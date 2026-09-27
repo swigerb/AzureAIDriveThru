@@ -112,9 +112,14 @@ def _relative_posix(path: Path) -> str:
 
 
 def _persona_pack_id(rel_posix: str):
-    """Returns the persona id if rel_posix is under personas/<id>/**, else None."""
+    """Returns the persona id if rel_posix is under personas/<id>/**, else None.
+
+    Requires a directory segment after the id (len(parts) >= 3): a file sitting directly under
+    personas/ itself (e.g. personas/persona.schema.json, a shared JSON Schema) is SHARED code,
+    not inside any particular pack, so it must not be treated as if it belonged to a pack named
+    after that filename."""
     parts = rel_posix.split("/")
-    return parts[1] if len(parts) >= 2 and parts[0] == "personas" else None
+    return parts[1] if len(parts) >= 3 and parts[0] == "personas" else None
 
 
 def _is_cross_brand_doc(rel_posix: str) -> bool:
@@ -135,12 +140,16 @@ def _conformance_testdata_pack_id(rel_posix: str):
     that pack's own menu/pricing and so may say its own brand, same as the pack that sourced
     them. Checked BEFORE the generic tests/conformance/testdata/ DIRECTORY_EXCEPTIONS entry
     (which only ever rescues 'sonic', for the original flat golden files that predate any
-    per-persona subfolder) so a new pack's own subfolder isn't limited to the sonic-only rule."""
+    per-persona subfolder) so a new pack's own subfolder isn't limited to the sonic-only rule.
+
+    Requires a "/" in the remainder: a file sitting directly under
+    tests/conformance/testdata/personas/ itself is SHARED code, not inside any particular
+    pack's subfolder, same rationale as ``_persona_pack_id``'s directory-segment requirement."""
     if not rel_posix.startswith(_CONFORMANCE_TESTDATA_PERSONAS_PREFIX):
         return None
     remainder = rel_posix[len(_CONFORMANCE_TESTDATA_PERSONAS_PREFIX):]
     parts = remainder.split("/")
-    return parts[0] if parts and parts[0] else None
+    return parts[0] if len(parts) >= 2 and parts[0] else None
 
 
 # ── Directory exceptions (generated/golden content; no per-file ratchet) ─────────────────
