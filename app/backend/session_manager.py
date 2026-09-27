@@ -675,6 +675,11 @@ class SessionManager:
                 "roundTripIndex": identifiers.round_trip_index,
                 "roundTripToken": identifiers.round_trip_token,
                 "persona": identifiers.persona_id,
+                # Issue #75, design doc section 5.2/7.5: the realtime model this session is
+                # bound to, alongside the persona it's already been reporting since #74 --
+                # so the browser's F11 debug panel (and any future model picker, #80) can
+                # show what's actually live for THIS session without a second round trip.
+                "model": identifiers.model_id,
                 **(extra or {}),
             }
         )

@@ -40,7 +40,7 @@
   "machines": { "soda_machine": "operational" },
 
   "models": {
-    "realtime": { "default": "gpt-realtime-mini", "allowed": ["gpt-realtime-mini"] }
+    "realtime": { "default": "gpt-realtime-mini", "allowed": ["gpt-realtime-mini", "gpt-realtime-2.1"] }
   },
 
   "strategies": { "searchQueryRewrite": "none" },

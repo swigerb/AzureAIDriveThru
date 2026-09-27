@@ -65,6 +65,11 @@ class FakeGARealtime:
         self.reject_keys: set[str] = set()
         self.reject_every_update = False
         self.echo_event_id = True
+        # Issue #75: the `?model=` query param on each upstream connect -- i.e. the
+        # deployment name `_forward_messages` actually chose, not just what session
+        # metadata reports to the browser. One connect per `test_model_selection.py`
+        # WS session that reaches this fake.
+        self.connect_model_params: list[str | None] = []
 
     def app(self) -> web.Application:
         app = web.Application()
@@ -75,6 +80,7 @@ class FakeGARealtime:
         return {**self.session, "tools": [t.get("name") for t in self.session["tools"]]}
 
     async def handler(self, request: web.Request) -> web.WebSocketResponse:
+        self.connect_model_params.append(request.query.get("model"))
         ws = web.WebSocketResponse()
         await ws.prepare(request)
         await ws.send_json({"type": "session.created", "session": {"type": "realtime", **self._snapshot()}})
