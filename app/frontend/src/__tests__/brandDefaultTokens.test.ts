@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -7,25 +7,43 @@ import { describe, expect, it } from "vitest";
 import { deriveAccents, DEFAULT_THEME_FONT } from "@/lib/personaTheme";
 
 // Guards issue #117: "index.css default brand tokens (light and dark) become neutral (grays / a
-// neutral accent), not Sonic's palette" -- and, symmetrically, that Sonic's full palette now lives
-// ONLY in its own pack (personas/sonic/persona.json), not baked into the shared default tokens
-// anywhere in app/frontend/src. Complements brandColorTokens.test.ts (#91, "no literal color values
-// outside the two token files"): that guard says literals may only live in these two files; THIS
-// guard says which literals those files may hold -- Sonic's, specifically, must not be among them.
+// neutral accent), not any one persona pack's palette" -- and, symmetrically, that a pack's full
+// palette lives ONLY in its own pack (personas/<id>/persona.json), never baked into the shared
+// default tokens anywhere in app/frontend/src. Complements brandColorTokens.test.ts (#91, "no
+// literal color values outside the two token files"): that guard says literals may only live in
+// these two files; THIS guard says which literals those files may hold -- no pack's, specifically,
+// may be among them.
 //
-// Reads personas/sonic/persona.json directly (not a frontend build artifact) so this test fails the
-// moment Sonic's own theme literals reappear in the shared defaults, regardless of which file they
-// were pasted into.
+// Rick review round 2 (#120): this guard is now pack-agnostic. It discovers every pack under
+// personas/ from disk (the same idea as the Python backend's `_discovered_persona_ids()`, #114)
+// instead of hard-coding one pack's path and palette, so it automatically covers every existing and
+// future pack with no brand literals living in this file.
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "../../../../");
+const personasDir = path.resolve(repoRoot, "personas");
 
 const indexCssText = readFileSync(path.resolve(here, "../index.css"), "utf-8");
-const sonicPersona = JSON.parse(readFileSync(path.resolve(repoRoot, "personas/sonic/persona.json"), "utf-8"));
 
-/** Recursively collects every string leaf under an object/array, skipping URL-shaped values (the
- * shared font, e.g., is intentionally the SAME literal in both Sonic's persona.json and
- * `DEFAULT_THEME_FONT` -- it's the app-wide default font, not a brand color, see personaTheme.ts). */
+/** Discovers every persona pack on disk: any directory directly under personas/ that contains a
+ * persona.json. Mirrors the backend's own pack-discovery convention rather than hard-coding a
+ * pack list, so a new pack (e.g. #111, #78) is covered the moment it lands on disk. */
+function discoverPackIds(): string[] {
+    if (!existsSync(personasDir)) return [];
+    return readdirSync(personasDir, { withFileTypes: true })
+        .filter(entry => entry.isDirectory())
+        .map(entry => entry.name)
+        .filter(id => existsSync(path.resolve(personasDir, id, "persona.json")))
+        .sort();
+}
+
+function loadPersona(packId: string): Record<string, unknown> {
+    return JSON.parse(readFileSync(path.resolve(personasDir, packId, "persona.json"), "utf-8"));
+}
+
+/** Recursively collects every string leaf under an object/array, skipping URL-shaped values (a
+ * pack's font import URL can legitimately match the shared `DEFAULT_THEME_FONT` when it uses the
+ * app-wide default webfont rather than a bespoke one -- see personaTheme.ts). */
 function collectStringLeaves(value: unknown, out: string[] = []): string[] {
     if (typeof value === "string") {
         if (!value.startsWith("http")) out.push(value);
@@ -37,51 +55,115 @@ function collectStringLeaves(value: unknown, out: string[] = []): string[] {
     return out;
 }
 
-const sonicTheme = sonicPersona.ui.theme;
-// Only the color-bearing `light`/`dark` blocks -- `font` is deliberately excluded: Sonic's
-// persona.json happens to declare the SAME shared `DEFAULT_THEME_FONT` family/URL (it doesn't have
-// a bespoke webfont), so comparing against it would false-positive on every persona, not just Sonic.
-const sonicThemeValues = [...collectStringLeaves(sonicTheme.light), ...collectStringLeaves(sonicTheme.dark)];
+/** True for achromatic values -- pure white/black/gray carries no brand hue, so a pack that
+ * legitimately declares e.g. pure white must not false-fail this guard against the shared neutral
+ * gray defaults. Recognizes HSL triplets ("H S% L%") and hex (#RGB / #RRGGBB). */
+function isAchromatic(value: string): boolean {
+    const hslMatch = value.match(/^-?\d+(?:\.\d+)?\s+(\d+(?:\.\d+)?)%\s+\d+(?:\.\d+)?%$/);
+    if (hslMatch) return parseFloat(hslMatch[1]) === 0;
 
-describe("shared default tokens contain no Sonic brand palette values (issue #117)", () => {
-    it("sanity: Sonic's persona.json theme block actually has values to compare against", () => {
-        // If this ever drops to 0 (e.g. a future refactor renames `ui.theme`), the guard below
-        // would pass vacuously and silently stop enforcing anything.
-        expect(sonicThemeValues.length).toBeGreaterThan(20);
-        expect(sonicThemeValues).toContain("#E40046"); // Sonic's primaryHex
-        expect(sonicThemeValues).toContain("341 100% 45%"); // Sonic's light primary
-    });
+    const hexMatch = value.match(/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/);
+    if (hexMatch) {
+        const hex = hexMatch[1];
+        const [r, g, b] =
+            hex.length === 3 ? hex.split("").map(c => parseInt(c + c, 16)) : [0, 2, 4].map(i => parseInt(hex.slice(i, i + 2), 16));
+        return r === g && g === b;
+    }
+    return false;
+}
 
-    it.each(sonicThemeValues)("index.css's shared defaults do not contain Sonic's theme value %s", value => {
-        expect(indexCssText).not.toContain(value);
-    });
+const packIds = discoverPackIds();
 
-    it("index.css's :root/.dark brand base roles are a neutral gray, not Sonic's hue", () => {
-        expect(indexCssText).toContain("--brand-primary: 220 9% 30%");
-        expect(indexCssText).toContain("--brand-primary-dark, 220 9% 60%");
-        // Sonic's saturated pink/red/teal/yellow hues (100% saturation, non-220 hue) must be gone.
-        expect(indexCssText).not.toMatch(/--brand-(primary|secondary|background|foreground):\s*(?:34[01]|208|195)\s/);
-    });
+type PackThemeValueRow = [packId: string, value: string];
 
-    it("index.css's brand accent hex constants are desaturated grays, not Sonic's saturated brand hex", () => {
-        expect(indexCssText).toContain("--brand-primary-hex: #464A53");
-        expect(indexCssText).toContain("--brand-accent: #9CA3AF");
-        for (const hex of ["#E40046", "#FEDD00", "#285780", "#18344D", "#0F1A24"]) {
-            expect(indexCssText).not.toContain(hex);
+/** [packId, chromatic theme value] rows from every discovered pack's `ui.theme.light`/`.dark`. */
+const packThemeValueRows: PackThemeValueRow[] = packIds.flatMap(packId => {
+    const persona = loadPersona(packId);
+    const theme = (persona.ui as Record<string, unknown> | undefined)?.theme as
+        | { light?: unknown; dark?: unknown }
+        | undefined;
+    if (!theme) return [];
+    const values = [...collectStringLeaves(theme.light ?? {}), ...collectStringLeaves(theme.dark ?? {})];
+    return values.filter(v => !isAchromatic(v)).map((v): PackThemeValueRow => [packId, v]);
+});
+
+describe("shared default tokens contain no persona pack's brand palette values (issue #117)", () => {
+    it("sanity: at least one pack was discovered, and every pack contributes a chromatic value", () => {
+        // If discovery ever silently returned nothing (e.g. a future refactor moves personas/
+        // elsewhere), or a pack's theme block were entirely achromatic, the it.each guard below
+        // would pass vacuously and silently stop enforcing anything for that pack.
+        expect(packIds.length).toBeGreaterThan(0);
+        const packsWithChromaticValues = new Set(packThemeValueRows.map(([packId]) => packId));
+        for (const packId of packIds) {
+            expect(packsWithChromaticValues.has(packId)).toBe(true);
         }
     });
 
-    it("deriveAccents' universal success/neutral fallback hex are not Sonic's literal values", () => {
+    it.each(packThemeValueRows)("index.css's shared defaults do not contain the %s pack's theme value %s", (_packId, value) => {
+        expect(indexCssText).not.toContain(value);
+    });
+
+    it("index.css's :root/.dark brand base roles are neutral (HSL saturation <= 20%)", () => {
+        // Matches both the :root direct declaration ("--brand-primary: 220 9% 30%;") and the
+        // .dark var() fallback ("var(--brand-primary-dark, 220 9% 60%)") -- no hardcoded brand hue
+        // list, just a real neutrality check on whatever HSL triplet index.css actually ships.
+        // Threshold is 20%, not a lower round number, because the current .dark background/card/
+        // popover fallback ("210 20% 5%", predates issue #117 -- introduced by the original
+        // full-rebrand commit that this issue's pack-agnostic follow-up didn't touch) is the
+        // highest-saturation value any of these four roles ships today; every discovered pack's
+        // OWN base role values are at least 40% saturated (checked below), so 20% still leaves a
+        // wide, real margin against an actual pack color leaking in here.
+        const roleTokenRegex = /--brand-(primary|secondary|background|foreground)(-dark)?[,:]\s*(-?\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)%\s+(\d+(?:\.\d+)?)%/g;
+        const matches = [...indexCssText.matchAll(roleTokenRegex)];
+        // Four base roles, each with a :root default and a .dark fallback, is the current shape --
+        // asserting a minimum keeps this from passing vacuously if the regex ever stops matching.
+        expect(matches.length).toBeGreaterThanOrEqual(8);
+        for (const match of matches) {
+            const saturation = parseFloat(match[4]);
+            expect(saturation).toBeLessThanOrEqual(20);
+        }
+
+        // Confirm the margin claimed above actually holds against every discovered pack's own base
+        // role saturation, so this guard fails loudly if a future pack ever ships something
+        // nearly-neutral enough to erode it.
+        for (const packId of packIds) {
+            const persona = loadPersona(packId);
+            const theme = (persona.ui as Record<string, unknown> | undefined)?.theme as
+                | { light?: Record<string, unknown> }
+                | undefined;
+            const light = theme?.light ?? {};
+            for (const role of ["primary", "secondary", "background", "foreground"] as const) {
+                const roleValue = light[role];
+                if (typeof roleValue !== "string") continue;
+                const saturationMatch = roleValue.match(/\s(\d+(?:\.\d+)?)%\s/);
+                if (!saturationMatch) continue;
+                expect(parseFloat(saturationMatch[1])).toBeGreaterThan(20);
+            }
+        }
+    });
+
+    it("index.css's own neutral accent hex defaults are present", () => {
+        expect(indexCssText).toContain("--brand-primary-hex: #464A53");
+        expect(indexCssText).toContain("--brand-accent: #9CA3AF");
+    });
+
+    it("deriveAccents' universal success/neutral fallback are not any pack's literal values", () => {
         const accents = deriveAccents({ primary: "0 0% 50%", secondary: "0 0% 50%", background: "0 0% 100%", foreground: "0 0% 0%" });
-        expect(accents.success).not.toBe("#328500"); // Sonic's success hex
-        expect(accents.neutral).not.toBe("#C9CFD4"); // Sonic's neutral hex
+        for (const packId of packIds) {
+            const persona = loadPersona(packId);
+            const theme = (persona.ui as Record<string, unknown> | undefined)?.theme as { light?: { accents?: Record<string, string> } } | undefined;
+            const packAccents = theme?.light?.accents;
+            if (!packAccents) continue;
+            if (packAccents.success) expect(accents.success).not.toBe(packAccents.success);
+            if (packAccents.neutral) expect(accents.neutral).not.toBe(packAccents.neutral);
+        }
     });
 
     it("the shared default font is the app-wide webfont, not gated on any persona id", () => {
-        // Sonic happens to declare this SAME font in its own persona.json (it uses the shared
-        // default rather than a bespoke one) -- so this only proves DEFAULT_THEME_FONT isn't
-        // Sonic-specific plumbing, not that the two must differ.
+        // A pack may legitimately declare this SAME font family/URL when it uses the shared
+        // default rather than a bespoke webfont -- that's covered by the URL-skip in
+        // collectStringLeaves above, not asserted here. Pack content otherwise is the pack's own
+        // business, not this guard's.
         expect(DEFAULT_THEME_FONT.family).toBe("Nunito Sans");
-        expect(sonicTheme.light.accents.primaryHex).toBe("#E40046"); // Sonic's own pack still has its palette
     });
 });
