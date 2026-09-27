@@ -67,6 +67,19 @@ internal static class DotnetBackendEnvironment
             ["DOTNET_ENVIRONMENT"] = "Production",
         };
 
+        // Same rationale as BackendEnvironment.cs (Python launcher): only set when a fixture
+        // explicitly overrides it (BackendContract.ForPort's personasDir param) -- omitted
+        // entirely otherwise, so every existing scenario resolves personas from the real repo
+        // personas/ folder exactly as before. Without this, every PersonaConformanceFixtures-
+        // derived fixture (test-alpha/test-beta packs) silently falls back to the real repo's
+        // sonic-only personas/ tree when run against the dotnet backend, and any row asserting
+        // on the fixture packs (disabled-pack, two-persona mismatch, model-selection fixtures)
+        // fails for the wrong reason.
+        if (contract.PersonasDir is not null)
+        {
+            env["PERSONAS_DIR"] = contract.PersonasDir;
+        }
+
         foreach (var (key, value) in options.ExtraEnvironment)
         {
             env[key] = value;

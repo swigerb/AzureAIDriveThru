@@ -8,11 +8,14 @@ namespace Conformance.Tests;
 
 /// <summary>
 /// Rick's PR #102 review item 1: Sonic-only (single-persona) conformance rows for issue #74's
-/// persona-binding contract -- design doc section 5.2. Deliberately UNTAGGED (no
-/// <c>[Trait("Dotnet", "ready")]</c>): the dotnet backend skeleton doesn't implement the persona
-/// catalog yet, so <see cref="DotnetTraitCoverageTests"/>'s dotnet CI leg
-/// (<c>Dotnet=ready&amp;Category!=Browser</c>) must skip these -- they still run in the main/full
-/// CI leg, which always launches the real Python backend.
+/// persona-binding contract -- design doc section 5.2. S2 part 2 (#12) ports the persona
+/// discovery/detail HTTP routes and the pre-upgrade ?persona= validation on /realtime, so four of
+/// the five rows below are now tagged <c>[Trait("Dotnet", "ready")]</c>.
+/// <see cref="Omitted_persona_binds_to_the_default_persona_visible_in_session_metadata"/> stays
+/// UNTAGGED: it needs the real upstream relay to actually reach `session.created` and echo
+/// `extension.session_metadata` (rtmt.py's `_websocket_handler`/`ConnectionForwarder`) --
+/// <see cref="RealtimeProcessor"/> this wave is a deliberate stub (issue #13 lands the real
+/// relay), so this row still only runs against the Python backend.
 /// </summary>
 [Collection(ConformanceCollection.Name)]
 public sealed class PersonaDiscoveryConformanceTests(ConformanceFixture fixture)
@@ -20,6 +23,7 @@ public sealed class PersonaDiscoveryConformanceTests(ConformanceFixture fixture)
     private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Api_personas_returns_the_designed_shape() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -52,6 +56,7 @@ public sealed class PersonaDiscoveryConformanceTests(ConformanceFixture fixture)
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Api_persona_detail_returns_200_for_the_default_persona() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -65,6 +70,7 @@ public sealed class PersonaDiscoveryConformanceTests(ConformanceFixture fixture)
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Api_persona_detail_returns_404_for_an_unknown_id() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -75,6 +81,7 @@ public sealed class PersonaDiscoveryConformanceTests(ConformanceFixture fixture)
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Realtime_with_an_unknown_persona_is_rejected_with_404_before_the_websocket_opens() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
