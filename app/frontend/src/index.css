@@ -49,12 +49,13 @@ layer(base);
   /* Persona theme accents (issue #80 F2): every brand color components used to hard-code as
      literal hex now resolves through one of these utilities instead (`bg-brand-primary`,
      `text-brand-secondary/80`, `from-brand-accent`, etc.). `lib/personaTheme.ts::applyTheme` can
-     override the underlying `--brand-*` custom properties at runtime once a persona picker (F1)
-     exists; today they only ever hold Sonic's values, set once at bootstrap.
+     override the underlying `--brand-*` custom properties at runtime for whichever persona is
+     active; the LITERAL values these fall back to (in the `:root`/`.dark` blocks below) are a
+     neutral, brand-independent gray/accent palette (issue #117) -- a persona pack (e.g.
+     `personas/sonic/persona.json`) supplies its own values, which win once loaded.
 
-     Names are roles, not Sonic's colors (PR #91 review round 2) -- another persona's `primary`
-     could be any hue, but it would still write through `--brand-primary`; only Sonic's *values*
-     happen to be red. */
+     Names are roles, not any one persona's colors (PR #91 review round 2) -- a persona's `primary`
+     could be any hue, but it would still write through `--brand-primary`. */
   --color-brand-primary: var(--brand-primary-hex);
   --color-brand-primary-strong: var(--brand-primary-strong);
   --color-brand-primary-light: var(--brand-primary-light);
@@ -109,44 +110,47 @@ layer(base);
 
 @layer base {
     :root {
-        /* Role names, not Sonic's colors (PR #91 review round 2). Another persona's `primary`
+        /* Role names, not any one persona's colors (PR #91 review round 2). A persona's `primary`
            could be any hue -- `applyTheme()` overrides these same variable names at runtime;
-           only the *values* below happen to be Sonic's today. */
-        --brand-primary: 341 100% 45%;
-        --brand-secondary: 208 52% 33%;
-        --brand-background: 195 44% 96%;
-        --brand-foreground: 208 53% 20%;
+           the literal values below are a neutral, brand-independent default (issue #117) used
+           until a persona's own theme has loaded (or for any persona pack that doesn't override
+           a given role at all). */
+        --brand-primary: 220 9% 30%;
+        --brand-secondary: 220 9% 46%;
+        --brand-background: 0 0% 100%;
+        --brand-foreground: 220 15% 15%;
 
         /* Persona theme accents (issue #80 F2, docs/persona-architecture.md §9 row F2). These are
-           Sonic's exact hex constants -- kept separate from --brand-primary/--brand-secondary above
-           (which round-trip through HSL for the shadcn-style tokens below) so components that need
-           a byte-identical color, rather than an HSL approximation, have one. lib/personaTheme.ts's
-           SONIC_THEME is the source of truth; applyTheme() overrides these at runtime, and today's
-           only caller passes SONIC_THEME right back in, so these defaults are never actually
-           exercised until a persona picker (F1) exists. */
-        --brand-primary-hex: #E40046;
-        --brand-primary-strong: #C31B24;
-        --brand-primary-light: #FF4D7A;
-        --brand-primary-tint: #FF6B8A;
-        --brand-secondary-hex: #285780;
-        --brand-secondary-strong: #137AC9;
-        --brand-secondary-tint: #74D2E7;
-        --brand-accent: #FEDD00;
-        --brand-accent-light: #FFE84D;
-        --brand-ink: #18344D;
-        --brand-surface-tint: #F2F8FA;
-        --brand-surface-dark: #0F1A24;
-        --brand-surface-dark-alt: #152231;
-        --brand-success: #328500;
-        --brand-neutral: #C9CFD4;
+           plain hex constants -- kept separate from --brand-primary/--brand-secondary above (which
+           round-trip through HSL for the shadcn-style tokens below) so components that need a
+           byte-identical color, rather than an HSL approximation, have one. The literal values here
+           are a neutral, brand-independent default (issue #117); `lib/personaTheme.ts::applyTheme`
+           overrides these at runtime once a persona's theme (e.g. `personas/sonic/persona.json`)
+           has loaded, so these defaults are only ever visible before that (or for a pack that omits
+           a given accent key). */
+        --brand-primary-hex: #464A53;
+        --brand-primary-strong: #2E3138;
+        --brand-primary-light: #686F7D;
+        --brand-primary-tint: #8C8C8C;
+        --brand-secondary-hex: #6B7280;
+        --brand-secondary-strong: #7F92B8;
+        --brand-secondary-tint: #CFCFCF;
+        --brand-accent: #9CA3AF;
+        --brand-accent-light: #C3C8D1;
+        --brand-ink: #21242C;
+        --brand-surface-tint: #F7F7F7;
+        --brand-surface-dark: #16181D;
+        --brand-surface-dark-alt: #1E2229;
+        --brand-success: #7A8B74;
+        --brand-neutral: #A7ACB5;
         /* Translucent "veils" of the tokens above, for shadows/gradients that need a fixed alpha
            baked in (a plain CSS custom property can't carry a Tailwind opacity modifier). Derived
            with color-mix() from the role tokens (PR #91 review round 2) instead of hard-coded
-           rgba() -- so a persona swap re-tints these too, instead of leaving Sonic-colored shadows
-           and gradients behind. color-mix(in srgb, X N%, transparent) reproduces the same value as
-           the old `rgba(<X's R,G,B>, N/100)` exactly (mixing N% of an opaque color with transparent
-           in sRGB is a per-channel linear blend, i.e. exactly N% alpha at X's own color), so Sonic's
-           rendering is unchanged -- verified with the round-2 before/after screenshots. */
+           rgba() -- so a persona swap re-tints these too, instead of leaving a stale persona's
+           shadows and gradients behind. color-mix(in srgb, X N%, transparent) reproduces the same
+           value as the old `rgba(<X's R,G,B>, N/100)` exactly (mixing N% of an opaque color with
+           transparent in sRGB is a per-channel linear blend, i.e. exactly N% alpha at X's own
+           color). */
         --brand-primary-veil-10: color-mix(in srgb, var(--brand-primary-hex) 10%, transparent);
         --brand-primary-veil-12: color-mix(in srgb, var(--brand-primary-hex) 12%, transparent);
         --brand-secondary-veil-08: color-mix(in srgb, var(--brand-secondary-hex) 8%, transparent);
@@ -159,64 +163,68 @@ layer(base);
         --background: var(--brand-background);
         --foreground: var(--brand-foreground);
         --card: 0 0% 100%;
-        --card-foreground: 208 40% 18%;
+        --card-foreground: var(--surface-card-foreground, 220 15% 20%);
         --popover: 0 0% 100%;
-        --popover-foreground: 208 40% 18%;
+        --popover-foreground: var(--surface-card-foreground, 220 15% 20%);
         --primary: var(--brand-primary);
         --primary-foreground: 0 0% 100%;
-        --secondary: 192 40% 90%;
-        --secondary-foreground: 208 48% 24%;
-        --muted: 200 20% 90%;
-        --muted-foreground: 210 15% 35%;
-        --accent: 52 100% 50%;
-        --accent-foreground: 208 53% 20%;
-        --destructive: 357 75% 44%;
+        --secondary: var(--surface-secondary, 220 9% 92%);
+        --secondary-foreground: var(--surface-secondary-foreground, 220 9% 30%);
+        --muted: var(--surface-muted, 220 9% 90%);
+        --muted-foreground: var(--surface-muted-foreground, 220 9% 40%);
+        --accent: var(--surface-accent, 220 9% 90%);
+        --accent-foreground: var(--surface-accent-foreground, 220 15% 15%);
+        --destructive: var(--surface-destructive, 0 70% 50%);
         --destructive-foreground: 0 0% 100%;
-        --border: 200 20% 85%;
-        --input: 200 20% 85%;
-        --ring: 341 100% 45%;
-        --chart-1: 341 100% 45%;
-        --chart-2: 208 52% 33%;
-        --chart-3: 52 100% 50%;
-        --chart-4: 192 67% 68%;
-        --chart-5: 97 100% 26%;
+        --border: var(--surface-border, 220 9% 85%);
+        --input: var(--surface-border, 220 9% 85%);
+        --ring: var(--primary);
+        --chart-1: var(--primary);
+        --chart-2: var(--brand-secondary);
+        --chart-3: var(--accent);
+        --chart-4: var(--surface-chart4, 220 9% 70%);
+        --chart-5: var(--surface-chart5, 220 9% 55%);
         --radius: 0.5rem;
     }
     .dark {
         /* Issue #80 F1/F3 (Rick's review): these nine roles derive from `--brand-x-dark` (only
            ever set by `lib/personaTheme.ts::applyDarkTheme`'s injected `<style>` -- see that
-           function's doc comment for why an inline style couldn't do this), falling back to the
-           exact literals this block used to hard-code so the default persona's rendering is unchanged before a
+           function's doc comment for why an inline style couldn't do this), falling back to a
+           neutral literal (issue #117) so the shared default renders consistently before a
            persona theme has loaded. This is the fix for the dark-mode hero-card contrast bug: the
            old literals here never referenced a persona's colors at all, so `--primary`/`--ring`/
            `--chart-1` (and hero's `bg-white/80` panels, fixed separately in App.tsx) stayed a fixed
-           gray/pink combination no matter which persona (or which persona's dark palette) was
-           active. `--secondary`/`--muted`/`--accent`/`--destructive`/`--border`/`--input`/
-           `--chart-2..5` are intentionally left as independent literal grays, matching `:root`. */
+           color no matter which persona (or which persona's dark palette) was active.
+           `--secondary`/`--muted`/`--accent`/`--destructive`/`--border`/`--input`/`--chart-2..5`
+           derive from the `--surface-*(-dark)` custom properties `applyTheme`/`applyDarkTheme` set
+           (issue #117), falling back to the same neutral literals as `:root` when a persona pack
+           doesn't override a given slot. `--accent`/`--chart-4` intentionally reference the SAME
+           `--surface-accent`/`--surface-chart4` variables (and fallbacks) as `:root` above --
+           they're mode-invariant, so one persona-set value covers both modes. */
         --background: var(--brand-background-dark, 210 20% 5%);
         --foreground: var(--brand-foreground-dark, 0 0% 98%);
         --card: var(--brand-background-dark, 210 20% 5%);
         --card-foreground: var(--brand-foreground-dark, 0 0% 98%);
         --popover: var(--brand-background-dark, 210 20% 5%);
         --popover-foreground: var(--brand-foreground-dark, 0 0% 98%);
-        --primary: var(--brand-primary-dark, 341 100% 55%);
+        --primary: var(--brand-primary-dark, 220 9% 60%);
         --primary-foreground: 0 0% 100%;
-        --secondary: 208 30% 15%;
+        --secondary: var(--surface-secondary-dark, 220 9% 15%);
         --secondary-foreground: 0 0% 98%;
-        --muted: 210 15% 15%;
+        --muted: var(--surface-muted-dark, 220 9% 15%);
         --muted-foreground: 0 0% 63.9%;
-        --accent: 52 100% 50%;
+        --accent: var(--surface-accent, 220 9% 90%);
         --accent-foreground: 0 0% 10%;
-        --destructive: 357 75% 35%;
+        --destructive: var(--surface-destructive-dark, 0 65% 42%);
         --destructive-foreground: 0 0% 98%;
-        --border: 210 15% 15%;
-        --input: 210 15% 15%;
-        --ring: var(--brand-primary-dark, 341 100% 55%);
-        --chart-1: var(--brand-primary-dark, 341 100% 55%);
-        --chart-2: 208 60% 50%;
-        --chart-3: 52 100% 55%;
-        --chart-4: 192 67% 68%;
-        --chart-5: 97 80% 40%;
+        --border: var(--surface-border-dark, 220 9% 15%);
+        --input: var(--surface-border-dark, 220 9% 15%);
+        --ring: var(--brand-primary-dark, 220 9% 60%);
+        --chart-1: var(--brand-primary-dark, 220 9% 60%);
+        --chart-2: var(--surface-chart2-dark, 220 9% 50%);
+        --chart-3: var(--surface-chart3-dark, 220 9% 60%);
+        --chart-4: var(--surface-chart4, 220 9% 70%);
+        --chart-5: var(--surface-chart5-dark, 220 9% 40%);
     }
 }
 
