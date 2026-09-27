@@ -39,6 +39,40 @@ public static class MenuIndex
         return documents;
     }
 
+    /// <summary>
+    /// Issue #76 part 2: resolves every persona id in <paramref name="personaIds"/> to the Azure
+    /// AI Search index name its OWN persona.json declares (`search.indexName`) and that SAME
+    /// pack's own `menu/menuItems.json` path -- so <see cref="Conformance.Fakes.FakeSearchServer"/>
+    /// can serve one Kestrel host that answers each persona's own index with only that persona's
+    /// own menu documents, instead of a single Sonic-only document set regardless of which index a
+    /// persona's SearchClient actually targeted (the exact gap
+    /// PersonaBusinessRuleConformanceTests.cs's own doc comment calls out). A hand-rolled,
+    /// harness-local read of just the two persona.json fields this fake needs -- deliberately NOT
+    /// a dependency on app/backend/persona_loader.py's or
+    /// app/backend-dotnet/src/Backend/Personas/PersonaCatalog.cs's full schema validation, which
+    /// belongs to the backends under test, not their test double.
+    /// </summary>
+    public static IReadOnlyDictionary<string, string> ResolveIndexPaths(string personasDir, IEnumerable<string> personaIds)
+    {
+        var map = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var personaId in personaIds)
+        {
+            var personaJsonPath = Path.Combine(personasDir, personaId, "persona.json");
+            using var stream = File.OpenRead(personaJsonPath);
+            using var document = JsonDocument.Parse(stream);
+            var indexName = document.RootElement.GetProperty("search").GetProperty("indexName").GetString();
+            if (string.IsNullOrEmpty(indexName))
+            {
+                throw new InvalidOperationException(
+                    $"persona.json for '{personaId}' under '{personasDir}' has no search.indexName.");
+            }
+
+            map[indexName] = Path.Combine(personasDir, personaId, "menu", "menuItems.json");
+        }
+
+        return map;
+    }
+
     private static string Slugify(string category, string name)
     {
         var combined = $"{category}-{name}";
