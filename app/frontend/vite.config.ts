@@ -50,7 +50,12 @@ export default defineConfig({
                 // the proxy target, so both match and the backend's same-origin check passes.
                 changeOrigin: true,
                 rewriteWsOrigin: true
-            }
+            },
+            // #80 F1/F3/F4: PersonaProvider/MenuPanel now fetch these REST routes (already live
+            // on the python backend, design doc section 5.2) instead of reading bundled frontend
+            // copies, so local `npm run dev` needs to reach the backend for them too.
+            "/api": { target: "http://localhost:8000", changeOrigin: true },
+            "/personas": { target: "http://localhost:8000", changeOrigin: true }
         }
     },
     test: {
