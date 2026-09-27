@@ -186,6 +186,9 @@ app.MapGet("/realtime", async (HttpContext context) =>
     var personaId = string.IsNullOrEmpty(requestedPersonaId) ? personaCatalog.DefaultPersonaId : requestedPersonaId;
     if (!personaCatalog.Contains(personaId))
     {
+        // rtmt.py's `_websocket_handler` logs this rejection at warning level before returning
+        // the 404 (Rick's PR #122 review item 2) -- mirrored here, not just the response body.
+        logger.LogWarning("Rejected WebSocket for unknown/disabled persona: {PersonaId}", personaId);
         return Results.Text($"Unknown or disabled persona: '{personaId}'", statusCode: 404);
     }
     var persona = personaCatalog.Get(personaId);
@@ -193,19 +196,47 @@ app.MapGet("/realtime", async (HttpContext context) =>
     // Model dispatch + resolution (issue #75): resolves which pipeline processor owns this
     // session, then validates the requested (or defaulted) model against that persona/pipeline.
     // Both stages 404 as plain text on failure, same as rtmt.py.
-    var requestedModelId = context.Request.Query["model"].ToString();
+    //
+    // Rick's PR #122 review item 2: `requested_model_id` is `None` only when `?model=` is
+    // genuinely absent from the query string -- an explicit `?model=` (empty value) is a real,
+    // distinct model id to Python (`requested_model_id if requested_model_id is not None else
+    // default`, processors.py), not treated the same as omitted. `Query["model"].ToString()`
+    // collapses both cases to `""`, so read via `TryGetValue` to preserve the distinction, same
+    // as `request.query.get("model")` returning `None` vs `""`.
+    var requestedModelId = context.Request.Query.TryGetValue("model", out var modelQueryValues)
+        ? modelQueryValues.ToString()
+        : null;
     string pipelineName;
     IPipelineProcessor processor;
     ResolvedModel resolvedModel;
     try
     {
-        (pipelineName, processor) = ModelDispatch.DispatchProcessor(
-            persona, string.IsNullOrEmpty(requestedModelId) ? null : requestedModelId, modelCatalog, processorRegistry);
-        resolvedModel = processor.ResolveModel(persona, string.IsNullOrEmpty(requestedModelId) ? null : requestedModelId);
+        (pipelineName, processor) = ModelDispatch.DispatchProcessor(persona, requestedModelId, modelCatalog, processorRegistry);
     }
     catch (ModelSelectionException exc)
     {
-        return Results.Text(exc.Message, statusCode: 404);
+        // Rick's PR #122 review item 2: the 404 BODY is always the fixed, Python-matching shape
+        // below -- rtmt.py's own dispatch_processor except-clause returns the identical body
+        // regardless of the underlying reason (unknown model vs. an unregistered pipeline for a
+        // catalogued one); the detailed reason goes to the log, not the client.
+        logger.LogWarning(
+            "Rejected WebSocket for unknown model / unregistered pipeline: {ModelId} ({Reason})",
+            requestedModelId, exc.Message);
+        return Results.Text($"Unknown or disallowed model: {PyRepr(requestedModelId)}", statusCode: 404);
+    }
+
+    try
+    {
+        resolvedModel = processor.ResolveModel(persona, requestedModelId);
+    }
+    catch (ModelSelectionException exc)
+    {
+        // Same fixed body/log split as the dispatch-stage catch above, mirroring rtmt.py's
+        // second `except ModelSelectionError` clause (resolve_model, not dispatch_processor).
+        logger.LogWarning(
+            "Rejected WebSocket for unknown/disallowed model: {ModelId} ({Reason})",
+            requestedModelId, exc.Message);
+        return Results.Text($"Unknown or disallowed model: {PyRepr(requestedModelId)}", statusCode: 404);
     }
 
     var sessionId = Guid.NewGuid().ToString("n");
@@ -267,6 +298,11 @@ return 0;
 
 static bool ParseBool(string? value) =>
     value is not null && (value.Equals("true", StringComparison.OrdinalIgnoreCase) || value == "1");
+
+// Rick's PR #122 review item 2: matches Python's `!r` for the two shapes `requested_model_id`
+// can take here -- `None` (bare, no quotes) when `?model=` was absent, `'value'` (single-quoted)
+// for any string value, including `''` for an explicit but empty `?model=`.
+static string PyRepr(string? value) => value is null ? "None" : $"'{value}'";
 
 static string? TryFindStaticDir()
 {
