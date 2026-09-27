@@ -45,6 +45,9 @@ EXCLUDED_DIRS = {
     ".git", "node_modules", "__pycache__",
     ".venv", "venv", "env",
     ".squad",
+    # Cross-brand architecture records (ADR-001, #19) must name all three brands by design. #76 inverts
+    # this whole guard (brand words only inside their own persona pack) and keeps these excluded.
+    "adr",
 }
 
 EXCLUDED_FILES = {
@@ -52,6 +55,8 @@ EXCLUDED_FILES = {
     "voice_rag_README.md",
     # This test file itself contains the forbidden words by necessity
     "test_rebrand_verification.py",
+    # The persona design doc compares the three brands (#19); see the "adr" exclusion above.
+    "persona-architecture.md",
 }
 
 

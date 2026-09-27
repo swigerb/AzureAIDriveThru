@@ -65,3 +65,11 @@
 ## 2026-09-25 — Team update
 
 - **PR #66 awaits Rick review:** Birdperson's conformance suite flakes fix (issues #55/#62) merged to dev branch, 12/12 test classes green, awaiting approval before main merge.
+
+## 2026-09-26 - P1 accepted: Brian's ten decisions recorded (#19, PR #67)
+
+- **Accepted:** ADR-001 and `docs/persona-architecture.md` updated to Accepted with Brian's answers. P2 is filed as #69 to #88 (milestone "P2 Unified demo (Python)"); the critical path is #70, #71, #72, #73, #74, #75, #82, #87, #88.
+- **Biggest consequence of "no off-menu":** menus must be completed from source data *before* the fallback goes. Sonic's served menu has no fountain drinks or add-ons, which today work only through the keyword fallback, and floats aren't in the export at all (#72 before #73).
+- **Model flexibility is a pipeline question, not just a deployment name:** realtime models swap by deployment, but showcasing non-OpenAI Foundry models needs a cascade pipeline (STT, chat with tools, TTS) behind the same browser contract (#82). Keep one processor interface so conformance treats the pipeline as a dimension.
+- **Environment:** the Search service and the Azure OpenAI resource both live in `rg-sonic-demo`, and the siblings reuse them. So "keep the indexes" plus "tear down everything else" means moving the free Search service into the new resource group on Day 30, not deleting it.
+- **Tooling gotcha:** PowerShell flattens a single-element `@(@('a','b'))` into `@('a','b')`, so `$pair[0]` became a character and a global `Replace` corrupted seven issue bodies. I restored them from the source script and verified them line by line. Use ordered hashtables (old to new) for replacement lists.
