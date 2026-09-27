@@ -473,3 +473,65 @@ original author.
   MCP host's cwd) regardless of what absolute path is requested -- for any screenshot that needs to
   land in an arbitrary caller-specified directory, capture with a bare relative filename first,
   then move the file with a normal shell command afterward.
+
+## 2026-09-28 — #95/#103/#68 PR #123 revision after Rick's rejection
+
+- Picked up PR #123 (branch `squad/flakes-95-103-68`, head `f1e7bff`) after Rick rejected it and
+  Birdperson (the author) was locked out. Worked in a fresh worktree
+  (`SonicAIDriveThru-wt\flakes-r2`) off the existing branch -- no new branch, no rebase, just
+  additional commits on top.
+- **#68's real bug was a same-signal-different-meaning confusion.** The rejected PR added
+  `on_guest_audio_forwarded()` cancellation because the flaky test raced on `speech_started`
+  timing. But the browser forwards *every* mic buffer to the backend, including pure silence --
+  there is no VAD gate on the client side. So "audio forwarded" fires on frame 1 of every guest
+  turn, silence or not, and would cancel every pending rate-limit retry the instant a turn starts,
+  including the greeting retry (#48). The correct fix was to leave the product code alone (revert
+  to `speech_started`-based cancellation, which only fires on genuine detected speech) and instead
+  fix the *test*: swap to the long second-retry delay profile (3.6s) so there's real margin, and
+  replace the polling assertion with an event-driven wait on the backend's own
+  `"Rate-limit retry cancelled: guest started speaking"` diagnostic line via the harness's
+  `WaitForDiagnosticsAsync`. Added a dedicated regression test that keeps streaming audio frames
+  from the fake browser without ever emitting `speech_started`, asserting the retry still fires --
+  this is the row that would have caught the rejected PR's regression directly. Mutation-proof:
+  temporarily restoring the old `on_guest_audio_forwarded()` code makes this exact new test fail,
+  with the log showing the retry cancelled on the very first forwarded frame.
+- **#103's "zero margin" flake wasn't a logic bug, it was a clock-vs-timer mismatch.**
+  `WaitForOutputQuiescenceAsync` computed `idleNeeded` once, awaited `Task.Delay(idleNeeded)`, and
+  trusted its completion as proof `idleWindow` of wall-clock silence had passed. But
+  `Task.Delay`'s underlying timer has coarse resolution (~1ms Linux, ~15.6ms Windows) and can
+  complete slightly before that much time has actually elapsed versus `DateTimeOffset.UtcNow`,
+  so `completedUtc - lastAppendUtc` can land a hair under `idleWindow` -- a genuine race, not a
+  fixable-by-adding-margin problem (Rick explicitly wanted zero margin kept). Fix: removed the
+  `firstIteration` special case and made every loop iteration re-derive `quietFor` fresh from
+  `_lastAppendUtc` under the lock, so a timer that fired early just causes one more short
+  iteration instead of a premature `true`. This one design (no special-casing "why did the loop
+  wake up") handles re-arm-via-new-line, timer-shortfall, and deadline-cap-hit uniformly.
+  Mutation-proof: since there's no injectable clock/timer seam in production code, I proved the
+  fix's necessity two ways -- (1) reverting to the old code and forcing `Task.Delay` to fire 20ms
+  early via a scratch-only subtraction (Rick's own suggested mutation) reliably reproduced the
+  under-shoot assertion failure; (2) applying the identical forced-20ms-early injection on top of
+  the *fixed* code passes cleanly, because the re-check loop absorbs the shortfall. Both scratch
+  edits were discarded before committing -- never land a clock-seam hack in reviewed code just to
+  make a mutation test easier.
+- **A tiny `idleWindow` isn't automatically a good amplifier for timer jitter.** My first mutation
+  attempt shrank `idleWindow` to 2ms hoping to make the ~1-15.6ms resolution noise dominate --
+  it didn't reproduce the bug at all, because Windows' coarse timer granularity means a 2ms
+  `Task.Delay` request almost always *overshoots* to the next tick boundary (rounds up), it
+  essentially never fires early when the requested duration is already smaller than the
+  resolution period. The early-fire behavior Rick described only shows up when the requested
+  delay is large enough that the timer's rounding can land on either side of the target --
+  forcing the shortfall explicitly (subtracting a fixed offset from the requested delay) was far
+  more reliable than trying to provoke it by making the window small.
+- **`app/backend/static` is a hard pytest dependency that isn't checked in.** A fresh worktree
+  produced 7-9 unrelated-looking `pytest` failures (`ValueError: static dir does not exist`) until
+  `npm ci && npm run build` was run in `app/frontend` -- CI always does this before the Python test
+  step; any new worktree/venv setup needs to replicate it or the whole suite looks broken for
+  reasons that have nothing to do with the change under review.
+- **Before trusting a scary-looking pytest/conformance failure that doesn't match the assigned
+  issue, reproduce it on a clean `origin/dev` worktree first.** Two Python failures and one C#
+  mirror survived every fix in this PR (`test_resize_wrong_size_price_carryover_...` and
+  `test_item_without_bundle_absorbs_nothing`, both pricing/menu bugs, tracked as #121) -- a
+  side-by-side scratch worktree pinned to plain `origin/dev` with zero code differences in the
+  relevant files reproduced the identical failures, confirming they're pre-existing and unrelated
+  rather than something this branch introduced. Cheaper and more convincing than trying to reason
+  about it from a diff alone.
