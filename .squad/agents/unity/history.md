@@ -670,3 +670,67 @@ Since `app/frontend/` is off-limits, the middleware (`rtmt.py` + `audio_pipeline
 - Found a real (pre-existing, shared-frontend, out-of-scope-to-fix-here) bug:
   Settings dialog hardcodes "Carhop Voice" regardless of active persona.
   Reported via PR comment + screenshot rather than fixed, since #78 is data-only.
+
+## 2026-09-27 round 6: phi-4 cascade cleanup, alias audit, nugget-name collision bug
+
+- Coordinator asked for 2 small follow-ups after Dunkin (#111) merged: strip
+  \phi-4\ from the pack's cascade allow-list (#118), and audit spoken aliases
+  ("nuggets", "fries", "Coke", "large fry") for unambiguous coverage.
+- Learning: \menu_utils._menu_key()\ strips ANY \(...)\ group anywhere in an
+  item's \
+ame\ as a "customization suffix" (by design, so
+  \"Tots (Extra Crispy)"\ classifies identically to \"Tots"\) -- and
+  \item_fields\ is keyed DIRECTLY by that stripped key, not just the alias
+  map. If a pack's source data uses parens to distinguish real SKUs (piece
+  counts, sizes, flavors -- anything that isn't purely cosmetic), every SKU
+  sharing the same pre-parens text SILENTLY collides into one dict entry,
+  last-loaded-wins, no error, no test failure (unless the harness happens to
+  order the losing SKU, which none of my golden/smoke data did). Found this
+  the hard way auditing "nuggets" alias-safety: McDonald's 5 standalone
+  Chicken McNuggets(R) items ("(4 piece)".."(40 piece)", verbatim from
+  source) all collapsed to key "chicken mcnuggets" -- only the last-loaded
+  (40-piece, \.99) was resolvable at all; the other 4 sizes would have
+  silently priced/classified as the 40-piece item if ordered.
+- Self-check recipe for future packs (or a future shared-engine lint, flagged
+  to the coordinator rather than added myself -- out of scope for a
+  data-only PR): run \_menu_key(name)\ over every item in the pack's own
+  menuItems.json and check for any two distinct names reducing to the same
+  string. A quick one-off script catches it in seconds; I deleted mine after
+  use per the scratch-file cleanup rule.
+- Fix: renamed the 5 colliding items from \"Chicken McNuggets(R) (N piece)"\
+  to \"N Piece Chicken McNuggets(R)"\ (no parens) -- this exact
+  non-colliding convention was ALREADY used elsewhere in the very same
+  source file for the Happy Meal variants (\"4 Piece Chicken McNuggets(R)
+  Happy Meal(R)"\), so it wasn't an invented format, just adopting the
+  source's own alternate style. Re-verified zero collisions across all 134
+  items after the rename, and re-verified live via a real MenuCatalog build
+  that all 5 sizes now resolve independently at their own correct price.
+  This is a deliberate, narrow, explicitly-flagged deviation from strict
+  "verbatim from source" naming -- justified because the alternative was a
+  real overcharge/undercharge bug, not a cosmetic mismatch. Called it out
+  explicitly in the PR comment for Rick/Brian.
+- Alias audit conclusions: "fries"/"Coke" were already safely aliased
+  (each the pack's only item of that kind, no change needed); "large fry"
+  needs no alias at all since item-name resolution and size resolution are
+  independent tool-call fields the model composes itself (not a schema gap);
+  "nuggets" bare word deliberately left un-aliased since the pack now has
+  5+3 legitimately different "nuggets" items and \lias_map\ has zero
+  runtime disambiguation (flat one-key-wins dict) -- flagged for Rick's call
+  per Brian's "list it, don't guess" rule instead of picking one arbitrarily.
+- phi-4 cascade removal: confirmed via a live \PersonaCatalog.load()\ call
+  that \mcdonalds\'s \models.cascade.allowed == ["gpt-5-mini"]\ post-fix.
+  Left \models.local\'s \phi-4-mini-local\ untouched (different tier/model,
+  not what #118 flagged). Noted that Sonic's and Dunkin's own packs still
+  carried \phi-4\ in their own cascade lists post-merge too -- #118's fix
+  hasn't landed on either pack yet, same "get ahead of a shared fix before it
+  lands" pattern as #107 (price wording) and #77 (\modify\ action) in
+  earlier rounds.
+- Validation: \pytest -q\ 1173 passed + 168 subtests; \uff check\ clean;
+  .NET \Backend.Tests\ 82/82; full conformance suite 670/670 (669 before
+  Dunkin's merge added 1); mcdonalds/smoke-filtered subset 9/9; backend
+  starts live with both personas enabled; rebrand baseline regenerate: true
+  no-op.
+- Pushed -> head SHA \6ab0edd\. CI: 8/8 green. PR #112 confirmed still OPEN,
+  not draft (READY for review). Posted a detailed follow-up PR comment
+  covering phi-4, the alias audit (incl. the flagged "nuggets" gap), and the
+  nugget-name-collision bug + fix.
