@@ -1,6 +1,6 @@
 # Squad Team
 
-> Sonic AI Drive-Thru Voice Assistant — AI-powered drive-thru ordering experience
+> Azure AI Drive-Thru — a Microsoft Foundry voice-ordering demo with persona switching and model flexibility
 
 ## Coordinator
 
@@ -25,8 +25,8 @@
 ## Project Context
 
 - **Owner:** Brian Swiger
-- **Project:** Sonic AI Drive-Thru Voice Assistant — a voice-driven drive-thru ordering experience showcasing Azure OpenAI GPT-4o Realtime, Azure AI Search, and Azure Container Apps. Emulates a Sonic Drive-In carhop who can search the menu, hold multilingual conversations, and keep orders in sync across devices.
-- **Repo:** https://github.com/swigerb/SonicAIDriveThru
+- **Project:** Azure AI Drive-Thru — a voice-driven drive-thru ordering demo on Microsoft Foundry (Azure OpenAI GPT-4o Realtime, Azure AI Search, Azure Container Apps) with persona switching across drive-thru brands (Sonic, McDonald's, Dunkin) and model flexibility.
+- **Repo:** https://github.com/swigerb/AzureAIDriveThru
 - **Stack:**
   - **Frontend:** React, TypeScript, Vite, Tailwind CSS, shadcn/ui
   - **Backend (Python, reference):** Python (aiohttp, WebSockets), Azure OpenAI Realtime API (gpt-realtime-2.1), Azure AI Search
