@@ -1,0 +1,22 @@
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net11.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <WarningsAsErrors />
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <!-- No Native AOT (Beth's charter): Azure SDK trimming warnings. JIT + ReadyToRun instead. -->
+    <PublishAot>false</PublishAot>
+    <!--
+      Issue #24-style hygiene, matching tests/conformance/Directory.Build.props: pins the exact
+      resolved dependency graph (including transitives) into a committed packages.lock.json per
+      project, so CI restoring in locked mode fails loudly instead of silently re-resolving if the
+      lock file and Directory.Packages.props versions ever disagree.
+    -->
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+  </PropertyGroup>
+</Project>
