@@ -1120,7 +1120,7 @@ this section used to document (the backend used to trust the tool call's price v
 cross-checked it against the menu); every `update_order` fixture across this suite (and
 `golden-order-pricing.json`'s `steps[].price`/`combos.items[].price` fields) is now the real
 per-size menu price, so a scenario's expected total can be computed directly from
-`golden-order-pricing.json`/`personas/sonic/menu/menuItems.json` rather than from whatever the
+`golden-order-pricing.json`/`personas/<id>/menu/menuItems.json` rather than from whatever the
 fixture happens to pass on the wire. `ComboAbsorptionTests.cs`'s combo prices, `HappyHourPricingTests.cs`'s
 drink price, and `UpdateOrderAddRemoveModifyTests.Adding_an_item_with_a_wrong_tool_call_price_is_charged_the_menu_price`
 (a `[Theory]` over a zero, negative, and wildly-too-high tool-call price, all charged the real

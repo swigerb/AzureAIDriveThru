@@ -422,12 +422,12 @@ class UpdateOrderAddTests(unittest.TestCase):
         self.assertTrue(math.isclose(summary.items[0].price, 2.79, rel_tol=1e-9))
 
     def test_resize_wrong_size_price_carryover_charges_new_size_menu_price(self):
-        """Rick's #104 review, required item 2 (wrong-size carry-over): Sonic has no `modify`
-        action, so a resize is remove-then-add. A model that carries the OLD size's tool-call
-        price over when re-adding at a NEW size must still be charged the NEW size's real menu
-        price, never the stale one it echoed back. Cherry Limeade medium (real price 2.89) is
-        removed, then re-added as large but with the medium price (2.89) mistakenly repeated;
-        the add must charge the large menu price (3.39), not 2.89."""
+        """Rick's #104 review, required item 2 (wrong-size carry-over): this persona has no
+        `modify` action, so a resize is remove-then-add. A model that carries the OLD size's
+        tool-call price over when re-adding at a NEW size must still be charged the NEW size's
+        real menu price, never the stale one it echoed back. Cherry Limeade medium (real price
+        2.89) is removed, then re-added as large but with the medium price (2.89) mistakenly
+        repeated; the add must charge the large menu price (3.39), not 2.89."""
         sid = _make_session()
         _run(update_order({
             "action": "add", "item_name": "Cherry Limeade",
