@@ -78,6 +78,14 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+# Issue #72 Part 2: Rick's rules confirmed these two items are NOT in the Sonic production export
+# (not naming mismatches -- genuinely absent from the source of truth), so ADR-001 decision 4 (no
+# off-menu ordering) required removing them from the persona pack. PR #99 review decision 3 (Rick):
+# a drift-guard exception is a weakening we don't need -- the two items were removed from the
+# frontend's copy in the same change instead, so the guard stays a hard "frontend must be a subset
+# of the pack" invariant with no allow-list.
+
+
 class FrontendMenuNeverContradictsThePackTests(unittest.TestCase):
     """The frontend's menuItems.json may be a subset of the pack's (a lagging copy while a new
     item rolls out), but every item it DOES list must agree with the pack's copy of that item on

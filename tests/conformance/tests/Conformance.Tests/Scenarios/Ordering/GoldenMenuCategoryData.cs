@@ -11,7 +11,7 @@ namespace Conformance.Tests.Scenarios.Ordering;
 /// app/backend/tests/test_menu_utils.py. These are two DELIBERATELY SEPARATE columns (PR #50
 /// review: don't derive one from the other), not one shared bucket. Kept as a separate
 /// file/loader from GoldenOrderPricingData.cs (a different golden dataset, not part of the money
-/// contract) so a future C# backend's own test suite can assert against the exact same 74-item
+/// contract) so a future C# backend's own test suite can assert against the exact same 180-item
 /// table without transcribing it a third time.
 /// </summary>
 public sealed record MenuCategoryCase(string Item, string Category, string ComboSlot, bool HappyHourDiscounted, string Size, decimal UnitPrice);

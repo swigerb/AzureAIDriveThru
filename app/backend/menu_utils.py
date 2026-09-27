@@ -22,6 +22,7 @@ __all__ = [
     "infer_category",
     "infer_combo_component",
     "is_happy_hour_discounted",
+    "bundle_slots",
     "MENU_CATEGORY_MAP",
 ]
 
@@ -268,6 +269,11 @@ def _load_menu_data() -> tuple[dict[str, dict], dict[str, str]]:
                     "category": category,
                     "comboSlot": item.get("comboSlot", "none"),
                     "happyHourDiscounted": bool(item.get("happyHourDiscounted", False)),
+                    # Rick's PR #99 review, decision 1: the item's own ``bundle.slots`` -- the
+                    # actual side/drink component groups this item absorbs when added (a combo,
+                    # Dinner, Wacky Pack or Meal), read straight from the pack. Empty tuple for an
+                    # item with no ``bundle`` field at all (most menu items absorb nothing).
+                    "bundleSlots": tuple(item.get("bundle", {}).get("slots") or ()),
                 }
                 for alias in item.get("aliases") or ():
                     alias_key = _menu_key(alias)
@@ -457,3 +463,41 @@ def is_happy_hour_discounted(item_name: str) -> bool:
 
     # Not in the menu at all -- same keyword fallback categories as the combo-drink-slot check.
     return _keyword_fallback_happy_hour_discounted(normalized)
+
+
+def bundle_slots(item_name: str) -> tuple[str, ...]:
+    """Return *item_name*'s bundle component slots -- the actual side/drink slots a combo,
+    Dinner, Wacky Pack or Meal absorbs when it's added, resolved through ``_menu_key``/aliases
+    against the pack's own ``bundle.slots`` field (Rick's PR #99 review, decision 1; pulls the
+    slot-count piece of the shared bundle engine, #77, forward).
+
+    This REPLACES the old ``"combo" in item_name.lower()`` heuristic in ``order_state.py``, which
+    gave every "... Combo"-named item exactly one side slot and one drink slot regardless of what
+    the item's own data says -- wrongly free-absorbing a side into "French Toast Sticks Combo"
+    (drinks-only per the export's own ``ingredientRefs``) and never absorbing anything into
+    "Corn Dog Wacky Pack" or "Crispy Tenders Dinner - 3 piece" (whose names don't contain the word
+    "combo" at all, even though the export shows they bundle real component groups).
+
+    Returns ``()`` for any item with no ``bundle`` field at all -- most menu items absorb nothing.
+    For a name that isn't on the menu at all (before #73 removes the keyword fallback entirely),
+    falls back to ``("sides", "drinks")`` when the name contains "combo", matching the previous
+    name-based heuristic exactly -- so an off-menu/typo'd "... Combo" name still behaves like
+    today until #73 rejects it outright as ``not_on_menu``.
+
+    >>> bundle_slots("French Toast Sticks Combo")
+    ('drinks',)
+    >>> bundle_slots("Crispy Tenders Dinner - 3 piece")
+    ('drinks',)
+    >>> bundle_slots("Tots")
+    ()
+    """
+    normalized = _resolve_alias(_menu_key(item_name))
+    fields = _MENU_ITEM_FIELDS.get(normalized)
+    if fields is not None:
+        return fields["bundleSlots"]
+
+    # Not in the menu at all -- same "combo" name heuristic order_state.py used before this
+    # function existed, kept only as a fallback for genuinely off-menu names (#73 territory).
+    if "combo" in normalized:
+        return ("sides", "drinks")
+    return ()

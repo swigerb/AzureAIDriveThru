@@ -32,10 +32,15 @@ def _load_menu_item_names() -> set[str]:
 
 def _load_menu_item_raw_fields() -> dict[str, dict]:
     """Read menuItems.json directly (no ``menu_utils`` involved at all) -- item name ->
-    ``{"comboSlot", "happyHourDiscounted"}`` exactly as authored in the pack, defaulting missing
-    fields the same way the schema documents (``"none"`` / ``False``). Used to check the golden
-    table against the RAW DATA itself (issue #71), independent of whether ``menu_utils``'s loader
-    or classification functions have a bug."""
+    ``{"comboSlot", "happyHourDiscounted", "requiresMachine"}`` exactly as authored in the pack,
+    defaulting missing fields the same way the schema documents (``"none"`` / ``False`` /
+    ``None``). Used to check the golden table against the RAW DATA itself (issue #71), independent
+    of whether ``menu_utils``'s loader or classification functions have a bug.
+
+    ``requiresMachine`` (PR #99 review decision 4): whether the item needs the ``slush_machine``
+    or ``ice_cream_machine`` (or ``None`` if it needs neither) -- e.g. an 86'd machine at a
+    physical store. Compared here the same way as comboSlot/happyHourDiscounted so the golden
+    table can't silently drift from the pack on this field either."""
     with _MENU_ITEMS_PATH.open("r", encoding="utf-8") as f:
         data = json.load(f)
     fields: dict[str, dict] = {}
@@ -44,6 +49,7 @@ def _load_menu_item_raw_fields() -> dict[str, dict]:
             fields[item["name"]] = {
                 "comboSlot": item.get("comboSlot", "none"),
                 "happyHourDiscounted": bool(item.get("happyHourDiscounted", False)),
+                "requiresMachine": item.get("requiresMachine"),
             }
     return fields
 
@@ -52,10 +58,11 @@ class GoldenTableCheckedAgainstPackDataTests(unittest.TestCase):
     """issue #71: the golden category table is CHECKED AGAINST the persona pack's data, not
     generated from it -- menuItems.json is hand-authored per the design doc (section 4.3/6) and
     the golden table is an independent, hand-authored oracle; this test compares the two directly,
-    reading menuItems.json's raw ``comboSlot``/``happyHourDiscounted`` fields with no
-    ``menu_utils`` code involved at all (see ``InferComboComponentGoldenCategoryTests`` above for
-    the equivalent check that goes THROUGH ``infer_combo_component``/``is_happy_hour_discounted``,
-    which additionally proves the loader/classification functions agree with the raw data)."""
+    reading menuItems.json's raw ``comboSlot``/``happyHourDiscounted``/``requiresMachine`` fields
+    with no ``menu_utils`` code involved at all (see ``InferComboComponentGoldenCategoryTests``
+    above for the equivalent check that goes THROUGH ``infer_combo_component``/
+    ``is_happy_hour_discounted``, which additionally proves the loader/classification functions
+    agree with the raw data)."""
 
     @classmethod
     def setUpClass(cls):
@@ -77,6 +84,11 @@ class GoldenTableCheckedAgainstPackDataTests(unittest.TestCase):
                 mismatches.append(
                     f"{row['item']!r}: pack happyHourDiscounted {pack_item['happyHourDiscounted']!r} "
                     f"!= golden {row['happyHourDiscounted']!r}"
+                )
+            if pack_item["requiresMachine"] != row.get("requiresMachine"):
+                mismatches.append(
+                    f"{row['item']!r}: pack requiresMachine {pack_item['requiresMachine']!r} "
+                    f"!= golden {row.get('requiresMachine')!r}"
                 )
         self.assertEqual(mismatches, [], "\n".join(mismatches))
 
@@ -551,11 +563,14 @@ class MenuCategoryMapDirectResolutionTests(unittest.TestCase):
 
 class TrademarkAndCurlyApostropheNormalisationTests(unittest.TestCase):
     """PR #50 review round 5, should-fix item 4: "™" and the curly apostrophe "\u2019" must be
-    normalised in ``_menu_key()`` exactly like "®" already is. Eight ``menuItems.json`` names carry
-    "™" (the "SONIC Smasher™" family, plain and Combo variants) and one carries "\u2019" (the
-    "SONIC Blast® made with REESE'S" -- the raw JSON name uses the curly apostrophe verbatim). All
-    nine previously missed their own ``MENU_CATEGORY_MAP`` entry and relied on keyword-fallback
-    luck exactly like the OREO Blast's NBSP did before round 4."""
+    normalised in ``_menu_key()`` exactly like "®" already is. Fourteen ``menuItems.json`` names
+    carry "™" (the "SONIC Smasher™" family, plain and Combo variants, plus the "$6 All-American
+    Smasher™ Meal" and "Ultimate Meat & Cheese Breakfast Burrito™" pair added by issue #72 Part 2's
+    full export import) and three carry "\u2019" (the "SONIC Blast® made with REESE'S"/"...M&M'S®
+    Chocolate Candies" family and "Chocolate Peanut Butter Shake Made With REESE'S", also added by
+    Part 2 -- the raw JSON names use the curly apostrophe verbatim). All originally missed their
+    own ``MENU_CATEGORY_MAP`` entry and relied on keyword-fallback luck exactly like the OREO
+    Blast's NBSP did before round 4."""
 
     @classmethod
     def setUpClass(cls):
@@ -566,8 +581,8 @@ class TrademarkAndCurlyApostropheNormalisationTests(unittest.TestCase):
     def test_menu_data_has_the_expected_special_character_names(self):
         """Sanity check on the fixture itself so this test class fails loudly, not silently, if
         ``menuItems.json`` ever changes which names carry these characters."""
-        self.assertEqual(len(self.tm_names), 8, self.tm_names)
-        self.assertEqual(len(self.curly_apostrophe_names), 1, self.curly_apostrophe_names)
+        self.assertEqual(len(self.tm_names), 14, self.tm_names)
+        self.assertEqual(len(self.curly_apostrophe_names), 3, self.curly_apostrophe_names)
 
     def test_trademark_symbol_is_stripped_from_the_menu_key(self):
         for name in self.tm_names:
