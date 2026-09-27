@@ -47,7 +47,7 @@ type SessionIdentifiersState = {
  * apology clip already uses, since these aren't declared fields on `PersonaDetail.assets`). A
  * persona that ships no demo data simply renders the empty state -- this is a debug/demo-only
  * feature, so that's an acceptable, non-crashing degradation rather than something to paper over
- * with a re-embedded copy of Sonic's data.
+ * with a re-embedded copy of the persona's data.
  */
 function useDemoData(personaId: string, enabled: boolean) {
     const [dummyOrder, setDummyOrder] = useState<OrderSummaryProps>({ items: [], total: 0, tax: 0, finalTotal: 0 });
@@ -742,7 +742,7 @@ function SonicApp() {
 }
 
 // Issue #80 F3: every persona-flavored piece of hero copy below now comes from the pack
-// (`logoUrl`/`persona.hero.headline`/`persona.hero.callouts`) rather than a Sonic-specific literal
+// (`logoUrl`/`persona.hero.headline`/`persona.hero.callouts`) rather than a brand-specific literal
 // baked into this component. The three highlight cards and the "powered by" strip are genuinely
 // app-level (not persona) chrome, so they stay i18n keys under `hero.*` -- decision 8 (docs/
 // persona-architecture.md, ADR-001) says neutral app strings lead with Microsoft Foundry, so
@@ -920,7 +920,7 @@ const SessionTokenPanel = memo(function SessionTokenPanel({
 });
 
 // Issue #80 F3: one persona-neutral decorative mark (a stylized sound wave) replaces the two
-// Sonic-specific illustrations (a slush cup, a burger) that used to sit beside the hero callouts.
+// brand-specific illustrations (a slush cup, a burger) that used to sit beside the hero callouts.
 function VoiceArt() {
     return (
         <svg width="48" height="48" viewBox="0 0 48 48" fill="none" role="img" aria-label="Voice ordering illustration">
@@ -936,7 +936,7 @@ function VoiceArt() {
 // Main app component with authentication wrapper
 function App() {
     const { isAuthenticated, isLoading, authEnabled } = useAuth();
-    // Issue #80 F6, Rick's PR-110 review item 6: no Sonic (or any persona's) content -- logo, hero
+    // Issue #80 F6, Rick's PR-110 review item 6: no persona's content -- logo, hero
     // copy, ticket strings -- ever paints before the requested persona (`?persona=` / localStorage
     // / the catalog's default) has actually been resolved and applied. Reusing the same neutral
     // shell the auth-loading gate already shows keeps this a single, familiar "please wait" state

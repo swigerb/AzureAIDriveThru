@@ -7,13 +7,13 @@ describe("OrderSummary", () => {
         { item: "Large Tots", size: "standard", quantity: 1, price: 3.29, display: "Large Tots" }
     ];
 
-    it("renders Sonic items with the correct totals", () => {
+    it("renders order items with the correct totals", () => {
         const summary = calculateOrderSummary(sampleItems);
         render(<OrderSummary order={summary} />);
 
         // react-i18next is globally mocked (test/setup.ts) to echo the key itself, so the ticket
         // title now asserts on the i18n key ("ticket.title") rather than its pack-supplied English
-        // value ("Your Sonic Order") -- issue #80 F3.
+        // value (the branded ticket title) -- issue #80 F3.
         expect(screen.getByText("ticket.title")).toBeInTheDocument();
         expect(screen.getByText(/SuperSONIC® Double Cheeseburger/)).toBeInTheDocument();
         expect(screen.getByText(/Large Tots/)).toBeInTheDocument();
@@ -27,7 +27,7 @@ describe("OrderSummary", () => {
 
         // react-i18next is globally mocked (test/setup.ts) to echo the key itself -- issue #80 F3
         // (Rick's PR-110 review item 1): this text is now the neutral `ticket.emptyHint` key, with
-        // Sonic's own flavor text ("Add a slush, burger, or shake...") living in
+        // the pack's own flavor text ("Add a slush, burger, or shake...") living in
         // personas/sonic/persona.json's ui.strings instead of the shared component.
         expect(screen.getByText("ticket.emptyHint")).toBeInTheDocument();
     });

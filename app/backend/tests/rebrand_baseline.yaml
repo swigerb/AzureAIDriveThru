@@ -281,27 +281,15 @@ entries:
     edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
     red as a non-Sonic-brand-hex test fixture, not real branding.'
   increase_reason: ''
-- file: app/frontend/src/App.tsx
-  brand: sonic
-  max: 3
-  issue: '#80'
-  reason: 'Frontend UI copy, locales, theming and menu data are Sonic-only pending
-    #80''s persona-aware runtime theming (frontend is out of this issue''s scope to
-    edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
-    red as a non-Sonic-brand-hex test fixture, not real branding. Lowered from 13 to 3
-    now that F1/F3/F4 (issue #80) read the persona/theme/menu copy from PersonaProvider
-    instead of hard-coding it in App.tsx; the remaining 3 are the literal fallback id and
-    disclaimer text `PersonaProvider` still owns as its bundled default.'
-  increase_reason: ''
 - file: app/frontend/src/__tests__/App.rateLimit.test.tsx
   brand: sonic
-  max: 5
+  max: 2
   issue: '#80'
   reason: 'Issue #80 F7: the rate-limit apology-clip test asserts on the real bundled
-    default persona''s (id `sonic`) pack-relative clip URL for each UI language, now that
-    the clips are served from `personas/sonic/assets/audio/**` instead of a duplicated
+    default persona''s (id `sonic`) pack-relative clip URL for each UI language, now
+    that the clips are served from `personas/sonic/assets/audio/**` instead of a duplicated
     frontend copy that was retired.'
-  increase_reason: '#80'
+  increase_reason: ''
 - file: app/frontend/src/__tests__/brandColorTokens.test.ts
   brand: mcdonalds
   max: 1
@@ -322,12 +310,21 @@ entries:
   increase_reason: ''
 - file: app/frontend/src/components/ui/__tests__/order-summary.test.tsx
   brand: sonic
-  max: 2
+  max: 1
   issue: '#80'
   reason: 'Frontend UI copy, locales, theming and menu data are Sonic-only pending
     #80''s persona-aware runtime theming (frontend is out of this issue''s scope to
     edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
     red as a non-Sonic-brand-hex test fixture, not real branding.'
+  increase_reason: ''
+- file: app/frontend/src/context/__tests__/persona-context.test.tsx
+  brand: sonic
+  max: 3
+  issue: '#80'
+  reason: 'Issue #80 F1: PersonaProvider''s bundled fallback id is the literal `sonic`
+    (matching the backend''s real default persona), so these unit tests necessarily
+    exercise that literal id/URL/title in their fixtures and assertions (query-param
+    precedence, localStorage persistence, offline/error fallback behavior, etc.).'
   increase_reason: ''
 - file: app/frontend/src/context/auth-context.tsx
   brand: sonic
@@ -338,37 +335,19 @@ entries:
     edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
     red as a non-Sonic-brand-hex test fixture, not real branding.'
   increase_reason: ''
-- file: app/frontend/src/context/__tests__/persona-context.test.tsx
-  brand: sonic
-  max: 11
-  issue: '#80'
-  reason: 'Issue #80 F1: PersonaProvider''s bundled fallback id is the literal `sonic`
-    (matching the backend''s real default persona), so these unit tests necessarily
-    exercise that literal id/URL/title in their fixtures and assertions (query-param
-    precedence, localStorage persistence, offline/error fallback behavior, etc.).'
-  increase_reason: '#80'
 - file: app/frontend/src/context/persona-context.tsx
   brand: sonic
-  max: 8
+  max: 1
   issue: '#80'
-  reason: 'Issue #80 F1: `FALLBACK_ID`/`FALLBACK_SUMMARY`/`FALLBACK_DETAIL` are this app''s
-    bundled default persona, copied verbatim from personas/sonic/persona.json so the app
-    renders correctly the instant it mounts, before `/api/personas` responds. Every hit
-    here is real bundled content (display name, title, ticket/menu copy, hero headline,
-    trademark disclaimer), not decorative prose.'
-  increase_reason: '#80'
+  reason: 'Issue #80 F1: `FALLBACK_ID`/`FALLBACK_SUMMARY`/`FALLBACK_DETAIL` are this
+    app''s bundled default persona, copied verbatim from personas/sonic/persona.json
+    so the app renders correctly the instant it mounts, before `/api/personas` responds.
+    Every hit here is real bundled content (display name, title, ticket/menu copy,
+    hero headline, trademark disclaimer), not decorative prose.'
+  increase_reason: ''
 - file: app/frontend/src/data/sonic-menu-items.json
   brand: sonic
   max: 421
-  issue: '#80'
-  reason: 'Frontend UI copy, locales, theming and menu data are Sonic-only pending
-    #80''s persona-aware runtime theming (frontend is out of this issue''s scope to
-    edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
-    red as a non-Sonic-brand-hex test fixture, not real branding.'
-  increase_reason: ''
-- file: app/frontend/src/hooks/useRealtime.tsx
-  brand: sonic
-  max: 1
   issue: '#80'
   reason: 'Frontend UI copy, locales, theming and menu data are Sonic-only pending
     #80''s persona-aware runtime theming (frontend is out of this issue''s scope to
@@ -391,8 +370,8 @@ entries:
   reason: 'Frontend UI copy, locales, theming and menu data are Sonic-only pending
     #80''s persona-aware runtime theming (frontend is out of this issue''s scope to
     edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
-    red as a non-Sonic-brand-hex test fixture, not real branding. Lowered from 2 to 1:
-    #80 F1/F3 trimmed decorative "Sonic" comment prose down to the one functionally
+    red as a non-Sonic-brand-hex test fixture, not real branding. Lowered from 2 to
+    1: #80 F1/F3 trimmed decorative "Sonic" comment prose down to the one functionally
     necessary literal (`resolvePersonaTheme("sonic", ...)`).'
   increase_reason: ''
 - file: app/frontend/src/lib/personaTheme.ts
@@ -402,58 +381,13 @@ entries:
   reason: 'Frontend UI copy, locales, theming and menu data are Sonic-only pending
     #80''s persona-aware runtime theming (frontend is out of this issue''s scope to
     edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
-    red as a non-Sonic-brand-hex test fixture, not real branding. Lowered from 5 to 1:
-    #80 F1/F3 trimmed decorative "Sonic" comment prose down to the one functionally
+    red as a non-Sonic-brand-hex test fixture, not real branding. Lowered from 5 to
+    1: #80 F1/F3 trimmed decorative "Sonic" comment prose down to the one functionally
     necessary literal (`personaId === "sonic"`).'
   increase_reason: ''
 - file: app/frontend/src/locales/__tests__/locales.test.ts
   brand: sonic
   max: 4
-  issue: '#80'
-  reason: 'Frontend UI copy, locales, theming and menu data are Sonic-only pending
-    #80''s persona-aware runtime theming (frontend is out of this issue''s scope to
-    edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
-    red as a non-Sonic-brand-hex test fixture, not real branding.'
-  increase_reason: ''
-- file: app/frontend/src/locales/en/translation.json
-  brand: sonic
-  max: 3
-  issue: '#80'
-  reason: 'Frontend UI copy, locales, theming and menu data are Sonic-only pending
-    #80''s persona-aware runtime theming (frontend is out of this issue''s scope to
-    edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
-    red as a non-Sonic-brand-hex test fixture, not real branding. Raised from 1 to 3 for
-    #80 F1/F3: PersonaProvider''s bundled fallback now needs default `app.title`,
-    `ticket.title`, and `menu.button` copy that mirrors the real Sonic persona pack, used
-    only until `/api/personas` responds.'
-  increase_reason: '#80'
-- file: app/frontend/src/locales/es/translation.json
-  brand: sonic
-  max: 3
-  issue: '#80'
-  reason: 'Frontend UI copy, locales, theming and menu data are Sonic-only pending
-    #80''s persona-aware runtime theming (frontend is out of this issue''s scope to
-    edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
-    red as a non-Sonic-brand-hex test fixture, not real branding. Raised from 1 to 3 for
-    #80 F1/F3: PersonaProvider''s bundled fallback now needs default `app.title`,
-    `ticket.title`, and `menu.button` copy that mirrors the real Sonic persona pack, used
-    only until `/api/personas` responds.'
-  increase_reason: '#80'
-- file: app/frontend/src/locales/fr/translation.json
-  brand: sonic
-  max: 3
-  issue: '#80'
-  reason: 'Frontend UI copy, locales, theming and menu data are Sonic-only pending
-    #80''s persona-aware runtime theming (frontend is out of this issue''s scope to
-    edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
-    red as a non-Sonic-brand-hex test fixture, not real branding. Raised from 1 to 3 for
-    #80 F1/F3: PersonaProvider''s bundled fallback now needs default `app.title`,
-    `ticket.title`, and `menu.button` copy that mirrors the real Sonic persona pack, used
-    only until `/api/personas` responds.'
-  increase_reason: '#80'
-- file: app/frontend/src/locales/ja/translation.json
-  brand: sonic
-  max: 1
   issue: '#80'
   reason: 'Frontend UI copy, locales, theming and menu data are Sonic-only pending
     #80''s persona-aware runtime theming (frontend is out of this issue''s scope to
@@ -541,9 +475,9 @@ entries:
   issue: '#80'
   reason: 'Operational scripts (deploy/build/benchmark/menu-maintenance) are Sonic-only
     pending other persona packs; #78/#79 will need them parameterized or duplicated
-    per persona. Raised from 1 to 2 for #80 F7: OUT_DIR now points at the real pack path
-    personas/sonic/assets/audio/ (the retired frontend copy''s replacement), plus the
-    pre-existing "Sonic Drive-In carhop" system-prompt literal.'
+    per persona. Raised from 1 to 2 for #80 F7: OUT_DIR now points at the real pack
+    path personas/sonic/assets/audio/ (the retired frontend copy''s replacement),
+    plus the pre-existing "Sonic Drive-In carhop" system-prompt literal.'
   increase_reason: '#80'
 - file: scripts/smoke_realtime.py
   brand: sonic

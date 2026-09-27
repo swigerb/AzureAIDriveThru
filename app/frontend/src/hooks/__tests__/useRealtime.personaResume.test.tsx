@@ -51,9 +51,11 @@ describe("resumeStorageKey", () => {
         expect(resumeStorageKey(undefined)).toBe("drivethru.resumeId.default");
     });
 
-    it("never collapses to the old shared 'sonic.resumeId' key", () => {
-        expect(resumeStorageKey("sonic")).toBe("drivethru.resumeId.sonic");
-        expect(resumeStorageKey("sonic")).not.toBe("sonic.resumeId");
+    it("never collapses to an un-namespaced '<persona>.resumeId' key", () => {
+        // Fixture id (not the earlier hardcoded default persona) per Rick's PR-110 review item 4:
+        // baseline tests use test-alpha/test-beta, not a real brand's persona id.
+        expect(resumeStorageKey("test-alpha")).toBe("drivethru.resumeId.test-alpha");
+        expect(resumeStorageKey("test-alpha")).not.toBe("test-alpha.resumeId");
     });
 });
 

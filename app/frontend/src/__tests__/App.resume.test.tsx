@@ -31,8 +31,8 @@ vi.mock("darkreader", () => ({ enable: vi.fn(), disable: vi.fn(), auto: vi.fn(),
 vi.mock("@/hooks/useAudioRecorder", () => ({ default: () => rec }));
 vi.mock("@/hooks/useAudioPlayer", () => ({ default: () => player }));
 
-// Rick's PR-110 review item 1 + item 6 (issue #80 F1/F6): with the hard-coded Sonic fallback gone,
-// `<RootApp />` now needs a real (mocked) `/api/personas` catalog + detail round trip before
+// Rick's PR-110 review item 1 + item 6 (issue #80 F1/F6): with the hard-coded persona fallback
+// gone, `<RootApp />` now needs a real (mocked) `/api/personas` catalog + detail round trip before
 // `App()`'s `ready` gate lets `<SonicApp />` (and the mic button this suite drives) render at all.
 const FIXTURE_PERSONA_INDEX = {
     default: "test-alpha",

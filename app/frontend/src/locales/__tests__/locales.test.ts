@@ -80,22 +80,21 @@ describe("locale files", () => {
     });
 });
 
-describe("sonic persona pack strings", () => {
-    // Rick's PR-110 review item 1 (issue #80 F1/F3): the shared locale files are brand-neutral now
-    // (see the "locale files" describe block above), so this is where the "Sonic" brand guard
-    // moves to -- personas/sonic/persona.json's ui.strings overlay, not the shared translation.json.
-    const personaPath = resolve(process.cwd(), "..", "..", "personas", "sonic", "persona.json");
-    const sonicPersona = JSON.parse(readFileSync(personaPath, "utf-8")) as {
-        ui: { strings: Record<string, Record<string, string>> };
-    };
-    const sonicLocales = Object.keys(sonicPersona.ui.strings).sort();
+describe("persona pack override strings", () => {
+    // Rick's PR-110 review item 1 (issue #80 F1/F3): the old brand guard here checked the shared
+    // locale files for "Sonic"; the shared files are brand-neutral now (see the "locale files"
+    // block above), so the guard moves to the persona pack's own ui.strings overlay instead.
+    const packJson = JSON.parse(
+        readFileSync(resolve(process.cwd(), "..", "..", "personas", "sonic", "persona.json"), "utf-8")
+    ) as { ui: { strings: Record<string, Record<string, string>> } };
+    const packLocales = Object.keys(packJson.ui.strings).sort();
 
     it("overrides every UI language", () => {
-        expect(sonicLocales).toEqual(["en", "es", "fr", "ja"]);
+        expect(packLocales).toEqual(["en", "es", "fr", "ja"]);
     });
 
-    it.each(sonicLocales)("%s names Sonic in the app title override", lang => {
-        expect(sonicPersona.ui.strings[lang]["app.title"]).toMatch(/Sonic/);
+    it.each(packLocales)("%s carries the pack's branded app title override", lang => {
+        expect(packJson.ui.strings[lang]["app.title"]).toMatch(/Sonic/);
     });
 });
 
