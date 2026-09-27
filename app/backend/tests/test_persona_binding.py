@@ -38,7 +38,7 @@ import default_persona
 import menu_utils
 import tools
 from order_state import order_state_singleton
-from persona_loader import PersonaCatalog
+from persona_loader import Persona, PersonaCatalog
 from prompt_loader import PromptLoader
 from session_manager import SessionManager
 
@@ -431,6 +431,31 @@ class HappyHourBannerFromBoundPackTests(unittest.TestCase):
         summary = order_state_singleton.get_order_summary(sid)
         self.assertAlmostEqual(summary.total, 1.99 * 0.5, places=2)
 
+    def _alpha_with_announce_off(self) -> Persona:
+        """test-alpha with only `pricing.happyHour.announce` flipped to false: same window,
+        multiplier, banner text and menu. Built in memory so no extra pack is committed."""
+        manifest = self.alpha.manifest
+        happy_hour = manifest.pricing.happyHour.model_copy(update={"announce": False})
+        pricing = manifest.pricing.model_copy(update={"happyHour": happy_hour})
+        return Persona(self.alpha.id, self.alpha.pack_dir, manifest.model_copy(update={"pricing": pricing}))
+
+    @patch("order_state.conformance_hooks.now", return_value=_IN_ALPHA_WINDOW)
+    def test_announce_false_discounts_but_never_shows_the_banner(self, _mock_now):
+        """A pack with happy hour on but `announce: false`, inside its own window: the
+        discount still applies, and neither update_order nor get_order carries the banner."""
+        quiet_alpha = self._alpha_with_announce_off()
+        self.assertTrue(quiet_alpha.manifest.pricing.happyHour.banner)
+        sid = self._new_session(quiet_alpha)
+        result = _run(tools.update_order(
+            {"action": "add", "item_name": "Alpha Cola", "size": "small", "quantity": 1, "price": 1.99}, sid
+        ))
+        self.assertNotIn(quiet_alpha.manifest.pricing.happyHour.banner, result.text)
+        self.assertNotIn("HAPPY HOUR", result.text)
+        result = _run(tools.get_order({}, sid))
+        self.assertNotIn(quiet_alpha.manifest.pricing.happyHour.banner, result.text)
+        self.assertNotIn("HAPPY HOUR", result.text)
+        summary = order_state_singleton.get_order_summary(sid)
+        self.assertAlmostEqual(summary.total, 1.99 * 0.5, places=2)
 
 class NoMidConversationPersonaSwitchTests(unittest.TestCase):
     """Design decision (5.1): no mid-conversation persona switching, ever -- not even
