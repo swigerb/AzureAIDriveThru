@@ -155,17 +155,37 @@ function SonicApp() {
         localStorage.setItem("voiceChoice", voiceChoice);
     }, [voiceChoice]);
 
-    // Re-resolves whenever the bound persona changes (initial load, or a persona switch via
-    // `handleSelectPersona` below): the persona's own per-pipeline default, unless this browser
-    // already has a stored choice for this specific persona.
+    // Re-resolves whenever the bound persona changes (initial load -- including a backend switch
+    // that carried `?model=` -- or a persona switch via `handleSelectPersona` below).
+    //
+    // Rick's PR 134 review, item 2: prefers `?model=` from the address bar (set by
+    // `lib/backends.ts`'s `backendTargetUrl` when hopping backends) over this persona's stored
+    // choice, validated through `resolveModelId` against THIS backend's own `/api/personas/{id}`
+    // list for the bound persona (`current.models` -- the C# catalog can differ from Python's): a
+    // listed id is adopted, an unlisted one falls through to the persona's default exactly like
+    // any other stale/invalid stored choice. Once consumed, `model` is stripped from the address
+    // bar with `history.replaceState` (leaving any other query params, e.g. `?persona=`, alone) so
+    // a later reload of this same URL doesn't keep re-pinning a choice the guest may since have
+    // changed via the picker.
+    //
+    // Rick's PR 134 review, item 4: persists the resolved id right here, in the same effect that
+    // computes it, rather than in a second effect keyed on `modelId` alone -- the previous split
+    // wrote whatever `modelId` last was under the NEW persona's storage key on the same commit
+    // `current` swapped to that persona (both effects run, in order, on the render where
+    // `current.id` changed), briefly leaving the new persona's key holding the OLD persona's model
+    // id. The only other write site is `onModelChange` below (an explicit user choice).
     useEffect(() => {
-        setModelId(resolveModelId(localStorage.getItem(modelStorageKey(current.id)), current.models));
+        const fromQuery = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("model") : null;
+        const resolved = resolveModelId(fromQuery ?? localStorage.getItem(modelStorageKey(current.id)), current.models);
+        setModelId(resolved);
+        localStorage.setItem(modelStorageKey(current.id), resolved);
+        if (fromQuery !== null && typeof window !== "undefined") {
+            const url = new URL(window.location.href);
+            url.searchParams.delete("model");
+            window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
+        }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [current.id, current.models]);
-
-    useEffect(() => {
-        localStorage.setItem(modelStorageKey(current.id), modelId);
-    }, [current.id, modelId]);
 
     const handleSessionIdentifiers = useCallback((message: ExtensionSessionMetadata | ExtensionRoundTripToken) => {
         const snapshot: SessionIdentifiersState = {
@@ -606,6 +626,15 @@ function SonicApp() {
         selectPersona(personaId);
     };
 
+    // Rick's PR 134 review, item 4: the model picker's own explicit user choice -- the other
+    // persist site is the resolve effect above (a persona switch or an initial `?model=` arrival).
+    // Written under the CURRENT persona's key, matching whichever persona is bound at the moment
+    // of the click.
+    const handleModelChange = (id: string) => {
+        setModelId(id);
+        localStorage.setItem(modelStorageKey(current.id), id);
+    };
+
     return (
         <div className={`min-h-screen bg-background p-4 text-foreground ${theme}`}>
             <div className="mx-auto max-w-7xl space-y-6">
@@ -664,7 +693,7 @@ function SonicApp() {
                                 roleName={current.roleName}
                                 models={current.models}
                                 modelId={modelId}
-                                onModelChange={setModelId}
+                                onModelChange={handleModelChange}
                                 modelDisabled={isRecording || order.items.length > 0}
                             />
                         </Suspense>

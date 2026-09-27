@@ -109,6 +109,9 @@ beforeEach(() => {
     HTMLDialogElement.prototype.close ??= vi.fn();
     rec.start.mockImplementation(async () => true);
     localStorage.clear();
+    // jsdom doesn't implement navigation -- give every test a clean, param-free URL (matching
+    // persona-context.test.tsx's own convention for the sibling ?persona= query param).
+    window.history.pushState({}, "", "/");
     mockPersonaFetch();
 });
 
@@ -163,6 +166,91 @@ describe("model picker persistence and reset (issue #80 F10)", () => {
 
         await waitFor(() => expect(screen.getByLabelText("Select model")).toBeDisabled());
     });
+
+    // Rick's PR 134 review, item 2: a backend switch's `?model=` (set by `lib/backends.ts`'s
+    // `backendTargetUrl`) is read on arrival, validated against THIS backend's own
+    // `/api/personas/{id}` list for the bound persona, persisted per persona, and stripped from
+    // the address bar so a later reload of the same URL doesn't keep re-pinning a stale choice.
+    describe("reading ?model= on arrival (issue #80, Rick's PR 134 review item 2)", () => {
+        it("adopts a listed ?model= value, persists it, and strips it from the address bar", async () => {
+            window.history.pushState({}, "", "/?model=gpt-5-mini");
+            render(<RootApp />);
+            await screen.findByLabelText("Select persona");
+
+            await waitFor(() => expect(rt.params.modelId).toBe("gpt-5-mini"));
+            expect(localStorage.getItem("modelChoice.test-alpha")).toBe("gpt-5-mini");
+            expect(new URLSearchParams(window.location.search).has("model")).toBe(false);
+        });
+
+        it("falls back to the persona's default for an unlisted ?model= value, still stripping it", async () => {
+            window.history.pushState({}, "", "/?model=not-a-real-model");
+            render(<RootApp />);
+            await screen.findByLabelText("Select persona");
+
+            await waitFor(() => expect(rt.params.modelId).toBe("gpt-realtime-2.1"));
+            expect(new URLSearchParams(window.location.search).has("model")).toBe(false);
+        });
+
+        it("preserves other query params (e.g. ?persona=) when stripping ?model=", async () => {
+            window.history.pushState({}, "", "/?persona=test-beta&model=gpt-5-mini");
+            render(<RootApp />);
+            await screen.findByLabelText("Select persona");
+
+            await waitFor(() => expect(rt.params.modelId).toBe("gpt-5-mini"));
+            expect(new URLSearchParams(window.location.search).get("persona")).toBe("test-beta");
+            expect(new URLSearchParams(window.location.search).has("model")).toBe(false);
+        });
+
+        it("takes ?model= over a persona's own stored choice", async () => {
+            localStorage.setItem("modelChoice.test-alpha", "gpt-realtime-mini");
+            window.history.pushState({}, "", "/?model=gpt-5-mini");
+            render(<RootApp />);
+            await screen.findByLabelText("Select persona");
+
+            await waitFor(() => expect(rt.params.modelId).toBe("gpt-5-mini"));
+            expect(localStorage.getItem("modelChoice.test-alpha")).toBe("gpt-5-mini");
+        });
+    });
+
+    // Rick's PR 134 review, item 4: switching personas must never leave a one-render window where
+    // the NEW persona's storage key (or `useRealTime`'s `modelId` param) briefly holds the OLD
+    // persona's model id -- the previous two-effect split (a resolve effect plus a separate
+    // effect persisting `modelId` under `current.id`) both ran on the same commit `current`
+    // changed, in an order that wrote the stale id. Folding persistence into the resolve effect
+    // itself (and the explicit `onModelChange` handler) closes that window.
+    describe("no stale-model race on persona switch (issue #80, Rick's PR 134 review item 4)", () => {
+        it("never persists the old persona's model under the new persona's storage key", async () => {
+            localStorage.setItem("modelChoice.test-alpha", "gpt-5-mini");
+            render(<RootApp />);
+            await waitFor(() => expect(rt.params.modelId).toBe("gpt-5-mini"));
+
+            await switchTo("test-beta");
+
+            await waitFor(() => expect(rt.params.modelId).toBe("gpt-realtime-2.1"));
+            // "gpt-5-mini" (test-alpha's model) must never have been written under test-beta's key,
+            // not even transiently -- assert on the final value, which is all a stale-write bug
+            // would have corrupted since nothing else writes this key on a persona switch.
+            expect(localStorage.getItem("modelChoice.test-beta")).toBe("gpt-realtime-2.1");
+        });
+
+        it("never writes the old persona's model to the new persona's storage key, not even transiently", async () => {
+            localStorage.setItem("modelChoice.test-alpha", "gpt-5-mini");
+            render(<RootApp />);
+            await waitFor(() => expect(rt.params.modelId).toBe("gpt-5-mini"));
+
+            const setItemSpy = vi.spyOn(Storage.prototype, "setItem");
+            await switchTo("test-beta");
+            await waitFor(() => expect(rt.params.modelId).toBe("gpt-realtime-2.1"));
+
+            // Every write App.tsx makes to test-beta's own key during the switch, in order -- a
+            // stale-write bug would show "gpt-5-mini" (test-alpha's model) written here before the
+            // correct default, since the old two-effect split persisted whatever `modelId` last
+            // was under the persona that had JUST become `current` on the very same commit.
+            const betaWrites = setItemSpy.mock.calls.filter(([key]) => key === "modelChoice.test-beta").map(([, value]) => value);
+            expect(betaWrites).not.toContain("gpt-5-mini");
+            setItemSpy.mockRestore();
+        });
+    });
 });
 
 describe("backend switch visibility (issue #80 F11)", () => {
@@ -187,5 +275,22 @@ describe("backend switch visibility (issue #80 F11)", () => {
         await screen.findByLabelText("Select persona");
 
         expect(screen.queryByLabelText("Select backend")).not.toBeInTheDocument();
+    });
+});
+
+// Rick's PR 134 review, item 3: a browser that previously had the legacy "Azure Backend" toggle
+// on (localStorage.useAzureSpeechOn === "true") must land on the realtime path -- and the guest's
+// own chosen model -- on its very next load, since there is no UI left anywhere in the app that
+// can turn the toggle back on.
+describe("legacy Azure Backend toggle forced off (issue #80, Rick's PR 134 review item 3)", () => {
+    it("still threads the chosen ?model= into useRealTime even when the legacy flag was stored true", async () => {
+        localStorage.setItem("useAzureSpeechOn", "true");
+        window.history.pushState({}, "", "/?model=gpt-5-mini");
+
+        render(<RootApp />);
+        await screen.findByLabelText("Select persona");
+
+        await waitFor(() => expect(rt.params.modelId).toBe("gpt-5-mini"));
+        expect(localStorage.getItem("useAzureSpeechOn")).toBeNull();
     });
 });
