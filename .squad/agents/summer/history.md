@@ -319,3 +319,29 @@ Detailed technical learnings from demo readiness, debugging, and prompt external
 - Validation: `python -m pytest app/backend/tests -q` 970 passed/154 subtests (baseline 954 stated in the task /+16 net: +10 regen-script tests, +1 increase_reason-format test, +5 for the optional CI ratchet-check's own script/tests) after `npm ci && npm run build` in `app/frontend` (same worktree-static gotcha as my #71/#72 rounds — `app/backend/static` doesn't exist in a fresh `git worktree add` until the frontend is built there). `ruff check .` clean repo-wide.
 - **Optional item done too:** added `check_rebrand_baseline_against_base.py` — a small CI-only script that loads the checked-in `rebrand_baseline.yaml` (head) and a base-branch copy, and fails on any `max` increase or brand-new entry that lacks a valid `increase_reason`, closing the gap that a hand-edit of the YAML (skipping the regen script entirely) would otherwise slip past. Wired it in as a new step in `.github/workflows/conformance.yml`'s existing `python-tests` job (not a new job, so `conformance-gate`'s `needs:` array didn't need touching) — `git fetch origin "${{ github.base_ref }}" --depth=1` then `git show origin/$BASE:app/backend/tests/rebrand_baseline.yaml`, guarded to `pull_request` events only (`github.base_ref` is only set then) and tolerant (`|| true`) of the base branch predating the file, matching the script's own graceful skip. Validated the comparison logic locally with three synthetic scenarios (identical files pass; a lowered max in a hand-built base file passes; a raised max without `increase_reason` fails with the exact offending entry printed) before wiring it into the workflow, plus 5 new unit tests (`test_check_rebrand_baseline_against_base.py`) covering missing-base-file/raise-without-reason/raise-with-reason/new-entry-without-reason/lower-never-needs-reason.
 - Commented on PR #101 addressed to Rick describing the change; did not merge. Head SHA and CI status recorded in the PR comment itself.
+
+## 2026-09-27 — #74 (P2-5) persona binding (misfiled to .squad/history.md; moved here per Rick's PR #102 review item 6)
+
+- A fresh `git worktree add` has neither a Python `.venv` nor a built frontend
+  (`app/backend/static/`) -- **both** are required before `dotnet test Conformance.slnx` can even
+  launch the Python backend subprocess, and the failure symptoms don't say so directly: a missing
+  `.venv` shows up as `System.ComponentModel.Win32Exception` trying to spawn
+  `.venv\Scripts\python.exe` (~474/589 fail), a missing `static/index.html` shows up as
+  `System.InvalidOperationException` from `PythonBackendLauncher` (~463/589 fail). Fix each fresh
+  worktree once with `python -m venv .venv` + `pip install -r app/backend/requirements.txt`
+  (real venv, never a junction/symlink) and `npm install && npm run build` in `app/frontend`.
+  Neither step touches tracked files (both outputs are gitignored) -- pure one-time local setup,
+  not a code change.
+- The "default context" delegation pattern (every persona-specific lookup falls back exactly to
+  the pre-existing module-level/env-driven behavior when no persona catalog is configured) let
+  the whole persona-binding feature (#74) land with zero changes to the existing test suite's
+  pass/fail set -- the entire risk of a large cross-cutting change (order_state/menu_utils/tools/
+  rtmt/app.py) can be pushed into new, additive code paths only exercised when a persona catalog
+  is actually configured, rather than forking existing logic. (Rick rejected this exact pattern
+  in PR #102 round 1 -- see Squanchy's round-2 revision for why the catalog needed to become
+  mandatory instead.)
+- `BackendUnderTest.IsPython` exists in the C# conformance harness (`BackendUnderTest.cs`) as a
+  gating property for backend-specific scenarios, but has zero actual test-file usages anywhere
+  in the suite -- only a hypothetical pattern documented in the README. Before relying on it for a
+  Python-only feature's conformance rows, expect to have to build the first real usage from
+  scratch, not just follow an existing example.
