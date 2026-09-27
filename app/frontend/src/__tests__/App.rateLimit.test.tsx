@@ -46,6 +46,47 @@ vi.mock("darkreader", () => ({ enable: vi.fn(), disable: vi.fn(), auto: vi.fn(),
 vi.mock("@/hooks/useAudioRecorder", () => ({ default: () => rec }));
 vi.mock("@/hooks/useAudioPlayer", () => ({ default: () => player }));
 
+// Rick's PR-110 review item 1 + item 6 (issue #80 F1/F6): with the hard-coded Sonic fallback
+// gone, `<RootApp />` now needs a real (mocked) `/api/personas` catalog + detail round trip before
+// `App()`'s `ready` gate lets `<SonicApp />` (and therefore the mic button this suite drives)
+// render at all. This fixture persona keeps the apology-clip business logic these tests exist to
+// cover genuinely exercised, the same way the deleted Sonic fallback used to -- just via a neutral
+// id instead of a hard-coded brand.
+const FIXTURE_PERSONA_INDEX = {
+    default: "test-alpha",
+    personas: [
+        { id: "test-alpha", displayName: "Test Alpha", logoUrl: "/personas/test-alpha/assets/logo.svg", theme: { light: { primary: "200 80% 50%", secondary: "40 60% 40%", background: "0 0% 98%", foreground: "0 0% 10%" } } }
+    ],
+    backends: []
+};
+const FIXTURE_PERSONA_DETAIL = {
+    id: "test-alpha",
+    title: "Test Alpha Fixture",
+    theme: FIXTURE_PERSONA_INDEX.personas[0].theme,
+    assets: { logo: "assets/logo.svg", favicon: "assets/favicon.ico", apologyClip: "assets/audio/apology-{lang}.wav" },
+    strings: { en: {} },
+    hero: { headline: "Test Alpha fixture pack", callouts: [] },
+    legal: "Fixture-only disclaimer.",
+    voice: { default: "marin" },
+    locales: { default: "en", supported: ["en", "es", "fr", "ja"] },
+    features: { dayparts: false },
+    menuUrl: "/personas/test-alpha/menu.json",
+    models: { realtime: { default: "gpt-realtime-2.1", allowed: ["gpt-realtime-2.1"] } }
+};
+
+function mockPersonaFetch() {
+    vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string) => {
+            if (url === "/api/personas") return { ok: true, status: 200, json: async () => FIXTURE_PERSONA_INDEX };
+            if (url === "/api/personas/test-alpha") return { ok: true, status: 200, json: async () => FIXTURE_PERSONA_DETAIL };
+            // Everything else (the menu panel's `menuUrl` fetch, demo-data fetches) is harmless to
+            // this suite's assertions -- a plain 404 lets each caller's own error handling run.
+            return { ok: false, status: 404, json: async () => ({}) };
+        })
+    );
+}
+
 class FakeAudio {
     static instances: FakeAudio[] = [];
     static playResult: () => Promise<void> = () => Promise.resolve();
@@ -73,8 +114,9 @@ const FINAL = { type: "extension.rate_limited" as const, attempt: 2, final: true
 const answer = (transcript: string) => ({ type: "response.done", response: { output: [{ content: [{ transcript }] }] } });
 
 const tapMic = async () => {
+    const micButton = await screen.findByLabelText(/app\.(start|stop)Recording/);
     await act(async () => {
-        fireEvent.click(screen.getByLabelText(/app\.(start|stop)Recording/));
+        fireEvent.click(micButton);
     });
 };
 
@@ -100,6 +142,7 @@ beforeEach(() => {
     FakeAudio.instances = [];
     FakeAudio.playResult = () => Promise.resolve();
     vi.stubGlobal("Audio", FakeAudio);
+    mockPersonaFetch();
 });
 
 afterEach(() => {
@@ -108,11 +151,11 @@ afterEach(() => {
 
 describe("rate-limit recovery in the app", () => {
     it.each([
-        ["en", "/personas/sonic/assets/audio/apology-en.wav"],
-        ["es", "/personas/sonic/assets/audio/apology-es.wav"],
-        ["fr-CA", "/personas/sonic/assets/audio/apology-fr.wav"],
-        ["ja", "/personas/sonic/assets/audio/apology-ja.wav"],
-        ["de", "/personas/sonic/assets/audio/apology-en.wav"]
+        ["en", "/personas/test-alpha/assets/audio/apology-en.wav"],
+        ["es", "/personas/test-alpha/assets/audio/apology-es.wav"],
+        ["fr-CA", "/personas/test-alpha/assets/audio/apology-fr.wav"],
+        ["ja", "/personas/test-alpha/assets/audio/apology-ja.wav"],
+        ["de", "/personas/test-alpha/assets/audio/apology-en.wav"]
     ])("attempt 1 plays the apology clip for UI language %s", async (language, url) => {
         lang.current = language;
         await startConversation();
@@ -185,6 +228,7 @@ describe("rate-limit recovery in the app", () => {
 
     it("does nothing when no conversation is running", async () => {
         render(<RootApp />);
+        await screen.findByLabelText(/app\.(start|stop)Recording/); // wait past the ready gate
         act(() => rt.params.onReceivedRateLimited(RATE_LIMITED));
         act(() => rt.params.onReceivedRateLimited(FINAL));
         expect(FakeAudio.instances).toEqual([]);

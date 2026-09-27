@@ -732,13 +732,39 @@ const HERO_HIGHLIGHT_KEYS = [
 
 const BrandHero = memo(function BrandHero({ logoUrl, persona }: { logoUrl: string; persona: PersonaDetail }) {
     const { t } = useTranslation();
+    // Issue #80 F3, Rick's PR-110 review item 2: a pack with no logo (`logoUrl` empty) or one whose
+    // image fails to load (a bad/missing asset path) must never show a broken-image icon -- fall
+    // back to the persona's own display name rendered as text instead. `logoUrl` empty happens
+    // for real before the persona catalog has loaded (see the neutral loading shell in `App()`
+    // below), and `onError` covers a live pack whose declared logo path 404s.
+    const [logoFailed, setLogoFailed] = useState(false);
+    const showLogo = Boolean(logoUrl) && !logoFailed;
+
+    // Reset the failure flag whenever the logo URL itself changes (e.g. a persona switch) --
+    // otherwise a previous persona's broken logo would permanently hide every later persona's
+    // working one, since `BrandHero` stays mounted across a switch.
+    useEffect(() => {
+        setLogoFailed(false);
+    }, [logoUrl]);
 
     return (
         <section className="hero-card rounded-[32px] border border-white/40 bg-white/80 p-6 shadow-[0_25px_70px_var(--brand-secondary-veil-18)] backdrop-blur-lg dark:border-white/10 dark:bg-brand-ink/80">
             <div className="flex flex-col gap-8 lg:flex-row lg:items-center">
                 <div className="flex-1 space-y-5">
                     <div className="flex flex-wrap items-center gap-3">
-                        <img src={logoUrl} alt={`${persona.title} logo`} className="h-20 w-auto drop-shadow-xs" loading="lazy" />
+                        {showLogo ? (
+                            <img
+                                src={logoUrl}
+                                alt={`${persona.title} logo`}
+                                className="h-20 w-auto drop-shadow-xs"
+                                loading="lazy"
+                                onError={() => setLogoFailed(true)}
+                            />
+                        ) : (
+                            <span className="text-2xl font-black text-brand-primary dark:text-brand-primary-tint" role="img" aria-label={`${persona.title} logo`}>
+                                {persona.title}
+                            </span>
+                        )}
                         <span className="rounded-full bg-brand-primary/10 px-3 py-1 text-xs font-black uppercase tracking-[0.3em] text-brand-primary dark:bg-white/10 dark:text-brand-primary-tint">
                             {t("hero.badge")}
                         </span>
@@ -886,8 +912,14 @@ function VoiceArt() {
 // Main app component with authentication wrapper
 function App() {
     const { isAuthenticated, isLoading, authEnabled } = useAuth();
+    // Issue #80 F6, Rick's PR-110 review item 6: no Sonic (or any persona's) content -- logo, hero
+    // copy, ticket strings -- ever paints before the requested persona (`?persona=` / localStorage
+    // / the catalog's default) has actually been resolved and applied. Reusing the same neutral
+    // shell the auth-loading gate already shows keeps this a single, familiar "please wait" state
+    // instead of a second bespoke one.
+    const { ready: personaReady } = usePersonaContext();
 
-    if (isLoading) {
+    if (isLoading || !personaReady) {
         return (
             <div className="flex min-h-screen items-center justify-center">
                 <div className="text-center">
