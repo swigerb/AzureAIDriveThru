@@ -13,6 +13,12 @@ internal sealed class RecordingProcessor : IPipelineProcessor
 
     public string PipelineName => "test";
 
+    /// <summary>Trivial stub -- this test double exercises SessionActor's mailbox-loop ordering
+    /// only, never the persona/model dispatch seam (see Models/ModelDispatchTests.cs and
+    /// Sessions/RealtimeProcessorTests.cs for that).</summary>
+    public Backend.Models.ResolvedModel ResolveModel(Backend.Personas.Persona persona, string? requestedModelId) =>
+        new(requestedModelId ?? "test-model", PipelineName, "test-deployment", Reasoning: false);
+
     public async Task ProcessAsync(SessionEvent sessionEvent, CancellationToken cancellationToken)
     {
         var current = Interlocked.Increment(ref _concurrentCallCount);

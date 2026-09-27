@@ -17,14 +17,20 @@ public sealed class SessionActor : IAsyncDisposable
     private readonly IPipelineProcessor? _processor;
     private readonly Task _loop;
 
-    public SessionActor(string sessionId, IPipelineProcessor? processor = null)
+    public SessionActor(string sessionId, IPipelineProcessor? processor = null, SessionMetadata? metadata = null)
     {
         SessionId = sessionId;
         _processor = processor;
+        Metadata = metadata;
         _loop = Task.Run(RunLoopAsync);
     }
 
     public string SessionId { get; }
+
+    /// <summary>Persona/model/pipeline this session bound to before its WebSocket upgraded (issue
+    /// #12 part 2), or null for the still-supported no-processor case. See
+    /// <see cref="SessionMetadata"/>.</summary>
+    public SessionMetadata? Metadata { get; }
 
     /// <summary>Enqueues an event for this session. Returns false only if the actor has already
     /// been disposed (its mailbox is closed).</summary>
