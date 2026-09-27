@@ -10,7 +10,7 @@ else
     # Try to copy from backend env variables related to auth
     if [ -f "./app/backend/.env" ]; then
         echo "Creating frontend .env from backend VITE_* variables"
-        grep "VITE_" ./app/backend/.env > ./app/frontend/.env 2>/dev/null || echo "" > ./app/frontend/.env
+        grep -E '^VITE_[A-Za-z0-9_]*=' ./app/backend/.env > ./app/frontend/.env 2>/dev/null || echo "" > ./app/frontend/.env
         
         # If no VITE_ variables found, add the defaults
         if [ ! -s "./app/frontend/.env" ]; then

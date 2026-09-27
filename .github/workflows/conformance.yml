@@ -529,6 +529,21 @@ jobs:
           size_bytes="$(docker image inspect --format '{{.Size}}' azureaidrivethru-backend:ci)"
           echo "Image size: $((size_bytes / 1024 / 1024)) MiB (${size_bytes} bytes)"
           echo "### Docker image size: $((size_bytes / 1024 / 1024)) MiB" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Verify app imports with PERSONAS_DIR unset (image-layout fallback)
+        run: |
+          set -euo pipefail
+          # #129 review round 2: PERSONAS_DIR is always set by app/Dockerfile, so the earlier
+          # verify step never actually exercises the fallback path resolution the flattened
+          # image layout depends on. Unsetting it here and importing the real gunicorn target
+          # module (app:create_app) proves the WHOLE import chain -- persona_loader.py,
+          # prompt_loader.py, and default_persona.py's own module-level PersonaCatalog.load()
+          # call -- resolves /app/personas by existence on its own, not just persona_loader.py
+          # in isolation.
+          docker run --rm azureaidrivethru-backend:ci sh -c '
+            unset PERSONAS_DIR
+            python -c "import app; print(\"import app OK with PERSONAS_DIR unset\")"
+          '
   # Issue #24: single aggregate required-status-check. Branch protection now pins only this job's
   # name, so growing the `conformance` matrix (e.g. adding backend: dotnet in S2) or adding a new
   # job to `needs:` below never requires another branch-protection edit -- it's added to `needs`
