@@ -185,28 +185,41 @@ jobs:
             app/backend-dotnet/backend-tests-output.log
           retention-days: 7
 
-  # Part of issue #7 (S1.1) / #11 (S1.5): the shared black-box conformance
-  # suite, against every backend it can currently run. S2 adds "dotnet" to the
-  # matrix once the .NET backend (tracked separately from this test suite)
-  # exists. Adding it to this matrix early would NOT be harmless today:
-  # CONFORMANCE_BACKEND=dotnet FAILS the suite by default in CI (PR #22 review
-  # item 15 -- DotnetPlaceholderPolicy/CiEnvironment.IsCi always ignore the
-  # CONFORMANCE_ALLOW_SKIP=1 opt-in when GITHUB_ACTIONS=true), precisely so CI
-  # can never silently report green with zero real backend coverage. Only add
-  # "dotnet" here once S2 lands.
+  # Part of issue #7 (S1.1) / #11 (S1.5): the shared black-box conformance suite, against every
+  # backend/persona combination it can currently run.
+  #
+  # Backend axis: "python" runs the full suite (matching PythonBackendLauncher's real relay/order
+  # pipeline). #76 added "dotnet" here once the C# skeleton (issue #12 S2) had a health/config/
+  # persona-pack/static-files surface worth gating on -- it deliberately does NOT run the full
+  # suite (the skeleton has no realtime relay or order pipeline yet), only the scoped
+  # health/auth/static/origin-validation subset docs/dotnet_mapping.md documents as already
+  # green (11 scenarios). Before this, CONFORMANCE_BACKEND=dotnet FAILED the suite by default in
+  # CI on purpose (PR #22 review item 15 -- DotnetPlaceholderPolicy/CiEnvironment.IsCi always
+  # ignore the CONFORMANCE_ALLOW_SKIP=1 opt-in when GITHUB_ACTIONS=true), precisely so CI could
+  # never silently report green with zero real backend coverage; the dotnet leg below now gets
+  # real (if partial) coverage instead of being skipped.
+  #
+  # Persona axis: "sonic" only for now -- #78/#79 add the McDonald's/Dunkin persona packs, at
+  # which point this list grows with no other change needed (ConformancePersonas' own disk
+  # discovery already makes every persona pack under personas/ visible for free). Model/pipeline
+  # axes are a later wave (docs/persona-architecture.md section 8); this matrix shape is designed
+  # so they slot in the same way (a new `matrix:` key plus, if a leg needs a different filter,
+  # another conditional step like the dotnet-only ones below).
   conformance:
-    name: Conformance suite (backend=${{ matrix.backend }})
+    name: Conformance suite (persona=${{ matrix.persona }}, backend=${{ matrix.backend }})
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        backend: [python]
+        persona: [sonic]
+        backend: [python, dotnet]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Python
+        if: matrix.backend == 'python'
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
@@ -216,7 +229,9 @@ jobs:
       - name: Create Python venv for the backend under test
         # PythonBackendLauncher (tests/conformance/src/Conformance.Harness)
         # expects a .venv at the repo root with the backend's runtime deps
-        # installed -- exactly what a developer's local checkout has.
+        # installed -- exactly what a developer's local checkout has. Only the
+        # python leg launches a Python process at all.
+        if: matrix.backend == 'python'
         run: |
           python -m venv .venv
           .venv/bin/python -m pip install --upgrade pip
@@ -229,7 +244,10 @@ jobs:
           cache: npm
           cache-dependency-path: app/frontend/package-lock.json
 
-      - name: Build frontend (app/backend/static is gitignored and required by app.py's add_static)
+      - name: Build frontend (app/backend/static is gitignored and required by app.py's/Program.cs's static-file serving)
+        # Both backends serve the same built frontend (app/backend-dotnet/src/Backend/Program.cs's
+        # TryFindStaticDir falls back to app/backend/static too) -- StaticIndexHtmlTests is part of
+        # the dotnet leg's scoped subset, so this step isn't python-only.
         working-directory: app/frontend
         run: |
           npm ci
@@ -244,7 +262,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.nuget/packages
-          key: ${{ runner.os }}-nuget-${{ hashFiles('tests/conformance/Directory.Packages.props', 'tests/conformance/**/*.csproj', 'tests/conformance/**/packages.lock.json') }}
+          key: ${{ runner.os }}-nuget-${{ hashFiles('tests/conformance/Directory.Packages.props', 'tests/conformance/**/*.csproj', 'tests/conformance/**/packages.lock.json', 'app/backend-dotnet/Directory.Packages.props', 'app/backend-dotnet/**/*.csproj', 'app/backend-dotnet/**/packages.lock.json') }}
           restore-keys: |
             ${{ runner.os }}-nuget-
 
@@ -257,16 +275,44 @@ jobs:
         # not the other, or a feed started serving a different transitive graph).
         run: dotnet restore Conformance.slnx --locked-mode
 
+      - name: dotnet restore and build app/backend-dotnet (dotnet leg only)
+        # Pre-restoring/building here (same --locked-mode convention as the dotnet-tests job
+        # above) means DotnetBackendLauncher's `dotnet run` at test time has nothing left to do
+        # but start the already-built process -- so a cold restore/build never eats into
+        # WaitForHealthAsync's 60s health-check timeout.
+        if: matrix.backend == 'dotnet'
+        working-directory: app/backend-dotnet
+        run: |
+          dotnet restore Backend.slnx --locked-mode
+          dotnet build Backend.slnx --no-restore
+
       - name: dotnet test tests/conformance
         working-directory: tests/conformance
         env:
-          # Resolved from a repo-root-relative .venv by RepoPaths/PythonBackendLauncher.
+          # Resolved from a repo-root-relative .venv by PythonBackendLauncher (python leg only);
+          # DotnetBackendLauncher resolves app/backend-dotnet directly instead.
           CONFORMANCE_BACKEND: ${{ matrix.backend }}
+          # Issue #76: explicit today (matrix.persona is always "sonic"), matching what
+          # ConformancePersonas would already resolve to via disk discovery -- set explicitly so
+          # the persona axis actually exercises the harness's env-var wiring end-to-end, not just
+          # its own unit tests, and so a future persona value here needs no other CI change.
+          CONFORMANCE_PERSONAS: ${{ matrix.persona }}
         run: |
           set -o pipefail
+          if [ "${{ matrix.backend }}" = "dotnet" ]; then
+            # #76: only the scenarios docs/dotnet_mapping.md documents as green against the C#
+            # skeleton (health/auth-token/static-index/origin-validation) -- the skeleton has no
+            # realtime relay or order pipeline yet (issue #12 S2 scope), so the full suite's
+            # remaining scenarios would fail for a reason unrelated to this leg's actual purpose.
+            # Security.OriginValidationTests.Exact_origin_is_accepted needs a real session/protocol
+            # pipeline that doesn't exist until a later wave -- excluded, not yet supported.
+            FILTER='(FullyQualifiedName~HealthEndpoint|FullyQualifiedName~AuthSession|FullyQualifiedName~StaticIndexHtml|FullyQualifiedName~OriginValidationTests)&FullyQualifiedName!~Security.OriginValidationTests.Exact_origin_is_accepted'
+          else
+            FILTER='Category!=Browser'
+          fi
           dotnet test Conformance.slnx \
             --no-restore \
-            --filter "Category!=Browser" \
+            --filter "${FILTER}" \
             --logger "trx;LogFileName=conformance.trx" \
             --logger "console;verbosity=detailed" \
             --results-directory TestResults \
@@ -288,7 +334,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: conformance-results-${{ matrix.backend }}
+          name: conformance-results-${{ matrix.persona }}-${{ matrix.backend }}
           path: |
             tests/conformance/TestResults
             tests/conformance/conformance-output.log
