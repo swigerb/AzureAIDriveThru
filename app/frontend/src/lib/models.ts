@@ -23,18 +23,19 @@ const PIPELINE_LABELS: Record<SelectablePipeline, string> = {
  * depends on work not yet done (#81) and is out of this task's scope, so it's left out of the
  * picker entirely rather than shown and then rejected by the server.
  *
- * A pipeline whose `models` list hasn't landed yet (PR 106 review: it's optional on the wire so
- * older backends -- or this branch's own backend before its final merge -- still respond with
- * just a bare `default`) falls back to a single synthetic option for that default id, so the
- * picker still has something selectable rather than an empty group.
+ * Rick's PR 134 review, item 1: a pipeline whose `models` list is empty or missing renders NO
+ * group at all -- both backends always send this list now (Python's `_selectable_models`, C#'s
+ * since issue 122), so an empty/missing list means nothing is deployed or allowed for that pipeline,
+ * and the persona's declared `default` is deliberately left out of it for that exact reason. The
+ * previous fallback here synthesized a single option for that default id, which puts back the one
+ * id the backend chose NOT to offer -- `?model=` would then carry an id the server 404s on.
  */
 export function selectableModelGroups(models: PersonaModels): ModelGroup[] {
     const groups: ModelGroup[] = [];
     for (const pipeline of ["realtime", "cascade"] as const) {
         const entry = models[pipeline];
-        if (!entry) continue;
-        const options = entry.models && entry.models.length > 0 ? entry.models : [{ id: entry.default, label: entry.default, reasoning: false }];
-        groups.push({ pipeline, label: PIPELINE_LABELS[pipeline], options });
+        if (!entry?.models || entry.models.length === 0) continue;
+        groups.push({ pipeline, label: PIPELINE_LABELS[pipeline], options: entry.models });
     }
     return groups;
 }
@@ -51,10 +52,16 @@ export function flattenModelOptions(models: PersonaModels): PersonaModelOption[]
  * silently offered, so a persona's declared default can be absent from its own catalog; this
  * falls through to the first selectable option in that case rather than pointing the picker at
  * an id it can't actually render as an `<option>`.
+ *
+ * Rick's PR 134 review, item 1: with zero selectable options (every pipeline's `models` list is
+ * empty or missing), returns `""` rather than `models.realtime.default` -- that default is
+ * unlisted by definition here, so returning it would still send the server an id it doesn't
+ * allow. `useRealTime` already omits `model` from `/realtime`'s query string whenever it's falsy
+ * (see `hooks/useRealtime.tsx`), so an empty string here means the server's own default applies.
  */
 export function defaultModelId(models: PersonaModels): string {
     const options = flattenModelOptions(models);
-    if (options.length === 0) return models.realtime.default;
+    if (options.length === 0) return "";
     if (options.some(option => option.id === models.realtime.default)) return models.realtime.default;
     if (models.cascade && options.some(option => option.id === models.cascade!.default)) return models.cascade.default;
     return options[0].id;

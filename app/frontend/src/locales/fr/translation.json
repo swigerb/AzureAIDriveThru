@@ -43,6 +43,16 @@
         "included": "Inclus",
         "componentsLabel": "Inclus avec cet article"
     },
+    "picker": {
+        "backendLabel": "Backend",
+        "modelLabel": "Modèle",
+        "modelDescription": "Choisissez le modèle qui alimente la conversation",
+        "lockedHint": "Verrouillé pour cette commande -- commencez une nouvelle commande pour changer",
+        "reasoningSuffix": "(raisonnement)",
+        "realtimeGroup": "Temps réel",
+        "cascadeGroup": "Cascade",
+        "noModelsAvailable": "Aucun modèle disponible"
+    },
     "hero": {
         "badge": "Démo de commande vocale",
         "subhead": "Un assistant de commande vocale piloté par personnage, ancré par Microsoft Foundry, Azure OpenAI et Azure AI Search.",

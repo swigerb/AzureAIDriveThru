@@ -43,6 +43,16 @@
         "included": "Incluido",
         "componentsLabel": "Incluido con este artículo"
     },
+    "picker": {
+        "backendLabel": "Backend",
+        "modelLabel": "Modelo",
+        "modelDescription": "Elige qué modelo impulsa la conversación",
+        "lockedHint": "Bloqueado para este pedido -- empieza un nuevo pedido para cambiar",
+        "reasoningSuffix": "(razonamiento)",
+        "realtimeGroup": "Tiempo real",
+        "cascadeGroup": "Cascada",
+        "noModelsAvailable": "No hay modelos disponibles"
+    },
     "hero": {
         "badge": "Demostración de pedidos por voz",
         "subhead": "Un asistente de pedidos por voz basado en personajes, fundamentado con Microsoft Foundry, Azure OpenAI y Azure AI Search.",

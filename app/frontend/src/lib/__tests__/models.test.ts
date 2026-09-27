@@ -37,10 +37,25 @@ describe("selectableModelGroups", () => {
         expect(groups[1].label).toBe("Cascade");
     });
 
-    it("falls back to a single synthetic option for a pipeline missing its models[] list", () => {
+    // Rick's PR 134 review, item 1: a pipeline with an empty or missing `models` list must never
+    // fall back to a synthetic option for its `default` -- both backends always send this list
+    // now (Python's `_selectable_models`, C#'s since #122), so an empty list means nothing is
+    // deployed/allowed, and the persona's declared default is deliberately left out of it for
+    // that exact reason. Re-introducing the old fallback (a single `{ id: entry.default, ... }`
+    // option whenever `models` is empty/missing) must fail this test.
+    it("renders no group at all for a pipeline whose models[] list is empty", () => {
+        const emptyCascade: PersonaModels = { realtime: MODELS.realtime, cascade: { default: "gpt-5-mini", models: [] } };
+        expect(selectableModelGroups(emptyCascade).map(g => g.pipeline)).toEqual(["realtime"]);
+    });
+
+    it("renders no group at all for a pipeline whose models[] list hasn't landed (missing entirely)", () => {
         const bareCascade: PersonaModels = { realtime: MODELS.realtime, cascade: { default: "gpt-5-mini" } };
-        const groups = selectableModelGroups(bareCascade);
-        expect(groups[1].options).toEqual([{ id: "gpt-5-mini", label: "gpt-5-mini", reasoning: false }]);
+        expect(selectableModelGroups(bareCascade).map(g => g.pipeline)).toEqual(["realtime"]);
+    });
+
+    it("returns zero groups when every pipeline's models[] list is empty", () => {
+        const allEmpty: PersonaModels = { realtime: { default: "gpt-realtime-2.1", models: [] } };
+        expect(selectableModelGroups(allEmpty)).toEqual([]);
     });
 
     it("omits a pipeline entirely when the persona doesn't offer it", () => {
@@ -77,6 +92,16 @@ describe("defaultModelId", () => {
         };
         expect(defaultModelId(bothStale)).toBe("gpt-realtime-mini");
     });
+
+    // Rick's PR 134 review, item 1: with zero selectable options across every pipeline, this must
+    // return `""`, never `models.realtime.default` -- that default is unlisted by definition here
+    // (an empty `models[]` means nothing is deployed/allowed), so returning it would still send
+    // the server an id it doesn't offer. `useRealTime` omits `?model=` entirely when this is
+    // falsy, so the server's own default applies instead.
+    it("returns an empty string when there are zero selectable options anywhere", () => {
+        const zeroOptions: PersonaModels = { realtime: { default: "gpt-realtime-2.1", models: [] } };
+        expect(defaultModelId(zeroOptions)).toBe("");
+    });
 });
 
 describe("resolveModelId", () => {
@@ -88,6 +113,16 @@ describe("resolveModelId", () => {
         expect(resolveModelId("no-longer-offered", MODELS)).toBe("gpt-realtime-2.1");
         expect(resolveModelId(null, MODELS)).toBe("gpt-realtime-2.1");
         expect(resolveModelId(undefined, MODELS)).toBe("gpt-realtime-2.1");
+    });
+
+    // Rick's PR 134 review, item 1: with zero selectable options, nothing is ever trusted --
+    // not even a stored id that happens to match `models.realtime.default` -- because it isn't
+    // one of the (zero) selectable options either. Resolves to `""`, so `useRealTime` sends no
+    // `?model=` param at all and the server's own default applies.
+    it("resolves to an empty string (sends no ?model=) when there are zero selectable options", () => {
+        const zeroOptions: PersonaModels = { realtime: { default: "gpt-realtime-2.1", models: [] } };
+        expect(resolveModelId("gpt-realtime-2.1", zeroOptions)).toBe("");
+        expect(resolveModelId(null, zeroOptions)).toBe("");
     });
 });
 

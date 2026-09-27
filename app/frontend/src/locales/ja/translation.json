@@ -43,6 +43,16 @@
         "included": "含む",
         "componentsLabel": "この商品に含まれるもの"
     },
+    "picker": {
+        "backendLabel": "バックエンド",
+        "modelLabel": "モデル",
+        "modelDescription": "会話を動かすモデルを選択してください",
+        "lockedHint": "この注文の間はロックされています -- 変更するには新しい注文を始めてください",
+        "reasoningSuffix": "(推論)",
+        "realtimeGroup": "リアルタイム",
+        "cascadeGroup": "カスケード",
+        "noModelsAvailable": "利用可能なモデルがありません"
+    },
     "hero": {
         "badge": "音声注文デモ",
         "subhead": "Microsoft Foundry、Azure OpenAI、Azure AI Search を基盤とした、ペルソナ主導の音声注文アシスタントです。",
