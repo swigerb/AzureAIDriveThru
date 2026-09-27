@@ -30,7 +30,7 @@ realtime relay is issue #13.
 | (JSON Schema validation, ad hoc in `persona_loader.py`) | `Personas/PersonaSchemaValidator.cs` | Wraps `JsonSchema.Net`; both backends validate against the exact same `personas/persona.schema.json` / `personas/menu.schema.json` files -- neither backend has its own copy. |
 | `config_loader.py` | `Configuration/AppConfig.cs` | Both backends load the SAME `app/backend/config.yaml` (not duplicated). Exposes the raw parsed sections (`IReadOnlyDictionary<string, object?>`) rather than a fully strongly-typed model of every field -- later waves can bind specific sections (`audio`, `business_rules`, ...) as they need them. |
 | `model_catalog.py`'s `ModelCatalog` (issue #75) | `Models/ModelCatalog.cs`, `Models/ModelEntry.cs`, `Models/ResolvedModel.cs`, `Models/ModelDispatch.cs` | Parses `config.yaml`'s `models.catalog` list (`id`, `pipeline`, `label`, `reasoning`/`toolCalling`/`runtime` flags) plus `AZURE_AI_MODEL_DEPLOYMENTS` (a JSON object mapping model id -> deployment name; a catalogued model with no entry there is "not deployed"). `ModelDispatch.DispatchProcessor`/`ResolveRealtimeModel` port `processors.py`'s free functions of the same name -- see "Known ambiguity" below for the now-resolved `models.catalog` shape question. |
-| `persona_loader.py`/`app.py`'s persona+asset+menu HTTP routes (issue #74, design doc section 5.2) | `Personas/PersonaRoutes.cs`, `Personas/PersonaAssetResolver.cs`, `Personas/PersonaAssetHash.cs`, `Configuration/AssetCacheConfig.cs` | `GET /api/personas`, `GET /api/personas/{id}`, `GET /personas/{id}/menu.json`, `GET /personas/{id}/assets/{*assetPath}`. `PersonaAssetResolver.Resolve` mirrors `_resolve_persona_asset_path`'s structural (not string-matching) traversal defense: segment-reject `.`/`..`/empty/drive-letter, THEN join, THEN re-verify containment after `Path.GetFullPath`. `PersonaAssetHash` mirrors `_content_hash` for the `?v=` query param; a matching `?v=` gets a year-long immutable cache header, everything else gets a short one. |
+| `persona_loader.py`/`app.py`'s persona+asset+menu HTTP routes (issue #74, design doc section 5.2) | `Personas/PersonaRoutes.cs`, `Personas/PersonaAssetResolver.cs`, `Personas/PersonaAssetHash.cs`, `Configuration/AssetCacheConfig.cs` | `GET /api/personas`, `GET /api/personas/{id}`, `GET /personas/{id}/menu.json`, `GET /personas/{id}/assets/{*assetPath}`. `PersonaAssetResolver.Resolve` mirrors `_resolve_persona_asset_path`'s structural (not string-matching) traversal defense: segment-reject `.`/`..`/empty/drive-letter, THEN join, THEN re-verify containment after `Path.GetFullPath`. Rick's PR #122 review item 3: containment is walked one path component at a time (`ResolveRealPath`), resolving any symlink encountered at ANY component -- not just the final leaf -- and re-checking it stays under the pack's assets root after each hop, same as Python's `os.path.realpath` on the full joined path; see "Symlink containment mutation-test note" below. `PersonaAssetHash` mirrors `_content_hash` for the `?v=` query param; a matching `?v=` gets a year-long immutable cache header, everything else gets a short one. |
 | `processors.py`'s `ProcessorRegistry` (issue #75, design doc section 7.4) | `Sessions/ProcessorRegistry.cs`, `Sessions/IPipelineProcessor.cs`, `Sessions/RealtimeProcessor.cs` | Maps a pipeline name (`realtime`\|`cascade`\|`local`) to the single `IPipelineProcessor` that owns every session bound to it. `RealtimeProcessor` is registered for `"realtime"` so `/realtime`'s persona+model resolution has a real dispatch target, but its `ProcessAsync` is a deliberate no-op stub -- the actual relay is issue #13. No processor is registered for `cascade`/`local` yet, so dispatching to either 404s at `/realtime` today (same observable shape as an unimplemented pipeline in Python). |
 | `prompt_loader.py` | `Prompts/PromptLoader.cs` | Loads/validates `system_prompt.yaml`, `greeting.yaml`, `tool_schemas.yaml`, `error_messages.yaml`, `hints.yaml` for one persona. See "Deliberate scope reductions" below for what's excluded. |
 | `rtmt.py`'s `create_hmac_token` / `validate_hmac_token` | `Auth/SessionTokenService.cs` | Byte-for-byte compatible: same payload JSON spacing (`{"exp": N}`), same URL-safe base64 (padding kept), same HMAC-SHA256-as-lowercase-hex signature, same "split on the last `.`" framing, constant-time signature comparison. See spike #44. PR #96 review nit: an earlier draft lowercased the *presented* signature before comparing, silently accepting uppercase hex that Python's `hmac.compare_digest` rejects -- fixed, covered by `Validate_RejectsUppercaseSignature`. |
@@ -63,7 +63,12 @@ realtime relay is issue #13.
   404-before-upgrade shape) ahead of `AcceptWebSocketAsync`, mirroring `rtmt.py`'s
   `_websocket_handler`. `SessionActor`/`RealtimeProcessor` do not yet forward to a real Azure OpenAI
   realtime session (that's issue #13) -- the resolved persona/model are bound but not yet acted on
-  beyond that stub.
+  beyond that stub. Rick's PR #122 review item 2: the model-rejection 404 body is byte-for-byte
+  identical to Python's regardless of which of the two model except-clauses fired (`Unknown or
+  disallowed model: {model_id!r}`, single-quoted Python `repr` via a small `PyRepr` helper) -- the
+  underlying reason (unknown catalog id, wrong pipeline, disallowed for this persona, undeployed)
+  goes to the log at warning level only, never the client, matching `rtmt.py` exactly. See
+  "Model dispatch/rejection body parity (PR #122)" below.
 - **`/api/personas` is now mapped** (`Personas/PersonaRoutes.cs`), matching the wire contract in
   `docs/persona-architecture.md` section 5.2 exactly: `{default, personas: [{id, displayName,
   logoUrl, theme}], backends}`. `/api/personas/{id}` additionally includes the persona's
@@ -196,22 +201,29 @@ See the comments left on those issues directly for this wave's position. Summary
   the wrong reason. Run locally with
   `CONFORMANCE_BACKEND=dotnet dotnet test Conformance.slnx --filter "Dotnet=ready"`
   (repo root needs a built frontend at `app/backend/static` -- `npm run build` in `app/frontend`
-  -- for the static-file scenario). **31/31 tagged scenarios passing** against the real C# skeleton
-  today (up from 11/11 before this revision; `DotnetTraitCoverageTests` enforces `count >= 11` and
-  grows automatically as more scenarios get tagged). New this revision, all confirmed passing and
-  tagged `[Trait("Dotnet", "ready")]`:
+  -- for the static-file scenario). **33 tagged test methods (36 test cases counting the
+  traversal `[Theory]`'s 4 `InlineData` rows individually), all passing** against the real C#
+  skeleton today (up from 11/11 at PR #96, 31 after the first #122 draft, 33 after Rick's #122
+  review revision; `DotnetTraitCoverageTests` enforces `count >= 11` and grows automatically as
+  more scenarios get tagged). This revision's changes, all confirmed passing and tagged
+  `[Trait("Dotnet", "ready")]`:
   - `PersonaDiscoveryConformanceTests` -- 4 of 5 methods (persona list/detail shape, 404 for an
     unknown persona id, pre-upgrade 404 for an unknown `?persona=` on `/realtime`). The 5th
     (`Omitted_persona_binds_to_the_default_persona_visible_in_session_metadata`) needs a real
     upstream `session.created` echo (`extension.session_metadata`), which only fires once the
     actual realtime relay lands (#13); left untagged.
   - `PersonaAssetRouteConformanceTests` -- full class (asset/menu 200s, immutable-vs-short cache
-    headers, 404s for an unknown persona, and all 3 path-traversal `InlineData` rows).
+    headers, 404s for an unknown persona). Rick's PR #122 review item 1: the traversal `[Theory]`
+    now has 4 `InlineData` rows (was 3, all blind) -- see "Traversal defense mutation-test note"
+    below for why the previous rows could never observe a resolver regression, and what changed.
   - `PersonaDisabledPackConformanceTests` -- full class (a disabled pack 404s on detail/asset/menu
     while an enabled pack still serves; proves the `PERSONAS_DIR` fix above).
-  - `ModelSelectionRejectionConformanceTests` -- full class (pre-upgrade 404 on `/realtime` for an
-    unknown model id, a model disallowed for this persona, a catalogued-but-undeployed model, and a
-    model catalogued for a different pipeline).
+  - `ModelSelectionRejectionConformanceTests` -- full class, now 6 methods (was 4): pre-upgrade 404
+    on `/realtime` for an unknown model id, a model disallowed for this persona, a
+    catalogued-but-undeployed model, a model catalogued for a different pipeline, plus two new
+    rows added for Rick's PR #122 review item 2 asserting the exact 404 BODY text (not just the
+    status) for an unknown persona and an unknown model. See "Model dispatch/rejection body parity
+    (PR #122)" below.
   - `ModelSelectionConformanceTests` -- 1 of 6 methods (`/api/personas/{id}`'s selectable-models
     list for the picker, a pure HTTP GET). The other 5 need the same real-relay session-metadata
     echo as `PersonaDiscoveryConformanceTests`'s 5th method above; left untagged pending #13.
@@ -232,29 +244,99 @@ See the comments left on those issues directly for this wave's position. Summary
   Still not covered: actually forwarding the resolved persona/model into a live Azure OpenAI
   realtime session (`RealtimeProcessor.ProcessAsync` is a no-op stub) -- issue #13.
 
-## Traversal defense mutation-test note (this revision)
+## Traversal defense mutation-test note (PR #122 review item 1)
 
-Verified `PersonaAssetResolver`'s containment logic is real, not just coincidentally passing,
-by temporarily reintroducing two bugs locally (never committed): dropping the segment-level `".."`
-rejection, and making the post-`GetFullPath` containment check (`IsUnderRoot`) unconditionally
-`true`. Two direct unit tests in `Backend.Tests/Personas/PersonaAssetResolverTests.cs` (added this
-revision) then failed as expected (a live out-of-root path was returned instead of `null`), while a
-same-class "real in-root asset still resolves" test kept passing -- confirming the mutation broke
-only the intended defense. Reverted both bugs before committing.
+Rick's PR #122 review flagged that the pinned conformance rows were **blind on both backends**:
+the first draft's three `InlineData` payloads all targeted `../../app.py` -> resolves to
+`personas/app.py`, a path that does not exist -- so every row 404'd for "no such file" reasons
+regardless of whether the resolver's traversal defense was even present. This was proven
+empirically this revision, not just reasoned about: with the OLD rows, temporarily gutting
+`PersonaAssetResolver`'s segment-rejection loop AND forcing its post-`GetFullPath` containment
+check (`IsUnderRoot`) to always return `true` left all three rows green (still 404, now for the
+right-shaped-wrong-reason: file-not-found instead of blocked-traversal).
 
-Notably, this could **not** be observed through the pinned HTTP-level conformance row
-(`PersonaAssetRouteConformanceTests.Persona_asset_route_rejects_path_traversal_attempts`'s three
-`InlineData` payloads): with both bugs applied, all nine of that test's HTTP assertions still
-passed, because each payload is independently neutralized before `PersonaAssetResolver.Resolve`
-ever runs -- `HttpClient` normalizes a literal `"../"` client-side before the request leaves the
-process, and ASP.NET Core's routing never decodes a `"%2f"` in a route segment into a real path
-separator (so an encoded-slash payload arrives as one opaque segment, never a literal `".."`
-segment). That's genuine defence-in-depth working as intended, but it also means the resolver's own
-logic needed a direct unit test to be provably load-bearing -- hence the new test file above.
+Fixed by repointing every row at `personas/sonic/persona.json` (one level above `assets/` --
+a file that DOES exist) and adding a fourth row, `..%5cpersona.json`, alongside the existing
+literal `../persona.json`, `..%2fpersona.json`, and `..%2Fpersona.json`. Even so, per-backend
+HTTP framework behavior means not all four rows are mutation-sensitive on both legs -- this is
+inherent to the two frameworks' routing, not a gap in the test:
 
-An analogous mutation on persona acceptance (temporarily always-accept in `Program.cs`'s
-`/realtime` handler, bypassing `personaCatalog.Contains(personaId)`) **is** caught by the pinned
-conformance suite:
-`PersonaDiscoveryConformanceTests.Realtime_with_an_unknown_persona_is_rejected_with_404_before_the_websocket_opens`
-failed (expected 404, observed 500 from the now-unguarded `PersonaCatalog.Get` throwing
-`KeyNotFoundException`) with the mutation applied, and passed again once reverted.
+- **Literal `../persona.json`**: both `HttpClient` (RFC 3986 dot-segment removal in the `Uri`
+  constructor) and aiohttp's request-line normalization collapse this to `/personas/sonic/persona.json`
+  before it is ever routed -- no matching route on either backend, so it 404s for "no such route"
+  reasons regardless of resolver logic. Structurally blind on **both** legs.
+- **`%2f`/`%2F`**: ASP.NET Core routing deliberately never decodes `%2f`/`%2F` into a literal `/`
+  in a route value (documented anti-ambiguity behavior) -- so on the **dotnet** leg the
+  `assetPath` route value arrives as one opaque unsplit string that never matches a real file,
+  blind regardless of the resolver's own checks. aiohttp's `match_info`, however, DOES decode
+  `%2f` into a real `/`, so on the **Python** leg these rows exercise a genuine `..` segment and
+  ARE mutation-sensitive.
+- **`%5c`**: an ordinary percent-encoded byte (backslash isn't a URI path separator, so neither
+  framework has a security reason to block decoding it) -- BOTH ASP.NET Core routing and aiohttp
+  decode it to a literal backslash, which both resolvers' own segment-split logic then treats as a
+  genuine `..` segment. This is the one row mutation-sensitive on **both** backends.
+
+Confirmed empirically this revision, on live servers, with both baseline (clean, all-green) and
+mutated runs, then a clean revert verified via `git status --porcelain`/`git diff --stat` showing
+zero diff before recommitting:
+
+- **Dotnet leg**: baseline 10/10 green. With the same `PersonaAssetResolver` mutation as above
+  (segment-rejection loop gutted, `IsUnderRoot` forced `true`), exactly the `%5c` row went red
+  (200 instead of 404); literal/`%2f`/`%2F` stayed green as predicted. Reverted, 10/10 green again.
+- **Python leg**: baseline 10/10 green. With `app.py`'s `_resolve_persona_asset_path` mutated
+  analogously (segment-rejection short-circuited, the `relative_to()` containment `ValueError`
+  swallowed), `%2f`, `%2F`, AND `%5c` all went red (200); the literal row stayed green (it never
+  reaches the handler). Reverted, 10/10 green again.
+
+## Symlink containment mutation-test note (PR #122 review item 3)
+
+Rick's PR #122 review flagged that `PersonaAssetResolver`'s containment check only re-verified the
+FINAL resolved path stayed under the pack's assets root, not every path COMPONENT along the way --
+so a symlinked directory placed inside `assets/` (pointing anywhere on disk) could let a
+non-traversal-looking request escape the pack, since no segment-level check ever runs
+`Path.GetFullPath`/`realpath` per component. Fixed by resolving the real path one component at a
+time (`ResolveRealPath`/`TryResolveLinkTarget`) and re-checking containment after each hop, same as
+Python's `os.path.realpath` applied to the joined path (which resolves every symlink in one call).
+
+`Backend.Tests/Personas/PersonaAssetResolverTests.cs`'s new
+`Symlinked_directory_inside_assets_cannot_escape_the_pack_root` test creates a real symlinked
+directory -- the ONE symlink this revision creates anywhere, and only inside a throwaway directory
+under `$env:TEMP`/`Path.GetTempPath()`, created and deleted by the test itself, never inside the
+repo or worktree -- pointing outside the pack, then asserts a request through it resolves to
+`null` rather than a live out-of-root path. Verified this is genuinely load-bearing, not
+coincidentally passing: temporarily reverting to final-path-only containment checking made this
+exact test fail as expected (a live out-of-root path was returned instead of `null`), while
+same-class in-root-asset tests kept passing. Reverted before committing; confirmed via
+`git status --porcelain` showing zero diff.
+
+## Model dispatch/rejection body parity (PR #122 review items 2 and 4)
+
+Rick's PR #122 review item 2: the `/realtime` model-rejection 404 body must match Python's
+`Unknown or disallowed model: {model_id!r}` exactly, including the `None` (no quotes) form for a
+`None` `requested_model_id` -- not a generic/summarized message. `Program.cs` now returns this
+exact body via a small `PyRepr` helper (`'x'` for a string, bare `None` for `null`), logging the
+detailed underlying reason (unknown catalog id vs. unregistered pipeline vs. disallowed vs.
+undeployed) at warning level instead of exposing it to the client, mirroring `rtmt.py`'s own
+except-clause behavior. Two new conformance rows in `ModelSelectionRejectionConformanceTests`
+assert the exact body text over the wire against both backends (see the tagged-scenario list
+above). The bare `None` form itself has no conformance row: it is provably unreachable at runtime
+on either backend, since omitting `?model=` always resolves to the persona's OWN pipeline default,
+and both backends' startup-time `ValidatePersonaDefaults`/`validate_persona_defaults` fail-fast
+gate refuses to start at all if any enabled persona's own default isn't catalogued for its own
+pipeline -- documented inline in the test file so this isn't mistaken for a coverage gap later.
+
+Rick's PR #122 review item 4: a `SessionActorTests.cs` comment referenced a `ModelDispatchTests.cs`
+file that did not exist. Added it (`Backend.Tests/Models/ModelDispatchTests.cs`, 6 tests) covering
+`ModelDispatch.DispatchProcessor`/`ResolveRealtimeModel` directly: an unknown model throws, a
+catalogued model with no registered processor throws, an omitted model dispatches to the persona's
+own default, a default model with no deployment entry falls back to the legacy
+`AZURE_OPENAI_REALTIME_DEPLOYMENT` env var and logs a warning, a NON-default model with no
+deployment entry throws (does NOT get the fallback), and reasoning comes from the catalog entry.
+Mutation-checked: temporarily removing the `modelId != pipelineCfg.Default` guard in
+`ResolveRealtimeModel`'s fallback branch made exactly one test fail
+(`A_non_default_model_with_no_deployment_throws`, "no exception was thrown"), with the other 5
+staying green -- confirming that test (and only that test) is load-bearing for the guard. Reverted
+before committing; confirmed via `git status --porcelain` showing zero diff. This also resolved the
+stale comment: `RealtimeProcessor.ResolveModel` is a one-line delegation to
+`ModelDispatch.ResolveRealtimeModel`, so `ModelDispatchTests.cs` alone gives full coverage and no
+separate `RealtimeProcessorTests.cs` is needed; the comment now says so.
