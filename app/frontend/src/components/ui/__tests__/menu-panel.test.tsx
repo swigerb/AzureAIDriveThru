@@ -115,4 +115,31 @@ describe("MenuPanel", () => {
         await waitFor(() => expect(screen.getByText("Test Burger")).toBeInTheDocument());
         expect(screen.getByText("2 items")).toBeInTheDocument();
     });
+
+    // Issue #119 (owner follow-up comment): category icons must come from the pack's own menu
+    // data, not a hardcoded pack-keyed lookup table that silently fell back to a generic icon
+    // for every other persona's categories.
+    it("renders a category's own icon when the pack's menu data supplies one", async () => {
+        mockFetchOnce({
+            menuItems: [
+                {
+                    category: "Iced Coffee",
+                    icon: "☕",
+                    items: [{ name: "Test Latte", sizes: [{ size: "standard", price: 3.49 }], description: "A fixture latte." }]
+                }
+            ]
+        });
+        render(<MenuPanel />);
+
+        await waitFor(() => expect(screen.getByText("Test Latte")).toBeInTheDocument());
+        expect(screen.getByText("☕")).toBeInTheDocument();
+    });
+
+    it("falls back to the shared neutral icon when a category has none", async () => {
+        mockFetchOnce(SAMPLE_MENU);
+        render(<MenuPanel />);
+
+        await waitFor(() => expect(screen.getByText("Test Burger")).toBeInTheDocument());
+        expect(screen.getByText("🍹")).toBeInTheDocument();
+    });
 });

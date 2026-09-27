@@ -198,6 +198,30 @@ class _ThemeAccents(BaseModel):
     neutral: str | None = None
 
 
+class _ThemeSurface(BaseModel):
+    """Optional shadcn-style UI slot palette (issue #117, personaTheme.ts::PersonaSurfaceTokens/
+    PersonaSurfaceDarkTokens). Every key is optional and the same shape is reused for both
+    `light.surface` and `dark.surface` -- which keys a mode actually populates differs (e.g.
+    `chart2`/`chart3` are dark-only, `accent`/`chart4` are mode-invariant and only ever set once
+    under `light.surface`), exactly like `_ThemeTokens.accents` already works for `light`/`dark`.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    cardForeground: str | None = None
+    secondary: str | None = None
+    secondaryForeground: str | None = None
+    muted: str | None = None
+    mutedForeground: str | None = None
+    accent: str | None = None
+    accentForeground: str | None = None
+    destructive: str | None = None
+    border: str | None = None
+    chart2: str | None = None
+    chart3: str | None = None
+    chart4: str | None = None
+    chart5: str | None = None
+
+
 class _ThemeTokens(BaseModel):
     model_config = ConfigDict(extra="forbid")
     primary: str | None = None
@@ -205,6 +229,7 @@ class _ThemeTokens(BaseModel):
     background: str | None = None
     foreground: str | None = None
     accents: _ThemeAccents | None = None
+    surface: _ThemeSurface | None = None
 
 
 class _Font(BaseModel):

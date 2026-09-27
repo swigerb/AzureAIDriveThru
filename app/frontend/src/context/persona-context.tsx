@@ -1,6 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, ReactNode } from "react";
 import i18next from "i18next";
 
+import { baseTranslationResources } from "@/i18n/baseResources";
+
 import { applyTheme, applyDarkTheme, resolvePersonaTheme, PersonaWireTheme } from "@/lib/personaTheme";
 import { personaAssetUrl } from "@/lib/personaAssets";
 import { DEFAULT_VOICE } from "@/lib/voices";
@@ -45,6 +47,7 @@ const NEUTRAL_SUMMARY: PersonaSummary = {
 };
 const NEUTRAL_DETAIL: PersonaDetail = {
     id: NEUTRAL_ID,
+    roleName: "",
     title: "",
     theme: NEUTRAL_THEME,
     assets: { logo: "", favicon: "" },
@@ -158,6 +161,30 @@ export function PersonaProvider({ children }: { children: ReactNode }) {
         // `i18next` singleton. Skipping the merge there is harmless: the mocked `useTranslation()`
         // already echoes back whatever key a component asks for.
         if (typeof i18next.addResourceBundle === "function") {
+            // Issue 119 item 1 (follow-up, found via a partner pack's verification pass): reset
+            // every locale's "translation" bundle back to the pristine, persona-neutral base
+            // *before* merging the current persona's overrides on top. `addResourceBundle`'s merge
+            // (the `deep=true` below) is cumulative across calls -- it only adds/overwrites the
+            // keys the new table actually contains, it never removes ones the new table omits.
+            // Without this reset, a pack whose `ui.strings` doesn't cover every key (some packs
+            // intentionally define only a handful of brand-specific keys, e.g. no
+            // `ticket.emptyHint` override at all) silently kept showing whatever the *previously
+            // active* persona (one that does define `ticket.emptyHint`) last set that key to,
+            // instead of falling back to the shared neutral copy.
+            //
+            // Rick's PR 120 review round 2 nit: a plain `addResourceBundle(..., deep=false,
+            // overwrite=true)` reset (as this used to do) only overlays `baseTranslationResources`
+            // on top of whatever's already in the store -- with `deep=false` it replaces each
+            // top-level namespace key present in the base table wholesale, but it never touches a
+            // top-level key that isn't in the base table at all. So a key the *previous* persona's
+            // `ui.strings` introduced that has no counterpart in `baseTranslationResources` (e.g. a
+            // pack-only key the base translation table doesn't define) survived every subsequent
+            // persona switch forever. `removeResourceBundle` first empties the whole namespace, so
+            // the base re-add below is a true reset, not a partial overlay.
+            for (const locale of Object.keys(baseTranslationResources)) {
+                i18next.removeResourceBundle(locale, "translation");
+                i18next.addResourceBundle(locale, "translation", structuredClone(baseTranslationResources[locale]), false, true);
+            }
             for (const [locale, table] of Object.entries(detail.strings)) {
                 i18next.addResourceBundle(locale, "translation", unflatten(table), true, true);
             }

@@ -221,7 +221,28 @@
         "secondary": { "type": "string" },
         "background": { "type": "string" },
         "foreground": { "type": "string" },
-        "accents": { "$ref": "#/$defs/themeAccents" }
+        "accents": { "$ref": "#/$defs/themeAccents" },
+        "surface": { "$ref": "#/$defs/themeSurface" }
+      }
+    },
+    "themeSurface": {
+      "description": "Optional shadcn-style UI slot palette (issue #117, app/frontend/src/lib/personaTheme.ts::PersonaSurfaceTokens/PersonaSurfaceDarkTokens). These back the shared shadcn tokens (card/secondary/muted/accent/destructive/border/input/ring/chart-N) that app/frontend/src/index.css previously hard-coded to one persona's palette; every key is optional so a pack that omits `surface` still validates and simply renders the shared neutral defaults. The same key set is reused for both `light.surface` and `dark.surface` -- which subset a mode actually needs differs (e.g. `chart2`/`chart3` are dark-only overrides, `accent`/`chart4` are mode-invariant and only ever set once under `light.surface`), mirroring how `light`/`dark` already share one `themeTokens` shape for the base roles.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cardForeground": { "type": "string" },
+        "secondary": { "type": "string" },
+        "secondaryForeground": { "type": "string" },
+        "muted": { "type": "string" },
+        "mutedForeground": { "type": "string" },
+        "accent": { "type": "string" },
+        "accentForeground": { "type": "string" },
+        "destructive": { "type": "string" },
+        "border": { "type": "string" },
+        "chart2": { "type": "string" },
+        "chart3": { "type": "string" },
+        "chart4": { "type": "string" },
+        "chart5": { "type": "string" }
       }
     },
     "themeAccents": {
