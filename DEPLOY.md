@@ -35,6 +35,52 @@ After testing locally, deploy the application with:
     sonic-drive-in-assistant
 ```
 
+## New Environment: Personas, Search Indexes, and Model Deployments
+
+A brand-new `azd` environment (its own resource group, Foundry/Azure OpenAI
+account, and paid Search service; see `docs/persona-architecture.md` section
+10) is configured with these `infra/main.bicep` parameters:
+
+| Parameter | env var (in `main.parameters.json`) | Default | Notes |
+|---|---|---|---|
+| `personas` | `PERSONAS` | *(empty)* | Comma list; the app parses this to its own allow-list. Empty (the tracked default) means "every persona pack found under `PERSONAS_DIR`" (`app/backend/persona_loader.py`), so all brands are served without naming any of them in tracked infra. The container app omits the `PERSONAS` env var entirely when this is empty, so the loader's own default applies. Override with `azd env set PERSONAS=...` only to restrict an environment to a subset of packs. |
+| `defaultPersona` | `DEFAULT_PERSONA` | *(empty)* | Persona selected when a request doesn't specify one. Empty (the tracked default) means the container app omits `DEFAULT_PERSONA` entirely, so `app/backend/persona_loader.py` picks its own default (its first-party pack if enabled, else the first enabled id alphabetically) -- same "don't name a brand in tracked infra" treatment as `personas` above. |
+| `openAiModelDeployments` | *(not wired to an env var)* | `infra/model-deployments.json` (loaded via `loadJsonContent()`): `gpt-realtime-2.1` (GlobalStandard, capacity from `realtimeDeploymentCapacity`, `isDefaultRealtime: true`) and `text-embedding-3-large` (capacity from `embeddingDeploymentCapacity`) | Each entry is `{catalogId, deploymentName, modelName, modelVersion, format, skuName, capacity, isDefaultRealtime}` (`format` is the Foundry model-format id, defaults to `OpenAI` when omitted). `AZURE_AI_MODEL_DEPLOYMENTS` output/env exposes the resulting catalogId to deploymentName map (section 7.2) for the model catalog in `app/backend/config.yaml`. Adding a #82 model is one new entry in `infra/model-deployments.json`, no Bicep edits. |
+| `realtimeDeploymentCapacity` | `AZURE_OPENAI_REALTIME_DEPLOYMENT_CAPACITY` | `10` | Scale-only override for the `gpt-realtime-2.1` entry above (section 10.3): bump the param, then `azd provision`. |
+| `searchServiceSkuName` | `AZURE_SEARCH_SERVICE_SKU` | `basic` | Paid tier for a clean-clone `azd up` (design section 10.2): Basic removes the free tier's 3-index cap at roughly a third of Standard's cost. |
+| `deployDotnetApp` | `DEPLOY_DOTNET_APP` | `false` | Deploys the `acaBackendDotnet` Container App module (same Foundry account, Search service, and managed identity as the Python app, no extra RBAC needed). Stays `false` until `app/backend-dotnet` exists (#17); `azure.yaml` has no `backend-dotnet` service yet, so `azd` never targets it while disabled. |
+| `dotnetServiceName` | `AZURE_CONTAINER_APP_DOTNET_NAME` | *(auto-generated)* | Only used when `deployDotnetApp` is `true`. |
+
+Search index names are not tracked in infra at all: each persona pack's own
+`persona.json` `search.indexName` (design section 4.2) is the one source of
+truth, read by the #84 ingestion hook and by the app itself. An infra-level
+index-name map would be a second source of truth for the same data.
+
+All resources use only user-assigned managed identity for authentication
+(`AZURE_CLIENT_ID` env var); no Azure OpenAI or Search keys are issued or
+stored anywhere.
+
+To validate infra changes against a **new** environment without deploying,
+run a preview from a clean environment (no local overrides), so the tracked
+defaults above (not a previous local override) are what gets checked:
+
+```bash
+azd env new <new-env-name>
+azd env set AZURE_SUBSCRIPTION_ID <subscription-guid>
+azd env set AZURE_LOCATION eastus2
+azd env set AZURE_RESOURCE_GROUP rg-<new-env-name>
+azd provision --preview
+```
+
+`azd provision --preview` is a read-only what-if: it resolves the
+`${VAR=default}` substitutions in `main.parameters.json` the same way a real
+`azd provision` would (a raw `az deployment sub what-if` against
+`main.parameters.json` does not, since those substitutions only resolve
+under `azd`), but it never applies anything. Never run this against an
+existing environment's `.azure/<env>` folder, and never run `azd
+provision`/`azd up`/`azd down` (without `--preview`) as part of validating a
+skeleton/infra-only change.
+
 ## Enable Entra ID Authentication (EasyAuth)
 
 Authentication is **opt-in** — a plain `azd up` deploys without auth. To protect
