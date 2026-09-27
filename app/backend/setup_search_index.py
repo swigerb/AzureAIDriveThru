@@ -3,8 +3,8 @@ setup_search_index.py — Headless Azure AI Search ingestion, one index per enab
 
 Issue #84 (P2-15): every enabled persona pack (``personas/<id>/`` -- see ``persona_loader.py``,
 issue #70) gets its own Azure AI Search index on the new environment's own Search service
-(ADR-001 decision 7 / issue #85): ``sonic-menu-items``, ``mcdonalds-menu-items``,
-``dunkin-menu-items``, and so on. The index NAME is never guessed or hardcoded here -- it is read
+(ADR-001 decision 7 / issue #85), conventionally named ``<persona>-menu-items``. The index NAME
+is never guessed or hardcoded here -- it is read
 straight from each pack's ``persona.json`` (``search.indexName``), the same field
 ``app.py``/``tools.py`` use to build each session's bound-persona ``SearchClient`` (#74). The
 document schema is one superset shared by every persona (id/category/name/description/
@@ -14,18 +14,21 @@ menu items don't populate every optional field simply upload an empty string for
 For each targeted persona this script: generates embeddings for its menu items using Azure OpenAI
 text-embedding-3-large, creates/updates that persona's index with an ``AzureOpenAIVectorizer``
 (for query-time ``VectorizableTextQuery``), and uploads documents with stable, sanitized
-``category_name``-derived ids via ``merge_or_upload_documents``.
+``category_name``-derived ids via ``merge_or_upload_documents``, then deletes every document in
+that index whose id is no longer in the pack's menu, and verifies the index's document count
+equals the plan's.
 
-Idempotent: safe to re-run for one persona, a subset, or every enabled persona -- re-running
-never leaves stale documents from a previous partial run, and never touches another persona's
-index. Uses ``DefaultAzureCredential`` only: no Azure OpenAI or Search key is ever read, issued,
-or stored.
+Idempotent: safe to re-run for one persona, a subset, or every enabled persona. An item removed
+from a pack's menu is removed from its index on the next run (it would otherwise stay searchable
+and the carhop would offer something ``update_order`` rejects as ``not_on_menu``). A run never
+touches another persona's index. Uses ``DefaultAzureCredential`` only: no Azure OpenAI or Search
+key is ever read, issued, or stored.
 
 Usage:
-    python setup_search_index.py                        # every enabled persona (the azd hook's usage)
-    python setup_search_index.py --persona sonic         # one persona
-    python setup_search_index.py --persona sonic,dunkin  # a subset (comma-separated or repeated --persona)
-    python setup_search_index.py --dry-run               # plan only -- no Azure calls, no credential needed
+    python setup_search_index.py                      # every enabled persona (the azd hook's usage)
+    python setup_search_index.py --persona <id>       # one persona
+    python setup_search_index.py --persona <a>,<b>    # a subset (comma-separated or repeated --persona)
+    python setup_search_index.py --dry-run            # plan only -- no Azure calls, no credential needed
 """
 
 from __future__ import annotations
@@ -37,6 +40,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
@@ -80,6 +84,10 @@ logger.setLevel(logging.INFO)
 # ---------------------------------------------------------------------------
 EMBEDDING_MODEL = "text-embedding-3-large"
 EMBEDDING_DIMENSIONS = 3072
+
+# Search indexing is near-real-time, so the post-ingest document count can lag for a moment.
+_COUNT_VERIFY_ATTEMPTS = 10
+_COUNT_VERIFY_DELAY_SECONDS = 2.0
 
 
 def load_azd_env():
@@ -283,6 +291,45 @@ def upload_documents(
         )
 
 
+def delete_stale_documents(search_client: SearchClient, keep_ids: set[str]) -> int:
+    """Delete every document in *search_client*'s index whose id isn't in *keep_ids*.
+
+    Lists the index's ids (the SDK pages through every result), then deletes the difference in
+    batches. Returns the number of documents deleted.
+    """
+    existing_ids = [doc["id"] for doc in search_client.search(search_text="*", select=["id"])]
+    stale_ids = sorted(doc_id for doc_id in existing_ids if doc_id not in keep_ids)
+    batch_size = 100
+    for i in range(0, len(stale_ids), batch_size):
+        search_client.delete_documents([{"id": doc_id} for doc_id in stale_ids[i : i + batch_size]])
+    return len(stale_ids)
+
+
+def verify_document_count(
+    search_client: SearchClient,
+    expected: int,
+    *,
+    index_name: str,
+    attempts: int = _COUNT_VERIFY_ATTEMPTS,
+    delay_seconds: float = _COUNT_VERIFY_DELAY_SECONDS,
+    sleep=time.sleep,
+) -> None:
+    """Fail unless the index's document count reaches *expected* (issue #84 acceptance).
+
+    Retries briefly because Azure AI Search indexing is near-real-time.
+    """
+    actual = None
+    for attempt in range(attempts):
+        actual = search_client.get_document_count()
+        if actual == expected:
+            return
+        if attempt < attempts - 1:
+            sleep(delay_seconds)
+    raise RuntimeError(
+        f"Index '{index_name}' holds {actual} document(s) after ingest; the plan has {expected}."
+    )
+
+
 @dataclass
 class PersonaIngestPlan:
     """What would be (or, outside ``--dry-run``, is being) ingested for one persona."""
@@ -374,8 +421,10 @@ def ingest_plan(
         search_endpoint, plan.index_name, credential, user_agent="setup_search_index"
     )
     upload_documents(search_client, plan.documents)
+    deleted = delete_stale_documents(search_client, {doc["id"] for doc in plan.documents})
+    logger.info("Persona '%s': deleted %d stale document(s) no longer on the menu.", plan.persona_id, deleted)
+    verify_document_count(search_client, plan.document_count, index_name=plan.index_name)
     logger.info("Persona '%s': search index setup complete.", plan.persona_id)
-
 
 def run(
     catalog: PersonaCatalog,

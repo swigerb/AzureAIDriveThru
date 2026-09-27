@@ -117,11 +117,12 @@ class BuildPlanTests(unittest.TestCase):
         beta_ids = {d["id"] for d in ssi.build_plan(catalog.get("test-beta")).documents}
         self.assertEqual(alpha_ids & beta_ids, set())
 
-    def test_real_sonic_pack_builds_a_plan(self):
-        """Sanity check against the real, non-fixture Sonic pack (never mutated by this test)."""
+    def test_real_default_pack_builds_a_plan(self):
+        """Sanity check against the real, non-fixture default pack (never mutated by this test)."""
         catalog = PersonaCatalog.load(personas_dir=_REAL_PERSONAS_DIR)
-        plan = ssi.build_plan(catalog.get("sonic"))
-        self.assertEqual(plan.index_name, "sonic-menu-items")
+        persona = catalog.get(catalog.default_persona_id)
+        plan = ssi.build_plan(persona)
+        self.assertEqual(plan.index_name, persona.manifest.search.indexName)
         self.assertGreater(plan.document_count, 0)
 
 
@@ -196,9 +197,26 @@ class LiveRunWithFakeClientsTests(unittest.TestCase):
         # index_name argument, so assertions can look up "the client used for persona X's index".
         self.search_clients_by_index: dict[str, MagicMock] = {}
 
+        # Each fake index keeps its document ids across SearchClient instances (and runs), so
+        # stale-document deletion and the post-ingest count check behave like a real index.
+        self.index_contents: dict[str, set[str]] = {}
+
         def _make_search_client(endpoint, index_name, credential, **kwargs):
+            contents = self.index_contents.setdefault(index_name, set())
             client = MagicMock(name=f"SearchClient[{index_name}]")
-            client.merge_or_upload_documents.return_value = [_FakeSearchResult(True)] * 100
+
+            def _merge_or_upload(batch):
+                contents.update(doc["id"] for doc in batch)
+                return [_FakeSearchResult(True) for _ in batch]
+
+            def _delete(batch):
+                contents.difference_update(doc["id"] for doc in batch)
+                return [_FakeSearchResult(True) for _ in batch]
+
+            client.merge_or_upload_documents.side_effect = _merge_or_upload
+            client.delete_documents.side_effect = _delete
+            client.search.side_effect = lambda **kwargs: [{"id": doc_id} for doc_id in sorted(contents)]
+            client.get_document_count.side_effect = lambda: len(contents)
             self.search_clients_by_index[index_name] = client
             return client
 
@@ -280,6 +298,53 @@ class LiveRunWithFakeClientsTests(unittest.TestCase):
         self.assertEqual(first_ids, second_ids)
         # create_or_update_index (never a delete) was called once per run == 2 total.
         self.assertEqual(self.index_client.create_or_update_index.call_count, 2)
+
+
+    def test_stale_documents_are_deleted_and_other_indexes_untouched(self):
+        """An item removed from a pack's menu must leave its index on the next run (#84): it
+        would otherwise stay searchable and the carhop would offer a not_on_menu item."""
+        self.index_contents["test-alpha-menu-items"] = {"stale_removed_item"}
+        self.index_contents["test-beta-menu-items"] = {"beta_only_doc"}
+        catalog = _fixture_catalog()
+
+        ssi.run(catalog, ["test-alpha"], dry_run=False)
+
+        alpha_client = self.search_clients_by_index["test-alpha-menu-items"]
+        alpha_client.delete_documents.assert_called_once_with([{"id": "stale_removed_item"}])
+        plan = ssi.build_plan(catalog.get("test-alpha"))
+        self.assertEqual(self.index_contents["test-alpha-menu-items"], {d["id"] for d in plan.documents})
+        self.assertNotIn("test-beta-menu-items", self.search_clients_by_index)
+        self.assertEqual(self.index_contents["test-beta-menu-items"], {"beta_only_doc"})
+
+    def test_no_delete_call_when_nothing_is_stale(self):
+        catalog = _fixture_catalog(["test-alpha"])
+        ssi.run(catalog, None, dry_run=False)
+        self.search_clients_by_index["test-alpha-menu-items"].delete_documents.assert_not_called()
+
+    def test_ingest_verifies_the_index_count_against_the_plan(self):
+        self.index_contents["test-alpha-menu-items"] = set()
+        catalog = _fixture_catalog(["test-alpha"])
+        with patch.object(ssi, "verify_document_count", wraps=ssi.verify_document_count) as verify:
+            ssi.run(catalog, None, dry_run=False)
+        verify.assert_called_once()
+        self.assertEqual(verify.call_args.args[1], 3)
+        self.assertEqual(verify.call_args.kwargs["index_name"], "test-alpha-menu-items")
+
+
+class VerifyDocumentCountTests(unittest.TestCase):
+    def test_returns_once_the_count_matches(self):
+        client = MagicMock()
+        client.get_document_count.side_effect = [1, 2, 3]
+        sleeps: list[float] = []
+        ssi.verify_document_count(client, 3, index_name="x", attempts=5, delay_seconds=0.5, sleep=sleeps.append)
+        self.assertEqual(sleeps, [0.5, 0.5])
+
+    def test_raises_when_the_count_never_matches(self):
+        client = MagicMock()
+        client.get_document_count.return_value = 2
+        with self.assertRaisesRegex(RuntimeError, "holds 2 document"):
+            ssi.verify_document_count(client, 3, index_name="x", attempts=3, delay_seconds=0, sleep=lambda _s: None)
+        self.assertEqual(client.get_document_count.call_count, 3)
 
 
 if __name__ == "__main__":

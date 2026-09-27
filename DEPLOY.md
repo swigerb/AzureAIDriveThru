@@ -92,16 +92,17 @@ skeleton/infra-only change.
 ### Production Environment: `azureaidrivethru-prod`
 
 The tracked default for `DEFAULT_PERSONA` is empty (section above), which is
-correct for a demo/dev environment serving every enabled persona with no
-single "home" brand. Production is different: `azureaidrivethru-prod` should
-answer unbound requests as Sonic, so set the persona explicitly for that one
-environment:
+correct for a demo/dev environment serving every enabled persona. A production
+environment sets its default persona explicitly, so the choice is recorded in
+that environment's `.azure/<env>` folder rather than in tracked infra:
 
 ```bash
 azd env select azureaidrivethru-prod
-azd env set DEFAULT_PERSONA sonic
+azd env set DEFAULT_PERSONA <persona-id>
 azd provision
 ```
+
+The production value is recorded in the deploy checklist on issue #87.
 
 This only changes which persona a session gets when it doesn't name one
 (`app/backend/persona_loader.py`'s fallback); it does not restrict `PERSONAS`
