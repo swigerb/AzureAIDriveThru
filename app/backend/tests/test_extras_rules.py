@@ -293,6 +293,18 @@ class HappyHourPricingTests(unittest.TestCase):
         self.assertTrue(math.isclose(summary.tax, expected_tax, rel_tol=1e-9))
 
     @patch("order_state.is_happy_hour", return_value=True)
+    def test_pre_applied_discount_tool_price_is_not_double_discounted(self, _mock_hh):
+        """Rick's #104 review, required item 2 (pre-applied discount): a tool call that sends an
+        already-discounted price (here, 1.45 -- Cherry Limeade medium's real price 2.89 halved)
+        must still be charged the real menu price with happy hour applied exactly once server
+        side, not the tool's own pre-discounted value. Expected subtotal is 2.89 * 0.5 = 1.445,
+        never 1.45 * 0.5 = 0.725 (which would mean the discount got applied twice)."""
+        session_id = order_state_singleton.create_session()
+        self._add_item(session_id, "Cherry Limeade", "medium", 1, 1.45)
+        summary = order_state_singleton.get_order_summary(session_id)
+        self.assertTrue(math.isclose(summary.total, 1.445, rel_tol=1e-9))
+
+    @patch("order_state.is_happy_hour", return_value=True)
     def test_happy_hour_does_not_discount_non_drinks(self, _mock_hh):
         """Happy hour only applies to drink-category items."""
         session_id = order_state_singleton.create_session()

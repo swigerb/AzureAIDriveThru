@@ -377,6 +377,76 @@ class UpdateOrderAddTests(unittest.TestCase):
         self.assertTrue(math.isclose(summary.items[0].price, 2.79, rel_tol=1e-9))
         self.assertTrue(math.isclose(summary.total, 2.79, rel_tol=1e-9))
 
+    def test_add_null_tool_price_still_charges_menu_price(self):
+        """Rick's #104 review, required item 1: the prompt no longer tells the model to send
+        a price (0ab2119), so `"price": null` is now a likely, well-formed input. It must never
+        crash the add -- `to_decimal(None)` would raise `decimal.InvalidOperation` if compared
+        unconditionally. The item is still added, charged the real menu price."""
+        sid = _make_session()
+        result = _run(update_order({
+            "action": "add", "item_name": "Tots",
+            "size": "medium", "quantity": 1, "price": None,
+        }, sid))
+        self.assertEqual(result.destination, ToolResultDirection.TO_BOTH)
+        summary = order_state_singleton.get_order_summary(sid)
+        self.assertEqual(len(summary.items), 1)
+        self.assertTrue(math.isclose(summary.items[0].price, 2.79, rel_tol=1e-9))
+
+    def test_add_non_numeric_tool_price_still_charges_menu_price(self):
+        """Rick's #104 review, required item 1: a non-numeric tool-call price (e.g. "cheap")
+        must be ignored, not crash the add -- `to_decimal("cheap")` raises
+        `decimal.InvalidOperation` if compared unconditionally. The item is still added,
+        charged the real menu price."""
+        sid = _make_session()
+        result = _run(update_order({
+            "action": "add", "item_name": "Tots",
+            "size": "medium", "quantity": 1, "price": "cheap",
+        }, sid))
+        self.assertEqual(result.destination, ToolResultDirection.TO_BOTH)
+        summary = order_state_singleton.get_order_summary(sid)
+        self.assertEqual(len(summary.items), 1)
+        self.assertTrue(math.isclose(summary.items[0].price, 2.79, rel_tol=1e-9))
+
+    def test_add_omitted_tool_price_still_charges_menu_price(self):
+        """Rick's #104 review, required item 1: an entirely omitted `price` argument (tools.py
+        defaults it to 0.0 via `args.get("price", 0.0)`) is charged the real menu price, same
+        as an explicit $0.0 tool-call price."""
+        sid = _make_session()
+        result = _run(update_order({
+            "action": "add", "item_name": "Tots",
+            "size": "medium", "quantity": 1,
+        }, sid))
+        self.assertEqual(result.destination, ToolResultDirection.TO_BOTH)
+        summary = order_state_singleton.get_order_summary(sid)
+        self.assertEqual(len(summary.items), 1)
+        self.assertTrue(math.isclose(summary.items[0].price, 2.79, rel_tol=1e-9))
+
+    def test_resize_wrong_size_price_carryover_charges_new_size_menu_price(self):
+        """Rick's #104 review, required item 2 (wrong-size carry-over): Sonic has no `modify`
+        action, so a resize is remove-then-add. A model that carries the OLD size's tool-call
+        price over when re-adding at a NEW size must still be charged the NEW size's real menu
+        price, never the stale one it echoed back. Cherry Limeade medium (real price 2.89) is
+        removed, then re-added as large but with the medium price (2.89) mistakenly repeated;
+        the add must charge the large menu price (3.39), not 2.89."""
+        sid = _make_session()
+        _run(update_order({
+            "action": "add", "item_name": "Cherry Limeade",
+            "size": "medium", "quantity": 1, "price": 2.89,
+        }, sid))
+        _run(update_order({
+            "action": "remove", "item_name": "Cherry Limeade",
+            "size": "medium", "quantity": 1,
+        }, sid))
+        result = _run(update_order({
+            "action": "add", "item_name": "Cherry Limeade",
+            "size": "large", "quantity": 1, "price": 2.89,
+        }, sid))
+        self.assertEqual(result.destination, ToolResultDirection.TO_BOTH)
+        summary = order_state_singleton.get_order_summary(sid)
+        self.assertEqual(len(summary.items), 1)
+        self.assertTrue(math.isclose(summary.total, 3.39, rel_tol=1e-9))
+        self.assertTrue(math.isclose(summary.finalTotal, 3.6612, rel_tol=1e-9))
+
     def test_missing_required_argument_returns_graceful_error(self):
         """swigerb/SonicAIDriveThru#36: a malformed tool call missing a required
         argument (e.g. "item_name") must not raise a bare KeyError -- it must be
