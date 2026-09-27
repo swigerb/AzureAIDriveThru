@@ -228,11 +228,20 @@ class InferComboComponentGoldenCategoryTests(unittest.TestCase):
         self.assertEqual(is_happy_hour_discounted("Coke Zero"), is_happy_hour_discounted("Coca-Cola® Zero"))
 
     def test_priced_extras_added_by_72_are_never_a_combo_slot_or_happy_hour_discounted(self):
-        """#72's priced add-ons (flavor add-ins, bacon and patty extras) are isExtra: true items,
-        not food/drink combo components, and are never happy-hour discounted."""
-        for name in ("Flavor Add-In", "Add Bacon", "Extra Patty"):
+        """#72's priced add-ons (flavor add-in, add bacon, whipped topping) are isExtra: true
+        items, not food/drink combo components, and are never happy-hour discounted."""
+        for name in ("Flavor Add-In", "Add Bacon", "Whipped Topping"):
             self.assertEqual(infer_combo_component(name), "", name)
             self.assertFalse(is_happy_hour_discounted(name), name)
+
+    def test_whipped_topping_aliases_resolve_to_the_same_classification(self):
+        """PR #98 Rick review item 2: "Whipped Topping" is the canonical isExtra menu item name
+        (source modifier "Whip Topping", Easy/Regular tier, $0.20); "whipped cream" and "whip" are
+        its spoken aliases and must resolve to the same classification."""
+        for alias in ("whipped cream", "whip"):
+            self.assertEqual(infer_category(alias), infer_category("Whipped Topping"))
+            self.assertEqual(infer_combo_component(alias), infer_combo_component("Whipped Topping"))
+            self.assertEqual(is_happy_hour_discounted(alias), is_happy_hour_discounted("Whipped Topping"))
 
     def test_burgers_combos_and_hot_dog_entrees_are_never_happy_hour_discounted(self):
         for name in ("Crispy Chicken Sandwich", "SONIC® Cheeseburger Combo", "Corn Dog", "Tots", "Groovy Fries"):

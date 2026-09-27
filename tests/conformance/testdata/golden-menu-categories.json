@@ -575,7 +575,7 @@
       "comboSlot": "none",
       "happyHourDiscounted": false,
       "size": "Standard",
-      "unitPrice": "0.60"
+      "unitPrice": "0.30"
     },
     {
       "item": "Add Bacon",
@@ -583,15 +583,15 @@
       "comboSlot": "none",
       "happyHourDiscounted": false,
       "size": "Standard",
-      "unitPrice": "2.00"
+      "unitPrice": "1.00"
     },
     {
-      "item": "Extra Patty",
+      "item": "Whipped Topping",
       "category": "Extras & Sides",
       "comboSlot": "none",
       "happyHourDiscounted": false,
       "size": "Standard",
-      "unitPrice": "1.50"
+      "unitPrice": "0.20"
     }
   ]
 }

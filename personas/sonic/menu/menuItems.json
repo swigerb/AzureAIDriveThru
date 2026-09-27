@@ -1905,12 +1905,12 @@
                     "sizes": [
                         {
                             "size": "Standard",
-                            "price": 0.6
+                            "price": 0.3
                         }
                     ],
                     "description": "Add a splash of your favorite flavor to any slush or fountain drink.",
                     "longDescription": "Add a splash of your favorite flavor to any slush or fountain drink.",
-                    "origin": "Sonic Drive-In Menu (priced from the export's flavor-syrup modifier data)",
+                    "origin": "Sonic Drive-In Menu (priced from the export's flavor-syrup modifier data, Regular tier, not the Extra tier; PR #98 Rick review)",
                     "popularity": "",
                     "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/c5ed53b2-8254-4359-d516-257031297b00/download",
                     "comboSlot": "none",
@@ -1923,12 +1923,12 @@
                     "sizes": [
                         {
                             "size": "Standard",
-                            "price": 2.0
+                            "price": 1.0
                         }
                     ],
                     "description": "Add crispy, thick-cut bacon to any burger, sandwich, or hot dog.",
                     "longDescription": "Add crispy, thick-cut bacon to any burger, sandwich, or hot dog.",
-                    "origin": "Sonic Drive-In Menu (priced from the export's bacon modifier data)",
+                    "origin": "Sonic Drive-In Menu (priced from the export's bacon modifier data, Regular tier, not the Extra tier; PR #98 Rick review)",
                     "popularity": "",
                     "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/f250542b-3c25-4a32-7792-d07638dcfd00/download",
                     "comboSlot": "none",
@@ -1937,21 +1937,24 @@
                     "isExtra": true
                 },
                 {
-                    "name": "Extra Patty",
+                    "name": "Whipped Topping",
                     "sizes": [
                         {
                             "size": "Standard",
-                            "price": 1.5
+                            "price": 0.2
                         }
                     ],
-                    "description": "Add an extra 100% pure beef patty to any burger.",
-                    "longDescription": "Add an extra 100% pure beef patty to any burger.",
-                    "origin": "Sonic Drive-In Menu (the export's patty modifiers carry no per-unit charge; kept at the price already charged in system_prompt.yaml, #72)",
+                    "description": "Top off any shake, float or dessert with real whipped topping.",
+                    "longDescription": "Top off any shake, float or dessert with real whipped topping.",
+                    "origin": "Sonic Drive-In Menu (priced from the export's \"Whip Topping\" modifier data, Easy/Regular tier; PR #98 Rick review)",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/18b06c90-1a3d-411b-75b3-b3cce2915000/download",
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/d615a2a0-d5c8-4164-e183-777cb62f9400/download",
                     "comboSlot": "none",
                     "happyHourDiscounted": false,
-                    "aliases": [],
+                    "aliases": [
+                        "whipped cream",
+                        "whip"
+                    ],
                     "isExtra": true
                 }
             ]
