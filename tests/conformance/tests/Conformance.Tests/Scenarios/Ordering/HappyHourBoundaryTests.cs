@@ -19,7 +19,10 @@ namespace Conformance.Tests.Scenarios.Ordering;
 file static class HappyHourBoundaryTestSupport
 {
     public const string DrinkItemName = "Cherry Limeade";
-    public const decimal DrinkPrice = 4.00m;
+    // #104: update_order now prices from the resolved menu record, not the caller-supplied tool
+    // price, so this must be the real menu price (personas/sonic/menu/menuItems.json, "Cherry
+    // Limeade" medium) rather than an arbitrary tool-call constant.
+    public const decimal DrinkPrice = 2.89m;
     // #73 (ADR-001 decision 4 "No off-menu"): "Regular" was never a real size for Cherry Limeade
     // (mini/small/medium/large/route 44 are); the #73 size gate now rejects it as
     // size_not_available, so this uses the real "medium" size instead.

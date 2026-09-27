@@ -11,8 +11,10 @@ namespace Conformance.Tests.Scenarios.Ordering;
 /// "Tots (Extra Crispy)", tools.py's `update_order`), so every menuItems.json-based lookup
 /// (combo slot, sundae, category, happy-hour eligibility) must strip them before classifying --
 /// otherwise a customised item silently disagrees with its own base item. Rick measured this as a
-/// real regression: Cheeseburger Combo (8.49) + "Chili Cheese Tots (Extra Cheese)" was absorbing
-/// for free (total 8.49) instead of charging in full (total 12.28).
+/// real regression: Cheeseburger Combo (originally priced at 8.49; #104 re-based this file to the
+/// real menu price, 9.19, once update_order started pricing from the menu instead of the tool call)
+/// + "Chili Cheese Tots (Extra Cheese)" was absorbing for free (total == combo price alone) instead
+/// of charging in full (total == combo price + Chili Cheese Tots' own price).
 ///
 /// Covers end-to-end, against the live backend, exactly the cases Rick's review called out:
 ///   - "Chili Cheese Tots (Extra Cheese)" must be CHARGED alongside a combo, never absorbed.
@@ -25,7 +27,10 @@ public sealed class CustomisedItemMenuLookupTests
 {
     private const string BaseComboName = "SONIC® Cheeseburger Combo";
     private const string BaseComboSize = "standard";
-    private const decimal BaseComboPrice = 8.49m;
+    // #104: update_order now prices from the resolved menu record, not the caller-supplied tool
+    // price, so this must be the real menu price (personas/sonic/menu/menuItems.json, "SONIC®
+    // Cheeseburger Combo" standard) rather than an arbitrary tool-call constant.
+    private const decimal BaseComboPrice = 9.19m;
 
     /// <summary>
     /// #73 (P2-4, "No off-menu ordering"): shared assertion for every off-menu-name scenario in
@@ -699,7 +704,11 @@ public sealed class CustomisedItemMenuLookupTests
                 const string smasher = "All-American SONIC Smasher";
                 const decimal smasherPrice = 5.79m; // app/frontend/src/data/menuItems.json
                 const string extra = "Add Bacon"; // tools.py EXTRAS_KEYWORDS
-                const decimal extraPrice = 0.99m;
+                // #104: update_order now prices from the resolved menu record, not the
+                // caller-supplied tool price, so this must be the real menu price
+                // (personas/sonic/menu/menuItems.json, "Add Bacon" standard) rather than an
+                // arbitrary tool-call constant.
+                const decimal extraPrice = 1.00m;
 
                 var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
                 await using var _ = browser;

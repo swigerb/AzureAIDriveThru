@@ -37,7 +37,10 @@ public sealed class HappyHourPricingTests(FixedClockConformanceFixture fixture)
         Assert.True(greetingRoundTrip is not null, "Greeting round trip never completed.");
 
         const string callId = "call_update_order_happy_hour";
-        const double price = 4.00;
+        // #104: update_order now prices from the resolved menu record, not the caller-supplied
+        // tool price, so this must be the real menu price (personas/sonic/menu/menuItems.json,
+        // "Cherry Limeade" medium) rather than an arbitrary tool-call constant.
+        const double price = 2.89;
         connection!.Script.Enqueue(new ResponseScript([
             new FunctionCallEvent(
                 Name: "update_order",
@@ -81,10 +84,10 @@ public sealed class HappyHourPricingTests(FixedClockConformanceFixture fixture)
         Assert.NotNull(toolResultJson);
         var finalTotal = OrderScenarioHelpers.GetOrderFinalTotal(toolResultJson!);
 
-        // price(4.00) * qty(1) * happy_hour_discount(0.5) = 2.00 subtotal; tax = 2.00 * tax_rate
-        // (0.08) = 0.16; finalTotal = 2.16. See app/backend/config.yaml's business_rules and
+        // price(2.89) * qty(1) * happy_hour_discount(0.5) = 1.445 subtotal; tax = 1.445 * tax_rate
+        // (0.08) = 0.1156; finalTotal = 1.5606. See app/backend/config.yaml's business_rules and
         // order_state.py's _update_summary. Exact decimal, no rounding at any step (must-fix #1).
-        const decimal expectedFinalTotal = 2.16m;
+        const decimal expectedFinalTotal = 1.5606m;
         OrderScenarioHelpers.AssertMoneyEqual(expectedFinalTotal, finalTotal);
 
         // The "backend logged no unhandled error during this scenario" invariant (PR #22 review

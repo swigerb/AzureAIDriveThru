@@ -7,7 +7,7 @@ namespace Conformance.Tests.Scenarios.Ordering;
 /// <summary>
 /// PR #38 second re-review should-fix 2: the spoken `$X.XX` text embedded in the
 /// `function_call_output` (tools.py's `delta_text`, e.g. "Added 1 Tots — your total is now
-/// $9.47") is a *display* concern, separate from the exact-decimal wire contract asserted
+/// $9.26") is a *display* concern, separate from the exact-decimal wire contract asserted
 /// elsewhere in this suite. This still needs its own assertion because Rick's N2 mutation
 /// (building that spoken text from the pre-tax subtotal instead of finalTotal) doesn't touch any
 /// JSON money field and so is invisible to every other scenario in this file.
@@ -44,10 +44,12 @@ public sealed class SpokenTotalTests(HappyHourJustBeforeOpenFixture fixture)
             spokenCase.ExpectedFinalTotal, OrderScenarioHelpers.GetOrderFinalTotal(result.ToolResultJson!));
 
         // PR #50 review (should-fix 1, Rick's X1): assert the *Display strings directly too, on an
-        // active (non-Skip'd) case, not only the decimal. subtotal 8.77, tax 8.77*0.08=0.7016.
-        Assert.Equal("$8.77", OrderScenarioHelpers.GetOrderTotalDisplay(result.ToolResultJson!));
-        Assert.Equal("$0.70", OrderScenarioHelpers.GetOrderTaxDisplay(result.ToolResultJson!));
-        Assert.Equal("$9.47", OrderScenarioHelpers.GetOrderFinalTotalDisplay(result.ToolResultJson!));
+        // active (non-Skip'd) case, not only the decimal. #104: Cherry Limeade re-based to its
+        // real medium price 2.89 (was an artificial 2.99), so subtotal is 2*2.89 + 2.79 = 8.57,
+        // tax 8.57*0.08=0.6856.
+        Assert.Equal("$8.57", OrderScenarioHelpers.GetOrderTotalDisplay(result.ToolResultJson!));
+        Assert.Equal("$0.69", OrderScenarioHelpers.GetOrderTaxDisplay(result.ToolResultJson!));
+        Assert.Equal("$9.26", OrderScenarioHelpers.GetOrderFinalTotalDisplay(result.ToolResultJson!));
 
         Assert.Contains(spokenCase.ExpectedSpokenTotalText, result.FunctionCallOutputText, StringComparison.Ordinal);
     });
@@ -123,14 +125,16 @@ public sealed class SpokenTotalHalfCentTests(HappyHourAtOpenFixture fixture)
             spokenCase.ExpectedFinalTotal, OrderScenarioHelpers.GetOrderFinalTotal(result.ToolResultJson!));
 
         // PR #50 review (should-fix 1, Rick's X1): assert the three *Display strings on the
-        // half-cent case explicitly -- subtotal 4.875 -> $4.88, tax 0.39 (exact, no rounding
-        // needed), finalTotal 5.265 -> $5.27. This kills a ROUND_HALF_EVEN mutation: banker's
-        // rounding leaves totalDisplay unchanged (487.5 cents rounds to the even 488) but flips
-        // finalTotalDisplay to "$5.26" (526.5 cents rounds to the even 526, not up to 527) --
+        // half-cent case explicitly. #104: re-based to real menu prices (Cherry Limeade Route 44
+        // 3.79 halved to 1.895 for happy hour + Salted Caramel Toffee Croissant Bites 1.99 x2 =
+        // 3.98) -- subtotal 5.875 -> $5.88, tax 0.47 (exact, no rounding needed), finalTotal 6.345
+        // -> $6.35. This kills a ROUND_HALF_EVEN mutation: banker's rounding leaves totalDisplay
+        // unchanged (587.5 cents rounds to the even 588, same as round-half-up here) but flips
+        // finalTotalDisplay to "$6.34" (634.5 cents rounds to the even 634, not up to 635) --
         // invisible if only the raw JSON decimal (never rounded) is asserted.
-        Assert.Equal("$4.88", OrderScenarioHelpers.GetOrderTotalDisplay(result.ToolResultJson!));
-        Assert.Equal("$0.39", OrderScenarioHelpers.GetOrderTaxDisplay(result.ToolResultJson!));
-        Assert.Equal("$5.27", OrderScenarioHelpers.GetOrderFinalTotalDisplay(result.ToolResultJson!));
+        Assert.Equal("$5.88", OrderScenarioHelpers.GetOrderTotalDisplay(result.ToolResultJson!));
+        Assert.Equal("$0.47", OrderScenarioHelpers.GetOrderTaxDisplay(result.ToolResultJson!));
+        Assert.Equal("$6.35", OrderScenarioHelpers.GetOrderFinalTotalDisplay(result.ToolResultJson!));
 
         Assert.Contains(spokenCase.ExpectedSpokenTotalText, result.FunctionCallOutputText, StringComparison.Ordinal);
     });
