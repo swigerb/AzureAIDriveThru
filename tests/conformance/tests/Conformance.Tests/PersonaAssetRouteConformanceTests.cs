@@ -8,12 +8,13 @@ namespace Conformance.Tests;
 
 /// <summary>
 /// Rick's PR #102 review item 5: `/personas/{id}/assets/*` and `/personas/{id}/menu.json`
-/// conformance rows against the real, production Sonic pack (personas/sonic). Deliberately
-/// UNTAGGED for the same reason as <see cref="PersonaDiscoveryConformanceTests"/> -- the dotnet
-/// backend skeleton doesn't serve persona assets yet. The disabled-pack row is covered separately
-/// in <c>PersonaDisabledPackConformanceTests</c> (needs a genuinely disabled-but-on-disk pack,
-/// which doesn't exist under the real personas/ directory -- see
-/// <see cref="DisabledPersonaConformanceFixture"/>'s own doc comment).
+/// conformance rows against the real, production Sonic pack (personas/sonic). S2 part 2 (#12)
+/// ports Personas/PersonaRoutes.cs's asset/menu routes (traversal-safe resolution, `?v=` content
+/// hashing, pinned content types) -- every row here (including all three path-traversal
+/// InlineData rows) is now tagged <c>[Trait("Dotnet", "ready")]</c> at the class level. The
+/// disabled-pack row is covered separately in <c>PersonaDisabledPackConformanceTests</c> (needs a
+/// genuinely disabled-but-on-disk pack, which doesn't exist under the real personas/ directory --
+/// see <see cref="DisabledPersonaConformanceFixture"/>'s own doc comment).
 ///
 /// Rick's PR #102 review item 2: the immutable-caching assertions below fetch the REAL
 /// `logoUrl`/`menuUrl` from `/api/personas/sonic` (which now carries a `?v=&lt;content-hash&gt;`)
@@ -23,6 +24,7 @@ namespace Conformance.Tests;
 /// end-to-end contract actually is.
 /// </summary>
 [Collection(ConformanceCollection.Name)]
+[Trait("Dotnet", "ready")]
 public sealed class PersonaAssetRouteConformanceTests(ConformanceFixture fixture)
 {
     [Fact]

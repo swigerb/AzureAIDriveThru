@@ -14,9 +14,13 @@ namespace Conformance.Tests;
 /// personas/sonic exists under the real personas/ directory, so there is no genuinely-disabled
 /// pack to test against there).
 ///
-/// Deliberately UNTAGGED, same reasoning as <see cref="PersonaDiscoveryConformanceTests"/>.
+/// S2 part 2 (#12) ports the persona routes' enabled-packs-only filtering and fixes the dotnet
+/// launcher to forward PERSONAS_DIR (<see cref="Conformance.Harness.DotnetBackendLauncher"/>) so
+/// this fixture's test-alpha/test-beta packs actually reach the C# backend process -- all four
+/// rows below now pass and are tagged <c>[Trait("Dotnet", "ready")]</c> at the class level.
 /// </summary>
 [Collection(DisabledPersonaConformanceCollection.Name)]
+[Trait("Dotnet", "ready")]
 public sealed class PersonaDisabledPackConformanceTests(DisabledPersonaConformanceFixture fixture)
 {
     private const string DisabledPersonaId = TwoPersonaConformanceFixture.PersonaB;

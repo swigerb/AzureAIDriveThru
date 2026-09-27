@@ -8,12 +8,16 @@ namespace Conformance.Tests;
 
 /// <summary>
 /// Rick's PR #106 review item 2: conformance rows for issue #75's per-session realtime model
-/// selection (design doc sections 5.2/7.3/7.5). Deliberately UNTAGGED (no
-/// <c>[Trait("Dotnet", "ready")]</c>), same reasoning as <see cref="PersonaDiscoveryConformanceTests"/>
-/// and <see cref="PersonaMismatchConformanceTests"/> -- the dotnet backend skeleton doesn't
-/// implement model selection yet, so <see cref="DotnetTraitCoverageTests"/>'s dotnet CI leg must
-/// skip these; they still run in the main/full CI leg, which always launches the real Python
-/// backend. See <see cref="ModelSelectionConformanceFixture"/>/<see cref="ModelDeploymentMapConformanceFixture"/>
+/// selection (design doc sections 5.2/7.3/7.5). S2 part 2 (#12) ports the persona/model HTTP
+/// surface and the pre-upgrade `?model=` dispatch/resolution on `/realtime`
+/// (Models/ModelDispatch.cs), so <see cref="ModelSelectionRejectionConformanceTests"/>'s four
+/// pre-upgrade 404 rows (below) and one HTTP-only positive row in
+/// <see cref="ModelSelectionConformanceTests"/> are now tagged. The rest of
+/// <see cref="ModelSelectionConformanceTests"/> stays UNTAGGED: those rows need the actual
+/// upstream relay to reach `session.created`/forward audio (rtmt.py's `ConnectionForwarder`) --
+/// this wave's <see cref="RealtimeProcessor"/> is a deliberate stub (issue #13 lands the real
+/// relay), so they still only run against the Python backend. See
+/// <see cref="ModelSelectionConformanceFixture"/>/<see cref="ModelDeploymentMapConformanceFixture"/>
 /// for why this row set needs two dedicated backend processes.
 /// </summary>
 public static class ModelSelectionConformanceTestHelpers
@@ -51,6 +55,7 @@ public static class ModelSelectionConformanceTestHelpers
 /// deployment map is exactly what "undeployed" needs.
 /// </summary>
 [Collection(ModelSelectionConformanceCollection.Name)]
+[Trait("Dotnet", "ready")]
 public sealed class ModelSelectionRejectionConformanceTests(ModelSelectionConformanceFixture fixture)
 {
     [Fact]
@@ -113,6 +118,7 @@ public sealed class ModelSelectionConformanceTests(ModelDeploymentMapConformance
     private static readonly TimeSpan FrameTimeout = ModelSelectionConformanceTestHelpers.FrameTimeout;
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Api_persona_detail_lists_only_the_selectable_models_shaped_for_the_picker() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
