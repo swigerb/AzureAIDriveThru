@@ -4,9 +4,6 @@ messages:
   search_service_unavailable: "I'm sorry, I can't reach our menu data right now."
   search_no_results: "No matching menu entries found."
 
-  # Pricing errors
-  price_validation_failed: "Hmm, I had a little glitch with the pricing on that one. Could you say that again?"
-
   # Customization errors
   invalid_mod: "I can't add {{forbidden_item}} to a {{base_name}} — that's a new one! Want to try a different topping?"
   nonsensical_mod_redirect: "That's a creative idea! How about a different topping?"

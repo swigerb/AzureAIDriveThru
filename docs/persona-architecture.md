@@ -405,10 +405,22 @@ starts a new session.
   - a size word inside the name ("Large Tater Tots").
 
   Scenarios that order an off-menu name only as a fixture (for example "Small Fries") switch to real items.
-- **Price is out of scope.** The unit price still comes from the tool argument (#28 N23). Taking it from the
-  menu is a possible follow-up, not part of P2.
 - **The golden table is checked, not generated.** `golden-menu-categories.json` stays hand-owned and is
   checked against each menu, so the golden file remains an independent oracle.
+- **The unit price always comes from the menu, never the tool call (#104, decided).** Supersedes the
+  old #28 N23 rule (trust the tool call's price verbatim). `update_order`'s `add` always charges
+  `menu_utils.MenuCatalog.price_for`'s resolved per-size price, applied once in
+  `order_state.py::handle_order_update`, the one choke point for both the realtime tool-call path and
+  any direct caller (a test, an admin tool) building an order without going through `tools.py`'s
+  on-menu gate; the C# port needs that same single choke point (#14). Applies uniformly to combos,
+  extras, happy hour and resizes. The tool call's own `price` stays in the schema, described as
+  "ignored," purely for backward compatibility, and is only ever used for a debug/warn mismatch log,
+  never for charging. If `price_for` finds no menu record at all, this same branch falls back to the
+  caller-supplied price (never a silent $0, and never a crash on a null/non-numeric one) instead;
+  `app/backend/tests/test_menu_data_completeness.py` asserts every item/size in every real and
+  fixture pack has a matching price, so an on-menu `add` should never actually reach that fallback.
+  Acceptance proof: `test_tool_calling.py::test_add_wrong_tool_price_charges_menu_price` and
+  `UpdateOrderAddRemoveModifyTests.Adding_an_item_with_a_wrong_tool_call_price_is_charged_the_menu_price`.
 
 **#64, decided (decision 3).** Floats do not get the happy-hour price, and they can fill the combo drink slot.
 They are real Sonic menu items (4.3, #72), not a keyword rule.

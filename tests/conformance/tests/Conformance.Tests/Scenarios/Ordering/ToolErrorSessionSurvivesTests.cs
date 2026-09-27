@@ -13,9 +13,11 @@ namespace Conformance.Tests.Scenarios.Ordering;
 /// app/backend/rtmt.py handle them very differently:
 ///
 ///  1. An application-level rejection tools.py itself catches and turns into a graceful
-///     TO_SERVER/TO_BOTH ToolResult (e.g., update_order's zero/negative-price guard) — the model
-///     gets an apology string back as the function_call_output, and the very next tool call on
-///     the same connection succeeds normally.
+///     TO_SERVER/TO_BOTH ToolResult (e.g., update_order's #73 on-menu gate for an off-menu item
+///     name -- #104 removed the old zero/negative-price guard this used to be, since the tool
+///     call's price is no longer validated at all, only ignored) — the model gets an apology
+///     string back as the function_call_output, and the very next tool call on the same
+///     connection succeeds normally.
 ///
 ///  2. A genuine unhandled Python exception inside a tool handler (e.g., a scripted call missing
 ///     a required argument the handler accesses via `args["..."]` with no `.get()` fallback,
@@ -59,12 +61,16 @@ public sealed class ToolErrorSessionSurvivesTests(ConformanceFixture fixture)
         var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
         await using var _ = browser;
 
-        // tools.py::update_order explicitly rejects action=="add" && price<=0.0 with an apology
-        // ToolResult(..., ToolResultDirection.TO_SERVER) rather than raising -- this is the "error
-        // result to the model" the issue describes.
+        // #104: tools.py::update_order no longer rejects action=="add" && price<=0.0 (the tool
+        // call's own price is ignored entirely, never validated -- see
+        // Adding_an_item_with_a_wrong_tool_call_price_is_charged_the_menu_price in
+        // UpdateOrderAddRemoveModifyTests.cs), so this scenario's "graceful application-level
+        // rejection" is now the #73 on-menu gate instead: an off-menu item name still gets an
+        // apology ToolResult(..., ToolResultDirection.TO_SERVER) rather than raising -- this is
+        // the "error result to the model" the issue describes.
         var errored = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "update_order",
-            """{"action":"add","item_name":"Tots","size":"medium","quantity":1,"price":-1.0}""",
+            """{"action":"add","item_name":"Nonexistent Off-Menu Item","size":"medium","quantity":1,"price":2.79}""",
             "call_graceful_error", roundTripIndex, ct, toClient: false);
         Assert.False(string.IsNullOrWhiteSpace(errored.FunctionCallOutputText));
         Assert.Null(errored.ToolResultJson); // TO_SERVER-only: never reaches the browser

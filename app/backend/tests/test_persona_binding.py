@@ -24,8 +24,10 @@ import asyncio
 import os
 import sys
 import unittest
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
+from zoneinfo import ZoneInfo
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 sys.path.append(str(Path(__file__).resolve().parent))
@@ -36,7 +38,7 @@ import default_persona
 import menu_utils
 import tools
 from order_state import order_state_singleton
-from persona_loader import PersonaCatalog
+from persona_loader import Persona, PersonaCatalog
 from prompt_loader import PromptLoader
 from session_manager import SessionManager
 
@@ -332,6 +334,128 @@ class PersonaBusinessRuleIsolationTests(unittest.TestCase):
         self.assertIn("Alpha-hop: one alpha cola coming up", rehydration_a)
         self.assertIn("Beta-runner: one beta root beer coming up", rehydration_b)
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# HAPPY-HOUR BANNER FROM THE BOUND PACK (issue #113): update_order/get_order must append
+# EACH session's own bound persona's `pricing.happyHour.banner`/`announce` -- never the
+# hardcoded default-pack string tools.py used to carry. alpha and beta are checked at the
+# SAME mocked clock instant (via order_state.conformance_hooks.now, not the coarser
+# `order_state.is_happy_hour` patch used elsewhere in this suite) so the difference in
+# outcome can only come from each session's own bound pack, not from a shared window/
+# clock fake. See test_tool_calling.py::HappyHourBannerWordingTests for the default
+# persona's own regression proof (unchanged banner text, same file, not duplicated here).
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# alpha's window is 14:00-16:00 America/Chicago (its persona.json, same hours as the
+# deployment default persona's own window).
+_ALPHA_TZ = ZoneInfo("America/Chicago")
+_IN_ALPHA_WINDOW = datetime(2026, 1, 1, 15, 0, tzinfo=_ALPHA_TZ)
+_OUTSIDE_ALPHA_WINDOW = datetime(2026, 1, 1, 20, 0, tzinfo=_ALPHA_TZ)
+
+
+class HappyHourBannerFromBoundPackTests(unittest.TestCase):
+    """#113 acceptance: test-alpha (inside its window) gets `[ALPHA HAPPY HOUR ACTIVE]`,
+    never the default pack's text; test-beta (`happyHour: null`) never gets a banner,
+    even at the identical instant alpha would announce. A mutation that re-hardcodes the
+    old default-pack string back into tools.py fails every "ALPHA" assertion below; a
+    mutation that ignores `pricing.happyHour: null`/`announce` fails the beta/no-announce
+    ones."""
+
+    def setUp(self):
+        catalog = _load_fixture_catalog()
+        self.alpha = catalog.get("test-alpha")
+        self.beta = catalog.get("test-beta")
+        self._sessions_created: list[str] = []
+        self.addCleanup(self._cleanup_sessions)
+        tools._search_cache.clear()
+
+    def _cleanup_sessions(self):
+        for sid in self._sessions_created:
+            order_state_singleton.delete_session(sid)
+
+    def _new_session(self, persona) -> str:
+        sid = order_state_singleton.create_session(persona=persona)
+        self._sessions_created.append(sid)
+        return sid
+
+    @patch("order_state.conformance_hooks.now", return_value=_IN_ALPHA_WINDOW)
+    def test_alpha_update_order_gets_its_own_banner_never_the_default_packs(self, _mock_now):
+        sid = self._new_session(self.alpha)
+        result = _run(tools.update_order(
+            {"action": "add", "item_name": "Alpha Cola", "size": "small", "quantity": 1, "price": 1.99}, sid
+        ))
+        self.assertIn("[ALPHA HAPPY HOUR ACTIVE]", result.text)
+        self.assertNotIn("slushes and fountain drinks", result.text)
+
+    @patch("order_state.conformance_hooks.now", return_value=_IN_ALPHA_WINDOW)
+    def test_alpha_get_order_also_uses_its_own_bound_pack(self, _mock_now):
+        sid = self._new_session(self.alpha)
+        _run(tools.update_order(
+            {"action": "add", "item_name": "Alpha Cola", "size": "small", "quantity": 1, "price": 1.99}, sid
+        ))
+        result = _run(tools.get_order({}, sid))
+        self.assertIn("[ALPHA HAPPY HOUR ACTIVE]", result.text)
+
+    @patch("order_state.conformance_hooks.now", return_value=_OUTSIDE_ALPHA_WINDOW)
+    def test_alpha_gets_no_banner_outside_its_own_window(self, _mock_now):
+        sid = self._new_session(self.alpha)
+        result = _run(tools.update_order(
+            {"action": "add", "item_name": "Alpha Cola", "size": "small", "quantity": 1, "price": 1.99}, sid
+        ))
+        self.assertNotIn("HAPPY HOUR", result.text)
+
+    @patch("order_state.conformance_hooks.now", return_value=_IN_ALPHA_WINDOW)
+    def test_beta_never_announces_even_at_the_same_instant_alpha_would(self, _mock_now):
+        """test-beta's `pricing.happyHour: null` (decision 5) -- checked at the exact same
+        mocked instant test-alpha announces at above, proving beta's silence is its OWN
+        pack's data, not a coincidence of the clock."""
+        sid = self._new_session(self.beta)
+        result = _run(tools.update_order(
+            {"action": "add", "item_name": "Beta Root Beer", "size": "regular", "quantity": 1, "price": 2.29}, sid
+        ))
+        self.assertNotIn("HAPPY HOUR", result.text)
+        result = _run(tools.get_order({}, sid))
+        self.assertNotIn("HAPPY HOUR", result.text)
+
+    @patch("order_state.conformance_hooks.now", return_value=_IN_ALPHA_WINDOW)
+    def test_alpha_own_price_multiplier_applies_not_a_shared_default(self, _mock_now):
+        """test-alpha's `priceMultiplier` is 0.5 (the default persona's own pack is also 0.5, so
+        this alone wouldn't prove isolation) -- combined with its own `happyHourDiscounted:
+        true` fixture item, this proves the discount actually applied comes from ALPHA's bound
+        persona, via the same per-session `_happy_hour_discount` order_state.py has read since
+        #74 (unchanged by this issue); #113 only changed the banner/announce lookup above."""
+        sid = self._new_session(self.alpha)
+        _run(tools.update_order(
+            {"action": "add", "item_name": "Alpha Cola", "size": "small", "quantity": 1, "price": 1.99}, sid
+        ))
+        summary = order_state_singleton.get_order_summary(sid)
+        self.assertAlmostEqual(summary.total, 1.99 * 0.5, places=2)
+
+    def _alpha_with_announce_off(self) -> Persona:
+        """test-alpha with only `pricing.happyHour.announce` flipped to false: same window,
+        multiplier, banner text and menu. Built in memory so no extra pack is committed."""
+        manifest = self.alpha.manifest
+        happy_hour = manifest.pricing.happyHour.model_copy(update={"announce": False})
+        pricing = manifest.pricing.model_copy(update={"happyHour": happy_hour})
+        return Persona(self.alpha.id, self.alpha.pack_dir, manifest.model_copy(update={"pricing": pricing}))
+
+    @patch("order_state.conformance_hooks.now", return_value=_IN_ALPHA_WINDOW)
+    def test_announce_false_discounts_but_never_shows_the_banner(self, _mock_now):
+        """A pack with happy hour on but `announce: false`, inside its own window: the
+        discount still applies, and neither update_order nor get_order carries the banner."""
+        quiet_alpha = self._alpha_with_announce_off()
+        self.assertTrue(quiet_alpha.manifest.pricing.happyHour.banner)
+        sid = self._new_session(quiet_alpha)
+        result = _run(tools.update_order(
+            {"action": "add", "item_name": "Alpha Cola", "size": "small", "quantity": 1, "price": 1.99}, sid
+        ))
+        self.assertNotIn(quiet_alpha.manifest.pricing.happyHour.banner, result.text)
+        self.assertNotIn("HAPPY HOUR", result.text)
+        result = _run(tools.get_order({}, sid))
+        self.assertNotIn(quiet_alpha.manifest.pricing.happyHour.banner, result.text)
+        self.assertNotIn("HAPPY HOUR", result.text)
+        summary = order_state_singleton.get_order_summary(sid)
+        self.assertAlmostEqual(summary.total, 1.99 * 0.5, places=2)
 
 class NoMidConversationPersonaSwitchTests(unittest.TestCase):
     """Design decision (5.1): no mid-conversation persona switching, ever -- not even
