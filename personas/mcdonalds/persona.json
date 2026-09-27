@@ -1,0 +1,116 @@
+{
+  "$schema": "../persona.schema.json",
+  "schemaVersion": 1,
+  "id": "mcdonalds",
+  "displayName": "McDonald's",
+  "roleName": "team member",
+  "locales": { "default": "en", "supported": ["en", "es", "fr", "ja"] },
+  "store": { "timezone": "America/Chicago" },
+  "voice": { "default": "marin" },
+  "search": { "indexName": "mcdonalds-menu-items", "contentFields": ["description"] },
+
+  "pricing": {
+    "taxRate": "0.08",
+    "happyHour": null
+  },
+
+  "sizes": {
+    "canonical": {
+      "small": "Small",
+      "medium": "Medium",
+      "large": "Large",
+      "regular": "Regular",
+      "standard": "Standard"
+    },
+    "aliases": {
+      "s": "small",
+      "m": "medium",
+      "l": "large",
+      "reg": "regular"
+    },
+    "spokenAs": {},
+    "hidden": ["", "standard", "n/a", "na", "none", "n.a."],
+    "default": null
+  },
+
+  "bundles": {
+    "nameMarkers": ["meal"],
+    "convertStandalone": true,
+    "missingPartText": { "sides": "World Famous Fries or another side", "drinks": "a drink" }
+  },
+
+  "extras": {
+    "allowedBaseCategories": ["burgers", "chicken & fish sandwiches", "mcnuggets & tenders", "meals & combos", "breakfast"],
+    "blockedBaseCategories": ["beverages", "mccafé coffees", "fries & sides", "sweets & treats", "happy meal"],
+    "splitCombinedNames": false
+  },
+
+  "invalidModifiers": {
+    "beverages": ["cheese", "bacon", "patty", "lettuce", "tomato", "onion", "mustard", "ketchup", "pickle"],
+    "mccafé coffees": ["cheese", "bacon", "patty", "lettuce", "tomato", "onion", "mustard", "ketchup", "pickle"],
+    "sweets & treats": ["mustard", "ketchup", "mayo", "pickles", "onions", "lettuce", "cheese", "bacon", "patty"],
+    "fries & sides": ["whipped cream", "chocolate", "vanilla", "strawberry"],
+    "burgers": ["whipped cream", "cherry", "strawberry fruit"]
+  },
+  "machines": { "ice_cream_machine": "down", "fryer": "operational" },
+
+  "models": {
+    "realtime": { "default": "gpt-realtime-2.1", "allowed": ["gpt-realtime-2.1", "gpt-realtime-mini"] },
+    "cascade": { "default": "gpt-5-mini", "allowed": ["gpt-5-mini", "phi-4"] },
+    "local": { "default": "phi-4-mini-local", "allowed": ["phi-4-mini-local"] }
+  },
+
+  "strategies": { "searchQueryRewrite": "meal_numbers" },
+  "features": { "dayparts": false },
+
+  "ui": {
+    "title": "McDonald's Voice Ordering",
+    "theme": {
+      "light": {
+        "primary": "45 100% 51%",
+        "secondary": "0 79% 42%",
+        "background": "0 0% 98%",
+        "foreground": "0 0% 13%",
+        "accents": {
+          "primaryHex": "#FFC72C",
+          "primaryStrong": "#DDA600",
+          "primaryLight": "#FFE199",
+          "primaryTintOnDark": "#FFDD7A",
+          "secondaryHex": "#DA291C",
+          "secondaryStrong": "#B0231A",
+          "secondaryTintOnDark": "#FF6F63",
+          "accent": "#27251F",
+          "accentLight": "#4A473F",
+          "ink": "#292420",
+          "surfaceTint": "#FFF8E1",
+          "surfaceDark": "#1B1B1B",
+          "surfaceDarkAlt": "#292420",
+          "success": "#2E7D32",
+          "neutral": "#8C8C8C"
+        }
+      },
+      "dark": {
+        "primary": "45 100% 55%",
+        "accents": {
+          "primaryTintOnDark": "#FFDD7A",
+          "secondaryTintOnDark": "#FF6F63",
+          "surfaceDark": "#1B1B1B",
+          "surfaceDarkAlt": "#292420"
+        }
+      },
+      "font": { "family": "Nunito Sans", "importUrl": "https://fonts.googleapis.com/css2?family=Nunito+Sans:wght@400;600;700;800;900&display=swap" }
+    },
+    "assets": { "logo": "assets/logo.svg", "favicon": "assets/favicon.ico", "apologyClip": "assets/audio/apology-{lang}.wav" },
+    "strings": {
+      "en": {
+        "app.title": "McDonald's Voice Ordering",
+        "status.notRecordingMessage": "Let's get your order started!",
+        "ticket.kicker": "Order screen",
+        "ticket.title": "Your McDonald's Order",
+        "menu.button": "View McDonald's Menu"
+      }
+    },
+    "hero": { "headline": "McDonald's ordering powered by Azure conversation intelligence", "callouts": [] },
+    "legal": "Disclaimer: This project is a non-commercial demo application created for educational and illustrative purposes only. It is not affiliated with, endorsed, or sponsored by McDonald's Corporation. Any references to McDonald's or use of McDonald's-inspired colors or themes are solely for demonstration and do not represent an official product."
+  }
+}
