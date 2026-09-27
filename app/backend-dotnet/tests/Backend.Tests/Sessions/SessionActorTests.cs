@@ -14,8 +14,10 @@ internal sealed class RecordingProcessor : IPipelineProcessor
     public string PipelineName => "test";
 
     /// <summary>Trivial stub -- this test double exercises SessionActor's mailbox-loop ordering
-    /// only, never the persona/model dispatch seam (see Models/ModelDispatchTests.cs and
-    /// Sessions/RealtimeProcessorTests.cs for that).</summary>
+    /// only, never the persona/model dispatch seam (see Models/ModelDispatchTests.cs for that;
+    /// RealtimeProcessor.ResolveModel is itself a one-line delegation straight to
+    /// ModelDispatch.ResolveRealtimeModel, so ModelDispatchTests.cs IS its coverage -- there is no
+    /// separate Sessions/RealtimeProcessorTests.cs).</summary>
     public Backend.Models.ResolvedModel ResolveModel(Backend.Personas.Persona persona, string? requestedModelId) =>
         new(requestedModelId ?? "test-model", PipelineName, "test-deployment", Reasoning: false);
 
