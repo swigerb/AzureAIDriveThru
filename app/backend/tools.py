@@ -425,7 +425,7 @@ update_order_tool_schema = {
             },
             "price": { 
                 "type": "number", 
-                "description": "Price of a single item to add. Required only for 'add' action. Note: This is the price per individual item, not the total price for the quantity."
+                "description": "Ignored; the server prices from the menu."
             }
         },
         "required": ["action", "item_name", "size", "quantity"],
@@ -530,12 +530,13 @@ async def update_order(args, session_id: str) -> ToolResult:
         if error:
             return ToolResult(error, ToolResultDirection.TO_SERVER)
 
-    # ── Hardened price validation (add only) ──
-    price = args.get("price", 0.0)
-    if args["action"] == "add" and price <= 0.0:
-        logger.warning("Model attempted to add item %s with invalid price $%.2f (rejecting $0 items)", item_name, price)
-        _err = pl.render_error("price_validation_failed") if pl else "I'm sorry, I had a glitch with the pricing for that. Could you say that again?"
-        return ToolResult(_err, ToolResultDirection.TO_SERVER)
+    # ── #104: the tool call's own `price` is no longer validated or trusted here. The unit
+    # price a guest is charged always comes from the resolved menu item's own per-size price
+    # (menu_utils.MenuCatalog.price_for, applied in order_state.handle_order_update -- the single
+    # source of truth for both this realtime path and any direct caller). A model-supplied price
+    # of $0, a negative number, or an arbitrary/stale value can no longer zero out or under/over-
+    # charge a real menu item; it is only ever logged (debug) when it disagrees with the menu
+    # price. See docs/persona-architecture.md section 6.
 
     if args["action"] == "add" and menu.is_extra_item(item_name):
         current_items = order_state_singleton.get_order_items(session_id)
@@ -687,7 +688,11 @@ async def update_order(args, session_id: str) -> ToolResult:
                 delta_text += " (UPSELL HINT: Ask if they'd like to add anything else — maybe a drink, side, or dessert!)"
         logger.debug("Upsell hint for category '%s'", category)
 
-    happy_hour_note = " [HAPPY HOUR ACTIVE: slushes and fountain drinks are half-price; shakes, Blasts and sundaes are full price]" if order_state_singleton.is_happy_hour_for_session(session_id) else ""
+    # #113: the banner text (and whether to announce at all) is this session's OWN bound
+    # persona's `pricing.happyHour.banner`/`announce` -- never a hardcoded string here. See
+    # order_state.OrderState.get_happy_hour_banner_for_session for the single place that's
+    # decided (mirrors is_happy_hour_for_session's per-session lookup just above it).
+    happy_hour_note = order_state_singleton.get_happy_hour_banner_for_session(session_id)
     return ToolResult(delta_text + happy_hour_note, ToolResultDirection.TO_BOTH, client_text=json_order_summary)
 
 
@@ -709,7 +714,9 @@ async def get_order(_args: Any, session_id: str) -> ToolResult:
     logger.info("Retrieving order summary for session %s", session_id)
     readback = order_state_singleton.get_grouped_order_for_readback(session_id)
     json_summary = order_state_singleton.get_order_summary_json(session_id)
-    happy_hour_note = " [HAPPY HOUR ACTIVE: slushes and fountain drinks are half-price; shakes, Blasts and sundaes are full price]" if order_state_singleton.is_happy_hour_for_session(session_id) else ""
+    # #113: same pack-sourced lookup as update_order above -- this session's own bound
+    # persona's banner/announce switch, never a hardcoded string.
+    happy_hour_note = order_state_singleton.get_happy_hour_banner_for_session(session_id)
     return ToolResult(readback + happy_hour_note, ToolResultDirection.TO_BOTH, client_text=json_summary)
 
 

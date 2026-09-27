@@ -99,7 +99,7 @@ public sealed class RealtimeBrowserClient : IAsyncDisposable
 
     public static async Task<RealtimeBrowserClient> ConnectAsync(
         Uri backendBaseUri, bool offerDeflate = false, string? origin = null, string? persona = null,
-        CancellationToken cancellationToken = default)
+        string? model = null, CancellationToken cancellationToken = default)
     {
         using var http = new HttpClient();
         var tokenResponse = await http.GetFromJsonAsyncSafe(new Uri(backendBaseUri, "/api/auth/session"), cancellationToken)
@@ -130,6 +130,13 @@ public sealed class RealtimeBrowserClient : IAsyncDisposable
         if (persona is not null)
         {
             query += $"&persona={Uri.EscapeDataString(persona)}";
+        }
+        // Rick's PR #106 review item 2: an explicit `model` query param binds the session to
+        // that realtime model id (mirrors `persona` immediately above) -- omitted (the default
+        // null) matches today's behaviour exactly, binding to the persona's own realtime default.
+        if (model is not null)
+        {
+            query += $"&model={Uri.EscapeDataString(model)}";
         }
         var wsUri = new Uri($"ws://{backendBaseUri.Host}:{backendBaseUri.Port}/realtime?{query}");
         await clientSocket.ConnectAsync(wsUri, cancellationToken).ConfigureAwait(false);

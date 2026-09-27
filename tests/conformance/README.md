@@ -281,17 +281,17 @@ error" at all — must still pass every scenario that uses this overload. Only g
 errors (anything above the declared ceiling) fail a scenario. The zero-arg `RunAsync(body)` overload
 still asserts a hard `0` ceiling, i.e. this scenario must cause no new backend errors at all.
 
-### Reasoning contract (PR #42 review item 10)
+### Reasoning contract (PR #42 review item 10, updated PR #106 review round 3)
 
 Whether `reasoning` is sent upstream at all (`RTMiddleTier.reasoning_enabled()`/`_reasoning_model()`
-in `app/backend/rtmt.py`) is decided by three independent inputs, checked in this precedence order —
-a correct backend in another language must reproduce all three, in this order:
+in `app/backend/rtmt.py`) is decided by four independent inputs, checked in this precedence order —
+a correct backend in another language must reproduce all four, in this order:
 
 1. **A runtime rejection always wins, for the rest of the process.** If the upstream ever rejects a
    session.update because of `reasoning` (the fallback path — see the wire-ordering section above),
    an in-memory latch (`self._reasoning_rejected`, an instance field on the single per-process
    `RTMiddleTier`) flips to `True` and `reasoning` is never sent again on that connection *or any
-   later connection in the same process*, regardless of what the other two inputs say. This is
+   later connection in the same process*, regardless of what the other three inputs say. This is
    intentionally process-wide, not per-connection: a deployment that has already proven it rejects
    `reasoning` once shouldn't keep re-triggering the fallback path for every new browser tab.
 2. **The explicit `reasoning_model` switch, tri-state.** `AZURE_OPENAI_REALTIME_REASONING_MODEL`
@@ -306,8 +306,19 @@ a correct backend in another language must reproduce all three, in this order:
      since it wasn't one of the recognised spellings above.
 
    `None` is *not* the same as `False`: an explicit `false` and an unset/`"auto"` value are
-   different tri-state members and are asserted separately (see below).
-3. **The deployment-name check, `auto`'s default only.** `deployment_supports_reasoning` matches the
+   different tri-state members and are asserted separately (see below). **This switch outranks the
+   catalog (input 3 below):** it records what THIS environment allows, while the catalog records
+   what a model generically supports, so an explicit operator choice must win over it either way
+   (PR #106 review round 3, Rick — round 2 had briefly let the catalog override an explicit `false`,
+   which was wrong).
+3. **The bound model's catalog `reasoning` flag, `auto`'s first fallback.** If the session is bound
+   to a specific model (`order_state_singleton.get_model_reasoning(session_id)`, sourced from
+   `config.yaml`'s `models.catalog`/`processors.py::ResolvedModel.reasoning`), that model's own
+   static `reasoning` flag is used — but only when the switch (input 2) is `auto`/unset. This lets a
+   persona pick a non-reasoning-capable model (e.g. `gpt-realtime-mini`, `reasoning: false`) even on
+   a deployment name the regex below would otherwise call reasoning-capable, and vice versa.
+4. **The deployment-name check, `auto`'s last-resort default.** Reached only when the switch is
+   `auto` AND no model is bound yet. `deployment_supports_reasoning` matches the
    deployment name against `_NON_REASONING_DEPLOYMENT_RE`, copied here **verbatim** from
    `app/backend/rtmt.py` so this doesn't silently drift from the real regex:
 
@@ -325,7 +336,7 @@ a correct backend in another language must reproduce all three, in this order:
    is assumed reasoning-capable, so an unrecognised name fails open into the fallback path (input 1)
    rather than silently omitting a feature it might actually support.
 
-**Inputs 1–3 above (`_reasoning_model()`) only decide whether reasoning-model-only fields *may* be
+**Inputs 1–4 above (`_reasoning_model()`) only decide whether reasoning-model-only fields *may* be
 sent at all — they are not sufficient on their own.** `reasoning_enabled()`, the actual gate
 `_build_session` checks before adding the `reasoning` key, additionally requires
 `normalize_reasoning_effort(self.reasoning_effort) is not None`:
@@ -338,26 +349,44 @@ def reasoning_enabled(self) -> bool:
 So even on a deployment/switch combination where `_reasoning_model()` is `True`, `reasoning` is
 still omitted entirely if `AZURE_OPENAI_REALTIME_REASONING_EFFORT` / `model.reasoning_effort`
 normalizes to `None` — i.e. it is unset, empty, or one of `_REASONING_DISABLED_VALUES`
-(`""`, `"off"`, `"disabled"`, `"false"`, `"null"`). This is a 4th, independent precondition on top
-of the three-input precedence above, not a fourth member of that precedence chain: it doesn't
-interact with the rejection latch or the deployment-name default at all, it just short-circuits
-`reasoning_enabled()` to `False` regardless of what they decide. `config.yaml`'s own default
-(`reasoning_effort: "low"`) means every existing fixture below already has a non-`None` effort, so
-this precondition isn't independently exercised by any dedicated fixture yet — noted here rather
-than silently assumed.
+(`""`, `"off"`, `"disabled"`, `"false"`, `"null"`). This is a 5th, independent precondition on top
+of the four-input precedence above, not a fifth member of that precedence chain: it doesn't
+interact with the rejection latch, the catalog, or the deployment-name default at all, it just
+short-circuits `reasoning_enabled()` to `False` regardless of what they decide. `config.yaml`'s own
+default (`reasoning_effort: "low"`) means every existing fixture below already has a non-`None`
+effort, so this precondition isn't independently exercised by any dedicated fixture yet — noted here
+rather than silently assumed.
 
-All four combinations input 2/3 can produce are covered, each pinned on its own dedicated fixture in
+All name/switch combinations below are covered, each pinned on its own dedicated fixture in
 `ReasoningDeploymentFixtures.cs` (a distinct deployment name and/or env var forces its own backend
 process, since `AZURE_OPENAI_REALTIME_DEPLOYMENT`/`AZURE_OPENAI_REALTIME_REASONING_MODEL` are read
-once at Python module-import time):
+once at Python module-import time). Every fixture below binds the session to the default persona's
+own realtime default model (`gpt-realtime-2.1`, catalog `reasoning: true`) regardless of the deployment name
+override — the deployment name only changes what the fake upstream's rejection behavior does, not
+which model the session binds to — so input 3 (the catalog) is held constant at `true` in every row
+here; see `ModelSelectionConformanceTests.Reasoning_is_sent_only_for_a_catalog_reasoning_model_not_the_other_selectable_one`
+for the row that varies the catalog itself by binding a different model (`gpt-realtime-mini`,
+`reasoning: false`), with the switch left on `auto`:
 
 | Deployment name | `reasoning_model` | Expected | Fixture |
 |---|---|---|---|
 | `gpt-realtime-2.1-conformance` (default) | `auto` (unset) | sent | `ConformanceFixture` (Default collection) |
 | `gpt-realtime-2.1-dz-conformance` | `auto` (unset) | sent | `Gpt21DzConformanceFixture` |
-| `gpt-realtime-1.5-conformance` | `auto` (unset) | **not** sent | `Gpt15ConformanceFixture` |
+| `gpt-realtime-1.5-conformance` | `false` (forced) | **not** sent | `Gpt15ConformanceFixture` |
 | `gpt-realtime-1.5-conformance` | `true` (forced) | sent (then rejected upstream → exactly one fallback) | `Gpt15ForcedReasoningConformanceFixture` |
 | `gpt-realtime-2.1-conformance` (default) | `false` (forced) | **not** sent | `Gpt21ReasoningSwitchOffConformanceFixture` |
+
+`Gpt15ConformanceFixture`'s `reasoning_model` changed from `auto` (unset) to `false` (forced) in PR
+#106 review round 3 (Rick): with `auto`, this fixture used to prove the pure name heuristic (input
+4) suppresses reasoning for a `-1.5` deployment on its own; it now instead proves the explicit
+switch (input 2) suppresses reasoning for that same deployment even though the *bound model's*
+catalog entry (`gpt-realtime-2.1`, input 3) says `reasoning: true` — modeling how an operator
+actually runs a 1.5 deployment (`AZURE_OPENAI_REALTIME_REASONING_MODEL=false`), which is the
+regression this round's fix restores. The pure name-heuristic path for a `-1.5`-shaped deployment
+name is still exercised directly at the unit level: `deployment_supports_reasoning`/
+`_NON_REASONING_DEPLOYMENT_RE` is unit-tested in `app/backend/tests/test_session_bootstrap.py`
+(`test_deployment_name_check`, `test_data_zone_deployment_name_is_a_reasoning_deployment`), which
+assert `-1.5`/`-1.5-dz` names are not reasoning-capable independent of any conformance fixture.
 
 The last row is the tri-state's third member and completes the coverage: the explicit switch must
 beat the name-based default in *both* directions, not just the "force reasoning on for a
@@ -1107,19 +1136,26 @@ Consequences for how this suite is written:
   no `precision: 2` (or any other precision-based money assertion) anywhere under
   `Scenarios/Ordering/`.
 
-### Tool-argument price trust (#28 N23)
+### Tool-call price is ignored; the menu is the source of truth (#104)
 
-`SpokenTotalTests`'s two golden spoken-total cases for "Cherry Limeade medium" use `2.99`/`3.79`
-as the unit price, while `golden-order-pricing.json`'s menu prices that size at `2.89`. This is
-deliberate, not a stale fixture: it is this suite's explicit contract rule that **the backend
-trusts whatever unit price the `update_order` tool call's own argument carries and never
-re-prices, re-validates, or cross-checks it against its own menu lookup.** A scenario asserting a
-spoken total is therefore free to pick any unit price for its `update_order` fixture — including
-one that deliberately does not match the menu — specifically to prove the total is derived from
-the tool-call argument, not silently recomputed server-side from a menu re-lookup a real customer
-order would never trigger. Do not "fix" a scenario's price to match the menu; if a genuinely
-menu-matching golden case is later wanted for its own reasons, add a new case rather than
-resolving this apparent mismatch in the existing one.
+`update_order`'s `add` action always charges the resolved menu item's own per-size price
+(`menu_utils.MenuCatalog.price_for`, applied once in `order_state.py::handle_order_update`: the
+single place this rule is enforced for both the realtime tool-call path and any caller that builds
+an order directly). The tool call's own `price` argument is **never** trusted or charged: it is
+accepted (kept in the tool schema, described there as "ignored") purely so a model that still
+sends one doesn't get rejected, and is only ever used for a `logger.debug`/`logger.warning`
+comparison against the real menu price, never for pricing. This supersedes the old #28 N23 rule
+this section used to document (the backend used to trust the tool call's price verbatim and never
+cross-checked it against the menu); every `update_order` fixture across this suite (and
+`golden-order-pricing.json`'s `steps[].price`/`combos.items[].price` fields) is now the real
+per-size menu price, so a scenario's expected total can be computed directly from
+`golden-order-pricing.json`/`personas/<id>/menu/menuItems.json` rather than from whatever the
+fixture happens to pass on the wire. `ComboAbsorptionTests.cs`'s combo prices, `HappyHourPricingTests.cs`'s
+drink price, and `UpdateOrderAddRemoveModifyTests.Adding_an_item_with_a_wrong_tool_call_price_is_charged_the_menu_price`
+(a `[Theory]` over a zero, negative, and wildly-too-high tool-call price, all charged the real
+menu price) are this suite's black-box proof of the rule; `app/backend/tests/test_tool_calling.py::test_add_wrong_tool_price_charges_menu_price`
+is its Python-side equivalent. A mutation that reverts to reading `price` straight through in
+`order_state.py`'s `add` branch (or re-adds `tools.py`'s old `price <= 0.0` rejection) fails both.
 
 ### On-menu validation gate (#73, PR #100 review item 1 and 2)
 
@@ -1755,8 +1791,9 @@ The fix has two layers, deliberately kept as defense-in-depth rather than either
    `args["item_name"]`. `update_order` now validates its full required-argument list
    (`action`, `item_name`, `size`, `quantity`) up front and returns the same kind of graceful,
    `TO_SERVER`-only `ToolResult` apology used by its other application-level rejections (the
-   zero/negative-price guard, extras rules, per-item/-order limits) — instead of ever reaching a
-   raise in the first place.
+   #73 on-menu gate, extras rules, per-item/-order limits; #104 removed the old zero/negative-price
+   guard this used to include, since the tool call's price is no longer validated at all) instead
+   of ever reaching a raise in the first place.
 
 These two layers are complementary, not redundant: layer 2 gives `update_order`'s specific known
 failure mode a precise, immediate, well-tested response; layer 1 is the safety net for *any* tool
@@ -1803,14 +1840,20 @@ survives, just without the extras):
    torn down between the exception and the refresh attempt), the refresh is skipped — no exception,
    no client push — never at the cost of the primary apology already having reached the server.
    `ToolFailureCapAndTicketRefreshTests.A_genuine_tool_exception_refreshes_the_guests_ticket` is the
-   black-box proof: it scripts `update_order` with a non-numeric `price` (`"cheap"`, present but the
-   wrong type — sails past `tools.py`'s layer-2 *presence* validation, then raises a genuine
-   `TypeError` at the `price <= 0.0` comparison, the only vector that reaches layer 1 through
-   `update_order`'s normal front door black-box; a missing-argument script like the original #36 repro
-   never reaches layer 1 at all, because layer 2 already turns it into a graceful non-raising
-   `ToolResult` — see the layering discussion above), then asserts a `get_order`-tagged
-   `extension.middle_tier_tool_response` arrives at the browser, distinct from (and not to be confused
-   with) the missing `update_order`-tagged one.
+   black-box proof: it scripts `update_order` with a string `quantity` (`"two"`, present but the
+   wrong type -- sails past `tools.py`'s layer-2 *presence* validation, then raises a genuine
+   Python `TypeError` at `tools.py`'s per-item quantity-limit check (`new_item_qty = existing_qty +
+   quantity`, an `int + str`), before the whole-order limit sum is ever reached), the only vector
+   that reaches layer 1 through `update_order`'s normal front door black-box; a missing-argument
+   script like the original #36 repro never reaches layer 1 at all, because layer 2 already turns
+   it into a graceful non-raising `ToolResult` -- see the layering discussion above. (Rick's #104
+   review, PR #107: this scenario used to script a non-numeric `price` (`"cheap"`), which raised
+   `decimal.InvalidOperation` inside `order_state.py`'s menu-vs-tool-call comparison. #104 made a
+   non-numeric tool-call `price` silently ignored rather than compared at all (never a crash), so
+   the scenario moved to a string `quantity` instead, still a present-but-wrong-type argument that
+   sails past layer 2's presence check and raises inside the tool handler.) It then asserts a
+   `get_order`-tagged `extension.middle_tier_tool_response` arrives at the browser, distinct from
+   (and not to be confused with) the missing `update_order`-tagged one.
 2. **Consecutive-failure cap.** A per-connection `_ToolFailureTracker` counts **consecutive failed
    tool-call rounds since the last guest turn** — not consecutive failed *calls*, and not reset by
    tool success (see the round-2 update below; text above described an earlier, superseded design).
@@ -1823,7 +1866,7 @@ survives, just without the extras):
    that (same streak, still no guest turn) goes back to sending nothing at all, so the apology itself
    can't restart an unbounded loop.
    `ToolFailureCapAndTicketRefreshTests.Consecutive_tool_exceptions_suppress_the_auto_continue_at_the_cap`
-   is the black-box proof: two consecutive `price:"cheap"` failures (the first's auto-continue must
+   is the black-box proof: two consecutive `quantity:"two"` failures (the first's auto-continue must
    still fire, driving the second automatically with no browser action; the second is the cap-th and
    must not auto-continue a third). Because nothing else is queued on the fake, an erroneous third
    auto-continue would fall through to `ResponseScript.Default` (plain audio, no tool call) — which,
@@ -1920,11 +1963,15 @@ different directions, each asserting the same three things: a `function_call_out
 server, the session survives (a further round trip / tool call still works), and no stray
 `extension.middle_tier_tool_response` for the failed call reaches the browser.
 
-1. **Non-numeric `price`** (`update_order(price:"cheap")`) — a genuine exception *inside* the tool
+1. **String `quantity`** (`update_order(quantity:"two")`): a genuine exception *inside* the tool
    handler, after `tools.py`'s own layer-2 presence validation has already passed. This is
    `ToolFailureCapAndTicketRefreshTests.A_genuine_tool_exception_refreshes_the_guests_ticket`,
    already added and mutation-verified as part of S2 above (S2 and S3 share this one scenario —
-   deliberately not duplicated).
+   deliberately not duplicated). (Rick's #104 review, PR #107: this used to be a non-numeric
+   `price`; #104 made a non-numeric tool-call `price` silently ignored rather than compared, so the
+   scenario moved to a string `quantity`, still present-but-wrong-typed, still raising a `TypeError`
+   inside the tool handler before layer 1's `except Exception` net (see the class doc comment on
+   `ToolFailureCapAndTicketRefreshTests` for the exact line.)
 2. **Malformed (non-JSON) `arguments`** (`"{not json"`) — the *other* way into layer 1: rtmt.py's
    `args = json.loads(item["arguments"])` is itself the first line inside the `try` block, before
    `tool.target(...)` is ever called, so a malformed argument string raises

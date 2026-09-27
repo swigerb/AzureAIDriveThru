@@ -90,6 +90,22 @@ public static class RepoPaths
         Path.Combine(repoRoot, "tests", "conformance", "testdata", "golden-menu-categories.json");
 
     /// <summary>
+    /// Rick's PR #108 second review: per-pack smoke expectations move OUT of shared C# (which must
+    /// carry no brand-specific literals -- e.g. no "sonic", no greeting text -- so a data-only pack
+    /// PR like #111/#112 can add its own persona without touching this repo's shared test code)
+    /// and into one small JSON file per persona, alongside the pack itself rather than inside it
+    /// (this data describes what the SMOKE TEST expects to see, not what the persona declares about
+    /// itself -- keeping it out of personas/&lt;id&gt;/ avoids a test-only file inside a pack a
+    /// future real-world sync process might treat as authoritative pack content).
+    /// </summary>
+    public static string PersonaSmokeDataDirectory(string repoRoot) =>
+        Path.Combine(repoRoot, "tests", "conformance", "testdata", "personas");
+
+    /// <summary>The one smoke-expectations file for a single persona id -- see <see cref="PersonaSmokeDataDirectory"/>.</summary>
+    public static string PersonaSmokeDataPath(string repoRoot, string personaId) =>
+        Path.Combine(PersonaSmokeDataDirectory(repoRoot), personaId, "smoke.json");
+
+    /// <summary>
     /// app/backend/static is gitignored — populated only by `npm run build` in app/frontend
     /// (vite's outDir points there). aiohttp's `add_static` raises at app-creation time if this
     /// directory doesn't exist, so the Python backend fails immediately on startup without it.
