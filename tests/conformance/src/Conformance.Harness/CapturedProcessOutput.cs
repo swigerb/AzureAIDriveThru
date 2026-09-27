@@ -39,6 +39,29 @@ public sealed class CapturedProcessOutput
     // ever going to arrive. DateTimeOffset.MinValue (never appended) counts as "quiet forever".
     private DateTimeOffset _lastAppendUtc = DateTimeOffset.MinValue;
 
+    /// <summary>
+    /// #103: internal (same <c>InternalsVisibleTo</c>-backed visibility as <see cref="Append"/>,
+    /// see that member's doc comment) so <c>CapturedProcessOutputWaitTests</c> can assert
+    /// <see cref="WaitForOutputQuiescenceAsync"/>'s completion time against the *exact* instant
+    /// this class itself recorded the last append, instead of re-deriving a proxy for that
+    /// instant via its own independent <c>Stopwatch</c> read. Mixing a <c>Stopwatch</c> (used by
+    /// the test) with the <c>DateTimeOffset.UtcNow</c> this class uses internally for arming
+    /// meant the two clocks were read at genuinely different instants -- ordinarily a negligible
+    /// gap, but one a scheduler/GC pause under CI load could stretch past the test's 30ms margin,
+    /// making it fail even though nothing was actually wrong. Comparing against this exact
+    /// timestamp instead removes that gap (and the margin it needed) entirely.
+    /// </summary>
+    internal DateTimeOffset LastAppendUtc
+    {
+        get
+        {
+            lock (_signalGate)
+            {
+                return _lastAppendUtc;
+            }
+        }
+    }
+
     public void Attach(Process process)
     {
         process.OutputDataReceived += (_, e) => Append("OUT", e.Data);
