@@ -54,10 +54,10 @@ public sealed class CascadeConformanceTests(CascadeConformanceFixture fixture)
         // realtime would either time out waiting for extension.session_metadata below (realtime's
         // own handshake needs a real upstream WS session.created round trip cascade never sends)
         // or, if the fake realtime upstream happened to answer anyway, report pipeline="realtime".
-        await using var browser = await CascadeScenarioHelpers.ConnectAsync(fixture, "gpt-5-mini", ct);
+        var connection = await CascadeScenarioHelpers.ConnectPastGreetingAsync(fixture, fixture.Chat, "gpt-5-mini", ct);
+        await using var browser = connection.Browser;
 
-        var metadata = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.session_metadata", FrameTimeout, ct);
+        var metadata = browser.ReceivedFrames.Snapshot().FirstOrDefault(f => f.Type == "extension.session_metadata");
         Assert.True(metadata is not null, $"Expected extension.session_metadata within {FrameTimeout}.");
 
         Assert.Equal("sonic", metadata!.Json.GetProperty("persona").GetString());
@@ -69,9 +69,8 @@ public sealed class CascadeConformanceTests(CascadeConformanceFixture fixture)
     public Task Cascade_tool_calling_round_trip_reaches_get_order_and_returns_structured_json_to_the_client() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
-        await using var browser = await CascadeScenarioHelpers.ConnectAsync(fixture, "gpt-5-mini", ct);
-        var metadata = await browser.ReceivedFrames.WaitForAsync(f => f.Type == "extension.session_metadata", FrameTimeout, ct);
-        Assert.True(metadata is not null);
+        var connection = await CascadeScenarioHelpers.ConnectPastGreetingAsync(fixture, fixture.Chat, "gpt-5-mini", ct);
+        await using var browser = connection.Browser;
 
         // Round 1: the model calls get_order (a tool that -- like update_order/search -- takes
         // `session_id` positionally, see cascade_processor.py::_execute_tool_call's own
@@ -88,7 +87,8 @@ public sealed class CascadeConformanceTests(CascadeConformanceFixture fixture)
         // the exact same event/shape (previous_item_id/tool_name/tool_result), never a
         // cascade-specific alternative, so the frontend needs no changes to render it.
         var toolResponse = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.middle_tier_tool_response" &&
+            f => f.Sequence > connection.GreetingWatermark &&
+                 f.Type == "extension.middle_tier_tool_response" &&
                  f.Json.TryGetProperty("tool_name", out var name) && name.GetString() == "get_order",
             FrameTimeout, ct);
         Assert.True(toolResponse is not null, $"Expected an extension.middle_tier_tool_response(get_order) within {FrameTimeout}.");
@@ -96,8 +96,11 @@ public sealed class CascadeConformanceTests(CascadeConformanceFixture fixture)
         var orderSummaryJson = toolResponse!.Json.GetProperty("tool_result").GetString()!;
         Assert.Equal(0, OrderScenarioHelpers.GetOrderItemCount(orderSummaryJson));
 
+        // Watermarked past the greeting's own turn -- WaitForAsync (Conformance.Fakes.FrameLog)
+        // always scans from the very first recorded frame, so a content-agnostic type-only
+        // predicate would otherwise match the greeting's own response.audio_transcript.delta.
         var finalAnswer = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "response.audio_transcript.delta", FrameTimeout, ct);
+            f => f.Sequence > connection.GreetingWatermark && f.Type == "response.audio_transcript.delta", FrameTimeout, ct);
         Assert.True(finalAnswer is not null, "Expected the model's final answer as response.audio_transcript.delta.");
         Assert.Equal("Your order is currently empty.", finalAnswer!.Json.GetProperty("delta").GetString());
 
@@ -105,7 +108,8 @@ public sealed class CascadeConformanceTests(CascadeConformanceFixture fixture)
         // FakeRealtimeUpstreamServer.BaseUri the realtime pipeline's WS points at) with the final
         // answer text, and streamed at least one audio.delta chunk back -- the same client-visible
         // audio-streaming contract the realtime pipeline uses.
-        var audioDelta = await browser.ReceivedFrames.WaitForAsync(f => f.Type == "response.audio.delta", FrameTimeout, ct);
+        var audioDelta = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Sequence > connection.GreetingWatermark && f.Type == "response.audio.delta", FrameTimeout, ct);
         Assert.True(audioDelta is not null, "Expected at least one response.audio.delta chunk from cascade TTS.");
         Assert.Contains("Your order is currently empty.", fixture.Realtime.TtsRequestInputs);
     });
@@ -114,8 +118,8 @@ public sealed class CascadeConformanceTests(CascadeConformanceFixture fixture)
     public Task Cascade_update_order_pricing_matches_the_same_menu_and_tax_math_as_realtime() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
-        await using var browser = await CascadeScenarioHelpers.ConnectAsync(fixture, "gpt-5-mini", ct);
-        await browser.ReceivedFrames.WaitForAsync(f => f.Type == "extension.session_metadata", FrameTimeout, ct);
+        var connection = await CascadeScenarioHelpers.ConnectPastGreetingAsync(fixture, fixture.Chat, "gpt-5-mini", ct);
+        await using var browser = connection.Browser;
 
         // "Tots"/medium is the real personas/sonic/menu/menuItems.json price (2.79) the golden
         // pricing dataset (tests/conformance/testdata/golden-order-pricing.json) already asserts
@@ -130,7 +134,8 @@ public sealed class CascadeConformanceTests(CascadeConformanceFixture fixture)
         await CascadeScenarioHelpers.SendGuestTurnAsync(browser, ct);
 
         var toolResponse = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.middle_tier_tool_response" &&
+            f => f.Sequence > connection.GreetingWatermark &&
+                 f.Type == "extension.middle_tier_tool_response" &&
                  f.Json.TryGetProperty("tool_name", out var name) && name.GetString() == "update_order",
             FrameTimeout, ct);
         Assert.True(toolResponse is not null, $"Expected an extension.middle_tier_tool_response(update_order) within {FrameTimeout}.");
@@ -146,8 +151,8 @@ public sealed class CascadeConformanceTests(CascadeConformanceFixture fixture)
     public Task Cascade_not_on_menu_rejection_matches_realtimes_structured_shape_in_the_tool_message_fed_back_to_the_model() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
-        await using var browser = await CascadeScenarioHelpers.ConnectAsync(fixture, "gpt-5-mini", ct);
-        await browser.ReceivedFrames.WaitForAsync(f => f.Type == "extension.session_metadata", FrameTimeout, ct);
+        var connection = await CascadeScenarioHelpers.ConnectPastGreetingAsync(fixture, fixture.Chat, "gpt-5-mini", ct);
+        await using var browser = connection.Browser;
 
         const string offMenuItem = "Unicorn Frappuccino";
         var requestWatermark = fixture.Chat.Requests.Count;
@@ -166,7 +171,8 @@ public sealed class CascadeConformanceTests(CascadeConformanceFixture fixture)
 
         await CascadeScenarioHelpers.SendGuestTurnAsync(browser, ct);
 
-        await browser.ReceivedFrames.WaitForAsync(f => f.Type == "response.done", FrameTimeout, ct);
+        await browser.ReceivedFrames.WaitForAsync(
+            f => f.Sequence > connection.GreetingWatermark && f.Type == "response.done", FrameTimeout, ct);
 
         var secondRequest = fixture.Chat.Requests.Skip(requestWatermark).Skip(1).FirstOrDefault();
         Assert.True(secondRequest is not null, "Expected a second /chat/completions request carrying the tool result.");
@@ -183,8 +189,145 @@ public sealed class CascadeConformanceTests(CascadeConformanceFixture fixture)
         // Belt-and-braces, mirroring SearchToolTests's own "never notifies the browser" check:
         // no extension.middle_tier_tool_response for update_order ever reached the client.
         var anyToolResponse = browser.ReceivedFrames.Snapshot().Any(f =>
+            f.Sequence > connection.GreetingWatermark &&
             f.Type == "extension.middle_tier_tool_response" &&
             f.Json.TryGetProperty("tool_name", out var toolName) && toolName.GetString() == "update_order");
         Assert.False(anyToolResponse, "A not_on_menu rejection must never emit extension.middle_tier_tool_response.");
+    });
+
+    // The three rows below cover Rick's #118 review item 5's demo-scope cascade turn-taking
+    // parity: greeting on connect, barge-in cancellation, and the 429 rate-limit notice path --
+    // see cascade_processor.py's own docstring / _send_greeting / _cancel_current_turn /
+    // _with_rate_limit_retry for the implementation each of these proves end to end. Resume,
+    // nudge, and echo suppression are explicitly deferred (design 7.1) and have no row here.
+
+    [Fact]
+    public Task Cascade_sends_a_greeting_automatically_on_connect() => fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+
+        // Unlike every other row in this file, no SendGuestTurnAsync is sent at all -- the
+        // greeting must fire purely off the connection itself (_run_session spawns
+        // _start_greeting before the WS message loop even starts reading), through the exact
+        // same chat-tool-loop + TTS path (_run_turn_and_speak) a real guest turn uses.
+        fixture.Chat.EnqueueMessage(FinalMessage("Welcome to the drive-thru! What can I get started for you today?"));
+
+        await using var browser = await CascadeScenarioHelpers.ConnectAsync(fixture, "gpt-5-mini", ct);
+        var metadata = await browser.ReceivedFrames.WaitForAsync(f => f.Type == "extension.session_metadata", FrameTimeout, ct);
+        Assert.True(metadata is not null, "Expected extension.session_metadata before the greeting.");
+
+        var greetingAnswer = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "response.audio_transcript.delta", FrameTimeout, ct);
+        Assert.True(greetingAnswer is not null, "Expected the greeting's own response.audio_transcript.delta.");
+        Assert.Equal("Welcome to the drive-thru! What can I get started for you today?",
+            greetingAnswer!.Json.GetProperty("delta").GetString());
+
+        var audioDelta = await browser.ReceivedFrames.WaitForAsync(f => f.Type == "response.audio.delta", FrameTimeout, ct);
+        Assert.True(audioDelta is not null, "Expected at least one response.audio.delta chunk for the spoken greeting.");
+        Assert.Contains("Welcome to the drive-thru! What can I get started for you today?", fixture.Realtime.TtsRequestInputs);
+
+        // The greeting is fed as a plain UserMessage into the SAME chat-completions call a real
+        // guest turn uses -- proven here by the very first /chat/completions request the fake
+        // received carrying no tool-role/assistant history yet (just the system + greeting-
+        // instruction messages), rather than some greeting-specific bypass.
+        Assert.True(fixture.Chat.Requests.Count >= 1, "Expected the greeting to reach /chat/completions.");
+    });
+
+    [Fact]
+    public Task Cascade_barge_in_cancels_the_in_flight_turn_before_it_speaks() => fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+
+        // The greeting's own turn must resolve first so it can't be mistaken for the "in-flight
+        // turn" this scenario cancels -- same ordering precaution UpdateOrderToolCallTests /
+        // RateLimitGuestSpeechCancellationTests use for the realtime pipeline's own greeting.
+        var connection = await CascadeScenarioHelpers.ConnectPastGreetingAsync(fixture, fixture.Chat, "gpt-5-mini", ct);
+        await using var browser = connection.Browser;
+
+        var requestWatermark = fixture.Chat.Requests.Count;
+
+        // A deliberately slow chat completion for the FIRST guest turn -- comfortably longer
+        // than the polling window below gives us to observe the request landed and still send a
+        // second speech burst before it would otherwise resolve.
+        fixture.Chat.ResponseDelay = TimeSpan.FromSeconds(3);
+        fixture.Chat.EnqueueMessage(FinalMessage("You should never hear this -- the turn gets cancelled."));
+        fixture.Realtime.NextTranscript = "I'll get a medium tots.";
+        await CascadeScenarioHelpers.SendGuestTurnAsync(browser, ct);
+
+        // Poll for the slow request to actually land at the fake (proving the first turn is
+        // genuinely in flight, blocked on the chat-completions response) before barging in --
+        // otherwise a second speech burst sent too early would just look like ordinary silence
+        // to _TurnDetector, proving nothing about cancellation.
+        var pollDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (fixture.Chat.Requests.Count <= requestWatermark && DateTime.UtcNow < pollDeadline)
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(25), ct);
+        }
+        Assert.True(fixture.Chat.Requests.Count > requestWatermark, "Expected the first turn's /chat/completions request to land.");
+
+        // Barge-in: a second speech_started arrives while the first turn is still blocked on its
+        // (slow, scripted) chat completion. _handle_client_message's speech_started branch must
+        // cancel the first turn's background task before it can ever reach _speak.
+        fixture.Chat.ResponseDelay = TimeSpan.Zero;
+        fixture.Chat.EnqueueMessage(FinalMessage("Barge-in answer."));
+        fixture.Realtime.NextTranscript = "Actually, never mind.";
+        await CascadeScenarioHelpers.SendGuestTurnAsync(browser, ct);
+
+        var secondAnswer = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Sequence > connection.GreetingWatermark &&
+                 f.Type == "response.audio_transcript.delta" && f.Json.GetProperty("delta").GetString() == "Barge-in answer.",
+            FrameTimeout, ct);
+        Assert.True(secondAnswer is not null, "Expected the second (barge-in) turn's own final answer.");
+
+        // The cancelled first turn's answer must never reach the client at all -- not before,
+        // not after the barge-in turn's own answer.
+        var firstTurnAnswer = browser.ReceivedFrames.Snapshot().Any(f =>
+            f.Sequence > connection.GreetingWatermark &&
+            f.Type == "response.audio_transcript.delta" &&
+            f.Json.GetProperty("delta").GetString() == "You should never hear this -- the turn gets cancelled.");
+        Assert.False(firstTurnAnswer, "A barged-in-on turn must never reach _speak/response.audio_transcript.delta.");
+    });
+
+    [Fact]
+    public Task Cascade_a_429_from_chat_completion_notifies_the_client_then_completes_once_it_resolves() => fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var connection = await CascadeScenarioHelpers.ConnectPastGreetingAsync(fixture, fixture.Chat, "gpt-5-mini", ct);
+        await using var browser = connection.Browser;
+
+        // Same ladder shape as RateLimitRetryTimingTests' own
+        // Ladder_runs_silent_then_two_notifications_then_gives_up, adapted for cascade's
+        // REST-call-based 429s: attempt 0 fails silently (no extension.rate_limited at all),
+        // attempt 1 fails and notifies {attempt:1} (not final), then attempt 2 succeeds and the
+        // turn completes normally -- proving a 429 from chat/STT/TTS goes through the SAME
+        // extension.rate_limited notice path the realtime pipeline's own RateLimitRecovery uses,
+        // without needing to also prove exhaustion (already covered by the Python unit suite's
+        // own WithRateLimitRetryTests.test_exhausted_retries_send_the_final_notice_and_raise).
+        fixture.Chat.EnqueueErrorStatus(429);
+        fixture.Chat.EnqueueErrorStatus(429);
+        fixture.Chat.EnqueueMessage(FinalMessage("All set after the retry."));
+        fixture.Realtime.NextTranscript = "Can I get a corn dog?";
+
+        await CascadeScenarioHelpers.SendGuestTurnAsync(browser, ct);
+
+        var attempt1Notification = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Sequence > connection.GreetingWatermark &&
+                 f.Type == "extension.rate_limited" && f.Json.GetProperty("attempt").GetInt32() == 1,
+            FrameTimeout, ct);
+        Assert.True(attempt1Notification is not null, "Expected extension.rate_limited{attempt:1} after the first retry also failed.");
+        Assert.False(attempt1Notification!.Json.TryGetProperty("final", out _), "attempt:1 must not carry final:true.");
+
+        // Watermarked past attempt1Notification (itself already past the greeting) --
+        // WaitForAsync (Conformance.Fakes.FrameLog) always scans from the very first recorded
+        // frame, so a content-agnostic type-only predicate would otherwise match the greeting's
+        // own response.audio_transcript.delta instead of this turn's retried final answer.
+        var finalAnswer = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Sequence > attempt1Notification.Sequence && f.Type == "response.audio_transcript.delta", FrameTimeout, ct);
+        Assert.True(finalAnswer is not null, "Expected the turn to still complete normally once the ladder's own retry succeeded.");
+        Assert.Equal("All set after the retry.", finalAnswer!.Json.GetProperty("delta").GetString());
+
+        var doneFrame = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "response.done" && f.Sequence > attempt1Notification.Sequence, FrameTimeout, ct);
+        Assert.True(doneFrame is not null, "Expected response.done once the retried turn finished.");
     });
 }

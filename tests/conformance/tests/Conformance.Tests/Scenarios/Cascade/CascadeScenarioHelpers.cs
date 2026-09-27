@@ -1,6 +1,18 @@
+using Conformance.Fakes;
 using Conformance.Harness;
+using System.Text.Json.Nodes;
 
 namespace Conformance.Tests.Scenarios.Cascade;
+
+/// <summary>A connected cascade browser client past its own connect-time greeting turn, plus the
+/// frame sequence number of that greeting's own `response.done` -- see
+/// <see cref="CascadeScenarioHelpers.ConnectPastGreetingAsync"/>. Callers should watermark their
+/// own guest-turn frame waits against <see cref="GreetingWatermark"/> (e.g.
+/// <c>f.Sequence &gt; connection.GreetingWatermark</c>) so a content-agnostic
+/// `WaitForAsync(f =&gt; f.Type == "response.audio_transcript.delta")` can never match the
+/// greeting's own frames instead of the guest turn's -- <c>Conformance.Fakes.FrameLog.WaitForAsync</c>
+/// always scans from the very first recorded frame, not just new arrivals.</summary>
+public sealed record CascadeConnection(RealtimeBrowserClient Browser, int GreetingWatermark);
 
 /// <summary>
 /// Issue #82: shared connect/turn-simulation plumbing for the cascade conformance rows in this
@@ -32,6 +44,45 @@ public static class CascadeScenarioHelpers
     public static Task<RealtimeBrowserClient> ConnectAsync(
         ConformanceFixture fixture, string model, CancellationToken ct, string? persona = null) =>
         RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, persona: persona, model: model, cancellationToken: ct);
+
+    /// <summary>
+    /// Connects, waits for extension.session_metadata, then drains the automatic connect-time
+    /// greeting turn (cascade_processor.py's `_start_greeting` fires unconditionally on every
+    /// connection, before any guest turn -- see that method's own docstring) so a test's own
+    /// `/chat/completions` script and frame-sequence watermark start from a clean, known point.
+    /// Enqueues a harmless, fixed greeting reply onto <paramref name="chat"/> BEFORE connecting so
+    /// the greeting's own completions call can never dequeue a message a test scripts afterward
+    /// for its own guest turn.
+    /// </summary>
+    public static async Task<CascadeConnection> ConnectPastGreetingAsync(
+        ConformanceFixture fixture, FakeChatCompletionsServer chat, string model, CancellationToken ct, string? persona = null)
+    {
+        chat.EnqueueMessage(new JsonObject { ["role"] = "assistant", ["content"] = "Welcome to the drive-thru!" });
+        var browser = await ConnectAsync(fixture, model, ct, persona).ConfigureAwait(false);
+        try
+        {
+            var metadata = await browser.ReceivedFrames.WaitForAsync(f => f.Type == "extension.session_metadata", FrameTimeout, ct)
+                .ConfigureAwait(false);
+            if (metadata is null)
+            {
+                throw new InvalidOperationException($"Expected extension.session_metadata within {FrameTimeout}.");
+            }
+
+            var greetingDone = await browser.ReceivedFrames.WaitForAsync(f => f.Type == "response.done", FrameTimeout, ct)
+                .ConfigureAwait(false);
+            if (greetingDone is null)
+            {
+                throw new InvalidOperationException($"Expected the connect-time greeting's own response.done within {FrameTimeout}.");
+            }
+
+            return new CascadeConnection(browser, greetingDone.Sequence);
+        }
+        catch
+        {
+            await browser.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
+    }
 
     /// <summary>
     /// Simulates one guest turn end to end: a loud "speech" burst (crosses `_TurnDetector`'s RMS

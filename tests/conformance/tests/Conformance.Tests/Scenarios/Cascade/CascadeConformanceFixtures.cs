@@ -17,10 +17,13 @@ namespace Conformance.Tests.Scenarios.Cascade;
 /// `ExpectedCascadeBearerToken` doc comment) with zero extra process needed.
 ///
 /// Uses the real, shipped `sonic` persona (no persona override, unlike
-/// <see cref="ModelSelectionConformanceFixture"/>) -- `personas/sonic/persona.json` already
-/// declares `models.cascade: {default: gpt-5-mini, allowed: [gpt-5-mini, phi-4]}` (#82's own
-/// catalog entries), so no test-only fixture pack is needed to exercise cascade dispatch,
-/// tool calling, or pricing against a real deployment-shaped persona.
+/// <see cref="ModelSelectionConformanceFixture"/>) -- `personas/sonic/persona.json` declares
+/// `models.cascade: {default: gpt-5-mini, allowed: [gpt-5-mini]}` (#82's own catalog entries),
+/// so no test-only fixture pack is needed to exercise cascade dispatch, tool calling, or
+/// pricing against a real deployment-shaped persona. Per Rick's #118 review item 3, `phi-4`
+/// stays in the model catalog (see <see cref="PhiChatDeployment"/> below, kept only so a future
+/// fixture override can still exercise catalog dispatch) but was pulled from every persona's
+/// cascade allow-list until it's qualified for live tool calling in #87.
 /// </summary>
 public sealed class CascadeConformanceFixture : ConformanceFixture
 {
@@ -36,6 +39,21 @@ public sealed class CascadeConformanceFixture : ConformanceFixture
     public const string TtsDeployment = "gpt-4o-mini-tts-cascade-conformance";
 
     public FakeChatCompletionsServer Chat { get; } = new();
+
+    /// <summary>The idle-timeout/nudge/first-frame/greeting-timeout knobs on
+    /// <see cref="BackendProfiles.ShortTimers"/> apply generically at the session-lifecycle layer
+    /// (not gated to the realtime pipeline the way this fixture's doc comment previously assumed
+    /// -- confirmed the hard way: a 1-second idle budget force-closed cascade sessions mid-test
+    /// whenever a scenario needed more than ~1s of client-side inactivity, e.g. the barge-in
+    /// row's deliberately-slow scripted turn and its own polling wait). Only the rate-limit retry
+    /// delay overrides (0.2s/0.4s instead of config.yaml's 1.5s/4.0s default) are actually needed
+    /// here, so this fixture uses <see cref="BackendProfiles.RateLimitTimers"/> instead -- the
+    /// same profile the realtime pipeline's own RateLimitRetryTimingTests use for the identical
+    /// reason -- which keeps idle/grace/nudge/first-frame comfortably long (10s/10s/10s/3s) while
+    /// still shortening the two rate-limit knobs
+    /// `Cascade_a_429_from_chat_completion_notifies_the_client_then_completes_once_it_resolves`
+    /// (and any future cascade rate-limit timing test) needs.</summary>
+    protected override BackendProfile Profile => BackendProfiles.RateLimitTimers;
 
     protected override async Task<IReadOnlyDictionary<string, string>> StartExtraFakesAsync()
     {
@@ -56,6 +74,28 @@ public sealed class CascadeConformanceFixture : ConformanceFixture
             // DefaultAzureCredential in place, which would hang/fail with no real Azure AD
             // identity available in CI.
             ["CONFORMANCE_CASCADE_FAKE_TOKEN"] = BearerToken,
+
+            // Widens RateLimitTimers' own 10s idle/grace/nudge budget to 45s for THIS fixture
+            // only (StartExtraFakesAsync's dict wins over Profile.ExtraEnvironment on a key
+            // collision -- see ConformanceFixture's own doc comment). session_manager.py's idle
+            // clock is driven purely by INCOMING guest activity (`touch_activity`,
+            // never by outgoing server frames -- confirmed against test_order_resume.py's own
+            // "silent mic audio reset the idle clock"/"the rate-limit retry counted as guest
+            // activity" cases), so a turn that is genuinely still in flight (a real HTTP
+            // round trip to the fakes, not a hang) but simply takes a while under a loaded CI/dev
+            // machine can otherwise race the idle-checker into force-closing the socket out from
+            // under it before the response ever arrives -- reproduced directly: the barge-in
+            // row's cancel-then-immediately-re-answer sequence (a real network round trip with no
+            // further client audio in between) was observed being killed by "Closing idle session
+            // ... (idle > 10s)" under machine load in ~2 of 6 back-to-back local runs, even though
+            // every step it depends on (request landing, cancellation, the second completions
+            // call) had already succeeded. 45s keeps comfortably clear of that race without
+            // weakening what any row here actually proves (none of these tests assert on the
+            // idle timeout itself -- that is IdleTimeoutTests'/RateLimitRecoveryTests' own job on
+            // the realtime pipeline, per RateLimitTimers' own doc comment).
+            ["CONFORMANCE_IDLE_TIMEOUT_SECONDS"] = "45",
+            ["CONFORMANCE_GRACE_SECONDS"] = "45",
+            ["CONFORMANCE_NUDGE_AFTER_SECONDS"] = "45",
         };
     }
 
