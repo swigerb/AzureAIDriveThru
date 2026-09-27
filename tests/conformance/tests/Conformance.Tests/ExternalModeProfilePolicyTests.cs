@@ -89,4 +89,49 @@ public sealed class ExternalModeProfilePolicyTests
         Assert.NotNull(reason);
         Assert.Contains("AZURE_OPENAI_REALTIME_DEPLOYMENT", reason);
     }
+
+    // Issue #76: a fixture that only overrides Persona (leaving Profile at Default and
+    // Deployment null) must ALSO skip in external mode -- same gap PR #42 review item 2 closed
+    // for Deployment, now closed for Persona too.
+
+    [Fact]
+    public void Five_arg_ShouldSkip_returns_null_when_not_external_regardless_of_persona()
+    {
+        Assert.Null(ExternalModeProfilePolicy.ShouldSkip(null, "Default", "Default", null, "mcdonalds"));
+        Assert.Null(ExternalModeProfilePolicy.ShouldSkip("", "Default", "Default", null, "dunkin"));
+    }
+
+    [Fact]
+    public void Five_arg_ShouldSkip_returns_null_when_external_and_deployment_and_persona_are_null_and_profile_is_default()
+    {
+        Assert.Null(ExternalModeProfilePolicy.ShouldSkip(
+            "http://127.0.0.1:9000", "Default", "Default", deployment: null, persona: null));
+    }
+
+    [Theory]
+    [InlineData("mcdonalds")]
+    [InlineData("dunkin")]
+    public void Five_arg_ShouldSkip_returns_a_clear_reason_when_external_and_persona_is_overridden_even_on_the_default_profile(string persona)
+    {
+        // Profile and deployment are deliberately Default/null here -- the case only the
+        // five-argument overload can catch.
+        var reason = ExternalModeProfilePolicy.ShouldSkip(
+            "http://127.0.0.1:9000", "Default", "Default", deployment: null, persona: persona);
+
+        Assert.NotNull(reason);
+        Assert.Contains(persona, reason);
+        Assert.Contains("external mode", reason, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("DEFAULT_PERSONA", reason);
+    }
+
+    [Fact]
+    public void Five_arg_ShouldSkip_prefers_the_deployment_reason_when_both_deployment_and_persona_are_overridden()
+    {
+        var reason = ExternalModeProfilePolicy.ShouldSkip(
+            "http://127.0.0.1:9000", "Default", "Default", "gpt-realtime-1.5-conformance", "mcdonalds");
+
+        Assert.NotNull(reason);
+        Assert.Contains("AZURE_OPENAI_REALTIME_DEPLOYMENT", reason);
+        Assert.DoesNotContain("DEFAULT_PERSONA", reason);
+    }
 }

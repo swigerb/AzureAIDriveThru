@@ -378,7 +378,8 @@ starts a new session.
   - Parenthesized customizations on an on-menu item are still allowed and still validated.
   - Priced extras are menu items (`isExtra`).
   - **Tool result contract (both rejection reasons, PR #100 review).** `update_order` returns a JSON object,
-    never plain text, so the C# port can mirror the same shape byte-for-byte:
+    never plain text, so the C# port can mirror the same shape -- same keys, types and
+    values, compared parsed:
     `{ "status": "rejected", "item_added": false, "reason": "not_on_menu" | "size_not_available", "item_name",
     "message" }`, plus `"available_sizes"` (the item's real display sizes) only for `size_not_available`. The
     `message` for `not_on_menu` also tells the model to search with the guest's words and offer the closest

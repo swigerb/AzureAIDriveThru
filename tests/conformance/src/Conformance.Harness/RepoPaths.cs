@@ -37,6 +37,15 @@ public static class RepoPaths
 
     public static string BackendDirectory(string repoRoot) => Path.Combine(repoRoot, "app", "backend");
 
+    /// <summary>
+    /// Issue #76: the persona-packs root both app/backend/persona_loader.py and
+    /// app/backend-dotnet/src/Backend/Personas/PersonaCatalog.cs discover from by default (an
+    /// explicit `PERSONAS_DIR` env var overrides this for the backend process itself, but the
+    /// harness's own disk-discovery fallback -- <see cref="ConformancePersonas.DiscoverFromDisk()"/> --
+    /// always looks here, matching the backends' own un-overridden default).
+    /// </summary>
+    public static string PersonasDirectory(string repoRoot) => Path.Combine(repoRoot, "personas");
+
     public static string PythonExecutable(string repoRoot) =>
         OperatingSystem.IsWindows()
             ? Path.Combine(repoRoot, ".venv", "Scripts", "python.exe")

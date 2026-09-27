@@ -78,6 +78,25 @@ jobs:
           set -o pipefail
           python -m pytest app/backend/tests -q --junitxml=pytest-results.xml 2>&1 | tee pytest-output.log
 
+      # PR #101 round 3 (Rick's review, optional/recommended): the regen script's
+      # --allow-increase refusal only protects people who run it -- nothing stops a hand-edit
+      # of rebrand_baseline.yaml that skips it entirely. This step makes any such raise (or
+      # brand-new entry) visible in CI by diffing the checked-in baseline against the PR's
+      # base branch and failing if the increase/new-entry lacks a valid `increase_reason`.
+      # Only meaningful on pull_request events, where github.base_ref is set.
+      - name: Rebrand baseline ratchet vs base branch
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch origin "${{ github.base_ref }}" --depth=1
+          # `|| true`: if the base branch predates rebrand_baseline.yaml, git show exits
+          # non-zero and (with bash's default -e for run steps) would abort the step before
+          # the python script's own graceful "not found -- skipping" fallback gets a chance to
+          # run. Tolerating the failure here leaves an empty/missing file, which the script
+          # already handles as "nothing to ratchet against yet".
+          git show "origin/${{ github.base_ref }}:app/backend/tests/rebrand_baseline.yaml" \
+            > base-rebrand-baseline.yaml || true
+          python app/backend/tests/check_rebrand_baseline_against_base.py base-rebrand-baseline.yaml
+
       - name: Upload pytest results on failure
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -185,15 +204,29 @@ jobs:
             app/backend-dotnet/backend-tests-output.log
           retention-days: 7
 
-  # Part of issue #7 (S1.1) / #11 (S1.5): the shared black-box conformance
-  # suite, against every backend it can currently run. S2 adds "dotnet" to the
-  # matrix once the .NET backend (tracked separately from this test suite)
-  # exists. Adding it to this matrix early would NOT be harmless today:
-  # CONFORMANCE_BACKEND=dotnet FAILS the suite by default in CI (PR #22 review
-  # item 15 -- DotnetPlaceholderPolicy/CiEnvironment.IsCi always ignore the
-  # CONFORMANCE_ALLOW_SKIP=1 opt-in when GITHUB_ACTIONS=true), precisely so CI
-  # can never silently report green with zero real backend coverage. Only add
-  # "dotnet" here once S2 lands.
+  # Part of issue #7 (S1.1) / #11 (S1.5): the shared black-box conformance suite, against every
+  # backend it can currently run.
+  #
+  # Backend axis: "python" runs the full suite (matching PythonBackendLauncher's real relay/order
+  # pipeline). #76 added "dotnet" here once the C# skeleton (issue #12 S2) had a health/config/
+  # persona-pack/static-files surface worth gating on -- it deliberately does NOT run the full
+  # suite (the skeleton has no realtime relay or order pipeline yet), only the scenarios tagged
+  # `[Trait("Dotnet", "ready")]` (docs/dotnet_mapping.md: 11 scenarios today, grown by a
+  # `DotnetTraitCoverageTests` floor of >= 11 so the count can't silently shrink). Before this,
+  # CONFORMANCE_BACKEND=dotnet FAILED the suite by default in CI on purpose (PR #22 review item
+  # 15 -- DotnetPlaceholderPolicy/CiEnvironment.IsCi always ignore the CONFORMANCE_ALLOW_SKIP=1
+  # opt-in when GITHUB_ACTIONS=true), precisely so CI could never silently report green with zero
+  # real backend coverage; the dotnet leg below now gets real (if partial) coverage instead of
+  # being skipped.
+  #
+  # Persona axis: intentionally not a matrix axis. CONFORMANCE_PERSONAS is left unset, so
+  # ConformancePersonas' own disk discovery enables every pack under personas/ that exists on
+  # disk (today: just Sonic) -- the same behaviour the backend itself falls back to. This means
+  # #78/#79 landing more persona packs needs no workflow edit at all; if run time ever requires
+  # sharding by persona, that can be added later (design doc section 8: "the suite's run time
+  # grows ... it is sharded if needed"). Model/pipeline axes are a later wave (design doc
+  # section 8); a new `matrix:` key plus, if a leg needs a different filter, another conditional
+  # step like the dotnet-only ones below is how they'd slot in.
   conformance:
     name: Conformance suite (backend=${{ matrix.backend }})
     runs-on: ubuntu-latest
@@ -201,12 +234,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        backend: [python]
+        backend: [python, dotnet]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Python
+        if: matrix.backend == 'python'
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
@@ -216,7 +250,9 @@ jobs:
       - name: Create Python venv for the backend under test
         # PythonBackendLauncher (tests/conformance/src/Conformance.Harness)
         # expects a .venv at the repo root with the backend's runtime deps
-        # installed -- exactly what a developer's local checkout has.
+        # installed -- exactly what a developer's local checkout has. Only the
+        # python leg launches a Python process at all.
+        if: matrix.backend == 'python'
         run: |
           python -m venv .venv
           .venv/bin/python -m pip install --upgrade pip
@@ -229,7 +265,10 @@ jobs:
           cache: npm
           cache-dependency-path: app/frontend/package-lock.json
 
-      - name: Build frontend (app/backend/static is gitignored and required by app.py's add_static)
+      - name: Build frontend (app/backend/static is gitignored and required by app.py's/Program.cs's static-file serving)
+        # Both backends serve the same built frontend (app/backend-dotnet/src/Backend/Program.cs's
+        # TryFindStaticDir falls back to app/backend/static too) -- StaticIndexHtmlTests is part of
+        # the dotnet leg's scoped subset, so this step isn't python-only.
         working-directory: app/frontend
         run: |
           npm ci
@@ -244,7 +283,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.nuget/packages
-          key: ${{ runner.os }}-nuget-${{ hashFiles('tests/conformance/Directory.Packages.props', 'tests/conformance/**/*.csproj', 'tests/conformance/**/packages.lock.json') }}
+          key: ${{ runner.os }}-nuget-${{ hashFiles('tests/conformance/Directory.Packages.props', 'tests/conformance/**/*.csproj', 'tests/conformance/**/packages.lock.json', 'app/backend-dotnet/Directory.Packages.props', 'app/backend-dotnet/**/*.csproj', 'app/backend-dotnet/**/packages.lock.json') }}
           restore-keys: |
             ${{ runner.os }}-nuget-
 
@@ -257,16 +296,46 @@ jobs:
         # not the other, or a feed started serving a different transitive graph).
         run: dotnet restore Conformance.slnx --locked-mode
 
+      - name: dotnet restore and build app/backend-dotnet (dotnet leg only)
+        # Pre-restoring/building here (same --locked-mode convention as the dotnet-tests job
+        # above) means DotnetBackendLauncher's `dotnet run` at test time has nothing left to do
+        # but start the already-built process -- so a cold restore/build never eats into
+        # WaitForHealthAsync's 60s health-check timeout.
+        if: matrix.backend == 'dotnet'
+        working-directory: app/backend-dotnet
+        run: |
+          dotnet restore Backend.slnx --locked-mode
+          dotnet build Backend.slnx --no-restore
+
       - name: dotnet test tests/conformance
         working-directory: tests/conformance
         env:
-          # Resolved from a repo-root-relative .venv by RepoPaths/PythonBackendLauncher.
+          # Resolved from a repo-root-relative .venv by PythonBackendLauncher (python leg only);
+          # DotnetBackendLauncher resolves app/backend-dotnet directly instead.
           CONFORMANCE_BACKEND: ${{ matrix.backend }}
+          # Issue #76 (Rick's PR #101 review item 2): deliberately left unset -- ConformancePersonas'
+          # own disk discovery already resolves to every pack under personas/ that exists today
+          # (just Sonic), exactly matching the backend's own un-overridden fallback. Set this
+          # explicitly only if run time ever requires shrinking the enabled set for a given leg.
         run: |
           set -o pipefail
+          if [ "${{ matrix.backend }}" = "dotnet" ]; then
+            # #76 (Rick's PR #101 review item 1): only the scenarios tagged
+            # [Trait("Dotnet", "ready")] -- exactly the set docs/dotnet_mapping.md documents as
+            # green against the C# skeleton (health/auth-token/static-index/origin-validation
+            # subset; 11 scenarios today, floor-checked by DotnetTraitCoverageTests) -- the
+            # skeleton has no realtime relay or order pipeline yet (issue #12 S2 scope), so the
+            # full suite's remaining scenarios would fail for a reason unrelated to this leg's
+            # actual purpose. Growing dotnet coverage (C# PRs #13-#16) means adding the trait in
+            # the test files themselves; this filter and DotnetTraitCoverageTests' floor both pick
+            # up a newly tagged scenario automatically, with no workflow edit.
+            FILTER='Dotnet=ready&Category!=Browser'
+          else
+            FILTER='Category!=Browser'
+          fi
           dotnet test Conformance.slnx \
             --no-restore \
-            --filter "Category!=Browser" \
+            --filter "${FILTER}" \
             --logger "trx;LogFileName=conformance.trx" \
             --logger "console;verbosity=detailed" \
             --results-directory TestResults \

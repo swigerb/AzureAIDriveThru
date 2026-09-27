@@ -40,6 +40,7 @@ public sealed class OriginValidationTests(ConformanceFixture fixture)
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Lookalike_suffix_origin_is_rejected_with_403() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -62,6 +63,7 @@ public sealed class OriginValidationTests(ConformanceFixture fixture)
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Missing_origin_is_accepted_unchanged() => fixture.RunAsync(async () =>
     {
         // Documents existing, #25-unaffected behaviour: a request with no Origin header at all

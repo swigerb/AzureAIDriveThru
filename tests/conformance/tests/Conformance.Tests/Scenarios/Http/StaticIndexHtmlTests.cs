@@ -13,6 +13,7 @@ namespace Conformance.Tests;
 /// directives, different casing/whitespace).
 /// </summary>
 [Collection(ConformanceCollection.Name)]
+[Trait("Dotnet", "ready")]
 public sealed class StaticIndexHtmlTests(ConformanceFixture fixture)
 {
     [Fact]

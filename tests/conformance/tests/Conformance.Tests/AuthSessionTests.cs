@@ -5,6 +5,7 @@ using Xunit;
 namespace Conformance.Tests;
 
 [Collection(ConformanceCollection.Name)]
+[Trait("Dotnet", "ready")]
 public sealed class AuthSessionTests(ConformanceFixture fixture)
 {
     [Fact]

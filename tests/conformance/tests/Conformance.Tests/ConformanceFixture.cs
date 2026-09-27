@@ -31,6 +31,29 @@ public class ConformanceFixture : IAsyncLifetime
     /// </summary>
     protected virtual string? Deployment => null;
 
+    /// <summary>
+    /// Issue #76: the DEFAULT_PERSONA the backend is launched with. Null uses
+    /// BackendLauncherFactory/ConformancePersonas' own default resolution (today: env var, else
+    /// disk discovery, else <see cref="ConformancePersonas.DefaultPersonaId"/>, "sonic") — every
+    /// existing fixture leaves this null and gets exactly today's implicit "sonic" behaviour.
+    /// Derived fixtures will override this once a second persona pack (#78/#79) exists, to
+    /// exercise persona-specific behaviour on their own dedicated collection — like <see
+    /// cref="Deployment"/>, PERSONAS/DEFAULT_PERSONA are read once at backend startup and can't
+    /// change for an already-running process, so each distinct value needs its own
+    /// collection/backend process.
+    /// </summary>
+    protected virtual string? Persona => null;
+
+    /// <summary>
+    /// Issue #76: the full PERSONAS enabled-list the backend is launched with. Null uses
+    /// BackendLauncherFactory/ConformancePersonas' own default resolution (env var, else disk
+    /// discovery). A fixture that only overrides <see cref="Persona"/> gets it folded into
+    /// whatever this resolves to automatically (<see cref="ConformancePersonas.EnsureIncluded"/>)
+    /// — overriding this too is only needed to exercise a *non-default* enabled persona (e.g.
+    /// asserting a rejected/unknown persona id still behaves like today when others are enabled).
+    /// </summary>
+    protected virtual IReadOnlyList<string>? Personas => null;
+
     public FakeRealtimeUpstreamServer Realtime { get; } = new();
     public FakeSearchServer Search { get; private set; } = null!;
 
@@ -55,7 +78,8 @@ public class ConformanceFixture : IAsyncLifetime
             Environment.GetEnvironmentVariable("CONFORMANCE_BACKEND_URL"),
             Profile.Name,
             BackendProfiles.Default.Name,
-            Deployment);
+            Deployment,
+            Persona);
         if (SkipReason is not null)
         {
             return;
@@ -86,7 +110,8 @@ public class ConformanceFixture : IAsyncLifetime
         try
         {
             Backend = await BackendLauncherFactory.StartAsync(
-                Realtime.BaseUri, Search.BaseUri, port, extraEnvironment: Profile.ExtraEnvironment, deployment: Deployment)
+                Realtime.BaseUri, Search.BaseUri, port, extraEnvironment: Profile.ExtraEnvironment, deployment: Deployment,
+                personas: Personas, persona: Persona)
                 .ConfigureAwait(false);
 
             // #66 re-review, R1(c): seed the attribution's watermark from the count observed the
