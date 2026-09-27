@@ -285,11 +285,11 @@ entries:
   brand: sonic
   max: 2
   issue: '#80'
-  reason: 'Issue #80 F7: the rate-limit apology-clip test asserts on the real bundled
-    default persona''s (id `sonic`) pack-relative clip URL for each UI language, now
-    that the clips are served from `personas/sonic/assets/audio/**` instead of a duplicated
-    frontend copy that was retired.'
-  increase_reason: ''
+  reason: 'Rick''s PR-110 review item 1 (issue #80): a comment explains why this suite now
+    boots through a mocked `/api/personas` fixture persona (`test-alpha`) instead of the
+    hard-coded Sonic fallback the review had deleted, naming "Sonic" twice only to describe
+    that historical fix -- no Sonic string is exercised at runtime.'
+  increase_reason: '#80'
 - file: app/frontend/src/__tests__/brandColorTokens.test.ts
   brand: mcdonalds
   max: 1
@@ -321,11 +321,11 @@ entries:
   brand: sonic
   max: 3
   issue: '#80'
-  reason: 'Issue #80 F1: PersonaProvider''s bundled fallback id is the literal `sonic`
-    (matching the backend''s real default persona), so these unit tests necessarily
-    exercise that literal id/URL/title in their fixtures and assertions (query-param
-    precedence, localStorage persistence, offline/error fallback behavior, etc.).'
-  increase_reason: ''
+  reason: 'Rick''s PR-110 review item 1 + item 4 (issue #80): a file-level comment and one
+    test title name "Sonic" only as the concrete example of the brand this suite deliberately
+    no longer hard-codes -- fixture ids (test-alpha/test-beta) exercise the actual
+    NEUTRAL-defaults/no-persona-hard-coded logic these tests cover.'
+  increase_reason: '#80'
 - file: app/frontend/src/context/auth-context.tsx
   brand: sonic
   max: 1
@@ -339,12 +339,12 @@ entries:
   brand: sonic
   max: 1
   issue: '#80'
-  reason: 'Issue #80 F1: `FALLBACK_ID`/`FALLBACK_SUMMARY`/`FALLBACK_DETAIL` are this
-    app''s bundled default persona, copied verbatim from personas/sonic/persona.json
-    so the app renders correctly the instant it mounts, before `/api/personas` responds.
-    Every hit here is real bundled content (display name, title, ticket/menu copy,
-    hero headline, trademark disclaimer), not decorative prose.'
-  increase_reason: ''
+  reason: 'Rick''s PR-110 review item 1 (issue #80): the hard-coded `FALLBACK_ID`/
+    `FALLBACK_SUMMARY`/`FALLBACK_DETAIL` Sonic fallback this review required deleting is
+    gone -- the one remaining hit is a file-level comment naming "Sonic" only as the
+    example brand no pack (Sonic or otherwise) may be hard-coded as, now that NEUTRAL
+    shared defaults are used instead.'
+  increase_reason: '#80'
 - file: app/frontend/src/data/sonic-menu-items.json
   brand: sonic
   max: 421
