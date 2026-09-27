@@ -127,10 +127,15 @@ public sealed class ResumeRehydrationAndNudgeTests(ResumeTimersConformanceFixtur
         // bare `args["size"]` with no default, so omitting it raises an unhandled KeyError that
         // silently aborts the tool call before extension.middle_tier_tool_response is ever sent.
         const string callId = "call_resume_rehydrate_1";
+        // #73: "Bacon Cheeseburger" is off-menu (no exact-match name/alias in menuItems.json) and
+        // would now be rejected TO_SERVER-only, so the extension.middle_tier_tool_response wait
+        // below would time out and the order would never actually contain the item. This test's
+        // subject matter is session-resume rehydration, not menu lookup, so it must use a real
+        // on-menu item and a real size for that item.
         oldConnection.Script.Enqueue(new ResponseScript([
             new FunctionCallEvent(
                 Name: "update_order",
-                ArgumentsJson: """{"action":"add","item_name":"Bacon Cheeseburger","size":"N/A","quantity":1,"price":6.99}""",
+                ArgumentsJson: """{"action":"add","item_name":"Tots","size":"medium","quantity":1,"price":2.79}""",
                 CallId: callId),
             new DoneEvent(),
         ]));
@@ -146,7 +151,7 @@ public sealed class ResumeRehydrationAndNudgeTests(ResumeTimersConformanceFixtur
             f => f.Type == "extension.session_resumed", FrameTimeout, ct);
         Assert.True(resumed is not null, "Expected extension.session_resumed after a valid mid-conversation resume.");
         var orderSummaryJson = resumed!.Json.GetProperty("order_summary").GetRawText();
-        Assert.Contains("Bacon Cheeseburger", orderSummaryJson);
+        Assert.Contains("Tots", orderSummaryJson);
 
         // Upstream ordering: bootstrap session.update (sent before any client traffic is
         // relayed, on every new connection) then the rehydration conversation.item.create -- and
@@ -210,7 +215,7 @@ public sealed class ResumeRehydrationAndNudgeTests(ResumeTimersConformanceFixtur
         oldConnection.Script.Enqueue(new ResponseScript([
             new FunctionCallEvent(
                 Name: "update_order",
-                ArgumentsJson: """{"action":"add","item_name":"Bacon Cheeseburger","size":"N/A","quantity":1,"price":6.99}""",
+                ArgumentsJson: """{"action":"add","item_name":"Tots","size":"medium","quantity":1,"price":2.79}""",
                 CallId: callId),
             new DoneEvent(),
         ]));
@@ -226,7 +231,7 @@ public sealed class ResumeRehydrationAndNudgeTests(ResumeTimersConformanceFixtur
             f => f.Type == "extension.session_resumed", FrameTimeout, ct);
         Assert.True(resumed is not null, "Expected extension.session_resumed after resuming from an abrupt abort within grace.");
         var orderSummaryJson = resumed!.Json.GetProperty("order_summary").GetRawText();
-        Assert.Contains("Bacon Cheeseburger", orderSummaryJson);
+        Assert.Contains("Tots", orderSummaryJson);
 
         var bootstrap = await newConnection.ReceivedFrames.WaitForAsync(
             f => f.Type == "session.update", FrameTimeout, ct);

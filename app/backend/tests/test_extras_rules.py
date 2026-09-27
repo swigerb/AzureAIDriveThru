@@ -33,7 +33,7 @@ class ExtrasRuleTests(unittest.TestCase):
             update_order(
                 {
                     "action": "add",
-                    "item_name": "Extra Cheese",
+                    "item_name": "Add Bacon",
                     "size": "standard",
                     "quantity": 1,
                     "price": 0.50,
@@ -107,7 +107,7 @@ class ExtrasRuleTests(unittest.TestCase):
     def test_allow_extra_with_shake(self):
         """Extras should be allowed when a shake is in the order."""
         session_id = order_state_singleton.create_session()
-        self._add_item(session_id, "Classic Vanilla Shake", "large", 1, 4.99)
+        self._add_item(session_id, "Vanilla Classic Shake", "large", 1, 4.99)
 
         result = asyncio.run(
             update_order(
@@ -157,7 +157,7 @@ class ExtrasRuleTests(unittest.TestCase):
             update_order(
                 {
                     "action": "add",
-                    "item_name": "Extra Cheese",
+                    "item_name": "Add Bacon",
                     "size": "standard",
                     "quantity": 1,
                     "price": 0.50,
@@ -310,7 +310,7 @@ class HappyHourPricingTests(unittest.TestCase):
         session_id = order_state_singleton.create_session()
         self._add_item(session_id, "Cherry Limeade", "medium", 1, 2.99)
         self._add_item(session_id, "Ocean Water", "large", 1, 3.49)
-        self._add_item(session_id, "Classic Vanilla Shake", "large", 1, 4.99)
+        self._add_item(session_id, "Vanilla Classic Shake", "large", 1, 4.99)
         summary = order_state_singleton.get_order_summary(session_id)
         expected_subtotal = (2.99 * 0.5) + (3.49 * 0.5) + 4.99
         self.assertTrue(math.isclose(summary.total, expected_subtotal, rel_tol=1e-9))

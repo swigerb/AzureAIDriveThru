@@ -19,6 +19,19 @@ messages:
     I can add extras to drinks, slushes, shakes, or combos,
     but I can't add them to sides or hot dogs on their own.
 
+  # No off-menu ordering (issue #73, ADR-001 decision 4: "No off-menu. If it's not on the menu
+  # in our source data, you cannot order it."). item_not_on_menu fires when update_order's "add"
+  # action can't resolve item_name (or an alias of it) to a real menuItems.json entry at all;
+  # size_not_available fires when the item itself is real but the requested size isn't one of
+  # its priced sizes. Both are model-facing (TO_SERVER) so the carhop can offer an on-menu
+  # alternative instead of pretending the item was added.
+  item_not_on_menu: >-
+    I'm sorry, {{item_name}} isn't on our menu. Would you like to try
+    something else instead?
+  size_not_available: >-
+    I'm sorry, {{item_name}} isn't available in that size. We have it in
+    {{available_sizes}} -- would you like one of those?
+
   # Quantity limit messages
   per_item_limit_maxed: >-
     That's a lot of {{item_name}}! Our drive-thru can handle up to
