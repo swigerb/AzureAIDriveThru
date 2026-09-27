@@ -28,11 +28,11 @@ from tools import (
     MAX_TOTAL_ITEMS,
     MOCK_MACHINE_STATUS,
     _format_size_human_readable,
-    _is_extra_item,
     _search_cache,
     _search_cfg,
     _SearchCache,
     get_order,
+    is_extra_item,
     reset_order,
     search,
     update_order,
@@ -258,12 +258,25 @@ class SearchOOSAnnotationTests(unittest.TestCase):
         _search_cache.clear()
 
     def test_shake_flagged_oos_when_machine_down(self):
-        records = [{"id": "1", "name": "Classic Vanilla Shake", "category": "Shakes", "sizes": "N/A"}]
+        records = [{"id": "1", "name": "Vanilla Classic Shake", "category": "Shakes", "sizes": "N/A"}]
         client = _make_mock_search_client(records)
         with patch.dict(MOCK_MACHINE_STATUS, {"ice_cream_machine": "down"}):
             result = _run(search(client, "cfg", "id", "description", "embedding", False, {"query": "shake"}))
         self.assertIn("OOS", result.text)
         self.assertIn("Ice cream machine", result.text)
+
+    def test_slush_flagged_oos_with_slush_label_when_slush_machine_down(self):
+        """#73 (Rick's PR #100 review, required item 3): a down `slush_machine` must get ITS OWN
+        label, not the ice cream machine's -- a slush down for cleaning has nothing to do with
+        ice cream, and telling the guest otherwise is just wrong. Mutation check: swapping the
+        slush label for the ice-cream text (or vice versa) must fail this test."""
+        records = [{"id": "1", "name": "Blue Raspberry Slush", "category": "Slushes", "sizes": "N/A"}]
+        client = _make_mock_search_client(records)
+        with patch.dict(MOCK_MACHINE_STATUS, {"slush_machine": "down"}):
+            result = _run(search(client, "cfg", "id", "description", "embedding", False, {"query": "slush"}))
+        self.assertIn("OOS", result.text)
+        self.assertIn("Slush machine", result.text)
+        self.assertNotIn("Ice cream machine", result.text)
 
     def test_non_ice_cream_item_not_flagged(self):
         records = [{"id": "1", "name": "Cherry Limeade", "category": "Slushes", "sizes": "N/A"}]
@@ -346,6 +359,144 @@ class UpdateOrderAddTests(unittest.TestCase):
         self.assertEqual(len(summary.items), 0)
 
 
+class NotOnMenuRejectionTests(unittest.TestCase):
+    """#73 (ADR-001 decision 4: "No off-menu. If it's not on the menu in our source data, you
+    cannot order it."). update_order's add path resolves item_name through the exact same
+    normalization/alias lookup as every other menu_utils classification (modifier-stripped,
+    symbol-normalised) -- never a keyword/substring guess -- and rejects anything that doesn't
+    resolve as not_on_menu, adding nothing to the order.
+
+    Rick's PR #100 review, required item 1: both rejections come back as a STRUCTURED result --
+    ``result.text`` is a dict (``status``/``item_added``/``reason``/``item_name``/``message``,
+    plus ``available_sizes`` for size_not_available), not a bare string -- so these tests assert
+    dict fields directly. Mutation check: reverting either rejection to a plain string breaks
+    every ``result.text["..."]`` access below with a TypeError/KeyError."""
+
+    def test_off_menu_item_is_rejected_and_order_unchanged(self):
+        sid = _make_session()
+        result = _run(update_order({
+            "action": "add", "item_name": "Dr Pepper Zero",
+            "size": "medium", "quantity": 1, "price": 2.29,
+        }, sid))
+        self.assertEqual(result.destination, ToolResultDirection.TO_SERVER)
+        self.assertEqual(result.text["status"], "rejected")
+        self.assertFalse(result.text["item_added"])
+        self.assertEqual(result.text["reason"], "not_on_menu")
+        self.assertEqual(result.text["item_name"], "Dr Pepper Zero")
+        self.assertIn("Dr Pepper Zero", result.text["message"])
+        self.assertIn("menu", result.text["message"].lower())
+        summary = order_state_singleton.get_order_summary(sid)
+        self.assertEqual(len(summary.items), 0)
+
+    def test_off_menu_message_tells_the_model_to_search_and_offer_the_closest_real_item(self):
+        """Rick's PR #100 review, required item 1 (UX): the not_on_menu message must add a line
+        telling the model to search with the guest's own words and offer the closest real menu
+        item back by its exact name, instead of just apologizing and stopping there."""
+        sid = _make_session()
+        result = _run(update_order({
+            "action": "add", "item_name": "Dr Pepper Zero",
+            "size": "medium", "quantity": 1, "price": 2.29,
+        }, sid))
+        message = result.text["message"].lower()
+        self.assertIn("search", message)
+        self.assertIn("closest", message)
+        self.assertIn("exact name", message)
+
+    def test_off_menu_extra_like_name_is_rejected_not_treated_as_an_extra(self):
+        """Rick's #73 review: "Extra Patty" isn't a real menuItems.json item -- it must be
+        rejected as not_on_menu, never silently classified as a valid extra add-on (the old
+        EXTRAS_KEYWORDS substring list used to match it)."""
+        sid = _make_session()
+        result = _run(update_order({
+            "action": "add", "item_name": "Extra Patty",
+            "size": "standard", "quantity": 1, "price": 1.29,
+        }, sid))
+        self.assertEqual(result.destination, ToolResultDirection.TO_SERVER)
+        self.assertEqual(result.text["reason"], "not_on_menu")
+        self.assertIn("menu", result.text["message"].lower())
+        self.assertNotIn("extras", result.text["message"].lower())
+        summary = order_state_singleton.get_order_summary(sid)
+        self.assertEqual(len(summary.items), 0)
+
+    def test_off_menu_spoken_variant_is_rejected(self):
+        """A near-miss spoken variant of a real item (wrong word, not just a missing symbol)
+        must be rejected -- e.g. the real item is "Cherry Slush" (singular)."""
+        sid = _make_session()
+        result = _run(update_order({
+            "action": "add", "item_name": "Cherry Slushes",
+            "size": "medium", "quantity": 1, "price": 2.69,
+        }, sid))
+        self.assertEqual(result.destination, ToolResultDirection.TO_SERVER)
+        self.assertEqual(result.text["reason"], "not_on_menu")
+        summary = order_state_singleton.get_order_summary(sid)
+        self.assertEqual(len(summary.items), 0)
+
+    def test_exact_match_alias_is_still_accepted(self):
+        """Regression guard: removing the keyword fallback must not break real exact-match
+        aliases -- "Tots" is a registered alias family member (Brian's #60 decision) and must
+        still be added normally."""
+        sid = _make_session()
+        result = _run(update_order({
+            "action": "add", "item_name": "Tater Tots",
+            "size": "medium", "quantity": 1, "price": 2.79,
+        }, sid))
+        self.assertEqual(result.destination, ToolResultDirection.TO_BOTH)
+        summary = order_state_singleton.get_order_summary(sid)
+        self.assertEqual(len(summary.items), 1)
+
+    def test_customized_on_menu_item_is_still_accepted(self):
+        """A parenthesized customization suffix on a real item must still resolve and be
+        accepted -- the on-menu gate strips modifiers before the lookup, exactly like every
+        other menu_utils classification."""
+        sid = _make_session()
+        result = _run(update_order({
+            "action": "add", "item_name": "Tots (Extra Crispy)",
+            "size": "medium", "quantity": 1, "price": 2.79,
+        }, sid))
+        self.assertEqual(result.destination, ToolResultDirection.TO_BOTH)
+        summary = order_state_singleton.get_order_summary(sid)
+        self.assertEqual(len(summary.items), 1)
+
+    def test_unsupported_size_is_rejected_as_size_not_available(self):
+        """"SuperSONIC® Double Cheeseburger Combo" is Standard-size only -- requesting "large"
+        must be rejected as size_not_available, and nothing added, distinct from not_on_menu."""
+        sid = _make_session()
+        result = _run(update_order({
+            "action": "add", "item_name": "SuperSONIC Double Cheeseburger Combo",
+            "size": "large", "quantity": 1, "price": 8.49,
+        }, sid))
+        self.assertEqual(result.destination, ToolResultDirection.TO_SERVER)
+        self.assertEqual(result.text["status"], "rejected")
+        self.assertFalse(result.text["item_added"])
+        self.assertEqual(result.text["reason"], "size_not_available")
+        self.assertIn("size", result.text["message"].lower())
+        self.assertIn("Standard", result.text["available_sizes"])
+        summary = order_state_singleton.get_order_summary(sid)
+        self.assertEqual(len(summary.items), 0)
+
+    def test_supported_size_for_the_same_item_is_accepted(self):
+        sid = _make_session()
+        result = _run(update_order({
+            "action": "add", "item_name": "SuperSONIC Double Cheeseburger Combo",
+            "size": "standard", "quantity": 1, "price": 8.49,
+        }, sid))
+        self.assertEqual(result.destination, ToolResultDirection.TO_BOTH)
+        summary = order_state_singleton.get_order_summary(sid)
+        self.assertEqual(len(summary.items), 1)
+
+    def test_remove_action_bypasses_the_on_menu_gate(self):
+        """The on-menu gate only applies to "add" -- removing a name that isn't on the menu (or
+        isn't in the cart) must not be rejected as not_on_menu; it's simply a no-op remove,
+        exactly like before #73."""
+        sid = _make_session()
+        result = _run(update_order({
+            "action": "remove", "item_name": "Not A Real Item",
+            "size": "medium", "quantity": 1,
+        }, sid))
+        self.assertEqual(result.destination, ToolResultDirection.TO_BOTH)
+        self.assertNotIn("menu", result.text.lower())
+
+
 class UpdateOrderRemoveTests(unittest.TestCase):
     """Test update_order with remove action."""
 
@@ -383,7 +534,7 @@ class UpdateOrderQuantityLimitTests(unittest.TestCase):
     def test_per_item_limit_exceeded(self):
         sid = _make_session()
         result = _run(update_order({
-            "action": "add", "item_name": "Burger",
+            "action": "add", "item_name": "SONIC Cheeseburger",
             "size": "standard", "quantity": MAX_QUANTITY_PER_ITEM + 1, "price": 5.99,
         }, sid))
         self.assertEqual(result.destination, ToolResultDirection.TO_SERVER)
@@ -393,7 +544,7 @@ class UpdateOrderQuantityLimitTests(unittest.TestCase):
     def test_per_item_limit_exact_succeeds(self):
         sid = _make_session()
         result = _run(update_order({
-            "action": "add", "item_name": "Burger",
+            "action": "add", "item_name": "SONIC Cheeseburger",
             "size": "standard", "quantity": MAX_QUANTITY_PER_ITEM, "price": 5.99,
         }, sid))
         self.assertEqual(result.destination, ToolResultDirection.TO_BOTH)
@@ -401,11 +552,11 @@ class UpdateOrderQuantityLimitTests(unittest.TestCase):
     def test_incremental_add_over_limit_rejected(self):
         sid = _make_session()
         _run(update_order({
-            "action": "add", "item_name": "Burger",
+            "action": "add", "item_name": "SONIC Cheeseburger",
             "size": "standard", "quantity": MAX_QUANTITY_PER_ITEM - 1, "price": 5.99,
         }, sid))
         result = _run(update_order({
-            "action": "add", "item_name": "Burger",
+            "action": "add", "item_name": "SONIC Cheeseburger",
             "size": "standard", "quantity": 2, "price": 5.99,
         }, sid))
         self.assertEqual(result.destination, ToolResultDirection.TO_SERVER)
@@ -418,7 +569,7 @@ class UpdateOrderQuantityLimitTests(unittest.TestCase):
         for i in range(MAX_TOTAL_ITEMS):
             order_state_singleton.handle_order_update(sid, "add", f"Item{i}", "standard", 1, 1.0)
         result = _run(update_order({
-            "action": "add", "item_name": "One More",
+            "action": "add", "item_name": "SONIC Cheeseburger",
             "size": "standard", "quantity": 1, "price": 1.0,
         }, sid))
         self.assertEqual(result.destination, ToolResultDirection.TO_SERVER)
@@ -557,7 +708,7 @@ class UpsellHintTests(unittest.TestCase):
         order_state_singleton.handle_order_update(sid, "add", "Tots", "medium", 1, 2.79)
         order_state_singleton.handle_order_update(sid, "add", "Cherry Limeade", "medium", 1, 2.99)
         result = _run(update_order({
-            "action": "add", "item_name": "SuperSONIC Cheeseburger Combo",
+            "action": "add", "item_name": "SuperSONIC Double Cheeseburger Combo",
             "size": "standard", "quantity": 1, "price": 8.49,
         }, sid))
         # Should mention upgrade or upsell
@@ -575,7 +726,7 @@ class ComboValidationInToolsTests(unittest.TestCase):
     def test_incomplete_combo_triggers_system_hint(self):
         sid = _make_session()
         result = _run(update_order({
-            "action": "add", "item_name": "SuperSONIC Cheeseburger Combo",
+            "action": "add", "item_name": "SuperSONIC Double Cheeseburger Combo",
             "size": "standard", "quantity": 1, "price": 8.49,
         }, sid))
         self.assertIn("SYSTEM HINT", result.text)
@@ -587,7 +738,7 @@ class ComboValidationInToolsTests(unittest.TestCase):
         order_state_singleton.handle_order_update(sid, "add", "Tots", "medium", 1, 2.79)
         order_state_singleton.handle_order_update(sid, "add", "Cherry Limeade", "medium", 1, 2.99)
         result = _run(update_order({
-            "action": "add", "item_name": "SuperSONIC Cheeseburger Combo",
+            "action": "add", "item_name": "SuperSONIC Double Cheeseburger Combo",
             "size": "standard", "quantity": 1, "price": 8.49,
         }, sid))
         self.assertNotIn("SYSTEM HINT", result.text)
@@ -690,9 +841,9 @@ class InferCategoryTests(unittest.TestCase):
         self.assertIn("slush", infer_category("Ocean Water"))
 
     def test_shake_keywords(self):
-        cat = infer_category("Classic Vanilla Shake")
+        cat = infer_category("Vanilla Classic Shake")
         self.assertTrue("shake" in cat)
-        cat2 = infer_category("Oreo Blast")
+        cat2 = infer_category("Turtle Truffle Nut Blast")
         self.assertTrue("shake" in cat2)
 
     def test_burger_keywords(self):
@@ -709,9 +860,9 @@ class InferCategoryTests(unittest.TestCase):
         self.assertTrue("side" in cat2 or cat2 != "")
 
     def test_drink_keywords(self):
-        cat = infer_category("Sweet Tea")
+        cat = infer_category("Sweet Iced Tea")
         self.assertTrue("drink" in cat)
-        cat2 = infer_category("Lemonade")
+        cat2 = infer_category("All Natural Lemonade")
         self.assertTrue("drink" in cat2)
 
     def test_unknown_returns_empty(self):
@@ -721,9 +872,12 @@ class InferCategoryTests(unittest.TestCase):
         cat = infer_category("CHERRY LIMEADE")
         self.assertTrue(len(cat) > 0)
 
-    def test_malt_inferred_as_shake(self):
-        cat = infer_category("Chocolate Malt")
-        self.assertTrue("shake" in cat)
+    def test_off_menu_malt_no_longer_falls_back_to_shake_category(self):
+        """#73: "malt" was a keyword-fallback-only rule -- no real menuItems.json item is named
+        "Chocolate Malt". Now that the fallback is removed, this off-menu name correctly infers
+        no category at all instead of guessing "shake"; a mutation re-adding the fallback would
+        make this assertion fail."""
+        self.assertEqual(infer_category("Chocolate Malt"), "")
 
 
 class FormatSizeHumanReadableTests(unittest.TestCase):
@@ -744,20 +898,27 @@ class IsExtraItemTests(unittest.TestCase):
     """Test extra item detection."""
 
     def test_recognized_extras(self):
-        self.assertTrue(_is_extra_item("Flavor Add-In"))
-        self.assertTrue(_is_extra_item("Whipped Cream"))
-        self.assertTrue(_is_extra_item("Extra Patty"))
-        self.assertTrue(_is_extra_item("Extra Cheese"))
-        self.assertTrue(_is_extra_item("Add Bacon"))
+        self.assertTrue(is_extra_item("Flavor Add-In"))
+        self.assertTrue(is_extra_item("Whipped Cream"))
+        self.assertTrue(is_extra_item("Add Bacon"))
 
     def test_non_extras(self):
-        self.assertFalse(_is_extra_item("Cherry Limeade"))
-        self.assertFalse(_is_extra_item("Tots"))
-        self.assertFalse(_is_extra_item("Sonic Cheeseburger"))
+        self.assertFalse(is_extra_item("Cherry Limeade"))
+        self.assertFalse(is_extra_item("Tots"))
+        self.assertFalse(is_extra_item("Sonic Cheeseburger"))
 
     def test_case_insensitive(self):
-        self.assertTrue(_is_extra_item("EXTRA PATTY"))
-        self.assertTrue(_is_extra_item("whipped cream"))
+        self.assertTrue(is_extra_item("ADD BACON"))
+        self.assertTrue(is_extra_item("whipped cream"))
+
+    def test_off_menu_names_are_not_extras(self):
+        """#73: "Extra Patty"/"Extra Cheese" are not real menuItems.json items at all -- the old
+        EXTRAS_KEYWORDS substring list matched them even though neither is a real extra; they are
+        now rejected outright as not_on_menu by update_order's on-menu gate before is_extra_item
+        would ever be reached for them (see NotOnMenuRejectionTests below)."""
+        self.assertFalse(is_extra_item("Extra Patty"))
+        self.assertFalse(is_extra_item("Extra Cheese"))
+        self.assertFalse(is_extra_item("EXTRA PATTY"))
 
 
 class ExtrasValidationTests(unittest.TestCase):

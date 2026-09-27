@@ -19,6 +19,28 @@ messages:
     I can add extras to drinks, slushes, shakes, or combos,
     but I can't add them to sides or hot dogs on their own.
 
+  # No off-menu ordering (issue #73, ADR-001 decision 4: "No off-menu. If it's not on the menu
+  # in our source data, you cannot order it."). item_not_on_menu fires when update_order's "add"
+  # action can't resolve item_name (or an alias of it) to a real menuItems.json entry at all;
+  # size_not_available fires when the item itself is real but the requested size isn't one of
+  # its priced sizes. Both come back as a structured (TO_SERVER) rejection result -- see
+  # docs/persona-architecture.md section 6 and tests/conformance/README.md's "On-menu validation
+  # gate" section for the exact JSON shape -- so the carhop can offer an on-menu alternative
+  # instead of pretending the item was added.
+  #
+  # Rick's PR #100 review, required item 1 (UX): item_not_on_menu's last line tells the model to
+  # use the search tool with the guest's own words and offer the closest real menu item back by
+  # its exact name, rather than retrying the same off-menu name or guessing a substitute itself.
+  # Deterministic suggestions deliberately stay OUT of the tool result -- search already does this
+  # semantically, and it keeps the C# port's contract trivial to match.
+  item_not_on_menu: >-
+    I'm sorry, {{item_name}} isn't on our menu. Would you like to try
+    something else instead? Use the search tool with the guest's words and
+    offer the closest real menu item by its exact name.
+  size_not_available: >-
+    I'm sorry, {{item_name}} isn't available in that size. We have it in
+    {{available_sizes}} -- would you like one of those?
+
   # Quantity limit messages
   per_item_limit_maxed: >-
     That's a lot of {{item_name}}! Our drive-thru can handle up to

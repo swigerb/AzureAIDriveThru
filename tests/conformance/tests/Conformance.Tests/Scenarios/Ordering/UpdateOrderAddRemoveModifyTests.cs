@@ -203,11 +203,20 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
         Assert.Equal($"{golden.Route44.ExpectedDisplayPrefix} Cherry Limeade", items[0].GetProperty("display").GetString());
     });
 
-    /// <summary>PR #50 review (second round, should-fix, kills Rick's Y2): "Extra Large" and "xl"
+    /// <summary>PR #50 review (second round, should-fix, kills Rick's Y2): "large" and "l"
     /// must canonicalize to the same size key, exactly like the Route 44 aliases above, so two
-    /// adds spelled differently merge into one order line rather than silently creating two.</summary>
+    /// adds spelled differently merge into one order line rather than silently creating two.
+    /// #73 (ADR-001 decision 4 "No off-menu"): this Fact originally used the synthetic
+    /// placeholder item "Latte" with the "Extra Large"/"xl" alias pair. Under #73 every item and
+    /// size must resolve against the real menu, and no item on the Sonic menu offers an "xl" size
+    /// at all (verified against personas/sonic/menu/menuItems.json), so that alias pair can no
+    /// longer be exercised end-to-end against any real item. This now uses the real item "Tots"
+    /// with the still-real "l"/"large" abbreviation alias pair to preserve the same
+    /// merge-differently-spelled-aliases regression coverage. The extralarge&lt;-&gt;xl key
+    /// equivalence itself remains covered directly against the pure function via
+    /// canonical_size_key's own doctest in app/backend/menu_utils.py.</summary>
     [Fact]
-    public Task Adding_the_same_drink_with_Extra_Large_and_xl_merges_into_one_line() => fixture.RunAsync(async () =>
+    public Task Adding_the_same_drink_with_L_and_large_merges_into_one_line() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
         var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
@@ -216,8 +225,8 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
         var result = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
             [
-                ("add", "Latte", "Extra Large", 1, 4.29m),
-                ("add", "Latte", "xl", 1, 4.29m),
+                ("add", "Tots", "l", 1, 3.49m),
+                ("add", "Tots", "large", 1, 3.49m),
             ],
             roundTripIndex, ct);
 
@@ -225,7 +234,7 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
         var items = order.GetProperty("items");
         Assert.Equal(1, items.GetArrayLength());
         Assert.Equal(2, items[0].GetProperty("quantity").GetInt32());
-        Assert.Equal("Extra Large Latte", items[0].GetProperty("display").GetString());
+        Assert.Equal("Large Tots", items[0].GetProperty("display").GetString());
     });
 
     [Fact]
@@ -286,6 +295,56 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
         var items = order.GetProperty("items");
         Assert.Equal(1, items.GetArrayLength());
         Assert.Equal(sizeCase.ExpectedDisplay, items[0].GetProperty("display").GetString());
+    });
+
+    /// <summary>Rick's PR #100 review, required item 2: wires up the `sizeNotAvailableCases`
+    /// golden table -- a real menu item ordered in a size it does not offer (Cherry Limeade in
+    /// an XL variant it has never had; Tots in an unrecognised size word) -- against the live
+    /// backend's structured `size_not_available` rejection (#73's on-menu size gate), never a
+    /// silent absorb/round-to-nearest-real-size.</summary>
+    public static TheoryData<int> SizeNotAvailableCaseIndexes()
+    {
+        var golden = GoldenOrderPricingData.Load(RepoPaths.FindRepoRoot());
+        var data = new TheoryData<int>();
+        for (var i = 0; i < golden.SizeNotAvailableCases.Count; i++)
+        {
+            data.Add(i);
+        }
+        return data;
+    }
+
+    [Theory]
+    [MemberData(nameof(SizeNotAvailableCaseIndexes))]
+    public Task Unavailable_size_is_rejected_with_the_items_real_available_sizes(int caseIndex) => fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var golden = GoldenOrderPricingData.Load(RepoPaths.FindRepoRoot());
+        var sizeCase = golden.SizeNotAvailableCases[caseIndex];
+
+        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using var _ = browser;
+
+        var rejected = await OrderScenarioHelpers.CallToolAsync(
+            connection, browser, "update_order",
+            JsonSerializer.Serialize(new
+            {
+                action = "add",
+                item_name = sizeCase.Item,
+                size = sizeCase.Size,
+                quantity = 1,
+                price = 3.79m, // placeholder -- size_not_available is checked before price validation
+            }),
+            "call_reject_size", roundTripIndex, ct, toClient: false);
+        Assert.Null(rejected.ToolResultJson);
+        OrderScenarioHelpers.AssertRejectionShape(
+            rejected.FunctionCallOutputText,
+            expectedReason: "size_not_available",
+            expectedItemName: sizeCase.ExpectedItemName,
+            expectedAvailableSizes: sizeCase.ExpectedAvailableSizes);
+
+        var result = await OrderScenarioHelpers.CallToolAsync(
+            connection, browser, "get_order", "{}", "call_get_after_reject_size", rejected.RoundTripIndex, ct);
+        Assert.Equal(0, OrderScenarioHelpers.GetOrderItemCount(result.ToolResultJson!));
     });
 
     [Fact]

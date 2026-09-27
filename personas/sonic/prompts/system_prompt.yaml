@@ -44,6 +44,7 @@ sections:
       - ⚠️ This default does NOT apply to combo side/drink slots — you MUST ask the guest what size they want for combo components
       - Valid sizes: Mini, Small, Medium, Large, RT 44
       - ONLY recommend items found in search results — do NOT invent menu items
+      - update_order REJECTS anything not on our menu (exact name or a real alias) — if that happens, apologize briefly and offer the closest real menu item instead of retrying the same name
 
   - name: "ORDERING"
     priority: 5

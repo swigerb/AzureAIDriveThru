@@ -12,8 +12,13 @@ from azure.search.documents.models import VectorizableTextQuery
 
 from config_loader import get_config
 from menu_utils import (
+    SIZE_MAP,
+    canonical_size_key,
     infer_category as _infer_category,
+    is_extra_item,
     normalize_size,
+    requires_machine,
+    resolve_menu_item,
     strip_modifiers,
 )
 from order_state import is_happy_hour, order_state_singleton
@@ -87,18 +92,30 @@ MOCK_MACHINE_STATUS = {
     "fryer": "operational",
 }
 
-# OOS keywords — items that depend on the ice cream machine
-_ICE_CREAM_MACHINE_KEYWORDS = ("shake", "blast", "sundae", "ice cream")
+# #73 (Rick's PR review): the old OOS check (`_ICE_CREAM_MACHINE_KEYWORDS`, a substring list) and
+# the old extras check (`EXTRAS_KEYWORDS`, also a substring list) both risked matching names that
+# aren't real menu items at all. Both are now data-driven off each item's own `requiresMachine`/
+# `isExtra` fields (menu_utils.requires_machine() / menu_utils.is_extra_item()), read once at
+# import time from the pack. See search()'s OOS annotation and update_order()'s extras check below.
+
+# #73 (Rick's PR #100 review, required item 3): the OOS annotation used to hard-code the single
+# string "Ice cream machine is being cleaned" for ANY down machine -- a slush with
+# `slush_machine: "down"` would wrongly claim the ice cream machine was the problem. Keyed per
+# machine so each machine's own outage reads naturally; an unlisted machine key still degrades
+# safely to a generic "<key> is down" label instead of a KeyError or silently reusing another
+# machine's text.
+_MACHINE_OOS_LABELS: dict[str, str] = {
+    "ice_cream_machine": "Ice cream machine is being cleaned",
+    "slush_machine": "Slush machine is down",
+    "fryer": "Fryer is down",
+}
 
 
-# Extras may only be applied to specific beverage categories.
-EXTRAS_KEYWORDS = (
-    "flavor add-in",
-    "whipped cream",
-    "extra patty",
-    "extra cheese",
-    "add bacon",
-)
+def _machine_oos_label(machine: str) -> str:
+    """Return the guest-facing out-of-stock label for *machine*, falling back to a generic
+    "<machine> is down" for any machine key not in `_MACHINE_OOS_LABELS` (e.g. a future machine
+    added to a persona pack before this dict is updated for it)."""
+    return _MACHINE_OOS_LABELS.get(machine, f"{machine} is down")
 ALLOWED_EXTRA_CATEGORIES = {"slushes & drinks", "shakes & ice cream", "burgers & sandwiches", "drinks", "slushes", "shakes", "combos"}
 BLOCKED_EXTRA_CATEGORIES = {"hot dogs & tots", "sides", "hot dogs"}
 
@@ -110,11 +127,6 @@ INVALID_MODS = {
     "side": ["whipped cream", "chocolate", "vanilla", "strawberry"],
     "hot dog": ["whipped cream", "chocolate", "vanilla", "strawberry"],
 }
-
-
-def _is_extra_item(item_name: str) -> bool:
-    normalized = item_name.lower()
-    return any(keyword in normalized for keyword in EXTRAS_KEYWORDS)
 
 
 def validate_customization(item_name: str, mods_string: str) -> str | None:
@@ -306,10 +318,12 @@ async def search(
             f"Available Sizes: {size_str}"
         )
 
-        # Flag items affected by machine outages so the AI knows not to recommend them
-        if MOCK_MACHINE_STATUS.get("ice_cream_machine") == "down":
-            if any(kw in item_name.lower() for kw in _ICE_CREAM_MACHINE_KEYWORDS):
-                summary += " [OOS: Ice cream machine is being cleaned]"
+        # Flag items affected by machine outages so the AI knows not to recommend them.
+        # #73: data-driven off the item's own `requiresMachine` field instead of a substring
+        # keyword list, so a real menu item is the only thing ever flagged.
+        machine = requires_machine(item_name)
+        if machine and MOCK_MACHINE_STATUS.get(machine) == "down":
+            summary += f" [OOS: {_machine_oos_label(machine)}]"
 
         results.append(summary)
 
@@ -378,6 +392,67 @@ async def update_order(args, session_id: str) -> ToolResult:
         return ToolResult(_err, ToolResultDirection.TO_SERVER)
 
     item_name = args["item_name"]
+    size = args["size"]
+
+    # ── #73 (ADR-001 decision 4: "No off-menu"): the on-menu gate, first thing in the add path,
+    # before any other validation (customization, price, extras, quantity limits). An item is
+    # on the menu iff its normalized name or one of its exact-match aliases resolves against the
+    # persona's own menu data (menu_utils.resolve_menu_item) -- never a keyword/substring guess.
+    # Anything else is rejected outright as not_on_menu; nothing is added to the order, and the
+    # model is told so (via error_messages.yaml's item_not_on_menu) so the carhop can offer an
+    # on-menu alternative instead of silently accepting or absorbing it.
+    #
+    # Rick's PR #100 review, required item 1: both rejections below return a STRUCTURED JSON
+    # result (TO_SERVER-only, exactly like every other add-time rejection direction-wise), not a
+    # bare apology string, so the C# port can match this contract field-for-field:
+    #   {"status": "rejected", "item_added": false, "reason": <"not_on_menu"|"size_not_available">,
+    #    "item_name": ..., "message": <error_messages.yaml text>}
+    #   (+ "available_sizes": [...] for size_not_available.)
+    # ToolResult.to_text() already json.dumps()s a non-str `text` payload (rtmt.py), so passing a
+    # dict here is exactly what every OTHER JSON-carrying ToolResult in this module does. ──
+    if args["action"] == "add":
+        menu_item = resolve_menu_item(item_name)
+        if menu_item is None:
+            logger.info("Rejected off-menu item '%s' for session %s (not_on_menu)", item_name, session_id)
+            _message = _prompt_loader.render_error("item_not_on_menu", item_name=item_name) if _prompt_loader else (
+                f"I'm sorry, {item_name} isn't on our menu. Would you like to try something else instead? "
+                "Use the search tool with the guest's words and offer the closest real menu item by its exact name."
+            )
+            return ToolResult(
+                {
+                    "status": "rejected",
+                    "item_added": False,
+                    "reason": "not_on_menu",
+                    "item_name": item_name,
+                    "message": _message,
+                },
+                ToolResultDirection.TO_SERVER,
+            )
+
+        requested_size = canonical_size_key(size)
+        if requested_size not in menu_item["sizes"]:
+            available_sizes = [SIZE_MAP.get(s, s.capitalize()) for s in menu_item["sizes"]]
+            logger.info(
+                "Rejected unsupported size '%s' for '%s' in session %s (size_not_available); available: %s",
+                size, item_name, session_id, menu_item["sizes"],
+            )
+            _message = _prompt_loader.render_error(
+                "size_not_available", item_name=menu_item["name"], available_sizes=", ".join(available_sizes)
+            ) if _prompt_loader else (
+                f"I'm sorry, {menu_item['name']} isn't available in that size. "
+                f"We have it in {', '.join(available_sizes)} -- would you like one of those?"
+            )
+            return ToolResult(
+                {
+                    "status": "rejected",
+                    "item_added": False,
+                    "reason": "size_not_available",
+                    "item_name": menu_item["name"],
+                    "message": _message,
+                    "available_sizes": available_sizes,
+                },
+                ToolResultDirection.TO_SERVER,
+            )
 
     # ── Customization validation (reject nonsensical mods) ──
     if "(" in item_name:
@@ -393,7 +468,7 @@ async def update_order(args, session_id: str) -> ToolResult:
         _err = _prompt_loader.render_error("price_validation_failed") if _prompt_loader else "I'm sorry, I had a glitch with the pricing for that. Could you say that again?"
         return ToolResult(_err, ToolResultDirection.TO_SERVER)
 
-    if args["action"] == "add" and _is_extra_item(item_name):
+    if args["action"] == "add" and is_extra_item(item_name):
         current_items = order_state_singleton.get_order_items(session_id)
         has_allowed_base = False
         has_blocked_base = False
@@ -421,7 +496,6 @@ async def update_order(args, session_id: str) -> ToolResult:
 
     # ── Quantity limit validation (add only) ──
     quantity = args.get("quantity", 0)
-    size = args["size"]
     if args["action"] == "add":
         current_items = order_state_singleton.get_order_items(session_id)
 

@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Text.Json;
 using Conformance.Fakes;
 using Conformance.Harness;
@@ -145,8 +146,9 @@ public static class OrderScenarioHelpers
             Assert.False(LooksLikeOrderSummary(outputText),
                 $"function_call_output for {toolName} (call_id={callId}) parses as a JSON " +
                 "order-summary object (has \"items\" and \"finalTotal\" keys), but this call was " +
-                "scripted as rejected/dropped -- a genuine rejection is a plain apology string, " +
-                "never an order summary.");
+                "scripted as rejected/dropped -- a genuine rejection is a plain apology string or " +
+                "a structured rejection object (#73, Rick's PR #100 review: {status: \"rejected\", " +
+                "item_added: false, reason: ..., message: ...}), never an order summary in disguise.");
         }
 
         return new ToolCallResult(
@@ -260,6 +262,45 @@ public static class OrderScenarioHelpers
 
     public static int GetOrderItemCount(string orderSummaryJson) =>
         JsonDocument.Parse(orderSummaryJson).RootElement.GetProperty("items").GetArrayLength();
+
+    /// <summary>
+    /// #73 (Rick's PR #100 review, required item 1): asserts <paramref name="functionCallOutputText"/>
+    /// parses as the structured rejection object <c>update_order</c>'s add-time on-menu gate now
+    /// returns for both <c>not_on_menu</c> and <c>size_not_available</c> -- <c>tools.py</c> hands
+    /// <c>ToolResult</c> a Python dict (not a string) for either rejection, and <c>ToolResult
+    /// .to_text()</c> (rtmt.py) JSON-encodes it verbatim onto the wire as this call's
+    /// `function_call_output.output`, so this is the C# side of that exact contract:
+    /// <c>{"status": "rejected", "item_added": false, "reason": ..., "item_name": ...,
+    /// "message": ..., ["available_sizes": [...]]}</c>. Pass <paramref name="expectedAvailableSizes"/>
+    /// (only meaningful for <c>size_not_available</c>) to also assert the exact ordered list of
+    /// human-readable size labels the item is actually offered in.
+    /// </summary>
+    public static void AssertRejectionShape(
+        string functionCallOutputText,
+        string expectedReason,
+        string? expectedItemName = null,
+        IReadOnlyList<string>? expectedAvailableSizes = null)
+    {
+        using var doc = JsonDocument.Parse(functionCallOutputText);
+        var root = doc.RootElement;
+        Assert.Equal("rejected", root.GetProperty("status").GetString());
+        Assert.False(root.GetProperty("item_added").GetBoolean());
+        Assert.Equal(expectedReason, root.GetProperty("reason").GetString());
+        if (expectedItemName is not null)
+        {
+            Assert.Equal(expectedItemName, root.GetProperty("item_name").GetString());
+        }
+        Assert.False(string.IsNullOrWhiteSpace(root.GetProperty("message").GetString()),
+            "Rejection message must be non-empty guest-facing text.");
+        if (expectedAvailableSizes is not null)
+        {
+            var actualSizes = root.GetProperty("available_sizes")
+                .EnumerateArray()
+                .Select(e => e.GetString()!)
+                .ToArray();
+            Assert.Equal(expectedAvailableSizes, actualSizes);
+        }
+    }
 
     /// <summary>
     /// True if <paramref name="text"/> parses as a JSON object carrying both an "items" and a

@@ -155,8 +155,12 @@ public sealed class WholeSessionLeakTests(ResumeMarginConformanceFixture fixture
         // added below (swigerb/SonicAIDriveThru#32), since those must never reach the browser via
         // response.done's output array. ──
         const string callId = "call_whole_session_leak_1";
+        // #73: "Small Fries" is off-menu ("Fries" is not a menuItems.json item; the real side is
+        // "Tots") and would now be rejected TO_SERVER-only, so the `extension.middle_tier_tool_response`
+        // wait below would time out. This test's subject matter is cross-session leak detection,
+        // not menu lookup, so it must use a real on-menu item.
         const string updateOrderArgumentsJson =
-            """{"action":"add","item_name":"Small Fries","size":"Small","quantity":1,"price":2.49}""";
+            """{"action":"add","item_name":"Tots","size":"small","quantity":1,"price":2.19}""";
         firstConnection.Script.Enqueue(new ResponseScript([
             new FunctionCallEvent(
                 Name: "update_order",

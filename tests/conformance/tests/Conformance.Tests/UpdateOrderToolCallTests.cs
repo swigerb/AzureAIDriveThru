@@ -40,10 +40,14 @@ public sealed class UpdateOrderToolCallTests(ConformanceFixture fixture)
         Assert.True(greetingRoundTrip is not null, "Greeting round trip never completed.");
 
         const string callId = "call_update_order_1";
+        // #73: "Small Fries" is off-menu ("Fries" is not a menuItems.json item; the real side is
+        // "Tots") and would now be rejected TO_SERVER-only, so the `extension.middle_tier_tool_response`
+        // wait below would time out. This test's subject matter is the scripted-call plumbing
+        // itself, not menu lookup, so it must use a real on-menu item.
         connection!.Script.Enqueue(new ResponseScript([
             new FunctionCallEvent(
                 Name: "update_order",
-                ArgumentsJson: """{"action":"add","item_name":"Small Fries","size":"Small","quantity":1,"price":2.49}""",
+                ArgumentsJson: """{"action":"add","item_name":"Tots","size":"small","quantity":1,"price":2.19}""",
                 CallId: callId),
             new DoneEvent(),
         ]));

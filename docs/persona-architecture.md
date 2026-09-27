@@ -377,6 +377,12 @@ starts a new session.
   - A size the item doesn't list gets `reason: "size_not_available"`.
   - Parenthesized customizations on an on-menu item are still allowed and still validated.
   - Priced extras are menu items (`isExtra`).
+  - **Tool result contract (both rejection reasons, PR #100 review).** `update_order` returns a JSON object,
+    never plain text, so the C# port can mirror the same shape byte-for-byte:
+    `{ "status": "rejected", "item_added": false, "reason": "not_on_menu" | "size_not_available", "item_name",
+    "message" }`, plus `"available_sizes"` (the item's real display sizes) only for `size_not_available`. The
+    `message` for `not_on_menu` also tells the model to search with the guest's words and offer the closest
+    real item by its exact name, so a rejection still moves the order forward.
 - **Every keyword fallback is removed** (combo slot, happy hour and category), along with the `offMenu` schema
   block (#73). That removes the whole class of substring bugs ("tea" in "steak") for every persona.
 - **Menus must be complete.** Every brand's `menuItems.json` is completed from its source data before the
