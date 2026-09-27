@@ -255,4 +255,17 @@ layer(base);
         bottom: 2rem;
         right: -2rem;
     }
+
+    /* Rick's PR-110 review (round 3) item 3, issue #80: hide the brand veil gradient and the
+       blurred circle "blobs" while `App()`'s neutral loading shell is up (`data-persona-loading`,
+       set in App.tsx) -- otherwise they can paint in a stale/neutral color, or a previous
+       persona's color, before the requested persona has actually been applied. */
+    html[data-persona-loading] body {
+        background-image: none;
+    }
+
+    html[data-persona-loading] body::before,
+    html[data-persona-loading] body::after {
+        display: none;
+    }
 }
