@@ -1107,19 +1107,26 @@ Consequences for how this suite is written:
   no `precision: 2` (or any other precision-based money assertion) anywhere under
   `Scenarios/Ordering/`.
 
-### Tool-argument price trust (#28 N23)
+### Tool-call price is ignored; the menu is the source of truth (#104)
 
-`SpokenTotalTests`'s two golden spoken-total cases for "Cherry Limeade medium" use `2.99`/`3.79`
-as the unit price, while `golden-order-pricing.json`'s menu prices that size at `2.89`. This is
-deliberate, not a stale fixture: it is this suite's explicit contract rule that **the backend
-trusts whatever unit price the `update_order` tool call's own argument carries and never
-re-prices, re-validates, or cross-checks it against its own menu lookup.** A scenario asserting a
-spoken total is therefore free to pick any unit price for its `update_order` fixture — including
-one that deliberately does not match the menu — specifically to prove the total is derived from
-the tool-call argument, not silently recomputed server-side from a menu re-lookup a real customer
-order would never trigger. Do not "fix" a scenario's price to match the menu; if a genuinely
-menu-matching golden case is later wanted for its own reasons, add a new case rather than
-resolving this apparent mismatch in the existing one.
+`update_order`'s `add` action always charges the resolved menu item's own per-size price
+(`menu_utils.MenuCatalog.price_for`, applied once in `order_state.py::handle_order_update` — the
+single place this rule is enforced for both the realtime tool-call path and any caller that builds
+an order directly). The tool call's own `price` argument is **never** trusted or charged: it is
+accepted (kept in the tool schema, described there as "ignored") purely so a model that still
+sends one doesn't get rejected, and is only ever used for a `logger.debug`/`logger.warning`
+comparison against the real menu price — never for pricing. This supersedes the old #28 N23 rule
+this section used to document (the backend used to trust the tool call's price verbatim and never
+cross-checked it against the menu); every `update_order` fixture across this suite (and
+`golden-order-pricing.json`'s `steps[].price`/`combos.items[].price` fields) is now the real
+per-size menu price, so a scenario's expected total can be computed directly from
+`golden-order-pricing.json`/`personas/sonic/menu/menuItems.json` rather than from whatever the
+fixture happens to pass on the wire. `ComboAbsorptionTests.cs`'s combo prices, `HappyHourPricingTests.cs`'s
+drink price, and `UpdateOrderAddRemoveModifyTests.Adding_an_item_with_a_wrong_tool_call_price_is_charged_the_menu_price`
+(a `[Theory]` over a zero, negative, and wildly-too-high tool-call price, all charged the real
+menu price) are this suite's black-box proof of the rule; `app/backend/tests/test_tool_calling.py::test_add_wrong_tool_price_charges_menu_price`
+is its Python-side equivalent. A mutation that reverts to reading `price` straight through in
+`order_state.py`'s `add` branch (or re-adds `tools.py`'s old `price <= 0.0` rejection) fails both.
 
 ### On-menu validation gate (#73, PR #100 review item 1 and 2)
 
@@ -1755,8 +1762,9 @@ The fix has two layers, deliberately kept as defense-in-depth rather than either
    `args["item_name"]`. `update_order` now validates its full required-argument list
    (`action`, `item_name`, `size`, `quantity`) up front and returns the same kind of graceful,
    `TO_SERVER`-only `ToolResult` apology used by its other application-level rejections (the
-   zero/negative-price guard, extras rules, per-item/-order limits) — instead of ever reaching a
-   raise in the first place.
+   #73 on-menu gate, extras rules, per-item/-order limits — #104 removed the old zero/negative-price
+   guard this used to include, since the tool call's price is no longer validated at all) — instead
+   of ever reaching a raise in the first place.
 
 These two layers are complementary, not redundant: layer 2 gives `update_order`'s specific known
 failure mode a precise, immediate, well-tested response; layer 1 is the safety net for *any* tool
@@ -1804,8 +1812,9 @@ survives, just without the extras):
    no client push — never at the cost of the primary apology already having reached the server.
    `ToolFailureCapAndTicketRefreshTests.A_genuine_tool_exception_refreshes_the_guests_ticket` is the
    black-box proof: it scripts `update_order` with a non-numeric `price` (`"cheap"`, present but the
-   wrong type — sails past `tools.py`'s layer-2 *presence* validation, then raises a genuine
-   `TypeError` at the `price <= 0.0` comparison, the only vector that reaches layer 1 through
+   wrong type — sails past `tools.py`'s layer-2 *presence* validation, then reaches
+   `order_state.py`'s #104 menu-vs-tool-call price comparison, where `Decimal("cheap")` raises a
+   genuine `decimal.InvalidOperation`, the only vector that reaches layer 1 through
    `update_order`'s normal front door black-box; a missing-argument script like the original #36 repro
    never reaches layer 1 at all, because layer 2 already turns it into a graceful non-raising
    `ToolResult` — see the layering discussion above), then asserts a `get_order`-tagged
