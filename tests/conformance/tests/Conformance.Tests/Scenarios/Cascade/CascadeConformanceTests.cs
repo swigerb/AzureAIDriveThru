@@ -145,6 +145,27 @@ public sealed class CascadeConformanceTests(CascadeConformanceFixture fixture)
         Assert.Equal("$2.79", OrderScenarioHelpers.GetOrderTotalDisplay(orderSummaryJson));
         Assert.Equal("$0.22", OrderScenarioHelpers.GetOrderTaxDisplay(orderSummaryJson));
         Assert.Equal("$3.01", OrderScenarioHelpers.GetOrderFinalTotalDisplay(orderSummaryJson));
+
+        // Named pre-existing flake (#118 Rick re-review item 3): this test enqueues TWO scripted
+        // /chat/completions responses (the tool call round above, plus this final round's own
+        // "Added a medium Tots" reply) but, unlike every sibling test in this file
+        // (Cascade_tool_calling_round_trip_..., Cascade_a_429_from_..., etc.), used to return
+        // right after the pricing assertions above -- disposing `browser` (and, transitively,
+        // this turn's CascadeProcessor session) before the model's second completions round ever
+        // fired. Whether that second round happened to still land before the NEXT cascade test's
+        // own greeting/scripted request depended entirely on scheduler timing -- when it lost that
+        // race, this test's own "Added a medium Tots -- anything else?" was left sitting,
+        // unconsumed, in FakeChatCompletionsServer's single shared FIFO queue, and got dequeued by
+        // whichever cascade test ran next instead of that test's own scripted response (a
+        // content-mismatch or timeout failure with no connection to what that other test actually
+        // exercises). Waiting for this final answer here -- the same convention every other
+        // multi-round test in this file already follows -- means the queue is always left exactly
+        // as empty as this test found it, regardless of what runs after it.
+        var finalAnswer = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Sequence > connection.GreetingWatermark && f.Type == "response.audio_transcript.delta",
+            FrameTimeout, ct);
+        Assert.True(finalAnswer is not null, "Expected the model's final answer as response.audio_transcript.delta.");
+        Assert.Equal("Added a medium Tots -- anything else?", finalAnswer!.Json.GetProperty("delta").GetString());
     });
 
     [Fact]
