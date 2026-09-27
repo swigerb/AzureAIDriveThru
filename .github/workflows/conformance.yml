@@ -471,6 +471,37 @@ jobs:
             tests/conformance/conformance-browser-output.log
           retention-days: 7
 
+  # Issue #129 (Rick, blocks #87 deploy): the Docker build context was ./app, but the Dockerfile's
+  # COPY instructions (frontend/, backend/, personas/) assume the repo root, and nothing in CI ever
+  # built the image -- so the break (personas/ never found) went unnoticed since #92. This job
+  # builds the production image the same way azd does post-#129 (context = repo root, Dockerfile at
+  # app/Dockerfile) on every PR/push, with no push to a registry, so a context/COPY regression fails
+  # here instead of only surfacing at deploy time. It also asserts persona packs actually land in
+  # the image and that the #120 menu/source/ raw-ingestion workbooks do not.
+  docker-build:
+    name: Docker image build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build backend image (no push)
+        run: docker build -f app/Dockerfile -t azureaidrivethru-backend:ci .
+
+      - name: Verify persona packs are present and menu/source/ is excluded
+        run: |
+          docker run --rm azureaidrivethru-backend:ci sh -c '
+            set -e
+            echo "personas/ contents:"
+            ls -la /app/personas
+            test -n "$(ls -A /app/personas)"
+            if find /app/personas -type d -path "*/menu/source" | grep -q .; then
+              echo "menu/source/ raw ingestion workbooks leaked into the image" >&2
+              exit 1
+            fi
+          '
+
   # Issue #24: single aggregate required-status-check. Branch protection now pins only this job's
   # name, so growing the `conformance` matrix (e.g. adding backend: dotnet in S2) or adding a new
   # job to `needs:` below never requires another branch-protection edit -- it's added to `needs`
@@ -484,7 +515,7 @@ jobs:
   # required check that never ran is not the same as a required check that explicitly failed.
   conformance-gate:
     name: conformance-gate
-    needs: [python-tests, frontend-tests, dotnet-tests, conformance, conformance-browser]
+    needs: [python-tests, frontend-tests, dotnet-tests, conformance, conformance-browser, docker-build]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
