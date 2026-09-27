@@ -128,6 +128,63 @@ jobs:
             app/frontend/coverage
           retention-days: 7
 
+  # Part of issue #12 (S2, PR #96 review required item 3): C# backend unit tests
+  # (app/backend-dotnet/tests/Backend.Tests), run on every PR to dev/main. Purely additive --
+  # does NOT touch the `conformance` matrix's `backend: [python]` axis above, which stays
+  # Birdperson's #76 to extend with a `dotnet` entry. This job only builds/runs
+  # app/backend-dotnet's own xUnit suite; it does not run the conformance suite at all.
+  dotnet-tests:
+    name: C# backend unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up .NET ${{ env.DOTNET_VERSION }}
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Cache NuGet packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('app/backend-dotnet/Directory.Packages.props', 'app/backend-dotnet/**/*.csproj', 'app/backend-dotnet/**/packages.lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: dotnet restore app/backend-dotnet (locked mode)
+        working-directory: app/backend-dotnet
+        # Same rationale as the `conformance` job's identically-named step: RestorePackagesWithLockFile=true
+        # (Directory.Build.props) means packages.lock.json fully pins the resolved graph, so
+        # --locked-mode fails loudly instead of silently re-resolving if the committed lock file
+        # and Directory.Packages.props/*.csproj ever disagree.
+        run: dotnet restore Backend.slnx --locked-mode
+
+      - name: dotnet test app/backend-dotnet
+        working-directory: app/backend-dotnet
+        run: |
+          set -o pipefail
+          dotnet test Backend.slnx \
+            --no-restore \
+            --logger "trx;LogFileName=backend-tests.trx" \
+            --logger "console;verbosity=detailed" \
+            --results-directory TestResults \
+            --blame-hang --blame-hang-timeout 10min --blame-hang-dump-type mini \
+            --blame-crash --blame-crash-dump-type mini \
+            2>&1 | tee backend-tests-output.log
+
+      - name: Upload C# backend test results on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dotnet-backend-tests-results
+          path: |
+            app/backend-dotnet/TestResults
+            app/backend-dotnet/backend-tests-output.log
+          retention-days: 7
+
   # Part of issue #7 (S1.1) / #11 (S1.5): the shared black-box conformance
   # suite, against every backend it can currently run. S2 adds "dotnet" to the
   # matrix once the .NET backend (tracked separately from this test suite)
@@ -358,7 +415,7 @@ jobs:
   # required check that never ran is not the same as a required check that explicitly failed.
   conformance-gate:
     name: conformance-gate
-    needs: [python-tests, frontend-tests, conformance, conformance-browser]
+    needs: [python-tests, frontend-tests, dotnet-tests, conformance, conformance-browser]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
