@@ -775,6 +775,284 @@
                     "happyHourDiscounted": true,
                     "aliases": [],
                     "isExtra": false
+                },
+                {
+                    "name": "Coca-Cola®",
+                    "sizes": [
+                        {
+                            "size": "Mini",
+                            "price": 1.19
+                        },
+                        {
+                            "size": "Small",
+                            "price": 2.19
+                        },
+                        {
+                            "size": "Medium",
+                            "price": 2.49
+                        },
+                        {
+                            "size": "Large",
+                            "price": 2.99
+                        },
+                        {
+                            "size": "RT 44",
+                            "price": 3.49
+                        }
+                    ],
+                    "description": "Coca-Cola® served cold and refreshing over SONIC's famous ice.",
+                    "longDescription": "Coca-Cola® served cold and refreshing over SONIC's famous ice.",
+                    "origin": "Sonic Drive-In Menu",
+                    "popularity": "",
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/f3dcb011-806d-4678-ed5f-ae22e89ffc00/download",
+                    "comboSlot": "drinks",
+                    "happyHourDiscounted": true,
+                    "aliases": [
+                        "Coke"
+                    ],
+                    "isExtra": false
+                },
+                {
+                    "name": "Diet Coke®",
+                    "sizes": [
+                        {
+                            "size": "Mini",
+                            "price": 1.19
+                        },
+                        {
+                            "size": "Small",
+                            "price": 2.19
+                        },
+                        {
+                            "size": "Medium",
+                            "price": 2.49
+                        },
+                        {
+                            "size": "Large",
+                            "price": 2.99
+                        },
+                        {
+                            "size": "RT 44",
+                            "price": 3.49
+                        }
+                    ],
+                    "description": "Diet Coke® served cold and refreshing over SONIC's famous ice.",
+                    "longDescription": "Diet Coke® served cold and refreshing over SONIC's famous ice.",
+                    "origin": "Sonic Drive-In Menu",
+                    "popularity": "",
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/f3dcb011-806d-4678-ed5f-ae22e89ffc00/download",
+                    "comboSlot": "drinks",
+                    "happyHourDiscounted": true,
+                    "aliases": [],
+                    "isExtra": false
+                },
+                {
+                    "name": "Coca-Cola® Zero",
+                    "sizes": [
+                        {
+                            "size": "Mini",
+                            "price": 1.19
+                        },
+                        {
+                            "size": "Small",
+                            "price": 2.19
+                        },
+                        {
+                            "size": "Medium",
+                            "price": 2.49
+                        },
+                        {
+                            "size": "Large",
+                            "price": 2.99
+                        },
+                        {
+                            "size": "RT 44",
+                            "price": 3.49
+                        }
+                    ],
+                    "description": "Coca-Cola® Zero Sugar served cold and refreshing over SONIC's famous ice.",
+                    "longDescription": "Coca-Cola® Zero Sugar served cold and refreshing over SONIC's famous ice.",
+                    "origin": "Sonic Drive-In Menu",
+                    "popularity": "",
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/f3dcb011-806d-4678-ed5f-ae22e89ffc00/download",
+                    "comboSlot": "drinks",
+                    "happyHourDiscounted": true,
+                    "aliases": [
+                        "Coke Zero"
+                    ],
+                    "isExtra": false
+                },
+                {
+                    "name": "Dr Pepper®",
+                    "sizes": [
+                        {
+                            "size": "Mini",
+                            "price": 1.19
+                        },
+                        {
+                            "size": "Small",
+                            "price": 2.19
+                        },
+                        {
+                            "size": "Medium",
+                            "price": 2.49
+                        },
+                        {
+                            "size": "Large",
+                            "price": 2.99
+                        },
+                        {
+                            "size": "RT 44",
+                            "price": 3.49
+                        }
+                    ],
+                    "description": "Dr Pepper® served cold and refreshing over SONIC's famous ice.",
+                    "longDescription": "Dr Pepper® served cold and refreshing over SONIC's famous ice.",
+                    "origin": "Sonic Drive-In Menu",
+                    "popularity": "",
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/d89894c9-83af-4935-1202-3ab27e597d00/download",
+                    "comboSlot": "drinks",
+                    "happyHourDiscounted": true,
+                    "aliases": [],
+                    "isExtra": false
+                },
+                {
+                    "name": "Diet Dr Pepper®",
+                    "sizes": [
+                        {
+                            "size": "Mini",
+                            "price": 1.19
+                        },
+                        {
+                            "size": "Small",
+                            "price": 2.19
+                        },
+                        {
+                            "size": "Medium",
+                            "price": 2.49
+                        },
+                        {
+                            "size": "Large",
+                            "price": 2.99
+                        },
+                        {
+                            "size": "RT 44",
+                            "price": 3.49
+                        }
+                    ],
+                    "description": "Diet Dr Pepper® served cold and refreshing over SONIC's famous ice.",
+                    "longDescription": "Diet Dr Pepper® served cold and refreshing over SONIC's famous ice.",
+                    "origin": "Sonic Drive-In Menu",
+                    "popularity": "",
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/d89894c9-83af-4935-1202-3ab27e597d00/download",
+                    "comboSlot": "drinks",
+                    "happyHourDiscounted": true,
+                    "aliases": [],
+                    "isExtra": false
+                },
+                {
+                    "name": "BARQ'S® Root Beer",
+                    "sizes": [
+                        {
+                            "size": "Mini",
+                            "price": 1.19
+                        },
+                        {
+                            "size": "Small",
+                            "price": 2.19
+                        },
+                        {
+                            "size": "Medium",
+                            "price": 2.49
+                        },
+                        {
+                            "size": "Large",
+                            "price": 2.99
+                        },
+                        {
+                            "size": "RT 44",
+                            "price": 3.49
+                        }
+                    ],
+                    "description": "BARQ'S® Root Beer served cold and refreshing over SONIC's famous ice.",
+                    "longDescription": "BARQ'S® Root Beer served cold and refreshing over SONIC's famous ice.",
+                    "origin": "Sonic Drive-In Menu",
+                    "popularity": "",
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/92bfd536-8e1b-46af-c683-180e6d542600/download",
+                    "comboSlot": "drinks",
+                    "happyHourDiscounted": true,
+                    "aliases": [
+                        "Root Beer"
+                    ],
+                    "isExtra": false
+                },
+                {
+                    "name": "Sprite®",
+                    "sizes": [
+                        {
+                            "size": "Mini",
+                            "price": 1.19
+                        },
+                        {
+                            "size": "Small",
+                            "price": 2.19
+                        },
+                        {
+                            "size": "Medium",
+                            "price": 2.49
+                        },
+                        {
+                            "size": "Large",
+                            "price": 2.99
+                        },
+                        {
+                            "size": "RT 44",
+                            "price": 3.49
+                        }
+                    ],
+                    "description": "Sprite® served cold and refreshing over SONIC's famous ice.",
+                    "longDescription": "Sprite® served cold and refreshing over SONIC's famous ice.",
+                    "origin": "Sonic Drive-In Menu",
+                    "popularity": "",
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/c57c56c6-a375-4cef-63a4-2645078af900/download",
+                    "comboSlot": "drinks",
+                    "happyHourDiscounted": true,
+                    "aliases": [],
+                    "isExtra": false
+                },
+                {
+                    "name": "Sprite Zero®",
+                    "sizes": [
+                        {
+                            "size": "Mini",
+                            "price": 1.19
+                        },
+                        {
+                            "size": "Small",
+                            "price": 2.19
+                        },
+                        {
+                            "size": "Medium",
+                            "price": 2.49
+                        },
+                        {
+                            "size": "Large",
+                            "price": 2.99
+                        },
+                        {
+                            "size": "RT 44",
+                            "price": 3.49
+                        }
+                    ],
+                    "description": "Sprite Zero® served cold and refreshing over SONIC's famous ice.",
+                    "longDescription": "Sprite Zero® served cold and refreshing over SONIC's famous ice.",
+                    "origin": "Sonic Drive-In Menu",
+                    "popularity": "",
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/c57c56c6-a375-4cef-63a4-2645078af900/download",
+                    "comboSlot": "drinks",
+                    "happyHourDiscounted": true,
+                    "aliases": [],
+                    "isExtra": false
                 }
             ]
         },
@@ -1054,6 +1332,99 @@
                     "popularity": "",
                     "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/03487758-7de6-42fe-1c22-cfc7f645ec00/download",
                     "comboSlot": "none",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "requiresMachine": "ice_cream_machine",
+                    "isExtra": false
+                },
+                {
+                    "name": "Root Beer Float",
+                    "sizes": [
+                        {
+                            "size": "Mini",
+                            "price": 3.39
+                        },
+                        {
+                            "size": "Small",
+                            "price": 4.19
+                        },
+                        {
+                            "size": "Medium",
+                            "price": 4.69
+                        },
+                        {
+                            "size": "Large",
+                            "price": 5.69
+                        }
+                    ],
+                    "description": "Creamy vanilla soft serve floating in ice-cold BARQ'S® Root Beer.",
+                    "longDescription": "Creamy vanilla soft serve floating in ice-cold BARQ'S® Root Beer.",
+                    "origin": "Added per Brian's decision (#64, #72) -- not in the source export (sonic-menu-items.json); priced to match the Classic Shake sizes/prices (design doc section 17).",
+                    "popularity": "",
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/b6ebeb24-53c7-4f63-7ecc-23fecf83c400/download",
+                    "comboSlot": "drinks",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "requiresMachine": "ice_cream_machine",
+                    "isExtra": false
+                },
+                {
+                    "name": "Coke Float",
+                    "sizes": [
+                        {
+                            "size": "Mini",
+                            "price": 3.39
+                        },
+                        {
+                            "size": "Small",
+                            "price": 4.19
+                        },
+                        {
+                            "size": "Medium",
+                            "price": 4.69
+                        },
+                        {
+                            "size": "Large",
+                            "price": 5.69
+                        }
+                    ],
+                    "description": "Creamy vanilla soft serve floating in ice-cold Coca-Cola®.",
+                    "longDescription": "Creamy vanilla soft serve floating in ice-cold Coca-Cola®.",
+                    "origin": "Added per Brian's decision (#64, #72) -- not in the source export (sonic-menu-items.json); priced to match the Classic Shake sizes/prices (design doc section 17).",
+                    "popularity": "",
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/b6ebeb24-53c7-4f63-7ecc-23fecf83c400/download",
+                    "comboSlot": "drinks",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "requiresMachine": "ice_cream_machine",
+                    "isExtra": false
+                },
+                {
+                    "name": "Dr Pepper Float",
+                    "sizes": [
+                        {
+                            "size": "Mini",
+                            "price": 3.39
+                        },
+                        {
+                            "size": "Small",
+                            "price": 4.19
+                        },
+                        {
+                            "size": "Medium",
+                            "price": 4.69
+                        },
+                        {
+                            "size": "Large",
+                            "price": 5.69
+                        }
+                    ],
+                    "description": "Creamy vanilla soft serve floating in ice-cold Dr Pepper®.",
+                    "longDescription": "Creamy vanilla soft serve floating in ice-cold Dr Pepper®.",
+                    "origin": "Added per Brian's decision (#64, #72) -- not in the source export (sonic-menu-items.json); priced to match the Classic Shake sizes/prices (design doc section 17).",
+                    "popularity": "",
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/b6ebeb24-53c7-4f63-7ecc-23fecf83c400/download",
+                    "comboSlot": "drinks",
                     "happyHourDiscounted": false,
                     "aliases": [],
                     "requiresMachine": "ice_cream_machine",
@@ -1528,6 +1899,60 @@
                     "happyHourDiscounted": false,
                     "aliases": [],
                     "isExtra": false
+                },
+                {
+                    "name": "Flavor Add-In",
+                    "sizes": [
+                        {
+                            "size": "Standard",
+                            "price": 0.6
+                        }
+                    ],
+                    "description": "Add a splash of your favorite flavor to any slush or fountain drink.",
+                    "longDescription": "Add a splash of your favorite flavor to any slush or fountain drink.",
+                    "origin": "Sonic Drive-In Menu (priced from the export's flavor-syrup modifier data)",
+                    "popularity": "",
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/c5ed53b2-8254-4359-d516-257031297b00/download",
+                    "comboSlot": "none",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "isExtra": true
+                },
+                {
+                    "name": "Add Bacon",
+                    "sizes": [
+                        {
+                            "size": "Standard",
+                            "price": 2.0
+                        }
+                    ],
+                    "description": "Add crispy, thick-cut bacon to any burger, sandwich, or hot dog.",
+                    "longDescription": "Add crispy, thick-cut bacon to any burger, sandwich, or hot dog.",
+                    "origin": "Sonic Drive-In Menu (priced from the export's bacon modifier data)",
+                    "popularity": "",
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/f250542b-3c25-4a32-7792-d07638dcfd00/download",
+                    "comboSlot": "none",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "isExtra": true
+                },
+                {
+                    "name": "Extra Patty",
+                    "sizes": [
+                        {
+                            "size": "Standard",
+                            "price": 1.5
+                        }
+                    ],
+                    "description": "Add an extra 100% pure beef patty to any burger.",
+                    "longDescription": "Add an extra 100% pure beef patty to any burger.",
+                    "origin": "Sonic Drive-In Menu (the export's patty modifiers carry no per-unit charge; kept at the price already charged in system_prompt.yaml, #72)",
+                    "popularity": "",
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/18b06c90-1a3d-411b-75b3-b3cce2915000/download",
+                    "comboSlot": "none",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "isExtra": true
                 }
             ]
         }
