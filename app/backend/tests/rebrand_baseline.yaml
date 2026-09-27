@@ -26,11 +26,11 @@ entries:
   increase_reason: ''
 - file: DEPLOY.md
   brand: sonic
-  max: 5
+  max: 7
   issue: '#86'
   reason: 'Deployment walkthrough uses the Sonic app name/image tag as its running
     example; same top-level-docs naming work as #86.'
-  increase_reason: ''
+  increase_reason: '#84'
 - file: README.md
   brand: mcdonalds
   max: 1
@@ -143,8 +143,23 @@ entries:
     #74''s session-scoped persona binding.'
   increase_reason: ''
 - file: app/backend/setup_search_index.py
+  brand: dunkin
+  max: 2
+  issue: '#84'
+  reason: 'Module docstring/usage example lists dunkin-menu-items alongside sonic/mcdonalds
+    as illustrative index names for issue #84''s per-persona ingestion design; no dunkin
+    persona pack exists yet.'
+  increase_reason: '#84'
+- file: app/backend/setup_search_index.py
+  brand: mcdonalds
+  max: 1
+  issue: '#84'
+  reason: 'Same illustrative-example list as the dunkin entry above (issue #84''s
+    per-persona ingestion docstring/usage comment).'
+  increase_reason: '#84'
+- file: app/backend/setup_search_index.py
   brand: sonic
-  max: 4
+  max: 3
   issue: '#74'
   reason: 'Backend config/persona/prompt loader defaults, logger names and illustrative
     docstring examples still default/hardcode to the single Sonic persona pending
@@ -270,6 +285,13 @@ entries:
     it''s the only persona pack that exists yet -- #78/#79 land the other packs, at
     which point these tests get parameterized per-persona instead of hardcoding Sonic.'
   increase_reason: ''
+- file: app/backend/tests/test_setup_search_index.py
+  brand: sonic
+  max: 3
+  issue: '#84'
+  reason: 'BuildPlanTests.test_real_sonic_pack_builds_a_plan sanity-checks the new
+    per-persona ingestion script against the real (non-fixture) sonic persona pack.'
+  increase_reason: '#84'
 - file: app/backend/tests/test_tool_calling.py
   brand: sonic
   max: 11
