@@ -14,7 +14,9 @@ from dotenv import load_dotenv
 
 import default_persona
 from config_loader import get_config
+from model_catalog import ModelCatalog, ModelValidationError
 from persona_loader import Persona, PersonaCatalog, PersonaValidationError
+from processors import ProcessorRegistry
 from prompt_loader import PromptLoader
 from rtmt import RTMiddleTier, configure_realtime_model, create_hmac_token
 from tools import attach_tools_rtmt
@@ -122,14 +124,44 @@ def _persona_menu_url(persona: Persona) -> str:
     return f"/personas/{persona.id}/menu.json?v={_content_hash(persona.menu_path)}"
 
 
-def _model_pipelines_body(models) -> dict:
+def _selectable_allowed(pipeline_cfg, pipeline_name: str, model_catalog: ModelCatalog | None) -> list[str]:
+    """*pipeline_cfg.allowed*, narrowed to what's actually selectable right now (design doc
+    section 7.3: "Selectable = catalog ∩ deployment ∩ persona-allowed") when *model_catalog* is
+    given. The pipeline's own `default` is always kept even if the catalog/deployment map
+    doesn't (yet) cover it -- #75 acceptance: default-model behavior never depends on the
+    catalog (`resolve_realtime_model`'s own default branch never touches it either). With
+    `model_catalog=None` (the default), returns `pipeline_cfg.allowed` unfiltered -- today's
+    exact, unchanged response shape for any caller that hasn't opted into filtering."""
+    if model_catalog is None:
+        return list(pipeline_cfg.allowed)
+    return [
+        model_id for model_id in pipeline_cfg.allowed
+        if model_id == pipeline_cfg.default or model_catalog.is_selectable(model_id, pipeline_name)
+    ]
+
+
+def _model_pipelines_body(models, model_catalog: ModelCatalog | None = None) -> dict:
     """The selectable `models` per pipeline (design doc section 7); only the pipelines a
-    persona actually declares (`cascade`/`local` are optional)."""
-    body = {"realtime": {"default": models.realtime.default, "allowed": models.realtime.allowed}}
+    persona actually declares (`cascade`/`local` are optional). *model_catalog* is optional
+    (default `None` = unfiltered, today's exact shape) -- pass the process's loaded
+    `ModelCatalog` to narrow each pipeline's `allowed` list to what's actually catalogued,
+    deployed, and wired to the right pipeline (section 7.3)."""
+    body = {
+        "realtime": {
+            "default": models.realtime.default,
+            "allowed": _selectable_allowed(models.realtime, "realtime", model_catalog),
+        }
+    }
     if models.cascade is not None:
-        body["cascade"] = {"default": models.cascade.default, "allowed": models.cascade.allowed}
+        body["cascade"] = {
+            "default": models.cascade.default,
+            "allowed": _selectable_allowed(models.cascade, "cascade", model_catalog),
+        }
     if models.local is not None:
-        body["local"] = {"default": models.local.default, "allowed": models.local.allowed}
+        body["local"] = {
+            "default": models.local.default,
+            "allowed": _selectable_allowed(models.local, "local", model_catalog),
+        }
     return body
 
 
@@ -169,11 +201,12 @@ def _personas_index_body(catalog: PersonaCatalog) -> dict:
     }
 
 
-def _persona_detail_body(persona: Persona) -> dict:
+def _persona_detail_body(persona: Persona, model_catalog: ModelCatalog | None = None) -> dict:
     """`GET /api/personas/{id}` response body (design doc section 5.2): the pack's `ui`
     block, plus `voice.default`, `locales`, `features.dayparts`, `menuUrl`, and the
     selectable `models` per pipeline. Callers must check the persona is enabled first
-    (404 otherwise) -- this function assumes it already is."""
+    (404 otherwise) -- this function assumes it already is. *model_catalog* is optional
+    (default `None`) -- see `_model_pipelines_body`."""
     manifest = persona.manifest
     return {
         "id": persona.id,
@@ -182,7 +215,7 @@ def _persona_detail_body(persona: Persona) -> dict:
         "locales": manifest.locales.model_dump(exclude_none=True),
         "features": {"dayparts": manifest.features.dayparts},
         "menuUrl": _persona_menu_url(persona),
-        "models": _model_pipelines_body(manifest.models),
+        "models": _model_pipelines_body(manifest.models, model_catalog),
     }
 
 
@@ -363,7 +396,7 @@ async def _check_service_connectivity() -> None:
         logger.warning("⚠️ Service connectivity check failed — %s (non-fatal)", exc)
 
 
-def register_persona_routes(app: web.Application, catalog: PersonaCatalog) -> None:
+def register_persona_routes(app: web.Application, catalog: PersonaCatalog, model_catalog: ModelCatalog | None = None) -> None:
     """Register `/api/personas`, `/api/personas/{id}`, `/personas/{id}/assets/*` and
     `/personas/{id}/menu.json` against `catalog` (issue #74, design doc section 5.2).
 
@@ -372,6 +405,12 @@ def register_persona_routes(app: web.Application, catalog: PersonaCatalog) -> No
     against a fixture catalog, hitting the real HTTP routes (path matching, traversal
     handling, status codes) without needing `create_app()`'s full Azure OpenAI/Search
     startup dependencies.
+
+    *model_catalog* (issue #75) is optional -- default `None` keeps `/api/personas/{id}`'s
+    `models` block unfiltered (today's exact shape, and every existing conformance/unit test
+    that calls this without a third argument keeps passing unmodified); `create_app()` passes
+    the process's loaded `ModelCatalog` so the response narrows to what's actually selectable
+    (design doc section 7.3).
     """
 
     async def get_personas(_request: web.Request) -> web.Response:
@@ -381,7 +420,7 @@ def register_persona_routes(app: web.Application, catalog: PersonaCatalog) -> No
         persona_id = request.match_info["persona_id"]
         if persona_id not in catalog:
             return web.json_response({"error": f"Unknown or disabled persona: {persona_id!r}"}, status=404)
-        return web.json_response(_persona_detail_body(catalog.get(persona_id)))
+        return web.json_response(_persona_detail_body(catalog.get(persona_id), model_catalog))
 
     # ── Persona static asset routes (issue #74, design doc section 5.2, Rick's PR #102
     # review item 5): serve only the ENABLED pack's own files, matching `logoUrl`/
@@ -455,6 +494,21 @@ async def create_app() -> web.Application:
         logger.critical("FATAL: Failed to load persona pack(s) — %s", exc)
         sys.exit(1)
     _startup_checks["personas_loaded"] = True
+
+    # 2b. Load and validate the shared realtime/cascade/local model catalog (issue #75,
+    # design doc section 7): config.yaml's `models.catalog` (layer 1) plus the
+    # AZURE_AI_MODEL_DEPLOYMENTS deployment-name map (layer 2, populated by #93's Bicep
+    # outputs). Fails fast on a malformed catalog entry, same pattern as persona/prompt
+    # loading above -- an unusable catalog should stop startup, not surface as a confusing
+    # 404 on the first `?model=` request. Not tracked in `_startup_checks`/`/health` (unlike
+    # personas/prompts/env vars above): those three predate #75 and are covered by existing
+    # tests that assert an exact set of `/health` keys; a load failure here still aborts
+    # startup via `sys.exit(1)`, same as they do.
+    try:
+        model_catalog = ModelCatalog.load()
+    except ModelValidationError as exc:
+        logger.critical("FATAL: Failed to load model catalog — %s", exc)
+        sys.exit(1)
 
     # 3. Build one PromptLoader per enabled persona pack (issue #74; #92 review note --
     # removes the single hardcoded default-brand PromptLoader). Each loader reads from its own
@@ -533,6 +587,16 @@ async def create_app() -> web.Application:
     rtmt.persona_catalog = _persona_catalog
     rtmt.persona_prompt_loaders = prompt_loaders
 
+    # Issue #75: the shared model catalog + deployment map, so `_websocket_handler` can
+    # resolve/validate `?model=` (`RTMiddleTier.resolve_model` -> `resolve_realtime_model`)
+    # against something other than the always-empty catalog `RTMiddleTier.__init__` defaults
+    # to. `ProcessorRegistry` is the seam #82's cascade pipeline (and #81's local pipeline)
+    # will register alongside `rtmt` on -- only one entry today, but it's the concrete thing
+    # a "processor seam bypassed" mutation test exercises (see `processors.py`'s own
+    # docstring): nothing here is unused, `_websocket_handler`'s registry lookup is intact.
+    rtmt.model_catalog = model_catalog
+    rtmt.processor_registry = ProcessorRegistry([rtmt])
+
     # Issue #74 (Rick's PR #102 review, item 2): every other module that resolves a
     # persona/menu when none is explicitly passed (order_state, tools, and this module's own
     # asset/menu routes below) goes through `default_persona`, not a private duplicate of the
@@ -597,7 +661,7 @@ async def create_app() -> web.Application:
         web.get('/api/auth/session', get_session_token),
     ])
     # ── Persona discovery + static asset routes (issue #74, design doc section 5.2) ──
-    register_persona_routes(app, _persona_catalog)
+    register_persona_routes(app, _persona_catalog, model_catalog)
     app.router.add_static(
         '/',
         path=current_directory / 'static',
