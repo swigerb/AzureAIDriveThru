@@ -1121,6 +1121,35 @@ order would never trigger. Do not "fix" a scenario's price to match the menu; if
 menu-matching golden case is later wanted for its own reasons, add a new case rather than
 resolving this apparent mismatch in the existing one.
 
+### On-menu validation gate (#73, PR #100 review item 1 and 2)
+
+`CustomisedItemMenuLookupTests.cs` and `UpdateOrderAddRemoveModifyTests.cs` assert that
+`update_order` `add` never silently absorbs, discounts, or rounds an off-menu name or an
+unsupported size to a nearby real one — it rejects outright and leaves the order unchanged.
+Both rejection reasons return the same structured JSON on the wire (never plain text), asserted
+via `OrderScenarioHelpers.AssertRejectionShape`:
+
+```json
+{ "status": "rejected", "item_added": false, "reason": "not_on_menu" | "size_not_available",
+  "item_name": "...", "message": "...", "available_sizes": ["Small", "Medium", ...] }
+```
+
+`available_sizes` is present only for `reason: "size_not_available"` (the item's real display
+sizes, e.g. Cherry Limeade's `["Mini","Small","Medium","Large","Route 44"]`). Since this is a
+`TO_SERVER`-only rejection, `ToolCallResult.ToolResultJson` stays `null` (no browser-facing
+extension message) — assert the JSON on `ToolCallResult.FunctionCallOutputText` instead, the
+string sent upstream as `function_call_output.output`.
+
+`golden-order-pricing.json`'s `sizeNotAvailableCases` array is the golden table for the size
+rejection: each row is a real menu item ordered in a size it does not offer (Cherry Limeade in an
+`xl`/`Extra Large`/`extra large`/`XL` variant it has never had; Tots in an unrecognised size word
+like `pot` or `kannchen`), with the expected resolved item name and the item's real available
+sizes. `UpdateOrderAddRemoveModifyTests.cs`'s `Unavailable_size_is_rejected_with_the_items_real_available_sizes`
+Theory is index-driven over that array, parallel to the existing `Size_aliases_and_hidden_sizes_display_correctly`
+Theory over `sizeDisplayCases`. A single-size item ordered with no size word (`n/a`/`none`/`""`)
+is a distinct, already-accepted case — see `sizeDisplayCases`' "Salted Caramel Toffee Croissant
+Bites" + `n/a` row — and is not part of `sizeNotAvailableCases`.
+
 ### Python-bug scenarios skip only against Python (PR #38 review should-fix 3)
 
 Every scenario documenting a "Known Python bug" — reproducing a genuine defect in `app/backend`

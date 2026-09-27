@@ -69,6 +69,8 @@ public sealed class CustomisedItemMenuLookupTests
             }),
             "call_reject", roundTripIndex, ct, toClient: false);
         Assert.Null(rejected.ToolResultJson);
+        OrderScenarioHelpers.AssertRejectionShape(
+            rejected.FunctionCallOutputText, expectedReason: "not_on_menu", expectedItemName: offMenuItemName);
 
         var result = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "get_order", "{}", "call_get_after_reject", rejected.RoundTripIndex, ct);

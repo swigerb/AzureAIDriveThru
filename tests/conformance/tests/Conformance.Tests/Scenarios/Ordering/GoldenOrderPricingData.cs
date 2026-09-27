@@ -47,6 +47,21 @@ public sealed record Route44Info(IReadOnlyList<string> Aliases, string ExpectedD
 
 public sealed record SizeDisplayCase(string Item, string Size, string ExpectedDisplay);
 
+/// <summary>
+/// Rick's PR #100 review, required item 2: rows for a real menu item ordered in a size it does
+/// NOT offer -- must be rejected as `size_not_available` (never silently absorbed/rounded to a
+/// nearby real size), and the rejection must list the item's actual available sizes so the
+/// carhop can offer one of those instead. <see cref="ExpectedItemName"/> is the item's canonical
+/// menuItems.json spelling (what `update_order`'s size_not_available rejection echoes back in
+/// its `item_name` field), distinct from <see cref="Item"/> (the possibly-differently-cased/
+/// spoken name used to place the order).
+/// </summary>
+public sealed record SizeNotAvailableCase(
+    string Item,
+    string Size,
+    string ExpectedItemName,
+    IReadOnlyList<string> ExpectedAvailableSizes);
+
 public sealed record QuantityLimits(int MaxItemQuantity, int MaxOrderItems);
 
 public sealed record ComboMenuItem(string Name, string Size, decimal Price, decimal ExpectedTax, decimal ExpectedFinalTotal);
@@ -86,6 +101,7 @@ public sealed record GoldenOrderPricingData(
     IReadOnlyList<TaxCase> TaxCases,
     Route44Info Route44,
     IReadOnlyList<SizeDisplayCase> SizeDisplayCases,
+    IReadOnlyList<SizeNotAvailableCase> SizeNotAvailableCases,
     QuantityLimits QuantityLimits,
     CombosSection Combos,
     IReadOnlyList<ComboAbsorptionScenario> ComboAbsorptionScenarios,

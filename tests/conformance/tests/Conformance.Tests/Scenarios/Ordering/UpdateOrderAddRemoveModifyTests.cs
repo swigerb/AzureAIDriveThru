@@ -297,6 +297,56 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
         Assert.Equal(sizeCase.ExpectedDisplay, items[0].GetProperty("display").GetString());
     });
 
+    /// <summary>Rick's PR #100 review, required item 2: wires up the `sizeNotAvailableCases`
+    /// golden table -- a real menu item ordered in a size it does not offer (Cherry Limeade in
+    /// an XL variant it has never had; Tots in an unrecognised size word) -- against the live
+    /// backend's structured `size_not_available` rejection (#73's on-menu size gate), never a
+    /// silent absorb/round-to-nearest-real-size.</summary>
+    public static TheoryData<int> SizeNotAvailableCaseIndexes()
+    {
+        var golden = GoldenOrderPricingData.Load(RepoPaths.FindRepoRoot());
+        var data = new TheoryData<int>();
+        for (var i = 0; i < golden.SizeNotAvailableCases.Count; i++)
+        {
+            data.Add(i);
+        }
+        return data;
+    }
+
+    [Theory]
+    [MemberData(nameof(SizeNotAvailableCaseIndexes))]
+    public Task Unavailable_size_is_rejected_with_the_items_real_available_sizes(int caseIndex) => fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var golden = GoldenOrderPricingData.Load(RepoPaths.FindRepoRoot());
+        var sizeCase = golden.SizeNotAvailableCases[caseIndex];
+
+        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using var _ = browser;
+
+        var rejected = await OrderScenarioHelpers.CallToolAsync(
+            connection, browser, "update_order",
+            JsonSerializer.Serialize(new
+            {
+                action = "add",
+                item_name = sizeCase.Item,
+                size = sizeCase.Size,
+                quantity = 1,
+                price = 3.79m, // placeholder -- size_not_available is checked before price validation
+            }),
+            "call_reject_size", roundTripIndex, ct, toClient: false);
+        Assert.Null(rejected.ToolResultJson);
+        OrderScenarioHelpers.AssertRejectionShape(
+            rejected.FunctionCallOutputText,
+            expectedReason: "size_not_available",
+            expectedItemName: sizeCase.ExpectedItemName,
+            expectedAvailableSizes: sizeCase.ExpectedAvailableSizes);
+
+        var result = await OrderScenarioHelpers.CallToolAsync(
+            connection, browser, "get_order", "{}", "call_get_after_reject_size", rejected.RoundTripIndex, ct);
+        Assert.Equal(0, OrderScenarioHelpers.GetOrderItemCount(result.ToolResultJson!));
+    });
+
     [Fact]
     public Task Adding_up_to_the_per_item_quantity_limit_succeeds_but_one_more_is_rejected() => fixture.RunAsync(async () =>
     {

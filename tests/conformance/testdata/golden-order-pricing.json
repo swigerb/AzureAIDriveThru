@@ -116,6 +116,14 @@
     { "item": "Salted Caramel Toffee Croissant Bites", "size": "", "expectedDisplay": "Salted Caramel Toffee Croissant Bites" },
     { "item": "Salted Caramel Toffee Croissant Bites", "size": "n.a.", "expectedDisplay": "Salted Caramel Toffee Croissant Bites" }
   ],
+  "sizeNotAvailableCases": [
+    { "item": "Cherry Limeade", "size": "xl", "expectedItemName": "Cherry Limeade", "expectedAvailableSizes": ["Mini", "Small", "Medium", "Large", "Route 44"] },
+    { "item": "Cherry Limeade", "size": "Extra Large", "expectedItemName": "Cherry Limeade", "expectedAvailableSizes": ["Mini", "Small", "Medium", "Large", "Route 44"] },
+    { "item": "Cherry Limeade", "size": "extra large", "expectedItemName": "Cherry Limeade", "expectedAvailableSizes": ["Mini", "Small", "Medium", "Large", "Route 44"] },
+    { "item": "Cherry Limeade", "size": "XL", "expectedItemName": "Cherry Limeade", "expectedAvailableSizes": ["Mini", "Small", "Medium", "Large", "Route 44"] },
+    { "item": "Tots", "size": "pot", "expectedItemName": "Tots", "expectedAvailableSizes": ["Small", "Medium", "Large"] },
+    { "item": "Tots", "size": "kannchen", "expectedItemName": "Tots", "expectedAvailableSizes": ["Small", "Medium", "Large"] }
+  ],
   "quantityLimits": {
     "maxItemQuantity": 10,
     "maxOrderItems": 25,
