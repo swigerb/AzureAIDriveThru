@@ -632,6 +632,7 @@ function SonicApp() {
                                     setVoiceChoice(voice);
                                     realtime.sendVoiceChoice(voice);
                                 }}
+                                models={current.models}
                             />
                         </Suspense>
                         {authEnabled && (
@@ -780,7 +781,7 @@ const BrandHero = memo(function BrandHero({ logoUrl, persona }: { logoUrl: strin
                             <img
                                 src={logoUrl}
                                 alt={`${persona.title} logo`}
-                                className="h-20 w-auto drop-shadow-xs"
+                                className="h-20 w-auto max-w-[14rem] object-contain drop-shadow-xs"
                                 loading="lazy"
                                 onError={() => setLogoFailed(true)}
                             />
@@ -943,11 +944,26 @@ function App() {
     // instead of a second bespoke one.
     const { ready: personaReady } = usePersonaContext();
 
+    // Rick's PR-110 review (round 3) item 3, issue #80: the `index.css` veil/blob background must
+    // stay hidden while this neutral shell is showing, so a size-less/mid-fetch persona never
+    // paints brand-colored decoration behind a "please wait" state that hasn't applied a persona
+    // yet. `data-persona-loading` is read by `index.css`'s `[data-persona-loading]` selector.
+    useEffect(() => {
+        if (personaReady) {
+            document.documentElement.removeAttribute("data-persona-loading");
+        } else {
+            document.documentElement.setAttribute("data-persona-loading", "true");
+        }
+        return () => {
+            document.documentElement.removeAttribute("data-persona-loading");
+        };
+    }, [personaReady]);
+
     if (isLoading || !personaReady) {
         return (
             <div className="flex min-h-screen items-center justify-center">
                 <div className="text-center">
-                    <div className="mx-auto mb-4 h-12 w-12 animate-spin rounded-full border-4 border-primary border-t-transparent"></div>
+                    <div className="mx-auto mb-4 h-12 w-12 animate-spin rounded-full border-4 border-muted-foreground border-t-transparent"></div>
                     <p className="text-lg">Loading...</p>
                 </div>
             </div>

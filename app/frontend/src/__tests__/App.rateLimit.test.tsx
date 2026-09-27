@@ -46,12 +46,12 @@ vi.mock("darkreader", () => ({ enable: vi.fn(), disable: vi.fn(), auto: vi.fn(),
 vi.mock("@/hooks/useAudioRecorder", () => ({ default: () => rec }));
 vi.mock("@/hooks/useAudioPlayer", () => ({ default: () => player }));
 
-// Rick's PR-110 review item 1 + item 6 (issue #80 F1/F6): with the hard-coded Sonic fallback
-// gone, `<RootApp />` now needs a real (mocked) `/api/personas` catalog + detail round trip before
-// `App()`'s `ready` gate lets `<SonicApp />` (and therefore the mic button this suite drives)
-// render at all. This fixture persona keeps the apology-clip business logic these tests exist to
-// cover genuinely exercised, the same way the deleted Sonic fallback used to -- just via a neutral
-// id instead of a hard-coded brand.
+// Rick's PR-110 review item 1 + item 6 (issue #80 F1/F6): with the old hard-coded fallback
+// persona gone, `<RootApp />` now needs a real (mocked) `/api/personas` catalog + detail round trip
+// before `App()`'s `ready` gate lets the branded shell (and therefore the mic button this suite
+// drives) render at all. This fixture persona keeps the apology-clip business logic these tests
+// exist to cover genuinely exercised, the same way the old hard-coded fallback used to -- just via
+// a neutral id instead of a hard-coded brand.
 const FIXTURE_PERSONA_INDEX = {
     default: "test-alpha",
     personas: [
@@ -71,7 +71,7 @@ const FIXTURE_PERSONA_DETAIL = {
     locales: { default: "en", supported: ["en", "es", "fr", "ja"] },
     features: { dayparts: false },
     menuUrl: "/personas/test-alpha/menu.json",
-    models: { realtime: { default: "gpt-realtime-2.1", allowed: ["gpt-realtime-2.1"] } }
+    models: { realtime: { default: "gpt-realtime-2.1", models: [{ id: "gpt-realtime-2.1", label: "GPT Realtime 2.1", reasoning: true }] } }
 };
 
 function mockPersonaFetch() {

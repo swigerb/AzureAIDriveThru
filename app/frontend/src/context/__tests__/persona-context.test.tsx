@@ -10,11 +10,10 @@ import type { PersonasIndexResponse, PersonaDetail } from "@/types/persona";
 // last localStorage choice > catalog default), applies its theme/title/favicon, and merges its
 // strings into i18next -- all BEFORE any realtime connection is made.
 //
-// Rick's PR-110 review, item 1 + item 4: no persona (Sonic or otherwise) is hard-coded as this
-// app's fallback/default anymore -- the two catalog personas used below are the neutral test
-// fixture ids ("sonic" stands in here only as one of TWO interchangeable catalog entries, exactly
-// like "test-alpha", never as a hard-coded default) plus a dedicated NEUTRAL placeholder before any
-// fetch resolves.
+// Rick's PR-110 review, item 1 + item 4: no persona pack is hard-coded as this app's
+// fallback/default anymore -- the two catalog personas used below are the neutral test
+// fixture ids ("test-beta" and "test-alpha", interchangeable catalog entries, never a
+// hard-coded default) plus a dedicated NEUTRAL placeholder before any fetch resolves.
 
 const TWO_PERSONA_INDEX: PersonasIndexResponse = {
     default: "test-beta",
@@ -37,7 +36,7 @@ const ALPHA_DETAIL: PersonaDetail = {
     locales: { default: "en", supported: ["en"] },
     features: { dayparts: false },
     menuUrl: "/personas/test-alpha/menu.json",
-    models: { realtime: { default: "gpt-realtime-2.1", allowed: ["gpt-realtime-2.1"] } }
+    models: { realtime: { default: "gpt-realtime-2.1", models: [{ id: "gpt-realtime-2.1", label: "GPT Realtime 2.1", reasoning: true }] } }
 };
 
 function Probe() {
@@ -88,7 +87,7 @@ afterEach(() => {
 });
 
 describe("PersonaProvider", () => {
-    it("renders the brand-neutral placeholder immediately, before any fetch resolves -- no Sonic (or any pack's) content", () => {
+    it("renders the brand-neutral placeholder immediately, before any fetch resolves -- no pack's content", () => {
         vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {}))); // never resolves
         renderProvider();
 

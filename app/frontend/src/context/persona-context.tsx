@@ -24,13 +24,13 @@ const NEUTRAL_THEME: PersonaWireTheme = {
 };
 
 /**
- * Rick's PR-110 review, item 1 + item 6 (issue #80 F1/F6): no persona pack -- Sonic or otherwise
- * -- is hard-coded here anymore. `NEUTRAL_ID`/`NEUTRAL_SUMMARY`/`NEUTRAL_DETAIL` are this app's
- * bundled PLACEHOLDER, not a "default persona": no display name, no logo, no theme hue, no copy
- * overrides (every string a component asks for falls through to the shared, persona-neutral
+ * Rick's PR-110 review, item 1 + item 6 (issue #80 F1/F6): no persona pack -- any brand or
+ * otherwise -- is hard-coded here anymore. `NEUTRAL_ID`/`NEUTRAL_SUMMARY`/`NEUTRAL_DETAIL` are this
+ * app's bundled PLACEHOLDER, not a "default persona": no display name, no logo, no theme hue, no
+ * copy overrides (every string a component asks for falls through to the shared, persona-neutral
  * defaults in the `locales` translation files), and no menu/apology-clip URLs. `PersonaProvider`
  * uses this as the initial React state (so there is nothing branded to paint before the very
- * first render) and, per `App.tsx`'s `ready` gate, `App()` doesn't render `<SonicApp />` at all
+ * first render) and, per `App.tsx`'s `ready` gate, `App()` doesn't render the branded shell at all
  * until `ready` flips true -- so in practice this placeholder is only ever visible for the
  * instant between mount and the `/api/personas` round trip resolving (or, in an offline/
  * unmocked-fetch environment such as a test that doesn't stub `fetch`, it's what the app is left
@@ -55,7 +55,7 @@ const NEUTRAL_DETAIL: PersonaDetail = {
     locales: { default: "en", supported: ["en", "es", "fr", "ja"] },
     features: { dayparts: false },
     menuUrl: "",
-    models: { realtime: { default: "gpt-realtime-2.1", allowed: ["gpt-realtime-2.1"] } }
+    models: { realtime: { default: "gpt-realtime-2.1", models: [{ id: "gpt-realtime-2.1", label: "GPT Realtime 2.1", reasoning: true }] } }
 };
 
 interface PersonaContextValue {
