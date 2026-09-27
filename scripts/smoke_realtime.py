@@ -24,21 +24,27 @@ Usage (from the repo root, with `az login` / `azd auth login` done):
     python scripts/smoke_realtime.py                       # uses azd env / env vars
     python scripts/smoke_realtime.py --deployment gpt-realtime-1.5
     python scripts/smoke_realtime.py --endpoint https://<aoai>.openai.azure.com/ --deployment gpt-realtime-2.1
+    python scripts/smoke_realtime.py --persona <persona-id> --model gpt-realtime-mini
 
     python scripts/smoke_realtime.py --tenant <tenant-id> --subscription <subscription-id>
 
 Endpoint/deployment default to AZURE_OPENAI_EASTUS2_ENDPOINT /
 AZURE_OPENAI_REALTIME_DEPLOYMENT, read from the environment or `azd env
-get-values`. Auth: AZURE_OPENAI_EASTUS2_API_KEY if set, else an Entra ID token
-from the resource's tenant (needs "Cognitive Services OpenAI User" on the
-resource, which `azd up` grants the deploying principal). The tenant and
-subscription come from --tenant / --subscription, else AZURE_TENANT_ID /
-AZURE_SUBSCRIPTION_ID in the environment, else the azd env. With a subscription,
-`az` is asked for a token for that subscription (the sign-in that owns it, without
-changing the global `az account` default); with a tenant, azd and az are pinned
-to it; with neither, DefaultAzureCredential. So a machine signed in to several
-tenants no longer gets HTTP 400 "Tenant provided in token does not match
-resource token".
+get-values`. `--persona <id>` (#83, P2-14) picks which persona pack's prompts
+and tool schemas to smoke-test (default: the persona catalog's own default
+persona -- never a hardcoded brand); `--model <catalog-id>` resolves a
+deployment via the SAME `AZURE_AI_MODEL_DEPLOYMENTS` map (config.yaml
+`models.catalog` + that env var) `app.create_app()` uses, taking precedence
+over --deployment/env when given. Auth: AZURE_OPENAI_EASTUS2_API_KEY if set,
+else an Entra ID token from the resource's tenant (needs "Cognitive Services
+OpenAI User" on the resource, which `azd up` grants the deploying principal).
+The tenant and subscription come from --tenant / --subscription, else
+AZURE_TENANT_ID / AZURE_SUBSCRIPTION_ID in the environment, else the azd env.
+With a subscription, `az` is asked for a token for that subscription (the
+sign-in that owns it, without changing the global `az account` default); with
+a tenant, azd and az are pinned to it; with neither, DefaultAzureCredential.
+So a machine signed in to several tenants no longer gets HTTP 400 "Tenant
+provided in token does not match resource token".
 
 Exit codes: 0 = all checks passed, 1 = a check failed, 2 = could not run
 (missing endpoint/deployment, auth or network failure).
@@ -67,6 +73,8 @@ import aiohttp  # noqa: E402
 from azure.core.credentials import AzureKeyCredential  # noqa: E402
 
 from config_loader import get_config  # noqa: E402
+from model_catalog import ModelCatalog  # noqa: E402
+from persona_loader import Persona, PersonaCatalog, PersonaValidationError  # noqa: E402
 from prompt_loader import PromptLoader  # noqa: E402
 from rtmt import RTMiddleTier, Tool, configure_realtime_model  # noqa: E402
 
@@ -78,11 +86,29 @@ BROWSER_SESSION = {
     "input_audio_transcription": {"model": "whisper-1"},
 }
 
-TRANSCRIPTION_PHRASE = "Hi, can I get a large cherry limeade and a medium tots, please?"
+# Fallback phrase when no persona (or a persona with too few menu items) is available. Kept
+# brand-neutral -- the normal path (#83, P2-14) builds a persona-specific phrase instead, see
+# `_transcription_phrase_for`.
+_DEFAULT_TRANSCRIPTION_PHRASE = "Hi, can I get a small drink and a side, please?"
 # Minimum similarity (difflib ratio over the normalised text) between the phrase
 # and its transcript. Tolerates a transcriber's spelling ("lime aid") but not an
 # answer or a paraphrase.
 TRANSCRIPT_MATCH_THRESHOLD = 0.85
+
+
+def _transcription_phrase_for(persona: Persona | None) -> str:
+    """A guest order phrase naming two of *persona*'s own real menu items, so the live
+    transcription check (#83, P2-14) exercises each persona's own vocabulary instead of a
+    single hardcoded brand's. Falls back to `_DEFAULT_TRANSCRIPTION_PHRASE` when there's no
+    persona (legacy no-`--persona` invocation) or its menu has fewer than two items."""
+    if persona is None:
+        return _DEFAULT_TRANSCRIPTION_PHRASE
+    import menu_utils
+    catalog = menu_utils.get_catalog_for_persona(persona)
+    names = [fields["name"] for fields in catalog.item_fields.values() if fields.get("name")]
+    if len(names) < 2:
+        return _DEFAULT_TRANSCRIPTION_PHRASE
+    return f"Hi, can I get a {names[0]} and a {names[1]}, please?"
 
 
 class SmokeError(Exception):
@@ -123,13 +149,22 @@ def _tool_schemas(prompt_loader: PromptLoader) -> list[dict]:
 
 
 def build_middle_tier(endpoint: str, deployment: str, voice: str | None = None,
-                      environ: dict | None = None) -> RTMiddleTier:
+                      environ: dict | None = None, persona: Persona | None = None) -> RTMiddleTier:
     """An RTMiddleTier configured exactly like app.create_app() configures it
     (config.yaml `model:` + env overrides, real system prompt and tool schemas),
-    without starting a server or touching Azure AI Search."""
+    without starting a server or touching Azure AI Search.
+
+    *persona* (#83, P2-14): when given, prompts/tool schemas load from that persona's own
+    pack (`brand=persona.id, prompts_dir=persona.prompts_dir`) instead of `PromptLoader`'s
+    single-brand default -- lets this smoke check exercise any enabled persona pack, not only
+    whichever one happens to be the deployment default."""
     env = os.environ if environ is None else environ
     model_cfg = get_config().get("model", {})
-    prompt_loader = PromptLoader()
+    prompt_loader = (
+        PromptLoader(brand=persona.id, prompts_dir=persona.prompts_dir)
+        if persona is not None
+        else PromptLoader()
+    )
     rtmt = RTMiddleTier(
         endpoint=endpoint,
         deployment=deployment,
@@ -321,8 +356,9 @@ def transcript_matches(phrase: str, transcript: str, threshold: float = TRANSCRI
     return bool(normalise_transcript(transcript)) and transcript_similarity(phrase, transcript) >= threshold
 
 
-async def check_transcription(rtmt: RTMiddleTier, url: str, headers: dict, timeout: float) -> tuple[list[str], list[str]]:
-    pcm = await _synthesize(url, headers, TRANSCRIPTION_PHRASE, timeout)
+async def check_transcription(rtmt: RTMiddleTier, url: str, headers: dict, timeout: float,
+                              phrase: str = _DEFAULT_TRANSCRIPTION_PHRASE) -> tuple[list[str], list[str]]:
+    pcm = await _synthesize(url, headers, phrase, timeout)
     if not pcm:
         raise SmokeError("could not synthesize test audio (no audio returned)")
     session = json.loads(rtmt.build_bootstrap_session_update())["session"]
@@ -350,13 +386,13 @@ async def check_transcription(rtmt: RTMiddleTier, url: str, headers: dict, timeo
                 transcript = event.get("transcript") or ""
                 if not transcript.strip():
                     return [f"transcription ({model}): completed with an empty transcript"], []
-                similarity = transcript_similarity(TRANSCRIPTION_PHRASE, transcript)
-                if not transcript_matches(TRANSCRIPTION_PHRASE, transcript):
+                similarity = transcript_similarity(phrase, transcript)
+                if not transcript_matches(phrase, transcript):
                     # Either the TTS step answered or paraphrased the phrase instead of
                     # reading it, or the transcriber got it wrong. Both mean this check
                     # did not show that guest speech is transcribed faithfully.
                     return [f"transcription ({model}): transcript {transcript!r} does not match the test phrase "
-                            f"{TRANSCRIPTION_PHRASE!r} (similarity {similarity:.2f} < "
+                            f"{phrase!r} (similarity {similarity:.2f} < "
                             f"{TRANSCRIPT_MATCH_THRESHOLD:.2f})"], []
                 return [], [f"PASS  transcription ({model}): {transcript!r} (matches the test phrase, "
                             f"similarity {similarity:.2f})"]
@@ -371,17 +407,20 @@ async def check_transcription(rtmt: RTMiddleTier, url: str, headers: dict, timeo
 
 async def run(endpoint: str, deployment: str, *, voice: str | None, timeout: float,
               skip_transcription: bool, headers: dict[str, str] | None = None,
-              tenant_id: str | None = None, subscription_id: str | None = None) -> int:
-    rtmt = build_middle_tier(endpoint, deployment, voice)
+              tenant_id: str | None = None, subscription_id: str | None = None,
+              persona: Persona | None = None) -> int:
+    rtmt = build_middle_tier(endpoint, deployment, voice, persona=persona)
     url = realtime_url(endpoint, deployment)
-    print(f"Realtime smoke check: deployment={deployment} voice={rtmt.voice_choice} "
+    print(f"Realtime smoke check: persona={persona.id if persona else '(default)'} "
+          f"deployment={deployment} voice={rtmt.voice_choice} "
           f"transcription={rtmt.transcription_model} "
           f"reasoning={rtmt.reasoning_effort if rtmt.reasoning_enabled() else 'off'}")
     headers = get_auth_headers(tenant_id, subscription_id) if headers is None else headers
     try:
         failures, report = await check_session_updates(rtmt, url, headers, timeout)
         if not skip_transcription:
-            t_failures, t_report = await check_transcription(rtmt, url, headers, timeout)
+            phrase = _transcription_phrase_for(persona)
+            t_failures, t_report = await check_transcription(rtmt, url, headers, timeout, phrase)
             failures += t_failures
             report += t_report + [f"FAIL  {f}" for f in t_failures]
     except aiohttp.WSServerHandshakeError as exc:
@@ -411,10 +450,55 @@ def resolve_identity(tenant: str | None, subscription: str | None,
     return identity["AZURE_TENANT_ID"], identity["AZURE_SUBSCRIPTION_ID"]
 
 
+def resolve_persona(persona_id: str | None) -> Persona | None:
+    """*persona_id* (--persona, #83/P2-14), else `None` -- the legacy, no-`--persona`
+    invocation, which leaves `build_middle_tier` on `PromptLoader`'s own single-brand
+    default (unchanged). Loads the SAME real `PersonaCatalog` `app.create_app()` does, so
+    an unknown or broken pack fails the same way it would in production -- never a silent
+    fallback to a hardcoded brand."""
+    if persona_id is None:
+        return None
+    try:
+        catalog = PersonaCatalog.load()
+    except PersonaValidationError as exc:
+        raise SmokeError(f"could not load persona catalog: {exc}") from exc
+    try:
+        return catalog.get(persona_id)
+    except KeyError as exc:
+        raise SmokeError(str(exc)) from exc
+
+
+def resolve_model_deployment(model_id: str | None, persona: Persona | None) -> str | None:
+    """--model (#83/P2-14; a `model_catalog.py` catalog id) resolved to its configured
+    deployment name via the SAME `AZURE_AI_MODEL_DEPLOYMENTS` map (config.yaml
+    `models.catalog` + that env var) `app.create_app()` uses -- takes precedence over
+    --deployment/env when given. Returns `None` when --model is omitted, so
+    --deployment/env keep resolving the deployment exactly as before."""
+    if model_id is None:
+        return None
+    catalog = ModelCatalog.load()
+    if model_id not in catalog:
+        raise SmokeError(f"--model {model_id!r} is not in the model catalog (config.yaml models.catalog)")
+    if persona is not None and model_id not in persona.manifest.models.realtime.allowed:
+        raise SmokeError(
+            f"--model {model_id!r} is not in persona {persona.id!r}'s allowed realtime models "
+            f"({', '.join(persona.manifest.models.realtime.allowed)})"
+        )
+    deployment = catalog.deployment_for(model_id)
+    if not deployment:
+        raise SmokeError(f"--model {model_id!r} has no AZURE_AI_MODEL_DEPLOYMENTS entry -- nothing to smoke-test")
+    return deployment
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--endpoint", help="Azure OpenAI endpoint (default: AZURE_OPENAI_EASTUS2_ENDPOINT)")
     parser.add_argument("--deployment", help="Realtime deployment (default: AZURE_OPENAI_REALTIME_DEPLOYMENT)")
+    parser.add_argument("--persona", help="Persona pack id to smoke-test prompts/tools for "
+                                          "(default: unchanged single-brand PromptLoader default)")
+    parser.add_argument("--model", help="Model catalog id (config.yaml models.catalog) to resolve a "
+                                         "deployment for via AZURE_AI_MODEL_DEPLOYMENTS; overrides "
+                                         "--deployment/env when given")
     parser.add_argument("--voice", help="Voice to send (default: AZURE_OPENAI_REALTIME_VOICE_CHOICE or config.yaml)")
     parser.add_argument("--tenant", help="Entra tenant of the Azure OpenAI resource (default: AZURE_TENANT_ID)")
     parser.add_argument("--subscription", help="Subscription whose `az` sign-in to use (default: AZURE_SUBSCRIPTION_ID)")
@@ -423,11 +507,18 @@ def main(argv: list[str] | None = None) -> int:
                         help="Skip the live speech-transcription check")
     args = parser.parse_args(argv)
 
-    azd_values = {} if (args.endpoint and args.deployment) else _azd_env_values()
+    try:
+        persona = resolve_persona(args.persona)
+        model_deployment = resolve_model_deployment(args.model, persona)
+    except SmokeError as exc:
+        print(f"Realtime smoke check could not run: {exc}", file=sys.stderr)
+        return 2
+
+    azd_values = {} if (args.endpoint and (args.deployment or model_deployment)) else _azd_env_values()
     endpoint = resolve_setting("AZURE_OPENAI_EASTUS2_ENDPOINT", args.endpoint, azd_values)
-    deployment = resolve_setting("AZURE_OPENAI_REALTIME_DEPLOYMENT", args.deployment, azd_values)
+    deployment = model_deployment or resolve_setting("AZURE_OPENAI_REALTIME_DEPLOYMENT", args.deployment, azd_values)
     if not endpoint or not deployment:
-        print("Realtime smoke check could not run: set --endpoint/--deployment or "
+        print("Realtime smoke check could not run: set --endpoint/--deployment (or --model) or "
               "AZURE_OPENAI_EASTUS2_ENDPOINT/AZURE_OPENAI_REALTIME_DEPLOYMENT (or run inside an azd env).",
               file=sys.stderr)
         return 2
@@ -442,7 +533,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return asyncio.run(run(endpoint, deployment, voice=args.voice, timeout=args.timeout,
                                skip_transcription=args.skip_transcription,
-                               tenant_id=tenant_id, subscription_id=subscription_id))
+                               tenant_id=tenant_id, subscription_id=subscription_id,
+                               persona=persona))
     except SmokeError as exc:
         print(f"Realtime smoke check could not run: {exc}", file=sys.stderr)
         return 2
