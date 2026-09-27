@@ -8,10 +8,11 @@ import aiohttp
 from aiohttp import web
 from azure.core.credentials import AzureKeyCredential
 from azure.identity import AzureDeveloperCliCredential, DefaultAzureCredential
+from azure.search.documents.aio import SearchClient
 from dotenv import load_dotenv
 
 from config_loader import get_config
-from persona_loader import PersonaCatalog, PersonaValidationError
+from persona_loader import Persona, PersonaCatalog, PersonaValidationError
 from prompt_loader import PromptLoader
 from rtmt import RTMiddleTier, configure_realtime_model, create_hmac_token
 from tools import attach_tools_rtmt
@@ -64,6 +65,75 @@ def _get_bool_env(variable_name: str, default: bool = False) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+# ---------------------------------------------------------------------------
+# Persona discovery endpoints (issue #74, design doc section 5.2)
+# ---------------------------------------------------------------------------
+
+def _persona_logo_url(persona: Persona) -> str:
+    """Best-effort static asset URL matching the `/personas/{id}/assets/*` route documented
+    in design doc section 5.2. That static route is separate, frontend-facing work (out of
+    scope for #74 per Brian's scoping to `/api/personas` and `/api/personas/{id}` only) --
+    this URL shape is forward-compatible with it once it lands."""
+    return f"/personas/{persona.id}/assets/{persona.manifest.ui.assets.logo}"
+
+
+def _persona_menu_url(persona: Persona) -> str:
+    """See `_persona_logo_url` -- same scoping note, for `/personas/{id}/menu.json`."""
+    return f"/personas/{persona.id}/menu.json"
+
+
+def _model_pipelines_body(models) -> dict:
+    """The selectable `models` per pipeline (design doc section 7); only the pipelines a
+    persona actually declares (`cascade`/`local` are optional)."""
+    body = {"realtime": {"default": models.realtime.default, "allowed": models.realtime.allowed}}
+    if models.cascade is not None:
+        body["cascade"] = {"default": models.cascade.default, "allowed": models.cascade.allowed}
+    if models.local is not None:
+        body["local"] = {"default": models.local.default, "allowed": models.local.allowed}
+    return body
+
+
+def _persona_summary_body(persona: Persona) -> dict:
+    """One entry of `GET /api/personas`'s `personas` list (design doc section 5.2)."""
+    return {
+        "id": persona.id,
+        "displayName": persona.manifest.displayName,
+        "logoUrl": _persona_logo_url(persona),
+        "theme": persona.manifest.ui.theme.model_dump(exclude_none=True),
+    }
+
+
+def _personas_index_body(catalog: PersonaCatalog) -> dict:
+    """`GET /api/personas` response body (design doc section 5.2), enabled personas only.
+
+    `backends` lists this deployment's own backend only -- the multi-backend list
+    (python + dotnet) is populated once the C# port also serves `/api/personas` (#74's
+    "C# follows later" note), not part of this PR.
+    """
+    return {
+        "default": catalog.default_persona_id,
+        "personas": [_persona_summary_body(catalog.get(persona_id)) for persona_id in catalog.ids],
+        "backends": [{"id": "python", "url": "/realtime"}],
+    }
+
+
+def _persona_detail_body(persona: Persona) -> dict:
+    """`GET /api/personas/{id}` response body (design doc section 5.2): the pack's `ui`
+    block, plus `voice.default`, `locales`, `features.dayparts`, `menuUrl`, and the
+    selectable `models` per pipeline. Callers must check the persona is enabled first
+    (404 otherwise) -- this function assumes it already is."""
+    manifest = persona.manifest
+    return {
+        "id": persona.id,
+        **manifest.ui.model_dump(exclude_none=True),
+        "voice": {"default": manifest.voice.default},
+        "locales": manifest.locales.model_dump(exclude_none=True),
+        "features": {"dayparts": manifest.features.dayparts},
+        "menuUrl": _persona_menu_url(persona),
+        "models": _model_pipelines_body(manifest.models),
+    }
 
 
 def load_app_secret(environ=None) -> bytes:
@@ -192,13 +262,21 @@ async def create_app() -> web.Application:
         sys.exit(1)
     _startup_checks["personas_loaded"] = True
 
-    # 3. Load prompts from YAML (fail-fast on missing/malformed files)
+    # 3. Build one PromptLoader per enabled persona pack (issue #74; #92 review note --
+    # removes the hardcoded PromptLoader(brand="sonic")). Each loader reads from its own
+    # catalog-resolved Persona.prompts_dir, so a pack doesn't need to live under
+    # PERSONAS_DIR/<id>/prompts for prompt loading to find it (same fail-fast behavior as
+    # before: a missing/malformed prompts dir aborts startup, naming the persona).
+    prompt_loaders: dict[str, PromptLoader] = {}
     try:
-        prompt_loader = PromptLoader(brand="sonic")
+        for persona_id in _persona_catalog.ids:
+            persona = _persona_catalog.get(persona_id)
+            prompt_loaders[persona_id] = PromptLoader(brand=persona_id, prompts_dir=persona.prompts_dir)
     except (FileNotFoundError, ValueError) as exc:
         logger.critical("FATAL: Failed to load prompts — %s", exc)
         sys.exit(1)
     _startup_checks["prompts_loaded"] = True
+    prompt_loader = prompt_loaders[_persona_catalog.default_persona_id]
 
     # 4. Optional: verify Azure service connectivity (non-blocking)
     await _check_service_connectivity()
@@ -252,6 +330,37 @@ async def create_app() -> web.Application:
     configure_realtime_model(rtmt, model_cfg)
     rtmt.system_message = prompt_loader.get_system_prompt()
 
+    # Issue #74: the enabled-persona catalog and one PromptLoader per persona, so
+    # _websocket_handler can resolve `?persona=`, reject an unknown one with 404 before the
+    # WebSocket upgrade, and _forward_messages can use each session's own bound persona's
+    # system prompt and default voice instead of the deployment-wide defaults above (which
+    # remain exactly the default persona's -- unchanged Sonic behavior when `?persona` is
+    # omitted, since `_persona_catalog.default_persona_id` is "sonic" today).
+    rtmt.persona_catalog = _persona_catalog
+    rtmt.persona_prompt_loaders = prompt_loaders
+
+    # One search index per persona (design doc 3.2/5.2): the shared field-schema config
+    # below (semantic configuration, identifier/content/embedding fields, vector/ranker
+    # flags) is common to every brand's ingestion pipeline, but the index itself is not.
+    persona_search_contexts: dict[str, dict] = {}
+    for persona_id in _persona_catalog.ids:
+        persona = _persona_catalog.get(persona_id)
+        persona_search_contexts[persona_id] = {
+            "search_client": SearchClient(
+                os.environ.get("AZURE_SEARCH_ENDPOINT"),
+                persona.manifest.search.indexName,
+                search_credential,
+                user_agent="RTMiddleTier",
+            ),
+            "semantic_configuration": os.environ.get("AZURE_SEARCH_SEMANTIC_CONFIGURATION") or "menuSemanticConfig",
+            "identifier_field": os.environ.get("AZURE_SEARCH_IDENTIFIER_FIELD") or "id",
+            "content_field": os.environ.get("AZURE_SEARCH_CONTENT_FIELD") or "description",
+            "embedding_field": os.environ.get("AZURE_SEARCH_EMBEDDING_FIELD") or "embedding",
+            "use_vector_query": _get_bool_env("AZURE_SEARCH_USE_VECTOR_QUERY", True),
+            "use_semantic_ranker": (os.environ.get("AZURE_SEARCH_SEMANTIC_RANKER") or "standard").lower() != "disabled",
+            "prompt_loader": prompt_loaders[persona_id],
+        }
+
     attach_tools_rtmt(
         rtmt,
         credentials=search_credential,
@@ -270,6 +379,7 @@ async def create_app() -> web.Application:
         # runtime fallback in tools.search to recover.
         use_semantic_ranker=(os.environ.get("AZURE_SEARCH_SEMANTIC_RANKER") or "standard").lower() != "disabled",
         prompt_loader=prompt_loader,
+        personas=persona_search_contexts,
     )
 
     rtmt.attach_to_app(app, "/realtime")
@@ -279,11 +389,23 @@ async def create_app() -> web.Application:
         token = create_hmac_token(app_secret, expiry_seconds=900)
         return web.json_response({"token": token})
 
+    # ── Persona discovery endpoints (issue #74, design doc section 5.2) ──
+    async def get_personas(_request: web.Request) -> web.Response:
+        return web.json_response(_personas_index_body(_persona_catalog))
+
+    async def get_persona_detail(request: web.Request) -> web.Response:
+        persona_id = request.match_info["persona_id"]
+        if persona_id not in _persona_catalog:
+            return web.json_response({"error": f"Unknown or disabled persona: {persona_id!r}"}, status=404)
+        return web.json_response(_persona_detail_body(_persona_catalog.get(persona_id)))
+
     current_directory = Path(__file__).parent
     app.add_routes([
         web.get('/', _index_handler),
         web.get('/health', _health_handler),
         web.get('/api/auth/session', get_session_token),
+        web.get('/api/personas', get_personas),
+        web.get('/api/personas/{persona_id}', get_persona_detail),
     ])
     app.router.add_static(
         '/',
