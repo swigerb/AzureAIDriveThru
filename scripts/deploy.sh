@@ -14,7 +14,9 @@ az extension add --name application-insights --yes || echo "Failed to install ap
 BACKEND_ENV_FILE_PATH="./app/backend/.env"
 FRONTEND_ENV_FILE_PATH="./app/frontend/.env"
 DOCKERFILE_PATH="./app/Dockerfile"
-DOCKER_CONTEXT="./app"
+# Issue #129: the Dockerfile's COPY paths (frontend/, backend/, and personas/ at the repo root)
+# assume the build context is the repo root, matching azure.yaml's docker.context.
+DOCKER_CONTEXT="."
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -70,7 +72,7 @@ if [ -z "$APP_NAME" ]; then
     echo "  --env-file ./app/backend/.env"
     echo "  --frontend-env-file ./app/frontend/.env"
     echo "  --dockerfile ./app/Dockerfile"
-    echo "  --context ./app"
+    echo "  --context ."
     exit 1
 fi
 
