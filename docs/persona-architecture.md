@@ -579,6 +579,77 @@ Local mode is selectable only when `/health` reports it available (models presen
 - **Local mode is not in CI conformance,** because the models are too large. It's covered by unit tests with
   mocked models, plus the manual UX checklist.
 
+### 7.6 Local mode: as-built design (#81)
+
+Section 7.1/7.4 above sketch local mode as Python loading ONNX Runtime GenAI/Whisper/Piper
+in-process, mirroring the sibling drive-thru project's own local mode as closely as possible. The
+as-built #81 design takes a different, deliberately lighter-weight shape once it came time to
+implement it as a *persona-agnostic* pipeline behind the same `PipelineProcessor` interface as
+`cascade` (#82):
+
+- **Companion-process boundary, not in-process model loading.** `LocalProcessor`
+  (`app/backend/local_processor.py`) never imports ONNX Runtime, Whisper or Piper directly. It
+  talks to a separate, external HTTP process -- "the companion local-runtime" -- over a small
+  three-endpoint contract (`app/backend/local_runtime.py`'s `HttpLocalRuntimeClient`):
+
+  | Endpoint              | Request                                                               | Response |
+  | ---------------------- | ------------------------------------------------------------------------ | ---------- |
+  | `POST /v1/transcribe`  | raw 16kHz mono PCM16, `Content-Type: application/octet-stream` (the client resamples from the mic's native 24kHz before sending) | `{"text": "..."}` |
+  | `POST /v1/chat`        | `{"messages": [...], "tools": [<flat tool schema>, ...]}` -- same flat, Realtime-API-style tool schema as `cascade`'s chat calls, no SDK-specific nesting | `{"content": str \| null, "tool_calls": [{"id", "name", "arguments"}]}` |
+  | `POST /v1/speak`       | `{"text": "...", "voice": "..."}`                                        | raw 24kHz mono PCM16 (already resampled server-side; the client does no TTS resampling) |
+
+  This keeps the main backend process light (no heavy ML runtimes/model weights on its own
+  dependency tree or its own memory footprint) and keeps `LocalProcessor` trivially testable with
+  a fake/scripted `LocalRuntimeClient` (`tests/test_local_processor.py`), the same way `cascade`'s
+  own tests substitute a fake chat client rather than standing up a real Foundry endpoint. The
+  companion process itself -- whatever implements the three endpoints above, whether that's a
+  direct port of the sibling project's Whisper/local-LLM/Piper runtimes or something else
+  entirely -- is out of this issue's scope (see README.md's "On-device local mode" section).
+- **Selection/gating (design doc section 7.3's "catalog ∩ deployment ∩ persona-allowed" reused,
+  with one term redefined):** the local pipeline has no per-model Foundry deployment at all --
+  there's one process-wide companion endpoint, not a deployment name per catalog id. So "deployed"
+  for a `pipeline: local` catalog model means `LOCAL_RUNTIME_ENDPOINT` (an env var, `model_catalog.py`)
+  is set, not an `AZURE_AI_MODEL_DEPLOYMENTS` entry. Concretely (`processors.resolve_local_model`):
+  1. The persona must have a `models.local` block at all (local mode isn't automatically enabled
+     for every persona the way realtime is -- McDonald's/Sonic/Dunkin/Wendy's opt in per pack).
+  2. The requested (or defaulted) model id must be in that pack's `models.local.allowed` list.
+  3. The id must be catalogued for `pipeline: local` in `config.yaml`.
+  4. `LOCAL_RUNTIME_ENDPOINT` must be set -- **there is no back-compat fallback for the default the
+     way realtime has one for `AZURE_OPENAI_REALTIME_DEPLOYMENT`.** An unconfigured runtime rejects
+     the persona's own local default exactly like any other undeployed id; local mode's whole
+     acceptance criterion ("OFF by default... only activates when the local runtime endpoint is
+     configured") depends on there being no such carve-out.
+  `GET /api/personas` reflects step 4 directly: a `pipeline: local` catalog entry reports
+  `deployed: true` (and is therefore listed as selectable) only once `LOCAL_RUNTIME_ENDPOINT` is
+  set for that process -- `ModelCatalog.is_deployed` special-cases `pipeline == "local"` to check
+  `local_runtime_endpoint` instead of the deployment map.
+- **`ResolvedModel.deployment` is repurposed** to carry the companion process's own base URL for
+  local sessions (instead of a Foundry deployment name) -- `LocalProcessor._run_session` builds its
+  `HttpLocalRuntimeClient` straight from it, mirroring how `realtime`/`cascade` treat `.deployment`
+  as "the place this model actually lives."
+- **Same tools, structured results, session metadata, wire protocol as realtime/cascade.**
+  `LocalProcessor` executes tool calls against the exact same shared `tools` dict `cascade`/
+  `realtime` use, with the byte-identical `ToolResultDirection`-gated send-to-client contract
+  (`extension.middle_tier_tool_response`, same `{previous_item_id, tool_name, tool_result}` shape)
+  -- a priced order ticket or a `not_on_menu` rejection reaches the frontend unchanged regardless
+  of which pipeline produced it. Session creation/metadata emission
+  (`extension.session_metadata`, `extension.round_trip_token`) reuses the same `SessionManager`/
+  `order_state_singleton` calls `cascade` makes.
+- **No rate-limit retry ladder.** Unlike `cascade`'s Azure-quota-aware `extension.rate_limited`
+  path, a `LocalRuntimeError` from the companion process (unreachable, malformed response, ...)
+  just ends the turn cleanly and logs -- there's no Azure quota to retry against for an on-device
+  runtime.
+- **Zero `rtmt.py` edits.** `LocalProcessor` registers into the same `ProcessorRegistry`
+  `dispatch_processor` already resolves purely from the catalog (`resolve_model`/`handle`, section
+  7.4's "Processor interface"); `app.py` is the only file that wires it up
+  (`ProcessorRegistry([rtmt, cascade_processor, local_processor])`).
+- **Conformance.** Same approach as documented above for cascade's fakes: `local` is exercised by
+  Python unit tests against a fake/scripted `LocalRuntimeClient`
+  (`tests/test_local_processor.py`: tool-calling, pricing, `not_on_menu`, persona-binding rows) and
+  a real-HTTP-server-backed fake for the wire contract itself (`tests/test_local_runtime.py`), not
+  the C# conformance suite -- same "too large for CI" rationale as the original 7.5 note, now
+  additionally true because the companion process itself isn't part of this repo's CI image.
+
 ## 8. Conformance and test dimensions
 
 The suite's dimensions become **persona x backend x pipeline**. Model is a sub-dimension of pipeline.
