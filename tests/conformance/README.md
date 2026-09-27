@@ -1244,11 +1244,20 @@ matching can never drift apart on how a customization suffix is stripped. A dire
 unknown/off-menu item (customised or not) **never** falls back into the combo side slot — only the
 literal, allow-listed `"tots"`/`"groovy fries"` names, plus any name that resolves through
 `_TOTS_ALIASES` to `"tots"` (below), do (post-modifier-stripping); the drink
-keyword fallback remains for genuinely off-menu fountain drinks (Dr Pepper, Coke, Sprite, root
-beer, ...) and for shakes/blasts/malts, but the latter obey
+keyword fallback remains for names that resolve to no `MENU_CATEGORY_MAP` entry at all (spoken
+short-forms/spellings not covered by an alias, or any future off-menu name) and for shakes/blasts/
+malts, but the latter obey
 `menu_utils._SHAKES_AND_BLASTS_HAPPY_HOUR_DISCOUNTED` for the happy-hour-discount question exactly
 like their on-menu counterparts do — that flag is the single switch for every shake/blast, plain or
-customised, on-menu or off. See `app/backend/tests/test_menu_utils.py::CustomisedItemMenuLookupTests`
+customised, on-menu or off. **#72 (P2-3) note:** the eight named fountain drinks (Coca-Cola®, Diet
+Coke®, Coca-Cola® Zero, Dr Pepper®, Diet Dr Pepper®, Sprite®, Sprite Zero®, BARQ'S® Root Beer) are
+now real `menuItems.json`/`MENU_CATEGORY_MAP` entries, not off-menu names relying on this fallback.
+Common bare spoken forms resolve directly too — either via `_menu_key()`'s existing `®` stripping
+(`"Dr Pepper"`, `"Sprite"`, `"Diet Coke"`, ... match their `®`-bearing map entry with no alias
+needed) or via one of three new explicit `aliases` entries added for names that differ more than
+just the `®` (`"Coke"` → Coca-Cola®, `"Coke Zero"` → Coca-Cola® Zero, `"Root Beer"` → BARQ'S® Root
+Beer). The fallback itself is retained unmodified (#73 territory) and still catches any other
+spelling/short-form that doesn't resolve through the map or its aliases. See `app/backend/tests/test_menu_utils.py::CustomisedItemMenuLookupTests`
 and `CustomisedItemMenuLookupTests.cs` in this suite.
 
 **Plain-Tots alias map for the combo side slot only (Brian's decision, 2026-09-25, #60; extended PR
@@ -1386,7 +1395,7 @@ names above even with the flag `False`.
 Every genuine on-menu item still resolves via `MENU_CATEGORY_MAP`
 directly and never reaches these fallbacks at all — see
 `test_menu_utils.py::MenuCategoryMapDirectResolutionTests`, which patches both fallback functions to
-raise and asserts classification never touches them for any of the 60 `menuItems.json` names.
+raise and asserts classification never touches them for any of the 74 `menuItems.json` names.
 
 See `app/backend/tests/test_menu_utils.py::KeywordFallbackWordBoundaryTests`,
 `KeywordOverCorrectionTests`, `KeywordFallbackPrecedenceTests`, `MenuCategoryMapDirectResolutionTests`, and

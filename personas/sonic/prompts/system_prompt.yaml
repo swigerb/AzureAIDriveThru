@@ -53,7 +53,7 @@ sections:
       - Before update_order, ALWAYS call search first for the correct price
       - Burger or sandwich alone → ALWAYS ask about making it a combo
       - Suggest extras ONLY after a drink or combo is ordered
-      - Extras: flavor add-in $0.50, whipped cream $0.50, extra patty $1.50
+      - Extras: flavor add-in $0.30, add bacon $1.00, whipped topping $0.20
       - 'Start over' or 'cancel everything' → call reset_order IMMEDIATELY
 
   - name: "CUSTOMIZATIONS_AND_MODS"

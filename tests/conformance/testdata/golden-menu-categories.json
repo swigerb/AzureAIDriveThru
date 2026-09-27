@@ -242,6 +242,70 @@
       "unitPrice": "2.89"
     },
     {
+      "item": "Coca-Cola®",
+      "category": "Slushes & Drinks",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": true,
+      "size": "Medium",
+      "unitPrice": "2.49"
+    },
+    {
+      "item": "Diet Coke®",
+      "category": "Slushes & Drinks",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": true,
+      "size": "Medium",
+      "unitPrice": "2.49"
+    },
+    {
+      "item": "Coca-Cola® Zero",
+      "category": "Slushes & Drinks",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": true,
+      "size": "Medium",
+      "unitPrice": "2.49"
+    },
+    {
+      "item": "Dr Pepper®",
+      "category": "Slushes & Drinks",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": true,
+      "size": "Medium",
+      "unitPrice": "2.49"
+    },
+    {
+      "item": "Diet Dr Pepper®",
+      "category": "Slushes & Drinks",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": true,
+      "size": "Medium",
+      "unitPrice": "2.49"
+    },
+    {
+      "item": "BARQ'S® Root Beer",
+      "category": "Slushes & Drinks",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": true,
+      "size": "Medium",
+      "unitPrice": "2.49"
+    },
+    {
+      "item": "Sprite®",
+      "category": "Slushes & Drinks",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": true,
+      "size": "Medium",
+      "unitPrice": "2.49"
+    },
+    {
+      "item": "Sprite Zero®",
+      "category": "Slushes & Drinks",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": true,
+      "size": "Medium",
+      "unitPrice": "2.49"
+    },
+    {
       "item": "Vanilla Classic Shake",
       "category": "Shakes & Ice Cream",
       "comboSlot": "drinks",
@@ -320,6 +384,30 @@
       "happyHourDiscounted": false,
       "size": "Standard",
       "unitPrice": "3.19"
+    },
+    {
+      "item": "Root Beer Float",
+      "category": "Shakes & Ice Cream",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": false,
+      "size": "Medium",
+      "unitPrice": "4.69"
+    },
+    {
+      "item": "Coke Float",
+      "category": "Shakes & Ice Cream",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": false,
+      "size": "Medium",
+      "unitPrice": "4.69"
+    },
+    {
+      "item": "Dr Pepper Float",
+      "category": "Shakes & Ice Cream",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": false,
+      "size": "Medium",
+      "unitPrice": "4.69"
     },
     {
       "item": "SONIC® Cheeseburger Combo",
@@ -480,6 +568,30 @@
       "happyHourDiscounted": false,
       "size": "Standard",
       "unitPrice": "1.89"
+    },
+    {
+      "item": "Flavor Add-In",
+      "category": "Extras & Sides",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "0.30"
+    },
+    {
+      "item": "Add Bacon",
+      "category": "Extras & Sides",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "1.00"
+    },
+    {
+      "item": "Whipped Topping",
+      "category": "Extras & Sides",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "0.20"
     }
   ]
 }

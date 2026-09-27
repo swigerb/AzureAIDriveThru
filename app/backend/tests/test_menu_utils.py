@@ -191,6 +191,58 @@ class InferComboComponentGoldenCategoryTests(unittest.TestCase):
         self.assertFalse(is_happy_hour_discounted("SONIC Blast® made with OREO® Cookie Pieces"))
         self.assertEqual(infer_combo_component("Vanilla Classic Shake"), "drinks")
 
+    def test_floats_fill_the_combo_drink_slot_but_are_never_happy_hour_discounted(self):
+        """Brian's #64/#72 decision: floats can fill a combo's drink slot (unlike shakes/sundaes,
+        which are food, not a drink-slot filler) but do NOT get the happy-hour discount -- unlike
+        every other Slushes & Drinks / fountain-drink item, which IS discounted. Mutation check:
+        flipping either ``happyHourDiscounted`` to true or ``comboSlot`` to "none"/anything but
+        "drinks" for any of these three menuItems.json rows must fail this test."""
+        for name in ("Root Beer Float", "Coke Float", "Dr Pepper Float"):
+            self.assertFalse(is_happy_hour_discounted(name), name)
+            self.assertEqual(infer_combo_component(name), "drinks", name)
+
+    def test_fountain_drinks_added_by_72_fill_the_combo_drink_slot_and_are_happy_hour_discounted(self):
+        """#72: the 8 fountain drinks named by the issue are ordinary Slushes & Drinks items --
+        they fill the combo drink slot and ARE happy-hour discounted, same as every other item in
+        that category (contrast with the floats above, which share the drink slot but are never
+        discounted)."""
+        for name in (
+            "Coca-Cola®",
+            "Diet Coke®",
+            "Coca-Cola® Zero",
+            "Dr Pepper®",
+            "Diet Dr Pepper®",
+            "BARQ'S® Root Beer",
+            "Sprite®",
+            "Sprite Zero®",
+        ):
+            self.assertTrue(is_happy_hour_discounted(name), name)
+            self.assertEqual(infer_combo_component(name), "drinks", name)
+
+    def test_coke_zero_alias_resolves_to_coca_cola_zero(self):
+        """#72 names the item "Coke Zero" in its acceptance criteria; the real menuItems.json name
+        is "Coca-Cola® Zero" -- the alias must resolve to the same classification as the canonical
+        name."""
+        self.assertEqual(infer_category("Coke Zero"), infer_category("Coca-Cola® Zero"))
+        self.assertEqual(infer_combo_component("Coke Zero"), infer_combo_component("Coca-Cola® Zero"))
+        self.assertEqual(is_happy_hour_discounted("Coke Zero"), is_happy_hour_discounted("Coca-Cola® Zero"))
+
+    def test_priced_extras_added_by_72_are_never_a_combo_slot_or_happy_hour_discounted(self):
+        """#72's priced add-ons (flavor add-in, add bacon, whipped topping) are isExtra: true
+        items, not food/drink combo components, and are never happy-hour discounted."""
+        for name in ("Flavor Add-In", "Add Bacon", "Whipped Topping"):
+            self.assertEqual(infer_combo_component(name), "", name)
+            self.assertFalse(is_happy_hour_discounted(name), name)
+
+    def test_whipped_topping_aliases_resolve_to_the_same_classification(self):
+        """PR #98 Rick review item 2: "Whipped Topping" is the canonical isExtra menu item name
+        (source modifier "Whip Topping", Easy/Regular tier, $0.20); "whipped cream" and "whip" are
+        its spoken aliases and must resolve to the same classification."""
+        for alias in ("whipped cream", "whip"):
+            self.assertEqual(infer_category(alias), infer_category("Whipped Topping"))
+            self.assertEqual(infer_combo_component(alias), infer_combo_component("Whipped Topping"))
+            self.assertEqual(is_happy_hour_discounted(alias), is_happy_hour_discounted("Whipped Topping"))
+
     def test_burgers_combos_and_hot_dog_entrees_are_never_happy_hour_discounted(self):
         for name in ("Crispy Chicken Sandwich", "SONIC® Cheeseburger Combo", "Corn Dog", "Tots", "Groovy Fries"):
             self.assertFalse(is_happy_hour_discounted(name), name)
