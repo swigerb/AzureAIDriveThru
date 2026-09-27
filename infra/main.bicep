@@ -578,6 +578,24 @@ module openAiRoleBackend 'core/security/role.bicep' = {
   }
 }
 
+// Issue #82 (Rick's PR #118 review, required item 6): the cascade pipeline's Foundry chat
+// client (ChatCompletionsClient against resolvedFoundryEndpoint) authorizes with the generic
+// "Cognitive Services User" role, same as the `principalId` grant already on the `openAi`
+// module above -- that earlier grant only covers the deploying user's own `az` session/local
+// dev, never the deployed container app, so without this module the deployed backend's
+// managed identity 401s the very first cascade chat-completions call. STT/TTS need no separate
+// grant here: they call the SAME AIServices account's `/openai/v1/audio/*` routes, already
+// covered by `openAiRoleBackend`'s "Cognitive Services OpenAI User" below.
+module openAiRoleBackendCascade 'core/security/role.bicep' = {
+  scope: openAiResourceGroup
+  name: 'openai-role-backend-cascade'
+  params: {
+    principalId: acaBackend.outputs.identityPrincipalId
+    roleDefinitionId: 'a97b65f3-24c7-4388-baec-2e87135dc908' // Cognitive Services User
+    principalType: 'ServicePrincipal'
+  }
+}
+
 // Used to issue search queries
 // https://learn.microsoft.com/azure/search/search-security-rbac
 module searchRoleBackend 'core/security/role.bicep' = {
