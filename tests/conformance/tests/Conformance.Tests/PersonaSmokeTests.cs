@@ -242,6 +242,11 @@ public sealed class FixturePackPersonaSmokeTests(TwoPersonaConformanceFixture fi
                 "ModelSelectionConformanceFixtures.cs) -- it is not part of " +
                 "TwoPersonaConformanceFixture (test-alpha/test-beta) and doesn't need its own " +
                 "generic greeting/search/order/happy-hour smoke coverage.",
+            ["test-delta"] = "Refs #77: a narrow bundle/extras-engine fixture pack exercised only " +
+                "by app/backend/tests/test_bundle_and_extras_engine.py (Python unit tests) -- it " +
+                "is not part of TwoPersonaConformanceFixture (test-alpha/test-beta) or any C# " +
+                "conformance fixture, and doesn't need its own generic greeting/search/order/" +
+                "happy-hour smoke coverage.",
         };
 
     [Theory]

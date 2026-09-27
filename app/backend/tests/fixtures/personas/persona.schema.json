@@ -113,7 +113,15 @@
     },
     "machines": {
       "type": "object",
-      "additionalProperties": { "type": "string", "enum": ["down", "operational"] }
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["status", "label"],
+        "properties": {
+          "status": { "type": "string", "enum": ["down", "operational"] },
+          "label": { "type": "string", "minLength": 1 }
+        }
+      }
     },
     "models": {
       "type": "object",

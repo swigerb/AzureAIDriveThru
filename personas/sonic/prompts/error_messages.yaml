@@ -38,6 +38,22 @@ messages:
     I'm sorry, {{item_name}} isn't available in that size. We have it in
     {{available_sizes}} -- would you like one of those?
 
+  # #77: add-time rejection when a real, on-menu item needs a machine (persona.json
+  # `requiresMachine`, e.g. the slush machine) that this store's own `machines.<key>.status` is
+  # currently "down". Same structured (TO_SERVER) rejection shape as item_not_on_menu/
+  # size_not_available above -- {{message}} is `machines.<key>.label` itself, so a persona doesn't
+  # need a second, differently-worded copy of the same outage text.
+  machine_unavailable: >-
+    I'm sorry, {{item_name}} isn't available right now -- {{machine_label}}. Would you like to
+    try something else instead?
+
+  # #77: `modify` (resize in place) for an on-menu item that isn't in the order. Same structured
+  # (TO_SERVER) rejection shape, reason "not_in_order", so the model never tells the guest an item
+  # was changed when nothing was.
+  item_not_in_order: >-
+    {{item_name}} isn't in the order, so nothing was changed. Call get_order to check what's in
+    the order, then ask the guest whether they'd like to add it.
+
   # Quantity limit messages
   per_item_limit_maxed: >-
     That's a lot of {{item_name}}! Our drive-thru can handle up to

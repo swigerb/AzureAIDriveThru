@@ -368,6 +368,17 @@ class HappyHourBannerFromBoundPackTests(unittest.TestCase):
         self._sessions_created: list[str] = []
         self.addCleanup(self._cleanup_sessions)
         tools._search_cache.clear()
+        # #77 (add-time `machine_unavailable`): alpha's own persona.json intentionally marks
+        # `soda_machine` "down" for test_same_machine_key_is_down_for_alpha_but_operational_for_beta
+        # (a SEARCH-time OOS-annotation test, above). None of the happy-hour tests below are
+        # about machine state at all, and #77 added a NEW add-time gate that would otherwise
+        # reject every "Alpha Cola" add here as `machine_unavailable` -- so bring soda_machine
+        # up for just this test class (the shared, memoized MenuCatalog instance, restored in
+        # cleanup) rather than touch the committed fixture pack real search tests still rely on.
+        menu_a = menu_utils.get_catalog_for_persona(self.alpha)
+        original_machines = dict(menu_a.machines)
+        menu_a.machines["soda_machine"] = ("operational", original_machines["soda_machine"][1])
+        self.addCleanup(menu_a.machines.update, original_machines)
 
     def _cleanup_sessions(self):
         for sid in self._sessions_created:

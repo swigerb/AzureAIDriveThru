@@ -412,7 +412,16 @@ public sealed class CustomisedItemMenuLookupTests
         /// category -- Brian's #39 decision (sundaes aren't a drink) must survive customization,
         /// exactly like the plain-sundae case already pinned in
         /// <see cref="InferComboComponentGoldenCategoryTests"/> (Python) /
-        /// <c>GoldenMenuComboSlotTheoryTests</c> (C#).</summary>
+        /// <c>GoldenMenuComboSlotTheoryTests</c> (C#).
+        ///
+        /// #77: Sonic's real persona.json now has machines.ice_cream_machine "down", so the new
+        /// add-time machine_unavailable gate rejects this item before combo-slot classification
+        /// is ever reached -- exactly like every other "Shakes & Ice Cream" item (see
+        /// GoldenMenuComboSlotTheoryTests.RequiresACurrentlyDownMachine). The customization-aware
+        /// combo-slot lookup this test exists to pin is unit-tested directly (with no machine
+        /// gate in the way) by menu_utils.py's own infer_combo_component -- so this end-to-end
+        /// test now instead pins that a CUSTOMIZED item's machine-gate check still fires
+        /// correctly (i.e., that the "(Extra Fudge)" suffix doesn't somehow evade the gate).</summary>
         [Fact]
         public Task Customised_sundae_is_charged_in_full_alongside_a_combo_not_absorbed_into_the_drink_slot() =>
             fixture.RunAsync(async () =>
@@ -424,19 +433,25 @@ public sealed class CustomisedItemMenuLookupTests
                 var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
                 await using var _ = browser;
 
-                var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+                var setup = await OrderScenarioHelpers.RunOrderStepsAsync(
                     connection, browser,
-                    [
-                        ("add", BaseComboName, BaseComboSize, 1, BaseComboPrice),
-                        ("add", item, "standard", 1, unitPrice),
-                    ],
-                    roundTripIndex, ct);
+                    [("add", BaseComboName, BaseComboSize, 1, BaseComboPrice)],
+                    roundTripIndex, ct, callIdPrefix: "call_setup");
 
+                var rejected = await OrderScenarioHelpers.CallToolAsync(
+                    connection, browser, "update_order",
+                    JsonSerializer.Serialize(new { action = "add", item_name = item, size = "standard", quantity = 1, price = unitPrice }),
+                    "call_reject", setup.RoundTripIndex, ct, toClient: false);
+                OrderScenarioHelpers.AssertRejectionShape(
+                    rejected.FunctionCallOutputText, expectedReason: "machine_unavailable", expectedItemName: item);
+
+                var afterReject = await OrderScenarioHelpers.CallToolAsync(
+                    connection, browser, "get_order", "{}", "call_get_after_reject", rejected.RoundTripIndex, ct);
                 OrderScenarioHelpers.AssertMoneyEqual(
-                    BaseComboPrice + unitPrice,
-                    OrderScenarioHelpers.GetOrderTotal(result.ToolResultJson!),
-                    "A customised sundae must never fill a combo's drink slot -- Brian's #39 decision survives customization.");
-                Assert.Equal(2, OrderScenarioHelpers.GetOrderItemCount(result.ToolResultJson!));
+                    BaseComboPrice,
+                    OrderScenarioHelpers.GetOrderTotal(afterReject.ToolResultJson!),
+                    "A customised sundae must be rejected outright while its machine is down -- never silently absorbed into a combo's drink slot instead.");
+                Assert.Equal(1, OrderScenarioHelpers.GetOrderItemCount(afterReject.ToolResultJson!));
             });
     }
 
@@ -473,6 +488,15 @@ public sealed class CustomisedItemMenuLookupTests
                 // menu_utils._SHAKES_AND_BLASTS_HAPPY_HOUR_DISCOUNTED is now False (Brian's
                 // decision, 2026-09-25) -- both the plain and customised forms of the same shake
                 // must agree: full price, not discounted.
+                //
+                // #77: Sonic's real persona.json now has machines.ice_cream_machine "down", so
+                // this shake is rejected outright by the new add-time machine_unavailable gate
+                // before happy-hour pricing is ever computed (see
+                // GoldenMenuComboSlotTheoryTests.RequiresACurrentlyDownMachine). The underlying
+                // _SHAKES_AND_BLASTS_HAPPY_HOUR_DISCOUNTED=False classification this test exists
+                // to pin is still covered directly, with no machine gate in the way, at the unit
+                // level (app/backend/tests/test_menu_utils.py) and by the golden dataset
+                // (GoldenMenuCategoryHappyHourTests's sanity assertion below).
                 var ct = TestContext.Current.CancellationToken;
                 const string item = "Vanilla Classic Shake (No Whip)";
                 const decimal unitPrice = 4.69m; // app/frontend/src/data/menuItems.json, "Vanilla Classic Shake" Medium
@@ -480,23 +504,29 @@ public sealed class CustomisedItemMenuLookupTests
                 var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
                 await using var _ = browser;
 
-                var result = await OrderScenarioHelpers.RunOrderStepsAsync(
-                    connection, browser,
-                    [("add", item, "medium", 1, unitPrice)],
-                    roundTripIndex, ct);
+                var rejected = await OrderScenarioHelpers.CallToolAsync(
+                    connection, browser, "update_order",
+                    JsonSerializer.Serialize(new { action = "add", item_name = item, size = "medium", quantity = 1, price = unitPrice }),
+                    "call_reject", roundTripIndex, ct, toClient: false);
+                OrderScenarioHelpers.AssertRejectionShape(
+                    rejected.FunctionCallOutputText, expectedReason: "machine_unavailable", expectedItemName: item);
 
                 var golden = GoldenMenuCategoryData.Load(RepoPaths.FindRepoRoot());
                 var baseItemCase = golden.Items.Single(c => c.Item == "Vanilla Classic Shake");
                 Assert.False(baseItemCase.HappyHourDiscounted, "Sanity check: base item golden row must now be full price.");
-
-                var rules = GoldenOrderPricingData.Load(RepoPaths.FindRepoRoot()).BusinessRules;
-                var expectedTotal = unitPrice * (1 + rules.TaxRate); // NOT multiplied by HappyHourDiscount
-                OrderScenarioHelpers.AssertMoneyEqual(expectedTotal, OrderScenarioHelpers.GetOrderFinalTotal(result.ToolResultJson!));
             });
 
         /// <summary>Rick's Z3: a customised sundae must never be happy-hour discounted, exactly
         /// like the plain sundae -- Brian's #39 decision (sundaes are full price during happy
-        /// hour) must survive customization too, not just the on-menu, uncustomised case.</summary>
+        /// hour) must survive customization too, not just the on-menu, uncustomised case.
+        ///
+        /// #77: Sonic's real persona.json now has machines.ice_cream_machine "down", so this
+        /// sundae is rejected outright by the new add-time machine_unavailable gate before
+        /// happy-hour pricing is ever computed (see
+        /// GoldenMenuComboSlotTheoryTests.RequiresACurrentlyDownMachine). The underlying "sundaes
+        /// aren't happy-hour discounted" classification this test exists to pin is still covered
+        /// directly, with no machine gate in the way, by the golden dataset
+        /// (GoldenMenuCategoryHappyHourTests) and app/backend/tests/test_menu_utils.py.</summary>
         [Fact]
         public Task Customised_sundae_is_not_happy_hour_discounted() =>
             fixture.RunAsync(async () =>
@@ -508,17 +538,12 @@ public sealed class CustomisedItemMenuLookupTests
                 var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
                 await using var _ = browser;
 
-                var result = await OrderScenarioHelpers.RunOrderStepsAsync(
-                    connection, browser,
-                    [("add", item, "standard", 1, unitPrice)],
-                    roundTripIndex, ct);
-
-                var rules = GoldenOrderPricingData.Load(RepoPaths.FindRepoRoot()).BusinessRules;
-                var expectedTotal = unitPrice * (1 + rules.TaxRate); // NOT multiplied by HappyHourDiscount
-                OrderScenarioHelpers.AssertMoneyEqual(
-                    expectedTotal,
-                    OrderScenarioHelpers.GetOrderFinalTotal(result.ToolResultJson!),
-                    "A customised sundae must stay full price during happy hour -- Brian's #39 decision survives customization.");
+                var rejected = await OrderScenarioHelpers.CallToolAsync(
+                    connection, browser, "update_order",
+                    JsonSerializer.Serialize(new { action = "add", item_name = item, size = "standard", quantity = 1, price = unitPrice }),
+                    "call_reject", roundTripIndex, ct, toClient: false);
+                OrderScenarioHelpers.AssertRejectionShape(
+                    rejected.FunctionCallOutputText, expectedReason: "machine_unavailable", expectedItemName: item);
             });
 
         /// <summary>#73: a genuinely off-menu fountain drink is now rejected outright, regardless

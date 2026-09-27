@@ -263,6 +263,26 @@ def _load_menu_data(
                         for s in item_sizes
                         if isinstance(s.get("price"), (int, float))
                     },
+                    # #77: this item's own bundle-slot auto-fill map (menu.schema.json
+                    # ``bundle.autoFill``) -- slot -> a guest-facing filler description, e.g.
+                    # {"sides": "Medium Fries"}. A slot present in ``bundleSlots`` above but absent
+                    # here stays an "absorb only" slot: unchanged behavior, the guest still has to
+                    # name a real side/drink for it. Empty dict for an item with no ``bundle``
+                    # field, or one that bundles slots but never auto-fills any of them (every
+                    # real pack today, until a pack owner opts a slot in).
+                    "bundleAutoFill": dict(item.get("bundle", {}).get("autoFill") or {}),
+                    # #77: this bundle's own default size (menu.schema.json ``bundle.defaultSize``)
+                    # -- used only to resolve a ``{size}`` placeholder in a ``bundleAutoFill``
+                    # template when the guest ordered the bundle itself with no size given.
+                    "bundleDefaultSize": item.get("bundle", {}).get("defaultSize"),
+                    # #77 (`strategies.searchQueryRewrite: "meal_numbers"`, design doc section
+                    # 3.3 row 23): this item's own numbered-meal id ("1", "2", ...) and the
+                    # daypart it's offered in ("allDay"/"breakfast"/"lunch"), straight from the
+                    # pack -- replaces the old hardcoded ``MEAL_NUMBER_MAP`` + regex. ``None`` for
+                    # any item that isn't a numbered meal at all (every pack today except one
+                    # that opts into "meal_numbers").
+                    "mealNumber": item.get("mealNumber"),
+                    "menuPeriod": item.get("menuPeriod"),
                 }
                 for alias in item.get("aliases") or ():
                     alias_key = _menu_key(alias)
@@ -305,10 +325,15 @@ class MenuCatalog:
         spoken_as: dict[str, str],
         item_fields: dict[str, dict],
         alias_map: dict[str, str],
-        machines: dict[str, str] | None = None,
+        machines: dict[str, tuple[str, str]] | None = None,
         allowed_extra_categories: list[str] | None = None,
         blocked_extra_categories: list[str] | None = None,
         invalid_modifiers: dict[str, list[str]] | None = None,
+        bundle_name_markers: list[str] | None = None,
+        bundle_convert_standalone: bool = False,
+        bundle_missing_part_text: dict[str, str] | None = None,
+        split_combined_names: bool = False,
+        search_query_rewrite: str = "",
     ):
         self.persona_id = persona_id
         self.size_map = size_map
@@ -325,7 +350,11 @@ class MenuCatalog:
         # data, no matter which persona a session was bound to). `MenuCatalog` is already the one "this persona's
         # resolved data" object threaded through every tools.py call site (`_menu_for`), so these
         # live here rather than adding a fourth per-session resolution helper alongside it.
-        self.machines: dict[str, str] = dict(machines or {})
+        # #77: each machine's own (status, guest-facing label) pair -- replaces the bare
+        # ``{"machine": "down"}`` string-status map (and the module-level, name-keyed
+        # ``tools._MACHINE_OOS_LABELS`` dict, now deleted) with data every persona owns for
+        # itself: `machine_status()`/`machine_label()` below.
+        self.machines: dict[str, tuple[str, str]] = dict(machines or {})
         self.allowed_extra_categories: frozenset[str] = frozenset(
             (c or "").strip().lower() for c in (allowed_extra_categories or ())
         )
@@ -335,6 +364,34 @@ class MenuCatalog:
         self.invalid_modifiers: dict[str, list[str]] = {
             (k or "").strip().lower(): list(v) for k, v in (invalid_modifiers or {}).items()
         }
+        # #77 (shared bundle engine, design doc 3.3 rows 20/21): this persona's own
+        # ``bundles.nameMarkers``/``convertStandalone``/``missingPartText`` -- e.g. one pack's own
+        # ``["combo"]``/``true``/{"sides": "a side (fries or tots)", ...}`` (an exact,
+        # behavior-neutral match for what used to be hardcoded in order_state.py), another pack's
+        # ``["meal"]``, and a pack with no bundles at all owning ``[]``/``false``.
+        self.bundle_name_markers: tuple[str, ...] = tuple(
+            (m or "").strip().lower() for m in (bundle_name_markers or ()) if (m or "").strip()
+        )
+        self.bundle_convert_standalone: bool = bool(bundle_convert_standalone)
+        self.bundle_missing_part_text: dict[str, str] = dict(bundle_missing_part_text or {})
+        # #77 (shared extras engine): whether a not-on-menu name that's really two known items
+        # joined by a connector word ("Latte with Extra Shot") should be split into two
+        # ``suggested_calls`` instead of a flat rejection -- only a pack that opts in sets this.
+        self.split_combined_names: bool = bool(split_combined_names)
+        # #77 (`strategies.searchQueryRewrite`, design doc 3.3 row 23): this persona's own named
+        # extension point -- "meal_numbers" is the only named strategy today; anything else
+        # (including "") is a no-op, so ``rewrite_search_query`` below degrades safely for every
+        # persona that doesn't opt in.
+        self.search_query_rewrite: str = search_query_rewrite or ""
+        # #77: number (as the pack's own string, e.g. "1") -> every real item name that claims
+        # it, built once here so a breakfast/lunch overlap ("#1" in both dayparts) returns BOTH
+        # real names rather than picking one -- disambiguation is left to the model/prompt, which
+        # already has the guest's own wording (and the search result's own daypart) to go on.
+        self.meal_number_index: dict[str, list[str]] = {}
+        for fields in item_fields.values():
+            number = fields.get("mealNumber")
+            if number:
+                self.meal_number_index.setdefault(str(number), []).append(fields["name"])
 
     @classmethod
     def from_persona(cls, persona: Persona) -> MenuCatalog:
@@ -349,18 +406,33 @@ class MenuCatalog:
 
         item_fields, alias_map = _load_menu_data(persona.menu_path, size_key_fn=_size_key_fn)
         extras_cfg = persona.manifest.extras
+        bundles_cfg = persona.manifest.bundles
+        machines = {key: (m.status, m.label) for key, m in persona.manifest.machines.items()}
         return cls(
             persona.id, size_map, size_aliases, hidden_sizes, spoken_as, item_fields, alias_map,
-            machines=persona.manifest.machines,
+            machines=machines,
             allowed_extra_categories=extras_cfg.allowedBaseCategories,
             blocked_extra_categories=extras_cfg.blockedBaseCategories,
             invalid_modifiers=persona.manifest.invalidModifiers,
+            bundle_name_markers=bundles_cfg.nameMarkers,
+            bundle_convert_standalone=bundles_cfg.convertStandalone,
+            bundle_missing_part_text=bundles_cfg.missingPartText,
+            split_combined_names=extras_cfg.splitCombinedNames,
+            search_query_rewrite=persona.manifest.strategies.searchQueryRewrite,
         )
 
     def machine_status(self, machine: str) -> str | None:
         """This persona's own reported status ("down"/"operational") for *machine* (its
         ``requiresMachine`` key), or ``None`` if this persona's pack never mentions it."""
-        return self.machines.get(machine)
+        entry = self.machines.get(machine)
+        return entry[0] if entry else None
+
+    def machine_label(self, machine: str) -> str:
+        """This persona's own guest-facing OOS label for *machine* (persona.json
+        ``machines.<key>.label``), falling back to a generic "<machine> is down" for a machine key
+        the pack never mentions (e.g. a future machine added to a pack before its label is)."""
+        entry = self.machines.get(machine)
+        return entry[1] if entry else f"{machine} is down"
 
     def normalize_size(self, size: str) -> str:
         return _normalize_size_for(size, self.size_map, self.size_aliases, self.hidden_sizes)
@@ -403,6 +475,77 @@ class MenuCatalog:
         normalized = self._resolve_alias(_menu_key(item_name))
         fields = self.item_fields.get(normalized)
         return fields["bundleSlots"] if fields else ()
+
+    def bundle_autofill(self, item_name: str, resolved_size_label: str = "") -> dict[str, str]:
+        """This bundle item's own slot -> filler-description map (menu.schema.json
+        ``bundle.autoFill``), with a literal ``{size}`` token in a template replaced by
+        *resolved_size_label* (falling back to the bundle's own ``bundle.defaultSize`` when the
+        guest ordered it with no usable size). Only the slots a pack actually opts in to
+        auto-filling are returned; every other one of this item's ``bundle_slots()`` stays
+        absorb-only, unchanged from today's behavior for every real pack (#77: no real pack
+        populates ``autoFill`` yet -- see docs/persona-architecture.md section 3.3 row 19)."""
+        normalized = self._resolve_alias(_menu_key(item_name))
+        fields = self.item_fields.get(normalized)
+        if fields is None:
+            return {}
+        template_map = fields.get("bundleAutoFill") or {}
+        if not template_map:
+            return {}
+        size_label = resolved_size_label or fields.get("bundleDefaultSize") or ""
+        return {slot: template.replace("{size}", size_label).strip() for slot, template in template_map.items()}
+
+    def meal_number_candidates(self, number: str) -> list[str]:
+        """Every real menu item name that claims numbered-meal id *number* (persona.json
+        ``mealNumber``) -- possibly more than one when a breakfast and a lunch meal share the same
+        number, e.g. a pack's own "#1" (design doc section 3.3 row 23). Empty for a persona that
+        has no numbered meals at all."""
+        return list(self.meal_number_index.get(str(number).strip(), ()))
+
+    def rewrite_search_query(self, query: str) -> str:
+        """Apply this persona's own ``strategies.searchQueryRewrite`` to *query*, or return it
+        unchanged for any persona that doesn't opt into a named strategy.
+
+        "meal_numbers": a guest asking for "number 1" or "meal 6" doesn't literally
+        say any menu item's own name, so a plain-text search can miss it entirely. When the query
+        contains a bare integer, every real item name that claims that number (``mealNumber``) is
+        appended to the query text -- never REPLACING the guest's own words, so the search index
+        still sees "number 1" too -- letting Azure Search's own text index match on the real
+        name(s) it actually indexed."""
+        if self.search_query_rewrite != "meal_numbers":
+            return query
+        match = re.search(r"\d+", query)
+        if not match:
+            return query
+        candidates = self.meal_number_candidates(match.group())
+        if not candidates:
+            return query
+        return f"{query} {' '.join(candidates)}"
+
+    def try_split_combined_name(self, item_name: str) -> tuple[str, str] | None:
+        """#77 (shared extras engine, ``extras.splitCombinedNames``): if *item_name* isn't on the
+        menu but is really a known base item plus a known extra joined by a connector word (e.g.
+        "Caramel Latte with Extra Shot"), return ``(base_name, extra_name)`` using each item's own
+        real menu name -- ``None`` if this persona doesn't opt in, or the name doesn't split into
+        exactly one resolvable base item + one resolvable ``isExtra`` item."""
+        if not self.split_combined_names:
+            return None
+        for connector in (" with ", " and ", " + ", " & "):
+            pattern = re.compile(re.escape(connector.strip()), re.IGNORECASE)
+            m = pattern.search(item_name)
+            if not m:
+                continue
+            base_part = item_name[: m.start()].strip()
+            extra_part = item_name[m.end():].strip()
+            if not base_part or not extra_part:
+                continue
+            base_item = self.resolve_menu_item(base_part)
+            if base_item is None or not self.is_extra_item(extra_part):
+                continue
+            extra_item = self.resolve_menu_item(extra_part)
+            if extra_item is None:
+                continue
+            return base_item["name"], extra_item["name"]
+        return None
 
     def requires_machine(self, item_name: str) -> str | None:
         normalized = self._resolve_alias(_menu_key(item_name))
