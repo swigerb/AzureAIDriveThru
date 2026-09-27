@@ -1307,16 +1307,21 @@ class RTMiddleTier:
     def _reasoning_model(self, reasoning_override: bool | None = _REASONING_UNSET) -> bool:
         """Whether reasoning-model-only fields may be sent upstream at all.
 
-        A runtime rejection always wins; then *reasoning_override* (#75: this
-        session's own bound, explicitly-selected model's catalog `reasoning`
-        flag -- see `_REASONING_UNSET`); then the explicit `reasoning_model`
-        switch; the deployment-name check is only the default."""
+        A runtime rejection always wins; then the explicit `reasoning_model`
+        switch (true/false -- an operator-level kill switch that overrides
+        what the catalog says a model supports); then *reasoning_override*
+        (#75: this session's own bound, explicitly-selected model's catalog
+        `reasoning` flag -- see `_REASONING_UNSET`); the deployment-name
+        check is the last resort, used only when the switch is `auto`
+        (`self.reasoning_model is None`) and no catalog entry is bound to
+        this session (PR #106 review round 3, Rick: the catalog records what
+        a model supports, the switch records what this environment allows)."""
         if self._reasoning_rejected:
             return False
-        if reasoning_override is not _REASONING_UNSET:
-            return bool(reasoning_override)
         if self.reasoning_model is not None:
             return self.reasoning_model
+        if reasoning_override is not _REASONING_UNSET:
+            return bool(reasoning_override)
         return deployment_supports_reasoning(getattr(self, "deployment", None))
 
     def reasoning_enabled(self, reasoning_override: bool | None = _REASONING_UNSET) -> bool:

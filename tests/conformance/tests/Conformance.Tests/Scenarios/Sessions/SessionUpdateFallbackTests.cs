@@ -189,16 +189,18 @@ public sealed class UnrelatedErrorsDoNotTriggerFallbackTests(ConformanceFixture 
 /// against; a test that actually needs two simultaneously-outstanding candidates to tell the two
 /// strategies apart is a separate, not-yet-written scenario.
 /// Deliberately runs on <see cref="Gpt15ConformanceFixture"/> rather than the plain Default
-/// deployment: this is about the guard's loop protection alone, and RIGHT NOW both fixtures'
-/// bootstraps legitimately contain `reasoning` (Rick's PR #106 review item 1, issue #75: the
-/// session's bound model — sonic's own default, gpt-realtime-2.1, catalog `reasoning: true` — now
-/// governs this regardless of deployment name; see ReasoningByDeploymentTests.cs's own top-level
-/// doc comment). The choice of fixture no longer changes what's IN the bootstrap; it only changes
-/// which shared collection/process absorbs the process-wide `_reasoning_rejected` latch flip this
-/// test's own scripted rejection of the (now-reasoning-bearing) bootstrap triggers as a side
-/// effect (see the allowedNewBackendErrors remark below) — kept on the dedicated
-/// <see cref="Gpt15ConformanceCollection"/> so that side effect stays isolated from every other
-/// Default-deployment scenario in the suite, which is still the property this choice protects.
+/// deployment: this is about the guard's loop protection alone, and this fixture's bootstrap must
+/// NOT legitimately contain `reasoning` (PR #106 review round 3, Rick: this fixture now sets
+/// <c>AZURE_OPENAI_REALTIME_REASONING_MODEL=false</c>, an operator disabling reasoning for a 1.5
+/// deployment, which outranks the session's bound model's catalog `reasoning: true` -- see
+/// ReasoningDeploymentFixtures.cs's <see cref="Gpt15ConformanceFixture"/> doc comment and
+/// ReasoningByDeploymentTests.cs's own top-level doc comment). With no `reasoning` key in the
+/// bootstrap, this test's scripted rejection is the sole reason the fallback fires -- it does not
+/// also trip rtmt.py's process-wide `_reasoning_rejected` latch as a side effect (see the
+/// allowedNewBackendErrors remark below) -- kept on the dedicated
+/// <see cref="Gpt15ConformanceCollection"/> regardless, so that any future change to this
+/// fixture's reasoning behaviour stays isolated from every other Default-deployment scenario in
+/// the suite.
 /// </summary>
 [Collection(Gpt15ConformanceCollection.Name)]
 public sealed class SecondSessionUpdateRejectionLoopGuardTests(Gpt15ConformanceFixture fixture)
@@ -269,15 +271,16 @@ public sealed class SecondSessionUpdateRejectionLoopGuardTests(Gpt15ConformanceF
         var browserErrorCount = browser.ReceivedFrames.Snapshot().Count(f => f.Type == "error");
         Assert.Equal(1, browserErrorCount);
     },
-    // Four deterministic backend ERROR-level log lines are this scenario's own subject matter:
+    // Three deterministic backend ERROR-level log lines are this scenario's own subject matter:
     // "Upstream REJECTED session.update ..." (recovering the bootstrap's scripted rejection),
-    // the extra "... rejected reasoning-model options ..." latch-flip line that recovery now ALSO
-    // logs (Rick's PR #106 review item 1: this fixture's bootstrap legitimately contains
-    // `reasoning` now — the session's bound model, not the "1.5" deployment name, governs it — so
-    // the scripted rejection's `rejected` payload genuinely contains "reasoning" with param=null,
-    // tripping the same latch-flip branch a real GA rejection would), "Fallback session.update
-    // ... was ALSO rejected ..." (refusing to loop), and the generic "OpenAI Realtime API error:
-    // ..." fall-through log for the second rejection once it's let through to the browser. All
-    // four are proven-expected above, not unhandled.
-    allowedNewBackendErrors: 4);
+    // "Fallback session.update ... was ALSO rejected ..." (refusing to loop), and the generic
+    // "OpenAI Realtime API error: ..." fall-through log for the second rejection once it's let
+    // through to the browser. PR #106 review round 3 (Rick, issue #75): back to 3 -- this
+    // fixture's bootstrap no longer legitimately contains `reasoning` (it now sets
+    // AZURE_OPENAI_REALTIME_REASONING_MODEL=false, which outranks the bound model's catalog
+    // `reasoning: true`; see this class's own doc comment), so the scripted rejection's
+    // `rejected` payload no longer contains "reasoning", and the extra "... rejected
+    // reasoning-model options ..." latch-flip log line the round-2 misconfiguration produced as a
+    // side effect is gone. All three lines are proven-expected above, not unhandled.
+    allowedNewBackendErrors: 3);
 }
