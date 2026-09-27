@@ -632,6 +632,7 @@ function SonicApp() {
                                     setVoiceChoice(voice);
                                     realtime.sendVoiceChoice(voice);
                                 }}
+                                roleName={current.roleName}
                                 models={current.models}
                             />
                         </Suspense>

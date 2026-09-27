@@ -51,7 +51,7 @@ from typing import Any
 
 from config_loader import get_config
 
-__all__ = ["ModelCatalog", "ModelEntry", "ModelValidationError"]
+__all__ = ["CascadeAudioConfig", "ModelCatalog", "ModelEntry", "ModelValidationError"]
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +60,40 @@ _REQUIRED_ENTRY_FIELDS = frozenset({"id", "pipeline", "label"})
 _KNOWN_ENTRY_FIELDS = _REQUIRED_ENTRY_FIELDS | frozenset({"reasoning", "toolCalling", "runtime"})
 
 _DEPLOYMENTS_ENV_VAR = "AZURE_AI_MODEL_DEPLOYMENTS"
+
+
+@dataclass(frozen=True)
+class CascadeAudioConfig:
+    """`config.yaml` `models.cascade` (issue #82, design doc section 7.2): the catalog ids for
+    the cascade pipeline's own transcription (speech-to-text) and TTS (text-to-speech) models.
+
+    These are NOT `models.catalog` rows -- they're not user-selectable chat models, just the
+    two fixed audio deployments every cascade session uses regardless of which cascade *chat*
+    model (`ModelEntry` with `pipeline: cascade`) the session is bound to. Their actual Foundry
+    deployment names still come from the SAME `AZURE_AI_MODEL_DEPLOYMENTS` map as chat models
+    (`ModelCatalog.deployment_for`) -- there is no separate audio deployment map."""
+
+    transcription: str
+    tts: str
+
+
+def _parse_cascade_audio_config(raw: Any) -> CascadeAudioConfig | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ModelValidationError(f"config.yaml models.cascade must be a mapping, got {type(raw).__name__}")
+    unknown = set(raw) - {"transcription", "tts"}
+    if unknown:
+        raise ModelValidationError(f"config.yaml models.cascade has unknown field(s): {sorted(unknown)}")
+    missing = {"transcription", "tts"} - set(raw)
+    if missing:
+        raise ModelValidationError(f"config.yaml models.cascade is missing required field(s): {sorted(missing)}")
+    transcription, tts = raw["transcription"], raw["tts"]
+    if not isinstance(transcription, str) or not transcription.strip():
+        raise ModelValidationError("config.yaml models.cascade's 'transcription' must be a non-empty string")
+    if not isinstance(tts, str) or not tts.strip():
+        raise ModelValidationError("config.yaml models.cascade's 'tts' must be a non-empty string")
+    return CascadeAudioConfig(transcription=transcription, tts=tts)
 
 
 class ModelValidationError(Exception):
@@ -156,9 +190,20 @@ class ModelCatalog:
     `PersonaCatalog.load()`); tests can also build one directly from the two constituent dicts.
     """
 
-    def __init__(self, entries: dict[str, ModelEntry], deployments: dict[str, str]):
+    def __init__(self, entries: dict[str, ModelEntry], deployments: dict[str, str],
+                 cascade_audio: CascadeAudioConfig | None = None):
         self._entries = dict(entries)
         self._deployments = dict(deployments)
+        self._cascade_audio = cascade_audio
+
+    @property
+    def cascade_audio(self) -> CascadeAudioConfig | None:
+        """`models.cascade`'s transcription/tts catalog ids (issue #82), or `None` if
+        `config.yaml` doesn't declare one -- e.g. a deployment with the cascade pipeline
+        unregistered, or a test fixture catalog that doesn't need it. `CascadeProcessor`
+        resolves each id's actual deployment name via `deployment_for`, same as any chat
+        model."""
+        return self._cascade_audio
 
     @property
     def ids(self) -> list[str]:
@@ -253,4 +298,5 @@ class ModelCatalog:
                 raise ModelValidationError(f"config.yaml models.catalog has a duplicate model id {entry.id!r} (entry {index})")
             entries[entry.id] = entry
         deployments = _parse_deployment_map(env.get(_DEPLOYMENTS_ENV_VAR))
-        return cls(entries=entries, deployments=deployments)
+        cascade_audio = _parse_cascade_audio_config(models_cfg.get("cascade"))
+        return cls(entries=entries, deployments=deployments, cascade_audio=cascade_audio)

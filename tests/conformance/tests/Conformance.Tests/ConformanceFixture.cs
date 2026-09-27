@@ -75,6 +75,29 @@ public class ConformanceFixture : IAsyncLifetime
     public FakeRealtimeUpstreamServer Realtime { get; } = new();
     public FakeSearchServer Search { get; private set; } = null!;
 
+    /// <summary>
+    /// Issue #82: a derived fixture overrides this to start any additional fake servers the
+    /// cascade pipeline needs beyond <see cref="Realtime"/>/<see cref="Search"/> (namely a
+    /// <see cref="FakeChatCompletionsServer"/> for the Foundry chat endpoint -- STT/TTS reuse
+    /// <see cref="Realtime"/> itself, see that class's own `ExpectedCascadeBearerToken` doc
+    /// comment), and to return the env vars those fakes' base URIs need injected into the
+    /// backend's own environment. Called from <see cref="InitializeAsync"/> right after
+    /// <see cref="Search"/> starts and before the backend launches, so returned values are ready
+    /// in time; the returned dictionary is merged over <see cref="Profile"/>'s own
+    /// <see cref="BackendProfile.ExtraEnvironment"/> (this override wins on a key collision).
+    /// No-op / empty by default so every existing fixture is completely unaffected.
+    /// </summary>
+    protected virtual Task<IReadOnlyDictionary<string, string>> StartExtraFakesAsync() =>
+        Task.FromResult<IReadOnlyDictionary<string, string>>(new Dictionary<string, string>());
+
+    /// <summary>
+    /// Symmetric shutdown for whatever <see cref="StartExtraFakesAsync"/> started, called from
+    /// <see cref="DisposeAsync"/> after <see cref="Backend"/> stops (so any of the backend's own
+    /// final requests still in flight during shutdown have somewhere to land) but before
+    /// <see cref="Search"/>/<see cref="Realtime"/> stop. No-op by default.
+    /// </summary>
+    protected virtual Task StopExtraFakesAsync() => Task.CompletedTask;
+
     /// <summary>Non-null once startup succeeds. Null (with <see cref="SkipReason"/> set) only when
     /// CONFORMANCE_BACKEND=dotnet and <see cref="DotnetPlaceholderPolicy.ShouldSkip"/> allows a skip
     /// (PR #22 review item 15); otherwise a dotnet placeholder run fails <see cref="InitializeAsync"/>
@@ -136,11 +159,16 @@ public class ConformanceFixture : IAsyncLifetime
         Search = new FakeSearchServer(indexPaths);
         await Search.StartAsync(fixedPort: searchPort).ConfigureAwait(false);
 
+        var extraFakeEnvironment = await StartExtraFakesAsync().ConfigureAwait(false);
+        var extraEnvironment = extraFakeEnvironment.Count == 0
+            ? Profile.ExtraEnvironment
+            : MergeEnvironment(Profile.ExtraEnvironment, extraFakeEnvironment);
+
         var port = NetworkUtils.GetFreeTcpPort();
         try
         {
             Backend = await BackendLauncherFactory.StartAsync(
-                Realtime.BaseUri, Search.BaseUri, port, extraEnvironment: Profile.ExtraEnvironment, deployment: Deployment,
+                Realtime.BaseUri, Search.BaseUri, port, extraEnvironment: extraEnvironment, deployment: Deployment,
                 personas: Personas, persona: Persona, personasDir: PersonasDir)
                 .ConfigureAwait(false);
 
@@ -168,11 +196,26 @@ public class ConformanceFixture : IAsyncLifetime
         {
             await Backend.DisposeAsync().ConfigureAwait(false);
         }
+        await StopExtraFakesAsync().ConfigureAwait(false);
         if (Search is not null)
         {
             await Search.DisposeAsync().ConfigureAwait(false);
         }
         await Realtime.DisposeAsync().ConfigureAwait(false);
+    }
+
+    /// <summary>Layers <paramref name="overrides"/> over <paramref name="baseEnvironment"/>,
+    /// overrides winning on a key collision -- used to combine a profile's own env vars with
+    /// whatever <see cref="StartExtraFakesAsync"/> additionally returns.</summary>
+    private static IReadOnlyDictionary<string, string> MergeEnvironment(
+        IReadOnlyDictionary<string, string> baseEnvironment, IReadOnlyDictionary<string, string> overrides)
+    {
+        var merged = new Dictionary<string, string>(baseEnvironment);
+        foreach (var (key, value) in overrides)
+        {
+            merged[key] = value;
+        }
+        return merged;
     }
 
     /// <summary>How long a scenario's connections get to finish closing before <see
