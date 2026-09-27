@@ -305,7 +305,8 @@ class HappyHourPricingTests(unittest.TestCase):
     @patch("order_state.is_happy_hour", return_value=True)
     def test_happy_hour_multiple_drink_types(self, _mock_hh):
         """Fountain drinks and slushes are discounted during happy hour; Shakes & Blasts are not
-        (Brian's decision, 2026-09-25 -- see menu_utils._SHAKES_AND_BLASTS_HAPPY_HOUR_DISCOUNTED)."""
+        (Brian's decision, 2026-09-25 -- every Shakes & Ice Cream item's ``happyHourDiscounted``
+        field in the Sonic pack's menuItems.json is ``false``, per issue #71)."""
         session_id = order_state_singleton.create_session()
         self._add_item(session_id, "Cherry Limeade", "medium", 1, 2.99)
         self._add_item(session_id, "Ocean Water", "large", 1, 3.49)
