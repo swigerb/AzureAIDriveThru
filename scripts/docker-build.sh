@@ -30,7 +30,8 @@ fi
 
 # Build the Docker image (frontend config is read from app/frontend/.env)
 echo "🔨 Building Docker image..."
-docker build --no-cache -t sonic-drive-thru-app -f ./app/Dockerfile ./app
+# Issue #129: the build context is the repo root, the same as CI and azd (azure.yaml docker.context).
+docker build --no-cache -t sonic-drive-thru-app -f ./app/Dockerfile .
 
 # Run the container
 echo "🚀 Running Docker container..."

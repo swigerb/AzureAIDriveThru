@@ -1,19 +1,31 @@
-# Issue #129: moved from app/.dockerignore -- the Docker build context is now the repo root
-# (azure.yaml's docker.context: ..), and Docker only reads .dockerignore from the context root,
-# so an app/.dockerignore would silently stop applying.
-.git
+# Issue #129: the Docker build context is the repo root (azure.yaml's docker.context: .., and
+# CI's `docker build -f app/Dockerfile .`). This file is an ALLOWLIST: exclude everything, then
+# re-include only what app/Dockerfile COPYs (app/frontend/, app/backend/ and personas/), then
+# re-exclude what must never reach the image. Anything new at the repo root stays out by default.
+*
+!app/frontend
+!app/backend
+!personas
 
-# Backend
-**/*.pyc
-**/.env
-
-## Will be built by multistage docker build
-**/static
-
-# Frontend
+# Dependencies and caches (the image installs its own).
 **/node_modules
+**/.venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
 
-# Persona menu source workbooks (raw ingestion spreadsheets, not needed at runtime -- see
-# scripts/sonic_menu_ingestion_search.ipynb / setup_search_index.py, which only ever read the
-# already-transformed personas/<id>/menu/menuItems.json)
+# Env files can hold secrets. The one exception is app/frontend/.env: scripts/docker-build.sh
+# generates it from VITE_* variables only, Vite reads it at build time, and VITE_* values are
+# embedded in the public bundle anyway. The Dockerfile writes a safe default when it's absent.
+**/.env*
+!app/frontend/.env
+
+# Built inside the image by the multistage build (vite outDir ../backend/static).
+app/backend/static
+
+# Tests are not runtime code.
+app/backend/tests/
+
+# Persona menu source workbooks (raw ingestion spreadsheets; the runtime only reads the
+# transformed personas/<id>/menu/menuItems.json).
 personas/*/menu/source/

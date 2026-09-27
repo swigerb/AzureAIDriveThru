@@ -489,19 +489,46 @@ jobs:
       - name: Build backend image (no push)
         run: docker build -f app/Dockerfile -t azureaidrivethru-backend:ci .
 
-      - name: Verify persona packs are present and menu/source/ is excluded
+      - name: Verify the image contents (persona packs load, nothing extra)
         run: |
-          docker run --rm azureaidrivethru-backend:ci sh -c '
-            set -e
-            echo "personas/ contents:"
-            ls -la /app/personas
-            test -n "$(ls -A /app/personas)"
+          set -euo pipefail
+          # Every persona pack in the checkout must be in the image.
+          expected_packs="$(find personas -mindepth 2 -maxdepth 2 -name persona.json -printf '%h\n' | xargs -n1 basename | sort | tr '\n' ' ')"
+          echo "Expected persona packs: ${expected_packs}"
+          test -n "${expected_packs}"
+          docker run --rm -e PERSONAS_DIR=/app/personas -e EXPECTED_PACKS="${expected_packs}" \
+            azureaidrivethru-backend:ci sh -c '
+            set -eu
+            for id in $EXPECTED_PACKS; do
+              test -f "/app/personas/$id/persona.json" || { echo "missing /app/personas/$id/persona.json" >&2; exit 1; }
+            done
+            # The packs must load and validate inside the container, exactly as the app loads them.
+            python -c "
+          import os
+          from persona_loader import PersonaCatalog
+          catalog = PersonaCatalog.load()
+          expected = sorted(os.environ[\"EXPECTED_PACKS\"].split())
+          assert sorted(catalog.ids) == expected, (sorted(catalog.ids), expected)
+          print(\"Loaded persona packs:\", \", \".join(catalog.ids))
+          "
+            # The frontend is built inside the image.
+            test -f /app/static/index.html || { echo "/app/static/index.html missing" >&2; exit 1; }
+            # Excluded paths must be absent.
+            if [ -e /app/tests ]; then echo "/app/tests leaked into the image" >&2; exit 1; fi
             if find /app/personas -type d -path "*/menu/source" | grep -q .; then
-              echo "menu/source/ raw ingestion workbooks leaked into the image" >&2
-              exit 1
+              echo "menu/source/ raw ingestion workbooks leaked into the image" >&2; exit 1
             fi
+            if find /app -name ".env*" | grep -q .; then
+              echo ".env files leaked into the image:" >&2; find /app -name ".env*" >&2; exit 1
+            fi
+            if find /app -type d \( -name node_modules -o -name .venv -o -name __pycache__ \) -prune -print | grep -q .; then
+              echo "dependency or cache directories leaked into the image" >&2; exit 1
+            fi
+            echo "Image contents OK."
           '
-
+          size_bytes="$(docker image inspect --format '{{.Size}}' azureaidrivethru-backend:ci)"
+          echo "Image size: $((size_bytes / 1024 / 1024)) MiB (${size_bytes} bytes)"
+          echo "### Docker image size: $((size_bytes / 1024 / 1024)) MiB" >> "$GITHUB_STEP_SUMMARY"
   # Issue #24: single aggregate required-status-check. Branch protection now pins only this job's
   # name, so growing the `conformance` matrix (e.g. adding backend: dotnet in S2) or adding a new
   # job to `needs:` below never requires another branch-protection edit -- it's added to `needs`
