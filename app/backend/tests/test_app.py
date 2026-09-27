@@ -92,7 +92,7 @@ class HealthEndpointTests(unittest.IsolatedAsyncioTestCase):
     async def test_health_returns_200_when_all_checks_pass(self):
         from app import _health_handler, _startup_checks
         original = dict(_startup_checks)
-        _startup_checks.update(prompts_loaded=True, config_loaded=True, env_vars=True)
+        _startup_checks.update(personas_loaded=True, prompts_loaded=True, config_loaded=True, env_vars=True)
         try:
             response = await _health_handler(MagicMock())
             self.assertEqual(response.status, 200)
@@ -106,7 +106,7 @@ class HealthEndpointTests(unittest.IsolatedAsyncioTestCase):
     async def test_health_returns_503_when_check_fails(self):
         from app import _health_handler, _startup_checks
         original = dict(_startup_checks)
-        _startup_checks.update(prompts_loaded=False, config_loaded=True, env_vars=True)
+        _startup_checks.update(personas_loaded=True, prompts_loaded=False, config_loaded=True, env_vars=True)
         try:
             response = await _health_handler(MagicMock())
             self.assertEqual(response.status, 503)
@@ -119,13 +119,14 @@ class HealthEndpointTests(unittest.IsolatedAsyncioTestCase):
     async def test_health_response_has_required_fields(self):
         from app import _health_handler, _startup_checks
         original = dict(_startup_checks)
-        _startup_checks.update(prompts_loaded=True, config_loaded=True, env_vars=True)
+        _startup_checks.update(personas_loaded=True, prompts_loaded=True, config_loaded=True, env_vars=True)
         try:
             response = await _health_handler(MagicMock())
             body = json.loads(response.body)
             self.assertIn("status", body)
             self.assertIn("version", body)
             self.assertIn("checks", body)
+            self.assertIn("personas_loaded", body["checks"])
             self.assertIn("prompts_loaded", body["checks"])
             self.assertIn("config_loaded", body["checks"])
             self.assertIn("env_vars", body["checks"])

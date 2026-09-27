@@ -42,8 +42,14 @@ public static class RepoPaths
             ? Path.Combine(repoRoot, ".venv", "Scripts", "python.exe")
             : Path.Combine(repoRoot, ".venv", "bin", "python");
 
+    /// <summary>
+    /// Issue #70: menu data now lives in the Sonic persona pack (personas/sonic/menu/menuItems.json),
+    /// not app/frontend/src/data/ -- the frontend keeps its own copy for now (out of scope for #70;
+    /// wiring the frontend to the pack is future work), but the backend and this conformance suite
+    /// read the persona pack's copy, which is the new source of truth.
+    /// </summary>
     public static string MenuItemsJsonPath(string repoRoot) =>
-        Path.Combine(repoRoot, "app", "frontend", "src", "data", "menuItems.json");
+        Path.Combine(repoRoot, "personas", "sonic", "menu", "menuItems.json");
 
     /// <summary>
     /// Issue #9: the golden order-pricing/combo/Route-44 dataset ported from
