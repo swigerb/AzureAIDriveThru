@@ -255,16 +255,17 @@ empirically this revision, not just reasoned about: with the OLD rows, temporari
 check (`IsUnderRoot`) to always return `true` left all three rows green (still 404, now for the
 right-shaped-wrong-reason: file-not-found instead of blocked-traversal).
 
-Fixed by repointing every row at `personas/sonic/persona.json` (one level above `assets/` --
-a file that DOES exist) and adding a fourth row, `..%5cpersona.json`, alongside the existing
-literal `../persona.json`, `..%2fpersona.json`, and `..%2Fpersona.json`. Even so, per-backend
-HTTP framework behavior means not all four rows are mutation-sensitive on both legs -- this is
-inherent to the two frameworks' routing, not a gap in the test:
+Fixed by repointing every row at the default persona pack's own `persona.json` (one level above
+`assets/` -- a file that DOES exist) and adding a fourth row, `..%5cpersona.json`, alongside the
+existing literal `../persona.json`, `..%2fpersona.json`, and `..%2Fpersona.json`. Even so,
+per-backend HTTP framework behavior means not all four rows are mutation-sensitive on both legs --
+this is inherent to the two frameworks' routing, not a gap in the test:
 
 - **Literal `../persona.json`**: both `HttpClient` (RFC 3986 dot-segment removal in the `Uri`
-  constructor) and aiohttp's request-line normalization collapse this to `/personas/sonic/persona.json`
-  before it is ever routed -- no matching route on either backend, so it 404s for "no such route"
-  reasons regardless of resolver logic. Structurally blind on **both** legs.
+  constructor) and aiohttp's request-line normalization collapse this to the pack's own
+  `persona.json` path one level up before it is ever routed -- no matching route on either
+  backend, so it 404s for "no such route" reasons regardless of resolver logic. Structurally blind
+  on **both** legs.
 - **`%2f`/`%2F`**: ASP.NET Core routing deliberately never decodes `%2f`/`%2F` into a literal `/`
   in a route value (documented anti-ambiguity behavior) -- so on the **dotnet** leg the
   `assetPath` route value arrives as one opaque unsplit string that never matches a real file,
