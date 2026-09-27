@@ -61,7 +61,23 @@ public static class ExternalModeProfilePolicy
     /// external backend that may well be a 2.1 deployment, passing or failing for the wrong
     /// reason instead of skipping.
     /// </summary>
-    public static string? ShouldSkip(string? backendUrl, string profileName, string defaultProfileName, string? deployment)
+    public static string? ShouldSkip(string? backendUrl, string profileName, string defaultProfileName, string? deployment) =>
+        ShouldSkip(backendUrl, profileName, defaultProfileName, deployment, persona: null);
+
+    /// <summary>
+    /// Same as the four-argument overload, plus (issue #76): a non-null <paramref name="persona"/>
+    /// override has exactly the same "needs its own dedicated backend process" requirement as a
+    /// non-null <paramref name="deployment"/> override does — PERSONAS/DEFAULT_PERSONA are read
+    /// once at backend startup too, so a fixture that overrides <c>ConformanceFixture.Persona</c>
+    /// while leaving <see cref="ExternalModeProfilePolicy"/>'s other checks satisfied would
+    /// otherwise slip through exactly the same gap PR #42 review item 2 closed for Deployment:
+    /// neither skip (racing every other collection's fixed fake ports) nor actually run against a
+    /// backend launched with its intended default persona (external mode's one already-running
+    /// backend has whatever DEFAULT_PERSONA it was started with, almost certainly not the one this
+    /// override names, until more than one persona pack exists).
+    /// </summary>
+    public static string? ShouldSkip(
+        string? backendUrl, string profileName, string defaultProfileName, string? deployment, string? persona)
     {
         var isExternal = !string.IsNullOrWhiteSpace(backendUrl);
         if (!isExternal)
@@ -83,6 +99,20 @@ public static class ExternalModeProfilePolicy
                 $"otherwise try to bind the same fixed fake ports " +
                 $"(CONFORMANCE_FAKE_REALTIME_PORT / CONFORMANCE_FAKE_SEARCH_PORT) concurrently, " +
                 $"same as the profile-name race below. Run this deployment's scenarios with " +
+                $"CONFORMANCE_BACKEND=python (harness-launched) instead.";
+        }
+
+        if (persona is not null)
+        {
+            return
+                $"CONFORMANCE_BACKEND_URL is set (external mode) -- skipping the backend " +
+                $"collection that overrides DEFAULT_PERSONA to '{persona}'. External mode has " +
+                $"exactly one already-running backend process, started with whatever " +
+                $"DEFAULT_PERSONA its own operator gave it -- the harness cannot know whether " +
+                $"that matches '{persona}', and (unlike harness-launched mode) cannot start a " +
+                $"second process with a different default persona to find out. Running this " +
+                $"collection's assertions against a mismatched persona would pass or fail for " +
+                $"the wrong reason instead of skipping. Run this persona's scenarios with " +
                 $"CONFORMANCE_BACKEND=python (harness-launched) instead.";
         }
 
