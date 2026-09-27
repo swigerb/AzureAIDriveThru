@@ -46,6 +46,11 @@ always returns one fixed, harness-known string instead, which
 ``FakeChatCompletionsServer``/``FakeRealtimeUpstreamServer``'s audio routes can
 then check for byte-for-byte, at the same fidelity level every other fake
 upstream in this suite checks its own bearer/api-key header.
+``cascade_chat_kwargs()`` rides the same double-gate: it hands back the one
+extra keyword argument (``enforce_https=False``) the Foundry chat client
+needs to tolerate that same fake credential being attached to a plain-HTTP
+fake server, and is likewise a no-op (``{}``) whenever a real credential is
+in play.
 
 One caveat worth flagging here even though it lives in ``rate_limit.py``:
 the *default* delay fed into ``retry_delay()`` is overridable via ``seconds()``
@@ -82,7 +87,7 @@ import os
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-__all__ = ["HOOKS_ENABLED", "hooks_enabled_now", "now", "seconds", "cascade_credential"]
+__all__ = ["HOOKS_ENABLED", "hooks_enabled_now", "now", "seconds", "cascade_credential", "cascade_chat_kwargs"]
 
 logger = logging.getLogger("sonic-drive-in")
 
@@ -275,3 +280,25 @@ def cascade_credential():
         if token:
             return _FakeCascadeCredential(token)
     return None
+
+
+def cascade_chat_kwargs() -> dict:
+    """Extra per-call keyword arguments for ``ChatCompletionsClient.complete()``,
+    needed **only** under the same fake-credential conditions as
+    ``cascade_credential()`` above (test hooks enabled AND
+    ``CONFORMANCE_CASCADE_FAKE_TOKEN`` set): ``azure-core``'s
+    ``BearerTokenCredentialPolicy`` unconditionally refuses to attach a bearer
+    token to a plain-``http://`` request (see
+    ``azure.core.pipeline.policies._authentication._enforce_https``) --
+    exactly right for a real, always-``https`` Foundry endpoint, but it also
+    means the conformance harness's own plain-HTTP
+    ``FakeChatCompletionsServer`` (issue #82) would otherwise make every
+    scripted tool-calling/pricing/not_on_menu row fail with
+    ``ServiceRequestError`` before the fake ever sees a request. ``{}`` (no
+    override) whenever a real ``DefaultAzureCredential`` is in play, so this
+    can never relax the check for a real, deployed Foundry endpoint --
+    identical safety story to ``cascade_credential()`` itself.
+    """
+    if HOOKS_ENABLED and os.environ.get(_CASCADE_FAKE_TOKEN_ENV):
+        return {"enforce_https": False}
+    return {}

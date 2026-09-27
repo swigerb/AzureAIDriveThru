@@ -59,6 +59,7 @@ from azure.ai.inference.models import (
 )
 
 from config_loader import get_config
+from conformance_hooks import cascade_chat_kwargs
 from order_state import order_state_singleton
 from processors import ResolvedModel, resolve_cascade_model
 from rtmt import Tool, ToolResult, ToolResultDirection
@@ -377,6 +378,7 @@ class CascadeProcessor:
                 messages=state.messages,
                 model=state.deployment,
                 tools=tool_defs or None,
+                **cascade_chat_kwargs(),
             )
             message = completion.choices[0].message
             tool_calls = message.tool_calls or []

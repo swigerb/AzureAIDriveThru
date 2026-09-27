@@ -89,12 +89,19 @@ public sealed class ModelSelectionRejectionConformanceTests(ModelSelectionConfor
     public Task Model_catalogued_for_a_different_pipeline_is_rejected_with_404() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
-        // gpt-5-mini is catalogued for the CASCADE pipeline -- dispatch_processor resolves its
-        // pipeline straight from the catalog and finds no processor registered for "cascade" yet
-        // (only RTMiddleTier/"realtime" is), 404-ing before resolve_realtime_model's own
-        // allow-list check would even run.
+        // phi-4-mini-local is catalogued for the LOCAL pipeline (config.yaml) -- dispatch_processor
+        // resolves its pipeline straight from the catalog and finds no processor registered for
+        // "local" (app.py's ProcessorRegistry only ever registers RTMiddleTier/"realtime" and,
+        // since issue #82, CascadeProcessor/"cascade" -- "local" is still unimplemented), 404-ing
+        // before resolve_realtime_model's own allow-list check would even run.
+        //
+        // gpt-5-mini used to be this row's example (catalogued for cascade, which had no
+        // processor registered yet) -- issue #82 registered CascadeProcessor for real, so
+        // gpt-5-mini now dispatches and connects successfully; see
+        // CascadeConformanceTests.Cascade_dispatch_binds_session_metadata_to_the_requested_persona_model_and_pipeline
+        // for that positive-path proof instead.
         await ModelSelectionConformanceTestHelpers.AssertRealtimeConnectIs404Async(
-            fixture.Backend!.BaseUri, "model=gpt-5-mini", ct);
+            fixture.Backend!.BaseUri, "model=phi-4-mini-local", ct);
     });
 }
 

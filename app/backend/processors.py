@@ -267,8 +267,9 @@ def dispatch_processor(
     Raises `ModelSelectionError` (turned into the same plain 404 as any other unknown/disallowed
     model by the caller) when:
       * the id isn't catalogued at all (unknown model), or
-      * its pipeline has no processor registered yet (e.g. cascade/local before #82/#81 land --
-        this is how an unimplemented pipeline still correctly 404s today instead of crashing).
+      * its pipeline has no processor registered yet (e.g. `local` before #81 lands -- this is
+        how an unimplemented pipeline still correctly 404s today instead of crashing; `cascade`
+        left this list once #82 registered `CascadeProcessor`).
     """
     model_id = requested_model_id if requested_model_id is not None else persona.manifest.models.realtime.default
     try:
