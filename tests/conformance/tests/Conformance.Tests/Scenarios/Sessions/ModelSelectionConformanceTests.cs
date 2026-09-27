@@ -8,12 +8,16 @@ namespace Conformance.Tests;
 
 /// <summary>
 /// Rick's PR #106 review item 2: conformance rows for issue #75's per-session realtime model
-/// selection (design doc sections 5.2/7.3/7.5). Deliberately UNTAGGED (no
-/// <c>[Trait("Dotnet", "ready")]</c>), same reasoning as <see cref="PersonaDiscoveryConformanceTests"/>
-/// and <see cref="PersonaMismatchConformanceTests"/> -- the dotnet backend skeleton doesn't
-/// implement model selection yet, so <see cref="DotnetTraitCoverageTests"/>'s dotnet CI leg must
-/// skip these; they still run in the main/full CI leg, which always launches the real Python
-/// backend. See <see cref="ModelSelectionConformanceFixture"/>/<see cref="ModelDeploymentMapConformanceFixture"/>
+/// selection (design doc sections 5.2/7.3/7.5). S2 part 2 (#12) ports the persona/model HTTP
+/// surface and the pre-upgrade `?model=` dispatch/resolution on `/realtime`
+/// (Models/ModelDispatch.cs), so <see cref="ModelSelectionRejectionConformanceTests"/>'s four
+/// pre-upgrade 404 rows (below) and one HTTP-only positive row in
+/// <see cref="ModelSelectionConformanceTests"/> are now tagged. The rest of
+/// <see cref="ModelSelectionConformanceTests"/> stays UNTAGGED: those rows need the actual
+/// upstream relay to reach `session.created`/forward audio (rtmt.py's `ConnectionForwarder`) --
+/// this wave's <see cref="RealtimeProcessor"/> is a deliberate stub (issue #13 lands the real
+/// relay), so they still only run against the Python backend. See
+/// <see cref="ModelSelectionConformanceFixture"/>/<see cref="ModelDeploymentMapConformanceFixture"/>
 /// for why this row set needs two dedicated backend processes.
 /// </summary>
 public static class ModelSelectionConformanceTestHelpers
@@ -38,6 +42,36 @@ public static class ModelSelectionConformanceTestHelpers
         Assert.NotEqual(WebSocketState.Open, socket.State);
         Assert.NotNull(ex);
     }
+
+    /// <summary>
+    /// Rick's PR #122 review item 2: the pre-upgrade 404 rows above only assert the STATUS code
+    /// (<see cref="ClientWebSocket"/> throws on any non-101 response and never exposes the body).
+    /// To read the exact body text -- rtmt.py's `web.Response(status=404, text=...)` shape, which
+    /// the C# port must match byte-for-byte, not merely "some 404" -- send the request with plain
+    /// <see cref="HttpClient"/> instead, carrying just enough of a WebSocket-upgrade-looking header
+    /// set (`Connection: Upgrade`, `Upgrade: websocket`, `Sec-WebSocket-Version`,
+    /// `Sec-WebSocket-Key`) that Kestrel's `HttpContext.WebSockets.IsWebSocketRequest` is `true`
+    /// (Program.cs's `/realtime` handler 400s immediately otherwise, before persona/model
+    /// resolution even runs) -- but since the handler never calls `AcceptWebSocketAsync` on the
+    /// rejection paths, Kestrel just writes a normal HTTP response (no actual upgrade handshake),
+    /// which <see cref="HttpClient"/> reads like any other response.
+    /// </summary>
+    public static async Task<string> RealtimeConnectBodyAsync(
+        Uri backendBaseUri, string query, HttpStatusCode expectedStatus, CancellationToken ct)
+    {
+        using var http = new HttpClient();
+        using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(backendBaseUri, $"/realtime?{query}"));
+        request.Headers.TryAddWithoutValidation("Connection", "Upgrade");
+        request.Headers.TryAddWithoutValidation("Upgrade", "websocket");
+        request.Headers.TryAddWithoutValidation("Sec-WebSocket-Version", "13");
+        request.Headers.TryAddWithoutValidation(
+            "Sec-WebSocket-Key", Convert.ToBase64String(Guid.NewGuid().ToByteArray()));
+
+        using var response = await http.SendAsync(request, ct);
+        var body = await response.Content.ReadAsStringAsync(ct);
+        Assert.Equal(expectedStatus, response.StatusCode);
+        return body;
+    }
 }
 
 /// <summary>
@@ -51,6 +85,7 @@ public static class ModelSelectionConformanceTestHelpers
 /// deployment map is exactly what "undeployed" needs.
 /// </summary>
 [Collection(ModelSelectionConformanceCollection.Name)]
+[Trait("Dotnet", "ready")]
 public sealed class ModelSelectionRejectionConformanceTests(ModelSelectionConformanceFixture fixture)
 {
     [Fact]
@@ -103,6 +138,40 @@ public sealed class ModelSelectionRejectionConformanceTests(ModelSelectionConfor
         await ModelSelectionConformanceTestHelpers.AssertRealtimeConnectIs404Async(
             fixture.Backend!.BaseUri, "model=phi-4-mini-local", ct);
     });
+
+    [Fact]
+    public Task Unknown_persona_404_body_is_exactly_the_python_shape() => fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var body = await ModelSelectionConformanceTestHelpers.RealtimeConnectBodyAsync(
+            fixture.Backend!.BaseUri, "persona=totally-not-a-persona", HttpStatusCode.NotFound, ct);
+        // rtmt.py's `_websocket_handler`: `web.Response(status=404, text=f"Unknown or disabled
+        // persona: '{persona_id}'")` -- plain text, single-quoted id, no trailing punctuation.
+        Assert.Equal("Unknown or disabled persona: 'totally-not-a-persona'", body);
+    });
+
+    [Fact]
+    public Task Unknown_model_404_body_is_exactly_the_python_shape() => fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var body = await ModelSelectionConformanceTestHelpers.RealtimeConnectBodyAsync(
+            fixture.Backend!.BaseUri, "model=totally-not-a-catalogued-model", HttpStatusCode.NotFound, ct);
+        // rtmt.py's `dispatch_processor`/`resolve_realtime_model` except-clauses both return the
+        // identical fixed body regardless of the underlying reason (Rick's PR #122 review item
+        // 2): `web.Response(status=404, text=f"Unknown or disallowed model: {model_id!r}")`.
+        // `!r` on a `str` is single-quoted Python repr -- `PyRepr` in Program.cs mirrors this.
+        //
+        // The bare `None` form (`Unknown or disallowed model: None`, for an omitted `?model=`
+        // that still gets rejected) is Python's shape for the case where `requested_model_id` is
+        // `None` -- but that case is provably UNREACHABLE at runtime on either backend: omitting
+        // `?model=` always resolves to the PERSONA'S OWN pipeline default, and both backends'
+        // startup-time `ValidatePersonaDefaults`/`validate_persona_defaults` gate refuses to start
+        // at all if any enabled persona's own default isn't catalogued for its own pipeline (which
+        // has a registered processor) and deployed (via the back-compat fallback for defaults) --
+        // so a running backend can never reach either except-clause with `requested_model_id is
+        // None`. No conformance row exists for it for that reason; this is not a coverage gap.
+        Assert.Equal("Unknown or disallowed model: 'totally-not-a-catalogued-model'", body);
+    });
 }
 
 /// <summary>
@@ -120,6 +189,7 @@ public sealed class ModelSelectionConformanceTests(ModelDeploymentMapConformance
     private static readonly TimeSpan FrameTimeout = ModelSelectionConformanceTestHelpers.FrameTimeout;
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Api_persona_detail_lists_only_the_selectable_models_shaped_for_the_picker() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
