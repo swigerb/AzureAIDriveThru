@@ -1,0 +1,42 @@
+version: "1.0.0"
+upsell_hints:
+  meal:
+    trigger_categories:
+      - "meals & combos"
+      - "breakfast"
+    hint: "Meals are a great base! Ask if they want to upgrade to a Large size, or add a delicious McFlurry or Dessert!"
+
+  burger:
+    trigger_categories:
+      - "burgers"
+      - "chicken & fish sandwiches"
+      - "mcnuggets & tenders"
+    hint: "Perfect choice! Ask if they want to make it a meal with World Famous Fries and a refreshing Drink!"
+
+  drink:
+    trigger_categories:
+      - "beverages"
+      - "mccafe coffees"
+    hint: "Great drink choice! Ask if they'd like to add some food — maybe a burger, McNuggets, or World Famous Fries!"
+
+  sweet:
+    trigger_categories:
+      - "sweets & treats"
+    hint: "Yum! Great pick! Ask if they'd like to add anything else to their order!"
+
+  side:
+    trigger_categories:
+      - "fries & sides"
+    hint: "Tasty! Ask if they want to add a refreshing Drink to complete their meal!"
+
+  generic:
+    trigger_categories: []
+    hint: "Ask if they'd like to add anything else — maybe a drink, side, or dessert!"
+
+system_hints:
+  combo_incomplete: "SYSTEM HINT: {{prompt_hint}}"
+  out_of_stock: "OOS: {{oos_reason}}"
+
+delta_templates:
+  item_added: "Added {{quantity}} {{display_name}} — your total is now {{total}}"
+  item_removed: "Removed {{quantity}} {{display_name}} — your total is now {{total}}"

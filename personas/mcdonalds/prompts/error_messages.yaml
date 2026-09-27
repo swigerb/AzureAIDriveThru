@@ -1,0 +1,78 @@
+version: "1.0.0"
+messages:
+  # Search errors
+  search_service_unavailable: "I'm sorry, I can't reach our menu data right now."
+  search_no_results: "No matching menu entries found."
+
+  # Pricing errors
+  price_validation_failed: "I'm sorry, I had a glitch with the pricing for that. Could you say that again?"
+
+  # Customization errors
+  invalid_mod: "I can't add {{forbidden_item}} to a {{base_name}} — that's a new one! Want to try a different topping?"
+  nonsensical_mod_redirect: "That's a creative idea! How about a different topping?"
+
+  # Extras validation (dormant for this persona: McDonald's source menu has no priced,
+  # standalone-orderable "extra" line items the way some other persona packs' add-in
+  # style items are, so no menu item is ever marked isExtra: true and this code path
+  # never actually fires today -- see personas/mcdonalds/menu/menuItems.json's decision notes).
+  # Kept populated anyway for parity with the full key set every persona pack documents.
+  extras_no_base_item: >-
+    I can add extras to burgers, sandwiches, McNuggets, or meals,
+    but not to sides or drinks on their own.
+  extras_blocked_category: >-
+    I can add extras to burgers, sandwiches, McNuggets, or meals,
+    but I can't add them to sides or drinks on their own.
+
+  # No off-menu ordering (ADR-001 decision 4: "No off-menu. If it's not on the menu in our
+  # source data, you cannot order it."). item_not_on_menu fires when update_order's "add"
+  # action can't resolve item_name (or an alias of it) to a real menuItems.json entry at
+  # all; size_not_available fires when the item itself is real but the requested size
+  # isn't one of its priced sizes. See docs/persona-architecture.md section 6.
+  item_not_on_menu: >-
+    I'm sorry, {{item_name}} isn't on our menu. Would you like to try
+    something else instead? Use the search tool with the guest's words and
+    offer the closest real menu item by its exact name.
+  size_not_available: >-
+    I'm sorry, {{item_name}} isn't available in that size. We have it in
+    {{available_sizes}} -- would you like one of those?
+
+  # Quantity limit messages
+  per_item_limit_maxed: >-
+    That's a lot of {{item_name}}! Our drive-thru can handle up to
+    {{max_per_item}} of any item. You already have {{existing_qty}} —
+    would you like to keep it at {{existing_qty}}?
+  per_item_limit_partial: >-
+    That's a lot of {{item_name}}! Our drive-thru can handle up to
+    {{max_per_item}} of any item. I can add {{allowed}} more —
+    would you like me to do that?
+  total_order_limit_maxed: >-
+    Wow, that's a big order! Our drive-thru tops out at
+    {{max_total}} items total so we can keep things moving.
+    You're already at the max — would you like to swap anything out?
+  total_order_limit_partial: >-
+    Wow, that's a big order! Our drive-thru tops out at
+    {{max_total}} items total so we can keep things moving.
+    I can add {{remaining}} more — would you like me to do that?
+
+  # Order reset
+  order_cleared: "Order cleared."
+
+  # Tool execution failures: a malformed/incomplete tool call (missing required
+  # arguments) or a genuine unhandled exception inside a tool handler. Deliberately
+  # short and neutral -- no internal detail is ever guest-visible. Points the model at
+  # get_order to confirm the order's actual state before doing anything else, and at
+  # asking the guest rather than silently retrying.
+  tool_execution_failed: >-
+    Something went wrong with that action and it did not complete. Don't retry it yet --
+    call get_order to confirm the order's current state, then ask the guest to repeat
+    what they'd like rather than guessing.
+
+  # Tool-failure cap notice: the response-level `instructions` sent on the ONE
+  # server-authored response.create when two consecutive tool-call rounds have failed
+  # with no guest turn in between. Response-level `instructions` REPLACE the session
+  # instructions for that single response, so this must be self-contained.
+  tool_failure_cap_instructions: >-
+    The order system just failed twice in a row and NOTHING was added or changed. Do not
+    say an item was added, removed, or changed. Stay upbeat and in character as a
+    McDonald's team member: briefly apologise, say you couldn't update the order just
+    now, and ask the guest to repeat what they'd like.
