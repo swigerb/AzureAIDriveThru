@@ -19,7 +19,13 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from persona_loader import Persona, PersonaCatalog, PersonaValidationError
+from persona_loader import (
+    Persona,
+    PersonaCatalog,
+    PersonaValidationError,
+    default_personas_dir,
+    resolve_personas_dir,
+)
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _REAL_PERSONAS_DIR = _REPO_ROOT / "personas"
@@ -413,6 +419,96 @@ class TestFixtureSchemasMatchRealSchemas:
             "(never edit the fixture copy independently; see this test class's docstring "
             "for why they're two files instead of one shared file)."
         )
+
+
+# ===========================================================================
+# Default personas/ directory resolution: pick by EXISTENCE, not by path depth (#129 review
+# round 2). Covers both default_personas_dir (the two-candidate, schema-marker lookup) and
+# resolve_personas_dir (adds the PERSONAS_DIR env var override and the "nothing qualifies"
+# error naming every path tried).
+# ===========================================================================
+
+
+class TestDefaultPersonasDirResolution:
+    def test_checkout_layout_resolves_repo_root_personas(self, tmp_path):
+        """app/backend/<module>.py, two levels below a repo root that has personas/persona.schema.json."""
+        repo = tmp_path / "repo"
+        module = repo / "app" / "backend" / "persona_loader.py"
+        module.parent.mkdir(parents=True)
+        module.write_text("", encoding="utf-8")
+        personas = repo / "personas"
+        personas.mkdir()
+        (personas / "persona.schema.json").write_text("{}", encoding="utf-8")
+
+        assert default_personas_dir(module) == personas
+
+    def test_image_layout_picks_adjacent_personas_even_over_a_stray_dir_two_levels_up(self, tmp_path):
+        """The flattened container image puts the module and personas/ side by side (app/Dockerfile
+        copies both straight onto /app). This reproduces that at an ARBITRARY nesting depth --
+        not two levels, the old depth rule's lucky number -- with a stray personas/ sitting at
+        exactly the old rule's "two levels up" location too, but WITHOUT a persona.schema.json.
+        The adjacent, real personas/ (which does have the schema) must still win: existence, not
+        depth, decides."""
+        module_dir = tmp_path / "srv" / "some" / "nested" / "workdir" / "app"
+        module_dir.mkdir(parents=True)
+        module = module_dir / "persona_loader.py"
+        module.write_text("", encoding="utf-8")
+
+        # The stray "two levels up" directory: exists, but no schema -- must not be chosen.
+        stray = module_dir.parent.parent / "personas"
+        stray.mkdir(parents=True)
+
+        # The real candidate: right next to the module.
+        real_personas = module_dir / "personas"
+        real_personas.mkdir()
+        (real_personas / "persona.schema.json").write_text("{}", encoding="utf-8")
+
+        assert default_personas_dir(module) == real_personas
+
+    def test_neither_candidate_qualifying_returns_none(self, tmp_path):
+        module = tmp_path / "app" / "backend" / "persona_loader.py"
+        module.parent.mkdir(parents=True)
+        module.write_text("", encoding="utf-8")
+        # Neither default candidate directory exists at all.
+
+        assert default_personas_dir(module) is None
+
+
+class TestResolvePersonasDirEnvVarAndErrors:
+    def test_personas_dir_env_var_overrides_the_defaults(self, tmp_path, monkeypatch):
+        override = tmp_path / "override-personas"
+        override.mkdir()
+        (override / "persona.schema.json").write_text("{}", encoding="utf-8")
+        monkeypatch.setenv("PERSONAS_DIR", str(override))
+
+        # Any module path -- the env var short-circuits before either default candidate is
+        # even considered.
+        module = tmp_path / "app" / "backend" / "persona_loader.py"
+        assert resolve_personas_dir(module) == override.resolve()
+
+    def test_personas_dir_env_var_without_the_schema_raises(self, tmp_path, monkeypatch):
+        override = tmp_path / "override-personas"
+        override.mkdir()  # no persona.schema.json
+        monkeypatch.setenv("PERSONAS_DIR", str(override))
+
+        module = tmp_path / "app" / "backend" / "persona_loader.py"
+        with pytest.raises(PersonaValidationError, match="does not exist or does not contain"):
+            resolve_personas_dir(module)
+
+    def test_no_env_var_and_neither_candidate_qualifying_raises_naming_both_paths(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("PERSONAS_DIR", raising=False)
+        module = tmp_path / "app" / "backend" / "persona_loader.py"
+        module.parent.mkdir(parents=True)
+
+        module_dir = module.resolve().parent
+        checkout_candidate = module_dir.parent.parent / "personas"
+        image_candidate = module_dir / "personas"
+
+        with pytest.raises(PersonaValidationError) as exc_info:
+            resolve_personas_dir(module)
+        message = str(exc_info.value)
+        assert str(checkout_candidate) in message
+        assert str(image_candidate) in message
 
 
 if __name__ == "__main__":

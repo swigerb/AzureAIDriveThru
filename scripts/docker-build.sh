@@ -10,7 +10,7 @@ else
     # Try to copy from backend env variables related to auth
     if [ -f "./app/backend/.env" ]; then
         echo "Creating frontend .env from backend VITE_* variables"
-        grep "VITE_" ./app/backend/.env > ./app/frontend/.env 2>/dev/null || echo "" > ./app/frontend/.env
+        grep -E '^VITE_[A-Za-z0-9_]*=' ./app/backend/.env > ./app/frontend/.env 2>/dev/null || echo "" > ./app/frontend/.env
         
         # If no VITE_ variables found, add the defaults
         if [ ! -s "./app/frontend/.env" ]; then
@@ -30,7 +30,8 @@ fi
 
 # Build the Docker image (frontend config is read from app/frontend/.env)
 echo "🔨 Building Docker image..."
-docker build --no-cache -t sonic-drive-thru-app -f ./app/Dockerfile ./app
+# Issue #129: the build context is the repo root, the same as CI and azd (azure.yaml docker.context).
+docker build --no-cache -t sonic-drive-thru-app -f ./app/Dockerfile .
 
 # Run the container
 echo "🚀 Running Docker container..."
