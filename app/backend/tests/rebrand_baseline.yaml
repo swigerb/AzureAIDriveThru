@@ -136,7 +136,7 @@ entries:
   increase_reason: ''
 - file: app/backend/session_manager.py
   brand: sonic
-  max: 3
+  max: 2
   issue: '#74'
   reason: 'Backend config/persona/prompt loader defaults, logger names and illustrative
     docstring examples still default/hardcode to the single Sonic persona pending
