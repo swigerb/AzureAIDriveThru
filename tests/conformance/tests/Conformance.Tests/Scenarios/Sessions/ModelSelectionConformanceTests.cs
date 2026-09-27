@@ -124,10 +124,10 @@ public sealed class ModelSelectionConformanceTests(ModelDeploymentMapConformance
         var realtime = document.RootElement.GetProperty("models").GetProperty("realtime");
         Assert.Equal("gpt-realtime-2.1", realtime.GetProperty("default").GetString());
 
-        var allowed = realtime.GetProperty("allowed").EnumerateArray().ToArray();
-        Assert.Equal(2, allowed.Length);
+        var models = realtime.GetProperty("models").EnumerateArray().ToArray();
+        Assert.Equal(2, models.Length);
 
-        var byId = allowed.ToDictionary(m => m.GetProperty("id").GetString()!);
+        var byId = models.ToDictionary(m => m.GetProperty("id").GetString()!);
         Assert.Equal("GPT Realtime 2.1", byId["gpt-realtime-2.1"].GetProperty("label").GetString());
         Assert.True(byId["gpt-realtime-2.1"].GetProperty("reasoning").GetBoolean());
         Assert.Equal("GPT Realtime mini", byId["gpt-realtime-mini"].GetProperty("label").GetString());

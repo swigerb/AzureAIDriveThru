@@ -147,25 +147,31 @@ def _selectable_models(pipeline_cfg, pipeline_name: str, model_catalog: ModelCat
 
 
 def _model_pipelines_body(models, model_catalog: ModelCatalog) -> dict:
-    """The selectable `models` per pipeline (design doc section 7; Rick's PR #106 review item
+    """The selectable `models` per pipeline (design doc section 5.2/7; Rick's PR #106 review item
     3: ALWAYS only selectable models, `{id, label, reasoning}` shaped); only the pipelines a
     persona actually declares (`cascade`/`local` are optional). *model_catalog* is mandatory --
-    there is no unfiltered fallback shape any more."""
+    there is no unfiltered fallback shape any more.
+
+    PR #106 review round 3 (Rick's nit, issue #75): each pipeline's list is keyed `models`, not
+    `allowed` -- it means *selectable* now (catalog ∩ deployment ∩ persona-allowed), not the
+    persona pack's own raw `models.<pipeline>.allowed` config field, which this list is filtered
+    FROM, not identical to. Renamed before #110 (frontend) starts consuming it as
+    `{id, label, reasoning}` objects."""
     body = {
         "realtime": {
             "default": models.realtime.default,
-            "allowed": _selectable_models(models.realtime, "realtime", model_catalog),
+            "models": _selectable_models(models.realtime, "realtime", model_catalog),
         }
     }
     if models.cascade is not None:
         body["cascade"] = {
             "default": models.cascade.default,
-            "allowed": _selectable_models(models.cascade, "cascade", model_catalog),
+            "models": _selectable_models(models.cascade, "cascade", model_catalog),
         }
     if models.local is not None:
         body["local"] = {
             "default": models.local.default,
-            "allowed": _selectable_models(models.local, "local", model_catalog),
+            "models": _selectable_models(models.local, "local", model_catalog),
         }
     return body
 

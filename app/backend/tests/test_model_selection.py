@@ -422,7 +422,7 @@ class ApiPersonasModelFilteringTests(unittest.TestCase):
         the picker's list exactly like any other unselectable model, not "always kept"."""
         persona = self.catalog.get("test-alpha")
         detail = self._detail_body(persona, _catalog())  # no deployments
-        self.assertEqual(detail["models"]["realtime"]["allowed"], [])
+        self.assertEqual(detail["models"]["realtime"]["models"], [])
 
     def test_only_the_deployed_model_is_kept_even_though_the_default_is_not(self):
         """gpt-realtime-mini is deployed here but is NOT test-alpha's default
@@ -431,7 +431,7 @@ class ApiPersonasModelFilteringTests(unittest.TestCase):
         persona = self.catalog.get("test-alpha")
         detail = self._detail_body(persona, _catalog('{"gpt-realtime-mini": "mini-deployment-42"}'))
         self.assertEqual(
-            detail["models"]["realtime"]["allowed"],
+            detail["models"]["realtime"]["models"],
             [{"id": "gpt-realtime-mini", "label": "GPT Realtime mini", "reasoning": False}],
         )
 
@@ -442,7 +442,7 @@ class ApiPersonasModelFilteringTests(unittest.TestCase):
             _catalog('{"gpt-realtime-2.1": "prod-deployment", "gpt-realtime-mini": "mini-deployment-42"}'),
         )
         self.assertEqual(
-            detail["models"]["realtime"]["allowed"],
+            detail["models"]["realtime"]["models"],
             [
                 {"id": "gpt-realtime-2.1", "label": "GPT Realtime 2.1", "reasoning": True},
                 {"id": "gpt-realtime-mini", "label": "GPT Realtime mini", "reasoning": False},
