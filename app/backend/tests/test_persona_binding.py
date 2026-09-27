@@ -3,8 +3,8 @@
 Scope covered here:
   * a TEST-ONLY fixture persona pack (tests/fixtures/personas/{test-alpha,test-beta}) --
     NOT the real personas/ directory, since only the deployment's single default persona
-    pack exists there today -- proves
-    multi-persona isolation is real, not just plausible from reading the code;
+    pack exists there today -- proves multi-persona isolation is real, not just plausible
+    from reading the code;
   * /realtime?persona=<id> binding: unknown id -> 404 before the WS upgrade, omitted
     falls back to the deployment default, a valid id binds the whole session (persona
     id, voice, menu/search index) for its entire lifetime;
@@ -20,10 +20,11 @@ Rick's #92 note ("remove the hardcoded PromptLoader with a fixed brand argument"
 test_app.py / test_performance.py respectively -- not duplicated here.
 """
 
+import os
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 sys.path.append(str(Path(__file__).resolve().parent))
@@ -297,13 +298,51 @@ class ApiPersonasResponseShapeTests(unittest.TestCase):
         self.assertEqual(body["default"], "test-alpha")
         ids = [p["id"] for p in body["personas"]]
         self.assertEqual(ids, ["test-alpha", "test-beta"])
-        self.assertEqual(body["backends"], [{"id": "python", "url": "/realtime"}])
+
+    def test_backends_python_falls_back_to_same_origin_when_backend_uri_is_unset(self):
+        """Rick's PR #102 review item 4: BACKEND_URI/BACKEND_DOTNET_URI unset (local dev)
+        -- python still gets an entry (same-origin ""), never omitted; dotnet, with no
+        configured URI, is omitted entirely rather than reported with a placeholder."""
+        with patch.dict("os.environ", {}, clear=False):
+            for var in ("BACKEND_URI", "BACKEND_DOTNET_URI"):
+                os.environ.pop(var, None)
+            body = self._index_body(self.catalog)
+        self.assertEqual(body["backends"], [{"id": "python", "url": ""}])
+
+    def test_backends_url_is_each_backend_public_base_url_not_realtime(self):
+        """`backends[].url` (design doc 5.2/10.1) is each backend's PUBLIC BASE URL, built
+        from the #93 azd outputs BACKEND_URI/BACKEND_DOTNET_URI -- never the `/realtime`
+        WebSocket path itself, so the F11 header switch can link across hostnames."""
+        with patch.dict(
+            "os.environ",
+            {
+                "BACKEND_URI": "https://python-backend.example.azurecontainerapps.io",
+                "BACKEND_DOTNET_URI": "https://dotnet-backend.example.azurecontainerapps.io",
+            },
+        ):
+            body = self._index_body(self.catalog)
+        self.assertEqual(
+            body["backends"],
+            [
+                {"id": "python", "url": "https://python-backend.example.azurecontainerapps.io"},
+                {"id": "dotnet", "url": "https://dotnet-backend.example.azurecontainerapps.io"},
+            ],
+        )
+
+    def test_backends_omits_dotnet_when_its_uri_is_unset(self):
+        with patch.dict("os.environ", {"BACKEND_URI": "https://python-backend.example.azurecontainerapps.io"}):
+            os.environ.pop("BACKEND_DOTNET_URI", None)
+            body = self._index_body(self.catalog)
+        self.assertEqual(
+            body["backends"],
+            [{"id": "python", "url": "https://python-backend.example.azurecontainerapps.io"}],
+        )
 
     def test_persona_summary_has_the_designed_fields(self):
         summary = self._summary_body(self.catalog.get("test-alpha"))
         self.assertEqual(summary["id"], "test-alpha")
         self.assertEqual(summary["displayName"], "Test Alpha Drive-In")
-        self.assertEqual(summary["logoUrl"], "/personas/test-alpha/assets/assets/logo.svg")
+        self.assertEqual(summary["logoUrl"], "/personas/test-alpha/assets/logo.svg")
         self.assertIn("light", summary["theme"])
 
     def test_persona_detail_has_voice_locales_features_menu_and_models(self):
@@ -319,8 +358,171 @@ class ApiPersonasResponseShapeTests(unittest.TestCase):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# END-TO-END /realtime?persona=<id> (real middle tier, fake GA realtime backend)
+# PERSONA ASSET + MENU.JSON ROUTES (issue #74, design doc section 5.2, Rick's PR #102
+# review item 5): served only for ENABLED packs, path traversal rejected, correct
+# content types + immutable cache headers.
 # ═══════════════════════════════════════════════════════════════════════════════
+
+class PersonaAssetPathResolutionTests(unittest.TestCase):
+    """Unit-level tests of `_resolve_persona_asset_path` -- deterministic, exercises the
+    exact input string with no HTTP client / URL-normalization ambiguity. Covers every
+    traversal variant Rick's item 5 calls out by name: `../`, encoded variants, absolute
+    paths, and symlink escape (simulated, since creating real symlinks needs elevated
+    privileges on Windows CI runners)."""
+
+    def setUp(self):
+        sys.path.append(str(Path(__file__).resolve().parents[1]))
+        from app import _resolve_persona_asset_path
+        self._resolve = _resolve_persona_asset_path
+        self.persona = _load_fixture_catalog().get("test-alpha")
+
+    def test_resolves_a_real_top_level_asset(self):
+        resolved = self._resolve(self.persona, "logo.svg")
+        self.assertIsNotNone(resolved)
+        self.assertTrue(resolved.is_file())
+
+    def test_resolves_a_real_nested_asset(self):
+        resolved = self._resolve(self.persona, "sub/icon.png")
+        self.assertIsNotNone(resolved)
+
+    def test_none_for_a_filename_that_does_not_exist(self):
+        self.assertIsNone(self._resolve(self.persona, "does-not-exist.svg"))
+
+    def test_none_for_dotdot_traversal(self):
+        self.assertIsNone(self._resolve(self.persona, "../persona.json"))
+        self.assertIsNone(self._resolve(self.persona, "../../../../etc/passwd"))
+        self.assertIsNone(self._resolve(self.persona, "sub/../../persona.json"))
+
+    def test_none_for_backslash_dotdot_traversal(self):
+        """Windows-style separators must be normalized before segment-splitting, not
+        smuggled past the `/`-based check."""
+        self.assertIsNone(self._resolve(self.persona, "..\\persona.json"))
+
+    def test_none_for_percent_encoded_dotdot(self):
+        """aiohttp's router percent-decodes match_info before handlers see it, so an
+        encoded variant like %2e%2e%2f arrives here already looking like a literal
+        `../` -- confirms the structural check still catches it once decoded."""
+        self.assertIsNone(self._resolve(self.persona, "%2e%2e/persona.json".replace("%2e", ".")))
+
+    def test_none_for_absolute_posix_path(self):
+        self.assertIsNone(self._resolve(self.persona, "/etc/passwd"))
+
+    def test_none_for_absolute_windows_path(self):
+        self.assertIsNone(self._resolve(self.persona, "C:/Windows/win.ini"))
+        self.assertIsNone(self._resolve(self.persona, "C:\\Windows\\win.ini"))
+
+    def test_none_for_empty_or_null_byte_path(self):
+        self.assertIsNone(self._resolve(self.persona, ""))
+        self.assertIsNone(self._resolve(self.persona, "logo.svg\x00.png"))
+
+    def test_none_when_resolved_path_escapes_assets_dir_even_without_dotdot_segments(self):
+        """Simulates a symlink escape: a segment-only check would pass (no `..` in the
+        string), but `.resolve()` following the link lands outside `assets_dir`, so the
+        `relative_to(assets_root)` guard must still reject it. Patches `Path.resolve` so
+        only the specific asset-file candidate resolves outside the pack -- everything
+        else (including `assets_dir` itself) resolves normally -- since creating a real
+        symlink needs elevated privileges on Windows CI runners."""
+        escaped_target = self.persona.pack_dir.parent.resolve() / "persona.schema.json"
+        real_resolve = Path.resolve
+
+        def fake_resolve(path_self, strict=False):
+            if path_self.name == "logo.svg":
+                return escaped_target
+            return real_resolve(path_self, strict=strict)
+
+        with patch.object(Path, "resolve", fake_resolve):
+            self.assertIsNone(self._resolve(self.persona, "logo.svg"))
+
+
+class PersonaAssetAndMenuRouteTests(unittest.IsolatedAsyncioTestCase):
+    """HTTP-level conformance tests: registers the real `register_persona_routes` (app.py)
+    on a standalone `web.Application` against the fixture catalog -- no `create_app()` /
+    Azure OpenAI/Search dependency needed, but actual route matching, percent-decoding
+    and status codes are exercised end-to-end via aiohttp's TestClient."""
+
+    async def asyncSetUp(self):
+        sys.path.append(str(Path(__file__).resolve().parents[1]))
+        from aiohttp import web
+        from aiohttp.test_utils import TestClient, TestServer
+
+        from app import register_persona_routes
+
+        # Only test-alpha enabled: test-beta's pack exists on disk (FIXTURES_DIR) but is a
+        # "disabled pack" for this catalog -- its routes must 404 exactly like an unknown
+        # persona id, never fall through to serving its files (Rick's item 5).
+        self.catalog = PersonaCatalog.load(
+            personas_dir=FIXTURES_DIR, enabled=["test-alpha"], default_persona_id="test-alpha",
+        )
+        app = web.Application()
+        register_persona_routes(app, self.catalog)
+        self.client = TestClient(TestServer(app))
+        await self.client.start_server()
+
+    async def asyncTearDown(self):
+        await self.client.close()
+
+    async def test_logo_asset_returns_200_with_immutable_cache_header(self):
+        from app import _STATIC_IMMUTABLE_MAX_AGE
+        resp = await self.client.get("/personas/test-alpha/assets/logo.svg")
+        self.assertEqual(resp.status, 200)
+        self.assertIn("<svg", await resp.text())
+        self.assertEqual(
+            resp.headers["Cache-Control"], f"public, max-age={_STATIC_IMMUTABLE_MAX_AGE}, immutable",
+        )
+
+    async def test_nested_asset_path_returns_200(self):
+        resp = await self.client.get("/personas/test-alpha/assets/sub/icon.png")
+        self.assertEqual(resp.status, 200)
+
+    async def test_menu_json_returns_200_as_application_json_with_immutable_cache_header(self):
+        from app import _STATIC_IMMUTABLE_MAX_AGE
+        resp = await self.client.get("/personas/test-alpha/menu.json")
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(resp.content_type, "application/json")
+        self.assertEqual(
+            resp.headers["Cache-Control"], f"public, max-age={_STATIC_IMMUTABLE_MAX_AGE}, immutable",
+        )
+        self.assertIn("menuItems", await resp.json())
+
+    async def test_asset_404s_for_unknown_persona_id(self):
+        resp = await self.client.get("/personas/does-not-exist/assets/logo.svg")
+        self.assertEqual(resp.status, 404)
+
+    async def test_menu_404s_for_unknown_persona_id(self):
+        resp = await self.client.get("/personas/does-not-exist/menu.json")
+        self.assertEqual(resp.status, 404)
+
+    async def test_asset_404s_for_a_disabled_persona_even_though_its_pack_exists_on_disk(self):
+        resp = await self.client.get("/personas/test-beta/assets/logo.svg")
+        self.assertEqual(resp.status, 404)
+
+    async def test_menu_404s_for_a_disabled_persona(self):
+        resp = await self.client.get("/personas/test-beta/menu.json")
+        self.assertEqual(resp.status, 404)
+
+    async def test_asset_404s_for_a_filename_that_does_not_exist_in_the_pack(self):
+        resp = await self.client.get("/personas/test-alpha/assets/does-not-exist.svg")
+        self.assertEqual(resp.status, 404)
+
+    async def test_percent_encoded_dotdot_traversal_is_rejected(self):
+        """The encoded variant Rick's item 5 calls out by name -- aiohttp's router
+        percent-decodes match_info before the handler runs, so this must land in the
+        same structural-rejection path as a literal `../`, not slip through as 200."""
+        resp = await self.client.get(
+            "/personas/test-alpha/assets/%2e%2e%2f%2e%2e%2f%2e%2e%2fpersona.json", allow_redirects=False,
+        )
+        self.assertIn(resp.status, (400, 404))
+
+    async def test_literal_dotdot_traversal_out_of_the_pack_is_rejected(self):
+        resp = await self.client.get(
+            "/personas/test-alpha/assets/../../../persona.schema.json", allow_redirects=False,
+        )
+        self.assertIn(resp.status, (400, 404))
+        # If the route even matched (rather than the underlying HTTP client/router
+        # normalizing the dots away into a different, non-matching path), it must not be
+        # a 200 -- the fixture pack's own schema file must never be served this way.
+        self.assertNotEqual(resp.status, 200)
+
 
 class PersonaWebSocketHandlerTests(_RealtimeHarness):
     """Drives the real RTMiddleTier._websocket_handler / _forward_messages through
@@ -355,6 +557,25 @@ class PersonaWebSocketHandlerTests(_RealtimeHarness):
         sid = next(iter(self.rtmt._sessions._session_map.values()))
         self.assertEqual(order_state_singleton.get_persona_id(sid), "test-alpha")
         await browser.close()
+
+    async def test_session_metadata_carries_the_bound_persona_id(self):
+        """Rick's PR #102 review item 3 (#74 acceptance, design doc 5.2): every
+        `extension.session_metadata` message reports the persona this session is bound
+        to -- both for an explicitly requested persona and for the omitted-persona
+        default-binding path."""
+        browser = await self.client.ws_connect("/realtime?persona=test-beta")
+        await browser.send_json(BROWSER_SESSION_UPDATE)
+        events = await self._browser_events(browser, duration=0.5)
+        meta = next(e for e in events if e.get("type") == "extension.session_metadata")
+        self.assertEqual(meta["persona"], "test-beta")
+        await browser.close()
+
+        default_browser = await self.client.ws_connect("/realtime")
+        await default_browser.send_json(BROWSER_SESSION_UPDATE)
+        default_events = await self._browser_events(default_browser, duration=0.5)
+        default_meta = next(e for e in default_events if e.get("type") == "extension.session_metadata")
+        self.assertEqual(default_meta["persona"], "test-alpha")
+        await default_browser.close()
 
     async def test_bound_persona_voice_flows_into_the_bootstrap_session_update(self):
         browser = await self.client.ws_connect("/realtime?persona=test-beta")

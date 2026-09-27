@@ -2,7 +2,7 @@ import gzip
 import logging
 import os
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 import aiohttp
 from aiohttp import web
@@ -73,15 +73,22 @@ def _get_bool_env(variable_name: str, default: bool = False) -> bool:
 # ---------------------------------------------------------------------------
 
 def _persona_logo_url(persona: Persona) -> str:
-    """Best-effort static asset URL matching the `/personas/{id}/assets/*` route documented
-    in design doc section 5.2. That static route is separate, frontend-facing work (out of
-    scope for #74 per Brian's scoping to `/api/personas` and `/api/personas/{id}` only) --
-    this URL shape is forward-compatible with it once it lands."""
-    return f"/personas/{persona.id}/assets/{persona.manifest.ui.assets.logo}"
+    """Static asset URL served by the `/personas/{id}/assets/*` route below (design doc
+    section 5.2, Rick's PR #102 review item 5).
+
+    `ui.assets.logo` in persona.json is a path relative to the PACK ROOT (e.g.
+    `"assets/logo.svg"`, matching the on-disk layout `<pack>/assets/logo.svg`) -- while
+    `_resolve_persona_asset_path` resolves the route's tail relative to `persona.assets_dir`
+    (`<pack>/assets`) itself, to keep that route's traversal boundary scoped to just the
+    assets subtree. Strip the redundant leading `assets/` here so the URL this function
+    builds is one the asset route can actually resolve, instead of doubling that segment.
+    """
+    logo = persona.manifest.ui.assets.logo
+    return f"/personas/{persona.id}/assets/{logo.removeprefix('assets/')}"
 
 
 def _persona_menu_url(persona: Persona) -> str:
-    """See `_persona_logo_url` -- same scoping note, for `/personas/{id}/menu.json`."""
+    """See `_persona_logo_url` -- same route family, for `/personas/{id}/menu.json`."""
     return f"/personas/{persona.id}/menu.json"
 
 
@@ -106,17 +113,29 @@ def _persona_summary_body(persona: Persona) -> dict:
     }
 
 
-def _personas_index_body(catalog: PersonaCatalog) -> dict:
-    """`GET /api/personas` response body (design doc section 5.2), enabled personas only.
-
-    `backends` lists this deployment's own backend only -- the multi-backend list
-    (python + dotnet) is populated once the C# port also serves `/api/personas` (#74's
-    "C# follows later" note), not part of this PR.
+def _backend_entries() -> list[dict]:
+    """`backends` entries in `GET /api/personas` (design doc section 5.2/10.1, Rick's PR
+    #102 review item 4): each backend's PUBLIC BASE URL, not `/realtime` -- so the F11
+    header switch (design doc section 8) can link across hostnames, not just paths on this
+    one origin. Built from `BACKEND_URI` / `BACKEND_DOTNET_URI` (azd outputs from #93; see
+    `.env-sample`). `python` always has an entry: an unset `BACKEND_URI` (local dev) falls
+    back to `""` (same origin) rather than being omitted, since this process IS the python
+    backend. `dotnet` is omitted entirely when `BACKEND_DOTNET_URI` isn't set -- e.g. no
+    .NET backend deployed for this environment -- rather than reported with a placeholder.
     """
+    entries = [{"id": "python", "url": (os.environ.get("BACKEND_URI") or "").strip()}]
+    dotnet_uri = (os.environ.get("BACKEND_DOTNET_URI") or "").strip()
+    if dotnet_uri:
+        entries.append({"id": "dotnet", "url": dotnet_uri})
+    return entries
+
+
+def _personas_index_body(catalog: PersonaCatalog) -> dict:
+    """`GET /api/personas` response body (design doc section 5.2), enabled personas only."""
     return {
         "default": catalog.default_persona_id,
         "personas": [_persona_summary_body(catalog.get(persona_id)) for persona_id in catalog.ids],
-        "backends": [{"id": "python", "url": "/realtime"}],
+        "backends": _backend_entries(),
     }
 
 
@@ -135,6 +154,53 @@ def _persona_detail_body(persona: Persona) -> dict:
         "menuUrl": _persona_menu_url(persona),
         "models": _model_pipelines_body(manifest.models),
     }
+
+
+def _resolve_persona_asset_path(persona: Persona, requested_path: str) -> Path | None:
+    """Resolve `requested_path` (the tail of `/personas/{id}/assets/{requested_path}`) to a
+    real file under `persona.assets_dir`, or ``None`` if it doesn't exist or the path
+    doesn't stay under that directory (Rick's PR #102 review item 5).
+
+    aiohttp's router percent-decodes the raw URL before populating `match_info`, so any
+    encoded traversal variant (``%2e%2e%2f``, double-encoded, etc.) already looks like a
+    plain ``../`` by the time it reaches here -- there is nothing extra to decode.
+
+    Traversal defense is structural, not string-matching: split on path separators, reject
+    any segment that is empty, ``.``, ``..``, or looks like a Windows drive letter (``C:``),
+    THEN join those pre-validated segments onto ``assets_dir`` one at a time. This avoids
+    the classic pathlib pitfall where ``Path(base) / "/etc/passwd"`` silently discards
+    `base` because the right-hand operand is absolute -- since no individual validated
+    segment can itself be absolute, that substitution can never happen here. Finally,
+    ``Path.resolve()`` (which follows symlinks) must land back under the assets directory's
+    own resolved real path -- this is what catches a symlink planted inside the pack that
+    points back out of it (a segment-only check would miss that).
+    """
+    if not requested_path or "\x00" in requested_path:
+        return None
+    segments = requested_path.replace("\\", "/").split("/")
+    if any(seg in ("", ".", "..") or ":" in seg for seg in segments):
+        return None
+    if PurePosixPath(requested_path).is_absolute() or PureWindowsPath(requested_path).is_absolute():
+        return None
+    assets_root = persona.assets_dir.resolve()
+    candidate = assets_root.joinpath(*segments)
+    try:
+        resolved = candidate.resolve(strict=True)
+    except (OSError, RuntimeError):
+        return None
+    try:
+        resolved.relative_to(assets_root)
+    except ValueError:
+        return None
+    if not resolved.is_file():
+        return None
+    return resolved
+
+
+def _asset_cache_headers(response: web.Response) -> None:
+    """Immutable caching (design doc section 5.2: "immutable caching, the existing
+    compression and caching middleware"), same policy as the hashed frontend bundles."""
+    response.headers["Cache-Control"] = f"public, max-age={_STATIC_IMMUTABLE_MAX_AGE}, immutable"
 
 
 def load_app_secret(environ=None) -> bytes:
@@ -233,6 +299,63 @@ async def _check_service_connectivity() -> None:
                     logger.warning("⚠️ %s unreachable at %s — %s (non-fatal)", name, url, exc)
     except Exception as exc:
         logger.warning("⚠️ Service connectivity check failed — %s (non-fatal)", exc)
+
+
+def register_persona_routes(app: web.Application, catalog: PersonaCatalog) -> None:
+    """Register `/api/personas`, `/api/personas/{id}`, `/personas/{id}/assets/*` and
+    `/personas/{id}/menu.json` against `catalog` (issue #74, design doc section 5.2).
+
+    A standalone, module-level function -- not a `create_app()` closure -- specifically so
+    conformance tests can register these routes on a small standalone `web.Application`
+    against a fixture catalog, hitting the real HTTP routes (path matching, traversal
+    handling, status codes) without needing `create_app()`'s full Azure OpenAI/Search
+    startup dependencies.
+    """
+
+    async def get_personas(_request: web.Request) -> web.Response:
+        return web.json_response(_personas_index_body(catalog))
+
+    async def get_persona_detail(request: web.Request) -> web.Response:
+        persona_id = request.match_info["persona_id"]
+        if persona_id not in catalog:
+            return web.json_response({"error": f"Unknown or disabled persona: {persona_id!r}"}, status=404)
+        return web.json_response(_persona_detail_body(catalog.get(persona_id)))
+
+    # ── Persona static asset routes (issue #74, design doc section 5.2, Rick's PR #102
+    # review item 5): serve only the ENABLED pack's own files, matching `logoUrl`/
+    # `menuUrl` in the persona summary/detail bodies above. ──
+    async def get_persona_asset(request: web.Request) -> web.Response:
+        persona_id = request.match_info["persona_id"]
+        if persona_id not in catalog:
+            return web.json_response({"error": f"Unknown or disabled persona: {persona_id!r}"}, status=404)
+        asset_path = request.match_info["asset_path"]
+        resolved = _resolve_persona_asset_path(catalog.get(persona_id), asset_path)
+        if resolved is None:
+            return web.json_response({"error": f"Unknown persona asset: {asset_path!r}"}, status=404)
+        resp = web.FileResponse(resolved)
+        _asset_cache_headers(resp)
+        return resp
+
+    async def get_persona_menu(request: web.Request) -> web.Response:
+        persona_id = request.match_info["persona_id"]
+        if persona_id not in catalog:
+            return web.json_response({"error": f"Unknown or disabled persona: {persona_id!r}"}, status=404)
+        menu_path = catalog.get(persona_id).menu_path
+        if not menu_path.is_file():
+            return web.json_response({"error": f"No menu data for persona: {persona_id!r}"}, status=404)
+        # A plain Response (not FileResponse) so the existing gzip _compression_middleware
+        # (which explicitly skips FileResponse) applies to this JSON payload too, matching
+        # design doc section 5.2 ("the existing compression and caching middleware").
+        resp = web.Response(body=menu_path.read_bytes(), content_type="application/json")
+        _asset_cache_headers(resp)
+        return resp
+
+    app.add_routes([
+        web.get('/api/personas', get_personas),
+        web.get('/api/personas/{persona_id}', get_persona_detail),
+        web.get('/personas/{persona_id}/menu.json', get_persona_menu),
+        web.get('/personas/{persona_id}/assets/{asset_path:.*}', get_persona_asset),
+    ])
 
 
 async def create_app() -> web.Application:
@@ -397,24 +520,14 @@ async def create_app() -> web.Application:
         token = create_hmac_token(app_secret, expiry_seconds=900)
         return web.json_response({"token": token})
 
-    # ── Persona discovery endpoints (issue #74, design doc section 5.2) ──
-    async def get_personas(_request: web.Request) -> web.Response:
-        return web.json_response(_personas_index_body(_persona_catalog))
-
-    async def get_persona_detail(request: web.Request) -> web.Response:
-        persona_id = request.match_info["persona_id"]
-        if persona_id not in _persona_catalog:
-            return web.json_response({"error": f"Unknown or disabled persona: {persona_id!r}"}, status=404)
-        return web.json_response(_persona_detail_body(_persona_catalog.get(persona_id)))
-
     current_directory = Path(__file__).parent
     app.add_routes([
         web.get('/', _index_handler),
         web.get('/health', _health_handler),
         web.get('/api/auth/session', get_session_token),
-        web.get('/api/personas', get_personas),
-        web.get('/api/personas/{persona_id}', get_persona_detail),
     ])
+    # ── Persona discovery + static asset routes (issue #74, design doc section 5.2) ──
+    register_persona_routes(app, _persona_catalog)
     app.router.add_static(
         '/',
         path=current_directory / 'static',
