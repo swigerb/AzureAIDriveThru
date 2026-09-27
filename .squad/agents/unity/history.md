@@ -358,6 +358,170 @@ Since `app/frontend/` is off-limits, the middleware (`rtmt.py` + `audio_pipeline
     PR #93 commented again (mapped the merge + the brand-guard fix), did not
     merge.
 
+### 2026-09-27: Dunkin' persona pack, issue #79 (PR #111, draft) — data-only pack ported from the sibling repo, three "second real pack" collisions found and worked around without touching out-of-scope test/harness code
+
+  Worktree `p2-79` off `origin/dev` (`76c0dfa`), branch `squad/79-dunkin-pack`. Task
+  was explicitly DATA ONLY: `personas/dunkin/**` and
+  `tests/conformance/testdata/personas/dunkin/**`, ported verbatim from the
+  read-only sibling `dunkin-chat-voice-assistant`, following `personas/sonic/**`'s
+  contract exactly (persona.json, menu/menuItems.json, prompts/*.yaml, assets).
+  16 source menu items -> 16 ported, 0 exclusions. Happy hour: Brian's decision
+  applied (announce it, like Sonic, instead of the sibling's silent 25% off) —
+  `startHour:14/endHour:17/priceMultiplier:"0.75"/announce:true`, eligible only for
+  Signature Lattes + Cold Beverages (6/16 items). Extras (`isExtra` items: flavor
+  swirls, shots, milk options) share the same two eligible categories as happy
+  hour, aliases pulled from the sibling's real `EXTRA_MENU_ITEMS` keyword logic,
+  not invented. No bundles/machines — the sibling has neither.
+
+  - **Schema-unsupported source fields get dropped and reported, never
+    schema-edited, never fabricated.** `caffeineContent`/`brewingMethod`/
+    `availability`/`calories` existed in the sibling's data but have no home in
+    `menu.schema.json`; the task explicitly forbade touching the schema, so they
+    were cut from `menuItems.json` and listed as a schema gap in the PR body
+    instead — the least-surprising place for a future schema owner to find them.
+  - **A second real persona-pack folder trips at least three *different*
+    pre-existing, out-of-scope test/harness assumptions, all in the same "only
+    one real pack has ever existed" shape, but with three different correct
+    responses.** (1) `test_persona_loader.py`'s `test_real_sonic_pack_loads`/
+    `test_valid_copy_loads_identically` hardcode `catalog.ids == ["sonic"]`
+    against the real repo `personas/` dir with no override — genuinely broken by
+    *any* second pack, unfixable from a data-only PR, left as a flagged,
+    documented, known failure for a coordinator-level test edit. (2)
+    `test_rebrand_verification.py`'s `FORBIDDEN_PATTERNS` forbids the literal
+    phrase "crew member" repo-wide (a leftover McDonald's-rebrand guard with no
+    persona-pack carve-out) — but "crew member" is genuine, sourced Dunkin
+    terminology; since the test itself is out of scope, the *content* was
+    reworded instead ("crew associate"/"Dunkin crew"/"Voice Crew assistant") —
+    when a shared guard is unfixable, look for a content-side rewording that
+    preserves meaning before assuming you must touch the guard. This will hit
+    McDonald's #78 too, probably harder, since "crew member" is McDonald's's own
+    real terminology. (3) `rebrand_scan.py`'s `DIRECTORY_EXCEPTIONS` for
+    `tests/conformance/testdata/` only rescues brand `"sonic"` **by deliberate
+    design** ("can't be snuck in without a code review of this literal list") —
+    so any new persona's golden-testdata file that so much as *mentions* its own
+    brand name in a comment trips the brand-word baseline guard. Fixed by
+    wording the new golden files' prose entirely brand-name-free (verified via
+    the exact same `\bword\b` regex the guard uses) rather than editing the
+    guard — a zero-risk workaround when the constraint is "don't say the word,"
+    not "don't have the data." **Same three collisions will recur verbatim for
+    #78 (McDonald's)** — flagged prominently in the PR for whichever lands
+    second, and for #77/coordinator to bundle a batch fix.
+  - **The C# side of the same problem was already solved correctly, unlike the
+    Python side** — `ConformancePersonas`'s own unit tests use scratch temp
+    directories via a testable `DiscoverFromDisk(string)` overload instead of
+    asserting against the real repo `personas/` folder, so adding a real second
+    pack causes zero C# test breakage (18/18 `ConformancePersonasTests` still
+    pass; confirmed with a `dotnet build` + targeted `dotnet test --filter` using
+    the .NET 11 RC1 SDK). Worth pointing future Python test authors at this
+    file as the pattern to copy when writing pack-count-sensitive tests.
+  - Golden conformance testdata created per Rick's #79 review note even though
+    no C# fixture consumes `tests/conformance/testdata/personas/<id>/` yet
+    (`ConformancePersonas.cs`'s own doc comment says so) — cross-checked
+    programmatically against the real `menuItems.json` (names/categories/
+    prices/happy-hour eligibility) and tax arithmetic verified with Python
+    `Decimal` before committing, rather than hand-typing numbers and hoping.
+  - Final validation: real `PersonaCatalog.load()`/`PromptLoader` (production
+    code, not a mock) load/render the pack cleanly; `ruff` clean; `pytest -q`
+    with `PERSONAS=sonic,dunkin` — 1030 passed/165 subtests, only the 2 flagged
+    `test_persona_loader.py` collisions failing; `test_rebrand_verification.py`
+    26/5 subtests all green (no baseline regen needed — the reworks removed the
+    offending references rather than needing new baseline entries). Three
+    commits (`03d54a9`, `5225f88`, `a8c848a`), pushed, PR #111 opened as
+    **draft** (merge gate: #77 + #76 part 2 must land first, coordinator
+    decides). Cleaned up a stray scratch venv in the main checkout and leftover
+    issue-research `.txt` dumps under `C:\src\repos\` left over from an earlier
+    phase of this same session.
+
+
+### 2026-09-27: McDonald's persona pack, issue #78 (PR TBD, draft) — the predicted "crew member" collision from #79's history entry hit exactly as forecast, plus a new bidirectional brand-guard catch
+
+  Worktree `p2-78` off `origin/dev`, branch `squad/78-mcdonalds-pack`. Task was
+  explicitly DATA ONLY: `personas/mcdonalds/**`, adapted (not copied) from the
+  read-only sibling `McDonalds_AI_DriveThru`, mirroring `personas/sonic/**`'s
+  contract. 134 source products -> 134 menu items, 0 exclusions. Full detail in
+  the decision note (`.squad/decisions/inbox/unity-78.md`).
+
+  - **The #79 (Dunkin) history entry's prediction came true, harder, as
+    forecast.** That entry flagged the repo-wide "crew member" ban in
+    `test_rebrand_verification.py` would hit McDonald's "probably harder, since
+    'crew member' is McDonald's's own real terminology" — exactly right: the
+    sibling's real role name and 5 prose occurrences all used "crew member".
+    Same fix pattern as #79: reword content ("team member"), never touch the
+    guard. **Lesson reinforced**: when a sibling agent's history entry predicts
+    a specific collision for your own upcoming issue, that prediction is worth
+    checking literally before you even start authoring prose — would have saved
+    a full pytest cycle if I'd grepped the sibling's role name against the
+    banned-phrase list up front instead of discovering it via test failure.
+  - **New catch this pack surfaced that #79's didn't call out explicitly: the
+    brand-guard baseline test is bidirectional**, and it caught my *own*
+    explanatory comment ("...the way Sonic's Flavor Add-In / Add Bacon are...")
+    inside `personas/mcdonalds/prompts/error_messages.yaml` — a persona pack
+    may not name another persona's brand even in a code comment aimed at a
+    future reader. Reworded to drop the brand name entirely; worth calling out
+    since it's an easy thing to write innocently (comparing to the reference
+    pack by name) and only surfaces at test time, not at review time.
+  - **Same #79-flagged `test_persona_loader.py` pair broke again** (`catalog.ids
+    == ["sonic"]` hardcoded against the real repo `personas/` dir) — confirmed,
+    as #79 predicted, this recurs for every second-and-later real pack, still
+    unfixable from a data-only PR. **New finding this pack added**: the C#
+    side isn't fully immune after all -- while `ConformancePersonasTests`
+    (harness-internal) uses scratch temp dirs and stayed green as #79 found,
+    `app/backend-dotnet`'s own `Backend.Tests/Personas/PersonaCatalogTests.cs`
+    has the *same* real-repo-`personas/`-dir hardcoding as the Python test
+    (`EmptyPersonasDirectory_ThrowsNoPersonasEnabled`), plus a second, sharper
+    one: `DefaultPersonaNotEnabled_Throws` literally uses the *string*
+    `"mcdonalds"` as its placeholder for "a persona id that doesn't exist" --
+    written before #78 existed, now ironically broken by #78 landing for real.
+    Flagged all of these for a coordinator-level batch fix rather than touching
+    backend/test code from a data-only PR.
+  - **CI parity required actually building the frontend once locally**:
+    `app/backend/static/` is gitignored, generated-only content
+    (`npm run build` in `app/frontend`); its absence in a fresh worktree cascades
+    into ~7 unrelated `create_app()`/`Program.cs` startup test failures. Checked
+    `conformance.yml` first and confirmed CI always builds the frontend before
+    either backend leg runs — so ran `npm run build` locally too rather than
+    faking a placeholder `index.html`, to get an honest, CI-equivalent
+    `pytest -q` result rather than a partially-blocked one.
+  - Full validation: `python -m pytest -q` 1031 passed / 2 failed (both the
+    pre-existing single-pack assumption pair, documented above); `ruff check`
+    clean; `regenerate_rebrand_baseline.py` zero diff (own-brand-pack exemption
+    already covers it, never used `--allow-increase`); .NET 11 RC1
+    `Backend.Tests` 79 passed / 2 failed (same pair, C# side); full conformance
+    suite with both personas auto-discovered from disk (CI's own convention,
+    `CONFORMANCE_PERSONAS` left unset) -- python backend leg 629 passed / 0
+    failed, dotnet backend leg (`Dotnet=ready` subset) 11 passed / 0 failed.
+    Reverted an incidental `app/frontend/package-lock.json` one-line diff from
+    `npm install` before committing (unrelated to this task's scope). 4 small
+    commits (persona.json; prompts; menu; assets), pushed, PR opened as
+    **draft** (merge gate: #77 + #76 part 2 must land first, coordinator
+    decides). Cleaned up scratch pytest/conformance output captures before
+    committing; `.venv`/`node_modules`/`static/` all confirmed gitignored.
+
+- **#78 PR #112 follow-up round (dev merge + #107 price-wording fix)**: after
+  coordinator confirmed #114 (pack-agnostic shared tests, `d475c77`) landed on
+  `dev`, merged `origin/dev` into `squad/78-mcdonalds-pack` with a plain
+  `git merge` (no rebase, no force-push, per the strict git rule) -- clean,
+  13 files touched, zero conflicts. Applied Rick's #107 review wording to my
+  own pack's `price` tool-schema param (`"Ignored; the server prices from the
+  menu."`) *ahead* of #107 itself landing on dev -- confirmed via
+  `git show origin/dev:personas/sonic/prompts/tool_schemas.yaml` that Sonic's
+  own pack still had the old wording, so this is intentional get-ahead-of-it
+  asymmetry per the coordinator's explicit instruction, not a mistake; it
+  self-resolves to byte-identical text on the next `dev` merge once #107 lands.
+  Also swept the system prompt for any language telling the model to
+  extract/send a price to `update_order` (3 spots) while preserving legitimate
+  verbal price-quoting-to-the-guest guidance -- worth remembering as a pattern:
+  a tool-schema wording fix is rarely complete without checking the prompt
+  prose that references the same tool/field.
+  Re-ran full validation post-merge and confirmed the fix worked as advertised:
+  pytest 1064 passed / 0 failed (both previously-failing single-pack-assumption
+  tests now pass), ruff clean, .NET Backend.Tests 82 passed / 0 failed,
+  conformance python leg 634/634, dotnet leg 11/11. Checked #108's status before
+  attempting the smoke.json testdata step -- still open/unmerged, so left that
+  step explicitly pending rather than guessing at a template that doesn't exist
+  yet. Pushed, watched CI to completion (all 8 checks green), reported back to
+  the coordinator with head SHA on the PR itself.
+
 ### 2026-09-28: PR #110 (#80, `squad/80-picker-assets`) round 3 — Rick's review
 - **Item 1 (logo):** test-alpha's fixture `logo.svg` was a size-less 1px circle
   (no `viewBox`/`width`/`height`), so it loaded 200, `onError` never fired, and
@@ -388,6 +552,58 @@ Since `app/frontend/` is off-limits, the middleware (`rtmt.py` + `audio_pipeline
   (was `border-primary`); a `data-persona-loading` attribute on
   `<html>` (toggled by a `useEffect` keyed off `!personaReady`) drives new
   `index.css` rules that hide the body's gradient background and the
+
+### 2026-09-27/28: PR #112 (#78, `squad/78-mcdonalds-pack`) round 5 — Rick-2's 5 changes, PR marked READY
+- **Coordinator paraphrase vs. Rick's literal wording:** the coordinator's
+  round-5 message said machine status enum was `"down"|"up"`; reading Rick's
+  actual PR comments (`gh pr view 112 --json comments`) and the schema itself
+  showed the real value is `"down"|"operational"`. **Lesson reinforced:** when
+  a coordinator message paraphrases a reviewer's ask, always cross-check the
+  literal PR comment (and the schema, if one exists) before implementing —
+  the paraphrase can silently drop or alter exact enum/string values.
+- **Sibling repo has 3 different menu export files with different item
+  counts/numbering** (`app/frontend/src/data/menuItems.json` 71 items,
+  `mcdonalds-menu-items.json` 134 items, `scripts/build_mcdonalds_menu.py`
+  generator missing items present in the built JSON). Spent real effort
+  chasing a suspected mealNumber/menuPeriod gap that turned out to be a red
+  herring — `mcdonalds-menu-items.json` was always the correct canonical
+  source (confirmed by exact category-count match to my own pack). **Lesson:**
+  when a sibling repo has multiple menu data files, pin down which one was the
+  actual import source ONCE (record it) rather than re-deriving it every time
+  a discrepancy shows up — I'd already established this in an earlier round
+  but had to re-derive it here after losing that context to summarization.
+- **`order_state.py` vs. `tools.py` layering matters for manual verification:**
+  calling `order_state.OrderState.handle_order_update()` directly bypasses
+  every add-time guard (machine-down rejection, size validation, extras
+  rules) — those all live one layer up, in `tools.py`'s `update_order()`. A
+  quick manual check that calls the lower-level function will silently "pass"
+  even when a guard would have rejected the real tool call. Always exercise
+  the actual `tools.update_order(args, session_id)` async entry point (via
+  `asyncio.run`) for any behavioral verification, not the order-state layer
+  underneath it.
+- **First pack to expose `"modify"`:** added it to my own
+  `tool_schemas.yaml`'s `action` enum ahead of Sonic's own pack (which still
+  only has `add`/`remove`) — same proactive-adoption pattern as the earlier
+  #107 price-wording fix. Worth remembering for future rounds: my pack tends
+  to end up first-mover on new shared-engine capabilities that land as
+  backend features gated by each pack's own opt-in data, since the
+  coordinator routes "prove this shared feature end-to-end" asks to whichever
+  PR is active when the feature lands.
+- Verified all 5 changes end-to-end via the real `tools.update_order()`
+  guarded path in a scratch script (deleted before commit, never pushed):
+  meal-order autofill onto the ticket, in-place resize via `modify` with
+  components carried over unchanged, machine-down rejection using the pack's
+  own label text, and item-not-in-order rejection on `modify`.
+- Full validation green: pytest 1173+168 subtests, ruff clean, .NET Backend
+  Tests 82, full conformance 669/669, smoke+golden filtered 211/211 (mcdonalds
+  present in the smoke Theory). Brand baseline regenerate was a pure line-
+  ending no-op — discarded rather than committing a content-free diff.
+- Pushed `squad/78-mcdonalds-pack` -> `3dd785b`. CI green (8/8). Marked PR
+  #112 READY for review (first round this PR left DRAFT status) per explicit
+  new coordinator instruction, now that #77/#116 landed. Posted a status
+  comment on the PR covering all 5 changes, verification counts, and the
+  known McChicken® Meal single-size cosmetic autofill quirk (flagged, not
+  fixed — source-verbatim, out of scope for a data-only PR).
   `::before`/`::after` decorative blobs until a persona resolves. Verified via
   a Playwright `page.route` delay on `/api/personas` to reliably freeze the
   loading state long enough to screenshot it (a local backend resolves too
@@ -427,3 +643,94 @@ Since `app/frontend/` is off-limits, the middleware (`rtmt.py` + `audio_pipeline
   `73826c0` post-#106), pushed, no force-push, no rebase. PR #110 commented
   addressed to Rick mapping all 4 items with the baseline diff pasted inline;
   did not merge.
+
+## #78 McDonald's pack — round 4 (2026-09-27): #108/#110 merge, smoke.json, UX check
+- Real `smoke.json` schema (from reading `PersonaSmokeTests.cs` directly, not
+  guessing) is exactly 5 fields: greetingSubstring, searchableOwnItem,
+  orderableItemName, orderableItemSize, orderableItemPrice. No off-menu-item
+  field, no happy-hour-banner field exist in the actual harness — those two
+  proofs use hardcoded literals / fixture-pack-only fixtures respectively.
+  Lesson: when a coordinator relays "add X if the format supports it," read the
+  actual test/schema source before assuming the ask maps to a real field.
+- Brand guard scope silently expanded (via #108/#110/#114) to also scan
+  per-persona conformance testdata, not just personas/<id>/**. A stray
+  cross-pack brand mention in a testdata description file tripped it. Lesson:
+  the brand guard's scope can grow underneath you across dev merges — rerun
+  `test_rebrand_verification.py` after every merge, don't assume prior-round
+  scope still holds.
+- #110 restructured frontend asset serving (deleted old public/ assets in
+  favor of per-pack /personas/<id>/assets/** served directly). A
+  well-structured persona pack built ahead of that change needed zero
+  modification — following the schema/reference-pack conventions closely paid
+  off across an unrelated infra refactor landing later.
+- Playwright UX check on a native <select> persona picker: element refs from
+  browser_snapshot invalidate quickly under live theme/context re-renders; use
+  browser_evaluate + document.querySelector/CSS selectors for anything that
+  needs to survive across multiple interaction steps, not snapshot refs.
+- Found a real (pre-existing, shared-frontend, out-of-scope-to-fix-here) bug:
+  Settings dialog hardcodes "Carhop Voice" regardless of active persona.
+  Reported via PR comment + screenshot rather than fixed, since #78 is data-only.
+
+## 2026-09-27 round 6: phi-4 cascade cleanup, alias audit, nugget-name collision bug
+
+- Coordinator asked for 2 small follow-ups after Dunkin (#111) merged: strip
+  \phi-4\ from the pack's cascade allow-list (#118), and audit spoken aliases
+  ("nuggets", "fries", "Coke", "large fry") for unambiguous coverage.
+- Learning: \menu_utils._menu_key()\ strips ANY \(...)\ group anywhere in an
+  item's \
+ame\ as a "customization suffix" (by design, so
+  \"Tots (Extra Crispy)"\ classifies identically to \"Tots"\) -- and
+  \item_fields\ is keyed DIRECTLY by that stripped key, not just the alias
+  map. If a pack's source data uses parens to distinguish real SKUs (piece
+  counts, sizes, flavors -- anything that isn't purely cosmetic), every SKU
+  sharing the same pre-parens text SILENTLY collides into one dict entry,
+  last-loaded-wins, no error, no test failure (unless the harness happens to
+  order the losing SKU, which none of my golden/smoke data did). Found this
+  the hard way auditing "nuggets" alias-safety: McDonald's 5 standalone
+  Chicken McNuggets(R) items ("(4 piece)".."(40 piece)", verbatim from
+  source) all collapsed to key "chicken mcnuggets" -- only the last-loaded
+  (40-piece, \.99) was resolvable at all; the other 4 sizes would have
+  silently priced/classified as the 40-piece item if ordered.
+- Self-check recipe for future packs (or a future shared-engine lint, flagged
+  to the coordinator rather than added myself -- out of scope for a
+  data-only PR): run \_menu_key(name)\ over every item in the pack's own
+  menuItems.json and check for any two distinct names reducing to the same
+  string. A quick one-off script catches it in seconds; I deleted mine after
+  use per the scratch-file cleanup rule.
+- Fix: renamed the 5 colliding items from \"Chicken McNuggets(R) (N piece)"\
+  to \"N Piece Chicken McNuggets(R)"\ (no parens) -- this exact
+  non-colliding convention was ALREADY used elsewhere in the very same
+  source file for the Happy Meal variants (\"4 Piece Chicken McNuggets(R)
+  Happy Meal(R)"\), so it wasn't an invented format, just adopting the
+  source's own alternate style. Re-verified zero collisions across all 134
+  items after the rename, and re-verified live via a real MenuCatalog build
+  that all 5 sizes now resolve independently at their own correct price.
+  This is a deliberate, narrow, explicitly-flagged deviation from strict
+  "verbatim from source" naming -- justified because the alternative was a
+  real overcharge/undercharge bug, not a cosmetic mismatch. Called it out
+  explicitly in the PR comment for Rick/Brian.
+- Alias audit conclusions: "fries"/"Coke" were already safely aliased
+  (each the pack's only item of that kind, no change needed); "large fry"
+  needs no alias at all since item-name resolution and size resolution are
+  independent tool-call fields the model composes itself (not a schema gap);
+  "nuggets" bare word deliberately left un-aliased since the pack now has
+  5+3 legitimately different "nuggets" items and \lias_map\ has zero
+  runtime disambiguation (flat one-key-wins dict) -- flagged for Rick's call
+  per Brian's "list it, don't guess" rule instead of picking one arbitrarily.
+- phi-4 cascade removal: confirmed via a live \PersonaCatalog.load()\ call
+  that \mcdonalds\'s \models.cascade.allowed == ["gpt-5-mini"]\ post-fix.
+  Left \models.local\'s \phi-4-mini-local\ untouched (different tier/model,
+  not what #118 flagged). Noted that Sonic's and Dunkin's own packs still
+  carried \phi-4\ in their own cascade lists post-merge too -- #118's fix
+  hasn't landed on either pack yet, same "get ahead of a shared fix before it
+  lands" pattern as #107 (price wording) and #77 (\modify\ action) in
+  earlier rounds.
+- Validation: \pytest -q\ 1173 passed + 168 subtests; \uff check\ clean;
+  .NET \Backend.Tests\ 82/82; full conformance suite 670/670 (669 before
+  Dunkin's merge added 1); mcdonalds/smoke-filtered subset 9/9; backend
+  starts live with both personas enabled; rebrand baseline regenerate: true
+  no-op.
+- Pushed -> head SHA \6ab0edd\. CI: 8/8 green. PR #112 confirmed still OPEN,
+  not draft (READY for review). Posted a detailed follow-up PR comment
+  covering phi-4, the alias audit (incl. the flagged "nuggets" gap), and the
+  nugget-name-collision bug + fix.

@@ -17,6 +17,12 @@ interface MenuItem {
 
 interface MenuCategory {
     category: string;
+    /** Optional per-category icon (persona pack data, `menu.schema.json`) -- issue 119: this
+     * used to be a hardcoded lookup table keyed on one pack's literal category names, which
+     * silently fell back to a generic icon for every other pack's categories (and even for a
+     * few categories of the pack it was hardcoded for). Packs that don't set one render the same
+     * neutral fallback below. */
+    icon?: string;
     items: MenuItem[];
 }
 
@@ -24,14 +30,10 @@ interface MenuDocument {
     menuItems: MenuCategory[];
 }
 
-const categoryIcons: Record<string, string> = {
-    "Burgers & Sandwiches": "🍔",
-    "Shakes & Ice Cream": "🥤",
-    "Slushes & Drinks": "🧊",
-    "Hot Dogs & Tots": "🌭",
-    Combos: "🍟",
-    Extras: "✨"
-};
+/** Shared, brand-neutral fallback for any category a pack didn't give its own `icon` -- matches
+ * what every uncovered category already rendered before this became data-driven, so no pack's
+ * menu panel changes appearance by this alone. */
+const DEFAULT_CATEGORY_ICON = "🍹";
 
 /**
  * Issue #80 F4: the menu now comes entirely from the active persona's pack (`menuUrl`, a
@@ -122,7 +124,7 @@ export default memo(function MenuPanel() {
                         >
                             <div className="flex items-center gap-2 sm:gap-3">
                                 <span className="text-2xl" aria-hidden>
-                                    {categoryIcons[category.category] ?? "🍹"}
+                                    {category.icon ?? DEFAULT_CATEGORY_ICON}
                                 </span>
                                 <h3 className="break-keep text-left font-semibold uppercase tracking-wide text-primary dark:text-primary">
                                     {category.category}

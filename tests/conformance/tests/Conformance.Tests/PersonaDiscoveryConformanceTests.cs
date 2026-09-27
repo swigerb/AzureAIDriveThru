@@ -7,15 +7,20 @@ using Xunit;
 namespace Conformance.Tests;
 
 /// <summary>
-/// Rick's PR #102 review item 1: Sonic-only (single-persona) conformance rows for issue #74's
 /// persona-binding contract -- design doc section 5.2. S2 part 2 (#12) ports the persona
 /// discovery/detail HTTP routes and the pre-upgrade ?persona= validation on /realtime, so four of
-/// the five rows below are now tagged <c>[Trait("Dotnet", "ready")]</c>.
+/// the five rows below are tagged <c>[Trait("Dotnet", "ready")]</c>.
 /// <see cref="Omitted_persona_binds_to_the_default_persona_visible_in_session_metadata"/> stays
 /// UNTAGGED: it needs the real upstream relay to actually reach `session.created` and echo
 /// `extension.session_metadata` (rtmt.py's `_websocket_handler`/`ConnectionForwarder`) --
 /// <see cref="RealtimeProcessor"/> this wave is a deliberate stub (issue #13 lands the real
 /// relay), so this row still only runs against the Python backend.
+///
+/// Rick's PR #120 review round 2, required item 4: <c>Api_persona_detail_returns_200_for_the_default_persona</c>
+/// now also pins <c>roleName</c> on the wire (design doc section 5.2). PR #122 merged its C#
+/// persona surface first, but its <c>PersonaRoutes.BuildPersonaDetailBody</c> didn't emit
+/// <c>roleName</c> yet; this PR adds it there too, so the row keeps its inherited
+/// <c>[Trait("Dotnet", "ready")]</c> tag -- it now passes on both backends.
 /// </summary>
 [Collection(ConformanceCollection.Name)]
 public sealed class PersonaDiscoveryConformanceTests(ConformanceFixture fixture)
@@ -67,6 +72,14 @@ public sealed class PersonaDiscoveryConformanceTests(ConformanceFixture fixture)
         using var document = JsonDocument.Parse(await response.Content.ReadAsStreamAsync(ct));
         Assert.Equal("sonic", document.RootElement.GetProperty("id").GetString());
         Assert.False(string.IsNullOrWhiteSpace(document.RootElement.GetProperty("menuUrl").GetString()));
+
+        // Rick's #120 review round 2, required item 4: `roleName` is a new field on the pinned
+        // wire contract (design doc section 5.2) -- read the expected value from Sonic's OWN
+        // persona.json (never a literal) so this row can't silently drift from the pack it proves.
+        var personaJsonPath = Path.Combine(fixture.PersonasDirectory, "sonic", "persona.json");
+        using var personaDocument = JsonDocument.Parse(await File.ReadAllTextAsync(personaJsonPath, ct));
+        var expectedRoleName = personaDocument.RootElement.GetProperty("roleName").GetString();
+        Assert.Equal(expectedRoleName, document.RootElement.GetProperty("roleName").GetString());
     });
 
     [Fact]

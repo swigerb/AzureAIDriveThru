@@ -287,6 +287,7 @@ Field rules:
 | `models` | Which catalog models the persona allows, and its default per pipeline (section 7). The deployment decides which ones exist; the session picks one of the allowed. |
 | `strategies` | A closed set. P2 has one slot, `searchQueryRewrite`, with the values `none` and `meal_numbers`. Adding a value needs both backends and a conformance scenario in the same PR series. |
 | `ui` | Everything the browser needs before it connects. It is served by `/api/personas/<id>`. Prompts and rules are never served to the browser. |
+| `ui.theme.{light,dark}.surface` | Optional shadcn-style UI slot palette (issue #117, `personaTheme.ts`'s `PersonaSurfaceTokens`/`PersonaSurfaceDarkTokens`): backs the shared shadcn tokens (`card`/`secondary`/`muted`/`accent`/`destructive`/`border`/`input`/`ring`/`chart-N`) that `index.css` previously hard-coded to one persona's palette. Every key is optional; a pack that omits `surface` gets the shared neutral defaults `index.css` falls back to. |
 
 ### 4.3 Per-item menu fields (#51)
 
@@ -295,6 +296,7 @@ Field rules:
 
 | Field | Type, default | Meaning | Replaces |
 | --- | --- | --- | --- |
+| `menuItems[].icon` | string, optional (category-level, not per-item) | The category's own emoji/icon (`menuItems.json`, `menu.schema.json`), rendered in `menu-panel.tsx`. A category that omits it falls back to the shared neutral `DEFAULT_CATEGORY_ICON` | `menu-panel.tsx`'s hardcoded category→icon map |
 | `comboSlot` | `"sides" \| "drinks" \| "none"`, default `"none"` | Can this item fill a bundle's included side or drink slot? The values match `golden-menu-categories.json` exactly, so golden rows can be compared field by field | `_COMBO_SIDE_ITEMS`, `_SUNDAES`, `_COMBO_DRINK_CATEGORIES` and the category-derived rule |
 | `happyHourDiscounted` | bool, default `false` | Does the happy-hour multiplier apply? Independent of `comboSlot` (PR #50 rule) | `_SHAKES_AND_BLASTS_HAPPY_HOUR_DISCOUNTED`, Dunkin's `happy_hour_categories`, McD's keyword check |
 | `aliases` | string[], default `[]` | Exact spoken names that resolve to this item after `_menu_key` normalization | `_TOTS_ALIASES` |
@@ -361,7 +363,7 @@ starts a new session.
 | Surface | Contract |
 | --- | --- |
 | `GET /api/personas` | `{ "default": "sonic", "personas": [ { "id", "displayName", "logoUrl", "theme" } ], "backends": [ { "id": "python", "url" }, { "id": "dotnet", "url" } ] }`, enabled personas only; `backends` lists the deployed backends (section 10) |
-| `GET /api/personas/{id}` | The pack's `ui` block, plus `voice.default`, `locales`, `features.dayparts`, `menuUrl`, and the selectable `models` per pipeline (section 7). 404 if not enabled |
+| `GET /api/personas/{id}` | The pack's `ui` block, plus `roleName`, `voice.default`, `locales`, `features.dayparts`, `menuUrl`, and the selectable `models` per pipeline (section 7). 404 if not enabled |
 | `GET /personas/{id}/assets/*`, `GET /personas/{id}/menu.json` | Static files from the pack, immutable caching (the existing compression and caching middleware) |
 | `GET /realtime?persona={id}&model={id}` | Omitted persona: `DEFAULT_PERSONA`. Omitted model: the persona's default realtime model. Unknown or not enabled: **HTTP 404 before the WebSocket upgrade**, never a silent fallback. Both are fixed for the session |
 | `extension.metadata` | Gains `persona`, `model` and `pipeline` (additive) |
@@ -474,6 +476,52 @@ They are real Sonic menu items (4.3, #72), not a keyword rule.
   it again whenever a `MenuCatalog` is built, so no code path can ever construct a
   degraded/last-write-wins catalog) -- same fail-fast convention, same "one contract, two backends"
   requirement as every other startup validation in this doc.
+
+### 6.1 Required rejection-message keys, validated at startup (#125, decided)
+
+Every structured rejection above (`not_on_menu`, `size_not_available`, `machine_unavailable`,
+`extras_blocked_category`, `extras_no_base_item`, `not_in_order`) renders its `message` from the
+persona's own `error_messages.yaml` via `prompt_loader.render_error(<key>, ...)`. This is the
+canonical, single list of keys every persona pack's `error_messages.yaml` **must** define:
+
+| Required key               | Rendered for reason (this section)                       |
+|-----------------------------|------------------------------------------------------------|
+| `generic_error`             | shared catch-all fallback (no dedicated reason yet)         |
+| `item_not_on_menu`          | `not_on_menu`                                               |
+| `size_not_available`        | `size_not_available`                                        |
+| `item_not_in_order`         | `not_in_order` (`modify` target missing)                     |
+| `machine_unavailable`       | `machine_unavailable`                                        |
+| `extras_blocked_category`   | `extras_blocked_category`                                    |
+| `extras_no_base_item`       | `extras_no_base_item`                                        |
+
+**One list, two mirrors, kept in sync by a test in each language.** The list above is duplicated
+verbatim, in the same order, as an ordered constant in both loaders:
+
+- Python: `prompt_loader.REQUIRED_ERROR_MESSAGE_KEYS` (`app/backend/prompt_loader.py`).
+- C#: `PromptLoader.RequiredErrorMessageKeys` (`app/backend-dotnet/src/Backend/Prompts/PromptLoader.cs`).
+
+Rather than externalizing the list to a shared file (which would mean plumbing a new path through
+both loaders' constructors and every test fixture's directory layout), each language's test suite
+parses the *other* language's source file as plain text and asserts the two ordered lists are
+equal:
+`RequiredErrorMessageKeys_MatchPython` (`PromptLoaderTests.cs`) parses `prompt_loader.py`;
+`test_python_and_dotnet_required_error_message_keys_are_equal`
+(`RequiredErrorMessageKeysMatchDotnetTests` in `test_prompt_loading.py`) parses `PromptLoader.cs`.
+A drift in either direction fails whichever suite runs.
+
+**Both loaders fail fast at startup if a pack is missing any required key.** `PromptLoader`'s
+constructor (C#) / `_load_all()` (Python) validates `error_messages.yaml` immediately after
+loading it, before the pack is considered usable, and raises naming both the persona/brand and
+every missing key (not just the first one) -- `PromptLoadException` in C#, `ValueError` in
+Python. This applies to every persona a process constructs a loader for: in Python, `app.py`'s
+`create_app()` builds one `PromptLoader` per enabled persona at startup (so a broken pack fails
+the whole process before it serves traffic), plus `default_persona.py`'s lazily-cached default;
+in C# today, `Program.cs` constructs one `PromptLoader` for the default persona only (multi-persona
+prompt loading is a later wave, `docs/dotnet_mapping.md`).
+
+Draft persona packs land the required keys themselves as part of their own PR (Dunkin's pack
+already has all seven; a future McDonald's pack must add them too) -- this validation does not
+touch `personas/dunkin/**` or `personas/mcdonalds/**`.
 
 ## 7. Model flexibility on Microsoft Foundry
 
