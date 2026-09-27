@@ -254,6 +254,15 @@ public sealed class CascadeConformanceTests(CascadeConformanceFixture fixture)
         Assert.True(fixture.Chat.Requests.Count >= 1, "Expected the greeting to reach /chat/completions.");
     });
 
+    /// <summary>Bounds the final negative wait below. By the time that wait starts, the first
+    /// turn's own /chat/completions request has already been asserted <c>Aborted</c> -- so unlike
+    /// <see cref="RateLimitGuestSpeechCancellationTests"/>'s own bounded negative waits (which
+    /// race a real, still-possible scheduled retry), there is no plausible mechanism left that
+    /// could still deliver the first turn's answer; this only guards against a regression that
+    /// somehow buffers/replays it. Comfortably short is fine -- same order of magnitude as that
+    /// class's own 1-1.5s bounds for "already proven, just double-check" waits.</summary>
+    private static readonly TimeSpan NegativeCheckTimeout = TimeSpan.FromSeconds(1);
+
     [Fact]
     public Task Cascade_barge_in_cancels_the_in_flight_turn_before_it_speaks() => fixture.RunAsync(async () =>
     {
@@ -265,31 +274,30 @@ public sealed class CascadeConformanceTests(CascadeConformanceFixture fixture)
         var connection = await CascadeScenarioHelpers.ConnectPastGreetingAsync(fixture, fixture.Chat, "gpt-5-mini", ct);
         await using var browser = connection.Browser;
 
-        var requestWatermark = fixture.Chat.Requests.Count;
+        var requestWatermark = fixture.Chat.RequestCount;
 
-        // A deliberately slow chat completion for the FIRST guest turn -- comfortably longer
-        // than the polling window below gives us to observe the request landed and still send a
-        // second speech burst before it would otherwise resolve.
-        fixture.Chat.ResponseDelay = TimeSpan.FromSeconds(3);
+        // Issue #118 Rick re-review item 2: event-driven instead of a fixed ResponseDelay + a
+        // polling loop with its own margin. The FIRST guest turn's chat completion is held on a
+        // gate this test controls -- FakeChatCompletionsServer suspends that one request's
+        // response write until Release() is called (or the connection is aborted first), so
+        // "the first turn is genuinely in flight" is proven by WaitForRequestCountAsync actually
+        // observing the request, never by racing a timer against how long a scripted delay
+        // happened to be.
+        var gate = fixture.Chat.HoldNextResponse();
         fixture.Chat.EnqueueMessage(FinalMessage("You should never hear this -- the turn gets cancelled."));
         fixture.Realtime.NextTranscript = "I'll get a medium tots.";
         await CascadeScenarioHelpers.SendGuestTurnAsync(browser, ct);
 
-        // Poll for the slow request to actually land at the fake (proving the first turn is
-        // genuinely in flight, blocked on the chat-completions response) before barging in --
-        // otherwise a second speech burst sent too early would just look like ordinary silence
-        // to _TurnDetector, proving nothing about cancellation.
-        var pollDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
-        while (fixture.Chat.Requests.Count <= requestWatermark && DateTime.UtcNow < pollDeadline)
-        {
-            await Task.Delay(TimeSpan.FromMilliseconds(25), ct);
-        }
-        Assert.True(fixture.Chat.Requests.Count > requestWatermark, "Expected the first turn's /chat/completions request to land.");
+        // Proves the first turn's /chat/completions request genuinely landed and is now
+        // suspended on the gate (not merely "hasn't happened yet") before barging in -- otherwise
+        // a second speech burst sent too early would just look like ordinary silence to
+        // _TurnDetector, proving nothing about cancellation.
+        var landed = await fixture.Chat.WaitForRequestCountAsync(requestWatermark + 1, FrameTimeout, ct);
+        Assert.True(landed, "Expected the first turn's /chat/completions request to land.");
 
-        // Barge-in: a second speech_started arrives while the first turn is still blocked on its
-        // (slow, scripted) chat completion. _handle_client_message's speech_started branch must
-        // cancel the first turn's background task before it can ever reach _speak.
-        fixture.Chat.ResponseDelay = TimeSpan.Zero;
+        // Barge-in: a second speech_started arrives while the first turn is still suspended on
+        // its held chat completion. _handle_client_message's speech_started branch must cancel
+        // the first turn's background task before it can ever reach _speak.
         fixture.Chat.EnqueueMessage(FinalMessage("Barge-in answer."));
         fixture.Realtime.NextTranscript = "Actually, never mind.";
         await CascadeScenarioHelpers.SendGuestTurnAsync(browser, ct);
@@ -300,22 +308,29 @@ public sealed class CascadeConformanceTests(CascadeConformanceFixture fixture)
             FrameTimeout, ct);
         Assert.True(secondAnswer is not null, "Expected the second (barge-in) turn's own final answer.");
 
-        // The first turn's request was still asleep in its own (already-captured, 3s) scripted
-        // delay when the barge-in turn's answer above landed -- if _cancel_current_turn were a
-        // no-op, that request would still be running in the background and could still complete
-        // and reach _speak once its delay elapses. Wait out that full window (plus margin) before
-        // asserting its answer never arrived, so a genuinely-uncancelled first turn has every
-        // chance to leak through here instead of this assertion merely proving it hadn't leaked
-        // through YET.
-        await Task.Delay(TimeSpan.FromSeconds(3.5), ct);
+        // The positive proof of cancellation (Rick's #118 review item 2): the first turn's own
+        // /chat/completions request was aborted by the client -- CascadeProcessor's
+        // _cancel_current_turn cancelling the task awaiting it -- not merely "hasn't answered
+        // yet". A no-op cancellation would leave this request un-aborted, still suspended on the
+        // gate below.
+        var firstRequest = fixture.Chat.Requests[requestWatermark];
+        Assert.True(firstRequest.Aborted,
+            "Expected the first turn's /chat/completions request to have been aborted by the client, proving _cancel_current_turn actually cancelled it.");
+
+        // Only matters for hygiene now (releasing a suspended fake-side handler coroutine, if the
+        // abort somehow left one dangling) -- the request is already proven aborted above, so
+        // this can never let the first turn's answer reach the browser.
+        gate.Release();
 
         // The cancelled first turn's answer must never reach the client at all -- not before,
-        // not after the barge-in turn's own answer.
-        var firstTurnAnswer = browser.ReceivedFrames.Snapshot().Any(f =>
-            f.Sequence > connection.GreetingWatermark &&
-            f.Type == "response.audio_transcript.delta" &&
-            f.Json.GetProperty("delta").GetString() == "You should never hear this -- the turn gets cancelled.");
-        Assert.False(firstTurnAnswer, "A barged-in-on turn must never reach _speak/response.audio_transcript.delta.");
+        // not after the barge-in turn's own answer. Short, BOUNDED wait expected to time out
+        // (see NegativeCheckTimeout's doc comment) -- no sleep, no large fixed margin.
+        var firstTurnAnswer = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Sequence > connection.GreetingWatermark &&
+                 f.Type == "response.audio_transcript.delta" &&
+                 f.Json.GetProperty("delta").GetString() == "You should never hear this -- the turn gets cancelled.",
+            NegativeCheckTimeout, ct);
+        Assert.True(firstTurnAnswer is null, "A barged-in-on turn must never reach _speak/response.audio_transcript.delta.");
     });
 
     [Fact]
