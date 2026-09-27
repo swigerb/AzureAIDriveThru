@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.unmock("react-i18next");
 
 import "../../i18n/config";
+import i18next from "i18next";
 import { PersonaProvider, usePersonaContext } from "../persona-context";
 import OrderSummary from "@/components/ui/order-summary";
 import StatusMessage from "@/components/ui/status-message";
@@ -172,5 +173,39 @@ describe("ticket/status copy on persona switch (issue #119 item 1)", () => {
         // test-beta's override live in the resource store even though test-alpha is now active.
         expect(screen.queryByText("Add a beta widget to kick things off.")).not.toBeInTheDocument();
         expect(screen.getByText("Add items to get started.")).toBeInTheDocument();
+    });
+
+    it("clears a previous persona's key that has no neutral-base counterpart at all when switching personas (Rick's #120 review round 2 nit: a true reset, not a shallow overlay)", async () => {
+        // The two earlier tests above only exercise keys that DO exist in `baseTranslationResources`
+        // (e.g. `ticket.emptyHint`) -- the old `addResourceBundle(base, deep=false, overwrite=true)`
+        // reset already happened to clear those correctly, because `deep=false` still replaces any
+        // top-level key that IS present in the object it's given. The bug is a top-level key a pack
+        // invents that the base translation table never defines at all: that overlay never touches
+        // it, so it silently outlived every later switch. `test-beta` here plays a pack whose
+        // `ui.strings` defines such a key; `test-alpha` never defines it.
+        const BETA_WITH_CUSTOM_KEY = detailFor("test-beta", {
+            ...(BETA_DETAIL.strings.en as Record<string, string>),
+            "ticket.betaOnlyPromo": "Beta-only promo copy that translation.json never defines"
+        });
+        mockFetchSequence(url => {
+            if (url === "/api/personas") return { ok: true, body: TWO_PERSONA_INDEX };
+            if (url === "/api/personas/test-beta") return { ok: true, body: BETA_WITH_CUSTOM_KEY };
+            if (url === "/api/personas/test-alpha") return { ok: true, body: ALPHA_DETAIL };
+            return { ok: false, body: null };
+        });
+        renderApp();
+
+        await waitFor(() => expect(screen.getByText("BETA TICKET")).toBeInTheDocument());
+        expect(i18next.exists("ticket.betaOnlyPromo")).toBe(true);
+
+        await act(async () => {
+            screen.getByText("select alpha").click();
+        });
+
+        await waitFor(() => expect(screen.getByText("ALPHA TICKET")).toBeInTheDocument());
+        // Regression: without `removeResourceBundle` emptying the namespace first, this key --
+        // never part of `baseTranslationResources` -- would still resolve here even though
+        // test-alpha (which never defines it) is now the active persona.
+        expect(i18next.exists("ticket.betaOnlyPromo")).toBe(false);
     });
 });

@@ -171,7 +171,18 @@ export function PersonaProvider({ children }: { children: ReactNode }) {
             // `ticket.emptyHint` override at all) silently kept showing whatever the *previously
             // active* persona (one that does define `ticket.emptyHint`) last set that key to,
             // instead of falling back to the shared neutral copy.
+            //
+            // Rick's PR 120 review round 2 nit: a plain `addResourceBundle(..., deep=false,
+            // overwrite=true)` reset (as this used to do) only overlays `baseTranslationResources`
+            // on top of whatever's already in the store -- with `deep=false` it replaces each
+            // top-level namespace key present in the base table wholesale, but it never touches a
+            // top-level key that isn't in the base table at all. So a key the *previous* persona's
+            // `ui.strings` introduced that has no counterpart in `baseTranslationResources` (e.g. a
+            // pack-only key the base translation table doesn't define) survived every subsequent
+            // persona switch forever. `removeResourceBundle` first empties the whole namespace, so
+            // the base re-add below is a true reset, not a partial overlay.
             for (const locale of Object.keys(baseTranslationResources)) {
+                i18next.removeResourceBundle(locale, "translation");
                 i18next.addResourceBundle(locale, "translation", structuredClone(baseTranslationResources[locale]), false, true);
             }
             for (const [locale, table] of Object.entries(detail.strings)) {
