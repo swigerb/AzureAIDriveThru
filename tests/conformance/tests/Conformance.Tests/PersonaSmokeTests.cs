@@ -16,7 +16,7 @@ namespace Conformance.Tests;
 ///
 /// Deliberately data-driven off the SAME two sources the rest of this stream already discovers
 /// packs from -- <see cref="ConformancePersonas.DiscoverFromDisk()"/> (real packs under
-/// personas/, today just "sonic") and the fixture pack under
+/// personas/, today just the default pack) and the fixture pack under
 /// <see cref="RepoPaths.FixturePersonasDirectory"/> (test-alpha/test-beta) -- rather than one
 /// hand-written test per persona, so a future real pack (#78/#79) or a new fixture persona
 /// automatically gets a smoke row once it has its own
@@ -34,7 +34,7 @@ namespace Conformance.Tests;
 /// "Happy-hour flag honored" is covered by a DIFFERENT, dedicated file
 /// (<c>PersonaHappyHourConformanceTests.cs</c>) rather than inline here: proving it needs a
 /// second FixedClock connection at a different instant, which would double the per-row backend
-/// connections/cost for every smoke row without adding coverage sonic's own existing
+/// connections/cost for every smoke row without adding coverage the default pack's own existing
 /// <c>HappyHourAtOpenTests</c> and the two new happy-hour rows don't already provide together.
 ///
 /// Untagged (Python only), same reasoning as <see cref="PersonaBusinessRuleConformanceTests"/>:
@@ -132,7 +132,7 @@ file static class PersonaSmokeScenario
         //    Searches by the item's own name rather than a "*" wildcard: the fake's `top` result
         //    cap (3, matching tools.py's _search_cfg default) comfortably covers each fixture
         //    pack's exactly-3-item catalog under a wildcard, but a real pack's much larger catalog
-        //    (sonic) would only get whichever 3 documents happen to load first -- not necessarily
+        //    (the default pack) would only get whichever 3 documents happen to load first -- not necessarily
         //    this persona's own known item -- so a real search-by-name is used for every pack.
         var searchResult = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "search",
@@ -141,16 +141,16 @@ file static class PersonaSmokeScenario
         roundTripIndex = searchResult.RoundTripIndex;
         Assert.Contains(expected.SearchableOwnItem, searchResult.FunctionCallOutputText);
 
-        // 3. A basic add-to-order of an on-menu item works -- and (Rick's PR #108 second review
-        //    item B) the amount actually CHARGED is the pack's own listed menu price, not just
-        //    that the item landed in the order at all. The backend trusts whatever price
-        //    `update_order` is called with (order_state.py::handle_order_update never re-derives
-        //    it from the menu), so echoing expected.OrderableItemPrice back through the order
-        //    total alone would only prove "the math didn't change the number I was given" -- it
-        //    could never catch a smoke.json literal that had drifted from the pack's real menu
-        //    price. PersonaMenuPrice.Read re-reads that SAME persona's own menu/menuItems.json
-        //    fresh, independent of smoke.json, so the assertion below genuinely proves
-        //    smoke.json's price literal (and therefore what gets charged) matches the real menu.
+        // 3. A basic add-to-order of an on-menu item works -- and (Rick's PR #108 round 4 review
+        //    item 1) the amount actually CHARGED is the pack's own listed menu price, not just
+        //    that the item landed in the order at all. The server charges the pack's own menu
+        //    price and ignores whatever price `update_order` is called with (#107), so the add
+        //    step below deliberately sends a wrong tool price (0.01m) instead of
+        //    expected.OrderableItemPrice. PersonaMenuPrice.Read re-reads that SAME persona's own
+        //    menu/menuItems.json fresh, independent of smoke.json, so the two assertions together
+        //    (smoke.json's price literal matches the real menu below, and the charged total
+        //    matches smoke.json's price further down despite the wrong tool price sent) prove
+        //    this session is priced from its own pack's menu, not from the echoed tool argument.
         var realMenuPrice = PersonaMenuPrice.Read(
             fixture.PersonasDirectory, personaId, expected.OrderableItemName, expected.OrderableItemSize);
         Assert.Equal(realMenuPrice, expected.OrderableItemPrice);
@@ -163,7 +163,7 @@ file static class PersonaSmokeScenario
         //    time-of-day-dependent and this exact-match assertion would flake).
         var addResult = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
-            [("add", expected.OrderableItemName, expected.OrderableItemSize, 1, expected.OrderableItemPrice)],
+            [("add", expected.OrderableItemName, expected.OrderableItemSize, 1, 0.01m)],
             roundTripIndex, ct, callIdPrefix: "call_smoke_add");
         roundTripIndex = addResult.RoundTripIndex;
         Assert.Equal(1, OrderScenarioHelpers.GetOrderItemCount(addResult.ToolResultJson!));
@@ -192,7 +192,7 @@ file static class PersonaSmokeScenario
     }
 }
 
-/// <summary>Real packs under personas/ -- today just "sonic".</summary>
+/// <summary>Real packs under personas/ -- today just the default pack.</summary>
 [Collection(ConformanceCollection.Name)]
 public sealed class RealPackPersonaSmokeTests(ConformanceFixture fixture)
 {

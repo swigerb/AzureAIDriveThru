@@ -16,7 +16,7 @@ namespace Conformance.Fakes;
 /// Issue #76 part 2: this is now MULTI-index -- one Kestrel host answering every persona's own
 /// index name (see <see cref="MenuIndex.ResolveIndexPaths"/>) with only that SAME persona's own
 /// menu documents, routed by the route's own `indexName` (previously ignored entirely: every
-/// index name, real or not, answered from one Sonic-only document set). This is what the real
+/// index name, real or not, answered from one single-pack document set). This is what the real
 /// backend's per-persona `SearchClient` (app/backend/app.py's `persona_search_contexts`, one
 /// client per enabled persona pointed at its own `persona.manifest.search.indexName`) actually
 /// depends on to prove cross-persona search isolation end to end -- see

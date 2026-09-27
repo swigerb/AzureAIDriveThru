@@ -53,7 +53,10 @@ public sealed class PersonaSmokeCoverageTests
             "FixturePackPersonaSmokeTests.FixturePersonaIds() silently shrank, or a newly-added " +
             "fixture pack needs its own tests/conformance/testdata/personas/<id>/smoke.json -- " +
             "see PersonaSmokeExpectations.For's failure message in PersonaSmokeTests.cs for the " +
-            "exact five fields and a template.");
+            "exact five fields and a template -- and add its id to " +
+            "FixturePackPersonaSmokeTests.FixturePersonaIds() and to the persona list " +
+            "TwoPersonaConformanceFixture launches the backend with, or list it in an explicit " +
+            "exclusion with a reason.");
     }
 
     /// <summary>Invokes a `public static TheoryData&lt;T&gt;`-returning `[MemberData]` source

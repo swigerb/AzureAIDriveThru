@@ -44,7 +44,7 @@ public static class MenuIndex
     /// AI Search index name its OWN persona.json declares (`search.indexName`) and that SAME
     /// pack's own `menu/menuItems.json` path -- so <see cref="Conformance.Fakes.FakeSearchServer"/>
     /// can serve one Kestrel host that answers each persona's own index with only that persona's
-    /// own menu documents, instead of a single Sonic-only document set regardless of which index a
+    /// own menu documents, instead of a single-pack document set regardless of which index a
     /// persona's SearchClient actually targeted (the exact gap
     /// PersonaBusinessRuleConformanceTests.cs's own doc comment calls out). A hand-rolled,
     /// harness-local read of just the two persona.json fields this fake needs -- deliberately NOT
