@@ -11,10 +11,19 @@ import { Tooltip } from "@/components/ui/tooltip";
 import { VOICE_OPTIONS } from "@/lib/voices";
 import type { PersonaModels } from "@/types/persona";
 
-/** Capitalizes the first letter of a persona's `roleName` (e.g. "carhop" -> "Carhop") for display;
- * leaves everything else untouched since roleName is a single lowercase word per the schema. */
+/** Capitalizes the first letter of a single word (e.g. "carhop" -> "Carhop"), leaving the rest
+ * untouched. */
 function capitalize(word: string): string {
     return word.length > 0 ? word[0].toUpperCase() + word.slice(1) : word;
+}
+
+/** Title-cases every whitespace-separated word in a persona's `roleName` for display in the
+ * voice label (e.g. "carhop" -> "Carhop", "team member" -> "Team Member"). The schema only
+ * guarantees `{ "type": "string", "minLength": 1 }` -- roleName is not restricted to a single
+ * lowercase word, so a multi-word role name needs every word capitalized, not just the first
+ * character of the whole string. */
+function titleCase(roleName: string): string {
+    return roleName.split(/\s+/).map(capitalize).join(" ");
 }
 
 interface SettingsProps {
@@ -56,7 +65,7 @@ export default function Settings({
     const { useAzureSpeechOn, setUseAzureSpeechOn } = useAzureSpeechOnContext();
     const { useDummyData, setUseDummyData } = useDummyDataContext();
     const realtimeModels = models?.realtime.models ?? [];
-    const voiceLabel = roleName ? `${capitalize(roleName)} Voice` : "Voice";
+    const voiceLabel = roleName ? `${titleCase(roleName)} Voice` : "Voice";
     const voiceAriaLabel = roleName ? `Select ${roleName} voice` : "Select voice";
 
     useEffect(() => {
@@ -107,19 +116,19 @@ export default function Settings({
                     <Switch id="dark-mode" checked={isDarkMode} onCheckedChange={handleDarkModeChange} aria-label="Toggle dark mode" />
                 </div>
             </div>
-            <div className="flex items-start justify-between">
+            <div className="flex flex-col gap-2">
                 <div className="flex-1 space-y-0.5">
                     <Label htmlFor="voice-choice" className="text-gray-900 dark:text-gray-100">
                         {voiceLabel}
                     </Label>
                     <p className="text-sm text-gray-600 dark:text-gray-400">Choose the drive-thru assistant voice</p>
                 </div>
-                <div className="ml-4 flex flex-col items-end shrink-0">
+                <div className="flex flex-col">
                     <select
                         id="voice-choice"
                         value={voiceChoice}
                         onChange={(e) => onVoiceChoiceChange(e.target.value)}
-                        className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+                        className="w-full min-w-0 rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
                         aria-label={voiceAriaLabel}
                     >
                         {VOICE_OPTIONS.map(voice => (

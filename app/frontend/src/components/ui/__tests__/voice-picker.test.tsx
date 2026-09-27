@@ -88,4 +88,16 @@ describe("Carhop voice picker", () => {
         expect(await screen.findByLabelText("Select voice")).toBeInTheDocument();
         expect(screen.queryByText("Carhop Voice")).not.toBeInTheDocument();
     });
+
+    // Issue #119 item 2 (Rick review round 2): roleName is not restricted to a single lowercase
+    // word by the schema (`{ "type": "string", "minLength": 1 }`), so a multi-word role name like
+    // a "team member" pack must title-case every word for the visible label ("Team Member
+    // Voice"), while the aria-label stays lowercase to match roleName as written.
+    it("title-cases every word of a multi-word role name", async () => {
+        renderSettings(DEFAULT_VOICE, "team member");
+        await userEvent.click(screen.getByRole("button", { name: /open settings/i }));
+
+        expect(await screen.findByText("Team Member Voice")).toBeInTheDocument();
+        expect(await screen.findByLabelText("Select team member voice")).toBeInTheDocument();
+    });
 });
