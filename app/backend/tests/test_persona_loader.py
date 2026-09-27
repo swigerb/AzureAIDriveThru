@@ -359,6 +359,64 @@ class TestMutationSchemaViolations:
         assert "sonic" in str(exc_info.value)
         assert "menuItems.json" in str(exc_info.value)
 
+    def test_menu_item_key_collision_refuses_to_start(self, personas_copy):
+        """#128: two menu items that normalize to the same ``_menu_key`` (e.g. two differently
+        parenthesized variants of the same base name) must fail startup for every enabled
+        persona, not just silently let the second one loaded win. Uses whichever real pack sorts
+        first (brand-agnostic, like ``test_every_discovered_real_pack_validates`` above) rather
+        than hardcoding a brand name."""
+        persona_id = _discovered_persona_ids(personas_copy)[0]
+        menu_path = personas_copy / persona_id / "menu" / "menuItems.json"
+        data = json.loads(menu_path.read_text(encoding="utf-8"))
+        first_item = data["menuItems"][0]["items"][0]
+        colliding_item = dict(first_item)
+        colliding_item["name"] = f"{first_item['name']} (Party Size)"
+        data["menuItems"][0]["items"].append(colliding_item)
+        menu_path.write_text(json.dumps(data), encoding="utf-8")
+        with pytest.raises(PersonaValidationError) as exc_info:
+            PersonaCatalog.load(personas_dir=personas_copy)
+        message = str(exc_info.value)
+        assert persona_id in message
+        assert first_item["name"] in message
+        assert colliding_item["name"] in message
+        assert "same lookup key" in message
+
+    def test_menu_alias_collision_with_another_items_alias_refuses_to_start(self, personas_copy):
+        """#128: an alias declared on two different items must fail startup -- an ambiguous alias
+        must never resolve silently to whichever item happened to load last."""
+        persona_id = _discovered_persona_ids(personas_copy)[0]
+        menu_path = personas_copy / persona_id / "menu" / "menuItems.json"
+        data = json.loads(menu_path.read_text(encoding="utf-8"))
+        items = [item for category in data["menuItems"] for item in category["items"]]
+        items[0].setdefault("aliases", []).append("duplicate test alias")
+        items[1].setdefault("aliases", []).append("duplicate test alias")
+        menu_path.write_text(json.dumps(data), encoding="utf-8")
+        with pytest.raises(PersonaValidationError) as exc_info:
+            PersonaCatalog.load(personas_dir=personas_copy)
+        message = str(exc_info.value)
+        assert persona_id in message
+        assert "duplicate test alias" in message
+        assert items[0]["name"] in message
+        assert items[1]["name"] in message
+
+    def test_menu_alias_colliding_with_another_items_own_key_refuses_to_start(self, personas_copy):
+        """#128: an alias that happens to normalize to a DIFFERENT item's own name (not just
+        another alias) must also fail startup -- this is the half of the rule that isn't a
+        plain alias-vs-alias duplicate."""
+        persona_id = _discovered_persona_ids(personas_copy)[0]
+        menu_path = personas_copy / persona_id / "menu" / "menuItems.json"
+        data = json.loads(menu_path.read_text(encoding="utf-8"))
+        items = [item for category in data["menuItems"] for item in category["items"]]
+        target_name = items[1]["name"]
+        items[0].setdefault("aliases", []).append(target_name)
+        menu_path.write_text(json.dumps(data), encoding="utf-8")
+        with pytest.raises(PersonaValidationError) as exc_info:
+            PersonaCatalog.load(personas_dir=personas_copy)
+        message = str(exc_info.value)
+        assert persona_id in message
+        assert items[0]["name"] in message
+        assert target_name in message
+
     def test_missing_prompts_dir_refuses_to_start(self, personas_copy):
         shutil.rmtree(personas_copy / "sonic" / "prompts")
         with pytest.raises(PersonaValidationError, match="prompts directory not found"):
