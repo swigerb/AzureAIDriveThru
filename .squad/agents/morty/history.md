@@ -227,11 +227,65 @@ Fixed `useAzureSpeech.tsx`: (1) `onReceivedToolResponse` parameter was declared 
 ## 2026-09-28 — PR #107 re-review (squad/104-menu-price, r3)
 
 - `PythonBackendLauncher` also needs `app/backend/static/index.html` to exist (aiohttp's `add_static` raises at app-creation without the directory) — it's gitignored (built via `npm run build`), but a placeholder `<html>` file is enough to boot the backend for conformance; no frontend build needed just to run the C# suite.
+
+## 2026-09-28 — PR #108 round 4 (squad/76-part2-multi-index)
+
+- Rick's round 4 review had all three items land as harness/comment-only changes, no product code:
+  the smoke add step's stale pre-#107 comment, the fixture-pack coverage failure message needing to
+  name *both* `FixturePackPersonaSmokeTests.FixturePersonaIds()` and the persona list
+  `TwoPersonaConformanceFixture` launches with (or an explicit exclusion), and de-branding a handful
+  of shared-C# comments. Read the actual `TwoPersonaConformanceFixture.Personas` property
+  (`[PersonaA, PersonaB]`) before writing the message text that references it — the wording has to
+  match a real, checkable thing, not just restate the reviewer's prose.
+- The task brief's "PR #106 (test-gamma fixture pack)" conditional turned out stale: `gh pr view 106`
+  showed an unrelated open PR (model catalog, issue #75), and the actual `test-gamma` fixture commit
+  lives on `squad/75-model-flexibility`, not merged into `dev`. Always verify a task brief's PR-number
+  claims against `gh pr view`/`git log --all` before acting on them — a wrong number here would have
+  meant editing coverage lists for a pack that doesn't exist on this branch yet.
+- Mutating "the backend trusts the tool price" for #107-era code: `order_state.py`'s
+  `price = menu_price` (~line 273) is the single override line; commenting it out to a `pass` and
+  running just `--filter "FullyQualifiedName~PersonaSmokeTests"` (3 tests: sonic/test-alpha/
+  test-beta) is enough to see all three fail on the charged-total assertion — no need to run the
+  full 657-test suite to prove the mutation lands. `git checkout -- <file>` cleanly reverts a
+  single-line comment-swap like this; re-ran the same filtered 3 tests to confirm the revert restored
+  green before moving on.
+- Full local validation this round: `dotnet test Conformance.slnx --filter "Category!=Browser"`
+  652/652; `--filter "Category=Browser"` 5/5 (657/657 total, matching round 3's own count exactly —
+  no new scenarios landed on `dev` since); `python -m pytest app/backend/tests -q` 1077 passed/168
+  subtests; `ruff check .` clean. `.venv` and `app/backend/static` (via `npm ci && npm run build`)
+  both had to be built fresh in this worktree — neither survives a `git worktree add`.
 - Adding two `[InlineData]` rows (`"\"cheap\""`, `"true"`) to an existing string-typed Theory needed no other code changes — Rick's PR #107 re-review confirmed the Python fix (`order_state.py`'s `isinstance(price, (int, float)) and not isinstance(price, bool)` guard) already covers non-numeric/bool tool prices; the conformance port was just missing rows, not missing behavior. Ran the six-row Theory alone (`--filter FullyQualifiedName~Adding_an_item_with_a_wrong_tool_call_price_is_charged_the_menu_price`) before the full suite to isolate the change under test.
 - Full conformance suite (642 tests) had 5 pre-existing failures, all in `OrderResumeBrowserTests` (`Category=Browser`, real headless Edge via Playwright's `channel: msedge`), each timing out with "No upstream connection was accepted within 00:00:30" — reproduced in isolation too, so not suite-ordering flakiness. That file wasn't touched by this PR or by dev since #26, Rick's review says CI is 8/8, and no proxy env vars were set in this shell, so this looks like a sandbox-specific gap in real-browser mic/audio emulation (headless Edge + getUserMedia) rather than a product regression — flagged in the PR comment rather than touched.
 - `app/backend/static/` is gitignored frontend build output; a fresh worktree without a frontend build fails 7 unrelated `test_app.py`/`test_performance.py` tests on `pytest -q` (missing static dir). Not a code bug — either `npm run build` the frontend or copy an existing built `static/` folder from another checkout/worktree into the new one (never committed, gitignored either way) to get a fully green run without spending frontend build time on unrelated backend-test work.
 - .NET 11 RC1 SDK (`C:\Users\brswig\.dotnet-sdks\11.0.100-rc.1.26425.128\`) works fine for both `Backend.Tests` and the conformance `Conformance.slnx` suite when `DOTNET_ROOT`/`PATH` are set per-process; emits a harmless NETSDK1057 preview-SDK notice on every build, not a failure.
 - vitest 65 → 116. Build green. No `npm install`; lockfile unchanged.
+
+## 2026-09-28 — PR #108 round 4, part 2: PR #106 landed on `dev` mid-task
+
+- The task brief's "if PR #106 (test-gamma fixture pack) has merged into dev by then" conditional
+  looked stale at task start (`gh pr view 106` showed it open, unrelated title) — but it merged into
+  `dev` as `6a71c3e` *during* this round's work, after the first `origin/dev` merge here but before
+  push. Only surfaced via the PR-linked `pull_request` CI run failing on the pushed head (`3a88ced`):
+  GitHub's `pull_request` checkout builds a fresh merge of the PR branch against the CURRENT `dev`
+  tip at trigger time, not whatever `dev` looked like at my last local fetch, so a fast one-shot
+  local merge-and-push isn't enough insurance on a long multi-step task — re-`git fetch origin dev`
+  and re-check `gh pr view <N>`/`git log --all` close to push time, not just at task start.
+- test-gamma (added by #106) is scoped to `ModelSelectionConformanceFixture`'s negative
+  model-selection rows (a narrow `models.realtime.allowed` persona, see
+  `ModelSelectionConformanceFixtures.cs`) — not part of `TwoPersonaConformanceFixture`
+  (test-alpha/test-beta) and not meant to get generic greeting/search/order smoke coverage.
+  Used the "or list it as an explicit exclusion" branch from Rick's own review wording rather than
+  awkwardly widening `TwoPersonaConformanceFixture`'s persona list for an unrelated fixture's sake:
+  added `FixturePackPersonaSmokeTests.FixturePersonaExclusions` (id → reason dictionary) and had
+  `PersonaSmokeCoverageTests`'s fixture-branch test `.Except()` its keys before asserting, so a
+  pack that's out of scope by design stays silent there while a genuinely forgotten pack still
+  fails loudly.
+- Re-merged `origin/dev` a second time mid-round (`d6611c6`) to pull in #106's diff, then re-ran the
+  full local suite against the new base: `Category!=Browser` 662/662 (+10 vs. round 4's first pass,
+  all `dev`/#106's own new tests), `Category=Browser` 5/5 (667/667 total), `pytest` 1151 passed/168
+  subtests (+74 vs. 1077, #106 added `test_model_catalog.py`/`test_model_selection.py`/
+  `test_processors.py` etc.), `ruff check .` clean. No changes needed to my three round-4 items
+  themselves — the exclusion was the only new work driven by #106 landing.
 
 ## 2026-09-26 — issue #80 F2 (wave 1 of the persona-theming epic)
 

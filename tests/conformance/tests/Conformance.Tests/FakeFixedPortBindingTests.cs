@@ -28,7 +28,9 @@ public sealed class FakeFixedPortBindingTests
     {
         var requestedPort = NetworkUtils.GetFreeTcpPort();
         var repoRoot = RepoPaths.FindRepoRoot();
-        await using var search = new FakeSearchServer(RepoPaths.MenuItemsJsonPath(repoRoot));
+        var indexPaths = MenuIndex.ResolveIndexPaths(
+            RepoPaths.PersonasDirectory(repoRoot), [ConformancePersonas.DefaultPersonaId]);
+        await using var search = new FakeSearchServer(indexPaths);
 
         await search.StartAsync(TestContext.Current.CancellationToken, fixedPort: requestedPort);
 
