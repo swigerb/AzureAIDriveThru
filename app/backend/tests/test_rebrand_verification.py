@@ -186,8 +186,16 @@ class TestRebrandVerification(unittest.TestCase):
 
     # ── Targeted file checks ─────────────────────────────────────────
 
-    def test_readme_title_contains_sonic(self):
-        """README.md project title/heading must mention 'Sonic'."""
+    def test_readme_title_contains_azure(self):
+        """README.md project title/heading must mention 'Azure'.
+
+        #69 (P2-0): the repo-level title/intro were neutralized to
+        AzureAIDriveThru — brand-specific wording (Sonic, McDonald's, Dunkin)
+        now lives in persona packs and stays in the README body only. This
+        guard used to require "Sonic" in the heading; it now requires
+        "Azure" instead, and the frontend/backend Sonic-title guards below
+        are unchanged (those files are out of #69's scope).
+        """
         readme = PROJECT_ROOT / "README.md"
         self.assertTrue(readme.exists(), "README.md not found at project root")
         content = readme.read_text(encoding="utf-8", errors="replace")
@@ -197,8 +205,8 @@ class TestRebrandVerification(unittest.TestCase):
                 first_heading = line
                 break
         self.assertTrue(
-            "sonic" in first_heading.lower(),
-            f"README.md first heading does not mention Sonic: '{first_heading}'",
+            "azure" in first_heading.lower(),
+            f"README.md first heading does not mention Azure: '{first_heading}'",
         )
 
     def test_readme_does_not_mention_dunkin(self):

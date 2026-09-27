@@ -1,14 +1,14 @@
-# Sonic AI Drive Thru
+# Azure AI Drive-Thru
 
-Sonic AI Drive Thru is a Sonic Drive-In–themed, voice-driven ordering experience that showcases Microsoft best practices for Azure OpenAI GPT-4o Realtime, Azure AI Search, and Azure Container Apps. The experience emulates a Sonic carhop who can search the official menu, hold multilingual conversations, and keep orders in sync across devices.
+Azure AI Drive-Thru is a persona- and model-flexible, voice-driven ordering demo that showcases Microsoft best practices for Azure OpenAI GPT-4o Realtime, Azure AI Search, and Azure Container Apps on Microsoft Foundry. A single deployment switches between drive-thru brand personas, starting with Sonic Drive-In with more brands to follow, while keeping every brand's ordering rules intact.
 
-As guests speak, real-time transcription, translation, and order management provide a transparent view of every choice...from slushes and shakes to burgers and tots. The UI applies Sonic's vibrant design language so stakeholders can picture how voice AI augments drive-in, carhop, and kiosk flows.
+As guests speak, real-time transcription, translation, and order management provide a transparent view of every choice...from drinks to combos to sides. Each persona applies its own brand's design language so stakeholders can picture how voice AI augments drive-in, counter, and kiosk flows.
 
-Beyond the drive-in experience, this sample demonstrates how Microsoft’s Responsible AI guidance plus Azure-first tooling enable inclusive, hands-free interactions for franchise teams, accessibility scenarios, and mixed fleet deployments across the Inspire Brands portfolio.
+Beyond the ordering experience, this sample demonstrates how Microsoft’s Responsible AI guidance plus Azure-first tooling enable inclusive, hands-free interactions for franchise teams and accessibility scenarios across brands.
 
 ## Table of Contents
 
-- [Sonic AI Drive Thru](#sonic-ai-drive-thru)
+- [Azure AI Drive-Thru](#azure-ai-drive-thru)
   - [Table of Contents](#table-of-contents)
   - [Acknowledgment](#acknowledgment)
   - [Visual Demonstrations](#visual-demonstrations)
@@ -26,6 +26,7 @@ Beyond the drive-in experience, this sample demonstrates how Microsoft’s Respo
     - [Observability & Diagnostics](#observability--diagnostics)
     - [Real-Time Transcription + Translation](#real-time-transcription--translation)
     - [Audio Output + Accessibility](#audio-output--accessibility)
+  - [Scope: what the unified demo carries over](#scope-what-the-unified-demo-carries-over)
   - [Agentic Architecture Flow](#agentic-architecture-flow)
     - [How It All Works — End-to-End Flow](#how-it-all-works--end-to-end-flow)
     - [Architecture Diagram](#architecture-diagram)
@@ -121,6 +122,28 @@ Special thanks to [John Carroll](https://github.com/john-carroll-sw) for the ori
 ### Audio Output + Accessibility
 - **Browser audio playback**: Mirrors what a guest would hear at a Sonic stall, supporting screenless or low-vision ordering.
 
+## Scope: what the unified demo carries over
+
+<!-- #86: the coffee-brand sibling is named in docs/persona-architecture.md. The README brand guard
+     (app/backend/tests/test_rebrand_verification.py) forbids its name here until #76 inverts the
+     brand guards; the same guard is why the intro says "more brands to follow". -->
+
+This repo is becoming the one unified drive-thru demo for every brand persona (ADR-001). Its scope rule: **demo features work the same for every persona, and only brand-specific logic differs** (menu, sizes, bundles, extras, happy hour, prompts, voice and theme). Brand logic lives in persona packs as data, not in code.
+
+**Carried over from the sibling brand demos**
+
+- **Local mode** (on-device speech recognition, language model and text to speech) from the McDonald's demo, as a persona-agnostic pipeline. It is off by default; cloud is the default (#81).
+
+**Not carried over** (Brian's decision 7, 2026-09-26; recorded in #86)
+
+| Feature | Where it lived | Why it is dropped |
+| --- | --- | --- |
+| Crew dashboard and order simulator (`/crew/` SPA, `/dashboard` WebSocket, `/simulator/demo`) | The coffee-brand sibling demo | A brand-only feature; the unified demo keeps features identical across personas |
+| CRM simulator (`crm/`, `crm_seed.json`, `seed_crm.py`) | The coffee-brand sibling demo | Only the simulator's fake guests used it; the voice agent never called it |
+| Azure Local edge stack (`Dockerfile.edge`, `requirements-edge.txt`, `rtmt_local.py`, `k8s/`, `flux/`, `deploy-edge.*`) | The coffee-brand sibling demo | The unified demo targets Microsoft Foundry in one Azure environment. The stack was never deployed to Azure, so its removal is code only, with nothing to tear down |
+| Azure Speech mode toggle | This repo's Settings panel | Dead: no backend code used it. The toggle is removed with the frontend persona work (#80) |
+
+None of this code is in this repo. After parity sign-off the sibling repos are archived, and their final code stays at each repo's `final-standalone` tag (#88). The full brand-difference inventory is in [docs/persona-architecture.md](docs/persona-architecture.md), section 3.6.
 ## Agentic Architecture Flow
 
 ![Sonic AI Carhop Agentic Architecture Flow](docs/Sonic_AI_Carhop_Agentic_Architecture_Flow.png)
@@ -292,7 +315,7 @@ You can run the project in your local VS Code Dev Container using the [Dev Conta
   The script installs the Azure CLI, signs you in, and verifies Docker availability for you.
 
   Alternatively, manually install [Azure Developer CLI](https://aka.ms/azure-dev/install), [Node.js](https://nodejs.org/), [Python >=3.11](https://www.python.org/downloads/), [Git](https://git-scm.com/downloads), and [Docker Desktop](https://www.docker.com/products/docker-desktop).
-  2. Clone your GitHub repository (`git clone https://github.com/swigerb/SonicAIDriveThru.git`)
+  2. Clone your GitHub repository (`git clone https://github.com/swigerb/AzureAIDriveThru.git`)
   3. Proceed to the next section to [deploy the app](#deploying-to-azure).
 
 ## Ingesting Menu Items into Azure AI Search
