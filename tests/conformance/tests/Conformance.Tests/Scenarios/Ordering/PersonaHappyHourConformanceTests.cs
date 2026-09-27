@@ -1,42 +1,53 @@
 using Conformance.Fakes;
+using Conformance.Harness;
 using Xunit;
 
 namespace Conformance.Tests.Scenarios.Ordering;
 
 file static class PersonaHappyHourTestSupport
 {
-    public static async Task<decimal> AddItemAndReadFinalTotalAsync(
+    public static async Task<ToolCallResult> AddItemAndReadResultAsync(
         ConformanceFixture fixture, string persona, string itemName, string size, decimal price, CancellationToken ct)
     {
         var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, persona: persona);
         await using var _ = browser;
 
-        var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+        return await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
             [("add", itemName, size, 1, price)],
             roundTripIndex, ct);
+    }
 
+    public static async Task<decimal> AddItemAndReadFinalTotalAsync(
+        ConformanceFixture fixture, string persona, string itemName, string size, decimal price, CancellationToken ct)
+    {
+        var result = await AddItemAndReadResultAsync(fixture, persona, itemName, size, price, ct);
         return OrderScenarioHelpers.GetOrderFinalTotal(result.ToolResultJson!);
     }
 }
 
 /// <summary>
-/// Issue #76 part 2 (Rick's wave-plan comment on #20): "happy-hour flag honored (enabled or
-/// not)" for the two fixture packs. Sonic's own "an eligible item DOES get discounted inside the
-/// window" proof already exists (<c>HappyHourAtOpenTests</c>/<c>HappyHourBoundaryTests.cs</c>) --
-/// not duplicated here. test-alpha and test-beta's fixture menus (#74) deliberately carry no
-/// <c>happyHourDiscounted: true</c> items (editing that shared Python-test fixture data is out of
-/// this stream's harness-only scope), so what this file proves instead is the other, equally
-/// real half of "honored": the persona-level <c>pricing.happyHour</c> flag must never blanket
-/// -discount an item that didn't individually opt in (test-alpha, flag ENABLED 14-16
-/// America/Chicago), and a persona with no happy-hour config at all must be completely clock
-/// -invariant (test-beta, flag explicitly <c>null</c>). Both are proven the same way: add the
-/// SAME item as the SAME persona at two FixedClock instants -- one inside the window
+/// Issue #76 part 2 (Rick's wave-plan comment on #20, and Rick's PR #108 review required items 2
+/// and 3): "happy-hour flag honored (enabled or not)" for the two fixture packs, now covering both
+/// the positive and negative half of "honored". Sonic's own "an eligible item DOES get discounted
+/// AND announces its own banner inside the window" proof lives in
+/// <c>HappyHourAtOpenTests</c>/<c>HappyHourBoundaryTests.cs</c> -- not duplicated here.
+/// test-alpha's menu (#74) now carries exactly ONE <c>happyHourDiscounted: true</c> item ("Alpha
+/// Cola", per Rick's PR #108 review required item 2) so this file can prove test-alpha's own
+/// positive case the same way Sonic's is proven: inside test-alpha's window the item is
+/// discounted by test-alpha's OWN priceMultiplier (0.5) and the `update_order` result carries
+/// test-alpha's OWN banner (read from its persona.json, never a literal); outside the window,
+/// neither. "Alpha Burger" (never opted in) and test-beta (persona-level flag null) remain the
+/// negative proofs: the persona-level <c>pricing.happyHour</c> flag must never blanket-discount
+/// an item that didn't individually opt in, a persona with no happy-hour config at all must be
+/// completely clock-invariant, and (Rick's PR #108 review required item 3) neither of those
+/// negative cases may ever surface a happy-hour banner either. All four facts add the SAME item
+/// as the SAME persona at two FixedClock instants -- one inside the window
 /// (<see cref="TwoPersonaHappyHourWindowFixture"/>, golden case 1 = 14:00:00) and one just
-/// outside it (<see cref="TwoPersonaHappyHourOutsideWindowFixture"/>, golden case 0 = 13:59:59)
-/// -- and assert the resulting totals are identical. A mutation that started applying the
-/// discount without checking the item's own opt-in flag (or that let one persona's happy-hour
-/// config bleed into another persona's pricing) would make either fact below fail.
+/// outside it (<see cref="TwoPersonaHappyHourOutsideWindowFixture"/>, golden case 0 = 13:59:59).
+/// A mutation that started applying the discount/banner without checking the item's own opt-in
+/// flag, or that let one persona's happy-hour config (or banner) bleed into another persona's
+/// session, would make one of the facts below fail.
 /// </summary>
 [Collection(TwoPersonaHappyHourWindowCollection.Name)]
 public sealed class PersonaHappyHourConformanceTests(
@@ -69,26 +80,75 @@ public sealed class PersonaHappyHourConformanceTests(
             "not blanket-discount an item that never individually opted in.");
     }
 
+    // Rick's PR #108 review, required item 2: "Alpha Cola" is the ONE item in the test-alpha
+    // fixture pack marked happyHourDiscounted:true. Inside test-alpha's own window it must be
+    // discounted by test-alpha's OWN priceMultiplier (0.5, not Sonic's, even though the two
+    // happen to share the same numeric value -- see the decision note on why the mutation
+    // evidence for this fact perturbs Sonic's own multiplier rather than relying on that
+    // coincidence) and the update_order result must carry test-alpha's OWN banner, read from its
+    // persona.json rather than typed here; outside the window, neither.
+    [Fact]
+    public async Task Test_alpha_item_with_its_own_happy_hour_opt_in_gets_test_alphas_own_multiplier_and_banner()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var expectedBanner = PersonaHappyHourBanner.Read(
+            RepoPaths.FixturePersonasDirectory(RepoPaths.FindRepoRoot()), TwoPersonaConformanceFixture.PersonaA);
+        const decimal unitPrice = 1.99m; // Small, app/backend/tests/fixtures/personas/test-alpha/menu/menuItems.json
+        ToolCallResult insideResult = null!;
+        ToolCallResult outsideResult = null!;
+
+        await windowFixture.RunAsync(async () =>
+        {
+            insideResult = await PersonaHappyHourTestSupport.AddItemAndReadResultAsync(
+                windowFixture, TwoPersonaConformanceFixture.PersonaA, "Alpha Cola", "small", unitPrice, ct);
+        });
+        await outsideWindowFixture.RunAsync(async () =>
+        {
+            outsideResult = await PersonaHappyHourTestSupport.AddItemAndReadResultAsync(
+                outsideWindowFixture, TwoPersonaConformanceFixture.PersonaA, "Alpha Cola", "small", unitPrice, ct);
+        });
+
+        Assert.Contains(expectedBanner, insideResult.FunctionCallOutputText);
+        Assert.DoesNotContain(expectedBanner, outsideResult.FunctionCallOutputText);
+        Assert.DoesNotContain("HAPPY HOUR", outsideResult.FunctionCallOutputText);
+
+        // test-alpha's taxRate is 0.05 (app/backend/tests/fixtures/personas/test-alpha/persona.json).
+        OrderScenarioHelpers.AssertMoneyEqual(
+            unitPrice * 0.5m * 1.05m,
+            OrderScenarioHelpers.GetOrderFinalTotal(insideResult.ToolResultJson!),
+            "Alpha Cola opted in via happyHourDiscounted:true -- inside test-alpha's own window it " +
+            "must be discounted by test-alpha's own priceMultiplier (0.5).");
+        OrderScenarioHelpers.AssertMoneyEqual(
+            unitPrice * 1.05m,
+            OrderScenarioHelpers.GetOrderFinalTotal(outsideResult.ToolResultJson!));
+    }
+
     [Fact]
     public async Task Test_beta_persona_with_no_happy_hour_config_is_never_discounted_regardless_of_clock()
     {
         var ct = TestContext.Current.CancellationToken;
-        decimal insideWindowTotal = 0m;
-        decimal outsideWindowTotal = 0m;
+        ToolCallResult insideResult = null!;
+        ToolCallResult outsideResult = null!;
 
         await windowFixture.RunAsync(async () =>
         {
-            insideWindowTotal = await PersonaHappyHourTestSupport.AddItemAndReadFinalTotalAsync(
+            insideResult = await PersonaHappyHourTestSupport.AddItemAndReadResultAsync(
                 windowFixture, TwoPersonaConformanceFixture.PersonaB, "Beta Double Burger", "regular", 4.49m, ct);
         });
         await outsideWindowFixture.RunAsync(async () =>
         {
-            outsideWindowTotal = await PersonaHappyHourTestSupport.AddItemAndReadFinalTotalAsync(
+            outsideResult = await PersonaHappyHourTestSupport.AddItemAndReadResultAsync(
                 outsideWindowFixture, TwoPersonaConformanceFixture.PersonaB, "Beta Double Burger", "regular", 4.49m, ct);
         });
 
         OrderScenarioHelpers.AssertMoneyEqual(
-            outsideWindowTotal, insideWindowTotal,
+            OrderScenarioHelpers.GetOrderFinalTotal(outsideResult.ToolResultJson!),
+            OrderScenarioHelpers.GetOrderFinalTotal(insideResult.ToolResultJson!),
             "test-beta's pricing.happyHour is null -- the clock instant must never affect its totals.");
+
+        // Rick's PR #108 review, required item 3: test-beta's happyHour is null, so no banner may
+        // ever appear -- clock-invariant, same as the price.
+        Assert.DoesNotContain("HAPPY HOUR", insideResult.FunctionCallOutputText);
+        Assert.DoesNotContain("HAPPY HOUR", outsideResult.FunctionCallOutputText);
     }
 }
