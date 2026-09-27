@@ -62,3 +62,6 @@
 - **Switching:** per session (`/realtime?persona=`) inside a per-deployment allow-list. It is cheaper (one app, not three) and it forces the per-session `Persona` object that the C# port needs anyway.
 - **#51:** check the golden table against the data; never generate it from the data, or a wrong field becomes its own oracle. Off-menu rules become ordered first-match data; a "no side-slot rule" loader check makes the PR #50 revenue rule structural.
 - **Watch-outs for P2:** the "no Dunkin words" guards must be inverted; the siblings share the free Search service's three indexes with the unified app until cutover; McD's `modify` action is dormant because the YAML tool schema wins over the inline one.
+## 2026-09-25 — Team update
+
+- **PR #66 awaits Rick review:** Birdperson's conformance suite flakes fix (issues #55/#62) merged to dev branch, 12/12 test classes green, awaiting approval before main merge.
