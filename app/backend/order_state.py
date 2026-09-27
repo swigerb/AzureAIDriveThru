@@ -1,22 +1,27 @@
 import logging
 import os
+import threading
 import uuid
 from dataclasses import dataclass
 from decimal import Decimal
+from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
 import conformance_hooks
+import menu_utils
 from config_loader import get_config
 from menu_utils import (
     _menu_key,
     bundle_slots,
-    canonical_size_key,
+    get_catalog_for_persona,
     infer_combo_component,
     is_happy_hour_discounted,
-    normalize_size,
 )
 from models import OrderItem, OrderSummary
 from money_utils import format_money, to_decimal
+
+if TYPE_CHECKING:
+    from persona_loader import Persona
 
 __all__ = ["OrderState", "SessionIdentifiers", "order_state_singleton", "is_happy_hour"]
 
@@ -79,6 +84,21 @@ class SessionIdentifiers:
 
 
 class OrderState:
+    """Per-session order state.
+
+    #97: a session's ``OrderState`` entry is confined to the single asyncio event loop /
+    thread that created it -- exactly like the C# backend's ``SessionActor`` (one actor per
+    session, no cross-actor shared mutable state). It is NOT a general-purpose thread-safe data
+    structure: every session-scoped method below asserts (via ``_check_owner``) that it is being
+    called from the same OS thread ``create_session`` ran on, and raises ``RuntimeError``
+    immediately if not, rather than silently racing on ``self.sessions[session_id]``'s list/dict
+    mutations. Concurrent guests are safe because each one's session lives on its own event-loop
+    task on the SAME thread (cooperative multitasking -- ``handle_order_update`` etc. contain no
+    internal ``await``, so they can never be interleaved mid-mutation); concurrent sessions are
+    never each given their own OS thread. See ``tests/test_performance.py``'s
+    ``OrderStateThreadConfinementTests`` for the enforced contract.
+    """
+
     _instance = None
 
     def __new__(cls):
@@ -101,20 +121,68 @@ class OrderState:
         session["absorbed_side_display"] = ""
         session["absorbed_drink_display"] = ""
 
+    def _check_owner(self, session_id: str) -> None:
+        """#97: raise if this session-scoped call is happening on a different OS thread than the
+        one that created the session. See the ``OrderState`` class docstring above -- a session's
+        state is confined to its owning thread/event loop, like the C# ``SessionActor``, and this
+        is the single enforcement point every session-scoped public method below calls first."""
+        session = self.sessions[session_id]
+        owner = session.get("_owner_thread")
+        current = threading.get_ident()
+        if owner is not None and owner != current:
+            raise RuntimeError(
+                f"OrderState session {session_id} accessed from thread {current}, "
+                f"but owned by thread {owner} (see #97: sessions are single-thread/event-loop confined)"
+            )
+
+    def _menu_for(self, session: dict):
+        """Return this session's own :class:`~menu_utils.MenuCatalog` if it's bound to a
+        persona, else the shared ``menu_utils`` module itself -- which exposes the identical set
+        of function names (``canonical_size_key``, ``normalize_size``, ``infer_combo_component``,
+        ``bundle_slots``, ``is_happy_hour_discounted``, ...) as free functions. Every call site
+        below can therefore call ``menu.<name>(...)`` uniformly regardless of whether a persona is
+        bound (#74) -- the no-persona/default path is unchanged (single source of truth, the same
+        module-level functions every other caller/test already uses)."""
+        return session.get("_menu") or menu_utils
+
+    def _pricing_for(self, session: dict) -> tuple[Decimal, Decimal]:
+        """Return this session's own ``(tax_rate, happy_hour_discount)`` as Decimals -- from its
+        bound persona's ``pricing`` config if any (#74), else the shared module-level
+        ``_biz_cfg`` default (unchanged no-persona behavior)."""
+        if session.get("_persona_id") is None:
+            return (
+                to_decimal(_biz_cfg.get("tax_rate", 0.08)),
+                to_decimal(_biz_cfg.get("happy_hour_discount", 0.5)),
+            )
+        return session["_tax_rate"], session["_happy_hour_discount"]
+
+    def _is_happy_hour_for(self, session: dict) -> bool:
+        """Whether *now* (store-local time) falls in this session's own happy-hour window -- from
+        its bound persona's ``pricing.happyHour``/``store.timezone`` if any (#74), else the shared
+        module-level ``is_happy_hour()`` default (unchanged no-persona behavior)."""
+        if session.get("_persona_id") is None:
+            return is_happy_hour()
+        window = session.get("_happy_hour_window")
+        if window is None:
+            return False
+        now = conformance_hooks.now(session["_tz"])
+        start_hour, end_hour = window
+        return start_hour <= now.hour < end_hour
+
     def _update_summary(self, session_id: str):
         session = self.sessions[session_id]
         order_items = session["order_state"]
-        happy_hour = is_happy_hour()
+        menu = self._menu_for(session)
+        happy_hour = self._is_happy_hour_for(session)
         # #46: accumulate in exact Decimal, with NO intermediate rounding anywhere in this
         # calculation. Only the very last step below converts to float, once, at the Pydantic
         # model boundary -- eliminating the compounding float-multiplication noise that used to
         # make the spoken total drift a fraction of a cent off the golden values.
-        happy_hour_discount = to_decimal(_biz_cfg.get("happy_hour_discount", 0.5))
-        tax_rate = to_decimal(_biz_cfg.get("tax_rate", 0.08))
+        tax_rate, happy_hour_discount = self._pricing_for(session)
         total = Decimal("0")
         for item in order_items:
             item_total = to_decimal(item.price) * item.quantity
-            if happy_hour and _is_happy_hour_discounted(item.item):
+            if happy_hour and menu.is_happy_hour_discounted(item.item):
                 item_total *= happy_hour_discount
             total += item_total
         tax = total * tax_rate
@@ -133,7 +201,16 @@ class OrderState:
         session["order_summary_json"] = summary.model_dump_json()
         logger.debug("Order summary updated for session %s (items=%d, total=%s)", session_id, len(order_items), finalTotal)
 
-    def create_session(self) -> str:
+    def create_session(self, persona: "Persona | None" = None) -> str:
+        """Create a new, empty order-state session.
+
+        *persona* (#74): when given, this session's menu/pricing/happy-hour/timezone are all
+        sourced from *persona*'s own catalog instead of the shared module-level defaults -- see
+        ``_menu_for``/``_pricing_for``/``_is_happy_hour_for`` above. ``persona=None`` (the
+        default) preserves EXACTLY today's single-persona (env-driven default catalog) behavior,
+        so every existing caller (hundreds of ``create_session()`` call sites across the test
+        suite) is unaffected.
+        """
         session_id = str(uuid.uuid4())
         session_token = str(uuid.uuid4())
         empty_summary = OrderSummary(
@@ -151,12 +228,30 @@ class OrderState:
             "session_token": session_token,
             "round_trip_index": 0,
             "round_trip_token": self._format_round_trip_token(session_token, 0),
+            # #97: the thread/event-loop this session is confined to for the rest of its life.
+            "_owner_thread": threading.get_ident(),
+            "_persona_id": persona.id if persona is not None else None,
         }
+        if persona is not None:
+            session = self.sessions[session_id]
+            session["_menu"] = get_catalog_for_persona(persona)
+            session["_tz"] = ZoneInfo(persona.manifest.store.timezone)
+            session["_tax_rate"] = to_decimal(persona.manifest.pricing.taxRate)
+            happy_hour_cfg = persona.manifest.pricing.happyHour
+            if happy_hour_cfg is not None:
+                session["_happy_hour_discount"] = to_decimal(happy_hour_cfg.priceMultiplier)
+                session["_happy_hour_window"] = (happy_hour_cfg.startHour, happy_hour_cfg.endHour)
+            else:
+                session["_happy_hour_discount"] = to_decimal("1")
+                session["_happy_hour_window"] = None
         self._reset_order_state(self.sessions[session_id])
         logger.info("Session created: %s", session_id)
         return session_id
 
     def delete_session(self, session_id: str) -> None:
+        if session_id not in self.sessions:
+            return
+        self._check_owner(session_id)
         if self.sessions.pop(session_id, None) is not None:
             logger.info("Session deleted: %s", session_id)
 
@@ -164,17 +259,19 @@ class OrderState:
         return f"{session_token}-{round_trip_index:04d}"
 
     def handle_order_update(self, session_id: str, action: str, item_name: str, size: str, quantity: int, price: float) -> dict:
+        self._check_owner(session_id)
         session = self.sessions[session_id]
         order_state = session["order_state"]
+        menu = self._menu_for(session)
         result_info = {}
 
         # #40: canonicalize the size to a single alias-resolved key BEFORE any matching/merging
         # so different spellings of the same physical size (e.g. "rt44" vs "route 44" vs "44 oz"
         # vs "ROUTE44") collapse onto one order line and can be removed with any alias, not only
         # the one it was added with.
-        size = canonical_size_key(size)
+        size = menu.canonical_size_key(size)
 
-        resolved = normalize_size(size)
+        resolved = menu.normalize_size(size)
         formatted_size = f"{resolved} " if resolved else ""
 
         display = f"{formatted_size}{item_name}".strip()
@@ -190,7 +287,7 @@ class OrderState:
             # "own_bundle_slots"/"is_bundle" instead, so a Dinner or Wacky Pack (whose names don't
             # contain "combo" at all) still absorbs its real slots, and a drinks-only combo like
             # French Toast Sticks Combo never free-absorbs a side.
-            own_bundle_slots = _bundle_slots(item_name)
+            own_bundle_slots = menu.bundle_slots(item_name)
             is_bundle = bool(own_bundle_slots)
 
             # ── Combo conversion: auto-remove matching standalone entree ──
@@ -222,7 +319,7 @@ class OrderState:
 
             # ── Post-bundle absorption: side/drink fills an incomplete bundle's slot ──
             if not is_bundle:
-                component = _infer_combo_component(item_name)
+                component = menu.infer_combo_component(item_name)
                 if component in ("sides", "drinks"):
                     # Capacity for this component = sum of quantities of every bundle item
                     # already in the order whose OWN bundle_slots include this component (Rick's
@@ -232,14 +329,14 @@ class OrderState:
                     # side+drink bundle (a regular Combo, a Wacky Pack, the $6 Meal) contributes 1
                     # to each.
                     bundle_capacity = sum(
-                        it.quantity for it in order_state if component in _bundle_slots(it.item)
+                        it.quantity for it in order_state if component in menu.bundle_slots(it.item)
                     )
                     if bundle_capacity > 0:
                         if component == "sides":
-                            filled = sum(it.quantity for it in order_state if _infer_combo_component(it.item) == "sides")
+                            filled = sum(it.quantity for it in order_state if menu.infer_combo_component(it.item) == "sides")
                             filled += session.get("absorbed_sides", 0)
                         else:
-                            filled = sum(it.quantity for it in order_state if _infer_combo_component(it.item) == "drinks")
+                            filled = sum(it.quantity for it in order_state if menu.infer_combo_component(it.item) == "drinks")
                             filled += session.get("absorbed_drinks", 0)
 
                         slots_available = bundle_capacity - filled
@@ -258,7 +355,7 @@ class OrderState:
                             # find a bundle item whose own slots actually include this component
                             # (not just any "combo"-named item).
                             for combo_item in order_state:
-                                if component in _bundle_slots(combo_item.item):
+                                if component in menu.bundle_slots(combo_item.item):
                                     # Build component list from absorbed sides/drinks
                                     components = []
                                     if session.get("absorbed_side_display"):
@@ -313,7 +410,7 @@ class OrderState:
                 for i, existing in enumerate(order_state):
                     if existing.item == item_name:
                         continue  # skip the bundle itself
-                    component = _infer_combo_component(existing.item)
+                    component = menu.infer_combo_component(existing.item)
                     # Only absorb a component this bundle's OWN slots actually include (Rick's PR
                     # #99 review, decision 1) -- e.g. French Toast Sticks Combo (drinks-only) must
                     # never free-absorb a pre-existing standalone side.
@@ -352,25 +449,29 @@ class OrderState:
         return result_info
 
     def get_order_summary(self, session_id: str) -> OrderSummary:
+        self._check_owner(session_id)
         return self.sessions[session_id]["order_summary"]
 
     def get_order_items(self, session_id: str) -> list:
         """Return raw order item list — avoids Pydantic overhead for validation checks."""
+        self._check_owner(session_id)
         return self.sessions[session_id]["order_state"]
 
     def get_combo_requirements(self, session_id: str) -> dict:
         """Scans the order for bundles (combos, Dinners, Wacky Packs, the Meal) and returns
         missing components. Helps the AI know exactly what to ask for next."""
+        self._check_owner(session_id)
         session = self.sessions[session_id]
         order_items = session["order_state"]
+        menu = self._menu_for(session)
 
         # Rick's PR #99 review, decision 1: per-component capacity is the sum over bundle items
         # whose OWN bundle_slots include that component -- a drinks-only bundle (French Toast
         # Sticks Combo, a Crispy Tenders Dinner) contributes 0 to side capacity, not 1.
-        side_capacity = sum(item.quantity for item in order_items if "sides" in _bundle_slots(item.item))
-        drink_capacity = sum(item.quantity for item in order_items if "drinks" in _bundle_slots(item.item))
-        side_count = sum(item.quantity for item in order_items if _infer_combo_component(item.item) == "sides")
-        drink_count = sum(item.quantity for item in order_items if _infer_combo_component(item.item) in ("drinks",))
+        side_capacity = sum(item.quantity for item in order_items if "sides" in menu.bundle_slots(item.item))
+        drink_capacity = sum(item.quantity for item in order_items if "drinks" in menu.bundle_slots(item.item))
+        side_count = sum(item.quantity for item in order_items if menu.infer_combo_component(item.item) == "sides")
+        drink_count = sum(item.quantity for item in order_items if menu.infer_combo_component(item.item) in ("drinks",))
 
         # Include sides/drinks absorbed into a bundle during the bundle pivot
         side_count += session.get("absorbed_sides", 0)
@@ -393,6 +494,7 @@ class OrderState:
         Groups items with the same display name for a natural voice read-back.
         Example: 'Two Medium Cherry Limeades and one Footlong Quarter Pound Coney.'
         """
+        self._check_owner(session_id)
         session = self.sessions[session_id]
         items = session["order_state"]
         if not items:
@@ -401,7 +503,15 @@ class OrderState:
         # Aggregate quantities by display name
         counts = {}
         for oi in items:
-            clean_name = oi.display.replace("RT 44", "Route 44").replace("RT44", "Route 44")
+            # #74: a persona-bound session speaks its OWN size vocabulary (``sizes.spokenAs``,
+            # e.g. a future persona's own "44 oz" -> "Route 44" equivalent) via its MenuCatalog;
+            # the no-persona default path keeps today's literal Sonic "RT 44"/"RT44" substitution
+            # unchanged, since the shared ``menu_utils`` module has no spokenAs data of its own.
+            bound_menu = session.get("_menu")
+            if bound_menu is not None:
+                clean_name = bound_menu.spoken(oi.display)
+            else:
+                clean_name = oi.display.replace("RT 44", "Route 44").replace("RT44", "Route 44")
             # Convert parenthesized mods to speech-friendly format
             # e.g. "Sonic Cheeseburger (No Lettuce)" -> "Sonic Cheeseburger with no lettuce"
             if "(" in clean_name and ")" in clean_name:
@@ -427,6 +537,7 @@ class OrderState:
 
     def reset_order(self, session_id: str):
         """Clears all items and per-session order state from the current session's order (#41)."""
+        self._check_owner(session_id)
         session = self.sessions[session_id]
         self._reset_order_state(session)
         self._update_summary(session_id)
@@ -434,9 +545,11 @@ class OrderState:
 
     def get_order_summary_json(self, session_id: str) -> str:
         """Return cached JSON string — avoids repeated Pydantic serialization."""
+        self._check_owner(session_id)
         return self.sessions[session_id]["order_summary_json"]
 
     def get_session_identifiers(self, session_id: str) -> SessionIdentifiers:
+        self._check_owner(session_id)
         session = self.sessions[session_id]
         return SessionIdentifiers(
             session_token=session["session_token"],
@@ -445,6 +558,7 @@ class OrderState:
         )
 
     def advance_round_trip(self, session_id: str) -> SessionIdentifiers:
+        self._check_owner(session_id)
         session = self.sessions[session_id]
         session["round_trip_index"] += 1
         session["round_trip_token"] = self._format_round_trip_token(
@@ -454,6 +568,11 @@ class OrderState:
             "Round trip %s recorded for session %s", session["round_trip_index"], session_id
         )
         return self.get_session_identifiers(session_id)
+
+    def get_persona_id(self, session_id: str) -> "str | None":
+        """The persona id this session was bound to at ``create_session`` time, or ``None`` for
+        the default (env-driven, no-persona-argument) path (#74)."""
+        return self.sessions[session_id].get("_persona_id")
 
 # Create a singleton instance of OrderState
 order_state_singleton = OrderState()

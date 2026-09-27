@@ -19,6 +19,10 @@ import logging
 import os
 import re
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from persona_loader import Persona
 
 __all__ = [
     "SIZE_MAP",
@@ -35,6 +39,8 @@ __all__ = [
     "is_extra_item",
     "resolve_menu_item",
     "MENU_CATEGORY_MAP",
+    "MenuCatalog",
+    "get_catalog_for_persona",
 ]
 
 logger = logging.getLogger(__name__)
@@ -81,6 +87,31 @@ def _compact_size_key(size: str) -> str:
     return "".join(ch for ch in key if ch not in _SIZE_ALIAS_IGNORED_CHARS)
 
 
+# #74: the two functions below are parameterized on (size_map, size_aliases, hidden_sizes) so
+# ``MenuCatalog`` (below) can reuse the EXACT SAME algorithm for a specific persona's own sizes
+# block, instead of a second, independently-maintained copy -- one implementation, per the
+# convention this module already follows for _menu_key/strip_modifiers. The module-level
+# ``normalize_size``/``canonical_size_key`` below just call these with the module's own
+# SIZE_MAP/SIZE_ALIASES/_NO_DISPLAY_SIZES globals (the env-driven default persona), so their
+# behavior for every existing caller is byte-for-byte unchanged.
+def _normalize_size_for(size: str, size_map: dict[str, str], size_aliases: dict[str, str],
+                        hidden_sizes: frozenset[str]) -> str:
+    key = (size or "").strip().lower()
+    if key in hidden_sizes:
+        return ""
+    return size_map.get(_canonical_size_key_for(size, size_aliases, hidden_sizes), "")
+
+
+def _canonical_size_key_for(size: str, size_aliases: dict[str, str], hidden_sizes: frozenset[str]) -> str:
+    key = (size or "").strip().lower()
+    if key in hidden_sizes:
+        return "standard"
+    compact_key = _compact_size_key(size)
+    if compact_key in size_aliases:
+        return size_aliases[compact_key]
+    return size_aliases.get(key, key)
+
+
 def normalize_size(size: str) -> str:
     """Return a human-readable size string, or ``""`` for hidden/standard sizes.
 
@@ -96,10 +127,7 @@ def normalize_size(size: str) -> str:
     >>> normalize_size("n/a")
     ''
     """
-    key = (size or "").strip().lower()
-    if key in _NO_DISPLAY_SIZES:
-        return ""
-    return SIZE_MAP.get(canonical_size_key(size), "")
+    return _normalize_size_for(size, SIZE_MAP, SIZE_ALIASES, _NO_DISPLAY_SIZES)
 
 
 def canonical_size_key(size: str) -> str:
@@ -140,15 +168,7 @@ def canonical_size_key(size: str) -> str:
     >>> canonical_size_key("")
     'standard'
     """
-    key = (size or "").strip().lower()
-    if key in _NO_DISPLAY_SIZES:
-        return "standard"
-    # Collapse whitespace/periods/hyphens so "44 oz", "Route-44" and "rt. 44" all resolve the same
-    # way as their tighter spellings ("44oz", "route44", "rt44").
-    compact_key = _compact_size_key(size)
-    if compact_key in SIZE_ALIASES:
-        return SIZE_ALIASES[compact_key]
-    return SIZE_ALIASES.get(key, key)
+    return _canonical_size_key_for(size, SIZE_ALIASES, _NO_DISPLAY_SIZES)
 
 
 # ---------------------------------------------------------------------------
@@ -268,16 +288,29 @@ _PERSONAS_DIR = Path(os.environ.get("PERSONAS_DIR") or (_REPO_ROOT / "personas")
 _ACTIVE_PERSONA = os.environ.get("DEFAULT_PERSONA", "sonic")
 
 
-def _load_menu_data() -> tuple[dict[str, dict], dict[str, str]]:
-    """Load every menu item from the active persona's pack, once, keyed by ``_menu_key(name)``.
+def _load_menu_data(
+    menu_path: Path | None = None,
+    size_key_fn: Any = None,
+) -> tuple[dict[str, dict], dict[str, str]]:
+    """Load every menu item from a pack's menu/menuItems.json, once, keyed by ``_menu_key(name)``.
+
+    ``menu_path``/``size_key_fn`` (#74): defaults to the env-driven default persona's menu file
+    and the module-level ``canonical_size_key`` -- byte-for-byte the same load this function has
+    always done. ``MenuCatalog.from_persona`` (below) passes a specific persona's own
+    ``menu_path`` and its OWN size-alias resolver, so two personas with different size vocabularies
+    each get correctly keyed ``sizes``/``prices`` maps -- one loader implementation, not a second
+    copy per persona.
 
     Returns ``(item_fields, alias_map)``:
 
     - ``item_fields``: normalized item key -> ``{"name", "category", "comboSlot",
-      "happyHourDiscounted", "bundleSlots", "requiresMachine", "isExtra", "sizes"}``, read
-      straight from each item's fields in menuItems.json. Missing fields fall back to their
+      "happyHourDiscounted", "bundleSlots", "requiresMachine", "isExtra", "sizes", "prices"}``,
+      read straight from each item's fields in menuItems.json. Missing fields fall back to their
       schema-documented safe defaults (``"none"`` / ``False`` / ``None`` / ``()``), matching a
-      pack that hasn't been fully populated yet.
+      pack that hasn't been fully populated yet. ``prices``: canonical size key -> that size's
+      unit price (float), read straight from the pack (Rick's #74 follow-up: the unit price a
+      guest is charged comes from this menu record, never from the tool call's own ``price``
+      argument).
     - ``alias_map``: normalized alias key -> the canonical item's normalized key, built from each
       item's ``aliases`` list. An alias resolves the item for EVERY lookup below (category, combo
       slot, happy-hour discount, machine requirement, extra-item classification, and #73's
@@ -285,7 +318,10 @@ def _load_menu_data() -> tuple[dict[str, dict], dict[str, str]]:
       section 4.3/6, issue #71). For "Tots" this is observably identical to #60's narrower scope:
       see ``TotsAliasResolvesEverywhereTests`` in test_menu_utils.py.
     """
-    menu_path = _PERSONAS_DIR / _ACTIVE_PERSONA / "menu" / "menuItems.json"
+    if menu_path is None:
+        menu_path = _PERSONAS_DIR / _ACTIVE_PERSONA / "menu" / "menuItems.json"
+    if size_key_fn is None:
+        size_key_fn = canonical_size_key
     if not menu_path.exists():
         return {}, {}
     try:
@@ -302,6 +338,7 @@ def _load_menu_data() -> tuple[dict[str, dict], dict[str, str]]:
                 # PR #50 review round 4: key by _menu_key(name), not a bare name.lower() -- see
                 # the module comment above this section for the NBSP regression this closes.
                 key = _menu_key(name)
+                item_sizes = item.get("sizes") or ()
                 item_fields[key] = {
                     "name": name,
                     "category": category,
@@ -326,9 +363,15 @@ def _load_menu_data() -> tuple[dict[str, dict], dict[str, str]]:
                     # #73: every size this item is actually offered in, as a tuple of
                     # ``canonical_size_key(...)`` values -- read once here so ``resolve_menu_item``
                     # can hand it straight to its caller for the size-availability check.
-                    "sizes": tuple(
-                        dict.fromkeys(canonical_size_key(s.get("size", "")) for s in item.get("sizes") or ())
-                    ),
+                    "sizes": tuple(dict.fromkeys(size_key_fn(s.get("size", "")) for s in item_sizes)),
+                    # #74 (Rick's follow-up): each offered size's own unit price, keyed the same
+                    # way -- the single source of truth ``tools.py``'s ``update_order`` now charges
+                    # from, instead of trusting whatever ``price`` the tool call itself supplied.
+                    "prices": {
+                        size_key_fn(s.get("size", "")): s["price"]
+                        for s in item_sizes
+                        if isinstance(s.get("price"), (int, float))
+                    },
                 }
                 for alias in item.get("aliases") or ():
                     alias_key = _menu_key(alias)
@@ -518,11 +561,155 @@ def resolve_menu_item(item_name: str) -> dict | None:
     and rejects anything it returns ``None`` for as ``not_on_menu``.
 
     Returns a dict with the item's canonical ``name`` (the exact menuItems.json spelling, for
-    error messages), ``category``, and ``sizes`` (a tuple of ``canonical_size_key(...)`` values,
-    for the caller's own size-availability check) -- a defensive copy, not the shared internal
+    error messages), ``category``, ``sizes`` (a tuple of ``canonical_size_key(...)`` values, for
+    the caller's own size-availability check), and ``prices`` (#74, Rick's follow-up: canonical
+    size key -> that size's own unit price, straight from the pack -- the caller charges from
+    this, never from its own tool-call argument) -- a defensive copy, not the shared internal
     fields dict, so a caller can't accidentally mutate module state."""
     normalized = _resolve_alias(_menu_key(item_name))
     fields = _MENU_ITEM_FIELDS.get(normalized)
     if fields is None:
         return None
-    return {"name": fields["name"], "category": fields["category"], "sizes": fields["sizes"]}
+    return {
+        "name": fields["name"],
+        "category": fields["category"],
+        "sizes": fields["sizes"],
+        "prices": dict(fields.get("prices", {})),
+    }
+
+
+# ---------------------------------------------------------------------------
+# MenuCatalog (#74): the per-persona equivalent of everything above.
+#
+# The module-level SIZE_MAP/SIZE_ALIASES/_MENU_ITEM_FIELDS/_MENU_ALIAS_MAP globals (and the free
+# functions built on them, above) stay exactly as they behaved before #74 -- they're the
+# env-driven ("DEFAULT_PERSONA"/"PERSONAS_DIR") default catalog, and every existing caller/test
+# that imports them keeps working unchanged. ``MenuCatalog`` is the SAME algorithms
+# (``_normalize_size_for``/``_canonical_size_key_for``/``_load_menu_data`` above are all already
+# parameterized so there is exactly one implementation, not two), instantiated once per enabled
+# persona from that persona's OWN ``sizes``/``menu/menuItems.json`` data (design doc 4.4) --
+# ``order_state.py`` and ``tools.py`` resolve a session's bound persona to one of these instead of
+# reading the module globals directly, once more than one persona is enabled.
+# ---------------------------------------------------------------------------
+
+
+class MenuCatalog:
+    """A persona's own size vocabulary + menu item data, built once and cached per persona id."""
+
+    def __init__(
+        self,
+        persona_id: str,
+        size_map: dict[str, str],
+        size_aliases: dict[str, str],
+        hidden_sizes: frozenset[str],
+        spoken_as: dict[str, str],
+        item_fields: dict[str, dict],
+        alias_map: dict[str, str],
+    ):
+        self.persona_id = persona_id
+        self.size_map = size_map
+        self.size_aliases = size_aliases
+        self.hidden_sizes = hidden_sizes
+        self.spoken_as = spoken_as
+        self.item_fields = item_fields
+        self.alias_map = alias_map
+        self.category_map: dict[str, str] = {key: fields["category"] for key, fields in item_fields.items()}
+
+    @classmethod
+    def from_persona(cls, persona: Persona) -> MenuCatalog:
+        sizes_cfg = persona.manifest.sizes
+        size_map = dict(sizes_cfg.canonical)
+        size_aliases = dict(sizes_cfg.aliases)
+        hidden_sizes = frozenset((s or "").strip().lower() for s in sizes_cfg.hidden)
+        spoken_as = dict(sizes_cfg.spokenAs)
+
+        def _size_key_fn(size: str) -> str:
+            return _canonical_size_key_for(size, size_aliases, hidden_sizes)
+
+        item_fields, alias_map = _load_menu_data(persona.menu_path, size_key_fn=_size_key_fn)
+        return cls(persona.id, size_map, size_aliases, hidden_sizes, spoken_as, item_fields, alias_map)
+
+    def normalize_size(self, size: str) -> str:
+        return _normalize_size_for(size, self.size_map, self.size_aliases, self.hidden_sizes)
+
+    def canonical_size_key(self, size: str) -> str:
+        return _canonical_size_key_for(size, self.size_aliases, self.hidden_sizes)
+
+    def _resolve_alias(self, normalized: str) -> str:
+        return self.alias_map.get(normalized, normalized)
+
+    def spoken(self, text: str) -> str:
+        """Apply this persona's ``sizes.spokenAs`` substitutions to a display string.
+
+        #74: replaces ``order_state.py``'s old hardcoded ``"RT 44"``/``"RT44"`` -> ``"Route 44"``
+        readback substitution -- Sonic's own persona.json ``spokenAs`` block is exactly that same
+        mapping, so this is a no-op behavior change for Sonic, but a future persona with its own
+        size vocabulary now drives its own readback text instead of inheriting Sonic's."""
+        for raw, spoken in self.spoken_as.items():
+            text = text.replace(raw, spoken)
+        return text
+
+    def infer_category(self, item_name: str) -> str:
+        normalized = self._resolve_alias(_menu_key(item_name))
+        return self.category_map.get(normalized, "")
+
+    def infer_combo_component(self, item_name: str) -> str:
+        normalized = self._resolve_alias(_menu_key(item_name))
+        fields = self.item_fields.get(normalized)
+        if fields is None:
+            return ""
+        combo_slot = fields["comboSlot"]
+        return combo_slot if combo_slot in ("sides", "drinks") else ""
+
+    def is_happy_hour_discounted(self, item_name: str) -> bool:
+        normalized = self._resolve_alias(_menu_key(item_name))
+        fields = self.item_fields.get(normalized)
+        return bool(fields["happyHourDiscounted"]) if fields else False
+
+    def bundle_slots(self, item_name: str) -> tuple[str, ...]:
+        normalized = self._resolve_alias(_menu_key(item_name))
+        fields = self.item_fields.get(normalized)
+        return fields["bundleSlots"] if fields else ()
+
+    def requires_machine(self, item_name: str) -> str | None:
+        normalized = self._resolve_alias(_menu_key(item_name))
+        fields = self.item_fields.get(normalized)
+        return fields["requiresMachine"] if fields else None
+
+    def is_extra_item(self, item_name: str) -> bool:
+        normalized = self._resolve_alias(_menu_key(item_name))
+        fields = self.item_fields.get(normalized)
+        return bool(fields["isExtra"]) if fields else False
+
+    def resolve_menu_item(self, item_name: str) -> dict | None:
+        normalized = self._resolve_alias(_menu_key(item_name))
+        fields = self.item_fields.get(normalized)
+        if fields is None:
+            return None
+        return {
+            "name": fields["name"],
+            "category": fields["category"],
+            "sizes": fields["sizes"],
+            "prices": dict(fields.get("prices", {})),
+        }
+
+    def price_for(self, item_name: str, size_key: str) -> float | None:
+        """Rick's #74 follow-up: the unit price for *item_name* at *size_key*, straight from this
+        persona's own menu record -- ``None`` if the item or that size isn't on the menu."""
+        normalized = self._resolve_alias(_menu_key(item_name))
+        fields = self.item_fields.get(normalized)
+        if fields is None:
+            return None
+        return fields.get("prices", {}).get(size_key)
+
+
+_catalog_cache: dict[str, MenuCatalog] = {}
+
+
+def get_catalog_for_persona(persona: Persona) -> MenuCatalog:
+    """Return (building and caching, if needed) *persona*'s own :class:`MenuCatalog`."""
+    cached = _catalog_cache.get(persona.id)
+    if cached is None:
+        cached = MenuCatalog.from_persona(persona)
+        _catalog_cache[persona.id] = cached
+    return cached
