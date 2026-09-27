@@ -260,6 +260,33 @@ Fixed `useAzureSpeech.tsx`: (1) `onReceivedToolResponse` parameter was declared 
 - .NET 11 RC1 SDK (`C:\Users\brswig\.dotnet-sdks\11.0.100-rc.1.26425.128\`) works fine for both `Backend.Tests` and the conformance `Conformance.slnx` suite when `DOTNET_ROOT`/`PATH` are set per-process; emits a harmless NETSDK1057 preview-SDK notice on every build, not a failure.
 - vitest 65 → 116. Build green. No `npm install`; lockfile unchanged.
 
+## 2026-09-28 — PR #108 round 4, part 2: PR #106 landed on `dev` mid-task
+
+- The task brief's "if PR #106 (test-gamma fixture pack) has merged into dev by then" conditional
+  looked stale at task start (`gh pr view 106` showed it open, unrelated title) — but it merged into
+  `dev` as `6a71c3e` *during* this round's work, after the first `origin/dev` merge here but before
+  push. Only surfaced via the PR-linked `pull_request` CI run failing on the pushed head (`3a88ced`):
+  GitHub's `pull_request` checkout builds a fresh merge of the PR branch against the CURRENT `dev`
+  tip at trigger time, not whatever `dev` looked like at my last local fetch, so a fast one-shot
+  local merge-and-push isn't enough insurance on a long multi-step task — re-`git fetch origin dev`
+  and re-check `gh pr view <N>`/`git log --all` close to push time, not just at task start.
+- test-gamma (added by #106) is scoped to `ModelSelectionConformanceFixture`'s negative
+  model-selection rows (a narrow `models.realtime.allowed` persona, see
+  `ModelSelectionConformanceFixtures.cs`) — not part of `TwoPersonaConformanceFixture`
+  (test-alpha/test-beta) and not meant to get generic greeting/search/order smoke coverage.
+  Used the "or list it as an explicit exclusion" branch from Rick's own review wording rather than
+  awkwardly widening `TwoPersonaConformanceFixture`'s persona list for an unrelated fixture's sake:
+  added `FixturePackPersonaSmokeTests.FixturePersonaExclusions` (id → reason dictionary) and had
+  `PersonaSmokeCoverageTests`'s fixture-branch test `.Except()` its keys before asserting, so a
+  pack that's out of scope by design stays silent there while a genuinely forgotten pack still
+  fails loudly.
+- Re-merged `origin/dev` a second time mid-round (`d6611c6`) to pull in #106's diff, then re-ran the
+  full local suite against the new base: `Category!=Browser` 662/662 (+10 vs. round 4's first pass,
+  all `dev`/#106's own new tests), `Category=Browser` 5/5 (667/667 total), `pytest` 1151 passed/168
+  subtests (+74 vs. 1077, #106 added `test_model_catalog.py`/`test_model_selection.py`/
+  `test_processors.py` etc.), `ruff check .` clean. No changes needed to my three round-4 items
+  themselves — the exclusion was the only new work driven by #106 landing.
+
 ## 2026-09-26 — issue #80 F2 (wave 1 of the persona-theming epic)
 
 - **Scope check matters more than the task brief.** My brief said "refactor hard-coded Sonic

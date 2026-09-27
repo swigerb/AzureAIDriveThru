@@ -227,6 +227,23 @@ public sealed class FixturePackPersonaSmokeTests(TwoPersonaConformanceFixture fi
         return data;
     }
 
+    /// <summary>
+    /// Fixture packs discovered on disk under app/backend/tests/fixtures/personas/ that
+    /// deliberately have NO row here, with the reason why -- <see
+    /// cref="PersonaSmokeCoverageTests"/> reads this so a pack that is genuinely out of scope for
+    /// this generic smoke scaffold by design doesn't fail loudly there either, while a pack that
+    /// is simply forgotten still does.
+    /// </summary>
+    public static IReadOnlyDictionary<string, string> FixturePersonaExclusions { get; } =
+        new Dictionary<string, string>
+        {
+            ["test-gamma"] = "PR #106: a narrow-`models.realtime.allowed` fixture pack scoped to " +
+                "ModelSelectionConformanceFixture's negative (404) model-selection rows only (see " +
+                "ModelSelectionConformanceFixtures.cs) -- it is not part of " +
+                "TwoPersonaConformanceFixture (test-alpha/test-beta) and doesn't need its own " +
+                "generic greeting/search/order/happy-hour smoke coverage.",
+        };
+
     [Theory]
     [MemberData(nameof(FixturePersonaIds))]
     public Task Discovered_pack_passes_the_smoke_scenario(string personaId) => fixture.RunAsync(

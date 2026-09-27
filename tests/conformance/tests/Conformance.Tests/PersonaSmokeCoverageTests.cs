@@ -46,7 +46,10 @@ public sealed class PersonaSmokeCoverageTests
         var discovered = ConformancePersonas.DiscoverFromDisk(RepoPaths.FixturePersonasDirectory(RepoPaths.FindRepoRoot()));
         var covered = GetTheoryDataValues<string>(typeof(FixturePackPersonaSmokeTests), nameof(FixturePackPersonaSmokeTests.FixturePersonaIds));
 
-        var missing = discovered.Except(covered).ToArray();
+        // Rick's PR #108 round 4 review item 2: a pack may instead be listed in
+        // FixturePersonaExclusions with a reason (e.g. test-gamma/#106 -- scoped to a different
+        // fixture entirely) rather than getting its own smoke row, so it's subtracted here too.
+        var missing = discovered.Except(covered).Except(FixturePackPersonaSmokeTests.FixturePersonaExclusions.Keys).ToArray();
         Assert.True(missing.Length == 0,
             $"Persona pack(s) discovered on disk under app/backend/tests/fixtures/personas/ have " +
             $"no FixturePackPersonaSmokeTests row: {string.Join(", ", missing)}. Either " +
