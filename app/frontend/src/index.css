@@ -46,6 +46,27 @@ layer(base);
   --color-chart-4: hsl(var(--chart-4));
   --color-chart-5: hsl(var(--chart-5));
 
+  /* Persona theme accents (issue #80 F2): every brand color components used to hard-code as
+     literal hex now resolves through one of these utilities instead (`bg-brand-red`,
+     `text-brand-blue/80`, `from-brand-yellow`, etc.). `lib/personaTheme.ts::applyTheme` can
+     override the underlying `--brand-*` custom properties at runtime once a persona picker (F1)
+     exists; today they only ever hold Sonic's values, set once at bootstrap. */
+  --color-brand-red: var(--brand-red-hex);
+  --color-brand-red-strong: var(--brand-red-strong);
+  --color-brand-red-light: var(--brand-red-light);
+  --color-brand-red-tint: var(--brand-red-tint);
+  --color-brand-blue: var(--brand-blue-hex);
+  --color-brand-blue-strong: var(--brand-blue-strong);
+  --color-brand-blue-tint: var(--brand-blue-tint);
+  --color-brand-yellow: var(--brand-yellow);
+  --color-brand-yellow-light: var(--brand-yellow-light);
+  --color-brand-ink: var(--brand-ink);
+  --color-brand-surface-tint: var(--brand-surface-tint);
+  --color-brand-surface-dark: var(--brand-surface-dark);
+  --color-brand-surface-dark-alt: var(--brand-surface-dark-alt);
+  --color-brand-success: var(--brand-success);
+  --color-brand-neutral: var(--brand-neutral);
+
   --text-7xl: 4.5rem;
   --text-7xl--line-height: 1.3;
   --text-4xl: 2.5rem;
@@ -88,6 +109,40 @@ layer(base);
         --brand-blue: 208 52% 33%;
         --brand-light: 195 44% 96%;
         --brand-dark: 208 53% 20%;
+
+        /* Persona theme accents (issue #80 F2, docs/persona-architecture.md §9 row F2). These are
+           Sonic's exact hex constants -- kept separate from --brand-red/--brand-blue above (which
+           round-trip through HSL for the shadcn-style tokens below) so components that need a
+           byte-identical color, rather than an HSL approximation, have one. lib/personaTheme.ts's
+           SONIC_THEME is the source of truth; applyTheme() overrides these at runtime, and today's
+           only caller passes SONIC_THEME right back in, so these defaults are never actually
+           exercised until a persona picker (F1) exists. */
+        --brand-red-hex: #E40046;
+        --brand-red-strong: #C31B24;
+        --brand-red-light: #FF4D7A;
+        --brand-red-tint: #FF6B8A;
+        --brand-blue-hex: #285780;
+        --brand-blue-strong: #137AC9;
+        --brand-blue-tint: #74D2E7;
+        --brand-yellow: #FEDD00;
+        --brand-yellow-light: #FFE84D;
+        --brand-ink: #18344D;
+        --brand-surface-tint: #F2F8FA;
+        --brand-surface-dark: #0F1A24;
+        --brand-surface-dark-alt: #152231;
+        --brand-success: #328500;
+        --brand-neutral: #C9CFD4;
+        /* Translucent "veils" of the above, for shadows/gradients that need a fixed alpha baked in
+           (a plain CSS custom property can't carry a Tailwind opacity modifier). */
+        --brand-red-veil-10: rgba(228, 0, 70, 0.10);
+        --brand-red-veil-12: rgba(228, 0, 70, 0.12);
+        --brand-blue-veil-08: rgba(40, 87, 128, 0.08);
+        --brand-blue-veil-12: rgba(40, 87, 128, 0.12);
+        --brand-blue-veil-15: rgba(40, 87, 128, 0.15);
+        --brand-blue-veil-18: rgba(40, 87, 128, 0.18);
+        --brand-yellow-veil-15: rgba(254, 221, 0, 0.15);
+        --brand-surface-tint-veil-98: rgba(242, 248, 250, 0.98);
+
         --background: var(--brand-light);
         --foreground: var(--brand-dark);
         --card: 0 0% 100%;
@@ -148,10 +203,10 @@ layer(base);
     }
     body {
         @apply bg-background text-foreground;
-        background-image: radial-gradient(40% 40% at 15% 20%, rgba(228, 0, 70, 0.10), transparent),
-            radial-gradient(38% 38% at 85% 10%, rgba(40, 87, 128, 0.12), transparent),
-            radial-gradient(32% 32% at 75% 60%, rgba(254, 221, 0, 0.15), transparent),
-            linear-gradient(180deg, rgba(242, 248, 250, 0.98), rgba(255, 255, 255, 0.95));
+        background-image: radial-gradient(40% 40% at 15% 20%, var(--brand-red-veil-10), transparent),
+            radial-gradient(38% 38% at 85% 10%, var(--brand-blue-veil-12), transparent),
+            radial-gradient(32% 32% at 75% 60%, var(--brand-yellow-veil-15), transparent),
+            linear-gradient(180deg, var(--brand-surface-tint-veil-98), rgba(255, 255, 255, 0.95));
         min-height: 100vh;
     }
 
@@ -164,7 +219,7 @@ layer(base);
         width: 280px;
         height: 280px;
         border-radius: 50%;
-        background: radial-gradient(circle at center, rgba(255, 255, 255, 0.8), rgba(40, 87, 128, 0.12));
+        background: radial-gradient(circle at center, rgba(255, 255, 255, 0.8), var(--brand-blue-veil-12));
         filter: blur(40px);
     }
 
