@@ -1,7 +1,7 @@
 # ADR-001: Persona architecture for the unified drive-thru demo
 
-- **Status:** **Accepted**, 2026-09-26T22:29:32-04:00, with Brian's decisions (design doc section 16). Proposed
-  2026-09-25.
+- **Status:** **Accepted**, 2026-09-26T22:29:32-04:00, with Brian's decisions (design doc section 16),
+  including the environment details of 22:52 (decision 11). Proposed 2026-09-25.
 - **Issues:** #19 (P1 spike), including the design for #51. Part of epic #6. Implemented by #69 to #88 (P2),
   then #12 to #18 and #21 (C#).
 - **Deciders:** Brian Swiger (owner), Rick (lead)
@@ -49,24 +49,31 @@ one behavior (McDonald's meal-number lookup) needs a named strategy.
 
    A shared catalog lists the models, Bicep maps each to the deployment that exists, the persona allows a subset,
    and the session picks one.
-7. **One new Azure environment, two backends.** The azd env `azure-ai-drivethru` holds one Foundry resource and
-   one ACA environment, with a Python and a .NET container app. Both serve the same frontend, and a header switch
-   moves between their hostnames, keeping persona and model. There is no proxy on the audio path.
+7. **One new, independent Azure environment, two backends.** Subscription `BrianSwiger-Microsoft-External-2026`,
+   eastus2, azd env `azureaidrivethru-prod`, resource group `rg-azureaidrivethru-prod`. It has its own Foundry
+   (Azure OpenAI) account, its own paid AI Search service with one index per persona, and one ACA environment
+   with a Python and a .NET container app. It has zero dependency on the old resource groups. Realtime starts at
+   GlobalStandard capacity 10 or less (the spare quota) and scales after cutover. Both apps serve the same
+   frontend, and a header switch moves between their hostnames, keeping persona and model. There is no proxy on
+   the audio path.
 8. **Runtime theming.** A `PersonaProvider` applies theme tokens and manifest copy, replacing the hard-coded brand
    colors. The frontend gains persona, model and backend pickers. This is the approved exception to the "no
    frontend changes" rule.
 9. **Repo and features.** The repo is renamed `AzureAIDriveThru`. Features work the same for every persona, and
    only brand logic differs. Dunkin's crew dashboard, CRM simulator and Azure Local edge stack, and the dead Azure
    Speech toggle, are not carried over.
-10. **Retire the rest.** After Brian's parity sign-off:
-    - Day 0: archive the sibling repos and stop the three old container apps;
-    - Day 30: move the free Search service (and its indexes) into the new resource group, then delete every old
-      resource group and Entra registration.
+10. **Retire the rest.** After Brian's parity sign-off, with his confirmation right before each destructive step:
+    - Day 0 (cutover): archive the sibling repos; delete `rg-mcd-demo` and `rg-dunkin-demo`; delete everything in
+      `rg-sonic-demo` (apps, ACR, identity, storage, Log Analytics, and the old shared AOAI including the orphaned
+      `gpt-realtime-1.5`) except the old shared Search service and its three indexes; delete the old Entra
+      registrations; scale the new realtime deployment.
+    - Day 30: delete the old Search service and the empty `rg-sonic-demo`.
+    - Dunkin's edge stack was never deployed, so its removal is code-only.
 11. **Release gate.** `dev` merges to `main` only when the whole plan is green:
     - unit tests;
     - conformance for persona x backend x pipeline;
     - Playwright UX per persona x backend;
-    - live Azure smoke per persona x backend x model;
+    - live Azure smoke per persona x backend x model, plus the zero-dependency check;
     - Brian's manual UX sign-off.
 
 ## Consequences
@@ -83,7 +90,10 @@ one behavior (McDonald's meal-number lookup) needs a named strategy.
 - No off-menu ordering flips about a dozen conformance rows and requires complete menus first (#72, #73).
 - The cascade pipeline needs new harness fakes, and each chat model must qualify on tool calling (#82).
 - The suite's run time grows with persona x backend x pipeline. It is sharded if needed.
-- Quota must cover the new Foundry deployments while the old environments still hold theirs (#85).
+- Realtime quota is tight until cutover (about 10 spare GlobalStandard units), so the new environment starts
+  small and scales only after the old AOAI is deleted (#85, #88).
+- A paid Search service costs more than the old free one; it is the price of independence and of more than
+  three indexes.
 
 ## Alternatives considered
 
@@ -93,4 +103,5 @@ one behavior (McDonald's meal-number lookup) needs a named strategy.
 | Per-brand code plug-ins | Every rule would be written twice (Python and C#) and could drift |
 | Keep an off-menu keyword fallback as data | Brian chose no off-menu ordering; the fallback was the source of the substring bugs |
 | One hostname through a proxy app | An extra WebSocket hop on the audio path, and more parts to secure. Kept as the fallback if Brian wants one hostname |
+| Reuse the old shared AOAI and free Search in the new environment | Couples the new environment to `rg-sonic-demo`, which is being torn down. Brian chose full independence |
 | Mid-session persona or model switch | The voice locks after the first audio, and the order rules differ by brand. A new session is cleaner |

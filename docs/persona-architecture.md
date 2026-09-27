@@ -2,8 +2,8 @@
 
 - **Issue:** #19 (P1 design spike), including the design for #51. Part of epic #6.
 - **Decision record:** [ADR-001](adr/ADR-001-persona-architecture.md)
-- **Status:** **Accepted**, 2026-09-26T22:29:32-04:00, with Brian's decisions (section 16). Proposed
-  2026-09-25T19:10:59-04:00.
+- **Status:** **Accepted**, 2026-09-26T22:29:32-04:00, with Brian's decisions (section 16),
+  including the environment details of 22:52 (decision 11). Proposed 2026-09-25T19:10:59-04:00.
 - **Author:** Rick (lead)
 - **Repo:** this repo is being renamed `AzureAIDriveThru` (#69).
 
@@ -26,7 +26,12 @@ Brian's decisions (2026-09-26, section 16):
 - **Models:** model flexibility is a first-class feature. Realtime and chat models are selectable per deployment,
   persona and session (section 7).
 - **Repo and cleanup:** the repo is renamed `AzureAIDriveThru`. After parity, the sibling repos are archived and
-  every old environment is torn down, after a 30-day grace.
+  every old environment is torn down at cutover. Only the old shared Search service and its three indexes are
+  kept, for a 30-day grace.
+- **New environment (section 10):** azd env `azureaidrivethru-prod`, resource group `rg-azureaidrivethru-prod`,
+  eastus2, subscription `BrianSwiger-Microsoft-External-2026`. It has its own Foundry (Azure OpenAI) account and
+  its own paid AI Search service with one index per persona, and zero dependency on `rg-sonic-demo`,
+  `rg-mcd-demo` or `rg-dunkin-demo`.
 
 P2 is 20 issues (#69 to #88) in milestone "P2 Unified demo (Python)" (section 13). The C# port (#12 to #18, #21)
 then ports the unified app once and deploys into the same environment (section 14). `dev` merges to `main` only
@@ -464,7 +469,7 @@ Local mode is selectable only when `/health` reports it available (models presen
   - tool definitions come from the pack's `tool_schemas.yaml`, converted to chat-tool shape once;
   - transcription and TTS use the catalog's `cascade.transcription` and `cascade.tts` deployments.
 - **Local.** Python runs ONNX Runtime GenAI, Whisper and Piper (ported from McDonald's). C# parity for local mode
-  is the one open ask (section 17). The default is to port it last in the C# track.
+  was resolved in section 17: port it, last in the C# track.
 - **Processor interface.** Both backends implement `realtime`, `cascade` and `local` behind one interface that
   emits the same browser frames (`response.audio.delta`, transcripts, `extension.*`), so conformance treats the
   pipeline as a dimension, not a different product.
@@ -526,8 +531,16 @@ Fonts: the pack's `importUrl` must be on `fonts.googleapis.com` (the loader enfo
 
 ## 10. The new Azure environment
 
-Decisions 1 and 10: one new environment in Brian's internal subscription (the one the current demos use). Every
-other environment is torn down (section 11).
+Decisions 1, 10 and 11: one new environment, fully independent of the old ones. Every other environment is torn
+down (section 11).
+
+| Setting | Value |
+| --- | --- |
+| Subscription | `BrianSwiger-Microsoft-External-2026` (`44847a42-6b69-4e6c-b7e5-ce7140469dd6`), the one the current demos use |
+| Region | `eastus2` (all resources, including Search) |
+| azd env | `azureaidrivethru-prod` |
+| Resource group | `rg-azureaidrivethru-prod` |
+| Dependencies | **None** on `rg-sonic-demo`, `rg-mcd-demo` or `rg-dunkin-demo`. The `*_REUSE_EXISTING` flags stay `false`; no app setting, role assignment or hook may name an old resource. #87 checks this before cutover |
 
 ### 10.1 One frontend, two backends: recommendation
 
@@ -538,19 +551,37 @@ other environment is torn down (section 11).
 | C. Azure Front Door with path routing | One hostname, managed | Added cost; EasyAuth and cookies per origin; overkill for a demo |
 
 **Recommendation: A.** "All three personas on one URL" holds on each backend. The backend switch keeps persona
-and model, and an Entra SSO session makes the hop seamless. If Brian wants literally one hostname for both
-backends, B is the fallback (section 17).
+and model, and an Entra SSO session makes the hop seamless. Option A is accepted (section 17); B stays the
+fallback if a single hostname is ever required.
 
-### 10.2 Resources (`azd env` `azure-ai-drivethru`, resource group `rg-azure-ai-drivethru`, eastus2)
+### 10.2 Resources (`rg-azureaidrivethru-prod`, eastus2)
 
 | Resource | Notes |
 | --- | --- |
-| Microsoft Foundry resource and project | Model deployments: the realtime default plus at least one alternative, transcription, TTS, embeddings (`text-embedding-3-large`), and the cascade chat models. Capacity is planned against the shared regional quota. The old deployments on `cog-axgpampkq3yfa` still consume quota during the overlap, so trim them if needed |
-| ACA environment, Log Analytics, ACR, user-assigned identity | As today |
+| Microsoft Foundry (Azure OpenAI) account and project | **Its own** account, never `cog-axgpampkq3yfa`. Deployments in 10.3 |
+| AI Search | **Its own paid service** (Basic SKU, eastus2). The free slot is taken by the old shared `gptkb-axgpampkq3yfa`, and paid removes the 3-index cap. One index per persona: `sonic-menu-items`, `mcdonalds-menu-items`, `dunkin-menu-items`, ingested from each pack's `menu/menuItems.json` by the postprovision hook (#84). The identity gets data-plane roles only on this service |
+| Storage | Its own account for ingestion, as today |
+| ACA environment, Log Analytics, ACR, user-assigned identity | Its own, as today, with `AzureAIDriveThru` names |
 | Container app `python` | One gunicorn worker, sticky ingress, `/health` probe, EasyAuth, `APP_SESSION_SECRET`, `PERSONAS=sonic,mcdonalds,dunkin`, `DEFAULT_PERSONA=sonic`, `AZURE_AI_MODEL_DEPLOYMENTS` (#85, #87) |
-| Container app `dotnet` | Same settings and the same shared Foundry, Search and identity. Added by S7 (#17) |
-| Search | Overlap: reuse the existing free `gptkb-axgpampkq3yfa` in `rg-sonic-demo` (the reuse flags the siblings already use). Teardown: move it into `rg-azure-ai-drivethru`, which keeps the three indexes (section 11). If the move is blocked, delete the old service and re-ingest into a new free one (minutes, since ingestion is idempotent) |
-| Entra | **One** app registration with redirect URIs for both hostnames. It needs Brian's admin rights (section 17) |
+| Container app `dotnet` | Same settings and the same Foundry account, Search and identity. Added by S7 (#17) |
+| Entra | **One** new app registration with redirect URIs for both hostnames, created by Squanchy with Brian's account during #85 (section 17). The three old registrations are deleted at cutover (#88) |
+
+### 10.3 Model deployments and capacity
+
+Quota for GlobalStandard `gpt-realtime-2.1` is subscription-wide, and only about 10 units are spare while the old
+environments hold theirs (36 for Sonic plus 10 DataZoneStandard for the siblings). So the new environment starts
+small and scales after cutover.
+
+| Deployment | SKU | Stand-up capacity | After cutover | Notes |
+| --- | --- | --- | --- | --- |
+| `gpt-realtime-2.1` (realtime default) | GlobalStandard | **10 or less** | Scale up (for example to 40) once #88 deletes `cog-axgpampkq3yfa` | Bicep param `realtimeDeploymentCapacity`; scaling is a param change plus `azd provision`, then the smoke again |
+| One alternative realtime model (for example `gpt-realtime-mini`) | GlobalStandard | Small | Unchanged | Separate quota bucket with headroom; proves the model picker live |
+| Cascade chat models (#82 list) | GlobalStandard | Small | Unchanged | Only models that pass Unity's tool-calling qualification |
+| Transcription and TTS for cascade | GlobalStandard | Small | Unchanged | Catalog `cascade.transcription` and `cascade.tts` |
+| `text-embedding-3-large` | Standard | 30 | Unchanged | Ingestion and query embeddings |
+
+DataZoneStandard is not used: the US data-zone pool for `gpt-realtime-2.1` is exhausted by the siblings. Live
+smoke and the manual checklist run serially, so 10 units are enough for verification; CI never touches quota.
 
 ## 11. Repo rename, sibling archive and teardown
 
@@ -558,15 +589,18 @@ backends, B is the fallback (section 17).
   PR merges. GitHub keeps the redirects. Internal protocol ids stay (row 49).
 - **Siblings until parity:** the McDonald's and Dunkin repos get security fixes only (McDonald's #6, Dunkin #11).
 
-**Teardown sequence (decisions 9 and 10, #88):**
+**Teardown sequence (decisions 9, 10 and 11, #88).** Squanchy executes; Brian confirms right before each
+destructive step (Day 0 and Day 30).
 
 | When | Step |
 | --- | --- |
-| Stand-up (#85, #87) | Create the new environment and deploy the unified Python app. The old environments keep running, untouched |
-| Day 0: Brian's parity sign-off (#88) | Complete the parity checklist (every row in section 3 marked done or dropped). Archive the McDonald's and Dunkin repos: README redirect to the new URL with `?persona=`, a `final-standalone` tag, then GitHub archive. **Stop, don't delete**, the three old container apps (deactivate revisions), which is reversible |
-| Days 1 to 29 | Grace period. Anything needed from an old environment can be restored by reactivating it |
-| Day 30 | Move `gptkb-axgpampkq3yfa` into `rg-azure-ai-drivethru`, re-run `azd provision` (role assignments reapplied), smoke the new environment. Then delete `rg-mcd-demo`, `rg-dunkin-demo` and `rg-sonic-demo`, including `cog-axgpampkq3yfa` once nothing references it. Brian deletes the three old Entra app registrations |
+| Stand-up (#85, #87) | Create `rg-azureaidrivethru-prod` and deploy the unified Python app with realtime capacity 10 or less. Ingest the three indexes into the new Search service. Run the live smoke and the zero-dependency check (section 12). The old environments keep running, untouched |
+| Day 0: cutover (#88) | 1. Brian's parity sign-off: the parity checklist (every row in section 3 marked done or dropped) and the manual UX checklist, both on the new URL. 2. Archive the McDonald's and Dunkin repos: README redirect to the new URL with `?persona=`, a `final-standalone` tag, then GitHub archive. 3. Brian confirms the teardown. 4. Delete `rg-mcd-demo` and `rg-dunkin-demo` (whole groups). 5. In `rg-sonic-demo`, delete resource by resource, keeping only `gptkb-axgpampkq3yfa`: the container app, ACA environment, ACR, identity, storage (and its Event Grid system topic), Log Analytics, and `cog-axgpampkq3yfa` (its deployments first, including the orphaned `gpt-realtime-1.5`; then the account; then purge it so the quota is released). 6. Brian deletes the three old Entra app registrations. 7. Scale the new realtime deployment (10.3), re-provision, and run the live smoke again |
+| Days 1 to 29 | Grace period. `rg-sonic-demo` holds only the old Search service and its three indexes (`sonic-menu-items`, `mcdonalds-menu-items`, `dunkin-menu-items`), kept as a data reference. No app uses them. Rollback for the demo itself is a previous revision of the new app |
+| Day 30 | Brian confirms. Delete `gptkb-axgpampkq3yfa`, then the empty `rg-sonic-demo`. Verify that no `rg-*-demo` group remains in the subscription |
 | Later | The C# app joins the same environment (S7, #17). It doesn't wait for, and doesn't block, the teardown |
+
+Dunkin's Azure Local edge stack was never deployed, so its removal is code-only (#86).
 
 ## 12. End-to-end validation plan
 
@@ -577,7 +611,8 @@ backends, B is the fallback (section 17).
 | Unit | pytest (backend), vitest (frontend), xUnit (C# backend, from S2), harness unit tests; every new behavior mutation-checked | CI on every PR | `conformance-gate` plus the unit jobs |
 | Functional conformance | The black-box suite: **persona x backend x pipeline**, with a model-selection subset (section 8) | CI on every PR (fakes only) | Every leg of the matrix |
 | UX, automated | Playwright per persona **x backend**: theme, menu (daypart for McDonald's), one voice order through the fake upstream, persona switch, model switch, backend switch, resume after a dropped socket, rate-limit clip | CI (browser job) | Required |
-| Live Azure smoke | `smoke_realtime.py --persona --model` (and a cascade smoke) **per persona x backend x enabled model**: session config accepted, tools registered, transcription echo, one tool call | azd `postdeploy` on the new environment | Deploy is red if any fails |
+| Live Azure smoke | `smoke_realtime.py --persona --model` (and a cascade smoke) **per persona x backend x enabled model**: session config accepted, tools registered, transcription echo, one tool call, and a Search query against that persona's index | azd `postdeploy` on `azureaidrivethru-prod`; again after the Day 0 scale-up | Deploy is red if any fails |
+| Zero-dependency check | Every app setting, role assignment and hook output of the new environment resolves only to resources in `rg-azureaidrivethru-prod` (a script over `azd env get-values` and `az role assignment list`). Re-run after Day 0: the live smoke must still pass with the old AOAI deleted | #87, then #88 | Required before Brian's teardown confirmation |
 | UX, manual checklist | Per persona on the live URL: greeting, a three-item order with the brand rule (Route 44; a meal with auto-filled fries; a latte with extras), happy hour announced on Sonic and Dunkin and absent on McDonald's (fixed-clock build or a live window), off-menu rejection, barge-in, resume, backend and model switch. Unity records it | New environment, before Day 0 and before release | Brian's sign-off |
 | Live A/B (S8) | Scripted orders against both backends, per persona: first-audio latency, tool correctness, CPU and memory per session, cold start | New environment | S8 report |
 
@@ -603,10 +638,10 @@ Milestone **"P2 Unified demo (Python)"**. Sizes: S up to 1 dev-day, M 2 to 3, L 
 | #82 | P2-13 Cascade pipeline with Foundry chat models | Summer, Unity, Birdperson | L | #75 |
 | #83 | P2-14 Voices, greetings, clips, prompt review per persona | Unity | M | #78, #79 |
 | #84 | P2-15 Ingestion and Search per persona | Summer, Squanchy | M | #72, #78, #79 |
-| #85 | P2-16 New Azure environment on Foundry, ready for both backends | Squanchy, Rick | L | #69 (names), #75 (catalog); skeleton starts now |
+| #85 | P2-16 New Azure environment on Foundry (own AOAI and paid Search), ready for both backends | Squanchy, Rick | L | this PR (skeleton); #75 (catalog) |
 | #86 | P2-17 Scope record: dashboard, CRM and edge not carried over | Rick | S | none |
 | #87 | P2-18 Deploy the unified Python app; live smoke per persona and model | Squanchy, Unity | M | #80 to #85 |
-| #88 | P2-19 Parity sign-off, sibling archive, teardown (30-day grace) | Rick, Squanchy | M | #87 and Brian |
+| #88 | P2-19 Parity sign-off, sibling archive, teardown (Search kept 30 days) | Rick, Squanchy | M | #87 and Brian |
 
 **Critical path:** #70 → #71 → #72 → #73 → #74 → #75 → #82 → #87 → #88. The brand packs (#77, #78, #79, #83,
 #84) run beside the model work (#81, #82) after #74.
@@ -629,11 +664,11 @@ The C# port starts after P2 lands and ports the unified app once. It deploys int
 | Issue | Scope update |
 | --- | --- |
 | #12 S2 skeleton | `PersonaCatalog` and `ModelCatalog` from `personas/` and `config.yaml`; `/api/personas` (with `models` and `backends`); the `?persona=&model=` binding with 404s; the processor interface skeleton; `docs/dotnet_mapping.md` covers `personas.py` and the model catalog |
-| #13 S3 middle tier | The `realtime` processor with per-session persona and model (reasoning from the catalog); the `cascade` processor through the Foundry v1 chat endpoint with the same tools; `local` per section 17 |
+| #13 S3 middle tier | The `realtime` processor with per-session persona and model (reasoning from the catalog); the `cascade` processor through the Foundry v1 chat endpoint with the same tools; `local` last (section 17) |
 | #14 S4 tools and orders | Data-driven engines: sizes, bundles, extras, per-persona happy hour (none for McDonald's), the `meal_numbers` strategy, and the **no-off-menu rejection**; golden files per persona match to the cent |
 | #15 S5 sessions | Resume binds persona and model (`persona_mismatch`, `model_mismatch`) |
 | #16 S6 tooling | Ingestion, clips and smoke with `--persona` (and `--model`); the brand raw-export converters |
-| #17 S7 deployment | The `dotnet` container app in `rg-azure-ai-drivethru`, beside `python`: the same Foundry deployments, Search, identity and Entra app (a second redirect URI); the backend switch goes live |
+| #17 S7 deployment | The `dotnet` container app in `rg-azureaidrivethru-prod`, beside `python`: the same Foundry deployments, Search, identity and Entra app (a second redirect URI); the backend switch goes live |
 | #18 S8 A/B and release | The section 12 plan in full, per persona x backend x model; then `dev` to `main` |
 | #21 parity | The persona x pipeline suite is green on C# |
 
@@ -644,9 +679,9 @@ The C# port starts after P2 lands and ports the unified app once. It deploys int
 | R1 | The move from module globals to a per-session persona regresses hardened Sonic code | #70 and #71 are behavior-neutral behind the full suite; #72 to #74 are the only intentional changes |
 | R2 | No off-menu ordering removes things guests order today (a Coke at Sonic) | #72 completes the menu from source data **before** #73 removes the fallback; the prompt offers the closest menu item |
 | R3 | A sibling brand rule is lost or changed in the port | Golden files come from the siblings' own tests; parity checklist in #88 |
-| R4 | Realtime or chat model quota in eastus2 is too small while the old environments still hold deployments | Plan capacity in #85; trim the old deployments during the overlap; they're deleted on Day 30 |
+| R4 | Realtime quota is tight until cutover: about 10 spare GlobalStandard `gpt-realtime-2.1` units subscription-wide | Stand up at capacity 10 or less (10.3); CI uses fakes only; live checks run serially; scale after #88 deletes `cog-axgpampkq3yfa` |
 | R5 | A cascade chat model's tool calling is weaker than the realtime model's | Unity qualifies each model in #82 with the ordering subset before it enters the catalog; per-persona `allowed` lists keep weak models off |
-| R6 | Moving the free Search service across resource groups fails or loses role assignments | Re-run `azd provision` after the move; the fallback is to re-ingest into a new free service (section 10.2) |
+| R6 | The new environment silently depends on an old resource, so the Day 0 teardown breaks it | Own AOAI and own Search from day one; reuse flags off; the zero-dependency check and a post-teardown smoke (section 12) |
 | R7 | Conformance run time grows with persona x backend x pipeline | Only data-driven theories multiply; shard by persona; the cascade and model subsets are representative, not full |
 | R8 | Prompt or brand leakage (a McDonald's crew member says "carhop") | Inverted brand guards (#76); per-persona smoke; Unity's review (#83) |
 | R9 | Trademark optics of three real brands on one URL | Per-pack legal line; the allow-list can hide any persona without a code change |
@@ -656,7 +691,7 @@ The C# port starts after P2 lands and ports the unified app once. It deploys int
 
 | Q | Question | Decision | Where |
 | --- | --- | --- | --- |
-| 1 | Switching model | Per-session picker; **one** deployment, in a **new** Azure environment in Brian's internal subscription | Sections 5, 10; #74, #85 |
+| 1 | Switching model | Per-session picker; **one** deployment, in a **new** Azure environment | Sections 5, 10; #74, #85 |
 | 2 | Personas on the main URL | All three on a single URL | Section 5; #74, #80 |
 | 3 | #64 floats | Not happy-hour discounted; can fill the combo drink slot. Added as Sonic menu items (not in the source export) | Sections 4.3, 6; #72; #64 closed |
 | 4 | Off-menu fallback | None. Not on the menu in the source data means it can't be ordered. The keyword fallback is removed and conformance changes accordingly | Section 6; #72, #73 |
@@ -664,18 +699,18 @@ The C# port starts after P2 lands and ports the unified app once. It deploys int
 | 6 | Dunkin happy hour | Announced like Sonic | #79 |
 | 7 | Brand-only features | Keep McDonald's local mode, default cloud, as a persona-agnostic pipeline. Remove the Dunkin crew dashboard, CRM simulator and Azure Local edge stack. Demo features work the same across personas except brand-specific logic | Rows 37, 46 to 48; #81, #86 |
 | 8 | Repo name | `AzureAIDriveThru`. The focus is Microsoft Foundry, Azure, persona switching and model flexibility | Sections 7, 11; #69, #75, #82 |
-| 9 | Sibling cutover | After parity: archive both repos, delete their container apps, keep the Search indexes; 30-day grace | Section 11; #88 |
+| 9 | Sibling cutover | After parity: archive both repos, delete their container apps, keep the Search indexes 30 days | Section 11; #88 |
 | 10 | Deploy target | Stand up a new environment and tear down all others | Sections 10, 11; #85, #88 |
+| 11 | New environment details (22:52) | Subscription `BrianSwiger-Microsoft-External-2026`, eastus2, azd env `azureaidrivethru-prod`, group `rg-azureaidrivethru-prod`; its own AOAI/Foundry and its own paid Search (one index per persona); no dependency on the old groups; realtime capacity 10 or less until cutover. Teardown at cutover, confirmed by Brian right before: delete `rg-mcd-demo` and `rg-dunkin-demo`; delete everything in `rg-sonic-demo` (including the old AOAI and `gpt-realtime-1.5`) except the old Search service and its three indexes, which are deleted after 30 days | Sections 10, 11; #85, #87, #88 |
 
-## 17. Remaining asks for Brian
+## 17. Resolved asks
 
-Each ask has a default, so nothing blocks the start of P2.
+Every earlier ask is closed with the default below (lead call, 2026-09-26). Nothing is waiting on Brian before P2
+starts; he confirms only the two destructive teardown steps in #88.
 
-1. **Float sizes and prices.** Floats aren't in the source export. Default: Mini, Small, Medium and Large at the
-   Classic Shake prices (3.39, 4.19, 4.69, 5.69) (#72).
-2. **Entra admin.** Create, or let Squanchy create, one app registration for the new environment with redirect
-   URIs for the two backend hostnames. Delete the three old registrations on Day 30 (#85, #88).
-3. **C# local mode.** Should the C# backend port local mode too (ONNX Runtime GenAI plus a Whisper and Piper
-   equivalent), or is local mode Python-only? Default: port it, last in the C# track.
-4. **Two backend hostnames.** Is one hostname per backend, with a header switch, acceptable (section 10.1, option
-   A)? Default: yes. Option B, one hostname through a proxy app, is the fallback.
+1. **Float sizes and prices:** Mini, Small, Medium and Large at the Classic Shake prices (3.39, 4.19, 4.69, 5.69)
+   (#72).
+2. **Entra:** Squanchy creates the one new app registration with Brian's signed-in account during #85, with
+   redirect URIs for both backend hostnames. The three old registrations are deleted at cutover (#88).
+3. **C# local mode:** ported, last in the C# track (#13).
+4. **Two backend hostnames:** accepted (section 10.1, option A). Option B stays the fallback.
