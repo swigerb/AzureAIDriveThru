@@ -1,0 +1,3127 @@
+{
+  "menuItems": [
+    {
+      "category": "Burgers",
+      "items": [
+        {
+          "name": "Big Mac®",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 5.69
+            }
+          ],
+          "description": "Mouthwatering perfection starts with two 100% pure all beef patties and Big Mac® sauce sandwiched between a sesame seed bun.",
+          "longDescription": "Mouthwatering perfection starts with two 100% pure all beef patties and Big Mac® sauce sandwiched between a sesame seed bun. It's topped off with pickles, crisp shredded lettuce, finely chopped onion, and a slice of melty American cheese. Two all-beef patties, special sauce, lettuce, cheese, pickles, onions — on a sesame seed bun.",
+          "origin": "McDonald's Menu",
+          "popularity": "Best Seller",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_BigMac_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Quarter Pounder® with Cheese",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 5.99
+            }
+          ],
+          "description": "Each Quarter Pounder® with Cheese burger features a ¼ lb.* of 100% fresh beef that's hot, deliciously juicy and cooked when you order.",
+          "longDescription": "Each Quarter Pounder® with Cheese burger features a ¼ lb.* of 100% fresh beef that's hot, deliciously juicy and cooked when you order. It's topped with slivered onions, tangy pickles, two slices of melty American cheese, ketchup, and mustard on a sesame seed bun. *Before cooking.",
+          "origin": "McDonald's Menu",
+          "popularity": "Best Seller",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_QuarterPounderCheese_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Quarter Pounder® with Cheese Deluxe",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 6.49
+            }
+          ],
+          "description": "The Quarter Pounder® with Cheese Deluxe features a ¼ lb.* of 100% fresh beef topped with Roma tomatoes, crisp leaf lettuce, and mayo.",
+          "longDescription": "The Quarter Pounder® with Cheese Deluxe features a ¼ lb.* of 100% fresh beef that's hot, deliciously juicy and cooked when you order, topped with slivered onions, Roma tomatoes, crisp leaf lettuce, mayo, two slices of melty American cheese, ketchup, mustard, and pickles on a sesame seed bun. *Before cooking.",
+          "origin": "McDonald's Menu",
+          "popularity": "Popular",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_QPCDeluxe_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Double Quarter Pounder® with Cheese",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 7.49
+            }
+          ],
+          "description": "Each Double Quarter Pounder® with Cheese features two ¼ lb.* patties of 100% fresh beef cooked when you order.",
+          "longDescription": "Each Double Quarter Pounder® with Cheese features two ¼ lb.* patties of 100% fresh beef that's hot, deliciously juicy and cooked when you order, topped with slivered onions, tangy pickles, two slices of melty American cheese, ketchup, and mustard on a sesame seed bun. *Before cooking. Weight before cooking 4 oz.",
+          "origin": "McDonald's Menu",
+          "popularity": "Popular",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_DoubleQPC_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Bacon Quarter Pounder® with Cheese",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 7.29
+            }
+          ],
+          "description": "Thick-cut Applewood smoked bacon on a ¼ lb.* of 100% fresh beef with two slices of melty American cheese.",
+          "longDescription": "Thick-cut Applewood smoked bacon tops a ¼ lb.* of 100% fresh beef that's hot, deliciously juicy and cooked when you order. It's further layered with slivered onions, tangy pickles, two slices of melty American cheese, ketchup, and mustard on a sesame seed bun. *Before cooking.",
+          "origin": "McDonald's Menu",
+          "popularity": "Popular",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_BaconQPC_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Double Bacon Quarter Pounder® with Cheese",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 8.99
+            }
+          ],
+          "description": "Two ¼ lb.* patties of 100% fresh beef topped with thick-cut Applewood smoked bacon and two slices of American cheese.",
+          "longDescription": "Two ¼ lb.* patties of 100% fresh beef cooked when you order, topped with thick-cut Applewood smoked bacon, slivered onions, tangy pickles, two slices of melty American cheese, ketchup, and mustard on a sesame seed bun. *Before cooking.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_DoubleBaconQPC_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "McDouble®",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 2.79
+            }
+          ],
+          "description": "A classic double featuring two 100% pure beef patties seasoned with a pinch of salt and pepper.",
+          "longDescription": "The McDouble® features two 100% pure beef patties seasoned with just a pinch of salt and pepper, topped with tangy pickles, chopped onions, ketchup, mustard, and a slice of melty American cheese on a regular bun.",
+          "origin": "McDonald's Menu",
+          "popularity": "Value Pick",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_McDouble_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Bacon McDouble®",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 3.49
+            }
+          ],
+          "description": "Two 100% pure beef patties topped with thick-cut Applewood smoked bacon and a slice of melty American cheese.",
+          "longDescription": "Two 100% pure beef patties topped with thick-cut Applewood smoked bacon, tangy pickles, chopped onions, ketchup, mustard, and a slice of melty American cheese on a regular bun.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_BaconMcDouble_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Cheeseburger",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 2.29
+            }
+          ],
+          "description": "A simple, satisfying classic—a 100% pure beef patty with a slice of melty American cheese on a regular bun.",
+          "longDescription": "A simple, satisfying classic—a 100% pure beef patty seasoned with just a pinch of salt and pepper, topped with a tangy pickle, chopped onions, ketchup, mustard, and a slice of melty American cheese on a regular bun.",
+          "origin": "McDonald's Menu",
+          "popularity": "Value Pick",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_Cheeseburger_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Double Cheeseburger",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 3.39
+            }
+          ],
+          "description": "Two 100% pure beef patties with two slices of melty American cheese on a regular bun.",
+          "longDescription": "The Double Cheeseburger features two 100% pure beef patties seasoned with just a pinch of salt and pepper, topped with tangy pickles, chopped onions, ketchup, mustard, and two slices of melty American cheese on a regular bun.",
+          "origin": "McDonald's Menu",
+          "popularity": "Popular",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_DoubleCheese_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Hamburger",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 1.89
+            }
+          ],
+          "description": "The original McDonald's hamburger—a 100% pure beef patty on a regular bun with pickles, onions, ketchup, and mustard.",
+          "longDescription": "The original McDonald's burger starts with a 100% pure beef patty seasoned with just a pinch of salt and pepper, then topped with a tangy pickle, chopped onions, ketchup, and mustard on a regular bun.",
+          "origin": "McDonald's Menu",
+          "popularity": "Value Pick",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_Hamburger_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Triple Cheeseburger",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 4.29
+            }
+          ],
+          "description": "Three 100% pure beef patties with two slices of melty American cheese on a regular bun.",
+          "longDescription": "Three 100% pure beef patties seasoned with just a pinch of salt and pepper, topped with tangy pickles, chopped onions, ketchup, mustard, and two slices of melty American cheese on a regular bun.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_TripleCheese_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Bacon Big Mac®",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 7.39
+            }
+          ],
+          "description": "The Bacon Big Mac® adds thick-cut Applewood smoked bacon to the iconic Big Mac®.",
+          "longDescription": "The Bacon Big Mac® features two 100% pure beef patties, thick-cut Applewood smoked bacon, Big Mac® sauce, crisp shredded lettuce, finely chopped onion, tangy pickles, a slice of melty American cheese, all on a sesame seed bun.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_BaconBigMac_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Grand Mac™",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 6.39
+            }
+          ],
+          "description": "The Grand Mac™ is a bigger Big Mac® with more of everything — two larger all-beef patties and more Big Mac sauce.",
+          "longDescription": "The Grand Mac™ features two larger 100% pure beef patties, more Big Mac® sauce, crisp shredded lettuce, a larger sesame seed bun, two slices of American cheese, finely chopped onion, and tangy pickles.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_GrandMac_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Mac Jr.™",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 3.49
+            }
+          ],
+          "description": "The Mac Jr.™ is a single-patty take on the Big Mac® with all the classic fixings.",
+          "longDescription": "The Mac Jr.™ features a single 100% pure beef patty topped with Big Mac® sauce, crisp shredded lettuce, finely chopped onion, tangy pickles, a slice of melty American cheese on a sesame seed bun.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_MacJr_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        }
+      ]
+    },
+    {
+      "category": "Chicken & Fish Sandwiches",
+      "items": [
+        {
+          "name": "McCrispy™",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 5.49
+            }
+          ],
+          "description": "The McCrispy™ features a Southern-style fried chicken filet on a toasted potato roll with crinkle-cut pickles.",
+          "longDescription": "The McCrispy™ is a crispy, juicy, Southern-style fried chicken sandwich made with all-white meat chicken filet, crinkle-cut pickles, and butter on a toasted potato roll.",
+          "origin": "McDonald's Menu",
+          "popularity": "Best Seller",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_McCrispy_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Spicy McCrispy™",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 5.69
+            }
+          ],
+          "description": "A Southern-style fried chicken filet with a spicy pepper sauce on a toasted potato roll.",
+          "longDescription": "The Spicy McCrispy™ is a crispy, juicy, Southern-style fried chicken sandwich with a spicy pepper sauce, crinkle-cut pickles on a toasted potato roll.",
+          "origin": "McDonald's Menu",
+          "popularity": "Popular",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_SpicyMcCrispy_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Deluxe McCrispy™",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 6.29
+            }
+          ],
+          "description": "A Southern-style fried chicken filet with shredded lettuce, Roma tomatoes, and mayo on a toasted potato roll.",
+          "longDescription": "The Deluxe McCrispy™ features a crispy, juicy, Southern-style fried chicken filet topped with shredded lettuce, Roma tomatoes, and mayo on a toasted potato roll.",
+          "origin": "McDonald's Menu",
+          "popularity": "Popular",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_DeluxeMcCrispy_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Spicy Deluxe McCrispy™",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 6.49
+            }
+          ],
+          "description": "A spicy Southern-style fried chicken filet with shredded lettuce, Roma tomatoes, and Spicy pepper sauce.",
+          "longDescription": "The Spicy Deluxe McCrispy™ features a crispy, juicy, Southern-style fried chicken filet with a spicy pepper sauce, shredded lettuce, Roma tomatoes, and mayo on a toasted potato roll.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_SpicyDeluxeMcCrispy_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "McChicken®",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 2.49
+            }
+          ],
+          "description": "A crispy chicken patty topped with shredded lettuce and mayo on a regular bun.",
+          "longDescription": "The McChicken® is a crispy chicken sandwich made with a seasoned chicken patty, shredded lettuce, and mayonnaise on a regular bun.",
+          "origin": "McDonald's Menu",
+          "popularity": "Value Pick",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_McChicken_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Hot 'N Spicy McChicken®",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 2.49
+            }
+          ],
+          "description": "A spicy, crispy chicken patty topped with shredded lettuce and mayo on a regular bun.",
+          "longDescription": "The Hot 'N Spicy McChicken® is a crispy chicken sandwich made with a spicy seasoned chicken patty, shredded lettuce, and mayonnaise on a regular bun.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_HotNSpicyMcChicken_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Filet-O-Fish®",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 5.19
+            }
+          ],
+          "description": "Dive into our wild-caught Filet-O-Fish® — a fish sandwich with crispy panko breading and tartar sauce.",
+          "longDescription": "Dive into the Filet-O-Fish®. This fish sandwich features a wild-caught Alaska Pollock filet with crispy panko breading, topped with creamy tartar sauce and a half slice of melty American cheese, all served on a soft, steamed bun.",
+          "origin": "McDonald's Menu",
+          "popularity": "Popular",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_FiletOFish_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Chicken McGriddle®",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 3.79
+            }
+          ],
+          "description": "A Southern-style fried chicken filet between two warm, sweet McGriddles® cakes with a hint of maple flavor.",
+          "longDescription": "The Chicken McGriddle® features a Southern-style fried chicken filet between two warm, sweet McGriddles® cakes with a hint of maple flavor, for a perfectly sweet and savory bite.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_ChickenMcGriddle_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Hot 'N Spicy Chicken McGriddle®",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 3.79
+            }
+          ],
+          "description": "A spicy Southern-style fried chicken filet between two warm, sweet McGriddles® cakes with maple flavor.",
+          "longDescription": "The Hot 'N Spicy Chicken McGriddle® features a spicy Southern-style fried chicken filet between two warm, sweet McGriddles® cakes with a hint of maple flavor.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_HotNSpicyChickenMcGriddle_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Double Filet-O-Fish®",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 7.29
+            }
+          ],
+          "description": "Two wild-caught Alaska Pollock filets with crispy panko breading, tartar sauce, and melty American cheese.",
+          "longDescription": "The Double Filet-O-Fish® doubles down with two wild-caught Alaska Pollock filets in crispy panko breading, topped with creamy tartar sauce and a slice of melty American cheese on a soft, steamed bun.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_DoubleFiletOFish_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        }
+      ]
+    },
+    {
+      "category": "McNuggets & Tenders",
+      "items": [
+        {
+          "name": "Chicken McNuggets® (4 piece)",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 2.49
+            }
+          ],
+          "description": "Our tender, juicy Chicken McNuggets® are made with 100% white meat chicken and no artificial colors, flavors, or preservatives.",
+          "longDescription": "Our tender, juicy Chicken McNuggets® are made with 100% white meat chicken and no artificial colors, flavors, or preservatives. Enjoy these in a 4-piece serving as a snack or pair with your favorite dipping sauce.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_McNuggets4_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Chicken McNuggets® (6 piece)",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 3.69
+            }
+          ],
+          "description": "Our tender, juicy Chicken McNuggets® are made with 100% white meat chicken. Enjoy 6 pieces with your favorite dipping sauce.",
+          "longDescription": "Our tender, juicy Chicken McNuggets® are made with 100% white meat chicken and no artificial colors, flavors, or preservatives. Enjoy 6 pieces with your favorite dipping sauce for a satisfying snack.",
+          "origin": "McDonald's Menu",
+          "popularity": "Value Pick",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_McNuggets6_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Chicken McNuggets® (10 piece)",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 5.29
+            }
+          ],
+          "description": "Our tender, juicy Chicken McNuggets® are made with 100% white meat chicken. Enjoy 10 pieces as a meal.",
+          "longDescription": "Our tender, juicy Chicken McNuggets® are made with 100% white meat chicken and no artificial colors, flavors, or preservatives. Enjoy 10 pieces perfect for a meal with your favorite dipping sauce.",
+          "origin": "McDonald's Menu",
+          "popularity": "Best Seller",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_McNuggets10_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Chicken McNuggets® (20 piece)",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 7.99
+            }
+          ],
+          "description": "Our tender, juicy Chicken McNuggets® — 20 pieces perfect for sharing with family and friends.",
+          "longDescription": "Our tender, juicy Chicken McNuggets® are made with 100% white meat chicken and no artificial colors, flavors, or preservatives. 20 pieces perfect for sharing with family and friends.",
+          "origin": "McDonald's Menu",
+          "popularity": "Popular",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_McNuggets20_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Chicken McNuggets® (40 piece)",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 14.99
+            }
+          ],
+          "description": "Feed the whole crew with 40 pieces of our tender, juicy Chicken McNuggets® made with 100% white meat chicken.",
+          "longDescription": "Feed the whole crew with 40 pieces of our tender, juicy Chicken McNuggets® made with 100% white meat chicken and no artificial colors, flavors, or preservatives. Perfect for parties and gatherings.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_McNuggets40_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        }
+      ]
+    },
+    {
+      "category": "Meals & Combos",
+      "items": [
+        {
+          "name": "Big Mac® Meal",
+          "sizes": [
+            {
+              "size": "Small",
+              "price": 8.99
+            },
+            {
+              "size": "Medium",
+              "price": 10.29
+            },
+            {
+              "size": "Large",
+              "price": 11.29
+            }
+          ],
+          "description": "The Big Mac® Meal includes a Big Mac®, World Famous Fries®, and your choice of drink.",
+          "longDescription": "The Big Mac® Meal includes a Big Mac® with two 100% pure beef patties and Big Mac® sauce on a sesame seed bun, World Famous Fries®, and your choice of a medium drink. Choose from Small, Medium, or Large.",
+          "origin": "McDonald's Menu",
+          "popularity": "Best Seller",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_BigMacMeal_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "bundle": {
+            "slots": [
+              "sides",
+              "drinks"
+            ]
+          },
+          "isExtra": false,
+          "menuPeriod": "allDay",
+          "mealNumber": "1"
+        },
+        {
+          "name": "Quarter Pounder® with Cheese Meal",
+          "sizes": [
+            {
+              "size": "Small",
+              "price": 9.29
+            },
+            {
+              "size": "Medium",
+              "price": 10.69
+            },
+            {
+              "size": "Large",
+              "price": 11.69
+            }
+          ],
+          "description": "The Quarter Pounder® with Cheese Meal includes a Quarter Pounder®, World Famous Fries®, and your choice of drink.",
+          "longDescription": "The Quarter Pounder® with Cheese Meal includes a Quarter Pounder® with Cheese made with ¼ lb.* of 100% fresh beef cooked when you order, World Famous Fries®, and your choice of drink. *Before cooking.",
+          "origin": "McDonald's Menu",
+          "popularity": "Best Seller",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_QPCMeal_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "bundle": {
+            "slots": [
+              "sides",
+              "drinks"
+            ]
+          },
+          "isExtra": false,
+          "menuPeriod": "allDay",
+          "mealNumber": "2"
+        },
+        {
+          "name": "Quarter Pounder® with Cheese Deluxe Meal",
+          "sizes": [
+            {
+              "size": "Small",
+              "price": 9.79
+            },
+            {
+              "size": "Medium",
+              "price": 11.19
+            },
+            {
+              "size": "Large",
+              "price": 12.19
+            }
+          ],
+          "description": "The QPC Deluxe Meal features a Quarter Pounder® with Cheese Deluxe, World Famous Fries®, and a drink.",
+          "longDescription": "The Quarter Pounder® with Cheese Deluxe Meal features a ¼ lb.* of 100% fresh beef topped with Roma tomatoes, lettuce, mayo, two slices of American cheese, World Famous Fries®, and your choice of drink. *Before cooking.",
+          "origin": "McDonald's Menu",
+          "popularity": "Popular",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_QPCDeluxeMeal_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "bundle": {
+            "slots": [
+              "sides",
+              "drinks"
+            ]
+          },
+          "isExtra": false,
+          "menuPeriod": "allDay",
+          "mealNumber": "3"
+        },
+        {
+          "name": "Bacon Quarter Pounder® with Cheese Meal",
+          "sizes": [
+            {
+              "size": "Small",
+              "price": 10.29
+            },
+            {
+              "size": "Medium",
+              "price": 11.69
+            },
+            {
+              "size": "Large",
+              "price": 12.69
+            }
+          ],
+          "description": "The Bacon QPC Meal features a Bacon Quarter Pounder® with Cheese, World Famous Fries®, and a drink.",
+          "longDescription": "The Bacon Quarter Pounder® with Cheese Meal features thick-cut Applewood smoked bacon on a ¼ lb.* of 100% fresh beef with two slices of melty American cheese, World Famous Fries®, and your choice of drink. *Before cooking.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_BaconQPCMeal_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "bundle": {
+            "slots": [
+              "sides",
+              "drinks"
+            ]
+          },
+          "isExtra": false,
+          "menuPeriod": "allDay",
+          "mealNumber": "4"
+        },
+        {
+          "name": "10 piece Chicken McNuggets® Meal",
+          "sizes": [
+            {
+              "size": "Small",
+              "price": 8.49
+            },
+            {
+              "size": "Medium",
+              "price": 9.89
+            },
+            {
+              "size": "Large",
+              "price": 10.89
+            }
+          ],
+          "description": "The 10 piece Chicken McNuggets® Meal includes 10 McNuggets®, World Famous Fries®, and a drink.",
+          "longDescription": "The 10 piece Chicken McNuggets® Meal includes 10 tender, juicy Chicken McNuggets® made with 100% white meat chicken, World Famous Fries®, your choice of dipping sauce, and your choice of drink.",
+          "origin": "McDonald's Menu",
+          "popularity": "Best Seller",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_McNuggets10Meal_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "bundle": {
+            "slots": [
+              "sides",
+              "drinks"
+            ]
+          },
+          "isExtra": false,
+          "menuPeriod": "allDay",
+          "mealNumber": "6"
+        },
+        {
+          "name": "McCrispy™ Meal",
+          "sizes": [
+            {
+              "size": "Small",
+              "price": 9.29
+            },
+            {
+              "size": "Medium",
+              "price": 10.69
+            },
+            {
+              "size": "Large",
+              "price": 11.69
+            }
+          ],
+          "description": "The McCrispy™ Meal includes a McCrispy™ sandwich, World Famous Fries®, and your choice of drink.",
+          "longDescription": "The McCrispy™ Meal features a Southern-style fried chicken filet on a toasted potato roll with crinkle-cut pickles, World Famous Fries®, and your choice of drink.",
+          "origin": "McDonald's Menu",
+          "popularity": "Popular",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_McCrispyMeal_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "bundle": {
+            "slots": [
+              "sides",
+              "drinks"
+            ]
+          },
+          "isExtra": false,
+          "menuPeriod": "allDay",
+          "mealNumber": "7"
+        },
+        {
+          "name": "Filet-O-Fish® Meal",
+          "sizes": [
+            {
+              "size": "Small",
+              "price": 8.79
+            },
+            {
+              "size": "Medium",
+              "price": 10.19
+            },
+            {
+              "size": "Large",
+              "price": 11.19
+            }
+          ],
+          "description": "The Filet-O-Fish® Meal includes a Filet-O-Fish® sandwich, World Famous Fries®, and your choice of drink.",
+          "longDescription": "The Filet-O-Fish® Meal features a wild-caught Alaska Pollock filet with crispy panko breading, tartar sauce, and melty American cheese, plus World Famous Fries® and your choice of drink.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_FiletOFishMeal_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "bundle": {
+            "slots": [
+              "sides",
+              "drinks"
+            ]
+          },
+          "isExtra": false,
+          "menuPeriod": "allDay",
+          "mealNumber": "8"
+        },
+        {
+          "name": "2 Cheeseburger Meal",
+          "sizes": [
+            {
+              "size": "Small",
+              "price": 7.49
+            },
+            {
+              "size": "Medium",
+              "price": 8.89
+            },
+            {
+              "size": "Large",
+              "price": 9.89
+            }
+          ],
+          "description": "The 2 Cheeseburger Meal includes two Cheeseburgers, World Famous Fries®, and your choice of drink.",
+          "longDescription": "The 2 Cheeseburger Meal features two classic Cheeseburgers with 100% pure beef and melty American cheese, World Famous Fries®, and your choice of drink.",
+          "origin": "McDonald's Menu",
+          "popularity": "Value Pick",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_2CheeseMeal_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "bundle": {
+            "slots": [
+              "sides",
+              "drinks"
+            ]
+          },
+          "isExtra": false,
+          "menuPeriod": "allDay",
+          "mealNumber": "9"
+        },
+        {
+          "name": "Double Quarter Pounder® with Cheese Meal",
+          "sizes": [
+            {
+              "size": "Small",
+              "price": 10.79
+            },
+            {
+              "size": "Medium",
+              "price": 12.19
+            },
+            {
+              "size": "Large",
+              "price": 13.19
+            }
+          ],
+          "description": "The Double QPC Meal features a Double Quarter Pounder® with Cheese, World Famous Fries®, and a drink.",
+          "longDescription": "The Double Quarter Pounder® with Cheese Meal features two ¼ lb.* patties of 100% fresh beef cooked when you order with two slices of melty American cheese, World Famous Fries®, and your choice of drink. *Before cooking.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_DoubleQPCMeal_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "bundle": {
+            "slots": [
+              "sides",
+              "drinks"
+            ]
+          },
+          "isExtra": false,
+          "menuPeriod": "allDay",
+          "mealNumber": "5"
+        },
+        {
+          "name": "Spicy McCrispy™ Meal",
+          "sizes": [
+            {
+              "size": "Small",
+              "price": 9.49
+            },
+            {
+              "size": "Medium",
+              "price": 10.89
+            },
+            {
+              "size": "Large",
+              "price": 11.89
+            }
+          ],
+          "description": "The Spicy McCrispy™ Meal includes a Spicy McCrispy™ sandwich, World Famous Fries®, and a drink.",
+          "longDescription": "The Spicy McCrispy™ Meal features a Southern-style fried chicken filet with a spicy pepper sauce and crinkle-cut pickles on a toasted potato roll, World Famous Fries®, and your choice of drink.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_SpicyMcCrispyMeal_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "bundle": {
+            "slots": [
+              "sides",
+              "drinks"
+            ]
+          },
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "McChicken® Meal",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 5.99
+            }
+          ],
+          "description": "The McChicken® as a meal with Medium Fries and a Medium Drink.",
+          "longDescription": "The McChicken® as an Extra Value Meal with Medium World Famous Fries® and a Medium Drink.",
+          "origin": "McDonald's Menu",
+          "popularity": "Popular",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_McChicken_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "bundle": {
+            "slots": [
+              "sides",
+              "drinks"
+            ]
+          },
+          "isExtra": false,
+          "menuPeriod": "allDay",
+          "mealNumber": "10"
+        }
+      ]
+    },
+    {
+      "category": "Breakfast",
+      "items": [
+        {
+          "name": "Egg McMuffin®",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 4.49
+            }
+          ],
+          "description": "A freshly cracked Grade A egg on a toasted English muffin with real butter, lean Canadian bacon, and melty American cheese.",
+          "longDescription": "A freshly cracked Grade A egg on a toasted English muffin with real butter, lean Canadian bacon, and a slice of melty American cheese. An excellent source of protein and the breakfast sandwich that started it all.",
+          "origin": "McDonald's Menu",
+          "popularity": "Best Seller",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_EggMcMuffin_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "breakfast"
+        },
+        {
+          "name": "Sausage McMuffin®",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 2.79
+            }
+          ],
+          "description": "A warm, savory sausage patty on a toasted English muffin with a slice of melty American cheese.",
+          "longDescription": "The Sausage McMuffin® features a warm, savory sausage patty topped with a slice of melty American cheese on a toasted English muffin. A satisfying breakfast at a great value.",
+          "origin": "McDonald's Menu",
+          "popularity": "Value Pick",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_SausageMcMuffin_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "breakfast"
+        },
+        {
+          "name": "Sausage McMuffin® with Egg",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 4.69
+            }
+          ],
+          "description": "A savory sausage patty and a freshly cracked Grade A egg on a toasted English muffin with melty American cheese.",
+          "longDescription": "The Sausage McMuffin® with Egg features a warm, savory sausage patty, a freshly cracked Grade A egg, and a slice of melty American cheese on a toasted English muffin.",
+          "origin": "McDonald's Menu",
+          "popularity": "Popular",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_SausageMcMuffinEgg_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "breakfast"
+        },
+        {
+          "name": "Bacon, Egg & Cheese Biscuit",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 4.79
+            }
+          ],
+          "description": "Thick-cut Applewood smoked bacon, a freshly cracked egg, and melty American cheese on a warm buttermilk biscuit.",
+          "longDescription": "The Bacon, Egg & Cheese Biscuit features thick-cut Applewood smoked bacon, a freshly cracked Grade A egg, and a slice of melty American cheese on a warm, flaky buttermilk biscuit.",
+          "origin": "McDonald's Menu",
+          "popularity": "Popular",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_BaconEggCheeseBiscuit_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "breakfast"
+        },
+        {
+          "name": "Sausage Biscuit",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 2.49
+            }
+          ],
+          "description": "A warm, savory sausage patty on a flaky, buttery biscuit.",
+          "longDescription": "The Sausage Biscuit features a warm, savory sausage patty on a flaky, warm buttermilk biscuit. A hearty breakfast classic at a great value.",
+          "origin": "McDonald's Menu",
+          "popularity": "Value Pick",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_SausageBiscuit_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "breakfast"
+        },
+        {
+          "name": "Sausage Biscuit with Egg",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 4.49
+            }
+          ],
+          "description": "A savory sausage patty and a freshly cracked Grade A egg on a warm buttermilk biscuit.",
+          "longDescription": "The Sausage Biscuit with Egg features a warm, savory sausage patty, a freshly cracked Grade A egg on a flaky, warm buttermilk biscuit.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_SausageBiscuitEgg_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "breakfast"
+        },
+        {
+          "name": "Sausage, Egg & Cheese Biscuit",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 4.99
+            }
+          ],
+          "description": "A savory sausage patty, freshly cracked egg, and melty American cheese on a flaky buttermilk biscuit.",
+          "longDescription": "The Sausage, Egg & Cheese Biscuit features a warm, savory sausage patty, a freshly cracked Grade A egg, and a slice of melty American cheese on a warm, flaky buttermilk biscuit.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_SausageEggCheeseBiscuit_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "breakfast"
+        },
+        {
+          "name": "Sausage, Egg & Cheese McGriddles®",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 5.29
+            }
+          ],
+          "description": "Sweet McGriddles® cakes with sausage, a freshly cracked egg, and melty American cheese.",
+          "longDescription": "The Sausage, Egg & Cheese McGriddles® features a warm sausage patty, a freshly cracked Grade A egg, and a slice of melty American cheese between two sweet McGriddles® cakes with a hint of maple flavor.",
+          "origin": "McDonald's Menu",
+          "popularity": "Popular",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_SausageEggCheeseGriddle_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "breakfast"
+        },
+        {
+          "name": "Bacon, Egg & Cheese McGriddles®",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 5.29
+            }
+          ],
+          "description": "Sweet McGriddles® cakes with thick-cut bacon, a freshly cracked egg, and melty American cheese.",
+          "longDescription": "The Bacon, Egg & Cheese McGriddles® features thick-cut Applewood smoked bacon, a freshly cracked Grade A egg, and a slice of melty American cheese between two sweet McGriddles® cakes with a hint of maple flavor.",
+          "origin": "McDonald's Menu",
+          "popularity": "Popular",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_BaconEggCheeseGriddle_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "breakfast"
+        },
+        {
+          "name": "Sausage McGriddles®",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 3.49
+            }
+          ],
+          "description": "Warm McGriddles® cakes with a hint of maple flavor and a savory sausage patty.",
+          "longDescription": "The Sausage McGriddles® features a warm, savory sausage patty between two soft McGriddles® cakes with a hint of sweet maple flavor.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_SausageMcGriddle_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "breakfast"
+        },
+        {
+          "name": "Hotcakes",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 3.99
+            }
+          ],
+          "description": "Three fluffy, golden brown hotcakes with a warm side of real butter and sweet maple flavored hotcake syrup.",
+          "longDescription": "Three fluffy, golden brown hotcakes served with a warm side of real butter and sweet maple flavored hotcake syrup. A classic breakfast favorite.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_Hotcakes_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "breakfast"
+        },
+        {
+          "name": "Hotcakes & Sausage",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 5.29
+            }
+          ],
+          "description": "Three fluffy hotcakes with real butter and maple syrup, served alongside a warm sausage patty.",
+          "longDescription": "Three fluffy, golden brown hotcakes with a warm side of real butter and sweet maple flavored hotcake syrup, served with a savory sausage patty. A classic breakfast combo.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_HotcakesSausage_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "breakfast"
+        },
+        {
+          "name": "Big Breakfast®",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 5.99
+            }
+          ],
+          "description": "A warm biscuit, scrambled eggs, a sausage patty, and crispy hash browns.",
+          "longDescription": "The Big Breakfast® features a warm biscuit, fluffy scrambled eggs, a savory sausage patty, and crispy golden hash browns. It's a big, hearty breakfast.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_BigBreakfast_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "breakfast"
+        },
+        {
+          "name": "Big Breakfast® with Hotcakes",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 7.49
+            }
+          ],
+          "description": "A warm biscuit, scrambled eggs, sausage, hash browns, and golden hotcakes with butter and syrup.",
+          "longDescription": "The Big Breakfast® with Hotcakes features a warm biscuit, fluffy scrambled eggs, a savory sausage patty, crispy golden hash browns, and three fluffy hotcakes with butter and maple flavored syrup.",
+          "origin": "McDonald's Menu",
+          "popularity": "Popular",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_BigBreakfastHotcakes_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "breakfast"
+        },
+        {
+          "name": "Sausage Burrito",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 2.29
+            }
+          ],
+          "description": "A savory blend of fluffy scrambled egg, pork sausage, melty cheese, and peppers wrapped in a warm tortilla.",
+          "longDescription": "The Sausage Burrito features a flour tortilla filled with fluffy scrambled egg, pork sausage, melty American cheese, and green chiles and onion. Served with picante sauce.",
+          "origin": "McDonald's Menu",
+          "popularity": "Value Pick",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_SausageBurrito_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "breakfast"
+        },
+        {
+          "name": "Hash Browns",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 1.89
+            }
+          ],
+          "description": "Our crispy, golden Hash Browns are deliciously tasty and perfectly crispy.",
+          "longDescription": "Our crispy, golden Hash Browns are made with shredded potatoes and cooked to delicious perfection for a crispy hash brown every time. A classic McDonald's breakfast side.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_HashBrowns_832x472",
+          "comboSlot": "sides",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "breakfast"
+        },
+        {
+          "name": "Fruit & Maple Oatmeal",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 3.49
+            }
+          ],
+          "description": "Whole-grain oats with diced apples, cranberry raisin blend, and cream, topped with a light maple flavor.",
+          "longDescription": "The Fruit & Maple Oatmeal features two whole grain oats, diced apples, a cranberry raisin blend, and light cream, all topped with a light brown sugar maple flavored syrup.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_FruitMapleOatmeal_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "breakfast"
+        },
+        {
+          "name": "Bacon, Egg & Cheese Bagel",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 5.49
+            }
+          ],
+          "description": "Thick-cut Applewood smoked bacon, a freshly cracked egg, and two slices of American cheese on a toasted bagel.",
+          "longDescription": "The Bacon, Egg & Cheese Bagel features thick-cut Applewood smoked bacon, a freshly cracked Grade A egg, and two slices of melty American cheese on a toasted bagel. Includes creamy mustard sauce.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_BaconEggCheeseBagel_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "breakfast"
+        },
+        {
+          "name": "Steak, Egg & Cheese Bagel",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 6.29
+            }
+          ],
+          "description": "Savory seasoned steak, a freshly cracked egg, and two slices of American cheese on a toasted bagel.",
+          "longDescription": "The Steak, Egg & Cheese Bagel features savory seasoned steak, a freshly cracked Grade A egg, and two slices of melty American cheese on a toasted bagel.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_SteakEggCheeseBagel_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "breakfast"
+        },
+        {
+          "name": "Egg McMuffin® Meal",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 6.49
+            }
+          ],
+          "description": "The Egg McMuffin® Meal includes an Egg McMuffin®, a Hash Brown, and a small McCafé® Premium Roast Coffee.",
+          "longDescription": "Start your morning right with the Egg McMuffin® Meal. It includes the classic Egg McMuffin® with Canadian bacon, a freshly cracked egg and American cheese on a toasted English muffin, a crispy Hash Brown, and a small McCafé® Premium Roast Coffee.",
+          "origin": "McDonald's Menu",
+          "popularity": "Best Seller",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_EggMcMuffinMeal_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "bundle": {
+            "slots": [
+              "sides",
+              "drinks"
+            ]
+          },
+          "isExtra": false,
+          "menuPeriod": "breakfast",
+          "mealNumber": "1"
+        },
+        {
+          "name": "Sausage McMuffin® with Egg Meal",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 6.69
+            }
+          ],
+          "description": "The Sausage McMuffin® with Egg Meal includes a Sausage McMuffin® with Egg, Hash Brown, and coffee.",
+          "longDescription": "The Sausage McMuffin® with Egg Meal features a warm sausage patty, freshly cracked egg, and melty American cheese on a toasted English muffin, a crispy Hash Brown, and a small McCafé® Premium Roast Coffee.",
+          "origin": "McDonald's Menu",
+          "popularity": "Popular",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_SausageMcMuffinEggMeal_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "bundle": {
+            "slots": [
+              "sides",
+              "drinks"
+            ]
+          },
+          "isExtra": false,
+          "menuPeriod": "breakfast",
+          "mealNumber": "2"
+        },
+        {
+          "name": "Sausage McGriddles® Meal",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 5.79
+            }
+          ],
+          "description": "The Sausage McGriddles® Meal includes Sausage McGriddles®, a Hash Brown, and a small coffee.",
+          "longDescription": "The Sausage McGriddles® Meal features a warm sausage patty between two sweet McGriddles® cakes, a crispy Hash Brown, and a small McCafé® Premium Roast Coffee.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_SausageMcGriddleMeal_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "bundle": {
+            "slots": [
+              "sides",
+              "drinks"
+            ]
+          },
+          "isExtra": false,
+          "menuPeriod": "breakfast"
+        },
+        {
+          "name": "Bacon, Egg & Cheese Biscuit Meal",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 6.79
+            }
+          ],
+          "description": "The Bacon, Egg & Cheese Biscuit Meal includes a Bacon, Egg & Cheese Biscuit, Hash Brown, and coffee.",
+          "longDescription": "The Bacon, Egg & Cheese Biscuit Meal features thick-cut Applewood smoked bacon, a freshly cracked egg, and melty American cheese on a buttermilk biscuit, a crispy Hash Brown, and a small McCafé® Premium Roast Coffee.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_BaconEggCheeseBiscuitMeal_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "bundle": {
+            "slots": [
+              "sides",
+              "drinks"
+            ]
+          },
+          "isExtra": false,
+          "menuPeriod": "breakfast",
+          "mealNumber": "4"
+        },
+        {
+          "name": "Sausage, Egg & Cheese McGriddles® Meal",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 7.29
+            }
+          ],
+          "description": "The Sausage, Egg & Cheese McGriddles® Meal includes the sandwich, a Hash Brown, and coffee.",
+          "longDescription": "The Sausage, Egg & Cheese McGriddles® Meal features a warm sausage patty, freshly cracked egg, and melty American cheese between sweet McGriddles® cakes, a crispy Hash Brown, and a small McCafé® Premium Roast Coffee.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_SECGriddleMeal_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "bundle": {
+            "slots": [
+              "sides",
+              "drinks"
+            ]
+          },
+          "isExtra": false,
+          "menuPeriod": "breakfast",
+          "mealNumber": "5"
+        },
+        {
+          "name": "Sausage Biscuit Meal",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 5.29
+            }
+          ],
+          "description": "Sausage Biscuit as a breakfast meal with Hash Browns and a Small Premium Roast Coffee.",
+          "longDescription": "Sausage Biscuit as a breakfast Extra Value Meal with Hash Browns and a Small Premium Roast Coffee.",
+          "origin": "McDonald's Menu",
+          "popularity": "Popular",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_SausageBiscuit_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "bundle": {
+            "slots": [
+              "sides",
+              "drinks"
+            ]
+          },
+          "isExtra": false,
+          "menuPeriod": "breakfast",
+          "mealNumber": "3"
+        }
+      ]
+    },
+    {
+      "category": "Fries & Sides",
+      "items": [
+        {
+          "name": "World Famous Fries®",
+          "sizes": [
+            {
+              "size": "Small",
+              "price": 2.19
+            },
+            {
+              "size": "Medium",
+              "price": 3.79
+            },
+            {
+              "size": "Large",
+              "price": 4.39
+            }
+          ],
+          "description": "Our World Famous Fries® are made with premium potatoes like the Russet Burbank and Shepody.",
+          "longDescription": "Our World Famous Fries® are made with premium potatoes like the Russet Burbank and Shepody. Crispy and golden on the outside, fluffy on the inside, and perfectly salted. The iconic fries that make every meal complete.",
+          "origin": "McDonald's Menu",
+          "popularity": "Best Seller",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_FrenchFries_832x472",
+          "comboSlot": "sides",
+          "happyHourDiscounted": false,
+          "aliases": [
+            "fries"
+          ],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Apple Slices",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 0.99
+            }
+          ],
+          "description": "Fresh, crisp apple slices. A wholesome snack or side that's a great complement to any meal.",
+          "longDescription": "Fresh, crisp apple slices. A wholesome snack or side that's a great complement to any meal. Perfect for kids and adults alike.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_AppleSlices_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Side Salad",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 3.29
+            }
+          ],
+          "description": "A blend of chopped Romaine and Iceberg lettuce, grape tomatoes, shredded carrots, and cheddar cheese.",
+          "longDescription": "The Side Salad is made with a blend of chopped Romaine and Iceberg lettuce, grape tomatoes, shredded carrots, and cheddar cheese. Pair it with your favorite dressing.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_SideSalad_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Tangy BBQ Sauce",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 0.25
+            }
+          ],
+          "description": "A bold, tangy BBQ dipping sauce perfect for Chicken McNuggets® and fries.",
+          "longDescription": "Our Tangy BBQ Sauce is a bold, tangy BBQ dipping sauce perfect for dipping Chicken McNuggets® or World Famous Fries®.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_TangyBBQSauce_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Sweet 'N Sour Sauce",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 0.25
+            }
+          ],
+          "description": "A sweet and tangy dipping sauce with a touch of apricot flavor.",
+          "longDescription": "Our Sweet 'N Sour Sauce is a sweet and tangy dipping sauce with a touch of apricot flavor. Perfect for dipping Chicken McNuggets® or other favorites.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_SweetNSourSauce_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        }
+      ]
+    },
+    {
+      "category": "Happy Meal",
+      "items": [
+        {
+          "name": "Hamburger Happy Meal®",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 4.99
+            }
+          ],
+          "description": "A Hamburger Happy Meal® with a kid-sized World Famous Fries®, Apple Slices, and a drink.",
+          "longDescription": "The Hamburger Happy Meal® includes a classic Hamburger with a 100% pure beef patty, a kid-sized order of World Famous Fries®, Apple Slices, and your choice of a small drink. Plus a fun toy!",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_HamburgerHappyMeal_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "4 Piece Chicken McNuggets® Happy Meal®",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 5.29
+            }
+          ],
+          "description": "A 4 piece Chicken McNuggets® Happy Meal® with kid-sized fries, Apple Slices, and a drink.",
+          "longDescription": "The 4 Piece Chicken McNuggets® Happy Meal® includes 4 tender, juicy Chicken McNuggets® made with 100% white meat chicken, a kid-sized order of World Famous Fries®, Apple Slices, and your choice of a small drink. Plus a fun toy!",
+          "origin": "McDonald's Menu",
+          "popularity": "Popular",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_McNuggets4HappyMeal_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "6 Piece Chicken McNuggets® Happy Meal®",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 5.99
+            }
+          ],
+          "description": "A 6 piece Chicken McNuggets® Happy Meal® with kid-sized fries, Apple Slices, and a drink.",
+          "longDescription": "The 6 Piece Chicken McNuggets® Happy Meal® includes 6 tender, juicy Chicken McNuggets® made with 100% white meat chicken, a kid-sized order of World Famous Fries®, Apple Slices, and your choice of a small drink. Plus a fun toy!",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_McNuggets6HappyMeal_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Mighty Kids Meal® — 6 Piece McNuggets®",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 6.49
+            }
+          ],
+          "description": "A bigger meal for bigger appetites — 6 McNuggets® with small fries, Apple Slices, and a drink.",
+          "longDescription": "The Mighty Kids Meal® with 6 Piece McNuggets® includes 6 tender Chicken McNuggets®, a small World Famous Fries®, Apple Slices, and a small drink. A bigger Happy Meal for bigger appetites.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_MightyKidsMeal_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        }
+      ]
+    },
+    {
+      "category": "McCafé Coffees",
+      "items": [
+        {
+          "name": "McCafé® Premium Roast Coffee",
+          "sizes": [
+            {
+              "size": "Small",
+              "price": 1.49
+            },
+            {
+              "size": "Medium",
+              "price": 1.79
+            },
+            {
+              "size": "Large",
+              "price": 1.99
+            }
+          ],
+          "description": "A full-bodied, smooth blend made from 100% Arabica beans. Available in Small, Medium, or Large.",
+          "longDescription": "McCafé® Premium Roast Coffee is a smooth, full-bodied coffee brewed fresh from 100% Arabica beans. A perfect cup to start your day.",
+          "origin": "McDonald's Menu",
+          "popularity": "Best Seller",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_PremiumRoastCoffee_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "McCafé® Decaf Coffee",
+          "sizes": [
+            {
+              "size": "Small",
+              "price": 1.49
+            },
+            {
+              "size": "Medium",
+              "price": 1.79
+            },
+            {
+              "size": "Large",
+              "price": 1.99
+            }
+          ],
+          "description": "A full-bodied, smooth decaf coffee brewed from 100% Arabica beans.",
+          "longDescription": "McCafé® Decaf Coffee is a smooth, rich decaffeinated coffee brewed fresh from 100% Arabica beans. Great taste without the caffeine.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_DecafCoffee_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "McCafé® Iced Coffee",
+          "sizes": [
+            {
+              "size": "Small",
+              "price": 2.49
+            },
+            {
+              "size": "Medium",
+              "price": 3.29
+            },
+            {
+              "size": "Large",
+              "price": 3.79
+            }
+          ],
+          "description": "Refreshingly cool McCafé® Iced Coffee made with 100% Arabica beans and served over ice.",
+          "longDescription": "McCafé® Iced Coffee is brewed from 100% Arabica beans, cooled, and served over ice with your choice of light cream and liquid sugar.",
+          "origin": "McDonald's Menu",
+          "popularity": "Popular",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_IcedCoffee_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "McCafé® Iced Caramel Coffee",
+          "sizes": [
+            {
+              "size": "Small",
+              "price": 2.79
+            },
+            {
+              "size": "Medium",
+              "price": 3.59
+            },
+            {
+              "size": "Large",
+              "price": 4.09
+            }
+          ],
+          "description": "Premium Roast coffee chilled and combined with caramel syrup, served over ice.",
+          "longDescription": "McCafé® Iced Caramel Coffee features our Premium Roast coffee chilled and combined with rich caramel syrup, served over ice with light cream.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_IcedCaramelCoffee_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "McCafé® Iced French Vanilla Coffee",
+          "sizes": [
+            {
+              "size": "Small",
+              "price": 2.79
+            },
+            {
+              "size": "Medium",
+              "price": 3.59
+            },
+            {
+              "size": "Large",
+              "price": 4.09
+            }
+          ],
+          "description": "Premium Roast coffee chilled and combined with French vanilla syrup, served over ice.",
+          "longDescription": "McCafé® Iced French Vanilla Coffee features our Premium Roast coffee chilled and combined with French vanilla syrup, served over ice with light cream.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_IcedFrenchVanillaCoffee_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "McCafé® Caramel Frappé",
+          "sizes": [
+            {
+              "size": "Small",
+              "price": 4.29
+            },
+            {
+              "size": "Medium",
+              "price": 4.99
+            },
+            {
+              "size": "Large",
+              "price": 5.69
+            }
+          ],
+          "description": "A sweet, creamy caramel frappé blended with ice and drizzled with caramel.",
+          "longDescription": "The McCafé® Caramel Frappé features rich caramel flavor blended with ice and our creamy dairy base, then topped with whipped topping and a caramel drizzle.",
+          "origin": "McDonald's Menu",
+          "popularity": "Popular",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_CaramelFrappe_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "McCafé® Mocha Frappé",
+          "sizes": [
+            {
+              "size": "Small",
+              "price": 4.29
+            },
+            {
+              "size": "Medium",
+              "price": 4.99
+            },
+            {
+              "size": "Large",
+              "price": 5.69
+            }
+          ],
+          "description": "A chocolatey, creamy mocha frappé blended with ice and topped with whipped cream.",
+          "longDescription": "The McCafé® Mocha Frappé features rich chocolate flavor blended with ice and our creamy dairy base, then topped with whipped topping and a chocolate drizzle.",
+          "origin": "McDonald's Menu",
+          "popularity": "Popular",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_MochaFrappe_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "McCafé® Latte",
+          "sizes": [
+            {
+              "size": "Small",
+              "price": 3.49
+            },
+            {
+              "size": "Medium",
+              "price": 3.99
+            },
+            {
+              "size": "Large",
+              "price": 4.49
+            }
+          ],
+          "description": "A classic espresso drink with steamed whole milk and a light layer of foam.",
+          "longDescription": "The McCafé® Latte is made with espresso and steamed whole milk, then finished with a light layer of foam. Rich and smooth.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_Latte_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "McCafé® Caramel Latte",
+          "sizes": [
+            {
+              "size": "Small",
+              "price": 3.99
+            },
+            {
+              "size": "Medium",
+              "price": 4.49
+            },
+            {
+              "size": "Large",
+              "price": 4.99
+            }
+          ],
+          "description": "Espresso with steamed whole milk and rich caramel syrup, topped with a light foam.",
+          "longDescription": "The McCafé® Caramel Latte features espresso combined with steamed whole milk and caramel syrup, then topped with a light layer of foam for a sweet, creamy coffee.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_CaramelLatte_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "McCafé® Iced Latte",
+          "sizes": [
+            {
+              "size": "Small",
+              "price": 3.49
+            },
+            {
+              "size": "Medium",
+              "price": 3.99
+            },
+            {
+              "size": "Large",
+              "price": 4.49
+            }
+          ],
+          "description": "Espresso combined with whole milk and served over ice for a cool, creamy coffee.",
+          "longDescription": "The McCafé® Iced Latte is made with espresso and whole milk, served over ice for a cool, creamy, and refreshing coffee drink.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_IcedLatte_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "McCafé® Iced Caramel Latte",
+          "sizes": [
+            {
+              "size": "Small",
+              "price": 3.99
+            },
+            {
+              "size": "Medium",
+              "price": 4.49
+            },
+            {
+              "size": "Large",
+              "price": 4.99
+            }
+          ],
+          "description": "Espresso, whole milk, and rich caramel syrup served over ice.",
+          "longDescription": "The McCafé® Iced Caramel Latte features espresso combined with whole milk and rich caramel syrup, served over ice for a cool, sweet, creamy coffee.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_IcedCaramelLatte_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "McCafé® Mocha",
+          "sizes": [
+            {
+              "size": "Small",
+              "price": 3.99
+            },
+            {
+              "size": "Medium",
+              "price": 4.49
+            },
+            {
+              "size": "Large",
+              "price": 4.99
+            }
+          ],
+          "description": "Espresso with steamed whole milk and rich chocolate syrup, topped with whipped cream.",
+          "longDescription": "The McCafé® Mocha features espresso with steamed whole milk, rich chocolate syrup, and whipped light cream, finished with a chocolate drizzle.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_Mocha_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "McCafé® Iced Mocha",
+          "sizes": [
+            {
+              "size": "Small",
+              "price": 3.99
+            },
+            {
+              "size": "Medium",
+              "price": 4.49
+            },
+            {
+              "size": "Large",
+              "price": 4.99
+            }
+          ],
+          "description": "Espresso with whole milk and chocolate syrup, served over ice and topped with whipped cream.",
+          "longDescription": "The McCafé® Iced Mocha features espresso combined with whole milk, rich chocolate syrup, and ice, finished with whipped light cream and a chocolate drizzle.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_IcedMocha_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "McCafé® Caramel Macchiato",
+          "sizes": [
+            {
+              "size": "Small",
+              "price": 3.99
+            },
+            {
+              "size": "Medium",
+              "price": 4.49
+            },
+            {
+              "size": "Large",
+              "price": 4.99
+            }
+          ],
+          "description": "Espresso layered with steamed whole milk and vanilla syrup, finished with a caramel drizzle.",
+          "longDescription": "The McCafé® Caramel Macchiato features espresso layered with steamed whole milk and vanilla syrup, then topped with a caramel drizzle for a sweet, layered coffee experience.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_CaramelMacchiato_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "McCafé® Iced Caramel Macchiato",
+          "sizes": [
+            {
+              "size": "Small",
+              "price": 3.99
+            },
+            {
+              "size": "Medium",
+              "price": 4.49
+            },
+            {
+              "size": "Large",
+              "price": 4.99
+            }
+          ],
+          "description": "Espresso layered over whole milk and vanilla syrup on ice, finished with a caramel drizzle.",
+          "longDescription": "The McCafé® Iced Caramel Macchiato features espresso layered over whole milk and vanilla syrup served over ice, finished with a caramel drizzle.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_IcedCaramelMacchiato_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "McCafé® Cappuccino",
+          "sizes": [
+            {
+              "size": "Small",
+              "price": 3.49
+            },
+            {
+              "size": "Medium",
+              "price": 3.99
+            },
+            {
+              "size": "Large",
+              "price": 4.49
+            }
+          ],
+          "description": "A classic cappuccino with espresso, steamed whole milk, and a thick layer of foam.",
+          "longDescription": "The McCafé® Cappuccino is made with espresso and steamed whole milk, then topped with a thick layer of rich, creamy foam.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_Cappuccino_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "McCafé® Americano",
+          "sizes": [
+            {
+              "size": "Small",
+              "price": 2.29
+            },
+            {
+              "size": "Medium",
+              "price": 2.79
+            },
+            {
+              "size": "Large",
+              "price": 3.29
+            }
+          ],
+          "description": "Espresso diluted with hot water for a bold, smooth coffee experience.",
+          "longDescription": "The McCafé® Americano is made with Rainforest Alliance Certified™ espresso, diluted with hot water to create a rich, bold, and smooth coffee.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_Americano_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "McCafé® Hot Chocolate",
+          "sizes": [
+            {
+              "size": "Small",
+              "price": 2.49
+            },
+            {
+              "size": "Medium",
+              "price": 2.99
+            },
+            {
+              "size": "Large",
+              "price": 3.49
+            }
+          ],
+          "description": "Steamed whole milk with rich chocolate syrup, topped with whipped cream and a chocolate drizzle.",
+          "longDescription": "McCafé® Hot Chocolate is made with steamed whole milk, rich chocolate syrup, and whipped light cream, finished with a chocolate drizzle. A warm, comforting treat.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_HotChocolate_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "McCafé® Hot Tea",
+          "sizes": [
+            {
+              "size": "Small",
+              "price": 1.29
+            },
+            {
+              "size": "Medium",
+              "price": 1.59
+            },
+            {
+              "size": "Large",
+              "price": 1.79
+            }
+          ],
+          "description": "A selection of hot teas to suit your taste — choose from a variety of flavors.",
+          "longDescription": "McCafé® Hot Tea is available in a variety of flavors. Simply choose your favorite and enjoy it however you like — with cream, sugar, or just plain.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_HotTea_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        }
+      ]
+    },
+    {
+      "category": "Beverages",
+      "items": [
+        {
+          "name": "Coca-Cola®",
+          "sizes": [
+            {
+              "size": "Small",
+              "price": 1.39
+            },
+            {
+              "size": "Medium",
+              "price": 1.79
+            },
+            {
+              "size": "Large",
+              "price": 2.19
+            }
+          ],
+          "description": "Ice-cold Coca-Cola® — the perfect refreshment to pair with your McDonald's favorites.",
+          "longDescription": "Enjoy an ice-cold Coca-Cola® at McDonald's. A bubbly, refreshing classic that's the perfect complement to any meal.",
+          "origin": "McDonald's Menu",
+          "popularity": "Best Seller",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_CocaCola_832x472",
+          "comboSlot": "drinks",
+          "happyHourDiscounted": false,
+          "aliases": [
+            "Coke"
+          ],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Diet Coke®",
+          "sizes": [
+            {
+              "size": "Small",
+              "price": 1.39
+            },
+            {
+              "size": "Medium",
+              "price": 1.79
+            },
+            {
+              "size": "Large",
+              "price": 2.19
+            }
+          ],
+          "description": "Ice-cold Diet Coke® with zero calories and the same great refreshing taste.",
+          "longDescription": "Enjoy a refreshing Diet Coke® at McDonald's. All the great taste of Coca-Cola® with zero calories.",
+          "origin": "McDonald's Menu",
+          "popularity": "Popular",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_DietCoke_832x472",
+          "comboSlot": "drinks",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Sprite®",
+          "sizes": [
+            {
+              "size": "Small",
+              "price": 1.39
+            },
+            {
+              "size": "Medium",
+              "price": 1.79
+            },
+            {
+              "size": "Large",
+              "price": 2.19
+            }
+          ],
+          "description": "Ice-cold Sprite® — a lemon-lime flavored soft drink that's caffeine free.",
+          "longDescription": "Enjoy an ice-cold Sprite® at McDonald's. A crisp, clean, lemon-lime flavored soft drink that's naturally caffeine free.",
+          "origin": "McDonald's Menu",
+          "popularity": "Popular",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_Sprite_832x472",
+          "comboSlot": "drinks",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Dr Pepper®",
+          "sizes": [
+            {
+              "size": "Small",
+              "price": 1.39
+            },
+            {
+              "size": "Medium",
+              "price": 1.79
+            },
+            {
+              "size": "Large",
+              "price": 2.19
+            }
+          ],
+          "description": "Ice-cold Dr Pepper® — the unique blend of 23 flavors.",
+          "longDescription": "Enjoy an ice-cold Dr Pepper® at McDonald's. The unique blend of 23 flavors makes Dr Pepper® a refreshing one-of-a-kind soft drink.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_DrPepper_832x472",
+          "comboSlot": "drinks",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Fanta® Orange",
+          "sizes": [
+            {
+              "size": "Small",
+              "price": 1.39
+            },
+            {
+              "size": "Medium",
+              "price": 1.79
+            },
+            {
+              "size": "Large",
+              "price": 2.19
+            }
+          ],
+          "description": "Ice-cold Fanta® Orange — a bright, bubbly orange-flavored soft drink.",
+          "longDescription": "Enjoy an ice-cold Fanta® Orange at McDonald's. A bright, bubbly, and fun orange-flavored soft drink.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_FantaOrange_832x472",
+          "comboSlot": "drinks",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Hi-C® Orange Lavaburst®",
+          "sizes": [
+            {
+              "size": "Small",
+              "price": 1.39
+            },
+            {
+              "size": "Medium",
+              "price": 1.79
+            },
+            {
+              "size": "Large",
+              "price": 2.19
+            }
+          ],
+          "description": "Hi-C® Orange Lavaburst® — a fruity, refreshing orange drink that's a McDonald's classic.",
+          "longDescription": "Hi-C® Orange Lavaburst® is a fruity, refreshing orange drink and a beloved McDonald's classic. Caffeine free.",
+          "origin": "McDonald's Menu",
+          "popularity": "Popular",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_HiCOrangeLavaburst_832x472",
+          "comboSlot": "drinks",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Barq's® Root Beer",
+          "sizes": [
+            {
+              "size": "Small",
+              "price": 1.39
+            },
+            {
+              "size": "Medium",
+              "price": 1.79
+            },
+            {
+              "size": "Large",
+              "price": 2.19
+            }
+          ],
+          "description": "Ice-cold Barq's® Root Beer — a bold, refreshing root beer with a bite.",
+          "longDescription": "Enjoy a Barq's® Root Beer at McDonald's. It's the bold, refreshing root beer with a bite that root beer lovers enjoy.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_BarqsRootBeer_832x472",
+          "comboSlot": "drinks",
+          "happyHourDiscounted": false,
+          "aliases": [
+            "Root Beer"
+          ],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Hawaiian Punch®",
+          "sizes": [
+            {
+              "size": "Small",
+              "price": 1.39
+            },
+            {
+              "size": "Medium",
+              "price": 1.79
+            },
+            {
+              "size": "Large",
+              "price": 2.19
+            }
+          ],
+          "description": "A sweet, fruity punch drink perfect for kids and adults alike.",
+          "longDescription": "Hawaiian Punch® at McDonald's delivers a sweet, fruity taste that's refreshing and fun. A perfect choice for any meal.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_HawaiianPunch_832x472",
+          "comboSlot": "drinks",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Sweet Iced Tea",
+          "sizes": [
+            {
+              "size": "Small",
+              "price": 1.39
+            },
+            {
+              "size": "Medium",
+              "price": 1.79
+            },
+            {
+              "size": "Large",
+              "price": 2.19
+            }
+          ],
+          "description": "Refreshing iced tea sweetened to perfection. A Southern classic at McDonald's.",
+          "longDescription": "McDonald's Sweet Iced Tea is freshly brewed, sweetened to perfection, and served ice cold. A refreshing complement to any meal.",
+          "origin": "McDonald's Menu",
+          "popularity": "Popular",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_SweetIcedTea_832x472",
+          "comboSlot": "drinks",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Unsweetened Iced Tea",
+          "sizes": [
+            {
+              "size": "Small",
+              "price": 1.39
+            },
+            {
+              "size": "Medium",
+              "price": 1.79
+            },
+            {
+              "size": "Large",
+              "price": 2.19
+            }
+          ],
+          "description": "Refreshing, freshly brewed iced tea with zero sugar, served ice cold.",
+          "longDescription": "McDonald's Unsweetened Iced Tea is freshly brewed and served ice cold with no added sugar. A refreshing, zero-calorie beverage option.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_UnsweetenedIcedTea_832x472",
+          "comboSlot": "drinks",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Frozen Coca-Cola®",
+          "sizes": [
+            {
+              "size": "Small",
+              "price": 1.79
+            },
+            {
+              "size": "Medium",
+              "price": 2.29
+            },
+            {
+              "size": "Large",
+              "price": 2.79
+            }
+          ],
+          "description": "An ice-cold frozen Coca-Cola® slushie that's extra refreshing on a hot day.",
+          "longDescription": "The Frozen Coca-Cola® features the classic taste of Coca-Cola® in an icy, slushy form. Extra refreshing and perfect for hot days.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_FrozenCoke_832x472",
+          "comboSlot": "drinks",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Frozen Fanta® Blue Raspberry",
+          "sizes": [
+            {
+              "size": "Small",
+              "price": 1.79
+            },
+            {
+              "size": "Medium",
+              "price": 2.29
+            },
+            {
+              "size": "Large",
+              "price": 2.79
+            }
+          ],
+          "description": "A cool, icy, blue raspberry-flavored frozen drink that's fun and refreshing.",
+          "longDescription": "The Frozen Fanta® Blue Raspberry is a cool, icy slush bursting with blue raspberry flavor. A fun and refreshing frozen treat.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_FrozenFantaBlueRaspberry_832x472",
+          "comboSlot": "drinks",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Frozen Fanta® Wild Cherry",
+          "sizes": [
+            {
+              "size": "Small",
+              "price": 1.79
+            },
+            {
+              "size": "Medium",
+              "price": 2.29
+            },
+            {
+              "size": "Large",
+              "price": 2.79
+            }
+          ],
+          "description": "A cool, icy, wild cherry-flavored frozen drink that's bold and refreshing.",
+          "longDescription": "The Frozen Fanta® Wild Cherry is a cool, icy slush bursting with wild cherry flavor. Bold, sweet, and refreshing.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_FrozenFantaWildCherry_832x472",
+          "comboSlot": "drinks",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Strawberry Banana Smoothie",
+          "sizes": [
+            {
+              "size": "Small",
+              "price": 3.49
+            },
+            {
+              "size": "Medium",
+              "price": 4.29
+            },
+            {
+              "size": "Large",
+              "price": 4.99
+            }
+          ],
+          "description": "A creamy smoothie made with strawberry and banana puree, low-fat yogurt, and ice.",
+          "longDescription": "The Strawberry Banana Smoothie is a creamy blend of strawberry puree, banana puree, and low-fat yogurt, blended with ice for a cool, refreshing treat.",
+          "origin": "McDonald's Menu",
+          "popularity": "Popular",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_StrawberryBananaSmoothie_832x472",
+          "comboSlot": "drinks",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Mango Pineapple Smoothie",
+          "sizes": [
+            {
+              "size": "Small",
+              "price": 3.49
+            },
+            {
+              "size": "Medium",
+              "price": 4.29
+            },
+            {
+              "size": "Large",
+              "price": 4.99
+            }
+          ],
+          "description": "A creamy tropical smoothie made with mango and pineapple puree, low-fat yogurt, and ice.",
+          "longDescription": "The Mango Pineapple Smoothie is a creamy blend of mango and pineapple puree and low-fat yogurt, blended with ice for a cool, tropical treat.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_MangoPineappleSmoothie_832x472",
+          "comboSlot": "drinks",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Minute Maid® Orange Juice",
+          "sizes": [
+            {
+              "size": "Small",
+              "price": 2.19
+            },
+            {
+              "size": "Medium",
+              "price": 2.69
+            },
+            {
+              "size": "Large",
+              "price": 3.29
+            }
+          ],
+          "description": "100% orange juice squeezed from Minute Maid® oranges for a refreshing citrus taste.",
+          "longDescription": "Minute Maid® Orange Juice at McDonald's is 100% pure squeezed orange juice. A great source of Vitamin C to start your morning.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_MinuteMaidOJ_832x472",
+          "comboSlot": "drinks",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Dasani® Bottled Water",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 1.49
+            }
+          ],
+          "description": "Purified, refreshing Dasani® Bottled Water.",
+          "longDescription": "Stay hydrated with Dasani® Bottled Water. Purified water enhanced with minerals for a pure, fresh taste.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_DasaniWater_832x472",
+          "comboSlot": "drinks",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "1% Low Fat Milk Jug",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 1.69
+            }
+          ],
+          "description": "A cold, creamy jug of 1% low fat milk. A great source of calcium and Vitamin D.",
+          "longDescription": "A cold, creamy jug of 1% low fat milk. A great source of calcium and Vitamin D for kids and adults.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_LowFatMilk_832x472",
+          "comboSlot": "drinks",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Reduced Sugar* Low Fat Chocolate Milk Jug",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 1.89
+            }
+          ],
+          "description": "A cold, creamy jug of reduced sugar low fat chocolate milk. A kid favorite.",
+          "longDescription": "A cold, creamy jug of reduced sugar* low fat chocolate milk. Great taste with less sugar. *25% less sugar than our regular chocolate milk.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_ChocolateMilk_832x472",
+          "comboSlot": "drinks",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Honest Kids® Apple Juice",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 1.49
+            }
+          ],
+          "description": "Organic apple juice for kids — made with no artificial sweeteners.",
+          "longDescription": "Honest Kids® Apple Juice is an organic juice drink made with no high fructose corn syrup or artificial sweeteners. A great drink option for kids.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_HonestKidsAppleJuice_832x472",
+          "comboSlot": "drinks",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        }
+      ]
+    },
+    {
+      "category": "Sweets & Treats",
+      "items": [
+        {
+          "name": "McFlurry® with OREO® Cookies",
+          "sizes": [
+            {
+              "size": "Regular",
+              "price": 4.69
+            }
+          ],
+          "description": "Creamy vanilla soft serve swirled with crunchy OREO® cookie pieces.",
+          "longDescription": "The McFlurry® with OREO® Cookies is a creamy vanilla soft serve swirled with crunchy OREO® cookie pieces. A delicious frozen treat that's the perfect ending to any meal.",
+          "origin": "McDonald's Menu",
+          "popularity": "Best Seller",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_McFlurryOreo_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "requiresMachine": "ice_cream_machine",
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "McFlurry® with M&M'S® Candies",
+          "sizes": [
+            {
+              "size": "Regular",
+              "price": 4.69
+            }
+          ],
+          "description": "Creamy vanilla soft serve mixed with colorful M&M'S® chocolate candies.",
+          "longDescription": "The McFlurry® with M&M'S® Candies features creamy vanilla soft serve with colorful, crunchy M&M'S® chocolate candies mixed in. A fun, tasty treat.",
+          "origin": "McDonald's Menu",
+          "popularity": "Popular",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_McFlurryMMs_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "requiresMachine": "ice_cream_machine",
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "McFlurry® with OREO® Fudge",
+          "sizes": [
+            {
+              "size": "Regular",
+              "price": 4.99
+            }
+          ],
+          "description": "Creamy vanilla soft serve swirled with OREO® cookie pieces and rich hot fudge.",
+          "longDescription": "The McFlurry® with OREO® Fudge features creamy vanilla soft serve swirled with crunchy OREO® cookie pieces and a rich hot fudge topping for the ultimate indulgence.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_McFlurryOreoFudge_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "requiresMachine": "ice_cream_machine",
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Chocolate Shake",
+          "sizes": [
+            {
+              "size": "Small",
+              "price": 3.49
+            },
+            {
+              "size": "Medium",
+              "price": 4.29
+            },
+            {
+              "size": "Large",
+              "price": 4.99
+            }
+          ],
+          "description": "A thick and creamy chocolate milkshake topped with whipped cream.",
+          "longDescription": "The McDonald's Chocolate Shake is made with creamy vanilla soft serve and chocolate syrup, topped with whipped light cream. Thick, creamy, and chocolatey.",
+          "origin": "McDonald's Menu",
+          "popularity": "Popular",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_ChocolateShake_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "requiresMachine": "ice_cream_machine",
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Vanilla Shake",
+          "sizes": [
+            {
+              "size": "Small",
+              "price": 3.49
+            },
+            {
+              "size": "Medium",
+              "price": 4.29
+            },
+            {
+              "size": "Large",
+              "price": 4.99
+            }
+          ],
+          "description": "A thick and creamy vanilla milkshake topped with whipped cream.",
+          "longDescription": "The McDonald's Vanilla Shake is made with creamy vanilla soft serve, topped with whipped light cream. Classic, smooth, and satisfying.",
+          "origin": "McDonald's Menu",
+          "popularity": "Popular",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_VanillaShake_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "requiresMachine": "ice_cream_machine",
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Strawberry Shake",
+          "sizes": [
+            {
+              "size": "Small",
+              "price": 3.49
+            },
+            {
+              "size": "Medium",
+              "price": 4.29
+            },
+            {
+              "size": "Large",
+              "price": 4.99
+            }
+          ],
+          "description": "A thick and creamy strawberry milkshake topped with whipped cream.",
+          "longDescription": "The McDonald's Strawberry Shake is made with creamy vanilla soft serve and strawberry syrup, topped with whipped light cream. Sweet and fruity.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_StrawberryShake_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "requiresMachine": "ice_cream_machine",
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Vanilla Cone",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 1.69
+            }
+          ],
+          "description": "A classic vanilla soft serve cone. Cool, creamy, and refreshing.",
+          "longDescription": "The Vanilla Cone features our creamy vanilla soft serve in a crispy cone. Cool, creamy, and just the right size for a satisfying treat.",
+          "origin": "McDonald's Menu",
+          "popularity": "Value Pick",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_VanillaCone_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "requiresMachine": "ice_cream_machine",
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Hot Fudge Sundae",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 2.49
+            }
+          ],
+          "description": "Creamy vanilla soft serve topped with hot fudge sauce.",
+          "longDescription": "The Hot Fudge Sundae features creamy McDonald's vanilla soft serve topped with hot, thick fudge sauce. A rich, indulgent treat.",
+          "origin": "McDonald's Menu",
+          "popularity": "Popular",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_HotFudgeSundae_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "requiresMachine": "ice_cream_machine",
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Hot Caramel Sundae",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 2.49
+            }
+          ],
+          "description": "Creamy vanilla soft serve topped with warm, buttery caramel sauce.",
+          "longDescription": "The Hot Caramel Sundae features creamy McDonald's vanilla soft serve topped with warm, buttery caramel sauce. Sweet and satisfying.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_HotCaramelSundae_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "requiresMachine": "ice_cream_machine",
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Plain Sundae",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 1.99
+            }
+          ],
+          "description": "Creamy vanilla soft serve served in a cup — simple and delicious.",
+          "longDescription": "The Plain Sundae is simple and delicious — creamy McDonald's vanilla soft serve served in a sundae cup. Perfect for those who love the soft serve on its own.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_PlainSundae_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "requiresMachine": "ice_cream_machine",
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Baked Apple Pie",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 1.89
+            }
+          ],
+          "description": "A classic McDonald's dessert with a warm, flaky crust and sweet apple filling.",
+          "longDescription": "The Baked Apple Pie features 100% American-grown apples, baked in a flaky, buttery crust seasoned with cinnamon. A classic McDonald's dessert.",
+          "origin": "McDonald's Menu",
+          "popularity": "Popular",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_BakedApplePie_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [
+            "apple pie"
+          ],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Cherry & Crème Pie",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 1.89
+            }
+          ],
+          "description": "A warm, flaky crust filled with sweet cherry filling and smooth crème.",
+          "longDescription": "The Cherry & Crème Pie features a warm, flaky crust filled with sweet cherry filling and a smooth, creamy vanilla crème. A limited-time treat.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_CherryPie_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Blueberry & Crème Pie",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 1.89
+            }
+          ],
+          "description": "A warm, flaky crust filled with blueberry filling and smooth crème.",
+          "longDescription": "The Blueberry & Crème Pie features a warm, flaky crust filled with real blueberry filling and a smooth, creamy vanilla crème.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_BlueberryPie_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Chocolate Chip Cookie",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 1.29
+            }
+          ],
+          "description": "A warm, soft, chewy chocolate chip cookie baked fresh in our restaurants.",
+          "longDescription": "The Chocolate Chip Cookie is soft, chewy, and baked fresh right in our restaurants. Made with semi-sweet chocolate chips for chocolate lovers.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_ChocolateChipCookie_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "3 Pack Cookies — Chocolate Chip",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 3.29
+            }
+          ],
+          "description": "Three warm, soft, chewy chocolate chip cookies baked fresh in our restaurants.",
+          "longDescription": "Get three of our soft, chewy Chocolate Chip Cookies baked fresh right in our restaurants. Made with semi-sweet chocolate chips — perfect for sharing (or not).",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_3PackChocolateChipCookie_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Oatmeal Raisin Cookie",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 1.29
+            }
+          ],
+          "description": "A warm, soft oatmeal raisin cookie baked fresh in our restaurants.",
+          "longDescription": "The Oatmeal Raisin Cookie is soft, chewy, and baked fresh in our restaurants with hearty oats and sweet raisins.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_OatmealRaisinCookie_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Sugar Cookie",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 1.29
+            }
+          ],
+          "description": "A warm, soft sugar cookie baked fresh in our restaurants.",
+          "longDescription": "The Sugar Cookie is soft, sweet, and baked fresh right in our restaurants. A simple, classic cookie treat.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_SugarCookie_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Blueberry Muffin",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 2.79
+            }
+          ],
+          "description": "A soft, fluffy blueberry muffin loaded with real blueberries.",
+          "longDescription": "The Blueberry Muffin is a soft, fluffy muffin loaded with real blueberries and topped with a sweet streusel crumble. Perfect for breakfast or a snack.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_BlueberryMuffin_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Apple Fritter",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 2.79
+            }
+          ],
+          "description": "A warm, glazed apple fritter with chunks of real apple and cinnamon.",
+          "longDescription": "The Apple Fritter is a warm, sweet, glazed fritter packed with chunks of real apple and a touch of cinnamon. Baked fresh in our restaurants.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_AppleFritter_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        },
+        {
+          "name": "Cinnamon Roll",
+          "sizes": [
+            {
+              "size": "Standard",
+              "price": 2.79
+            }
+          ],
+          "description": "A warm, gooey cinnamon roll topped with sweet cream cheese icing.",
+          "longDescription": "The Cinnamon Roll is warm, gooey, and topped with sweet cream cheese icing. Baked fresh daily in our restaurants for a delicious treat any time.",
+          "origin": "McDonald's Menu",
+          "popularity": "",
+          "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_CinnamonRoll_832x472",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "menuPeriod": "allDay"
+        }
+      ]
+    }
+  ]
+}
