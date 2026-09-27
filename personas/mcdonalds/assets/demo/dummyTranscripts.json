@@ -1,0 +1,73 @@
+[
+    { "text": "Hi, is this the McDonald's drive-thru?", "isUser": true, "timestamp": "2024-07-18T12:00:00Z", "translation": "Hi, is this the McDonald's drive-thru?" },
+    {
+        "text": "Welcome to McDonald's! What can I get started for you today?",
+        "isUser": false,
+        "timestamp": "2024-07-18T12:00:05Z",
+        "translation": "Welcome to McDonald's! What can I get started for you today?"
+    },
+    {
+        "text": "Quiero dos Big Macs, por favor.",
+        "isUser": true,
+        "timestamp": "2024-07-18T12:00:20Z",
+        "translation": "I want two Big Macs, please."
+    },
+    {
+        "text": "¡Dos Big Macs, perfecto! ¿Le gustaría hacerlo un Meal con papas fritas y una bebida?",
+        "isUser": false,
+        "timestamp": "2024-07-18T12:00:28Z",
+        "translation": "Two Big Macs, perfect! Would you like to make that a Meal with fries and a drink?"
+    },
+    { "text": "No thanks, just the burgers, but add two medium fries and two large Cokes.", "isUser": true, "timestamp": "2024-07-18T12:00:38Z", "translation": "No thanks, just the burgers, but add two medium fries and two large Cokes." },
+    {
+        "text": "You got it! Two medium World Famous Fries and two large Coca-Colas added. Anything else?",
+        "isUser": false,
+        "timestamp": "2024-07-18T12:00:45Z",
+        "translation": "You got it! Two medium World Famous Fries and two large Coca-Colas added. Anything else?"
+    },
+    {
+        "text": "10ピースのチキンマックナゲットを一つお願いします。",
+        "isUser": true,
+        "timestamp": "2024-07-18T12:00:58Z",
+        "translation": "I'd like one 10 piece Chicken McNuggets, please."
+    },
+    {
+        "text": "10ピースのチキンマックナゲットを追加しました！他にご注文はありますか？",
+        "isUser": false,
+        "timestamp": "2024-07-18T12:01:05Z",
+        "translation": "10 piece Chicken McNuggets added! Anything else for your order?"
+    },
+    {
+        "text": "What's in a McFlurry?",
+        "isUser": true,
+        "timestamp": "2024-07-18T12:01:15Z",
+        "translation": "What's in a McFlurry?"
+    },
+    {
+        "text": "Our McFlurry is creamy vanilla soft serve blended with your choice of mix-in — OREO Cookies or M&M'S Candies are our favorites! Want to add one?",
+        "isUser": false,
+        "timestamp": "2024-07-18T12:01:22Z",
+        "translation": "Our McFlurry is creamy vanilla soft serve blended with your choice of mix-in — OREO Cookies or M&M'S Candies are our favorites! Want to add one?"
+    },
+    { "text": "Ajoutez un McFlurry OREO et une tarte aux pommes, s'il vous plaît.", "isUser": true, "timestamp": "2024-07-18T12:01:35Z", "translation": "Add an OREO McFlurry and an apple pie, please." },
+    {
+        "text": "Parfait ! Un McFlurry OREO et une tarte aux pommes ajoutés. Voulez-vous le récapitulatif de la commande ?",
+        "isUser": false,
+        "timestamp": "2024-07-18T12:01:42Z",
+        "translation": "Perfect! One OREO McFlurry and one apple pie added. Would you like the order summary?"
+    },
+    { "text": "Yes, give me the total.", "isUser": true, "timestamp": "2024-07-18T12:01:50Z", "translation": "Yes, give me the total." },
+    {
+        "text": "You have 2 Big Macs, 2 Medium World Famous Fries, 2 Large Coca-Colas, a 10 piece Chicken McNuggets, an OREO McFlurry, and a Baked Apple Pie. Your total is $38.03.",
+        "isUser": false,
+        "timestamp": "2024-07-18T12:01:58Z",
+        "translation": "You have 2 Big Macs, 2 Medium World Famous Fries, 2 Large Coca-Colas, a 10 piece Chicken McNuggets, an OREO McFlurry, and a Baked Apple Pie. Your total is $38.03."
+    },
+    { "text": "That's all, thanks!", "isUser": true, "timestamp": "2024-07-18T12:02:05Z", "translation": "That's all, thanks!" },
+    {
+        "text": "Thanks for choosing McDonald's! Please pull up to the next window.",
+        "isUser": false,
+        "timestamp": "2024-07-18T12:02:10Z",
+        "translation": "Thanks for choosing McDonald's! Please pull up to the next window."
+    }
+]
