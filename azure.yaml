@@ -10,6 +10,13 @@ services:
     host: containerapp
     docker:
       remoteBuild: true
+      # Issue #129: the Dockerfile's COPY paths (frontend/, backend/, and personas/ at the repo
+      # root) assume the build context is the repo root, not this service's ./app project dir --
+      # azd resolves a relative `context` against the service directory (see
+      # resolveDockerPaths in azd's container_helper.go), so `..` here lands exactly on the repo
+      # root. docker.path is left at its default (./Dockerfile, also service-relative), which
+      # already points at app/Dockerfile correctly.
+      context: ..
 hooks:
     postprovision:
       windows:
