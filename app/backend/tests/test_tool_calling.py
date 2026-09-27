@@ -1050,7 +1050,7 @@ class HappyHourBannerWordingTests(unittest.TestCase):
     NEW_BANNER = "[HAPPY HOUR ACTIVE: slushes and fountain drinks are half-price; shakes, Blasts and sundaes are full price]"
 
     def setUp(self):
-        self._hh_patcher = patch("tools.is_happy_hour", return_value=True)
+        self._hh_patcher = patch("order_state.is_happy_hour", return_value=True)
         self._hh_patcher.start()
 
     def tearDown(self):
@@ -1075,7 +1075,7 @@ class HappyHourBannerWordingTests(unittest.TestCase):
 
     def test_no_banner_outside_happy_hour(self):
         self._hh_patcher.stop()
-        with patch("tools.is_happy_hour", return_value=False):
+        with patch("order_state.is_happy_hour", return_value=False):
             sid = _make_session()
             result = _run(update_order({
                 "action": "add", "item_name": "Cherry Limeade",

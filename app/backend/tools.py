@@ -10,6 +10,7 @@ from azure.identity import DefaultAzureCredential
 from azure.search.documents.aio import SearchClient
 from azure.search.documents.models import VectorizableTextQuery
 
+import menu_utils
 from config_loader import get_config
 from menu_utils import (
     SIZE_MAP,
@@ -21,12 +22,28 @@ from menu_utils import (
     resolve_menu_item,
     strip_modifiers,
 )
-from order_state import is_happy_hour, order_state_singleton
+from order_state import order_state_singleton
 from rtmt import RTMiddleTier, Tool, ToolResult, ToolResultDirection
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["attach_tools_rtmt"]
+# #74: these menu_utils re-exports (canonical_size_key, is_extra_item, normalize_size,
+# requires_machine, resolve_menu_item, _infer_category) are no longer called directly
+# in this module's own function bodies -- every persona-aware call site below goes through
+# a resolved `menu` (MenuCatalog or the bare menu_utils module, see _menu_for()) instead so
+# a genuinely bound persona's own menu data is used. They stay imported and re-exported here
+# ONLY for backward compatibility: several existing tests (test_tools_search.py,
+# test_tool_calling.py) import these names directly from `tools`, and menu_utils's own
+# module-level functions ARE the correct default/no-persona behavior these tests exercise.
+__all__ = [
+    "_infer_category",
+    "attach_tools_rtmt",
+    "canonical_size_key",
+    "is_extra_item",
+    "normalize_size",
+    "requires_machine",
+    "resolve_menu_item",
+]
 
 # Load centralized config
 _config = get_config()
@@ -34,8 +51,53 @@ _cache_cfg = _config.get("cache", {})
 _search_cfg = _config.get("search", {})
 _biz_cfg = _config.get("business_rules", {})
 
-# Module-level prompt loader — set by attach_tools_rtmt() at startup
+# Module-level prompt loader — set by attach_tools_rtmt() at startup. This remains the
+# DEFAULT/fallback used for a session with no bound persona (unchanged single-persona
+# behavior); see _prompt_loader_for() below.
 _prompt_loader = None
+
+# #74: per-persona search/prompt runtime context, keyed by persona id, registered by
+# attach_tools_rtmt()'s optional `personas` argument. Empty (the default) preserves today's
+# exact single-persona behavior -- every session falls back to the module-level
+# _prompt_loader/search config above via _persona_registry.get(pid) returning None.
+_persona_registry: dict[str, dict[str, Any]] = {}
+
+# #74: the single deployment-wide search context (client + field config), captured by
+# attach_tools_rtmt()'s own positional params -- this is the fallback _search_dispatch()
+# uses for an unbound session or a persona with no registered override, i.e. today's exact
+# single-persona search behavior when `personas=` is omitted.
+_default_search_ctx: dict[str, Any] = {}
+
+
+def _menu_for(session_id: str | None):
+    """This session's bound persona :class:`~menu_utils.MenuCatalog`, or the shared
+    ``menu_utils`` module itself (duck-typed: identical function names) for an unbound
+    session -- mirrors ``order_state.py``'s own ``_menu_for`` so every persona-specific
+    lookup in this module (menu resolution, size keys, category/extra/machine checks)
+    reads from the session's own bound persona (#74)."""
+    if session_id is None:
+        return menu_utils
+    return order_state_singleton.get_menu_catalog(session_id)
+
+
+def _size_map_for(menu) -> dict[str, str]:
+    """The size-code -> display-string map for *menu* (a MenuCatalog or the bare
+    ``menu_utils`` module, see ``_menu_for``). The module has no ``size_map`` attribute of
+    its own (its equivalent is the top-level ``SIZE_MAP`` constant), so this falls back to
+    that for the unbound/default path."""
+    return getattr(menu, "size_map", None) or SIZE_MAP
+
+
+def _prompt_loader_for(session_id: str | None):
+    """This session's bound persona's ``PromptLoader``, or the module-level default
+    (``_prompt_loader``, set by ``attach_tools_rtmt()``) if the session is unbound or its
+    persona has no registered runtime context (#74)."""
+    if session_id is not None:
+        pid = order_state_singleton.get_persona_id(session_id)
+        ctx = _persona_registry.get(pid) if pid else None
+        if ctx is not None and ctx.get("prompt_loader") is not None:
+            return ctx["prompt_loader"]
+    return _prompt_loader
 
 # ---------------------------------------------------------------------------
 # Search result cache — avoids redundant Azure AI Search round-trips for
@@ -129,28 +191,36 @@ INVALID_MODS = {
 }
 
 
-def validate_customization(item_name: str, mods_string: str) -> str | None:
-    """Return an error message if the mods are nonsensical for the item category, else None."""
+def validate_customization(item_name: str, mods_string: str, prompt_loader=None, menu=None) -> str | None:
+    """Return an error message if the mods are nonsensical for the item category, else None.
+
+    *prompt_loader*/*menu* (#74): the caller's resolved per-session persona context, if any;
+    both default to the module-level fallbacks (``_prompt_loader``, the ``menu_utils`` module)
+    when omitted, so every existing direct call keeps behaving exactly as before."""
+    prompt_loader = prompt_loader if prompt_loader is not None else _prompt_loader
+    menu = menu or menu_utils
     # PR #50 review (third round, minor): reuse the one shared strip_modifiers() helper instead of
     # a second, independent ad-hoc `.split("(")[0]` implementation of the same paren-stripping rule
     # (menu_utils.py's classification functions and order_state.py's combo-conversion logic already
     # route through it).
     base_name = strip_modifiers(item_name)
-    category = _infer_category(base_name)
+    category = menu.infer_category(base_name)
     mods_lower = mods_string.lower()
     for cat_key, forbidden_list in INVALID_MODS.items():
         if cat_key in category.lower():
             for forbidden in forbidden_list:
                 if forbidden in mods_lower:
-                    if _prompt_loader:
-                        return _prompt_loader.render_error("invalid_mod", forbidden_item=forbidden, base_name=base_name)
+                    if prompt_loader:
+                        return prompt_loader.render_error("invalid_mod", forbidden_item=forbidden, base_name=base_name)
                     return f"I can't add {forbidden} to a {base_name} — that's a new one! Want to try a different topping?"
     return None
 
 
-def _format_size_human_readable(size: str) -> str:
-    """Convert size codes to human-readable format using shared size map."""
-    result = normalize_size(size)
+def _format_size_human_readable(size: str, menu=None) -> str:
+    """Convert size codes to human-readable format using *menu*'s (or the shared default's)
+    size map."""
+    menu = menu or menu_utils
+    result = menu.normalize_size(size)
     return result if result else size.capitalize()
 
 
@@ -183,14 +253,29 @@ async def search(
     use_vector_query: bool,
     args: Any,
     use_semantic_ranker: bool = True,
+    *,
+    menu=None,
+    prompt_loader=None,
+    persona_id: str | None = None,
 ) -> ToolResult:
-    """Execute a hybrid Azure AI Search query with caching and safe fallbacks."""
+    """Execute a hybrid Azure AI Search query with caching and safe fallbacks.
+
+    *menu*/*prompt_loader*/*persona_id* (#74): the caller's resolved per-session persona
+    context, if any. All three default to the module-level fallbacks (the ``menu_utils``
+    module, ``_prompt_loader``, and an unnamespaced cache) when omitted, so every existing
+    direct call (e.g. in tests) keeps behaving exactly as before; ``_search_dispatch`` (used
+    by the registered "search" tool) is the only caller that passes them.
+    """
+    menu = menu or menu_utils
+    prompt_loader = prompt_loader if prompt_loader is not None else _prompt_loader
 
     query = args["query"]
     logger.info("Knowledge search requested for query '%s'", query)
 
-    # Check cache first — repeated questions about the same menu item are common
-    cache_key = query.strip().lower()
+    # Check cache first — repeated questions about the same menu item are common. Namespaced
+    # by persona_id so two personas asking the same question never share a cached result from
+    # each other's (potentially different) search index (#74).
+    cache_key = f"{persona_id or ''}::{query.strip().lower()}"
     cached = _search_cache.get(cache_key)
     if cached is not None:
         logger.debug("Search cache hit for '%s'", query)
@@ -255,7 +340,7 @@ async def search(
         )
     except TimeoutError:
         logger.error("Azure AI Search timed out for query '%s'", query)
-        _err = _prompt_loader.render_error("search_service_unavailable") if _prompt_loader else "I'm having trouble reaching our menu right now — could you try that again?"
+        _err = prompt_loader.render_error("search_service_unavailable") if prompt_loader else "I'm having trouble reaching our menu right now — could you try that again?"
         return ToolResult(_err, ToolResultDirection.TO_SERVER)
     except HttpResponseError as exc:
         # Gracefully handle schema/field mismatches (e.g., invalid $select fields) by retrying with a minimal projection.
@@ -272,7 +357,7 @@ async def search(
                 )
             except Exception as exc2:
                 logger.error("Search retry with minimal select also failed: %s", exc2)
-                _err = _prompt_loader.render_error("search_service_unavailable") if _prompt_loader else "I'm sorry, I can't reach our menu data right now."
+                _err = prompt_loader.render_error("search_service_unavailable") if prompt_loader else "I'm sorry, I can't reach our menu data right now."
                 return ToolResult(_err, ToolResultDirection.TO_SERVER)
         elif semantic_enabled and "semantic" in str(exc).lower():
             # Belt and braces: the service rejected the semantic query even though
@@ -288,15 +373,15 @@ async def search(
                 )
             except Exception as exc2:
                 logger.error("Search retry without semantic ranker also failed: %s", exc2)
-                _err = _prompt_loader.render_error("search_service_unavailable") if _prompt_loader else "I'm sorry, I can't reach our menu data right now."
+                _err = prompt_loader.render_error("search_service_unavailable") if prompt_loader else "I'm sorry, I can't reach our menu data right now."
                 return ToolResult(_err, ToolResultDirection.TO_SERVER)
         else:
             logger.error("Azure AI Search request failed: %s", exc)
-            _err = _prompt_loader.render_error("search_service_unavailable") if _prompt_loader else "I'm sorry, I can't reach our menu data right now."
+            _err = prompt_loader.render_error("search_service_unavailable") if prompt_loader else "I'm sorry, I can't reach our menu data right now."
             return ToolResult(_err, ToolResultDirection.TO_SERVER)
     except Exception as exc:
         logger.error("Unexpected error during search for '%s': %s", query, exc)
-        _err = _prompt_loader.render_error("search_service_unavailable") if _prompt_loader else "I had a little glitch looking that up — could you say that again?"
+        _err = prompt_loader.render_error("search_service_unavailable") if prompt_loader else "I had a little glitch looking that up — could you say that again?"
         return ToolResult(_err, ToolResultDirection.TO_SERVER)
 
     results = []
@@ -307,7 +392,7 @@ async def search(
         raw_sizes = record.get('sizes', 'N/A')
         try:
             sizes_json = json.loads(raw_sizes)
-            size_str = ", ".join([f"{_format_size_human_readable(s['size'])} (${s['price']})" for s in sizes_json])
+            size_str = ", ".join([f"{_format_size_human_readable(s['size'], menu=menu)} (${s['price']})" for s in sizes_json])
         except Exception:
             size_str = raw_sizes
 
@@ -321,7 +406,7 @@ async def search(
         # Flag items affected by machine outages so the AI knows not to recommend them.
         # #73: data-driven off the item's own `requiresMachine` field instead of a substring
         # keyword list, so a real menu item is the only thing ever flagged.
-        machine = requires_machine(item_name)
+        machine = menu.requires_machine(item_name)
         if machine and MOCK_MACHINE_STATUS.get(machine) == "down":
             summary += f" [OOS: {_machine_oos_label(machine)}]"
 
@@ -329,7 +414,7 @@ async def search(
 
     joined_results = "\n-----\n".join(results)
     logger.debug("Search results returned %d documents", len(results))
-    _no_results = _prompt_loader.get_error_messages().get("search_no_results", "No matching menu entries found.") if _prompt_loader else "No matching menu entries found."
+    _no_results = prompt_loader.get_error_messages().get("search_no_results", "No matching menu entries found.") if prompt_loader else "No matching menu entries found."
     result = ToolResult(joined_results or _no_results, ToolResultDirection.TO_SERVER)
 
     # Cache the result for repeated queries
@@ -376,6 +461,12 @@ async def update_order(args, session_id: str) -> ToolResult:
 
     logger.info("Updating order for session %s with payload %s", session_id, args)
 
+    # #74: this session's own bound persona menu/prompt-loader context (or the shared
+    # module-level defaults for an unbound session -- unchanged behavior for the
+    # single-persona-deployment default path).
+    menu = _menu_for(session_id)
+    pl = _prompt_loader_for(session_id)
+
     # ── #36: validate required args up front instead of letting a bare
     # args["..."] raise an unhandled KeyError deep inside this handler. Before this
     # check, a malformed/incomplete tool call (e.g. missing "item_name") propagated a
@@ -386,7 +477,7 @@ async def update_order(args, session_id: str) -> ToolResult:
     missing = [k for k in required if k not in args]
     if missing:
         logger.warning("update_order called with missing required argument(s) %s (session=%s)", missing, session_id)
-        _err = _prompt_loader.render_error("tool_execution_failed") if _prompt_loader else (
+        _err = pl.render_error("tool_execution_failed") if pl else (
             "I'm sorry, something went wrong with that. Could you try again?"
         )
         return ToolResult(_err, ToolResultDirection.TO_SERVER)
@@ -397,7 +488,7 @@ async def update_order(args, session_id: str) -> ToolResult:
     # ── #73 (ADR-001 decision 4: "No off-menu"): the on-menu gate, first thing in the add path,
     # before any other validation (customization, price, extras, quantity limits). An item is
     # on the menu iff its normalized name or one of its exact-match aliases resolves against the
-    # persona's own menu data (menu_utils.resolve_menu_item) -- never a keyword/substring guess.
+    # persona's own menu data (menu.resolve_menu_item) -- never a keyword/substring guess.
     # Anything else is rejected outright as not_on_menu; nothing is added to the order, and the
     # model is told so (via error_messages.yaml's item_not_on_menu) so the carhop can offer an
     # on-menu alternative instead of silently accepting or absorbing it.
@@ -411,10 +502,10 @@ async def update_order(args, session_id: str) -> ToolResult:
     # ToolResult.to_text() already json.dumps()s a non-str `text` payload (rtmt.py), so passing a
     # dict here is exactly what every OTHER JSON-carrying ToolResult in this module does. ──
     if args["action"] == "add":
-        menu_item = resolve_menu_item(item_name)
+        menu_item = menu.resolve_menu_item(item_name)
         if menu_item is None:
             logger.info("Rejected off-menu item '%s' for session %s (not_on_menu)", item_name, session_id)
-            _message = _prompt_loader.render_error("item_not_on_menu", item_name=item_name) if _prompt_loader else (
+            _message = pl.render_error("item_not_on_menu", item_name=item_name) if pl else (
                 f"I'm sorry, {item_name} isn't on our menu. Would you like to try something else instead? "
                 "Use the search tool with the guest's words and offer the closest real menu item by its exact name."
             )
@@ -429,16 +520,17 @@ async def update_order(args, session_id: str) -> ToolResult:
                 ToolResultDirection.TO_SERVER,
             )
 
-        requested_size = canonical_size_key(size)
+        requested_size = menu.canonical_size_key(size)
         if requested_size not in menu_item["sizes"]:
-            available_sizes = [SIZE_MAP.get(s, s.capitalize()) for s in menu_item["sizes"]]
+            size_map = _size_map_for(menu)
+            available_sizes = [size_map.get(s, s.capitalize()) for s in menu_item["sizes"]]
             logger.info(
                 "Rejected unsupported size '%s' for '%s' in session %s (size_not_available); available: %s",
                 size, item_name, session_id, menu_item["sizes"],
             )
-            _message = _prompt_loader.render_error(
+            _message = pl.render_error(
                 "size_not_available", item_name=menu_item["name"], available_sizes=", ".join(available_sizes)
-            ) if _prompt_loader else (
+            ) if pl else (
                 f"I'm sorry, {menu_item['name']} isn't available in that size. "
                 f"We have it in {', '.join(available_sizes)} -- would you like one of those?"
             )
@@ -457,7 +549,7 @@ async def update_order(args, session_id: str) -> ToolResult:
     # ── Customization validation (reject nonsensical mods) ──
     if "(" in item_name:
         mods_content = item_name[item_name.find("(")+1:item_name.find(")")]
-        error = validate_customization(item_name, mods_content)
+        error = validate_customization(item_name, mods_content, prompt_loader=pl, menu=menu)
         if error:
             return ToolResult(error, ToolResultDirection.TO_SERVER)
 
@@ -465,16 +557,16 @@ async def update_order(args, session_id: str) -> ToolResult:
     price = args.get("price", 0.0)
     if args["action"] == "add" and price <= 0.0:
         logger.warning("Model attempted to add item %s with invalid price $%.2f (rejecting $0 items)", item_name, price)
-        _err = _prompt_loader.render_error("price_validation_failed") if _prompt_loader else "I'm sorry, I had a glitch with the pricing for that. Could you say that again?"
+        _err = pl.render_error("price_validation_failed") if pl else "I'm sorry, I had a glitch with the pricing for that. Could you say that again?"
         return ToolResult(_err, ToolResultDirection.TO_SERVER)
 
-    if args["action"] == "add" and is_extra_item(item_name):
+    if args["action"] == "add" and menu.is_extra_item(item_name):
         current_items = order_state_singleton.get_order_items(session_id)
         has_allowed_base = False
         has_blocked_base = False
 
         for order_item in current_items:
-            category = _infer_category(order_item.item)
+            category = menu.infer_category(order_item.item)
             if category in ALLOWED_EXTRA_CATEGORIES:
                 has_allowed_base = True
             if category in BLOCKED_EXTRA_CATEGORIES:
@@ -482,12 +574,12 @@ async def update_order(args, session_id: str) -> ToolResult:
 
         if not has_allowed_base:
             if has_blocked_base:
-                apology = _prompt_loader.render_error("extras_blocked_category") if _prompt_loader else (
+                apology = pl.render_error("extras_blocked_category") if pl else (
                     "I can add extras to drinks, slushes, shakes, or combos, "
                     "but I can't add them to sides or hot dogs on their own."
                 )
             else:
-                apology = _prompt_loader.render_error("extras_no_base_item") if _prompt_loader else (
+                apology = pl.render_error("extras_no_base_item") if pl else (
                     "I can add extras to drinks, slushes, shakes, or combos, "
                     "but not to sides or hot dogs on their own."
                 )
@@ -509,8 +601,8 @@ async def update_order(args, session_id: str) -> ToolResult:
         if new_item_qty > MAX_QUANTITY_PER_ITEM:
             allowed = MAX_QUANTITY_PER_ITEM - existing_qty
             if allowed <= 0:
-                if _prompt_loader:
-                    msg = _prompt_loader.render_error("per_item_limit_maxed", item_name=item_name, max_per_item=MAX_QUANTITY_PER_ITEM, existing_qty=existing_qty)
+                if pl:
+                    msg = pl.render_error("per_item_limit_maxed", item_name=item_name, max_per_item=MAX_QUANTITY_PER_ITEM, existing_qty=existing_qty)
                 else:
                     msg = (
                         f"That's a lot of {item_name}! Our drive-thru can handle up to "
@@ -518,8 +610,8 @@ async def update_order(args, session_id: str) -> ToolResult:
                         f"would you like to keep it at {existing_qty}?"
                     )
             else:
-                if _prompt_loader:
-                    msg = _prompt_loader.render_error("per_item_limit_partial", item_name=item_name, max_per_item=MAX_QUANTITY_PER_ITEM, allowed=allowed)
+                if pl:
+                    msg = pl.render_error("per_item_limit_partial", item_name=item_name, max_per_item=MAX_QUANTITY_PER_ITEM, allowed=allowed)
                 else:
                     msg = (
                         f"That's a lot of {item_name}! Our drive-thru can handle up to "
@@ -535,8 +627,8 @@ async def update_order(args, session_id: str) -> ToolResult:
         if total_qty > MAX_TOTAL_ITEMS:
             remaining = MAX_TOTAL_ITEMS - sum(oi.quantity for oi in current_items)
             if remaining <= 0:
-                if _prompt_loader:
-                    msg = _prompt_loader.render_error("total_order_limit_maxed", max_total=MAX_TOTAL_ITEMS)
+                if pl:
+                    msg = pl.render_error("total_order_limit_maxed", max_total=MAX_TOTAL_ITEMS)
                 else:
                     msg = (
                         f"Wow, that's a big order! Our drive-thru tops out at "
@@ -544,8 +636,8 @@ async def update_order(args, session_id: str) -> ToolResult:
                         f"You're already at the max — would you like to swap anything out?"
                     )
             else:
-                if _prompt_loader:
-                    msg = _prompt_loader.render_error("total_order_limit_partial", max_total=MAX_TOTAL_ITEMS, remaining=remaining)
+                if pl:
+                    msg = pl.render_error("total_order_limit_partial", max_total=MAX_TOTAL_ITEMS, remaining=remaining)
                 else:
                     msg = (
                         f"Wow, that's a big order! Our drive-thru tops out at "
@@ -584,9 +676,9 @@ async def update_order(args, session_id: str) -> ToolResult:
         if mods:
             combo_display = f"{display_name} {mods}"
         delta_text = f"Upgraded to {combo_display} — your total is now {summary.finalTotalDisplay}"
-    elif _prompt_loader:
-        tpl = _prompt_loader.get_delta_template(action)
-        delta_text = _prompt_loader.render_template(tpl, quantity=quantity, display_name=display_name, total=summary.finalTotalDisplay)
+    elif pl:
+        tpl = pl.get_delta_template(action)
+        delta_text = pl.render_template(tpl, quantity=quantity, display_name=display_name, total=summary.finalTotalDisplay)
     elif action == "add":
         delta_text = f"Added {quantity} {display_name} — your total is now {summary.finalTotalDisplay}"
     else:
@@ -600,9 +692,9 @@ async def update_order(args, session_id: str) -> ToolResult:
         logger.info("Combo incomplete for session %s — missing: %s", session_id, validation["missing_items"])
     elif action == "add" and not absorbed:
         # ── Category-aware upsell hints (only when combo requirements are met) ──
-        category = _infer_category(item_name)
-        if _prompt_loader:
-            delta_text += _prompt_loader.get_upsell_hint(category)
+        category = menu.infer_category(item_name)
+        if pl:
+            delta_text += pl.get_upsell_hint(category)
         else:
             if category == "combos":
                 delta_text += " (UPSELL HINT: Combos are a great base! Ask if they want to upgrade to a Large size, or add a delicious Shake or Dessert!)"
@@ -618,7 +710,7 @@ async def update_order(args, session_id: str) -> ToolResult:
                 delta_text += " (UPSELL HINT: Ask if they'd like to add anything else — maybe a drink, side, or dessert!)"
         logger.debug("Upsell hint for category '%s'", category)
 
-    happy_hour_note = " [HAPPY HOUR ACTIVE: slushes and fountain drinks are half-price; shakes, Blasts and sundaes are full price]" if is_happy_hour() else ""
+    happy_hour_note = " [HAPPY HOUR ACTIVE: slushes and fountain drinks are half-price; shakes, Blasts and sundaes are full price]" if order_state_singleton.is_happy_hour_for_session(session_id) else ""
     return ToolResult(delta_text + happy_hour_note, ToolResultDirection.TO_BOTH, client_text=json_order_summary)
 
 
@@ -640,7 +732,7 @@ async def get_order(_args: Any, session_id: str) -> ToolResult:
     logger.info("Retrieving order summary for session %s", session_id)
     readback = order_state_singleton.get_grouped_order_for_readback(session_id)
     json_summary = order_state_singleton.get_order_summary_json(session_id)
-    happy_hour_note = " [HAPPY HOUR ACTIVE: slushes and fountain drinks are half-price; shakes, Blasts and sundaes are full price]" if is_happy_hour() else ""
+    happy_hour_note = " [HAPPY HOUR ACTIVE: slushes and fountain drinks are half-price; shakes, Blasts and sundaes are full price]" if order_state_singleton.is_happy_hour_for_session(session_id) else ""
     return ToolResult(readback + happy_hour_note, ToolResultDirection.TO_BOTH, client_text=json_summary)
 
 
@@ -664,6 +756,34 @@ async def reset_order(_args: Any, session_id: str) -> ToolResult:
     return ToolResult(f"Order cleared. {json_summary}", ToolResultDirection.TO_BOTH, client_text=json_summary)
 
 
+async def _search_dispatch(args, session_id: str | None) -> ToolResult:
+    """Resolve *this session's* bound persona search client/field-config (or the shared
+    deployment-wide default for an unbound session or a persona with no registered override,
+    #74) and execute the unchanged ``search()`` above with it.
+
+    This is the function actually registered as ``rtmt.tools["search"].target`` -- it is the
+    one place a per-persona ``SearchClient``/index gets selected, keeping ``search()`` itself
+    100% backward compatible (same positional signature every existing direct test call uses).
+    """
+    pid = order_state_singleton.get_persona_id(session_id) if session_id else None
+    cfg = (_persona_registry.get(pid) if pid else None) or _default_search_ctx
+    menu = _menu_for(session_id)
+    pl = _prompt_loader_for(session_id)
+    return await search(
+        cfg["search_client"],
+        cfg["semantic_configuration"],
+        cfg["identifier_field"],
+        cfg["content_field"],
+        cfg["embedding_field"],
+        cfg["use_vector_query"],
+        args,
+        cfg.get("use_semantic_ranker", True),
+        menu=menu,
+        prompt_loader=pl,
+        persona_id=pid,
+    )
+
+
 def attach_tools_rtmt(
     rtmt: RTMiddleTier,
     credentials: AzureKeyCredential | DefaultAzureCredential,
@@ -677,8 +797,17 @@ def attach_tools_rtmt(
     use_vector_query: bool,
     prompt_loader=None,
     use_semantic_ranker: bool = True,
+    *,
+    personas: dict[str, dict[str, Any]] | None = None,
 ) -> None:
-    """Attach search and order tools to the RTMiddleTier instance."""
+    """Attach search and order tools to the RTMiddleTier instance.
+
+    *personas* (#74, optional): ``{persona_id: {"search_client", "semantic_configuration",
+    "identifier_field", "content_field", "embedding_field", "use_vector_query",
+    "use_semantic_ranker", "prompt_loader"}}`` for a multi-persona deployment -- each bound
+    session's search/prompt calls are then routed through its own persona's entry via
+    ``_search_dispatch``/``_prompt_loader_for`` instead of the single deployment-wide default
+    below. Omitted (the default): identical to today's single-persona behavior."""
     global _prompt_loader
     _prompt_loader = prompt_loader
 
@@ -693,7 +822,22 @@ def attach_tools_rtmt(
         credentials.get_token("https://search.azure.com/.default")  # warm up prior to first call
     search_client = SearchClient(search_endpoint, search_index, credentials, user_agent="RTMiddleTier")
 
-    rtmt.tools["search"] = Tool(schema=schema_map.get("search", search_tool_schema), target=lambda args: search(search_client, semantic_configuration, identifier_field, content_field, embedding_field, use_vector_query, args, use_semantic_ranker))
+    _default_search_ctx.clear()
+    _default_search_ctx.update({
+        "search_client": search_client,
+        "semantic_configuration": semantic_configuration,
+        "identifier_field": identifier_field,
+        "content_field": content_field,
+        "embedding_field": embedding_field,
+        "use_vector_query": use_vector_query,
+        "use_semantic_ranker": use_semantic_ranker,
+    })
+
+    _persona_registry.clear()
+    if personas:
+        _persona_registry.update(personas)
+
+    rtmt.tools["search"] = Tool(schema=schema_map.get("search", search_tool_schema), target=lambda args, session_id: _search_dispatch(args, session_id))
     rtmt.tools["update_order"] = Tool(schema=schema_map.get("update_order", update_order_tool_schema), target=lambda args, session_id: update_order(args, session_id))
     rtmt.tools["get_order"] = Tool(schema=schema_map.get("get_order", get_order_tool_schema), target=lambda args, session_id: get_order(args, session_id))
     rtmt.tools["reset_order"] = Tool(schema=schema_map.get("reset_order", reset_order_tool_schema), target=lambda args, session_id: reset_order(args, session_id))

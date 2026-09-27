@@ -1622,7 +1622,7 @@ class RTMiddleTier:
                                     args = json.loads(item["arguments"])
                                     logger.info("Executing tool '%s' (session=%s)", item["name"], session_id)
                                     t0 = time.monotonic()
-                                    if item["name"] in ("update_order", "get_order", "reset_order"):
+                                    if item["name"] in ("update_order", "get_order", "reset_order", "search"):
                                         result = await tool.target(args, session_id)
                                     else:
                                         result = await tool.target(args)

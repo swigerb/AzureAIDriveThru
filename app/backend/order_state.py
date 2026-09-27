@@ -570,9 +570,35 @@ class OrderState:
         return self.get_session_identifiers(session_id)
 
     def get_persona_id(self, session_id: str) -> "str | None":
-        """The persona id this session was bound to at ``create_session`` time, or ``None`` for
-        the default (env-driven, no-persona-argument) path (#74)."""
+        """The persona id this session was bound to at ``create_session`` time, ``None`` for
+        the default (env-driven, no-persona-argument) path, or ``None`` if *session_id* isn't a
+        live session at all (#74) -- defensive, since callers like ``session_manager.py``'s
+        resume mismatch check may probe an id that has already expired/ended."""
+        if session_id not in self.sessions:
+            return None
+        self._check_owner(session_id)
         return self.sessions[session_id].get("_persona_id")
+
+    def get_menu_catalog(self, session_id: str):
+        """Public, session-scoped counterpart of ``_menu_for`` for callers outside this module
+        (``tools.py``) that need this session's own persona-aware menu resolution (#74). Returns
+        the bound :class:`~menu_utils.MenuCatalog`, or the shared ``menu_utils`` module itself
+        (duck-typed: identical function names) for an unbound or unknown session -- the same
+        default-path fallback ``_menu_for`` already gives every internal call site."""
+        if session_id not in self.sessions:
+            return menu_utils
+        self._check_owner(session_id)
+        return self._menu_for(self.sessions[session_id])
+
+    def is_happy_hour_for_session(self, session_id: str) -> bool:
+        """Public, session-scoped counterpart of ``_is_happy_hour_for`` for callers outside this
+        module (``tools.py``) that need this session's own happy-hour status (#74). Falls back to
+        the shared module-level ``is_happy_hour()`` for an unbound or unknown session (unchanged
+        default-path behavior)."""
+        if session_id not in self.sessions:
+            return is_happy_hour()
+        self._check_owner(session_id)
+        return self._is_happy_hour_for(self.sessions[session_id])
 
 # Create a singleton instance of OrderState
 order_state_singleton = OrderState()
