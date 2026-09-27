@@ -40,6 +40,8 @@ from typing import Any
 import jsonschema
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+import menu_utils
+
 __all__ = [
     "PersonaCatalog",
     "Persona",
@@ -554,6 +556,18 @@ def _load_one_persona(
             f"Persona '{persona_id}': {menu_path} failed schema validation "
             f"at field '{field_path}': {exc.message}"
         ) from exc
+
+    # #128: fail fast if two menu items normalize to the same lookup key, or an alias collides
+    # with another item's own key or another item's own alias -- see
+    # menu_utils.validate_menu_key_collisions's own doc comment for the exact rule (design doc
+    # section 6). Runs here, eagerly, for every ENABLED persona at process startup -- the same
+    # fail-fast guarantee as the schema/model checks above, not just lazily on first session bind
+    # (menu_utils._load_menu_data calls this same function again when a MenuCatalog is actually
+    # built, so the rule holds no matter which path constructs a persona's catalog first).
+    try:
+        menu_utils.validate_menu_key_collisions(menu_raw, persona_id, menu_path)
+    except menu_utils.MenuKeyCollisionError as exc:
+        raise PersonaValidationError(str(exc)) from exc
 
     prompts_dir = pack_dir / "prompts"
     if not prompts_dir.is_dir():

@@ -7,11 +7,17 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 import menu_utils
 from default_persona import get_default_persona
-from menu_utils import strip_modifiers
+from menu_utils import (
+    MenuKeyCollisionError,
+    _load_menu_data,
+    strip_modifiers,
+    validate_menu_key_collisions,
+)
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _GOLDEN_CATEGORIES_PATH = _REPO_ROOT / "tests" / "conformance" / "testdata" / "golden-menu-categories.json"
 _MENU_ITEMS_PATH = _REPO_ROOT / "personas" / "sonic" / "menu" / "menuItems.json"
+_PERSONAS_DIR = _REPO_ROOT / "personas"
 
 # #74 (Rick's PR #102 review, item 2): the module-level brand-specific globals (SIZE_MAP,
 # MENU_CATEGORY_MAP, etc.) are gone from menu_utils -- every classification below now goes
@@ -549,6 +555,164 @@ class OffMenuNamesReturnSafeDefaultsSinceIssue73Tests(unittest.TestCase):
         ):
             self.assertEqual(_SONIC.infer_combo_component(name), "", name)
             self.assertFalse(_SONIC.is_happy_hour_discounted(name), name)
+
+
+# ===========================================================================
+# #128: menu key / alias collision detection.
+#
+# `_menu_key`'s modifier-stripping is BY DESIGN (a customised item must classify like its base
+# item -- see `_menu_key`'s own doc comment), but that exact same stripping can silently collapse
+# two genuinely different menu items (e.g. several differently-priced "(N piece)" size variants of
+# the same base name) into one lookup key, with whichever one loaded last winning and the others
+# unreachable/mispriced. `validate_menu_key_collisions`/`_load_menu_data` must fail fast instead --
+# these tests exercise the standalone validator (raw dict, no disk I/O) and the real loader
+# (`_load_menu_data`, an actual `menuItems.json` on disk) so both the rule itself and its wiring
+# into the loader's try/except are pinned. See also test_persona_loader.py's
+# TestMutationSchemaViolations for the equivalent pack-load-level (persona_loader.PersonaCatalog)
+# proof that this also fails startup, not just a lazy MenuCatalog build.
+# ===========================================================================
+
+
+def _identity_size_key_fn(size: str) -> str:
+    return size
+
+
+def _write_menu_fixture(tmp_path: Path, menu_items: list[dict], persona_id: str = "test-collision-pack") -> Path:
+    """Write a minimal ``menuItems.json`` at ``<tmp_path>/personas/<persona_id>/menu/menuItems.json``
+    (the real pack layout, so `_load_menu_data`'s path-derived pack-label fallback has a real
+    persona id to report) and return its path."""
+    menu_dir = tmp_path / "personas" / persona_id / "menu"
+    menu_dir.mkdir(parents=True)
+    menu_path = menu_dir / "menuItems.json"
+    menu_path.write_text(json.dumps({"menuItems": menu_items}), encoding="utf-8")
+    return menu_path
+
+
+_COLLIDING_NUGGET_SIZES = [
+    {"category": "sides", "items": [
+        {"name": "Nuggets (4 piece)", "sizes": [], "description": ""},
+        {"name": "Nuggets (8 piece)", "sizes": [], "description": ""},
+    ]},
+]
+
+
+class MenuKeyCollisionValidatorTests(unittest.TestCase):
+    """Direct tests of ``validate_menu_key_collisions`` against an in-memory raw dict -- no disk
+    I/O, so these pin the rule itself independent of the loader's file handling."""
+
+    def test_two_items_normalizing_to_same_key_raises(self):
+        with self.assertRaises(MenuKeyCollisionError) as ctx:
+            validate_menu_key_collisions({"menuItems": _COLLIDING_NUGGET_SIZES}, "test-pack")
+        message = str(ctx.exception)
+        self.assertIn("test-pack", message)
+        self.assertIn("Nuggets (4 piece)", message)
+        self.assertIn("Nuggets (8 piece)", message)
+        self.assertIn("same lookup key", message)
+
+    def test_alias_colliding_with_another_items_own_key_raises(self):
+        menu_raw = {"menuItems": [{"category": "sides", "items": [
+            {"name": "Tots", "sizes": [], "description": "", "aliases": []},
+            {"name": "Fries", "sizes": [], "description": "", "aliases": ["tots"]},
+        ]}]}
+        with self.assertRaises(MenuKeyCollisionError) as ctx:
+            validate_menu_key_collisions(menu_raw, "test-pack")
+        message = str(ctx.exception)
+        self.assertIn("Fries", message)
+        self.assertIn("Tots", message)
+        self.assertIn("tots", message.lower())
+
+    def test_alias_colliding_with_another_items_alias_raises(self):
+        menu_raw = {"menuItems": [{"category": "sides", "items": [
+            {"name": "Item A", "sizes": [], "description": "", "aliases": ["combo"]},
+            {"name": "Item B", "sizes": [], "description": "", "aliases": ["combo"]},
+        ]}]}
+        with self.assertRaises(MenuKeyCollisionError) as ctx:
+            validate_menu_key_collisions(menu_raw, "test-pack")
+        message = str(ctx.exception)
+        self.assertIn("combo", message)
+        self.assertIn("Item A", message)
+        self.assertIn("Item B", message)
+
+    def test_forward_reference_alias_vs_later_item_key_is_still_caught(self):
+        """The alias is declared on the FIRST item in file order, but collides with a DIFFERENT
+        item's own key declared LATER in the file -- the two-pass design must catch this
+        regardless of declaration order, not just a same-or-earlier-item collision."""
+        menu_raw = {"menuItems": [{"category": "sides", "items": [
+            {"name": "Small Fries", "sizes": [], "description": "", "aliases": ["fries"]},
+            {"name": "Fries", "sizes": [], "description": ""},
+        ]}]}
+        with self.assertRaises(MenuKeyCollisionError):
+            validate_menu_key_collisions(menu_raw, "test-pack")
+
+    def test_alias_matching_its_own_items_key_is_not_a_collision(self):
+        """An item's own alias normalizing to its own key is a harmless no-op (e.g. authoring both
+        "Tots" and an alias that also happens to mean "Tots"), never a collision."""
+        menu_raw = {"menuItems": [{"category": "sides", "items": [
+            {"name": "Tots", "sizes": [], "description": "", "aliases": ["Tots", "tots (large)"]},
+        ]}]}
+        validate_menu_key_collisions(menu_raw, "test-pack")  # must not raise
+
+    def test_clean_menu_with_no_collisions_does_not_raise(self):
+        menu_raw = {"menuItems": [{"category": "sides", "items": [
+            {"name": "Tots", "sizes": [], "description": "", "aliases": ["tater tots"]},
+            {"name": "Fries", "sizes": [], "description": "", "aliases": []},
+        ]}]}
+        validate_menu_key_collisions(menu_raw, "test-pack")  # must not raise
+
+    def test_real_packs_have_no_collisions(self):
+        """Brand-agnostic (like test_persona_loader.py's own pack-count-agnostic tests): every
+        real persona pack discovered under personas/, not a hardcoded brand name."""
+        menu_paths = sorted(_PERSONAS_DIR.glob("*/menu/menuItems.json"))
+        self.assertTrue(menu_paths, "expected at least one real persona pack's menuItems.json")
+        for path in menu_paths:
+            with path.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+            validate_menu_key_collisions(data, path.parent.parent.name, path)  # must not raise
+
+
+class LoadMenuDataCollisionWiringTests(unittest.TestCase):
+    """`_load_menu_data` is the actual per-persona loader (`MenuCatalog.from_persona`'s only
+    caller) -- these pin that its own try/except doesn't swallow MenuKeyCollisionError (a naive
+    `raise` placed inside that block would otherwise be caught by its `except Exception` and
+    logged-and-degraded into an empty ``({}, {})`` instead of failing fast)."""
+
+    def test_colliding_fixture_menu_raises_not_swallowed(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            menu_path = _write_menu_fixture(Path(tmp), _COLLIDING_NUGGET_SIZES)
+            with self.assertRaises(MenuKeyCollisionError):
+                _load_menu_data(menu_path, size_key_fn=_identity_size_key_fn, persona_id="test-pack")
+
+    def test_explicit_persona_id_is_used_in_the_message(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            menu_path = _write_menu_fixture(Path(tmp), _COLLIDING_NUGGET_SIZES)
+            with self.assertRaises(MenuKeyCollisionError) as ctx:
+                _load_menu_data(menu_path, size_key_fn=_identity_size_key_fn, persona_id="explicit-persona-id")
+            self.assertIn("explicit-persona-id", str(ctx.exception))
+
+    def test_omitted_persona_id_falls_back_to_path_derived_pack_label(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            menu_path = _write_menu_fixture(Path(tmp), _COLLIDING_NUGGET_SIZES, persona_id="path-derived-pack")
+            with self.assertRaises(MenuKeyCollisionError) as ctx:
+                _load_menu_data(menu_path, size_key_fn=_identity_size_key_fn)  # no persona_id
+            self.assertIn("path-derived-pack", str(ctx.exception))
+
+    def test_clean_fixture_menu_loads_normally(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            menu_path = _write_menu_fixture(Path(tmp), [
+                {"category": "sides", "items": [
+                    {"name": "Tots", "sizes": [], "description": "", "aliases": ["tater tots"]},
+                    {"name": "Fries", "sizes": [], "description": "", "aliases": []},
+                ]},
+            ])
+            item_fields, alias_map = _load_menu_data(
+                menu_path, size_key_fn=_identity_size_key_fn, persona_id="test-pack"
+            )
+            self.assertEqual(set(item_fields), {"tots", "fries"})
+            self.assertEqual(alias_map, {"tater tots": "tots"})
 
     def test_off_menu_names_that_used_to_falsely_match_steak_or_a_plural_drink_are_unclassified(self):
         """"Philly Cheesesteak"/"Steak Sandwich" (contain "tea" as a bare substring of "steak") and
