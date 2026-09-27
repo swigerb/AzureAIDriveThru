@@ -1,0 +1,57 @@
+{
+  "$schema": "../persona.schema.json",
+  "schemaVersion": 1,
+  "id": "test-beta",
+  "displayName": "Test Beta Burger Co.",
+  "roleName": "beta-runner",
+  "locales": { "default": "en", "supported": ["en"] },
+  "store": { "timezone": "America/Los_Angeles" },
+  "voice": { "default": "cedar" },
+  "search": { "indexName": "test-beta-menu-items", "contentFields": ["description"] },
+
+  "pricing": {
+    "taxRate": "0.09",
+    "happyHour": null
+  },
+
+  "sizes": {
+    "canonical": { "regular": "Regular", "jumbo": "Jumbo" },
+    "aliases": { "reg": "regular" },
+    "spokenAs": {},
+    "hidden": ["", "n/a", "none"],
+    "default": null
+  },
+
+  "bundles": {
+    "nameMarkers": ["meal"],
+    "convertStandalone": false,
+    "missingPartText": { "sides": "a side", "drinks": "a drink" }
+  },
+
+  "extras": {
+    "allowedBaseCategories": ["drinks"],
+    "blockedBaseCategories": ["mains"],
+    "splitCombinedNames": false
+  },
+
+  "invalidModifiers": {},
+  "machines": {},
+
+  "models": {
+    "realtime": { "default": "gpt-realtime-mini", "allowed": ["gpt-realtime-mini"] }
+  },
+
+  "strategies": { "searchQueryRewrite": "none" },
+  "features": { "dayparts": false },
+
+  "ui": {
+    "title": "Test Beta Voice Ordering",
+    "theme": {
+      "light": { "primary": "220 80% 45%", "secondary": "220 40% 30%", "background": "0 0% 96%", "foreground": "0 0% 10%" }
+    },
+    "assets": { "logo": "assets/logo.svg", "favicon": "assets/favicon.ico" },
+    "strings": { "en": { "app.title": "Test Beta Voice Ordering" } },
+    "hero": { "headline": "Test Beta fixture pack", "callouts": [] },
+    "legal": "TEST-ONLY fixture pack (#74) -- not a real brand, used only by the Python backend test suite to prove multi-persona isolation. Also proves pricing.happyHour: null (decision 5) works end to end."
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "menuItems": [
+    {
+      "category": "drinks",
+      "items": [
+        {
+          "name": "Alpha Cola",
+          "sizes": [
+            { "size": "small", "price": 1.99 },
+            { "size": "large", "price": 2.99 }
+          ],
+          "description": "Test Alpha's house cola, served ice cold.",
+          "aliases": ["cola"]
+        }
+      ]
+    },
+    {
+      "category": "mains",
+      "items": [
+        {
+          "name": "Alpha Burger",
+          "sizes": [
+            { "size": "small", "price": 3.99 }
+          ],
+          "description": "Test Alpha's signature burger."
+        }
+      ]
+    }
+  ]
+}

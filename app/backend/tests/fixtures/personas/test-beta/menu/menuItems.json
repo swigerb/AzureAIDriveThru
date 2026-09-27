@@ -1,0 +1,30 @@
+{
+  "menuItems": [
+    {
+      "category": "drinks",
+      "items": [
+        {
+          "name": "Beta Root Beer",
+          "sizes": [
+            { "size": "regular", "price": 2.29 },
+            { "size": "jumbo", "price": 3.29 }
+          ],
+          "description": "Test Beta's house root beer.",
+          "aliases": ["root beer"]
+        }
+      ]
+    },
+    {
+      "category": "mains",
+      "items": [
+        {
+          "name": "Beta Double Burger",
+          "sizes": [
+            { "size": "regular", "price": 4.49 }
+          ],
+          "description": "Test Beta's double-patty burger."
+        }
+      ]
+    }
+  ]
+}

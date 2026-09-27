@@ -1,0 +1,63 @@
+{
+  "$schema": "../persona.schema.json",
+  "schemaVersion": 1,
+  "id": "test-alpha",
+  "displayName": "Test Alpha Drive-In",
+  "roleName": "alpha-hop",
+  "locales": { "default": "en", "supported": ["en"] },
+  "store": { "timezone": "America/Chicago" },
+  "voice": { "default": "marin" },
+  "search": { "indexName": "test-alpha-menu-items", "contentFields": ["description"] },
+
+  "pricing": {
+    "taxRate": "0.05",
+    "happyHour": {
+      "startHour": 14,
+      "endHour": 16,
+      "priceMultiplier": "0.5",
+      "announce": true,
+      "banner": "[ALPHA HAPPY HOUR ACTIVE]"
+    }
+  },
+
+  "sizes": {
+    "canonical": { "small": "Small", "large": "Large" },
+    "aliases": { "s": "small", "l": "large" },
+    "spokenAs": {},
+    "hidden": ["", "n/a", "none"],
+    "default": null
+  },
+
+  "bundles": {
+    "nameMarkers": ["combo"],
+    "convertStandalone": false,
+    "missingPartText": { "sides": "a side", "drinks": "a drink" }
+  },
+
+  "extras": {
+    "allowedBaseCategories": ["drinks"],
+    "blockedBaseCategories": ["mains"],
+    "splitCombinedNames": false
+  },
+
+  "invalidModifiers": {},
+  "machines": {},
+
+  "models": {
+    "realtime": { "default": "gpt-realtime-2.1", "allowed": ["gpt-realtime-2.1"] }
+  },
+
+  "strategies": { "searchQueryRewrite": "none" },
+  "features": { "dayparts": false },
+
+  "ui": {
+    "title": "Test Alpha Voice Ordering",
+    "theme": {
+      "light": { "primary": "10 80% 45%", "secondary": "10 40% 30%", "background": "0 0% 96%", "foreground": "0 0% 10%" }
+    },
+    "assets": { "logo": "assets/logo.svg", "favicon": "assets/favicon.ico" },
+    "strings": { "en": { "app.title": "Test Alpha Voice Ordering" } },
+    "hero": { "headline": "Test Alpha fixture pack", "callouts": [] },
+    "legal": "TEST-ONLY fixture pack (#74) -- not a real brand, used only by the Python backend test suite to prove multi-persona isolation."
+  }
+}
