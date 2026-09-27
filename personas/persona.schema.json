@@ -212,7 +212,30 @@
         "primary": { "type": "string" },
         "secondary": { "type": "string" },
         "background": { "type": "string" },
-        "foreground": { "type": "string" }
+        "foreground": { "type": "string" },
+        "accents": { "$ref": "#/$defs/themeAccents" }
+      }
+    },
+    "themeAccents": {
+      "description": "Optional extended brand accent palette (issue #80 F2, app/frontend/src/lib/personaTheme.ts::PersonaAccentPalette). Role-named, not brand-specific: hex colors so a persona's exact pre-theming shades carry over without HSL round-trip drift. Every key is optional so packs without a curated accent palette (or a dark-mode override of only some keys) still validate.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "primaryHex": { "type": "string" },
+        "primaryStrong": { "type": "string" },
+        "primaryLight": { "type": "string" },
+        "primaryTintOnDark": { "type": "string" },
+        "secondaryHex": { "type": "string" },
+        "secondaryStrong": { "type": "string" },
+        "secondaryTintOnDark": { "type": "string" },
+        "accent": { "type": "string" },
+        "accentLight": { "type": "string" },
+        "ink": { "type": "string" },
+        "surfaceTint": { "type": "string" },
+        "surfaceDark": { "type": "string" },
+        "surfaceDarkAlt": { "type": "string" },
+        "success": { "type": "string" },
+        "neutral": { "type": "string" }
       }
     }
   }

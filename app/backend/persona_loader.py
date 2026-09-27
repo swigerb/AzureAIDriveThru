@@ -151,12 +151,38 @@ class _Features(BaseModel):
     dayparts: bool
 
 
+class _ThemeAccents(BaseModel):
+    """Optional extended brand accent palette (issue #80 F2, personaTheme.ts::PersonaAccentPalette).
+
+    Role-named, not brand-specific, and every key is optional: a pack may omit the block entirely,
+    provide the full light-mode palette, or override only a subset for dark mode.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    primaryHex: str | None = None
+    primaryStrong: str | None = None
+    primaryLight: str | None = None
+    primaryTintOnDark: str | None = None
+    secondaryHex: str | None = None
+    secondaryStrong: str | None = None
+    secondaryTintOnDark: str | None = None
+    accent: str | None = None
+    accentLight: str | None = None
+    ink: str | None = None
+    surfaceTint: str | None = None
+    surfaceDark: str | None = None
+    surfaceDarkAlt: str | None = None
+    success: str | None = None
+    neutral: str | None = None
+
+
 class _ThemeTokens(BaseModel):
     model_config = ConfigDict(extra="forbid")
     primary: str | None = None
     secondary: str | None = None
     background: str | None = None
     foreground: str | None = None
+    accents: _ThemeAccents | None = None
 
 
 class _Font(BaseModel):

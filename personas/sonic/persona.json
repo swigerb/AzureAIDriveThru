@@ -80,7 +80,7 @@
     "title": "Sonic Drive-In Voice Ordering",
     "theme": {
       "light": { "primary": "341 100% 45%", "secondary": "208 52% 33%", "background": "195 44% 96%", "foreground": "208 53% 20%" },
-      "dark": { "primary": "347 100% 71%" },
+      "dark": { "primary": "341 100% 55%" },
       "font": { "family": "Nunito Sans", "importUrl": "https://fonts.googleapis.com/css2?family=Nunito+Sans:wght@400;600;700;800;900&display=swap" }
     },
     "assets": { "logo": "assets/logo.svg", "favicon": "assets/favicon.ico", "apologyClip": "assets/audio/apology-{lang}.wav" },

@@ -74,6 +74,58 @@ class TestValidPackLoads:
         assert manifest.pricing.happyHour.endHour == 16
         assert manifest.machines["ice_cream_machine"] == "down"
 
+    def test_sonic_dark_primary_matches_index_css(self):
+        """Regression guard: dark-mode primary must match index.css's `.dark` block / personaTheme.ts's
+        SONIC_THEME.dark.primary ("341 100% 55%"), not the design doc's abridged example value. A prior
+        draft of persona.json had "347 100% 71%" here, which would have silently diverged the pack from
+        the actual rendered dark-mode color."""
+        catalog = PersonaCatalog.load(personas_dir=_REAL_PERSONAS_DIR)
+        manifest = catalog.get("sonic").manifest
+        assert manifest.ui.theme.dark is not None
+        assert manifest.ui.theme.dark.primary == "341 100% 55%"
+
+    def test_sonic_theme_accents_block_is_optional_and_absent_today(self):
+        """`accents` (issue #80 F2, personaTheme.ts::PersonaAccentPalette) is optional in the schema
+        so packs without a curated accent palette still validate -- today's real Sonic persona.json
+        doesn't set it yet, and that must keep loading cleanly."""
+        catalog = PersonaCatalog.load(personas_dir=_REAL_PERSONAS_DIR)
+        manifest = catalog.get("sonic").manifest
+        assert manifest.ui.theme.light.accents is None
+
+    def test_theme_accents_block_loads_when_present(self, personas_copy):
+        """When a persona pack does supply the optional `accents` block (role-named per
+        personaTheme.ts's PersonaAccentPalette: primaryHex, primaryStrong, ..., neutral), it
+        validates and its values are exposed on the manifest -- proves the block is wired through
+        both persona.schema.json and the Pydantic models, not just accepted by one of the two."""
+        def mutator(d):
+            d["ui"]["theme"]["light"]["accents"] = {
+                "primaryHex": "#E40046",
+                "primaryStrong": "#C31B24",
+                "primaryLight": "#FF4D7A",
+                "primaryTintOnDark": "#FF6B8A",
+                "secondaryHex": "#285780",
+                "secondaryStrong": "#137AC9",
+                "secondaryTintOnDark": "#74D2E7",
+                "accent": "#FEDD00",
+                "accentLight": "#FFE84D",
+                "ink": "#18344D",
+                "surfaceTint": "#F2F8FA",
+                "surfaceDark": "#0F1A24",
+                "surfaceDarkAlt": "#152231",
+                "success": "#328500",
+                "neutral": "#C9CFD4",
+            }
+            # Dark mode is allowed to override only a subset of accent keys.
+            d["ui"]["theme"]["dark"]["accents"] = {"primaryHex": "#FF4D7A"}
+        _mutate_persona_json(personas_copy, "sonic", mutator)
+        catalog = PersonaCatalog.load(personas_dir=personas_copy)
+        manifest = catalog.get("sonic").manifest
+        assert manifest.ui.theme.light.accents is not None
+        assert manifest.ui.theme.light.accents.primaryHex == "#E40046"
+        assert manifest.ui.theme.light.accents.neutral == "#C9CFD4"
+        assert manifest.ui.theme.dark.accents.primaryHex == "#FF4D7A"
+        assert manifest.ui.theme.dark.accents.secondaryHex is None
+
     def test_valid_copy_loads_identically(self, personas_copy):
         """A byte-identical copy of the real pack, loaded from a different directory, validates
         the same way -- proves the loader is driven by content, not some real-path special case."""
@@ -173,6 +225,19 @@ class TestMutationSchemaViolations:
     def test_extra_unknown_nested_field_refuses_to_start(self, personas_copy):
         def mutator(d):
             d["ui"]["unexpectedNestedField"] = "nope"
+        _mutate_persona_json(personas_copy, "sonic", mutator)
+        with pytest.raises(PersonaValidationError, match="sonic"):
+            PersonaCatalog.load(personas_dir=personas_copy)
+
+    def test_unknown_field_inside_theme_accents_refuses_to_start(self, personas_copy):
+        """`accents` is optional, but once present it's still additionalProperties:false -- an
+        unrecognized accent key (e.g. a typo, or a token name from before the primary/secondary/
+        accent role-name rename) must be rejected, not silently ignored."""
+        def mutator(d):
+            d["ui"]["theme"]["light"]["accents"] = {
+                "primaryHex": "#E40046",
+                "brandRedHex": "#E40046",  # old pre-rename token name, not a valid role name
+            }
         _mutate_persona_json(personas_copy, "sonic", mutator)
         with pytest.raises(PersonaValidationError, match="sonic"):
             PersonaCatalog.load(personas_dir=personas_copy)
