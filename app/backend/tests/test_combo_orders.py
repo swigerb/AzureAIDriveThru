@@ -19,7 +19,17 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 import pytest
 
+from default_persona import get_default_persona
+from menu_utils import get_catalog_for_persona
 from order_state import order_state_singleton
+
+
+def _default_menu():
+    """The default (env-driven) persona's own MenuCatalog -- #74 replaces the old
+    module-level menu_utils free functions/MENU_CATEGORY_MAP these tests used to
+    call directly; every session (including the default one) now resolves its menu
+    through this exact same path, so this fixture proves nothing is skipped."""
+    return get_catalog_for_persona(get_default_persona())
 
 
 @pytest.fixture(autouse=True)
@@ -550,8 +560,7 @@ class TestComboMenuItems:
     """Verify combo items exist in the menu JSON and are categorized correctly."""
 
     def test_combo_items_in_menu_category_map(self):
-        from menu_utils import MENU_CATEGORY_MAP
-        combos_in_map = {k: v for k, v in MENU_CATEGORY_MAP.items() if "combo" in k}
+        combos_in_map = {k: v for k, v in _default_menu().category_map.items() if "combo" in k}
         # issue #72 Part 2: full export import grew Combos to 28 items; 25 of those 28 literally
         # contain "combo" in their name (the other 3 -- "$6 All-American Smasher™ Meal" and the
         # two "Crispy Tenders Dinner - N piece" items -- are Combos-category bundles that don't
@@ -562,14 +571,14 @@ class TestComboMenuItems:
             assert cat == "combos", f"{name} mapped to '{cat}' instead of 'combos'"
 
     def test_combo_infer_category(self):
-        from menu_utils import infer_category
-        assert infer_category("SONIC® Cheeseburger Combo") == "combos"
-        assert infer_category("Fish Sandwich Combo") == "combos"
-        assert infer_category("SuperSONIC® Double Cheeseburger Combo") == "combos"
+        menu = _default_menu()
+        assert menu.infer_category("SONIC® Cheeseburger Combo") == "combos"
+        assert menu.infer_category("Fish Sandwich Combo") == "combos"
+        assert menu.infer_category("SuperSONIC® Double Cheeseburger Combo") == "combos"
 
     def test_combo_not_classified_as_drink(self):
         """Combos must not be classified as drinks (would break happy hour)."""
-        from order_state import _infer_combo_component
-        assert _infer_combo_component("SONIC® Cheeseburger Combo") == ""
-        assert _infer_combo_component("Fish Sandwich Combo") == ""
-        assert _infer_combo_component("SuperSONIC® Double Cheeseburger Combo") == ""
+        menu = _default_menu()
+        assert menu.infer_combo_component("SONIC® Cheeseburger Combo") == ""
+        assert menu.infer_combo_component("Fish Sandwich Combo") == ""
+        assert menu.infer_combo_component("SuperSONIC® Double Cheeseburger Combo") == ""

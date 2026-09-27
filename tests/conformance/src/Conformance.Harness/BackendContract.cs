@@ -18,7 +18,8 @@ public sealed record BackendContract(
     string SearchIndex,
     string StoreTimeZone,
     IReadOnlyList<string> Personas,
-    string DefaultPersona)
+    string DefaultPersona,
+    string? PersonasDir = null)
 {
     public const string DefaultDeployment = "gpt-realtime-2.1-conformance";
     public const string DefaultVoice = "marin";
@@ -53,10 +54,18 @@ public sealed record BackendContract(
     /// <see cref="Conformance.Harness.ConformancePersonas"/>) so a caller that doesn't care about
     /// personas gets exactly today's implicit behaviour (everything runs as "sonic") with no
     /// change required.
+    ///
+    /// <paramref name="personasDir"/> (Rick's PR #102 review item 1: the two-pack persona_mismatch
+    /// conformance row) overrides PERSONAS_DIR so a scenario can launch the backend against a
+    /// second, TEST-ONLY persona pack directory (e.g. the same fixture pack
+    /// app/backend/tests/test_persona_binding.py already uses) without needing a real, user-facing
+    /// second persona pack under personas/ -- that's #78/#79's job, explicitly out of scope here.
+    /// Null (the default) never sets PERSONAS_DIR, so every existing caller resolves personas from
+    /// the real repo personas/ folder exactly as before.
     /// </summary>
     public static BackendContract ForPort(
         Uri realtimeBaseUri, Uri searchBaseUri, int port, string? deployment = null,
-        IReadOnlyList<string>? personas = null, string? defaultPersona = null) => new(
+        IReadOnlyList<string>? personas = null, string? defaultPersona = null, string? personasDir = null) => new(
         RealtimeBaseUri: realtimeBaseUri,
         SearchBaseUri: searchBaseUri,
         Port: port,
@@ -65,5 +74,6 @@ public sealed record BackendContract(
         SearchIndex: DefaultSearchIndex,
         StoreTimeZone: DefaultStoreTimeZone,
         Personas: personas ?? [ConformancePersonas.DefaultPersonaId],
-        DefaultPersona: defaultPersona ?? ConformancePersonas.DefaultPersonaId);
+        DefaultPersona: defaultPersona ?? ConformancePersonas.DefaultPersonaId,
+        PersonasDir: personasDir);
 }

@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from aiohttp import web
 
 import conformance_hooks
+import default_persona
 from config_loader import get_config
 from order_state import SessionIdentifiers, order_state_singleton
 
@@ -148,9 +149,11 @@ _REHYDRATION_PREAMBLE = (
 )
 
 # Sent once, if the guest stays silent for resume.nudge_after_seconds after a resume.
-_NUDGE_TEXT = (
+# #74 (Rick's PR #102 review, round 3, required item 1): templated on the bound persona's own
+# roleName ("carhop" by default, but never hardcoded here) -- see build_nudge_item() below.
+_NUDGE_TEXT_TEMPLATE = (
     "The guest has been quiet since their connection came back. In one short, friendly sentence, "
-    "in your carhop persona, ask whether they need anything else with their order. Do not greet "
+    "in your {role_name} persona, ask whether they need anything else with their order. Do not greet "
     "them again, do not mention the connection, and do not read the order back."
 )
 
@@ -170,19 +173,6 @@ class ResumeOutcome:
 # Rough token estimation: ~4 characters per token for English text.
 # This is intentionally conservative (over-estimates) for safety monitoring.
 _CHARS_PER_TOKEN = 4
-
-# Default greeting — overridden by PromptLoader at runtime.
-_DEFAULT_GREETING_MSG = json.dumps({
-    "type": "conversation.item.create",
-    "item": {
-        "type": "message",
-        "role": "user",
-        "content": [
-            {"type": "input_text", "text": "Say EXACTLY this greeting and NOTHING else: Welcome to Sonic Drive-In! What can I get started for you today?"}
-        ]
-    }
-})
-
 
 class ContextMonitor:
     """Estimates token usage in the conversation context window and logs warnings.
@@ -274,9 +264,14 @@ class SessionManager:
         if prompt_loader is not None:
             self._greeting_template = prompt_loader.get_greeting_json_str()
         else:
-            self._greeting_template = _DEFAULT_GREETING_MSG
+            # #74 (Rick's PR #102 review, round 3, required item 1): the deployment default
+            # persona's own greeting (persona.json's pack, never a hardcoded brand-specific string) --
+            # loader validation (prompt_loader.py's PromptLoader._load_all) already requires
+            # every real pack to have a greeting.yaml, so this never silently falls back to
+            # placeholder text.
+            self._greeting_template = default_persona.get_default_prompt_loader().get_greeting_json_str()
 
-    def build_greeting_msg(self) -> str:
+    def build_greeting_msg(self, greeting_template: str | None = None) -> str:
         """A fresh `conversation.item.create` for the greeting, with a brand-new
         middle-tier item id stamped on *this* call (swigerb/SonicAIDriveThru#29
         follow-up, PR #30 review "G1" / item 1).
@@ -288,8 +283,13 @@ class SessionManager:
         (e.g. a resume that happens before the conversation ever started, which
         re-greets rather than rehydrating). Mirrors `build_rehydration_item`
         and `build_nudge_item`, which already build a fresh item -- id
-        included -- on every call rather than caching one at init."""
-        return _with_middle_tier_item_id(self._greeting_template)
+        included -- on every call rather than caching one at init.
+
+        *greeting_template* (#74, optional): a per-persona greeting JSON string
+        (from the bound persona's own PromptLoader) to use for THIS call instead of
+        the deployment-wide default captured at construction. Omitted: unchanged,
+        single-persona behavior (``self._greeting_template``)."""
+        return _with_middle_tier_item_id(greeting_template if greeting_template is not None else self._greeting_template)
 
     @property
     def idle_timeout_seconds(self) -> float:
@@ -317,9 +317,15 @@ class SessionManager:
         """Record guest activity. Drives the idle clock (which also bounds the grace hold)."""
         self._last_activity[session_id] = self._clock()
 
-    def create_session(self, ws: web.WebSocketResponse) -> str:
-        """Create a new order session and map it to the WebSocket connection."""
-        session_id = order_state_singleton.create_session()
+    def create_session(self, ws: web.WebSocketResponse, persona=None) -> str:
+        """Create a new order session and map it to the WebSocket connection.
+
+        *persona* (#74, optional): the persona this session is bound to for its entire
+        lifetime (no mid-conversation switching); threaded straight through to
+        ``order_state_singleton.create_session()``. Omitted: binds to the deployment's
+        default persona (mandatory catalog, #74/Rick's PR #102 review item 2 -- there is
+        no more unbound-session state)."""
+        session_id = order_state_singleton.create_session(persona=persona)
         self._session_map[ws] = session_id
         self._attached[session_id] = ws
         self._context_monitors[session_id] = ContextMonitor(session_id)
@@ -448,11 +454,17 @@ class SessionManager:
         kept.reverse()
         return kept
 
-    def build_rehydration_item(self, session_id: str) -> str:
-        """One system conversation.item.create carrying the order and the recent turns."""
+    def build_rehydration_item(self, session_id: str, role_name: str | None = None) -> str:
+        """One system conversation.item.create carrying the order and the recent turns.
+
+        *role_name* (#74, optional): the resumed session's own bound persona's roleName (e.g.
+        "carhop"), used to label that persona's turns in the replayed history instead of a
+        hardcoded "Carhop". Omitted: the deployment default persona's own roleName -- never a
+        literal brand string."""
         order_json = order_state_singleton.get_order_summary_json(session_id)
         turns = self.recent_turns(session_id)
-        history = "\n".join(f"{'Guest' if role == 'guest' else 'Carhop'}: {text}" for role, text in turns)
+        role_label = (role_name if role_name is not None else default_persona.get_default_persona().manifest.roleName).capitalize()
+        history = "\n".join(f"{'Guest' if role == 'guest' else role_label}: {text}" for role, text in turns)
         text = (f"{_REHYDRATION_PREAMBLE}\n\nCurrent order (JSON): {order_json}\n\n"
                 f"Recent conversation (oldest first):\n{history or '(none recorded)'}")
         return json.dumps({
@@ -464,12 +476,18 @@ class SessionManager:
         })
 
     @staticmethod
-    def build_nudge_item() -> str:
+    def build_nudge_item(role_name: str | None = None) -> str:
+        """*role_name* (#74, optional): the session's own bound persona's roleName, substituted
+        into ``_NUDGE_TEXT_TEMPLATE``. Omitted: the deployment default persona's own roleName --
+        never a hardcoded "carhop"."""
+        text = _NUDGE_TEXT_TEMPLATE.format(
+            role_name=role_name if role_name is not None else default_persona.get_default_persona().manifest.roleName
+        )
         return json.dumps({
             "type": "conversation.item.create",
             "item": {
                 "id": new_middle_tier_item_id(),
-                "type": "message", "role": "system", "content": [{"type": "input_text", "text": _NUDGE_TEXT}],
+                "type": "message", "role": "system", "content": [{"type": "input_text", "text": text}],
             },
         })
 
@@ -490,13 +508,24 @@ class SessionManager:
         self._resume_index[digest] = session_id
         return resume_id
 
-    def resume(self, ws: web.WebSocketResponse, resume_id: object) -> ResumeOutcome:
+    def resume(self, ws: web.WebSocketResponse, resume_id: object, requested_persona_id: str | None = None) -> ResumeOutcome:
         """Re-attach the session identified by ``resume_id`` to ``ws``.
 
         Single use: the presented id is consumed and a rotated one is returned.
         The provisional session created for ``ws`` on connect is ended. If the
         resumed session is still attached to another socket (half-open), that
         socket is handed back as ``stale_ws`` to be closed with 4002.
+
+        *requested_persona_id* (#74, optional): the persona id this resume request
+        connected with (``/realtime?persona=<id>``). A session can only ever resume
+        under the SAME persona it was originally bound to -- no mid-conversation
+        persona switching, ever, including across a transport drop/resume. Omitted
+        entirely (``None``) means "the caller means the deployment default persona"
+        (#74/Rick's PR #102 review item 2: the persona catalog is mandatory, so
+        there is no more "unbound session"/"skip the check" state) -- it resolves to
+        ``default_persona.get_default_persona().id`` before comparing. Mismatched ->
+        rejected as ``"persona_mismatch"`` BEFORE the presented resume id is
+        consumed, so the guest's real credential stays valid for a legitimate retry.
         """
         if not self.resume_enabled:
             return ResumeOutcome(False, reason="disabled")
@@ -518,6 +547,15 @@ class SessionManager:
         if now - last > self.idle_timeout_seconds or (expires is not None and now >= expires):
             self.end_session(session_id, "resume attempted after expiry")
             return ResumeOutcome(False, reason="expired")
+
+        effective_requested_persona_id = requested_persona_id or default_persona.get_default_persona().id
+        bound_persona_id = order_state_singleton.get_persona_id(session_id)
+        if bound_persona_id != effective_requested_persona_id:
+            logger.info(
+                "Resume rejected for session %s: bound persona %r != requested persona %r (persona_mismatch)",
+                session_id, bound_persona_id, effective_requested_persona_id,
+            )
+            return ResumeOutcome(False, reason="persona_mismatch")
 
         # Consume the presented id before anything else can use it.
         self._resume_index.pop(digest, None)
@@ -607,6 +645,7 @@ class SessionManager:
                 "sessionToken": identifiers.session_token,
                 "roundTripIndex": identifiers.round_trip_index,
                 "roundTripToken": identifiers.round_trip_token,
+                "persona": identifiers.persona_id,
                 **(extra or {}),
             }
         )

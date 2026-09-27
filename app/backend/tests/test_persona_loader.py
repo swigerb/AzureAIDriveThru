@@ -299,5 +299,56 @@ class TestMutationSchemaViolations:
             PersonaCatalog.load(personas_dir=personas_copy)
 
 
+# ===========================================================================
+# Fixture schema copies stay in sync with the real schemas (Rick's PR #102 review item 3)
+# ===========================================================================
+
+_FIXTURES_PERSONAS_DIR = Path(__file__).resolve().parent / "fixtures" / "personas"
+
+
+class TestFixtureSchemasMatchRealSchemas:
+    """`PersonaCatalog.load(personas_dir=...)` hardcodes its schema lookup to
+    ``<personas_dir>/persona.schema.json`` and ``<personas_dir>/menu.schema.json`` (see
+    ``PersonaCatalog.load`` above) -- the schema files must physically exist inside whatever
+    directory is passed as ``personas_dir``. That's why ``app/backend/tests/fixtures/personas/``
+    carries its own copies of ``personas/persona.schema.json`` and ``personas/menu.schema.json``
+    rather than the test fixtures somehow pointing at the real ``personas/`` directory's copies.
+
+    Rick's PR #102 review item 3 asked to either (a) prove those copies stay byte-identical to
+    the real schemas, or (b) make the fixtures reference the real files directly and delete the
+    copies. This repo chose (a):
+
+      - (b)'s only real-code-free way to share one file at two paths is a symlink/junction --
+        explicitly forbidden by this project's git/worktree rules (Windows dev machines / CI
+        runners must not depend on privileged symlink creation).
+      - The alternative to a symlink for (b) is teaching ``PersonaCatalog.load`` to accept a
+        second, separate "schema directory" distinct from ``personas_dir`` (or falling back to
+        the real ``personas/`` directory when the passed one lacks its own copies) -- a
+        production-code contract change whose only purpose would be serving this test's
+        fixture layout, not something the schema-validation feature itself needs. That's a much
+        larger and riskier change than the review's actual concern (byte-for-byte fixture drift).
+      - Fixture packs are also deliberately self-contained (see ``TwoPersonaConformanceFixture``'s
+        own doc comment): no reliance on a real ``personas/`` directory existing at a fixed
+        relative path from wherever a test happens to run, which matters for the .NET
+        conformance harness too, not just these Python unit tests.
+
+    So (a): this test class fails loudly the moment either fixture copy drifts from its real
+    counterpart, which is the actual risk Rick's review flagged -- the fixtures silently
+    validating against a stale/relaxed contract that no longer matches what packs are really
+    held to in production.
+    """
+
+    @pytest.mark.parametrize("schema_filename", ["persona.schema.json", "menu.schema.json"])
+    def test_fixture_schema_copy_is_byte_identical_to_the_real_schema(self, schema_filename):
+        real_bytes = (_REAL_PERSONAS_DIR / schema_filename).read_bytes()
+        fixture_bytes = (_FIXTURES_PERSONAS_DIR / schema_filename).read_bytes()
+        assert fixture_bytes == real_bytes, (
+            f"app/backend/tests/fixtures/personas/{schema_filename} has drifted from "
+            f"personas/{schema_filename} -- copy the real file over the fixture copy "
+            "(never edit the fixture copy independently; see this test class's docstring "
+            "for why they're two files instead of one shared file)."
+        )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

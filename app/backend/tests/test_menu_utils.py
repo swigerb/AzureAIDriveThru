@@ -6,16 +6,19 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 import menu_utils
-from menu_utils import (
-    infer_category,
-    infer_combo_component,
-    is_happy_hour_discounted,
-    strip_modifiers,
-)
+from default_persona import get_default_persona
+from menu_utils import strip_modifiers
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _GOLDEN_CATEGORIES_PATH = _REPO_ROOT / "tests" / "conformance" / "testdata" / "golden-menu-categories.json"
 _MENU_ITEMS_PATH = _REPO_ROOT / "personas" / "sonic" / "menu" / "menuItems.json"
+
+# #74 (Rick's PR #102 review, item 2): the module-level brand-specific globals (SIZE_MAP,
+# MENU_CATEGORY_MAP, etc.) are gone from menu_utils -- every classification below now goes
+# through a real MenuCatalog, built here from the deployment's real default persona pack, exactly
+# the same way `order_state.py`/`tools.py` resolve ANY bound persona's menu. This is not a
+# behavior change: it is the same underlying data, loaded through the one remaining code path.
+_SONIC = menu_utils.get_catalog_for_persona(get_default_persona())
 
 
 def _load_golden_categories() -> list[dict]:
@@ -116,7 +119,7 @@ class InferComboComponentGoldenCategoryTests(unittest.TestCase):
         mismatches = []
         for row in self.golden:
             expected = row["comboSlot"]
-            actual = infer_combo_component(row["item"]) or "none"
+            actual = _SONIC.infer_combo_component(row["item"]) or "none"
             if actual != expected:
                 mismatches.append(f"{row['item']!r}: expected comboSlot {expected!r}, got {actual!r}")
         self.assertEqual(mismatches, [], "\n".join(mismatches))
@@ -127,7 +130,7 @@ class InferComboComponentGoldenCategoryTests(unittest.TestCase):
         mismatches = []
         for row in self.golden:
             expected = row["happyHourDiscounted"]
-            actual = is_happy_hour_discounted(row["item"])
+            actual = _SONIC.is_happy_hour_discounted(row["item"])
             if actual != expected:
                 mismatches.append(f"{row['item']!r}: expected happyHourDiscounted {expected!r}, got {actual!r}")
         self.assertEqual(mismatches, [], "\n".join(mismatches))
@@ -137,14 +140,14 @@ class InferComboComponentGoldenCategoryTests(unittest.TestCase):
         one of the two combo side-slot items (Tots, Groovy Fries) -- it must be charged in full,
         not silently absorbed for free into a combo. It also must not match the bare substring
         'pepper' as the drink 'Dr Pepper' (the original #39 bug)."""
-        self.assertEqual(infer_combo_component("Ched 'R' Peppers"), "")
+        self.assertEqual(_SONIC.infer_combo_component("Ched 'R' Peppers"), "")
 
     def test_only_tots_and_groovy_fries_fill_the_combo_side_slot(self):
         """PR #50 must-fix: the menu's own combo description says "your choice of a side (Tots or
         Fries) and a drink" -- the combo side slot is an explicit allow-list of exactly those two
         items, not the whole "Hot Dogs & Tots"/"Extras & Sides" category."""
-        self.assertEqual(infer_combo_component("Tots"), "sides")
-        self.assertEqual(infer_combo_component("Groovy Fries"), "sides")
+        self.assertEqual(_SONIC.infer_combo_component("Tots"), "sides")
+        self.assertEqual(_SONIC.infer_combo_component("Groovy Fries"), "sides")
 
     def test_extras_and_sides_lookalikes_are_not_combo_sides(self):
         """PR #50 pricing regression: these 9+ items were being silently absorbed for free into a
@@ -166,33 +169,33 @@ class InferComboComponentGoldenCategoryTests(unittest.TestCase):
             "Chili Cheese Groovy Fries",
             "Chili Cheese Tots",
         ):
-            self.assertEqual(infer_combo_component(name), "", name)
+            self.assertEqual(_SONIC.infer_combo_component(name), "", name)
 
     def test_sundaes_are_neither_a_combo_drink_nor_happy_hour_discounted(self):
         """Brian's #39 decision: sundaes are full price during happy hour and can't fill a
         combo's drink slot, even though they live in the "Shakes & Ice Cream" category."""
         for name in ("Hot Fudge Sundae", "Caramel Sundae"):
-            self.assertEqual(infer_combo_component(name), "", name)
-            self.assertFalse(is_happy_hour_discounted(name), name)
+            self.assertEqual(_SONIC.infer_combo_component(name), "", name)
+            self.assertFalse(_SONIC.is_happy_hour_discounted(name), name)
 
     def test_hot_dog_entrees_are_not_the_sides_bucket(self):
         """Hot-dog entrees share the "Hot Dogs & Tots" JSON category with real sides (Tots,
         Onion Rings, ...) but are food items, not a fillable combo side slot."""
         for name in ("All-American Dog", "Chili Cheese Coney", "Footlong Quarter Pound Coney", "Corn Dog"):
-            self.assertEqual(infer_combo_component(name), "", name)
+            self.assertEqual(_SONIC.infer_combo_component(name), "", name)
 
     def test_dr_pepper_without_the_registered_trademark_symbol_still_resolves_directly(self):
         """#73: there is no more keyword fallback at all -- "Dr Pepper" (spoken/typed without the
         "®" the real menuItems.json name "Dr Pepper®" carries) still resolves because ``_menu_key``
         strips "®" before the lookup, an exact-match resolution, never a substring/keyword guess.
         "Peppercorn Ranch Dip" is genuinely off-menu and must return the safe default."""
-        self.assertEqual(infer_combo_component("Dr Pepper"), "drinks")
-        self.assertEqual(infer_combo_component("Diet Dr Pepper"), "drinks")
-        self.assertEqual(infer_combo_component("Peppercorn Ranch Dip"), "")
+        self.assertEqual(_SONIC.infer_combo_component("Dr Pepper"), "drinks")
+        self.assertEqual(_SONIC.infer_combo_component("Diet Dr Pepper"), "drinks")
+        self.assertEqual(_SONIC.infer_combo_component("Peppercorn Ranch Dip"), "")
 
     def test_slushes_and_drinks_are_happy_hour_discounted(self):
-        self.assertTrue(is_happy_hour_discounted("Cherry Limeade"))
-        self.assertTrue(is_happy_hour_discounted("Ocean Water®"))
+        self.assertTrue(_SONIC.is_happy_hour_discounted("Cherry Limeade"))
+        self.assertTrue(_SONIC.is_happy_hour_discounted("Ocean Water®"))
 
     def test_shakes_and_blasts_are_full_price_during_happy_hour(self):
         """Brian's decision (2026-09-25, #39 follow-up): Shakes & Blasts are NOT happy-hour
@@ -200,9 +203,9 @@ class InferComboComponentGoldenCategoryTests(unittest.TestCase):
         ``happyHourDiscounted: false`` on every Shakes & Ice Cream item in menuItems.json (not a
         Python switch any more), and this test is what pins/documents that final answer.
         Combo-drink-slot eligibility is unaffected -- a separate question (PR #50 review)."""
-        self.assertFalse(is_happy_hour_discounted("Vanilla Classic Shake"))
-        self.assertFalse(is_happy_hour_discounted("SONIC Blast® made with OREO® Cookie Pieces"))
-        self.assertEqual(infer_combo_component("Vanilla Classic Shake"), "drinks")
+        self.assertFalse(_SONIC.is_happy_hour_discounted("Vanilla Classic Shake"))
+        self.assertFalse(_SONIC.is_happy_hour_discounted("SONIC Blast® made with OREO® Cookie Pieces"))
+        self.assertEqual(_SONIC.infer_combo_component("Vanilla Classic Shake"), "drinks")
 
     def test_floats_fill_the_combo_drink_slot_but_are_never_happy_hour_discounted(self):
         """Brian's #64/#72 decision: floats can fill a combo's drink slot (unlike shakes/sundaes,
@@ -211,8 +214,8 @@ class InferComboComponentGoldenCategoryTests(unittest.TestCase):
         flipping either ``happyHourDiscounted`` to true or ``comboSlot`` to "none"/anything but
         "drinks" for any of these three menuItems.json rows must fail this test."""
         for name in ("Root Beer Float", "Coke Float", "Dr Pepper Float"):
-            self.assertFalse(is_happy_hour_discounted(name), name)
-            self.assertEqual(infer_combo_component(name), "drinks", name)
+            self.assertFalse(_SONIC.is_happy_hour_discounted(name), name)
+            self.assertEqual(_SONIC.infer_combo_component(name), "drinks", name)
 
     def test_fountain_drinks_added_by_72_fill_the_combo_drink_slot_and_are_happy_hour_discounted(self):
         """#72: the 8 fountain drinks named by the issue are ordinary Slushes & Drinks items --
@@ -229,36 +232,36 @@ class InferComboComponentGoldenCategoryTests(unittest.TestCase):
             "Sprite®",
             "Sprite Zero®",
         ):
-            self.assertTrue(is_happy_hour_discounted(name), name)
-            self.assertEqual(infer_combo_component(name), "drinks", name)
+            self.assertTrue(_SONIC.is_happy_hour_discounted(name), name)
+            self.assertEqual(_SONIC.infer_combo_component(name), "drinks", name)
 
     def test_coke_zero_alias_resolves_to_coca_cola_zero(self):
         """#72 names the item "Coke Zero" in its acceptance criteria; the real menuItems.json name
         is "Coca-Cola® Zero" -- the alias must resolve to the same classification as the canonical
         name."""
-        self.assertEqual(infer_category("Coke Zero"), infer_category("Coca-Cola® Zero"))
-        self.assertEqual(infer_combo_component("Coke Zero"), infer_combo_component("Coca-Cola® Zero"))
-        self.assertEqual(is_happy_hour_discounted("Coke Zero"), is_happy_hour_discounted("Coca-Cola® Zero"))
+        self.assertEqual(_SONIC.infer_category("Coke Zero"), _SONIC.infer_category("Coca-Cola® Zero"))
+        self.assertEqual(_SONIC.infer_combo_component("Coke Zero"), _SONIC.infer_combo_component("Coca-Cola® Zero"))
+        self.assertEqual(_SONIC.is_happy_hour_discounted("Coke Zero"), _SONIC.is_happy_hour_discounted("Coca-Cola® Zero"))
 
     def test_priced_extras_added_by_72_are_never_a_combo_slot_or_happy_hour_discounted(self):
         """#72's priced add-ons (flavor add-in, add bacon, whipped topping) are isExtra: true
         items, not food/drink combo components, and are never happy-hour discounted."""
         for name in ("Flavor Add-In", "Add Bacon", "Whipped Topping"):
-            self.assertEqual(infer_combo_component(name), "", name)
-            self.assertFalse(is_happy_hour_discounted(name), name)
+            self.assertEqual(_SONIC.infer_combo_component(name), "", name)
+            self.assertFalse(_SONIC.is_happy_hour_discounted(name), name)
 
     def test_whipped_topping_aliases_resolve_to_the_same_classification(self):
         """PR #98 Rick review item 2: "Whipped Topping" is the canonical isExtra menu item name
         (source modifier "Whip Topping", Easy/Regular tier, $0.20); "whipped cream" and "whip" are
         its spoken aliases and must resolve to the same classification."""
         for alias in ("whipped cream", "whip"):
-            self.assertEqual(infer_category(alias), infer_category("Whipped Topping"))
-            self.assertEqual(infer_combo_component(alias), infer_combo_component("Whipped Topping"))
-            self.assertEqual(is_happy_hour_discounted(alias), is_happy_hour_discounted("Whipped Topping"))
+            self.assertEqual(_SONIC.infer_category(alias), _SONIC.infer_category("Whipped Topping"))
+            self.assertEqual(_SONIC.infer_combo_component(alias), _SONIC.infer_combo_component("Whipped Topping"))
+            self.assertEqual(_SONIC.is_happy_hour_discounted(alias), _SONIC.is_happy_hour_discounted("Whipped Topping"))
 
     def test_burgers_combos_and_hot_dog_entrees_are_never_happy_hour_discounted(self):
         for name in ("Crispy Chicken Sandwich", "SONIC® Cheeseburger Combo", "Corn Dog", "Tots", "Groovy Fries"):
-            self.assertFalse(is_happy_hour_discounted(name), name)
+            self.assertFalse(_SONIC.is_happy_hour_discounted(name), name)
 
 
 class CustomisedItemMenuLookupTests(unittest.TestCase):
@@ -278,33 +281,33 @@ class CustomisedItemMenuLookupTests(unittest.TestCase):
         measuring as absorbed free (8.49) instead of charged in full (12.28) because the raw,
         un-stripped name missed the menuItems.json category lookup and fell through to a keyword
         fallback that (wrongly) matched "tots"."""
-        self.assertEqual(infer_combo_component("Chili Cheese Tots (Extra Cheese)"), "")
+        self.assertEqual(_SONIC.infer_combo_component("Chili Cheese Tots (Extra Cheese)"), "")
 
     def test_chili_cheese_groovy_fries_customised_is_charged_in_full_not_absorbed(self):
-        self.assertEqual(infer_combo_component("Chili Cheese Groovy Fries (No Chili)"), "")
+        self.assertEqual(_SONIC.infer_combo_component("Chili Cheese Groovy Fries (No Chili)"), "")
 
     def test_plain_tots_customised_still_fills_the_combo_side_slot(self):
         """The allow-listed items themselves must still be absorbed once customised -- only the
         modifier is stripped, the underlying item is unchanged."""
-        self.assertEqual(infer_combo_component("Tots (Extra Crispy)"), "sides")
-        self.assertEqual(infer_combo_component("Groovy Fries (Extra Salty)"), "sides")
+        self.assertEqual(_SONIC.infer_combo_component("Tots (Extra Crispy)"), "sides")
+        self.assertEqual(_SONIC.infer_combo_component("Groovy Fries (Extra Salty)"), "sides")
 
     def test_unknown_misspelled_item_never_fills_the_side_slot_even_as_a_substring_match(self):
         """PR #50 must-fix 2: the side fallback for unknown items is deleted entirely -- a
         misspelling/off-menu item (here "chilli cheese tots", a typo) must never silently absorb
         into a combo's side slot. A charged item is visible and correctable; a free one is a
         silent revenue loss."""
-        self.assertEqual(infer_combo_component("chilli cheese tots"), "")
-        self.assertEqual(infer_combo_component("totstastic snack"), "")
+        self.assertEqual(_SONIC.infer_combo_component("chilli cheese tots"), "")
+        self.assertEqual(_SONIC.infer_combo_component("totstastic snack"), "")
 
     def test_cherry_limeade_customised_still_gets_the_happy_hour_discount(self):
-        self.assertTrue(is_happy_hour_discounted("Cherry Limeade (Extra Cherries)"))
+        self.assertTrue(_SONIC.is_happy_hour_discounted("Cherry Limeade (Extra Cherries)"))
 
     def test_ched_r_peppers_customised_is_still_not_a_combo_side_or_dr_pepper(self):
-        self.assertEqual(infer_combo_component("Ched 'R' Peppers (Extra Spicy)"), "")
+        self.assertEqual(_SONIC.infer_combo_component("Ched 'R' Peppers (Extra Spicy)"), "")
 
     def test_customised_category_matches_base_item_category(self):
-        self.assertEqual(infer_category("Tots (Extra Crispy)"), infer_category("Tots"))
+        self.assertEqual(_SONIC.infer_category("Tots (Extra Crispy)"), _SONIC.infer_category("Tots"))
 
     def test_shakes_and_blasts_are_never_happy_hour_discounted_plain_or_customised(self):
         """PR #50 review's original intent (a single answer for every shake/blast, plain or
@@ -321,11 +324,11 @@ class CustomisedItemMenuLookupTests(unittest.TestCase):
         off_menu_customised = "Chocolate Malt (Extra Malt)"
 
         for name in (on_menu_plain, on_menu_customised, on_menu_blast_customised, off_menu_plain, off_menu_customised):
-            self.assertFalse(is_happy_hour_discounted(name), name)
+            self.assertFalse(_SONIC.is_happy_hour_discounted(name), name)
 
         # #73: off-menu names are no longer swept into the combo drink slot by a keyword guess --
         # they fill no slot at all, exactly like every other unresolved name.
-        self.assertEqual(infer_combo_component(off_menu_customised), "")
+        self.assertEqual(_SONIC.infer_combo_component(off_menu_customised), "")
 
 
 class TotsAliasNormalisationTests(unittest.TestCase):
@@ -339,28 +342,28 @@ class TotsAliasNormalisationTests(unittest.TestCase):
 
     def test_every_plain_tots_alias_fills_the_combo_side_slot(self):
         for name in ("Tot", "tot", "Tots", "TOTS", "Tater Tot", "Tater Tots", "Tator Tots", "Tator Tot"):
-            self.assertEqual(infer_combo_component(name), "sides", name)
+            self.assertEqual(_SONIC.infer_combo_component(name), "sides", name)
 
     def test_customised_tots_alias_still_fills_the_combo_side_slot(self):
         """Alias resolution runs after ``_menu_key`` normalisation, so a bracketed modifier is
         stripped first exactly like it is for the real "Tots" item."""
-        self.assertEqual(infer_combo_component("Tater Tots (Extra Crispy)"), "sides")
-        self.assertEqual(infer_combo_component("Tator Tots (Extra Crispy)"), "sides")
+        self.assertEqual(_SONIC.infer_combo_component("Tater Tots (Extra Crispy)"), "sides")
+        self.assertEqual(_SONIC.infer_combo_component("Tator Tots (Extra Crispy)"), "sides")
 
     def test_spoken_misspelling_tator_tots_is_recognised(self):
-        self.assertEqual(infer_combo_component("tator tots"), "sides")
+        self.assertEqual(_SONIC.infer_combo_component("tator tots"), "sides")
 
     def test_real_but_different_tots_menu_items_still_charged_in_full(self):
         """These are separate, real menuItems.json items -- not aliases of plain Tots -- and must
         keep being charged in full, exactly like Rick's PR #50 revenue rule requires."""
         for name in ("Chili Cheese Tots", "Cheese Tots"):
-            self.assertEqual(infer_combo_component(name), "", name)
+            self.assertEqual(_SONIC.infer_combo_component(name), "", name)
 
     def test_off_menu_near_miss_names_still_charged_in_full(self):
         """The alias is an EXACT match against the alias set, not a substring check -- these
         off-menu names merely contain "tot(s)" and must not be swept up by the alias."""
         for name in ("Loaded Tots Supreme", "chilli cheese tots", "totstastic snack"):
-            self.assertEqual(infer_combo_component(name), "", name)
+            self.assertEqual(_SONIC.infer_combo_component(name), "", name)
 
     def test_tots_alias_resolves_the_same_category_as_the_real_tots_item(self):
         """issue #71 (deliberate behaviour change from #60): aliases now resolve for EVERY
@@ -371,8 +374,8 @@ class TotsAliasNormalisationTests(unittest.TestCase):
         string itself changes -- pinned here on purpose. Happy-hour-discount eligibility is
         unaffected either way (Tots was never a drink, discounted or not)."""
         for name in ("Tater Tot", "Tater Tots", "Tator Tots"):
-            self.assertEqual(infer_category(name), "hot dogs & tots", name)
-            self.assertFalse(is_happy_hour_discounted(name), name)
+            self.assertEqual(_SONIC.infer_category(name), "hot dogs & tots", name)
+            self.assertFalse(_SONIC.is_happy_hour_discounted(name), name)
 
 
 class AliasResolvesIdenticallyOnEveryLookupTests(unittest.TestCase):
@@ -392,10 +395,10 @@ class AliasResolvesIdenticallyOnEveryLookupTests(unittest.TestCase):
         )
         for alias in aliases:
             with self.subTest(alias=alias):
-                self.assertEqual(infer_category(alias), infer_category(canonical), alias)
-                self.assertEqual(infer_combo_component(alias), infer_combo_component(canonical), alias)
+                self.assertEqual(_SONIC.infer_category(alias), _SONIC.infer_category(canonical), alias)
+                self.assertEqual(_SONIC.infer_combo_component(alias), _SONIC.infer_combo_component(canonical), alias)
                 self.assertEqual(
-                    is_happy_hour_discounted(alias), is_happy_hour_discounted(canonical), alias
+                    _SONIC.is_happy_hour_discounted(alias), _SONIC.is_happy_hour_discounted(canonical), alias
                 )
 
 
@@ -410,29 +413,29 @@ class MoreTotsAliasFormsTests(unittest.TestCase):
 
     def test_one_word_forms_fill_the_combo_side_slot(self):
         for name in ("tatertot", "TaterTot", "tatertots", "TATERTOTS", "tatortot", "tatortots"):
-            self.assertEqual(infer_combo_component(name), "sides", name)
+            self.assertEqual(_SONIC.infer_combo_component(name), "sides", name)
 
     def test_hyphenated_forms_fill_the_combo_side_slot(self):
         for name in ("tater-tot", "Tater-Tot", "tater-tots", "TATER-TOTS", "tator-tot", "tator-tots"):
-            self.assertEqual(infer_combo_component(name), "sides", name)
+            self.assertEqual(_SONIC.infer_combo_component(name), "sides", name)
 
     def test_customised_new_alias_forms_still_fill_the_combo_side_slot(self):
         for name in ("Tater-Tots (Extra Crispy)", "TaterTots (Extra Crispy)"):
-            self.assertEqual(infer_combo_component(name), "sides", name)
+            self.assertEqual(_SONIC.infer_combo_component(name), "sides", name)
 
     def test_new_alias_forms_resolve_the_same_category_as_the_real_tots_item(self):
         """See ``test_tots_alias_resolves_the_same_category_as_the_real_tots_item`` above (#71):
         every alias form resolves category too, now -- not "sides" any more."""
         for name in ("tatertots", "tater-tots"):
-            self.assertEqual(infer_category(name), "hot dogs & tots", name)
-            self.assertFalse(is_happy_hour_discounted(name), name)
+            self.assertEqual(_SONIC.infer_category(name), "hot dogs & tots", name)
+            self.assertFalse(_SONIC.is_happy_hour_discounted(name), name)
 
     def test_near_miss_spellings_still_charged_in_full(self):
         """"Totts" (typo, doubled T) and "Tater Tot's" (stray apostrophe) are NOT in the alias
         set -- they must stay charged in full exactly like any other off-menu near-miss (Rick's
         PR #50 revenue rule)."""
         for name in ("Totts", "Tater Tot's", "Tatertot's"):
-            self.assertEqual(infer_combo_component(name), "", name)
+            self.assertEqual(_SONIC.infer_combo_component(name), "", name)
 
 
 class GroovyFriesAliasTests(unittest.TestCase):
@@ -442,22 +445,22 @@ class GroovyFriesAliasTests(unittest.TestCase):
     one is a sensible resolution of the bare word "fries" alone."""
 
     def test_fries_resolves_to_groovy_fries(self):
-        resolved = menu_utils.resolve_menu_item("fries")
+        resolved = _SONIC.resolve_menu_item("fries")
         self.assertIsNotNone(resolved)
         self.assertEqual(resolved["name"], "Groovy Fries")
 
     def test_fries_is_case_insensitive(self):
         for name in ("Fries", "FRIES", "  fries  "):
-            resolved = menu_utils.resolve_menu_item(name)
+            resolved = _SONIC.resolve_menu_item(name)
             self.assertIsNotNone(resolved, name)
             self.assertEqual(resolved["name"], "Groovy Fries", name)
 
     def test_cheese_and_chili_cheese_variants_are_unaffected(self):
         """The alias is scoped to plain "Groovy Fries" only -- it must not make the cheese/chili
         cheese variants resolve to the plain item, nor vice versa."""
-        self.assertEqual(menu_utils.resolve_menu_item("Cheese Groovy Fries")["name"], "Cheese Groovy Fries")
+        self.assertEqual(_SONIC.resolve_menu_item("Cheese Groovy Fries")["name"], "Cheese Groovy Fries")
         self.assertEqual(
-            menu_utils.resolve_menu_item("Chili Cheese Groovy Fries")["name"], "Chili Cheese Groovy Fries"
+            _SONIC.resolve_menu_item("Chili Cheese Groovy Fries")["name"], "Chili Cheese Groovy Fries"
         )
 
 
@@ -472,13 +475,13 @@ class SizeWordFailSafeTests(unittest.TestCase):
         """"Large Tater Tots" -- the size word is part of the name text, so it survives
         ``_menu_key()`` and the resulting key ("large tater tots") is not one of "Tots"'s
         ``aliases`` in menuItems.json."""
-        self.assertEqual(infer_combo_component("Large Tater Tots"), "", "Large Tater Tots")
+        self.assertEqual(_SONIC.infer_combo_component("Large Tater Tots"), "", "Large Tater Tots")
 
     def test_size_word_as_a_bracketed_modifier_still_absorbs(self):
         """"Tater Tots (Large)" -- the size word is a bracketed modifier, stripped by
         ``strip_modifiers`` before the alias lookup runs, leaving "Tater Tots" which does
         resolve via "Tots"'s ``aliases``."""
-        self.assertEqual(infer_combo_component("Tater Tots (Large)"), "sides", "Tater Tots (Large)")
+        self.assertEqual(_SONIC.infer_combo_component("Tater Tots (Large)"), "sides", "Tater Tots (Large)")
 
 
 class CanonicalSizeKeyNoDisplaySizesPinningTests(unittest.TestCase):
@@ -493,26 +496,26 @@ class CanonicalSizeKeyNoDisplaySizesPinningTests(unittest.TestCase):
     showing up as a mysterious conformance/live-order regression."""
 
     def test_empty_string_is_standard(self):
-        self.assertEqual(menu_utils.canonical_size_key(""), "standard")
+        self.assertEqual(_SONIC.canonical_size_key(""), "standard")
 
     def test_n_slash_a_is_standard(self):
-        self.assertEqual(menu_utils.canonical_size_key("n/a"), "standard")
+        self.assertEqual(_SONIC.canonical_size_key("n/a"), "standard")
 
     def test_na_is_standard(self):
-        self.assertEqual(menu_utils.canonical_size_key("na"), "standard")
+        self.assertEqual(_SONIC.canonical_size_key("na"), "standard")
 
     def test_none_word_is_standard(self):
-        self.assertEqual(menu_utils.canonical_size_key("none"), "standard")
+        self.assertEqual(_SONIC.canonical_size_key("none"), "standard")
 
     def test_n_dot_a_dot_is_standard(self):
-        self.assertEqual(menu_utils.canonical_size_key("n.a."), "standard")
+        self.assertEqual(_SONIC.canonical_size_key("n.a."), "standard")
 
     def test_standard_itself_is_standard(self):
-        self.assertEqual(menu_utils.canonical_size_key("standard"), "standard")
+        self.assertEqual(_SONIC.canonical_size_key("standard"), "standard")
 
     def test_case_and_whitespace_insensitive(self):
-        self.assertEqual(menu_utils.canonical_size_key("  N/A  "), "standard")
-        self.assertEqual(menu_utils.canonical_size_key("NONE"), "standard")
+        self.assertEqual(_SONIC.canonical_size_key("  N/A  "), "standard")
+        self.assertEqual(_SONIC.canonical_size_key("NONE"), "standard")
 
 
 class OffMenuNamesReturnSafeDefaultsSinceIssue73Tests(unittest.TestCase):
@@ -544,16 +547,16 @@ class OffMenuNamesReturnSafeDefaultsSinceIssue73Tests(unittest.TestCase):
             "Grape Slushy",
             "Overshake Deluxe",
         ):
-            self.assertEqual(infer_combo_component(name), "", name)
-            self.assertFalse(is_happy_hour_discounted(name), name)
+            self.assertEqual(_SONIC.infer_combo_component(name), "", name)
+            self.assertFalse(_SONIC.is_happy_hour_discounted(name), name)
 
     def test_off_menu_names_that_used_to_falsely_match_steak_or_a_plural_drink_are_unclassified(self):
         """"Philly Cheesesteak"/"Steak Sandwich" (contain "tea" as a bare substring of "steak") and
         "Cokes" (plural -- only the singular "Coke" is a real alias) are all off-menu; none of them
         get swept up by any keyword any more, because there is no keyword matching left at all."""
         for name in ("Philly Cheesesteak", "Steak Sandwich", "Cokes"):
-            self.assertEqual(infer_combo_component(name), "", name)
-            self.assertFalse(is_happy_hour_discounted(name), name)
+            self.assertEqual(_SONIC.infer_combo_component(name), "", name)
+            self.assertFalse(_SONIC.is_happy_hour_discounted(name), name)
 
     def test_real_fountain_drink_and_tea_names_still_resolve_directly_not_via_a_keyword(self):
         """The genuinely on-menu names resolve fine -- via ``MENU_CATEGORY_MAP``'s direct lookup,
@@ -561,8 +564,8 @@ class OffMenuNamesReturnSafeDefaultsSinceIssue73Tests(unittest.TestCase):
         which are real menuItems.json names (the real ones are "Sweet Iced Tea"/"Unsweet Iced
         Tea")."""
         for name in ("Cherry Limeade", "Sweet Iced Tea", "Unsweet Iced Tea", "Coke"):
-            self.assertEqual(infer_combo_component(name), "drinks", name)
-            self.assertTrue(is_happy_hour_discounted(name), name)
+            self.assertEqual(_SONIC.infer_combo_component(name), "drinks", name)
+            self.assertTrue(_SONIC.is_happy_hour_discounted(name), name)
 
 
 class MenuCategoryMapDirectResolutionTests(unittest.TestCase):
@@ -580,7 +583,7 @@ class MenuCategoryMapDirectResolutionTests(unittest.TestCase):
     def test_every_menu_item_name_resolves_directly_via_the_category_map(self):
         """Direct proof the map key resolves -- ``_menu_key(name)`` must be a member of
         ``MENU_CATEGORY_MAP`` for every real menu item, with no fallback involved at all."""
-        missing = [name for name in self.menu_names if menu_utils._menu_key(name) not in menu_utils.MENU_CATEGORY_MAP]
+        missing = [name for name in self.menu_names if menu_utils._menu_key(name) not in _SONIC.category_map]
         self.assertEqual(missing, [], f"Missing from MENU_CATEGORY_MAP: {missing}")
 
     def test_combo_and_happy_hour_classification_never_reaches_a_keyword_fallback(self):
@@ -589,8 +592,8 @@ class MenuCategoryMapDirectResolutionTests(unittest.TestCase):
         entirely, so there's nothing left to patch -- the strongest possible proof they're never
         reached. Classifying every real menu item name must simply succeed without error."""
         for name in self.menu_names:
-            infer_combo_component(name)
-            is_happy_hour_discounted(name)
+            _SONIC.infer_combo_component(name)
+            _SONIC.is_happy_hour_discounted(name)
 
 
 class TrademarkAndCurlyApostropheNormalisationTests(unittest.TestCase):
@@ -632,7 +635,7 @@ class TrademarkAndCurlyApostropheNormalisationTests(unittest.TestCase):
         ``MENU_CATEGORY_MAP`` for every "™"- or "\u2019"-bearing menu item, with no fallback
         involved at all."""
         affected = self.tm_names + self.curly_apostrophe_names
-        missing = [name for name in affected if menu_utils._menu_key(name) not in menu_utils.MENU_CATEGORY_MAP]
+        missing = [name for name in affected if menu_utils._menu_key(name) not in _SONIC.category_map]
         self.assertEqual(missing, [], f"Missing from MENU_CATEGORY_MAP: {missing}")
 
     def test_classification_never_reaches_a_keyword_fallback_for_these_names(self):
@@ -640,8 +643,8 @@ class TrademarkAndCurlyApostropheNormalisationTests(unittest.TestCase):
         keyword-fallback functions are deleted entirely, so classifying every "™"- or
         "\u2019"-bearing name must simply succeed without error."""
         for name in self.tm_names + self.curly_apostrophe_names:
-            infer_combo_component(name)
-            is_happy_hour_discounted(name)
+            _SONIC.infer_combo_component(name)
+            _SONIC.is_happy_hour_discounted(name)
 
     def test_spoken_smasher_without_the_trademark_symbol_still_resolves(self):
         """A guest's speech-to-text transcription realistically omits an unspeakable "™" symbol --

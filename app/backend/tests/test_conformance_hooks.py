@@ -305,10 +305,10 @@ class TestHappyHourIntegration:
         importlib.reload(conformance_hooks)
         order_state = _isolated_order_state()
         try:
-            now = datetime.now(order_state._STORE_TZ)
-            start = order_state._biz_cfg.get("happy_hour_start", 14)
-            end = order_state._biz_cfg.get("happy_hour_end", 16)
-            expected = start <= now.hour < end
+            persona = order_state.default_persona.get_default_persona()
+            happy_hour_cfg = persona.manifest.pricing.happyHour
+            now = datetime.now(ZoneInfo(persona.manifest.store.timezone))
+            expected = happy_hour_cfg.startHour <= now.hour < happy_hour_cfg.endHour
             assert order_state.is_happy_hour() == expected
         finally:
             monkeypatch.delenv("CONFORMANCE_FIXED_NOW", raising=False)
