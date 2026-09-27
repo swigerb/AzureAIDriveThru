@@ -405,3 +405,77 @@
 - **Brand-baseline regen is genuinely lower-only and will bite you on doc prose, not just code:** writing "sonic's own realtime default" in a new README paragraph raised the `(tests/conformance/README.md, sonic)` baseline entry from the checked-in max of 14 matching lines to 15 -- `regenerate_rebrand_baseline.py` (no flags) correctly refused to write, printing the exact RAISE entry. Reworded to "the default persona's own realtime default model" (says the same thing without the brand word) and reran the regen: 0 diff, confirming it's back at the checked-in max. Do this check BEFORE committing doc changes that mention a brand name, not after -- it's a one-line PowerShell count (Select-String -Pattern with a word-boundary brand regex) against the file you just edited vs. the prior commit's version of the same file.
 - **Mutation testing evidence for a precedence swap is a 2-line diff + one filtered test run, not a rebuild of the whole matrix:** to prove round 3's fix actually matters, temporarily swapped the switch/catalog check order back in `_reasoning_model()` (reintroducing round 2's bug), ran the switch-off conformance test filtered by name -- failed exactly as expected (catalog `reasoning: true` won over the explicit `false`) -- then discarded the change to revert cleanly and reran the full suite (652/652) to confirm no residual damage.
 - Final validation for this round: pytest 1151 passed / 168 subtests, ruff clean; full .NET conformance (RC1 SDK, dotnet test -c Release) 652 passed / 0 failed; brand-baseline regen confirmed zero drift (lower-only, no --allow-increase used). Commits on top of the origin/dev merge: reasoning precedence fix, personas key rename, README precedence-table update, and the brand-word wording fix. Did not merge PR #106 -- posted a mapped comment addressed to Rick and left the branch open for the team.
+
+- **Three conformance flakes, one branch (#95/#103/#68, squad/flakes-95-103-68, 2026-09-28):**
+  - **#95** -- `response.cancel` sent after a response already finished gets
+    `response_cancel_not_active` back from the fake upstream; `rtmt.py` was logging that at
+    ERROR, which strict scenarios (`OrderResumeBrowserTests`) count. Fix: a small benign-path
+    branch in `rtmt.py` that logs at INFO and still relays to the browser -- upstream error
+    codes that mean "already resolved, nothing to do" are not backend bugs. Python unit test +
+    a new `ResponseCancelRelayTests` conformance row, both red without the fix.
+  - **#103** -- `CapturedProcessOutputWaitTests`'s rearm test compared a test-side
+    `Stopwatch.Elapsed` read against production's own internal `DateTimeOffset.UtcNow`-based
+    state via a 30ms margin that load blows through. **The real lesson: when a flaky test
+    compares two independently-read clocks with a margin, look for whether the production
+    class already has (or can cheaply expose) its own internal timestamp, and compare directly
+    against THAT instead of re-deriving a second reading** -- eliminates the margin entirely
+    rather than widening it. Exposed `internal DateTimeOffset LastAppendUtc` on
+    `CapturedProcessOutput` for exactly this. C#'s `CS0162` (unreachable code) is a build
+    ERROR, not a warning, in this project -- mutation-testing techniques that insert
+    unconditional early returns won't build; gate the mutation behind an environment-variable
+    check instead (`Environment.GetEnvironmentVariable("MUTATE_X") == "1"`) so the file always
+    has a reachable path regardless of whether the mutation is "active." Two mutations proved
+    the fix: short-circuiting the re-arm loop, and halving the effective idle window on re-arm.
+  - **#68** -- `RateLimitGuestSpeechCancellationTests`: cancelling a pending rate-limit retry in
+    response to guest speech was wired ONLY to the upstream model's own `speech_started`
+    acknowledgment round-tripping back through `from_server_to_client` -- a real network round
+    trip racing the retry's own fixed local timer (as low as 0.4s in some conformance
+    profiles). Traced and ruled out a same-process reordering theory first (confirmed
+    `from_server_to_client`'s `async for msg in target_ws` loop is strictly sequential -- a
+    later message literally can't be processed until an earlier handler fully returns) before
+    accepting the round-trip-vs-timer race as the real shape. Fix: a new, minimal
+    `RateLimitRecovery.on_guest_audio_forwarded()` fired the instant non-echo-suppressed mic
+    audio is forwarded upstream in `from_client_to_server` -- the earliest purely local,
+    deterministic signal available, no round trip, no margin. Deliberately does NOT call
+    `_reset()` (unlike `on_guest_speech()`), since it fires on every forwarded frame and must
+    not disturb ladder state that only the VAD-confirmed path should own.
+  - **Reproduction diligence vs. a genuinely rare race:** issue #68 itself was filed from an
+    unreproduced CI observation ("not reproduced locally as part of this investigation") --
+    same as #55/#62 before it (see PR #66's own text). Spent real effort trying anyway: the
+    isolated target test 20x with no load, 20x under a busy-loop-per-core (24 cores), then 50x
+    at 2x core oversubscription (48 busy processes) -- 0 failures in all ~90 runs. Also looped
+    the FULL suite 4x under 24-core load specifically because #55/#62's own filed text says
+    they only manifested in full-suite runs, never isolated ones -- still 0 hits on the target
+    assertion (though 2/4 runs picked up unrelated backend-health-timeout failures, a pure
+    CPU-starvation artifact of 100% synthetic load on Python process startup, not a logic
+    race). **Lesson: a race this rare is legitimately allowed to resist reproduction within a
+    reasonable budget -- the acceptance bar has to become "closed structurally, verified safe
+    by static analysis + a deterministic unit test + no regression," not "reproduced red then
+    fixed," when the issue itself says it was never reproduced either.** Mutation-tested by
+    neutralizing `on_guest_audio_forwarded`'s cancellation (`if self.pending and False`) --
+    the new unit test went red exactly as expected, reverted cleanly.
+  - **"Merge origin/dev first" surfaced a genuine, unrelated regression, not a merge
+    conflict:** after merging (clean, no conflicts -- P2-7 part 2 / #108 and P2-11 / #110),
+    the full suite showed `UpdateOrderAddRemoveModifyTests` failing intermittently (3/10 clean,
+    7/10 with exactly that one failure). Rather than assume it was something I'd disturbed,
+    spun up a throwaway `git worktree add $env:TEMP\... origin/dev` at the exact pre-merge dev
+    tip, built its own venv + C# solution from scratch, and reproduced the SAME failure 6/6 in
+    isolation there -- proving it predates and is fully independent of this branch's three
+    fixes. Filed it as a new tracked issue (#121, referencing the closed #104 it looks like a
+    regression of) instead of silently working around it or trying to fix out-of-scope
+    menu/persona code. **Lesson: when a required merge step surfaces a new failure, don't
+    assume it's yours -- a disposable worktree at the pre-merge tip is a cheap, conclusive way
+    to attribute it before you touch anything.**
+  - **Rebrand-baseline bump is sometimes the correct fix, not a workaround:** the already-
+    committed #95 test's `assertNoLogs("sonic-drive-in", ...)` pushed
+    `test_session_bootstrap.py` to a legitimate 5th "sonic" occurrence, one over the checked-in
+    baseline max of 4 -- failing `test_rebrand_verification.py`. Used the sanctioned
+    `regenerate_rebrand_baseline.py --allow-increase --increase-reason '#95'` (per PR #101's
+    ratchet-safe design) rather than hand-editing the YAML; produced a minimal 2-line diff
+    (`max: 4 -> 5`, `increase_reason: '' -> '#95'`).
+  - Final validation: pytest 1150 passed / 168 subtests (post-merge), ruff clean; full .NET
+    conformance suite 662/663 consistently across repeated runs, the sole failure being #121
+    (confirmed pre-existing on origin/dev, unrelated); all three targets 20/20 clean under
+    24-core busy-loop load post-merge. Head `773561f` (merge commit) on top of `3908cb5`
+    (#68) / `3c6a799` (#103) / `126398b` (#95). Did not merge -- PR opened for the team, "Refs
+    #95, #103, #68" (nothing closed).

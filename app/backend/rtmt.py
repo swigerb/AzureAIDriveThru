@@ -1606,6 +1606,17 @@ class RTMiddleTier:
                     if recovery is not None and await recovery.on_error(message):
                         _vlog(verbose, "  ⚠ rate-limited — recovery ladder: %s", json.dumps(message, default=str)[:500])
                         return None
+                    # #95: a browser response.cancel that lands after the response has
+                    # already finished (e.g. useRealtime.tsx's unconditional cancel on
+                    # barge-in or a mic restart, racing response.done) is rejected by the
+                    # real API with response_cancel_not_active in the same race -- benign,
+                    # not a backend fault. Still relayed to the browser unchanged below, just
+                    # not logged as an ERROR so strict conformance scenarios don't count it.
+                    if (message.get("error") or {}).get("code") == "response_cancel_not_active":
+                        logger.info("OpenAI Realtime API error (benign — response already finished): %s",
+                                    json.dumps(message, default=str)[:1000])
+                        _vlog(verbose, "  ⚠ benign (response_cancel_not_active): %s", json.dumps(message, default=str)[:500])
+                        return updated_message
                     # Surface OpenAI errors (e.g. rejected session.update, malformed tool schemas)
                     # so they don't silently vanish into the client.
                     logger.error("OpenAI Realtime API error: %s", json.dumps(message, default=str)[:1000])
