@@ -4,9 +4,14 @@ namespace Backend.Tests.TestSupport;
 
 /// <summary>
 /// Test-side equivalent of app/backend/tests/test_persona_loader.py's `personas_copy` fixture:
-/// copies the real personas/ tree (schemas + sonic pack) into a throwaway temp directory so tests
-/// can mutate one field at a time without touching the real, shared personas/ tree. Disposing
-/// deletes the temp directory.
+/// copies the real personas/ tree's schema files plus ONLY the sonic pack into a throwaway temp
+/// directory so tests can mutate one field at a time without touching the real, shared
+/// personas/ tree. Deliberately does NOT copy any other real pack folder that may also exist
+/// under personas/ (e.g. #78/#79's mcdonalds/dunkin) -- this fixture models a single, known
+/// "sonic-only" catalog on purpose (see EmptyPersonasDirectory_ThrowsNoPersonasEnabled and
+/// UnlistedEnabledPersona_Throws, which depend on sonic being the ONLY pack present unless a
+/// test explicitly adds one via DuplicatePersona), so its scenarios stay correct no matter how
+/// many more real packs land on disk. Disposing deletes the temp directory.
 /// </summary>
 public sealed class PersonaPackFixture : IDisposable
 {
@@ -16,7 +21,12 @@ public sealed class PersonaPackFixture : IDisposable
     {
         var sourceDir = Path.Combine(RepoRootLocator.Find(), "personas");
         PersonasDir = Path.Combine(Path.GetTempPath(), "beth-persona-tests-" + Guid.NewGuid().ToString("n"));
-        CopyDirectory(sourceDir, PersonasDir);
+        Directory.CreateDirectory(PersonasDir);
+        foreach (var file in Directory.EnumerateFiles(sourceDir))
+        {
+            File.Copy(file, Path.Combine(PersonasDir, Path.GetFileName(file)));
+        }
+        CopyDirectory(Path.Combine(sourceDir, "sonic"), Path.Combine(PersonasDir, "sonic"));
     }
 
     /// <summary>Loads personas/&lt;personaId&gt;/persona.json as a mutable JsonNode, applies
