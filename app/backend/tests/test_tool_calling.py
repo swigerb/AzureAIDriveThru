@@ -269,7 +269,7 @@ class SearchOOSAnnotationTests(unittest.TestCase):
         # module-level `MOCK_MACHINE_STATUS` global -- patch the SAME memoized MenuCatalog
         # instance `search()`'s default resolves (`_SONIC` above), proving the real, only code
         # path a mutation reintroducing a module-level global would have nothing left to pass.
-        with patch.dict(_SONIC.machines, {"ice_cream_machine": "down"}):
+        with patch.dict(_SONIC.machines, {"ice_cream_machine": ("down", "Ice cream machine is being cleaned")}):
             result = _run(search(client, "cfg", "id", "description", "embedding", False, {"query": "shake"}))
         self.assertIn("OOS", result.text)
         self.assertIn("Ice cream machine", result.text)
@@ -281,7 +281,7 @@ class SearchOOSAnnotationTests(unittest.TestCase):
         slush label for the ice-cream text (or vice versa) must fail this test."""
         records = [{"id": "1", "name": "Blue Raspberry Slush", "category": "Slushes", "sizes": "N/A"}]
         client = _make_mock_search_client(records)
-        with patch.dict(_SONIC.machines, {"slush_machine": "down"}):
+        with patch.dict(_SONIC.machines, {"slush_machine": ("down", "Slush machine is down")}):
             result = _run(search(client, "cfg", "id", "description", "embedding", False, {"query": "slush"}))
         self.assertIn("OOS", result.text)
         self.assertIn("Slush machine", result.text)
