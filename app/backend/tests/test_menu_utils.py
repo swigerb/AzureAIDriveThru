@@ -435,6 +435,32 @@ class MoreTotsAliasFormsTests(unittest.TestCase):
             self.assertEqual(infer_combo_component(name), "", name)
 
 
+class GroovyFriesAliasTests(unittest.TestCase):
+    """#73 (Rick's PR #100 review, optional/cheap item): "fries" is an unambiguous plain-English
+    spoken alias for "Groovy Fries" -- ``menuItems.json`` only has three fries items ("Groovy
+    Fries", "Cheese Groovy Fries", "Chili Cheese Groovy Fries"), and only the plain, unqualified
+    one is a sensible resolution of the bare word "fries" alone."""
+
+    def test_fries_resolves_to_groovy_fries(self):
+        resolved = menu_utils.resolve_menu_item("fries")
+        self.assertIsNotNone(resolved)
+        self.assertEqual(resolved["name"], "Groovy Fries")
+
+    def test_fries_is_case_insensitive(self):
+        for name in ("Fries", "FRIES", "  fries  "):
+            resolved = menu_utils.resolve_menu_item(name)
+            self.assertIsNotNone(resolved, name)
+            self.assertEqual(resolved["name"], "Groovy Fries", name)
+
+    def test_cheese_and_chili_cheese_variants_are_unaffected(self):
+        """The alias is scoped to plain "Groovy Fries" only -- it must not make the cheese/chili
+        cheese variants resolve to the plain item, nor vice versa."""
+        self.assertEqual(menu_utils.resolve_menu_item("Cheese Groovy Fries")["name"], "Cheese Groovy Fries")
+        self.assertEqual(
+            menu_utils.resolve_menu_item("Chili Cheese Groovy Fries")["name"], "Chili Cheese Groovy Fries"
+        )
+
+
 class SizeWordFailSafeTests(unittest.TestCase):
     """PR #61 review, must-fix 5 -- no behaviour change, a pinned fail-safe contract. Size words
     embedded directly in the name text are NOT stripped by ``strip_modifiers`` (only a bracketed
@@ -453,6 +479,40 @@ class SizeWordFailSafeTests(unittest.TestCase):
         ``strip_modifiers`` before the alias lookup runs, leaving "Tater Tots" which does
         resolve via "Tots"'s ``aliases``."""
         self.assertEqual(infer_combo_component("Tater Tots (Large)"), "sides", "Tater Tots (Large)")
+
+
+class CanonicalSizeKeyNoDisplaySizesPinningTests(unittest.TestCase):
+    """Rick's PR #100 review, required item 2 (pin): ``canonical_size_key`` already treats every
+    "no real size word" spelling -- ``""``, ``"n/a"``, ``"na"``, ``"none"``, ``"n.a."`` -- as the
+    literal ``"standard"`` key (see its docstring and ``_NO_DISPLAY_SIZES`` above), which is what
+    lets a real single-size item (e.g. "Salted Caramel Toffee Croissant Bites", whose only size is
+    "Standard") be ordered as ``"n/a"``/``""``/etc. without #73's on-menu size gate wrongly
+    rejecting it as size_not_available. This behaviour existed before this PR revision but had no
+    dedicated pytest pinning it directly -- this class is that pin, so a future edit to
+    ``_NO_DISPLAY_SIZES``/``canonical_size_key`` that breaks it fails loudly here instead of only
+    showing up as a mysterious conformance/live-order regression."""
+
+    def test_empty_string_is_standard(self):
+        self.assertEqual(menu_utils.canonical_size_key(""), "standard")
+
+    def test_n_slash_a_is_standard(self):
+        self.assertEqual(menu_utils.canonical_size_key("n/a"), "standard")
+
+    def test_na_is_standard(self):
+        self.assertEqual(menu_utils.canonical_size_key("na"), "standard")
+
+    def test_none_word_is_standard(self):
+        self.assertEqual(menu_utils.canonical_size_key("none"), "standard")
+
+    def test_n_dot_a_dot_is_standard(self):
+        self.assertEqual(menu_utils.canonical_size_key("n.a."), "standard")
+
+    def test_standard_itself_is_standard(self):
+        self.assertEqual(menu_utils.canonical_size_key("standard"), "standard")
+
+    def test_case_and_whitespace_insensitive(self):
+        self.assertEqual(menu_utils.canonical_size_key("  N/A  "), "standard")
+        self.assertEqual(menu_utils.canonical_size_key("NONE"), "standard")
 
 
 class OffMenuNamesReturnSafeDefaultsSinceIssue73Tests(unittest.TestCase):

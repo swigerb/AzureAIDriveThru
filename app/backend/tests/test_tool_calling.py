@@ -265,6 +265,19 @@ class SearchOOSAnnotationTests(unittest.TestCase):
         self.assertIn("OOS", result.text)
         self.assertIn("Ice cream machine", result.text)
 
+    def test_slush_flagged_oos_with_slush_label_when_slush_machine_down(self):
+        """#73 (Rick's PR #100 review, required item 3): a down `slush_machine` must get ITS OWN
+        label, not the ice cream machine's -- a slush down for cleaning has nothing to do with
+        ice cream, and telling the guest otherwise is just wrong. Mutation check: swapping the
+        slush label for the ice-cream text (or vice versa) must fail this test."""
+        records = [{"id": "1", "name": "Blue Raspberry Slush", "category": "Slushes", "sizes": "N/A"}]
+        client = _make_mock_search_client(records)
+        with patch.dict(MOCK_MACHINE_STATUS, {"slush_machine": "down"}):
+            result = _run(search(client, "cfg", "id", "description", "embedding", False, {"query": "slush"}))
+        self.assertIn("OOS", result.text)
+        self.assertIn("Slush machine", result.text)
+        self.assertNotIn("Ice cream machine", result.text)
+
     def test_non_ice_cream_item_not_flagged(self):
         records = [{"id": "1", "name": "Cherry Limeade", "category": "Slushes", "sizes": "N/A"}]
         client = _make_mock_search_client(records)
@@ -351,7 +364,13 @@ class NotOnMenuRejectionTests(unittest.TestCase):
     cannot order it."). update_order's add path resolves item_name through the exact same
     normalization/alias lookup as every other menu_utils classification (modifier-stripped,
     symbol-normalised) -- never a keyword/substring guess -- and rejects anything that doesn't
-    resolve as not_on_menu, adding nothing to the order."""
+    resolve as not_on_menu, adding nothing to the order.
+
+    Rick's PR #100 review, required item 1: both rejections come back as a STRUCTURED result --
+    ``result.text`` is a dict (``status``/``item_added``/``reason``/``item_name``/``message``,
+    plus ``available_sizes`` for size_not_available), not a bare string -- so these tests assert
+    dict fields directly. Mutation check: reverting either rejection to a plain string breaks
+    every ``result.text["..."]`` access below with a TypeError/KeyError."""
 
     def test_off_menu_item_is_rejected_and_order_unchanged(self):
         sid = _make_session()
@@ -360,10 +379,28 @@ class NotOnMenuRejectionTests(unittest.TestCase):
             "size": "medium", "quantity": 1, "price": 2.29,
         }, sid))
         self.assertEqual(result.destination, ToolResultDirection.TO_SERVER)
-        self.assertIn("Dr Pepper Zero", result.text)
-        self.assertIn("menu", result.text.lower())
+        self.assertEqual(result.text["status"], "rejected")
+        self.assertFalse(result.text["item_added"])
+        self.assertEqual(result.text["reason"], "not_on_menu")
+        self.assertEqual(result.text["item_name"], "Dr Pepper Zero")
+        self.assertIn("Dr Pepper Zero", result.text["message"])
+        self.assertIn("menu", result.text["message"].lower())
         summary = order_state_singleton.get_order_summary(sid)
         self.assertEqual(len(summary.items), 0)
+
+    def test_off_menu_message_tells_the_model_to_search_and_offer_the_closest_real_item(self):
+        """Rick's PR #100 review, required item 1 (UX): the not_on_menu message must add a line
+        telling the model to search with the guest's own words and offer the closest real menu
+        item back by its exact name, instead of just apologizing and stopping there."""
+        sid = _make_session()
+        result = _run(update_order({
+            "action": "add", "item_name": "Dr Pepper Zero",
+            "size": "medium", "quantity": 1, "price": 2.29,
+        }, sid))
+        message = result.text["message"].lower()
+        self.assertIn("search", message)
+        self.assertIn("closest", message)
+        self.assertIn("exact name", message)
 
     def test_off_menu_extra_like_name_is_rejected_not_treated_as_an_extra(self):
         """Rick's #73 review: "Extra Patty" isn't a real menuItems.json item -- it must be
@@ -375,8 +412,9 @@ class NotOnMenuRejectionTests(unittest.TestCase):
             "size": "standard", "quantity": 1, "price": 1.29,
         }, sid))
         self.assertEqual(result.destination, ToolResultDirection.TO_SERVER)
-        self.assertIn("menu", result.text.lower())
-        self.assertNotIn("extras", result.text.lower())
+        self.assertEqual(result.text["reason"], "not_on_menu")
+        self.assertIn("menu", result.text["message"].lower())
+        self.assertNotIn("extras", result.text["message"].lower())
         summary = order_state_singleton.get_order_summary(sid)
         self.assertEqual(len(summary.items), 0)
 
@@ -389,6 +427,7 @@ class NotOnMenuRejectionTests(unittest.TestCase):
             "size": "medium", "quantity": 1, "price": 2.69,
         }, sid))
         self.assertEqual(result.destination, ToolResultDirection.TO_SERVER)
+        self.assertEqual(result.text["reason"], "not_on_menu")
         summary = order_state_singleton.get_order_summary(sid)
         self.assertEqual(len(summary.items), 0)
 
@@ -427,7 +466,11 @@ class NotOnMenuRejectionTests(unittest.TestCase):
             "size": "large", "quantity": 1, "price": 8.49,
         }, sid))
         self.assertEqual(result.destination, ToolResultDirection.TO_SERVER)
-        self.assertIn("size", result.text.lower())
+        self.assertEqual(result.text["status"], "rejected")
+        self.assertFalse(result.text["item_added"])
+        self.assertEqual(result.text["reason"], "size_not_available")
+        self.assertIn("size", result.text["message"].lower())
+        self.assertIn("Standard", result.text["available_sizes"])
         summary = order_state_singleton.get_order_summary(sid)
         self.assertEqual(len(summary.items), 0)
 

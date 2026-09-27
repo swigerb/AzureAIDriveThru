@@ -97,6 +97,25 @@ MOCK_MACHINE_STATUS = {
 # aren't real menu items at all. Both are now data-driven off each item's own `requiresMachine`/
 # `isExtra` fields (menu_utils.requires_machine() / menu_utils.is_extra_item()), read once at
 # import time from the pack. See search()'s OOS annotation and update_order()'s extras check below.
+
+# #73 (Rick's PR #100 review, required item 3): the OOS annotation used to hard-code the single
+# string "Ice cream machine is being cleaned" for ANY down machine -- a slush with
+# `slush_machine: "down"` would wrongly claim the ice cream machine was the problem. Keyed per
+# machine so each machine's own outage reads naturally; an unlisted machine key still degrades
+# safely to a generic "<key> is down" label instead of a KeyError or silently reusing another
+# machine's text.
+_MACHINE_OOS_LABELS: dict[str, str] = {
+    "ice_cream_machine": "Ice cream machine is being cleaned",
+    "slush_machine": "Slush machine is down",
+    "fryer": "Fryer is down",
+}
+
+
+def _machine_oos_label(machine: str) -> str:
+    """Return the guest-facing out-of-stock label for *machine*, falling back to a generic
+    "<machine> is down" for any machine key not in `_MACHINE_OOS_LABELS` (e.g. a future machine
+    added to a persona pack before this dict is updated for it)."""
+    return _MACHINE_OOS_LABELS.get(machine, f"{machine} is down")
 ALLOWED_EXTRA_CATEGORIES = {"slushes & drinks", "shakes & ice cream", "burgers & sandwiches", "drinks", "slushes", "shakes", "combos"}
 BLOCKED_EXTRA_CATEGORIES = {"hot dogs & tots", "sides", "hot dogs"}
 
@@ -304,7 +323,7 @@ async def search(
         # keyword list, so a real menu item is the only thing ever flagged.
         machine = requires_machine(item_name)
         if machine and MOCK_MACHINE_STATUS.get(machine) == "down":
-            summary += " [OOS: Ice cream machine is being cleaned]"
+            summary += f" [OOS: {_machine_oos_label(machine)}]"
 
         results.append(summary)
 
@@ -381,30 +400,59 @@ async def update_order(args, session_id: str) -> ToolResult:
     # persona's own menu data (menu_utils.resolve_menu_item) -- never a keyword/substring guess.
     # Anything else is rejected outright as not_on_menu; nothing is added to the order, and the
     # model is told so (via error_messages.yaml's item_not_on_menu) so the carhop can offer an
-    # on-menu alternative instead of silently accepting or absorbing it. ──
+    # on-menu alternative instead of silently accepting or absorbing it.
+    #
+    # Rick's PR #100 review, required item 1: both rejections below return a STRUCTURED JSON
+    # result (TO_SERVER-only, exactly like every other add-time rejection direction-wise), not a
+    # bare apology string, so the C# port can match this contract field-for-field:
+    #   {"status": "rejected", "item_added": false, "reason": <"not_on_menu"|"size_not_available">,
+    #    "item_name": ..., "message": <error_messages.yaml text>}
+    #   (+ "available_sizes": [...] for size_not_available.)
+    # ToolResult.to_text() already json.dumps()s a non-str `text` payload (rtmt.py), so passing a
+    # dict here is exactly what every OTHER JSON-carrying ToolResult in this module does. ──
     if args["action"] == "add":
         menu_item = resolve_menu_item(item_name)
         if menu_item is None:
             logger.info("Rejected off-menu item '%s' for session %s (not_on_menu)", item_name, session_id)
-            _err = _prompt_loader.render_error("item_not_on_menu", item_name=item_name) if _prompt_loader else (
-                f"I'm sorry, {item_name} isn't on our menu. Would you like to try something else instead?"
+            _message = _prompt_loader.render_error("item_not_on_menu", item_name=item_name) if _prompt_loader else (
+                f"I'm sorry, {item_name} isn't on our menu. Would you like to try something else instead? "
+                "Use the search tool with the guest's words and offer the closest real menu item by its exact name."
             )
-            return ToolResult(_err, ToolResultDirection.TO_SERVER)
+            return ToolResult(
+                {
+                    "status": "rejected",
+                    "item_added": False,
+                    "reason": "not_on_menu",
+                    "item_name": item_name,
+                    "message": _message,
+                },
+                ToolResultDirection.TO_SERVER,
+            )
 
         requested_size = canonical_size_key(size)
         if requested_size not in menu_item["sizes"]:
-            available_sizes = ", ".join(SIZE_MAP.get(s, s.capitalize()) for s in menu_item["sizes"])
+            available_sizes = [SIZE_MAP.get(s, s.capitalize()) for s in menu_item["sizes"]]
             logger.info(
                 "Rejected unsupported size '%s' for '%s' in session %s (size_not_available); available: %s",
                 size, item_name, session_id, menu_item["sizes"],
             )
-            _err = _prompt_loader.render_error(
-                "size_not_available", item_name=menu_item["name"], available_sizes=available_sizes
+            _message = _prompt_loader.render_error(
+                "size_not_available", item_name=menu_item["name"], available_sizes=", ".join(available_sizes)
             ) if _prompt_loader else (
                 f"I'm sorry, {menu_item['name']} isn't available in that size. "
-                f"We have it in {available_sizes} -- would you like one of those?"
+                f"We have it in {', '.join(available_sizes)} -- would you like one of those?"
             )
-            return ToolResult(_err, ToolResultDirection.TO_SERVER)
+            return ToolResult(
+                {
+                    "status": "rejected",
+                    "item_added": False,
+                    "reason": "size_not_available",
+                    "item_name": menu_item["name"],
+                    "message": _message,
+                    "available_sizes": available_sizes,
+                },
+                ToolResultDirection.TO_SERVER,
+            )
 
     # ── Customization validation (reject nonsensical mods) ──
     if "(" in item_name:
