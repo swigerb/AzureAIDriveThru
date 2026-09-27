@@ -21,6 +21,25 @@ public sealed class PromptLoader
 {
     private readonly IDeserializer _yaml = new DeserializerBuilder().Build();
 
+    /// <summary>Required rejection-message keys (#125, fail-fast follow-up to #116): every
+    /// structured rejection app/backend/tools.py's update_order/modify path can return renders one
+    /// of these keys via PromptLoader.render_error (Python), plus generic_error as the shared
+    /// fallback. Mirrors app/backend/prompt_loader.py's REQUIRED_ERROR_MESSAGE_KEYS byte-for-byte
+    /// (same values, same order) -- Backend.Tests's
+    /// PromptLoaderRequiredErrorKeysTests.RequiredErrorMessageKeys_MatchPython parses that Python
+    /// file and asserts the two lists are equal, so the two can never silently drift apart. See
+    /// docs/persona-architecture.md section 6.</summary>
+    public static readonly IReadOnlyList<string> RequiredErrorMessageKeys =
+    [
+        "generic_error",
+        "item_not_on_menu",
+        "size_not_available",
+        "item_not_in_order",
+        "machine_unavailable",
+        "extras_blocked_category",
+        "extras_no_base_item",
+    ];
+
     public string PersonaId { get; }
     public string SystemPrompt { get; }
     public IReadOnlyDictionary<object, object> Greeting { get; }
@@ -51,6 +70,7 @@ public sealed class PromptLoader
         var errorMessagesData = LoadYaml(promptsDir, "error_messages.yaml");
         ErrorMessages = (IReadOnlyDictionary<object, object>?)GetMapping(errorMessagesData, "messages")
             ?? new Dictionary<object, object>();
+        ValidateErrorMessages(ErrorMessages);
 
         Hints = LoadYaml(promptsDir, "hints.yaml");
     }
@@ -162,6 +182,20 @@ public sealed class PromptLoader
         }
 
         return tools.Select(t => (IReadOnlyDictionary<object, object>)t).ToList();
+    }
+
+    /// <summary>#125 (fail-fast follow-up to #116): every key in RequiredErrorMessageKeys must be
+    /// present so the model never gets a bare "An error occurred" placeholder in place of the
+    /// pack's own guidance for a real, reachable rejection path.</summary>
+    private void ValidateErrorMessages(IReadOnlyDictionary<object, object> messages)
+    {
+        var missing = RequiredErrorMessageKeys.Where(key => !messages.ContainsKey(key)).ToList();
+        if (missing.Count > 0)
+        {
+            throw new PromptLoadException(
+                $"error_messages.yaml for persona pack '{PersonaId}' is missing required " +
+                $"rejection-message key(s): {string.Join(", ", missing)}.");
+        }
     }
 
     private static IDictionary<object, object>? GetMapping(IReadOnlyDictionary<object, object> data, string key) =>
