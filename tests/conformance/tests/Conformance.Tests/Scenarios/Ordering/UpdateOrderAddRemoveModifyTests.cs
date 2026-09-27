@@ -7,10 +7,10 @@ namespace Conformance.Tests.Scenarios.Ordering;
 
 /// <summary>
 /// Issue #9: `update_order` add/remove/modify scenarios — quantities, sizes (including Route 44),
-/// zero/negative price rejection, and both the per-item and whole-order quantity limits. Scripts
-/// real scripted-function-call turns against the real Python backend (see
-/// OrderScenarioHelpers.cs) and asserts on the `tool_result` JSON order summary
-/// (extension.middle_tier_tool_response) that reaches the browser, exactly as
+/// tool-call price is ignored in favor of the resolved menu price (#104), and both the per-item
+/// and whole-order quantity limits. Scripts real scripted-function-call turns against the real
+/// Python backend (see OrderScenarioHelpers.cs) and asserts on the `tool_result` JSON order
+/// summary (extension.middle_tier_tool_response) that reaches the browser, exactly as
 /// app/backend/tests/test_order_state.py and test_tool_calling.py assert against the in-process
 /// order state directly.
 /// </summary>
@@ -118,26 +118,39 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
         Assert.Equal(0, order.GetProperty("items").GetArrayLength());
     });
 
-    [Fact]
-    public Task Adding_an_item_at_zero_or_negative_price_is_rejected_and_nothing_is_added() => fixture.RunAsync(async () =>
+    /// <summary>
+    /// #104 acceptance criterion (Rick's issue #104 constraints): the unit price charged always
+    /// comes from the resolved menu record for (item, size), never the tool call's own `price`
+    /// argument -- the price parameter is accepted (kept in the tool schema so a caller can still
+    /// send one) but ignored, only ever logged if it disagrees with the menu. Covers a wrong price
+    /// that undercharges (0.0, previously rejected outright pre-#104), a negative price, and a
+    /// price that overcharges -- all three must still add the item and charge exactly the real
+    /// menu price (Tots, medium = 2.79). A mutation that reverts to trusting the tool-call price
+    /// (e.g. re-introducing tools.py's old price&lt;=0 rejection, or reading `price` straight
+    /// through in order_state.py's add branch) fails this by either rejecting the add outright or
+    /// charging the wrong amount.
+    /// </summary>
+    [Theory]
+    [InlineData(0.0)]
+    [InlineData(-5.00)]
+    [InlineData(999.99)]
+    public Task Adding_an_item_with_a_wrong_tool_call_price_is_charged_the_menu_price(double toolCallPrice) => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
         var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
         await using var _ = browser;
 
-        // tools.py::update_order rejects action=="add" && price<=0.0 with a TO_SERVER-only apology
-        // (never reaches the browser), so this step must be scripted with toClient:false or the
-        // wait for extension.middle_tier_tool_response would time out.
-        var rejected = await OrderScenarioHelpers.CallToolAsync(
-            connection, browser, "update_order",
-            """{"action":"add","item_name":"Tots","size":"medium","quantity":1,"price":0.0}""",
-            "call_zero_price", roundTripIndex, ct, toClient: false);
-        Assert.Null(rejected.ToolResultJson);
-
         var result = await OrderScenarioHelpers.CallToolAsync(
-            connection, browser, "get_order", "{}", "call_get_after_zero_price", rejected.RoundTripIndex, ct);
+            connection, browser, "update_order",
+            $$"""{"action":"add","item_name":"Tots","size":"medium","quantity":1,"price":{{toolCallPrice}}}""",
+            "call_wrong_tool_price", roundTripIndex, ct);
+
+        Assert.NotNull(result.ToolResultJson);
         var order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
-        Assert.Equal(0, order.GetProperty("items").GetArrayLength());
+        Assert.Equal(1, order.GetProperty("items").GetArrayLength());
+        OrderScenarioHelpers.AssertMoneyEqual(2.79m, order.GetProperty("total").GetDecimal(),
+            $"A wrong tool-call price ({toolCallPrice}) must be ignored and 'Tots' (medium) charged " +
+            "its real menu price, 2.79 -- not the tool-call price, and not rejected outright.");
     });
 
     [Theory]

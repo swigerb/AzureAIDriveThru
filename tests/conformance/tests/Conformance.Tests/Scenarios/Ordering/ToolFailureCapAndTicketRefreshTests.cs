@@ -16,10 +16,13 @@ namespace Conformance.Tests.Scenarios.Ordering;
 /// Both scenarios here deliberately use <c>update_order</c> with a string <c>price</c>
 /// (<c>"cheap"</c>) rather than a missing required argument: <c>tools.py</c>'s own layer-2
 /// validation only checks <c>action</c>/<c>item_name</c>/<c>size</c>/<c>quantity</c> presence, so
-/// a call with all four present but a non-numeric price sails past it and hits the unguarded
-/// `price &lt;= 0.0` comparison at <c>tools.py:~391</c>, raising a genuine <c>TypeError</c> that
-/// only rtmt.py's layer-1 <c>except</c> block catches -- exactly the failure mode Rick's S3 "S3"
-/// probe describes, and the only way this black-box harness can reach layer 1 through
+/// a call with all four present but a non-numeric price sails past it. #104 removed the old
+/// `price &lt;= 0.0` guard this used to trigger; the non-numeric price now instead reaches
+/// <c>order_state.py</c>'s menu-vs-tool-call price comparison (<c>to_decimal(price) !=
+/// to_decimal(menu_price)</c>, added for #104's debug/warn-on-mismatch logging), where
+/// <c>Decimal("cheap")</c> raises a genuine <c>decimal.InvalidOperation</c> that only rtmt.py's
+/// layer-1 <c>except</c> block catches -- exactly the failure mode Rick's S3 "S3" probe
+/// describes, and the only way this black-box harness can reach layer 1 through
 /// <c>update_order</c>'s own front door (see <see cref="ToolErrorSessionSurvivesTests"/>'s
 /// missing-<c>item_name</c> script, which is caught by layer 2 instead and never reaches here).
 /// </summary>
