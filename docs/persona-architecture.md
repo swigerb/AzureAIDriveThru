@@ -636,10 +636,10 @@ Milestone **"P2 Unified demo (Python)"**. Sizes: S up to 1 dev-day, M 2 to 3, L 
 | #80 | P2-11 Frontend: theming and persona, model and backend pickers | Morty | L | #74, #75 (F2 starts now) |
 | #81 | P2-12 Local mode as a persona-agnostic pipeline (default cloud) | Summer, Unity | L | #75 |
 | #82 | P2-13 Cascade pipeline with Foundry chat models | Summer, Unity, Birdperson | L | #75 |
-| #83 | P2-14 Voices, greetings, clips, prompt review per persona | Unity | M | #78, #79 |
-| #84 | P2-15 Ingestion and Search per persona | Summer, Squanchy | M | #72, #78, #79 |
+| #83 | P2-14 Voices, greetings, clips, prompt review per persona | Unity | M | #75, #78, #79 |
+| #84 | P2-15 Ingestion and Search per persona | Summer, Squanchy | M | #70 (script), #72, #78, #79; #85 (live run) |
 | #85 | P2-16 New Azure environment on Foundry (own AOAI and paid Search), ready for both backends | Squanchy, Rick | L | this PR (skeleton); #75 (catalog) |
-| #86 | P2-17 Scope record: dashboard, CRM and edge not carried over | Rick | S | none |
+| #86 | P2-17 Scope record: dashboard, CRM and edge not carried over | Rick | S | #69 (both edit the README) |
 | #87 | P2-18 Deploy the unified Python app; live smoke per persona and model | Squanchy, Unity | M | #80 to #85 |
 | #88 | P2-19 Parity sign-off, sibling archive, teardown (Search kept 30 days) | Rick, Squanchy | M | #87 and Brian |
 
@@ -650,7 +650,7 @@ Milestone **"P2 Unified demo (Python)"**. Sizes: S up to 1 dev-day, M 2 to 3, L 
 - #69, the rename;
 - #70, the loader;
 - #85, the environment skeleton;
-- #86, the scope record;
+- #86, the scope record (after #69);
 - #76, harness groundwork (after #70);
 - #80 F2, the token refactor.
 
