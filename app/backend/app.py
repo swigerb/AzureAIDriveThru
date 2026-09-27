@@ -59,6 +59,7 @@ _startup_checks = {
     "prompts_loaded": False,
     "config_loaded": True,  # validated at module load by get_config()
     "env_vars": False,
+    "prod_guard": False,
 }
 
 # Populated by create_app() from the validated persona pack catalog (issue #70). Read by
@@ -482,6 +483,24 @@ def register_persona_routes(app: web.Application, catalog: PersonaCatalog, model
 
 async def create_app() -> web.Application:
     """Configure and return the aiohttp application for realtime ordering."""
+
+    # 0. Production guard (Rick's PR #118 review, required item 4): refuse to start with
+    # CONFORMANCE_TEST_HOOKS=1 (conformance_hooks.py's fake credentials/timers/HTTP overrides
+    # active) AND RUNNING_IN_PRODUCTION both set -- a deployed app must never run with test
+    # hooks live, and this must fail loudly at startup rather than silently 401ing on the
+    # first request or, worse, accepting a fake bearer token in prod. Checked before even the
+    # dev-mode .env load below and before the required-env-vars check, since this is the one
+    # startup failure that must never be masked by any other. Uses hooks_enabled_now() (a live
+    # re-check), not the frozen HOOKS_ENABLED constant, so this guard reflects this process's
+    # actual environment even if some earlier import already froze that constant differently.
+    if conformance_hooks.hooks_enabled_now() and _get_bool_env("RUNNING_IN_PRODUCTION", False):
+        logger.critical(
+            "FATAL: CONFORMANCE_TEST_HOOKS=1 is set alongside RUNNING_IN_PRODUCTION=1. "
+            "Test-only fake credentials, timers, and HTTP overrides must never be active in "
+            "a deployed environment. Refusing to start."
+        )
+        sys.exit(1)
+    _startup_checks["prod_guard"] = True
 
     if not _get_bool_env("RUNNING_IN_PRODUCTION", False):
         logger.info("Running in development mode; loading values from .env")
