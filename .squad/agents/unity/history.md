@@ -307,3 +307,53 @@ Since `app/frontend/` is off-limits, the middleware (`rtmt.py` + `audio_pipeline
     passed/1 pre-existing unrelated failure; ruff clean. One commit (`ac7e7da`),
     pushed, no force-push. PR #93 commented (mapped items 1-5 to Rick), issue #87
     got an explicit AIServices realtime smoke-check item. Did not merge.
+
+### 2026-09-27: PR #93 revision 3 (issue #85) — post-merge brand-guard regression, fixed by design not by baseline
+
+  Coordinator flagged the PR as "dirty" against `dev` after a burst of merges (#92
+  persona loader — already accounted for, #96 C# skeleton + dotnet CI, #99-#101
+  menu/conformance/brand baseline). New worktree `p2-85-r3`, merged `origin/dev` in
+  (no rebase, no force-push): **zero textual conflicts** — git's `ort` strategy
+  resolved everything automatically. GitHub's `mergeable: CONFLICTING` flag had
+  simply gone stale relative to how far `dev` had moved; it cleared to `MERGEABLE`
+  once the merge commit was pushed. **Lesson:** a coordinator-reported "dirty"/
+  conflicting PR does not always mean an actual line-level conflict — always try
+  the real `git merge` first before assuming manual conflict resolution is needed;
+  it may just be a stale mergeability cache that a normal merge-and-push clears.
+
+  - **A dependency-baseline test can regress you retroactively, through no line
+    you touched in the merge.** Merging in #101's new ratcheting brand-guard test
+    (`test_rebrand_verification.py`) exposed that revision 2's own
+    `defaultPersona string = 'sonic'` bicep default (added days earlier, before the
+    guard existed) had pushed 3 (file, brand) pairs above baseline —
+    `infra/main.bicep` (no entry at all), `infra/main.parameters.json` (max 1, now
+    2), `DEPLOY.md` (max 5, now 6). The failure only surfaced once the *guard*
+    landed via merge, not when the *offending code* landed — a reminder to
+    re-run the full test suite after every merge from a fast-moving base branch,
+    even when your own tracked files are byte-for-byte unchanged by the merge.
+  - **When a brand-guard baseline blocks you, prefer fixing the design over
+    padding the baseline — especially when told the regenerate tool is
+    lower-only.** Rather than adding a baseline entry to permit `'sonic'` as
+    `defaultPersona`'s hardcoded default, applied the same "omit env var when
+    empty" pattern already used for `personas` (revision 2, item 5):
+    `defaultPersona` now defaults to `''`, and
+    `empty(defaultPersona) ? {} : { DEFAULT_PERSONA: defaultPersona }` in both
+    container apps. Checked `app/backend/persona_loader.py` first to confirm an
+    absent `DEFAULT_PERSONA` already falls back sanely (first-party pack if
+    enabled, else first enabled id alphabetically) — so this was a genuine
+    brand-neutral improvement, not just a guard-dodge, and it matches the
+    existing `personas`/search-index philosophy instead of adding a one-off
+    exception to it.
+  - Re-validation after merge + fix: `az bicep build` clean (same 13 warning
+    classes); `azd provision --preview` from a fresh clean env (new worktree, no
+    carried-over `.azure` state) reproduced the same 10-resource plan; a direct
+    `az deployment sub what-if` re-confirmed all 5 of Rick's original items
+    (Search SKU `basic`, account `kind: AIServices`, realtime capacity `10`,
+    per-model `format: OpenAI`, `.openai.azure.com` endpoint), plus a *second*
+    what-if run specifically to prove `DEFAULT_PERSONA` is now also omitted when
+    empty; `pytest -q` 970 passed/154 subtests/0 failures (the revision-2
+    `pytest-asyncio` environment gap was already resolved here); `ruff` clean;
+    all 8 CI checks green including `conformance-gate`. One fix commit
+    (`1aea7c0`) on top of the merge commit (`64111de`), pushed, no force-push.
+    PR #93 commented again (mapped the merge + the brand-guard fix), did not
+    merge.
