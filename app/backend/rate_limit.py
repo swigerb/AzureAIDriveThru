@@ -221,6 +221,34 @@ class RateLimitRecovery:
             self._cancel_pending("guest started speaking")
         self._reset()
 
+    def on_guest_audio_forwarded(self) -> None:
+        """A cheaper, earlier signal than `on_guest_speech()`, called the instant genuine
+        (non-suppressed) mic audio is forwarded upstream from `from_client_to_server` --
+        instead of only reacting once the upstream model's own asynchronous VAD
+        `speech_started` acknowledgment round-trips back through `from_server_to_client`.
+
+        #68: waiting for that round trip races a pending retry's own fixed delay
+        (`second_retry_delay_seconds`, as low as 0.4s in some conformance profiles) --
+        under load, the round trip (forward append -> upstream VAD -> speech_started reply
+        -> this coroutine resuming) can take longer than the retry's own timer, so the
+        retry fires first even though the guest had, in fact, already started speaking
+        before it did. That's not a bug in the ladder's cancellation *logic* (it's a
+        genuine, unavoidable network round trip racing a local timer), so no amount of
+        margin/timeout tuning fixes it structurally.
+
+        The guest's audio reaching this point already means EchoSuppressor decided it
+        is not feedback (not during the assistant's own speech, not within a post-speech
+        cooldown) -- i.e. it is already the earliest local, deterministic proxy this
+        process has for "the guest is providing real input right now", without waiting
+        on anything asynchronous. Unlike `on_guest_speech()` this only ever cancels a
+        pending retry -- it deliberately does NOT call `_reset()`, so it can be called on
+        every forwarded audio frame (most of which arrive while nothing is pending, a
+        cheap no-op) without disturbing `attempt`/`awaiting_retry`/`exhausted` state that
+        only the authoritative VAD-confirmed `on_guest_speech()` should own.
+        """
+        if self.pending:
+            self._cancel_pending("guest audio forwarded upstream")
+
     def on_external_response_create(self, source: str) -> None:
         """Someone else (greeting, nudge, tool follow-up, browser) asked for a response."""
         if self.pending:

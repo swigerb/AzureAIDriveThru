@@ -189,6 +189,52 @@ class RecoveryUnitTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(recovery.busy)
         self.assertEqual(notices, [])
 
+    async def test_guest_audio_forwarded_cancels_a_pending_retry_without_waiting_for_speech_started(self):
+        """#68: rtmt.py's from_client_to_server calls on_guest_audio_forwarded() the instant
+        non-suppressed mic audio is forwarded upstream -- it must cancel a pending retry right
+        there, deterministically, without needing the model's own round-tripped
+        speech_started acknowledgment (which is what on_guest_speech() reacts to instead, and
+        which under load can arrive too late relative to the retry's own fixed delay)."""
+        sent, notices, sleep = [], [], GatedSleep()
+
+        async def upstream(frame):
+            sent.append(frame)
+
+        async def client(payload):
+            notices.append(payload)
+
+        recovery = RateLimitRecovery(RateLimitSettings(), upstream, client, sleep=sleep)
+        self.assertTrue(await recovery.on_error({"type": "error", "error": RATE_LIMIT_ERROR}))
+        self.assertTrue(recovery.pending)
+        recovery.on_guest_audio_forwarded()
+        self.assertFalse(recovery.pending, "the retry must be cancelled synchronously, not after a round trip")
+        sleep.open()
+        await asyncio.sleep(0.05)
+        self.assertEqual(sent, [], "a cancelled-before-firing retry must never reach upstream")
+
+    async def test_guest_audio_forwarded_is_a_no_op_when_nothing_is_pending(self):
+        """Unlike on_guest_speech(), on_guest_audio_forwarded() is called on every forwarded
+        audio frame (most of which have nothing pending) -- it must never raise, and must not
+        disturb ladder state (attempt/awaiting_retry/exhausted), which only the
+        VAD-confirmed on_guest_speech() owns."""
+        sent, notices, sleep = [], [], GatedSleep()
+
+        async def upstream(frame):
+            sent.append(frame)
+
+        async def client(payload):
+            notices.append(payload)
+
+        recovery = RateLimitRecovery(RateLimitSettings(), upstream, client, sleep=sleep)
+        recovery.attempt = 1
+        recovery.awaiting_retry = True
+        recovery.exhausted = True
+        recovery.on_guest_audio_forwarded()
+        self.assertFalse(recovery.pending)
+        self.assertEqual(recovery.attempt, 1)
+        self.assertTrue(recovery.awaiting_retry)
+        self.assertTrue(recovery.exhausted)
+
 
 class GatedSleep:
     """Stands in for asyncio.sleep: records each delay, returns once opened."""

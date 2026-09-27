@@ -2517,6 +2517,13 @@ class RTMiddleTier:
                                 audio_frame_count += 1
                                 if (verbose or _VERBOSE_GLOBAL) and audio_frame_count % 50 == 0:
                                     _vlog(verbose, "─── [Client → Server] Audio frame #%d ───", audio_frame_count)
+                                # #68: cancel a pending rate-limit retry the instant genuine
+                                # (non-suppressed) mic audio is forwarded, rather than only on the
+                                # upstream model's own round-tripped speech_started reply (see
+                                # from_server_to_client below) -- that round trip races the retry's
+                                # own fixed delay under load. See RateLimitRecovery.on_guest_audio_forwarded's
+                                # own doc comment for the full rationale.
+                                recovery.on_guest_audio_forwarded()
                             # Forward client message to OpenAI.
                             new_msg, sent_type = await self._process_message_to_server(msg, ws, verbose, voice_locked=assistant_audio_seen, guard=guard, voice=voice, limiter=drop_limiter, reasoning_override=reasoning_override)
                             # PR #49 review round 2, "F1": idle reset, nudge
