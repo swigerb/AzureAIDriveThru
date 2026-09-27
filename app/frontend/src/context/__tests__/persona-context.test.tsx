@@ -40,7 +40,7 @@ const ALPHA_DETAIL: PersonaDetail = {
 };
 
 function Probe() {
-    const { personas, current, logoUrl, ready, error, selectPersona } = usePersonaContext();
+    const { personas, backends, current, logoUrl, ready, error, selectPersona } = usePersonaContext();
     return (
         <div>
             <span data-testid="current-id">{current.id}</span>
@@ -48,6 +48,7 @@ function Probe() {
             <span data-testid="ready">{String(ready)}</span>
             <span data-testid="error">{error ?? ""}</span>
             <span data-testid="persona-count">{personas.length}</span>
+            <span data-testid="backend-count">{backends.length}</span>
             <span data-testid="logo-url">{logoUrl}</span>
             <button onClick={() => selectPersona("test-alpha")}>select alpha</button>
             <button onClick={() => selectPersona("test-beta")}>select beta</button>
@@ -128,6 +129,26 @@ describe("PersonaProvider", () => {
         expect(document.title).toBe("Test Beta Fixture");
         // The primary theme var is set from the catalog entry's own theme via resolvePersonaTheme.
         expect(document.documentElement.style.getPropertyValue("--brand-primary")).toBe("341 100% 45%");
+    });
+
+    // Issue #80 F11 (design doc §5.2/§10.1): `/api/personas`' `backends[]` is exposed as-is on the
+    // context so `App.tsx` can pass it straight to the backend picker, which hides itself
+    // entirely below two entries.
+    it("exposes /api/personas' backends[] on the context", async () => {
+        mockFetchSequence(url => {
+            if (url === "/api/personas") {
+                return {
+                    ok: true,
+                    body: { ...TWO_PERSONA_INDEX, backends: [{ id: "python", url: "" }, { id: "dotnet", url: "https://dotnet.example.com" }] }
+                };
+            }
+            if (url === "/api/personas/test-beta") return { ok: true, body: { ...ALPHA_DETAIL, id: "test-beta" } };
+            return { ok: false, body: null };
+        });
+        renderProvider();
+
+        await waitFor(() => expect(screen.getByTestId("ready")).toHaveTextContent("true"));
+        expect(screen.getByTestId("backend-count")).toHaveTextContent("2");
     });
 
     it("resolves a persona chosen via ?persona= over the catalog default", async () => {

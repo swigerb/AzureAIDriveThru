@@ -6,8 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { useDummyDataContext } from "@/context/dummy-data-context";
-import { useAzureSpeechOnContext } from "@/context/azure-speech-context";
-import { Tooltip } from "@/components/ui/tooltip";
+import ModelPicker from "@/components/ui/model-picker";
 import { VOICE_OPTIONS } from "@/lib/voices";
 import type { PersonaModels } from "@/types/persona";
 
@@ -21,9 +20,19 @@ interface SettingsProps {
     onLogToFileChange: (checked: boolean) => void;
     voiceChoice: string;
     onVoiceChoiceChange: (voice: string) => void;
-    /** Current persona's model options (design doc §7), per PR 106 (issue #75). Optional: this
-     * branch's backend doesn't emit it yet, so the model-switch seam below must tolerate absence. */
+    /** Current persona's model options (design doc §7), from `/api/personas/{id}` (issue #80 F10,
+     * PR 106/#75). Optional purely so `<Settings>` still renders before the persona detail's
+     * first fetch resolves -- `App.tsx` always has a real value (`current.models`, even the
+     * neutral placeholder's) by the time a guest can reach this dialog. */
     models?: PersonaModels;
+    /** The model chosen for the NEXT session (issue #80 F10) -- ignored/hidden entirely if
+     * `models` hasn't arrived yet. Optional (defaults below) so callers that never pass `models`
+     * (e.g. this component's own tests) don't have to thread through unused wiring. */
+    modelId?: string;
+    onModelChange?: (id: string) => void;
+    /** Locked while a session is active (ADR-001 decision 2), same rule as the persona picker --
+     * a model change here only ever takes effect on the next session. */
+    modelDisabled?: boolean;
 }
 
 export default function Settings({
@@ -36,14 +45,15 @@ export default function Settings({
     onLogToFileChange,
     voiceChoice,
     onVoiceChoiceChange,
-    models
+    models,
+    modelId = "",
+    onModelChange = () => {},
+    modelDisabled = false
 }: SettingsProps) {
     const [isDarkMode, setIsDarkMode] = useState(() => {
         return localStorage.getItem("isDarkMode") === "true";
     });
-    const { useAzureSpeechOn, setUseAzureSpeechOn } = useAzureSpeechOnContext();
     const { useDummyData, setUseDummyData } = useDummyDataContext();
-    const realtimeModels = models?.realtime.models ?? [];
 
     useEffect(() => {
         localStorage.setItem("isDarkMode", isDarkMode.toString());
@@ -57,10 +67,6 @@ export default function Settings({
 
     const handleDarkModeChange = (checked: boolean) => {
         setIsDarkMode(checked);
-    };
-
-    const handleAzureBackendChange = (checked: boolean) => {
-        setUseAzureSpeechOn(checked);
     };
 
     const handleDummyDataChange = (checked: boolean) => {
@@ -116,30 +122,14 @@ export default function Settings({
                     </select>
                 </div>
             </div>
-            <div className="flex items-start justify-between">
-                <div className="flex-1 space-y-0.5">
-                    <Label htmlFor="azure-backend" className="text-gray-900 dark:text-gray-100">
-                        Azure Backend
-                    </Label>
-                    <p className="text-sm text-gray-600 dark:text-gray-400">
-                        Toggle between Azure OpenAI's real-time API and a cascaded speech-to-text / LLM / text-to-speech pipeline (STT, LLM(GPT-4o), TTS)
-                    </p>
-                </div>
-                <div className="ml-4 flex items-center gap-3 shrink-0">
-                    <span className="min-w-[5rem] text-right text-xs text-muted-foreground">{useAzureSpeechOn ? "STT->LLM->TTS" : "Realtime API"}</span>
-                    <Tooltip content="Work in progress">
-                        <div>
-                            <Switch
-                                id="azure-backend"
-                                checked={useAzureSpeechOn}
-                                onCheckedChange={handleAzureBackendChange}
-                                aria-label="Toggle Azure backend"
-                                disabled
-                            />
-                        </div>
-                    </Tooltip>
-                </div>
-            </div>
+            {models && (
+                <ModelPicker
+                    models={models}
+                    currentId={modelId}
+                    onSelect={onModelChange}
+                    disabled={modelDisabled}
+                />
+            )}
             <div className="flex items-start justify-between">
                 <div className="flex-1 space-y-0.5">
                     <Label htmlFor="dummy-data" className="text-gray-900 dark:text-gray-100">
@@ -150,31 +140,6 @@ export default function Settings({
                 <div className="ml-4 flex items-center gap-3 shrink-0">
                     <span className="min-w-[5rem] text-right text-xs text-muted-foreground">{useDummyData ? "Dummy Data" : "Real Data"}</span>
                     <Switch id="dummy-data" checked={useDummyData} onCheckedChange={handleDummyDataChange} aria-label="Toggle dummy data" />
-                </div>
-            </div>
-            {/* Issue #80/#75: model picking depends on Birdperson's PR 106 (round 3), which
-                landed the `models.<pipeline>.models: {id,label,reasoning}[]` shape this reads --
-                but not yet the switching UX itself. This row is only a seam, matching the "Azure
-                Backend" row's disabled-Switch + WIP-Tooltip convention above, so the control
-                exists and is discoverable without inventing #75's full API. Wire up switching
-                (per design doc section 7) once #75 lands; `realtimeModels` tolerates PR 106 not
-                having merged into this branch's backend yet (falls back to an empty list). */}
-            <div className="flex items-start justify-between">
-                <div className="flex-1 space-y-0.5">
-                    <Label htmlFor="model-picker" className="text-gray-900 dark:text-gray-100">
-                        Model
-                    </Label>
-                    <p className="text-sm text-gray-600 dark:text-gray-400">Choose which model powers the conversation</p>
-                </div>
-                <div className="ml-4 flex items-center gap-3 shrink-0">
-                    <span className="min-w-[5rem] text-right text-xs text-muted-foreground">
-                        {realtimeModels.length > 0 ? `${realtimeModels.length} option${realtimeModels.length === 1 ? "" : "s"}` : "Work in progress"}
-                    </span>
-                    <Tooltip content="Work in progress (#75)">
-                        <div>
-                            <Switch id="model-picker" checked={false} onCheckedChange={() => {}} aria-label="Toggle model picker" disabled />
-                        </div>
-                    </Tooltip>
                 </div>
             </div>
             <div className="flex items-start justify-between">

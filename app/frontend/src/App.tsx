@@ -13,6 +13,7 @@ import MenuPanel from "@/components/ui/menu-panel";
 import OrderSummary, { calculateOrderSummary, OrderItem, OrderSummaryProps } from "@/components/ui/order-summary";
 import TranscriptPanel from "@/components/ui/transcript-panel";
 import PersonaPicker from "@/components/ui/persona-picker";
+import BackendPicker from "@/components/ui/backend-picker";
 const Settings = lazy(() => import("@/components/ui/settings"));
 import useRealTime from "@/hooks/useRealtime";
 import useAzureSpeech from "@/hooks/useAzureSpeech";
@@ -27,6 +28,7 @@ import { AzureSpeechProvider, useAzureSpeechOnContext } from "@/context/azure-sp
 import { AuthProvider, useAuth } from "@/context/auth-context";
 import { PersonaProvider, usePersonaContext } from "@/context/persona-context";
 import { resolveVoice } from "@/lib/voices";
+import { resolveModelId, modelStorageKey } from "@/lib/models";
 import { apologyClipUrl, playApologyClip } from "@/lib/apology";
 import { personaAssetUrl } from "@/lib/personaAssets";
 import type { PersonaDetail } from "@/types/persona";
@@ -100,7 +102,7 @@ function SonicApp() {
     const { useDummyData } = useDummyDataContext();
     const { theme } = useTheme();
     const { logout, authEnabled } = useAuth();
-    const { personas, current, logoUrl, selectPersona } = usePersonaContext();
+    const { personas, backends, current, logoUrl, selectPersona } = usePersonaContext();
 
     const [transcripts, setTranscripts] = useState<Array<{ text: string; isUser: boolean; timestamp: Date }>>([]);
     const { dummyOrder, dummyTranscripts } = useDemoData(current.id, useDummyData);
@@ -129,6 +131,13 @@ function SonicApp() {
     const [voiceChoice, setVoiceChoice] = useState<string>(() => {
         return resolveVoice(localStorage.getItem("voiceChoice"), current.voice.default);
     });
+    // Issue #80 F10: persisted per persona (unlike `voiceChoice` above), so switching personas
+    // never leaks one persona's chosen model onto another's -- `resolveModelId` falls back to
+    // this persona's own default whenever there's no stored choice yet, or the stored one is no
+    // longer one of this persona's selectable options.
+    const [modelId, setModelId] = useState<string>(() => {
+        return resolveModelId(localStorage.getItem(modelStorageKey(current.id)), current.models);
+    });
 
     useEffect(() => {
         localStorage.setItem("showSessionTokens", showSessionTokens.toString());
@@ -145,6 +154,18 @@ function SonicApp() {
     useEffect(() => {
         localStorage.setItem("voiceChoice", voiceChoice);
     }, [voiceChoice]);
+
+    // Re-resolves whenever the bound persona changes (initial load, or a persona switch via
+    // `handleSelectPersona` below): the persona's own per-pipeline default, unless this browser
+    // already has a stored choice for this specific persona.
+    useEffect(() => {
+        setModelId(resolveModelId(localStorage.getItem(modelStorageKey(current.id)), current.models));
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [current.id, current.models]);
+
+    useEffect(() => {
+        localStorage.setItem(modelStorageKey(current.id), modelId);
+    }, [current.id, modelId]);
 
     const handleSessionIdentifiers = useCallback((message: ExtensionSessionMetadata | ExtensionRoundTripToken) => {
         const snapshot: SessionIdentifiersState = {
@@ -195,6 +216,7 @@ function SonicApp() {
 
     const realtime = useRealTime({
         personaId: current.id,
+        modelId,
         enableInputAudioTranscription: true,
         onWebSocketOpen: () => console.log("WebSocket connection opened"),
         onWebSocketClose: () => console.log("WebSocket connection closed"),
@@ -608,6 +630,13 @@ function SonicApp() {
                             onSelect={handleSelectPersona}
                             disabled={isRecording || order.items.length > 0}
                         />
+                        {/* Issue #80 F11: hides itself entirely below two `backends[]` entries. */}
+                        <BackendPicker
+                            backends={backends}
+                            personaId={current.id}
+                            modelId={modelId}
+                            disabled={isRecording || order.items.length > 0}
+                        />
                         <Suspense fallback={null}>
                             <Settings
                                 isMobile={isMobile}
@@ -633,6 +662,9 @@ function SonicApp() {
                                     realtime.sendVoiceChoice(voice);
                                 }}
                                 models={current.models}
+                                modelId={modelId}
+                                onModelChange={setModelId}
+                                modelDisabled={isRecording || order.items.length > 0}
                             />
                         </Suspense>
                         {authEnabled && (
