@@ -119,19 +119,60 @@ public sealed class PersonaAssetRouteConformanceTests(ConformanceFixture fixture
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     });
 
+    /// <summary>
+    /// Rick's PR #122 review item 1: every row here USED to target `../../app.py` -- a file that
+    /// doesn't exist even one level further up (personas/sonic/assets -&gt; personas/sonic -&gt;
+    /// personas), so all four rows 404'd for "no such file" reasons and stayed green even with a
+    /// completely disabled resolver (verified below by literally disabling each backend's checks).
+    /// `personas/sonic/persona.json` sits exactly ONE level above assets/ and DOES exist, so every
+    /// row now targets it instead (a single `..`, not two) -- a row can only prove anything about
+    /// the resolver if defeating the resolver would make that row 200 instead of 404.
+    ///
+    /// Per backend, these rows are NOT equally mutation-sensitive, because of a genuine, deliberate
+    /// framework difference in how the traversal payload reaches the resolver at all:
+    ///  - Literal `../persona.json`: both HttpClient (client-side, per RFC 3986 dot-segment
+    ///    removal in the Uri constructor) and aiohttp's own request-line normalisation collapse
+    ///    this to `/personas/sonic/persona.json` BEFORE it is ever sent/routed -- neither backend's
+    ///    resolver ever sees a `..` segment for this row. Kept only as a defence-in-depth
+    ///    documentation row; it can never go red on either leg no matter what the resolver does.
+    ///  - `..%2fpersona.json` / `..%2Fpersona.json`: ASP.NET Core's routing deliberately does NOT
+    ///    decode `%2f`/`%2F` into a literal `/` in a route value (a well-known security behaviour
+    ///    that avoids exactly this kind of ambiguity) -- so on the DOTNET leg, `assetPath` arrives
+    ///    as the single, literal, unsplit segment `"..%2fpersona.json"`, which never equals `".."`
+    ///    and never matches a real file either way. These rows are therefore structurally blind on
+    ///    the dotnet leg regardless of PersonaAssetResolver's own logic -- disabling its checks
+    ///    cannot turn them red, and that is NOT a resolver bug. On the PYTHON leg, aiohttp's
+    ///    `match_info` DOES decode `%2f` into a real `/`, so `_resolve_persona_asset_path` sees a
+    ///    genuine `..` segment -- these rows ARE mutation-sensitive on the Python leg (proven
+    ///    below).
+    ///  - `..%5cpersona.json`: `%5c` is an ordinary percent-encoded byte (backslash is not a URI
+    ///    path separator, so there is no ambiguity for either framework to specially block) -- BOTH
+    ///    ASP.NET Core routing and aiohttp decode it into a literal backslash, which
+    ///    PersonaAssetResolver's own `requestedPath.Replace('\\', '/').Split('/')` (and Python's
+    ///    equivalent) then splits into a genuine `".."` segment. This is the one row that
+    ///    genuinely exercises -- and, mutation-tested below, is sensitive to -- EACH backend's OWN
+    ///    resolver logic, not just routing/framework behaviour upstream of it.
+    ///
+    /// Mutation evidence (performed by hand for this revision, then reverted -- see PR #122 body):
+    ///  - Python: temporarily made `_resolve_persona_asset_path` skip its segment-rejection loop
+    ///    and its `relative_to(assets_root)` containment check -- the `%2f`, `%2F`, and `%5c` rows
+    ///    all went red (200, serving app/backend/personas/sonic/persona.json's *sibling* file
+    ///    content -- actually the real, existing persona.json one level up); the literal row
+    ///    stayed a 404 (never reaches the handler). Reverting restored all four rows to green.
+    ///  - Dotnet: temporarily made PersonaAssetResolver.Resolve skip its segment-rejection loop and
+    ///    forced IsUnderRoot to always return true -- ONLY the `%5c` row went red (200); `%2f`,
+    ///    `%2F`, and the literal row stayed green (still 404), exactly as the framework-behaviour
+    ///    analysis above predicts. Reverting restored 4/4 green with a clean `git diff`.
+    /// </summary>
     [Theory]
-    [InlineData("/personas/sonic/assets/../../app.py")]
-    [InlineData("/personas/sonic/assets/..%2f..%2fapp.py")]
-    [InlineData("/personas/sonic/assets/..%2F..%2Fapp.py")]
+    [InlineData("/personas/sonic/assets/../persona.json")]
+    [InlineData("/personas/sonic/assets/..%2fpersona.json")]
+    [InlineData("/personas/sonic/assets/..%2Fpersona.json")]
+    [InlineData("/personas/sonic/assets/..%5cpersona.json")]
     public Task Persona_asset_route_rejects_path_traversal_attempts(string requestPath) => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
         using var http = new HttpClient();
-        // HttpClient/aiohttp both normalise a literal "../" before it reaches the server for the
-        // first InlineData case -- included anyway as a defence-in-depth row documenting intent,
-        // matching _resolve_persona_asset_path's own defence (segment check AND a resolve()-based
-        // relative_to(assets_root) guard, app/backend/app.py). The percent-encoded variants are
-        // the ones that actually exercise the resolver's own decode-then-check path.
         using var response = await http.GetAsync(new Uri(fixture.Backend!.BaseUri, requestPath), ct);
 
         Assert.True(
