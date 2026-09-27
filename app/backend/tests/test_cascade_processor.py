@@ -19,8 +19,21 @@ covered by the C# conformance suite's fake upstreams, per the task's own accepta
   - `CascadeProcessor._run_chat_tool_loop`: the multi-round tool-call loop and its round cap.
   - `CascadeProcessor.resolve_model`: delegates to `resolve_cascade_model` (already unit-tested
     in tests/test_processors.py) -- just a thin proof the processor wires it up.
+  - Rick's PR #118 review item 5 (cascade turn-taking parity): `_send_greeting` (greeting on
+    connect), `_cancel_current_turn`/the `_handle_client_message` `speech_started` branch
+    (barge-in cancels the in-flight chat completion and TTS -- `test_new_speech_started_
+    cancels_an_in_flight_turn_before_it_speaks` is the mutation-test proof: reverting
+    `_start_turn` to being awaited inline, or dropping the `_cancel_current_turn` call from the
+    `speech_started` branch, makes that turn run to completion and `_speak` gets called anyway),
+    and `_with_rate_limit_retry` (a 429 from chat/STT/TTS goes through the same
+    `extension.rate_limited` notice path as the realtime pipeline's own `RateLimitRecovery` --
+    `test_exhausted_retries_send_the_final_notice_and_raise` is the mutation-test proof: a 429
+    that bypasses the notice path, or stops raising so the turn silently continues, makes those
+    assertions fail).
 """
 
+import asyncio
+import base64
 import io
 import sys
 import unittest
@@ -28,20 +41,23 @@ import wave
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from aiohttp import web
+from azure.core.exceptions import HttpResponseError
 
 from cascade_processor import (
     _AUDIO_SAMPLE_RATE,
     CascadeProcessor,
+    CascadeRateLimitExhausted,
     _CascadeSessionState,
     _pcm16_to_wav_bytes,
     _tool_definitions,
     _TurnDetector,
 )
+from rate_limit import RATE_LIMITED_EVENT, RateLimitSettings
 from rtmt import Tool, ToolResult, ToolResultDirection
 
 
@@ -50,6 +66,21 @@ def _make_mock_ws():
     ws.closed = False
     ws.send_json = AsyncMock()
     return ws
+
+
+def _sent_types(ws) -> list[str]:
+    return [call.args[0]["type"] for call in ws.send_json.await_args_list]
+
+
+def _http_429(retry_after=None, message="Too Many Requests"):
+    """A fake azure-core `HttpResponseError` shaped like a real 429 -- `status_code` and (when
+    given) a `Retry-After`-bearing `headers` mapping, exactly what `_http_status_of`/
+    `_retry_hint_of` (cascade_processor.py) read off a genuine one."""
+    err = HttpResponseError(message=message)
+    err.status_code = 429
+    if retry_after is not None:
+        err.headers = {"Retry-After": str(retry_after)}
+    return err
 
 
 def _silence(num_samples: int) -> bytes:
@@ -62,6 +93,7 @@ def _loud_tone(num_samples: int, amplitude: int = 20000) -> bytes:
     import struct
     frames = [amplitude if i % 2 == 0 else -amplitude for i in range(num_samples)]
     return struct.pack(f"<{num_samples}h", *frames)
+
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -151,6 +183,7 @@ class ToolDefinitionsTests(unittest.TestCase):
 def _make_processor(tools: dict) -> CascadeProcessor:
     sessions = MagicMock()
     sessions.get_context_monitor.return_value = None
+    sessions.emit_session_identifiers = AsyncMock()
     return CascadeProcessor(
         tools=tools,
         sessions=sessions,
@@ -318,6 +351,296 @@ class ResolveModelDelegationTests(unittest.TestCase):
         self.assertEqual(resolved.id, "gpt-5-mini")
         self.assertEqual(resolved.pipeline, "cascade")
         self.assertEqual(resolved.deployment, "gpt-5-mini-prod")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Rick's #118 review item 5: greeting on connect
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _greeting_payload(text: str) -> dict:
+    return {
+        "type": "conversation.item.create",
+        "item": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": text}]},
+    }
+
+
+class SendGreetingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_greeting_feeds_the_instruction_text_and_speaks_the_final_answer(self):
+        processor = _make_processor({})
+        processor._run_chat_tool_loop = AsyncMock(return_value="Welcome to the drive-thru! What can I get started for you today?")
+        processor._speak = AsyncMock()
+        ws = _make_mock_ws()
+        state = _CascadeSessionState(session_id="s1", persona_id="test-persona", deployment="d", voice="marin")
+        prompt_loader = MagicMock()
+        prompt_loader.get_greeting.return_value = _greeting_payload(
+            "Say EXACTLY this greeting and NOTHING else: Welcome to the drive-thru! "
+            "What can I get started for you today?"
+        )
+
+        with patch("cascade_processor.order_state_singleton") as mock_order_state:
+            mock_order_state.advance_round_trip.return_value = SimpleNamespace()
+            await processor._send_greeting(ws, "s1", state, prompt_loader)
+
+        self.assertEqual(len(state.messages), 1)
+        self.assertIn("Welcome to the drive-thru!", state.messages[0].content)
+        processor._speak.assert_awaited_once_with(
+            ws, "Welcome to the drive-thru! What can I get started for you today?", "marin"
+        )
+        self.assertEqual(_sent_types(ws), ["response.created", "response.audio_transcript.delta", "response.done"])
+
+    async def test_greeting_is_a_noop_without_a_bound_prompt_loader(self):
+        """A persona with no PromptLoader bound (shouldn't happen for a real persona, but this
+        processor must not crash the connection over it) skips the greeting silently."""
+        processor = _make_processor({})
+        ws = _make_mock_ws()
+        state = _CascadeSessionState(session_id="s1", persona_id="test-persona", deployment="d", voice="marin")
+
+        await processor._send_greeting(ws, "s1", state, None)
+
+        ws.send_json.assert_not_called()
+        self.assertEqual(state.messages, [])
+
+    async def test_greeting_is_skipped_when_greeting_yaml_has_an_unexpected_shape(self):
+        processor = _make_processor({})
+        ws = _make_mock_ws()
+        state = _CascadeSessionState(session_id="s1", persona_id="test-persona", deployment="d", voice="marin")
+        prompt_loader = MagicMock()
+        prompt_loader.get_greeting.return_value = {"item": {"content": []}}  # missing [0]["text"]
+
+        await processor._send_greeting(ws, "s1", state, prompt_loader)
+
+        ws.send_json.assert_not_called()
+        self.assertEqual(state.messages, [])
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Rick's #118 review item 5: barge-in cancels the in-flight chat completion and TTS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class CancelCurrentTurnTests(unittest.IsolatedAsyncioTestCase):
+    async def test_cancels_an_in_flight_task_and_clears_it(self):
+        processor = _make_processor({})
+        state = _CascadeSessionState(session_id="s1", persona_id="p", deployment="d", voice="marin")
+        started = asyncio.Event()
+
+        async def _never_finishes():
+            started.set()
+            await asyncio.Event().wait()
+
+        task = asyncio.ensure_future(_never_finishes())
+        await started.wait()
+        state.current_turn_task = task
+
+        await processor._cancel_current_turn(state, "test barge-in")
+
+        self.assertTrue(task.cancelled())
+        self.assertIsNone(state.current_turn_task)
+
+    async def test_is_a_noop_when_no_turn_is_in_flight(self):
+        processor = _make_processor({})
+        state = _CascadeSessionState(session_id="s1", persona_id="p", deployment="d", voice="marin")
+
+        await processor._cancel_current_turn(state, "nothing running")
+
+        self.assertIsNone(state.current_turn_task)
+
+    async def test_is_a_noop_when_the_turn_already_finished(self):
+        processor = _make_processor({})
+        state = _CascadeSessionState(session_id="s1", persona_id="p", deployment="d", voice="marin")
+
+        async def _quick():
+            return None
+
+        task = asyncio.ensure_future(_quick())
+        await task
+        state.current_turn_task = task
+
+        await processor._cancel_current_turn(state, "already done")
+
+        self.assertIsNone(state.current_turn_task)
+
+
+class BargeInEndToEndTests(unittest.IsolatedAsyncioTestCase):
+    async def test_new_speech_started_cancels_an_in_flight_turn_before_it_speaks(self):
+        """The mutation-test seam for Rick's #118 review item 5 (barge-in): if
+        `_handle_client_message`'s `speech_started` branch stops calling `_cancel_current_turn`
+        (or `_start_turn` goes back to being awaited inline instead of spawned as a background
+        task), the slow turn below runs to completion once the guest's second utterance is fed
+        in and `_speak` gets called anyway -- these assertions are what would then fail."""
+        processor = _make_processor({})
+        ws = _make_mock_ws()
+        state = _CascadeSessionState(session_id="s1", persona_id="p", deployment="d", voice="marin")
+        detector = _TurnDetector(threshold=0.5, silence_duration_ms=200, sample_rate=24000)
+
+        transcribe_started = asyncio.Event()
+        release_transcribe = asyncio.Event()
+
+        async def _slow_transcribe(pcm16_bytes):
+            transcribe_started.set()
+            await release_transcribe.wait()
+            return "should never get this far"
+
+        processor._transcribe = _slow_transcribe
+        processor._speak = AsyncMock()
+
+        # Kick off a turn exactly the way _handle_client_message's speech_stopped branch does.
+        processor._start_turn(ws, "s1", state, _loud_tone(2400))
+        await asyncio.wait_for(transcribe_started.wait(), timeout=2)
+        self.assertIsNotNone(state.current_turn_task)
+
+        # A NEW speech_started arrives mid-turn (barge-in) -- must cancel the in-flight task
+        # before it can ever reach chat completion or TTS.
+        append_msg = {
+            "type": "input_audio_buffer.append",
+            "audio": base64.b64encode(_loud_tone(2400)).decode("ascii"),
+        }
+        await processor._handle_client_message(ws, "s1", state, detector, append_msg, None)
+
+        self.assertIsNone(state.current_turn_task)
+        processor._speak.assert_not_awaited()
+        release_transcribe.set()  # let the (already-cancelled) coroutine's own await resolve harmlessly
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Rick's #118 review item 5: a 429 from chat/STT/TTS goes through the same
+# extension.rate_limited notice path as the realtime pipeline.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class WithRateLimitRetryTests(unittest.IsolatedAsyncioTestCase):
+    def _settings(self, **overrides) -> RateLimitSettings:
+        defaults = dict(enabled=True, retry_delay_seconds=1.5, second_retry_delay_seconds=4.0, max_retries=2)
+        defaults.update(overrides)
+        return RateLimitSettings(**defaults)
+
+    async def test_first_failure_retries_silently_without_notifying_the_client(self):
+        processor = _make_processor({})
+        processor._rate_limit_settings = self._settings()
+        ws = _make_mock_ws()
+        op = AsyncMock(side_effect=[_http_429(), "ok"])
+
+        with patch("cascade_processor.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+            result = await processor._with_rate_limit_retry(ws, "s1", op, "chat completion")
+
+        self.assertEqual(result, "ok")
+        ws.send_json.assert_not_called()
+        mock_sleep.assert_awaited_once_with(1.5)
+
+    async def test_second_failure_notifies_the_client_with_attempt_one(self):
+        processor = _make_processor({})
+        processor._rate_limit_settings = self._settings()
+        ws = _make_mock_ws()
+        op = AsyncMock(side_effect=[_http_429(), _http_429(), "ok"])
+
+        with patch("cascade_processor.asyncio.sleep", new_callable=AsyncMock):
+            result = await processor._with_rate_limit_retry(ws, "s1", op, "chat completion")
+
+        self.assertEqual(result, "ok")
+        ws.send_json.assert_called_once_with({"type": RATE_LIMITED_EVENT, "attempt": 1})
+
+    async def test_exhausted_retries_send_the_final_notice_and_raise(self):
+        """Mutation-test seam ('a 429 bypasses the rate-limit notice path -> row fails'): if
+        this retry ladder stops sending `extension.rate_limited` on exhaustion, or stops raising
+        so the caller's turn silently continues, these assertions fail."""
+        processor = _make_processor({})
+        processor._rate_limit_settings = self._settings()
+        ws = _make_mock_ws()
+        op = AsyncMock(side_effect=[_http_429(), _http_429(), _http_429()])
+
+        with patch("cascade_processor.asyncio.sleep", new_callable=AsyncMock):
+            with self.assertRaises(CascadeRateLimitExhausted):
+                await processor._with_rate_limit_retry(ws, "s1", op, "chat completion")
+
+        self.assertEqual(
+            ws.send_json.await_args_list[-1].args[0],
+            {"type": RATE_LIMITED_EVENT, "attempt": 2, "final": True},
+        )
+
+    async def test_non_429_error_propagates_without_retrying(self):
+        processor = _make_processor({})
+        ws = _make_mock_ws()
+        op = AsyncMock(side_effect=RuntimeError("boom"))
+
+        with self.assertRaises(RuntimeError):
+            await processor._with_rate_limit_retry(ws, "s1", op, "chat completion")
+
+        ws.send_json.assert_not_called()
+
+    async def test_429_propagates_unchanged_when_rate_limit_recovery_is_disabled(self):
+        processor = _make_processor({})
+        processor._rate_limit_settings = self._settings(enabled=False)
+        ws = _make_mock_ws()
+        op = AsyncMock(side_effect=_http_429())
+
+        with self.assertRaises(HttpResponseError):
+            await processor._with_rate_limit_retry(ws, "s1", op, "chat completion")
+
+        ws.send_json.assert_not_called()
+
+    async def test_retry_after_header_within_bounds_is_used_verbatim_as_the_delay(self):
+        processor = _make_processor({})
+        processor._rate_limit_settings = self._settings()
+        ws = _make_mock_ws()
+        op = AsyncMock(side_effect=[_http_429(retry_after=3), "ok"])
+
+        with patch("cascade_processor.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+            await processor._with_rate_limit_retry(ws, "s1", op, "chat completion")
+
+        mock_sleep.assert_awaited_once_with(3.0)  # within FIRST_RETRY_BOUNDS (0.5s, 5.0s)
+
+
+class RunChatToolLoopRateLimitTests(unittest.IsolatedAsyncioTestCase):
+    async def test_a_429_from_chat_completion_is_retried_then_resolves_normally(self):
+        processor = _make_processor({})
+        processor._rate_limit_settings = RateLimitSettings(
+            enabled=True, retry_delay_seconds=0.01, second_retry_delay_seconds=0.01, max_retries=2
+        )
+        fake_client = MagicMock()
+        fake_client.complete = AsyncMock(side_effect=[_http_429(), _completion_with_final_text("All set.")])
+        processor._get_chat_client = AsyncMock(return_value=fake_client)
+        ws = _make_mock_ws()
+        state = _CascadeSessionState(session_id="s1", persona_id="p", deployment="d", voice="marin")
+
+        with patch("cascade_processor.asyncio.sleep", new_callable=AsyncMock):
+            final_text = await processor._run_chat_tool_loop(ws, "s1", state)
+
+        self.assertEqual(final_text, "All set.")
+        ws.send_json.assert_not_called()  # the first failure is a silent retry
+
+
+class ProcessTurnRateLimitTests(unittest.IsolatedAsyncioTestCase):
+    async def test_exhausted_rate_limit_during_transcription_ends_the_turn_before_any_response(self):
+        processor = _make_processor({})
+        processor._rate_limit_settings = RateLimitSettings(
+            enabled=True, retry_delay_seconds=0.01, second_retry_delay_seconds=0.01, max_retries=1
+        )
+        processor._transcribe = AsyncMock(side_effect=[_http_429(), _http_429()])
+        ws = _make_mock_ws()
+        state = _CascadeSessionState(session_id="s1", persona_id="p", deployment="d", voice="marin")
+
+        with patch("cascade_processor.asyncio.sleep", new_callable=AsyncMock):
+            await processor._process_turn(ws, "s1", state, _loud_tone(2400))
+
+        sent_types = _sent_types(ws)
+        self.assertIn(RATE_LIMITED_EVENT, sent_types)
+        self.assertNotIn("response.created", sent_types)  # the turn never got that far
+
+    async def test_exhausted_rate_limit_during_chat_completion_still_sends_response_done(self):
+        """Even when the ladder is spent mid-turn, `response.done` must still be sent -- the
+        session must not hang waiting for a response that will never arrive."""
+        processor = _make_processor({})
+        processor._rate_limit_settings = RateLimitSettings(
+            enabled=True, retry_delay_seconds=0.01, second_retry_delay_seconds=0.01, max_retries=0
+        )
+        fake_client = MagicMock()
+        fake_client.complete = AsyncMock(side_effect=_http_429())
+        processor._get_chat_client = AsyncMock(return_value=fake_client)
+        ws = _make_mock_ws()
+        state = _CascadeSessionState(session_id="s1", persona_id="p", deployment="d", voice="marin")
+
+        with patch("cascade_processor.asyncio.sleep", new_callable=AsyncMock):
+            await processor._run_turn_and_speak(ws, "s1", state)
+
+        self.assertEqual(_sent_types(ws), ["response.created", RATE_LIMITED_EVENT, "response.done"])
 
 
 if __name__ == "__main__":

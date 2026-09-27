@@ -37,6 +37,7 @@ pipelines with zero duplicated lifecycle logic.
 from __future__ import annotations
 
 import array
+import asyncio
 import base64
 import io
 import json
@@ -57,11 +58,20 @@ from azure.ai.inference.models import (
     ToolMessage,
     UserMessage,
 )
+from azure.core.exceptions import HttpResponseError
 
 from config_loader import get_config
 from conformance_hooks import cascade_chat_kwargs
 from order_state import order_state_singleton
 from processors import ResolvedModel, resolve_cascade_model
+from rate_limit import (
+    FIRST_RETRY_BOUNDS,
+    RATE_LIMITED_EVENT,
+    SECOND_RETRY_BOUNDS,
+    RateLimitSettings,
+    parse_retry_hint,
+    retry_delay,
+)
 from rtmt import Tool, ToolResult, ToolResultDirection
 from session_manager import SessionManager, new_middle_tier_item_id
 
@@ -103,6 +113,68 @@ def _tool_definitions(tools: dict[str, Tool]) -> list[ChatCompletionsToolDefinit
             )
         )
     return definitions
+
+
+# Fire-and-forget turn-processing tasks (Rick's #118 review item 5, barge-in). Mirrors
+# rtmt.py's own `_spawn`/`_BACKGROUND_TASKS`/`_on_background_task_done` pattern verbatim,
+# duplicated locally (not imported) to keep this module's own boundary clean -- see the module
+# docstring's "Session/tool/persona sharing" note on what IS shared with rtmt.py vs. not.
+_BACKGROUND_TASKS: set[asyncio.Task] = set()
+
+
+def _spawn(coro) -> asyncio.Task:
+    task = asyncio.ensure_future(coro)
+    _BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_on_background_task_done)
+    return task
+
+
+def _on_background_task_done(task: asyncio.Task) -> None:
+    _BACKGROUND_TASKS.discard(task)
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.debug("Cascade background turn task raised (retrieved, not re-raised): %r", exc)
+
+
+class CascadeRateLimitExhausted(Exception):
+    """Raised internally once a chat/STT/TTS call has been retried through the full ladder
+    below and still failed with a 429 -- by the time this is raised the client has already
+    received the final `extension.rate_limited` notice, so callers just need to end the turn
+    cleanly (same as the realtime pipeline's own guest-repeats-themselves outcome)."""
+
+
+def _http_status_of(exc: Exception) -> int | None:
+    """The HTTP status code of an azure-core `HttpResponseError` (`.status_code`) or an
+    aiohttp `ClientResponseError` (`.status`) -- the two shapes cascade's chat/STT/TTS calls
+    can raise."""
+    status = getattr(exc, "status_code", None)
+    if status is not None:
+        return status
+    return getattr(exc, "status", None)
+
+
+def _retry_hint_of(exc: Exception) -> float | None:
+    """Seconds the service asked us to wait, preferring a `Retry-After` response header (both
+    azure-core's `HttpResponseError.response.headers` and aiohttp's own
+    `ClientResponseError.headers` expose one) and falling back to
+    `rate_limit.parse_retry_hint`'s free-text parse of the error message."""
+    headers = getattr(exc, "headers", None)
+    if headers is None:
+        response = getattr(exc, "response", None)
+        headers = getattr(response, "headers", None) if response is not None else None
+    if headers is not None:
+        try:
+            retry_after = headers.get("Retry-After") or headers.get("retry-after")
+        except AttributeError:
+            retry_after = None
+        if retry_after is not None:
+            try:
+                return float(retry_after)
+            except (TypeError, ValueError):
+                pass
+    return parse_retry_hint(str(exc))
 
 
 def _pcm16_to_wav_bytes(pcm: bytes, sample_rate: int = _AUDIO_SAMPLE_RATE) -> bytes:
@@ -192,6 +264,10 @@ class _CascadeSessionState:
     deployment: str
     voice: str
     messages: list[Any] = field(default_factory=list)
+    # The currently in-flight background turn task (greeting or guest turn), if any -- set by
+    # `CascadeProcessor._start_turn`/`_send_greeting`, cancelled by `_cancel_current_turn` on a
+    # new `speech_started` (barge-in, Rick's #118 review item 5).
+    current_turn_task: asyncio.Task | None = None
 
 
 class CascadeProcessor:
@@ -230,6 +306,11 @@ class CascadeProcessor:
         self._chat_client: ChatCompletionsClient | None = None
         self._vad_threshold = _vad_cfg.get("threshold", 0.5)
         self._vad_silence_ms = _vad_cfg.get("silence_duration_ms", 200)
+        # Rick's #118 review item 5 (429 parity): reuses rate_limit.py's shared
+        # settings/constants/ladder-shape so a chat/STT/TTS 429 surfaces to the guest through
+        # the SAME `extension.rate_limited` event contract the realtime pipeline's own
+        # `RateLimitRecovery` already uses -- see `_with_rate_limit_retry` below.
+        self._rate_limit_settings = RateLimitSettings.from_config(_config)
 
     def resolve_model(self, persona, requested_model_id: str | None) -> ResolvedModel:
         """`processors.PipelineProcessor`'s model-resolution hook -- delegates to
@@ -295,6 +376,12 @@ class CascadeProcessor:
             state.messages.append(SystemMessage(content=prompt_loader.get_system_prompt()))
         detector = _TurnDetector(threshold=self._vad_threshold, silence_duration_ms=self._vad_silence_ms)
 
+        # Rick's #118 review item 5 (greeting on connect, design 7.1): spawned as a background
+        # task -- like every other turn below -- rather than awaited inline, so the WS loop
+        # starts consuming audio frames immediately and a guest who starts talking over the
+        # greeting can still barge in on it via the SAME cancellation path as any other turn.
+        self._start_greeting(ws, session_id, state, prompt_loader)
+
         async for msg in ws:
             if msg.type == web.WSMsgType.TEXT:
                 try:
@@ -311,6 +398,7 @@ class CascadeProcessor:
                     logger.exception("Cascade: unhandled error processing a client message (session=%s)", session_id)
             elif msg.type in (web.WSMsgType.ERROR, web.WSMsgType.CLOSE, web.WSMsgType.CLOSING):
                 break
+        await self._cancel_current_turn(state, "connection closing")
 
     async def _handle_client_message(self, ws, session_id, state, detector, data, prompt_loader) -> None:
         msg_type = data.get("type")
@@ -321,11 +409,17 @@ class CascadeProcessor:
                 return
             event = detector.feed(pcm)
             if event == "speech_started":
+                # Barge-in (Rick's #118 review item 5): cancel whatever turn (guest turn OR
+                # greeting) is still in flight BEFORE telling the client speech started, so no
+                # further response.audio.delta/chat-completion work for the stale turn survives
+                # past this point -- useRealtime.tsx already stops playback purely reactively on
+                # this same event, so no new wire-protocol event is needed on top of it.
+                await self._cancel_current_turn(state, "guest started speaking (barge-in)")
                 await ws.send_json({"type": "input_audio_buffer.speech_started"})
             elif event == "speech_stopped":
                 turn_audio = detector.take_buffer()
                 detector.reset()
-                await self._process_turn(ws, session_id, state, turn_audio)
+                self._start_turn(ws, session_id, state, turn_audio)
         elif msg_type == "input_audio_buffer.clear":
             detector.reset()
         elif msg_type == "extension.set_voice":
@@ -337,11 +431,56 @@ class CascadeProcessor:
         # explicit scope cut for this issue's v1 (see the decision note) -- no-op rather than an
         # error, so an unrecognized/unused message never disrupts the session.
 
+    def _start_turn(self, ws: web.WebSocketResponse, session_id: str, state: _CascadeSessionState, turn_audio: bytes) -> None:
+        """Spawns `_process_turn` as a background task (Rick's #118 review item 5) instead of
+        awaiting it inline, so the WS message loop in `_run_session` keeps consuming incoming
+        audio frames -- and can therefore detect a NEW `speech_started` at all -- while a turn's
+        STT/chat/TTS work is still in flight. Before this fix, `_process_turn` was awaited
+        directly inside the loop, so barge-in could never even be detected, let alone cancelled,
+        during a turn."""
+        async def _run() -> None:
+            try:
+                await self._process_turn(ws, session_id, state, turn_audio)
+            except Exception:
+                logger.exception("Cascade: unhandled error processing a turn (session=%s)", session_id)
+        state.current_turn_task = _spawn(_run())
+
+    def _start_greeting(self, ws: web.WebSocketResponse, session_id: str, state: _CascadeSessionState, prompt_loader) -> None:
+        async def _run() -> None:
+            try:
+                await self._send_greeting(ws, session_id, state, prompt_loader)
+            except Exception:
+                logger.exception("Cascade: unhandled error sending the greeting (session=%s)", session_id)
+        state.current_turn_task = _spawn(_run())
+
+    async def _cancel_current_turn(self, state: _CascadeSessionState, reason: str) -> None:
+        """Barge-in's cancellation half (Rick's #118 review item 5): cancels whatever turn
+        (guest turn or greeting) `_start_turn`/`_start_greeting` most recently spawned, if it
+        hasn't already finished. Cancellation naturally halts further `ws.send_json` calls in
+        `_speak`'s streaming loop and further azure-ai-inference/aiohttp calls in
+        `_run_chat_tool_loop`/`_transcribe`/`_speak` -- no extra flag-checking is needed at each
+        of those await points."""
+        task = state.current_turn_task
+        if task is None or task.done():
+            state.current_turn_task = None
+            return
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.exception("Cascade: in-flight turn raised while being cancelled (session=%s)", state.session_id)
+        logger.info("Cascade: cancelled in-flight turn: %s (session=%s)", reason, state.session_id)
+        state.current_turn_task = None
+
     async def _process_turn(self, ws: web.WebSocketResponse, session_id: str, state: _CascadeSessionState, turn_audio: bytes) -> None:
         if not turn_audio:
             return
         try:
-            transcript = await self._transcribe(turn_audio)
+            transcript = await self._with_rate_limit_retry(ws, session_id, lambda: self._transcribe(turn_audio), "transcription")
+        except CascadeRateLimitExhausted:
+            return  # the client already got the final extension.rate_limited notice
         except Exception:
             logger.exception("Cascade transcription failed (session=%s)", session_id)
             return
@@ -352,16 +491,49 @@ class CascadeProcessor:
             "transcript": transcript,
         })
         state.messages.append(UserMessage(content=transcript))
+        await self._run_turn_and_speak(ws, session_id, state)
 
+    async def _send_greeting(self, ws: web.WebSocketResponse, session_id: str, state: _CascadeSessionState, prompt_loader) -> None:
+        """Cascade parity with the realtime pipeline's connect-time greeting (Rick's #118
+        review item 5, design 7.1). `RTMiddleTier`'s own greeting (session_manager.py's
+        `build_greeting_msg`) is a literal `conversation.item.create` message seeded straight
+        into the Realtime API's own upstream conversation; cascade has no such upstream
+        conversation to seed, so instead this feeds the SAME instruction text
+        (`greeting.yaml`'s `item.content[0].text`, "Say EXACTLY this greeting...") into this
+        pipeline's own normal chat-tool-loop + TTS turn machinery once, up front -- the model is
+        told to say the greeting verbatim, so this naturally produces the identical spoken
+        greeting through this pipeline's own turn-taking path rather than duplicating it."""
+        if prompt_loader is None:
+            return
+        try:
+            text = prompt_loader.get_greeting()["item"]["content"][0]["text"]
+        except (KeyError, IndexError, TypeError):
+            logger.warning("Cascade: greeting.yaml has an unexpected shape; skipping the greeting (session=%s)",
+                            session_id)
+            return
+        state.messages.append(UserMessage(content=text))
+        await self._run_turn_and_speak(ws, session_id, state)
+
+    async def _run_turn_and_speak(self, ws: web.WebSocketResponse, session_id: str, state: _CascadeSessionState) -> None:
+        """Shared tail of both a guest turn and the connect-time greeting: run the chat-tool
+        loop against whatever's already in `state.messages`, then speak the final answer.
+        Cancellation (barge-in, `_cancel_current_turn`) propagates through the awaits below
+        exactly like any other `asyncio.CancelledError` -- there is no extra flag-checking."""
         response_id = new_middle_tier_item_id()
         await ws.send_json({"type": "response.created", "response": {"id": response_id}})
 
-        final_text = await self._run_chat_tool_loop(ws, session_id, state)
+        try:
+            final_text = await self._run_chat_tool_loop(ws, session_id, state)
+        except CascadeRateLimitExhausted:
+            await ws.send_json({"type": "response.done", "response": {"id": response_id}})
+            return
 
         if final_text:
             await ws.send_json({"type": "response.audio_transcript.delta", "delta": final_text})
             try:
-                await self._speak(ws, final_text, state.voice)
+                await self._with_rate_limit_retry(ws, session_id, lambda: self._speak(ws, final_text, state.voice), "text-to-speech")
+            except CascadeRateLimitExhausted:
+                pass
             except Exception:
                 logger.exception("Cascade TTS failed (session=%s)", session_id)
 
@@ -370,15 +542,54 @@ class CascadeProcessor:
         identifiers = order_state_singleton.advance_round_trip(session_id)
         await self._sessions.emit_session_identifiers(ws, "extension.round_trip_token", identifiers)
 
+    async def _with_rate_limit_retry(self, ws: web.WebSocketResponse, session_id: str, op, op_name: str):
+        """Runs *op* (a zero-arg async callable performing ONE chat/STT/TTS call) applying the
+        SAME retry-ladder semantics as `rate_limit.py`'s `RateLimitRecovery` (silent retry, then
+        `extension.rate_limited` at attempt 1, then `extension.rate_limited` with `final: true`)
+        -- adapted for cascade's REST-call-based 429s (an azure-ai-inference
+        `HttpResponseError`/aiohttp `ClientResponseError` raised directly from the call) instead
+        of the realtime pipeline's own WS `response.create`/`response.done` lifecycle. A non-429
+        error, or a 429 while `RATE_LIMIT_RECOVERY_ENABLED` is off, propagates unchanged so
+        existing callers' own try/except keep handling it exactly as before. Raises
+        `CascadeRateLimitExhausted` once the ladder is spent; by then the client has already
+        gotten the final notice."""
+        settings = self._rate_limit_settings
+        attempt = 0
+        while True:
+            try:
+                return await op()
+            except (HttpResponseError, aiohttp.ClientResponseError) as exc:
+                if _http_status_of(exc) != 429 or not settings.enabled:
+                    raise
+                hint = _retry_hint_of(exc)
+                if attempt >= settings.max_retries:
+                    logger.warning("Cascade %s rate-limited; retries exhausted after %d attempt(s) (session=%s)",
+                                   op_name, attempt, session_id)
+                    await ws.send_json({"type": RATE_LIMITED_EVENT, "attempt": attempt, "final": True})
+                    raise CascadeRateLimitExhausted(op_name) from exc
+                if attempt == 0:
+                    delay = retry_delay(hint, settings.retry_delay_seconds, FIRST_RETRY_BOUNDS)
+                else:
+                    delay = retry_delay(hint, settings.second_retry_delay_seconds, SECOND_RETRY_BOUNDS)
+                    await ws.send_json({"type": RATE_LIMITED_EVENT, "attempt": attempt})
+                logger.info("Cascade %s rate-limited; retry %d after %.2fs (session=%s)",
+                            op_name, attempt + 1, delay, session_id)
+                await asyncio.sleep(delay)
+                attempt += 1
+
     async def _run_chat_tool_loop(self, ws: web.WebSocketResponse, session_id: str, state: _CascadeSessionState) -> str:
         client = await self._get_chat_client()
         tool_defs = _tool_definitions(self.tools)
         for _round in range(self._MAX_TOOL_ROUNDS):
-            completion = await client.complete(
-                messages=state.messages,
-                model=state.deployment,
-                tools=tool_defs or None,
-                **cascade_chat_kwargs(),
+            completion = await self._with_rate_limit_retry(
+                ws, session_id,
+                lambda: client.complete(
+                    messages=state.messages,
+                    model=state.deployment,
+                    tools=tool_defs or None,
+                    **cascade_chat_kwargs(),
+                ),
+                "chat completion",
             )
             message = completion.choices[0].message
             tool_calls = message.tool_calls or []
