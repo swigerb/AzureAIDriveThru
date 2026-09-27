@@ -1,0 +1,242 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/swigerb/SonicAIDriveThru/personas/persona.schema.json",
+  "title": "Persona pack manifest (persona.json)",
+  "description": "Schema for personas/<id>/persona.json -- issue #70 (P2-1), design doc section 4.2. Both the Python and C# backends validate every enabled pack against this schema at startup and refuse to start on a violation (ADR-001 decision 1/2).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "id", "displayName", "roleName", "locales", "store", "voice",
+    "search", "pricing", "sizes", "bundles", "extras", "invalidModifiers", "machines",
+    "models", "strategies", "features", "ui"
+  ],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "id": { "type": "string", "pattern": "^[a-z][a-z0-9_-]*$" },
+    "displayName": { "type": "string", "minLength": 1 },
+    "roleName": { "type": "string", "minLength": 1 },
+    "locales": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["default", "supported"],
+      "properties": {
+        "default": { "type": "string", "minLength": 2 },
+        "supported": { "type": "array", "items": { "type": "string", "minLength": 2 }, "minItems": 1, "uniqueItems": true }
+      }
+    },
+    "store": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["timezone"],
+      "properties": {
+        "timezone": { "type": "string", "minLength": 1 }
+      }
+    },
+    "voice": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["default"],
+      "properties": {
+        "default": { "type": "string", "minLength": 1 }
+      }
+    },
+    "search": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["indexName", "contentFields"],
+      "properties": {
+        "indexName": { "type": "string", "minLength": 1 },
+        "contentFields": { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1 }
+      }
+    },
+    "pricing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["taxRate", "happyHour"],
+      "properties": {
+        "taxRate": { "type": "string", "pattern": "^[0-9]+(\\.[0-9]+)?$" },
+        "happyHour": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["startHour", "endHour", "priceMultiplier", "announce", "banner"],
+              "properties": {
+                "startHour": { "type": "integer", "minimum": 0, "maximum": 23 },
+                "endHour": { "type": "integer", "minimum": 0, "maximum": 23 },
+                "priceMultiplier": { "type": "string", "pattern": "^[0-9]+(\\.[0-9]+)?$" },
+                "announce": { "type": "boolean" },
+                "banner": { "type": "string", "minLength": 1 }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "sizes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["canonical", "aliases", "spokenAs", "hidden", "default"],
+      "properties": {
+        "canonical": { "type": "object", "additionalProperties": { "type": "string" } },
+        "aliases": { "type": "object", "additionalProperties": { "type": "string" } },
+        "spokenAs": { "type": "object", "additionalProperties": { "type": "string" } },
+        "hidden": { "type": "array", "items": { "type": "string" } },
+        "default": { "type": ["string", "null"] }
+      }
+    },
+    "bundles": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nameMarkers", "convertStandalone", "missingPartText"],
+      "properties": {
+        "nameMarkers": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "convertStandalone": { "type": "boolean" },
+        "missingPartText": { "type": "object", "additionalProperties": { "type": "string" } }
+      }
+    },
+    "extras": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowedBaseCategories", "blockedBaseCategories", "splitCombinedNames"],
+      "properties": {
+        "allowedBaseCategories": { "type": "array", "items": { "type": "string" } },
+        "blockedBaseCategories": { "type": "array", "items": { "type": "string" } },
+        "splitCombinedNames": { "type": "boolean" }
+      }
+    },
+    "invalidModifiers": {
+      "type": "object",
+      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+    },
+    "machines": {
+      "type": "object",
+      "additionalProperties": { "type": "string", "enum": ["down", "operational"] }
+    },
+    "models": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["realtime"],
+      "properties": {
+        "realtime": { "$ref": "#/$defs/modelPipeline" },
+        "cascade": { "$ref": "#/$defs/modelPipeline" },
+        "local": { "$ref": "#/$defs/modelPipeline" }
+      }
+    },
+    "strategies": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["searchQueryRewrite"],
+      "properties": {
+        "searchQueryRewrite": { "type": "string", "enum": ["none", "meal_numbers"] }
+      }
+    },
+    "features": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dayparts"],
+      "properties": {
+        "dayparts": { "type": "boolean" }
+      }
+    },
+    "ui": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "theme", "assets", "strings", "hero", "legal"],
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "theme": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["light"],
+          "properties": {
+            "light": { "$ref": "#/$defs/themeTokens" },
+            "dark": { "$ref": "#/$defs/themeTokens" },
+            "font": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["family"],
+              "properties": {
+                "family": { "type": "string", "minLength": 1 },
+                "importUrl": { "type": "string" }
+              }
+            }
+          }
+        },
+        "assets": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["logo", "favicon"],
+          "properties": {
+            "logo": { "type": "string", "minLength": 1 },
+            "favicon": { "type": "string", "minLength": 1 },
+            "apologyClip": { "type": "string" }
+          }
+        },
+        "strings": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": { "type": "string" }
+          }
+        },
+        "hero": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["headline", "callouts"],
+          "properties": {
+            "headline": { "type": "string", "minLength": 1 },
+            "callouts": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "legal": { "type": "string", "minLength": 1 }
+      }
+    }
+  },
+  "$defs": {
+    "modelPipeline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["default", "allowed"],
+      "properties": {
+        "default": { "type": "string", "minLength": 1 },
+        "allowed": { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1 }
+      }
+    },
+    "themeTokens": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "primary": { "type": "string" },
+        "secondary": { "type": "string" },
+        "background": { "type": "string" },
+        "foreground": { "type": "string" },
+        "accents": { "$ref": "#/$defs/themeAccents" }
+      }
+    },
+    "themeAccents": {
+      "description": "Optional extended brand accent palette (issue #80 F2, app/frontend/src/lib/personaTheme.ts::PersonaAccentPalette). Role-named, not brand-specific: hex colors so a persona's exact pre-theming shades carry over without HSL round-trip drift. Every key is optional so packs without a curated accent palette (or a dark-mode override of only some keys) still validate.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "primaryHex": { "type": "string" },
+        "primaryStrong": { "type": "string" },
+        "primaryLight": { "type": "string" },
+        "primaryTintOnDark": { "type": "string" },
+        "secondaryHex": { "type": "string" },
+        "secondaryStrong": { "type": "string" },
+        "secondaryTintOnDark": { "type": "string" },
+        "accent": { "type": "string" },
+        "accentLight": { "type": "string" },
+        "ink": { "type": "string" },
+        "surfaceTint": { "type": "string" },
+        "surfaceDark": { "type": "string" },
+        "surfaceDarkAlt": { "type": "string" },
+        "success": { "type": "string" },
+        "neutral": { "type": "string" }
+      }
+    }
+  }
+}

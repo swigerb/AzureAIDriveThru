@@ -384,6 +384,11 @@ starts a new session.
     "message" }`, plus `"available_sizes"` (the item's real display sizes) only for `size_not_available`. The
     `message` for `not_on_menu` also tells the model to search with the guest's words and offer the closest
     real item by its exact name, so a rejection still moves the order forward.
+  - **`item_name` means something different per reason (#74 note).** For `not_on_menu`, `item_name` is the
+    guest's own words -- the raw, unresolved `update_order` tool-call argument, since nothing on the menu
+    matched it. For `size_not_available`, `item_name` is the real menu name (`menu_item["name"]`) -- the item
+    itself DID resolve; only the requested size didn't. A client rendering these rejections (or a future
+    persona's own copy) must not assume `item_name` is always menu-canonical.
 - **Every keyword fallback is removed** (combo slot, happy hour and category), along with the `offMenu` schema
   block (#73). That removes the whole class of substring bugs ("tea" in "steak") for every persona.
 - **Menus must be complete.** Every brand's `menuItems.json` is completed from its source data before the

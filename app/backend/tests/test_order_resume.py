@@ -860,8 +860,9 @@ class VoicePersistenceTests(_ResumeHarness):
         await self._until(lambda: sum(e["type"] == "session.update" for e in upstream) >= 2)
 
         session_updates = [e for e in upstream if e["type"] == "session.update"]
-        self.assertEqual(session_updates[0]["session"]["audio"]["output"]["voice"], "shimmer",
-                          "the bootstrap fires before the resume is known, so it must use the config default")
+        self.assertEqual(session_updates[0]["session"]["audio"]["output"]["voice"], "marin",
+                          "the bootstrap fires before the resume is known, so it must use the "
+                          "bound (default) persona's own default voice, not the picked one")
         self.assertEqual(session_updates[1]["session"]["audio"]["output"]["voice"], "cedar",
                           "the follow-up session.update after a confirmed resume must restore this "
                           "session's own picked voice")
@@ -887,9 +888,9 @@ class VoicePersistenceTests(_ResumeHarness):
         await self._until(lambda: any(e["type"] == "session.update" for e in upstream))
 
         bootstrap = next(e for e in upstream if e["type"] == "session.update")
-        self.assertEqual(bootstrap["session"]["audio"]["output"]["voice"], "shimmer",
-                          "a brand-new, unrelated connection must get the server default, never "
-                          "another session's persisted voice pick")
+        self.assertEqual(bootstrap["session"]["audio"]["output"]["voice"], "marin",
+                          "a brand-new, unrelated connection must get the server (persona-bound) "
+                          "default, never another session's persisted voice pick")
         await fresh.close()
 
     async def test_end_session_clears_the_persisted_voice(self):

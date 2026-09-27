@@ -6,62 +6,70 @@ from unittest.mock import AsyncMock
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
+from default_persona import get_default_persona
+from menu_utils import get_catalog_for_persona
 from rtmt import ToolResultDirection
-from tools import _infer_category, _search_cache, is_extra_item, search
+from tools import _search_cache, search
+
+# #74: the default (env-driven) persona's own MenuCatalog -- replaces the old module-level
+# menu_utils/tools free functions (is_extra_item/infer_category) these tests used to call
+# directly. Every session (including the default one) resolves its menu through this exact
+# same MenuCatalog path now.
+_SONIC = get_catalog_for_persona(get_default_persona())
 
 
 class IsExtraItemTests(unittest.TestCase):
     def test_recognized_extras(self):
-        self.assertTrue(is_extra_item("Whipped Cream"))
-        self.assertTrue(is_extra_item("Flavor Add-In"))
+        self.assertTrue(_SONIC.is_extra_item("Whipped Cream"))
+        self.assertTrue(_SONIC.is_extra_item("Flavor Add-In"))
 
     def test_case_insensitive(self):
-        self.assertTrue(is_extra_item("WHIPPED CREAM"))
-        self.assertTrue(is_extra_item("flavor add-in"))
+        self.assertTrue(_SONIC.is_extra_item("WHIPPED CREAM"))
+        self.assertTrue(_SONIC.is_extra_item("flavor add-in"))
 
     def test_non_extras(self):
-        self.assertFalse(is_extra_item("Tots"))
-        self.assertFalse(is_extra_item("Cherry Limeade"))
-        self.assertFalse(is_extra_item("Sonic Cheeseburger"))
-        self.assertFalse(is_extra_item("Onion Rings"))
+        self.assertFalse(_SONIC.is_extra_item("Tots"))
+        self.assertFalse(_SONIC.is_extra_item("Cherry Limeade"))
+        self.assertFalse(_SONIC.is_extra_item("Sonic Cheeseburger"))
+        self.assertFalse(_SONIC.is_extra_item("Onion Rings"))
 
     def test_off_menu_names_are_not_extras(self):
         """#73: "Extra Patty"/"Extra Cheese" are not real menuItems.json items at all -- they're
         never real extras, they're rejected outright as not_on_menu by tools.py's update_order
-        (via menu_utils.resolve_menu_item) before is_extra_item would ever matter for them."""
-        self.assertFalse(is_extra_item("Extra Patty"))
-        self.assertFalse(is_extra_item("Extra Cheese"))
+        (via MenuCatalog.resolve_menu_item) before is_extra_item would ever matter for them."""
+        self.assertFalse(_SONIC.is_extra_item("Extra Patty"))
+        self.assertFalse(_SONIC.is_extra_item("Extra Cheese"))
 
 
 class InferCategoryTests(unittest.TestCase):
     def test_slush_inferred(self):
-        cat = _infer_category("Cherry Limeade")
+        cat = _SONIC.infer_category("Cherry Limeade")
         self.assertIn("slush", cat)
-        cat2 = _infer_category("Ocean Water")
+        cat2 = _SONIC.infer_category("Ocean Water")
         self.assertIn("slush", cat2)
 
     def test_shakes_inferred(self):
-        cat = _infer_category("Vanilla Classic Shake")
+        cat = _SONIC.infer_category("Vanilla Classic Shake")
         self.assertIn("shake", cat)
-        cat2 = _infer_category("Turtle Truffle Nut Blast")
+        cat2 = _SONIC.infer_category("Turtle Truffle Nut Blast")
         self.assertIn("shake", cat2)
 
     def test_combos_inferred(self):
-        cat = _infer_category("Sonic Cheeseburger")
+        cat = _SONIC.infer_category("Sonic Cheeseburger")
         self.assertTrue("burger" in cat or "combo" in cat)
 
     def test_hot_dogs_inferred(self):
-        cat = _infer_category("Chili Cheese Coney")
+        cat = _SONIC.infer_category("Chili Cheese Coney")
         self.assertIn("hot dog", cat)
-        cat2 = _infer_category("All-American Dog")
+        cat2 = _SONIC.infer_category("All-American Dog")
         self.assertIn("hot dog", cat2)
 
     def test_sides_inferred(self):
-        cat = _infer_category("Onion Rings")
+        cat = _SONIC.infer_category("Onion Rings")
         self.assertTrue("side" in cat or "tot" in cat or "ring" in cat or len(cat) > 0)
 
     def test_unknown_returns_empty(self):
-        self.assertEqual(_infer_category("Mystery Item XYZ"), "")
+        self.assertEqual(_SONIC.infer_category("Mystery Item XYZ"), "")
 
 
 class SearchToolTests(unittest.TestCase):

@@ -243,7 +243,10 @@ class SessionBootstrapTests(_RealtimeHarness):
         self.assertEqual([t["name"] for t in session["tools"]], TOOL_NAMES)
         self.assertEqual(session["tool_choice"], "auto")
         self.assertEqual(session["instructions"], SYSTEM_PROMPT)
-        self.assertEqual(session["audio"]["output"]["voice"], "shimmer")
+        self.assertEqual(session["audio"]["output"]["voice"], "marin",
+                          "with the persona catalog mandatory (#74), a fresh session's voice is "
+                          "the bound (default) persona's own voice.default, not the bare "
+                          "RTMiddleTier voice_choice constructor fallback")
         self.assertEqual(session["audio"]["input"]["turn_detection"], BROWSER_SESSION_UPDATE["session"]["turn_detection"])
         self.assertEqual(session["audio"]["input"]["transcription"], {"model": "whisper-1"})
         self.assertEqual(session["type"], "realtime")
@@ -376,8 +379,9 @@ class SessionBootstrapTests(_RealtimeHarness):
         second = await self.client.ws_connect("/realtime")
         await self._until(lambda: len(self._session_updates()) > watermark)
         bootstrap = [e for e in self._session_updates() if str(e.get("event_id", "")).startswith("sonic_bootstrap")][-1]
-        self.assertEqual(bootstrap["session"]["audio"]["output"]["voice"], "shimmer",
-                          "a brand-new, unrelated connection must get the server default, never another guest's pick")
+        self.assertEqual(bootstrap["session"]["audio"]["output"]["voice"], "marin",
+                          "a brand-new, unrelated connection must get the server (persona-bound) "
+                          "default, never another guest's pick")
         await second.close()
 
     async def test_bootstrap_does_not_trigger_an_unprompted_greeting(self):

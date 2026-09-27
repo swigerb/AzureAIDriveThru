@@ -41,9 +41,15 @@ _jinja_env = Environment(loader=BaseLoader(), undefined=__import__("jinja2").Str
 class PromptLoader:
     """Loads and caches prompt YAML files for a given brand's persona pack."""
 
-    def __init__(self, brand: str = "sonic"):
+    def __init__(self, brand: str = "sonic", prompts_dir: Path | str | None = None):
+        """*prompts_dir* (#74, optional): load prompts from this exact directory instead of
+        deriving it from *brand* + ``PERSONAS_DIR`` -- lets a multi-persona deployment build one
+        ``PromptLoader`` per bound persona from its own catalog-resolved
+        :attr:`persona_loader.Persona.prompts_dir`, without requiring that path to match the
+        ``PERSONAS_DIR / brand / "prompts"`` convention. Omitted (the default): unchanged,
+        today's single-persona/env-driven behavior."""
         self._brand = brand
-        self._brand_dir = _PERSONAS_DIR / brand / "prompts"
+        self._brand_dir = Path(prompts_dir) if prompts_dir is not None else _PERSONAS_DIR / brand / "prompts"
         self._cache: dict[str, Any] = {}
         self._last_load_time: float = 0.0
         self._dev_mode = os.environ.get("DEV_MODE", "").lower() in ("true", "1", "yes")

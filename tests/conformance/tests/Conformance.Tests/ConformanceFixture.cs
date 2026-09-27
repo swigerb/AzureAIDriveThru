@@ -54,6 +54,14 @@ public class ConformanceFixture : IAsyncLifetime
     /// </summary>
     protected virtual IReadOnlyList<string>? Personas => null;
 
+    /// <summary>
+    /// Rick's PR #102 review item 1: overrides PERSONAS_DIR so a fixture can launch the backend
+    /// against a TEST-ONLY second persona pack directory (see
+    /// <see cref="RepoPaths.FixturePersonasDirectory"/>) instead of the real repo personas/
+    /// folder. Null (every existing fixture) resolves personas from personas/ exactly as before.
+    /// </summary>
+    protected virtual string? PersonasDir => null;
+
     public FakeRealtimeUpstreamServer Realtime { get; } = new();
     public FakeSearchServer Search { get; private set; } = null!;
 
@@ -111,7 +119,7 @@ public class ConformanceFixture : IAsyncLifetime
         {
             Backend = await BackendLauncherFactory.StartAsync(
                 Realtime.BaseUri, Search.BaseUri, port, extraEnvironment: Profile.ExtraEnvironment, deployment: Deployment,
-                personas: Personas, persona: Persona)
+                personas: Personas, persona: Persona, personasDir: PersonasDir)
                 .ConfigureAwait(false);
 
             // #66 re-review, R1(c): seed the attribution's watermark from the count observed the

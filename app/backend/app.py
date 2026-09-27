@@ -1,17 +1,20 @@
 import gzip
+import hashlib
 import logging
 import os
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 import aiohttp
 from aiohttp import web
 from azure.core.credentials import AzureKeyCredential
 from azure.identity import AzureDeveloperCliCredential, DefaultAzureCredential
+from azure.search.documents.aio import SearchClient
 from dotenv import load_dotenv
 
+import default_persona
 from config_loader import get_config
-from persona_loader import PersonaCatalog, PersonaValidationError
+from persona_loader import Persona, PersonaCatalog, PersonaValidationError
 from prompt_loader import PromptLoader
 from rtmt import RTMiddleTier, configure_realtime_model, create_hmac_token
 from tools import attach_tools_rtmt
@@ -64,6 +67,202 @@ def _get_bool_env(variable_name: str, default: bool = False) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+# ---------------------------------------------------------------------------
+# Persona discovery endpoints (issue #74, design doc section 5.2)
+# ---------------------------------------------------------------------------
+
+def _content_hash(path: Path) -> str:
+    """Short, stable content-hash for the `?v=` query param on persona asset/menu URLs
+    (Rick's PR #102 review item 2). Recomputed fresh from the file's current bytes on every
+    request (see `_asset_cache_headers`), never cached across a file edit -- so a stale `?v=`
+    from a URL minted before a pack update simply falls through to the short/no-cache
+    fallback below instead of being trusted. 16 hex chars (64 bits) of SHA-256 is plenty of
+    collision resistance for a cache-busting token; the full digest would just make the URL
+    (and every response referencing it) needlessly longer.
+    """
+    return hashlib.sha256(path.read_bytes()).hexdigest()[:16]
+
+
+def _persona_logo_url(persona: Persona) -> str:
+    """Static asset URL served by the `/personas/{id}/assets/*` route below (design doc
+    section 5.2, Rick's PR #102 review item 5).
+
+    `ui.assets.logo` in persona.json is a path relative to the PACK ROOT (e.g.
+    `"assets/logo.svg"`, matching the on-disk layout `<pack>/assets/logo.svg`) -- while
+    `_resolve_persona_asset_path` resolves the route's tail relative to `persona.assets_dir`
+    (`<pack>/assets`) itself, to keep that route's traversal boundary scoped to just the
+    assets subtree. Strip the redundant leading `assets/` here so the URL this function
+    builds is one the asset route can actually resolve, instead of doubling that segment.
+
+    Rick's PR #102 review item 2: the URL carries a `?v=<content-hash>` of the logo file
+    itself, so the asset route (`_asset_cache_headers`) can tell a request that's actually
+    pinned to this exact content (safe to cache for a year, immutably) apart from an
+    unversioned or stale-hash request (which might get different bytes the next time this
+    same path is requested, e.g. after a pack update) -- never immutable caching by default.
+    Falls back to no `?v=` (rare: schema validation doesn't check the logo file itself
+    exists on disk, only that persona.json's string field is present) rather than raising --
+    an unversioned URL still works, just without the year-long cache policy.
+    """
+    logo = persona.manifest.ui.assets.logo
+    relative = logo.removeprefix('assets/')
+    route = f"/personas/{persona.id}/assets/{relative}"
+    resolved = _resolve_persona_asset_path(persona, relative)
+    if resolved is not None:
+        route += f"?v={_content_hash(resolved)}"
+    return route
+
+
+def _persona_menu_url(persona: Persona) -> str:
+    """See `_persona_logo_url` -- same route family and `?v=<content-hash>` versioning
+    scheme, for `/personas/{id}/menu.json`. Unlike the logo, `persona.menu_path` is
+    guaranteed to exist (persona_loader.py's `PersonaCatalog.load` fails fast at startup if
+    the menu file is missing), so this always carries a `?v=`."""
+    return f"/personas/{persona.id}/menu.json?v={_content_hash(persona.menu_path)}"
+
+
+def _model_pipelines_body(models) -> dict:
+    """The selectable `models` per pipeline (design doc section 7); only the pipelines a
+    persona actually declares (`cascade`/`local` are optional)."""
+    body = {"realtime": {"default": models.realtime.default, "allowed": models.realtime.allowed}}
+    if models.cascade is not None:
+        body["cascade"] = {"default": models.cascade.default, "allowed": models.cascade.allowed}
+    if models.local is not None:
+        body["local"] = {"default": models.local.default, "allowed": models.local.allowed}
+    return body
+
+
+def _persona_summary_body(persona: Persona) -> dict:
+    """One entry of `GET /api/personas`'s `personas` list (design doc section 5.2)."""
+    return {
+        "id": persona.id,
+        "displayName": persona.manifest.displayName,
+        "logoUrl": _persona_logo_url(persona),
+        "theme": persona.manifest.ui.theme.model_dump(exclude_none=True),
+    }
+
+
+def _backend_entries() -> list[dict]:
+    """`backends` entries in `GET /api/personas` (design doc section 5.2/10.1, Rick's PR
+    #102 review item 4): each backend's PUBLIC BASE URL, not `/realtime` -- so the F11
+    header switch (design doc section 8) can link across hostnames, not just paths on this
+    one origin. Built from `BACKEND_URI` / `BACKEND_DOTNET_URI` (azd outputs from #93; see
+    `.env-sample`). `python` always has an entry: an unset `BACKEND_URI` (local dev) falls
+    back to `""` (same origin) rather than being omitted, since this process IS the python
+    backend. `dotnet` is omitted entirely when `BACKEND_DOTNET_URI` isn't set -- e.g. no
+    .NET backend deployed for this environment -- rather than reported with a placeholder.
+    """
+    entries = [{"id": "python", "url": (os.environ.get("BACKEND_URI") or "").strip()}]
+    dotnet_uri = (os.environ.get("BACKEND_DOTNET_URI") or "").strip()
+    if dotnet_uri:
+        entries.append({"id": "dotnet", "url": dotnet_uri})
+    return entries
+
+
+def _personas_index_body(catalog: PersonaCatalog) -> dict:
+    """`GET /api/personas` response body (design doc section 5.2), enabled personas only."""
+    return {
+        "default": catalog.default_persona_id,
+        "personas": [_persona_summary_body(catalog.get(persona_id)) for persona_id in catalog.ids],
+        "backends": _backend_entries(),
+    }
+
+
+def _persona_detail_body(persona: Persona) -> dict:
+    """`GET /api/personas/{id}` response body (design doc section 5.2): the pack's `ui`
+    block, plus `voice.default`, `locales`, `features.dayparts`, `menuUrl`, and the
+    selectable `models` per pipeline. Callers must check the persona is enabled first
+    (404 otherwise) -- this function assumes it already is."""
+    manifest = persona.manifest
+    return {
+        "id": persona.id,
+        **manifest.ui.model_dump(exclude_none=True),
+        "voice": {"default": manifest.voice.default},
+        "locales": manifest.locales.model_dump(exclude_none=True),
+        "features": {"dayparts": manifest.features.dayparts},
+        "menuUrl": _persona_menu_url(persona),
+        "models": _model_pipelines_body(manifest.models),
+    }
+
+
+def _resolve_persona_asset_path(persona: Persona, requested_path: str) -> Path | None:
+    """Resolve `requested_path` (the tail of `/personas/{id}/assets/{requested_path}`) to a
+    real file under `persona.assets_dir`, or ``None`` if it doesn't exist or the path
+    doesn't stay under that directory (Rick's PR #102 review item 5).
+
+    aiohttp's router percent-decodes the raw URL before populating `match_info`, so any
+    encoded traversal variant (``%2e%2e%2f``, double-encoded, etc.) already looks like a
+    plain ``../`` by the time it reaches here -- there is nothing extra to decode.
+
+    Traversal defense is structural, not string-matching: split on path separators, reject
+    any segment that is empty, ``.``, ``..``, or looks like a Windows drive letter (``C:``),
+    THEN join those pre-validated segments onto ``assets_dir`` one at a time. This avoids
+    the classic pathlib pitfall where ``Path(base) / "/etc/passwd"`` silently discards
+    `base` because the right-hand operand is absolute -- since no individual validated
+    segment can itself be absolute, that substitution can never happen here. Finally,
+    ``Path.resolve()`` (which follows symlinks) must land back under the assets directory's
+    own resolved real path -- this is what catches a symlink planted inside the pack that
+    points back out of it (a segment-only check would miss that).
+    """
+    if not requested_path or "\x00" in requested_path:
+        return None
+    segments = requested_path.replace("\\", "/").split("/")
+    if any(seg in ("", ".", "..") or ":" in seg for seg in segments):
+        return None
+    if PurePosixPath(requested_path).is_absolute() or PureWindowsPath(requested_path).is_absolute():
+        return None
+    assets_root = persona.assets_dir.resolve()
+    candidate = assets_root.joinpath(*segments)
+    try:
+        resolved = candidate.resolve(strict=True)
+    except (OSError, RuntimeError):
+        return None
+    try:
+        resolved.relative_to(assets_root)
+    except ValueError:
+        return None
+    if not resolved.is_file():
+        return None
+    return resolved
+
+
+# Non-blocking (Rick's PR #102 review): explicit content types for persona asset files,
+# instead of trusting `mimetypes.guess_type`'s OS-dependent registry (e.g. `.svg`/`.ico` are
+# missing from Python's default table on some platforms, silently falling back to
+# `application/octet-stream`; `.wav` can resolve to `audio/x-wav` instead of `audio/wav`
+# depending on the local `mimetypes` database).
+_ASSET_CONTENT_TYPES = {
+    ".svg": "image/svg+xml",
+    ".wav": "audio/wav",
+    ".ico": "image/x-icon",
+    ".json": "application/json",
+}
+
+
+def _asset_cache_headers(response: web.Response, request: web.Request, expected_v: str | None) -> None:
+    """Content-hash versioned caching (Rick's PR #102 review item 2): year-long immutable
+    caching on a URL with no content-hash pinning it to a specific set of bytes was wrong --
+    a later pack update could silently serve stale content for a year to anyone still holding
+    the unversioned URL. Only a request whose `?v=` query param matches *this file's current*
+    content hash (`expected_v`, computed fresh per-request by the caller via `_content_hash`)
+    is safe to mark immutable: that exact URL can never resolve to different bytes later,
+    because a future edit changes the file's hash and therefore the URL a fresh
+    `_persona_logo_url`/`_persona_menu_url` call would mint. An unversioned request (no `v`
+    at all -- e.g. a client that cached an old response body containing a pre-versioning URL,
+    or hit the route directly) or one carrying a stale/mismatched hash gets the same short,
+    revalidate-often policy as any other mutable static file (`_STATIC_DEFAULT_MAX_AGE` --
+    previously defined but unused; this is that "short/no-cache policy consistent with
+    existing static handling" now actually wired up), never the immutable policy.
+    """
+    requested_v = request.query.get("v")
+    if expected_v is not None and requested_v == expected_v:
+        response.headers["Cache-Control"] = f"public, max-age={_STATIC_IMMUTABLE_MAX_AGE}, immutable"
+    else:
+        response.headers["Cache-Control"] = f"public, max-age={_STATIC_DEFAULT_MAX_AGE}"
+    # Non-blocking (Rick's PR #102 review): defense-in-depth against content-type sniffing on
+    # these persona-supplied (not first-party-authored) files.
+    response.headers["X-Content-Type-Options"] = "nosniff"
 
 
 def load_app_secret(environ=None) -> bytes:
@@ -164,6 +363,71 @@ async def _check_service_connectivity() -> None:
         logger.warning("⚠️ Service connectivity check failed — %s (non-fatal)", exc)
 
 
+def register_persona_routes(app: web.Application, catalog: PersonaCatalog) -> None:
+    """Register `/api/personas`, `/api/personas/{id}`, `/personas/{id}/assets/*` and
+    `/personas/{id}/menu.json` against `catalog` (issue #74, design doc section 5.2).
+
+    A standalone, module-level function -- not a `create_app()` closure -- specifically so
+    conformance tests can register these routes on a small standalone `web.Application`
+    against a fixture catalog, hitting the real HTTP routes (path matching, traversal
+    handling, status codes) without needing `create_app()`'s full Azure OpenAI/Search
+    startup dependencies.
+    """
+
+    async def get_personas(_request: web.Request) -> web.Response:
+        return web.json_response(_personas_index_body(catalog))
+
+    async def get_persona_detail(request: web.Request) -> web.Response:
+        persona_id = request.match_info["persona_id"]
+        if persona_id not in catalog:
+            return web.json_response({"error": f"Unknown or disabled persona: {persona_id!r}"}, status=404)
+        return web.json_response(_persona_detail_body(catalog.get(persona_id)))
+
+    # ── Persona static asset routes (issue #74, design doc section 5.2, Rick's PR #102
+    # review item 5): serve only the ENABLED pack's own files, matching `logoUrl`/
+    # `menuUrl` in the persona summary/detail bodies above. ──
+    async def get_persona_asset(request: web.Request) -> web.Response:
+        persona_id = request.match_info["persona_id"]
+        if persona_id not in catalog:
+            return web.json_response({"error": f"Unknown or disabled persona: {persona_id!r}"}, status=404)
+        asset_path = request.match_info["asset_path"]
+        resolved = _resolve_persona_asset_path(catalog.get(persona_id), asset_path)
+        if resolved is None:
+            return web.json_response({"error": f"Unknown persona asset: {asset_path!r}"}, status=404)
+        resp = web.FileResponse(resolved)
+        # Non-blocking (Rick's PR #102 review): pin the content type for known persona-asset
+        # extensions instead of trusting the local `mimetypes` registry (see
+        # `_ASSET_CONTENT_TYPES`'s docstring). Must be set before `_asset_cache_headers`
+        # returns the response, since `FileResponse` only guesses a Content-Type if one
+        # isn't already present in its headers at prepare() time.
+        content_type = _ASSET_CONTENT_TYPES.get(resolved.suffix.lower())
+        if content_type is not None:
+            resp.headers["Content-Type"] = content_type
+        _asset_cache_headers(resp, request, _content_hash(resolved))
+        return resp
+
+    async def get_persona_menu(request: web.Request) -> web.Response:
+        persona_id = request.match_info["persona_id"]
+        if persona_id not in catalog:
+            return web.json_response({"error": f"Unknown or disabled persona: {persona_id!r}"}, status=404)
+        menu_path = catalog.get(persona_id).menu_path
+        if not menu_path.is_file():
+            return web.json_response({"error": f"No menu data for persona: {persona_id!r}"}, status=404)
+        # A plain Response (not FileResponse) so the existing gzip _compression_middleware
+        # (which explicitly skips FileResponse) applies to this JSON payload too, matching
+        # design doc section 5.2 ("the existing compression and caching middleware").
+        resp = web.Response(body=menu_path.read_bytes(), content_type="application/json")
+        _asset_cache_headers(resp, request, _content_hash(menu_path))
+        return resp
+
+    app.add_routes([
+        web.get('/api/personas', get_personas),
+        web.get('/api/personas/{persona_id}', get_persona_detail),
+        web.get('/personas/{persona_id}/menu.json', get_persona_menu),
+        web.get('/personas/{persona_id}/assets/{asset_path:.*}', get_persona_asset),
+    ])
+
+
 async def create_app() -> web.Application:
     """Configure and return the aiohttp application for realtime ordering."""
 
@@ -192,13 +456,21 @@ async def create_app() -> web.Application:
         sys.exit(1)
     _startup_checks["personas_loaded"] = True
 
-    # 3. Load prompts from YAML (fail-fast on missing/malformed files)
+    # 3. Build one PromptLoader per enabled persona pack (issue #74; #92 review note --
+    # removes the single hardcoded default-brand PromptLoader). Each loader reads from its own
+    # catalog-resolved Persona.prompts_dir, so a pack doesn't need to live under
+    # PERSONAS_DIR/<id>/prompts for prompt loading to find it (same fail-fast behavior as
+    # before: a missing/malformed prompts dir aborts startup, naming the persona).
+    prompt_loaders: dict[str, PromptLoader] = {}
     try:
-        prompt_loader = PromptLoader(brand="sonic")
+        for persona_id in _persona_catalog.ids:
+            persona = _persona_catalog.get(persona_id)
+            prompt_loaders[persona_id] = PromptLoader(brand=persona_id, prompts_dir=persona.prompts_dir)
     except (FileNotFoundError, ValueError) as exc:
         logger.critical("FATAL: Failed to load prompts — %s", exc)
         sys.exit(1)
     _startup_checks["prompts_loaded"] = True
+    prompt_loader = prompt_loaders[_persona_catalog.default_persona_id]
 
     # 4. Optional: verify Azure service connectivity (non-blocking)
     await _check_service_connectivity()
@@ -252,6 +524,44 @@ async def create_app() -> web.Application:
     configure_realtime_model(rtmt, model_cfg)
     rtmt.system_message = prompt_loader.get_system_prompt()
 
+    # Issue #74: the enabled-persona catalog and one PromptLoader per persona, so
+    # _websocket_handler can resolve `?persona=`, reject an unknown one with 404 before the
+    # WebSocket upgrade, and _forward_messages can use each session's own bound persona's
+    # system prompt and default voice instead of the deployment-wide defaults above (which
+    # remain exactly the default persona's -- unchanged behavior when `?persona` is
+    # omitted, since it resolves to `_persona_catalog.default_persona_id` today).
+    rtmt.persona_catalog = _persona_catalog
+    rtmt.persona_prompt_loaders = prompt_loaders
+
+    # Issue #74 (Rick's PR #102 review, item 2): every other module that resolves a
+    # persona/menu when none is explicitly passed (order_state, tools, and this module's own
+    # asset/menu routes below) goes through `default_persona`, not a private duplicate of the
+    # catalog. Point it at the one catalog this process just validated, so those call sites
+    # see the exact same enabled packs / default id as the WebSocket path above.
+    default_persona.configure_default_catalog(_persona_catalog)
+
+    # One search index per persona (design doc 3.2/5.2): the shared field-schema config
+    # below (semantic configuration, identifier/content/embedding fields, vector/ranker
+    # flags) is common to every brand's ingestion pipeline, but the index itself is not.
+    persona_search_contexts: dict[str, dict] = {}
+    for persona_id in _persona_catalog.ids:
+        persona = _persona_catalog.get(persona_id)
+        persona_search_contexts[persona_id] = {
+            "search_client": SearchClient(
+                os.environ.get("AZURE_SEARCH_ENDPOINT"),
+                persona.manifest.search.indexName,
+                search_credential,
+                user_agent="RTMiddleTier",
+            ),
+            "semantic_configuration": os.environ.get("AZURE_SEARCH_SEMANTIC_CONFIGURATION") or "menuSemanticConfig",
+            "identifier_field": os.environ.get("AZURE_SEARCH_IDENTIFIER_FIELD") or "id",
+            "content_field": os.environ.get("AZURE_SEARCH_CONTENT_FIELD") or "description",
+            "embedding_field": os.environ.get("AZURE_SEARCH_EMBEDDING_FIELD") or "embedding",
+            "use_vector_query": _get_bool_env("AZURE_SEARCH_USE_VECTOR_QUERY", True),
+            "use_semantic_ranker": (os.environ.get("AZURE_SEARCH_SEMANTIC_RANKER") or "standard").lower() != "disabled",
+            "prompt_loader": prompt_loaders[persona_id],
+        }
+
     attach_tools_rtmt(
         rtmt,
         credentials=search_credential,
@@ -270,6 +580,7 @@ async def create_app() -> web.Application:
         # runtime fallback in tools.search to recover.
         use_semantic_ranker=(os.environ.get("AZURE_SEARCH_SEMANTIC_RANKER") or "standard").lower() != "disabled",
         prompt_loader=prompt_loader,
+        personas=persona_search_contexts,
     )
 
     rtmt.attach_to_app(app, "/realtime")
@@ -285,6 +596,8 @@ async def create_app() -> web.Application:
         web.get('/health', _health_handler),
         web.get('/api/auth/session', get_session_token),
     ])
+    # ── Persona discovery + static asset routes (issue #74, design doc section 5.2) ──
+    register_persona_routes(app, _persona_catalog)
     app.router.add_static(
         '/',
         path=current_directory / 'static',

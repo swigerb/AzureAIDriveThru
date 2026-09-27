@@ -82,6 +82,15 @@ public static class BackendEnvironment
             ["PYTHONUTF8"] = "1",
         };
 
+        // Rick's PR #102 review item 1 (the two-pack persona_mismatch conformance row): only set
+        // when a fixture explicitly overrides it (BackendContract.ForPort's personasDir param) --
+        // omitted entirely otherwise, so every existing scenario resolves personas from the real
+        // repo personas/ folder exactly as before.
+        if (contract.PersonasDir is not null)
+        {
+            env["PERSONAS_DIR"] = contract.PersonasDir;
+        }
+
         foreach (var (key, value) in options.ExtraEnvironment)
         {
             env[key] = value;

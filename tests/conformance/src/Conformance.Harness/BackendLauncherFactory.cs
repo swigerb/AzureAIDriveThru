@@ -38,6 +38,7 @@ public static class BackendLauncherFactory
         string? deployment = null,
         IReadOnlyList<string>? personas = null,
         string? persona = null,
+        string? personasDir = null,
         CancellationToken cancellationToken = default)
     {
         var explicitUrl = Environment.GetEnvironmentVariable("CONFORMANCE_BACKEND_URL");
@@ -59,7 +60,7 @@ public static class BackendLauncherFactory
         var resolvedDefaultPersona = ConformancePersonas.ResolveDefault(persona, resolvedPersonas);
 
         var contract = BackendContract.ForPort(
-            realtimeBaseUri, searchBaseUri, port, deployment, resolvedPersonas, resolvedDefaultPersona);
+            realtimeBaseUri, searchBaseUri, port, deployment, resolvedPersonas, resolvedDefaultPersona, personasDir);
         var env = extraEnvironment ?? new Dictionary<string, string>();
 
         return target switch
