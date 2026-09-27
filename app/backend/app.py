@@ -124,43 +124,48 @@ def _persona_menu_url(persona: Persona) -> str:
     return f"/personas/{persona.id}/menu.json?v={_content_hash(persona.menu_path)}"
 
 
-def _selectable_allowed(pipeline_cfg, pipeline_name: str, model_catalog: ModelCatalog | None) -> list[str]:
-    """*pipeline_cfg.allowed*, narrowed to what's actually selectable right now (design doc
-    section 7.3: "Selectable = catalog ∩ deployment ∩ persona-allowed") when *model_catalog* is
-    given. The pipeline's own `default` is always kept even if the catalog/deployment map
-    doesn't (yet) cover it -- #75 acceptance: default-model behavior never depends on the
-    catalog (`resolve_realtime_model`'s own default branch never touches it either). With
-    `model_catalog=None` (the default), returns `pipeline_cfg.allowed` unfiltered -- today's
-    exact, unchanged response shape for any caller that hasn't opted into filtering."""
-    if model_catalog is None:
-        return list(pipeline_cfg.allowed)
+def _selectable_models(pipeline_cfg, pipeline_name: str, model_catalog: ModelCatalog) -> list[dict]:
+    """*pipeline_cfg.allowed*, narrowed to ONLY what's actually selectable right now (design doc
+    section 7.3: "Selectable = catalog ∩ deployment ∩ persona-allowed") and shaped as
+    `{id, label, reasoning}` per entry (Rick's PR #106 review item 3) -- Morty's model picker
+    (F10) needs a label to show and a reasoning flag to group by, not a bare id.
+
+    Rick's PR #106 review item 1/3: there is NO carve-out for the pipeline's own `default` --
+    an unselectable default (e.g. its deployment only resolves through the
+    `AZURE_OPENAI_REALTIME_DEPLOYMENT` back-compat fallback, never `AZURE_AI_MODEL_DEPLOYMENTS`
+    itself) is deliberately left OUT of this list: the picker must never offer a model that
+    would 404 if explicitly requested by id (`model_catalog.is_selectable` already encodes that
+    exact rule -- see its own docstring). Every enabled persona's own default is still
+    guaranteed catalogued (`ModelCatalog.validate_persona_defaults` fails startup otherwise);
+    whether it's also independently *deployed* (and therefore listed here) is a separate,
+    narrower question this function answers honestly rather than papering over."""
     return [
-        model_id for model_id in pipeline_cfg.allowed
-        if model_id == pipeline_cfg.default or model_catalog.is_selectable(model_id, pipeline_name)
+        {"id": model_id, "label": model_catalog.get(model_id).label, "reasoning": model_catalog.get(model_id).reasoning}
+        for model_id in pipeline_cfg.allowed
+        if model_catalog.is_selectable(model_id, pipeline_name)
     ]
 
 
-def _model_pipelines_body(models, model_catalog: ModelCatalog | None = None) -> dict:
-    """The selectable `models` per pipeline (design doc section 7); only the pipelines a
-    persona actually declares (`cascade`/`local` are optional). *model_catalog* is optional
-    (default `None` = unfiltered, today's exact shape) -- pass the process's loaded
-    `ModelCatalog` to narrow each pipeline's `allowed` list to what's actually catalogued,
-    deployed, and wired to the right pipeline (section 7.3)."""
+def _model_pipelines_body(models, model_catalog: ModelCatalog) -> dict:
+    """The selectable `models` per pipeline (design doc section 7; Rick's PR #106 review item
+    3: ALWAYS only selectable models, `{id, label, reasoning}` shaped); only the pipelines a
+    persona actually declares (`cascade`/`local` are optional). *model_catalog* is mandatory --
+    there is no unfiltered fallback shape any more."""
     body = {
         "realtime": {
             "default": models.realtime.default,
-            "allowed": _selectable_allowed(models.realtime, "realtime", model_catalog),
+            "allowed": _selectable_models(models.realtime, "realtime", model_catalog),
         }
     }
     if models.cascade is not None:
         body["cascade"] = {
             "default": models.cascade.default,
-            "allowed": _selectable_allowed(models.cascade, "cascade", model_catalog),
+            "allowed": _selectable_models(models.cascade, "cascade", model_catalog),
         }
     if models.local is not None:
         body["local"] = {
             "default": models.local.default,
-            "allowed": _selectable_allowed(models.local, "local", model_catalog),
+            "allowed": _selectable_models(models.local, "local", model_catalog),
         }
     return body
 
@@ -201,12 +206,12 @@ def _personas_index_body(catalog: PersonaCatalog) -> dict:
     }
 
 
-def _persona_detail_body(persona: Persona, model_catalog: ModelCatalog | None = None) -> dict:
+def _persona_detail_body(persona: Persona, model_catalog: ModelCatalog) -> dict:
     """`GET /api/personas/{id}` response body (design doc section 5.2): the pack's `ui`
     block, plus `voice.default`, `locales`, `features.dayparts`, `menuUrl`, and the
     selectable `models` per pipeline. Callers must check the persona is enabled first
-    (404 otherwise) -- this function assumes it already is. *model_catalog* is optional
-    (default `None`) -- see `_model_pipelines_body`."""
+    (404 otherwise) -- this function assumes it already is. *model_catalog* is mandatory
+    (Rick's PR #106 review item 3) -- see `_model_pipelines_body`."""
     manifest = persona.manifest
     return {
         "id": persona.id,
@@ -396,7 +401,7 @@ async def _check_service_connectivity() -> None:
         logger.warning("⚠️ Service connectivity check failed — %s (non-fatal)", exc)
 
 
-def register_persona_routes(app: web.Application, catalog: PersonaCatalog, model_catalog: ModelCatalog | None = None) -> None:
+def register_persona_routes(app: web.Application, catalog: PersonaCatalog, model_catalog: ModelCatalog) -> None:
     """Register `/api/personas`, `/api/personas/{id}`, `/personas/{id}/assets/*` and
     `/personas/{id}/menu.json` against `catalog` (issue #74, design doc section 5.2).
 
@@ -406,11 +411,10 @@ def register_persona_routes(app: web.Application, catalog: PersonaCatalog, model
     handling, status codes) without needing `create_app()`'s full Azure OpenAI/Search
     startup dependencies.
 
-    *model_catalog* (issue #75) is optional -- default `None` keeps `/api/personas/{id}`'s
-    `models` block unfiltered (today's exact shape, and every existing conformance/unit test
-    that calls this without a third argument keeps passing unmodified); `create_app()` passes
-    the process's loaded `ModelCatalog` so the response narrows to what's actually selectable
-    (design doc section 7.3).
+    *model_catalog* (issue #75, Rick's PR #106 review item 3) is mandatory -- there is no
+    unfiltered fallback shape any more: `/api/personas/{id}`'s `models` block ALWAYS narrows to
+    what's actually selectable (catalog ∩ deployment ∩ persona-allowed, design doc section 7.3),
+    `{id, label, reasoning}` shaped, never bare ids.
     """
 
     async def get_personas(_request: web.Request) -> web.Response:
@@ -508,6 +512,16 @@ async def create_app() -> web.Application:
         model_catalog = ModelCatalog.load()
     except ModelValidationError as exc:
         logger.critical("FATAL: Failed to load model catalog — %s", exc)
+        sys.exit(1)
+
+    # 2c. Rick's PR #106 review item 1 (second half): fail fast if any ENABLED persona's own
+    # pipeline default model isn't in the catalog for that pipeline -- an unusable default
+    # should stop startup, not surface as a confusing 404 on the first `?model=`-omitted
+    # request. Must run after both catalogs above are loaded.
+    try:
+        model_catalog.validate_persona_defaults(_persona_catalog)
+    except ModelValidationError as exc:
+        logger.critical("FATAL: Persona/model catalog mismatch — %s", exc)
         sys.exit(1)
 
     # 3. Build one PromptLoader per enabled persona pack (issue #74; #92 review note --

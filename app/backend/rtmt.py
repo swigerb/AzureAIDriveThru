@@ -53,7 +53,13 @@ from audio_pipeline import (
 from config_loader import get_config
 from model_catalog import ModelCatalog
 from order_state import order_state_singleton
-from processors import ModelSelectionError, ResolvedModel, resolve_realtime_model
+from processors import (
+    ModelSelectionError,
+    ProcessorRegistry,
+    ResolvedModel,
+    dispatch_processor,
+    resolve_realtime_model,
+)
 from rate_limit import RateLimitRecovery, RateLimitSettings, is_rate_limit_error
 from session_manager import (
     MIDDLE_TIER_ITEM_ID_PREFIX,
@@ -1264,6 +1270,13 @@ class RTMiddleTier:
         # persona's own default realtime model) -- it only means no NON-default `?model=` is
         # selectable yet.
         self.model_catalog = ModelCatalog(entries={}, deployments={})
+        # #75/Rick's PR #106 review item 5: the processor registry is mandatory too (same
+        # "safe default here, app.py installs/extends the real one" pattern as
+        # `persona_catalog`/`model_catalog` above) -- defaulted to a registry containing only
+        # `self` (the realtime pipeline processor) so a deployment with no other pipelines
+        # registered yet keeps working exactly as before. A future cascade (#82) / local (#81)
+        # processor is added here by app.py, never by editing this class.
+        self.processor_registry = ProcessorRegistry([self])
         # Flipped if the deployment rejects `reasoning` at runtime despite the
         # name check, so later sessions stop sending it.
         self._reasoning_rejected = False
@@ -1311,11 +1324,13 @@ class RTMiddleTier:
         return normalize_reasoning_effort(self.reasoning_effort) is not None and self._reasoning_model(reasoning_override)
 
     def resolve_model(self, persona, requested_model_id: str | None) -> ResolvedModel:
-        """`processors.PipelineProcessor`'s one required method (#75, design doc section 7.4).
-        Validates *requested_model_id* (or `persona`'s own realtime default, when `None`)
-        against `persona`'s `models.realtime` allow-list and `self.model_catalog`/deployment map.
-        Raises `processors.ModelSelectionError` on an unknown, disallowed, cross-wired or
-        undeployed model -- `_websocket_handler` turns that into the same plain HTTP 404 an
+        """`processors.PipelineProcessor`'s `resolve_model` method (#75, design doc section
+        7.4). Validates *requested_model_id* (or `persona`'s own realtime default, when
+        `None`) against `persona`'s `models.realtime` allow-list and `self.model_catalog`/
+        deployment map -- Rick's PR #106 review item 1: EVERY id, including the default,
+        goes through the catalog here; there is no default-path special case. Raises
+        `processors.ModelSelectionError` on an unknown, disallowed, cross-wired or undeployed
+        model -- `_websocket_handler` turns that into the same plain HTTP 404 an
         unknown/disabled persona already gets, before the WebSocket upgrade."""
         return resolve_realtime_model(
             persona, requested_model_id, self.model_catalog, self.deployment, pipeline_name=self.pipeline_name
@@ -2687,13 +2702,6 @@ class RTMiddleTier:
             await ws.close()
             return ws
 
-        ws = web.WebSocketResponse(
-            heartbeat=_WS_HEARTBEAT_SEC,
-            autoping=True,
-            autoclose=True,
-            compress=_WS_COMPRESS,
-        )
-
         # ── Persona binding (#74) ──
         # The persona catalog is mandatory (#74/Rick's PR #102 review item 2): the
         # persona is picked once, here, before the WebSocket upgrade (design doc
@@ -2706,28 +2714,65 @@ class RTMiddleTier:
             return web.Response(status=404, text=f"Unknown or disabled persona: {requested_persona_id!r}")
         persona = self.persona_catalog.get(requested_persona_id)
 
-        # ── Model selection (#75) ──
-        # Same pattern as persona binding above (design doc 5.2/7.3): the realtime
-        # model is picked once, here, before the WebSocket upgrade. A missing
-        # `?model=` uses the persona's own `models.realtime.default` (today's
-        # exact, unchanged behaviour -- `resolve_model` never touches the catalog
-        # for that path); an unknown, disallowed, cross-wired (wrong pipeline) or
-        # undeployed one gets the same plain HTTP 404 an unknown/disabled persona
-        # already gets -- never a silent fallback -- and it is fixed for the life
-        # of the session (no mid-conversation switching; see `resume`'s
-        # `model_mismatch` rejection).
+        # ── Processor dispatch (#75, Rick's PR #106 review item 5) ──
+        # Which PIPELINE the requested (or, when omitted, persona-defaulted) model belongs
+        # to -- and which processor handles that pipeline -- is resolved from the shared
+        # catalog/registry here, BEFORE any processor-specific code runs. This is the seam
+        # that lets a cascade model (#82) be routed to a cascade processor without
+        # `RTMiddleTier.handle` ever being entered, even though this method lives on
+        # `RTMiddleTier` itself: the routing decision never assumes "the pipeline is mine".
         requested_model_id = request.query.get("model")
         try:
-            resolved_model = self.resolve_model(persona, requested_model_id)
+            processor = dispatch_processor(persona, requested_model_id, self.model_catalog, self.processor_registry)
+        except ModelSelectionError as e:
+            logger.warning("Rejected WebSocket for unknown model / unregistered pipeline: %s (%s)", requested_model_id, e)
+            return web.Response(status=404, text=f"Unknown or disallowed model: {requested_model_id!r}")
+
+        # ── Model selection (#75) ──
+        # Persona-allow-list + catalog + deployment validation, scoped to the ONE pipeline
+        # `processor` just claimed above (design doc 5.2/7.3; Rick's PR #106 review item 1 --
+        # no default-path special case: EVERY model, including the persona's own default,
+        # resolves through the catalog here). An unknown, disallowed, cross-wired (wrong
+        # pipeline) or undeployed model gets the same plain HTTP 404 an unknown/disabled
+        # persona already gets -- never a silent fallback -- and it is fixed for the life of
+        # the session (no mid-conversation switching; see `resume`'s `model_mismatch`
+        # rejection).
+        try:
+            resolved_model = processor.resolve_model(persona, requested_model_id)
         except ModelSelectionError as e:
             logger.warning("Rejected WebSocket for unknown/disallowed model: %s (%s)", requested_model_id, e)
             return web.Response(status=404, text=f"Unknown or disallowed model: {requested_model_id!r}")
 
+        # ── Dispatch (#75, Rick's PR #106 review item 5) ──
+        # `processor` owns everything from here on -- the WebSocket upgrade, session
+        # creation and the relay loop -- through its own `handle`. For every model
+        # selectable today that's `self` (`RTMiddleTier`, the realtime pipeline
+        # processor), so this call is a no-op indirection until #82/#81 register a second
+        # processor -- see `tests/test_processors.py::TestDispatchProcessor` for the proof
+        # that a fake cascade processor is reached here instead of `RTMiddleTier.handle`.
+        return await processor.handle(request, persona, resolved_model)
+
+    async def handle(self, request: web.Request, persona, resolved_model: ResolvedModel) -> web.StreamResponse:
+        """`processors.PipelineProcessor`'s other required method (#75, design doc section
+        7.4; Rick's PR #106 review item 5). Owns this connection's ENTIRE lifetime from
+        here on: the WebSocket upgrade, session creation, the relay/processing loop and
+        teardown. Reached only through `_websocket_handler`'s dispatch seam above, once
+        `dispatch_processor` has picked `self` for `resolved_model`'s own pipeline and
+        `resolve_model` has already validated it -- this is today's exact previous
+        `_websocket_handler` tail, moved here verbatim so it is reachable only through that
+        seam and never a fallback default."""
+        ws = web.WebSocketResponse(
+            heartbeat=_WS_HEARTBEAT_SEC,
+            autoping=True,
+            autoclose=True,
+            compress=_WS_COMPRESS,
+        )
         await ws.prepare(request)
-        
+
         self._sessions.create_session(
             ws, persona=persona, model_id=resolved_model.id,
             model_deployment=resolved_model.deployment, model_reasoning=resolved_model.reasoning,
+            model_pipeline=resolved_model.pipeline,
         )
 
         try:

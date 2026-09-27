@@ -43,6 +43,13 @@ class BrowserSocketTransportTests(unittest.IsolatedAsyncioTestCase):
             voice_choice="shimmer",
         )
         self.rtmt.system_message = "sys"
+        # #75/Rick's PR #106 review item 1: no default-path catalog bypass --
+        # the shipped default persona's own default model (gpt-realtime-2.1)
+        # must be catalogued or the WS upgrade 404s before it even reaches this
+        # test's frame-handling assertions. Same fix as `_RealtimeHarness`.
+        from model_catalog import ModelCatalog
+
+        self.rtmt.model_catalog = ModelCatalog.load(environ={})
         app = web.Application()
         self.rtmt.attach_to_app(app, "/realtime")
         self.client = TestClient(TestServer(app))
@@ -137,6 +144,13 @@ class BargeInFilterTests(unittest.IsolatedAsyncioTestCase):
             voice_choice="shimmer",
         )
         self.rtmt.system_message = "sys"
+        # #75/Rick's PR #106 review item 1: no default-path catalog bypass --
+        # the shipped default persona's own default model (gpt-realtime-2.1)
+        # must be catalogued or the WS upgrade 404s before it even reaches this
+        # test's frame-handling assertions. Same fix as `_RealtimeHarness`.
+        from model_catalog import ModelCatalog
+
+        self.rtmt.model_catalog = ModelCatalog.load(environ={})
         app = web.Application()
         self.rtmt.attach_to_app(app, "/realtime")
         self.client = TestClient(TestServer(app))

@@ -167,6 +167,23 @@ class _RealtimeHarness(unittest.IsolatedAsyncioTestCase):
         # Matches the shipped config.yaml default (never unset in a real
         # deployment) -- see input_audio_transcription server-ownership.
         self.rtmt.transcription_model = "whisper-1"
+        # #75/Rick's PR #106 review item 1: there is no more default-path catalog
+        # bypass -- every session's bound model (including the deployment-wide
+        # default persona's own default, whichever fixture/real persona a given
+        # test binds to) must be catalogued or `_websocket_handler` 404s before
+        # the WS upgrade. Load the REAL config.yaml catalog (so the shipped
+        # default persona's own default model, gpt-realtime-2.1, is always
+        # catalogued) with an explicitly EMPTY deployment map (`environ={}`,
+        # never the real process environment) so it's never actually deployed
+        # here either -- exercising the same deployment-fallback-to-`self.deployment`
+        # ("gpt-realtime-test") branch every pre-#75 test already assumed, with
+        # its `reasoning` flag now correctly sourced from the catalog (True for
+        # gpt-realtime-2.1) instead of the old reasoning=None default path. A
+        # test that needs a different/deployed catalog (e.g. ModelWebSocketHandlerTests)
+        # overrides this in its own asyncSetUp.
+        from model_catalog import ModelCatalog
+
+        self.rtmt.model_catalog = ModelCatalog.load(environ={})
         for name in TOOL_NAMES:
             self.rtmt.tools[name] = Tool(target=MagicMock(), schema={"type": "function", "name": name})
 

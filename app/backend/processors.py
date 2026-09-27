@@ -16,22 +16,37 @@ whether a model is usable for realtime -- `resolve_realtime_model` below always 
 catalog `pipeline` field against the *caller's own* `pipeline_name`, not a literal. A future
 `CascadeProcessor`/`LocalProcessor` (#82/#81) would implement the same `PipelineProcessor` shape
 and register alongside `RTMiddleTier` in a `ProcessorRegistry`.
+
+Rick's PR #106 review item 5: `dispatch_processor` below is the REAL processor seam. Once a
+persona and a requested model id are known, it (a) resolves which pipeline the model belongs to
+straight from the shared catalog -- never from which processor happens to be asking -- and
+(b) looks that pipeline's processor up in the registry, 404-ing (`ModelSelectionError`) if none is
+registered for it yet. `rtmt.py::_websocket_handler` calls this BEFORE calling `resolve_model`/
+`handle` on whatever it returns, so a cascade-pipeline model is routed to a (future, #82) cascade
+processor without `RTMiddleTier`/`handle` ever being entered -- see
+`tests/test_processors.py::TestDispatchProcessor` for the fake-cascade-processor proof.
 """
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from aiohttp import web
+
     from model_catalog import ModelCatalog
     from persona_loader import Persona
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "ModelSelectionError",
     "PipelineProcessor",
     "ProcessorRegistry",
     "ResolvedModel",
+    "dispatch_processor",
     "resolve_realtime_model",
 ]
 
@@ -51,17 +66,17 @@ class ResolvedModel:
     persona's allow-list and the shared catalog/deployment map -- design doc section 7.3:
     "Selectable = catalog ∩ deployment ∩ persona-allowed."
 
-    `reasoning` is `None` for the persona's own default realtime model (today's unchanged,
-    non-catalog-driven path -- the caller keeps using its existing name-heuristic/config-driven
-    reasoning decision); it is the catalog entry's own `reasoning` flag for any other,
-    explicitly-selected model, per the design doc's "reasoning sent only for catalog reasoning
-    models" (section 7.5).
+    Rick's PR #106 review item 1: `reasoning` is ALWAYS the catalog entry's own `reasoning`
+    flag -- for every model, including the persona's own pipeline default. There is no
+    default-path special case here any more; `reasoning=None` was exactly what Rick's review
+    rejected (the default silently falling back to a deployment-name heuristic instead of the
+    catalog). Design doc's "reasoning sent only for catalog reasoning models" (section 7.5).
     """
 
     id: str
     pipeline: str
     deployment: str
-    reasoning: bool | None
+    reasoning: bool
 
 
 @runtime_checkable
@@ -81,6 +96,17 @@ class PipelineProcessor(Protocol):
         """Validate *requested_model_id* (or the persona's own pipeline default, when `None`)
         for *persona* on this processor's own pipeline. Raises `ModelSelectionError` on an
         unknown, disallowed, cross-wired or undeployed model."""
+        ...
+
+    async def handle(self, request: web.Request, persona: Persona, resolved_model: ResolvedModel) -> web.StreamResponse:
+        """Rick's PR #106 review item 5: own this connection's ENTIRE lifetime from here on --
+        the WebSocket upgrade, session creation, the relay/processing loop, and teardown. Called
+        by `rtmt.py::_websocket_handler` only AFTER the shared origin/token/persona checks have
+        passed and `dispatch_processor` has picked THIS processor for *resolved_model*'s own
+        pipeline -- never called directly for a model whose pipeline doesn't match
+        `pipeline_name` (that's exactly what `dispatch_processor` prevents). `RTMiddleTier.handle`
+        is today's existing upgrade+relay path, moved here verbatim; a future `CascadeProcessor`
+        (#82) implements its own."""
         ...
 
 
@@ -116,39 +142,91 @@ def resolve_realtime_model(
 ) -> ResolvedModel:
     """Resolve a `/realtime?model=` request for `persona`'s realtime pipeline.
 
-    Algorithm (design doc sections 5.2, 7.3):
+    Algorithm (design doc sections 5.2, 7.3; Rick's PR #106 review item 1 -- no default-path
+    special case):
       1. Omitted `?model=` -> the persona's own `models.realtime.default`.
       2. The id must be in the persona's own `models.realtime.allowed` list -- persona-scoped,
          checked regardless of whether the id is even catalogued (a persona can allow a model
          this deployment doesn't stock yet; it just won't be selectable, below).
-      3. If the id equals the persona's default: resolve to *default_deployment*
-         (`AZURE_OPENAI_REALTIME_DEPLOYMENT`) unconditionally, `reasoning=None` (today's exact,
-         unchanged, non-catalog-driven path -- #75 acceptance: "keep behavior identical when no
-         model param is given"). This branch never touches `model_catalog`.
-      4. Otherwise: the id must be catalogued for *pipeline_name* (not, say, `cascade` -- the
-         processor-seam guard) AND have a deployment mapped in `AZURE_AI_MODEL_DEPLOYMENTS`.
-         Resolves to that deployment, `reasoning=<catalog entry's own reasoning flag>`.
+      3. EVERY id -- including the default -- must be catalogued for *pipeline_name* (not, say,
+         `cascade` -- the processor-seam guard). `reasoning` always comes from that catalog
+         entry; there is no id for which this is skipped.
+      4. The id's deployment comes from `AZURE_AI_MODEL_DEPLOYMENTS`. The ONLY back-compat
+         exception is on this term, and only for the persona's own default: if the map doesn't
+         cover it (yet), it falls back to *default_deployment*
+         (`AZURE_OPENAI_REALTIME_DEPLOYMENT`) so that omitting `?model=` keeps working on a
+         deployment that hasn't populated the map yet -- logged as a warning, since that's a
+         transitional, not a steady, state. Any OTHER id with no deployment mapped is rejected
+         outright (never a silent fallback for an explicitly-requested, non-default model).
 
     Raises `ModelSelectionError` (never returns a partial/best-effort result) if any check fails.
     """
     pipeline_cfg = persona.manifest.models.realtime
     model_id = requested_model_id if requested_model_id is not None else pipeline_cfg.default
+    is_default = model_id == pipeline_cfg.default
 
-    if model_id not in pipeline_cfg.allowed and model_id != pipeline_cfg.default:
+    if model_id not in pipeline_cfg.allowed and not is_default:
         raise ModelSelectionError(
             f"Model {model_id!r} is not allowed for persona {persona.id!r}'s {pipeline_name} pipeline "
             f"(allowed: {pipeline_cfg.allowed})"
         )
 
-    if model_id == pipeline_cfg.default:
-        return ResolvedModel(id=model_id, pipeline=pipeline_name, deployment=default_deployment, reasoning=None)
-
-    if not model_catalog.is_selectable(model_id, pipeline_name):
+    if not model_catalog.is_catalogued_for(model_id, pipeline_name):
         raise ModelSelectionError(
-            f"Model {model_id!r} is not selectable for the {pipeline_name} pipeline (not catalogued "
-            f"for it, or has no deployment mapped in AZURE_AI_MODEL_DEPLOYMENTS)"
+            f"Model {model_id!r} is not in config.yaml's models.catalog for the {pipeline_name} pipeline"
         )
     entry = model_catalog.get(model_id)
+
     deployment = model_catalog.deployment_for(model_id)
-    assert deployment is not None  # guaranteed by is_selectable() above
+    if deployment is None:
+        if not is_default:
+            raise ModelSelectionError(
+                f"Model {model_id!r} is catalogued for the {pipeline_name} pipeline but has no "
+                f"deployment mapped in AZURE_AI_MODEL_DEPLOYMENTS"
+            )
+        logger.warning(
+            "Model %r (persona %r's %s default) has no AZURE_AI_MODEL_DEPLOYMENTS entry -- "
+            "falling back to AZURE_OPENAI_REALTIME_DEPLOYMENT (%r). Populate the deployment map "
+            "to remove this warning.",
+            model_id, persona.id, pipeline_name, default_deployment,
+        )
+        deployment = default_deployment
+
     return ResolvedModel(id=model_id, pipeline=pipeline_name, deployment=deployment, reasoning=entry.reasoning)
+
+
+def dispatch_processor(
+    persona: Persona,
+    requested_model_id: str | None,
+    model_catalog: ModelCatalog,
+    registry: ProcessorRegistry,
+) -> PipelineProcessor:
+    """Rick's PR #106 review item 5: the REAL processor seam. Determines which pipeline
+    *requested_model_id* (or, when omitted, `persona`'s own realtime default -- design doc 5.2:
+    an omitted `?model=` always means the realtime pipeline, not "whichever pipeline the last
+    request happened to use") belongs to, straight from the shared catalog, and returns that
+    pipeline's registered processor -- never the caller's own processor by default. This is what
+    makes `rtmt.py::_websocket_handler` route a cascade model to a (future, #82) cascade
+    processor without `RTMiddleTier.handle` ever being entered, even though the handler itself is
+    a method on `RTMiddleTier`: the routing decision is made HERE, before any processor-specific
+    code runs, not by asking `self` to resolve its own model.
+
+    Raises `ModelSelectionError` (turned into the same plain 404 as any other unknown/disallowed
+    model by the caller) when:
+      * the id isn't catalogued at all (unknown model), or
+      * its pipeline has no processor registered yet (e.g. cascade/local before #82/#81 land --
+        this is how an unimplemented pipeline still correctly 404s today instead of crashing).
+    """
+    model_id = requested_model_id if requested_model_id is not None else persona.manifest.models.realtime.default
+    try:
+        pipeline_name = model_catalog.get(model_id).pipeline
+    except KeyError as exc:
+        raise ModelSelectionError(f"Model {model_id!r} is not in config.yaml's models.catalog") from exc
+
+    processor = registry.get(pipeline_name)
+    if processor is None:
+        raise ModelSelectionError(
+            f"Model {model_id!r} belongs to the {pipeline_name!r} pipeline, which has no "
+            f"processor registered yet"
+        )
+    return processor

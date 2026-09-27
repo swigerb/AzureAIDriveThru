@@ -21,17 +21,30 @@ config and (per the squad's split) a different owner:
 Design doc section 7.3: "Selectable = catalog ∩ deployment ∩ persona-allowed." This module owns
 the first two terms of that intersection; `processors.py` combines all three.
 
-The realtime pipeline's own *default* model (a persona's `models.realtime.default`) is the one
-deliberate exception to all of the above: it always resolves to `AZURE_OPENAI_REALTIME_DEPLOYMENT`
-(today's single, pre-#75 deployment env var), whether or not `AZURE_AI_MODEL_DEPLOYMENTS` maps it
--- so that omitting `?model=` on `/realtime` is byte-for-byte unchanged behavior (#75 acceptance).
-That back-compat rule lives in `processors.py`, not here: this module only knows about the catalog
-and the deployment map, nothing about a persona's own default.
+Rick's PR #106 review item 1: there is NO default-path special case. Every model a persona can
+bind to -- including its own pipeline default -- resolves through the catalog exactly like any
+other requested id: it must be catalogued for the right pipeline (`is_catalogued_for`), and its
+`reasoning`/`toolCalling`/`runtime` capabilities always come from that catalog entry, never from
+a deployment-name heuristic. The ONLY back-compat carve-out is on the *deployment* term, and only
+for the realtime pipeline's default: if `AZURE_AI_MODEL_DEPLOYMENTS` doesn't map it yet, it falls
+back to `AZURE_OPENAI_REALTIME_DEPLOYMENT` (today's single, pre-#75 deployment env var) so that
+omitting `?model=` on `/realtime` keeps working on a deployment that hasn't populated the map yet
+-- with a logged warning, since that's a transitional, not a steady, state. That fallback rule
+lives in `processors.py::resolve_realtime_model`, not here: this module only knows about the
+catalog and the deployment map, nothing about a persona's own default.
+
+Startup fail-fast (Rick's PR #106 review item 1, second half): `validate_persona_defaults` checks
+every enabled persona's own pipeline defaults are catalogued for the right pipeline -- an enabled
+persona whose default model isn't in the catalog must stop the app from starting, the same
+fail-fast style as a malformed catalog entry itself, never a confusing 404 on the first
+`?model=`-omitted request. A non-default `allowed` id that isn't catalogued only logs a warning:
+it only 404s if a guest actually asks for it (see `processors.py::resolve_realtime_model`).
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass
 from typing import Any
@@ -39,6 +52,8 @@ from typing import Any
 from config_loader import get_config
 
 __all__ = ["ModelCatalog", "ModelEntry", "ModelValidationError"]
+
+logger = logging.getLogger(__name__)
 
 _PIPELINES = frozenset({"realtime", "cascade", "local"})
 _REQUIRED_ENTRY_FIELDS = frozenset({"id", "pipeline", "label"})
@@ -169,13 +184,57 @@ class ModelCatalog:
     def is_deployed(self, model_id: str) -> bool:
         return self.deployment_for(model_id) is not None
 
-    def is_selectable(self, model_id: str, pipeline: str) -> bool:
-        """True iff *model_id* is catalogued, catalogued for exactly *pipeline* (the
-        processor-seam guard -- #75's "processor seam bypassed" mutation check), and has a
-        deployment mapped (design doc section 7.3's catalog ∩ deployment). Persona-allowed is
-        the caller's own job (persona-scoped, not catalog-scoped)."""
+    def is_catalogued_for(self, model_id: str, pipeline: str) -> bool:
+        """True iff *model_id* is catalogued at all AND catalogued for exactly *pipeline* (the
+        processor-seam guard -- #75's "processor seam bypassed" mutation check). Deliberately
+        does NOT check deployment -- see `is_selectable` for the full catalog ∩ deployment
+        check, and `processors.py::resolve_realtime_model` for why the two need to be checked
+        independently (the realtime default's deployment-fallback branch)."""
         entry = self._entries.get(model_id)
-        return entry is not None and entry.pipeline == pipeline and self.is_deployed(model_id)
+        return entry is not None and entry.pipeline == pipeline
+
+    def is_selectable(self, model_id: str, pipeline: str) -> bool:
+        """True iff *model_id* is catalogued for exactly *pipeline* (`is_catalogued_for`) AND has
+        a deployment mapped (design doc section 7.3's catalog ∩ deployment). Persona-allowed is
+        the caller's own job (persona-scoped, not catalog-scoped). Rick's PR #106 review item 1:
+        no default-path exception here -- a pipeline default that only reaches its deployment via
+        the `AZURE_OPENAI_REALTIME_DEPLOYMENT` back-compat fallback is still NOT selectable by
+        this definition, so `/api/personas`'s picker (item 3) never offers a model that would
+        404 if a guest explicitly asked for it by id."""
+        return self.is_catalogued_for(model_id, pipeline) and self.is_deployed(model_id)
+
+    def validate_persona_defaults(self, persona_catalog: Any) -> None:
+        """Rick's PR #106 review item 1: startup fails if any enabled persona's own pipeline
+        default model isn't in the catalog for that pipeline -- an unusable default should stop
+        startup, not surface as a confusing 404 on the first `?model=`-omitted request. Only the
+        DEFAULT is fail-fast; a non-default `allowed` id that isn't catalogued only logs a
+        warning here, since it only 404s if a guest actually asks for it by id (see
+        `processors.py::resolve_realtime_model`). *persona_catalog* is a `persona_loader.
+        PersonaCatalog` (typed loosely here to avoid a module import cycle -- persona_loader.py
+        has no reason to import this module, and this module has no reason to import it either,
+        so this keeps both directions import-free)."""
+        for persona_id in persona_catalog.ids:
+            persona = persona_catalog.get(persona_id)
+            for pipeline_name in ("realtime", "cascade", "local"):
+                pipeline_cfg = getattr(persona.manifest.models, pipeline_name, None)
+                if pipeline_cfg is None:
+                    continue
+                if not self.is_catalogued_for(pipeline_cfg.default, pipeline_name):
+                    raise ModelValidationError(
+                        f"Persona {persona_id!r}'s {pipeline_name} default model "
+                        f"{pipeline_cfg.default!r} is not in config.yaml's models.catalog for "
+                        f"pipeline {pipeline_name!r}. Known models: {', '.join(self.ids) or '(none)'}"
+                    )
+                for allowed_id in pipeline_cfg.allowed:
+                    if allowed_id == pipeline_cfg.default:
+                        continue
+                    if not self.is_catalogued_for(allowed_id, pipeline_name):
+                        logger.warning(
+                            "Persona %r's %s allowed model %r is not in config.yaml's "
+                            "models.catalog for pipeline %r -- it will 404 if a guest ever "
+                            "requests it explicitly by id.",
+                            persona_id, pipeline_name, allowed_id, pipeline_name,
+                        )
 
     @classmethod
     def load(cls, *, config: dict[str, Any] | None = None, environ: os._Environ[str] | dict[str, str] | None = None) -> ModelCatalog:

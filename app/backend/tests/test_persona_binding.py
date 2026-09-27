@@ -442,9 +442,16 @@ class ApiPersonasResponseShapeTests(unittest.TestCase):
             _persona_summary_body,
             _personas_index_body,
         )
+        from model_catalog import ModelCatalog
+
         self.catalog = _load_fixture_catalog()
+        # Rick's PR #106 review item 3: `_persona_detail_body` now requires a `model_catalog`
+        # (no more unfiltered "today's shape" fallback) -- an empty one is enough here since
+        # these tests only assert `models.<pipeline>.default`, never the narrowed `allowed`
+        # list, which needs no catalogued entries to correctly resolve to `[]`.
+        self._model_catalog = ModelCatalog(entries={}, deployments={})
         self._index_body = _personas_index_body
-        self._detail_body = _persona_detail_body
+        self._detail_body = lambda persona: _persona_detail_body(persona, self._model_catalog)
         self._summary_body = _persona_summary_body
 
     def test_personas_index_lists_default_and_both_personas(self):
@@ -611,6 +618,7 @@ class PersonaAssetAndMenuRouteTests(unittest.IsolatedAsyncioTestCase):
         from aiohttp.test_utils import TestClient, TestServer
 
         from app import register_persona_routes
+        from model_catalog import ModelCatalog
 
         # Only test-alpha enabled: test-beta's pack exists on disk (FIXTURES_DIR) but is a
         # "disabled pack" for this catalog -- its routes must 404 exactly like an unknown
@@ -619,7 +627,12 @@ class PersonaAssetAndMenuRouteTests(unittest.IsolatedAsyncioTestCase):
             personas_dir=FIXTURES_DIR, enabled=["test-alpha"], default_persona_id="test-alpha",
         )
         app = web.Application()
-        register_persona_routes(app, self.catalog)
+        # #75, Rick's PR #106 review item 3: register_persona_routes now requires a
+        # ModelCatalog (its `/api/personas/{id}` `models` block always narrows to what's
+        # selectable). This suite only exercises the asset/menu routes, not model listing,
+        # so an empty-but-valid catalog is enough -- same safe-default pattern as
+        # `RTMiddleTier.__init__`'s own `ModelCatalog(entries={}, deployments={})`.
+        register_persona_routes(app, self.catalog, ModelCatalog(entries={}, deployments={}))
         self.client = TestClient(TestServer(app))
         await self.client.start_server()
 

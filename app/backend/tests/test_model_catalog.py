@@ -1,8 +1,10 @@
-"""Model catalog loader tests for the drive-thru voice ordering backend (issue #75, P2-6).
+"""Model catalog loader tests for the drive-thru voice ordering backend (issue #75, P2-6;
+revised per Rick's PR #106 review).
 
 Covers:
   - A valid `models.catalog` config + `AZURE_AI_MODEL_DEPLOYMENTS` env var loads cleanly and
-    `.ids`/`.get()`/`__contains__`/`deployment_for()`/`is_deployed()`/`is_selectable()` all behave.
+    `.ids`/`.get()`/`__contains__`/`deployment_for()`/`is_deployed()`/`is_catalogued_for()`/
+    `is_selectable()` all behave.
   - `ModelValidationError` on: non-list catalog, non-mapping entry, missing required field, unknown
     field, unknown pipeline value, wrong-typed `reasoning`/`toolCalling`/`runtime`, duplicate id,
     malformed `AZURE_AI_MODEL_DEPLOYMENTS` JSON, non-object `AZURE_AI_MODEL_DEPLOYMENTS`,
@@ -10,9 +12,14 @@ Covers:
   - An absent `models`/`models.catalog` section, or an unset/empty `AZURE_AI_MODEL_DEPLOYMENTS`,
     loads an empty-but-valid catalog rather than failing (both are optional layers until a persona
     or `?model=` actually needs them).
+  - Rick's PR #106 review item 1 (startup fail-fast): `validate_persona_defaults` raises when an
+    enabled persona's own pipeline default isn't catalogued for that pipeline, only warns for a
+    non-default `allowed` id, and passes silently when every default is catalogued correctly.
 """
 
+import logging
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
@@ -81,6 +88,19 @@ class TestValidLoad:
         assert catalog.is_selectable("gpt-realtime-2.1", "realtime") is False
         # Not catalogued at all.
         assert catalog.is_selectable("nope", "realtime") is False
+
+    def test_is_catalogued_for_ignores_deployment(self):
+        """Rick's PR #106 review item 1: `is_catalogued_for` is the catalog-only half of
+        `is_selectable` -- it must say True for a catalogued model even with NO deployment
+        mapped at all, since `resolve_realtime_model` needs that distinction for the realtime
+        default's deployment-fallback branch."""
+        catalog = ModelCatalog.load(config=_VALID_CATALOG_CFG, environ={})
+        assert catalog.is_catalogued_for("gpt-realtime-2.1", "realtime") is True
+        # Catalogued, but for a DIFFERENT pipeline -- the processor-seam guard.
+        assert catalog.is_catalogued_for("gpt-5-mini", "realtime") is False
+        assert catalog.is_catalogued_for("gpt-5-mini", "cascade") is True
+        # Not catalogued at all.
+        assert catalog.is_catalogued_for("nope", "realtime") is False
 
 
 class TestOptionalSections:
@@ -199,3 +219,108 @@ class TestRealConfigYaml:
         assert catalog.get("gpt-realtime-2.1").pipeline == "realtime"
         assert catalog.get("gpt-realtime-2.1").reasoning is True
         assert catalog.get("gpt-realtime-mini").reasoning is False
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# validate_persona_defaults -- Rick's PR #106 review item 1 (startup fail-fast)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@dataclass
+class _FakePipelineCfg:
+    default: str
+    allowed: list = field(default_factory=list)
+
+
+@dataclass
+class _FakeModels:
+    realtime: _FakePipelineCfg | None = None
+    cascade: _FakePipelineCfg | None = None
+    local: _FakePipelineCfg | None = None
+
+
+@dataclass
+class _FakeManifest:
+    models: _FakeModels
+
+
+@dataclass
+class _FakePersona:
+    id: str
+    manifest: _FakeManifest
+
+
+class _FakePersonaCatalog:
+    """A minimal stand-in for `persona_loader.PersonaCatalog`, exposing only the `.ids`/`.get()`
+    shape `validate_persona_defaults` actually uses -- avoids pulling in the full persona
+    loader/fixture machinery just to test the catalog-side validation in isolation."""
+
+    def __init__(self, personas: list[_FakePersona]):
+        self._by_id = {p.id: p for p in personas}
+
+    @property
+    def ids(self) -> list[str]:
+        return list(self._by_id)
+
+    def get(self, persona_id: str) -> _FakePersona:
+        return self._by_id[persona_id]
+
+
+class TestValidatePersonaDefaults:
+    def test_passes_silently_when_every_default_is_catalogued(self):
+        catalog = ModelCatalog.load(config=_VALID_CATALOG_CFG, environ={})
+        personas = _FakePersonaCatalog([
+            _FakePersona(id="alpha", manifest=_FakeManifest(models=_FakeModels(
+                realtime=_FakePipelineCfg(default="gpt-realtime-2.1", allowed=["gpt-realtime-2.1", "gpt-realtime-mini"])
+            ))),
+        ])
+        catalog.validate_persona_defaults(personas)  # must not raise
+
+    def test_raises_when_a_personas_default_is_not_catalogued(self):
+        """THE mutation check Rick asked for at startup: an enabled persona's own default
+        model must be catalogued, or the app must refuse to start rather than let it 404 on
+        the first request."""
+        catalog = ModelCatalog.load(config=_VALID_CATALOG_CFG, environ={})
+        personas = _FakePersonaCatalog([
+            _FakePersona(id="alpha", manifest=_FakeManifest(models=_FakeModels(
+                realtime=_FakePipelineCfg(default="not-catalogued-at-all", allowed=["not-catalogued-at-all"])
+            ))),
+        ])
+        with pytest.raises(ModelValidationError, match="alpha.*realtime default model"):
+            catalog.validate_persona_defaults(personas)
+
+    def test_raises_when_a_personas_default_is_catalogued_for_the_wrong_pipeline(self):
+        """The processor-seam guard applies to startup validation too: a realtime default that
+        is only catalogued as a `cascade` model must still fail fast."""
+        catalog = ModelCatalog.load(config=_VALID_CATALOG_CFG, environ={})
+        personas = _FakePersonaCatalog([
+            _FakePersona(id="alpha", manifest=_FakeManifest(models=_FakeModels(
+                realtime=_FakePipelineCfg(default="gpt-5-mini", allowed=["gpt-5-mini"])
+            ))),
+        ])
+        with pytest.raises(ModelValidationError, match="realtime default model"):
+            catalog.validate_persona_defaults(personas)
+
+    def test_only_warns_for_a_non_default_uncatalogued_allowed_id(self, caplog):
+        catalog = ModelCatalog.load(config=_VALID_CATALOG_CFG, environ={})
+        personas = _FakePersonaCatalog([
+            _FakePersona(id="alpha", manifest=_FakeManifest(models=_FakeModels(
+                realtime=_FakePipelineCfg(default="gpt-realtime-2.1", allowed=["gpt-realtime-2.1", "not-catalogued-at-all"])
+            ))),
+        ])
+        with caplog.at_level(logging.WARNING, logger="model_catalog"):
+            catalog.validate_persona_defaults(personas)  # must not raise
+        assert any("not-catalogued-at-all" in record.getMessage() for record in caplog.records)
+
+    def test_skips_pipelines_the_persona_does_not_use(self):
+        """A persona with only a `realtime` block (no `cascade`/`local`) must not be penalized
+        for pipelines it never declares."""
+        catalog = ModelCatalog.load(config=_VALID_CATALOG_CFG, environ={})
+        personas = _FakePersonaCatalog([
+            _FakePersona(id="alpha", manifest=_FakeManifest(models=_FakeModels(
+                realtime=_FakePipelineCfg(default="gpt-realtime-2.1", allowed=["gpt-realtime-2.1"]),
+                cascade=None,
+                local=None,
+            ))),
+        ])
+        catalog.validate_persona_defaults(personas)  # must not raise
+

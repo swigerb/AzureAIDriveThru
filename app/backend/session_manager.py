@@ -318,7 +318,8 @@ class SessionManager:
         self._last_activity[session_id] = self._clock()
 
     def create_session(self, ws: web.WebSocketResponse, persona=None, model_id: str | None = None,
-                        model_deployment: str | None = None, model_reasoning: bool | None = None) -> str:
+                        model_deployment: str | None = None, model_reasoning: bool | None = None,
+                        model_pipeline: str | None = None) -> str:
         """Create a new order session and map it to the WebSocket connection.
 
         *persona* (#74, optional): the persona this session is bound to for its entire
@@ -327,14 +328,17 @@ class SessionManager:
         default persona (mandatory catalog, #74/Rick's PR #102 review item 2 -- there is
         no more unbound-session state).
 
-        *model_id*/*model_deployment*/*model_reasoning* (#75, optional): this session's
-        own bound realtime model -- resolved once, by the caller (``rtmt.py::
-        _websocket_handler``, via ``RTMiddleTier.resolve_model()``), BEFORE the socket is
-        even prepared, exactly like *persona* above (no mid-conversation model switching
-        either). Omitted: binds to *persona*'s own ``models.realtime.default`` (see
-        ``order_state.OrderState.create_session``) -- today's exact, unchanged path."""
+        *model_id*/*model_deployment*/*model_reasoning*/*model_pipeline* (#75, optional):
+        this session's own bound realtime model -- resolved once, by the caller
+        (``rtmt.py::_websocket_handler``, via ``processors.dispatch_processor`` + the
+        returned processor's own ``resolve_model()``), BEFORE the socket is even prepared,
+        exactly like *persona* above (no mid-conversation model switching either). Omitted:
+        binds to *persona*'s own ``models.realtime.default`` (see
+        ``order_state.OrderState.create_session``) -- today's exact, unchanged path.
+        *model_pipeline* (Rick's PR #106 review item 3) omitted defaults to ``"realtime"``."""
         session_id = order_state_singleton.create_session(
-            persona=persona, model_id=model_id, model_deployment=model_deployment, model_reasoning=model_reasoning
+            persona=persona, model_id=model_id, model_deployment=model_deployment,
+            model_reasoning=model_reasoning, model_pipeline=model_pipeline,
         )
         self._session_map[ws] = session_id
         self._attached[session_id] = ws
@@ -577,7 +581,18 @@ class SessionManager:
             )
             return ResumeOutcome(False, reason="persona_mismatch")
 
-        effective_requested_model_id = requested_model_id or default_persona.get_default_persona().manifest.models.realtime.default
+        # #75 bug fix (this revision, PR #106 review): an omitted `?model=` on resume means
+        # "this SESSION's own bound persona's default model", not the deployment-wide default
+        # persona's default -- using the latter here incorrectly compared against the WRONG
+        # persona's default for any session bound to a non-default persona whose own default
+        # model id differs from the deployment default persona's, silently misfiring
+        # model_mismatch (or, worse, wrongly matching) depending on which ids happened to
+        # collide. Reads the session's OWN bound persona's default straight off what
+        # `create_session` already captured from the concrete `Persona` object at creation
+        # time -- no catalog lookup of any kind, since there is no reliable persona catalog to
+        # reach for here (a session may be bound via a persona from a catalog this module has
+        # no other handle on, e.g. a caller's own fixture/test catalog).
+        effective_requested_model_id = requested_model_id or order_state_singleton.get_persona_default_model_id(session_id)
         bound_model_id = order_state_singleton.get_model_id(session_id)
         if bound_model_id != effective_requested_model_id:
             logger.info(
@@ -680,6 +695,10 @@ class SessionManager:
                 # so the browser's F11 debug panel (and any future model picker, #80) can
                 # show what's actually live for THIS session without a second round trip.
                 "model": identifiers.model_id,
+                # Rick's PR #106 review item 3: which pipeline `model` belongs to -- so
+                # Morty's model picker (F10) can group/label models by pipeline without a
+                # second round trip to `/api/personas`, exactly like `model` above.
+                "pipeline": identifiers.pipeline,
                 **(extra or {}),
             }
         )
