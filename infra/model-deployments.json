@@ -1,0 +1,22 @@
+[
+  {
+    "catalogId": "gpt-realtime-2.1",
+    "deploymentName": "gpt-realtime-2.1",
+    "modelName": "gpt-realtime-2.1",
+    "modelVersion": "2026-07-07",
+    "format": "OpenAI",
+    "skuName": "GlobalStandard",
+    "capacity": 10,
+    "isDefaultRealtime": true
+  },
+  {
+    "catalogId": "text-embedding-3-large",
+    "deploymentName": "text-embedding-3-large",
+    "modelName": "text-embedding-3-large",
+    "modelVersion": "1",
+    "format": "OpenAI",
+    "skuName": "Standard",
+    "capacity": 30,
+    "isDefaultRealtime": false
+  }
+]

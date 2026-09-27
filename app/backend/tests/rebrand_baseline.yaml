@@ -142,14 +142,6 @@ entries:
     docstring examples still default/hardcode to the single Sonic persona pending
     #74''s session-scoped persona binding.'
   increase_reason: ''
-- file: app/backend/setup_search_index.py
-  brand: sonic
-  max: 4
-  issue: '#74'
-  reason: 'Backend config/persona/prompt loader defaults, logger names and illustrative
-    docstring examples still default/hardcode to the single Sonic persona pending
-    #74''s session-scoped persona binding.'
-  increase_reason: ''
 - file: app/backend/tests/test_combo_orders.py
   brand: sonic
   max: 31
