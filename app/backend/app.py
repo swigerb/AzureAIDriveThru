@@ -13,6 +13,7 @@ from azure.identity.aio import DefaultAzureCredential as AsyncDefaultAzureCreden
 from azure.search.documents.aio import SearchClient
 from dotenv import load_dotenv
 
+import conformance_hooks
 import default_persona
 from cascade_processor import CascadeProcessor
 from config_loader import get_config
@@ -678,8 +679,12 @@ async def create_app() -> web.Application:
     # chat model client uses DefaultAzureCredential only (design doc 7.4 / issue #82) --
     # never an API key -- via a dedicated async credential (the SDK's async
     # `ChatCompletionsClient` needs an async `get_token`, unlike the sync `credential`
-    # above used for the realtime/search clients).
-    cascade_credential = AsyncDefaultAzureCredential()
+    # above used for the realtime/search clients). conformance_hooks.cascade_credential()
+    # substitutes a fake, static-token credential only when CONFORMANCE_TEST_HOOKS=1 AND
+    # CONFORMANCE_CASCADE_FAKE_TOKEN are both set (the conformance harness's own child
+    # process); every other process (real deployments, `python -m pytest`, a developer's
+    # local run) gets exactly today's real DefaultAzureCredential, unchanged.
+    cascade_credential = conformance_hooks.cascade_credential() or AsyncDefaultAzureCredential()
     cascade_processor = CascadeProcessor(
         tools=rtmt.tools,
         sessions=rtmt._sessions,
