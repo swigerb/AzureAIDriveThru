@@ -427,3 +427,80 @@ Fixed `useAzureSpeech.tsx`: (1) `onReceivedToolResponse` parameter was declared 
   leaving a hole — by design, not a bug, even though it reads oddly in a minimal test fixture
   (`test-alpha`'s ticket heading still says "Your Sonic Order" since its fixture only overrides
   `app.title`).
+
+## 2026-09-28 — Issue #117: neutral shared CSS defaults; Sonic's palette moves into its pack
+
+- **Scope:** `index.css`'s `:root`/`.dark` brand tokens (base roles, 15-key accent set, shadcn
+  `--surface-*` slot indirections) were Sonic's actual palette hard-coded as the *shared default*
+  — every persona without a full theme silently inherited Sonic's pink/blue/yellow. Moved that
+  entire light+dark palette into `personas/sonic/persona.json`'s `theme` block and replaced the
+  CSS defaults with a neutral gray scale + a single neutral accent, so a persona pack with no
+  theme now falls back to genuinely brand-neutral chrome instead of Sonic's colors.
+- **Schema/loader sync:** `persona.schema.json` already had `accents`; added a `surface`
+  sub-schema (`$defs/themeSurface`, 11 light-mode / 7 dark-mode shadcn slot keys — card, popover,
+  border, input, ring, chart accents, sidebar family) since the UI's CSS needed those tokens
+  overridable per-persona too, not just the named roles/accents. Updated both loaders in lockstep:
+  Python `_ThemeSurface` model in `app/backend/persona_loader.py`, C# `PersonaThemeSurface` record
+  in `PersonaModels.cs`. Frontend `personaTheme.ts` rewritten to plumb `surface` through the same
+  path as `accents`; deleted the old `SONIC_THEME` frontend constant entirely (Sonic's palette now
+  lives in exactly one place: its own persona.json).
+- **Guard tests:** kept the pre-existing color-literal guard (#91, `brandColorTokens.test.ts`)
+  green — it wasn't checking *whose* palette the defaults were, just that literals aren't
+  hardcoded outside token definitions, so it needed no logic change, just a stale comment fix.
+  Added a new guard, `brandDefaultTokens.test.ts` (43 cases), that asserts none of Sonic's actual
+  theme values (read from `personas/sonic/persona.json` at test time, not duplicated by hand) ever
+  reappear in `index.css`'s shared defaults — this is the test that would have caught the original
+  #117 bug and will catch any future "I'll just default it to my brand's color" regression.
+- **Rebrand-baseline / brand-word-count trap:** the new guard test's *file itself* legitimately
+  quotes Sonic's old hex values for comparison purposes, which trips the `\bsonic\b` word-count
+  scanner from #91/#101 as a brand-new file with no baseline. `regenerate_rebrand_baseline.py`
+  refuses to add anything net-new without `--allow-increase` (forbidden here) — the only compliant
+  options are "get the file's count to 0" or "add it to `BRAND_EXCLUDED_FILES`". Chose the latter,
+  following the precedent of two existing Python fixture/test files already excluded there for the
+  identical "test data referencing the brand, not real branding" reason. Also discovered (the hard
+  way, via `test_persona_loader.py` gaining 4 net "sonic" word-hits from a necessarily-renamed
+  test) that `\bsonic\b`'s word-boundary treats `_` as a word char in both Python's `re` and
+  .NET's regex — so `test_sonic_theme_...` (Python identifier) does *not* count, only bare/quoted
+  "sonic"/"Sonic" prose does. Trimmed decorative mentions in docstrings/comments until the file's
+  count matched its existing baseline exactly, avoiding a baseline change altogether for that file.
+  Net baseline diff after regen (no `--allow-increase`): `index.css` max lowered 8→2 (the 2
+  remaining are non-brand-value comments), `personaTheme.ts` entry removed (1→0, `SONIC_THEME` is
+  gone). No file's count rose.
+- **Conformance harness venv hardcoding:** the Browser-category conformance suite
+  (`PythonBackendLauncher.cs`) expects a real venv at exactly `<repoRoot>\.venv` — not configurable
+  — to spawn the backend for the real-Edge tests. My working Python venv was `.venv-p2-117`
+  (named to avoid confusion with the worktree's actual `.venv` semantics elsewhere); had to also
+  create a proper `.venv` at the worktree root (confirmed gitignored, not just `.venv-p2-117`)
+  with the same deps to get `dotnet test Conformance.slnx --filter "Category=Browser"` to launch
+  the backend at all. Learned Edge, not Chrome, is the available real browser on this box;
+  `BrowserChannelPolicy` auto-detects that at runtime and needed no changes.
+- **Screenshot verification (issue's explicit ask: Sonic must be pixel-identical):** captured
+  before (temp worktree pinned to pre-#117 `origin/dev`) and after (this branch) screenshots for
+  Sonic light/dark, the loading shell light/dark, and `test-alpha`/`test-beta` fixture personas
+  light/dark (16 PNGs total). First diff attempt showed a spuriously huge delta (94% of pixels,
+  max channel delta 245) — root-caused to two independent test-harness bugs, not real regressions:
+  (1) the browser window/viewport size drifted between capture sessions, reflowing the responsive
+  layout at a different scale even though the *colors* were identical; (2) `localStorage` is
+  per-origin, and setting `isDarkMode` *before* `page.goto()` to a fresh port silently wrote to the
+  *previous* page's origin, not the target one, so a captured "light" shot was actually showing
+  whatever dark/light state that origin's storage last held from an earlier capture in the same
+  session. Fixed by pinning an explicit shared viewport (`setViewportSize`) across both
+  before/after captures and always setting `localStorage` *after* `goto()` (then reloading) so it
+  lands on the correct origin. Re-diffed (PIL `ImageChops.difference` + numpy) with that fix:
+  Sonic light and Sonic dark both came back **byte-for-byte identical — max channel delta 0, 0%
+  of pixels above the AA-noise threshold, mean delta 0.0** across the full 1385×1469 page — the
+  strongest possible confirmation the palette move didn't change Sonic's rendered output at all.
+  Loading shell and `test-alpha`/`test-beta` screenshots, as expected/intended by the issue, show
+  a real visual change (pale Sonic-blue-tinted backgrounds → neutral white/gray) since those never
+  had a persona-specific theme to fall back to and previously borrowed Sonic's defaults by
+  accident. All 16 screenshots saved under the session's `ux/p2-117/` folder as requested.
+- **Validation, all green:** `npm test` 276/276, `npm run build` clean, `pytest app/backend/tests
+  -q` 1148 passed/168 subtests (repo-root `python -m pytest -q` matches), `ruff check .` clean,
+  `dotnet test tests\Backend.Tests\Backend.Tests.csproj` 82/82, conformance suite
+  `--filter "Category=Browser"` 5/5 (real Edge) and `--filter "Category!=Browser"` 662/662.
+- **Cleanup:** stopped all scratch backends by PID, removed the temp before-screenshot worktree
+  (`git worktree remove --force`, it had its own build artifacts) plus `git worktree prune`, left
+  no scratch files inside the repo tree or the shared screenshot cwd (relative-path Playwright
+  screenshots land in a shared cross-session folder outside the sandbox's normal write roots —
+  copied to the real target dir and deleted the scratch copies immediately each time, a pattern
+  worth remembering for any future screenshot-based verification task).

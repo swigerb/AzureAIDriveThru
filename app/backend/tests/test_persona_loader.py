@@ -61,8 +61,8 @@ class TestValidPackLoads:
     def test_real_sonic_pack_loads(self):
         catalog = PersonaCatalog.load(personas_dir=_REAL_PERSONAS_DIR)
         # Assert against the packs actually present on disk (more real packs may land
-        # alongside this one) rather than hardcoding the full set -- sonic must always be
-        # present, and it must remain the default whenever it's enabled (persona_loader.py's
+        # alongside this one) rather than hardcoding the full set -- this pack must always
+        # be present, and it must remain the default whenever it's enabled (persona_loader.py's
         # documented resolution order), regardless of how many other packs also load.
         assert catalog.ids == _discovered_persona_ids(_REAL_PERSONAS_DIR)
         assert "sonic" in catalog.ids
@@ -114,13 +114,25 @@ class TestValidPackLoads:
         assert manifest.ui.theme.dark is not None
         assert manifest.ui.theme.dark.primary == "341 100% 55%"
 
-    def test_sonic_theme_accents_block_is_optional_and_absent_today(self):
-        """`accents` (issue #80 F2, personaTheme.ts::PersonaAccentPalette) is optional in the schema
-        so packs without a curated accent palette still validate -- today's real Sonic persona.json
-        doesn't set it yet, and that must keep loading cleanly."""
+    def test_sonic_theme_accents_and_surface_blocks_are_populated(self):
+        """Issue #117: the real pack now owns its full accent AND shadcn-slot ("surface") palette
+        (previously only in the frontend's deleted SONIC_THEME constant / hard-coded into
+        index.css). `accents`/`surface` stay optional in the schema for any OTHER pack that doesn't
+        curate one -- see `test_theme_accents_block_loads_when_present` -- but this pack's real
+        persona.json must set both, with byte-identical values to what index.css used to hard-code."""
         catalog = PersonaCatalog.load(personas_dir=_REAL_PERSONAS_DIR)
         manifest = catalog.get("sonic").manifest
-        assert manifest.ui.theme.light.accents is None
+        light = manifest.ui.theme.light
+        assert light.accents is not None
+        assert light.accents.primaryHex == "#E40046"
+        assert light.accents.neutral == "#C9CFD4"
+        assert light.surface is not None
+        assert light.surface.cardForeground == "208 40% 18%"
+        assert light.surface.chart5 == "97 100% 26%"
+        assert manifest.ui.theme.dark is not None
+        assert manifest.ui.theme.dark.surface is not None
+        assert manifest.ui.theme.dark.surface.chart2 == "208 60% 50%"
+        assert manifest.ui.theme.dark.surface.border == "210 15% 15%"
 
     def test_theme_accents_block_loads_when_present(self, personas_copy):
         """When a persona pack does supply the optional `accents` block (role-named per
@@ -129,32 +141,50 @@ class TestValidPackLoads:
         both persona.schema.json and the Pydantic models, not just accepted by one of the two."""
         def mutator(d):
             d["ui"]["theme"]["light"]["accents"] = {
-                "primaryHex": "#E40046",
-                "primaryStrong": "#C31B24",
-                "primaryLight": "#FF4D7A",
-                "primaryTintOnDark": "#FF6B8A",
-                "secondaryHex": "#285780",
-                "secondaryStrong": "#137AC9",
-                "secondaryTintOnDark": "#74D2E7",
-                "accent": "#FEDD00",
-                "accentLight": "#FFE84D",
-                "ink": "#18344D",
-                "surfaceTint": "#F2F8FA",
-                "surfaceDark": "#0F1A24",
-                "surfaceDarkAlt": "#152231",
-                "success": "#328500",
-                "neutral": "#C9CFD4",
+                "primaryHex": "#112233",
+                "primaryStrong": "#001122",
+                "primaryLight": "#223344",
+                "primaryTintOnDark": "#334455",
+                "secondaryHex": "#445566",
+                "secondaryStrong": "#556677",
+                "secondaryTintOnDark": "#667788",
+                "accent": "#778899",
+                "accentLight": "#8899AA",
+                "ink": "#99AABB",
+                "surfaceTint": "#AABBCC",
+                "surfaceDark": "#BBCCDD",
+                "surfaceDarkAlt": "#CCDDEE",
+                "success": "#DDEEFF",
+                "neutral": "#EEFF00",
             }
             # Dark mode is allowed to override only a subset of accent keys.
-            d["ui"]["theme"]["dark"]["accents"] = {"primaryHex": "#FF4D7A"}
+            d["ui"]["theme"]["dark"]["accents"] = {"primaryHex": "#FF0011"}
         _mutate_persona_json(personas_copy, "sonic", mutator)
         catalog = PersonaCatalog.load(personas_dir=personas_copy)
         manifest = catalog.get("sonic").manifest
         assert manifest.ui.theme.light.accents is not None
-        assert manifest.ui.theme.light.accents.primaryHex == "#E40046"
-        assert manifest.ui.theme.light.accents.neutral == "#C9CFD4"
-        assert manifest.ui.theme.dark.accents.primaryHex == "#FF4D7A"
+        assert manifest.ui.theme.light.accents.primaryHex == "#112233"
+        assert manifest.ui.theme.light.accents.neutral == "#EEFF00"
+        assert manifest.ui.theme.dark.accents.primaryHex == "#FF0011"
         assert manifest.ui.theme.dark.accents.secondaryHex is None
+
+    def test_theme_surface_block_loads_when_present(self, personas_copy):
+        """Issue #117: `surface` (personaTheme.ts's PersonaSurfaceTokens/PersonaSurfaceDarkTokens --
+        the shadcn UI slot palette index.css used to hard-code to this pack's own values) validates
+        and round-trips through both persona.schema.json and the Pydantic models, same as `accents`."""
+        def mutator(d):
+            d["ui"]["theme"]["light"]["surface"] = {"cardForeground": "0 0% 20%", "border": "0 0% 85%"}
+            d["ui"]["theme"]["dark"]["surface"] = {"border": "0 0% 15%", "chart2": "0 0% 50%"}
+        _mutate_persona_json(personas_copy, "sonic", mutator)
+        catalog = PersonaCatalog.load(personas_dir=personas_copy)
+        manifest = catalog.get("sonic").manifest
+        assert manifest.ui.theme.light.surface is not None
+        assert manifest.ui.theme.light.surface.cardForeground == "0 0% 20%"
+        assert manifest.ui.theme.light.surface.border == "0 0% 85%"
+        assert manifest.ui.theme.light.surface.secondary is None
+        assert manifest.ui.theme.dark.surface.border == "0 0% 15%"
+        assert manifest.ui.theme.dark.surface.chart2 == "0 0% 50%"
+        assert manifest.ui.theme.dark.surface.muted is None
 
     def test_valid_copy_loads_identically(self, personas_copy):
         """A byte-identical copy of the real pack, loaded from a different directory, validates

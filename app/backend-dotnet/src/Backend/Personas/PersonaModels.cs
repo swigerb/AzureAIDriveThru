@@ -154,6 +154,7 @@ public sealed record PersonaThemeTokens
     [JsonPropertyName("background")] public string? Background { get; init; }
     [JsonPropertyName("foreground")] public string? Foreground { get; init; }
     [JsonPropertyName("accents")] public PersonaThemeAccents? Accents { get; init; }
+    [JsonPropertyName("surface")] public PersonaThemeSurface? Surface { get; init; }
 }
 
 /// <summary>Optional extended brand accent palette (issue #80 F2). Every key optional.</summary>
@@ -174,6 +175,25 @@ public sealed record PersonaThemeAccents
     [JsonPropertyName("surfaceDarkAlt")] public string? SurfaceDarkAlt { get; init; }
     [JsonPropertyName("success")] public string? Success { get; init; }
     [JsonPropertyName("neutral")] public string? Neutral { get; init; }
+}
+
+/// <summary>Optional shadcn-style UI slot palette (issue #117). Every key optional; the same shape
+/// is reused for both `light.surface` and `dark.surface` (see PersonaThemeTokens.Surface).</summary>
+public sealed record PersonaThemeSurface
+{
+    [JsonPropertyName("cardForeground")] public string? CardForeground { get; init; }
+    [JsonPropertyName("secondary")] public string? Secondary { get; init; }
+    [JsonPropertyName("secondaryForeground")] public string? SecondaryForeground { get; init; }
+    [JsonPropertyName("muted")] public string? Muted { get; init; }
+    [JsonPropertyName("mutedForeground")] public string? MutedForeground { get; init; }
+    [JsonPropertyName("accent")] public string? Accent { get; init; }
+    [JsonPropertyName("accentForeground")] public string? AccentForeground { get; init; }
+    [JsonPropertyName("destructive")] public string? Destructive { get; init; }
+    [JsonPropertyName("border")] public string? Border { get; init; }
+    [JsonPropertyName("chart2")] public string? Chart2 { get; init; }
+    [JsonPropertyName("chart3")] public string? Chart3 { get; init; }
+    [JsonPropertyName("chart4")] public string? Chart4 { get; init; }
+    [JsonPropertyName("chart5")] public string? Chart5 { get; init; }
 }
 
 public sealed record PersonaAssets

@@ -81,6 +81,11 @@ BRAND_EXCLUDED_FILES = {
     # as excluding test_rebrand_verification.py itself.
     "test_regenerate_rebrand_baseline.py",
     "test_check_rebrand_baseline_against_base.py",
+    # Issue #117's guard that index.css's shared default tokens contain no Sonic brand-palette
+    # value: it reads personas/sonic/persona.json and hard-codes several of Sonic's literal hex/HSL
+    # values purely as comparison DATA (to assert index.css must NOT contain them), the same
+    # fixture-not-branding rationale as the two entries above.
+    "brandDefaultTokens.test.ts",
     # The baseline itself necessarily lists every brand word it tracks (as data, in `file`/
     # `brand` fields), which would otherwise make it its own violation.
     "rebrand_baseline.yaml",

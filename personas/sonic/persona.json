@@ -79,8 +79,51 @@
   "ui": {
     "title": "Sonic Drive-In Voice Ordering",
     "theme": {
-      "light": { "primary": "341 100% 45%", "secondary": "208 52% 33%", "background": "195 44% 96%", "foreground": "208 53% 20%" },
-      "dark": { "primary": "341 100% 55%" },
+      "light": {
+        "primary": "341 100% 45%", "secondary": "208 52% 33%", "background": "195 44% 96%", "foreground": "208 53% 20%",
+        "accents": {
+          "primaryHex": "#E40046",
+          "primaryStrong": "#C31B24",
+          "primaryLight": "#FF4D7A",
+          "primaryTintOnDark": "#FF6B8A",
+          "secondaryHex": "#285780",
+          "secondaryStrong": "#137AC9",
+          "secondaryTintOnDark": "#74D2E7",
+          "accent": "#FEDD00",
+          "accentLight": "#FFE84D",
+          "ink": "#18344D",
+          "surfaceTint": "#F2F8FA",
+          "surfaceDark": "#0F1A24",
+          "surfaceDarkAlt": "#152231",
+          "success": "#328500",
+          "neutral": "#C9CFD4"
+        },
+        "surface": {
+          "cardForeground": "208 40% 18%",
+          "secondary": "192 40% 90%",
+          "secondaryForeground": "208 48% 24%",
+          "muted": "200 20% 90%",
+          "mutedForeground": "210 15% 35%",
+          "accent": "52 100% 50%",
+          "accentForeground": "208 53% 20%",
+          "destructive": "357 75% 44%",
+          "border": "200 20% 85%",
+          "chart4": "192 67% 68%",
+          "chart5": "97 100% 26%"
+        }
+      },
+      "dark": {
+        "primary": "341 100% 55%",
+        "surface": {
+          "secondary": "208 30% 15%",
+          "muted": "210 15% 15%",
+          "destructive": "357 75% 35%",
+          "border": "210 15% 15%",
+          "chart2": "208 60% 50%",
+          "chart3": "52 100% 55%",
+          "chart5": "97 80% 40%"
+        }
+      },
       "font": { "family": "Nunito Sans", "importUrl": "https://fonts.googleapis.com/css2?family=Nunito+Sans:wght@400;600;700;800;900&display=swap" }
     },
     "assets": { "logo": "assets/logo.svg", "favicon": "assets/favicon.ico", "apologyClip": "assets/audio/apology-{lang}.wav" },
