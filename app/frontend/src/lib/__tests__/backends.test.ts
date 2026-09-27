@@ -47,19 +47,19 @@ describe("currentBackendId", () => {
 
 describe("backendTargetUrl", () => {
     it("builds the target backend's URL with explicit persona and model query params", () => {
-        const target = backendTargetUrl({ id: "dotnet", url: "https://dotnet.example.com" }, "sonic", "gpt-realtime-2.1");
+        const target = backendTargetUrl({ id: "dotnet", url: "https://dotnet.example.com" }, "test-alpha", "gpt-realtime-2.1");
         const url = new URL(target);
         expect(url.origin).toBe("https://dotnet.example.com");
-        expect(url.searchParams.get("persona")).toBe("sonic");
+        expect(url.searchParams.get("persona")).toBe("test-alpha");
         expect(url.searchParams.get("model")).toBe("gpt-realtime-2.1");
     });
 
     it("resolves an empty-url ('this origin') backend against window.location.origin", () => {
         vi.stubGlobal("location", { origin: "https://python.example.com" });
-        const target = backendTargetUrl({ id: "python", url: "" }, "dunkin", "gpt-5-mini");
+        const target = backendTargetUrl({ id: "python", url: "" }, "test-beta", "gpt-5-mini");
         const url = new URL(target);
         expect(url.origin).toBe("https://python.example.com");
-        expect(url.searchParams.get("persona")).toBe("dunkin");
+        expect(url.searchParams.get("persona")).toBe("test-beta");
     });
 
     it("omits persona/model params that are falsy rather than writing them as empty strings", () => {

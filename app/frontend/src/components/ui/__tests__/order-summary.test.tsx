@@ -99,18 +99,18 @@ describe("OrderSummary", () => {
         it("renders each absorbed/auto-filled component under its combo/meal line, marked included", () => {
             const items: OrderItem[] = [
                 {
-                    item: "SONIC® Cheeseburger Combo",
+                    item: "Cheeseburger Combo",
                     size: "standard",
                     quantity: 1,
                     price: 9.19,
-                    display: "SONIC® Cheeseburger Combo",
+                    display: "Cheeseburger Combo",
                     components: ["Medium World Famous Fries", "Medium Coca-Cola®"]
                 }
             ];
             const summary: OrderSummaryProps = { items, total: 9.19, tax: 0, finalTotal: 9.19 };
             render(<OrderSummary order={summary} />);
 
-            expect(screen.getByText("SONIC® Cheeseburger Combo")).toBeInTheDocument();
+            expect(screen.getByText("Cheeseburger Combo")).toBeInTheDocument();
             expect(screen.getByText("Medium World Famous Fries")).toBeInTheDocument();
             expect(screen.getByText("Medium Coca-Cola®")).toBeInTheDocument();
             // react-i18next is mocked (test/setup.ts) to echo the key -- "ticket.included" is the

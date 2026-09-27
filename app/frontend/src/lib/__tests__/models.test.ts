@@ -93,7 +93,7 @@ describe("resolveModelId", () => {
 
 describe("modelStorageKey", () => {
     it("namespaces the localStorage key by persona id (unlike the un-namespaced voiceChoice key)", () => {
-        expect(modelStorageKey("sonic")).toBe("modelChoice.sonic");
-        expect(modelStorageKey("dunkin")).toBe("modelChoice.dunkin");
+        expect(modelStorageKey("test-alpha")).toBe("modelChoice.test-alpha");
+        expect(modelStorageKey("test-beta")).toBe("modelChoice.test-beta");
     });
 });
