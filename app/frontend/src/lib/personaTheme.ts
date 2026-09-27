@@ -217,11 +217,32 @@ export const PERSONA_THEME_DARK_CSS_VARS = {
 const DARK_THEME_STYLE_ELEMENT_ID = "persona-dark-theme-overrides";
 
 /**
+ * The app-wide default dark palette for `background`/`foreground` (and, via the same two CSS
+ * vars, `.dark`'s `card`/`popover`/`card-foreground`/`popover-foreground` -- see
+ * `PERSONA_THEME_DARK_CSS_VARS`'s doc comment). Byte-identical to `index.css`'s own literal
+ * `var(--brand-background-dark, 210 20% 5%)` / `var(--brand-foreground-dark, 0 0% 98%)`
+ * fallbacks, so a pack that omits these two keys still gets the SAME neutral-dark page `index.css`
+ * would render on its own if `applyDarkTheme` never ran at all.
+ *
+ * Issue #80 F1/F3 (Rick's #110 review, item 3): a persona whose `dark` block only sets some tokens
+ * (the default persona sets only `primary`) used to leak that persona's LIGHT `background`/
+ * `foreground` into dark mode instead -- for the default persona that's a pale blue-white
+ * (`"195 44% 96%"`), which reads as "half the page didn't go dark". Falling back to these DEFAULT
+ * dark values instead (rather than `theme.light.*`) keeps the rest of the page dark like every
+ * other pack, regardless of what a pack's `dark` block chooses to override.
+ */
+export const DEFAULT_DARK_BACKGROUND: HslTriplet = "210 20% 5%";
+export const DEFAULT_DARK_FOREGROUND: HslTriplet = "0 0% 98%";
+
+/**
  * Injects (or updates) a `<style>` element holding a `.dark { --brand-x-dark: ...; }` rule for the
- * given persona theme's dark-mode overrides, falling back to the theme's own light values for any
- * key a persona doesn't override -- so a persona with no `dark` block at all (both fixture personas
- * in `app/backend/tests/fixtures/personas` today) still renders coherently in dark mode instead of
- * leaking a previous persona's dark colors or the default persona's.
+ * given persona theme's dark-mode overrides. `primary` falls back to the theme's own light value
+ * (a persona with no dark accent at all still gets ITS brand hue, just at the light-mode
+ * lightness); `background`/`foreground` fall back to the shared `DEFAULT_DARK_*` constants above
+ * instead, so a persona with no `dark` block (both fixture personas in
+ * `app/backend/tests/fixtures/personas`) or one that only overrides `primary` (the default
+ * persona) still renders a coherent dark page instead of leaking a light-mode background/text
+ * color, a previous persona's dark colors, or the default persona's.
  *
  * A `<style>` tag (not inline styles) is required here specifically so the `.dark` selector keeps
  * normal cascade behavior -- see `PERSONA_THEME_DARK_CSS_VARS`'s doc comment for why inline styles
@@ -231,8 +252,8 @@ export function applyDarkTheme(theme: PersonaTheme, doc: Document = document): v
     const vars = PERSONA_THEME_DARK_CSS_VARS;
     const dark = theme.dark ?? {};
     const primary = dark.primary ?? theme.light.primary;
-    const background = dark.background ?? theme.light.background;
-    const foreground = dark.foreground ?? theme.light.foreground;
+    const background = dark.background ?? DEFAULT_DARK_BACKGROUND;
+    const foreground = dark.foreground ?? DEFAULT_DARK_FOREGROUND;
 
     let style = doc.getElementById(DARK_THEME_STYLE_ELEMENT_ID) as HTMLStyleElement | null;
     if (!style) {

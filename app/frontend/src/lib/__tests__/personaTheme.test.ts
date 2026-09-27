@@ -4,6 +4,8 @@ import {
     applyDarkTheme,
     applyTheme,
     deriveAccents,
+    DEFAULT_DARK_BACKGROUND,
+    DEFAULT_DARK_FOREGROUND,
     PERSONA_THEME_CSS_VARS,
     PERSONA_THEME_DARK_CSS_VARS,
     resolvePersonaTheme,
@@ -158,7 +160,7 @@ describe("applyDarkTheme", () => {
         expect(rule).toContain(`${PERSONA_THEME_DARK_CSS_VARS.foreground}: 40 40% 95%`);
     });
 
-    it("falls back to the light values for any key a persona's dark block omits", () => {
+    it("falls back to the persona's own light primary, and the shared DEFAULT dark background/foreground, when a persona has no dark block at all", () => {
         const doc = freshDoc();
         const theme: PersonaTheme = {
             light: { primary: "10 10% 10%", secondary: "20 20% 20%", background: "30 30% 30%", foreground: "40 40% 40%", accents: SONIC_THEME.light.accents },
@@ -169,9 +171,35 @@ describe("applyDarkTheme", () => {
         applyDarkTheme(theme, doc);
         const rule = readDarkRule(doc);
 
+        // `primary` still comes from the persona's own light hue (so its brand color is visible in
+        // dark mode too); `background`/`foreground` must NOT leak the persona's pale light-mode
+        // values (that's the bug -- Rick's #110 review, item 3) -- they fall back to the shared
+        // DEFAULT dark palette instead, so the page still reads as genuinely dark.
         expect(rule).toContain(`${PERSONA_THEME_DARK_CSS_VARS.primary}: 10 10% 10%`);
-        expect(rule).toContain(`${PERSONA_THEME_DARK_CSS_VARS.background}: 30 30% 30%`);
-        expect(rule).toContain(`${PERSONA_THEME_DARK_CSS_VARS.foreground}: 40 40% 40%`);
+        expect(rule).toContain(`${PERSONA_THEME_DARK_CSS_VARS.background}: ${DEFAULT_DARK_BACKGROUND}`);
+        expect(rule).toContain(`${PERSONA_THEME_DARK_CSS_VARS.foreground}: ${DEFAULT_DARK_FOREGROUND}`);
+    });
+
+    // Issue #80 F1/F3 (Rick's #110 review, item 3): the default persona's own `dark` block sets
+    // ONLY `primary` (see `SONIC_THEME.dark` above) -- a *partial* palette, not an absent one. This
+    // guards the exact repro from the review: with the old (buggy) fallback to `theme.light.*`,
+    // `background`/`foreground` came out as the default persona's pale light-mode colors
+    // (`"195 44% 96%"` / `"208 53% 20%"`) instead of a dark palette, so cards/panels/text stayed
+    // light while only the accent color changed -- "the whole page" did not "go dark like
+    // before-dark.png".
+    it("falls back to the shared DEFAULT dark background/foreground when a persona's dark block sets only some tokens (the default persona sets only primary)", () => {
+        const doc = freshDoc();
+
+        applyDarkTheme(SONIC_THEME, doc);
+        const rule = readDarkRule(doc);
+
+        expect(SONIC_THEME.dark).toEqual({ primary: "341 100% 55%" });
+        expect(rule).toContain(`${PERSONA_THEME_DARK_CSS_VARS.primary}: 341 100% 55%`);
+        expect(rule).toContain(`${PERSONA_THEME_DARK_CSS_VARS.background}: ${DEFAULT_DARK_BACKGROUND}`);
+        expect(rule).toContain(`${PERSONA_THEME_DARK_CSS_VARS.foreground}: ${DEFAULT_DARK_FOREGROUND}`);
+        // And definitely not the default persona's pale light-mode background/foreground.
+        expect(rule).not.toContain(SONIC_THEME.light.background);
+        expect(rule).not.toContain(SONIC_THEME.light.foreground);
     });
 
     it("re-uses the same injected <style> element across repeated calls (persona switching)", () => {
