@@ -30,8 +30,14 @@ from __future__ import annotations
 
 import menu_utils
 from persona_loader import Persona, PersonaCatalog
+from prompt_loader import PromptLoader
 
 _catalog: PersonaCatalog = PersonaCatalog.load()
+
+# #74 (Rick's PR #102 review, round 3, required item 1): memoized per persona id, the same
+# pattern as ``menu_utils._catalog_cache`` -- built once for the default persona, then reused
+# rather than re-parsing the pack's YAML prompts on every call.
+_prompt_loader_cache: dict[str, PromptLoader] = {}
 
 
 def get_default_catalog() -> PersonaCatalog:
@@ -53,6 +59,22 @@ def get_default_menu_catalog() -> menu_utils.MenuCatalog:
     so this is the SAME instance every explicitly-bound default-persona session already uses,
     never a second, independently-loaded copy)."""
     return menu_utils.get_catalog_for_persona(get_default_persona())
+
+
+def get_default_prompt_loader() -> PromptLoader:
+    """The default persona's own :class:`~prompt_loader.PromptLoader` -- the deployment-wide
+    fallback ``session_manager.py``/``tools.py`` read greeting/error-message text through when a
+    caller has no explicitly-bound persona's own ``PromptLoader`` in hand (#74, Rick's PR #102
+    review, round 3, required item 1: replaces ``session_manager.py``'s hardcoded
+    ``_DEFAULT_GREETING_MSG`` hardcoded string -- there is no more brand-specific text living
+    outside a persona pack). Memoized per persona id (same pattern as ``get_default_menu_catalog``), so
+    this is the SAME instance every explicitly-bound default-persona session already uses."""
+    persona = get_default_persona()
+    loader = _prompt_loader_cache.get(persona.id)
+    if loader is None:
+        loader = PromptLoader(brand=persona.id, prompts_dir=persona.prompts_dir)
+        _prompt_loader_cache[persona.id] = loader
+    return loader
 
 
 def configure_default_catalog(catalog: PersonaCatalog) -> None:

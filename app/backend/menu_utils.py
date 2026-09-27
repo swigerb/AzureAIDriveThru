@@ -305,6 +305,10 @@ class MenuCatalog:
         spoken_as: dict[str, str],
         item_fields: dict[str, dict],
         alias_map: dict[str, str],
+        machines: dict[str, str] | None = None,
+        allowed_extra_categories: list[str] | None = None,
+        blocked_extra_categories: list[str] | None = None,
+        invalid_modifiers: dict[str, list[str]] | None = None,
     ):
         self.persona_id = persona_id
         self.size_map = size_map
@@ -314,6 +318,23 @@ class MenuCatalog:
         self.item_fields = item_fields
         self.alias_map = alias_map
         self.category_map: dict[str, str] = {key: fields["category"] for key, fields in item_fields.items()}
+        # #74 (Rick's PR #102 review, round 3, required item 1): this persona's OWN "store
+        # telemetry"/extras-gate/invalid-modifier rules, straight from its pack -- replaces the
+        # module-level `MOCK_MACHINE_STATUS`/`ALLOWED_EXTRA_CATEGORIES`/`BLOCKED_EXTRA_CATEGORIES`/
+        # `INVALID_MODS` globals tools.py used to read directly (always the default persona's own
+        # data, no matter which persona a session was bound to). `MenuCatalog` is already the one "this persona's
+        # resolved data" object threaded through every tools.py call site (`_menu_for`), so these
+        # live here rather than adding a fourth per-session resolution helper alongside it.
+        self.machines: dict[str, str] = dict(machines or {})
+        self.allowed_extra_categories: frozenset[str] = frozenset(
+            (c or "").strip().lower() for c in (allowed_extra_categories or ())
+        )
+        self.blocked_extra_categories: frozenset[str] = frozenset(
+            (c or "").strip().lower() for c in (blocked_extra_categories or ())
+        )
+        self.invalid_modifiers: dict[str, list[str]] = {
+            (k or "").strip().lower(): list(v) for k, v in (invalid_modifiers or {}).items()
+        }
 
     @classmethod
     def from_persona(cls, persona: Persona) -> MenuCatalog:
@@ -327,7 +348,19 @@ class MenuCatalog:
             return _canonical_size_key_for(size, size_aliases, hidden_sizes)
 
         item_fields, alias_map = _load_menu_data(persona.menu_path, size_key_fn=_size_key_fn)
-        return cls(persona.id, size_map, size_aliases, hidden_sizes, spoken_as, item_fields, alias_map)
+        extras_cfg = persona.manifest.extras
+        return cls(
+            persona.id, size_map, size_aliases, hidden_sizes, spoken_as, item_fields, alias_map,
+            machines=persona.manifest.machines,
+            allowed_extra_categories=extras_cfg.allowedBaseCategories,
+            blocked_extra_categories=extras_cfg.blockedBaseCategories,
+            invalid_modifiers=persona.manifest.invalidModifiers,
+        )
+
+    def machine_status(self, machine: str) -> str | None:
+        """This persona's own reported status ("down"/"operational") for *machine* (its
+        ``requiresMachine`` key), or ``None`` if this persona's pack never mentions it."""
+        return self.machines.get(machine)
 
     def normalize_size(self, size: str) -> str:
         return _normalize_size_for(size, self.size_map, self.size_aliases, self.hidden_sizes)

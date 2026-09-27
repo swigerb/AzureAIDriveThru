@@ -122,13 +122,15 @@ MAX_TOTAL_ITEMS = _biz_cfg.get("max_order_items", 25)
 
 
 # ---------------------------------------------------------------------------
-# Mock "Store Telemetry" - In production, this would be an Azure Function / IoT Hub call
+# "Store Telemetry" (which machine, if any, is down right now) -- #74 (Rick's PR #102
+# review, round 3, required item 1): this used to be a single module-level
+# `MOCK_MACHINE_STATUS` dict, always the default persona's own machines no matter which
+# pack a session was bound to. It is now each session's own bound persona's `machines` data
+# (``persona.json``'s ``machines`` block), read off the resolved `MenuCatalog` (see
+# `_menu_for` above / `menu.machine_status()`) -- never a module-level global. In
+# production, a real deployment would still source this from an Azure Function / IoT
+# Hub call keyed by the guest's own store/persona, not this mocked pack data.
 # ---------------------------------------------------------------------------
-MOCK_MACHINE_STATUS = {
-    "ice_cream_machine": "down",  # Classic "shake machine is broken" scenario
-    "slush_machine": "operational",
-    "fryer": "operational",
-}
 
 # #73 (Rick's PR review): the old OOS check (`_ICE_CREAM_MACHINE_KEYWORDS`, a substring list) and
 # the old extras check (`EXTRAS_KEYWORDS`, also a substring list) both risked matching names that
@@ -154,17 +156,15 @@ def _machine_oos_label(machine: str) -> str:
     "<machine> is down" for any machine key not in `_MACHINE_OOS_LABELS` (e.g. a future machine
     added to a persona pack before this dict is updated for it)."""
     return _MACHINE_OOS_LABELS.get(machine, f"{machine} is down")
-ALLOWED_EXTRA_CATEGORIES = {"slushes & drinks", "shakes & ice cream", "burgers & sandwiches", "drinks", "slushes", "shakes", "combos"}
-BLOCKED_EXTRA_CATEGORIES = {"hot dogs & tots", "sides", "hot dogs"}
 
-# Map category keywords → mods that don't make sense for that category
-INVALID_MODS = {
-    "shake": ["lettuce", "tomato", "onion", "mustard", "ketchup", "pickle", "jalapeño", "relish"],
-    "slush": ["lettuce", "tomato", "onion", "mustard", "ketchup", "pickle", "jalapeño", "cheese", "bacon", "patty"],
-    "drink": ["lettuce", "tomato", "onion", "mustard", "ketchup", "pickle", "jalapeño", "cheese", "bacon", "patty"],
-    "side": ["whipped cream", "chocolate", "vanilla", "strawberry"],
-    "hot dog": ["whipped cream", "chocolate", "vanilla", "strawberry"],
-}
+# #74 (Rick's PR #102 review, round 3, required item 1): `ALLOWED_EXTRA_CATEGORIES`/
+# `BLOCKED_EXTRA_CATEGORIES`/`INVALID_MODS` used to be module-level globals here, always the
+# default persona's own rules no matter which pack a session was bound to. They are now each session's own bound
+# persona's ``extras.allowedBaseCategories``/``blockedBaseCategories``/``invalidModifiers`` data
+# (``persona.json``), read off the resolved `MenuCatalog` (see `_menu_for` above /
+# `menu.allowed_extra_categories`/`menu.blocked_extra_categories`/`menu.invalid_modifiers`) --
+# never a module-level global. See update_order()'s extras check and validate_customization()
+# below.
 
 
 def validate_customization(item_name: str, mods_string: str, prompt_loader=None, menu=None) -> str | None:
@@ -183,7 +183,7 @@ def validate_customization(item_name: str, mods_string: str, prompt_loader=None,
     base_name = strip_modifiers(item_name)
     category = menu.infer_category(base_name)
     mods_lower = mods_string.lower()
-    for cat_key, forbidden_list in INVALID_MODS.items():
+    for cat_key, forbidden_list in menu.invalid_modifiers.items():
         if cat_key in category.lower():
             for forbidden in forbidden_list:
                 if forbidden in mods_lower:
@@ -384,7 +384,7 @@ async def search(
         # #73: data-driven off the item's own `requiresMachine` field instead of a substring
         # keyword list, so a real menu item is the only thing ever flagged.
         machine = menu.requires_machine(item_name)
-        if machine and MOCK_MACHINE_STATUS.get(machine) == "down":
+        if machine and menu.machine_status(machine) == "down":
             summary += f" [OOS: {_machine_oos_label(machine)}]"
 
         results.append(summary)
@@ -544,9 +544,9 @@ async def update_order(args, session_id: str) -> ToolResult:
 
         for order_item in current_items:
             category = menu.infer_category(order_item.item)
-            if category in ALLOWED_EXTRA_CATEGORIES:
+            if category in menu.allowed_extra_categories:
                 has_allowed_base = True
-            if category in BLOCKED_EXTRA_CATEGORIES:
+            if category in menu.blocked_extra_categories:
                 has_blocked_base = True
 
         if not has_allowed_base:

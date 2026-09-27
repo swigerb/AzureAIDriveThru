@@ -149,9 +149,11 @@ _REHYDRATION_PREAMBLE = (
 )
 
 # Sent once, if the guest stays silent for resume.nudge_after_seconds after a resume.
-_NUDGE_TEXT = (
+# #74 (Rick's PR #102 review, round 3, required item 1): templated on the bound persona's own
+# roleName ("carhop" by default, but never hardcoded here) -- see build_nudge_item() below.
+_NUDGE_TEXT_TEMPLATE = (
     "The guest has been quiet since their connection came back. In one short, friendly sentence, "
-    "in your carhop persona, ask whether they need anything else with their order. Do not greet "
+    "in your {role_name} persona, ask whether they need anything else with their order. Do not greet "
     "them again, do not mention the connection, and do not read the order back."
 )
 
@@ -171,19 +173,6 @@ class ResumeOutcome:
 # Rough token estimation: ~4 characters per token for English text.
 # This is intentionally conservative (over-estimates) for safety monitoring.
 _CHARS_PER_TOKEN = 4
-
-# Default greeting — overridden by PromptLoader at runtime.
-_DEFAULT_GREETING_MSG = json.dumps({
-    "type": "conversation.item.create",
-    "item": {
-        "type": "message",
-        "role": "user",
-        "content": [
-            {"type": "input_text", "text": "Say EXACTLY this greeting and NOTHING else: Welcome to Sonic Drive-In! What can I get started for you today?"}
-        ]
-    }
-})
-
 
 class ContextMonitor:
     """Estimates token usage in the conversation context window and logs warnings.
@@ -275,7 +264,12 @@ class SessionManager:
         if prompt_loader is not None:
             self._greeting_template = prompt_loader.get_greeting_json_str()
         else:
-            self._greeting_template = _DEFAULT_GREETING_MSG
+            # #74 (Rick's PR #102 review, round 3, required item 1): the deployment default
+            # persona's own greeting (persona.json's pack, never a hardcoded brand-specific string) --
+            # loader validation (prompt_loader.py's PromptLoader._load_all) already requires
+            # every real pack to have a greeting.yaml, so this never silently falls back to
+            # placeholder text.
+            self._greeting_template = default_persona.get_default_prompt_loader().get_greeting_json_str()
 
     def build_greeting_msg(self, greeting_template: str | None = None) -> str:
         """A fresh `conversation.item.create` for the greeting, with a brand-new
@@ -460,11 +454,17 @@ class SessionManager:
         kept.reverse()
         return kept
 
-    def build_rehydration_item(self, session_id: str) -> str:
-        """One system conversation.item.create carrying the order and the recent turns."""
+    def build_rehydration_item(self, session_id: str, role_name: str | None = None) -> str:
+        """One system conversation.item.create carrying the order and the recent turns.
+
+        *role_name* (#74, optional): the resumed session's own bound persona's roleName (e.g.
+        "carhop"), used to label that persona's turns in the replayed history instead of a
+        hardcoded "Carhop". Omitted: the deployment default persona's own roleName -- never a
+        literal brand string."""
         order_json = order_state_singleton.get_order_summary_json(session_id)
         turns = self.recent_turns(session_id)
-        history = "\n".join(f"{'Guest' if role == 'guest' else 'Carhop'}: {text}" for role, text in turns)
+        role_label = (role_name if role_name is not None else default_persona.get_default_persona().manifest.roleName).capitalize()
+        history = "\n".join(f"{'Guest' if role == 'guest' else role_label}: {text}" for role, text in turns)
         text = (f"{_REHYDRATION_PREAMBLE}\n\nCurrent order (JSON): {order_json}\n\n"
                 f"Recent conversation (oldest first):\n{history or '(none recorded)'}")
         return json.dumps({
@@ -476,12 +476,18 @@ class SessionManager:
         })
 
     @staticmethod
-    def build_nudge_item() -> str:
+    def build_nudge_item(role_name: str | None = None) -> str:
+        """*role_name* (#74, optional): the session's own bound persona's roleName, substituted
+        into ``_NUDGE_TEXT_TEMPLATE``. Omitted: the deployment default persona's own roleName --
+        never a hardcoded "carhop"."""
+        text = _NUDGE_TEXT_TEMPLATE.format(
+            role_name=role_name if role_name is not None else default_persona.get_default_persona().manifest.roleName
+        )
         return json.dumps({
             "type": "conversation.item.create",
             "item": {
                 "id": new_middle_tier_item_id(),
-                "type": "message", "role": "system", "content": [{"type": "input_text", "text": _NUDGE_TEXT}],
+                "type": "message", "role": "system", "content": [{"type": "input_text", "text": text}],
             },
         })
 

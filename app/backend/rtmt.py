@@ -2063,14 +2063,21 @@ class RTMiddleTier:
                 # hasn't enabled (`model.allowed_voices`).
                 voice = self.voice_choice
                 system_message = self.system_message
+                # #74 (Rick's PR #102 review, round 3, required item 1): resolved once here
+                # (never left unbound) so send_greeting_once()/nudge_after_silence()/
+                # handle_resume() below can all use THIS session's own bound persona's greeting
+                # text and role name -- instead of the deployment-wide default's, or (before this
+                # fix) a hardcoded brand-specific string/"carhop" label -- for every session, not just the
+                # one whose persona happens to be the deployment default.
+                persona_prompt_loader = None
+                bound_persona = None
                 if persona_id is not None:
                     persona_prompt_loader = self.persona_prompt_loaders.get(persona_id)
                     if persona_prompt_loader is not None:
                         system_message = persona_prompt_loader.get_system_prompt()
                     if persona_id in self.persona_catalog:
-                        persona_voice = _sanitize_voice(
-                            self.persona_catalog.get(persona_id).manifest.voice.default, self.allowed_voices
-                        )
+                        bound_persona = self.persona_catalog.get(persona_id)
+                        persona_voice = _sanitize_voice(bound_persona.manifest.voice.default, self.allowed_voices)
                         if persona_voice is not None:
                             voice = persona_voice
 
@@ -2108,7 +2115,9 @@ class RTMiddleTier:
                     echo.start_greeting_suppression(verbose)
                     # Flush any stale audio that arrived before session was configured
                     await target_ws.send_str(_INPUT_AUDIO_CLEAR_MSG)
-                    greeting_msg = self._sessions.build_greeting_msg()
+                    greeting_msg = self._sessions.build_greeting_msg(
+                        persona_prompt_loader.get_greeting_json_str() if persona_prompt_loader is not None else None
+                    )
                     await target_ws.send_str(greeting_msg)
                     await target_ws.send_str(_RESPONSE_CREATE_MSG)
                     if session_id is not None:
@@ -2149,18 +2158,21 @@ class RTMiddleTier:
 
                 async def nudge_after_silence():
                     """If the guest says nothing for nudge_after_seconds after a resume, have
-                    the carhop ask once whether they need anything else. Goes through the
-                    same session.updated gate as the greeting so voice/tools are confirmed."""
+                    the assistant (in this session's own bound persona) ask once whether they
+                    need anything else. Goes through the same session.updated gate as the
+                    greeting so voice/tools are confirmed."""
                     await asyncio.sleep(self._sessions.nudge_after_seconds)
                     await session_configured.wait()
                     if recovery.busy:
-                        # The carhop is already retrying a rate-limited response; a
+                        # The assistant is already retrying a rate-limited response; a
                         # nudge now would stack a second response on top of it.
                         logger.info("Resume nudge skipped: a rate-limit retry is in progress (session=%s)", session_id)
                         return
-                    logger.info("Guest silent %.0fs after resume; carhop nudges (session=%s)",
+                    logger.info("Guest silent %.0fs after resume; nudging (session=%s)",
                                 self._sessions.nudge_after_seconds, session_id)
-                    nudge = self._sessions.build_nudge_item()
+                    nudge = self._sessions.build_nudge_item(
+                        bound_persona.manifest.roleName if bound_persona is not None else None
+                    )
                     await target_ws.send_str(nudge)
                     await target_ws.send_str(_RESPONSE_CREATE_MSG)
                     ctx_monitor = self._sessions.get_context_monitor(session_id)
@@ -2232,7 +2244,9 @@ class RTMiddleTier:
                     # upstream (after the bootstrap session.update, before any
                     # response.create) and stay silent until the guest speaks.
                     greeting_sent = True
-                    rehydration = self._sessions.build_rehydration_item(session_id)
+                    rehydration = self._sessions.build_rehydration_item(
+                        session_id, role_name=bound_persona.manifest.roleName if bound_persona is not None else None
+                    )
                     await target_ws.send_str(rehydration)
                     ctx_monitor = self._sessions.get_context_monitor(session_id)
                     if ctx_monitor:

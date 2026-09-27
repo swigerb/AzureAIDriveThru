@@ -23,7 +23,6 @@ from rtmt import ToolResult, ToolResultDirection
 from tools import (
     MAX_QUANTITY_PER_ITEM,
     MAX_TOTAL_ITEMS,
-    MOCK_MACHINE_STATUS,
     _format_size_human_readable,
     _search_cache,
     _search_cfg,
@@ -265,7 +264,12 @@ class SearchOOSAnnotationTests(unittest.TestCase):
     def test_shake_flagged_oos_when_machine_down(self):
         records = [{"id": "1", "name": "Vanilla Classic Shake", "category": "Shakes", "sizes": "N/A"}]
         client = _make_mock_search_client(records)
-        with patch.dict(MOCK_MACHINE_STATUS, {"ice_cream_machine": "down"}):
+        # #74 (Rick's PR #102 review, round 3, required item 1): machine status is now this
+        # persona's own `MenuCatalog.machines` dict (persona.json's `machines` block), not a
+        # module-level `MOCK_MACHINE_STATUS` global -- patch the SAME memoized MenuCatalog
+        # instance `search()`'s default resolves (`_SONIC` above), proving the real, only code
+        # path a mutation reintroducing a module-level global would have nothing left to pass.
+        with patch.dict(_SONIC.machines, {"ice_cream_machine": "down"}):
             result = _run(search(client, "cfg", "id", "description", "embedding", False, {"query": "shake"}))
         self.assertIn("OOS", result.text)
         self.assertIn("Ice cream machine", result.text)
@@ -277,7 +281,7 @@ class SearchOOSAnnotationTests(unittest.TestCase):
         slush label for the ice-cream text (or vice versa) must fail this test."""
         records = [{"id": "1", "name": "Blue Raspberry Slush", "category": "Slushes", "sizes": "N/A"}]
         client = _make_mock_search_client(records)
-        with patch.dict(MOCK_MACHINE_STATUS, {"slush_machine": "down"}):
+        with patch.dict(_SONIC.machines, {"slush_machine": "down"}):
             result = _run(search(client, "cfg", "id", "description", "embedding", False, {"query": "slush"}))
         self.assertIn("OOS", result.text)
         self.assertIn("Slush machine", result.text)
