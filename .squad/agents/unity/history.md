@@ -496,3 +496,28 @@ Since `app/frontend/` is off-limits, the middleware (`rtmt.py` + `audio_pipeline
     **draft** (merge gate: #77 + #76 part 2 must land first, coordinator
     decides). Cleaned up scratch pytest/conformance output captures before
     committing; `.venv`/`node_modules`/`static/` all confirmed gitignored.
+
+- **#78 PR #112 follow-up round (dev merge + #107 price-wording fix)**: after
+  coordinator confirmed #114 (pack-agnostic shared tests, `d475c77`) landed on
+  `dev`, merged `origin/dev` into `squad/78-mcdonalds-pack` with a plain
+  `git merge` (no rebase, no force-push, per the strict git rule) -- clean,
+  13 files touched, zero conflicts. Applied Rick's #107 review wording to my
+  own pack's `price` tool-schema param (`"Ignored; the server prices from the
+  menu."`) *ahead* of #107 itself landing on dev -- confirmed via
+  `git show origin/dev:personas/sonic/prompts/tool_schemas.yaml` that Sonic's
+  own pack still had the old wording, so this is intentional get-ahead-of-it
+  asymmetry per the coordinator's explicit instruction, not a mistake; it
+  self-resolves to byte-identical text on the next `dev` merge once #107 lands.
+  Also swept the system prompt for any language telling the model to
+  extract/send a price to `update_order` (3 spots) while preserving legitimate
+  verbal price-quoting-to-the-guest guidance -- worth remembering as a pattern:
+  a tool-schema wording fix is rarely complete without checking the prompt
+  prose that references the same tool/field.
+  Re-ran full validation post-merge and confirmed the fix worked as advertised:
+  pytest 1064 passed / 0 failed (both previously-failing single-pack-assumption
+  tests now pass), ruff clean, .NET Backend.Tests 82 passed / 0 failed,
+  conformance python leg 634/634, dotnet leg 11/11. Checked #108's status before
+  attempting the smoke.json testdata step -- still open/unmerged, so left that
+  step explicitly pending rather than guessing at a template that doesn't exist
+  yet. Pushed, watched CI to completion (all 8 checks green), reported back to
+  the coordinator with head SHA on the PR itself.
