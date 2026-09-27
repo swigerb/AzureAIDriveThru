@@ -10,8 +10,9 @@ contract, at the base URL `LOCAL_RUNTIME_ENDPOINT` points at (`model_catalog.py`
      (`local_runtime_server/`, ported from the sibling's `phi4_model.py`/`whisper_stt.py`/
      `piper_tts.py`), matching issue #81's "optional dependencies... requirements extra" goal.
   2. Gives conformance/unit tests a small, fully-fakeable HTTP seam
-     (`tests/test_local_processor.py`'s `FakeLocalRuntimeServer`, an in-process aiohttp test
-     server), the same shape `cascade_processor.py`'s own tests already fake
+     (`tests/test_local_processor.py`'s scripted `FakeLocalRuntimeClient`, and the conformance
+     harness's `FakeLocalRuntimeServer`, a real HTTP server for the whole companion process), the
+     same shape the cascade conformance rows already fake
      `FakeChatCompletionsServer`/the Azure OpenAI audio endpoints with.
   3. Makes "local mode only activates when the local runtime endpoint is configured" (issue
      #81's own acceptance line) a literal, testable fact about one env var, rather than an
@@ -79,8 +80,8 @@ _STT_SAMPLE_RATE = 16000
 
 class LocalRuntimeError(Exception):
     """Raised when the companion local-runtime process is unreachable, times out, or returns a
-    malformed response. `LocalProcessor` treats this the same as any other turn failure (log and
-    end the turn) -- never a silent fallback to a cloud pipeline; issue #81's local mode is a
+    malformed response. `LocalProcessor` logs it and ends the turn with the pack's `generic_error`
+    notice -- never a silent fallback to a cloud pipeline; issue #81's local mode is a
     distinct, explicit choice, not a cloud/local blend."""
 
 
@@ -110,8 +111,8 @@ class LocalChatResult:
 @runtime_checkable
 class LocalRuntimeClient(Protocol):
     """The seam `LocalProcessor` talks to -- implemented for real by `HttpLocalRuntimeClient`
-    below, and by `tests/test_local_processor.py`'s `FakeLocalRuntimeServer` (an in-process
-    aiohttp test server standing in for the whole companion process, not just this client)."""
+    below, and by `tests/test_local_processor.py`'s scripted `FakeLocalRuntimeClient`. The
+    conformance harness's `FakeLocalRuntimeServer` stands in for the whole companion process instead."""
 
     async def transcribe(self, pcm16_bytes: bytes) -> str: ...
 

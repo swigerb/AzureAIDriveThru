@@ -30,10 +30,10 @@ runtime instead of Azure OpenAI/a Foundry chat model:
     cascade_processor.py).
   - NO rate-limit retry ladder (`cascade_processor._with_rate_limit_retry`/
     `CascadeRateLimitExhausted`): that machinery exists purely for Azure quota 429s, which don't
-    apply to an on-device/companion process. A `local_runtime.LocalRuntimeError` (or any other
-    unexpected failure) during a turn is logged and ends the turn cleanly instead -- the guest
-    can just try again, same end-user outcome as cascade's own exhausted-retries path, minus the
-    `extension.rate_limited` notice (there is nothing to wait out).
+    apply to an on-device/companion process. A `local_runtime.LocalRuntimeError` during a turn
+    (transcription or chat) is logged and ends the turn with the pack's own `generic_error` text
+    as the assistant transcript (`_send_runtime_error_notice`), so an unreachable runtime is never
+    silent; there is no `extension.rate_limited` notice (there is nothing to wait out).
   - NO WAV-wrapping of the transcription upload (`cascade_processor._pcm16_to_wav_bytes`): the
     local runtime's `/v1/transcribe` endpoint takes raw PCM16 directly (matching the sibling
     repo's own `whisper_stt.py::transcribe(audio_pcm: bytes)` signature) -- there's no
@@ -338,8 +338,14 @@ class LocalProcessor:
             return
         try:
             transcript = await self._transcribe(state, turn_audio)
-        except LocalRuntimeError:
-            logger.exception("Local transcription failed (session=%s)", session_id)
+        except LocalRuntimeError as exc:
+            # One line, no traceback: LocalRuntimeError already names the endpoint and the cause,
+            # and a handled runtime outage shouldn't read as several unhandled incidents.
+            logger.error("Local transcription failed (session=%s): %s", session_id, exc)
+            response_id = new_middle_tier_item_id()
+            await ws.send_json({"type": "response.created", "response": {"id": response_id}})
+            await self._send_runtime_error_notice(ws, state)
+            await ws.send_json({"type": "response.done", "response": {"id": response_id}})
             return
         if not transcript.strip():
             return
@@ -372,8 +378,10 @@ class LocalProcessor:
 
         try:
             final_text = await self._run_chat_tool_loop(ws, session_id, state)
-        except LocalRuntimeError:
-            logger.exception("Local chat failed (session=%s)", session_id)
+        except LocalRuntimeError as exc:
+            logger.error("Local chat failed (session=%s): %s", session_id, exc)
+            notice = await self._send_runtime_error_notice(ws, state)
+            state.messages.append({"role": "assistant", "content": notice})
             await ws.send_json({"type": "response.done", "response": {"id": response_id}})
             return
 
@@ -381,13 +389,25 @@ class LocalProcessor:
             await ws.send_json({"type": "response.audio_transcript.delta", "delta": final_text})
             try:
                 await self._speak(ws, state, final_text)
-            except LocalRuntimeError:
-                logger.exception("Local TTS failed (session=%s)", session_id)
+            except LocalRuntimeError as exc:
+                logger.error("Local TTS failed (session=%s): %s", session_id, exc)
 
         await ws.send_json({"type": "response.done", "response": {"id": response_id}})
 
         identifiers = order_state_singleton.advance_round_trip(session_id)
         await self._sessions.emit_session_identifiers(ws, "extension.round_trip_token", identifiers)
+
+    async def _send_runtime_error_notice(self, ws: web.WebSocketResponse, state: _LocalSessionState) -> str:
+        """Issue #81 part 1: when the companion runtime is unreachable (or fails) the guest sees
+        the pack's own `generic_error` text as the assistant transcript instead of silence. Text
+        only: the runtime that just failed is also the TTS engine, so no speech is attempted.
+        The caller owns the surrounding response.created/response.done framing."""
+        prompt_loader = self.persona_prompt_loaders.get(state.persona_id)
+        notice = prompt_loader.render_error("generic_error") if prompt_loader else (
+            "Sorry, something went wrong. Please try again."
+        )
+        await ws.send_json({"type": "response.audio_transcript.delta", "delta": notice})
+        return notice
 
     async def _run_chat_tool_loop(self, ws: web.WebSocketResponse, session_id: str, state: _LocalSessionState) -> str:
         tool_defs = _tool_definitions(self.tools)

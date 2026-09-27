@@ -308,6 +308,64 @@ class RunChatToolLoopTests(unittest.IsolatedAsyncioTestCase):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Issue #81 part 1, item 4: an unreachable runtime sends the pack's generic_error
+# notice instead of silence (conformance twin: LocalRuntimeUnreachableTests)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class _UnreachableRuntime:
+    """Every call fails the way `HttpLocalRuntimeClient` does when nothing listens."""
+
+    def __init__(self):
+        self.speak_calls: list[tuple[str, str]] = []
+
+    async def transcribe(self, pcm16_bytes: bytes) -> str:
+        raise LocalRuntimeError("connection refused")
+
+    async def chat(self, messages, tools) -> LocalChatResult:
+        raise LocalRuntimeError("connection refused")
+
+    async def speak(self, text: str, voice: str) -> bytes:
+        self.speak_calls.append((text, voice))
+        raise LocalRuntimeError("connection refused")
+
+
+class RuntimeErrorNoticeTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.loader = PromptLoader(brand="test-alpha", prompts_dir=FIXTURES_DIR / "test-alpha" / "prompts")
+        self.expected_notice = self.loader.render_error("generic_error")
+        self.processor = _make_processor({}, persona_prompt_loaders={"test-alpha": self.loader})
+        self.runtime = _UnreachableRuntime()
+        self.state = _LocalSessionState(session_id="s1", persona_id="test-alpha", runtime=self.runtime, voice="en_US-amy-medium")
+
+    def _transcript_deltas(self, ws) -> list[str]:
+        return [call.args[0]["delta"] for call in ws.send_json.await_args_list
+                if call.args[0]["type"] == "response.audio_transcript.delta"]
+
+    async def test_chat_failure_sends_the_packs_generic_error_as_the_transcript(self):
+        ws = _make_mock_ws()
+        self.state.messages.append({"role": "user", "content": "one shake please"})
+
+        with patch("local_processor.order_state_singleton"):
+            await self.processor._run_turn_and_speak(ws, "s1", self.state)
+
+        self.assertEqual(_sent_types(ws), ["response.created", "response.audio_transcript.delta", "response.done"])
+        self.assertEqual(self._transcript_deltas(ws), [self.expected_notice])
+        self.assertEqual(self.state.messages[-1], {"role": "assistant", "content": self.expected_notice})
+        self.assertEqual(self.runtime.speak_calls, [], "the runtime that just failed must not be asked to speak")
+
+    async def test_transcription_failure_sends_the_packs_generic_error_framed_as_a_response(self):
+        ws = _make_mock_ws()
+
+        await self.processor._process_turn(ws, "s1", self.state, b"\x00\x10" * 480)
+
+        self.assertEqual(_sent_types(ws), ["response.created", "response.audio_transcript.delta", "response.done"])
+        self.assertEqual(self._transcript_deltas(ws), [self.expected_notice])
+        created, _, done = (call.args[0] for call in ws.send_json.await_args_list)
+        self.assertEqual(created["response"]["id"], done["response"]["id"])
+        self.assertEqual(self.state.messages, [], "no guest text was heard, so nothing joins the chat history")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # LocalProcessor.resolve_model -- delegates to resolve_local_model
 # ═══════════════════════════════════════════════════════════════════════════════
 
