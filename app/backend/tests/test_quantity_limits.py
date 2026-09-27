@@ -27,7 +27,7 @@ class QuantityLimitTests(unittest.TestCase):
         session_id = order_state_singleton.create_session()
         result = self._run(update_order({
             "action": "add",
-            "item_name": "SuperSONIC Cheeseburger",
+            "item_name": "SuperSONIC Double Cheeseburger",
             "size": "standard",
             "quantity": MAX_QUANTITY_PER_ITEM,
             "price": 5.99,
@@ -42,7 +42,7 @@ class QuantityLimitTests(unittest.TestCase):
         session_id = order_state_singleton.create_session()
         result = self._run(update_order({
             "action": "add",
-            "item_name": "SuperSONIC Cheeseburger",
+            "item_name": "SuperSONIC Double Cheeseburger",
             "size": "standard",
             "quantity": MAX_QUANTITY_PER_ITEM + 1,
             "price": 5.99,
@@ -160,7 +160,7 @@ class QuantityLimitTests(unittest.TestCase):
         session_id = order_state_singleton.create_session()
         result = self._run(update_order({
             "action": "add",
-            "item_name": "SuperSONIC Cheeseburger",
+            "item_name": "SuperSONIC Double Cheeseburger",
             "size": "standard",
             "quantity": MAX_QUANTITY_PER_ITEM + 5,
             "price": 5.99,

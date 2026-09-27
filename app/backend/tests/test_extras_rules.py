@@ -33,7 +33,7 @@ class ExtrasRuleTests(unittest.TestCase):
             update_order(
                 {
                     "action": "add",
-                    "item_name": "Extra Cheese",
+                    "item_name": "Add Bacon",
                     "size": "standard",
                     "quantity": 1,
                     "price": 0.50,
@@ -107,7 +107,7 @@ class ExtrasRuleTests(unittest.TestCase):
     def test_allow_extra_with_shake(self):
         """Extras should be allowed when a shake is in the order."""
         session_id = order_state_singleton.create_session()
-        self._add_item(session_id, "Classic Vanilla Shake", "large", 1, 4.99)
+        self._add_item(session_id, "Vanilla Classic Shake", "large", 1, 4.99)
 
         result = asyncio.run(
             update_order(
@@ -157,7 +157,7 @@ class ExtrasRuleTests(unittest.TestCase):
             update_order(
                 {
                     "action": "add",
-                    "item_name": "Extra Cheese",
+                    "item_name": "Add Bacon",
                     "size": "standard",
                     "quantity": 1,
                     "price": 0.50,
@@ -305,11 +305,12 @@ class HappyHourPricingTests(unittest.TestCase):
     @patch("order_state.is_happy_hour", return_value=True)
     def test_happy_hour_multiple_drink_types(self, _mock_hh):
         """Fountain drinks and slushes are discounted during happy hour; Shakes & Blasts are not
-        (Brian's decision, 2026-09-25 -- see menu_utils._SHAKES_AND_BLASTS_HAPPY_HOUR_DISCOUNTED)."""
+        (Brian's decision, 2026-09-25 -- every Shakes & Ice Cream item's ``happyHourDiscounted``
+        field in the Sonic pack's menuItems.json is ``false``, per issue #71)."""
         session_id = order_state_singleton.create_session()
         self._add_item(session_id, "Cherry Limeade", "medium", 1, 2.99)
         self._add_item(session_id, "Ocean Water", "large", 1, 3.49)
-        self._add_item(session_id, "Classic Vanilla Shake", "large", 1, 4.99)
+        self._add_item(session_id, "Vanilla Classic Shake", "large", 1, 4.99)
         summary = order_state_singleton.get_order_summary(session_id)
         expected_subtotal = (2.99 * 0.5) + (3.49 * 0.5) + 4.99
         self.assertTrue(math.isclose(summary.total, expected_subtotal, rel_tol=1e-9))

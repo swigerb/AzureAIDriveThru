@@ -41,10 +41,13 @@ public sealed class HappyHourPricingTests(FixedClockConformanceFixture fixture)
         connection!.Script.Enqueue(new ResponseScript([
             new FunctionCallEvent(
                 Name: "update_order",
-                // "Cherry Limeade" doesn't need to exist in menuItems.json: menu_utils'
-                // infer_category keyword-fallback matches "limeade" to the "drinks" category
-                // that order_state.py's happy-hour discount applies to.
-                ArgumentsJson: $$"""{"action":"add","item_name":"Cherry Limeade","size":"Regular","quantity":1,"price":{{price}}}""",
+                // #73 (ADR-001 decision 4 "No off-menu"): "Cherry Limeade" is a real drink on
+                // personas/sonic/menu/menuItems.json, so update_order's on-menu gate resolves it
+                // directly (no keyword-category-inference fallback needed or available anymore).
+                // Size must be one of Cherry Limeade's real sizes (mini/small/medium/large/route 44)
+                // or the #73 size gate rejects it as size_not_available -- "Regular" was never a
+                // real size for this item and is replaced with "medium" here.
+                ArgumentsJson: $$"""{"action":"add","item_name":"Cherry Limeade","size":"medium","quantity":1,"price":{{price}}}""",
                 CallId: callId),
             new DoneEvent(),
         ]));

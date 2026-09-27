@@ -4,7 +4,7 @@ using Xunit;
 namespace Conformance.Tests.Scenarios.Ordering;
 
 /// <summary>
-/// PR #50 review must-fix: a comprehensive data-driven Theory over ALL 60 rows of
+/// PR #50 review must-fix: a comprehensive data-driven Theory over ALL 180 rows of
 /// tests/conformance/testdata/golden-menu-categories.json, added specifically to replace
 /// "illustrative subset" coverage with an exhaustive regression net for the combo side-slot
 /// pricing bug Rick caught in review (menu_utils.py's old wide "Extras & Sides"/"Hot Dogs & Tots"
@@ -21,7 +21,7 @@ namespace Conformance.Tests.Scenarios.Ordering;
 /// regardless of the underlying implementation detail, because it asserts the OBSERVABLE
 /// end-to-end price for every real menu item, not an internal classification helper.
 ///
-/// Only the TOTAL is asserted generically across all 60 rows -- not the line-item count -- because
+/// Only the TOTAL is asserted generically across all 180 rows -- not the line-item count -- because
 /// one golden row (the base combo itself, "SONIC® Cheeseburger Combo") collides on item+size with
 /// the fixture's base combo and merges into one line at quantity 2 by the pre-existing (unrelated)
 /// duplicate-line-merge behavior in order_state.py, rather than creating a second line; the total
@@ -33,7 +33,8 @@ public sealed class GoldenMenuComboSlotTheoryTests(HappyHourJustBeforeOpenFixtur
 {
     private const string BaseComboName = "SONIC® Cheeseburger Combo";
     private const string BaseComboSize = "standard";
-    private const decimal BaseComboPrice = 8.49m;
+    // PR #99 review decision 3: corrected to the committed export price (was a stale 8.49).
+    private const decimal BaseComboPrice = 9.19m;
 
     public static TheoryData<int> GoldenRowIndexes()
     {
@@ -53,7 +54,7 @@ public sealed class GoldenMenuComboSlotTheoryTests(HappyHourJustBeforeOpenFixtur
         {
             var ct = TestContext.Current.CancellationToken;
             var golden = GoldenMenuCategoryData.Load(RepoPaths.FindRepoRoot());
-            Assert.Equal(60, golden.Items.Count);
+            Assert.Equal(180, golden.Items.Count);
             var row = golden.Items[rowIndex];
 
             var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);

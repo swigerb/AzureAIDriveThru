@@ -16,7 +16,9 @@ public sealed record BackendContract(
     string Deployment,
     string Voice,
     string SearchIndex,
-    string StoreTimeZone)
+    string StoreTimeZone,
+    IReadOnlyList<string> Personas,
+    string DefaultPersona)
 {
     public const string DefaultDeployment = "gpt-realtime-2.1-conformance";
     public const string DefaultVoice = "marin";
@@ -45,12 +47,23 @@ public sealed record BackendContract(
     public const bool SearchUseVectorQuery = true;
     public const string SearchSemanticRanker = "standard";
 
-    public static BackendContract ForPort(Uri realtimeBaseUri, Uri searchBaseUri, int port, string? deployment = null) => new(
+    /// <summary>
+    /// Issue #76: the persona(s) the launched backend is told about via PERSONAS, and which one
+    /// is DEFAULT_PERSONA -- mirrors app/backend/persona_loader.py's own defaults (see
+    /// <see cref="Conformance.Harness.ConformancePersonas"/>) so a caller that doesn't care about
+    /// personas gets exactly today's implicit behaviour (everything runs as "sonic") with no
+    /// change required.
+    /// </summary>
+    public static BackendContract ForPort(
+        Uri realtimeBaseUri, Uri searchBaseUri, int port, string? deployment = null,
+        IReadOnlyList<string>? personas = null, string? defaultPersona = null) => new(
         RealtimeBaseUri: realtimeBaseUri,
         SearchBaseUri: searchBaseUri,
         Port: port,
         Deployment: deployment ?? DefaultDeployment,
         Voice: DefaultVoice,
         SearchIndex: DefaultSearchIndex,
-        StoreTimeZone: DefaultStoreTimeZone);
+        StoreTimeZone: DefaultStoreTimeZone,
+        Personas: personas ?? [ConformancePersonas.DefaultPersonaId],
+        DefaultPersona: defaultPersona ?? ConformancePersonas.DefaultPersonaId);
 }

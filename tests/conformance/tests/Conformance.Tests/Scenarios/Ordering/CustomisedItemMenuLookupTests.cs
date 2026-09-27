@@ -1,4 +1,6 @@
 using System.Linq;
+using System.Text.Json;
+using Conformance.Fakes;
 using Conformance.Harness;
 using Xunit;
 
@@ -24,6 +26,60 @@ public sealed class CustomisedItemMenuLookupTests
     private const string BaseComboName = "SONIC® Cheeseburger Combo";
     private const string BaseComboSize = "standard";
     private const decimal BaseComboPrice = 8.49m;
+
+    /// <summary>
+    /// #73 (P2-4, "No off-menu ordering"): shared assertion for every off-menu-name scenario in
+    /// this file, now that every one of them is rejected outright rather than absorbed/charged/
+    /// discounted. Scripts the (optional) <paramref name="precedingSteps"/> first (e.g. the base
+    /// combo), then attempts to add <paramref name="offMenuItemName"/> -- a <c>not_on_menu</c>
+    /// rejection is TO_SERVER-only, exactly like every other <c>update_order</c> rejection
+    /// already covered in <c>UpdateOrderAddRemoveModifyTests</c> (price &lt;= 0, over quantity
+    /// limits), so it must be scripted with <c>toClient: false</c> or the wait for a browser-bound
+    /// tool response would time out. <c>get_order</c> afterwards proves the order holds only what
+    /// <paramref name="precedingSteps"/> put there -- the off-menu add never happened at all, not
+    /// even as a separately-charged/absorbed/discounted line.
+    /// </summary>
+    private static async Task AssertOffMenuAddIsRejectedAsync(
+        ConformanceFixture fixture,
+        (string Action, string Item, string Size, int Quantity, decimal Price)[] precedingSteps,
+        string offMenuItemName,
+        decimal expectedTotalAfter,
+        int expectedItemCountAfter,
+        CancellationToken ct)
+    {
+        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using var _ = browser;
+
+        if (precedingSteps.Length > 0)
+        {
+            var setup = await OrderScenarioHelpers.RunOrderStepsAsync(
+                connection, browser, precedingSteps, roundTripIndex, ct, callIdPrefix: "call_setup");
+            roundTripIndex = setup.RoundTripIndex;
+        }
+
+        var rejected = await OrderScenarioHelpers.CallToolAsync(
+            connection, browser, "update_order",
+            JsonSerializer.Serialize(new
+            {
+                action = "add",
+                item_name = offMenuItemName,
+                size = "medium",
+                quantity = 1,
+                price = 3.79m, // placeholder -- not_on_menu is checked before price validation
+            }),
+            "call_reject", roundTripIndex, ct, toClient: false);
+        Assert.Null(rejected.ToolResultJson);
+        OrderScenarioHelpers.AssertRejectionShape(
+            rejected.FunctionCallOutputText, expectedReason: "not_on_menu", expectedItemName: offMenuItemName);
+
+        var result = await OrderScenarioHelpers.CallToolAsync(
+            connection, browser, "get_order", "{}", "call_get_after_reject", rejected.RoundTripIndex, ct);
+        OrderScenarioHelpers.AssertMoneyEqual(
+            expectedTotalAfter,
+            OrderScenarioHelpers.GetOrderTotal(result.ToolResultJson!),
+            $"'{offMenuItemName}' is off-menu (#73) and must be rejected outright -- the order must be left exactly as it was.");
+        Assert.Equal(expectedItemCountAfter, OrderScenarioHelpers.GetOrderItemCount(result.ToolResultJson!));
+    }
 
     [Collection(HappyHourJustBeforeOpenCollection.Name)]
     public sealed class ComboSlotTests(HappyHourJustBeforeOpenFixture fixture)
@@ -181,74 +237,44 @@ public sealed class CustomisedItemMenuLookupTests
         /// <summary>PR #61 review, must-fix 3: "Totts" (doubled-T typo) and "Tater Tot's" (stray
         /// apostrophe) are deliberately NOT in <c>_TOTS_ALIASES</c> -- they must stay charged in
         /// full exactly like any other off-menu near-miss (Rick's PR #50 revenue rule).</summary>
+        /// <summary>#73: these near-miss spellings are not an exact-match name or alias for any
+        /// menu item (ADR-001 decision 4 -- "if it's not on the menu ... you cannot order it"), so
+        /// they must now be rejected outright rather than charged in full as a separate line.</summary>
         [Theory]
         [InlineData("Totts")]
         [InlineData("Tater Tot's")]
-        public Task Near_miss_tots_spellings_are_charged_in_full_alongside_a_combo_not_absorbed(string item) =>
+        public Task Near_miss_tots_spellings_are_rejected_as_not_on_menu(string item) =>
             fixture.RunAsync(async () =>
             {
                 var ct = TestContext.Current.CancellationToken;
-                const decimal unitPrice = 2.79m;
-
-                var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-                await using var _ = browser;
-
-                var result = await OrderScenarioHelpers.RunOrderStepsAsync(
-                    connection, browser,
-                    [
-                        ("add", BaseComboName, BaseComboSize, 1, BaseComboPrice),
-                        ("add", item, "medium", 1, unitPrice),
-                    ],
-                    roundTripIndex, ct);
-
-                OrderScenarioHelpers.AssertMoneyEqual(
-                    BaseComboPrice + unitPrice,
-                    OrderScenarioHelpers.GetOrderTotal(result.ToolResultJson!),
-                    $"'{item}' is not an exact-match Tots alias and must be charged in full.");
-                Assert.Equal(2, OrderScenarioHelpers.GetOrderItemCount(result.ToolResultJson!));
+                await AssertOffMenuAddIsRejectedAsync(
+                    fixture,
+                    [("add", BaseComboName, BaseComboSize, 1, BaseComboPrice)],
+                    item,
+                    expectedTotalAfter: BaseComboPrice,
+                    expectedItemCountAfter: 1,
+                    ct);
             });
 
-        /// <summary>PR #61 review, must-fix 5 -- no behaviour change, a pinned fail-safe
-        /// contract. Size words embedded directly in the name text are not stripped by
+        /// <summary>PR #61 review, must-fix 5 -- a pinned fail-safe contract, now re-pinned for
+        /// #73: size words embedded directly in the name text are not stripped by
         /// <c>strip_modifiers</c> (only a bracketed <c>(...)</c> modifier is), so "Large Tater
-        /// Tots" (size word in the name text) is charged in full, while "Tater Tots (Large)"
-        /// (size word as a bracketed modifier) still absorbs into the combo side slot -- the
-        /// modifier is stripped before the alias lookup runs, exactly like any other
-        /// modifier.
-        ///
-        /// PR #61 delta review: the original version of this test ordered BOTH items alongside
-        /// one combo, so a single combo side slot absorbs at most one of them either way -- the
-        /// total (combo + one unit price) was identical whether "Large Tater Tots" or "Tater Tots
-        /// (Large)" was the one actually absorbed, so the test could not tell them apart and did
-        /// not pin the fail-safe it claimed to. Split into two independent scenarios, each with
-        /// the combo plus exactly one item, so the total unambiguously reveals whether that one
-        /// item absorbed or not. Rick's S1 mutation (stripping a leading "large " token before the
-        /// alias match, so "Large Tater Tots" would also resolve to the Tots alias) now fails the
-        /// first scenario below.</summary>
+        /// Tots" never resolves to the Tots alias and must be rejected as not_on_menu, while
+        /// "Tater Tots (Large)" (size word as a bracketed modifier) still resolves and absorbs
+        /// into the combo side slot -- the modifier is stripped before the alias lookup runs,
+        /// exactly like any other modifier.</summary>
         [Fact]
-        public Task Size_word_in_the_name_is_charged_in_full_not_absorbed() =>
+        public Task Size_word_in_the_name_is_rejected_as_not_on_menu() =>
             fixture.RunAsync(async () =>
             {
                 var ct = TestContext.Current.CancellationToken;
-                const decimal unitPrice = 2.79m;
-
-                var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-                await using var _ = browser;
-
-                var result = await OrderScenarioHelpers.RunOrderStepsAsync(
-                    connection, browser,
-                    [
-                        ("add", BaseComboName, BaseComboSize, 1, BaseComboPrice),
-                        ("add", "Large Tater Tots", "large", 1, unitPrice),
-                    ],
-                    roundTripIndex, ct);
-
-                OrderScenarioHelpers.AssertMoneyEqual(
-                    BaseComboPrice + unitPrice,
-                    OrderScenarioHelpers.GetOrderTotal(result.ToolResultJson!),
-                    "'Large Tater Tots' (size word in the name text) does not match the Tots " +
-                    "alias and must be charged in full alongside the combo.");
-                Assert.Equal(2, OrderScenarioHelpers.GetOrderItemCount(result.ToolResultJson!));
+                await AssertOffMenuAddIsRejectedAsync(
+                    fixture,
+                    [("add", BaseComboName, BaseComboSize, 1, BaseComboPrice)],
+                    "Large Tater Tots",
+                    expectedTotalAfter: BaseComboPrice,
+                    expectedItemCountAfter: 1,
+                    ct);
             });
 
         [Fact]
@@ -277,166 +303,103 @@ public sealed class CustomisedItemMenuLookupTests
                 Assert.Equal(1, OrderScenarioHelpers.GetOrderItemCount(result.ToolResultJson!));
             });
 
-
-        /// case here used either a real allow-listed side or a real non-side menu item -- never
-        /// an off-menu name that merely LOOKS like a side. These three names are deliberately
-        /// off-menu (not in menuItems.json at all, so category inference can't rescue them
-        /// either) yet contain "tots"/"fries" substrings that the old, deleted fallback would
-        /// have matched.</summary>
+        /// <summary>#73: these three names are deliberately off-menu (not in menuItems.json at
+        /// all, so category inference can't rescue them either) yet contain "tots"/"fries"
+        /// substrings that the old, deleted keyword fallback would have matched. They must now be
+        /// rejected outright rather than charged in full as a separate line.</summary>
         [Theory]
         [InlineData("Loaded Tots Supreme")]
         [InlineData("Crispy Fries Basket")]
         [InlineData("chilli cheese tots")] // misspelling of "Chili Cheese Tots" -- still off-menu verbatim
-        public Task Off_menu_side_like_item_is_charged_in_full_alongside_a_combo_not_absorbed(string item) =>
+        public Task Off_menu_side_like_item_is_rejected_as_not_on_menu(string item) =>
             fixture.RunAsync(async () =>
             {
                 var ct = TestContext.Current.CancellationToken;
-                const decimal unitPrice = 3.79m; // arbitrary placeholder -- update_order's price is
-                                                  // caller-supplied and never menu-validated for an
-                                                  // off-menu name; only comboSlot behaviour is under test.
-
-                var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-                await using var _ = browser;
-
-                var result = await OrderScenarioHelpers.RunOrderStepsAsync(
-                    connection, browser,
-                    [
-                        ("add", BaseComboName, BaseComboSize, 1, BaseComboPrice),
-                        ("add", item, "medium", 1, unitPrice),
-                    ],
-                    roundTripIndex, ct);
-
-                OrderScenarioHelpers.AssertMoneyEqual(
-                    BaseComboPrice + unitPrice,
-                    OrderScenarioHelpers.GetOrderTotal(result.ToolResultJson!),
-                    $"'{item}' is off-menu and must never silently fill the combo side slot.");
-                Assert.Equal(2, OrderScenarioHelpers.GetOrderItemCount(result.ToolResultJson!));
+                await AssertOffMenuAddIsRejectedAsync(
+                    fixture,
+                    [("add", BaseComboName, BaseComboSize, 1, BaseComboPrice)],
+                    item,
+                    expectedTotalAfter: BaseComboPrice,
+                    expectedItemCountAfter: 1,
+                    ct);
             });
 
-        /// <summary>PR #50 review (third round): pins the OTHER side of the same fallback split
-        /// -- the drink keyword fallback for genuinely off-menu fountain drinks is intentionally
-        /// KEPT (unlike the deleted side fallback), so an off-menu fountain drink still fills a
-        /// combo's drink slot for free. Deleting `_keyword_fallback_combo_drink` must fail this.</summary>
+        /// <summary>#73: the drink keyword fallback for genuinely off-menu fountain drinks
+        /// (`_keyword_fallback_combo_drink`) is removed entirely -- this off-menu fountain drink
+        /// must now be rejected outright, never silently fill a combo's drink slot for free.</summary>
         [Fact]
-        public Task Off_menu_fountain_drink_still_absorbs_into_the_combo_drink_slot() =>
+        public Task Off_menu_fountain_drink_is_rejected_as_not_on_menu() =>
             fixture.RunAsync(async () =>
             {
                 var ct = TestContext.Current.CancellationToken;
-                const string item = "Dr Pepper Zero"; // off-menu variant, not a literal menuItems.json entry
-                const decimal unitPrice = 2.29m; // placeholder -- see comment above
-
-                var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-                await using var _ = browser;
-
-                var result = await OrderScenarioHelpers.RunOrderStepsAsync(
-                    connection, browser,
-                    [
-                        ("add", BaseComboName, BaseComboSize, 1, BaseComboPrice),
-                        ("add", item, "medium", 1, unitPrice),
-                    ],
-                    roundTripIndex, ct);
-
-                OrderScenarioHelpers.AssertMoneyEqual(BaseComboPrice, OrderScenarioHelpers.GetOrderTotal(result.ToolResultJson!));
-                Assert.Equal(1, OrderScenarioHelpers.GetOrderItemCount(result.ToolResultJson!));
+                await AssertOffMenuAddIsRejectedAsync(
+                    fixture,
+                    [("add", BaseComboName, BaseComboSize, 1, BaseComboPrice)],
+                    "Dr Pepper Zero", // off-menu variant, not a literal menuItems.json entry
+                    expectedTotalAfter: BaseComboPrice,
+                    expectedItemCountAfter: 1,
+                    ct);
             });
 
-        /// <summary>PR #50 review (round 5, "keyword over-correction"): the round-4 word-boundary
-        /// fix over-corrected and broke these genuinely off-menu spoken variants (the real
-        /// menuItems.json items are "... Classic Shake" and "... Slush", singular): a bare
-        /// `\bshake\b` never matches "milkshake" (no word boundary between "milk" and "shake"),
-        /// and the old `s?` suffix only allowed a single trailing "s", missing "-es"/"-ie". A
-        /// mutation reverting either regex to its round-4 form must fail this Theory.</summary>
+        /// <summary>#73: these genuinely off-menu spoken shake/slush variants (the real
+        /// menuItems.json items are "... Classic Shake" and "... Slush", singular) are no longer
+        /// rescued by any keyword fallback -- they must be rejected outright.</summary>
         [Theory]
         [InlineData("Chocolate Milkshake")]
         [InlineData("Cherry Slushes")]
         [InlineData("Blue Raspberry Slushie")]
-        public Task Off_menu_spoken_shake_and_slush_variants_still_absorb_into_the_combo_drink_slot(string item) =>
+        public Task Off_menu_spoken_shake_and_slush_variants_are_rejected_as_not_on_menu(string item) =>
             fixture.RunAsync(async () =>
             {
                 var ct = TestContext.Current.CancellationToken;
-                const decimal unitPrice = 4.69m; // placeholder -- see comment on the off-menu drink test above
-
-                var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-                await using var _ = browser;
-
-                var result = await OrderScenarioHelpers.RunOrderStepsAsync(
-                    connection, browser,
-                    [
-                        ("add", BaseComboName, BaseComboSize, 1, BaseComboPrice),
-                        ("add", item, "medium", 1, unitPrice),
-                    ],
-                    roundTripIndex, ct);
-
-                OrderScenarioHelpers.AssertMoneyEqual(
-                    BaseComboPrice,
-                    OrderScenarioHelpers.GetOrderTotal(result.ToolResultJson!),
-                    $"'{item}' is an off-menu spoken shake/slush variant and must still absorb into the combo drink slot.");
-                Assert.Equal(1, OrderScenarioHelpers.GetOrderItemCount(result.ToolResultJson!));
+                await AssertOffMenuAddIsRejectedAsync(
+                    fixture,
+                    [("add", BaseComboName, BaseComboSize, 1, BaseComboPrice)],
+                    item,
+                    expectedTotalAfter: BaseComboPrice,
+                    expectedItemCountAfter: 1,
+                    ct);
             });
 
-        /// <summary>PR #61 review (must-fix 1): the combo-drink-slot question is unaffected by
-        /// the keyword-precedence fix -- these names contain both a fountain word and a
-        /// shake/blast word, and must still fill the combo drink slot regardless of which keyword
-        /// "wins" the (separate) happy-hour-discount question. See the sibling Theory in
-        /// <see cref="HappyHourDiscountTests"/> for the discount side of the same names.</summary>
+        /// <summary>#73: these off-menu names contain both a fountain word and a shake/blast
+        /// word -- the keyword-precedence question this Theory used to pin (which keyword "wins")
+        /// no longer applies, since neither keyword fallback exists any more; every one of these
+        /// names must simply be rejected as not_on_menu. See the sibling Theory in
+        /// <see cref="HappyHourDiscountTests"/> for the same names re-pinned during happy hour.</summary>
         [Theory]
         [InlineData("Cherry Limeade Shake")]
         [InlineData("Strawberry Lemonade Shake")]
         [InlineData("Dr Pepper Shake")]
         [InlineData("Sweet Tea Blast")]
-        public Task Off_menu_shake_or_blast_containing_a_fountain_keyword_still_absorbs_into_the_combo_drink_slot(string item) =>
+        public Task Off_menu_shake_or_blast_containing_a_fountain_keyword_is_rejected_as_not_on_menu(string item) =>
             fixture.RunAsync(async () =>
             {
                 var ct = TestContext.Current.CancellationToken;
-                const decimal unitPrice = 4.69m; // placeholder -- see comment on the off-menu drink test above
-
-                var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-                await using var _ = browser;
-
-                var result = await OrderScenarioHelpers.RunOrderStepsAsync(
-                    connection, browser,
-                    [
-                        ("add", BaseComboName, BaseComboSize, 1, BaseComboPrice),
-                        ("add", item, "medium", 1, unitPrice),
-                    ],
-                    roundTripIndex, ct);
-
-                OrderScenarioHelpers.AssertMoneyEqual(
-                    BaseComboPrice,
-                    OrderScenarioHelpers.GetOrderTotal(result.ToolResultJson!),
-                    $"'{item}' contains a fountain keyword but is a shake/blast and must still absorb into the combo drink slot.");
-                Assert.Equal(1, OrderScenarioHelpers.GetOrderItemCount(result.ToolResultJson!));
+                await AssertOffMenuAddIsRejectedAsync(
+                    fixture,
+                    [("add", BaseComboName, BaseComboSize, 1, BaseComboPrice)],
+                    item,
+                    expectedTotalAfter: BaseComboPrice,
+                    expectedItemCountAfter: 1,
+                    ct);
             });
 
-        /// <summary>PR #50 review (round 4): pins the word-boundary fix for the fountain-drink
-        /// keyword fallback -- a plain substring check let "tea" match inside "steak", so this
-        /// genuinely off-menu item (not in menuItems.json at all) was silently absorbed into a
-        /// combo's drink slot for free. Word-boundary regex fixes this; a mutation removing the
-        /// `\b` anchors must fail this test.</summary>
+        /// <summary>#73: "Steak Sandwich" is off-menu ("SONIC® Steak Sandwich" is the real item,
+        /// but this exact name has no matching alias). The old fountain-drink keyword fallback's
+        /// word-boundary fix (PR #50 round 4) is now moot -- the fallback itself is gone, so this
+        /// must simply be rejected as not_on_menu, with no keyword classification of any kind.</summary>
         [Fact]
-        public Task Off_menu_steak_item_is_not_misclassified_as_a_tea_drink_and_charges_in_full() =>
+        public Task Off_menu_steak_item_is_rejected_as_not_on_menu() =>
             fixture.RunAsync(async () =>
             {
                 var ct = TestContext.Current.CancellationToken;
-                const string item = "Steak Sandwich"; // off-menu; contains "tea" as a substring of "steak"
-                const decimal unitPrice = 5.49m; // placeholder -- see comment on the off-menu side test above
-
-                var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-                await using var _ = browser;
-
-                var result = await OrderScenarioHelpers.RunOrderStepsAsync(
-                    connection, browser,
-                    [
-                        ("add", BaseComboName, BaseComboSize, 1, BaseComboPrice),
-                        ("add", item, "standard", 1, unitPrice),
-                    ],
-                    roundTripIndex, ct);
-
-                OrderScenarioHelpers.AssertMoneyEqual(
-                    BaseComboPrice + unitPrice,
-                    OrderScenarioHelpers.GetOrderTotal(result.ToolResultJson!),
-                    $"'{item}' must not match the bare substring 'tea' inside 'steak' and silently fill the combo drink slot.");
-                Assert.Equal(2, OrderScenarioHelpers.GetOrderItemCount(result.ToolResultJson!));
+                await AssertOffMenuAddIsRejectedAsync(
+                    fixture,
+                    [("add", BaseComboName, BaseComboSize, 1, BaseComboPrice)],
+                    "Steak Sandwich", // off-menu; contains "tea" as a substring of "steak"
+                    expectedTotalAfter: BaseComboPrice,
+                    expectedItemCountAfter: 1,
+                    ct);
             });
 
         /// <summary>Rick's Z2: a customised sundae must not silently fill a combo's drink slot
@@ -553,123 +516,70 @@ public sealed class CustomisedItemMenuLookupTests
                     "A customised sundae must stay full price during happy hour -- Brian's #39 decision survives customization.");
             });
 
-        /// <summary>Rick's Y4, re-pinned directly in conformance (previously only covered by a
-        /// pytest): a genuinely off-menu fountain drink must still get the happy-hour discount via
-        /// the keyword fallback, at the C# level too, not just Python's.</summary>
+        /// <summary>#73: a genuinely off-menu fountain drink is now rejected outright, regardless
+        /// of happy-hour timing -- re-pinned here (fixture is at happy-hour open) alongside the
+        /// same name's <see cref="ComboSlotTests.Off_menu_fountain_drink_is_rejected_as_not_on_menu"/>
+        /// (fixture is just before open) to prove the rejection doesn't depend on time of day.</summary>
         [Fact]
-        public Task Off_menu_fountain_drink_is_happy_hour_discounted() =>
+        public Task Off_menu_fountain_drink_is_rejected_as_not_on_menu_regardless_of_happy_hour() =>
             fixture.RunAsync(async () =>
             {
                 var ct = TestContext.Current.CancellationToken;
-                const string item = "Dr Pepper Zero"; // off-menu variant, not a literal menuItems.json entry
-                const decimal unitPrice = 2.29m; // placeholder -- see comment on the off-menu drink test above
-
-                var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-                await using var _ = browser;
-
-                var result = await OrderScenarioHelpers.RunOrderStepsAsync(
-                    connection, browser,
-                    [("add", item, "medium", 1, unitPrice)],
-                    roundTripIndex, ct);
-
-                var rules = GoldenOrderPricingData.Load(RepoPaths.FindRepoRoot()).BusinessRules;
-                var expectedTotal = unitPrice * rules.HappyHourDiscount * (1 + rules.TaxRate);
-                OrderScenarioHelpers.AssertMoneyEqual(expectedTotal, OrderScenarioHelpers.GetOrderFinalTotal(result.ToolResultJson!));
+                await AssertOffMenuAddIsRejectedAsync(
+                    fixture,
+                    [],
+                    "Dr Pepper Zero", // off-menu variant, not a literal menuItems.json entry
+                    expectedTotalAfter: 0m,
+                    expectedItemCountAfter: 0,
+                    ct);
             });
 
-        /// <summary>PR #50 review (round 5, "keyword over-correction"): pins the same two spoken
-        /// off-menu fountain-drink variants as the combo-drink-slot Theory above, at the
-        /// happy-hour-discount question this time -- the two slush spoken variants are always
-        /// discounted like every other fountain drink. "Chocolate Milkshake" moved to
-        /// <see cref="Off_menu_spoken_shake_variant_is_full_price_during_happy_hour"/> below
-        /// (Brian's decision, 2026-09-25: Shakes & Blasts are full price during happy hour).</summary>
+        /// <summary>#73: these genuinely off-menu spoken slush variants are no longer rescued by
+        /// any keyword fallback (happy-hour-discount question or otherwise) -- rejected outright,
+        /// during happy hour exactly like any other time.</summary>
         [Theory]
         [InlineData("Cherry Slushes")]
         [InlineData("Blue Raspberry Slushie")]
-        public Task Off_menu_spoken_shake_and_slush_variants_are_happy_hour_discounted(string item) =>
+        public Task Off_menu_spoken_shake_and_slush_variants_are_rejected_as_not_on_menu_during_happy_hour(string item) =>
             fixture.RunAsync(async () =>
             {
                 var ct = TestContext.Current.CancellationToken;
-                const decimal unitPrice = 4.69m; // placeholder -- see comment on the off-menu drink test above
-
-                var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-                await using var _ = browser;
-
-                var result = await OrderScenarioHelpers.RunOrderStepsAsync(
-                    connection, browser,
-                    [("add", item, "medium", 1, unitPrice)],
-                    roundTripIndex, ct);
-
-                var rules = GoldenOrderPricingData.Load(RepoPaths.FindRepoRoot()).BusinessRules;
-                var expectedTotal = unitPrice * rules.HappyHourDiscount * (1 + rules.TaxRate);
-                OrderScenarioHelpers.AssertMoneyEqual(
-                    expectedTotal,
-                    OrderScenarioHelpers.GetOrderFinalTotal(result.ToolResultJson!),
-                    $"'{item}' is an off-menu spoken slush variant and must still get the happy-hour discount.");
+                await AssertOffMenuAddIsRejectedAsync(fixture, [], item, expectedTotalAfter: 0m, expectedItemCountAfter: 0, ct);
             });
 
-        /// <summary>Brian's decision (2026-09-25, #39 follow-up): Shakes & Blasts are full price
-        /// during happy hour -- proves the off-menu keyword-fallback path
-        /// (`_keyword_fallback_happy_hour_discounted`) obeys
-        /// `_SHAKES_AND_BLASTS_HAPPY_HOUR_DISCOUNTED` exactly like the on-menu, JSON-category path
-        /// does (<see cref="Customised_shake_obeys_the_single_shakes_and_blasts_flag_exactly_like_its_plain_form"/>),
-        /// not just some of the shake/blast surfaces.</summary>
+        /// <summary>#73: "Chocolate Milkshake" is off-menu (the real item is "... Classic Shake")
+        /// and is now rejected outright -- the happy-hour-discount question this test used to pin
+        /// (Brian's 2026-09-25 decision that Shakes &amp; Blasts are full price) no longer applies
+        /// to an off-menu name, since it's never added to the order at all.</summary>
         [Fact]
-        public Task Off_menu_spoken_shake_variant_is_full_price_during_happy_hour() =>
+        public Task Off_menu_spoken_shake_variant_is_rejected_as_not_on_menu_during_happy_hour() =>
             fixture.RunAsync(async () =>
             {
                 var ct = TestContext.Current.CancellationToken;
-                const string item = "Chocolate Milkshake"; // off-menu; the real item is "... Classic Shake"
-                const decimal unitPrice = 4.69m; // placeholder -- see comment on the off-menu drink test above
-
-                var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-                await using var _ = browser;
-
-                var result = await OrderScenarioHelpers.RunOrderStepsAsync(
-                    connection, browser,
-                    [("add", item, "medium", 1, unitPrice)],
-                    roundTripIndex, ct);
-
-                var rules = GoldenOrderPricingData.Load(RepoPaths.FindRepoRoot()).BusinessRules;
-                var expectedTotal = unitPrice * (1 + rules.TaxRate); // NOT multiplied by HappyHourDiscount
-                OrderScenarioHelpers.AssertMoneyEqual(
-                    expectedTotal,
-                    OrderScenarioHelpers.GetOrderFinalTotal(result.ToolResultJson!),
-                    $"'{item}' is an off-menu spoken shake variant and must be full price during happy hour (Brian's decision).");
+                await AssertOffMenuAddIsRejectedAsync(
+                    fixture,
+                    [],
+                    "Chocolate Milkshake", // off-menu; the real item is "... Classic Shake"
+                    expectedTotalAfter: 0m,
+                    expectedItemCountAfter: 0,
+                    ct);
             });
 
-        /// <summary>PR #61 review (must-fix 1): pins the keyword-precedence bug directly against
-        /// the live backend, not just the pytest -- these off-menu names contain BOTH a
-        /// fountain-drink word ("limeade"/"lemonade"/Dr Pepper/"tea") and a shake/blast word
-        /// ("shake"/"blast"), and must resolve as a shake/blast for the DISCOUNT question (full
-        /// price, obeying the flag) even though a fountain-drink-first check would have wrongly
-        /// discounted them. Combo-drink-slot eligibility is unaffected either way -- see the
-        /// sibling Theory in <see cref="ComboSlotTests"/>.</summary>
+        /// <summary>#73: these off-menu names contain both a fountain word and a shake/blast word
+        /// -- the keyword-precedence bug this Theory used to pin (PR #61 must-fix 1) no longer
+        /// applies, since neither keyword fallback exists any more; every one of these names must
+        /// simply be rejected as not_on_menu. See the sibling Theory in
+        /// <see cref="ComboSlotTests"/> for the same names outside happy hour.</summary>
         [Theory]
         [InlineData("Cherry Limeade Shake")]
         [InlineData("Strawberry Lemonade Shake")]
         [InlineData("Dr Pepper Shake")]
         [InlineData("Sweet Tea Blast")]
-        public Task Off_menu_shake_or_blast_containing_a_fountain_keyword_is_full_price_during_happy_hour(string item) =>
+        public Task Off_menu_shake_or_blast_containing_a_fountain_keyword_is_rejected_as_not_on_menu_during_happy_hour(string item) =>
             fixture.RunAsync(async () =>
             {
                 var ct = TestContext.Current.CancellationToken;
-                const decimal unitPrice = 4.69m; // placeholder -- see comment on the off-menu drink test above
-
-                var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-                await using var _ = browser;
-
-                var result = await OrderScenarioHelpers.RunOrderStepsAsync(
-                    connection, browser,
-                    [("add", item, "medium", 1, unitPrice)],
-                    roundTripIndex, ct);
-
-                var rules = GoldenOrderPricingData.Load(RepoPaths.FindRepoRoot()).BusinessRules;
-                var expectedTotal = unitPrice * (1 + rules.TaxRate); // NOT multiplied by HappyHourDiscount
-                OrderScenarioHelpers.AssertMoneyEqual(
-                    expectedTotal,
-                    OrderScenarioHelpers.GetOrderFinalTotal(result.ToolResultJson!),
-                    $"'{item}' contains a fountain keyword but is a shake/blast and must be full price during happy hour (keyword precedence bug, PR #61).");
+                await AssertOffMenuAddIsRejectedAsync(fixture, [], item, expectedTotalAfter: 0m, expectedItemCountAfter: 0, ct);
             });
     }
 
@@ -740,33 +650,23 @@ public sealed class CustomisedItemMenuLookupTests
             });
 
         [Fact]
-        public Task Nested_unbalanced_parenthesized_group_fails_safe_and_charges_in_full() =>
+        public Task Nested_unbalanced_parenthesized_group_fails_safe_and_is_rejected_as_not_on_menu() =>
             fixture.RunAsync(async () =>
             {
                 // "Tots (Extra (Really) Crispy)" -- a nested group -- cannot be fully stripped by
                 // the single-level `\([^)]*\)` pattern (it can't cross the inner "("), leaving a
-                // stray ")" in the normalised key ("tots crispy)"). This must match NO menu key and
-                // fall through to full price -- a deliberate fail-safe, never a silent free side.
+                // stray ")" in the normalised key ("tots crispy)"). This must match NO menu key,
+                // and #73 means "matches no menu key" now means rejected outright as not_on_menu
+                // -- a deliberate fail-safe, never a silent free side (nor, pre-#73, a silently
+                // charged-in-full off-menu line).
                 var ct = TestContext.Current.CancellationToken;
-                const string item = "Tots (Extra (Really) Crispy)";
-                const decimal unitPrice = 2.79m; // placeholder -- see comment on the off-menu side test above
-
-                var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-                await using var _ = browser;
-
-                var result = await OrderScenarioHelpers.RunOrderStepsAsync(
-                    connection, browser,
-                    [
-                        ("add", BaseComboName, BaseComboSize, 1, BaseComboPrice),
-                        ("add", item, "medium", 1, unitPrice),
-                    ],
-                    roundTripIndex, ct);
-
-                OrderScenarioHelpers.AssertMoneyEqual(
-                    BaseComboPrice + unitPrice,
-                    OrderScenarioHelpers.GetOrderTotal(result.ToolResultJson!),
-                    "A nested/unbalanced parenthesized group must fail safe to full price, never a silent free side.");
-                Assert.Equal(2, OrderScenarioHelpers.GetOrderItemCount(result.ToolResultJson!));
+                await AssertOffMenuAddIsRejectedAsync(
+                    fixture,
+                    [("add", BaseComboName, BaseComboSize, 1, BaseComboPrice)],
+                    "Tots (Extra (Really) Crispy)",
+                    expectedTotalAfter: BaseComboPrice,
+                    expectedItemCountAfter: 1,
+                    ct);
             });
     }
 

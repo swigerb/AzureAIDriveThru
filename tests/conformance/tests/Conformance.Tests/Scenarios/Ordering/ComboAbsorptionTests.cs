@@ -10,8 +10,15 @@ namespace Conformance.Tests.Scenarios.Ordering;
 /// Issue #9: combo scenarios, including component absorption. Data-driven over the
 /// `comboAbsorptionScenarios` table in golden-order-pricing.json (ported verbatim from
 /// app/backend/tests/test_combo_orders.py), plus a Theory proving all 10 real combo items from
-/// app/frontend/src/data/menuItems.json price correctly through the same tax pipeline used
-/// elsewhere in this stream.
+/// personas/sonic/menu/menuItems.json (the backend-authoritative menu resolve_menu_item() reads)
+/// price correctly through the same tax pipeline used elsewhere in this stream.
+///
+/// #73 (ADR-001 decision 4 "No off-menu"): two of the original ten golden combo rows
+/// ("All-American SONIC Smasher Combo" and "Jr Double Cheeseburger Combo") never existed on any
+/// real menu snapshot -- they used to silently absorb under the keyword-substring combo fallback
+/// this issue removes, and now correctly fail to resolve. Replaced with real combo items
+/// ("All-American Hot Dog Combo", "French Toast Sticks Combo") in golden-order-pricing.json so
+/// comboIndex 3 and 8 resolve through resolve_menu_item() like the other eight.
 ///
 /// The absorption Theory (and the mods-carried Fact) run under a FixedClock pinned just before
 /// the happy-hour window opens rather than the ambient ConformanceCollection (real wall-clock

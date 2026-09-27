@@ -232,3 +232,81 @@
 - PowerShell gotcha re-confirmed: a typed `[int]$Param` and a differently-cased local `$param` collide (case-insensitive variable names) — caused a `repro-loop.ps1` bug this session; fixed by renaming the local.
 - Commit `35a19ad` on branch `squad/55-62-conformance-flakes`, pushed to `swigerb/SonicAIDriveThru`, PR #66 into `dev`, requesting Rick's review. Not merged.
 - **PR #66 merged as 7ca056d (2026-09-25):** Participated in round 1 review of conformance flake fixes covering late-error attribution, mutation-tested unit tests, and honest PR text. Rick requested R1 changes; Birdperson locked out per reviewer-lockout rule. Lesson: event-driven waits preferred over wall-clock margins; attribute errors to the scenario that caused them; never rely on timing windows in tests under parallel load.
+
+## 2026-09-27 — squad/80-theming PR #91 round 2 (issue #80), worktree `p2-80-r2`
+
+- Reviewer-lockout revision of Morty's PR #91 after Rick's rejection (3 required changes): renamed
+  ~70 Sonic-color-named CSS/Tailwind tokens (`--brand-red/blue/yellow`, `--brand-light/dark`) to
+  role names (`--brand-primary/secondary/accent`, `--brand-background/foreground`) across
+  `index.css`, `lib/personaTheme.ts`, and the four component/style files the PR touched; converted
+  every `--brand-*-veil-*` from hard-coded `rgba()` to `color-mix(in srgb, var(--brand-*-hex) N%,
+  transparent)` so a future `applyTheme()` call re-tints veils along with the rest of the palette;
+  rewrote the `brandColorTokens.test.ts` guard to ban every color literal (any 3/4/6/8-digit hex,
+  any `rgb()`/`rgba()`/`hsl()`/`hsla()` with a literal numeric argument including Tailwind arbitrary
+  values) instead of just Sonic's 15 hardcoded hexes, with a 2-entry black/white allowlist and a
+  battery of self-tests plus a live mutation check.
+- **Found and fixed a real regex bug in my own first draft, before it ever left the worktree**: `\b`
+  does not fire between two word characters, and Tailwind's arbitrary-value syntax glues the
+  literal directly onto the preceding token with an underscore (`shadow-[0_4px_8px_rgba(0,0,0,.2)]`
+  — `_` and `r` are both `\w`), so `/\b(?:rgba?|hsla?)\(/` silently missed exactly the shape the
+  guard exists to catch. Caught it by reasoning through the regex against the two real allowlisted
+  literals already in the codebase, not by a failing test (the self-test fixtures I'd written
+  happened to use `[rgb(...)]`/space-preceded forms that don't trigger the bug) — added a dedicated
+  underscore-glued self-test afterward so the regression can't come back silently. Fixed with a
+  negative lookbehind for a preceding letter instead of `\b`. Lesson: when a guard's job is to catch
+  an adversarial pattern, write the regex test cases from the exact real-world shapes already in
+  the codebase first, not just clean textbook fixtures — the codebase's own edge cases are the ones
+  most likely to expose a boundary-assertion bug.
+- Also caught mid-task: a `locales.test.ts` guard (`TEMPLATE_LEFTOVERS`, pre-existing, unrelated to
+  my edit) bans competitor-brand mentions (`\bdunkin\b`) in any `.ts`/`.tsx` under `src` — tripped
+  by my own explanatory comment in `personaTheme.ts` naming Dunkin/McDonald's as illustrative
+  examples of "another persona's colors." Reworded to describe the *shape* of the problem generically
+  instead of naming real competitor brands, even in code comments outside the two exempt token files.
+- Live mutation check on a real PR-touched file (not just fixtures): temporarily reintroduced
+  `#DA291C` into `App.tsx`, confirmed `brandColorTokens.test.ts` failed with exactly that hex in the
+  reported hits array, reverted, re-confirmed 48/48 green and no `MUTATION_TEST` marker left behind.
+- Proved the `color-mix()` veil derivation is genuinely live (not just mathematically equivalent on
+  paper) via a throwaway browser-console harness against the running dev server: swapped
+  `--brand-primary-hex` to a synthetic orange, read a probe element's computed
+  `var(--brand-primary-veil-10)` background before/during/after, confirmed it tracked the swap and
+  reverted to Sonic's exact original `color(srgb ...)` value on removal. Nothing from this harness
+  was committed; no other persona's real palette exists anywhere in the diff.
+- Playwright screenshot diff: full-page light/dark screenshots vs the pre-PR baseline differ by
+  ≤1 RGB unit on ~1.45% of pixels (AA/rounding noise, same order of magnitude as Morty's own
+  round-1 measurement) — strong evidence the rename + color-mix conversion render pixel-identical
+  for Sonic. The fixed-viewport screenshot showed a much larger raw diff %, but direct pixel
+  sampling at matching content landmarks (mic button `#E40046`, page background `#F0F7F9`) came back
+  byte-identical before/after; the diff was a scrollbar-presence layout shift in that one capture,
+  not a color regression. Lesson: a large aggregate pixel-diff percentage on a fixed-viewport capture
+  can be dominated by an unrelated layout/scrollbar artifact — sample actual colors at known content
+  landmarks before concluding a visual regression exists.
+- `npm test`: 181 green (171 baseline + 10 new guard self-tests). `npm run build` clean.
+  `Category=Browser` conformance: 5/5 green locally against .NET 11 RC1 (`DOTNET_ROOT`/`PATH`
+  scoped to the invoking process only, not the global environment).
+- Posted the final `PersonaTheme` key list on issue #70 for Summer's `persona.schema.json` work.
+  Left `applyTheme()` ignoring `theme.dark` and the static dark-mode CSS block for F1, per the
+  task's explicit scope boundary.
+
+## 2026-09-27 — squad/76-personas-v2 PR #101 (#76 P2-7 groundwork)
+
+- The conformance harness's persona
+  dimension (`ConformancePersonas`, mirroring `persona_loader.py`'s exact
+  `PERSONAS`/`DEFAULT_PERSONA`/disk-discovery algorithm) and the CI `persona × backend`
+  matrix are designed so adding a persona is a data change, not a code change: extend
+  `.github/workflows/conformance.yml`'s `persona: [sonic]` list once #78/#79 land packs, and
+  `ConformancePersonas.DiscoverFromDisk` already finds them without a harness edit.
+- Inverting a "forbidden brand word" guard for a multi-persona repo needs three concerns
+  kept separate, or the design gets muddled fast: (1) a persona pack may say its own brand
+  but not another's (cross-brand leak inside `personas/<id>/**`), (2) a small number of docs
+  are explicitly cross-brand by design (ADR-001, `docs/persona-architecture.md`) and should
+  be classified-allowed, not just scan-excluded, so the rule is actually exercised/testable,
+  and (3) everywhere else needs a per-location allowlist where every entry is forced to carry
+  a tracking issue ref (a dedicated test fails on a missing/malformed one) so "temporarily
+  allowed" can't quietly become "permanently forgotten". Today's real repo state needed ~13
+  allowlist entries (mostly directory-prefix, longest-prefix-wins) to cover the ~72 files that
+  still say "Sonic" pending #74/#78/#79/#80/#86 migration work -- that volume is expected and
+  healthy for a repo mid-multi-persona-migration, not a sign the guard is too loose.
+- A CI workflow's own comments are source text the brand guard scans too: mentioning a
+  not-yet-existing persona ("McDonald's"/"Dunkin") in a `.yml` comment tripped the guard
+  before it was allowlisted -- worth remembering before adding forward-looking comments to
+  any scanned file.

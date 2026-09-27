@@ -1121,6 +1121,35 @@ order would never trigger. Do not "fix" a scenario's price to match the menu; if
 menu-matching golden case is later wanted for its own reasons, add a new case rather than
 resolving this apparent mismatch in the existing one.
 
+### On-menu validation gate (#73, PR #100 review item 1 and 2)
+
+`CustomisedItemMenuLookupTests.cs` and `UpdateOrderAddRemoveModifyTests.cs` assert that
+`update_order` `add` never silently absorbs, discounts, or rounds an off-menu name or an
+unsupported size to a nearby real one — it rejects outright and leaves the order unchanged.
+Both rejection reasons return the same structured JSON on the wire (never plain text), asserted
+via `OrderScenarioHelpers.AssertRejectionShape`:
+
+```json
+{ "status": "rejected", "item_added": false, "reason": "not_on_menu" | "size_not_available",
+  "item_name": "...", "message": "...", "available_sizes": ["Small", "Medium", ...] }
+```
+
+`available_sizes` is present only for `reason: "size_not_available"` (the item's real display
+sizes, e.g. Cherry Limeade's `["Mini","Small","Medium","Large","Route 44"]`). Since this is a
+`TO_SERVER`-only rejection, `ToolCallResult.ToolResultJson` stays `null` (no browser-facing
+extension message) — assert the JSON on `ToolCallResult.FunctionCallOutputText` instead, the
+string sent upstream as `function_call_output.output`.
+
+`golden-order-pricing.json`'s `sizeNotAvailableCases` array is the golden table for the size
+rejection: each row is a real menu item ordered in a size it does not offer (Cherry Limeade in an
+`xl`/`Extra Large`/`extra large`/`XL` variant it has never had; Tots in an unrecognised size word
+like `pot` or `kannchen`), with the expected resolved item name and the item's real available
+sizes. `UpdateOrderAddRemoveModifyTests.cs`'s `Unavailable_size_is_rejected_with_the_items_real_available_sizes`
+Theory is index-driven over that array, parallel to the existing `Size_aliases_and_hidden_sizes_display_correctly`
+Theory over `sizeDisplayCases`. A single-size item ordered with no size word (`n/a`/`none`/`""`)
+is a distinct, already-accepted case — see `sizeDisplayCases`' "Salted Caramel Toffee Croissant
+Bites" + `n/a` row — and is not part of `sizeNotAvailableCases`.
+
 ### Python-bug scenarios skip only against Python (PR #38 review should-fix 3)
 
 Every scenario documenting a "Known Python bug" — reproducing a genuine defect in `app/backend`
@@ -1189,6 +1218,49 @@ stream's scenarios.
   test deliberately rejects `"sizes"` for exactly this reason, so a successful retry can only be
   observed by the second request omitting it.
 
+### On-menu validation gate (#73 — ADR-001 decision 4: "No off-menu. If it's not on the menu in
+### our source data, you cannot order it.")
+
+`update_order`'s `add` path calls `menu_utils.resolve_menu_item(item_name)` — THE single on-menu
+gate — before anything else (before size validation, customization validation, price validation,
+the extras guard, or quantity limits). An item resolves iff its `_menu_key()`-normalised name (which
+also strips a parenthesized customization suffix) or one of its own `aliases` is an exact key in
+the persona pack's data; there is no substring/keyword matching anywhere in the resolution path.
+
+- **Unknown item → rejected, order unchanged.** `resolve_menu_item` returns `None`; `update_order`
+  returns `ToolResultDirection.TO_SERVER` (model-only, never reaches the browser/ticket) with the
+  `error_messages.yaml` `item_not_on_menu` message (rendered with the guest's `item_name`) — the
+  same "apology-string, `TO_SERVER`-only" shape every other add-time rejection in this file uses
+  (price validation, the extras guard, quantity limits), so the carhop can naturally offer an
+  on-menu alternative in its next turn without a new wire shape for the client to learn.
+  `order_state_singleton` is never called, so the order is provably unchanged.
+- **Known item, unsupported size → rejected, order unchanged.** `canonical_size_key(size)` is
+  checked against the resolved item's own `sizes` tuple (built once at load time from each item's
+  own `sizes` entries); a mismatch returns `size_not_available` (also `TO_SERVER`-only), listing the
+  item's actual available sizes in the message.
+- **What replaced the keyword fallback removed by this issue.** Every keyword/substring fallback
+  that used to classify a name NOT found in the pack's own data — `_keyword_fallback_combo_drink`,
+  `_keyword_fallback_happy_hour_discounted`, their `_FOUNTAIN_DRINK_KEYWORD_RE` /
+  `_SHAKE_BLAST_KEYWORD_RE` / `_DR_PEPPER_RE` regexes, and the matching substring rule inside
+  `infer_category` — is deleted outright, along with `tools.py`'s old `_ICE_CREAM_MACHINE_KEYWORDS`
+  (machine-outage flagging, now `menu_utils.requires_machine()`, data-driven off each item's own
+  `requiresMachine` field) and `EXTRAS_KEYWORDS` (the extras guard, now `menu_utils.is_extra_item()`,
+  data-driven off each item's own `isExtra` field) substring lists. An off-menu name that used to
+  slip through one of those lists — an off-menu fountain drink ("Dr Pepper Zero"), a spoken shake/
+  blast/slush variant ("Cherry Slushes", "Blue Raspberry Slushie", "Chocolate Milkshake"), a
+  fountain-and-shake compound ("Cherry Limeade Shake"), the "tea"-inside-"steak" false match
+  ("Steak Sandwich"), or an off-menu "extra" ("Extra Patty", "Extra Cheese") — is now rejected
+  as `not_on_menu` before any of those functions would ever run. See
+  `app/backend/tests/test_menu_utils.py::OffMenuNamesReturnSafeDefaultsSinceIssue73Tests` (the
+  classification functions' own safe-default behaviour once an item doesn't resolve),
+  `test_tool_calling.py::NotOnMenuRejectionTests` (the `update_order` gate itself, including the
+  size check and the former-extras-keyword and former-machine-keyword cases), and
+  `CustomisedItemMenuLookupTests.cs` in this suite (the `Off_menu_*`/`Near_miss_*`/`Size_word_*`
+  scenarios) for the end-to-end equivalents. Mutation-checked: reintroducing any of the three
+  deleted keyword lists, or flipping
+  a real item's `requiresMachine`/`isExtra` field away from its pack value, fails at least one of
+  these rows.
+
 ### Order-summary wire schema
 
 `update_order`/`get_order`/`reset_order` are all `ToolResultDirection.TO_BOTH` (see
@@ -1242,14 +1314,100 @@ whitespace-collapsed), used everywhere a raw item name is turned into a lookup k
 standalone entree when its combo is added) — one implementation, so lookup and combo-conversion
 matching can never drift apart on how a customization suffix is stripped. A direct implication: an
 unknown/off-menu item (customised or not) **never** falls back into the combo side slot — only the
-literal, allow-listed `"tots"`/`"groovy fries"` names, plus any name that resolves through
-`_TOTS_ALIASES` to `"tots"` (below), do (post-modifier-stripping); the drink
-keyword fallback remains for genuinely off-menu fountain drinks (Dr Pepper, Coke, Sprite, root
-beer, ...) and for shakes/blasts/malts, but the latter obey
-`menu_utils._SHAKES_AND_BLASTS_HAPPY_HOUR_DISCOUNTED` for the happy-hour-discount question exactly
-like their on-menu counterparts do — that flag is the single switch for every shake/blast, plain or
-customised, on-menu or off. See `app/backend/tests/test_menu_utils.py::CustomisedItemMenuLookupTests`
+literal, on-menu `"Tots"`/`"Groovy Fries"` items, plus any name that resolves through their own
+pack `aliases` to one of them (below), do (post-modifier-stripping). **#73 update:** the drink
+keyword fallback this paragraph used to describe for a name that resolves to no `MENU_CATEGORY_MAP`
+entry at all is deleted entirely — see "On-menu validation gate" above — so such a name is now
+rejected as `not_on_menu` by `update_order` before `infer_combo_component` would ever run, rather
+than silently absorbing into a combo's slot or picking up its discount. **#72 (P2-3) note:** the
+eight named fountain drinks (Coca-Cola®, Diet Coke®, Coca-Cola® Zero, Dr Pepper®, Diet Dr Pepper®,
+Sprite®, Sprite Zero®, BARQ'S® Root Beer) are real `menuItems.json`/`MENU_CATEGORY_MAP` entries.
+Common bare spoken forms resolve directly too — either via `_menu_key()`'s existing `®` stripping
+(`"Dr Pepper"`, `"Sprite"`, `"Diet Coke"`, ... match their `®`-bearing map entry with no alias
+needed) or via one of three explicit `aliases` entries added for names that differ more than just
+the `®` (`"Coke"` → Coca-Cola®, `"Coke Zero"` → Coca-Cola® Zero, `"Root Beer"` → BARQ'S® Root Beer).
+See `app/backend/tests/test_menu_utils.py::CustomisedItemMenuLookupTests`
 and `CustomisedItemMenuLookupTests.cs` in this suite.
+
+**#72 Part 2 (P2-3) note — full production export import**: `personas/sonic/menu/menuItems.json`
+grew from 74 to 180 items (12 categories, up from 6) by importing all 106 products present in the
+172-product Sonic production export (`scripts/extract_production_items.py`) but missing from the
+pack; the other 66 export products already matched a pre-existing pack item 1:1, so all 172 export
+products are now accounted for with **zero exclusions** (no `isAvailable:false` or zero-price
+products exist in the export). Two pre-existing, non-export items — `"Jr Double Cheeseburger
+Combo"` and `"All-American SONIC Smasher™ Combo"` — were confirmed genuinely absent from the export
+(not a naming mismatch) and removed per ADR-001 decision 4 (no off-menu ordering); the frontend's
+own lagging `menuItems.json` copy still names both, so `test_persona_pack_drift_guard.py` carries a
+narrow, named, temporary exception for exactly these two names (removed once issue #80 retires the
+frontend's duplicated menu copy). Two new `isExtra` items were added from the export's Regular-tier
+priced modifiers — Sweet Cream ($0.50) and Jalapeños ($0.80) — alongside the "whip topping" alias on
+the existing Whipped Topping item and a "half and half tea" alias on Half Sweet Tea / Half Unsweet
+Tea; the system prompt's `Extras:` line was updated to match (`test_prompt_extras_pin.py`). Every
+new import's `comboSlot`/`happyHourDiscounted`/`requiresMachine`/`bundle` fields were assigned from
+Rick's posted field-table rules (fountain/teas/lemonades/limeades/slushes → drinks slot + HH
+discount; shakes/blasts/floats → drinks slot, full price; bottled drinks/coffee → neither;
+ice-cream/slush items → `requiresMachine`; `bundle:{slots:[sides,drinks]}` only for Combo/Dinner/
+Wacky-Pack items whose export `ingredientRefs` show real swappable side+drink component groups) —
+never inferred from names or generated from the golden table, matching the pack's own
+hand-authored-oracle convention. Two items don't cleanly fit a rule and are flagged for Rick rather
+than guessed: `"French Toast Sticks Combo"` (name implies side+drink, but its `ingredientRefs` show
+drinks-only, so it was built drinks-only) and `"Strawberry Cheesecake Cream Cooler"` (its export
+description mentions both an icy slush and creamy vanilla soft serve; defaulted to
+`requiresMachine: "ice_cream_machine"`). Seven pre-existing combo price/size mismatches against the
+current export (e.g. `"SONIC® Cheeseburger Combo"` $8.49 in the pack vs. $9.19 in a fresh export)
+were initially left untouched pending Rick's call — see the PR #99 review note below for how they
+were resolved.
+`tests/conformance/testdata/golden-menu-categories.json` grew in lockstep, 74 → 180 rows (one row
+per pack item, hand-written from the same rules, not generated from `menuItems.json`), so
+`GoldenMenuComboSlotTheoryTests.cs`'s Theory now covers all 180 rows end-to-end. Mutation-check
+(temporarily, then reverted): flipping `"Cherry Limeade"`'s `happyHourDiscounted` to `false` broke 6
+tests across `test_menu_utils.py`/`test_combo_orders.py` (golden-vs-pack, classification, and
+end-to-end pricing); dropping `"Blue Raspberry Slush"`'s `requiresMachine` broke none at the time,
+because the field had no golden-table column or data-check coverage yet (schema-only) — this gap
+is closed by the PR #99 review note below.
+
+**PR #99 review (Rick's decisions 1-4) note**: Rick rejected the initial full-export import above
+and this PR was revised to apply his review exactly (Summer, the original author, was not
+consulted for this revision).
+*Decision 1 (bundle slots, blocking)*: the bug Rick caught — `order_state.py` detected "is this a
+combo" by testing `"combo" in name`, so items like `"French Toast Sticks Combo"` (drinks-only
+bundle) and `"Corn Dog Wacky Pack®"` / `"$6 All-American Smasher™ Meal"` (side+drink bundles, but
+no literal "combo" in the name) either absorbed the wrong slots or none at all — is fixed by a new
+`menu_utils.bundle_slots(item_name)` lookup that returns the item's real `bundle.slots` from the
+pack, with `order_state.py`'s post-absorption/combo-pivot/`get_combo_requirements()` logic now
+counting side/drink capacity per-component from that lookup instead of the name test. Covered by
+`app/backend/tests/test_combo_orders.py::TestBundleSlotsByPackData` (8 new pytest cases) and 6 new
+`comboAbsorptionScenarios` rows in `golden-order-pricing.json` (French Toast Sticks Combo
+drinks-only in both directions, Crispy Tenders Dinner drinks-only, Corn Dog Wacky Pack® side+drink,
+$6 Meal side+drink, and a combined two-different-bundle-shapes capacity-independence case) — no
+harness (`ComboAbsorptionTests.cs`) changes needed, since its Theory is already generic/index-driven
+over the golden data. Mutation-checked: reverting `order_state.py` to the name-based check fails 4
+of the 8 new pytest cases, including French Toast Sticks Combo wrongly absorbing a Tots side.
+*Decision 2*: `"Strawberry Cheesecake Cream Cooler"` keeps `requiresMachine: "ice_cream_machine"` —
+no change, per Rick.
+*Decision 3 (7 combo prices)*: the 7 mismatches flagged above are now fixed to the committed export
+in `personas/sonic/menu/menuItems.json`, the matching `golden-menu-categories.json` rows, and the
+frontend's `app/frontend/src/data/menuItems.json` copy (which also had its two already-deleted
+combos — `"Jr Double Cheeseburger Combo"`, `"All-American SONIC Smasher™ Combo"` — removed). The
+`test_persona_pack_drift_guard.py` exception for those two names is gone entirely (not deferred to
+#80); the drift guard now compares the frontend copy against the pack with no carve-outs. The
+harness's own `BaseComboPrice = 8.49m` constants that fed real assertions off the (now-wrong)
+`"SONIC® Cheeseburger Combo"` price were updated to `9.19m`
+(`GoldenMenuComboSlotTheoryTests.cs`; a stale self-consistent duplicate in
+`CustomisedItemMenuLookupTests.cs` was left as an illustrative tool-call input, matching the
+Python-side convention below). The unrelated `8.49`-style prices used throughout
+`test_combo_orders.py` as arbitrary tool-call *inputs* (not real pack prices) are deliberately left
+alone — see that file's module docstring. Mutation-checked: bumping the frontend's
+`"SONIC® Cheeseburger Combo"` price by a cent fails `test_persona_pack_drift_guard.py`'s
+size/price-identity check.
+*Decision 4 (`requiresMachine` golden column)*: `golden-menu-categories.json` gained a
+`requiresMachine` column on all 180 rows (sourced from the pack's own field, `null` when absent),
+now compared in `test_menu_utils.py::GoldenTableCheckedAgainstPackDataTests` alongside
+`comboSlot`/`happyHourDiscounted` — this closes the exact coverage gap the mutation-check above
+found. Mutation-checked: dropping `requiresMachine` from `"Cherry Slush"` in the pack fails that
+comparison test with a clear mismatch message.
+Also carried forward: the "whip topping" alias on Whipped Topping (already present from the
+original import, reconfirmed unchanged).
 
 **Plain-Tots alias map for the combo side slot only (Brian's decision, 2026-09-25, #60; extended PR
 #61 review, must-fix 3)**: any spoken name-variant of plain Tots fills the combo side slot exactly
@@ -1311,7 +1469,8 @@ tell them apart. Splitting into two single-item scenarios makes each total unamb
 **The exact `_menu_key()` normalisation algorithm (PR #50 review, round 4 — state it precisely so
 C# does the same thing, not just "something similar")**, applied in this order to *every* raw
 `item_name` before it is used as a lookup key into `MENU_CATEGORY_MAP`, `_COMBO_SIDE_ITEMS`, or
-`_SUNDAES`, and before the two keyword-fallback functions ever see it:
+`_SUNDAES`, and (historically, before #73 deleted them) before the two keyword-fallback functions
+ever saw it:
 1. Remove **every** `\s*\([^)]*\)\s*` group anywhere in the string, not just a trailing one —
    `"Chili Cheese (Extra Cheese) Tots"` (a mid-string group) strips to `"Chili Cheese Tots"` exactly
    like a trailing one would, and `"Tots (Extra Crispy) (No Salt)"` (two groups) strips to `"Tots"`.
@@ -1342,57 +1501,33 @@ C# does the same thing, not just "something similar")**, applied in this order t
    did before round 4. See `.squad/decisions.md` for the history of why this pattern of
    consolidating symbol-handling into `_menu_key()` started.
 
-Keyword fallbacks (`_keyword_fallback_combo_drink`, `_keyword_fallback_happy_hour_discounted`, for
-names that resolve to no `MENU_CATEGORY_MAP` entry at all, i.e. genuinely off-menu) match on
-**word boundaries**, not bare substrings (PR #50 review round 4): a bare substring check let
-`"tea"` match inside `"steak"`, silently absorbing an off-menu `"Philly Cheesesteak"`/
-`"Steak Sandwich"` into a combo's drink slot for free and happy-hour-discounting it. A hyphen is a
-non-word character in both engines (Python `\b`/`re` and C#'s `\b`/`Regex`, whose word-character
-definition matches .NET's), so it is a word boundary in either regex, on either side, with no
-special-casing (PR #50 review round 5, no behaviour change) — a keyword adjacent to a hyphen, e.g.
-a hyphenated customization like `"(Extra-Crispy)"` or the `"All-American"` prefix on the Smasher
-family, still gets a correct boundary. Both keyword lists are compiled regexes:
-```
-r"\b(?:slush(?:ie|y)?|limeade|ocean water|drink|tea|lemonade|coke|sprite|root beer)(?:e?s)?\b"
-```
-for fountain drinks, and
-```
-r"(?:\b|milk)(?:shake|blast|malt)(?:e?s)?\b"
-```
-for shakes/blasts/malts; Dr Pepper keeps its own, already-word-boundary regex unchanged. The
-`(?:e?s)?` suffix (not a bare `s?`) matches the plural `-s`/`-es` forms (`"Cokes"`, `"Slushes"`) as
-well as the singular; `slush(?:ie|y)?` additionally matches the spoken `"Slushie"`/`"Slushy"`
-variants. The shake/blast/malt regex's `(?:\b|milk)` prefix is a narrow, deliberate carve-out (PR
-#50 review round 5, "keyword over-correction"): a plain `\bshake\b` never matches `"Milkshake"` at
-all because there is no word boundary between "milk" and "shake" (both are word characters), so a
-guest's spoken `"Chocolate Milkshake"` fell all the way through to unclassified. Matching either a
-normal word boundary OR the literal `"milk"` immediately before the keyword resolves that specific
-compound without loosening the boundary for anything else — a nonsense `"Overshake Deluxe"` still
-correctly does not match.
+**Keyword fallbacks are deleted entirely (#73 — ADR-001 decision 4 "No off-menu"), not merely
+unreachable.** Before #73, a name that resolved to no `MENU_CATEGORY_MAP` entry at all fell through
+to two regex-based keyword-guessing functions — `_keyword_fallback_combo_drink` (word-boundary
+matches on `slush(?:ie|y)?`/`limeade`/`ocean water`/`drink`/`tea`/`lemonade`/`coke`/`sprite`/
+`root beer`, plus its own Dr Pepper regex) and `_keyword_fallback_happy_hour_discounted` (checking a
+shake/blast/malt regex first, then the fountain regex, so a name matching both resolved as a
+shake/blast for the discount question) — which is exactly how an off-menu `"Philly Cheesesteak"`
+used to get silently absorbed into a combo's drink slot (`"tea"` inside `"steak"`) and an off-menu
+`"Cherry Limeade Shake"` used to get discounted or not depending on match order. Issue #73 deletes
+both functions and their regexes outright, per Rick's and Brian's decision that reject-and-offer-an-
+alternative is strictly better than any keyword guess, however careful: see "On-menu validation
+gate" above for what replaced them. `infer_category`/`infer_combo_component`/
+`is_happy_hour_discounted` now simply return their safe default (`""`/`""`/`False`) for a name that
+doesn't resolve — there is nothing left to guess with, and `update_order` rejects such a name as
+`not_on_menu` before any of these functions would run at all in the live add path.
 
-**Precedence between the two keyword lists matters for the discount question, but not for the
-combo-drink-slot question (PR #61 review, must-fix 1).** An off-menu name can contain both a
-fountain word and a shake/blast word at once — `"Cherry Limeade Shake"` (`"limeade"` + `"shake"`),
-`"Strawberry Lemonade Shake"` (`"lemonade"` + `"shake"`), `"Sweet Tea Blast"` (`"tea"` + `"blast"`),
-`"Dr Pepper Shake"`. `_keyword_fallback_combo_drink` is
-an unconditional `or` across all three regexes, so it is not order-dependent — any one of these
-names fills the combo drink slot regardless of which keyword matches first.
-`_keyword_fallback_happy_hour_discounted`, however, must check the shake/blast/malt regex **first**
-so that a name matching both resolves as a shake/blast for the discount question — obeying
-`_SHAKES_AND_BLASTS_HAPPY_HOUR_DISCOUNTED` — rather than falling into the fountain branch (always
-discounted). Checking fountain first was the bug: it silently discounted every one of the four
-names above even with the flag `False`.
-
-Every genuine on-menu item still resolves via `MENU_CATEGORY_MAP`
-directly and never reaches these fallbacks at all — see
-`test_menu_utils.py::MenuCategoryMapDirectResolutionTests`, which patches both fallback functions to
-raise and asserts classification never touches them for any of the 60 `menuItems.json` names.
-
-See `app/backend/tests/test_menu_utils.py::KeywordFallbackWordBoundaryTests`,
-`KeywordOverCorrectionTests`, `KeywordFallbackPrecedenceTests`, `MenuCategoryMapDirectResolutionTests`, and
-`CustomisedItemMenuLookupTests.cs`'s `ParenGroupNormalisationTests` in this suite for the
-paren-group-stripping edge cases (two groups, mid-string group, nested/unbalanced group) end to end
-against the live backend.
+Every genuine on-menu item still resolves via `MENU_CATEGORY_MAP` directly and never needed a
+fallback in the first place — see
+`test_menu_utils.py::MenuCategoryMapDirectResolutionTests::test_combo_and_happy_hour_classification_never_reaches_a_keyword_fallback`,
+which classifies all 180 `menuItems.json` names and simply asserts it succeeds (the strongest
+possible proof the deleted functions are never reached — there's nothing left to patch-and-raise
+against). See `app/backend/tests/test_menu_utils.py::OffMenuNamesReturnSafeDefaultsSinceIssue73Tests`
+for the former keyword-fallback names (the Philly Cheesesteak/steak-tea case included) now
+classifying to their safe defaults instead, `test_tool_calling.py::NotOnMenuRejectionTests` for the
+`update_order`-level rejection, and `CustomisedItemMenuLookupTests.cs`'s
+`ParenGroupNormalisationTests` in this suite for the paren-group-stripping edge cases (two groups,
+mid-string group, nested/unbalanced group) end to end against the live backend.
 
 All four money fields (`items[].price`, `total`, `tax`, `finalTotal`) are numbers on the wire (not
 quoted, unlike the golden file's storage format) and must always be parsed via

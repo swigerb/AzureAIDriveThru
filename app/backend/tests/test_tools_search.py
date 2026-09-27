@@ -7,25 +7,30 @@ from unittest.mock import AsyncMock
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from rtmt import ToolResultDirection
-from tools import _infer_category, _is_extra_item, _search_cache, search
+from tools import _infer_category, _search_cache, is_extra_item, search
 
 
 class IsExtraItemTests(unittest.TestCase):
     def test_recognized_extras(self):
-        self.assertTrue(_is_extra_item("Extra Patty"))
-        self.assertTrue(_is_extra_item("Whipped Cream"))
-        self.assertTrue(_is_extra_item("Flavor Add-In"))
-        self.assertTrue(_is_extra_item("Extra Cheese"))
+        self.assertTrue(is_extra_item("Whipped Cream"))
+        self.assertTrue(is_extra_item("Flavor Add-In"))
 
     def test_case_insensitive(self):
-        self.assertTrue(_is_extra_item("extra patty"))
-        self.assertTrue(_is_extra_item("WHIPPED CREAM"))
+        self.assertTrue(is_extra_item("WHIPPED CREAM"))
+        self.assertTrue(is_extra_item("flavor add-in"))
 
     def test_non_extras(self):
-        self.assertFalse(_is_extra_item("Tots"))
-        self.assertFalse(_is_extra_item("Cherry Limeade"))
-        self.assertFalse(_is_extra_item("Sonic Cheeseburger"))
-        self.assertFalse(_is_extra_item("Onion Rings"))
+        self.assertFalse(is_extra_item("Tots"))
+        self.assertFalse(is_extra_item("Cherry Limeade"))
+        self.assertFalse(is_extra_item("Sonic Cheeseburger"))
+        self.assertFalse(is_extra_item("Onion Rings"))
+
+    def test_off_menu_names_are_not_extras(self):
+        """#73: "Extra Patty"/"Extra Cheese" are not real menuItems.json items at all -- they're
+        never real extras, they're rejected outright as not_on_menu by tools.py's update_order
+        (via menu_utils.resolve_menu_item) before is_extra_item would ever matter for them."""
+        self.assertFalse(is_extra_item("Extra Patty"))
+        self.assertFalse(is_extra_item("Extra Cheese"))
 
 
 class InferCategoryTests(unittest.TestCase):
@@ -36,9 +41,9 @@ class InferCategoryTests(unittest.TestCase):
         self.assertIn("slush", cat2)
 
     def test_shakes_inferred(self):
-        cat = _infer_category("Classic Vanilla Shake")
+        cat = _infer_category("Vanilla Classic Shake")
         self.assertIn("shake", cat)
-        cat2 = _infer_category("Oreo Blast")
+        cat2 = _infer_category("Turtle Truffle Nut Blast")
         self.assertIn("shake", cat2)
 
     def test_combos_inferred(self):
@@ -48,7 +53,7 @@ class InferCategoryTests(unittest.TestCase):
     def test_hot_dogs_inferred(self):
         cat = _infer_category("Chili Cheese Coney")
         self.assertIn("hot dog", cat)
-        cat2 = _infer_category("All-American Hot Dog")
+        cat2 = _infer_category("All-American Dog")
         self.assertIn("hot dog", cat2)
 
     def test_sides_inferred(self):

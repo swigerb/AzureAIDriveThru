@@ -20,6 +20,10 @@ file static class HappyHourBoundaryTestSupport
 {
     public const string DrinkItemName = "Cherry Limeade";
     public const decimal DrinkPrice = 4.00m;
+    // #73 (ADR-001 decision 4 "No off-menu"): "Regular" was never a real size for Cherry Limeade
+    // (mini/small/medium/large/route 44 are); the #73 size gate now rejects it as
+    // size_not_available, so this uses the real "medium" size instead.
+    public const string DrinkItemSize = "medium";
 
     public static async Task<decimal> AddOneDrinkAndReadFinalTotalAsync(ConformanceFixture fixture, CancellationToken ct)
     {
@@ -28,7 +32,7 @@ file static class HappyHourBoundaryTestSupport
 
         var result = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
-            [("add", DrinkItemName, "Regular", 1, DrinkPrice)],
+            [("add", DrinkItemName, DrinkItemSize, 1, DrinkPrice)],
             roundTripIndex, ct);
 
         return OrderScenarioHelpers.GetOrderFinalTotal(result.ToolResultJson!);
