@@ -14,7 +14,10 @@ allowed only
   2. inside the explicitly listed cross-brand docs (docs/adr/**, docs/persona-architecture.md)
      that compare all three brands by design (ADR-001, design doc section 16);
   3. inside one of exactly two DIRECTORY_EXCEPTIONS for generated/golden content
-     (app/backend/static/, tests/conformance/testdata/) -- see rebrand_scan.py;
+     (app/backend/static/, tests/conformance/testdata/) -- see rebrand_scan.py. A pack's own
+     per-persona conformance testdata subfolder (tests/conformance/testdata/personas/<id>/**,
+     #78/#79) is instead classified under rule 1's same per-pack-ownership logic, not limited
+     to the flat directory exception's sonic-only rule;
   4. inside a shared-code file+brand pair that has an exact-match entry in the checked-in
      BASELINE (rebrand_baseline.yaml) -- the entry's line-hit count must equal the file's
      real count today: a rise means a new/uncontrolled reference snuck in, a silent drop
@@ -47,8 +50,10 @@ from rebrand_scan import (  # noqa: E402
     DIRECTORY_EXCEPTIONS,
     BaselineEntry,
     _classify_hit,
+    _conformance_testdata_pack_id,
     _count_brand_occurrences,
     _load_baseline,
+    _persona_pack_id,
     _relative_posix,
 )
 
@@ -273,6 +278,17 @@ class TestRebrandVerification(unittest.TestCase):
             )
         )
 
+    def test_a_file_directly_under_personas_is_shared_not_a_pack(self):
+        """Nit (Rick, PR #114 review): a file sitting directly under personas/ (e.g. the shared
+        personas/persona.schema.json) has no directory segment after it, so it is SHARED code,
+        not a pack named after that filename -- ``_persona_pack_id`` must return None for it,
+        not the filename itself."""
+        self.assertIsNone(_persona_pack_id("personas/persona.schema.json"))
+        self.assertIsNone(_persona_pack_id("personas/menu.schema.json"))
+        self.assertEqual(
+            _persona_pack_id("personas/sonic/menu/menuItems.json"), "sonic",
+        )
+
     def test_a_brand_word_in_an_unlisted_shared_file_is_forbidden(self):
         """Mutation-style unit check (no real file touched): a brand-new file with a brand-word
         hit and no BASELINE entry at all must be forbidden."""
@@ -335,6 +351,87 @@ class TestRebrandVerification(unittest.TestCase):
         failure, not silently waved through by the directory match."""
         self.assertIsNotNone(
             _classify_hit("app/backend/static/assets/app.js", "dunkin", 1, {})
+        )
+
+    def test_conformance_testdata_persona_subfolder_may_say_its_own_brand(self):
+        """#78/#79: a pack's own per-persona conformance testdata subfolder
+        (tests/conformance/testdata/personas/<id>/**) may say its own brand -- mirrors
+        personas/<id>/**'s ownership rule, so a new pack's golden fixtures aren't limited to
+        the flat tests/conformance/testdata/ directory exception's sonic-only rule."""
+        for count in (0, 1, 999):
+            with self.subTest(count=count):
+                self.assertIsNone(
+                    _classify_hit(
+                        "tests/conformance/testdata/personas/dunkin/golden-menu-categories.json",
+                        "dunkin", count, {},
+                    )
+                )
+                self.assertIsNone(
+                    _classify_hit(
+                        "tests/conformance/testdata/personas/mcdonalds/golden-order-pricing.json",
+                        "mcdonalds", count, {},
+                    )
+                )
+
+    def test_conformance_testdata_persona_subfolder_forbids_a_foreign_brand(self):
+        """Mutation-style unit check: a pack's per-persona testdata subfolder only rescues its
+        OWN brand -- a foreign brand word there is still forbidden, and no BASELINE entry can
+        rescue it (same as personas/<id>/**'s cross-brand-leak rule)."""
+        self.assertIsNotNone(
+            _classify_hit(
+                "tests/conformance/testdata/personas/dunkin/golden-menu-categories.json",
+                "sonic", 1, {},
+            )
+        )
+        self.assertIsNotNone(
+            _classify_hit(
+                "tests/conformance/testdata/personas/dunkin/golden-menu-categories.json",
+                "mcdonalds", 1,
+                {("tests/conformance/testdata/personas/dunkin/golden-menu-categories.json", "mcdonalds"):
+                    BaselineEntry(
+                        "tests/conformance/testdata/personas/dunkin/golden-menu-categories.json",
+                        "mcdonalds", 1, "#78",
+                    )},
+            )
+        )
+
+    def test_conformance_testdata_flat_files_are_unaffected_by_the_persona_subfolder_rule(self):
+        """Sanity: a file directly under tests/conformance/testdata/ (not inside a personas/
+        subfolder) still only goes through the flat, sonic-only DIRECTORY_EXCEPTIONS entry --
+        the new per-persona rule must not accidentally widen what the flat files are allowed
+        to say."""
+        self.assertIsNone(
+            _classify_hit("tests/conformance/testdata/golden-menu-categories.json", "sonic", 1, {})
+        )
+        self.assertIsNotNone(
+            _classify_hit("tests/conformance/testdata/golden-menu-categories.json", "dunkin", 1, {})
+        )
+
+    def test_a_file_directly_under_conformance_testdata_personas_is_shared_not_a_pack(self):
+        """Nit (Rick, PR #114 review): a file sitting directly under
+        tests/conformance/testdata/personas/ (no "/" in the remainder) is SHARED code, not
+        inside any particular pack's subfolder -- ``_conformance_testdata_pack_id`` must return
+        None for it, not the filename itself."""
+        self.assertIsNone(
+            _conformance_testdata_pack_id("tests/conformance/testdata/personas/README.md")
+        )
+        self.assertEqual(
+            _conformance_testdata_pack_id(
+                "tests/conformance/testdata/personas/dunkin/golden-menu-categories.json"
+            ),
+            "dunkin",
+        )
+
+    def test_a_dunkin_word_under_sonic_conformance_testdata_subfolder_fails(self):
+        """Literal case from Rick's PR #114 review: a Dunkin word under
+        tests/conformance/testdata/personas/sonic/ fails -- the per-persona testdata subfolder
+        only rescues its OWN brand ('sonic' here), same cross-brand-leak rule as
+        personas/sonic/** itself, and no BASELINE entry can rescue it."""
+        self.assertIsNotNone(
+            _classify_hit(
+                "tests/conformance/testdata/personas/sonic/golden-menu-categories.json",
+                "dunkin", 1, {},
+            )
         )
 
     # ── Terminology checks (unrelated to brand packs; unchanged by #76) ──
