@@ -1,14 +1,14 @@
-# Sonic AI Drive Thru
+# Azure AI Drive-Thru
 
-Sonic AI Drive Thru is a Sonic Drive-In–themed, voice-driven ordering experience that showcases Microsoft best practices for Azure OpenAI GPT-4o Realtime, Azure AI Search, and Azure Container Apps. The experience emulates a Sonic carhop who can search the official menu, hold multilingual conversations, and keep orders in sync across devices.
+Azure AI Drive-Thru is a persona- and model-flexible, voice-driven ordering demo that showcases Microsoft best practices for Azure OpenAI GPT-4o Realtime, Azure AI Search, and Azure Container Apps on Microsoft Foundry. A single deployment switches between drive-thru brand personas — starting with Sonic Drive-In, with more brands to follow — while keeping every brand's ordering rules intact.
 
-As guests speak, real-time transcription, translation, and order management provide a transparent view of every choice...from slushes and shakes to burgers and tots. The UI applies Sonic's vibrant design language so stakeholders can picture how voice AI augments drive-in, carhop, and kiosk flows.
+As guests speak, real-time transcription, translation, and order management provide a transparent view of every choice...from drinks to combos to sides. Each persona applies its own brand's design language so stakeholders can picture how voice AI augments drive-in, counter, and kiosk flows.
 
-Beyond the drive-in experience, this sample demonstrates how Microsoft’s Responsible AI guidance plus Azure-first tooling enable inclusive, hands-free interactions for franchise teams, accessibility scenarios, and mixed fleet deployments across the Inspire Brands portfolio.
+Beyond the ordering experience, this sample demonstrates how Microsoft’s Responsible AI guidance plus Azure-first tooling enable inclusive, hands-free interactions for franchise teams and accessibility scenarios across brands.
 
 ## Table of Contents
 
-- [Sonic AI Drive Thru](#sonic-ai-drive-thru)
+- [Azure AI Drive-Thru](#azure-ai-drive-thru)
   - [Table of Contents](#table-of-contents)
   - [Acknowledgment](#acknowledgment)
   - [Visual Demonstrations](#visual-demonstrations)
@@ -292,7 +292,7 @@ You can run the project in your local VS Code Dev Container using the [Dev Conta
   The script installs the Azure CLI, signs you in, and verifies Docker availability for you.
 
   Alternatively, manually install [Azure Developer CLI](https://aka.ms/azure-dev/install), [Node.js](https://nodejs.org/), [Python >=3.11](https://www.python.org/downloads/), [Git](https://git-scm.com/downloads), and [Docker Desktop](https://www.docker.com/products/docker-desktop).
-  2. Clone your GitHub repository (`git clone https://github.com/swigerb/SonicAIDriveThru.git`)
+  2. Clone your GitHub repository (`git clone https://github.com/swigerb/AzureAIDriveThru.git`)
   3. Proceed to the next section to [deploy the app](#deploying-to-azure).
 
 ## Ingesting Menu Items into Azure AI Search
