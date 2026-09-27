@@ -534,6 +534,29 @@ async def update_order(args, session_id: str) -> ToolResult:
                 ToolResultDirection.TO_SERVER,
             )
 
+        # #77: `modify` resizes an existing line, so an on-menu item that isn't in the order has
+        # nothing to resize. Reject it with the same structured shape instead of letting the
+        # success delta tell the guest it was changed (docs/persona-architecture.md section 6).
+        # Same line-matching rule as order_state.handle_order_update's modify branch.
+        if args["action"] == "modify" and not any(
+            order_item.item == item_name for order_item in order_state_singleton.get_order_items(session_id)
+        ):
+            logger.info("Rejected modify of '%s' for session %s (not_in_order)", item_name, session_id)
+            _message = pl.render_error("item_not_in_order", item_name=menu_item["name"]) if pl else (
+                f"{menu_item['name']} isn't in the order, so nothing was changed. "
+                "Ask the guest whether they'd like to add it."
+            )
+            return ToolResult(
+                {
+                    "status": "rejected",
+                    "item_added": False,
+                    "reason": "not_in_order",
+                    "item_name": menu_item["name"],
+                    "message": _message,
+                },
+                ToolResultDirection.TO_SERVER,
+            )
+
     # ── #77: add-time `machine_unavailable` structured rejection -- an on-menu item that
     # `requiresMachine` a machine this persona's OWN `machines.<key>.status` currently reports
     # "down". Same TO_SERVER structured-JSON shape as not_on_menu/size_not_available above (Rick's

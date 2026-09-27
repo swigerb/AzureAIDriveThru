@@ -418,9 +418,13 @@ starts a new session.
   - **`modify` (#77, McDonald's tool/prompt contract, `tool_schemas.yaml` opt-in only).** Re-prices an
     existing order line at a new size from the persona's own menu (never the tool call's own `price`,
     consistent with #104) and leaves that line's `components` untouched -- a bundle's absorbed sides/drinks
-    are not re-picked on a resize. A `modify` for an item not currently in the order is a no-op (logged,
-    not rejected): nothing to resize, so nothing changes, and the model is free to fall back to `add`. This
-    is the single, shared implementation both McDonald's (real "modify a Happy Meal to a large" flow) and
+    are not re-picked on a resize. A `modify` for an item not currently in the order is rejected with the
+    same shape, never reported as a success: `{ "status": "rejected", "item_added": false, "reason":
+    "not_in_order", "item_name", "message" }`. `item_name` is the real menu name (the item resolved; it just
+    isn't in the order), `message` is the persona's `item_not_in_order` error message, and the order is left
+    unchanged. The check runs after the on-menu and size gates, so an off-menu or wrong-size `modify` still
+    gets `not_on_menu` or `size_not_available`. This is the single, shared implementation both McDonald's
+    (real "modify a Happy Meal to a large" flow) and
     any future pack's own `modify`-listing tool schema route through -- there is no persona-specific
     `modify` variant.
 - **Every keyword fallback is removed** (combo slot, happy hour and category), along with the `offMenu` schema

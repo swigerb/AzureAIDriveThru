@@ -47,6 +47,13 @@ messages:
     I'm sorry, {{item_name}} isn't available right now -- {{machine_label}}. Would you like to
     try something else instead?
 
+  # #77: `modify` (resize in place) for an on-menu item that isn't in the order. Same structured
+  # (TO_SERVER) rejection shape, reason "not_in_order", so the model never tells the guest an item
+  # was changed when nothing was.
+  item_not_in_order: >-
+    {{item_name}} isn't in the order, so nothing was changed. Call get_order to check what's in
+    the order, then ask the guest whether they'd like to add it.
+
   # Quantity limit messages
   per_item_limit_maxed: >-
     That's a lot of {{item_name}}! Our drive-thru can handle up to

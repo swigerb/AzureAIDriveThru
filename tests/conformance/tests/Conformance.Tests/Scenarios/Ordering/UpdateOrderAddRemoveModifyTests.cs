@@ -119,6 +119,51 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
     });
 
     /// <summary>
+    /// #77 (rick-2's PR #116 review): a `modify` for an on-menu item that isn't in the order
+    /// must come back as the structured rejection (status "rejected", item_added false, reason
+    /// "not_in_order", the menu's item name, a non-empty message from the pack's
+    /// `item_not_in_order` error message), sent to the model only, and must leave the order
+    /// untouched. Before this, the backend logged a no-op but still told the model the item was
+    /// "Changed". A mutation that removes the check in tools.py fails this row.
+    /// </summary>
+    [Fact]
+    public Task Modifying_an_item_that_is_not_in_the_order_is_rejected_and_changes_nothing() => fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using var _ = browser;
+
+        var rejected = await OrderScenarioHelpers.CallToolAsync(
+            connection, browser, "update_order",
+            JsonSerializer.Serialize(new
+            {
+                action = "modify",
+                item_name = "Tots",
+                size = "medium",
+                quantity = 1,
+                price = 2.79m,
+            }),
+            "call_modify_missing", roundTripIndex, ct, toClient: false);
+        Assert.Null(rejected.ToolResultJson);
+        OrderScenarioHelpers.AssertRejectionShape(
+            rejected.FunctionCallOutputText, expectedReason: "not_in_order", expectedItemName: "Tots");
+        using (var doc = JsonDocument.Parse(rejected.FunctionCallOutputText))
+        {
+            var message = doc.RootElement.GetProperty("message").GetString()!;
+            Assert.Contains("Tots", message);
+            Assert.DoesNotContain("An error occurred", message);
+        }
+
+        var result = await OrderScenarioHelpers.CallToolAsync(
+            connection, browser, "get_order", "{}", "call_get_after_modify_missing", rejected.RoundTripIndex, ct);
+        Assert.Equal(0, OrderScenarioHelpers.GetOrderItemCount(result.ToolResultJson!));
+        OrderScenarioHelpers.AssertMoneyEqual(
+            0m,
+            OrderScenarioHelpers.GetOrderTotal(result.ToolResultJson!),
+            "A rejected modify must leave the order exactly as it was.");
+    });
+
+    /// <summary>
     /// #104 acceptance criterion (Rick's issue #104 constraints): the unit price charged always
     /// comes from the resolved menu record for (item, size), never the tool call's own `price`
     /// argument -- the price parameter is accepted (kept in the tool schema so a caller can still

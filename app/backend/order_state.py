@@ -330,7 +330,7 @@ class OrderState:
             # pack's own ``["combo"]``, another's ``["meal"]``, a third pack's ``[]`` -- never
             # true, no bundles at all) -- replaces the old hardcoded ``"combo" in
             # item_name.lower()`` check, which only ever matched one pack's own combos and would
-            # silently never fire for a differently-worded bundle name like "Big Mac Meal".
+            # silently never fire for a differently-worded bundle name.
             # Exactly reproduces today's behavior for the pack whose own persona.json
             # ``nameMarkers`` IS ``["combo"]``, while generalizing for every other pack.
             # ``convertStandalone`` (also persona-owned) gates whether a name-marker match should

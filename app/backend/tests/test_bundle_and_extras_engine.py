@@ -278,12 +278,38 @@ class ModifyActionTests(DeltaFixtureTestCase):
         self.assertIn("Delta Fries (Regular)", bundle_line.components)
         self.assertIn("Delta Cola (Regular)", bundle_line.components)
 
-    def test_modify_is_a_noop_when_the_item_was_never_added(self):
+    def test_modify_of_an_item_not_in_the_order_is_rejected_not_reported_as_changed(self):
+        """rick-2's PR #116 review: a `modify` for an on-menu item that isn't in the order must
+        come back as the structured `not_in_order` rejection, never the success delta ("Changed
+        ... your total is now ..."), and must leave the order unchanged."""
         sid = self._new_session()
         _run(tools.update_order({
+            "action": "add", "item_name": "Delta Meal",
+            "size": "regular", "quantity": 1, "price": 5.99,
+        }, sid))
+        before = [(i.item, i.size, i.quantity, i.price) for i in order_state_singleton.get_order_items(sid)]
+        result = _run(tools.update_order({
             "action": "modify", "item_name": "Delta Latte",
             "size": "large", "quantity": 1, "price": 4.29,
         }, sid))
+        self.assertEqual(result.destination, ToolResultDirection.TO_SERVER)
+        self.assertEqual(
+            {k: v for k, v in result.text.items() if k != "message"},
+            {"status": "rejected", "item_added": False, "reason": "not_in_order", "item_name": "Delta Latte"},
+        )
+        self.assertIn("Delta Latte", result.text["message"])
+        self.assertIn("nothing was changed", result.text["message"])
+        after = [(i.item, i.size, i.quantity, i.price) for i in order_state_singleton.get_order_items(sid)]
+        self.assertEqual(after, before)
+
+    def test_modify_on_an_empty_order_is_rejected_and_adds_nothing(self):
+        sid = self._new_session()
+        result = _run(tools.update_order({
+            "action": "modify", "item_name": "Delta Latte",
+            "size": "large", "quantity": 1, "price": 4.29,
+        }, sid))
+        self.assertEqual(result.destination, ToolResultDirection.TO_SERVER)
+        self.assertEqual(result.text["reason"], "not_in_order")
         self.assertEqual(order_state_singleton.get_order_items(sid), [])
 
     def test_modify_never_re_checks_the_machine_gate_for_an_item_already_in_the_order(self):
