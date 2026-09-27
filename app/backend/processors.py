@@ -47,6 +47,7 @@ __all__ = [
     "ProcessorRegistry",
     "ResolvedModel",
     "dispatch_processor",
+    "resolve_cascade_model",
     "resolve_realtime_model",
 ]
 
@@ -191,6 +192,58 @@ def resolve_realtime_model(
             model_id, persona.id, pipeline_name, default_deployment,
         )
         deployment = default_deployment
+
+    return ResolvedModel(id=model_id, pipeline=pipeline_name, deployment=deployment, reasoning=entry.reasoning)
+
+
+def resolve_cascade_model(
+    persona: Persona,
+    requested_model_id: str | None,
+    model_catalog: ModelCatalog,
+    *,
+    pipeline_name: str = "cascade",
+) -> ResolvedModel:
+    """Resolve a cascade-pipeline session's requested model (issue #82).
+
+    Same catalog ∩ deployment ∩ persona-allowed algorithm as `resolve_realtime_model` (design
+    doc sections 5.2, 7.3), EXCEPT there is no `AZURE_OPENAI_REALTIME_DEPLOYMENT`-style
+    back-compat fallback for the pipeline default: unlike the realtime pipeline (which predates
+    #75 and had to keep an existing bare env var working), the cascade pipeline is new in this
+    issue, so there is no old behavior to preserve here. EVERY cascade model -- including a
+    persona's own `models.cascade.default` -- must have a real `AZURE_AI_MODEL_DEPLOYMENTS`
+    entry; an undeployed default is rejected exactly like an undeployed non-default id, never a
+    silent fallback (Rick's PR #106 review item 1's "no default-path special case", taken one
+    step further here since cascade has no legacy fallback to even offer).
+
+    Raises `ModelSelectionError` if *persona* has no `models.cascade` block at all (the pipeline
+    isn't enabled for this persona), or any of the usual unknown/disallowed/cross-wired/
+    undeployed checks fail.
+    """
+    pipeline_cfg = persona.manifest.models.cascade
+    if pipeline_cfg is None:
+        raise ModelSelectionError(f"Persona {persona.id!r} has no models.cascade configured -- cascade is not enabled for it")
+
+    model_id = requested_model_id if requested_model_id is not None else pipeline_cfg.default
+    is_default = model_id == pipeline_cfg.default
+
+    if model_id not in pipeline_cfg.allowed and not is_default:
+        raise ModelSelectionError(
+            f"Model {model_id!r} is not allowed for persona {persona.id!r}'s {pipeline_name} pipeline "
+            f"(allowed: {pipeline_cfg.allowed})"
+        )
+
+    if not model_catalog.is_catalogued_for(model_id, pipeline_name):
+        raise ModelSelectionError(
+            f"Model {model_id!r} is not in config.yaml's models.catalog for the {pipeline_name} pipeline"
+        )
+    entry = model_catalog.get(model_id)
+
+    deployment = model_catalog.deployment_for(model_id)
+    if deployment is None:
+        raise ModelSelectionError(
+            f"Model {model_id!r} is catalogued for the {pipeline_name} pipeline but has no "
+            f"deployment mapped in AZURE_AI_MODEL_DEPLOYMENTS"
+        )
 
     return ResolvedModel(id=model_id, pipeline=pipeline_name, deployment=deployment, reasoning=entry.reasoning)
 
