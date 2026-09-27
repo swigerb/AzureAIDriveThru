@@ -51,12 +51,24 @@ describe("PersonaPicker", () => {
         expect(select).toBeDisabled();
     });
 
-    it("wraps the disabled control in a tooltip explaining why it's locked", () => {
+    it("exposes the lock reason to screen readers via aria-describedby, not just a hover tooltip", () => {
+        // Non-blocking item from Rick's PR-110 review: the visible Radix Tooltip only reaches
+        // sighted users who hover/focus the trigger, so the lock reason is duplicated into an
+        // always-present sr-only element and wired up with aria-describedby for AT users too.
         render(<PersonaPicker personas={PERSONAS} currentId="test-beta" onSelect={() => {}} disabled={true} />);
-        expect(screen.getByLabelText("Select persona")).toBeDisabled();
-        // The Tooltip component renders its content lazily on hover/focus in most implementations,
-        // so this only asserts the enabled/disabled branch rendered distinct markup, not the
-        // tooltip's own content -- that's `components/ui/tooltip.tsx`'s own test surface.
+        const select = screen.getByLabelText("Select persona");
+
+        expect(select).toBeDisabled();
+        const describedById = select.getAttribute("aria-describedby");
+        expect(describedById).toBeTruthy();
+        expect(document.getElementById(describedById!)).toHaveTextContent("Locked for this order -- start a new order to switch");
+    });
+
+    it("does not describe the enabled control with a lock reason", () => {
+        render(<PersonaPicker personas={PERSONAS} currentId="test-beta" onSelect={() => {}} disabled={false} />);
+        const select = screen.getByLabelText("Select persona");
+
+        expect(select).not.toHaveAttribute("aria-describedby");
         expect(screen.queryByText("Locked for this order -- start a new order to switch")).not.toBeInTheDocument();
     });
 });

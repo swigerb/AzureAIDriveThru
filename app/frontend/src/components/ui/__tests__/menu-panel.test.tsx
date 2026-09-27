@@ -87,4 +87,32 @@ describe("MenuPanel", () => {
         act(() => fireEvent.click(toggle));
         expect(toggle).toHaveAttribute("aria-expanded", "false");
     });
+
+    // Non-blocking item from Rick's PR-110 review: singular/plural count label ("1 item", not "1 items").
+    it("uses the singular 'item' label for a one-item category", async () => {
+        mockFetchOnce(SAMPLE_MENU);
+        render(<MenuPanel />);
+
+        await waitFor(() => expect(screen.getByText("Test Burger")).toBeInTheDocument());
+        expect(screen.getByText("1 item")).toBeInTheDocument();
+        expect(screen.queryByText("1 items")).not.toBeInTheDocument();
+    });
+
+    it("uses the plural 'items' label for a multi-item category", async () => {
+        mockFetchOnce({
+            menuItems: [
+                {
+                    category: "Burgers & Sandwiches",
+                    items: [
+                        { name: "Test Burger", sizes: [{ size: "standard", price: 4.99 }], description: "A fixture burger." },
+                        { name: "Test Fries", sizes: [{ size: "standard", price: 2.49 }], description: "A fixture side." }
+                    ]
+                }
+            ]
+        });
+        render(<MenuPanel />);
+
+        await waitFor(() => expect(screen.getByText("Test Burger")).toBeInTheDocument());
+        expect(screen.getByText("2 items")).toBeInTheDocument();
+    });
 });

@@ -22,6 +22,9 @@ export interface PersonaPickerProps {
  * `disabled`) whenever a session is already active, rather than letting a mid-call switch silently
  * reset the order -- switching a persona always starts a new session by design.
  */
+const LOCK_HINT_ID = "persona-picker-lock-hint";
+const LOCK_HINT_TEXT = "Locked for this order -- start a new order to switch";
+
 export default function PersonaPicker({ personas, currentId, onSelect, disabled }: PersonaPickerProps) {
     const select = (
         <select
@@ -30,6 +33,11 @@ export default function PersonaPicker({ personas, currentId, onSelect, disabled 
             disabled={disabled}
             onChange={event => onSelect(event.target.value)}
             aria-label="Select persona"
+            // Non-blocking item from Rick's PR-110 review (issue #80): the visible Tooltip only
+            // reaches sighted, hovering/focused users -- aria-describedby exposes the same lock
+            // reason to screen readers via the always-present (but visually hidden) sr-only text
+            // below, so a keyboard/AT user tabbing onto the disabled select still hears why.
+            aria-describedby={disabled ? LOCK_HINT_ID : undefined}
             className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-60 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
         >
             {personas.map(persona => (
@@ -46,11 +54,16 @@ export default function PersonaPicker({ personas, currentId, onSelect, disabled 
                 Persona
             </Label>
             {disabled ? (
-                <Tooltip content="Locked for this order -- start a new order to switch">
+                <Tooltip content={LOCK_HINT_TEXT}>
                     <div>{select}</div>
                 </Tooltip>
             ) : (
                 select
+            )}
+            {disabled && (
+                <span id={LOCK_HINT_ID} className="sr-only">
+                    {LOCK_HINT_TEXT}
+                </span>
             )}
         </div>
     );

@@ -130,7 +130,9 @@ export default memo(function MenuPanel() {
                             </div>
                             <div className="flex items-center gap-2">
                                 <span className="whitespace-nowrap rounded-full bg-brand-secondary/10 px-3 py-1 text-xs font-bold text-brand-secondary dark:bg-brand-surface-dark-alt dark:text-brand-secondary-tint">
-                                    {category.items.length} items
+                                    {/* Non-blocking item from Rick's PR-110 review: correct singular/plural
+                                        ("1 item", not "1 items"). */}
+                                    {category.items.length} {category.items.length === 1 ? "item" : "items"}
                                 </span>
                                 <motion.span
                                     animate={{ rotate: isOpen ? 180 : 0 }}
