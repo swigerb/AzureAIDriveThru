@@ -1189,6 +1189,49 @@ stream's scenarios.
   test deliberately rejects `"sizes"` for exactly this reason, so a successful retry can only be
   observed by the second request omitting it.
 
+### On-menu validation gate (#73 — ADR-001 decision 4: "No off-menu. If it's not on the menu in
+### our source data, you cannot order it.")
+
+`update_order`'s `add` path calls `menu_utils.resolve_menu_item(item_name)` — THE single on-menu
+gate — before anything else (before size validation, customization validation, price validation,
+the extras guard, or quantity limits). An item resolves iff its `_menu_key()`-normalised name (which
+also strips a parenthesized customization suffix) or one of its own `aliases` is an exact key in
+the persona pack's data; there is no substring/keyword matching anywhere in the resolution path.
+
+- **Unknown item → rejected, order unchanged.** `resolve_menu_item` returns `None`; `update_order`
+  returns `ToolResultDirection.TO_SERVER` (model-only, never reaches the browser/ticket) with the
+  `error_messages.yaml` `item_not_on_menu` message (rendered with the guest's `item_name`) — the
+  same "apology-string, `TO_SERVER`-only" shape every other add-time rejection in this file uses
+  (price validation, the extras guard, quantity limits), so the carhop can naturally offer an
+  on-menu alternative in its next turn without a new wire shape for the client to learn.
+  `order_state_singleton` is never called, so the order is provably unchanged.
+- **Known item, unsupported size → rejected, order unchanged.** `canonical_size_key(size)` is
+  checked against the resolved item's own `sizes` tuple (built once at load time from each item's
+  own `sizes` entries); a mismatch returns `size_not_available` (also `TO_SERVER`-only), listing the
+  item's actual available sizes in the message.
+- **What replaced the keyword fallback removed by this issue.** Every keyword/substring fallback
+  that used to classify a name NOT found in the pack's own data — `_keyword_fallback_combo_drink`,
+  `_keyword_fallback_happy_hour_discounted`, their `_FOUNTAIN_DRINK_KEYWORD_RE` /
+  `_SHAKE_BLAST_KEYWORD_RE` / `_DR_PEPPER_RE` regexes, and the matching substring rule inside
+  `infer_category` — is deleted outright, along with `tools.py`'s old `_ICE_CREAM_MACHINE_KEYWORDS`
+  (machine-outage flagging, now `menu_utils.requires_machine()`, data-driven off each item's own
+  `requiresMachine` field) and `EXTRAS_KEYWORDS` (the extras guard, now `menu_utils.is_extra_item()`,
+  data-driven off each item's own `isExtra` field) substring lists. An off-menu name that used to
+  slip through one of those lists — an off-menu fountain drink ("Dr Pepper Zero"), a spoken shake/
+  blast/slush variant ("Cherry Slushes", "Blue Raspberry Slushie", "Chocolate Milkshake"), a
+  fountain-and-shake compound ("Cherry Limeade Shake"), the "tea"-inside-"steak" false match
+  ("Steak Sandwich"), or an off-menu "extra" ("Extra Patty", "Extra Cheese") — is now rejected
+  as `not_on_menu` before any of those functions would ever run. See
+  `app/backend/tests/test_menu_utils.py::OffMenuNamesReturnSafeDefaultsSinceIssue73Tests` (the
+  classification functions' own safe-default behaviour once an item doesn't resolve),
+  `test_tool_calling.py::NotOnMenuRejectionTests` (the `update_order` gate itself, including the
+  size check and the former-extras-keyword and former-machine-keyword cases), and
+  `CustomisedItemMenuLookupTests.cs` in this suite (the `Off_menu_*`/`Near_miss_*`/`Size_word_*`
+  scenarios) for the end-to-end equivalents. Mutation-checked: reintroducing any of the three
+  deleted keyword lists, or flipping
+  a real item's `requiresMachine`/`isExtra` field away from its pack value, fails at least one of
+  these rows.
+
 ### Order-summary wire schema
 
 `update_order`/`get_order`/`reset_order` are all `ToolResultDirection.TO_BOTH` (see
@@ -1242,22 +1285,19 @@ whitespace-collapsed), used everywhere a raw item name is turned into a lookup k
 standalone entree when its combo is added) — one implementation, so lookup and combo-conversion
 matching can never drift apart on how a customization suffix is stripped. A direct implication: an
 unknown/off-menu item (customised or not) **never** falls back into the combo side slot — only the
-literal, allow-listed `"tots"`/`"groovy fries"` names, plus any name that resolves through
-`_TOTS_ALIASES` to `"tots"` (below), do (post-modifier-stripping); the drink
-keyword fallback remains for names that resolve to no `MENU_CATEGORY_MAP` entry at all (spoken
-short-forms/spellings not covered by an alias, or any future off-menu name) and for shakes/blasts/
-malts, but the latter obey
-`menu_utils._SHAKES_AND_BLASTS_HAPPY_HOUR_DISCOUNTED` for the happy-hour-discount question exactly
-like their on-menu counterparts do — that flag is the single switch for every shake/blast, plain or
-customised, on-menu or off. **#72 (P2-3) note:** the eight named fountain drinks (Coca-Cola®, Diet
-Coke®, Coca-Cola® Zero, Dr Pepper®, Diet Dr Pepper®, Sprite®, Sprite Zero®, BARQ'S® Root Beer) are
-now real `menuItems.json`/`MENU_CATEGORY_MAP` entries, not off-menu names relying on this fallback.
+literal, on-menu `"Tots"`/`"Groovy Fries"` items, plus any name that resolves through their own
+pack `aliases` to one of them (below), do (post-modifier-stripping). **#73 update:** the drink
+keyword fallback this paragraph used to describe for a name that resolves to no `MENU_CATEGORY_MAP`
+entry at all is deleted entirely — see "On-menu validation gate" above — so such a name is now
+rejected as `not_on_menu` by `update_order` before `infer_combo_component` would ever run, rather
+than silently absorbing into a combo's slot or picking up its discount. **#72 (P2-3) note:** the
+eight named fountain drinks (Coca-Cola®, Diet Coke®, Coca-Cola® Zero, Dr Pepper®, Diet Dr Pepper®,
+Sprite®, Sprite Zero®, BARQ'S® Root Beer) are real `menuItems.json`/`MENU_CATEGORY_MAP` entries.
 Common bare spoken forms resolve directly too — either via `_menu_key()`'s existing `®` stripping
 (`"Dr Pepper"`, `"Sprite"`, `"Diet Coke"`, ... match their `®`-bearing map entry with no alias
-needed) or via one of three new explicit `aliases` entries added for names that differ more than
-just the `®` (`"Coke"` → Coca-Cola®, `"Coke Zero"` → Coca-Cola® Zero, `"Root Beer"` → BARQ'S® Root
-Beer). The fallback itself is retained unmodified (#73 territory) and still catches any other
-spelling/short-form that doesn't resolve through the map or its aliases. See `app/backend/tests/test_menu_utils.py::CustomisedItemMenuLookupTests`
+needed) or via one of three explicit `aliases` entries added for names that differ more than just
+the `®` (`"Coke"` → Coca-Cola®, `"Coke Zero"` → Coca-Cola® Zero, `"Root Beer"` → BARQ'S® Root Beer).
+See `app/backend/tests/test_menu_utils.py::CustomisedItemMenuLookupTests`
 and `CustomisedItemMenuLookupTests.cs` in this suite.
 
 **#72 Part 2 (P2-3) note — full production export import**: `personas/sonic/menu/menuItems.json`
@@ -1400,7 +1440,8 @@ tell them apart. Splitting into two single-item scenarios makes each total unamb
 **The exact `_menu_key()` normalisation algorithm (PR #50 review, round 4 — state it precisely so
 C# does the same thing, not just "something similar")**, applied in this order to *every* raw
 `item_name` before it is used as a lookup key into `MENU_CATEGORY_MAP`, `_COMBO_SIDE_ITEMS`, or
-`_SUNDAES`, and before the two keyword-fallback functions ever see it:
+`_SUNDAES`, and (historically, before #73 deleted them) before the two keyword-fallback functions
+ever saw it:
 1. Remove **every** `\s*\([^)]*\)\s*` group anywhere in the string, not just a trailing one —
    `"Chili Cheese (Extra Cheese) Tots"` (a mid-string group) strips to `"Chili Cheese Tots"` exactly
    like a trailing one would, and `"Tots (Extra Crispy) (No Salt)"` (two groups) strips to `"Tots"`.
@@ -1431,57 +1472,33 @@ C# does the same thing, not just "something similar")**, applied in this order t
    did before round 4. See `.squad/decisions.md` for the history of why this pattern of
    consolidating symbol-handling into `_menu_key()` started.
 
-Keyword fallbacks (`_keyword_fallback_combo_drink`, `_keyword_fallback_happy_hour_discounted`, for
-names that resolve to no `MENU_CATEGORY_MAP` entry at all, i.e. genuinely off-menu) match on
-**word boundaries**, not bare substrings (PR #50 review round 4): a bare substring check let
-`"tea"` match inside `"steak"`, silently absorbing an off-menu `"Philly Cheesesteak"`/
-`"Steak Sandwich"` into a combo's drink slot for free and happy-hour-discounting it. A hyphen is a
-non-word character in both engines (Python `\b`/`re` and C#'s `\b`/`Regex`, whose word-character
-definition matches .NET's), so it is a word boundary in either regex, on either side, with no
-special-casing (PR #50 review round 5, no behaviour change) — a keyword adjacent to a hyphen, e.g.
-a hyphenated customization like `"(Extra-Crispy)"` or the `"All-American"` prefix on the Smasher
-family, still gets a correct boundary. Both keyword lists are compiled regexes:
-```
-r"\b(?:slush(?:ie|y)?|limeade|ocean water|drink|tea|lemonade|coke|sprite|root beer)(?:e?s)?\b"
-```
-for fountain drinks, and
-```
-r"(?:\b|milk)(?:shake|blast|malt)(?:e?s)?\b"
-```
-for shakes/blasts/malts; Dr Pepper keeps its own, already-word-boundary regex unchanged. The
-`(?:e?s)?` suffix (not a bare `s?`) matches the plural `-s`/`-es` forms (`"Cokes"`, `"Slushes"`) as
-well as the singular; `slush(?:ie|y)?` additionally matches the spoken `"Slushie"`/`"Slushy"`
-variants. The shake/blast/malt regex's `(?:\b|milk)` prefix is a narrow, deliberate carve-out (PR
-#50 review round 5, "keyword over-correction"): a plain `\bshake\b` never matches `"Milkshake"` at
-all because there is no word boundary between "milk" and "shake" (both are word characters), so a
-guest's spoken `"Chocolate Milkshake"` fell all the way through to unclassified. Matching either a
-normal word boundary OR the literal `"milk"` immediately before the keyword resolves that specific
-compound without loosening the boundary for anything else — a nonsense `"Overshake Deluxe"` still
-correctly does not match.
+**Keyword fallbacks are deleted entirely (#73 — ADR-001 decision 4 "No off-menu"), not merely
+unreachable.** Before #73, a name that resolved to no `MENU_CATEGORY_MAP` entry at all fell through
+to two regex-based keyword-guessing functions — `_keyword_fallback_combo_drink` (word-boundary
+matches on `slush(?:ie|y)?`/`limeade`/`ocean water`/`drink`/`tea`/`lemonade`/`coke`/`sprite`/
+`root beer`, plus its own Dr Pepper regex) and `_keyword_fallback_happy_hour_discounted` (checking a
+shake/blast/malt regex first, then the fountain regex, so a name matching both resolved as a
+shake/blast for the discount question) — which is exactly how an off-menu `"Philly Cheesesteak"`
+used to get silently absorbed into a combo's drink slot (`"tea"` inside `"steak"`) and an off-menu
+`"Cherry Limeade Shake"` used to get discounted or not depending on match order. Issue #73 deletes
+both functions and their regexes outright, per Rick's and Brian's decision that reject-and-offer-an-
+alternative is strictly better than any keyword guess, however careful: see "On-menu validation
+gate" above for what replaced them. `infer_category`/`infer_combo_component`/
+`is_happy_hour_discounted` now simply return their safe default (`""`/`""`/`False`) for a name that
+doesn't resolve — there is nothing left to guess with, and `update_order` rejects such a name as
+`not_on_menu` before any of these functions would run at all in the live add path.
 
-**Precedence between the two keyword lists matters for the discount question, but not for the
-combo-drink-slot question (PR #61 review, must-fix 1).** An off-menu name can contain both a
-fountain word and a shake/blast word at once — `"Cherry Limeade Shake"` (`"limeade"` + `"shake"`),
-`"Strawberry Lemonade Shake"` (`"lemonade"` + `"shake"`), `"Sweet Tea Blast"` (`"tea"` + `"blast"`),
-`"Dr Pepper Shake"`. `_keyword_fallback_combo_drink` is
-an unconditional `or` across all three regexes, so it is not order-dependent — any one of these
-names fills the combo drink slot regardless of which keyword matches first.
-`_keyword_fallback_happy_hour_discounted`, however, must check the shake/blast/malt regex **first**
-so that a name matching both resolves as a shake/blast for the discount question — obeying
-`_SHAKES_AND_BLASTS_HAPPY_HOUR_DISCOUNTED` — rather than falling into the fountain branch (always
-discounted). Checking fountain first was the bug: it silently discounted every one of the four
-names above even with the flag `False`.
-
-Every genuine on-menu item still resolves via `MENU_CATEGORY_MAP`
-directly and never reaches these fallbacks at all — see
-`test_menu_utils.py::MenuCategoryMapDirectResolutionTests`, which patches both fallback functions to
-raise and asserts classification never touches them for any of the 180 `menuItems.json` names.
-
-See `app/backend/tests/test_menu_utils.py::KeywordFallbackWordBoundaryTests`,
-`KeywordOverCorrectionTests`, `KeywordFallbackPrecedenceTests`, `MenuCategoryMapDirectResolutionTests`, and
-`CustomisedItemMenuLookupTests.cs`'s `ParenGroupNormalisationTests` in this suite for the
-paren-group-stripping edge cases (two groups, mid-string group, nested/unbalanced group) end to end
-against the live backend.
+Every genuine on-menu item still resolves via `MENU_CATEGORY_MAP` directly and never needed a
+fallback in the first place — see
+`test_menu_utils.py::MenuCategoryMapDirectResolutionTests::test_combo_and_happy_hour_classification_never_reaches_a_keyword_fallback`,
+which classifies all 180 `menuItems.json` names and simply asserts it succeeds (the strongest
+possible proof the deleted functions are never reached — there's nothing left to patch-and-raise
+against). See `app/backend/tests/test_menu_utils.py::OffMenuNamesReturnSafeDefaultsSinceIssue73Tests`
+for the former keyword-fallback names (the Philly Cheesesteak/steak-tea case included) now
+classifying to their safe defaults instead, `test_tool_calling.py::NotOnMenuRejectionTests` for the
+`update_order`-level rejection, and `CustomisedItemMenuLookupTests.cs`'s
+`ParenGroupNormalisationTests` in this suite for the paren-group-stripping edge cases (two groups,
+mid-string group, nested/unbalanced group) end to end against the live backend.
 
 All four money fields (`items[].price`, `total`, `tax`, `finalTotal`) are numbers on the wire (not
 quoted, unlike the golden file's storage format) and must always be parsed via
