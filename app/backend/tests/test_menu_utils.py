@@ -32,10 +32,15 @@ def _load_menu_item_names() -> set[str]:
 
 def _load_menu_item_raw_fields() -> dict[str, dict]:
     """Read menuItems.json directly (no ``menu_utils`` involved at all) -- item name ->
-    ``{"comboSlot", "happyHourDiscounted"}`` exactly as authored in the pack, defaulting missing
-    fields the same way the schema documents (``"none"`` / ``False``). Used to check the golden
-    table against the RAW DATA itself (issue #71), independent of whether ``menu_utils``'s loader
-    or classification functions have a bug."""
+    ``{"comboSlot", "happyHourDiscounted", "requiresMachine"}`` exactly as authored in the pack,
+    defaulting missing fields the same way the schema documents (``"none"`` / ``False`` /
+    ``None``). Used to check the golden table against the RAW DATA itself (issue #71), independent
+    of whether ``menu_utils``'s loader or classification functions have a bug.
+
+    ``requiresMachine`` (PR #99 review decision 4): whether the item needs the ``slush_machine``
+    or ``ice_cream_machine`` (or ``None`` if it needs neither) -- e.g. an 86'd machine at a
+    physical store. Compared here the same way as comboSlot/happyHourDiscounted so the golden
+    table can't silently drift from the pack on this field either."""
     with _MENU_ITEMS_PATH.open("r", encoding="utf-8") as f:
         data = json.load(f)
     fields: dict[str, dict] = {}
@@ -44,6 +49,7 @@ def _load_menu_item_raw_fields() -> dict[str, dict]:
             fields[item["name"]] = {
                 "comboSlot": item.get("comboSlot", "none"),
                 "happyHourDiscounted": bool(item.get("happyHourDiscounted", False)),
+                "requiresMachine": item.get("requiresMachine"),
             }
     return fields
 
@@ -52,10 +58,11 @@ class GoldenTableCheckedAgainstPackDataTests(unittest.TestCase):
     """issue #71: the golden category table is CHECKED AGAINST the persona pack's data, not
     generated from it -- menuItems.json is hand-authored per the design doc (section 4.3/6) and
     the golden table is an independent, hand-authored oracle; this test compares the two directly,
-    reading menuItems.json's raw ``comboSlot``/``happyHourDiscounted`` fields with no
-    ``menu_utils`` code involved at all (see ``InferComboComponentGoldenCategoryTests`` above for
-    the equivalent check that goes THROUGH ``infer_combo_component``/``is_happy_hour_discounted``,
-    which additionally proves the loader/classification functions agree with the raw data)."""
+    reading menuItems.json's raw ``comboSlot``/``happyHourDiscounted``/``requiresMachine`` fields
+    with no ``menu_utils`` code involved at all (see ``InferComboComponentGoldenCategoryTests``
+    above for the equivalent check that goes THROUGH ``infer_combo_component``/
+    ``is_happy_hour_discounted``, which additionally proves the loader/classification functions
+    agree with the raw data)."""
 
     @classmethod
     def setUpClass(cls):
@@ -77,6 +84,11 @@ class GoldenTableCheckedAgainstPackDataTests(unittest.TestCase):
                 mismatches.append(
                     f"{row['item']!r}: pack happyHourDiscounted {pack_item['happyHourDiscounted']!r} "
                     f"!= golden {row['happyHourDiscounted']!r}"
+                )
+            if pack_item["requiresMachine"] != row.get("requiresMachine"):
+                mismatches.append(
+                    f"{row['item']!r}: pack requiresMachine {pack_item['requiresMachine']!r} "
+                    f"!= golden {row.get('requiresMachine')!r}"
                 )
         self.assertEqual(mismatches, [], "\n".join(mismatches))
 

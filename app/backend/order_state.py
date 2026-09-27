@@ -9,6 +9,7 @@ import conformance_hooks
 from config_loader import get_config
 from menu_utils import (
     _menu_key,
+    bundle_slots,
     canonical_size_key,
     infer_combo_component,
     is_happy_hour_discounted,
@@ -45,6 +46,19 @@ def _infer_combo_component(item_name: str) -> str:
     below -- and must never be used to derive it (PR #50 review).
     """
     return infer_combo_component(item_name)
+
+
+def _bundle_slots(item_name: str) -> tuple[str, ...]:
+    """The component slots *item_name* itself absorbs when added (sides/drinks/both/neither).
+
+    Delegates to the shared ``bundle_slots`` in menu_utils to avoid drift (Rick's PR #99 review,
+    decision 1). This answers "how many, and which, slots does THIS bundle item provide" -- a
+    SEPARATE question from ``_infer_combo_component`` above, which answers "can this OTHER item
+    fill one of those slots". A combo/Dinner/Wacky-Pack/Meal's own slot capacity must be read from
+    its data (``bundle.slots``), never assumed to be one side plus one drink just because its name
+    contains the word "combo".
+    """
+    return bundle_slots(item_name)
 
 
 def _is_happy_hour_discounted(item_name: str) -> bool:
@@ -167,6 +181,17 @@ class OrderState:
 
         if action == "add":
             is_combo = "combo" in item_name.lower()
+            # Rick's PR #99 review, decision 1: the item's OWN bundle slots, read from the pack's
+            # ``bundle.slots`` field (via menu_utils.bundle_slots) -- NOT derived from the word
+            # "combo" in its name. "is_combo" above stays name-based and is used ONLY for the
+            # combo-conversion logic below (auto-removing a matching standalone entree), which
+            # Rick's review explicitly keeps as-is ("... Combo" only). Everything about how many
+            # slots a bundle item actually absorbs -- and of which kind -- goes through
+            # "own_bundle_slots"/"is_bundle" instead, so a Dinner or Wacky Pack (whose names don't
+            # contain "combo" at all) still absorbs its real slots, and a drinks-only combo like
+            # French Toast Sticks Combo never free-absorbs a side.
+            own_bundle_slots = _bundle_slots(item_name)
+            is_bundle = bool(own_bundle_slots)
 
             # ── Combo conversion: auto-remove matching standalone entree ──
             if is_combo:
@@ -195,12 +220,21 @@ class OrderState:
                         logger.info("Combo conversion: removed standalone '%s' for combo '%s'", existing.item, item_name)
                         break
 
-            # ── Post-combo absorption: side/drink fills an incomplete combo slot ──
-            if not is_combo:
+            # ── Post-bundle absorption: side/drink fills an incomplete bundle's slot ──
+            if not is_bundle:
                 component = _infer_combo_component(item_name)
                 if component in ("sides", "drinks"):
-                    combo_count = sum(it.quantity for it in order_state if "combo" in it.item.lower())
-                    if combo_count > 0:
+                    # Capacity for this component = sum of quantities of every bundle item
+                    # already in the order whose OWN bundle_slots include this component (Rick's
+                    # PR #99 review, decision 1) -- not one slot per "combo"-named item regardless
+                    # of what it actually bundles. A drinks-only bundle (French Toast Sticks
+                    # Combo, the Crispy Tenders Dinners) contributes 0 to side capacity; a
+                    # side+drink bundle (a regular Combo, a Wacky Pack, the $6 Meal) contributes 1
+                    # to each.
+                    bundle_capacity = sum(
+                        it.quantity for it in order_state if component in _bundle_slots(it.item)
+                    )
+                    if bundle_capacity > 0:
                         if component == "sides":
                             filled = sum(it.quantity for it in order_state if _infer_combo_component(it.item) == "sides")
                             filled += session.get("absorbed_sides", 0)
@@ -208,7 +242,7 @@ class OrderState:
                             filled = sum(it.quantity for it in order_state if _infer_combo_component(it.item) == "drinks")
                             filled += session.get("absorbed_drinks", 0)
 
-                        slots_available = combo_count - filled
+                        slots_available = bundle_capacity - filled
                         if slots_available > 0:
                             to_absorb = min(quantity, slots_available)
                             if component == "sides":
@@ -220,9 +254,11 @@ class OrderState:
                             result_info["absorbed_component"] = component
                             result_info["absorbed_display"] = display
 
-                            # Update the combo item's display to show the absorbed component
+                            # Update the bundle item's display to show the absorbed component --
+                            # find a bundle item whose own slots actually include this component
+                            # (not just any "combo"-named item).
                             for combo_item in order_state:
-                                if "combo" in combo_item.item.lower():
+                                if component in _bundle_slots(combo_item.item):
                                     # Build component list from absorbed sides/drinks
                                     components = []
                                     if session.get("absorbed_side_display"):
@@ -269,24 +305,27 @@ class OrderState:
                 order_state.append(OrderItem(item=item_name, size=size, quantity=quantity, price=price, display=display))
                 logger.debug("Added %s to session %s", display, session_id)
 
-            # ── Combo pivot: absorb standalone sides/drinks into a newly added combo ──
-            if is_combo:
+            # ── Bundle pivot: absorb standalone sides/drinks into a newly added bundle ──
+            if is_bundle:
                 absorbed_side = False
                 absorbed_drink = False
                 items_to_remove = []
                 for i, existing in enumerate(order_state):
                     if existing.item == item_name:
-                        continue  # skip the combo itself
+                        continue  # skip the bundle itself
                     component = _infer_combo_component(existing.item)
-                    if component == "sides" and not absorbed_side:
-                        logger.info("Absorbing '%s' into new combo '%s'", existing.display, item_name)
+                    # Only absorb a component this bundle's OWN slots actually include (Rick's PR
+                    # #99 review, decision 1) -- e.g. French Toast Sticks Combo (drinks-only) must
+                    # never free-absorb a pre-existing standalone side.
+                    if component == "sides" and "sides" in own_bundle_slots and not absorbed_side:
+                        logger.info("Absorbing '%s' into new bundle '%s'", existing.display, item_name)
                         if existing.quantity > 1:
                             existing.quantity -= 1
                         else:
                             items_to_remove.append(i)
                         absorbed_side = True
-                    elif component == "drinks" and not absorbed_drink:
-                        logger.info("Absorbing '%s' into new combo '%s'", existing.display, item_name)
+                    elif component == "drinks" and "drinks" in own_bundle_slots and not absorbed_drink:
+                        logger.info("Absorbing '%s' into new bundle '%s'", existing.display, item_name)
                         if existing.quantity > 1:
                             existing.quantity -= 1
                         else:
@@ -320,23 +359,27 @@ class OrderState:
         return self.sessions[session_id]["order_state"]
 
     def get_combo_requirements(self, session_id: str) -> dict:
-        """Scans the order for combos and returns missing components.
-        Helps the AI know exactly what to ask for next."""
+        """Scans the order for bundles (combos, Dinners, Wacky Packs, the Meal) and returns
+        missing components. Helps the AI know exactly what to ask for next."""
         session = self.sessions[session_id]
         order_items = session["order_state"]
 
-        combo_count = sum(item.quantity for item in order_items if "combo" in item.item.lower())
+        # Rick's PR #99 review, decision 1: per-component capacity is the sum over bundle items
+        # whose OWN bundle_slots include that component -- a drinks-only bundle (French Toast
+        # Sticks Combo, a Crispy Tenders Dinner) contributes 0 to side capacity, not 1.
+        side_capacity = sum(item.quantity for item in order_items if "sides" in _bundle_slots(item.item))
+        drink_capacity = sum(item.quantity for item in order_items if "drinks" in _bundle_slots(item.item))
         side_count = sum(item.quantity for item in order_items if _infer_combo_component(item.item) == "sides")
         drink_count = sum(item.quantity for item in order_items if _infer_combo_component(item.item) in ("drinks",))
 
-        # Include sides/drinks absorbed into combos during combo pivot
+        # Include sides/drinks absorbed into a bundle during the bundle pivot
         side_count += session.get("absorbed_sides", 0)
         drink_count += session.get("absorbed_drinks", 0)
 
         missing = []
-        if side_count < combo_count:
+        if side_count < side_capacity:
             missing.append("a side (fries or tots)")
-        if drink_count < combo_count:
+        if drink_count < drink_capacity:
             missing.append("a drink or slush")
 
         return {

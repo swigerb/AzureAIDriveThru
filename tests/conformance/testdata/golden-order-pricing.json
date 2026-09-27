@@ -302,6 +302,77 @@
       "expectedLineItemCount": 2,
       "expectedTotal": "20.87",
       "expectedComboComplete": false
+    },
+    {
+      "description": "PR #99 decision 1 (Rick's review): French Toast Sticks Combo's bundle.slots is [\"drinks\"] only, so Tots added afterward is NOT absorbed and is charged in full -- the bug the old name-based ('combo' in item name) engine had, which wrongly gave every '...Combo'-named item a free side slot too (app/backend/menu_utils.py::bundle_slots, order_state.py post-bundle-absorption block)",
+      "steps": [
+        { "action": "add", "item": "French Toast Sticks Combo", "size": "standard", "quantity": 1, "price": "5.19" },
+        { "action": "add", "item": "Tots", "size": "medium", "quantity": 1, "price": "2.79" }
+      ],
+      "happyHour": false,
+      "expectedLineItemCount": 2,
+      "expectedTotal": "7.98",
+      "expectedComboComplete": false
+    },
+    {
+      "description": "PR #99 decision 1: French Toast Sticks Combo absorbs its one drink slot for free and is then complete with no side required (app/backend/menu_utils.py::bundle_slots)",
+      "steps": [
+        { "action": "add", "item": "French Toast Sticks Combo", "size": "standard", "quantity": 1, "price": "5.19" },
+        { "action": "add", "item": "Cherry Limeade", "size": "medium", "quantity": 1, "price": "2.89" }
+      ],
+      "happyHour": false,
+      "expectedLineItemCount": 1,
+      "expectedTotal": "5.19",
+      "expectedComboComplete": true
+    },
+    {
+      "description": "PR #99 decision 1: Crispy Tenders Dinner - 3 piece's bundle.slots is [\"drinks\"] only, same as French Toast Sticks Combo -- absorbs a drink for free but a side stays a full-price standalone line",
+      "steps": [
+        { "action": "add", "item": "Crispy Tenders Dinner - 3 piece", "size": "standard", "quantity": 1, "price": "8.89" },
+        { "action": "add", "item": "Ocean Water\u00ae", "size": "medium", "quantity": 1, "price": "2.89" },
+        { "action": "add", "item": "Tots", "size": "medium", "quantity": 1, "price": "2.79" }
+      ],
+      "happyHour": false,
+      "expectedLineItemCount": 2,
+      "expectedTotal": "11.68",
+      "expectedComboComplete": true
+    },
+    {
+      "description": "PR #99 decision 1: Corn Dog Wacky Pack\u00ae's bundle.slots is [\"sides\",\"drinks\"] (same as a regular Combo) even though its name doesn't contain the word 'combo' -- the old name-based engine gave it zero slots and never absorbed anything for it",
+      "steps": [
+        { "action": "add", "item": "Corn Dog Wacky Pack\u00ae", "size": "standard", "quantity": 1, "price": "4.59" },
+        { "action": "add", "item": "Tots", "size": "medium", "quantity": 1, "price": "2.79" },
+        { "action": "add", "item": "Cherry Limeade", "size": "medium", "quantity": 1, "price": "2.89" }
+      ],
+      "happyHour": false,
+      "expectedLineItemCount": 1,
+      "expectedTotal": "4.59",
+      "expectedComboComplete": true
+    },
+    {
+      "description": "PR #99 decision 1: $6 All-American Smasher\u2122 Meal's bundle.slots is [\"sides\",\"drinks\"] despite not containing the word 'combo' in its name -- absorbs one side and one drink for free, same as a regular Combo",
+      "steps": [
+        { "action": "add", "item": "$6 All-American Smasher\u2122 Meal", "size": "standard", "quantity": 1, "price": "6.00" },
+        { "action": "add", "item": "Tots", "size": "medium", "quantity": 1, "price": "2.79" },
+        { "action": "add", "item": "Cherry Limeade", "size": "medium", "quantity": 1, "price": "2.89" }
+      ],
+      "happyHour": false,
+      "expectedLineItemCount": 1,
+      "expectedTotal": "6.00",
+      "expectedComboComplete": true
+    },
+    {
+      "description": "PR #99 decision 1: two different bundles with different slot shapes track side/drink capacity independently -- French Toast Sticks Combo (drinks-only) contributes 0 side capacity, Corn Dog Wacky Pack\u00ae contributes 1 side + 1 drink, so total capacity is 1 side + 2 drinks; a mutation that shares one flat 'combo_count' across both bundles instead of per-component bundle_slots() capacity would wrongly report this complete before the second drink is added",
+      "steps": [
+        { "action": "add", "item": "French Toast Sticks Combo", "size": "standard", "quantity": 1, "price": "5.19" },
+        { "action": "add", "item": "Corn Dog Wacky Pack\u00ae", "size": "standard", "quantity": 1, "price": "4.59" },
+        { "action": "add", "item": "Tots", "size": "medium", "quantity": 1, "price": "2.79" },
+        { "action": "add", "item": "Cherry Limeade", "size": "medium", "quantity": 2, "price": "2.89" }
+      ],
+      "happyHour": false,
+      "expectedLineItemCount": 2,
+      "expectedTotal": "9.78",
+      "expectedComboComplete": true
     }
   ],
   "spokenTotalCases": [

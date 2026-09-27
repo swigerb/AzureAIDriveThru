@@ -33,7 +33,8 @@ public sealed class GoldenMenuComboSlotTheoryTests(HappyHourJustBeforeOpenFixtur
 {
     private const string BaseComboName = "SONIC® Cheeseburger Combo";
     private const string BaseComboSize = "standard";
-    private const decimal BaseComboPrice = 8.49m;
+    // PR #99 review decision 3: corrected to the committed export price (was a stale 8.49).
+    private const decimal BaseComboPrice = 9.19m;
 
     public static TheoryData<int> GoldenRowIndexes()
     {

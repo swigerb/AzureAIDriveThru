@@ -1286,17 +1286,59 @@ drinks-only, so it was built drinks-only) and `"Strawberry Cheesecake Cream Cool
 description mentions both an icy slush and creamy vanilla soft serve; defaulted to
 `requiresMachine: "ice_cream_machine"`). Seven pre-existing combo price/size mismatches against the
 current export (e.g. `"SONIC® Cheeseburger Combo"` $8.49 in the pack vs. $9.19 in a fresh export)
-were left untouched as out-of-scope for this data-only import (many C# tests hardcode
-`BaseComboPrice = 8.49m`) and are flagged for Rick's call, not silently repriced.
+were initially left untouched pending Rick's call — see the PR #99 review note below for how they
+were resolved.
 `tests/conformance/testdata/golden-menu-categories.json` grew in lockstep, 74 → 180 rows (one row
 per pack item, hand-written from the same rules, not generated from `menuItems.json`), so
 `GoldenMenuComboSlotTheoryTests.cs`'s Theory now covers all 180 rows end-to-end. Mutation-check
 (temporarily, then reverted): flipping `"Cherry Limeade"`'s `happyHourDiscounted` to `false` broke 6
 tests across `test_menu_utils.py`/`test_combo_orders.py` (golden-vs-pack, classification, and
-end-to-end pricing); dropping `"Blue Raspberry Slush"`'s `requiresMachine` broke none, because that
-field has no backend consumer or golden-table column yet — a genuine, pre-existing coverage gap
-(the field is schema-only today), not something this Part 2 change introduced or was asked to wire
-up.
+end-to-end pricing); dropping `"Blue Raspberry Slush"`'s `requiresMachine` broke none at the time,
+because the field had no golden-table column or data-check coverage yet (schema-only) — this gap
+is closed by the PR #99 review note below.
+
+**PR #99 review (Rick's decisions 1-4) note**: Rick rejected the initial full-export import above
+and this PR was revised to apply his review exactly (Summer, the original author, was not
+consulted for this revision).
+*Decision 1 (bundle slots, blocking)*: the bug Rick caught — `order_state.py` detected "is this a
+combo" by testing `"combo" in name`, so items like `"French Toast Sticks Combo"` (drinks-only
+bundle) and `"Corn Dog Wacky Pack®"` / `"$6 All-American Smasher™ Meal"` (side+drink bundles, but
+no literal "combo" in the name) either absorbed the wrong slots or none at all — is fixed by a new
+`menu_utils.bundle_slots(item_name)` lookup that returns the item's real `bundle.slots` from the
+pack, with `order_state.py`'s post-absorption/combo-pivot/`get_combo_requirements()` logic now
+counting side/drink capacity per-component from that lookup instead of the name test. Covered by
+`app/backend/tests/test_combo_orders.py::TestBundleSlotsByPackData` (8 new pytest cases) and 6 new
+`comboAbsorptionScenarios` rows in `golden-order-pricing.json` (French Toast Sticks Combo
+drinks-only in both directions, Crispy Tenders Dinner drinks-only, Corn Dog Wacky Pack® side+drink,
+$6 Meal side+drink, and a combined two-different-bundle-shapes capacity-independence case) — no
+harness (`ComboAbsorptionTests.cs`) changes needed, since its Theory is already generic/index-driven
+over the golden data. Mutation-checked: reverting `order_state.py` to the name-based check fails 4
+of the 8 new pytest cases, including French Toast Sticks Combo wrongly absorbing a Tots side.
+*Decision 2*: `"Strawberry Cheesecake Cream Cooler"` keeps `requiresMachine: "ice_cream_machine"` —
+no change, per Rick.
+*Decision 3 (7 combo prices)*: the 7 mismatches flagged above are now fixed to the committed export
+in `personas/sonic/menu/menuItems.json`, the matching `golden-menu-categories.json` rows, and the
+frontend's `app/frontend/src/data/menuItems.json` copy (which also had its two already-deleted
+combos — `"Jr Double Cheeseburger Combo"`, `"All-American SONIC Smasher™ Combo"` — removed). The
+`test_persona_pack_drift_guard.py` exception for those two names is gone entirely (not deferred to
+#80); the drift guard now compares the frontend copy against the pack with no carve-outs. The
+harness's own `BaseComboPrice = 8.49m` constants that fed real assertions off the (now-wrong)
+`"SONIC® Cheeseburger Combo"` price were updated to `9.19m`
+(`GoldenMenuComboSlotTheoryTests.cs`; a stale self-consistent duplicate in
+`CustomisedItemMenuLookupTests.cs` was left as an illustrative tool-call input, matching the
+Python-side convention below). The unrelated `8.49`-style prices used throughout
+`test_combo_orders.py` as arbitrary tool-call *inputs* (not real pack prices) are deliberately left
+alone — see that file's module docstring. Mutation-checked: bumping the frontend's
+`"SONIC® Cheeseburger Combo"` price by a cent fails `test_persona_pack_drift_guard.py`'s
+size/price-identity check.
+*Decision 4 (`requiresMachine` golden column)*: `golden-menu-categories.json` gained a
+`requiresMachine` column on all 180 rows (sourced from the pack's own field, `null` when absent),
+now compared in `test_menu_utils.py::GoldenTableCheckedAgainstPackDataTests` alongside
+`comboSlot`/`happyHourDiscounted` — this closes the exact coverage gap the mutation-check above
+found. Mutation-checked: dropping `requiresMachine` from `"Cherry Slush"` in the pack fails that
+comparison test with a clear mismatch message.
+Also carried forward: the "whip topping" alias on Whipped Topping (already present from the
+original import, reconfirmed unchanged).
 
 **Plain-Tots alias map for the combo side slot only (Brian's decision, 2026-09-25, #60; extended PR
 #61 review, must-fix 3)**: any spoken name-variant of plain Tots fills the combo side slot exactly

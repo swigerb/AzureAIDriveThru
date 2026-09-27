@@ -884,7 +884,7 @@
                     "sizes": [
                         {
                             "size": "Standard",
-                            "price": 8.49
+                            "price": 9.19
                         }
                     ],
                     "description": "SONIC® Cheeseburger bundled with your choice of a side (Tots or Fries) and a drink. Includes medium side and medium drink.",
@@ -912,7 +912,7 @@
                     "sizes": [
                         {
                             "size": "Standard",
-                            "price": 10.99
+                            "price": 10.89
                         }
                     ],
                     "description": "SuperSONIC® Bacon Double Cheeseburger bundled with your choice of a side (Tots or Fries) and a drink. Includes medium side and medium drink.",
@@ -922,25 +922,11 @@
                     "image": ""
                 },
                 {
-                    "name": "All-American SONIC Smasher™ Combo",
-                    "sizes": [
-                        {
-                            "size": "Standard",
-                            "price": 9.49
-                        }
-                    ],
-                    "description": "All-American SONIC Smasher™ bundled with your choice of a side (Tots or Fries) and a drink. Includes medium side and medium drink.",
-                    "longDescription": "All-American SONIC Smasher™ bundled with your choice of a side (Tots or Fries) and a drink. Includes medium side and medium drink. Side and drink are included in the combo price.",
-                    "origin": "Sonic Drive-In Menu",
-                    "popularity": "",
-                    "image": ""
-                },
-                {
                     "name": "All-American Bacon SONIC Smasher™ Combo",
                     "sizes": [
                         {
                             "size": "Standard",
-                            "price": 10.49
+                            "price": 10.69
                         }
                     ],
                     "description": "All-American Bacon SONIC Smasher™ bundled with your choice of a side (Tots or Fries) and a drink. Includes medium side and medium drink.",
@@ -954,7 +940,7 @@
                     "sizes": [
                         {
                             "size": "Standard",
-                            "price": 9.29
+                            "price": 9.19
                         }
                     ],
                     "description": "Crispy Chicken Sandwich bundled with your choice of a side (Tots or Fries) and a drink. Includes medium side and medium drink.",
@@ -968,7 +954,7 @@
                     "sizes": [
                         {
                             "size": "Standard",
-                            "price": 10.19
+                            "price": 10.39
                         }
                     ],
                     "description": "Double SONIC Smasher™ bundled with your choice of a side (Tots or Fries) and a drink. Includes medium side and medium drink.",
@@ -982,7 +968,7 @@
                     "sizes": [
                         {
                             "size": "Standard",
-                            "price": 8.49
+                            "price": 8.39
                         }
                     ],
                     "description": "Fish Sandwich bundled with your choice of a side (Tots or Fries) and a drink. Includes medium side and medium drink.",
@@ -992,25 +978,11 @@
                     "image": ""
                 },
                 {
-                    "name": "Jr Double Cheeseburger Combo",
-                    "sizes": [
-                        {
-                            "size": "Standard",
-                            "price": 6.99
-                        }
-                    ],
-                    "description": "Jr Double Cheeseburger bundled with your choice of a side (Tots or Fries) and a drink. Includes medium side and medium drink.",
-                    "longDescription": "Jr Double Cheeseburger bundled with your choice of a side (Tots or Fries) and a drink. Includes medium side and medium drink. Side and drink are included in the combo price.",
-                    "origin": "Sonic Drive-In Menu",
-                    "popularity": "",
-                    "image": ""
-                },
-                {
                     "name": "Triple SONIC Smasher™ Combo",
                     "sizes": [
                         {
                             "size": "Standard",
-                            "price": 11.29
+                            "price": 11.39
                         }
                     ],
                     "description": "Triple SONIC Smasher™ bundled with your choice of a side (Tots or Fries) and a drink. Includes medium side and medium drink.",

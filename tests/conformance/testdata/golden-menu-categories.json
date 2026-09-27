@@ -6,6 +6,7 @@
       "category": "Burgers & Sandwiches",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "6.59"
     },
@@ -14,6 +15,7 @@
       "category": "Burgers & Sandwiches",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "7.39"
     },
@@ -22,6 +24,7 @@
       "category": "Burgers & Sandwiches",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "5.29"
     },
@@ -30,6 +33,7 @@
       "category": "Burgers & Sandwiches",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "5.79"
     },
@@ -38,6 +42,7 @@
       "category": "Burgers & Sandwiches",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "6.79"
     },
@@ -46,6 +51,7 @@
       "category": "Burgers & Sandwiches",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "3.49"
     },
@@ -54,6 +60,7 @@
       "category": "Burgers & Sandwiches",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "6.59"
     },
@@ -62,6 +69,7 @@
       "category": "Burgers & Sandwiches",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "5.59"
     },
@@ -70,6 +78,7 @@
       "category": "Burgers & Sandwiches",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "7.59"
     },
@@ -78,6 +87,7 @@
       "category": "Burgers & Sandwiches",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "4.99"
     },
@@ -86,6 +96,7 @@
       "category": "Hot Dogs & Tots",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "3.19"
     },
@@ -94,6 +105,7 @@
       "category": "Hot Dogs & Tots",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "3.19"
     },
@@ -102,6 +114,7 @@
       "category": "Hot Dogs & Tots",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "5.29"
     },
@@ -110,6 +123,7 @@
       "category": "Hot Dogs & Tots",
       "comboSlot": "sides",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Medium",
       "unitPrice": "2.79"
     },
@@ -118,6 +132,7 @@
       "category": "Hot Dogs & Tots",
       "comboSlot": "sides",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Medium",
       "unitPrice": "2.79"
     },
@@ -126,6 +141,7 @@
       "category": "Hot Dogs & Tots",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "1.99"
     },
@@ -134,6 +150,7 @@
       "category": "Hot Dogs & Tots",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Medium",
       "unitPrice": "3.79"
     },
@@ -142,6 +159,7 @@
       "category": "Hot Dogs & Tots",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Medium",
       "unitPrice": "4.89"
     },
@@ -150,6 +168,7 @@
       "category": "Hot Dogs & Tots",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Medium",
       "unitPrice": "3.89"
     },
@@ -158,6 +177,7 @@
       "category": "Hot Dogs & Tots",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Medium",
       "unitPrice": "5.19"
     },
@@ -166,6 +186,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": null,
       "size": "Medium",
       "unitPrice": "2.89"
     },
@@ -174,6 +195,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": null,
       "size": "Medium",
       "unitPrice": "2.89"
     },
@@ -182,6 +204,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": "slush_machine",
       "size": "Medium",
       "unitPrice": "2.79"
     },
@@ -190,6 +213,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": "slush_machine",
       "size": "Medium",
       "unitPrice": "3.29"
     },
@@ -198,6 +222,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": "slush_machine",
       "size": "Medium",
       "unitPrice": "2.79"
     },
@@ -206,6 +231,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": null,
       "size": "Medium",
       "unitPrice": "3.39"
     },
@@ -214,6 +240,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": "slush_machine",
       "size": "Medium",
       "unitPrice": "2.79"
     },
@@ -222,6 +249,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": null,
       "size": "Medium",
       "unitPrice": "2.89"
     },
@@ -230,6 +258,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": null,
       "size": "Medium",
       "unitPrice": "2.49"
     },
@@ -238,6 +267,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": null,
       "size": "Medium",
       "unitPrice": "2.89"
     },
@@ -246,6 +276,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": null,
       "size": "Medium",
       "unitPrice": "2.49"
     },
@@ -254,6 +285,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": null,
       "size": "Medium",
       "unitPrice": "2.49"
     },
@@ -262,6 +294,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": null,
       "size": "Medium",
       "unitPrice": "2.49"
     },
@@ -270,6 +303,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": null,
       "size": "Medium",
       "unitPrice": "2.49"
     },
@@ -278,6 +312,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": null,
       "size": "Medium",
       "unitPrice": "2.49"
     },
@@ -286,6 +321,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": null,
       "size": "Medium",
       "unitPrice": "2.49"
     },
@@ -294,6 +330,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": null,
       "size": "Medium",
       "unitPrice": "2.49"
     },
@@ -302,6 +339,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": null,
       "size": "Medium",
       "unitPrice": "2.49"
     },
@@ -310,6 +348,7 @@
       "category": "Shakes & Ice Cream",
       "comboSlot": "drinks",
       "happyHourDiscounted": false,
+      "requiresMachine": "ice_cream_machine",
       "size": "Medium",
       "unitPrice": "4.69"
     },
@@ -318,6 +357,7 @@
       "category": "Shakes & Ice Cream",
       "comboSlot": "drinks",
       "happyHourDiscounted": false,
+      "requiresMachine": "ice_cream_machine",
       "size": "Medium",
       "unitPrice": "4.69"
     },
@@ -326,6 +366,7 @@
       "category": "Shakes & Ice Cream",
       "comboSlot": "drinks",
       "happyHourDiscounted": false,
+      "requiresMachine": "ice_cream_machine",
       "size": "Medium",
       "unitPrice": "4.69"
     },
@@ -334,6 +375,7 @@
       "category": "Shakes & Ice Cream",
       "comboSlot": "drinks",
       "happyHourDiscounted": false,
+      "requiresMachine": "ice_cream_machine",
       "size": "Medium",
       "unitPrice": "4.69"
     },
@@ -342,6 +384,7 @@
       "category": "Shakes & Ice Cream",
       "comboSlot": "drinks",
       "happyHourDiscounted": false,
+      "requiresMachine": "ice_cream_machine",
       "size": "Medium",
       "unitPrice": "5.89"
     },
@@ -350,6 +393,7 @@
       "category": "Shakes & Ice Cream",
       "comboSlot": "drinks",
       "happyHourDiscounted": false,
+      "requiresMachine": "ice_cream_machine",
       "size": "Medium",
       "unitPrice": "5.89"
     },
@@ -358,6 +402,7 @@
       "category": "Shakes & Ice Cream",
       "comboSlot": "drinks",
       "happyHourDiscounted": false,
+      "requiresMachine": "ice_cream_machine",
       "size": "Medium",
       "unitPrice": "5.39"
     },
@@ -366,6 +411,7 @@
       "category": "Shakes & Ice Cream",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": "ice_cream_machine",
       "size": "Standard",
       "unitPrice": "3.19"
     },
@@ -374,6 +420,7 @@
       "category": "Shakes & Ice Cream",
       "comboSlot": "drinks",
       "happyHourDiscounted": false,
+      "requiresMachine": "ice_cream_machine",
       "size": "Medium",
       "unitPrice": "4.69"
     },
@@ -382,6 +429,7 @@
       "category": "Shakes & Ice Cream",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": "ice_cream_machine",
       "size": "Standard",
       "unitPrice": "3.19"
     },
@@ -390,6 +438,7 @@
       "category": "Shakes & Ice Cream",
       "comboSlot": "drinks",
       "happyHourDiscounted": false,
+      "requiresMachine": "ice_cream_machine",
       "size": "Medium",
       "unitPrice": "4.69"
     },
@@ -398,6 +447,7 @@
       "category": "Shakes & Ice Cream",
       "comboSlot": "drinks",
       "happyHourDiscounted": false,
+      "requiresMachine": "ice_cream_machine",
       "size": "Medium",
       "unitPrice": "4.69"
     },
@@ -406,6 +456,7 @@
       "category": "Shakes & Ice Cream",
       "comboSlot": "drinks",
       "happyHourDiscounted": false,
+      "requiresMachine": "ice_cream_machine",
       "size": "Medium",
       "unitPrice": "4.69"
     },
@@ -414,14 +465,16 @@
       "category": "Combos",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
-      "unitPrice": "8.49"
+      "unitPrice": "9.19"
     },
     {
       "item": "SuperSONIC® Double Cheeseburger Combo",
       "category": "Combos",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "10.19"
     },
@@ -430,54 +483,61 @@
       "category": "Combos",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
-      "unitPrice": "10.99"
+      "unitPrice": "10.89"
     },
     {
       "item": "All-American Bacon SONIC Smasher™ Combo",
       "category": "Combos",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
-      "unitPrice": "10.49"
+      "unitPrice": "10.69"
     },
     {
       "item": "Crispy Chicken Sandwich Combo",
       "category": "Combos",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
-      "unitPrice": "9.29"
+      "unitPrice": "9.19"
     },
     {
       "item": "Double SONIC Smasher™ Combo",
       "category": "Combos",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
-      "unitPrice": "10.19"
+      "unitPrice": "10.39"
     },
     {
       "item": "Fish Sandwich Combo",
       "category": "Combos",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
-      "unitPrice": "8.49"
+      "unitPrice": "8.39"
     },
     {
       "item": "Triple SONIC Smasher™ Combo",
       "category": "Combos",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
-      "unitPrice": "11.29"
+      "unitPrice": "11.39"
     },
     {
       "item": "Cheese Tots",
       "category": "Extras & Sides",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Medium",
       "unitPrice": "3.39"
     },
@@ -486,6 +546,7 @@
       "category": "Extras & Sides",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Medium",
       "unitPrice": "3.39"
     },
@@ -494,6 +555,7 @@
       "category": "Extras & Sides",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Medium",
       "unitPrice": "3.79"
     },
@@ -502,6 +564,7 @@
       "category": "Extras & Sides",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Medium",
       "unitPrice": "5.69"
     },
@@ -510,6 +573,7 @@
       "category": "Extras & Sides",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "2.99"
     },
@@ -518,6 +582,7 @@
       "category": "Extras & Sides",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "1.99"
     },
@@ -526,6 +591,7 @@
       "category": "Extras & Sides",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Medium",
       "unitPrice": "3.49"
     },
@@ -534,6 +600,7 @@
       "category": "Extras & Sides",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "5.19"
     },
@@ -542,6 +609,7 @@
       "category": "Extras & Sides",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "6.19"
     },
@@ -550,6 +618,7 @@
       "category": "Extras & Sides",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "1.89"
     },
@@ -558,6 +627,7 @@
       "category": "Extras & Sides",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "0.30"
     },
@@ -566,6 +636,7 @@
       "category": "Extras & Sides",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "1.00"
     },
@@ -574,6 +645,7 @@
       "category": "Extras & Sides",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "0.20"
     },
@@ -582,6 +654,7 @@
       "category": "Burgers & Sandwiches",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "8.09"
     },
@@ -590,6 +663,7 @@
       "category": "Burgers & Sandwiches",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "7.09"
     },
@@ -598,6 +672,7 @@
       "category": "Burgers & Sandwiches",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "2.19"
     },
@@ -606,6 +681,7 @@
       "category": "Burgers & Sandwiches",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "5.29"
     },
@@ -614,6 +690,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": null,
       "size": "Medium",
       "unitPrice": "3.99"
     },
@@ -622,6 +699,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": "slush_machine",
       "size": "Medium",
       "unitPrice": "2.79"
     },
@@ -630,6 +708,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": null,
       "size": "Medium",
       "unitPrice": "3.39"
     },
@@ -638,6 +717,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": null,
       "size": "Medium",
       "unitPrice": "2.49"
     },
@@ -646,6 +726,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": "slush_machine",
       "size": "Medium",
       "unitPrice": "3.49"
     },
@@ -654,6 +735,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": null,
       "size": "Medium",
       "unitPrice": "3.69"
     },
@@ -662,6 +744,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": null,
       "size": "Medium",
       "unitPrice": "3.39"
     },
@@ -670,6 +753,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": "slush_machine",
       "size": "Medium",
       "unitPrice": "2.79"
     },
@@ -678,6 +762,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": null,
       "size": "Medium",
       "unitPrice": "2.89"
     },
@@ -686,6 +771,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": null,
       "size": "Medium",
       "unitPrice": "2.89"
     },
@@ -694,6 +780,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": null,
       "size": "Medium",
       "unitPrice": "3.39"
     },
@@ -702,6 +789,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": null,
       "size": "Medium",
       "unitPrice": "3.99"
     },
@@ -710,6 +798,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": null,
       "size": "Medium",
       "unitPrice": "2.49"
     },
@@ -718,6 +807,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": "slush_machine",
       "size": "Medium",
       "unitPrice": "3.29"
     },
@@ -726,6 +816,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": "slush_machine",
       "size": "Medium",
       "unitPrice": "2.69"
     },
@@ -734,6 +825,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": null,
       "size": "Medium",
       "unitPrice": "3.39"
     },
@@ -742,6 +834,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": null,
       "size": "Medium",
       "unitPrice": "2.49"
     },
@@ -750,6 +843,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": null,
       "size": "Medium",
       "unitPrice": "3.39"
     },
@@ -758,6 +852,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": null,
       "size": "Medium",
       "unitPrice": "2.49"
     },
@@ -766,6 +861,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": "slush_machine",
       "size": "Medium",
       "unitPrice": "3.49"
     },
@@ -774,6 +870,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": null,
       "size": "Medium",
       "unitPrice": "2.89"
     },
@@ -782,6 +879,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": "slush_machine",
       "size": "Medium",
       "unitPrice": "3.49"
     },
@@ -790,6 +888,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": "slush_machine",
       "size": "Medium",
       "unitPrice": "2.79"
     },
@@ -798,6 +897,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": "slush_machine",
       "size": "Standard",
       "unitPrice": "1.99"
     },
@@ -806,6 +906,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": "slush_machine",
       "size": "Standard",
       "unitPrice": "1.99"
     },
@@ -814,6 +915,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": null,
       "size": "Medium",
       "unitPrice": "2.49"
     },
@@ -822,6 +924,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": "slush_machine",
       "size": "Medium",
       "unitPrice": "2.79"
     },
@@ -830,6 +933,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": "slush_machine",
       "size": "Medium",
       "unitPrice": "2.79"
     },
@@ -838,6 +942,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": "slush_machine",
       "size": "Standard",
       "unitPrice": "2.99"
     },
@@ -846,6 +951,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": "slush_machine",
       "size": "Medium",
       "unitPrice": "4.29"
     },
@@ -854,6 +960,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": null,
       "size": "Medium",
       "unitPrice": "3.49"
     },
@@ -862,6 +969,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": "ice_cream_machine",
       "size": "Medium",
       "unitPrice": "4.69"
     },
@@ -870,6 +978,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": null,
       "size": "Medium",
       "unitPrice": "3.89"
     },
@@ -878,6 +987,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": null,
       "size": "Medium",
       "unitPrice": "3.19"
     },
@@ -886,6 +996,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": null,
       "size": "Medium",
       "unitPrice": "3.99"
     },
@@ -894,6 +1005,7 @@
       "category": "Slushes & Drinks",
       "comboSlot": "drinks",
       "happyHourDiscounted": true,
+      "requiresMachine": null,
       "size": "Medium",
       "unitPrice": "2.49"
     },
@@ -902,6 +1014,7 @@
       "category": "Shakes & Ice Cream",
       "comboSlot": "drinks",
       "happyHourDiscounted": false,
+      "requiresMachine": "ice_cream_machine",
       "size": "Medium",
       "unitPrice": "4.69"
     },
@@ -910,6 +1023,7 @@
       "category": "Shakes & Ice Cream",
       "comboSlot": "drinks",
       "happyHourDiscounted": false,
+      "requiresMachine": "ice_cream_machine",
       "size": "Medium",
       "unitPrice": "5.39"
     },
@@ -918,6 +1032,7 @@
       "category": "Shakes & Ice Cream",
       "comboSlot": "drinks",
       "happyHourDiscounted": false,
+      "requiresMachine": "ice_cream_machine",
       "size": "Medium",
       "unitPrice": "5.89"
     },
@@ -926,6 +1041,7 @@
       "category": "Shakes & Ice Cream",
       "comboSlot": "drinks",
       "happyHourDiscounted": false,
+      "requiresMachine": "ice_cream_machine",
       "size": "Medium",
       "unitPrice": "5.89"
     },
@@ -934,6 +1050,7 @@
       "category": "Shakes & Ice Cream",
       "comboSlot": "drinks",
       "happyHourDiscounted": false,
+      "requiresMachine": "ice_cream_machine",
       "size": "Medium",
       "unitPrice": "5.39"
     },
@@ -942,6 +1059,7 @@
       "category": "Shakes & Ice Cream",
       "comboSlot": "drinks",
       "happyHourDiscounted": false,
+      "requiresMachine": "ice_cream_machine",
       "size": "Medium",
       "unitPrice": "4.69"
     },
@@ -950,6 +1068,7 @@
       "category": "Shakes & Ice Cream",
       "comboSlot": "drinks",
       "happyHourDiscounted": false,
+      "requiresMachine": "ice_cream_machine",
       "size": "Medium",
       "unitPrice": "5.39"
     },
@@ -958,6 +1077,7 @@
       "category": "Shakes & Ice Cream",
       "comboSlot": "drinks",
       "happyHourDiscounted": false,
+      "requiresMachine": "ice_cream_machine",
       "size": "Medium",
       "unitPrice": "5.39"
     },
@@ -966,6 +1086,7 @@
       "category": "Shakes & Ice Cream",
       "comboSlot": "drinks",
       "happyHourDiscounted": false,
+      "requiresMachine": "ice_cream_machine",
       "size": "Medium",
       "unitPrice": "5.89"
     },
@@ -974,6 +1095,7 @@
       "category": "Shakes & Ice Cream",
       "comboSlot": "drinks",
       "happyHourDiscounted": false,
+      "requiresMachine": "ice_cream_machine",
       "size": "Medium",
       "unitPrice": "5.89"
     },
@@ -982,6 +1104,7 @@
       "category": "Shakes & Ice Cream",
       "comboSlot": "drinks",
       "happyHourDiscounted": false,
+      "requiresMachine": "ice_cream_machine",
       "size": "Medium",
       "unitPrice": "5.39"
     },
@@ -990,6 +1113,7 @@
       "category": "Shakes & Ice Cream",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": "ice_cream_machine",
       "size": "Standard",
       "unitPrice": "3.19"
     },
@@ -998,6 +1122,7 @@
       "category": "Shakes & Ice Cream",
       "comboSlot": "drinks",
       "happyHourDiscounted": false,
+      "requiresMachine": "ice_cream_machine",
       "size": "Medium",
       "unitPrice": "5.89"
     },
@@ -1006,6 +1131,7 @@
       "category": "Shakes & Ice Cream",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": "ice_cream_machine",
       "size": "Standard",
       "unitPrice": "1.39"
     },
@@ -1014,6 +1140,7 @@
       "category": "Combos",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "6.00"
     },
@@ -1022,6 +1149,7 @@
       "category": "Combos",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "8.89"
     },
@@ -1030,6 +1158,7 @@
       "category": "Combos",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "9.99"
     },
@@ -1038,6 +1167,7 @@
       "category": "Combos",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "11.99"
     },
@@ -1046,6 +1176,7 @@
       "category": "Combos",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "7.19"
     },
@@ -1054,6 +1185,7 @@
       "category": "Combos",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "10.99"
     },
@@ -1062,6 +1194,7 @@
       "category": "Combos",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "7.39"
     },
@@ -1070,6 +1203,7 @@
       "category": "Combos",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "7.89"
     },
@@ -1078,6 +1212,7 @@
       "category": "Combos",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "7.19"
     },
@@ -1086,6 +1221,7 @@
       "category": "Combos",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "8.89"
     },
@@ -1094,6 +1230,7 @@
       "category": "Combos",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "9.99"
     },
@@ -1102,6 +1239,7 @@
       "category": "Combos",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "9.19"
     },
@@ -1110,6 +1248,7 @@
       "category": "Combos",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "5.19"
     },
@@ -1118,6 +1257,7 @@
       "category": "Combos",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "9.79"
     },
@@ -1126,6 +1266,7 @@
       "category": "Combos",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "8.99"
     },
@@ -1134,6 +1275,7 @@
       "category": "Combos",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "9.19"
     },
@@ -1142,6 +1284,7 @@
       "category": "Combos",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "7.39"
     },
@@ -1150,6 +1293,7 @@
       "category": "Combos",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "7.89"
     },
@@ -1158,6 +1302,7 @@
       "category": "Combos",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "8.19"
     },
@@ -1166,6 +1311,7 @@
       "category": "Combos",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "7.99"
     },
@@ -1174,6 +1320,7 @@
       "category": "Extras & Sides",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "1.99"
     },
@@ -1182,6 +1329,7 @@
       "category": "Extras & Sides",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "1.99"
     },
@@ -1190,6 +1338,7 @@
       "category": "Extras & Sides",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "0.50"
     },
@@ -1198,6 +1347,7 @@
       "category": "Extras & Sides",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "0.80"
     },
@@ -1206,6 +1356,7 @@
       "category": "National Breakfast Entrees",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "4.29"
     },
@@ -1214,6 +1365,7 @@
       "category": "National Breakfast Entrees",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "3.59"
     },
@@ -1222,6 +1374,7 @@
       "category": "National Breakfast Entrees",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "3.59"
     },
@@ -1230,6 +1383,7 @@
       "category": "National Breakfast Entrees",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "1.79"
     },
@@ -1238,6 +1392,7 @@
       "category": "National Breakfast Entrees",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "1.79"
     },
@@ -1246,6 +1401,7 @@
       "category": "National Breakfast Entrees",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "1.99"
     },
@@ -1254,6 +1410,7 @@
       "category": "National Breakfast Entrees",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "4.29"
     },
@@ -1262,6 +1419,7 @@
       "category": "National Breakfast Entrees",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "3.59"
     },
@@ -1270,6 +1428,7 @@
       "category": "National Breakfast Entrees",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "4.59"
     },
@@ -1278,6 +1437,7 @@
       "category": "National Breakfast Entrees",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "4.59"
     },
@@ -1286,6 +1446,7 @@
       "category": "Local Breakfast Favorites",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "4.29"
     },
@@ -1294,6 +1455,7 @@
       "category": "Local Breakfast Favorites",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "4.29"
     },
@@ -1302,6 +1464,7 @@
       "category": "Breakfast Drinks",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "2.19"
     },
@@ -1310,6 +1473,7 @@
       "category": "Breakfast Drinks",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Medium",
       "unitPrice": "3.49"
     },
@@ -1318,6 +1482,7 @@
       "category": "Breakfast Drinks",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Medium",
       "unitPrice": "3.49"
     },
@@ -1326,6 +1491,7 @@
       "category": "Breakfast Drinks",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "2.49"
     },
@@ -1334,6 +1500,7 @@
       "category": "Local Chicken",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "5.49"
     },
@@ -1342,6 +1509,7 @@
       "category": "Local Chicken",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "6.99"
     },
@@ -1350,6 +1518,7 @@
       "category": "Local Chicken",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "6.69"
     },
@@ -1358,6 +1527,7 @@
       "category": "Wacky Pack® Kids Meals",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "4.59"
     },
@@ -1366,6 +1536,7 @@
       "category": "Wacky Pack® Kids Meals",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "4.79"
     },
@@ -1374,6 +1545,7 @@
       "category": "Wacky Pack® Kids Meals",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "4.29"
     },
@@ -1382,6 +1554,7 @@
       "category": "Wacky Pack® Kids Meals",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "4.59"
     },
@@ -1390,6 +1563,7 @@
       "category": "Wacky Pack® Kids Meals",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "4.29"
     },
@@ -1398,6 +1572,7 @@
       "category": "Other",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "1.99"
     },
@@ -1406,6 +1581,7 @@
       "category": "Other",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Medium",
       "unitPrice": "0.49"
     },
@@ -1414,6 +1590,7 @@
       "category": "Other",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "1.39"
     },
@@ -1422,6 +1599,7 @@
       "category": "Other",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "1.59"
     },
@@ -1430,6 +1608,7 @@
       "category": "Other",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Standard",
       "unitPrice": "3.19"
     },
@@ -1438,6 +1617,7 @@
       "category": "Other",
       "comboSlot": "none",
       "happyHourDiscounted": false,
+      "requiresMachine": null,
       "size": "Medium",
       "unitPrice": "0.49"
     }

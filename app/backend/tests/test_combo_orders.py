@@ -1,5 +1,14 @@
 """Tests for combo ordering: adding combos, converting standalone items to combos,
-component absorption pricing, combo + happy hour interaction, and Route 44 sizing."""
+component absorption pricing, combo + happy hour interaction, and Route 44 sizing.
+
+PR #99 review decision 3 (Rick): the `8.49`-style prices passed into `handle_order_update()`
+throughout this file are deliberately left at their pre-#72-Part-2 values. They are tool-call
+*input* prices -- standing in for whatever price a realtime tool call would pass at the time --
+not values looked up from the persona pack, so they are independent of the 7 combo prices Rick's
+review corrected in `personas/sonic/menu/menuItems.json` (and the matching golden/frontend rows).
+Only `TestBundleSlotsByPackData` below intentionally uses the corrected pack prices, because those
+scenarios are asserting against the real bundle-slot data those specific items carry.
+"""
 
 import math
 import sys
@@ -385,6 +394,157 @@ class TestRoute44WithCombos:
 # ---------------------------------------------------------------------------
 # Menu item existence validation
 # ---------------------------------------------------------------------------
+
+class TestBundleSlotsByPackData:
+    """PR #99 decision 1 (Rick): bundle absorption must key off each item's actual
+    pack `bundle.slots`, not off the literal word "combo" in the item name. These
+    scenarios cover the specific bundles Rick called out: French Toast Sticks Combo
+    and Crispy Tenders Dinner absorb a drink only (no side slot), while Wacky Packs
+    and the $6 Meal absorb a side AND a drink, same as a regular Combo."""
+
+    def test_french_toast_sticks_combo_absorbs_drink_only(self):
+        """French Toast Sticks Combo's bundle.slots is ["drinks"] only, so a
+        standalone drink added afterward must be absorbed for free."""
+        sid = order_state_singleton.create_session()
+        order_state_singleton.handle_order_update(
+            sid, "add", "French Toast Sticks Combo", "standard", 1, 5.19
+        )
+        result = order_state_singleton.handle_order_update(
+            sid, "add", "Cherry Limeade", "medium", 1, 2.89
+        )
+        assert result.get("absorbed_into_combo") is True
+        summary = order_state_singleton.get_order_summary(sid)
+        assert math.isclose(summary.total, 5.19, rel_tol=1e-9)
+
+    def test_french_toast_sticks_combo_does_not_absorb_a_side(self):
+        """Tots added after a French Toast Sticks Combo must be charged in full --
+        this is the bug Rick flagged: the old name-based ("combo" in name) engine
+        wrongly gave every "Combo"-named item one free side slot."""
+        sid = order_state_singleton.create_session()
+        order_state_singleton.handle_order_update(
+            sid, "add", "French Toast Sticks Combo", "standard", 1, 5.19
+        )
+        result = order_state_singleton.handle_order_update(
+            sid, "add", "Tots", "medium", 1, 2.79
+        )
+        assert not result.get("absorbed_into_combo", False)
+        summary = order_state_singleton.get_order_summary(sid)
+        assert math.isclose(summary.total, 5.19 + 2.79, rel_tol=1e-9)
+        items = order_state_singleton.get_order_items(sid)
+        tots = next(i for i in items if i.item == "Tots")
+        assert tots.price == 2.79
+
+    def test_crispy_tenders_dinner_absorbs_drink_only(self):
+        """Crispy Tenders Dinner - 3 piece has bundle.slots = ["drinks"]: drink
+        absorbed free, but a side is not."""
+        sid = order_state_singleton.create_session()
+        order_state_singleton.handle_order_update(
+            sid, "add", "Crispy Tenders Dinner - 3 piece", "standard", 1, 8.89
+        )
+        drink_result = order_state_singleton.handle_order_update(
+            sid, "add", "Ocean Water®", "medium", 1, 2.89
+        )
+        assert drink_result.get("absorbed_into_combo") is True
+        side_result = order_state_singleton.handle_order_update(
+            sid, "add", "Tots", "medium", 1, 2.79
+        )
+        assert not side_result.get("absorbed_into_combo", False)
+        summary = order_state_singleton.get_order_summary(sid)
+        assert math.isclose(summary.total, 8.89 + 2.79, rel_tol=1e-9)
+
+    def test_corn_dog_wacky_pack_absorbs_side_and_drink(self):
+        """Wacky Packs have bundle.slots = ["sides", "drinks"], same as a regular
+        Combo, even though the name doesn't contain the word "combo"."""
+        sid = order_state_singleton.create_session()
+        order_state_singleton.handle_order_update(
+            sid, "add", "Corn Dog Wacky Pack®", "standard", 1, 4.59
+        )
+        side_result = order_state_singleton.handle_order_update(
+            sid, "add", "Tots", "medium", 1, 2.79
+        )
+        drink_result = order_state_singleton.handle_order_update(
+            sid, "add", "Cherry Limeade", "medium", 1, 2.89
+        )
+        assert side_result.get("absorbed_into_combo") is True
+        assert drink_result.get("absorbed_into_combo") is True
+        summary = order_state_singleton.get_order_summary(sid)
+        assert math.isclose(summary.total, 4.59, rel_tol=1e-9)
+
+    def test_six_dollar_meal_absorbs_side_and_drink(self):
+        """$6 All-American Smasher™ Meal has bundle.slots = ["sides", "drinks"]
+        despite not containing "combo" in its name."""
+        sid = order_state_singleton.create_session()
+        order_state_singleton.handle_order_update(
+            sid, "add", "$6 All-American Smasher™ Meal", "standard", 1, 6.0
+        )
+        side_result = order_state_singleton.handle_order_update(
+            sid, "add", "Tots", "medium", 1, 2.79
+        )
+        drink_result = order_state_singleton.handle_order_update(
+            sid, "add", "Cherry Limeade", "medium", 1, 2.89
+        )
+        assert side_result.get("absorbed_into_combo") is True
+        assert drink_result.get("absorbed_into_combo") is True
+        summary = order_state_singleton.get_order_summary(sid)
+        assert math.isclose(summary.total, 6.0, rel_tol=1e-9)
+
+    def test_item_without_bundle_absorbs_nothing(self):
+        """A plain (non-bundle) item must not absorb any side or drink."""
+        sid = order_state_singleton.create_session()
+        order_state_singleton.handle_order_update(
+            sid, "add", "SONIC® Cheeseburger", "standard", 1, 5.29
+        )
+        side_result = order_state_singleton.handle_order_update(
+            sid, "add", "Tots", "medium", 1, 2.79
+        )
+        drink_result = order_state_singleton.handle_order_update(
+            sid, "add", "Cherry Limeade", "medium", 1, 2.89
+        )
+        assert not side_result.get("absorbed_into_combo", False)
+        assert not drink_result.get("absorbed_into_combo", False)
+        summary = order_state_singleton.get_order_summary(sid)
+        assert math.isclose(summary.total, 5.29 + 2.79 + 2.89, rel_tol=1e-9)
+
+    def test_regular_combo_still_absorbs_side_and_drink(self):
+        """Regression: a regular "... Combo" item (bundle.slots = ["sides",
+        "drinks"]) must behave exactly as before the bundle-slot fix."""
+        sid = order_state_singleton.create_session()
+        order_state_singleton.handle_order_update(
+            sid, "add", "SONIC® Cheeseburger Combo", "standard", 1, 8.49
+        )
+        side_result = order_state_singleton.handle_order_update(
+            sid, "add", "Tots", "medium", 1, 2.79
+        )
+        drink_result = order_state_singleton.handle_order_update(
+            sid, "add", "Cherry Limeade", "medium", 1, 2.89
+        )
+        assert side_result.get("absorbed_into_combo") is True
+        assert drink_result.get("absorbed_into_combo") is True
+        summary = order_state_singleton.get_order_summary(sid)
+        assert math.isclose(summary.total, 8.49, rel_tol=1e-9)
+
+    def test_get_combo_requirements_uses_per_component_bundle_capacity(self):
+        """get_combo_requirements() must track side/drink capacity per bundle,
+        not one shared "combo_count" -- a drinks-only bundle must not report a
+        missing side as satisfied by another bundle's side slot, and vice versa."""
+        sid = order_state_singleton.create_session()
+        order_state_singleton.handle_order_update(
+            sid, "add", "French Toast Sticks Combo", "standard", 1, 5.19
+        )
+        order_state_singleton.handle_order_update(
+            sid, "add", "Corn Dog Wacky Pack®", "standard", 1, 4.59
+        )
+        # French Toast Sticks Combo needs 1 drink (no side); Wacky Pack needs 1
+        # side + 1 drink. Total capacity: 1 side, 2 drinks.
+        req = order_state_singleton.get_combo_requirements(sid)
+        assert not req["is_complete"]
+        order_state_singleton.handle_order_update(sid, "add", "Tots", "medium", 1, 2.79)
+        order_state_singleton.handle_order_update(
+            sid, "add", "Cherry Limeade", "medium", 2, 2.89
+        )
+        req = order_state_singleton.get_combo_requirements(sid)
+        assert req["is_complete"]
+
 
 class TestComboMenuItems:
     """Verify combo items exist in the menu JSON and are categorized correctly."""

@@ -80,15 +80,10 @@ def _sha256(path: Path) -> str:
 
 # Issue #72 Part 2: Rick's rules confirmed these two items are NOT in the Sonic production export
 # (not naming mismatches -- genuinely absent from the source of truth), so ADR-001 decision 4 (no
-# off-menu ordering) requires removing them from the persona pack. app/frontend/** is explicitly
-# off-limits for Part 2, so the frontend's stale copy still references them; issue #80 (frontend
-# migration off its own menuItems.json copy) is the tracked follow-up that will delete this
-# exception along with the rest of this temporary guard file. This is a narrow, named allow-list --
-# not a loosening of the "frontend must be a subset" invariant for any other item.
-_KNOWN_FRONTEND_ONLY_ITEMS_PENDING_ISSUE_80 = {
-    "Jr Double Cheeseburger Combo",
-    "All-American SONIC Smasher\u2122 Combo",
-}
+# off-menu ordering) required removing them from the persona pack. PR #99 review decision 3 (Rick):
+# a drift-guard exception is a weakening we don't need -- the two items were removed from the
+# frontend's copy in the same change instead, so the guard stays a hard "frontend must be a subset
+# of the pack" invariant with no allow-list.
 
 
 class FrontendMenuNeverContradictsThePackTests(unittest.TestCase):
@@ -103,10 +98,8 @@ class FrontendMenuNeverContradictsThePackTests(unittest.TestCase):
 
     def test_every_frontend_item_exists_in_the_pack(self):
         """The frontend is never allowed to invent an item the pack doesn't know about -- it may
-        only lag behind (subset), never diverge (superset or disjoint). Exception: the two items
-        in _KNOWN_FRONTEND_ONLY_ITEMS_PENDING_ISSUE_80, confirmed removed from the pack by #72
-        Part 2 because they don't exist in the Sonic production export -- see the comment above."""
-        missing = sorted(set(self.frontend_items) - set(self.pack_items) - _KNOWN_FRONTEND_ONLY_ITEMS_PENDING_ISSUE_80)
+        only lag behind (subset), never diverge (superset or disjoint)."""
+        missing = sorted(set(self.frontend_items) - set(self.pack_items))
         self.assertEqual(missing, [], f"Frontend items missing from the persona pack: {missing}")
 
     def test_shared_items_have_identical_sizes_and_prices(self):
