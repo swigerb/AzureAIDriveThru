@@ -1,63 +1,61 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, ReactNode } from "react";
 import i18next from "i18next";
 
-import { SONIC_THEME, applyTheme, applyDarkTheme, resolvePersonaTheme } from "@/lib/personaTheme";
+import { applyTheme, applyDarkTheme, resolvePersonaTheme, PersonaWireTheme } from "@/lib/personaTheme";
 import { personaAssetUrl } from "@/lib/personaAssets";
+import { DEFAULT_VOICE } from "@/lib/voices";
 import type { PersonaDetail, PersonaSummary, PersonasIndexResponse } from "@/types/persona";
 
 const STORAGE_KEY = "personaId";
 const QUERY_PARAM = "persona";
 
 /**
- * The default persona's real content, hard-coded here as this app's bundled default/fallback
- * (issue #80 F1).
- *
- * This is NOT a "frontend copy" of the kind #80's drift guard retires (design doc §9, issue #80
- * comment 3): it isn't a duplicated FILE that could drift from the pack's own persona.json bytes
- * -- it's the minimum data `PersonaProvider` needs to render something coherent the instant the
- * app mounts, before `/api/personas` has had a chance to respond (or if it never does -- e.g. an
- * existing test that renders `<RootApp />` without mocking `fetch`, or a genuinely offline dev
- * session). Once the live fetch resolves, its response always wins and overwrites this. Every
- * value below is copied verbatim from the shipped pack so there's no observable difference
- * between "fallback" and "freshly fetched" for the persona this app has always shipped with.
+ * A neutral, brand-free wire theme: plain grays, no persona hue. Used only for `NEUTRAL_DETAIL`
+ * below -- `resolvePersonaTheme` derives a full `PersonaAccentPalette` from these four base roles
+ * the same way it would for any other non-default persona pack (issue #80 F1/F3).
  */
-const FALLBACK_ID = "sonic";
-const FALLBACK_SUMMARY: PersonaSummary = {
-    id: FALLBACK_ID,
-    displayName: "Sonic Drive-In",
-    logoUrl: personaAssetUrl(FALLBACK_ID, "logo.svg"),
-    theme: {
-        light: { ...SONIC_THEME.light },
-        dark: SONIC_THEME.dark,
-        font: SONIC_THEME.font
+const NEUTRAL_THEME: PersonaWireTheme = {
+    light: {
+        primary: "220 9% 30%",
+        secondary: "220 9% 46%",
+        background: "0 0% 100%",
+        foreground: "220 15% 15%"
     }
 };
-const FALLBACK_DETAIL: PersonaDetail = {
-    id: FALLBACK_ID,
-    title: "Sonic Drive-In Voice Ordering",
-    theme: FALLBACK_SUMMARY.theme,
-    assets: {
-        logo: "assets/logo.svg",
-        favicon: "assets/favicon.ico",
-        apologyClip: "assets/audio/apology-{lang}.wav"
-    },
-    strings: {
-        en: {
-            "app.title": "Sonic Voice Ordering",
-            "status.notRecordingMessage": "Let's order from America's Drive-In!",
-            "ticket.kicker": "Carhop ticket",
-            "ticket.title": "Your Sonic Order",
-            "menu.button": "View Sonic Menu"
-        }
-    },
-    hero: { headline: "Sonic ordering powered by Azure conversation intelligence", callouts: [] },
-    legal:
-        "Disclaimer: This project is a non-commercial demo application created for educational and illustrative purposes only. It is not affiliated with, endorsed, or sponsored by Inspire Brands, Inc. or Sonic Corp. Any references to Sonic Drive-In or use of Sonic-inspired colors or themes are solely for demonstration and do not represent an official product.",
-    voice: { default: "marin" },
+
+/**
+ * Rick's PR-110 review, item 1 + item 6 (issue #80 F1/F6): no persona pack -- Sonic or otherwise
+ * -- is hard-coded here anymore. `NEUTRAL_ID`/`NEUTRAL_SUMMARY`/`NEUTRAL_DETAIL` are this app's
+ * bundled PLACEHOLDER, not a "default persona": no display name, no logo, no theme hue, no copy
+ * overrides (every string a component asks for falls through to the shared, persona-neutral
+ * defaults in the `locales` translation files), and no menu/apology-clip URLs. `PersonaProvider`
+ * uses this as the initial React state (so there is nothing branded to paint before the very
+ * first render) and, per `App.tsx`'s `ready` gate, `App()` doesn't render `<SonicApp />` at all
+ * until `ready` flips true -- so in practice this placeholder is only ever visible for the
+ * instant between mount and the `/api/personas` round trip resolving (or, in an offline/
+ * unmocked-fetch environment such as a test that doesn't stub `fetch`, it's what the app is left
+ * running on, `ready` still flips true so the app doesn't hang forever).
+ */
+const NEUTRAL_ID = "";
+const NEUTRAL_SUMMARY: PersonaSummary = {
+    id: NEUTRAL_ID,
+    displayName: "",
+    logoUrl: "",
+    theme: NEUTRAL_THEME
+};
+const NEUTRAL_DETAIL: PersonaDetail = {
+    id: NEUTRAL_ID,
+    title: "",
+    theme: NEUTRAL_THEME,
+    assets: { logo: "", favicon: "" },
+    strings: {},
+    hero: { headline: "", callouts: [] },
+    legal: "",
+    voice: { default: DEFAULT_VOICE },
     locales: { default: "en", supported: ["en", "es", "fr", "ja"] },
     features: { dayparts: false },
-    menuUrl: `/personas/${FALLBACK_ID}/menu.json`,
-    models: { realtime: { default: "gpt-realtime-2.1", allowed: ["gpt-realtime-2.1", "gpt-realtime-mini"] } }
+    menuUrl: "",
+    models: { realtime: { default: "gpt-realtime-2.1", allowed: ["gpt-realtime-2.1"] } }
 };
 
 interface PersonaContextValue {
@@ -68,10 +66,12 @@ interface PersonaContextValue {
     /** This persona's logo URL -- only ever available from the summary list (see `types/persona.ts`). */
     logoUrl: string;
     /** True once the initial `/api/personas` + `/api/personas/{id}` round trip has settled (success
-     * or failure) -- consumers can use this to show a subtle "still loading" affordance, but nothing
-     * blocks on it: `current`/`personas` are always populated (with the fallback, at worst). */
+     * or failure). `App.tsx`'s `App()` gates ALL rendering of `<SonicApp />` on this (issue #80 F6,
+     * Rick's PR-110 review item 6): until it flips true, `current`/`personas` hold the brand-neutral
+     * placeholder (`NEUTRAL_DETAIL`/`NEUTRAL_SUMMARY`) so there is nothing persona-specific to show
+     * regardless of how the component tree renders it. */
     ready: boolean;
-    /** Non-null if the live fetch failed and the app is running on fallback data. */
+    /** Non-null if the live fetch failed and the app is running on the neutral placeholder. */
     error: string | null;
     selectPersona: (id: string) => void;
 }
@@ -115,9 +115,9 @@ function initialPersonaId(defaultId: string): string {
 /**
  * Fetches `/api/personas` + `/api/personas/{id}` at startup (design doc §5.2), resolves the
  * session's persona BEFORE any realtime connection is made (`?persona=` > last localStorage
- * choice > the catalog's declared default > the bundled default-persona fallback -- ADR-001 decision 1: one
- * URL, no per-request routing), applies its theme (light + dark, `lib/personaTheme.ts`), sets
- * `document.title`/the favicon, and merges its `ui.strings` into i18next.
+ * choice > the catalog's declared default -- ADR-001 decision 1: one URL, no per-request routing),
+ * applies its theme (light + dark, `lib/personaTheme.ts`), sets `document.title`/the favicon, and
+ * merges its `ui.strings` into i18next.
  *
  * Deliberately "dumb" about whether a session is currently active: `selectPersona` always applies
  * immediately. Gating the picker while a session is in progress (ADR-001 decision 2: no
@@ -125,9 +125,9 @@ function initialPersonaId(defaultId: string): string {
  * state actually live.
  */
 export function PersonaProvider({ children }: { children: ReactNode }) {
-    const [personas, setPersonas] = useState<PersonaSummary[]>([FALLBACK_SUMMARY]);
-    const [current, setCurrent] = useState<PersonaDetail>(FALLBACK_DETAIL);
-    const [personaId, setPersonaId] = useState<string>(() => initialPersonaId(FALLBACK_ID));
+    const [personas, setPersonas] = useState<PersonaSummary[]>([NEUTRAL_SUMMARY]);
+    const [current, setCurrent] = useState<PersonaDetail>(NEUTRAL_DETAIL);
+    const [personaId, setPersonaId] = useState<string>(() => initialPersonaId(NEUTRAL_ID));
     const [ready, setReady] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const catalogRef = useRef<PersonasIndexResponse | null>(null);
@@ -172,7 +172,7 @@ export function PersonaProvider({ children }: { children: ReactNode }) {
                 setCurrent(detail);
                 applyDetail(id, detail, summary);
                 setError(null);
-            } else if (id !== FALLBACK_ID) {
+            } else {
                 setError(`Could not load persona "${id}"; staying on the previous selection.`);
             }
         },
@@ -186,9 +186,10 @@ export function PersonaProvider({ children }: { children: ReactNode }) {
             const index = await safeFetchJson<PersonasIndexResponse>("/api/personas");
             if (cancelled) return;
             if (!index || index.personas.length === 0) {
-                // Offline / unmocked-fetch test environment: keep the fallback and stop here --
-                // `current`/`personas` are already populated, so the app still renders.
-                applyDetail(FALLBACK_ID, FALLBACK_DETAIL, FALLBACK_SUMMARY);
+                // Offline / unmocked-fetch environment (e.g. a test that doesn't stub `fetch`):
+                // there's no catalog to resolve a real persona from, so stay on the neutral
+                // placeholder rather than ever reaching for a hard-coded brand (issue #80 F1,
+                // Rick's PR-110 review item 1) -- `ready` still flips true so the app doesn't hang.
                 setReady(true);
                 return;
             }
@@ -218,7 +219,7 @@ export function PersonaProvider({ children }: { children: ReactNode }) {
         [personaId, loadPersona]
     );
 
-    const logoUrl = useMemo(() => personas.find(p => p.id === personaId)?.logoUrl ?? FALLBACK_SUMMARY.logoUrl, [personas, personaId]);
+    const logoUrl = useMemo(() => personas.find(p => p.id === personaId)?.logoUrl ?? NEUTRAL_SUMMARY.logoUrl, [personas, personaId]);
 
     const value = useMemo<PersonaContextValue>(
         () => ({ personas, current, logoUrl, ready, error, selectPersona }),
