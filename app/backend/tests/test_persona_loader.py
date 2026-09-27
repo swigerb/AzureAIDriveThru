@@ -19,7 +19,12 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from persona_loader import Persona, PersonaCatalog, PersonaValidationError
+from persona_loader import (
+    Persona,
+    PersonaCatalog,
+    PersonaValidationError,
+    default_repo_root,
+)
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _REAL_PERSONAS_DIR = _REPO_ROOT / "personas"
@@ -387,3 +392,15 @@ class TestFixtureSchemasMatchRealSchemas:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+def test_default_repo_root_in_a_checkout_is_two_levels_up():
+    repo = Path(__file__).resolve().parents[3]
+    assert default_repo_root(repo / "app" / "backend" / "persona_loader.py") == repo
+
+
+def test_default_repo_root_in_the_flattened_container_layout_does_not_crash():
+    """#129: the image flattens the backend onto /app, so the module is /app/persona_loader.py and
+    parents[2] doesn't exist. Importing the loader there must not raise (the container would fail
+    at startup); the fallback is the module's own directory."""
+    module = Path(Path.cwd().anchor) / "app" / "persona_loader.py"
+    assert default_repo_root(module) == module.resolve().parent

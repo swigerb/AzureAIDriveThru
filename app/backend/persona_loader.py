@@ -50,9 +50,18 @@ logger = logging.getLogger("persona-loader")
 
 # personas/ sits at the repo root (design doc section 4.1): app/backend/persona_loader.py is two
 # levels below it (app/backend/ -> app/ -> repo root).
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-_DEFAULT_PERSONAS_DIR = _REPO_ROOT / "personas"
+def default_repo_root(module_path: Path) -> Path:
+    """The repo root for a module at ``app/backend/<module>.py`` (two levels up), or the module's
+    own directory when there is no such depth. In the container image the backend is flattened
+    onto ``/app`` (``/app/<module>.py``), where ``parents[2]`` doesn't exist; there
+    ``PERSONAS_DIR`` is always set by ``app/Dockerfile``, and ``/app/personas`` is also this
+    fallback's answer."""
+    resolved = module_path.resolve()
+    return resolved.parents[2] if len(resolved.parents) > 2 else resolved.parent
 
+
+_REPO_ROOT = default_repo_root(Path(__file__))
+_DEFAULT_PERSONAS_DIR = _REPO_ROOT / "personas"
 
 class PersonaValidationError(Exception):
     """Raised when an enabled persona pack fails schema or model validation.

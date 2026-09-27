@@ -24,6 +24,8 @@ from typing import Any
 import yaml
 from jinja2 import BaseLoader, Environment
 
+from persona_loader import default_repo_root
+
 __all__ = ["PromptLoader"]
 
 logger = logging.getLogger("prompt-loader")
@@ -31,7 +33,7 @@ logger = logging.getLogger("prompt-loader")
 # personas/ sits at the repo root (design doc section 4.1); this module lives at
 # app/backend/prompt_loader.py, two levels below it. Overridable via the PERSONAS_DIR env var
 # (same variable persona_loader.py reads), so both modules agree on where packs live.
-_REPO_ROOT = Path(__file__).resolve().parents[2]
+_REPO_ROOT = default_repo_root(Path(__file__))
 _PERSONAS_DIR = Path(os.environ.get("PERSONAS_DIR") or (_REPO_ROOT / "personas"))
 
 # Jinja2 environment for rendering error message templates
