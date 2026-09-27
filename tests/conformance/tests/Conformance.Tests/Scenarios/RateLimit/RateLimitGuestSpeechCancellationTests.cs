@@ -220,6 +220,40 @@ public sealed class RateLimitGuestSpeechCancellationTests(RateLimitIdleInteracti
             await Task.Delay(TimeSpan.FromMilliseconds(150), ct);
         }
 
+        // PR #123 review item 1: this row's own precondition. The appends above "must still
+        // reach the fake (proving echo suppression isn't what's blocking them)" per this
+        // method's doc comment, but nothing checked that until now -- if the echo cooldown ever
+        // grew past EchoCooldownWait, every append would be silently dropped by rtmt.py's
+        // echo-suppression `continue` before reaching the fake, and this row would still pass
+        // vacuously (the retry fires on its own timer either way). Asserting at least one append
+        // past `boundary` actually landed at the fake closes that gap, so an echo-cooldown
+        // regression can no longer make this row pass for the wrong reason.
+        Assert.Contains(connection.ReceivedFrames.Snapshot(),
+            f => f.Sequence > boundary && f.Type == "input_audio_buffer.append");
+
+        // Keep streaming mic audio past the initial burst above, all the way until the retry
+        // itself arrives -- matching this row's own doc comment ("the browser keeps streaming
+        // every mic buffer upstream ... while a retry is pending"), rather than stopping after a
+        // fixed handful of frames sent well before the profile's 3.6s second-retry delay
+        // elapses. None of these get a speech_started reply either (the rule stays removed for
+        // the whole row), so they can't accidentally cancel the retry themselves.
+        using var streamingCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var streamingTask = Task.Run(async () =>
+        {
+            try
+            {
+                while (true)
+                {
+                    await browser.SendInputAudioAppendAsync("dGVzdA==", streamingCts.Token);
+                    await Task.Delay(TimeSpan.FromMilliseconds(150), streamingCts.Token);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected: cancelled below once the retry's own response.create is observed.
+            }
+        }, ct);
+
         // CONFORMANCE_RATE_LIMIT_SECOND_RETRY_DELAY_SECONDS=3.6 on this profile (see class doc
         // comment) -- the pending retry must still reach the fake on schedule despite the
         // ongoing, speech_started-free audio stream above.
@@ -228,5 +262,8 @@ public sealed class RateLimitGuestSpeechCancellationTests(RateLimitIdleInteracti
         Assert.True(retriedResponseCreate is not null,
             "Expected the pending retry's response.create to still fire even though the browser kept " +
             "sending audio frames the fake never acknowledged with speech_started.");
+
+        streamingCts.Cancel();
+        await streamingTask;
     });
 }

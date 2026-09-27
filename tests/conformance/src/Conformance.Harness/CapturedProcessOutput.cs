@@ -225,7 +225,11 @@ public sealed class CapturedProcessOutput
     /// it can no longer flake in either direction (#103); <c>false</c> if <paramref
     /// name="maxWait"/> elapsed first (#66 S4) -- still never throws for a mere cap hit, only for
     /// a genuine <paramref name="cancellationToken"/> cancellation (#66 S3), so callers can decide
-    /// how loudly to surface a cap hit rather than have it silently mean "quiescent".
+    /// how loudly to surface a cap hit rather than have it silently mean "quiescent". The
+    /// quiescence check runs before the deadline check on every iteration (PR #123 round 2), so a
+    /// window that goes fully quiet in the very same instant <paramref name="maxWait"/> expires
+    /// returns <c>true</c> -- quiet wins the tie, matching this method's documented contract that
+    /// quiescence, not the cap, is the primary signal.
     /// </para>
     /// </summary>
     public async Task<bool> WaitForOutputQuiescenceAsync(
@@ -237,11 +241,6 @@ public sealed class CapturedProcessOutput
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var remaining = deadline - DateTimeOffset.UtcNow;
-            if (remaining <= TimeSpan.Zero)
-            {
-                return false;
-            }
 
             Task signalTask;
             TimeSpan idleNeeded;
@@ -257,8 +256,16 @@ public sealed class CapturedProcessOutput
 
             if (idleNeeded <= TimeSpan.Zero)
             {
-                // Already quiet for a full idle window -- nothing to wait for at all.
+                // Already quiet for a full idle window -- nothing to wait for at all. Checked
+                // before the deadline below so a window that goes quiet exactly as maxWait
+                // expires still reports quiescence rather than a cap hit (PR #123 round 2).
                 return true;
+            }
+
+            var remaining = deadline - DateTimeOffset.UtcNow;
+            if (remaining <= TimeSpan.Zero)
+            {
+                return false;
             }
 
             var cappedByDeadline = remaining < idleNeeded;
