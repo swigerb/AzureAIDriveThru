@@ -567,7 +567,7 @@ entries:
   increase_reason: ''
 - file: tests/conformance/README.md
   brand: sonic
-  max: 14
+  max: 15
   issue: '#78'
   reason: Harness docs reference Sonic as the only persona pack that exists today.
-  increase_reason: ''
+  increase_reason: '#104'
