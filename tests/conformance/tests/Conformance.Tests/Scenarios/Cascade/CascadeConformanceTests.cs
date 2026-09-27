@@ -279,6 +279,15 @@ public sealed class CascadeConformanceTests(CascadeConformanceFixture fixture)
             FrameTimeout, ct);
         Assert.True(secondAnswer is not null, "Expected the second (barge-in) turn's own final answer.");
 
+        // The first turn's request was still asleep in its own (already-captured, 3s) scripted
+        // delay when the barge-in turn's answer above landed -- if _cancel_current_turn were a
+        // no-op, that request would still be running in the background and could still complete
+        // and reach _speak once its delay elapses. Wait out that full window (plus margin) before
+        // asserting its answer never arrived, so a genuinely-uncancelled first turn has every
+        // chance to leak through here instead of this assertion merely proving it hadn't leaked
+        // through YET.
+        await Task.Delay(TimeSpan.FromSeconds(3.5), ct);
+
         // The cancelled first turn's answer must never reach the client at all -- not before,
         // not after the barge-in turn's own answer.
         var firstTurnAnswer = browser.ReceivedFrames.Snapshot().Any(f =>
