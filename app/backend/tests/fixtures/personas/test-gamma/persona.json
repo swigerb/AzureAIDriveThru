@@ -1,0 +1,59 @@
+{
+  "$schema": "../persona.schema.json",
+  "schemaVersion": 1,
+  "id": "test-gamma",
+  "displayName": "Test Gamma Diner",
+  "roleName": "gamma-runner",
+  "locales": { "default": "en", "supported": ["en"] },
+  "store": { "timezone": "America/Los_Angeles" },
+  "voice": { "default": "cedar" },
+  "search": { "indexName": "test-gamma-menu-items", "contentFields": ["description"] },
+
+  "pricing": {
+    "taxRate": "0.09",
+    "happyHour": null
+  },
+
+  "sizes": {
+    "canonical": { "regular": "Regular", "jumbo": "Jumbo" },
+    "aliases": { "reg": "regular" },
+    "spokenAs": {},
+    "hidden": ["", "n/a", "none"],
+    "default": null
+  },
+
+  "bundles": {
+    "nameMarkers": ["meal"],
+    "convertStandalone": false,
+    "missingPartText": { "sides": "a side", "drinks": "a drink" }
+  },
+
+  "extras": {
+    "allowedBaseCategories": ["mains"],
+    "blockedBaseCategories": ["drinks"],
+    "splitCombinedNames": false
+  },
+
+  "invalidModifiers": {
+    "main": ["mustard"]
+  },
+  "machines": { "soda_machine": "operational" },
+
+  "models": {
+    "realtime": { "default": "gpt-realtime-mini", "allowed": ["gpt-realtime-mini"] }
+  },
+
+  "strategies": { "searchQueryRewrite": "none" },
+  "features": { "dayparts": false },
+
+  "ui": {
+    "title": "Test Gamma Voice Ordering",
+    "theme": {
+      "light": { "primary": "150 80% 45%", "secondary": "150 40% 30%", "background": "0 0% 96%", "foreground": "0 0% 10%" }
+    },
+    "assets": { "logo": "assets/logo.svg", "favicon": "assets/favicon.ico" },
+    "strings": { "en": { "app.title": "Test Gamma Voice Ordering" } },
+    "hero": { "headline": "Test Gamma fixture pack", "callouts": [] },
+    "legal": "TEST-ONLY fixture pack (Rick's PR #106 review item 2) -- not a real brand, used only by the conformance suite to prove a realtime model that IS catalogued (gpt-realtime-2.1) but NOT in this persona's own `models.realtime.allowed` list 404s as disallowed, distinct from an unknown or wrong-pipeline model id."
+  }
+}
