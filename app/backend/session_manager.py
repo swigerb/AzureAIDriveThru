@@ -317,15 +317,25 @@ class SessionManager:
         """Record guest activity. Drives the idle clock (which also bounds the grace hold)."""
         self._last_activity[session_id] = self._clock()
 
-    def create_session(self, ws: web.WebSocketResponse, persona=None) -> str:
+    def create_session(self, ws: web.WebSocketResponse, persona=None, model_id: str | None = None,
+                        model_deployment: str | None = None, model_reasoning: bool | None = None) -> str:
         """Create a new order session and map it to the WebSocket connection.
 
         *persona* (#74, optional): the persona this session is bound to for its entire
         lifetime (no mid-conversation switching); threaded straight through to
         ``order_state_singleton.create_session()``. Omitted: binds to the deployment's
         default persona (mandatory catalog, #74/Rick's PR #102 review item 2 -- there is
-        no more unbound-session state)."""
-        session_id = order_state_singleton.create_session(persona=persona)
+        no more unbound-session state).
+
+        *model_id*/*model_deployment*/*model_reasoning* (#75, optional): this session's
+        own bound realtime model -- resolved once, by the caller (``rtmt.py::
+        _websocket_handler``, via ``RTMiddleTier.resolve_model()``), BEFORE the socket is
+        even prepared, exactly like *persona* above (no mid-conversation model switching
+        either). Omitted: binds to *persona*'s own ``models.realtime.default`` (see
+        ``order_state.OrderState.create_session``) -- today's exact, unchanged path."""
+        session_id = order_state_singleton.create_session(
+            persona=persona, model_id=model_id, model_deployment=model_deployment, model_reasoning=model_reasoning
+        )
         self._session_map[ws] = session_id
         self._attached[session_id] = ws
         self._context_monitors[session_id] = ContextMonitor(session_id)
@@ -508,7 +518,8 @@ class SessionManager:
         self._resume_index[digest] = session_id
         return resume_id
 
-    def resume(self, ws: web.WebSocketResponse, resume_id: object, requested_persona_id: str | None = None) -> ResumeOutcome:
+    def resume(self, ws: web.WebSocketResponse, resume_id: object, requested_persona_id: str | None = None,
+               requested_model_id: str | None = None) -> ResumeOutcome:
         """Re-attach the session identified by ``resume_id`` to ``ws``.
 
         Single use: the presented id is consumed and a rotated one is returned.
@@ -526,7 +537,16 @@ class SessionManager:
         ``default_persona.get_default_persona().id`` before comparing. Mismatched ->
         rejected as ``"persona_mismatch"`` BEFORE the presented resume id is
         consumed, so the guest's real credential stays valid for a legitimate retry.
-        """
+
+        *requested_model_id* (#75, optional): the realtime model id this resume
+        request's OWN (provisional) session already resolved to (``/realtime?model=``,
+        validated by ``RTMiddleTier.resolve_model()`` before this socket was even
+        prepared) -- mirrors *requested_persona_id* exactly: a session can only ever
+        resume under the SAME model it was originally bound to, no mid-conversation
+        model switching. Omitted entirely (``None``) resolves to the bound persona's
+        own ``models.realtime.default`` before comparing. Mismatched -> rejected as
+        ``"model_mismatch"`` BEFORE the presented resume id is consumed, same as
+        ``"persona_mismatch"`` above."""
         if not self.resume_enabled:
             return ResumeOutcome(False, reason="disabled")
         if not isinstance(resume_id, str) or not (_RESUME_ID_MIN_LEN <= len(resume_id) <= _RESUME_ID_MAX_LEN):
@@ -556,6 +576,15 @@ class SessionManager:
                 session_id, bound_persona_id, effective_requested_persona_id,
             )
             return ResumeOutcome(False, reason="persona_mismatch")
+
+        effective_requested_model_id = requested_model_id or default_persona.get_default_persona().manifest.models.realtime.default
+        bound_model_id = order_state_singleton.get_model_id(session_id)
+        if bound_model_id != effective_requested_model_id:
+            logger.info(
+                "Resume rejected for session %s: bound model %r != requested model %r (model_mismatch)",
+                session_id, bound_model_id, effective_requested_model_id,
+            )
+            return ResumeOutcome(False, reason="model_mismatch")
 
         # Consume the presented id before anything else can use it.
         self._resume_index.pop(digest, None)

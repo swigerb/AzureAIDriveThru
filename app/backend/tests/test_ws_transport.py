@@ -12,7 +12,6 @@ import json
 import sys
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import patch
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
@@ -194,13 +193,21 @@ class CompressionConfigTests(unittest.TestCase):
         class _Stop(Exception):
             pass
 
+        class _FakeWs:
+            """A hashable stand-in for `web.WebSocketResponse` (#75: `_forward_messages`
+            now looks up `self._sessions.get_session_id(ws)` -- a plain dict `.get()` --
+            before ever reaching `ws_connect`, so the fake here must be hashable; unlike
+            `SimpleNamespace`, which defines `__eq__` and so has no `__hash__`)."""
+
+            headers = {}
+
         def fake_ws_connect(self_, *args, **kwargs):
             captured.update(kwargs)
             raise _Stop
 
         with patch.object(aiohttp.ClientSession, "ws_connect", fake_ws_connect):
             with self.assertRaises(_Stop):
-                asyncio.run(rtmt._forward_messages(SimpleNamespace(headers={})))
+                asyncio.run(rtmt._forward_messages(_FakeWs()))
         self.assertEqual(captured.get("compress"), 0)
 
 

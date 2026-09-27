@@ -54,6 +54,10 @@ class SessionIdentifiers:
     # #74 (Rick's PR #102 review, item 4): the persona this session is bound to -- every
     # session has one (the deployment default when none was requested), so this is never None.
     persona_id: str
+    # #75: the realtime model this session is bound to -- every session has one (the
+    # bound persona's own `models.realtime.default` when none was explicitly requested
+    # via `?model=`), so this is never None either.
+    model_id: str
 
 
 class OrderState:
@@ -157,7 +161,8 @@ class OrderState:
         session["order_summary_json"] = summary.model_dump_json()
         logger.debug("Order summary updated for session %s (items=%d, total=%s)", session_id, len(order_items), finalTotal)
 
-    def create_session(self, persona: "Persona | None" = None) -> str:
+    def create_session(self, persona: "Persona | None" = None, model_id: str | None = None,
+                        model_deployment: str | None = None, model_reasoning: bool | None = None) -> str:
         """Create a new, empty order-state session.
 
         *persona* (#74, Rick's PR #102 review item 2): the session is bound to *persona*, or to
@@ -165,8 +170,17 @@ class OrderState:
         every session has exactly one bound persona, through the same ``MenuCatalog``/pricing
         path either way. There is no unbound-session state and no module-level brand-only
         fallback.
+
+        *model_id*/*model_deployment*/*model_reasoning* (#75): this session's own bound
+        realtime model, resolved once by the caller (``RTMiddleTier.resolve_model()``) before
+        the session is ever created -- no mid-conversation model switching, exactly like
+        *persona* above. *model_id* omitted (``None``) binds to *persona*'s own
+        ``models.realtime.default`` -- today's exact, unchanged path; *model_deployment*/
+        *model_reasoning* stay ``None`` in that case too (``_forward_messages`` falls back to
+        ``self.deployment``/the process-wide reasoning heuristic, never a stale/incorrect value).
         """
         persona = persona or default_persona.get_default_persona()
+        model_id = model_id or persona.manifest.models.realtime.default
         session_id = str(uuid.uuid4())
         session_token = str(uuid.uuid4())
         empty_summary = OrderSummary(
@@ -188,6 +202,9 @@ class OrderState:
             # #97: the thread/event-loop this session is confined to for the rest of its life.
             "_owner_thread": threading.get_ident(),
             "_persona_id": persona.id,
+            "_model_id": model_id,
+            "_model_deployment": model_deployment,
+            "_model_reasoning": model_reasoning,
             "_menu": get_catalog_for_persona(persona),
             "_tz": ZoneInfo(persona.manifest.store.timezone),
             "_tax_rate": to_decimal(persona.manifest.pricing.taxRate),
@@ -199,7 +216,7 @@ class OrderState:
             ),
         }
         self._reset_order_state(self.sessions[session_id])
-        logger.info("Session created: %s (persona=%s)", session_id, persona.id)
+        logger.info("Session created: %s (persona=%s, model=%s)", session_id, persona.id, model_id)
         return session_id
 
     def delete_session(self, session_id: str) -> None:
@@ -507,6 +524,7 @@ class OrderState:
             round_trip_index=session["round_trip_index"],
             round_trip_token=session["round_trip_token"],
             persona_id=session["_persona_id"],
+            model_id=session["_model_id"],
         )
 
     def advance_round_trip(self, session_id: str) -> SessionIdentifiers:
@@ -531,6 +549,38 @@ class OrderState:
             return default_persona.get_default_persona().id
         self._check_owner(session_id)
         return self.sessions[session_id]["_persona_id"]
+
+    def get_model_id(self, session_id: str) -> str:
+        """The realtime model id this session is bound to -- every session has one (#75; the
+        bound persona's own ``models.realtime.default`` when none was explicitly requested via
+        ``?model=``). Falls back to the deployment default persona's own realtime default for a
+        *session_id* that isn't a live session at all -- same defensive fallback as
+        ``get_persona_id`` above, for ``session_manager.py``'s resume mismatch check on an
+        already-expired id."""
+        if session_id not in self.sessions:
+            return default_persona.get_default_persona().manifest.models.realtime.default
+        self._check_owner(session_id)
+        return self.sessions[session_id]["_model_id"]
+
+    def get_model_deployment(self, session_id: str) -> str | None:
+        """This session's own bound realtime model's Foundry deployment name (#75), or ``None``
+        for its persona's own default realtime model (today's unchanged path -- the caller falls
+        back to ``RTMiddleTier.deployment``, never a stale/incorrect value) or for a
+        *session_id* that isn't a live session at all."""
+        if session_id not in self.sessions:
+            return None
+        self._check_owner(session_id)
+        return self.sessions[session_id]["_model_deployment"]
+
+    def get_model_reasoning(self, session_id: str) -> bool | None:
+        """Whether this session's own bound realtime model is a reasoning model, per the shared
+        model catalog (#75), or ``None`` for its persona's own default realtime model (today's
+        unchanged path -- the caller falls back to the process-wide name-heuristic/config
+        decision) or for a *session_id* that isn't a live session at all."""
+        if session_id not in self.sessions:
+            return None
+        self._check_owner(session_id)
+        return self.sessions[session_id]["_model_reasoning"]
 
     def get_menu_catalog(self, session_id: str):
         """Public, session-scoped counterpart of ``_menu_for`` for callers outside this module
