@@ -1,9 +1,22 @@
 import { describe, expect, it } from "vitest";
 
-import { applyTheme, PERSONA_THEME_CSS_VARS, SONIC_THEME, type PersonaTheme } from "@/lib/personaTheme";
+import {
+    applyDarkTheme,
+    applyTheme,
+    deriveAccents,
+    DEFAULT_DARK_BACKGROUND,
+    DEFAULT_DARK_FOREGROUND,
+    PERSONA_THEME_CSS_VARS,
+    PERSONA_THEME_DARK_CSS_VARS,
+    resolvePersonaTheme,
+    SONIC_THEME,
+    type PersonaBaseColors,
+    type PersonaTheme,
+    type PersonaWireTheme
+} from "@/lib/personaTheme";
 
-// Guards issue #80 F2 (docs/persona-architecture.md §9): runtime theming groundwork. Sonic must
-// stay the default theme and applying it must not change any value from what index.css already
+// Guards issue #80 F2 (docs/persona-architecture.md §9): runtime theming groundwork. The default
+// persona must stay the default theme and applying it must not change any value from what index.css already
 // hard-codes -- these tests would fail if a future edit let SONIC_THEME and index.css's `:root`/
 // `.dark` defaults drift apart, which is the one way this "seam" could silently break the "looks
 // IDENTICAL today" requirement.
@@ -40,7 +53,7 @@ describe("SONIC_THEME", () => {
         });
     });
 
-    it("uses the Sonic font already imported by index.css", () => {
+    it("uses the default persona's font already imported by index.css", () => {
         expect(SONIC_THEME.font.family).toBe("Nunito Sans");
         expect(SONIC_THEME.font.importUrl).toMatch(/^https:\/\/fonts\.googleapis\.com\//);
     });
@@ -114,5 +127,169 @@ describe("applyTheme", () => {
         expect(root.style.getPropertyValue(PERSONA_THEME_CSS_VARS.primary)).toBe("20 90% 50%");
         expect(root.style.getPropertyValue(PERSONA_THEME_CSS_VARS.primaryHex)).toBe("#F07020");
         expect(root.style.getPropertyValue(PERSONA_THEME_CSS_VARS.accent)).toBe("#FFC030");
+    });
+});
+
+// Issue #80 F1/F3 (Rick's #80 review): "map dark.background/dark.foreground onto the .dark block
+// vars". `applyDarkTheme` is the half of the dark-mode-hero-contrast fix that writes those three
+// `--brand-*-dark` variables into an injected <style>.dark { ... } rule (see personaTheme.ts's own
+// doc comment for why it can't just be an inline style like applyTheme's).
+describe("applyDarkTheme", () => {
+    function freshDoc(): Document {
+        return document.implementation.createHTMLDocument("test");
+    }
+
+    function readDarkRule(doc: Document): string {
+        const style = doc.getElementById("persona-dark-theme-overrides");
+        return style?.textContent ?? "";
+    }
+
+    it("creates the .dark style rule using a persona's declared dark overrides", () => {
+        const doc = freshDoc();
+        const theme: PersonaTheme = {
+            light: { primary: "10 10% 10%", secondary: "20 20% 20%", background: "30 30% 30%", foreground: "40 40% 40%", accents: SONIC_THEME.light.accents },
+            dark: { primary: "10 10% 90%", background: "30 30% 5%", foreground: "40 40% 95%" },
+            font: SONIC_THEME.font
+        };
+
+        applyDarkTheme(theme, doc);
+        const rule = readDarkRule(doc);
+
+        expect(rule).toContain(`${PERSONA_THEME_DARK_CSS_VARS.primary}: 10 10% 90%`);
+        expect(rule).toContain(`${PERSONA_THEME_DARK_CSS_VARS.background}: 30 30% 5%`);
+        expect(rule).toContain(`${PERSONA_THEME_DARK_CSS_VARS.foreground}: 40 40% 95%`);
+    });
+
+    it("falls back to the persona's own light primary, and the shared DEFAULT dark background/foreground, when a persona has no dark block at all", () => {
+        const doc = freshDoc();
+        const theme: PersonaTheme = {
+            light: { primary: "10 10% 10%", secondary: "20 20% 20%", background: "30 30% 30%", foreground: "40 40% 40%", accents: SONIC_THEME.light.accents },
+            // No `dark` block at all -- both fixture personas (test-alpha/test-beta) ship like this.
+            font: SONIC_THEME.font
+        };
+
+        applyDarkTheme(theme, doc);
+        const rule = readDarkRule(doc);
+
+        // `primary` still comes from the persona's own light hue (so its brand color is visible in
+        // dark mode too); `background`/`foreground` must NOT leak the persona's pale light-mode
+        // values (that's the bug -- Rick's #110 review, item 3) -- they fall back to the shared
+        // DEFAULT dark palette instead, so the page still reads as genuinely dark.
+        expect(rule).toContain(`${PERSONA_THEME_DARK_CSS_VARS.primary}: 10 10% 10%`);
+        expect(rule).toContain(`${PERSONA_THEME_DARK_CSS_VARS.background}: ${DEFAULT_DARK_BACKGROUND}`);
+        expect(rule).toContain(`${PERSONA_THEME_DARK_CSS_VARS.foreground}: ${DEFAULT_DARK_FOREGROUND}`);
+    });
+
+    // Issue #80 F1/F3 (Rick's #110 review, item 3): the default persona's own `dark` block sets
+    // ONLY `primary` (see `SONIC_THEME.dark` above) -- a *partial* palette, not an absent one. This
+    // guards the exact repro from the review: with the old (buggy) fallback to `theme.light.*`,
+    // `background`/`foreground` came out as the default persona's pale light-mode colors
+    // (`"195 44% 96%"` / `"208 53% 20%"`) instead of a dark palette, so cards/panels/text stayed
+    // light while only the accent color changed -- "the whole page" did not "go dark like
+    // before-dark.png".
+    it("falls back to the shared DEFAULT dark background/foreground when a persona's dark block sets only some tokens (the default persona sets only primary)", () => {
+        const doc = freshDoc();
+
+        applyDarkTheme(SONIC_THEME, doc);
+        const rule = readDarkRule(doc);
+
+        expect(SONIC_THEME.dark).toEqual({ primary: "341 100% 55%" });
+        expect(rule).toContain(`${PERSONA_THEME_DARK_CSS_VARS.primary}: 341 100% 55%`);
+        expect(rule).toContain(`${PERSONA_THEME_DARK_CSS_VARS.background}: ${DEFAULT_DARK_BACKGROUND}`);
+        expect(rule).toContain(`${PERSONA_THEME_DARK_CSS_VARS.foreground}: ${DEFAULT_DARK_FOREGROUND}`);
+        // And definitely not the default persona's pale light-mode background/foreground.
+        expect(rule).not.toContain(SONIC_THEME.light.background);
+        expect(rule).not.toContain(SONIC_THEME.light.foreground);
+    });
+
+    it("re-uses the same injected <style> element across repeated calls (persona switching)", () => {
+        const doc = freshDoc();
+        applyDarkTheme(SONIC_THEME, doc);
+        const firstCount = doc.querySelectorAll("#persona-dark-theme-overrides").length;
+
+        applyDarkTheme(SONIC_THEME, doc);
+        expect(doc.querySelectorAll("#persona-dark-theme-overrides").length).toBe(firstCount);
+        expect(firstCount).toBe(1);
+    });
+});
+
+// Issue #80 F1/F3: any non-default persona needs its accent palette synthesized from just its
+// four base HSL roles, since `accents` isn't in persona.schema.json yet.
+describe("deriveAccents", () => {
+    const colors: PersonaBaseColors = {
+        primary: "200 80% 50%",
+        secondary: "40 60% 40%",
+        background: "0 0% 98%",
+        foreground: "0 0% 10%"
+    };
+
+    it("derives a full accent palette deterministically from the base colors", () => {
+        const first = deriveAccents(colors);
+        const second = deriveAccents(colors);
+        expect(first).toEqual(second);
+    });
+
+    it("produces valid 6-digit uppercase hex colors for every slot", () => {
+        const accents = deriveAccents(colors);
+        for (const value of Object.values(accents)) {
+            expect(value).toMatch(/^#[0-9A-F]{6}$/);
+        }
+    });
+
+    it("derives primaryHex directly from the primary hue/sat/lightness", () => {
+        // 200 80% 50% is a saturated cyan-blue; just assert it round-trips to *some* stable hex
+        // rather than hand-computing the RGB math personaTheme.ts already implements.
+        const accents = deriveAccents(colors);
+        expect(accents.primaryHex).toBe(deriveAccents(colors).primaryHex);
+        expect(accents.primaryStrong).not.toBe(accents.primaryHex);
+        expect(accents.primaryLight).not.toBe(accents.primaryHex);
+    });
+});
+
+// Issue #80 F1/F3: resolvePersonaTheme is the seam PersonaProvider calls with the wire theme
+// `/api/personas/<id>` returns -- the default persona must keep resolving to the literal SONIC_THEME
+// object (same identity) so F2's byte-identical guarantee can never regress via this path.
+describe("resolvePersonaTheme", () => {
+    it("resolves the default persona id to the literal SONIC_THEME object, ignoring the wire theme given", () => {
+        const wireTheme: PersonaWireTheme = {
+            light: { primary: "0 0% 0%", secondary: "0 0% 0%", background: "0 0% 0%", foreground: "0 0% 0%" }
+        };
+        expect(resolvePersonaTheme("sonic", wireTheme)).toBe(SONIC_THEME);
+    });
+
+    it("derives accents for a non-default persona that supplies none", () => {
+        const wireTheme: PersonaWireTheme = {
+            light: { primary: "200 80% 50%", secondary: "40 60% 40%", background: "0 0% 98%", foreground: "0 0% 10%" }
+        };
+        const theme = resolvePersonaTheme("test-alpha", wireTheme);
+        expect(theme.light.accents).toEqual(deriveAccents(wireTheme.light));
+        expect(theme.font).toBe(SONIC_THEME.font); // no font declared -- falls back to the default persona's
+    });
+
+    it("lets a persona override individual accent keys without authoring the whole palette", () => {
+        const wireTheme: PersonaWireTheme = {
+            light: {
+                primary: "200 80% 50%",
+                secondary: "40 60% 40%",
+                background: "0 0% 98%",
+                foreground: "0 0% 10%",
+                accents: { accent: "#123456" }
+            }
+        };
+        const theme = resolvePersonaTheme("test-alpha", wireTheme);
+        expect(theme.light.accents.accent).toBe("#123456");
+        // Every other key still comes from deriveAccents.
+        expect(theme.light.accents.primaryHex).toBe(deriveAccents(wireTheme.light).primaryHex);
+    });
+
+    it("passes through a persona's own dark overrides and font untouched", () => {
+        const wireTheme: PersonaWireTheme = {
+            light: { primary: "200 80% 50%", secondary: "40 60% 40%", background: "0 0% 98%", foreground: "0 0% 10%" },
+            dark: { primary: "200 80% 70%" },
+            font: { family: "Fredoka", importUrl: "https://fonts.googleapis.com/css2?family=Fredoka" }
+        };
+        const theme = resolvePersonaTheme("test-alpha", wireTheme);
+        expect(theme.dark).toEqual({ primary: "200 80% 70%" });
+        expect(theme.font).toEqual({ family: "Fredoka", importUrl: "https://fonts.googleapis.com/css2?family=Fredoka" });
     });
 });

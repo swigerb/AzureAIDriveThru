@@ -1,7 +1,7 @@
 {
     "app": {
-        "title": "Sonic Voice Ordering",
-        "footer": "Built with Azure AI, Azure OpenAI, and Azure Speech",
+        "title": "Voice Ordering",
+        "footer": "Built with Microsoft Foundry, Azure OpenAI, and Azure AI",
         "showTranscript": "Show transcript",
         "stopRecording": "Stop recording",
         "startRecording": "Start recording",
@@ -9,7 +9,7 @@
         "newOrder": "Start a new order"
     },
     "status": {
-        "notRecordingMessage": "Let's order from America's Drive-In!",
+        "notRecordingMessage": "Tap the mic to place your order.",
         "conversationInProgress": "Conversation in progress",
         "sessionEndedIdle": "Session ended after inactivity. Tap the mic to start a new order.",
         "connectionLost": "Connection lost. Tap the mic to start again.",
@@ -30,6 +30,35 @@
         "description": "Files used to ground the answers."
     },
     "menu": {
-        "title": "Menu"
+        "title": "Menu",
+        "button": "View Menu",
+        "loading": "Loading menu…",
+        "loadError": "Couldn't load the menu. Please try again later."
+    },
+    "ticket": {
+        "kicker": "Order ticket",
+        "title": "Your Order",
+        "emptyHint": "Add items to get started.",
+        "tax": "Tax"
+    },
+    "hero": {
+        "badge": "Voice Ordering Demo",
+        "subhead": "A persona-driven voice ordering assistant, grounded by Microsoft Foundry, Azure OpenAI, and Azure AI Search.",
+        "poweredBy": "Microsoft Foundry · Azure OpenAI · Azure AI Search",
+        "calloutsTitle": "Menu highlights",
+        "highlights": {
+            "fastOrders": {
+                "title": "Fast orders",
+                "detail": "Guests order by voice in seconds, no menu scrolling required."
+            },
+            "foundryPowered": {
+                "title": "Foundry powered",
+                "detail": "Conversation intelligence runs on Microsoft Foundry and Azure OpenAI."
+            },
+            "liveMenu": {
+                "title": "Live menu",
+                "detail": "Every order is grounded against the persona's own live menu data."
+            }
+        }
     }
 }

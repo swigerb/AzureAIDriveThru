@@ -62,6 +62,16 @@ public class ConformanceFixture : IAsyncLifetime
     /// </summary>
     protected virtual string? PersonasDir => null;
 
+    /// <summary>
+    /// Public counterpart of <see cref="PersonasDir"/>, resolved the exact same way
+    /// <see cref="InitializeAsync"/> resolves it for <see cref="MenuIndex.ResolveIndexPaths"/> and
+    /// <see cref="BackendLauncherFactory.StartAsync"/> above -- so a scenario shared across both
+    /// real-pack and fixture-pack fixtures (e.g. PersonaSmokeTests.cs's PersonaSmokeScenario) can
+    /// find THIS fixture's own persona pack root (to read a persona's own menu/menuItems.json,
+    /// say) without needing to know which concrete fixture subclass it was handed.
+    /// </summary>
+    public string PersonasDirectory => PersonasDir ?? RepoPaths.PersonasDirectory(RepoPaths.FindRepoRoot());
+
     public FakeRealtimeUpstreamServer Realtime { get; } = new();
     public FakeSearchServer Search { get; private set; } = null!;
 
@@ -133,8 +143,20 @@ public class ConformanceFixture : IAsyncLifetime
         Realtime.ExpectedApiKey = BackendContract.OpenAiApiKey;
         await Realtime.StartAsync(fixedPort: realtimePort).ConfigureAwait(false);
 
-        var repoRoot = RepoPaths.FindRepoRoot();
-        Search = new FakeSearchServer(RepoPaths.MenuItemsJsonPath(repoRoot));
+        // Issue #76 part 2: build FakeSearchServer's index map from exactly the same persona
+        // resolution BackendLauncherFactory.StartAsync uses below (explicit Personas override,
+        // else CONFORMANCE_PERSONAS, else disk discovery, folded with any Persona override) --
+        // so the fake always has (and only has) an index loaded for every persona the backend
+        // this fixture launches can actually query. A fixture that only enables a subset (e.g.
+        // DisabledPersonaConformanceFixture) gets a fake that can't answer the disabled persona's
+        // index at all, matching that persona being genuinely unreachable end to end.
+        var resolvedPersonas = Personas ?? ConformancePersonas.ResolveEnabled(
+            Environment.GetEnvironmentVariable("CONFORMANCE_PERSONAS"), ConformancePersonas.DiscoverFromDisk);
+        resolvedPersonas = ConformancePersonas.EnsureIncluded(resolvedPersonas, Persona);
+        var personasDirForSearch = PersonasDirectory;
+        var indexPaths = MenuIndex.ResolveIndexPaths(personasDirForSearch, resolvedPersonas);
+
+        Search = new FakeSearchServer(indexPaths);
         await Search.StartAsync(fixedPort: searchPort).ConfigureAwait(false);
 
         var extraFakeEnvironment = await StartExtraFakesAsync().ConfigureAwait(false);

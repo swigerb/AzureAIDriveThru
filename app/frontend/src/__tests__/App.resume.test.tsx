@@ -31,6 +31,42 @@ vi.mock("darkreader", () => ({ enable: vi.fn(), disable: vi.fn(), auto: vi.fn(),
 vi.mock("@/hooks/useAudioRecorder", () => ({ default: () => rec }));
 vi.mock("@/hooks/useAudioPlayer", () => ({ default: () => player }));
 
+// Rick's PR-110 review item 1 + item 6 (issue #80 F1/F6): with the hard-coded persona fallback
+// gone, `<RootApp />` now needs a real (mocked) `/api/personas` catalog + detail round trip before
+// `App()`'s `ready` gate lets `<SonicApp />` (and the mic button this suite drives) render at all.
+const FIXTURE_PERSONA_INDEX = {
+    default: "test-alpha",
+    personas: [
+        { id: "test-alpha", displayName: "Test Alpha", logoUrl: "/personas/test-alpha/assets/logo.svg", theme: { light: { primary: "200 80% 50%", secondary: "40 60% 40%", background: "0 0% 98%", foreground: "0 0% 10%" } } }
+    ],
+    backends: []
+};
+const FIXTURE_PERSONA_DETAIL = {
+    id: "test-alpha",
+    title: "Test Alpha Fixture",
+    theme: FIXTURE_PERSONA_INDEX.personas[0].theme,
+    assets: { logo: "assets/logo.svg", favicon: "assets/favicon.ico" },
+    strings: { en: {} },
+    hero: { headline: "Test Alpha fixture pack", callouts: [] },
+    legal: "Fixture-only disclaimer.",
+    voice: { default: "marin" },
+    locales: { default: "en", supported: ["en", "es", "fr", "ja"] },
+    features: { dayparts: false },
+    menuUrl: "/personas/test-alpha/menu.json",
+    models: { realtime: { default: "gpt-realtime-2.1", models: [{ id: "gpt-realtime-2.1", label: "GPT Realtime 2.1", reasoning: true }] } }
+};
+
+function mockPersonaFetch() {
+    vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string) => {
+            if (url === "/api/personas") return { ok: true, status: 200, json: async () => FIXTURE_PERSONA_INDEX };
+            if (url === "/api/personas/test-alpha") return { ok: true, status: 200, json: async () => FIXTURE_PERSONA_DETAIL };
+            return { ok: false, status: 404, json: async () => ({}) };
+        })
+    );
+}
+
 const TOTS = { item: "Tots", size: "Large", quantity: 1, price: 2.99, display: "Large Tots" };
 const LIMEADE = { item: "Cherry Limeade", size: "Medium", quantity: 1, price: 2.49, display: "Medium Cherry Limeade" };
 const orderOf = (...items: (typeof TOTS)[]) => {
@@ -48,8 +84,9 @@ const resumedMsg = (order = orderOf(TOTS, LIMEADE)) => ({
 const transportDrop = { code: 1011, reason: "", idle: false, kind: "transport", resuming: true };
 
 const tapMic = async () => {
+    const micButton = await screen.findByLabelText(/app\.(start|stop)Recording/);
     await act(async () => {
-        fireEvent.click(screen.getByLabelText(/app\.(start|stop)Recording/));
+        fireEvent.click(micButton);
     });
 };
 
@@ -65,6 +102,7 @@ beforeEach(() => {
     Element.prototype.scrollIntoView = vi.fn();
     rec.start.mockImplementation(async () => true);
     rt.api.isConnected = true;
+    mockPersonaFetch();
 });
 
 describe("order resume in the app", () => {
