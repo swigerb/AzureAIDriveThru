@@ -1,13 +1,12 @@
 """Tests for combo ordering: adding combos, converting standalone items to combos,
 component absorption pricing, combo + happy hour interaction, and Route 44 sizing.
 
-PR #99 review decision 3 (Rick): the `8.49`-style prices passed into `handle_order_update()`
-throughout this file are deliberately left at their pre-#72-Part-2 values. They are tool-call
-*input* prices -- standing in for whatever price a realtime tool call would pass at the time --
-not values looked up from the persona pack, so they are independent of the 7 combo prices Rick's
-review corrected in `personas/sonic/menu/menuItems.json` (and the matching golden/frontend rows).
-Only `TestBundleSlotsByPackData` below intentionally uses the corrected pack prices, because those
-scenarios are asserting against the real bundle-slot data those specific items carry.
+#104: unit prices now always come from the resolved menu record for the requested item/size --
+the price passed into `handle_order_update()` is a realistic tool-call *input* value (what a
+realtime tool call would plausibly send), but it is informational only: the server always charges
+the real menu price and only logs a debug/warning message if the two differ. Every price literal
+below is the real per-size menu price from `personas/sonic/menu/menuItems.json`, so assertions
+comparing `summary.total`/`item.price` reflect what the guest is actually charged.
 """
 
 import math
@@ -50,12 +49,12 @@ class TestAddCombo:
     def test_add_combo_creates_line_item(self):
         sid = order_state_singleton.create_session()
         order_state_singleton.handle_order_update(
-            sid, "add", "SONIC® Cheeseburger Combo", "standard", 1, 8.49
+            sid, "add", "SONIC® Cheeseburger Combo", "standard", 1, 9.19
         )
         items = order_state_singleton.get_order_items(sid)
         assert len(items) == 1
         assert items[0].item == "SONIC® Cheeseburger Combo"
-        assert items[0].price == 8.49
+        assert items[0].price == 9.19
 
     def test_add_combo_total_is_combo_price(self):
         sid = order_state_singleton.create_session()
@@ -68,7 +67,7 @@ class TestAddCombo:
     def test_combo_needs_side_and_drink(self):
         sid = order_state_singleton.create_session()
         order_state_singleton.handle_order_update(
-            sid, "add", "SONIC® Cheeseburger Combo", "standard", 1, 8.49
+            sid, "add", "SONIC® Cheeseburger Combo", "standard", 1, 9.19
         )
         req = order_state_singleton.get_combo_requirements(sid)
         assert not req["is_complete"]
@@ -77,7 +76,7 @@ class TestAddCombo:
     def test_combo_with_side_and_drink_is_complete(self):
         sid = order_state_singleton.create_session()
         order_state_singleton.handle_order_update(
-            sid, "add", "SONIC® Cheeseburger Combo", "standard", 1, 8.49
+            sid, "add", "SONIC® Cheeseburger Combo", "standard", 1, 9.19
         )
         order_state_singleton.handle_order_update(sid, "add", "Tots", "medium", 1, 2.79)
         order_state_singleton.handle_order_update(sid, "add", "Cherry Limeade", "medium", 1, 2.89)
@@ -85,7 +84,7 @@ class TestAddCombo:
         assert req["is_complete"]
         # Total should be only the combo price (side+drink absorbed)
         summary = order_state_singleton.get_order_summary(sid)
-        assert math.isclose(summary.total, 8.49, rel_tol=1e-9)
+        assert math.isclose(summary.total, 9.19, rel_tol=1e-9)
 
 
 # ---------------------------------------------------------------------------
@@ -101,7 +100,7 @@ class TestComboConversion:
             sid, "add", "SONIC® Cheeseburger", "standard", 1, 5.29
         )
         result = order_state_singleton.handle_order_update(
-            sid, "add", "SONIC® Cheeseburger Combo", "standard", 1, 8.49
+            sid, "add", "SONIC® Cheeseburger Combo", "standard", 1, 9.19
         )
         items = order_state_singleton.get_order_items(sid)
         item_names = [i.item for i in items]
@@ -116,11 +115,11 @@ class TestComboConversion:
             sid, "add", "SONIC® Cheeseburger", "standard", 1, 5.29
         )
         order_state_singleton.handle_order_update(
-            sid, "add", "SONIC® Cheeseburger Combo", "standard", 1, 8.49
+            sid, "add", "SONIC® Cheeseburger Combo", "standard", 1, 9.19
         )
         summary = order_state_singleton.get_order_summary(sid)
         # Only the combo price, standalone was removed
-        assert math.isclose(summary.total, 8.49, rel_tol=1e-9)
+        assert math.isclose(summary.total, 9.19, rel_tol=1e-9)
 
     def test_conversion_carries_mods(self):
         sid = order_state_singleton.create_session()
@@ -128,7 +127,7 @@ class TestComboConversion:
             sid, "add", "SONIC® Cheeseburger (No Onions)", "standard", 1, 5.29
         )
         result = order_state_singleton.handle_order_update(
-            sid, "add", "SONIC® Cheeseburger Combo", "standard", 1, 8.49
+            sid, "add", "SONIC® Cheeseburger Combo", "standard", 1, 9.19
         )
         items = order_state_singleton.get_order_items(sid)
         assert "(No Onions)" in items[0].item
@@ -144,7 +143,7 @@ class TestComboConversion:
             sid, "add", "Tots", "medium", 1, 2.79
         )
         order_state_singleton.handle_order_update(
-            sid, "add", "SONIC® Cheeseburger Combo", "standard", 1, 8.49
+            sid, "add", "SONIC® Cheeseburger Combo", "standard", 1, 9.19
         )
         items = order_state_singleton.get_order_items(sid)
         item_names = [i.item for i in items]
@@ -153,7 +152,7 @@ class TestComboConversion:
         assert "SONIC® Cheeseburger Combo" in item_names
         assert len(items) == 1
         summary = order_state_singleton.get_order_summary(sid)
-        assert math.isclose(summary.total, 8.49, rel_tol=1e-9)
+        assert math.isclose(summary.total, 9.19, rel_tol=1e-9)
 
     def test_conversion_full_flow_burger_to_combo_with_components(self):
         """Full 'Brian's bug' scenario: burger → make it a combo → tots → drink."""
@@ -164,7 +163,7 @@ class TestComboConversion:
         )
         # AI suggests combo, guest accepts
         order_state_singleton.handle_order_update(
-            sid, "add", "SONIC® Cheeseburger Combo", "standard", 1, 8.49
+            sid, "add", "SONIC® Cheeseburger Combo", "standard", 1, 9.19
         )
         # Guest picks side and drink
         order_state_singleton.handle_order_update(sid, "add", "Tots", "large", 1, 3.49)
@@ -174,7 +173,7 @@ class TestComboConversion:
         assert len(items) == 1
         assert items[0].item == "SONIC® Cheeseburger Combo"
         summary = order_state_singleton.get_order_summary(sid)
-        assert math.isclose(summary.total, 8.49, rel_tol=1e-9)
+        assert math.isclose(summary.total, 9.19, rel_tol=1e-9)
         req = order_state_singleton.get_combo_requirements(sid)
         assert req["is_complete"]
 
@@ -189,7 +188,7 @@ class TestAbsorptionPricing:
     def test_absorbed_side_is_zero_price(self):
         sid = order_state_singleton.create_session()
         order_state_singleton.handle_order_update(
-            sid, "add", "Fish Sandwich Combo", "standard", 1, 8.49
+            sid, "add", "Fish Sandwich Combo", "standard", 1, 8.39
         )
         result = order_state_singleton.handle_order_update(
             sid, "add", "Tots", "medium", 1, 2.79
@@ -197,25 +196,25 @@ class TestAbsorptionPricing:
         assert result.get("absorbed_into_combo") is True
         summary = order_state_singleton.get_order_summary(sid)
         # Only combo price, no tots price added
-        assert math.isclose(summary.total, 8.49, rel_tol=1e-9)
+        assert math.isclose(summary.total, 8.39, rel_tol=1e-9)
 
     def test_absorbed_drink_is_zero_price(self):
         sid = order_state_singleton.create_session()
         order_state_singleton.handle_order_update(
-            sid, "add", "Fish Sandwich Combo", "standard", 1, 8.49
+            sid, "add", "Fish Sandwich Combo", "standard", 1, 8.39
         )
         result = order_state_singleton.handle_order_update(
             sid, "add", "Cherry Limeade", "large", 1, 3.39
         )
         assert result.get("absorbed_into_combo") is True
         summary = order_state_singleton.get_order_summary(sid)
-        assert math.isclose(summary.total, 8.49, rel_tol=1e-9)
+        assert math.isclose(summary.total, 8.39, rel_tol=1e-9)
 
     def test_second_side_not_absorbed_charged_full(self):
         """Extra side beyond combo slot is at full price."""
         sid = order_state_singleton.create_session()
         order_state_singleton.handle_order_update(
-            sid, "add", "Fish Sandwich Combo", "standard", 1, 8.49
+            sid, "add", "Fish Sandwich Combo", "standard", 1, 8.39
         )
         order_state_singleton.handle_order_update(sid, "add", "Tots", "medium", 1, 2.79)
         # Second side should NOT be absorbed
@@ -224,13 +223,13 @@ class TestAbsorptionPricing:
         )
         assert not result.get("absorbed_into_combo", False)
         summary = order_state_singleton.get_order_summary(sid)
-        assert math.isclose(summary.total, 8.49 + 3.89, rel_tol=1e-9)
+        assert math.isclose(summary.total, 8.39 + 3.89, rel_tol=1e-9)
 
     def test_two_combos_need_two_sides_two_drinks(self):
         """Two combos absorb two sides and two drinks."""
         sid = order_state_singleton.create_session()
         order_state_singleton.handle_order_update(
-            sid, "add", "SONIC® Cheeseburger Combo", "standard", 2, 8.49
+            sid, "add", "SONIC® Cheeseburger Combo", "standard", 2, 9.19
         )
         order_state_singleton.handle_order_update(sid, "add", "Tots", "medium", 1, 2.79)
         order_state_singleton.handle_order_update(sid, "add", "Groovy Fries", "medium", 1, 2.79)
@@ -241,7 +240,7 @@ class TestAbsorptionPricing:
         # Only the combo (qty 2) should remain
         assert len(items) == 1
         summary = order_state_singleton.get_order_summary(sid)
-        assert math.isclose(summary.total, 8.49 * 2, rel_tol=1e-9)
+        assert math.isclose(summary.total, 9.19 * 2, rel_tol=1e-9)
         req = order_state_singleton.get_combo_requirements(sid)
         assert req["is_complete"]
 
@@ -250,7 +249,7 @@ class TestAbsorptionPricing:
         """Combo with components filled + extra standalone drink is full price."""
         sid = order_state_singleton.create_session()
         order_state_singleton.handle_order_update(
-            sid, "add", "SONIC® Cheeseburger Combo", "standard", 1, 8.49
+            sid, "add", "SONIC® Cheeseburger Combo", "standard", 1, 9.19
         )
         order_state_singleton.handle_order_update(sid, "add", "Tots", "medium", 1, 2.79)
         order_state_singleton.handle_order_update(sid, "add", "Cherry Limeade", "medium", 1, 2.89)
@@ -260,7 +259,7 @@ class TestAbsorptionPricing:
         ocean = next(i for i in items if i.item == "Ocean Water®")
         assert ocean.price == 3.39
         summary = order_state_singleton.get_order_summary(sid)
-        assert math.isclose(summary.total, 8.49 + 3.39, rel_tol=1e-9)
+        assert math.isclose(summary.total, 9.19 + 3.39, rel_tol=1e-9)
 
 
 # ---------------------------------------------------------------------------
@@ -287,31 +286,31 @@ class TestComboHappyHour:
         """Combo price itself is NOT discounted during happy hour."""
         sid = order_state_singleton.create_session()
         order_state_singleton.handle_order_update(
-            sid, "add", "SONIC® Cheeseburger Combo", "standard", 1, 8.49
+            sid, "add", "SONIC® Cheeseburger Combo", "standard", 1, 9.19
         )
         summary = order_state_singleton.get_order_summary(sid)
         # Combo is not a "drink" so no discount
-        assert math.isclose(summary.total, 8.49, rel_tol=1e-9)
+        assert math.isclose(summary.total, 9.19, rel_tol=1e-9)
 
     @patch("order_state.is_happy_hour", return_value=True)
     def test_absorbed_drink_not_double_discounted(self, _mock_hh):
         """A drink absorbed into a combo (at $0) must not cause negative pricing."""
         sid = order_state_singleton.create_session()
         order_state_singleton.handle_order_update(
-            sid, "add", "SONIC® Cheeseburger Combo", "standard", 1, 8.49
+            sid, "add", "SONIC® Cheeseburger Combo", "standard", 1, 9.19
         )
         order_state_singleton.handle_order_update(sid, "add", "Tots", "medium", 1, 2.79)
         order_state_singleton.handle_order_update(sid, "add", "Cherry Limeade", "large", 1, 3.39)
         summary = order_state_singleton.get_order_summary(sid)
         # Only combo price; absorbed drink is not on the order, no happy hour effect
-        assert math.isclose(summary.total, 8.49, rel_tol=1e-9)
+        assert math.isclose(summary.total, 9.19, rel_tol=1e-9)
 
     @patch("order_state.is_happy_hour", return_value=True)
     def test_combo_plus_extra_standalone_drink_discounted(self, _mock_hh):
         """Combo + standalone extra drink: only the extra drink gets 50% off."""
         sid = order_state_singleton.create_session()
         order_state_singleton.handle_order_update(
-            sid, "add", "SONIC® Cheeseburger Combo", "standard", 1, 8.49
+            sid, "add", "SONIC® Cheeseburger Combo", "standard", 1, 9.19
         )
         order_state_singleton.handle_order_update(sid, "add", "Tots", "medium", 1, 2.79)
         order_state_singleton.handle_order_update(sid, "add", "Cherry Limeade", "medium", 1, 2.89)
@@ -319,7 +318,7 @@ class TestComboHappyHour:
         order_state_singleton.handle_order_update(sid, "add", "Ocean Water®", "large", 1, 3.39)
         summary = order_state_singleton.get_order_summary(sid)
         # Combo full price + extra drink at 50%
-        expected = 8.49 + (3.39 * 0.5)
+        expected = 9.19 + (3.39 * 0.5)
         assert math.isclose(summary.total, expected, rel_tol=1e-9)
 
     @patch("order_state.is_happy_hour", return_value=False)
@@ -352,7 +351,7 @@ class TestRoute44WithCombos:
         """RT44 drink absorbed into combo still works (no line item but combo complete)."""
         sid = order_state_singleton.create_session()
         order_state_singleton.handle_order_update(
-            sid, "add", "SONIC® Cheeseburger Combo", "standard", 1, 8.49
+            sid, "add", "SONIC® Cheeseburger Combo", "standard", 1, 9.19
         )
         order_state_singleton.handle_order_update(sid, "add", "Tots", "medium", 1, 2.79)
         result = order_state_singleton.handle_order_update(
@@ -362,7 +361,7 @@ class TestRoute44WithCombos:
         req = order_state_singleton.get_combo_requirements(sid)
         assert req["is_complete"]
         summary = order_state_singleton.get_order_summary(sid)
-        assert math.isclose(summary.total, 8.49, rel_tol=1e-9)
+        assert math.isclose(summary.total, 9.19, rel_tol=1e-9)
 
     @patch("order_state.is_happy_hour", return_value=True)
     def test_route_44_standalone_gets_happy_hour(self, _mock_hh):
@@ -520,7 +519,7 @@ class TestBundleSlotsByPackData:
         "drinks"]) must behave exactly as before the bundle-slot fix."""
         sid = order_state_singleton.create_session()
         order_state_singleton.handle_order_update(
-            sid, "add", "SONIC® Cheeseburger Combo", "standard", 1, 8.49
+            sid, "add", "SONIC® Cheeseburger Combo", "standard", 1, 9.19
         )
         side_result = order_state_singleton.handle_order_update(
             sid, "add", "Tots", "medium", 1, 2.79
@@ -531,7 +530,7 @@ class TestBundleSlotsByPackData:
         assert side_result.get("absorbed_into_combo") is True
         assert drink_result.get("absorbed_into_combo") is True
         summary = order_state_singleton.get_order_summary(sid)
-        assert math.isclose(summary.total, 8.49, rel_tol=1e-9)
+        assert math.isclose(summary.total, 9.19, rel_tol=1e-9)
 
     def test_get_combo_requirements_uses_per_component_bundle_capacity(self):
         """get_combo_requirements() must track side/drink capacity per bundle,

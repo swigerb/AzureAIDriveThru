@@ -1107,19 +1107,26 @@ Consequences for how this suite is written:
   no `precision: 2` (or any other precision-based money assertion) anywhere under
   `Scenarios/Ordering/`.
 
-### Tool-argument price trust (#28 N23)
+### Tool-call price is ignored; the menu is the source of truth (#104)
 
-`SpokenTotalTests`'s two golden spoken-total cases for "Cherry Limeade medium" use `2.99`/`3.79`
-as the unit price, while `golden-order-pricing.json`'s menu prices that size at `2.89`. This is
-deliberate, not a stale fixture: it is this suite's explicit contract rule that **the backend
-trusts whatever unit price the `update_order` tool call's own argument carries and never
-re-prices, re-validates, or cross-checks it against its own menu lookup.** A scenario asserting a
-spoken total is therefore free to pick any unit price for its `update_order` fixture — including
-one that deliberately does not match the menu — specifically to prove the total is derived from
-the tool-call argument, not silently recomputed server-side from a menu re-lookup a real customer
-order would never trigger. Do not "fix" a scenario's price to match the menu; if a genuinely
-menu-matching golden case is later wanted for its own reasons, add a new case rather than
-resolving this apparent mismatch in the existing one.
+`update_order`'s `add` action always charges the resolved menu item's own per-size price
+(`menu_utils.MenuCatalog.price_for`, applied once in `order_state.py::handle_order_update`: the
+single place this rule is enforced for both the realtime tool-call path and any caller that builds
+an order directly). The tool call's own `price` argument is **never** trusted or charged: it is
+accepted (kept in the tool schema, described there as "ignored") purely so a model that still
+sends one doesn't get rejected, and is only ever used for a `logger.debug`/`logger.warning`
+comparison against the real menu price, never for pricing. This supersedes the old #28 N23 rule
+this section used to document (the backend used to trust the tool call's price verbatim and never
+cross-checked it against the menu); every `update_order` fixture across this suite (and
+`golden-order-pricing.json`'s `steps[].price`/`combos.items[].price` fields) is now the real
+per-size menu price, so a scenario's expected total can be computed directly from
+`golden-order-pricing.json`/`personas/<id>/menu/menuItems.json` rather than from whatever the
+fixture happens to pass on the wire. `ComboAbsorptionTests.cs`'s combo prices, `HappyHourPricingTests.cs`'s
+drink price, and `UpdateOrderAddRemoveModifyTests.Adding_an_item_with_a_wrong_tool_call_price_is_charged_the_menu_price`
+(a `[Theory]` over a zero, negative, and wildly-too-high tool-call price, all charged the real
+menu price) are this suite's black-box proof of the rule; `app/backend/tests/test_tool_calling.py::test_add_wrong_tool_price_charges_menu_price`
+is its Python-side equivalent. A mutation that reverts to reading `price` straight through in
+`order_state.py`'s `add` branch (or re-adds `tools.py`'s old `price <= 0.0` rejection) fails both.
 
 ### On-menu validation gate (#73, PR #100 review item 1 and 2)
 
@@ -1755,8 +1762,9 @@ The fix has two layers, deliberately kept as defense-in-depth rather than either
    `args["item_name"]`. `update_order` now validates its full required-argument list
    (`action`, `item_name`, `size`, `quantity`) up front and returns the same kind of graceful,
    `TO_SERVER`-only `ToolResult` apology used by its other application-level rejections (the
-   zero/negative-price guard, extras rules, per-item/-order limits) — instead of ever reaching a
-   raise in the first place.
+   #73 on-menu gate, extras rules, per-item/-order limits; #104 removed the old zero/negative-price
+   guard this used to include, since the tool call's price is no longer validated at all) instead
+   of ever reaching a raise in the first place.
 
 These two layers are complementary, not redundant: layer 2 gives `update_order`'s specific known
 failure mode a precise, immediate, well-tested response; layer 1 is the safety net for *any* tool
@@ -1803,14 +1811,20 @@ survives, just without the extras):
    torn down between the exception and the refresh attempt), the refresh is skipped — no exception,
    no client push — never at the cost of the primary apology already having reached the server.
    `ToolFailureCapAndTicketRefreshTests.A_genuine_tool_exception_refreshes_the_guests_ticket` is the
-   black-box proof: it scripts `update_order` with a non-numeric `price` (`"cheap"`, present but the
-   wrong type — sails past `tools.py`'s layer-2 *presence* validation, then raises a genuine
-   `TypeError` at the `price <= 0.0` comparison, the only vector that reaches layer 1 through
-   `update_order`'s normal front door black-box; a missing-argument script like the original #36 repro
-   never reaches layer 1 at all, because layer 2 already turns it into a graceful non-raising
-   `ToolResult` — see the layering discussion above), then asserts a `get_order`-tagged
-   `extension.middle_tier_tool_response` arrives at the browser, distinct from (and not to be confused
-   with) the missing `update_order`-tagged one.
+   black-box proof: it scripts `update_order` with a string `quantity` (`"two"`, present but the
+   wrong type -- sails past `tools.py`'s layer-2 *presence* validation, then raises a genuine
+   Python `TypeError` at `tools.py`'s per-item quantity-limit check (`new_item_qty = existing_qty +
+   quantity`, an `int + str`), before the whole-order limit sum is ever reached), the only vector
+   that reaches layer 1 through `update_order`'s normal front door black-box; a missing-argument
+   script like the original #36 repro never reaches layer 1 at all, because layer 2 already turns
+   it into a graceful non-raising `ToolResult` -- see the layering discussion above. (Rick's #104
+   review, PR #107: this scenario used to script a non-numeric `price` (`"cheap"`), which raised
+   `decimal.InvalidOperation` inside `order_state.py`'s menu-vs-tool-call comparison. #104 made a
+   non-numeric tool-call `price` silently ignored rather than compared at all (never a crash), so
+   the scenario moved to a string `quantity` instead, still a present-but-wrong-type argument that
+   sails past layer 2's presence check and raises inside the tool handler.) It then asserts a
+   `get_order`-tagged `extension.middle_tier_tool_response` arrives at the browser, distinct from
+   (and not to be confused with) the missing `update_order`-tagged one.
 2. **Consecutive-failure cap.** A per-connection `_ToolFailureTracker` counts **consecutive failed
    tool-call rounds since the last guest turn** — not consecutive failed *calls*, and not reset by
    tool success (see the round-2 update below; text above described an earlier, superseded design).
@@ -1823,7 +1837,7 @@ survives, just without the extras):
    that (same streak, still no guest turn) goes back to sending nothing at all, so the apology itself
    can't restart an unbounded loop.
    `ToolFailureCapAndTicketRefreshTests.Consecutive_tool_exceptions_suppress_the_auto_continue_at_the_cap`
-   is the black-box proof: two consecutive `price:"cheap"` failures (the first's auto-continue must
+   is the black-box proof: two consecutive `quantity:"two"` failures (the first's auto-continue must
    still fire, driving the second automatically with no browser action; the second is the cap-th and
    must not auto-continue a third). Because nothing else is queued on the fake, an erroneous third
    auto-continue would fall through to `ResponseScript.Default` (plain audio, no tool call) — which,
@@ -1920,11 +1934,15 @@ different directions, each asserting the same three things: a `function_call_out
 server, the session survives (a further round trip / tool call still works), and no stray
 `extension.middle_tier_tool_response` for the failed call reaches the browser.
 
-1. **Non-numeric `price`** (`update_order(price:"cheap")`) — a genuine exception *inside* the tool
+1. **String `quantity`** (`update_order(quantity:"two")`): a genuine exception *inside* the tool
    handler, after `tools.py`'s own layer-2 presence validation has already passed. This is
    `ToolFailureCapAndTicketRefreshTests.A_genuine_tool_exception_refreshes_the_guests_ticket`,
    already added and mutation-verified as part of S2 above (S2 and S3 share this one scenario —
-   deliberately not duplicated).
+   deliberately not duplicated). (Rick's #104 review, PR #107: this used to be a non-numeric
+   `price`; #104 made a non-numeric tool-call `price` silently ignored rather than compared, so the
+   scenario moved to a string `quantity`, still present-but-wrong-typed, still raising a `TypeError`
+   inside the tool handler before layer 1's `except Exception` net (see the class doc comment on
+   `ToolFailureCapAndTicketRefreshTests` for the exact line.)
 2. **Malformed (non-JSON) `arguments`** (`"{not json"`) — the *other* way into layer 1: rtmt.py's
    `args = json.loads(item["arguments"])` is itself the first line inside the `try` block, before
    `tool.target(...)` is ever called, so a malformed argument string raises

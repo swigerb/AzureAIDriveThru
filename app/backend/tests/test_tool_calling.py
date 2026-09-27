@@ -305,7 +305,7 @@ class UpdateOrderAddTests(unittest.TestCase):
         sid = _make_session()
         result = _run(update_order({
             "action": "add", "item_name": "Cherry Limeade",
-            "size": "medium", "quantity": 1, "price": 2.99,
+            "size": "medium", "quantity": 1, "price": 2.89,
         }, sid))
         self.assertEqual(result.destination, ToolResultDirection.TO_BOTH)
         self.assertIn("Cherry Limeade", result.text)
@@ -334,23 +334,118 @@ class UpdateOrderAddTests(unittest.TestCase):
         summary = order_state_singleton.get_order_summary(sid)
         self.assertEqual(summary.items[0].quantity, 3)
 
-    def test_add_zero_price_rejected(self):
+    def test_add_zero_tool_price_still_charges_menu_price(self):
+        """#104: pricing comes from the menu, not the tool call -- a $0.0 tool-call price is
+        no longer a rejection. The item is still added, priced at the real menu price for its
+        size (medium Tots = 2.79), not the bogus $0.0 the caller sent."""
         sid = _make_session()
         result = _run(update_order({
             "action": "add", "item_name": "Tots",
             "size": "medium", "quantity": 1, "price": 0.0,
         }, sid))
-        self.assertEqual(result.destination, ToolResultDirection.TO_SERVER)
+        self.assertEqual(result.destination, ToolResultDirection.TO_BOTH)
         summary = order_state_singleton.get_order_summary(sid)
-        self.assertEqual(len(summary.items), 0)
+        self.assertEqual(len(summary.items), 1)
+        self.assertTrue(math.isclose(summary.items[0].price, 2.79, rel_tol=1e-9))
 
-    def test_add_negative_price_rejected(self):
+    def test_add_negative_tool_price_still_charges_menu_price(self):
+        """#104: a negative tool-call price is likewise ignored -- the item is still added,
+        charged the real menu price rather than being rejected or charged the negative value."""
         sid = _make_session()
         result = _run(update_order({
             "action": "add", "item_name": "Tots",
             "size": "medium", "quantity": 1, "price": -1.0,
         }, sid))
-        self.assertEqual(result.destination, ToolResultDirection.TO_SERVER)
+        self.assertEqual(result.destination, ToolResultDirection.TO_BOTH)
+        summary = order_state_singleton.get_order_summary(sid)
+        self.assertEqual(len(summary.items), 1)
+        self.assertTrue(math.isclose(summary.items[0].price, 2.79, rel_tol=1e-9))
+
+    def test_add_wrong_tool_price_charges_menu_price(self):
+        """#104 acceptance criterion: a wrong (but plausible-looking) tool-call price is charged
+        the menu price. The tool sends $999.99 for a medium Tots (real menu price 2.79); the
+        server must charge 2.79, never the tool-supplied value. A mutation that trusts the
+        tool-call price again would charge 999.99 here and fail this assertion."""
+        sid = _make_session()
+        result = _run(update_order({
+            "action": "add", "item_name": "Tots",
+            "size": "medium", "quantity": 1, "price": 999.99,
+        }, sid))
+        self.assertEqual(result.destination, ToolResultDirection.TO_BOTH)
+        summary = order_state_singleton.get_order_summary(sid)
+        self.assertEqual(len(summary.items), 1)
+        self.assertTrue(math.isclose(summary.items[0].price, 2.79, rel_tol=1e-9))
+        self.assertTrue(math.isclose(summary.total, 2.79, rel_tol=1e-9))
+
+    def test_add_null_tool_price_still_charges_menu_price(self):
+        """Rick's #104 review, required item 1: the prompt no longer tells the model to send
+        a price (0ab2119), so `"price": null` is now a likely, well-formed input. It must never
+        crash the add -- `to_decimal(None)` would raise `decimal.InvalidOperation` if compared
+        unconditionally. The item is still added, charged the real menu price."""
+        sid = _make_session()
+        result = _run(update_order({
+            "action": "add", "item_name": "Tots",
+            "size": "medium", "quantity": 1, "price": None,
+        }, sid))
+        self.assertEqual(result.destination, ToolResultDirection.TO_BOTH)
+        summary = order_state_singleton.get_order_summary(sid)
+        self.assertEqual(len(summary.items), 1)
+        self.assertTrue(math.isclose(summary.items[0].price, 2.79, rel_tol=1e-9))
+
+    def test_add_non_numeric_tool_price_still_charges_menu_price(self):
+        """Rick's #104 review, required item 1: a non-numeric tool-call price (e.g. "cheap")
+        must be ignored, not crash the add -- `to_decimal("cheap")` raises
+        `decimal.InvalidOperation` if compared unconditionally. The item is still added,
+        charged the real menu price."""
+        sid = _make_session()
+        result = _run(update_order({
+            "action": "add", "item_name": "Tots",
+            "size": "medium", "quantity": 1, "price": "cheap",
+        }, sid))
+        self.assertEqual(result.destination, ToolResultDirection.TO_BOTH)
+        summary = order_state_singleton.get_order_summary(sid)
+        self.assertEqual(len(summary.items), 1)
+        self.assertTrue(math.isclose(summary.items[0].price, 2.79, rel_tol=1e-9))
+
+    def test_add_omitted_tool_price_still_charges_menu_price(self):
+        """Rick's #104 review, required item 1: an entirely omitted `price` argument (tools.py
+        defaults it to 0.0 via `args.get("price", 0.0)`) is charged the real menu price, same
+        as an explicit $0.0 tool-call price."""
+        sid = _make_session()
+        result = _run(update_order({
+            "action": "add", "item_name": "Tots",
+            "size": "medium", "quantity": 1,
+        }, sid))
+        self.assertEqual(result.destination, ToolResultDirection.TO_BOTH)
+        summary = order_state_singleton.get_order_summary(sid)
+        self.assertEqual(len(summary.items), 1)
+        self.assertTrue(math.isclose(summary.items[0].price, 2.79, rel_tol=1e-9))
+
+    def test_resize_wrong_size_price_carryover_charges_new_size_menu_price(self):
+        """Rick's #104 review, required item 2 (wrong-size carry-over): this persona has no
+        `modify` action, so a resize is remove-then-add. A model that carries the OLD size's
+        tool-call price over when re-adding at a NEW size must still be charged the NEW size's
+        real menu price, never the stale one it echoed back. Cherry Limeade medium (real price
+        2.89) is removed, then re-added as large but with the medium price (2.89) mistakenly
+        repeated; the add must charge the large menu price (3.39), not 2.89."""
+        sid = _make_session()
+        _run(update_order({
+            "action": "add", "item_name": "Cherry Limeade",
+            "size": "medium", "quantity": 1, "price": 2.89,
+        }, sid))
+        _run(update_order({
+            "action": "remove", "item_name": "Cherry Limeade",
+            "size": "medium", "quantity": 1,
+        }, sid))
+        result = _run(update_order({
+            "action": "add", "item_name": "Cherry Limeade",
+            "size": "large", "quantity": 1, "price": 2.89,
+        }, sid))
+        self.assertEqual(result.destination, ToolResultDirection.TO_BOTH)
+        summary = order_state_singleton.get_order_summary(sid)
+        self.assertEqual(len(summary.items), 1)
+        self.assertTrue(math.isclose(summary.total, 3.39, rel_tol=1e-9))
+        self.assertTrue(math.isclose(summary.finalTotal, 3.6612, rel_tol=1e-9))
 
     def test_missing_required_argument_returns_graceful_error(self):
         """swigerb/SonicAIDriveThru#36: a malformed tool call missing a required
@@ -487,7 +582,7 @@ class NotOnMenuRejectionTests(unittest.TestCase):
         sid = _make_session()
         result = _run(update_order({
             "action": "add", "item_name": "SuperSONIC Double Cheeseburger Combo",
-            "size": "standard", "quantity": 1, "price": 8.49,
+            "size": "standard", "quantity": 1, "price": 10.19,
         }, sid))
         self.assertEqual(result.destination, ToolResultDirection.TO_BOTH)
         summary = order_state_singleton.get_order_summary(sid)
@@ -513,7 +608,7 @@ class UpdateOrderRemoveTests(unittest.TestCase):
         sid = _make_session()
         _run(update_order({
             "action": "add", "item_name": "Cherry Limeade",
-            "size": "medium", "quantity": 2, "price": 2.99,
+            "size": "medium", "quantity": 2, "price": 2.89,
         }, sid))
         result = _run(update_order({
             "action": "remove", "item_name": "Cherry Limeade",
@@ -566,7 +661,7 @@ class UpdateOrderQuantityLimitTests(unittest.TestCase):
         }, sid))
         result = _run(update_order({
             "action": "add", "item_name": "SONIC Cheeseburger",
-            "size": "standard", "quantity": 2, "price": 5.99,
+            "size": "standard", "quantity": 2, "price": 5.29,
         }, sid))
         self.assertEqual(result.destination, ToolResultDirection.TO_SERVER)
         summary = order_state_singleton.get_order_summary(sid)
@@ -579,7 +674,7 @@ class UpdateOrderQuantityLimitTests(unittest.TestCase):
             order_state_singleton.handle_order_update(sid, "add", f"Item{i}", "standard", 1, 1.0)
         result = _run(update_order({
             "action": "add", "item_name": "SONIC Cheeseburger",
-            "size": "standard", "quantity": 1, "price": 1.0,
+            "size": "standard", "quantity": 1, "price": 5.29,
         }, sid))
         self.assertEqual(result.destination, ToolResultDirection.TO_SERVER)
         self.assertIn("big order", result.text.lower())
@@ -596,7 +691,7 @@ class GetOrderTests(unittest.TestCase):
 
     def test_get_order_with_items(self):
         sid = _make_session()
-        order_state_singleton.handle_order_update(sid, "add", "Cherry Limeade", "medium", 2, 2.99)
+        order_state_singleton.handle_order_update(sid, "add", "Cherry Limeade", "medium", 2, 2.89)
         result = _run(get_order({}, sid))
         self.assertIn("Cherry Limeade", result.text)
         self.assertRegex(result.text, r"\d+\.\d{2}")
@@ -616,7 +711,7 @@ class ResetOrderTests(unittest.TestCase):
 
     def test_reset_clears_all_items(self):
         sid = _make_session()
-        order_state_singleton.handle_order_update(sid, "add", "Cherry Limeade", "medium", 2, 2.99)
+        order_state_singleton.handle_order_update(sid, "add", "Cherry Limeade", "medium", 2, 2.89)
         order_state_singleton.handle_order_update(sid, "add", "Tots", "medium", 1, 2.79)
         result = _run(reset_order({}, sid))
         self.assertEqual(result.destination, ToolResultDirection.TO_BOTH)
@@ -643,17 +738,18 @@ class TaxCalculationTests(unittest.TestCase):
 
     def test_tax_rate_applied_correctly(self):
         sid = _make_session()
-        order_state_singleton.handle_order_update(sid, "add", "Tots", "medium", 1, 10.00)
+        order_state_singleton.handle_order_update(sid, "add", "Tots", "medium", 1, 2.79)
         summary = order_state_singleton.get_order_summary(sid)
-        self.assertTrue(math.isclose(summary.tax, 0.80, rel_tol=1e-9))
-        self.assertTrue(math.isclose(summary.finalTotal, 10.80, rel_tol=1e-9))
+        expected_tax = 2.79 * 0.08
+        self.assertTrue(math.isclose(summary.tax, expected_tax, rel_tol=1e-9))
+        self.assertTrue(math.isclose(summary.finalTotal, 2.79 + expected_tax, rel_tol=1e-9))
 
     def test_tax_on_multiple_items(self):
         sid = _make_session()
-        order_state_singleton.handle_order_update(sid, "add", "Cherry Limeade", "medium", 2, 2.99)
+        order_state_singleton.handle_order_update(sid, "add", "Cherry Limeade", "medium", 2, 2.89)
         order_state_singleton.handle_order_update(sid, "add", "Tots", "medium", 1, 2.79)
         summary = order_state_singleton.get_order_summary(sid)
-        expected_subtotal = (2 * 2.99) + 2.79
+        expected_subtotal = (2 * 2.89) + 2.79
         expected_tax = expected_subtotal * 0.08
         self.assertTrue(math.isclose(summary.tax, expected_tax, rel_tol=1e-9))
 
@@ -661,10 +757,10 @@ class TaxCalculationTests(unittest.TestCase):
     def test_tax_on_multiple_items_during_happy_hour(self, _mock_hh):
         """Tax is computed on the discounted subtotal during happy hour."""
         sid = _make_session()
-        order_state_singleton.handle_order_update(sid, "add", "Cherry Limeade", "medium", 2, 2.99)
+        order_state_singleton.handle_order_update(sid, "add", "Cherry Limeade", "medium", 2, 2.89)
         order_state_singleton.handle_order_update(sid, "add", "Tots", "medium", 1, 2.79)
         summary = order_state_singleton.get_order_summary(sid)
-        expected_subtotal = (2 * 2.99 * 0.5) + 2.79
+        expected_subtotal = (2 * 2.89 * 0.5) + 2.79
         expected_tax = expected_subtotal * 0.08
         self.assertTrue(math.isclose(summary.total, expected_subtotal, rel_tol=1e-9))
         self.assertTrue(math.isclose(summary.tax, expected_tax, rel_tol=1e-9))
@@ -681,7 +777,7 @@ class UpsellHintTests(unittest.TestCase):
         sid = _make_session()
         result = _run(update_order({
             "action": "add", "item_name": "Sonic Cheeseburger",
-            "size": "standard", "quantity": 1, "price": 5.99,
+            "size": "standard", "quantity": 1, "price": 5.29,
         }, sid))
         # Should contain upsell about combo
         self.assertTrue("combo" in result.text.lower() or "upsell" in result.text.lower())
@@ -690,7 +786,7 @@ class UpsellHintTests(unittest.TestCase):
         sid = _make_session()
         result = _run(update_order({
             "action": "add", "item_name": "Cherry Limeade",
-            "size": "medium", "quantity": 1, "price": 2.99,
+            "size": "medium", "quantity": 1, "price": 2.89,
         }, sid))
         self.assertTrue(
             "flavor" in result.text.lower()
@@ -715,10 +811,10 @@ class UpsellHintTests(unittest.TestCase):
         sid = _make_session()
         # Add side+drink first so combo is complete (no missing items hint)
         order_state_singleton.handle_order_update(sid, "add", "Tots", "medium", 1, 2.79)
-        order_state_singleton.handle_order_update(sid, "add", "Cherry Limeade", "medium", 1, 2.99)
+        order_state_singleton.handle_order_update(sid, "add", "Cherry Limeade", "medium", 1, 2.89)
         result = _run(update_order({
             "action": "add", "item_name": "SuperSONIC Double Cheeseburger Combo",
-            "size": "standard", "quantity": 1, "price": 8.49,
+            "size": "standard", "quantity": 1, "price": 10.19,
         }, sid))
         # Should mention upgrade or upsell
         self.assertTrue(
@@ -736,7 +832,7 @@ class ComboValidationInToolsTests(unittest.TestCase):
         sid = _make_session()
         result = _run(update_order({
             "action": "add", "item_name": "SuperSONIC Double Cheeseburger Combo",
-            "size": "standard", "quantity": 1, "price": 8.49,
+            "size": "standard", "quantity": 1, "price": 10.19,
         }, sid))
         self.assertIn("SYSTEM HINT", result.text)
         self.assertIn("side", result.text.lower())
@@ -745,10 +841,10 @@ class ComboValidationInToolsTests(unittest.TestCase):
     def test_complete_combo_no_hint(self):
         sid = _make_session()
         order_state_singleton.handle_order_update(sid, "add", "Tots", "medium", 1, 2.79)
-        order_state_singleton.handle_order_update(sid, "add", "Cherry Limeade", "medium", 1, 2.99)
+        order_state_singleton.handle_order_update(sid, "add", "Cherry Limeade", "medium", 1, 2.89)
         result = _run(update_order({
             "action": "add", "item_name": "SuperSONIC Double Cheeseburger Combo",
-            "size": "standard", "quantity": 1, "price": 8.49,
+            "size": "standard", "quantity": 1, "price": 10.19,
         }, sid))
         self.assertNotIn("SYSTEM HINT", result.text)
 
@@ -937,16 +1033,16 @@ class ExtrasValidationTests(unittest.TestCase):
         sid = _make_session()
         result = _run(update_order({
             "action": "add", "item_name": "Flavor Add-In",
-            "size": "standard", "quantity": 1, "price": 0.79,
+            "size": "standard", "quantity": 1, "price": 0.3,
         }, sid))
         self.assertEqual(result.destination, ToolResultDirection.TO_SERVER)
 
     def test_extra_allowed_with_drink_in_order(self):
         sid = _make_session()
-        order_state_singleton.handle_order_update(sid, "add", "Cherry Limeade", "medium", 1, 2.99)
+        order_state_singleton.handle_order_update(sid, "add", "Cherry Limeade", "medium", 1, 2.89)
         result = _run(update_order({
             "action": "add", "item_name": "Flavor Add-In",
-            "size": "standard", "quantity": 1, "price": 0.79,
+            "size": "standard", "quantity": 1, "price": 0.3,
         }, sid))
         self.assertEqual(result.destination, ToolResultDirection.TO_BOTH)
 
@@ -955,7 +1051,7 @@ class ExtrasValidationTests(unittest.TestCase):
         order_state_singleton.handle_order_update(sid, "add", "Tots", "medium", 1, 2.79)
         result = _run(update_order({
             "action": "add", "item_name": "Flavor Add-In",
-            "size": "standard", "quantity": 1, "price": 0.79,
+            "size": "standard", "quantity": 1, "price": 0.3,
         }, sid))
         self.assertEqual(result.destination, ToolResultDirection.TO_SERVER)
 
@@ -1011,11 +1107,11 @@ class EdgeCaseTests(unittest.TestCase):
         sid = _make_session()
         _run(update_order({
             "action": "add", "item_name": "Cherry Limeade",
-            "size": "medium", "quantity": 1, "price": 2.99,
+            "size": "medium", "quantity": 1, "price": 2.89,
         }, sid))
         _run(update_order({
             "action": "add", "item_name": "Cherry Limeade",
-            "size": "large", "quantity": 1, "price": 3.49,
+            "size": "large", "quantity": 1, "price": 3.39,
         }, sid))
         summary = order_state_singleton.get_order_summary(sid)
         self.assertEqual(len(summary.items), 2)
@@ -1069,7 +1165,7 @@ class HappyHourBannerWordingTests(unittest.TestCase):
         sid = _make_session()
         result = _run(update_order({
             "action": "add", "item_name": "Cherry Limeade",
-            "size": "medium", "quantity": 1, "price": 2.99,
+            "size": "medium", "quantity": 1, "price": 2.89,
         }, sid))
         self.assertIn(self.NEW_BANNER, result.text)
 
@@ -1077,7 +1173,7 @@ class HappyHourBannerWordingTests(unittest.TestCase):
         sid = _make_session()
         _run(update_order({
             "action": "add", "item_name": "Cherry Limeade",
-            "size": "medium", "quantity": 1, "price": 2.99,
+            "size": "medium", "quantity": 1, "price": 2.89,
         }, sid))
         result = _run(get_order({}, sid))
         self.assertIn(self.NEW_BANNER, result.text)
@@ -1088,7 +1184,7 @@ class HappyHourBannerWordingTests(unittest.TestCase):
             sid = _make_session()
             result = _run(update_order({
                 "action": "add", "item_name": "Cherry Limeade",
-                "size": "medium", "quantity": 1, "price": 2.99,
+                "size": "medium", "quantity": 1, "price": 2.89,
             }, sid))
             self.assertNotIn("HAPPY HOUR", result.text)
         self._hh_patcher.start()
