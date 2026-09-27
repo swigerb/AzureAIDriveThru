@@ -7,7 +7,7 @@ import type { PersonasIndexResponse, PersonaDetail } from "@/types/persona";
 
 // Issue #80 F1 (design doc §5.1/§5.2, ADR-001 decisions 1/2): PersonaProvider fetches
 // `/api/personas` + `/api/personas/{id}` at startup, resolves the session's persona (query param >
-// last localStorage choice > catalog default > bundled Sonic fallback), applies its theme/title/
+// last localStorage choice > catalog default > bundled default-persona fallback), applies its theme/title/
 // favicon, and merges its strings into i18next -- all BEFORE any realtime connection is made.
 
 const SECOND_INDEX: PersonasIndexResponse = {
@@ -81,7 +81,7 @@ afterEach(() => {
 });
 
 describe("PersonaProvider", () => {
-    it("renders the bundled Sonic fallback immediately, before any fetch resolves", () => {
+    it("renders the bundled default-persona fallback immediately, before any fetch resolves", () => {
         vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {}))); // never resolves
         renderProvider();
 
@@ -163,7 +163,7 @@ describe("PersonaProvider", () => {
         });
 
         await waitFor(() => expect(screen.getByTestId("error")).not.toHaveTextContent(""));
-        // Stays on Sonic rather than showing a half-applied/blank persona.
+        // Stays on the default persona rather than showing a half-applied/blank one.
         expect(screen.getByTestId("current-id")).toHaveTextContent("sonic");
     });
 

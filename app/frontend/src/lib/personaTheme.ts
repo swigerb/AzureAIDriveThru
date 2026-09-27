@@ -11,7 +11,7 @@
  * documents today (`primary`, `secondary`, `background`, `foreground`, each an "H S% L%" triplet
  * with no `hsl()` wrapper -- exactly how persona.json and index.css's existing `--brand-primary`/
  * `--brand-secondary`/`--brand-background`/`--brand-foreground` tokens already store them). `accents` is this
- * slice's own addition: every other brand color Sonic's components had hard-coded as literal hex
+ * slice's own addition: every other brand color this persona's components had hard-coded as literal hex
  * (87 of them per the design doc's diff, ~96 by this repo's current count) collapses into these
  * named slots. `accents` isn't in persona.schema.json yet -- promoting it there, if a second
  * persona needs it, is a follow-up for whoever picks up F1/F3+ (and for Summer, who owns the
@@ -49,7 +49,7 @@ export interface PersonaAccentPalette {
     secondaryStrong: string;
     /** Shade of `secondary` legible on dark surfaces (dark-mode text/badges). */
     secondaryTintOnDark: string;
-    /** Accent hue distinct from primary/secondary (Sonic's yellow). */
+    /** Accent hue distinct from primary/secondary (the default persona's yellow). */
     accent: string;
     /** Lighter shade of `accent`, used as a gradient endpoint. */
     accentLight: string;
@@ -80,7 +80,7 @@ export interface PersonaTheme {
 }
 
 /**
- * Sonic's theme, as the default (and, until #78/#79 land, only) persona. Every value here must
+ * The default persona's theme (and, until #78/#79 land, the only one). Every value here must
  * match the corresponding hard-coded default already baked into `index.css`'s `:root`/`.dark`
  * blocks -- `personaTheme.test.ts` guards that the two never drift apart.
  */
@@ -122,10 +122,10 @@ export const SONIC_THEME: PersonaTheme = {
  * else should call `style.setProperty` for them, so this map is the single source of truth for the
  * variable names on both sides.
  *
- * Names are roles (`primary`/`secondary`/`accent`/...), not Sonic's colors -- a future persona's
+ * Names are roles (`primary`/`secondary`/`accent`/...), not brand colors -- a future persona's
  * `primary` could be any hue and would still write through the same `--brand-primary` variable.
  * Only the *values* SONIC_THEME supplies happen to be red today (PR #91 review round 2: the
- * round-1 names, `--brand-red`/`--brand-blue`/`--brand-yellow`, baked Sonic's colors into the
+ * round-1 names, `--brand-red`/`--brand-blue`/`--brand-yellow`, baked the default persona's colors into the
  * variable names themselves, which would mislabel every other persona).
  */
 export const PERSONA_THEME_CSS_VARS = {
@@ -221,7 +221,7 @@ const DARK_THEME_STYLE_ELEMENT_ID = "persona-dark-theme-overrides";
  * given persona theme's dark-mode overrides, falling back to the theme's own light values for any
  * key a persona doesn't override -- so a persona with no `dark` block at all (both fixture personas
  * in `app/backend/tests/fixtures/personas` today) still renders coherently in dark mode instead of
- * leaking a previous persona's dark colors or Sonic's.
+ * leaking a previous persona's dark colors or the default persona's.
  *
  * A `<style>` tag (not inline styles) is required here specifically so the `.dark` selector keeps
  * normal cascade behavior -- see `PERSONA_THEME_DARK_CSS_VARS`'s doc comment for why inline styles
@@ -279,14 +279,14 @@ function hslToHex(h: number, s: number, l: number): string {
 
 /**
  * Derives a full `PersonaAccentPalette` from just a persona's four base HSL roles (issue #80 F1/F3,
- * design doc §4.2: `accents` isn't in `persona.schema.json`, so any persona besides Sonic needs one
+ * design doc §4.2: `accents` isn't in `persona.schema.json`, so any non-default persona needs one
  * synthesized rather than authored). Not meant to be a perfect design-system generator -- just a
  * reasonable, deterministic set of tints/shades so a second persona's illustrations, gradients, and
  * dark-mode surfaces aren't flatly monochrome, without requiring a color-math dependency.
  *
- * Sonic itself never calls this: `resolvePersonaTheme` below keeps returning `SONIC_THEME`'s exact,
- * hand-tuned hex constants for persona id `"sonic"` so nothing here can regress F2's byte-identical
- * guarantee (`personaTheme.test.ts`).
+ * The default persona itself never calls this: `resolvePersonaTheme` below keeps returning
+ * `SONIC_THEME`'s exact, hand-tuned hex constants for that persona's id so nothing here can
+ * regress F2's byte-identical guarantee (`personaTheme.test.ts`).
  */
 export function deriveAccents(colors: PersonaBaseColors): PersonaAccentPalette {
     const primary = parseHslTriplet(colors.primary);
@@ -317,11 +317,11 @@ export function deriveAccents(colors: PersonaBaseColors): PersonaAccentPalette {
 /**
  * Builds a full `PersonaTheme` (light accents + optional dark overrides + font) from the base wire
  * shape `/api/personas/<id>` returns (`ui.theme.light`/`ui.theme.dark`, each just the four HSL
- * roles -- see design doc §5.2 and `personas/sonic/persona.json`). Persona id `"sonic"` always
+ * roles -- see design doc §5.2 and `personas/<id>/persona.json`). The default persona's id always
  * resolves to the literal `SONIC_THEME` (same object identity for `accents`/`font`) so this never
  * regresses F2's pixel-identical guarantee; any other persona id gets `deriveAccents` and a
- * `font` fallback of Sonic's own (until a persona pack declares its own webfont, which is out of
- * scope here).
+ * `font` fallback of the default persona's own (until a persona pack declares its own webfont,
+ * which is out of scope here).
  */
 export interface PersonaWireTheme {
     light: PersonaBaseColors & { accents?: Partial<PersonaAccentPalette> };

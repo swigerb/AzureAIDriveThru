@@ -186,7 +186,7 @@ layer(base);
         /* Issue #80 F1/F3 (Rick's review): these nine roles derive from `--brand-x-dark` (only
            ever set by `lib/personaTheme.ts::applyDarkTheme`'s injected `<style>` -- see that
            function's doc comment for why an inline style couldn't do this), falling back to the
-           exact literals this block used to hard-code so Sonic's rendering is unchanged before a
+           exact literals this block used to hard-code so the default persona's rendering is unchanged before a
            persona theme has loaded. This is the fix for the dark-mode hero-card contrast bug: the
            old literals here never referenced a persona's colors at all, so `--primary`/`--ring`/
            `--chart-1` (and hero's `bg-white/80` panels, fixed separately in App.tsx) stayed a fixed

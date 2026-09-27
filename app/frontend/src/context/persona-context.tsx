@@ -9,17 +9,17 @@ const STORAGE_KEY = "personaId";
 const QUERY_PARAM = "persona";
 
 /**
- * Sonic's real content, hard-coded here as this app's bundled default/fallback (issue #80 F1).
+ * The default persona's real content, hard-coded here as this app's bundled default/fallback
+ * (issue #80 F1).
  *
  * This is NOT a "frontend copy" of the kind #80's drift guard retires (design doc §9, issue #80
- * comment 3): it isn't a duplicated FILE that could drift from `personas/sonic/persona.json` bytes
+ * comment 3): it isn't a duplicated FILE that could drift from the pack's own persona.json bytes
  * -- it's the minimum data `PersonaProvider` needs to render something coherent the instant the
  * app mounts, before `/api/personas` has had a chance to respond (or if it never does -- e.g. an
  * existing test that renders `<RootApp />` without mocking `fetch`, or a genuinely offline dev
  * session). Once the live fetch resolves, its response always wins and overwrites this. Every
- * value below is copied verbatim from `personas/sonic/persona.json` so there's no observable
- * difference between "fallback" and "freshly fetched" for Sonic -- the one persona this app has
- * always shipped with.
+ * value below is copied verbatim from the shipped pack so there's no observable difference
+ * between "fallback" and "freshly fetched" for the persona this app has always shipped with.
  */
 const FALLBACK_ID = "sonic";
 const FALLBACK_SUMMARY: PersonaSummary = {
@@ -115,7 +115,7 @@ function initialPersonaId(defaultId: string): string {
 /**
  * Fetches `/api/personas` + `/api/personas/{id}` at startup (design doc §5.2), resolves the
  * session's persona BEFORE any realtime connection is made (`?persona=` > last localStorage
- * choice > the catalog's declared default > the bundled Sonic fallback -- ADR-001 decision 1: one
+ * choice > the catalog's declared default > the bundled default-persona fallback -- ADR-001 decision 1: one
  * URL, no per-request routing), applies its theme (light + dark, `lib/personaTheme.ts`), sets
  * `document.title`/the favicon, and merges its `ui.strings` into i18next.
  *

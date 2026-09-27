@@ -8,7 +8,7 @@ import type { PersonaDetail } from "@/types/persona";
 // of reading a bundled `src/data/menuItems.json` copy. `usePersonaContext` is mocked here so each
 // test controls `current.menuUrl` directly without spinning up a full PersonaProvider fetch chain.
 
-const context = vi.hoisted(() => ({ menuUrl: "/personas/sonic/menu.json?v=test" }));
+const context = vi.hoisted(() => ({ menuUrl: "/personas/test-alpha/menu.json?v=test" }));
 vi.mock("@/context/persona-context", () => ({
     usePersonaContext: () => ({ current: { menuUrl: context.menuUrl } as PersonaDetail })
 }));

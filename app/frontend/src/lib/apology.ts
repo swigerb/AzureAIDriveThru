@@ -17,7 +17,7 @@ export function apologyLanguage(language: string | undefined | null): ApologyLan
 /**
  * Builds the persona-pack apology clip URL for `language`, substituting `{lang}` in the pack's
  * `ui.assets.apologyClip` template (e.g. `"assets/audio/apology-{lang}.wav"`,
- * `personas/sonic/persona.json`) and routing it through `personaAssetUrl`. Returns `null` when a
+ * `personas/<id>/persona.json`) and routing it through `personaAssetUrl`. Returns `null` when a
  * persona declares no `apologyClip` at all (the field is optional -- `_UiAssets.apologyClip: str |
  * None` in `persona_loader.py`) so callers can skip playing anything rather than requesting a
  * clip that doesn't exist.

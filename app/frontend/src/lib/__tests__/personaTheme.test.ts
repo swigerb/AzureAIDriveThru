@@ -13,8 +13,8 @@ import {
     type PersonaWireTheme
 } from "@/lib/personaTheme";
 
-// Guards issue #80 F2 (docs/persona-architecture.md §9): runtime theming groundwork. Sonic must
-// stay the default theme and applying it must not change any value from what index.css already
+// Guards issue #80 F2 (docs/persona-architecture.md §9): runtime theming groundwork. The default
+// persona must stay the default theme and applying it must not change any value from what index.css already
 // hard-codes -- these tests would fail if a future edit let SONIC_THEME and index.css's `:root`/
 // `.dark` defaults drift apart, which is the one way this "seam" could silently break the "looks
 // IDENTICAL today" requirement.
@@ -51,7 +51,7 @@ describe("SONIC_THEME", () => {
         });
     });
 
-    it("uses the Sonic font already imported by index.css", () => {
+    it("uses the default persona's font already imported by index.css", () => {
         expect(SONIC_THEME.font.family).toBe("Nunito Sans");
         expect(SONIC_THEME.font.importUrl).toMatch(/^https:\/\/fonts\.googleapis\.com\//);
     });
@@ -185,7 +185,7 @@ describe("applyDarkTheme", () => {
     });
 });
 
-// Issue #80 F1/F3: any persona besides Sonic needs its accent palette synthesized from just its
+// Issue #80 F1/F3: any non-default persona needs its accent palette synthesized from just its
 // four base HSL roles, since `accents` isn't in persona.schema.json yet.
 describe("deriveAccents", () => {
     const colors: PersonaBaseColors = {
@@ -219,23 +219,23 @@ describe("deriveAccents", () => {
 });
 
 // Issue #80 F1/F3: resolvePersonaTheme is the seam PersonaProvider calls with the wire theme
-// `/api/personas/<id>` returns -- Sonic must keep resolving to the literal SONIC_THEME object
-// (same identity) so F2's byte-identical guarantee can never regress via this path.
+// `/api/personas/<id>` returns -- the default persona must keep resolving to the literal SONIC_THEME
+// object (same identity) so F2's byte-identical guarantee can never regress via this path.
 describe("resolvePersonaTheme", () => {
-    it("resolves persona id 'sonic' to the literal SONIC_THEME object, ignoring the wire theme given", () => {
+    it("resolves the default persona id to the literal SONIC_THEME object, ignoring the wire theme given", () => {
         const wireTheme: PersonaWireTheme = {
             light: { primary: "0 0% 0%", secondary: "0 0% 0%", background: "0 0% 0%", foreground: "0 0% 0%" }
         };
         expect(resolvePersonaTheme("sonic", wireTheme)).toBe(SONIC_THEME);
     });
 
-    it("derives accents for a non-Sonic persona that supplies none", () => {
+    it("derives accents for a non-default persona that supplies none", () => {
         const wireTheme: PersonaWireTheme = {
             light: { primary: "200 80% 50%", secondary: "40 60% 40%", background: "0 0% 98%", foreground: "0 0% 10%" }
         };
         const theme = resolvePersonaTheme("test-alpha", wireTheme);
         expect(theme.light.accents).toEqual(deriveAccents(wireTheme.light));
-        expect(theme.font).toBe(SONIC_THEME.font); // no font declared -- falls back to Sonic's
+        expect(theme.font).toBe(SONIC_THEME.font); // no font declared -- falls back to the default persona's
     });
 
     it("lets a persona override individual accent keys without authoring the whole palette", () => {

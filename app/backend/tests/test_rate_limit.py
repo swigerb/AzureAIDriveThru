@@ -584,7 +584,10 @@ class ApologyClipTests(unittest.TestCase):
         for lang in self.gen.APOLOGY_PHRASES:
             with self.subTest(lang):
                 path = self.gen.clip_path(lang)
-                self.assertEqual(path.parent, self.REPO / "app" / "frontend" / "public" / "audio")
+                # Issue #80 F7: the clips now live in the persona pack (single source of truth --
+                # the frontend's own copies were retired once App.tsx started reading
+                # personaAssetUrl()/apologyClipUrl() from the pack instead).
+                self.assertEqual(path.parent, self.REPO / "personas" / "sonic" / "assets" / "audio")
                 with wave.open(str(path), "rb") as wav:
                     self.assertEqual((wav.getnchannels(), wav.getsampwidth(), wav.getframerate()), (1, 2, 24_000))
                     seconds = wav.getnframes() / wav.getframerate()
