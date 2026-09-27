@@ -1,0 +1,149 @@
+{
+  "description": "Golden category table for this brand's persona pack (issue #79), mirroring tests/conformance/testdata/golden-menu-categories.json's shape (the reference persona). Created preemptively per Rick's #79 review note -- not yet consumed by any C# fixture as of this PR (see ConformancePersonas.cs's doc comment). Every menu/menuItems.json entry in this pack mapped to comboSlot (always \"none\" -- this brand has no combos, persona.json bundles.nameMarkers is empty) and happyHourDiscounted (true for every item in persona.json extras.allowedBaseCategories -- 'signature lattes' and 'cold beverages' -- false otherwise, per Brian's decision that happy hour and extras share the same two eligible categories). requiresMachine is null for every item (persona.json machines is {} -- this brand has no machine-availability gating). size/unitPrice (quoted exact-decimal strings) are the representative size: 'medium' when the item has small/medium/large, else 'standard'. Source of truth: this pack's persona.json (pricing.happyHour, extras.allowedBaseCategories/blockedBaseCategories) and this pack's menu/menuItems.json.",
+  "items": [
+    {
+      "item": "Caramel Craze Latte",
+      "category": "Signature Lattes",
+      "comboSlot": "none",
+      "happyHourDiscounted": true,
+      "requiresMachine": null,
+      "size": "Medium",
+      "unitPrice": "4.99"
+    },
+    {
+      "item": "Cocoa Mocha Latte",
+      "category": "Signature Lattes",
+      "comboSlot": "none",
+      "happyHourDiscounted": true,
+      "requiresMachine": null,
+      "size": "Medium",
+      "unitPrice": "5.09"
+    },
+    {
+      "item": "Toasted Almond Cold Foam Latte",
+      "category": "Signature Lattes",
+      "comboSlot": "none",
+      "happyHourDiscounted": true,
+      "requiresMachine": null,
+      "size": "Medium",
+      "unitPrice": "5.29"
+    },
+    {
+      "item": "Original Cold Brew",
+      "category": "Cold Beverages",
+      "comboSlot": "none",
+      "happyHourDiscounted": true,
+      "requiresMachine": null,
+      "size": "Medium",
+      "unitPrice": "4.29"
+    },
+    {
+      "item": "Strawberry Dragonfruit Refresher",
+      "category": "Cold Beverages",
+      "comboSlot": "none",
+      "happyHourDiscounted": true,
+      "requiresMachine": null,
+      "size": "Medium",
+      "unitPrice": "3.79"
+    },
+    {
+      "item": "Brown Sugar Cream Cold Brew",
+      "category": "Cold Beverages",
+      "comboSlot": "none",
+      "happyHourDiscounted": true,
+      "requiresMachine": null,
+      "size": "Medium",
+      "unitPrice": "4.79"
+    },
+    {
+      "item": "Glazed Donut",
+      "category": "Donuts & Bakery",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "requiresMachine": null,
+      "size": "Standard",
+      "unitPrice": "1.49"
+    },
+    {
+      "item": "Boston Kreme Donut",
+      "category": "Donuts & Bakery",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "requiresMachine": null,
+      "size": "Standard",
+      "unitPrice": "1.79"
+    },
+    {
+      "item": "Everything Bagel & Cream Cheese",
+      "category": "Donuts & Bakery",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "requiresMachine": null,
+      "size": "Standard",
+      "unitPrice": "3.29"
+    },
+    {
+      "item": "MUNCHKINS\u00ae Donut Hole Treats (10 ct)",
+      "category": "Donuts & Bakery",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "requiresMachine": null,
+      "size": "Standard",
+      "unitPrice": "3.99"
+    },
+    {
+      "item": "Bacon Egg & Cheese on Croissant",
+      "category": "Breakfast Sandwiches",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "requiresMachine": null,
+      "size": "Standard",
+      "unitPrice": "4.99"
+    },
+    {
+      "item": "Power Breakfast Sandwich",
+      "category": "Breakfast Sandwiches",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "requiresMachine": null,
+      "size": "Standard",
+      "unitPrice": "5.49"
+    },
+    {
+      "item": "Turkey Sausage Wake-Up Wrap",
+      "category": "Breakfast Sandwiches",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "requiresMachine": null,
+      "size": "Standard",
+      "unitPrice": "2.59"
+    },
+    {
+      "item": "Flavor Swirl Add-On",
+      "category": "Extras",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "requiresMachine": null,
+      "size": "Standard",
+      "unitPrice": "0.75"
+    },
+    {
+      "item": "Whipped Cream",
+      "category": "Extras",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "requiresMachine": null,
+      "size": "Standard",
+      "unitPrice": "0.50"
+    },
+    {
+      "item": "Extra Espresso Shot",
+      "category": "Extras",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "requiresMachine": null,
+      "size": "Standard",
+      "unitPrice": "1.00"
+    }
+  ]
+}
