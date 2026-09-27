@@ -1,5 +1,6 @@
 using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Conformance.Fakes;
 using Conformance.Harness;
 using Conformance.Tests.Scenarios.Ordering;
@@ -18,9 +19,17 @@ namespace Conformance.Tests;
 /// personas/, today just "sonic") and the fixture pack under
 /// <see cref="RepoPaths.FixturePersonasDirectory"/> (test-alpha/test-beta) -- rather than one
 /// hand-written test per persona, so a future real pack (#78/#79) or a new fixture persona
-/// automatically gets a smoke row once <see cref="PersonaSmokeExpectations.For"/> below is taught
-/// its expectations. <see cref="PersonaSmokeCoverageTests"/> is the companion scaffold that fails
-/// loudly if a discovered pack is missing from either Theory's own data source.
+/// automatically gets a smoke row once it has its own
+/// tests/conformance/testdata/personas/&lt;id&gt;/smoke.json (<see cref="PersonaSmokeExpectations.For"/>).
+/// <see cref="PersonaSmokeCoverageTests"/> is the companion scaffold that fails loudly if a
+/// discovered pack is missing from either Theory's own data source.
+///
+/// Rick's PR #108 second review: this file (and <see cref="PersonaSmokeExpectations"/>,
+/// <see cref="PersonaSmokeScenario"/>, <see cref="PersonaSmokeCoverageTests"/>) is shared C# and
+/// so carries NO persona-specific literal -- no pack id, no greeting text, no menu item name --
+/// of its own; every persona-specific value used below comes from that persona's own
+/// smoke.json, read fresh per call. This lets a data-only pack PR (#111/#112) add its own
+/// persona's smoke coverage without touching this repo's shared test code at all.
 ///
 /// "Happy-hour flag honored" is covered by a DIFFERENT, dedicated file
 /// (<c>PersonaHappyHourConformanceTests.cs</c>) rather than inline here: proving it needs a
@@ -41,44 +50,55 @@ internal static class PersonaSmokeExpectations
         decimal OrderableItemPrice);
 
     /// <summary>
-    /// One entry per persona id this smoke Theory knows how to exercise. Deliberately NOT a
-    /// generic/fallback lookup: a discovered pack with no entry here fails loudly (see
-    /// <see cref="For"/>) rather than silently skipping its own assertions, so adding a new real
-    /// or fixture pack (#78/#79) forces its own PR to also teach this map its expectations.
+    /// MONEY CONTRACT: <see cref="Expectation.OrderableItemPrice"/> is stored as a quoted, exact
+    /// decimal string in each persona's own smoke.json (same convention as
+    /// GoldenOrderPricingData.cs), so <see cref="JsonNumberHandling.AllowReadingFromString"/> lets
+    /// it deserialize straight into a `decimal` with no intermediate `double`.
     /// </summary>
-    private static readonly IReadOnlyDictionary<string, Expectation> ById = new Dictionary<string, Expectation>
+    private static readonly JsonSerializerOptions Options = new()
     {
-        ["sonic"] = new(
-            GreetingSubstring: "Welcome to Sonic Drive-In! What can I get started for you today?",
-            SearchableOwnItem: "Tots",
-            OrderableItemName: "Tots",
-            OrderableItemSize: "medium",
-            OrderableItemPrice: 2.79m),
-        ["test-alpha"] = new(
-            GreetingSubstring: "Welcome to Test Alpha Drive-In! What can I get started for you?",
-            SearchableOwnItem: "Alpha Burger",
-            OrderableItemName: "Alpha Burger",
-            OrderableItemSize: "small",
-            OrderableItemPrice: 3.99m),
-        ["test-beta"] = new(
-            GreetingSubstring: "Welcome to Test Beta Burger Co.! What can I get started for you?",
-            SearchableOwnItem: "Beta Double Burger",
-            OrderableItemName: "Beta Double Burger",
-            OrderableItemSize: "regular",
-            OrderableItemPrice: 4.49m),
+        PropertyNameCaseInsensitive = true,
+        NumberHandling = JsonNumberHandling.AllowReadingFromString,
     };
 
+    /// <summary>
+    /// Rick's PR #108 second review: reads one persona's smoke expectations from its OWN data
+    /// file -- tests/conformance/testdata/personas/&lt;id&gt;/smoke.json (<see
+    /// cref="RepoPaths.PersonaSmokeDataPath"/>) -- instead of a hand-copied literal dictionary in
+    /// this shared C# file. This is deliberate: a data-only pack PR (#111/#112) must be able to
+    /// add a new persona's smoke coverage by adding ONE file under testdata/personas/, without
+    /// touching PersonaSmokeTests.cs (which therefore carries no persona-specific literal --
+    /// no pack name, no greeting text, no menu item -- at all). A discovered pack with no file
+    /// here fails loudly (see the message below) rather than silently skipping its own
+    /// assertions, so adding a new real or fixture pack forces its own PR to also add its own
+    /// smoke.json.
+    /// </summary>
     public static Expectation For(string personaId)
     {
-        Assert.True(ById.TryGetValue(personaId, out var expectation),
-            $"PersonaSmokeTests.cs's PersonaSmokeExpectations.ById has no entry for discovered " +
-            $"persona '{personaId}' -- teach this map its expectations as part of the same PR " +
-            "that adds the pack, filling in all five Expectation fields: GreetingSubstring (a " +
-            "substring of the pack's OWN prompts/greeting.yaml greeting text), SearchableOwnItem " +
-            "(an item name from the pack's OWN menu/menuItems.json that its search index must " +
-            "return), and OrderableItemName/OrderableItemSize/OrderableItemPrice (a name, one of " +
-            "its sizes, and that size's price, all taken from that SAME menu/menuItems.json entry " +
-            "-- the size and price must match exactly or the add-to-order smoke step will fail).");
+        var path = RepoPaths.PersonaSmokeDataPath(RepoPaths.FindRepoRoot(), personaId);
+        Assert.True(File.Exists(path),
+            $"PersonaSmokeTests.cs's PersonaSmokeExpectations.For('{personaId}') found no data " +
+            $"file at '{path}'. Create it (as part of the same PR that adds the pack) with " +
+            "exactly these five fields, each sourced from THIS SAME persona's own pack files: " +
+            "greetingSubstring (a substring of the pack's OWN prompts/greeting.yaml greeting " +
+            "text), searchableOwnItem (an item name from the pack's OWN menu/menuItems.json that " +
+            "its search index must return), and orderableItemName/orderableItemSize/" +
+            "orderableItemPrice (a name, one of its sizes, and that size's price, all taken from " +
+            "that SAME menu/menuItems.json entry -- the size and price must match exactly or the " +
+            "add-to-order smoke step will fail; prefer an item that is NOT happyHourDiscounted:" +
+            "true, since the smoke fixture runs on the real wall clock and this price is asserted " +
+            "as charged). Template:\n" +
+            "{\n" +
+            "  \"greetingSubstring\": \"<substring of this pack's own greeting text>\",\n" +
+            "  \"searchableOwnItem\": \"<an item name from this pack's own menu>\",\n" +
+            "  \"orderableItemName\": \"<a menu item name from this SAME pack>\",\n" +
+            "  \"orderableItemSize\": \"<one of that item's own sizes>\",\n" +
+            "  \"orderableItemPrice\": \"<that size's price, quoted, e.g. \\\"2.79\\\">\"\n" +
+            "}");
+
+        var json = File.ReadAllText(path);
+        var expectation = JsonSerializer.Deserialize<Expectation>(json, Options);
+        Assert.True(expectation is not null, $"'{path}' deserialized to null.");
         return expectation!;
     }
 }
@@ -121,13 +141,26 @@ file static class PersonaSmokeScenario
         roundTripIndex = searchResult.RoundTripIndex;
         Assert.Contains(expected.SearchableOwnItem, searchResult.FunctionCallOutputText);
 
-        // 3. A basic add-to-order of an on-menu item works.
+        // 3. A basic add-to-order of an on-menu item works -- and (Rick's PR #108 second review
+        //    item B) the amount actually CHARGED is the pack's own listed menu price, not just
+        //    that the item landed in the order at all. Pre-tax ("total", not "finalTotal"): the
+        //    quantity is always 1 here, so this is exactly OrderableItemPrice for any pack whose
+        //    smoke item isn't happy-hour-eligible (see the "prefer a non-happyHourDiscounted
+        //    item" guidance in PersonaSmokeExpectations.For's template -- this fixture runs on
+        //    the real wall clock, not a FixedClock, so a happy-hour-eligible item's charged price
+        //    would be time-of-day-dependent and this exact-match assertion would flake).
         var addResult = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
             [("add", expected.OrderableItemName, expected.OrderableItemSize, 1, expected.OrderableItemPrice)],
             roundTripIndex, ct, callIdPrefix: "call_smoke_add");
         roundTripIndex = addResult.RoundTripIndex;
         Assert.Equal(1, OrderScenarioHelpers.GetOrderItemCount(addResult.ToolResultJson!));
+        OrderScenarioHelpers.AssertMoneyEqual(
+            expected.OrderableItemPrice,
+            OrderScenarioHelpers.GetOrderTotal(addResult.ToolResultJson!),
+            $"persona '{personaId}': the order's pre-tax total after adding one " +
+            $"'{expected.OrderableItemName}' ({expected.OrderableItemSize}) must equal its own " +
+            $"pack's listed menu price ({expected.OrderableItemPrice}), not just contain 1 item.");
 
         // 4. not_on_menu rejection works.
         var rejected = await OrderScenarioHelpers.CallToolAsync(

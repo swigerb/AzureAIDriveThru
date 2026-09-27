@@ -34,8 +34,10 @@ public sealed class PersonaSmokeCoverageTests
         Assert.True(missing.Length == 0,
             $"Persona pack(s) discovered on disk under personas/ have no RealPackPersonaSmokeTests " +
             $"row: {string.Join(", ", missing)}. Either RealPackPersonaSmokeTests.DiscoveredPersonaIds() " +
-            "silently shrank, or a newly-added real pack (#78/#79) needs " +
-            "PersonaSmokeExpectations taught its greeting/searchable-item/orderable-item expectations.");
+            "silently shrank, or a newly-added real pack (#78/#79) needs its own " +
+            "tests/conformance/testdata/personas/<id>/smoke.json -- see " +
+            "PersonaSmokeExpectations.For's failure message in PersonaSmokeTests.cs for the exact " +
+            "five fields and a template.");
     }
 
     [Fact]
@@ -49,7 +51,9 @@ public sealed class PersonaSmokeCoverageTests
             $"Persona pack(s) discovered on disk under app/backend/tests/fixtures/personas/ have " +
             $"no FixturePackPersonaSmokeTests row: {string.Join(", ", missing)}. Either " +
             "FixturePackPersonaSmokeTests.FixturePersonaIds() silently shrank, or a newly-added " +
-            "fixture pack needs PersonaSmokeExpectations taught its expectations.");
+            "fixture pack needs its own tests/conformance/testdata/personas/<id>/smoke.json -- " +
+            "see PersonaSmokeExpectations.For's failure message in PersonaSmokeTests.cs for the " +
+            "exact five fields and a template.");
     }
 
     /// <summary>Invokes a `public static TheoryData&lt;T&gt;`-returning `[MemberData]` source
