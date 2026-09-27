@@ -11,7 +11,8 @@
           ],
           "description": "Test Alpha's house cola, served ice cold.",
           "aliases": ["cola"],
-          "requiresMachine": "soda_machine"
+          "requiresMachine": "soda_machine",
+          "happyHourDiscounted": true
         },
         {
           "name": "Alpha Flavor Shot",
