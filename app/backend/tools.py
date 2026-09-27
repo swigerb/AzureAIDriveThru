@@ -425,7 +425,7 @@ update_order_tool_schema = {
             },
             "price": { 
                 "type": "number", 
-                "description": "Price of a single item to add. Required only for 'add' action. Note: This is the price per individual item, not the total price for the quantity."
+                "description": "Ignored; the server prices from the menu. Kept in the schema for backward compatibility only -- do not rely on this value being charged."
             }
         },
         "required": ["action", "item_name", "size", "quantity"],
@@ -530,12 +530,13 @@ async def update_order(args, session_id: str) -> ToolResult:
         if error:
             return ToolResult(error, ToolResultDirection.TO_SERVER)
 
-    # ── Hardened price validation (add only) ──
-    price = args.get("price", 0.0)
-    if args["action"] == "add" and price <= 0.0:
-        logger.warning("Model attempted to add item %s with invalid price $%.2f (rejecting $0 items)", item_name, price)
-        _err = pl.render_error("price_validation_failed") if pl else "I'm sorry, I had a glitch with the pricing for that. Could you say that again?"
-        return ToolResult(_err, ToolResultDirection.TO_SERVER)
+    # ── #104: the tool call's own `price` is no longer validated or trusted here. The unit
+    # price a guest is charged always comes from the resolved menu item's own per-size price
+    # (menu_utils.MenuCatalog.price_for, applied in order_state.handle_order_update -- the single
+    # source of truth for both this realtime path and any direct caller). A model-supplied price
+    # of $0, a negative number, or an arbitrary/stale value can no longer zero out or under/over-
+    # charge a real menu item; it is only ever logged (debug) when it disagrees with the menu
+    # price. See docs/persona-architecture.md section 6.
 
     if args["action"] == "add" and menu.is_extra_item(item_name):
         current_items = order_state_singleton.get_order_items(session_id)
