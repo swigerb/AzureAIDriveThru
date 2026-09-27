@@ -37,9 +37,13 @@ file static class PersonaHappyHourTestSupport
 /// positive case the same way Sonic's is proven: inside test-alpha's window the item is
 /// discounted by test-alpha's OWN priceMultiplier (0.5) and the `update_order` result carries
 /// test-alpha's OWN banner (read from its persona.json, never a literal); outside the window,
-/// neither. That row is currently <c>Skip("until #113")</c> -- tools.py still hardcodes the
-/// default pack's banner literal for every session (issue #113, owner Beth) -- and will be
-/// un-skipped once #113 lands, per that issue's own acceptance criteria. "Alpha Burger" (never
+/// neither. This row was briefly <c>Skip("until #113")</c> in an earlier revision of this PR
+/// (tools.py hardcoded the default pack's banner literal for every session); #113 (Beth, PR
+/// #115, branch squad/113-pack-happy-hour) has since merged into dev -- <c>order_state.py</c>
+/// now resolves each session's own bound-pack banner via
+/// <c>get_happy_hour_banner_for_session</c> -- so this PR merges origin/dev and un-skips the
+/// row here, exactly as #115's own coordination note with this PR said it would once it
+/// landed. "Alpha Burger" (never
 /// opted in) and test-beta (persona-level flag null) remain the
 /// negative proofs: the persona-level <c>pricing.happyHour</c> flag must never blanket-discount
 /// an item that didn't individually opt in, a persona with no happy-hour config at all must be
@@ -91,12 +95,14 @@ public sealed class PersonaHappyHourConformanceTests(
     // coincidence) and the update_order result must carry test-alpha's OWN banner, read from its
     // persona.json rather than typed here; outside the window, neither.
     //
-    // SKIPPED until #113: tools.py's update_order/get_order still hardcode the default pack's
-    // literal banner text for every session regardless of its bound persona (Beth owns the fix,
-    // branch squad/113-pack-happy-hour; it blocks #79's merge and is scoped to tools.py alone).
-    // Per #113's own acceptance criteria ("un-skip the test-alpha banner row that PR #108 adds as
-    // skipped"), this row stays skipped here and Beth un-skips it once #113 lands.
-    [Fact(Skip = "until #113")]
+    // Previously SKIPPED until #113: tools.py's update_order/get_order hardcoded the default
+    // pack's literal banner text for every session regardless of its bound persona. #113 (Beth,
+    // PR #115, branch squad/113-pack-happy-hour) has since merged into dev -- order_state.py now
+    // resolves each session's own bound-pack banner via get_happy_hour_banner_for_session -- so
+    // this revision merges origin/dev and un-skips this row, per #113's own acceptance criteria
+    // ("un-skip the test-alpha banner row that PR #108 adds as skipped") and #115's own
+    // coordination note on this PR.
+    [Fact]
     public async Task Test_alpha_item_with_its_own_happy_hour_opt_in_gets_test_alphas_own_multiplier_and_banner()
     {
         var ct = TestContext.Current.CancellationToken;
