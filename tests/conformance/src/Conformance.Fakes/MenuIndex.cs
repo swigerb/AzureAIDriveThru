@@ -51,10 +51,20 @@ public static class MenuIndex
     /// a dependency on app/backend/persona_loader.py's or
     /// app/backend-dotnet/src/Backend/Personas/PersonaCatalog.cs's full schema validation, which
     /// belongs to the backends under test, not their test double.
+    ///
+    /// Rick's PR #108 second review, required item C: two DIFFERENT personas declaring the SAME
+    /// `search.indexName` (a copy-paste mistake in a new pack's persona.json, most likely) used to
+    /// silently overwrite the first persona's entry in this map with the second's -- the fake
+    /// would then answer that shared index with only the LAST persona's menu documents, and any
+    /// conformance row exercising the first persona's search would silently get the wrong
+    /// persona's catalog back instead of failing loudly. Throws instead, naming both persona ids
+    /// and the index name they collide on, the moment a second, DIFFERENT persona claims an
+    /// already-claimed index name.
     /// </summary>
     public static IReadOnlyDictionary<string, string> ResolveIndexPaths(string personasDir, IEnumerable<string> personaIds)
     {
         var map = new Dictionary<string, string>(StringComparer.Ordinal);
+        var ownerByIndexName = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var personaId in personaIds)
         {
             var personaJsonPath = Path.Combine(personasDir, personaId, "persona.json");
@@ -66,6 +76,18 @@ public static class MenuIndex
                 throw new InvalidOperationException(
                     $"persona.json for '{personaId}' under '{personasDir}' has no search.indexName.");
             }
+
+            if (ownerByIndexName.TryGetValue(indexName, out var firstOwner) && firstOwner != personaId)
+            {
+                throw new InvalidOperationException(
+                    $"Duplicate Azure AI Search index name '{indexName}': both '{firstOwner}' and " +
+                    $"'{personaId}' (personas under '{personasDir}') declare search.indexName=" +
+                    $"'{indexName}' in their own persona.json. Every enabled persona must have its " +
+                    "own, distinct index name -- a shared name would make this fake (and the real " +
+                    "Azure AI Search service) answer both personas' searches from whichever " +
+                    "persona's documents were indexed last.");
+            }
+            ownerByIndexName[indexName] = personaId;
 
             map[indexName] = Path.Combine(personasDir, personaId, "menu", "menuItems.json");
         }
