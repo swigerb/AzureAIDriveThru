@@ -591,3 +591,30 @@ Since `app/frontend/` is off-limits, the middleware (`rtmt.py` + `audio_pipeline
   `73826c0` post-#106), pushed, no force-push, no rebase. PR #110 commented
   addressed to Rick mapping all 4 items with the baseline diff pasted inline;
   did not merge.
+
+## #78 McDonald's pack — round 4 (2026-09-27): #108/#110 merge, smoke.json, UX check
+- Real `smoke.json` schema (from reading `PersonaSmokeTests.cs` directly, not
+  guessing) is exactly 5 fields: greetingSubstring, searchableOwnItem,
+  orderableItemName, orderableItemSize, orderableItemPrice. No off-menu-item
+  field, no happy-hour-banner field exist in the actual harness — those two
+  proofs use hardcoded literals / fixture-pack-only fixtures respectively.
+  Lesson: when a coordinator relays "add X if the format supports it," read the
+  actual test/schema source before assuming the ask maps to a real field.
+- Brand guard scope silently expanded (via #108/#110/#114) to also scan
+  per-persona conformance testdata, not just personas/<id>/**. A stray
+  cross-pack brand mention in a testdata description file tripped it. Lesson:
+  the brand guard's scope can grow underneath you across dev merges — rerun
+  `test_rebrand_verification.py` after every merge, don't assume prior-round
+  scope still holds.
+- #110 restructured frontend asset serving (deleted old public/ assets in
+  favor of per-pack /personas/<id>/assets/** served directly). A
+  well-structured persona pack built ahead of that change needed zero
+  modification — following the schema/reference-pack conventions closely paid
+  off across an unrelated infra refactor landing later.
+- Playwright UX check on a native <select> persona picker: element refs from
+  browser_snapshot invalidate quickly under live theme/context re-renders; use
+  browser_evaluate + document.querySelector/CSS selectors for anything that
+  needs to survive across multiple interaction steps, not snapshot refs.
+- Found a real (pre-existing, shared-frontend, out-of-scope-to-fix-here) bug:
+  Settings dialog hardcodes "Carhop Voice" regardless of active persona.
+  Reported via PR comment + screenshot rather than fixed, since #78 is data-only.
