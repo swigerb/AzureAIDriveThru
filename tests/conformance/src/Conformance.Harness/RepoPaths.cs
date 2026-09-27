@@ -46,6 +46,17 @@ public static class RepoPaths
     /// </summary>
     public static string PersonasDirectory(string repoRoot) => Path.Combine(repoRoot, "personas");
 
+    /// <summary>
+    /// Rick's PR #102 review item 1: the TEST-ONLY, two-persona fixture pack
+    /// app/backend/tests/test_persona_binding.py already uses (test-alpha/test-beta) --
+    /// schema-valid, brand-neutral, self-contained. Reused here (rather than duplicating a second
+    /// fixture pack under tests/conformance/testdata/) so the two-pack persona_mismatch
+    /// conformance row can launch the backend with PERSONAS_DIR pointed here, without waiting on
+    /// #78/#79 to land a real, user-facing second persona pack under personas/.
+    /// </summary>
+    public static string FixturePersonasDirectory(string repoRoot) =>
+        Path.Combine(repoRoot, "app", "backend", "tests", "fixtures", "personas");
+
     public static string PythonExecutable(string repoRoot) =>
         OperatingSystem.IsWindows()
             ? Path.Combine(repoRoot, ".venv", "Scripts", "python.exe")

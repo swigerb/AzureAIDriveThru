@@ -98,7 +98,8 @@ public sealed class RealtimeBrowserClient : IAsyncDisposable
     public WebSocketState SocketState => _socket.State;
 
     public static async Task<RealtimeBrowserClient> ConnectAsync(
-        Uri backendBaseUri, bool offerDeflate = false, string? origin = null, CancellationToken cancellationToken = default)
+        Uri backendBaseUri, bool offerDeflate = false, string? origin = null, string? persona = null,
+        CancellationToken cancellationToken = default)
     {
         using var http = new HttpClient();
         var tokenResponse = await http.GetFromJsonAsyncSafe(new Uri(backendBaseUri, "/api/auth/session"), cancellationToken)
@@ -122,8 +123,17 @@ public sealed class RealtimeBrowserClient : IAsyncDisposable
         // Built manually rather than via UriBuilder: UriBuilder.Scheme silently resets Port to
         // the new scheme's default port when the current port matches the old scheme's default,
         // which would corrupt the dynamically-allocated backend port used throughout the suite.
-        var wsUri = new Uri($"ws://{backendBaseUri.Host}:{backendBaseUri.Port}/realtime?token={Uri.EscapeDataString(token ?? "")}");
+        // Rick's PR #102 review item 1: an explicit `persona` query param binds the session to
+        // that persona id (mirrors the frontend's own /realtime?persona=<id> usage) -- omitted
+        // (the default null) matches today's behaviour exactly, binding to DEFAULT_PERSONA.
+        var query = $"token={Uri.EscapeDataString(token ?? "")}";
+        if (persona is not null)
+        {
+            query += $"&persona={Uri.EscapeDataString(persona)}";
+        }
+        var wsUri = new Uri($"ws://{backendBaseUri.Host}:{backendBaseUri.Port}/realtime?{query}");
         await clientSocket.ConnectAsync(wsUri, cancellationToken).ConfigureAwait(false);
+
 
         var client = new RealtimeBrowserClient(clientSocket)
         {
