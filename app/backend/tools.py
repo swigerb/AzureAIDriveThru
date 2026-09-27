@@ -687,9 +687,7 @@ async def update_order(args, session_id: str) -> ToolResult:
                 delta_text += " (UPSELL HINT: Ask if they'd like to add anything else — maybe a drink, side, or dessert!)"
         logger.debug("Upsell hint for category '%s'", category)
 
-    # #76 part 2 (Rick's PR #108 review, required item 1/2): this session's own bound persona's
-    # OWN banner text (ADR-001 decision 6), never a hardcoded brand-specific literal.
-    happy_hour_note = order_state_singleton.get_happy_hour_banner_note(session_id)
+    happy_hour_note = " [HAPPY HOUR ACTIVE: slushes and fountain drinks are half-price; shakes, Blasts and sundaes are full price]" if order_state_singleton.is_happy_hour_for_session(session_id) else ""
     return ToolResult(delta_text + happy_hour_note, ToolResultDirection.TO_BOTH, client_text=json_order_summary)
 
 
@@ -711,9 +709,7 @@ async def get_order(_args: Any, session_id: str) -> ToolResult:
     logger.info("Retrieving order summary for session %s", session_id)
     readback = order_state_singleton.get_grouped_order_for_readback(session_id)
     json_summary = order_state_singleton.get_order_summary_json(session_id)
-    # #76 part 2 (Rick's PR #108 review, required item 1/2): this session's own bound persona's
-    # OWN banner text (ADR-001 decision 6), never a hardcoded brand-specific literal.
-    happy_hour_note = order_state_singleton.get_happy_hour_banner_note(session_id)
+    happy_hour_note = " [HAPPY HOUR ACTIVE: slushes and fountain drinks are half-price; shakes, Blasts and sundaes are full price]" if order_state_singleton.is_happy_hour_for_session(session_id) else ""
     return ToolResult(readback + happy_hour_note, ToolResultDirection.TO_BOTH, client_text=json_summary)
 
 
