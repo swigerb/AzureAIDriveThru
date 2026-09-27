@@ -14,7 +14,10 @@ namespace Conformance.Tests.Scenarios.Ordering;
 /// contract) so a future C# backend's own test suite can assert against the exact same 180-item
 /// table without transcribing it a third time.
 /// </summary>
-public sealed record MenuCategoryCase(string Item, string Category, string ComboSlot, bool HappyHourDiscounted, string Size, decimal UnitPrice);
+// #77: requiresMachine (nullable -- only items that use a machine set it) is generated straight
+// from the item's own menuItems.json requiresMachine field, so it's the authoritative signal for
+// which golden rows are machine-gated -- prefer it over any category-name proxy.
+public sealed record MenuCategoryCase(string Item, string Category, string ComboSlot, bool HappyHourDiscounted, string Size, decimal UnitPrice, string? RequiresMachine = null);
 
 public sealed record GoldenMenuCategoryData(string Description, IReadOnlyList<MenuCategoryCase> Items)
 {
@@ -34,5 +37,31 @@ public sealed record GoldenMenuCategoryData(string Description, IReadOnlyList<Me
         var json = File.ReadAllText(path);
         return JsonSerializer.Deserialize<GoldenMenuCategoryData>(json, Options)
             ?? throw new InvalidDataException($"Golden menu category dataset at '{path}' deserialized to null.");
+    }
+
+    /// <summary>
+    /// #77: the set of machine keys the real Sonic persona.json currently reports as
+    /// <c>"down"</c> (e.g. <c>ice_cream_machine</c>), read straight from the single source of
+    /// truth rather than hard-coded in test code, so a golden row's own <see
+    /// cref="MenuCategoryCase.RequiresMachine"/> can be checked against it to determine whether
+    /// the item is currently add-time blocked by tools.py's machine_unavailable gate.
+    /// </summary>
+    public static IReadOnlySet<string> LoadCurrentlyDownMachines(string repoRoot)
+    {
+        var path = Path.Combine(RepoPaths.PersonasDirectory(repoRoot), "sonic", "persona.json");
+        using var doc = JsonDocument.Parse(File.ReadAllText(path));
+        var down = new HashSet<string>(StringComparer.Ordinal);
+        if (doc.RootElement.TryGetProperty("machines", out var machines))
+        {
+            foreach (var machine in machines.EnumerateObject())
+            {
+                if (machine.Value.TryGetProperty("status", out var status) && status.GetString() == "down")
+                {
+                    down.Add(machine.Name);
+                }
+            }
+        }
+
+        return down;
     }
 }

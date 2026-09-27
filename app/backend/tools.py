@@ -138,24 +138,12 @@ MAX_TOTAL_ITEMS = _biz_cfg.get("max_order_items", 25)
 # `isExtra` fields (menu_utils.requires_machine() / menu_utils.is_extra_item()), read once at
 # import time from the pack. See search()'s OOS annotation and update_order()'s extras check below.
 
-# #73 (Rick's PR #100 review, required item 3): the OOS annotation used to hard-code the single
-# string "Ice cream machine is being cleaned" for ANY down machine -- a slush with
-# `slush_machine: "down"` would wrongly claim the ice cream machine was the problem. Keyed per
-# machine so each machine's own outage reads naturally; an unlisted machine key still degrades
-# safely to a generic "<key> is down" label instead of a KeyError or silently reusing another
-# machine's text.
-_MACHINE_OOS_LABELS: dict[str, str] = {
-    "ice_cream_machine": "Ice cream machine is being cleaned",
-    "slush_machine": "Slush machine is down",
-    "fryer": "Fryer is down",
-}
-
-
-def _machine_oos_label(machine: str) -> str:
-    """Return the guest-facing out-of-stock label for *machine*, falling back to a generic
-    "<machine> is down" for any machine key not in `_MACHINE_OOS_LABELS` (e.g. a future machine
-    added to a persona pack before this dict is updated for it)."""
-    return _MACHINE_OOS_LABELS.get(machine, f"{machine} is down")
+# #77: the OOS label used to be a module-level, name-keyed Python dict here
+# (`_MACHINE_OOS_LABELS`/`_machine_oos_label`) that only the default persona's own two machine
+# keys ever populated -- a second persona's machine silently fell back to a generic "<key> is
+# down" string with no way to override it. Every persona now owns its own machines' labels in its
+# OWN persona.json (`machines.<key>.label`), read via `menu.machine_label()` below -- see
+# menu_utils.MenuCatalog.machine_label / machine_status and persona_loader._Machine.
 
 # #74 (Rick's PR #102 review, round 3, required item 1): `ALLOWED_EXTRA_CATEGORIES`/
 # `BLOCKED_EXTRA_CATEGORIES`/`INVALID_MODS` used to be module-level globals here, always the
@@ -247,6 +235,12 @@ async def search(
     prompt_loader = prompt_loader if prompt_loader is not None else _prompt_loader
 
     query = args["query"]
+    # #77 (`strategies.searchQueryRewrite: "meal_numbers"`, design doc section 3.3 row 23): this
+    # persona's own named extension point -- a no-op for every persona that doesn't opt into it.
+    # Applied to `query` itself (not a separate variable) so the cache key, the vector query, and
+    # every `search_text=query` call below all see the same, already-rewritten text -- one
+    # rewrite, not three copies of it.
+    query = menu.rewrite_search_query(query)
     logger.info("Knowledge search requested for query '%s'", query)
 
     # Check cache first — repeated questions about the same menu item are common. Namespaced
@@ -385,7 +379,7 @@ async def search(
         # keyword list, so a real menu item is the only thing ever flagged.
         machine = menu.requires_machine(item_name)
         if machine and menu.machine_status(machine) == "down":
-            summary += f" [OOS: {_machine_oos_label(machine)}]"
+            summary += f" [OOS: {menu.machine_label(machine)}]"
 
         results.append(summary)
 
@@ -402,14 +396,18 @@ async def search(
 update_order_tool_schema = {
     "type": "function",
     "name": "update_order",
-    "description": "Update the current order by adding or removing items.",
+    "description": "Update the current order by adding, removing, or resizing items.",
     "parameters": {
         "type": "object",
         "properties": {
             "action": { 
                 "type": "string", 
-                "description": "Action to perform: 'add' or 'remove'.", 
-                "enum": ["add", "remove"]
+                "description": (
+                    "Action to perform: 'add', 'remove', or 'modify' (change an existing item's "
+                    "size in place, e.g. resizing a meal/combo from Medium to Large -- only offer "
+                    "'modify' if this persona's own tool instructions mention it)."
+                ),
+                "enum": ["add", "remove", "modify"]
             },
             "item_name": { 
                 "type": "string", 
@@ -417,7 +415,7 @@ update_order_tool_schema = {
             },
             "size": { 
                 "type": "string", 
-                "description": "Size of the item to update, e.g., 'Large'."
+                "description": "Size of the item to update, e.g., 'Large'. For 'modify', this is the NEW size."
             },
             "quantity": { 
                 "type": "integer", 
@@ -478,7 +476,7 @@ async def update_order(args, session_id: str) -> ToolResult:
     #   (+ "available_sizes": [...] for size_not_available.)
     # ToolResult.to_text() already json.dumps()s a non-str `text` payload (rtmt.py), so passing a
     # dict here is exactly what every OTHER JSON-carrying ToolResult in this module does. ──
-    if args["action"] == "add":
+    if args["action"] in ("add", "modify"):
         menu_item = menu.resolve_menu_item(item_name)
         if menu_item is None:
             logger.info("Rejected off-menu item '%s' for session %s (not_on_menu)", item_name, session_id)
@@ -486,16 +484,29 @@ async def update_order(args, session_id: str) -> ToolResult:
                 f"I'm sorry, {item_name} isn't on our menu. Would you like to try something else instead? "
                 "Use the search tool with the guest's words and offer the closest real menu item by its exact name."
             )
-            return ToolResult(
-                {
-                    "status": "rejected",
-                    "item_added": False,
-                    "reason": "not_on_menu",
-                    "item_name": item_name,
-                    "message": _message,
-                },
-                ToolResultDirection.TO_SERVER,
-            )
+            _rejection = {
+                "status": "rejected",
+                "item_added": False,
+                "reason": "not_on_menu",
+                "item_name": item_name,
+                "message": _message,
+            }
+            # #77 (shared extras engine, `extras.splitCombinedNames`): a combined name like
+            # "Caramel Latte with Extra Shot" is really a known base item plus a known extra --
+            # never on the menu as one single item, but the guest's intent is unambiguous. Offer
+            # the model two real `add` calls instead of a flat "isn't on our menu" dead end.
+            split = menu.try_split_combined_name(item_name)
+            if split is not None:
+                base_name, extra_name = split
+                _rejection["suggested_calls"] = [
+                    {"action": "add", "item_name": base_name},
+                    {"action": "add", "item_name": extra_name},
+                ]
+                logger.info(
+                    "Split combined name '%s' -> '%s' + '%s' for session %s",
+                    item_name, base_name, extra_name, session_id,
+                )
+            return ToolResult(_rejection, ToolResultDirection.TO_SERVER)
 
         requested_size = menu.canonical_size_key(size)
         if requested_size not in menu_item["sizes"]:
@@ -519,6 +530,60 @@ async def update_order(args, session_id: str) -> ToolResult:
                     "item_name": menu_item["name"],
                     "message": _message,
                     "available_sizes": available_sizes,
+                },
+                ToolResultDirection.TO_SERVER,
+            )
+
+        # #77: `modify` resizes an existing line, so an on-menu item that isn't in the order has
+        # nothing to resize. Reject it with the same structured shape instead of letting the
+        # success delta tell the guest it was changed (docs/persona-architecture.md section 6).
+        # Same line-matching rule as order_state.handle_order_update's modify branch.
+        if args["action"] == "modify" and not any(
+            order_item.item == item_name for order_item in order_state_singleton.get_order_items(session_id)
+        ):
+            logger.info("Rejected modify of '%s' for session %s (not_in_order)", item_name, session_id)
+            _message = pl.render_error("item_not_in_order", item_name=menu_item["name"]) if pl else (
+                f"{menu_item['name']} isn't in the order, so nothing was changed. "
+                "Ask the guest whether they'd like to add it."
+            )
+            return ToolResult(
+                {
+                    "status": "rejected",
+                    "item_added": False,
+                    "reason": "not_in_order",
+                    "item_name": menu_item["name"],
+                    "message": _message,
+                },
+                ToolResultDirection.TO_SERVER,
+            )
+
+    # ── #77: add-time `machine_unavailable` structured rejection -- an on-menu item that
+    # `requiresMachine` a machine this persona's OWN `machines.<key>.status` currently reports
+    # "down". Same TO_SERVER structured-JSON shape as not_on_menu/size_not_available above (Rick's
+    # PR #100 review, required item 1; docs/persona-architecture.md section 6), so nothing is
+    # silently added while a real machine outage is in effect. `modify` never reaches this check
+    # -- resizing an item already in the order doesn't newly require the machine it already
+    # required when it was added.
+    if args["action"] == "add":
+        machine = menu.requires_machine(item_name)
+        if machine and menu.machine_status(machine) == "down":
+            machine_label = menu.machine_label(machine)
+            logger.info(
+                "Rejected '%s' for session %s (machine_unavailable: %s)", item_name, session_id, machine,
+            )
+            _message = pl.render_error(
+                "machine_unavailable", item_name=item_name, machine_label=machine_label
+            ) if pl else (
+                f"I'm sorry, {item_name} isn't available right now -- {machine_label}. "
+                "Would you like to try something else instead?"
+            )
+            return ToolResult(
+                {
+                    "status": "rejected",
+                    "item_added": False,
+                    "reason": "machine_unavailable",
+                    "item_name": item_name,
+                    "message": _message,
                 },
                 ToolResultDirection.TO_SERVER,
             )
@@ -551,18 +616,36 @@ async def update_order(args, session_id: str) -> ToolResult:
                 has_blocked_base = True
 
         if not has_allowed_base:
+            # #77 (shared extras engine, Rick's PR #100 review pattern reused): a STRUCTURED
+            # (TO_SERVER) rejection, matching not_on_menu/size_not_available/machine_unavailable
+            # field-for-field -- `reason` is "extras_blocked_category" (a real base item is
+            # present, but its category is explicitly blocked) or "extras_no_base_item" (no
+            # allowed base item at all yet). This used to be a bare apology string; every OTHER
+            # add-time rejection in this module is already this shape, and #14 (C# port) needs one
+            # contract, not two.
             if has_blocked_base:
-                apology = pl.render_error("extras_blocked_category") if pl else (
+                _reason = "extras_blocked_category"
+                _message = pl.render_error("extras_blocked_category") if pl else (
                     "I can add extras to drinks, slushes, shakes, or combos, "
                     "but I can't add them to sides or hot dogs on their own."
                 )
             else:
-                apology = pl.render_error("extras_no_base_item") if pl else (
+                _reason = "extras_no_base_item"
+                _message = pl.render_error("extras_no_base_item") if pl else (
                     "I can add extras to drinks, slushes, shakes, or combos, "
                     "but not to sides or hot dogs on their own."
                 )
-            logger.info("Blocked extra '%s' for session %s", item_name, session_id)
-            return ToolResult(apology, ToolResultDirection.TO_SERVER)
+            logger.info("Blocked extra '%s' for session %s (%s)", item_name, session_id, _reason)
+            return ToolResult(
+                {
+                    "status": "rejected",
+                    "item_added": False,
+                    "reason": _reason,
+                    "item_name": item_name,
+                    "message": _message,
+                },
+                ToolResultDirection.TO_SERVER,
+            )
 
     # ── Quantity limit validation (add only) ──
     quantity = args.get("quantity", 0)
@@ -659,6 +742,8 @@ async def update_order(args, session_id: str) -> ToolResult:
         delta_text = pl.render_template(tpl, quantity=quantity, display_name=display_name, total=summary.finalTotalDisplay)
     elif action == "add":
         delta_text = f"Added {quantity} {display_name} — your total is now {summary.finalTotalDisplay}"
+    elif action == "modify":
+        delta_text = f"Changed {display_name} — your total is now {summary.finalTotalDisplay}"
     else:
         delta_text = f"Removed {quantity} {display_name} — your total is now {summary.finalTotalDisplay}"
 

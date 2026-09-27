@@ -29,7 +29,7 @@ public sealed record Persona
     [JsonPropertyName("bundles")] public required PersonaBundles Bundles { get; init; }
     [JsonPropertyName("extras")] public required PersonaExtras Extras { get; init; }
     [JsonPropertyName("invalidModifiers")] public required Dictionary<string, List<string>> InvalidModifiers { get; init; }
-    [JsonPropertyName("machines")] public required Dictionary<string, string> Machines { get; init; }
+    [JsonPropertyName("machines")] public required Dictionary<string, PersonaMachine> Machines { get; init; }
     [JsonPropertyName("models")] public required PersonaModelsBlock Models { get; init; }
     [JsonPropertyName("strategies")] public required PersonaStrategies Strategies { get; init; }
     [JsonPropertyName("features")] public required PersonaFeatures Features { get; init; }
@@ -108,6 +108,15 @@ public sealed record PersonaExtras
     [JsonPropertyName("allowedBaseCategories")] public required List<string> AllowedBaseCategories { get; init; }
     [JsonPropertyName("blockedBaseCategories")] public required List<string> BlockedBaseCategories { get; init; }
     [JsonPropertyName("splitCombinedNames")] public required bool SplitCombinedNames { get; init; }
+}
+
+/// <summary>#77: each pack owns its own guest-facing out-of-stock label, so a machine going
+/// down doesn't fall back to a hardcoded, Sonic-only apology (mirrors persona_loader.py's
+/// _Machine).</summary>
+public sealed record PersonaMachine
+{
+    [JsonPropertyName("status")] public required string Status { get; init; }
+    [JsonPropertyName("label")] public required string Label { get; init; }
 }
 
 public sealed record PersonaModelsBlock
