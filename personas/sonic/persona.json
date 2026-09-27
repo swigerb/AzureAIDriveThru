@@ -65,7 +65,10 @@
     "side": ["whipped cream", "chocolate", "vanilla", "strawberry"],
     "hot dog": ["whipped cream", "chocolate", "vanilla", "strawberry"]
   },
-  "machines": { "ice_cream_machine": "down", "slush_machine": "operational", "fryer": "operational" },
+  "machines": {
+    "ice_cream_machine": { "status": "down", "label": "Ice cream machine is being cleaned" },
+    "slush_machine": { "status": "operational", "label": "Slush machine is down" }
+  },
 
   "models": {
     "realtime": { "default": "gpt-realtime-2.1", "allowed": ["gpt-realtime-2.1", "gpt-realtime-mini"] },

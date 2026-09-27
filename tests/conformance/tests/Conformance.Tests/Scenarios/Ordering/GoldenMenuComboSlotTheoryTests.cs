@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Conformance.Harness;
 using Xunit;
 
@@ -47,26 +48,62 @@ public sealed class GoldenMenuComboSlotTheoryTests(HappyHourJustBeforeOpenFixtur
         return data;
     }
 
+    // #77: real Sonic persona data's own machines.ice_cream_machine is "down" (persona.json --
+    // not a test fixture), so every golden row whose own `requiresMachine` names a currently-down
+    // machine now hits the new add-time machine_unavailable gate before combo-slot
+    // pricing/absorption is ever reached. That gate is this issue's own acceptance criterion
+    // (Rick's #100 review: "add an add-time out-of-stock refusal ... when the resolved item's
+    // requiresMachine is down"), so the correct, current end-to-end behavior for these rows is
+    // rejection, not pricing. Checking the row's own requiresMachine against persona.json's own
+    // machines block (rather than a category-name proxy) keeps this correct even for rows outside
+    // "Shakes & Ice Cream" that also need a currently-down machine (e.g. "Slushes & Drinks" items
+    // that require ice_cream_machine) -- without touching real persona data out of scope for this PR.
+    private static bool RequiresACurrentlyDownMachine(MenuCategoryCase row, IReadOnlySet<string> currentlyDownMachines) =>
+        row.RequiresMachine is { } machine && currentlyDownMachines.Contains(machine);
+
     [Theory]
     [MemberData(nameof(GoldenRowIndexes))]
     public Task Golden_combo_slot_determines_whether_the_item_is_absorbed_or_charged_in_full(int rowIndex) =>
         fixture.RunAsync(async () =>
         {
             var ct = TestContext.Current.CancellationToken;
-            var golden = GoldenMenuCategoryData.Load(RepoPaths.FindRepoRoot());
+            var repoRoot = RepoPaths.FindRepoRoot();
+            var golden = GoldenMenuCategoryData.Load(repoRoot);
             Assert.Equal(180, golden.Items.Count);
             var row = golden.Items[rowIndex];
+            var currentlyDownMachines = GoldenMenuCategoryData.LoadCurrentlyDownMachines(repoRoot);
 
             var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
             await using var _ = browser;
 
+            var setup = await OrderScenarioHelpers.RunOrderStepsAsync(
+                connection, browser,
+                [("add", BaseComboName, BaseComboSize, 1, BaseComboPrice)],
+                roundTripIndex, ct, callIdPrefix: "call_setup");
+            roundTripIndex = setup.RoundTripIndex;
+
+            if (RequiresACurrentlyDownMachine(row, currentlyDownMachines) && row.Item != BaseComboName)
+            {
+                var rejected = await OrderScenarioHelpers.CallToolAsync(
+                    connection, browser, "update_order",
+                    JsonSerializer.Serialize(new { action = "add", item_name = row.Item, size = row.Size, quantity = 1, price = row.UnitPrice }),
+                    "call_reject", roundTripIndex, ct, toClient: false);
+                OrderScenarioHelpers.AssertRejectionShape(
+                    rejected.FunctionCallOutputText, expectedReason: "machine_unavailable", expectedItemName: row.Item);
+
+                var afterReject = await OrderScenarioHelpers.CallToolAsync(
+                    connection, browser, "get_order", "{}", "call_get_after_reject", rejected.RoundTripIndex, ct);
+                OrderScenarioHelpers.AssertMoneyEqual(
+                    BaseComboPrice, OrderScenarioHelpers.GetOrderTotal(afterReject.ToolResultJson!),
+                    $"{row.Item}: machine_unavailable must reject outright, leaving only the base combo.");
+                Assert.Equal(1, OrderScenarioHelpers.GetOrderItemCount(afterReject.ToolResultJson!));
+                return;
+            }
+
             var result = await OrderScenarioHelpers.RunOrderStepsAsync(
                 connection, browser,
-                [
-                    ("add", BaseComboName, BaseComboSize, 1, BaseComboPrice),
-                    ("add", row.Item, row.Size, 1, row.UnitPrice),
-                ],
-                roundTripIndex, ct);
+                [("add", row.Item, row.Size, 1, row.UnitPrice)],
+                roundTripIndex, ct, callIdPrefix: "call_item");
 
             var isAbsorbed = row.ComboSlot is "sides" or "drinks";
             var expectedTotal = isAbsorbed ? BaseComboPrice : BaseComboPrice + row.UnitPrice;

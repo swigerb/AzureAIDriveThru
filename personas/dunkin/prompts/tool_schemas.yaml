@@ -1,0 +1,67 @@
+version: "1.0.0"
+tools:
+  - name: "search"
+    type: "function"
+    description: >-
+      Search the Dunkin menu for items, prices, sizes, and availability.
+      The menu data is in English — translate to and from English if needed.
+      Results are formatted as a source name first in square brackets, followed
+      by the text content, and a line with '-----' at the end of each result.
+    parameters:
+      type: "object"
+      properties:
+        query:
+          type: "string"
+          description: "Search query for Dunkin menu items (e.g., 'signature latte', 'cold brew sizes', 'flavor swirl')"
+      required:
+        - "query"
+      additionalProperties: false
+
+  - name: "update_order"
+    type: "function"
+    description: "Update the current Dunkin order by adding or removing menu items from the Crew Ticket."
+    parameters:
+      type: "object"
+      properties:
+        action:
+          type: "string"
+          description: "Action to perform: 'add' or 'remove'."
+          enum:
+            - "add"
+            - "remove"
+        item_name:
+          type: "string"
+          description: "Name of ONE Dunkin menu item, e.g., 'Caramel Craze Latte'. Extras (whipped cream, flavor swirl, extra espresso shot) are separate items: add the drink first, then the extra with its own call."
+        size:
+          type: "string"
+          description: "Size of the item to update, e.g., 'Medium'."
+        quantity:
+          type: "integer"
+          description: "Quantity of the item to update. Represents the number of items."
+        price:
+          type: "number"
+          description: "Ignored; the server prices from the menu."
+      required:
+        - "action"
+        - "item_name"
+        - "size"
+        - "quantity"
+      additionalProperties: false
+
+  - name: "get_order"
+    type: "function"
+    description: "Retrieve the current Dunkin order summary from the Crew Ticket, including all items and the total."
+    parameters:
+      type: "object"
+      properties: {}
+      required: []
+      additionalProperties: false
+
+  - name: "reset_order"
+    type: "function"
+    description: "Clear all items from the current Dunkin order and start a fresh Crew Ticket."
+    parameters:
+      type: "object"
+      properties: {}
+      required: []
+      additionalProperties: false

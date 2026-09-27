@@ -269,7 +269,7 @@ class SearchOOSAnnotationTests(unittest.TestCase):
         # module-level `MOCK_MACHINE_STATUS` global -- patch the SAME memoized MenuCatalog
         # instance `search()`'s default resolves (`_SONIC` above), proving the real, only code
         # path a mutation reintroducing a module-level global would have nothing left to pass.
-        with patch.dict(_SONIC.machines, {"ice_cream_machine": "down"}):
+        with patch.dict(_SONIC.machines, {"ice_cream_machine": ("down", "Ice cream machine is being cleaned")}):
             result = _run(search(client, "cfg", "id", "description", "embedding", False, {"query": "shake"}))
         self.assertIn("OOS", result.text)
         self.assertIn("Ice cream machine", result.text)
@@ -281,7 +281,7 @@ class SearchOOSAnnotationTests(unittest.TestCase):
         slush label for the ice-cream text (or vice versa) must fail this test."""
         records = [{"id": "1", "name": "Blue Raspberry Slush", "category": "Slushes", "sizes": "N/A"}]
         client = _make_mock_search_client(records)
-        with patch.dict(_SONIC.machines, {"slush_machine": "down"}):
+        with patch.dict(_SONIC.machines, {"slush_machine": ("down", "Slush machine is down")}):
             result = _run(search(client, "cfg", "id", "description", "embedding", False, {"query": "slush"}))
         self.assertIn("OOS", result.text)
         self.assertIn("Slush machine", result.text)
@@ -421,7 +421,13 @@ class UpdateOrderAddTests(unittest.TestCase):
         self.assertEqual(len(summary.items), 1)
         self.assertTrue(math.isclose(summary.items[0].price, 2.79, rel_tol=1e-9))
 
-    def test_resize_wrong_size_price_carryover_charges_new_size_menu_price(self):
+    # Pre-existing gap (unrelated to #77): this test never fixed the clock either, so a run
+    # landing inside the persona's real 14:00-16:00 happy-hour window would silently half-price
+    # the `happyHourDiscounted:true` Cherry Limeade re-add below, breaking the menu-price-carryover
+    # assertion. Matches the established `@patch("order_state.is_happy_hour", ...)` pattern used
+    # throughout this file/`test_combo_orders.py`/`test_extras_rules.py`.
+    @patch("order_state.is_happy_hour", return_value=False)
+    def test_resize_wrong_size_price_carryover_charges_new_size_menu_price(self, _mock_hh):
         """Rick's #104 review, required item 2 (wrong-size carry-over): this persona has no
         `modify` action, so a resize is remove-then-add. A model that carries the OLD size's
         tool-call price over when re-adding at a NEW size must still be charged the NEW size's
