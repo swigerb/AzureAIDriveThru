@@ -281,17 +281,17 @@ error" at all — must still pass every scenario that uses this overload. Only g
 errors (anything above the declared ceiling) fail a scenario. The zero-arg `RunAsync(body)` overload
 still asserts a hard `0` ceiling, i.e. this scenario must cause no new backend errors at all.
 
-### Reasoning contract (PR #42 review item 10)
+### Reasoning contract (PR #42 review item 10, updated PR #106 review round 3)
 
 Whether `reasoning` is sent upstream at all (`RTMiddleTier.reasoning_enabled()`/`_reasoning_model()`
-in `app/backend/rtmt.py`) is decided by three independent inputs, checked in this precedence order —
-a correct backend in another language must reproduce all three, in this order:
+in `app/backend/rtmt.py`) is decided by four independent inputs, checked in this precedence order —
+a correct backend in another language must reproduce all four, in this order:
 
 1. **A runtime rejection always wins, for the rest of the process.** If the upstream ever rejects a
    session.update because of `reasoning` (the fallback path — see the wire-ordering section above),
    an in-memory latch (`self._reasoning_rejected`, an instance field on the single per-process
    `RTMiddleTier`) flips to `True` and `reasoning` is never sent again on that connection *or any
-   later connection in the same process*, regardless of what the other two inputs say. This is
+   later connection in the same process*, regardless of what the other three inputs say. This is
    intentionally process-wide, not per-connection: a deployment that has already proven it rejects
    `reasoning` once shouldn't keep re-triggering the fallback path for every new browser tab.
 2. **The explicit `reasoning_model` switch, tri-state.** `AZURE_OPENAI_REALTIME_REASONING_MODEL`
@@ -306,8 +306,19 @@ a correct backend in another language must reproduce all three, in this order:
      since it wasn't one of the recognised spellings above.
 
    `None` is *not* the same as `False`: an explicit `false` and an unset/`"auto"` value are
-   different tri-state members and are asserted separately (see below).
-3. **The deployment-name check, `auto`'s default only.** `deployment_supports_reasoning` matches the
+   different tri-state members and are asserted separately (see below). **This switch outranks the
+   catalog (input 3 below):** it records what THIS environment allows, while the catalog records
+   what a model generically supports, so an explicit operator choice must win over it either way
+   (PR #106 review round 3, Rick — round 2 had briefly let the catalog override an explicit `false`,
+   which was wrong).
+3. **The bound model's catalog `reasoning` flag, `auto`'s first fallback.** If the session is bound
+   to a specific model (`order_state_singleton.get_model_reasoning(session_id)`, sourced from
+   `config.yaml`'s `models.catalog`/`processors.py::ResolvedModel.reasoning`), that model's own
+   static `reasoning` flag is used — but only when the switch (input 2) is `auto`/unset. This lets a
+   persona pick a non-reasoning-capable model (e.g. `gpt-realtime-mini`, `reasoning: false`) even on
+   a deployment name the regex below would otherwise call reasoning-capable, and vice versa.
+4. **The deployment-name check, `auto`'s last-resort default.** Reached only when the switch is
+   `auto` AND no model is bound yet. `deployment_supports_reasoning` matches the
    deployment name against `_NON_REASONING_DEPLOYMENT_RE`, copied here **verbatim** from
    `app/backend/rtmt.py` so this doesn't silently drift from the real regex:
 
@@ -325,7 +336,7 @@ a correct backend in another language must reproduce all three, in this order:
    is assumed reasoning-capable, so an unrecognised name fails open into the fallback path (input 1)
    rather than silently omitting a feature it might actually support.
 
-**Inputs 1–3 above (`_reasoning_model()`) only decide whether reasoning-model-only fields *may* be
+**Inputs 1–4 above (`_reasoning_model()`) only decide whether reasoning-model-only fields *may* be
 sent at all — they are not sufficient on their own.** `reasoning_enabled()`, the actual gate
 `_build_session` checks before adding the `reasoning` key, additionally requires
 `normalize_reasoning_effort(self.reasoning_effort) is not None`:
@@ -338,26 +349,44 @@ def reasoning_enabled(self) -> bool:
 So even on a deployment/switch combination where `_reasoning_model()` is `True`, `reasoning` is
 still omitted entirely if `AZURE_OPENAI_REALTIME_REASONING_EFFORT` / `model.reasoning_effort`
 normalizes to `None` — i.e. it is unset, empty, or one of `_REASONING_DISABLED_VALUES`
-(`""`, `"off"`, `"disabled"`, `"false"`, `"null"`). This is a 4th, independent precondition on top
-of the three-input precedence above, not a fourth member of that precedence chain: it doesn't
-interact with the rejection latch or the deployment-name default at all, it just short-circuits
-`reasoning_enabled()` to `False` regardless of what they decide. `config.yaml`'s own default
-(`reasoning_effort: "low"`) means every existing fixture below already has a non-`None` effort, so
-this precondition isn't independently exercised by any dedicated fixture yet — noted here rather
-than silently assumed.
+(`""`, `"off"`, `"disabled"`, `"false"`, `"null"`). This is a 5th, independent precondition on top
+of the four-input precedence above, not a fifth member of that precedence chain: it doesn't
+interact with the rejection latch, the catalog, or the deployment-name default at all, it just
+short-circuits `reasoning_enabled()` to `False` regardless of what they decide. `config.yaml`'s own
+default (`reasoning_effort: "low"`) means every existing fixture below already has a non-`None`
+effort, so this precondition isn't independently exercised by any dedicated fixture yet — noted here
+rather than silently assumed.
 
-All four combinations input 2/3 can produce are covered, each pinned on its own dedicated fixture in
+All name/switch combinations below are covered, each pinned on its own dedicated fixture in
 `ReasoningDeploymentFixtures.cs` (a distinct deployment name and/or env var forces its own backend
 process, since `AZURE_OPENAI_REALTIME_DEPLOYMENT`/`AZURE_OPENAI_REALTIME_REASONING_MODEL` are read
-once at Python module-import time):
+once at Python module-import time). Every fixture below binds the session to sonic's own realtime
+default model (`gpt-realtime-2.1`, catalog `reasoning: true`) regardless of the deployment name
+override — the deployment name only changes what the fake upstream's rejection behavior does, not
+which model the session binds to — so input 3 (the catalog) is held constant at `true` in every row
+here; see `ModelSelectionConformanceTests.Reasoning_is_sent_only_for_a_catalog_reasoning_model_not_the_other_selectable_one`
+for the row that varies the catalog itself by binding a different model (`gpt-realtime-mini`,
+`reasoning: false`), with the switch left on `auto`:
 
 | Deployment name | `reasoning_model` | Expected | Fixture |
 |---|---|---|---|
 | `gpt-realtime-2.1-conformance` (default) | `auto` (unset) | sent | `ConformanceFixture` (Default collection) |
 | `gpt-realtime-2.1-dz-conformance` | `auto` (unset) | sent | `Gpt21DzConformanceFixture` |
-| `gpt-realtime-1.5-conformance` | `auto` (unset) | **not** sent | `Gpt15ConformanceFixture` |
+| `gpt-realtime-1.5-conformance` | `false` (forced) | **not** sent | `Gpt15ConformanceFixture` |
 | `gpt-realtime-1.5-conformance` | `true` (forced) | sent (then rejected upstream → exactly one fallback) | `Gpt15ForcedReasoningConformanceFixture` |
 | `gpt-realtime-2.1-conformance` (default) | `false` (forced) | **not** sent | `Gpt21ReasoningSwitchOffConformanceFixture` |
+
+`Gpt15ConformanceFixture`'s `reasoning_model` changed from `auto` (unset) to `false` (forced) in PR
+#106 review round 3 (Rick): with `auto`, this fixture used to prove the pure name heuristic (input
+4) suppresses reasoning for a `-1.5` deployment on its own; it now instead proves the explicit
+switch (input 2) suppresses reasoning for that same deployment even though the *bound model's*
+catalog entry (`gpt-realtime-2.1`, input 3) says `reasoning: true` — modeling how an operator
+actually runs a 1.5 deployment (`AZURE_OPENAI_REALTIME_REASONING_MODEL=false`), which is the
+regression this round's fix restores. The pure name-heuristic path for a `-1.5`-shaped deployment
+name is still exercised directly at the unit level: `deployment_supports_reasoning`/
+`_NON_REASONING_DEPLOYMENT_RE` is unit-tested in `app/backend/tests/test_session_bootstrap.py`
+(`test_deployment_name_check`, `test_data_zone_deployment_name_is_a_reasoning_deployment`), which
+assert `-1.5`/`-1.5-dz` names are not reasoning-capable independent of any conformance fixture.
 
 The last row is the tri-state's third member and completes the coverage: the explicit switch must
 beat the name-based default in *both* directions, not just the "force reasoning on for a
