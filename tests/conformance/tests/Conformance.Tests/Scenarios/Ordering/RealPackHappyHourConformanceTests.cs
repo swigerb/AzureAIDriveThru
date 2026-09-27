@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Conformance.Fakes;
@@ -9,8 +10,9 @@ namespace Conformance.Tests.Scenarios.Ordering;
 
 /// <summary>
 /// Refs #127: a per-pack, brand-neutral happy-hour conformance proof over every REAL pack
-/// discovered on disk (<see cref="ConformancePersonas.DiscoverFromDisk()"/>) -- today "sonic" and
-/// "dunkin", and "mcdonalds" automatically the moment #112 lands, with no change needed here.
+/// discovered on disk (<see cref="ConformancePersonas.DiscoverFromDisk()"/>) -- every real pack
+/// merged so far, and any future pack automatically the moment its own PR lands, with no change
+/// needed here.
 /// <see cref="PersonaHappyHourConformanceTests"/> proves the identical shape of fact (persona-flag
 /// vs item-level opt-in, banner iff announce) but is scoped to the fixture packs
 /// (test-alpha/test-beta); this file is its real-pack counterpart, and deliberately reads EVERY
@@ -26,9 +28,10 @@ namespace Conformance.Tests.Scenarios.Ordering;
 /// Each pack owns both its own window AND its own IANA timezone (persona.json's
 /// <c>store.timezone</c> -- see <c>order_state.py</c>'s <c>_is_happy_hour_for</c>, which is the
 /// ONLY place happy-hour membership is computed, always via that pack's own bound
-/// <c>ZoneInfo</c>), and two packs' windows need not overlap in UTC at all -- Sonic's is
-/// 14-16 America/Chicago, Dunkin's is 14-17 America/New_York, and a future pack could pick
-/// anything. So a single shared FixedClock instant across every pack (as
+/// <c>ZoneInfo</c>), and two packs' windows need not overlap in UTC at all -- one real pack's
+/// window is 14-16 in its own timezone, another real pack's is 14-17 in an entirely different
+/// timezone, and a future pack could pick anything. So a single shared FixedClock instant across
+/// every pack (as
 /// <c>PersonaHappyHourFixtures.cs</c>'s two-persona-in-one-backend design relies on, safely, only
 /// because just ONE of its two fixture personas has a non-null window) is not safe here -- this
 /// file instead launches one dedicated <see cref="RealPackHappyHourFixture"/> backend PER pack PER
@@ -41,20 +44,28 @@ namespace Conformance.Tests.Scenarios.Ordering;
 /// enabled but whose smoke.json has no (or a null) <c>happyHour</c> block fails loudly, naming the
 /// pack and the exact fields its author still needs to add -- see
 /// <see cref="PersonaHappyHourSmokeExpectations.For"/>. A pack with <c>pricing.happyHour: null</c>
-/// (disabled -- McDonald's, once #112 lands) is proven never to discount or announce at ANY pinned
+/// (disabled -- a future decision-5 pack, once #112 lands) is proven never to discount or announce at ANY pinned
 /// instant, reusing that pack's own smoke.json orderable item (<see
 /// cref="PersonaSmokeExpectations.For"/>) rather than requiring its own extra happy-hour item data
 /// it has no use for.
 ///
 /// Mutation testing (this PR's own evidence, reverted before commit -- see the PR description):
 /// temporarily hardcoding order_state.py's per-session happy-hour discount to a shared constant
-/// (Sonic's own 0.5, ignoring each pack's own <c>priceMultiplier</c>) leaves Sonic's row green
-/// (0.5 coincidentally matches) but fails Dunkin's row (0.75 expected, 0.5 computed) --
+/// (one real pack's own 0.5, ignoring each pack's own <c>priceMultiplier</c>) leaves that pack's
+/// row green (0.5 coincidentally matches) but fails a different real pack's row (its own distinct
+/// multiplier expected, 0.5 computed) --
 /// demonstrating this Theory reads each pack's OWN multiplier rather than trusting a shared
 /// default. Separately, hardcoding <c>_happy_hour_announce</c> to always suppress the banner
 /// fails BOTH real packs' inside-window rows (each currently has <c>announce: true</c> and expects
 /// its own banner text) -- demonstrating the banner assertion is genuinely exercised, not
-/// vacuously true.
+/// vacuously true. A third mutation, exercised against a scratch personas directory rather than
+/// against a real disabled pack (none exists on disk until #112 -- see the PR description for the
+/// full setup and result): a disabled pack (<c>pricing.happyHour: null</c>) falling back to the
+/// default persona's own window/announce/banner instead of staying inert fails the disabled-pack
+/// row below at the instant derived from an enabled pack's own opening hour reinterpreted in the
+/// disabled pack's own timezone -- demonstrating <see cref="RealPackHappyHourConformanceTests"/>'s
+/// disabled-pack proof pinned
+/// instants actually land inside the regression window rather than always missing it.
 /// </summary>
 internal static class PersonaHappyHourConfig
 {
@@ -208,10 +219,40 @@ file static class RealPackHappyHourTestSupport
             [("add", itemName, size, 1, price)],
             roundTripIndex, ct);
     }
+
+    /// <summary>
+    /// Refs #127 nit (Rick's PR #133 review): same connection as <see
+    /// cref="AddItemAndReadResultAsync"/>, but follows the add with a <c>get_order</c> round trip
+    /// so the caller can assert the banner reaches get_order's own response text too, not just
+    /// update_order's (which #115 already covers for the fixture packs).
+    /// </summary>
+    public static async Task<(ToolCallResult AddResult, ToolCallResult GetOrderResult)> AddItemAndGetOrderAsync(
+        ConformanceFixture fixture, string persona, string itemName, string size, decimal price, CancellationToken ct)
+    {
+        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, persona: persona);
+        await using var _ = browser;
+
+        var added = await OrderScenarioHelpers.RunOrderStepsAsync(
+            connection, browser,
+            [("add", itemName, size, 1, price)],
+            roundTripIndex, ct);
+
+        var getOrder = await OrderScenarioHelpers.CallToolAsync(
+            connection, browser, "get_order", "{}", "call_happy_hour_get_order", added.RoundTripIndex, ct);
+
+        return (added, getOrder);
+    }
 }
 
 public sealed class RealPackHappyHourConformanceTests
 {
+    /// <summary>
+    /// Refs #127 item 1 (Rick's PR #133 review): one enabled pack's own window/timezone/banner,
+    /// snapshotted so <see cref="RunDisabledPackProofAsync"/> can derive pinned instants and
+    /// forbidden banner text from EVERY other enabled pack discovered on disk, never a literal.
+    /// </summary>
+    private sealed record EnabledPackSnapshot(string PersonaId, string TimeZoneId, PersonaHappyHourConfig.HappyHourWindow Window);
+
     public static TheoryData<string> DiscoveredPersonaIds()
     {
         var data = new TheoryData<string>();
@@ -233,7 +274,14 @@ public sealed class RealPackHappyHourConformanceTests
 
         if (pricing.HappyHour is null)
         {
-            await RunDisabledPackProofAsync(personaId, pricing, ct);
+            var enabledPacks = ConformancePersonas.DiscoverFromDisk()
+                .Where(id => id != personaId)
+                .Select(id => (Id: id, Pricing: PersonaHappyHourConfig.Read(personasDir, id)))
+                .Where(discovered => discovered.Pricing.HappyHour is not null)
+                .Select(discovered => new EnabledPackSnapshot(discovered.Id, discovered.Pricing.TimeZoneId, discovered.Pricing.HappyHour!))
+                .ToList();
+
+            await RunDisabledPackProofAsync(personaId, pricing, enabledPacks, ct);
         }
         else
         {
@@ -274,8 +322,24 @@ public sealed class RealPackHappyHourConformanceTests
         var insideInstant = LocalWallClockInstant(timeZoneId, window.StartHour);
         var outsideInstant = insideInstant.AddSeconds(-1);
 
+        // Refs #127 nit (Rick's PR #133 review): pins the CLOSING boundary the same way the
+        // opening boundary already is above -- one second before this pack's own window closes
+        // (still inside) vs the closing hour itself (first second outside) -- so a `<` vs `<=`
+        // slip in order_state.py's own window-membership check fails here regardless of which
+        // boundary it slips on.
+        var insideClosingInstant = LocalWallClockInstant(timeZoneId, window.EndHour).AddSeconds(-1);
+        var outsideClosingInstant = LocalWallClockInstant(timeZoneId, window.EndHour);
+
+        // Refs #127 nit (Rick's PR #133 review): #115 already proves the banner echoes through
+        // get_order for the fixture packs; this adds ONE get_order round trip for one real pack
+        // -- the first discovered on disk, read from data so this file still carries no brand
+        // literal of its own -- so a real pack's banner is proven to reach get_order's own
+        // response text too, not just update_order's.
+        var isGetOrderBannerCheckPack = personaId == ConformancePersonas.DiscoverFromDisk()[0];
+
         ToolCallResult insideEligibleResult = null!;
         ToolCallResult insideIneligibleResult = null!;
+        ToolCallResult? insideEligibleGetOrderResult = null;
         await using (var insideFixture = new RealPackHappyHourFixture(personaId, insideInstant))
         {
             await insideFixture.InitializeAsync();
@@ -289,6 +353,15 @@ public sealed class RealPackHappyHourConformanceTests
                 insideIneligibleResult = await RealPackHappyHourTestSupport.AddItemAndReadResultAsync(
                     insideFixture, personaId, expectation.IneligibleItem, expectation.IneligibleSize, expectation.IneligibleMenuPrice, ct);
             });
+            if (isGetOrderBannerCheckPack)
+            {
+                await insideFixture.RunAsync(async () =>
+                {
+                    var (_, getOrderResult) = await RealPackHappyHourTestSupport.AddItemAndGetOrderAsync(
+                        insideFixture, personaId, expectation.EligibleItem, expectation.Size, expectation.MenuPrice, ct);
+                    insideEligibleGetOrderResult = getOrderResult;
+                });
+            }
         }
 
         ToolCallResult outsideEligibleResult = null!;
@@ -299,6 +372,28 @@ public sealed class RealPackHappyHourConformanceTests
             {
                 outsideEligibleResult = await RealPackHappyHourTestSupport.AddItemAndReadResultAsync(
                     outsideFixture, personaId, expectation.EligibleItem, expectation.Size, expectation.MenuPrice, ct);
+            });
+        }
+
+        ToolCallResult insideClosingEligibleResult = null!;
+        await using (var insideClosingFixture = new RealPackHappyHourFixture(personaId, insideClosingInstant))
+        {
+            await insideClosingFixture.InitializeAsync();
+            await insideClosingFixture.RunAsync(async () =>
+            {
+                insideClosingEligibleResult = await RealPackHappyHourTestSupport.AddItemAndReadResultAsync(
+                    insideClosingFixture, personaId, expectation.EligibleItem, expectation.Size, expectation.MenuPrice, ct);
+            });
+        }
+
+        ToolCallResult outsideClosingEligibleResult = null!;
+        await using (var outsideClosingFixture = new RealPackHappyHourFixture(personaId, outsideClosingInstant))
+        {
+            await outsideClosingFixture.InitializeAsync();
+            await outsideClosingFixture.RunAsync(async () =>
+            {
+                outsideClosingEligibleResult = await RealPackHappyHourTestSupport.AddItemAndReadResultAsync(
+                    outsideClosingFixture, personaId, expectation.EligibleItem, expectation.Size, expectation.MenuPrice, ct);
             });
         }
 
@@ -323,6 +418,13 @@ public sealed class RealPackHappyHourConformanceTests
             Assert.DoesNotContain(window.Banner, insideEligibleResult.FunctionCallOutputText);
         }
 
+        // Refs #127 nit: the banner must reach get_order's own response text too, for the one
+        // designated real pack, not just update_order's.
+        if (isGetOrderBannerCheckPack && window.Announce)
+        {
+            Assert.Contains(window.Banner, insideEligibleGetOrderResult!.FunctionCallOutputText);
+        }
+
         // Inside this pack's own window: the non-eligible item is unaffected -- the persona-level
         // flag being active must not blanket-discount an item that never individually opted in.
         OrderScenarioHelpers.AssertMoneyEqual(
@@ -339,28 +441,75 @@ public sealed class RealPackHappyHourConformanceTests
             $"'{expectation.EligibleItem}' must be full price.");
         Assert.DoesNotContain(window.Banner, outsideEligibleResult.FunctionCallOutputText);
         Assert.DoesNotContain("HAPPY HOUR", outsideEligibleResult.FunctionCallOutputText);
+
+        // One second before this pack's own window closes: still discounted -- pins the closing
+        // boundary the same way the opening boundary is pinned above.
+        OrderScenarioHelpers.AssertMoneyEqual(
+            expectation.MenuPrice * window.PriceMultiplier * (1 + taxRate),
+            OrderScenarioHelpers.GetOrderFinalTotal(insideClosingEligibleResult.ToolResultJson!),
+            $"persona '{personaId}': one second before its own happy-hour window closes, " +
+            $"'{expectation.EligibleItem}' must still be discounted by this pack's own " +
+            $"priceMultiplier ({window.PriceMultiplier}).");
+
+        // Exactly at this pack's own window's closing hour: no longer discounted, no banner.
+        OrderScenarioHelpers.AssertMoneyEqual(
+            expectation.MenuPrice * (1 + taxRate),
+            OrderScenarioHelpers.GetOrderFinalTotal(outsideClosingEligibleResult.ToolResultJson!),
+            $"persona '{personaId}': at its own happy-hour window's closing hour, " +
+            $"'{expectation.EligibleItem}' must be full price.");
+        Assert.DoesNotContain(window.Banner, outsideClosingEligibleResult.FunctionCallOutputText);
+        Assert.DoesNotContain("HAPPY HOUR", outsideClosingEligibleResult.FunctionCallOutputText);
     }
 
     /// <summary>
-    /// Refs #127: "A pack with happy hour disabled (McDonald's once #112 lands) never discounts
-    /// or announces at any pinned time." Reuses this pack's own existing
+    /// Refs #127: "A pack with happy hour disabled (a future decision-5 pack once #112 lands)
+    /// never discounts or announces at any pinned time." Reuses this pack's own existing
     /// PersonaSmokeExpectations orderable item (every discovered pack already has one, per
-    /// PersonaSmokeCoverageTests) at two independently-chosen instants rather than requiring its
-    /// own extra happy-hour smoke data it has no eligible item for.
+    /// PersonaSmokeCoverageTests) rather than requiring its own extra happy-hour smoke data it
+    /// has no eligible item for.
+    ///
+    /// Refs #127 item 1 (Rick's PR #133 review): the two original fixed reference instants
+    /// (09:00/10:00 and 20:00/21:00 local in the two real packs' timezones) sit outside every
+    /// real pack's window, so a disabled pack silently falling back to the default persona's own
+    /// window/announce/banner would pass both rows. <paramref name="enabledPacks"/> -- every OTHER
+    /// pack discovered on disk with its OWN <c>pricing.happyHour</c> enabled -- fixes that: for
+    /// each one, this method adds (a) the exact instant THAT pack's own window opens (in ITS OWN
+    /// timezone), which is a real moment somewhere in the world a happy hour is genuinely active,
+    /// and (b) that SAME start hour reinterpreted in THIS disabled pack's OWN timezone -- the one
+    /// that actually bites the realistic fallback bug, because order_state.py always resolves
+    /// happy-hour membership through a session's OWN bound timezone (see this pack's own
+    /// <c>store.timezone</c>), so a fallback that borrows another pack's window/announce/banner
+    /// but keeps this pack's own timezone shows up exactly there. At every instant, this pack must
+    /// stay full price, silent on "HAPPY HOUR", AND silent on every enabled pack's own banner text
+    /// -- read fresh from that pack's own persona.json, never a literal.
     /// </summary>
-    private static async Task RunDisabledPackProofAsync(string personaId, PersonaHappyHourConfig.PersonaPricing pricing, CancellationToken ct)
+    private static async Task RunDisabledPackProofAsync(
+        string personaId,
+        PersonaHappyHourConfig.PersonaPricing pricing,
+        IReadOnlyList<EnabledPackSnapshot> enabledPacks,
+        CancellationToken ct)
     {
         var expectation = PersonaHappyHourSmokeExpectations.For(personaId, isEnabled: false);
         Assert.Null(expectation);
         var smoke = PersonaSmokeExpectations.For(personaId);
 
-        DateTimeOffset[] pinnedInstants =
-        [
+        var pinnedInstants = new List<DateTimeOffset>
+        {
             DateTimeOffset.Parse("2026-07-04T14:00:00Z", CultureInfo.InvariantCulture),
             DateTimeOffset.Parse("2026-01-15T02:00:00Z", CultureInfo.InvariantCulture),
-        ];
+        };
+        foreach (var enabledPack in enabledPacks)
+        {
+            // (a) the real, global moment this enabled pack's own window opens.
+            pinnedInstants.Add(LocalWallClockInstant(enabledPack.TimeZoneId, enabledPack.Window.StartHour));
+            // (b) that same start hour, reinterpreted in THIS disabled pack's own timezone --
+            // the instant a "falls back to the default persona's window" regression would bite,
+            // since this pack's own timezone is always what happy-hour membership resolves
+            // through, never the enabled pack's.
+            pinnedInstants.Add(LocalWallClockInstant(pricing.TimeZoneId, enabledPack.Window.StartHour));
+        }
 
-        foreach (var instant in pinnedInstants)
+        foreach (var instant in pinnedInstants.Distinct())
         {
             ToolCallResult result = null!;
             await using var fixture = new RealPackHappyHourFixture(personaId, instant);
@@ -377,6 +526,13 @@ public sealed class RealPackHappyHourConformanceTests
                 $"persona '{personaId}': pricing.happyHour is null -- '{smoke.OrderableItemName}' " +
                 $"must be full price regardless of clock instant ({instant:O}).");
             Assert.DoesNotContain("HAPPY HOUR", result.FunctionCallOutputText);
+
+            // Refs #127 item 1: a disabled pack must never surface ANY other pack's own banner
+            // text either -- not just the generic "HAPPY HOUR" substring above.
+            foreach (var enabledPack in enabledPacks)
+            {
+                Assert.DoesNotContain(enabledPack.Window.Banner, result.FunctionCallOutputText);
+            }
         }
     }
 }
