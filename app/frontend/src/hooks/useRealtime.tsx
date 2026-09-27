@@ -65,32 +65,43 @@ export const WS_CLOSE_SUPERSEDED = 4002;
 // Reply to extension.end_session: 1000 with this reason.
 export const WS_CLOSE_SESSION_ENDED_REASON = "session_ended";
 
-// Per-tab resume credential (docs/order_resume.md). Never put it in a URL.
-export const RESUME_STORAGE_KEY = "sonic.resumeId";
+// Per-tab resume credential (docs/order_resume.md), namespaced per persona (issue #80 F7,
+// Rick's PR-110 review item 5): each persona gets its own sessionStorage slot so switching personas
+// never reads or clobbers a DIFFERENT persona's resume id -- switching back to a persona later
+// still finds (or doesn't find) exactly the resume state that persona itself left behind.
+const RESUME_STORAGE_KEY_PREFIX = "drivethru.resumeId.";
+const DEFAULT_RESUME_BUCKET = "default";
 
-export const resumeStore = {
-    get(): string | null {
-        try {
-            return sessionStorage.getItem(RESUME_STORAGE_KEY);
-        } catch {
-            return null;
+export function resumeStorageKey(personaId?: string): string {
+    return `${RESUME_STORAGE_KEY_PREFIX}${personaId ?? DEFAULT_RESUME_BUCKET}`;
+}
+
+export function createResumeStore(personaId?: string) {
+    const key = resumeStorageKey(personaId);
+    return {
+        get(): string | null {
+            try {
+                return sessionStorage.getItem(key);
+            } catch {
+                return null;
+            }
+        },
+        set(id: string) {
+            try {
+                sessionStorage.setItem(key, id);
+            } catch {
+                // storage unavailable: resume just won't work in this tab
+            }
+        },
+        clear() {
+            try {
+                sessionStorage.removeItem(key);
+            } catch {
+                // ignore
+            }
         }
-    },
-    set(id: string) {
-        try {
-            sessionStorage.setItem(RESUME_STORAGE_KEY, id);
-        } catch {
-            // storage unavailable: resume just won't work in this tab
-        }
-    },
-    clear() {
-        try {
-            sessionStorage.removeItem(RESUME_STORAGE_KEY);
-        } catch {
-            // ignore
-        }
-    }
-};
+    };
+}
 
 /** idle: 4000; superseded: 4002; ended: 1000 session_ended; transport: anything else (resumable). */
 export type CloseKind = "idle" | "superseded" | "ended" | "transport";
@@ -160,6 +171,10 @@ export default function useRealTime({
     // socket is torn down and replaced as soon as the token arrives.
     const [tokenReady, setTokenReady] = useState(!!useDirectAoaiApi);
     const [shouldConnect, setShouldConnect] = useState(true);
+
+    // Recomputed every render (cheap) so a `personaId` change (persona switch) is picked up by
+    // every closure below on its very next render, without needing its own memoization seam.
+    const resumeStore = createResumeStore(personaId);
 
     // Fetch a session token on mount (graceful — null means no token required)
     useEffect(() => {
@@ -284,7 +299,8 @@ export default function useRealTime({
         onReceivedRoundTripToken,
         onReceivedRateLimited,
         onReceivedError,
-        useDirectAoaiApi
+        useDirectAoaiApi,
+        personaId
     ]);
 
     const { sendJsonMessage, readyState } = useWebSocket(tokenReady ? wsEndpoint : null, {

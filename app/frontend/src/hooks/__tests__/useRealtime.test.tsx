@@ -1,7 +1,13 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import useRealTime, { RESUME_STORAGE_KEY, WS_CLOSE_IDLE_TIMEOUT, WS_CLOSE_SUPERSEDED } from "../useRealtime";
+import useRealTime, { resumeStorageKey, WS_CLOSE_IDLE_TIMEOUT, WS_CLOSE_SUPERSEDED } from "../useRealtime";
+
+// `renderConnected()` below never passes a `personaId`, so every test in this file exercises the
+// "default" resume bucket (issue #80 F7, Rick's #110 review item 5: resume ids are namespaced per
+// persona -- `hooks/__tests__/useRealtime.personaResume.test.tsx` covers the per-persona keying
+// itself).
+const RESUME_STORAGE_KEY = resumeStorageKey();
 
 const ws = vi.hoisted(() => ({
     calls: [] as Array<{ url: string | null; options: any; connect: boolean }>,
