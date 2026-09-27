@@ -96,6 +96,32 @@ param openAiServiceLocation string
 param realtimeDeploymentCapacity int
 param embeddingDeploymentCapacity int
 
+// --- Persona picker (ADR-001, docs/persona-architecture.md section 10) ---
+// This environment is independent of rg-sonic-demo / rg-mcd-demo / rg-dunkin-demo:
+// its own Foundry (Azure OpenAI) account, its own paid AI Search service, one
+// index per persona. Adding a fourth persona is a parameter change here plus a
+// personas/<id>/ pack (#70) -- no other Bicep edits.
+@description('Allow-list of persona ids served by this environment, comma-separated (matches the app PERSONAS env var, e.g. "sonic,mcdonalds,dunkin"). Each id needs a personas/<id>/ pack (#70, #78, #79) and an entry in personaSearchIndexNamesJson before the app can actually serve it.')
+param personas string = 'sonic,mcdonalds,dunkin'
+
+@description('Default persona id when a session omits ?persona= (app DEFAULT_PERSONA env var). Should be one of the comma-separated ids in personas.')
+param defaultPersona string = 'sonic'
+
+@description('JSON object mapping persona id to its AI Search index name on this environment\'s own Search service (10.2). The postprovision ingestion hook (#84) creates/updates one index per entry. Surfaced to the app as the AZURE_SEARCH_INDEXES env var.')
+param personaSearchIndexNamesJson string = '{"sonic":"sonic-menu-items","mcdonalds":"mcdonalds-menu-items","dunkin":"dunkin-menu-items"}'
+
+@description('JSON array of Foundry/Azure OpenAI model deployments to create on this environment\'s own account (section 7.2, 10.3). Each entry: catalogId (matches app/backend/config.yaml models.catalog), deploymentName, modelName, modelVersion, skuName, capacity, isDefaultRealtime (exactly one entry should be true -- it becomes AZURE_OPENAI_REALTIME_DEPLOYMENT). realtimeDeploymentCapacity/embeddingDeploymentCapacity above still override the matching entries by catalogId, so the existing "bump a param, azd provision" scaling flow (10.3) keeps working. Only the two models already qualified for this repo ship by default; the alternative realtime model and the cascade chat/transcription/TTS models (#75, #82) are added the same way once Unity fixes the real catalog -- no Bicep changes needed to add a model, only a new array entry.')
+param openAiModelDeploymentsJson string = '[{"catalogId":"gpt-realtime-2.1","deploymentName":"gpt-realtime-2.1","modelName":"gpt-realtime-2.1","modelVersion":"2026-07-07","skuName":"GlobalStandard","capacity":10,"isDefaultRealtime":true},{"catalogId":"text-embedding-3-large","deploymentName":"text-embedding-3-large","modelName":"text-embedding-3-large","modelVersion":"1","skuName":"Standard","capacity":30,"isDefaultRealtime":false}]'
+
+// --- C# backend (section 10.1 option A, 10.2; added by S7, #17) ---
+// The module is always present so #17 only has to flip this flag, but it
+// deploys nothing until then: no app/backend-dotnet project exists yet.
+@description('Deploy the .NET container app alongside the Python one, sharing the same ACA environment, Foundry account, Search service and managed identity (10.2). Leave false until #12-#17 land a real image; the module compiles either way.')
+param deployDotnetApp bool = false
+
+@description('Name override for the .NET container app. Empty = derived from the environment token, matching the Python app\'s naming convention.')
+param dotnetServiceName string = ''
+
 param tenantId string = tenant().tenantId
 
 @description('Id of the user or app to assign application roles')
@@ -250,9 +276,7 @@ module acaBackend 'core/host/container-app-upsert.bicep' = {
       APP_SESSION_SECRET: 'app-session-secret'
     }
     env: union({
-      AZURE_SEARCH_ENDPOINT: reuseExistingSearch
-        ? searchEndpoint
-        : 'https://${searchService.outputs.name}.search.windows.net'
+      AZURE_SEARCH_ENDPOINT: resolvedSearchEndpoint
       AZURE_SEARCH_INDEX: searchIndexName
       AZURE_SEARCH_SEMANTIC_CONFIGURATION: searchSemanticConfiguration
       AZURE_SEARCH_IDENTIFIER_FIELD: searchIdentifierField
@@ -263,9 +287,18 @@ module acaBackend 'core/host/container-app-upsert.bicep' = {
       // Free SKU has no semantic ranker; the app must not request one or every
       // query returns HTTP 400.
       AZURE_SEARCH_SEMANTIC_RANKER: actualSearchServiceSemanticRankerLevel
-      AZURE_OPENAI_EASTUS2_ENDPOINT: reuseExistingOpenAi ? openAiEndpoint : openAi.outputs.endpoint
-      AZURE_OPENAI_REALTIME_DEPLOYMENT: reuseExistingOpenAi ? openAiRealtimeDeployment : openAiDeployments[0].name
+      // One index per persona (10.2), keyed by persona id; #84's ingestion hook
+      // creates/updates each one on this environment's own Search service.
+      AZURE_SEARCH_INDEXES: string(personaSearchIndexNames)
+      AZURE_OPENAI_EASTUS2_ENDPOINT: resolvedOpenAiEndpoint
+      AZURE_OPENAI_REALTIME_DEPLOYMENT: reuseExistingOpenAi ? openAiRealtimeDeployment : defaultRealtimeDeployment.deploymentName
       AZURE_OPENAI_REALTIME_VOICE_CHOICE: openAiRealtimeVoiceChoice
+      // Catalog id -> deployment name for every model this environment created (7.2).
+      AZURE_AI_MODEL_DEPLOYMENTS: string(modelDeploymentsMap)
+      // Persona allow-list and default (4.2, 10.2). PERSONAS is the app's own
+      // parsing of this comma list; kept as one string here to match it exactly.
+      PERSONAS: personas
+      DEFAULT_PERSONA: defaultPersona
       RUNNING_IN_PRODUCTION: 'true'
       // Changing a secret alone does not restart running replicas; a changed
       // fingerprint changes the template, so every replica restarts on the new
@@ -282,33 +315,102 @@ module acaBackend 'core/host/container-app-upsert.bicep' = {
   }
 }
 
+// Container App for the .NET backend (10.1 option A, 10.2). Disabled by
+// default (deployDotnetApp = false): S7 (#17) flips the flag once
+// app/backend-dotnet exists. It shares acaIdentity, so the RBAC already
+// granted below (openAiRoleBackend, searchRoleBackend) covers it too -- no
+// separate role assignments needed for a second app on the same identity.
+module acaBackendDotnet 'core/host/container-app-upsert.bicep' = if (deployDotnetApp) {
+  name: 'aca-web-dotnet'
+  scope: resourceGroup
+  params: {
+    name: !empty(dotnetServiceName) ? dotnetServiceName : '${abbrs.webSitesContainerApps}backend-dotnet-${resourceToken}'
+    location: location
+    identityName: acaIdentityName
+    // No azure.yaml service exists for this app yet (#17), so azd never
+    // reports an existing resource for it.
+    exists: false
+    workloadProfile: azureContainerAppsWorkloadProfile
+    containerRegistryName: containerApps.outputs.registryName
+    containerAppsEnvironmentName: containerApps.outputs.environmentName
+    identityType: 'UserAssigned'
+    tags: union(tags, { 'azd-service-name': 'backend-dotnet' })
+    targetPort: 8000
+    containerCpuCoreCount: '1.0'
+    containerMemory: '2Gi'
+    containerMinReplicas: 1
+    containerMaxReplicas: 5
+    healthProbePath: '/health'
+    enableWebSocket: true
+    stickySessionsAffinity: 'sticky'
+    // Same Foundry account, Search service and persona/model config as the
+    // Python app (10.2). EasyAuth for this app arrives with #17.
+    env: {
+      AZURE_SEARCH_ENDPOINT: resolvedSearchEndpoint
+      AZURE_SEARCH_INDEX: searchIndexName
+      AZURE_SEARCH_SEMANTIC_CONFIGURATION: searchSemanticConfiguration
+      AZURE_SEARCH_IDENTIFIER_FIELD: searchIdentifierField
+      AZURE_SEARCH_CONTENT_FIELD: searchContentField
+      AZURE_SEARCH_TITLE_FIELD: searchTitleField
+      AZURE_SEARCH_EMBEDDING_FIELD: searchEmbeddingField
+      AZURE_SEARCH_USE_VECTOR_QUERY: searchUseVectorQuery
+      AZURE_SEARCH_SEMANTIC_RANKER: actualSearchServiceSemanticRankerLevel
+      AZURE_SEARCH_INDEXES: string(personaSearchIndexNames)
+      AZURE_OPENAI_EASTUS2_ENDPOINT: resolvedOpenAiEndpoint
+      AZURE_OPENAI_REALTIME_DEPLOYMENT: reuseExistingOpenAi ? openAiRealtimeDeployment : defaultRealtimeDeployment.deploymentName
+      AZURE_OPENAI_REALTIME_VOICE_CHOICE: openAiRealtimeVoiceChoice
+      AZURE_AI_MODEL_DEPLOYMENTS: string(modelDeploymentsMap)
+      PERSONAS: personas
+      DEFAULT_PERSONA: defaultPersona
+      RUNNING_IN_PRODUCTION: 'true'
+      AZURE_CLIENT_ID: acaIdentity.outputs.clientId
+    }
+  }
+}
+
 var embedModel = 'text-embedding-3-large'
-var openAiDeployments = [
-  {
-    name: 'gpt-realtime-2.1'
-    model: {
-      format: 'OpenAI'
-      name: 'gpt-realtime-2.1'
-      version: '2026-07-07'
-    }
-    sku: {
-      name: 'GlobalStandard'
-      capacity: realtimeDeploymentCapacity
-    }
+
+// Computed once so both container apps (and the outputs below) reference the
+// same value instead of repeating the reuseExisting ternary at every call site.
+var resolvedSearchEndpoint = reuseExistingSearch ? searchEndpoint : 'https://${searchService.outputs.name}.search.windows.net'
+var resolvedOpenAiEndpoint = reuseExistingOpenAi ? openAiEndpoint : openAi.outputs.endpoint
+
+// Parsed persona config (section 10.2)
+var personaSearchIndexNames = json(personaSearchIndexNamesJson)
+
+// The model deployment list (10.3) with the two existing scale-only params
+// (realtimeDeploymentCapacity, embeddingDeploymentCapacity) still overriding
+// their matching entries by catalogId, so "bump a param, azd provision" keeps
+// working for the two knobs the design calls out even though the list itself
+// is now data, not hardcoded Bicep.
+var capacityOverridesByCatalogId = {
+  'gpt-realtime-2.1': realtimeDeploymentCapacity
+  '${embedModel}': embeddingDeploymentCapacity
+}
+var openAiModelDeployments = [for d in json(openAiModelDeploymentsJson): union(d, {
+  capacity: capacityOverridesByCatalogId[?d.catalogId] ?? d.capacity
+})]
+// Exactly one entry should be isDefaultRealtime: true -- it feeds
+// AZURE_OPENAI_REALTIME_DEPLOYMENT, same as the old openAiDeployments[0]. Falls
+// back to the list's first entry so a catalog with no isDefaultRealtime flag
+// (or an empty override list) still resolves to something instead of null.
+var defaultRealtimeDeployment = first(filter(openAiModelDeployments, d => d.isDefaultRealtime)) ?? openAiModelDeployments[0]
+// Bicep output AZURE_AI_MODEL_DEPLOYMENTS (7.2): catalog id -> deployment name,
+// for whichever deployments this environment actually created.
+var modelDeploymentsMap = reduce(openAiModelDeployments, {}, (cur, d) => union(cur, { '${d.catalogId}': d.deploymentName }))
+
+var openAiDeployments = [for d in openAiModelDeployments: {
+  name: d.deploymentName
+  model: {
+    format: 'OpenAI'
+    name: d.modelName
+    version: d.modelVersion
   }
-  {
-    name: embedModel
-    model: {
-      format: 'OpenAI'
-      name: embedModel
-      version: '1'
-    }
-    sku: {
-      name: 'Standard'
-      capacity: embeddingDeploymentCapacity
-    }
+  sku: {
+    name: d.skuName
+    capacity: d.capacity
   }
-]
+}]
 
 module openAi 'br/public:avm/res/cognitive-services/account:0.8.0' = if (!reuseExistingOpenAi) {
   name: 'openai'
@@ -479,17 +581,19 @@ output AZURE_LOCATION string = location
 output AZURE_TENANT_ID string = tenantId
 output AZURE_RESOURCE_GROUP string = resourceGroup.name
 
-output AZURE_OPENAI_EASTUS2_ENDPOINT string = reuseExistingOpenAi ? openAiEndpoint : openAi.outputs.endpoint
+output AZURE_OPENAI_EASTUS2_ENDPOINT string = resolvedOpenAiEndpoint
 output AZURE_OPENAI_REALTIME_DEPLOYMENT string = reuseExistingOpenAi
   ? openAiRealtimeDeployment
-  : openAiDeployments[0].name
+  : defaultRealtimeDeployment.deploymentName
 output AZURE_OPENAI_REALTIME_VOICE_CHOICE string = openAiRealtimeVoiceChoice
 output AZURE_OPENAI_EMBEDDING_DEPLOYMENT string = embedModel
 output AZURE_OPENAI_EMBEDDING_MODEL string = embedModel
+// Catalog id -> deployment name for every model this environment created
+// (section 7.2). A catalog entry (app/backend/config.yaml) with no matching
+// key here isn't selectable.
+output AZURE_AI_MODEL_DEPLOYMENTS string = string(modelDeploymentsMap)
 
-output AZURE_SEARCH_ENDPOINT string = reuseExistingSearch
-  ? searchEndpoint
-  : 'https://${searchService.outputs.name}.search.windows.net'
+output AZURE_SEARCH_ENDPOINT string = resolvedSearchEndpoint
 output AZURE_SEARCH_INDEX string = searchIndexName
 output AZURE_SEARCH_SEMANTIC_CONFIGURATION string = searchSemanticConfiguration
 output AZURE_SEARCH_IDENTIFIER_FIELD string = searchIdentifierField
@@ -501,6 +605,9 @@ output AZURE_SEARCH_USE_VECTOR_QUERY bool = searchUseVectorQuery
 // semantic queries. On the free SKU this resolves to 'disabled', and sending
 // query_type="semantic" to a service without the ranker returns HTTP 400.
 output AZURE_SEARCH_SEMANTIC_RANKER string = actualSearchServiceSemanticRankerLevel
+// One index per persona (10.2), keyed by persona id -- JSON object so the app
+// and the #84 ingestion hook read the same shape as AZURE_AI_MODEL_DEPLOYMENTS.
+output AZURE_SEARCH_INDEXES string = string(personaSearchIndexNames)
 
 output AZURE_STORAGE_ENDPOINT string = 'https://${storage.outputs.name}.blob.core.windows.net'
 output AZURE_STORAGE_ACCOUNT string = storage.outputs.name
@@ -508,5 +615,12 @@ output AZURE_STORAGE_CONNECTION_STRING string = 'ResourceId=/subscriptions/${sub
 output AZURE_STORAGE_CONTAINER string = storageContainerName
 output AZURE_STORAGE_RESOURCE_GROUP string = storageResourceGroup.name
 
+output PERSONAS string = personas
+output DEFAULT_PERSONA string = defaultPersona
+
 output BACKEND_URI string = acaBackend.outputs.uri
+// Empty until deployDotnetApp is flipped on (S7, #17); the C# app then serves
+// the same frontend and personas behind its own hostname (10.1 option A).
+output AZURE_CONTAINER_APP_DOTNET_NAME string = deployDotnetApp ? acaBackendDotnet.outputs.name : ''
+output BACKEND_DOTNET_URI string = deployDotnetApp ? acaBackendDotnet.outputs.uri : ''
 output AZURE_CONTAINER_REGISTRY_ENDPOINT string = containerApps.outputs.registryLoginServer

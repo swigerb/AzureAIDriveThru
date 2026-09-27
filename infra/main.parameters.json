@@ -107,6 +107,18 @@
     "embeddingDimensions": {
       "value": "${AZURE_OPENAI_EMB_DIMENSIONS}"
     },
+    "personas": {
+      "value": "${PERSONAS=sonic,mcdonalds,dunkin}"
+    },
+    "defaultPersona": {
+      "value": "${DEFAULT_PERSONA=sonic}"
+    },
+    "deployDotnetApp": {
+      "value": "${DEPLOY_DOTNET_APP=false}"
+    },
+    "dotnetServiceName": {
+      "value": "${AZURE_CONTAINER_APP_DOTNET_NAME}"
+    },
     "logAnalyticsName": {
       "value": "${AZURE_LOG_ANALYTICS}"
     },
