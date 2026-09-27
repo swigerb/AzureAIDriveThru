@@ -1,0 +1,142 @@
+{
+  "description": "Golden pricing/tax/happy-hour dataset for this brand's persona pack (issue #79). Created preemptively per Rick's #79 review note anticipating a future per-persona conformance harness (tests/conformance/testdata/personas/<id>/ is not yet consumed by any C# fixture as of this PR -- see tests/conformance/src/Conformance.Harness/ConformancePersonas.cs's doc comment). MONEY CONTRACT: identical to tests/conformance/testdata/golden-order-pricing.json (the reference persona) -- line = unit * qty * (happyHourDiscount iff item is happy-hour-eligible per this pack's persona.json extras.allowedBaseCategories AND happy hour is active); subtotal = sum(line); tax = subtotal * taxRate computed ONCE per order; finalTotal = subtotal + tax. No rounding at any step; every money value is a quoted exact-decimal string. This brand has NO combos (persona.json bundles.nameMarkers is empty) and no 'Route 44'-style size-alias branding -- both sections are intentionally omitted rather than fabricated.",
+  "businessRules": {
+    "taxRate": "0.08",
+    "happyHourDiscount": "0.75",
+    "happyHourStartHour": 14,
+    "happyHourEndHour": 17,
+    "maxItemQuantity": 10,
+    "maxOrderItems": 25,
+    "storeTimezone": "America/New_York",
+    "source": "this pack's persona.json (pricing.taxRate, pricing.happyHour) + app/backend/config.yaml business_rules block (maxItemQuantity/maxOrderItems are shared platform constants, not persona-specific)"
+  },
+  "happyHourBoundaryInstants": {
+    "note": "This brand's happy hour is 14:00-17:00 America/New_York (persona.json pricing.happyHour). The first four instants use a summer date (2026-07-04, EDT/-04:00); the last two are a winter (EST/-05:00) instant pair, mirroring the reference golden file's DST-boundary coverage.",
+    "cases": [
+      { "instant": "2026-07-04T13:59:59-04:00", "expectedHappyHour": false, "description": "one second before the window opens (summer/EDT)" },
+      { "instant": "2026-07-04T14:00:00-04:00", "expectedHappyHour": true, "description": "exact opening instant (summer/EDT)" },
+      { "instant": "2026-07-04T16:59:59-04:00", "expectedHappyHour": true, "description": "one second before the window closes (summer/EDT)" },
+      { "instant": "2026-07-04T17:00:00-04:00", "expectedHappyHour": false, "description": "exact closing instant (summer/EDT)" },
+      { "instant": "2026-01-15T13:59:59-05:00", "expectedHappyHour": false, "description": "one second before the window opens (winter/EST)" },
+      { "instant": "2026-01-15T14:00:00-05:00", "expectedHappyHour": true, "description": "exact opening instant (winter/EST)" }
+    ]
+  },
+  "taxCases": [
+    {
+      "description": "Single non-eligible item (donuts & bakery), no happy hour",
+      "items": [ { "item": "Glazed Donut", "size": "standard", "quantity": 3, "unitPrice": "1.49", "isHappyHourEligible": false } ],
+      "happyHour": false,
+      "expectedSubtotal": "4.47",
+      "expectedTax": "0.3576",
+      "expectedFinalTotal": "4.8276"
+    },
+    {
+      "description": "Two non-eligible items (breakfast sandwiches + donuts & bakery), no happy hour",
+      "items": [
+        { "item": "Bacon Egg & Cheese on Croissant", "size": "standard", "quantity": 1, "unitPrice": "4.99", "isHappyHourEligible": false },
+        { "item": "Boston Kreme Donut", "size": "standard", "quantity": 2, "unitPrice": "1.79", "isHappyHourEligible": false }
+      ],
+      "happyHour": false,
+      "expectedSubtotal": "8.57",
+      "expectedTax": "0.6856",
+      "expectedFinalTotal": "9.2556"
+    },
+    {
+      "description": "Eligible latte + non-eligible donut, no happy hour: both full price",
+      "items": [
+        { "item": "Caramel Craze Latte", "size": "medium", "quantity": 1, "unitPrice": "4.99", "isHappyHourEligible": true },
+        { "item": "Glazed Donut", "size": "standard", "quantity": 1, "unitPrice": "1.49", "isHappyHourEligible": false }
+      ],
+      "happyHour": false,
+      "expectedSubtotal": "6.48",
+      "expectedTax": "0.5184",
+      "expectedFinalTotal": "6.9984"
+    },
+    {
+      "description": "Same order during happy hour: only the eligible latte line is discounted (0.75 multiplier) before tax; the donut is unaffected",
+      "items": [
+        { "item": "Caramel Craze Latte", "size": "medium", "quantity": 1, "unitPrice": "4.99", "isHappyHourEligible": true },
+        { "item": "Glazed Donut", "size": "standard", "quantity": 1, "unitPrice": "1.49", "isHappyHourEligible": false }
+      ],
+      "happyHour": true,
+      "expectedSubtotal": "5.2325",
+      "expectedTax": "0.4186",
+      "expectedFinalTotal": "5.6511"
+    },
+    {
+      "description": "Single standalone eligible cold beverage during happy hour",
+      "items": [ { "item": "Original Cold Brew", "size": "large", "quantity": 1, "unitPrice": "4.79", "isHappyHourEligible": true } ],
+      "happyHour": true,
+      "expectedSubtotal": "3.5925",
+      "expectedTax": "0.2874",
+      "expectedFinalTotal": "3.8799"
+    },
+    {
+      "description": "Non-eligible breakfast sandwich is unaffected even when happy hour is active",
+      "items": [ { "item": "Turkey Sausage Wake-Up Wrap", "size": "standard", "quantity": 1, "unitPrice": "2.59", "isHappyHourEligible": false } ],
+      "happyHour": true,
+      "expectedSubtotal": "2.59",
+      "expectedTax": "0.2072",
+      "expectedFinalTotal": "2.7972"
+    },
+    {
+      "description": "Standalone eligible cold beverage, no happy hour, full price",
+      "items": [ { "item": "Brown Sugar Cream Cold Brew", "size": "large", "quantity": 1, "unitPrice": "5.29", "isHappyHourEligible": true } ],
+      "happyHour": false,
+      "expectedSubtotal": "5.29",
+      "expectedTax": "0.4232",
+      "expectedFinalTotal": "5.7132"
+    }
+  ],
+  "sizeDisplayCases": [
+    { "item": "Caramel Craze Latte", "size": "small", "expectedDisplay": "Small Caramel Craze Latte" },
+    { "item": "Caramel Craze Latte", "size": "medium", "expectedDisplay": "Medium Caramel Craze Latte" },
+    { "item": "Caramel Craze Latte", "size": "large", "expectedDisplay": "Large Caramel Craze Latte" },
+    { "item": "Glazed Donut", "size": "standard", "expectedDisplay": "Glazed Donut" },
+    { "item": "Glazed Donut", "size": "n/a", "expectedDisplay": "Glazed Donut" },
+    { "item": "Glazed Donut", "size": "na", "expectedDisplay": "Glazed Donut" },
+    { "item": "Glazed Donut", "size": "none", "expectedDisplay": "Glazed Donut" },
+    { "item": "Glazed Donut", "size": "", "expectedDisplay": "Glazed Donut" },
+    { "item": "Glazed Donut", "size": "n.a.", "expectedDisplay": "Glazed Donut" }
+  ],
+  "sizeNotAvailableCases": [
+    { "item": "Caramel Craze Latte", "size": "xl", "expectedItemName": "Caramel Craze Latte", "expectedAvailableSizes": ["Small", "Medium", "Large"] },
+    { "item": "Caramel Craze Latte", "size": "extra large", "expectedItemName": "Caramel Craze Latte", "expectedAvailableSizes": ["Small", "Medium", "Large"] },
+    { "item": "Glazed Donut", "size": "large", "expectedItemName": "Glazed Donut", "expectedAvailableSizes": ["Standard"] }
+  ],
+  "quantityLimits": {
+    "maxItemQuantity": 10,
+    "maxOrderItems": 25,
+    "source": "app/backend/config.yaml business_rules block (shared platform constants, not persona-specific)"
+  },
+  "extrasCases": [
+    {
+      "description": "Extra allowed on an eligible base category (signature lattes)",
+      "baseItem": "Caramel Craze Latte",
+      "baseCategory": "signature lattes",
+      "extra": "Whipped Cream",
+      "expectedAllowed": true
+    },
+    {
+      "description": "Extra allowed on an eligible base category (cold beverages)",
+      "baseItem": "Original Cold Brew",
+      "baseCategory": "cold beverages",
+      "extra": "Extra Espresso Shot",
+      "expectedAllowed": true
+    },
+    {
+      "description": "Extra blocked on a blocked base category (donuts & bakery) -- error_messages.yaml 'extras_blocked_category'",
+      "baseItem": "Glazed Donut",
+      "baseCategory": "donuts & bakery",
+      "extra": "Flavor Swirl Add-On",
+      "expectedAllowed": false
+    },
+    {
+      "description": "Extra blocked on a blocked base category (breakfast sandwiches) -- error_messages.yaml 'extras_blocked_category'",
+      "baseItem": "Bacon Egg & Cheese on Croissant",
+      "baseCategory": "breakfast sandwiches",
+      "extra": "Extra Espresso Shot",
+      "expectedAllowed": false
+    }
+  ]
+}
