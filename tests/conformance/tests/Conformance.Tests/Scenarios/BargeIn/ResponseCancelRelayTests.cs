@@ -99,4 +99,69 @@ public sealed class ResponseCancelRelayTests(ConformanceFixture fixture)
         // The "backend logged no unhandled error during this scenario" invariant (PR #22 review
         // item N5) is enforced fixture-wide by ConformanceFixture.RunAsync.
     });
+
+    /// <summary>
+    /// Issue #95: a racy `response.cancel` that lands strictly after the response it targets has
+    /// already finished (e.g. useRealtime.tsx's unconditional cancel firing on a barge-in or a mic
+    /// restart that loses the race against response.done) is rejected upstream with
+    /// `response_cancel_not_active`, exactly like <see
+    /// cref="ResponseCancelTests.Cancel_with_nothing_active_is_rejected_and_the_session_remains_unaffected"/>
+    /// proves at the fake-only level. Through the real backend this is benign, not a backend
+    /// fault -- rtmt.py logs it at INFO, not ERROR, so it is never counted against
+    /// <see cref="ConformanceFixture.RunAsync(Func{Task})"/>'s default zero-tolerance backend-error
+    /// baseline. This is the deterministic conformance row for the flake originally seen in
+    /// OrderResumeBrowserTests' strict-autoplay scenario (PR #94, run 36294099810).
+    /// </summary>
+    [Fact]
+    public Task Browser_response_cancel_after_the_response_already_finished_is_not_a_backend_error() => fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var noneOpen = await fixture.Realtime.WaitForNoOpenConnectionsAsync(FrameTimeout, ct);
+        Assert.True(noneOpen, $"Expected no open upstream connections at test start, but " +
+            $"{fixture.Realtime.OpenConnectionCount} are still open — a previous test leaked a connection.");
+
+        var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
+        await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        var connection = await connectionTask;
+        Assert.True(connection is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+
+        await browser.SendStartSessionAsync(cancellationToken: ct);
+
+        // Let the greeting's response.create/response.done finish fully first, then drive one
+        // more turn to completion with ResponseScript.Default's unpaced (immediate) delta+done --
+        // by the time the browser observes response.done, ActiveResponseId is already cleared
+        // upstream, so a cancel sent afterward is guaranteed racy/late rather than mid-stream.
+        var greetingRoundTrip = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.round_trip_token", FrameTimeout, ct);
+        Assert.True(greetingRoundTrip is not null, "Greeting round trip never completed.");
+
+        connection!.Script.Enqueue(ResponseScript.Default);
+        await browser.SendResponseCreateAsync(ct);
+        var done = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "response.done" && f.Sequence > greetingRoundTrip!.Sequence, FrameTimeout, ct);
+        Assert.True(done is not null, "Expected the scripted turn's response.done to reach the browser before cancelling.");
+        Assert.Equal("completed", done!.Json.GetProperty("response").GetProperty("status").GetString());
+
+        // The race from #95: response.cancel sent unconditionally, after the response it would
+        // have targeted has already finished. rtmt.py has no special case of its own for
+        // response.cancel -- it relays straight through, same as the mid-stream case above.
+        await browser.SendResponseCancelAsync(ct);
+
+        var error = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "error" && f.Sequence > done!.Sequence, FrameTimeout, ct);
+        Assert.True(error is not null, "Expected the fake upstream's rejection to reach the browser.");
+        Assert.Equal("response_cancel_not_active", error!.Json.GetProperty("error").GetProperty("code").GetString());
+
+        // The connection must stay open and usable -- a benign, expected rejection, not a fault.
+        Assert.Null(browser.CloseStatus);
+        await browser.SendResponseCreateAsync(ct);
+        var nextRoundTrip = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.round_trip_token" && f.Sequence > error!.Sequence, FrameTimeout, ct);
+        Assert.True(nextRoundTrip is not null,
+            "Expected the session to remain fully usable for a further turn after the benign cancel rejection.");
+
+        // The actual regression check: ConformanceFixture.RunAsync's default zero-tolerance
+        // backend-error baseline (allowedNewBackendErrors: 0) fails this test by itself if rtmt.py
+        // logs response_cancel_not_active at ERROR -- no separate assertion needed here.
+    });
 }
