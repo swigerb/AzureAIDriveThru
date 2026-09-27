@@ -64,6 +64,39 @@ built `app/backend/static` (`npm ci && npm run build`) before either `pytest` or
 conformance harness's `PythonBackendLauncher` will run cleanly — `git worktree add` does not
 carry over build artifacts, confirming the same lesson already recorded below from PR #66.
 
+**PR #73 (P2-4) — No off-menu ordering, ADR-001 decision 4 (2026-09-27):** Made `resolve_menu_item()`
+(exact normalized name or exact-match alias against the real pack, nothing else) the single on-menu
+gate `update_order`'s `add` path calls before any size/price/customization/extras/quantity check;
+anything that doesn't resolve is rejected `TO_SERVER`-only with `error_messages.yaml`'s
+`item_not_on_menu` (or `size_not_available` if the name resolves but the size doesn't), same plain-
+text rejection shape every other add-time guard in `tools.py` already used — no new wire schema was
+needed, and inventing one would have meant touching `rtmt.py`/`app.py` session code, explicitly out
+of scope here (#74 next). Fully deleted (not just made unreachable) three keyword-fallback regex
+functions in `menu_utils.py` (`_FOUNTAIN_DRINK_KEYWORD_RE`, `_SHAKE_BLAST_KEYWORD_RE`,
+`_DR_PEPPER_RE`) plus `infer_category`'s substring rules and `bundle_slots`' `"combo" in name`
+escape hatch (the "until #73" fallback called out in the wave plan); off-menu names now get safe
+classification defaults (`""`/`False`/`()`/`None`) instead of guessing. Replaced
+`_ICE_CREAM_MACHINE_KEYWORDS` substring matching in the OOS annotation with a new
+`requires_machine(item_name)` reading the pack's real `requiresMachine` field, and replaced
+`EXTRAS_KEYWORDS` name matching in the extras guard with a new `is_extra_item(item_name)` reading
+the real `isExtra` field — both resolve aliases first through the same `_resolve_alias` pipeline
+every other classifier uses, which is why e.g. "Whipped Cream" (an alias of "Whipped Topping")
+still correctly reports `isExtra=True`. **Data-loss near-miss and recovery:** a `git checkout --
+menu_utils.py` run to "clean up a scratch experiment" silently wiped the entire uncommitted #73
+rewrite of that file back to the pre-#73 baseline, undetected until a later `pytest` `ImportError`
+surfaced it. Reconstructed the file from scratch using the (intact) test files as the spec
+(`test_menu_utils.py`'s class/test names, `tools.py`'s import contract, real `menuItems.json`
+field values) and re-verified byte-for-byte against every consumer before trusting it again.
+**Key lesson, now load-bearing for how I work in a worktree:** `git checkout -- <file>` on an
+uncommitted file has zero recovery path — never run it against a file with pending work, and more
+importantly, commit a fully-verified milestone (full test suite green) *before* starting any
+follow-on work (mutation testing, docs) that involves further `git` commands, so an accidental
+revert only costs the uncommitted increment, not the whole feature. Applied this immediately after:
+committed the reconstruction first, then ran all three issue-mandated mutation checks (keyword
+fallback re-added → off-menu test fails; a shake's `requiresMachine` blanked → machine-down test
+fails; an extra's `isExtra` flipped false → extras-guard test fails) against that safe restore
+point, using `git checkout --` only for files with zero uncommitted #73 diff.
+
 **PR #66 round 3 — conformance-flake attribution R1/R2 (2026-09-25):** Fixed the last two items from Rick's round-2 re-review on the C#/xUnit conformance harness (`tests/conformance`) without touching Beth's overall design. R1: a single late backend error was cascading into failing every remaining scenario because (a) the charge to the previous scenario never consumed/advanced the count it charged, so the same line got re-attributed to every subsequent scenario, and (b) `Assert.Fail` for that charge ran *before* the `try`/`finally` in `ConformanceFixture.RunAsync`, so the failing scenario itself was silently dropped from the report instead of being recorded — moving the charge+fail inside `try`/`finally` (with a `postBodyRecorded` guard) fixed both at once; also seeded a `StartupScenarioName` pseudo-scenario so pre-scenario startup errors fail once, by name, instead of surfacing as `<unknown scenario>` and cascading. R2: the unhandled-error count was read twice per checkpoint (once for the charge/check, again for the baseline/record) — collapsed to single-read `BeginScenario`/`EndScenario` methods so a line landing between reads can't be lost. Key lessons: (1) `git worktree add` does not carry over frontend build artifacts — `app/backend/static/` needs `robocopy`-mirroring from the main checkout same as the Python venv, or the full conformance suite fails ~330/456 for reasons that have nothing to do with your change; (2) one CI-only failure in a real-process, wall-clock-timing-sensitive test (ironic, given the PR's whole purpose) was a genuine one-off scheduling flake, confirmed by rerunning just that job rather than assuming a regression; (3) squad personas share one GitHub account — there's no `@handle` per persona, so "@-mention Rick" means naming him in plain text in the comment body, not fabricating a GitHub username (which risks pinging an unrelated real account).
 
 ## Learnings — Current (Phase 7)
