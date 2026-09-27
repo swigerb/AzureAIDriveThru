@@ -202,4 +202,29 @@ public sealed class PersonaCatalogTests
 
         Assert.Equal("aaa-alphabetically-first", catalog.DefaultPersonaId);
     }
+
+    [Fact]
+    public void RealPersonasDirectory_LoadsEveryPackFolderOnDisk_AndDefaultsToSonic()
+    {
+        // Rick's #114 review, required change 2: unlike PersonaPackFixture (which deliberately
+        // copies only the sonic pack), this test loads the REAL personas/ directory directly, so
+        // once #111 (Dunkin) and #112 (McDonald's) land, C# validates them too instead of the
+        // catalog silently never seeing them.
+        var personasDir = Path.Combine(RepoRootLocator.Find(), "personas");
+
+        // Independent (catalog-free) ground truth: every immediate subfolder that contains a
+        // persona.json, ordinal sorted -- the same disk-discovery convention PersonaCatalog.Load
+        // itself documents (mirrors test_persona_loader.py's _discovered_persona_ids).
+        var expectedIds = Directory.EnumerateDirectories(personasDir)
+            .Select(d => Path.GetFileName(d)!)
+            .Where(name => File.Exists(Path.Combine(personasDir, name, "persona.json")))
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToList();
+
+        var catalog = PersonaCatalog.Load(personasDir: personasDir);
+
+        Assert.Equal(expectedIds, catalog.Ids.OrderBy(id => id, StringComparer.Ordinal).ToList());
+        Assert.Contains("sonic", catalog.Ids);
+        Assert.Equal("sonic", catalog.DefaultPersonaId);
+    }
 }

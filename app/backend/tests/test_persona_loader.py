@@ -41,6 +41,17 @@ def _mutate_persona_json(personas_dir: Path, persona_id: str, mutator) -> None:
     path.write_text(json.dumps(data), encoding="utf-8")
 
 
+def _discovered_persona_ids(personas_dir: Path) -> list[str]:
+    """Every immediate subfolder of ``personas_dir`` that contains a ``persona.json``, ordinal
+    sorted -- the same disk-discovery convention ``PersonaCatalog.load`` itself documents, used
+    here as an independent (catalog-free) ground truth so pack-count assertions stay correct as
+    more real packs land alongside the original pack, instead of hardcoding today's exact set."""
+    return sorted(
+        p.name for p in personas_dir.iterdir()
+        if p.is_dir() and (p / "persona.json").is_file()
+    )
+
+
 # ===========================================================================
 # Valid pack loads
 # ===========================================================================
@@ -49,8 +60,27 @@ def _mutate_persona_json(personas_dir: Path, persona_id: str, mutator) -> None:
 class TestValidPackLoads:
     def test_real_sonic_pack_loads(self):
         catalog = PersonaCatalog.load(personas_dir=_REAL_PERSONAS_DIR)
-        assert catalog.ids == ["sonic"]
+        # Assert against the packs actually present on disk (more real packs may land
+        # alongside this one) rather than hardcoding the full set -- sonic must always be
+        # present, and it must remain the default whenever it's enabled (persona_loader.py's
+        # documented resolution order), regardless of how many other packs also load.
+        assert catalog.ids == _discovered_persona_ids(_REAL_PERSONAS_DIR)
+        assert "sonic" in catalog.ids
         assert catalog.default_persona_id == "sonic"
+
+    def test_every_discovered_real_pack_validates(self):
+        """Pack-count agnostic: whatever packs land alongside the original one under personas/,
+        every single one of them must load as a valid, complete Persona -- not just one."""
+        catalog = PersonaCatalog.load(personas_dir=_REAL_PERSONAS_DIR)
+        for persona_id in catalog.ids:
+            persona = catalog.get(persona_id)
+            assert isinstance(persona, Persona)
+            assert persona.prompts_dir.is_dir(), f"{persona_id}: prompts_dir missing"
+            assert (persona.prompts_dir / "system_prompt.yaml").is_file(), (
+                f"{persona_id}: system_prompt.yaml missing"
+            )
+            assert persona.menu_path.is_file(), f"{persona_id}: menu file missing"
+            assert persona.assets_dir.is_dir(), f"{persona_id}: assets_dir missing"
 
     def test_sonic_persona_exposes_expected_paths(self):
         catalog = PersonaCatalog.load(personas_dir=_REAL_PERSONAS_DIR)
@@ -128,9 +158,11 @@ class TestValidPackLoads:
 
     def test_valid_copy_loads_identically(self, personas_copy):
         """A byte-identical copy of the real pack, loaded from a different directory, validates
-        the same way -- proves the loader is driven by content, not some real-path special case."""
+        the same way -- proves the loader is driven by content, not some real-path special case.
+        Compares against the same disk-discovered set as the real personas/ dir (pack-count
+        agnostic) rather than hardcoding a literal id list."""
         catalog = PersonaCatalog.load(personas_dir=personas_copy)
-        assert catalog.ids == ["sonic"]
+        assert catalog.ids == _discovered_persona_ids(_REAL_PERSONAS_DIR)
 
     def test_explicit_enabled_and_default_override(self, personas_copy):
         catalog = PersonaCatalog.load(
