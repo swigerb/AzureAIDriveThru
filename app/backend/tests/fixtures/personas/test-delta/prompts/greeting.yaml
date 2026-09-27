@@ -1,0 +1,8 @@
+greeting:
+  type: conversation.item.create
+  item:
+    type: message
+    role: assistant
+    content:
+      - type: input_text
+        text: "Welcome to Test Delta Meal Co.! What can I get started for you?"

@@ -102,7 +102,10 @@ class TestValidPackLoads:
         assert manifest.pricing.taxRate == "0.08"
         assert manifest.pricing.happyHour.startHour == 14
         assert manifest.pricing.happyHour.endHour == 16
-        assert manifest.machines["ice_cream_machine"] == "down"
+        # #77: `machines` moved from a bare status string to a `{status, label}` object (the OOS
+        # label now lives in persona.json instead of a hardcoded Python dict) -- `.status` carries
+        # the exact same value the bare string used to.
+        assert manifest.machines["ice_cream_machine"].status == "down"
 
     def test_sonic_dark_primary_matches_index_css(self):
         """Regression guard: dark-mode primary must match index.css's `.dark` block / personaTheme.ts's
