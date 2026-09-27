@@ -61,9 +61,9 @@ export interface PersonaAccentPalette {
     surfaceDark: string;
     /** Dark-mode secondary panel surface. */
     surfaceDarkAlt: string;
-    /** Decorative success green (used in the burger illustration only). */
+    /** Decorative success green (unused by any current component; kept for pack compatibility). */
     success: string;
-    /** Decorative neutral gray (used in the burger illustration only). */
+    /** Decorative neutral gray (unused by any current component; kept for pack compatibility). */
     neutral: string;
 }
 
@@ -187,4 +187,167 @@ export function applyTheme(theme: PersonaTheme, root: HTMLElement = document.doc
     set(vars.surfaceDarkAlt, light.accents.surfaceDarkAlt);
     set(vars.success, light.accents.success);
     set(vars.neutral, light.accents.neutral);
+}
+
+/**
+ * The three `--brand-*-dark` CSS custom properties `index.css`'s `.dark` block reads via a
+ * `var(--brand-x-dark, <literal fallback>)` chain (issue #80 F1/F3, Rick's #80 review: "map
+ * dark.background/dark.foreground onto the .dark block vars").
+ *
+ * These are DELIBERATELY separate property names from `PERSONA_THEME_CSS_VARS`, not the same names
+ * written a second time. An inline style set on `documentElement` (which is exactly what
+ * `applyTheme` above does) always wins over any stylesheet rule targeting the same element,
+ * regardless of selector specificity or source order -- so a `.dark { --brand-primary: ... }` rule
+ * could never override `applyTheme`'s inline `--brand-primary`. Giving dark overrides their own
+ * variable names, applied only via `applyDarkTheme`'s injected `<style>` (never inline), sidesteps
+ * that entirely: `.dark`'s selector can win over `:root`'s defaults normally, and light mode is
+ * completely unaffected since `:root` never mentions the `-dark` names.
+ *
+ * Only `primary`/`background`/`foreground` are listed (no `secondary`) because those are the only
+ * three base roles `index.css`'s `.dark` block derives from brand tokens today -- `--secondary` (and
+ * `--muted`/`--accent`/`--destructive`/etc.) are intentionally independent literal grays in both
+ * `:root` and `.dark`, unchanged by this slice.
+ */
+export const PERSONA_THEME_DARK_CSS_VARS = {
+    primary: "--brand-primary-dark",
+    background: "--brand-background-dark",
+    foreground: "--brand-foreground-dark"
+} as const;
+
+const DARK_THEME_STYLE_ELEMENT_ID = "persona-dark-theme-overrides";
+
+/**
+ * Injects (or updates) a `<style>` element holding a `.dark { --brand-x-dark: ...; }` rule for the
+ * given persona theme's dark-mode overrides, falling back to the theme's own light values for any
+ * key a persona doesn't override -- so a persona with no `dark` block at all (both fixture personas
+ * in `app/backend/tests/fixtures/personas` today) still renders coherently in dark mode instead of
+ * leaking a previous persona's dark colors or Sonic's.
+ *
+ * A `<style>` tag (not inline styles) is required here specifically so the `.dark` selector keeps
+ * normal cascade behavior -- see `PERSONA_THEME_DARK_CSS_VARS`'s doc comment for why inline styles
+ * would not work for this.
+ */
+export function applyDarkTheme(theme: PersonaTheme, doc: Document = document): void {
+    const vars = PERSONA_THEME_DARK_CSS_VARS;
+    const dark = theme.dark ?? {};
+    const primary = dark.primary ?? theme.light.primary;
+    const background = dark.background ?? theme.light.background;
+    const foreground = dark.foreground ?? theme.light.foreground;
+
+    let style = doc.getElementById(DARK_THEME_STYLE_ELEMENT_ID) as HTMLStyleElement | null;
+    if (!style) {
+        style = doc.createElement("style");
+        style.id = DARK_THEME_STYLE_ELEMENT_ID;
+        doc.head.appendChild(style);
+    }
+
+    style.textContent = `.dark {\n  ${vars.primary}: ${primary};\n  ${vars.background}: ${background};\n  ${vars.foreground}: ${foreground};\n}`;
+}
+
+function parseHslTriplet(triplet: HslTriplet): { h: number; s: number; l: number } {
+    const match = /^(-?\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)%\s+(\d+(?:\.\d+)?)%$/.exec(triplet.trim());
+    if (!match) return { h: 0, s: 0, l: 50 };
+    return { h: Number(match[1]), s: Number(match[2]), l: Number(match[3]) };
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+    return Math.min(max, Math.max(min, value));
+}
+
+function hslToHex(h: number, s: number, l: number): string {
+    const hue = ((h % 360) + 360) % 360;
+    const sat = clampNumber(s, 0, 100) / 100;
+    const light = clampNumber(l, 0, 100) / 100;
+    const c = (1 - Math.abs(2 * light - 1)) * sat;
+    const x = c * (1 - Math.abs(((hue / 60) % 2) - 1));
+    const m = light - c / 2;
+    let r = 0,
+        g = 0,
+        b = 0;
+    if (hue < 60) [r, g, b] = [c, x, 0];
+    else if (hue < 120) [r, g, b] = [x, c, 0];
+    else if (hue < 180) [r, g, b] = [0, c, x];
+    else if (hue < 240) [r, g, b] = [0, x, c];
+    else if (hue < 300) [r, g, b] = [x, 0, c];
+    else [r, g, b] = [c, 0, x];
+    const toHex = (v: number) => Math.round((v + m) * 255)
+        .toString(16)
+        .padStart(2, "0")
+        .toUpperCase();
+    return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
+/**
+ * Derives a full `PersonaAccentPalette` from just a persona's four base HSL roles (issue #80 F1/F3,
+ * design doc §4.2: `accents` isn't in `persona.schema.json`, so any persona besides Sonic needs one
+ * synthesized rather than authored). Not meant to be a perfect design-system generator -- just a
+ * reasonable, deterministic set of tints/shades so a second persona's illustrations, gradients, and
+ * dark-mode surfaces aren't flatly monochrome, without requiring a color-math dependency.
+ *
+ * Sonic itself never calls this: `resolvePersonaTheme` below keeps returning `SONIC_THEME`'s exact,
+ * hand-tuned hex constants for persona id `"sonic"` so nothing here can regress F2's byte-identical
+ * guarantee (`personaTheme.test.ts`).
+ */
+export function deriveAccents(colors: PersonaBaseColors): PersonaAccentPalette {
+    const primary = parseHslTriplet(colors.primary);
+    const secondary = parseHslTriplet(colors.secondary);
+    const background = parseHslTriplet(colors.background);
+    const foreground = parseHslTriplet(colors.foreground);
+    const accentHue = (primary.h + 150) % 360;
+
+    return {
+        primaryHex: hslToHex(primary.h, primary.s, primary.l),
+        primaryStrong: hslToHex(primary.h, primary.s, clampNumber(primary.l - 10, 5, 95)),
+        primaryLight: hslToHex(primary.h, primary.s, clampNumber(primary.l + 15, 5, 95)),
+        primaryTintOnDark: hslToHex(primary.h, clampNumber(primary.s - 10, 0, 100), clampNumber(primary.l + 25, 5, 95)),
+        secondaryHex: hslToHex(secondary.h, secondary.s, secondary.l),
+        secondaryStrong: hslToHex(secondary.h, clampNumber(secondary.s + 20, 0, 100), clampNumber(secondary.l + 15, 5, 95)),
+        secondaryTintOnDark: hslToHex(secondary.h, clampNumber(secondary.s - 20, 0, 100), clampNumber(secondary.l + 35, 5, 95)),
+        accent: hslToHex(accentHue, 90, 55),
+        accentLight: hslToHex(accentHue, 85, 70),
+        ink: hslToHex(foreground.h, foreground.s, foreground.l),
+        surfaceTint: hslToHex(background.h, clampNumber(background.s, 0, 40), 97),
+        surfaceDark: hslToHex(foreground.h, clampNumber(foreground.s, 0, 30), 10),
+        surfaceDarkAlt: hslToHex(foreground.h, clampNumber(foreground.s, 0, 30), 14),
+        success: "#328500",
+        neutral: "#C9CFD4"
+    };
+}
+
+/**
+ * Builds a full `PersonaTheme` (light accents + optional dark overrides + font) from the base wire
+ * shape `/api/personas/<id>` returns (`ui.theme.light`/`ui.theme.dark`, each just the four HSL
+ * roles -- see design doc §5.2 and `personas/sonic/persona.json`). Persona id `"sonic"` always
+ * resolves to the literal `SONIC_THEME` (same object identity for `accents`/`font`) so this never
+ * regresses F2's pixel-identical guarantee; any other persona id gets `deriveAccents` and a
+ * `font` fallback of Sonic's own (until a persona pack declares its own webfont, which is out of
+ * scope here).
+ */
+export interface PersonaWireTheme {
+    light: PersonaBaseColors & { accents?: Partial<PersonaAccentPalette> };
+    dark?: Partial<PersonaBaseColors> & { accents?: Partial<PersonaAccentPalette> };
+    font?: PersonaThemeFont;
+}
+
+export function resolvePersonaTheme(personaId: string, wireTheme: PersonaWireTheme): PersonaTheme {
+    if (personaId === "sonic") {
+        return SONIC_THEME;
+    }
+
+    // A pack MAY author its own accents (personas/persona.schema.json's `_ThemeAccents`) --
+    // any key it supplies wins; any key it omits falls back to `deriveAccents`'s synthesized
+    // value, so a pack can override just e.g. `accent` without having to author all 15 keys.
+    const accents: PersonaAccentPalette = {
+        ...deriveAccents(wireTheme.light),
+        ...wireTheme.light.accents
+    };
+
+    return {
+        light: {
+            ...wireTheme.light,
+            accents
+        },
+        dark: wireTheme.dark,
+        font: wireTheme.font ?? SONIC_THEME.font
+    };
 }

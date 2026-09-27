@@ -183,13 +183,23 @@ layer(base);
         --radius: 0.5rem;
     }
     .dark {
-        --background: 210 20% 5%;
-        --foreground: 0 0% 98%;
-        --card: 210 20% 5%;
-        --card-foreground: 0 0% 98%;
-        --popover: 210 20% 5%;
-        --popover-foreground: 0 0% 98%;
-        --primary: 341 100% 55%;
+        /* Issue #80 F1/F3 (Rick's review): these nine roles derive from `--brand-x-dark` (only
+           ever set by `lib/personaTheme.ts::applyDarkTheme`'s injected `<style>` -- see that
+           function's doc comment for why an inline style couldn't do this), falling back to the
+           exact literals this block used to hard-code so Sonic's rendering is unchanged before a
+           persona theme has loaded. This is the fix for the dark-mode hero-card contrast bug: the
+           old literals here never referenced a persona's colors at all, so `--primary`/`--ring`/
+           `--chart-1` (and hero's `bg-white/80` panels, fixed separately in App.tsx) stayed a fixed
+           gray/pink combination no matter which persona (or which persona's dark palette) was
+           active. `--secondary`/`--muted`/`--accent`/`--destructive`/`--border`/`--input`/
+           `--chart-2..5` are intentionally left as independent literal grays, matching `:root`. */
+        --background: var(--brand-background-dark, 210 20% 5%);
+        --foreground: var(--brand-foreground-dark, 0 0% 98%);
+        --card: var(--brand-background-dark, 210 20% 5%);
+        --card-foreground: var(--brand-foreground-dark, 0 0% 98%);
+        --popover: var(--brand-background-dark, 210 20% 5%);
+        --popover-foreground: var(--brand-foreground-dark, 0 0% 98%);
+        --primary: var(--brand-primary-dark, 341 100% 55%);
         --primary-foreground: 0 0% 100%;
         --secondary: 208 30% 15%;
         --secondary-foreground: 0 0% 98%;
@@ -201,8 +211,8 @@ layer(base);
         --destructive-foreground: 0 0% 98%;
         --border: 210 15% 15%;
         --input: 210 15% 15%;
-        --ring: 341 100% 55%;
-        --chart-1: 341 100% 55%;
+        --ring: var(--brand-primary-dark, 341 100% 55%);
+        --chart-1: var(--brand-primary-dark, 341 100% 55%);
         --chart-2: 208 60% 50%;
         --chart-3: 52 100% 55%;
         --chart-4: 192 67% 68%;
