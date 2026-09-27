@@ -497,8 +497,7 @@
             }
           ],
           "description": "Our tender, juicy Chicken McNuggets® are made with 100% white meat chicken and no artificial colors, flavors, or preservatives.",
-          "longDescription": "Our tender, juicy Chicken McNuggets® are made with 100% white meat chicken and no artificial colors, flavors, or preservatives. Enjoy these in a 4-piece serving as a snack or pair with your favorite dipping sauce.",
-          "origin": "McDonald's Menu",
+          "origin": "McDonald's Menu (source name 'Chicken McNuggets® (4 piece)'; renamed to avoid a lookup-key collision, #128)",
           "popularity": "",
           "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_McNuggets4_832x472",
           "comboSlot": "none",
@@ -516,8 +515,7 @@
             }
           ],
           "description": "Our tender, juicy Chicken McNuggets® are made with 100% white meat chicken. Enjoy 6 pieces with your favorite dipping sauce.",
-          "longDescription": "Our tender, juicy Chicken McNuggets® are made with 100% white meat chicken and no artificial colors, flavors, or preservatives. Enjoy 6 pieces with your favorite dipping sauce for a satisfying snack.",
-          "origin": "McDonald's Menu",
+          "origin": "McDonald's Menu (source name 'Chicken McNuggets® (6 piece)'; renamed to avoid a lookup-key collision, #128)",
           "popularity": "Value Pick",
           "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_McNuggets6_832x472",
           "comboSlot": "none",
@@ -535,8 +533,7 @@
             }
           ],
           "description": "Our tender, juicy Chicken McNuggets® are made with 100% white meat chicken. Enjoy 10 pieces as a meal.",
-          "longDescription": "Our tender, juicy Chicken McNuggets® are made with 100% white meat chicken and no artificial colors, flavors, or preservatives. Enjoy 10 pieces perfect for a meal with your favorite dipping sauce.",
-          "origin": "McDonald's Menu",
+          "origin": "McDonald's Menu (source name 'Chicken McNuggets® (10 piece)'; renamed to avoid a lookup-key collision, #128)",
           "popularity": "Best Seller",
           "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_McNuggets10_832x472",
           "comboSlot": "none",
@@ -554,8 +551,7 @@
             }
           ],
           "description": "Our tender, juicy Chicken McNuggets® — 20 pieces perfect for sharing with family and friends.",
-          "longDescription": "Our tender, juicy Chicken McNuggets® are made with 100% white meat chicken and no artificial colors, flavors, or preservatives. 20 pieces perfect for sharing with family and friends.",
-          "origin": "McDonald's Menu",
+          "origin": "McDonald's Menu (source name 'Chicken McNuggets® (20 piece)'; renamed to avoid a lookup-key collision, #128)",
           "popularity": "Popular",
           "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_McNuggets20_832x472",
           "comboSlot": "none",
@@ -573,8 +569,7 @@
             }
           ],
           "description": "Feed the whole crew with 40 pieces of our tender, juicy Chicken McNuggets® made with 100% white meat chicken.",
-          "longDescription": "Feed the whole crew with 40 pieces of our tender, juicy Chicken McNuggets® made with 100% white meat chicken and no artificial colors, flavors, or preservatives. Perfect for parties and gatherings.",
-          "origin": "McDonald's Menu",
+          "origin": "McDonald's Menu (source name 'Chicken McNuggets® (40 piece)'; renamed to avoid a lookup-key collision, #128)",
           "popularity": "",
           "image": "https://s7d1.scene7.com/is/image/mcdonalds/Header_McNuggets40_832x472",
           "comboSlot": "none",
@@ -989,9 +984,8 @@
               "drinks"
             ],
             "autoFill": {
-              "sides": "{size} World Famous Fries®"
-            },
-            "defaultSize": "Medium"
+              "sides": "Medium World Famous Fries®"
+            }
           },
           "isExtra": false,
           "menuPeriod": "allDay",

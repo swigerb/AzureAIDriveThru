@@ -4,7 +4,7 @@ upsell_hints:
     trigger_categories:
       - "meals & combos"
       - "breakfast"
-    hint: "Meals are a great base! Ask if they want to upgrade to a Large size, or add a delicious McFlurry or Dessert!"
+    hint: "Meals are a great base! Ask if they want to upgrade to a Large size, or add a delicious dessert like a Baked Apple Pie!"
 
   burger:
     trigger_categories:
@@ -16,7 +16,7 @@ upsell_hints:
   drink:
     trigger_categories:
       - "beverages"
-      - "mccafe coffees"
+      - "mccafé coffees"
     hint: "Great drink choice! Ask if they'd like to add some food — maybe a burger, McNuggets, or World Famous Fries!"
 
   sweet:

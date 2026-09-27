@@ -63,7 +63,7 @@
   },
 
   "strategies": { "searchQueryRewrite": "meal_numbers" },
-  "features": { "dayparts": false },
+  "features": { "dayparts": true },
 
   "ui": {
     "title": "McDonald's Voice Ordering",
