@@ -60,6 +60,14 @@ models:
     - { id: gpt-5-mini, pipeline: cascade, label: "GPT-5 mini", toolCalling: true }
     - { id: phi-4, pipeline: cascade, label: "Phi-4 (Foundry)", toolCalling: true }
     - { id: phi-4-mini-local, pipeline: local, label: "Phi-4 mini (on device)", runtime: onnx }
+  # #82, design doc section 7.2/7.4: the cascade pipeline's own fixed transcription/TTS
+  # deployments -- not user-selectable chat models (no `pipeline`/`toolCalling` row above),
+  # just the two Azure OpenAI audio models every cascade session uses regardless of which
+  # cascade *chat* model it's bound to. Deployment names still come from the same
+  # AZURE_AI_MODEL_DEPLOYMENTS map (model_catalog.py's `deployment_for`) as any catalog id.
+  cascade:
+    transcription: gpt-4o-transcribe
+    tts: gpt-4o-mini-tts
 
 vad:
   type: "server_vad"

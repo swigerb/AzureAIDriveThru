@@ -36,6 +36,7 @@ from processors import (
     PipelineProcessor,
     ProcessorRegistry,
     dispatch_processor,
+    resolve_cascade_model,
     resolve_realtime_model,
 )
 
@@ -49,6 +50,7 @@ class _FakePipelineCfg:
 @dataclass
 class _FakeModels:
     realtime: _FakePipelineCfg
+    cascade: _FakePipelineCfg | None = None
 
 
 @dataclass
@@ -62,8 +64,12 @@ class _FakePersona:
     manifest: _FakeManifest
 
 
-def _persona(default: str, allowed: list) -> _FakePersona:
-    return _FakePersona(id="test-persona", manifest=_FakeManifest(models=_FakeModels(realtime=_FakePipelineCfg(default=default, allowed=allowed))))
+def _persona(default: str, allowed: list, cascade_default: str | None = None, cascade_allowed: list | None = None) -> _FakePersona:
+    cascade_cfg = _FakePipelineCfg(default=cascade_default, allowed=cascade_allowed or []) if cascade_default is not None else None
+    return _FakePersona(
+        id="test-persona",
+        manifest=_FakeManifest(models=_FakeModels(realtime=_FakePipelineCfg(default=default, allowed=allowed), cascade=cascade_cfg)),
+    )
 
 
 class _FakeProcessor:
@@ -219,6 +225,76 @@ class TestRejections:
 # ═══════════════════════════════════════════════════════════════════════════════
 # PipelineProcessor / ProcessorRegistry shape (Rick's PR #106 review item 5)
 # ═══════════════════════════════════════════════════════════════════════════════
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# resolve_cascade_model (issue #82) -- same catalog/persona algorithm as realtime, but no
+# AZURE_OPENAI_REALTIME_DEPLOYMENT-style back-compat fallback for the default.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_CASCADE_CATALOG_CFG = {
+    "models": {
+        "catalog": [
+            {"id": "gpt-realtime-2.1", "pipeline": "realtime", "label": "GPT Realtime 2.1", "reasoning": True},
+            {"id": "gpt-5-mini", "pipeline": "cascade", "label": "GPT-5 mini", "toolCalling": True},
+            {"id": "phi-4", "pipeline": "cascade", "label": "Phi-4 (Foundry)", "toolCalling": True},
+        ]
+    }
+}
+
+
+def _cascade_catalog(deployments: str | None = None) -> ModelCatalog:
+    env = {"AZURE_AI_MODEL_DEPLOYMENTS": deployments} if deployments else {}
+    return ModelCatalog.load(config=_CASCADE_CATALOG_CFG, environ=env)
+
+
+class TestResolveCascadeModel:
+    def test_omitted_model_resolves_to_persona_cascade_default(self):
+        persona = _persona("gpt-realtime-2.1", ["gpt-realtime-2.1"], cascade_default="gpt-5-mini", cascade_allowed=["gpt-5-mini", "phi-4"])
+        catalog = _cascade_catalog('{"gpt-5-mini": "gpt-5-mini-prod"}')
+        resolved = resolve_cascade_model(persona, None, catalog)
+        assert resolved.id == "gpt-5-mini"
+        assert resolved.pipeline == "cascade"
+        assert resolved.deployment == "gpt-5-mini-prod"
+
+    def test_explicit_non_default_allowed_model_resolves(self):
+        persona = _persona("gpt-realtime-2.1", ["gpt-realtime-2.1"], cascade_default="gpt-5-mini", cascade_allowed=["gpt-5-mini", "phi-4"])
+        catalog = _cascade_catalog('{"gpt-5-mini": "gpt-5-mini-prod", "phi-4": "phi-4-prod"}')
+        resolved = resolve_cascade_model(persona, "phi-4", catalog)
+        assert resolved.id == "phi-4"
+        assert resolved.deployment == "phi-4-prod"
+
+    def test_persona_with_no_cascade_block_raises(self):
+        """Cascade isn't enabled for every persona -- unlike realtime, which every persona has."""
+        persona = _persona("gpt-realtime-2.1", ["gpt-realtime-2.1"])  # no cascade_default given
+        with pytest.raises(ModelSelectionError, match="no models.cascade configured"):
+            resolve_cascade_model(persona, "gpt-5-mini", _cascade_catalog())
+
+    def test_not_in_persona_allowed_list_raises(self):
+        persona = _persona("gpt-realtime-2.1", ["gpt-realtime-2.1"], cascade_default="gpt-5-mini", cascade_allowed=["gpt-5-mini"])
+        catalog = _cascade_catalog('{"gpt-5-mini": "a", "phi-4": "b"}')
+        with pytest.raises(ModelSelectionError, match="not allowed"):
+            resolve_cascade_model(persona, "phi-4", catalog)
+
+    def test_wrong_pipeline_raises(self):
+        persona = _persona("gpt-realtime-2.1", ["gpt-realtime-2.1"], cascade_default="gpt-5-mini", cascade_allowed=["gpt-5-mini", "gpt-realtime-2.1"])
+        catalog = _cascade_catalog('{"gpt-5-mini": "a", "gpt-realtime-2.1": "b"}')
+        with pytest.raises(ModelSelectionError, match="not in .*models.catalog for the cascade pipeline"):
+            resolve_cascade_model(persona, "gpt-realtime-2.1", catalog)
+
+    def test_default_with_no_deployment_mapped_is_rejected_not_fallen_back(self):
+        """#82's key divergence from realtime: there is NO back-compat deployment fallback for
+        the cascade default -- an undeployed default 404s exactly like any other undeployed
+        id, since (unlike realtime) there is no pre-existing bare env var to preserve."""
+        persona = _persona("gpt-realtime-2.1", ["gpt-realtime-2.1"], cascade_default="gpt-5-mini", cascade_allowed=["gpt-5-mini"])
+        with pytest.raises(ModelSelectionError, match="no deployment mapped"):
+            resolve_cascade_model(persona, None, _cascade_catalog())  # no deployments mapped at all
+
+    def test_non_default_model_with_no_deployment_mapped_raises(self):
+        persona = _persona("gpt-realtime-2.1", ["gpt-realtime-2.1"], cascade_default="gpt-5-mini", cascade_allowed=["gpt-5-mini", "phi-4"])
+        catalog = _cascade_catalog('{"gpt-5-mini": "a"}')  # phi-4 not mapped
+        with pytest.raises(ModelSelectionError, match="no deployment mapped"):
+            resolve_cascade_model(persona, "phi-4", catalog)
+
 
 class TestProcessorRegistryAndProtocol:
     def test_registry_looks_up_by_pipeline_name(self):
