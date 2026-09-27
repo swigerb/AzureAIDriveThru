@@ -111,7 +111,7 @@
       "value": "${PERSONAS=}"
     },
     "defaultPersona": {
-      "value": "${DEFAULT_PERSONA=sonic}"
+      "value": "${DEFAULT_PERSONA=}"
     },
     "deployDotnetApp": {
       "value": "${DEPLOY_DOTNET_APP=false}"

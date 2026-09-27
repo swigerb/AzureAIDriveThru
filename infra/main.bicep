@@ -114,8 +114,8 @@ param embeddingDeploymentCapacity int
 @description('Allow-list of persona ids served by this environment, comma-separated (matches the app PERSONAS env var). Empty (the tracked default) means "every persona pack found under PERSONAS_DIR" -- app/backend/persona_loader.py discovers them automatically. Override at provision time (azd env set PERSONAS=...) only to restrict this environment to a subset of packs.')
 param personas string = ''
 
-@description('Default persona id when a session omits ?persona= (app DEFAULT_PERSONA env var). Should be one of the comma-separated ids in personas, or left to the app default (sonic) when personas is empty.')
-param defaultPersona string = 'sonic'
+@description('Default persona id when a session omits ?persona= (app DEFAULT_PERSONA env var). Should be one of the comma-separated ids in personas. Empty (the tracked default) means app/backend/persona_loader.py picks its own default (its first-party pack if enabled, else the first enabled id alphabetically) -- keeps tracked infra free of persona names, same as personas above.')
+param defaultPersona string = ''
 
 @description('JSON array of Foundry/Azure OpenAI model deployments to create on this environment\'s own account (section 7.2, 10.3). Each entry: catalogId (matches app/backend/config.yaml models.catalog), deploymentName, modelName, modelVersion, format (Foundry model-format id, defaults to OpenAI), skuName, capacity, isDefaultRealtime (exactly one entry should be true -- it becomes AZURE_OPENAI_REALTIME_DEPLOYMENT). realtimeDeploymentCapacity/embeddingDeploymentCapacity above still override the matching entries by catalogId, so the existing "bump a param, azd provision" scaling flow (10.3) keeps working. The tracked list lives in infra/model-deployments.json (Rick\'s review of #93): adding a #82 model is one JSON entry there, no Bicep edits.')
 param openAiModelDeploymentsData array = loadJsonContent('model-deployments.json')
@@ -299,7 +299,6 @@ module acaBackend 'core/host/container-app-upsert.bicep' = {
       AZURE_OPENAI_REALTIME_VOICE_CHOICE: openAiRealtimeVoiceChoice
       // Catalog id -> deployment name for every model this environment created (7.2).
       AZURE_AI_MODEL_DEPLOYMENTS: string(modelDeploymentsMap)
-      DEFAULT_PERSONA: defaultPersona
       RUNNING_IN_PRODUCTION: 'true'
       // Changing a secret alone does not restart running replicas; a changed
       // fingerprint changes the template, so every replica restarts on the new
@@ -313,6 +312,10 @@ module acaBackend 'core/host/container-app-upsert.bicep' = {
     // enable every pack found under PERSONAS_DIR" behavior applies, instead of
     // the app seeing an explicit empty string (Rick's review of #93).
     empty(personas) ? {} : { PERSONAS: personas },
+    // Same "omit when empty" treatment for the default persona id, so the
+    // loader's own default (its first-party pack if enabled, else the first
+    // enabled id alphabetically) applies instead of a hardcoded name here.
+    empty(defaultPersona) ? {} : { DEFAULT_PERSONA: defaultPersona },
     // Optional overrides of model.reasoning_effort / reasoning_model / transcription_model
     // in app/backend/config.yaml; unset means the config.yaml value applies.
     empty(openAiRealtimeReasoningEffort) ? {} : { AZURE_OPENAI_REALTIME_REASONING_EFFORT: openAiRealtimeReasoningEffort },
@@ -369,12 +372,12 @@ module acaBackendDotnet 'core/host/container-app-upsert.bicep' = if (deployDotne
       AZURE_OPENAI_REALTIME_DEPLOYMENT: reuseExistingOpenAi ? openAiRealtimeDeployment : defaultRealtimeDeployment.deploymentName
       AZURE_OPENAI_REALTIME_VOICE_CHOICE: openAiRealtimeVoiceChoice
       AZURE_AI_MODEL_DEPLOYMENTS: string(modelDeploymentsMap)
-      DEFAULT_PERSONA: defaultPersona
       RUNNING_IN_PRODUCTION: 'true'
       AZURE_CLIENT_ID: acaIdentity.outputs.clientId
     },
     // Same "omit when empty" persona behavior as the Python app's env, above.
-    empty(personas) ? {} : { PERSONAS: personas })
+    empty(personas) ? {} : { PERSONAS: personas },
+    empty(defaultPersona) ? {} : { DEFAULT_PERSONA: defaultPersona })
   }
 }
 
