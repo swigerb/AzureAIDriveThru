@@ -742,7 +742,7 @@ class SessionUpdateFallbackTests(_RealtimeHarness):
         unchanged -- only the server-side log level changes."""
         browser = await self.client.ws_connect("/realtime")
         await self._until_browser(browser, "session.updated")     # nothing of ours in flight now
-        with self.assertNoLogs("sonic-drive-in", level="ERROR"):
+        with self.assertNoLogs(rtmt_module.logger.name, level="ERROR"):
             await browser.send_json({"type": "response.cancel"})
             await self._until(lambda: len(self.fake.errors) >= 1)
             events = await self._browser_events(browser)
