@@ -243,7 +243,10 @@ All money values are quoted decimal strings, so C# reads them as `decimal` witho
   },
 
   "invalidModifiers": { "shake": ["lettuce", "tomato", "onion"], "slush": ["cheese", "bacon", "patty"] },
-  "machines": { "ice_cream_machine": "down", "slush_machine": "operational", "fryer": "operational" },
+  "machines": {
+    "ice_cream_machine": { "status": "down", "label": "Ice cream machine is being cleaned" },
+    "slush_machine": { "status": "operational", "label": "Slush machine is down" }
+  },
 
   "models": {
     "realtime": { "default": "gpt-realtime-2.1", "allowed": ["gpt-realtime-2.1", "gpt-realtime-mini"] },
@@ -389,6 +392,37 @@ starts a new session.
     matched it. For `size_not_available`, `item_name` is the real menu name (`menu_item["name"]`) -- the item
     itself DID resolve; only the requested size didn't. A client rendering these rejections (or a future
     persona's own copy) must not assume `item_name` is always menu-canonical.
+  - **`machine_unavailable` (#77, add-time only).** An on-menu item whose per-item `requiresMachine` key
+    points at a `persona.json` `machines.<key>` this store's *own* status currently reports `"down"` is
+    rejected with the same shape: `{ "status": "rejected", "item_added": false, "reason":
+    "machine_unavailable", "item_name", "message" }` -- `item_name` is the real menu name (the item DID
+    resolve), and `message` is built from that same machine's own `label` (`persona.json` `machines.<key>`
+    is `{ "status": "down" | "operational", "label": "<store-facing outage text>" }`, replacing the old
+    bare-string status and the module-level, name-keyed `_MACHINE_OOS_LABELS` dict that only the default
+    persona's two machines ever populated). `modify` never re-runs this check: resizing an item already in
+    the order doesn't newly require the machine it already required when it was added, so a legitimate
+    resize of an item that was fine at add time is never incorrectly blocked by a machine that went down
+    afterward. `fryer` is dropped from every persona's `machines` block unless some item's own
+    `requiresMachine` actually names it (none does today) -- an unused machine key is dead data, not a
+    real gate.
+  - **`extras_blocked_category` / `extras_no_base_item` (#77, shared extras engine, add-time only).** An
+    `isExtra` item can only be added once the current order has a real base item whose category is in this
+    persona's own `extras.allowedBaseCategories` and not in `extras.blockedBaseCategories` -- checked against
+    every line already in the order, not just the last one added. Same shape again: `{ "status": "rejected",
+    "item_added": false, "reason": "extras_blocked_category" | "extras_no_base_item", "item_name", "message"
+    }`. `extras_blocked_category` fires when a real base item is present but its category is explicitly
+    blocked (e.g. a side or a hot dog on its own); `extras_no_base_item` fires when there is no allowed base
+    item in the order at all yet. This one engine (`menu.is_extra_item`, `menu.allowed_extra_categories`,
+    `menu.blocked_extra_categories`) is the only place any persona's extras rule is enforced -- it is
+    data-driven from that persona's own `persona.json`, not a second brand-specific implementation.
+  - **`modify` (#77, McDonald's tool/prompt contract, `tool_schemas.yaml` opt-in only).** Re-prices an
+    existing order line at a new size from the persona's own menu (never the tool call's own `price`,
+    consistent with #104) and leaves that line's `components` untouched -- a bundle's absorbed sides/drinks
+    are not re-picked on a resize. A `modify` for an item not currently in the order is a no-op (logged,
+    not rejected): nothing to resize, so nothing changes, and the model is free to fall back to `add`. This
+    is the single, shared implementation both McDonald's (real "modify a Happy Meal to a large" flow) and
+    any future pack's own `modify`-listing tool schema route through -- there is no persona-specific
+    `modify` variant.
 - **Every keyword fallback is removed** (combo slot, happy hour and category), along with the `offMenu` schema
   block (#73). That removes the whole class of substring bugs ("tea" in "steak") for every persona.
 - **Menus must be complete.** Every brand's `menuItems.json` is completed from its source data before the

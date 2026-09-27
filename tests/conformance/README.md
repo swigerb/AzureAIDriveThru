@@ -1279,7 +1279,7 @@ summary:
 ```json
 {
   "items": [
-    { "item": "<name>", "size": "<canonical size key, or empty>", "quantity": <int>, "price": <number>, "display": "<full display string>" }
+    { "item": "<name>", "size": "<canonical size key, or empty>", "quantity": <int>, "price": <number>, "display": "<full display string>", "components": ["<absorbed/auto-filled bundle slot display string>", ...] }
   ],
   "total": <number>,
   "tax": <number>,
@@ -1289,6 +1289,18 @@ summary:
   "finalTotalDisplay": "<$0.00 string>"
 }
 ```
+
+**`items[].components` (#77, additive) is the bundle-slot item(s) absorbed into, or auto-filled onto,
+this line** — e.g. `["Medium Fries", "Coca-Cola"]` for a combo/meal that absorbed a real
+standalone side plus auto-filled the drink slot from `bundle.autoFill`. It defaults to `[]` for every
+persona and every non-bundle item (`app/backend/models.py::OrderItem.components`), so an a-la-carte
+line's shape on the wire is completely unchanged. Order matters no more than a set would: it is
+built append-only (absorption first, then any auto-fill for a slot that absorption did **not** just
+fill — see `order_state.handle_order_update`), and a `modify` (resize) on a bundle line carries this
+list forward unchanged, since resizing a meal doesn't re-pick its sides/drinks. A client that renders
+the ticket line-by-line should treat a non-empty `components` as "this line already includes these
+named parts" rather than separate orderable lines of their own — they aren't independently priced or
+removable.
 
 **`items[].size` is the canonical size key, not the raw spelling or the display string (#40, PR #50
 review follow-up)**: `order_state.handle_order_update` runs every incoming size through
