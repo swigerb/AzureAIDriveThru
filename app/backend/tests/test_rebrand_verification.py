@@ -13,27 +13,46 @@ allowed only
      but not "Dunkin'"/"McDonald's" (a persona pack must not reference a different brand);
   2. inside the explicitly listed cross-brand docs (docs/adr/**, docs/persona-architecture.md)
      that compare all three brands by design (ADR-001, design doc section 16);
-  3. inside a shared-code file that has an explicit ALLOWLIST entry below, each of which MUST
-     carry an issue reference (validated by test_every_allowlist_entry_has_an_issue_reference)
-     naming the work that will remove it -- #74 (session-scoped persona binding), #78/#79
-     (the McDonald's/Dunkin packs themselves), #80 (frontend runtime theming), #86 (README
-     naming all three brands), or #76 itself (this groundwork's own CI matrix literal).
+  3. inside one of exactly two DIRECTORY_EXCEPTIONS for generated/golden content
+     (app/backend/static/, tests/conformance/testdata/) -- see rebrand_scan.py;
+  4. inside a shared-code file+brand pair that has an exact-match entry in the checked-in
+     BASELINE (rebrand_baseline.yaml) -- the entry's line-hit count must equal the file's
+     real count today: a rise means a new/uncontrolled reference snuck in, a silent drop
+     means the fix landed but the baseline wasn't ratcheted down (round-2 review, replacing
+     the original directory-prefix allowlist a PR reviewer flagged as a coverage trap: it
+     rescued brand words anywhere under e.g. app/backend/ regardless of whether they were
+     the SAME references being tracked or new ones).
 
-Anywhere else, a brand word is forbidden. Every ALLOWLIST entry today rescues only "sonic"
-(the actual, current leftover) -- if a stray "Dunkin"/"McDonald's" ever showed up in shared
-code, it would still fail (see AllowlistEntry.brands).
+Anywhere else, a brand word is forbidden. Every BASELINE entry today rescues only "sonic"
+except two intentional McDonald's-brand-hex test fixtures -- if a stray "Dunkin" ever showed
+up in shared code, it would still fail (no baseline entry would cover it).
 
 The old "crew member" (should be carhop) and "coffee-chat" (old repo name) terminology checks
 are unrelated to the brand-pack architecture and are unchanged by this inversion -- they still
 apply everywhere except the same repo-meta/historical exclusions as before.
 
-Author: Birdperson (Tester)
+Author: Birdperson (Tester); brand-word guard replaced with a per-file baseline in round 2
+(Beth, PR #101 review response, issue #76).
 """
 
 import re
+import sys
 import unittest
-from dataclasses import dataclass, field
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from rebrand_scan import (  # noqa: E402
+    BRAND_PATTERNS,
+    DIRECTORY_EXCEPTIONS,
+    BaselineEntry,
+    _classify_hit,
+    _count_brand_occurrences,
+    _load_baseline,
+    _relative_posix,
+)
+
+BASELINE = _load_baseline()
 
 # ── Paths ────────────────────────────────────────────────────────────────
 PROJECT_ROOT = Path(__file__).resolve().parents[3]  # SonicAIDriveThru/
@@ -127,243 +146,85 @@ def _scan_for_forbidden(files: list[Path]) -> list[tuple[Path, int, str, str]]:
     return hits
 
 
-# ── Brand-word guard (#76 inversion) ──────────────────────────────────────
-
-# Canonical brand -> matching pattern. A pack under personas/<id>/** may only contain the
-# word matching its own id; every other brand word there is a cross-brand leak, same as in
-# any other shared file.
-BRAND_PATTERNS: dict[str, "re.Pattern[str]"] = {
-    "sonic": re.compile(r"\bsonic\b", re.IGNORECASE),
-    "mcdonalds": re.compile(r"\bmcdonald'?s?\b", re.IGNORECASE),
-    "dunkin": re.compile(r"\bdunkin'?\b", re.IGNORECASE),
-}
-
-# Brand-word scan intentionally does NOT exclude "adr" or "personas" the way the terminology
-# scan does -- #76 needs both to actively participate so the cross-brand-doc and
-# persona-pack-ownership rules below can classify each hit, instead of the pre-#76 approach of
-# blanket-skipping them so a "no Dunkin anywhere" rule wouldn't misfire on them.
-BRAND_EXCLUDED_DIRS = BASE_EXCLUDED_DIRS
-BRAND_EXCLUDED_FILES = {
-    "voice_rag_README.md",
-    "test_rebrand_verification.py",
-}
-
-
-@dataclass(frozen=True)
-class AllowlistEntry:
-    """One shared-code location where a brand word is tolerated pending migration.
-
-    `prefix` is a POSIX-style, repo-root-relative path: a trailing "/" means "this directory
-    and everything under it", no trailing "/" means "this exact file". `issue` MUST be a
-    GitHub issue reference like "#74" -- test_every_allowlist_entry_has_an_issue_reference
-    fails the moment any entry's issue is missing/malformed, so nothing can land in this
-    allowlist as a silent, untracked permanent exception. `brands` restricts which brand
-    word(s) this entry rescues (default: only "sonic", since every real hit in the repo today
-    is a pending-Sonic-migration leftover, not a genuine McDonald's/Dunkin reference slipping
-    into shared code -- narrowing the default keeps a stray wrong-brand word from accidentally
-    riding along on an entry that was only ever meant to cover "sonic").
-    """
-
-    prefix: str
-    issue: str
-    reason: str
-    brands: frozenset = field(default_factory=lambda: frozenset({"sonic"}))
-
-
-ALLOWLIST: list[AllowlistEntry] = [
-    AllowlistEntry(
-        "app/backend/tests/", "#78",
-        "Backend test fixtures/paths reference personas/sonic/** directly because it's the "
-        "only persona pack that exists yet -- #78/#79 land the McDonald's/Dunkin packs, at "
-        "which point these tests get parameterized per-persona instead of hardcoding Sonic.",
-    ),
-    AllowlistEntry(
-        "app/backend/static/", "#80",
-        "Gitignored built-frontend output (npm run build's outDir) -- mirrors the frontend's "
-        "own pending persona theming (#80); nothing here is hand-edited.",
-    ),
-    AllowlistEntry(
-        "app/backend/", "#74",
-        "Backend config/persona/prompt loader defaults, logger names and illustrative "
-        "docstring examples still default/hardcode to the single Sonic persona pending #74's "
-        "session-scoped persona binding.",
-    ),
-    AllowlistEntry(
-        "app/frontend/", "#80",
-        "Frontend UI copy, locales, theming and menu data are Sonic-only pending #80's "
-        "persona-aware runtime theming (frontend is out of this issue's scope to edit). "
-        "Also rescues 'mcdonalds' for brandColorTokens.test.ts, which uses McDonald's red "
-        "as a non-Sonic-brand-hex test fixture, not real branding.",
-        brands=frozenset({"sonic", "mcdonalds"}),
-    ),
-    AllowlistEntry(
-        ".copilot/skills/sonic-menu-parsing/", "#78",
-        "Copilot skill describing how to parse personas/sonic's own menu JSON specifically; "
-        "#78/#79 will need an equivalent (or generalized) skill once other persona menu files "
-        "exist.",
-    ),
-    AllowlistEntry(
-        "README.md", "#86",
-        "Top-level README currently reads Sonic-only; #86 tracks updating it to name all "
-        "three brands. Also rescues 'mcdonalds' for the Local-mode paragraph's reference to "
-        "the upstream voice_rag McDonald's demo this repo was forked from.",
-        brands=frozenset({"sonic", "mcdonalds"}),
-    ),
-    AllowlistEntry(
-        "DEPLOY.md", "#86",
-        "Deployment walkthrough uses the Sonic app name/image tag as its running example; "
-        "same top-level-docs naming work as #86.",
-    ),
-    AllowlistEntry(
-        "docs/", "#78",
-        "Non-ADR docs (customizing_deploy.md, dotnet_mapping.md, existing_services.md, "
-        "order_resume.md) use the Sonic persona as the illustrative current example pending "
-        "other persona packs landing. (docs/adr/** and persona-architecture.md are handled by "
-        "the cross-brand-doc rule above this allowlist, not this entry.)",
-    ),
-    AllowlistEntry(
-        "scripts/", "#78",
-        "Operational scripts (deploy/build/benchmark/menu-maintenance) are Sonic-only pending "
-        "other persona packs; #78/#79 will need them parameterized or duplicated per persona.",
-    ),
-    AllowlistEntry(
-        "infra/main.parameters.json", "#78",
-        "Infra default naming/tags reference Sonic pending other persona packs landing. "
-        "(Recorded here only -- infra/** itself is out of this issue's scope to edit.)",
-    ),
-    AllowlistEntry(
-        "tests/conformance/README.md", "#78",
-        "Harness docs reference Sonic as the only persona pack that exists today.",
-    ),
-    AllowlistEntry(
-        "tests/conformance/testdata/", "#78",
-        "Golden order-pricing/menu-category datasets are sourced from Sonic's own menu; will "
-        "need per-persona equivalents once other packs exist.",
-    ),
-    AllowlistEntry(
-        ".github/workflows/conformance.yml", "#76",
-        "This groundwork's own persona matrix literal (`persona: [sonic]`) and surrounding "
-        "comments -- the only enabled persona today; ConformancePersonas' own disk discovery "
-        "means no further CI edit is needed once #78/#79 add more packs. Also rescues "
-        "'mcdonalds'/'dunkin' for the comment naming the not-yet-existing persona packs "
-        "#78/#79 will add.",
-        brands=frozenset({"sonic", "mcdonalds", "dunkin"}),
-    ),
-]
-
-
-def _relative_posix(path: Path) -> str:
-    return path.relative_to(PROJECT_ROOT).as_posix()
-
-
-def _persona_pack_id(rel_posix: str):
-    """Returns the persona id if rel_posix is under personas/<id>/**, else None."""
-    parts = rel_posix.split("/")
-    return parts[1] if len(parts) >= 2 and parts[0] == "personas" else None
-
-
-def _is_cross_brand_doc(rel_posix: str) -> bool:
-    """docs/adr/** and docs/persona-architecture.md compare all three brands by design (ADR-001)."""
-    return rel_posix == "docs/persona-architecture.md" or rel_posix.startswith("docs/adr/")
-
-
-def _allowlist_entry_for(rel_posix: str):
-    """Longest-prefix match: a more specific entry (e.g. app/backend/tests/) wins over a more
-    general one (app/backend/) covering the same file."""
-    matches = [
-        e for e in ALLOWLIST
-        if (not e.prefix.endswith("/") and rel_posix == e.prefix)
-        or (e.prefix.endswith("/") and rel_posix.startswith(e.prefix))
-    ]
-    if not matches:
-        return None
-    return max(matches, key=lambda e: len(e.prefix))
-
-
-def _forbidden_reason(rel_posix: str, brand: str):
-    """Returns None if `brand` is allowed at rel_posix, else a human-readable reason it's not."""
-    if _is_cross_brand_doc(rel_posix):
-        return None
-
-    pack_id = _persona_pack_id(rel_posix)
-    if pack_id is not None:
-        if brand == pack_id:
-            return None
-        return (
-            f"'{brand}' appears inside the '{pack_id}' persona pack (personas/{pack_id}/**) -- "
-            f"a persona pack must only reference its own brand"
-        )
-
-    entry = _allowlist_entry_for(rel_posix)
-    if entry is not None and brand in entry.brands:
-        return None
-
-    return (
-        f"'{brand}' appears in shared code with no allowlist entry covering it -- either this "
-        f"is a genuine leftover to fix, or (if pending migration) add an ALLOWLIST entry "
-        f"above with an issue reference"
-    )
-
-
-def _scan_for_brand_violations() -> list[tuple[str, int, str, str, str]]:
-    """Returns (rel_posix, line_no, brand, line_text, reason) for every disallowed brand-word hit."""
-    files = _collect_source_files(BRAND_EXCLUDED_DIRS, BRAND_EXCLUDED_FILES)
-    violations: list[tuple[str, int, str, str, str]] = []
-    for filepath in files:
-        rel_posix = _relative_posix(filepath)
-        try:
-            lines = filepath.read_text(encoding="utf-8", errors="replace").splitlines()
-        except Exception:
-            continue
-        for line_no, line in enumerate(lines, start=1):
-            for brand, pattern in BRAND_PATTERNS.items():
-                if not pattern.search(line):
-                    continue
-                reason = _forbidden_reason(rel_posix, brand)
-                if reason is not None:
-                    violations.append((rel_posix, line_no, brand, line.strip(), reason))
-    return violations
+# ── Brand-word guard (#76 inversion, per-file baseline as of round 2) ────
+#
+# BRAND_PATTERNS, the persona-pack/cross-brand-doc rules, DIRECTORY_EXCEPTIONS, the BASELINE
+# loader, and the classification logic (_classify_hit) all live in rebrand_scan.py so that
+# regenerate_rebrand_baseline.py can reuse the exact same rules when rewriting
+# rebrand_baseline.yaml -- see that module's docstring for the full design rationale.
 
 
 # ── Test class ───────────────────────────────────────────────────────────
 
 class TestRebrandVerification(unittest.TestCase):
     """#76: brand words are allowed only in their own persona pack, the explicit cross-brand
-    docs, or an allowlisted shared-code location that carries an issue reference -- forbidden
-    everywhere else. "crew member"/"coffee-chat" terminology checks are unrelated and
-    unchanged."""
+    docs, one of the two generated/golden-content DIRECTORY_EXCEPTIONS, or a shared-code
+    (file, brand) pair whose real line-hit count exactly matches its checked-in BASELINE
+    entry -- forbidden everywhere else. "crew member"/"coffee-chat" terminology checks are
+    unrelated and unchanged."""
 
-    # ── Brand-word guard (inverted, #76) ─────────────────────────────
+    # ── Brand-word guard (inverted, #76; per-file baseline, round 2) ──
 
-    def test_no_disallowed_brand_words_in_shared_code(self):
-        """The main inverted guard: every brand-word hit outside its own persona pack, the
-        cross-brand docs, or an allowlisted location is a failure."""
-        violations = _scan_for_brand_violations()
-        formatted = [
-            f"  [{brand}] {rel}:{line_no}  →  {line_text}\n      {reason}"
-            for rel, line_no, brand, line_text, reason in violations
-        ]
+    def test_brand_word_counts_match_the_checked_in_baseline(self):
+        """The main inverted guard: for every (file, brand) pair that has a real hit today, or
+        that has a BASELINE entry, the real line-hit count must exactly match -- a rise, a
+        silent drop, or a brand-new unbaselined hit are all failures (see rebrand_scan.py's
+        docstring / _classify_hit)."""
+        counts = _count_brand_occurrences()
+        keys = set(counts) | set(BASELINE)
+        formatted = []
+        for rel_posix, brand in sorted(keys):
+            reason = _classify_hit(rel_posix, brand, counts.get((rel_posix, brand), 0), BASELINE)
+            if reason is not None:
+                formatted.append(f"  [{brand}] {rel_posix}: {reason}")
         self.assertEqual(
             formatted, [],
-            f"\n{len(formatted)} disallowed brand-word reference(s):\n" + "\n".join(formatted),
+            f"\n{len(formatted)} baseline mismatch(es):\n" + "\n".join(formatted),
         )
 
-    def test_every_allowlist_entry_has_an_issue_reference(self):
-        """Every ALLOWLIST entry must carry a well-formed issue reference like '#74' -- an
-        entry without one would be an untracked, silent permanent exception."""
-        bad = [e.prefix for e in ALLOWLIST if not re.fullmatch(r"#\d+", e.issue or "")]
+    def test_every_baseline_entry_has_a_valid_issue_reference(self):
+        """Every BASELINE entry must carry a well-formed issue reference like '#74' -- an entry
+        without one would be an untracked, silent permanent exception."""
+        bad = [
+            (e.file, e.brand) for e in BASELINE.values()
+            if not re.fullmatch(r"#\d+", e.issue or "")
+        ]
         self.assertEqual(
             bad, [],
-            f"\nAllowlist entries missing a valid issue reference (e.g. '#74'): {bad}",
+            f"\nBaseline entries missing a valid issue reference (e.g. '#74'): {bad}",
         )
 
-    def test_allowlist_prefixes_are_unique(self):
-        """Sanity: no two entries should target the exact same prefix (the longest-prefix-wins
-        matcher would silently pick one and ignore the other's reason/issue)."""
-        prefixes = [e.prefix for e in ALLOWLIST]
+    def test_baseline_entries_are_unique_per_file_and_brand(self):
+        """Sanity: rebrand_scan._load_baseline already raises on a literal YAML duplicate, but
+        assert it here too so a future refactor of the loader can't silently swallow one."""
+        keys = [(e.file, e.brand) for e in BASELINE.values()]
         self.assertEqual(
-            len(prefixes), len(set(prefixes)),
-            f"Duplicate ALLOWLIST prefixes found: {prefixes}",
+            len(keys), len(set(keys)),
+            f"Duplicate BASELINE (file, brand) entries found: {keys}",
+        )
+
+    def test_every_directory_exception_has_a_valid_issue_reference(self):
+        """Every DIRECTORY_EXCEPTIONS entry must also carry a well-formed issue reference --
+        these are exempt from per-file counting, not from being tracked at all."""
+        bad = [
+            exc.prefix for exc in DIRECTORY_EXCEPTIONS
+            if not re.fullmatch(r"#\d+", exc.issue or "")
+        ]
+        self.assertEqual(
+            bad, [],
+            f"\nDirectory exceptions missing a valid issue reference (e.g. '#78'): {bad}",
+        )
+
+    def test_directory_exceptions_are_exactly_the_two_generated_or_golden_locations(self):
+        """Mutation-style guard: DIRECTORY_EXCEPTIONS is deliberately a short, hardcoded list --
+        this pins it to exactly the two locations Rick's review named, so a third
+        directory-wide exception can't be added without a reviewer noticing this test change."""
+        prefixes = {exc.prefix for exc in DIRECTORY_EXCEPTIONS}
+        self.assertEqual(
+            prefixes, {"app/backend/static/", "tests/conformance/testdata/"},
+            f"DIRECTORY_EXCEPTIONS changed to {prefixes} -- add per-file BASELINE entries "
+            f"instead of a new directory-wide exception unless the content is truly "
+            f"generated/golden, and get that reviewed explicitly",
         )
 
     def test_sonic_persona_pack_may_say_sonic(self):
@@ -373,7 +234,7 @@ class TestRebrandVerification(unittest.TestCase):
         menu_path = PROJECT_ROOT / "personas" / "sonic" / "menu" / "menuItems.json"
         self.assertTrue(menu_path.exists(), "personas/sonic/menu/menuItems.json not found")
         rel_posix = _relative_posix(menu_path)
-        self.assertIsNone(_forbidden_reason(rel_posix, "sonic"))
+        self.assertIsNone(_classify_hit(rel_posix, "sonic", 1, {}))
 
     def test_cross_brand_docs_may_say_any_brand(self):
         """Sanity: docs/persona-architecture.md must legitimately be allowed to say all three
@@ -382,25 +243,85 @@ class TestRebrandVerification(unittest.TestCase):
         self.assertTrue(doc_path.exists(), "docs/persona-architecture.md not found")
         rel_posix = _relative_posix(doc_path)
         for brand in BRAND_PATTERNS:
-            self.assertIsNone(_forbidden_reason(rel_posix, brand))
+            self.assertIsNone(_classify_hit(rel_posix, brand, 1, {}))
 
     def test_a_foreign_brand_word_inside_a_persona_pack_is_forbidden(self):
         """Mutation-style unit check (no real file touched): 'dunkin' inside personas/sonic/**
         must be forbidden even though 'sonic' there is fine -- a persona pack must not
-        reference a different brand."""
-        self.assertIsNone(_forbidden_reason("personas/sonic/menu/menuItems.json", "sonic"))
-        self.assertIsNotNone(_forbidden_reason("personas/sonic/menu/menuItems.json", "dunkin"))
+        reference a different brand, and no BASELINE entry can rescue it."""
+        self.assertIsNone(_classify_hit("personas/sonic/menu/menuItems.json", "sonic", 1, {}))
+        self.assertIsNotNone(
+            _classify_hit(
+                "personas/sonic/menu/menuItems.json", "dunkin", 1,
+                {("personas/sonic/menu/menuItems.json", "dunkin"): BaselineEntry(
+                    "personas/sonic/menu/menuItems.json", "dunkin", 1, "#78",
+                )},
+            )
+        )
 
     def test_a_brand_word_in_an_unlisted_shared_file_is_forbidden(self):
-        """Mutation-style unit check (no real file touched): a brand word in a shared-code path
-        with no ALLOWLIST entry at all must be forbidden."""
-        self.assertIsNotNone(_forbidden_reason("app/some_new_top_level_module.py", "dunkin"))
+        """Mutation-style unit check (no real file touched): a brand-new file with a brand-word
+        hit and no BASELINE entry at all must be forbidden."""
+        self.assertIsNotNone(_classify_hit("app/some_new_top_level_module.py", "dunkin", 1, {}))
 
-    def test_a_brand_word_in_an_allowlisted_shared_file_is_allowed(self):
-        """Mutation-style unit check (no real file touched): 'sonic' inside an allowlisted
-        prefix (e.g. app/backend/) is allowed, matching what a real 'Sonic' leftover there
-        resolves to today."""
-        self.assertIsNone(_forbidden_reason("app/backend/some_new_module.py", "sonic"))
+    def test_a_brand_word_matching_its_baseline_entry_is_allowed(self):
+        """Mutation-style unit check (no real file touched): a count that exactly matches its
+        BASELINE entry is allowed."""
+        baseline = {
+            ("app/backend/some_module.py", "sonic"): BaselineEntry(
+                "app/backend/some_module.py", "sonic", 3, "#74",
+            ),
+        }
+        self.assertIsNone(_classify_hit("app/backend/some_module.py", "sonic", 3, baseline))
+
+    def test_a_count_risen_above_its_baseline_max_is_forbidden(self):
+        """Mutation-style unit check: rule 1 of the ratchet -- more hits than the checked-in
+        max means a new, uncontrolled reference snuck in."""
+        baseline = {
+            ("app/backend/some_module.py", "sonic"): BaselineEntry(
+                "app/backend/some_module.py", "sonic", 3, "#74",
+            ),
+        }
+        reason = _classify_hit("app/backend/some_module.py", "sonic", 4, baseline)
+        self.assertIsNotNone(reason)
+        self.assertIn("above its BASELINE max", reason)
+
+    def test_a_count_dropped_below_its_baseline_max_is_forbidden_until_lowered(self):
+        """Mutation-style unit check: rule 2 of the ratchet -- fewer hits than the checked-in
+        max (including 0, i.e. the file no longer has the brand word at all) must still fail,
+        so the baseline can't silently drift out of sync with reality; it must be lowered."""
+        baseline = {
+            ("app/backend/some_module.py", "sonic"): BaselineEntry(
+                "app/backend/some_module.py", "sonic", 3, "#74",
+            ),
+        }
+        for new_count in (2, 0):
+            with self.subTest(new_count=new_count):
+                reason = _classify_hit("app/backend/some_module.py", "sonic", new_count, baseline)
+                self.assertIsNotNone(reason)
+                self.assertIn("lower", reason)
+
+    def test_directory_exception_allows_any_count_for_its_own_brand(self):
+        """Mutation-style unit check: app/backend/static/ and tests/conformance/testdata/ are
+        exempt from per-file counting entirely -- any count of their allowed brand is fine."""
+        for count in (0, 1, 999):
+            with self.subTest(count=count):
+                self.assertIsNone(
+                    _classify_hit("app/backend/static/assets/app.js", "sonic", count, {})
+                )
+                self.assertIsNone(
+                    _classify_hit(
+                        "tests/conformance/testdata/menu.json", "sonic", count, {}
+                    )
+                )
+
+    def test_directory_exception_still_forbids_a_brand_it_does_not_rescue(self):
+        """Mutation-style unit check: a directory exception only rescues the brand(s) it lists
+        (both today's exceptions list only 'sonic') -- a foreign brand there is still a
+        failure, not silently waved through by the directory match."""
+        self.assertIsNotNone(
+            _classify_hit("app/backend/static/assets/app.js", "dunkin", 1, {})
+        )
 
     # ── Terminology checks (unrelated to brand packs; unchanged by #76) ──
 
