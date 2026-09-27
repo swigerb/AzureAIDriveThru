@@ -58,7 +58,7 @@ const detailFor = (id: string, title: string) => ({
     locales: { default: "en", supported: ["en"] },
     features: { dayparts: false },
     menuUrl: `/personas/${id}/menu.json`,
-    models: { realtime: { default: "gpt-realtime-2.1", allowed: ["gpt-realtime-2.1"] } }
+    models: { realtime: { default: "gpt-realtime-2.1", models: [{ id: "gpt-realtime-2.1", label: "GPT Realtime 2.1", reasoning: true }] } }
 });
 const DETAIL_ALPHA = detailFor("test-alpha", "Test Alpha Fixture");
 const DETAIL_BETA = detailFor("test-beta", "Test Beta Fixture");

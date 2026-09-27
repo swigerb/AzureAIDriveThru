@@ -30,9 +30,21 @@ export interface PersonasIndexResponse {
     backends: PersonaBackendEntry[];
 }
 
+/** One selectable model for a pipeline, per PR 106 (Birdperson round 3, issue #75)'s
+ * `/api/personas/{id}` shape: each entry is now an object (id/label/whether it does visible
+ * reasoning), not a bare model-id string. */
+export interface PersonaModelOption {
+    id: string;
+    label: string;
+    reasoning: boolean;
+}
+
 export interface PersonaModelPipeline {
     default: string;
-    allowed: string[];
+    /** Optional: PR 106 renamed `allowed` -> `models` and richened the entries (see
+     * `PersonaModelOption`), but hasn't merged into this branch's backend yet, so callers must
+     * tolerate its absence until then (falls back to just `default`). */
+    models?: PersonaModelOption[];
 }
 
 export interface PersonaModels {

@@ -53,7 +53,7 @@ const FIXTURE_PERSONA_DETAIL = {
     locales: { default: "en", supported: ["en", "es", "fr", "ja"] },
     features: { dayparts: false },
     menuUrl: "/personas/test-alpha/menu.json",
-    models: { realtime: { default: "gpt-realtime-2.1", allowed: ["gpt-realtime-2.1"] } }
+    models: { realtime: { default: "gpt-realtime-2.1", models: [{ id: "gpt-realtime-2.1", label: "GPT Realtime 2.1", reasoning: true }] } }
 };
 
 function mockPersonaFetch() {

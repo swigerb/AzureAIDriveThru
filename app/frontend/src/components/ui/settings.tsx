@@ -9,6 +9,7 @@ import { useDummyDataContext } from "@/context/dummy-data-context";
 import { useAzureSpeechOnContext } from "@/context/azure-speech-context";
 import { Tooltip } from "@/components/ui/tooltip";
 import { VOICE_OPTIONS } from "@/lib/voices";
+import type { PersonaModels } from "@/types/persona";
 
 interface SettingsProps {
     isMobile: boolean;
@@ -20,14 +21,29 @@ interface SettingsProps {
     onLogToFileChange: (checked: boolean) => void;
     voiceChoice: string;
     onVoiceChoiceChange: (voice: string) => void;
+    /** Current persona's model options (design doc §7), per PR 106 (issue #75). Optional: this
+     * branch's backend doesn't emit it yet, so the model-switch seam below must tolerate absence. */
+    models?: PersonaModels;
 }
 
-export default function Settings({ isMobile, showSessionTokens, onShowSessionTokensChange, verboseLogging, onVerboseLoggingChange, logToFile, onLogToFileChange, voiceChoice, onVoiceChoiceChange }: SettingsProps) {
+export default function Settings({
+    isMobile,
+    showSessionTokens,
+    onShowSessionTokensChange,
+    verboseLogging,
+    onVerboseLoggingChange,
+    logToFile,
+    onLogToFileChange,
+    voiceChoice,
+    onVoiceChoiceChange,
+    models
+}: SettingsProps) {
     const [isDarkMode, setIsDarkMode] = useState(() => {
         return localStorage.getItem("isDarkMode") === "true";
     });
     const { useAzureSpeechOn, setUseAzureSpeechOn } = useAzureSpeechOnContext();
     const { useDummyData, setUseDummyData } = useDummyDataContext();
+    const realtimeModels = models?.realtime.models ?? [];
 
     useEffect(() => {
         localStorage.setItem("isDarkMode", isDarkMode.toString());
@@ -37,6 +53,7 @@ export default function Settings({ isMobile, showSessionTokens, onShowSessionTok
             document.documentElement.classList.remove("dark");
         }
     }, [isDarkMode]);
+
 
     const handleDarkModeChange = (checked: boolean) => {
         setIsDarkMode(checked);
@@ -135,11 +152,13 @@ export default function Settings({ isMobile, showSessionTokens, onShowSessionTok
                     <Switch id="dummy-data" checked={useDummyData} onCheckedChange={handleDummyDataChange} aria-label="Toggle dummy data" />
                 </div>
             </div>
-            {/* Issue #80: model/backend pickers depend on Summer's #75 (in flight, not yet
-                merged) -- this row is only a seam, matching the "Azure Backend" row's
-                disabled-Switch + WIP-Tooltip convention above, so the control exists and is
-                discoverable without inventing #75's API. Wire it up (persona.models.*, per
-                design doc section 7) once #75 lands. */}
+            {/* Issue #80/#75: model picking depends on Birdperson's PR 106 (round 3), which
+                landed the `models.<pipeline>.models: {id,label,reasoning}[]` shape this reads --
+                but not yet the switching UX itself. This row is only a seam, matching the "Azure
+                Backend" row's disabled-Switch + WIP-Tooltip convention above, so the control
+                exists and is discoverable without inventing #75's full API. Wire up switching
+                (per design doc section 7) once #75 lands; `realtimeModels` tolerates PR 106 not
+                having merged into this branch's backend yet (falls back to an empty list). */}
             <div className="flex items-start justify-between">
                 <div className="flex-1 space-y-0.5">
                     <Label htmlFor="model-picker" className="text-gray-900 dark:text-gray-100">
@@ -148,6 +167,9 @@ export default function Settings({ isMobile, showSessionTokens, onShowSessionTok
                     <p className="text-sm text-gray-600 dark:text-gray-400">Choose which model powers the conversation</p>
                 </div>
                 <div className="ml-4 flex items-center gap-3 shrink-0">
+                    <span className="min-w-[5rem] text-right text-xs text-muted-foreground">
+                        {realtimeModels.length > 0 ? `${realtimeModels.length} option${realtimeModels.length === 1 ? "" : "s"}` : "Work in progress"}
+                    </span>
                     <Tooltip content="Work in progress (#75)">
                         <div>
                             <Switch id="model-picker" checked={false} onCheckedChange={() => {}} aria-label="Toggle model picker" disabled />
