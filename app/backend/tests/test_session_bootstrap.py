@@ -731,6 +731,25 @@ class SessionUpdateFallbackTests(_RealtimeHarness):
                          ["response_cancel_not_active", "response_cancel_not_active"])
         await browser.close()
 
+    async def test_response_cancel_not_active_is_benign_not_an_error_log(self):
+        """#95: a response.cancel that lands after the response already finished
+        (e.g. useRealtime.tsx's unconditional cancel racing a barge-in or a mic
+        restart) is rejected by the real API with response_cancel_not_active in
+        the same race. It's not a backend fault, so it must not be logged at
+        ERROR -- strict conformance scenarios count every ERROR line as a new
+        backend error, and OrderResumeBrowserTests' strict-autoplay scenario
+        flaked on exactly this (issue #95). Still relayed to the browser
+        unchanged -- only the server-side log level changes."""
+        browser = await self.client.ws_connect("/realtime")
+        await self._until_browser(browser, "session.updated")     # nothing of ours in flight now
+        with self.assertNoLogs(rtmt_module.logger.name, level="ERROR"):
+            await browser.send_json({"type": "response.cancel"})
+            await self._until(lambda: len(self.fake.errors) >= 1)
+            events = await self._browser_events(browser)
+        self.assertEqual(sorted(e["error"]["code"] for e in events if e["type"] == "error"),
+                         ["response_cancel_not_active"])
+        await browser.close()
+
 
 class SessionUpdateGuardTests(unittest.TestCase):
 

@@ -173,6 +173,22 @@ public sealed class CapturedProcessOutputWaitTests
             $"Expected this to wait out the still-arriving second line, only took {sw.Elapsed}.");
     }
 
+    /// <summary>
+    /// #103: this used to time-box its assertion with <c>sw.Elapsed &gt;= appendTimes[^1] +
+    /// ShortIdleWindow - 30ms</c>, comparing a <see cref="Stopwatch"/> read (this test) against a
+    /// separately-recomputed proxy for when the last line "really" landed. Those are two
+    /// different clocks read at two different instants with an unsynchronized gap between them
+    /// (this test's own <c>appendTimes.Add(sw.Elapsed)</c> runs a few instructions *after* <see
+    /// cref="CapturedProcessOutput.Append"/> already captured <see
+    /// cref="CapturedProcessOutput.LastAppendUtc"/> internally) -- ordinarily negligible, but a
+    /// scheduler/GC pause landing in exactly that gap under CI load could stretch it past the
+    /// 30ms margin, failing the assertion even though nothing was actually wrong. Comparing a
+    /// fresh <c>DateTimeOffset.UtcNow</c> read against <see cref="CapturedProcessOutput.LastAppendUtc"/>
+    /// itself (the *exact* timestamp the method under test armed its window from, not a proxy for
+    /// it) removes that gap -- and the margin it needed -- entirely: real scheduling delay after
+    /// the wait resumes can only make this test's own read later, never earlier, so the assertion
+    /// can no longer flake in either direction.
+    /// </summary>
     [Fact]
     public async Task WaitForOutputQuiescenceAsync_rearms_the_idle_window_on_every_new_line()
     {
@@ -184,27 +200,32 @@ public sealed class CapturedProcessOutputWaitTests
         // return true before ever observing any of the three lines appended below, making this
         // assert nothing about re-arming at all).
         output.Append("ERR", "seed line so the S1 fast path does not short-circuit this test");
-        var appendTimes = new List<TimeSpan>();
-        var sw = Stopwatch.StartNew();
+        var appendCount = 0;
         _ = Task.Run(async () =>
         {
             for (var i = 0; i < 3; i++)
             {
                 await Task.Delay(100, ct);
                 output.Append("ERR", $"line {i}");
-                appendTimes.Add(sw.Elapsed);
+                Interlocked.Increment(ref appendCount);
             }
         }, ct);
 
         var quiesced = await output.WaitForOutputQuiescenceAsync(ShortIdleWindow, ShortMaxWait, ct);
-        sw.Stop();
+        var completedUtc = DateTimeOffset.UtcNow;
 
         Assert.True(quiesced);
-        Assert.Equal(3, appendTimes.Count);
-        // Must not have returned before the LAST line's own full idle window elapsed.
-        Assert.True(sw.Elapsed >= appendTimes[^1] + ShortIdleWindow - TimeSpan.FromMilliseconds(30),
-            $"Returned at {sw.Elapsed}, but the last line landed at {appendTimes[^1]} and needed " +
-            $"a further {ShortIdleWindow} of silence after that.");
+        // Must not have returned before all three lines landed -- a stale, never-re-armed idle
+        // window (the pre-#62 bug this test guards) would fire on just the first or second line
+        // and return long before the background loop above ever finishes.
+        Assert.Equal(3, Volatile.Read(ref appendCount));
+        // Must not have returned before the LAST line's own full idle window elapsed, checked
+        // against the exact instant that line was recorded internally (see this test's own doc
+        // comment above for why that -- not an independent Stopwatch read -- is what removes the
+        // flake without widening any margin).
+        Assert.True(completedUtc - output.LastAppendUtc >= ShortIdleWindow,
+            $"Returned at {completedUtc:O}, but the last line was recorded at {output.LastAppendUtc:O} " +
+            $"and needed a further {ShortIdleWindow} of silence after that.");
     }
 
     /// <summary>Mutation check for #66 S4: if a cap hit still silently returned success (the

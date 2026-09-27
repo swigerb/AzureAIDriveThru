@@ -9,26 +9,50 @@ namespace Conformance.Tests.Scenarios.RateLimit;
 /// the backend (app/backend/rate_limit.py's RateLimitRecovery.on_guest_speech(), invoked from
 /// rtmt.py's from_server_to_client handling of the fake's own speech_started reply).
 ///
-/// This scenario needs its own dedicated <see cref="RateLimitTimersConformanceFixture"/> instead
-/// of sharing <see cref="RateLimitRecoveryTests"/>'s ShortTimers collection, for a reason that has
-/// nothing to do with rate-limit timing at all: app/backend/audio_pipeline.py's EchoSuppressor.
-/// Every fresh (non-resumed) connection's greeting is answered by RealtimeBrowserClient's
-/// AutoRespond default script with a real audio delta, so echo.on_audio_done() always fires and
-/// starts a `greeting_in_progress`-doubled cooldown (config.yaml's audio.echo_cooldown_seconds is
-/// 1.5, doubled to 3.0s post-greeting) during which rtmt.py's from_client_to_server loop silently
+/// PR #123 review item 1 (issue #68): the previous version of
+/// <see cref="A_pending_retry_is_cancelled_by_guest_speech"/> raced a fixed local guess against
+/// this genuine network round trip (backend -> upstream -> speech_started reply ->
+/// from_server_to_client resuming): it sent guest speech after an arbitrary fixed 200ms delay,
+/// then bounded "no retried response.create" to a fixed 1.5s, all under the shared
+/// <see cref="BackendProfiles.RateLimitTimers"/> profile's short 0.4s second-retry delay. Under
+/// CPU load the round trip could occasionally lose that race to the retry's own timer -- a
+/// genuine race, not a same-process ordering bug (rtmt.py's server-to-client loop is strictly
+/// sequential). A rejected fix (reverted; see #68/#48 history) tried to close that race with a
+/// cheaper, purely-local "audio forwarded upstream" signal instead of waiting for the model's own
+/// VAD -- but the browser streams every mic buffer, including silence
+/// (useAudioRecorder.tsx has no energy gate), so that signal would have cancelled every pending
+/// retry, including the #48 greeting retry, the instant the mic reopened, leaving the carhop
+/// silently unresponsive. `on_guest_speech()` (wired to the model's own VAD-confirmed
+/// `speech_started`) remains the only guest-driven cancellation path. This class now:
+/// (1) uses <see cref="BackendProfiles.RateLimitIdleInteractionTimers"/>, whose second-retry
+/// delay is a generous 3.6s (see that profile's own doc comment) -- the round trip this test
+/// waits on has no realistic way to lose that race under any load this suite exercises; and
+/// (2) waits on the backend's own evidence -- the "Rate-limit retry cancelled: guest started
+/// speaking" log line, via <see cref="IBackendUnderTest.WaitForDiagnosticsAsync"/> -- event-driven
+/// rather than a fixed guess-and-hope delay. Gating on that log line costs no wall time:
+/// `RateLimitRecovery._cancel_pending` calls the pending `asyncio.Task`'s `cancel()` and logs
+/// synchronously, with no `await` in between and (single-threaded asyncio) nothing else able to
+/// run in that gap, so observing the log line is itself proof the retry can never fire
+/// afterward.
+///
+/// This scenario needs its own dedicated collection instead of sharing
+/// <see cref="RateLimitRecoveryTests"/>'s ShortTimers collection, for a reason that has nothing
+/// to do with rate-limit timing at all: app/backend/audio_pipeline.py's EchoSuppressor. Every
+/// fresh (non-resumed) connection's greeting is answered by RealtimeBrowserClient's AutoRespond
+/// default script with a real audio delta, so echo.on_audio_done() always fires and starts a
+/// `greeting_in_progress`-doubled cooldown (config.yaml's audio.echo_cooldown_seconds is 1.5,
+/// doubled to 3.0s post-greeting) during which rtmt.py's from_client_to_server loop silently
 /// `continue`s past *every* input_audio_buffer.append -- it never reaches the fake upstream, so
 /// the fake's WithVadDefaults() rule never replies with speech_started, so on_guest_speech() is
 /// never invoked at all. This is a genuine, deliberate anti-echo production safety feature (real
 /// callers' own mic audio picking up the assistant's TTS would otherwise falsely look like guest
 /// speech), not a test bug or a rate-limit-specific race -- but it means this scenario's synthetic
-/// guest-speech append must be sent *after* that fixed 3.0s cooldown has elapsed, which ShortTimers'
-/// 1-second idle timeout and 1-second nudge budget cannot survive (the idle sweep would close the
-/// socket, or the nudge would inject an unrelated response.create, before the wait finished).
-/// There is no CONFORMANCE_* hook for echo_cooldown_seconds itself (unlike the timers this profile
-/// does override), so the wait below is real wall-clock time, not a shortened one.
+/// guest-speech append must be sent *after* that fixed 3.0s cooldown has elapsed. There is no
+/// CONFORMANCE_* hook for echo_cooldown_seconds itself (unlike the timers this profile does
+/// override), so the wait below is real wall-clock time, not a shortened one.
 /// </summary>
-[Collection(RateLimitTimersConformanceCollection.Name)]
-public sealed class RateLimitGuestSpeechCancellationTests(RateLimitTimersConformanceFixture fixture)
+[Collection(RateLimitIdleInteractionTimersConformanceCollection.Name)]
+public sealed class RateLimitGuestSpeechCancellationTests(RateLimitIdleInteractionTimersConformanceFixture fixture)
 {
     private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
 
@@ -81,10 +105,15 @@ public sealed class RateLimitGuestSpeechCancellationTests(RateLimitTimersConform
         var connection = await ConnectAndGetPastGreetingAsync(connectionTask, browser, ct);
 
         // Wait out the greeting's own echo-suppression cooldown (see class doc comment) *before*
-        // starting the rate-limit ladder at all, so the guest-speech append below -- sent shortly
-        // after the ladder's own {attempt:1} notification -- lands comfortably past the cooldown
-        // window rather than racing it.
+        // starting the rate-limit ladder at all, so the guest-speech append below lands
+        // comfortably past the cooldown window rather than racing it.
         await Task.Delay(EchoCooldownWait, ct);
+
+        // Taken before the ladder starts, so the WaitForDiagnosticsAsync call below only ever
+        // matches a cancellation log line produced by *this* scenario, not (for example) an
+        // identically-worded line an earlier scenario sharing this collection's backend process
+        // happened to log first (#66 S2).
+        var diagnosticsWatermark = fixture.Backend!.DiagnosticsWatermark;
 
         // Two scripted failures: attempt 0 (silent) and retry 1 (notifies {attempt:1}) -- the
         // ladder's own second retry (attempt 2) is by then scheduled ("pending"). That
@@ -106,19 +135,10 @@ public sealed class RateLimitGuestSpeechCancellationTests(RateLimitTimersConform
             "Expected extension.rate_limited{attempt:1} after the first retry also failed.");
 
         // The boundary for "no further retry reaches the fake": retry 1's own response.create,
-        // the last one the fake has seen so far. Attempt 2 is pending now -- guest speech must
-        // cancel it before it ever reaches the fake.
+        // the last one the fake has seen so far. Attempt 2 is pending now (its own second-retry
+        // delay is 3.6s on this profile -- see class doc comment) -- guest speech must cancel it
+        // before it ever reaches the fake.
         var boundary = connection.ReceivedFrames.Snapshot().Last(f => f.Type == "response.create").Sequence;
-
-        // rate_limit.py's _on_failure sends the {attempt:1} notification (awaited) and only
-        // *then*, with no further await in between, assigns self._pending for attempt 2 -- so
-        // self.pending is False for the notification's own send duration. Reacting to the
-        // notification the instant it's observed (0 delay) reliably lands inside that window,
-        // where on_guest_speech() sees nothing pending to cancel and attempt 2 gets scheduled
-        // anyway right after. A short buffer here gives the notification's own send time to fully
-        // unwind before the guest "speaks", well short of the 0.4s second retry delay this is
-        // racing against, and long past the echo cooldown already waited out above.
-        await Task.Delay(TimeSpan.FromMilliseconds(200), ct);
 
         // input_audio_buffer.append is forwarded upstream (echo suppression's cooldown has long
         // since elapsed by now), where WithVadDefaults' rule replies with speech_started --
@@ -126,11 +146,21 @@ public sealed class RateLimitGuestSpeechCancellationTests(RateLimitTimersConform
         // rtmt.py: "elif _MARKER_SPEECH_STARTED in data: ... recovery.on_guest_speech()").
         await browser.SendInputAudioAppendAsync("dGVzdA==", ct);
 
-        // Bounded comfortably longer than the 0.4s second-retry delay that would have applied
-        // had attempt 2 not been cancelled -- if this ever finds a third response.create, the
-        // cancellation didn't actually happen.
+        // Event-driven, not a fixed-delay guess: wait for the backend's own log evidence that
+        // on_guest_speech() actually ran and found (and cancelled) a pending retry. See class doc
+        // comment for why observing this line is itself proof the retry can never fire
+        // afterward, no margin needed.
+        var cancelled = await fixture.Backend!.WaitForDiagnosticsAsync(
+            d => d.Contains("Rate-limit retry cancelled: guest started speaking", StringComparison.Ordinal),
+            FrameTimeout, ct, sinceWatermark: diagnosticsWatermark);
+        Assert.True(cancelled,
+            "Expected the backend to log \"Rate-limit retry cancelled: guest started speaking\" after " +
+            "guest speech reached it.\n\n--- backend stdout/stderr ---\n" + fixture.Backend!.DumpDiagnostics());
+
+        // A short, generous sanity bound (not the sole guarantee -- the log line above already is
+        // one) that nothing slipped through regardless.
         var thirdResponseCreate = await connection.ReceivedFrames.WaitForAsync(
-            f => f.Sequence > boundary && f.Type == "response.create", TimeSpan.FromSeconds(1.5), ct);
+            f => f.Sequence > boundary && f.Type == "response.create", TimeSpan.FromSeconds(1), ct);
         Assert.True(thirdResponseCreate is null,
             "Expected no retried response.create -- guest speech should have cancelled the pending retry.");
 
@@ -138,5 +168,102 @@ public sealed class RateLimitGuestSpeechCancellationTests(RateLimitTimersConform
             f => f.Type == "extension.rate_limited" && f.Sequence > attempt1Notification!.Sequence,
             TimeSpan.FromSeconds(1), ct);
         Assert.True(furtherNotification is null, "A cancelled retry must never notify the browser.");
+    });
+
+    /// <summary>
+    /// Regression row for PR #123 review item 1 (issue #68): while a retry is pending, the
+    /// browser keeps streaming every mic buffer upstream, including silence
+    /// (useAudioRecorder.tsx has no energy gate) -- but if the fake never reports
+    /// `speech_started` for any of them (scripted off below, standing in for a genuinely quiet
+    /// buffer the model's own real VAD wouldn't trigger on either), `on_guest_speech()` is never
+    /// invoked. The pending retry must still fire on schedule: `rate_limit.py` has exactly one
+    /// guest-driven cancellation path (`on_guest_speech()`, wired only to the model's own
+    /// VAD-confirmed acknowledgment) and nothing cheaper is allowed to substitute for it. This
+    /// pins the contract Rick's review called out so a cheaper "earlier signal" (the rejected
+    /// `on_guest_audio_forwarded()` -- see this class's doc comment) can't come back: forwarded
+    /// audio alone, without a confirmed `speech_started`, must never cancel a pending retry.
+    /// </summary>
+    [Fact]
+    public Task A_pending_retry_still_fires_while_the_browser_keeps_streaming_audio_without_speech_started() => fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
+        await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        var connection = await ConnectAndGetPastGreetingAsync(connectionTask, browser, ct);
+
+        await Task.Delay(EchoCooldownWait, ct);
+
+        // Opt out of WithVadDefaults' speech simulation for this row only: appends must still
+        // reach the fake (proving echo suppression isn't what's blocking them), but never get a
+        // synthetic speech_started reply -- isolating exactly the "no VAD confirmation" case
+        // the rejected forwarded-audio signal would have mishandled.
+        connection.Script.RemoveVadSpeechDefaultRule();
+
+        connection.Script.Enqueue(NoHintRateLimited());
+        connection.Script.Enqueue(NoHintRateLimited());
+        await browser.SendResponseCreateAsync(ct);
+
+        var attempt1Notification = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.rate_limited" && f.Json.GetProperty("attempt").GetInt32() == 1,
+            FrameTimeout, ct);
+        Assert.True(attempt1Notification is not null,
+            "Expected extension.rate_limited{attempt:1} after the first retry also failed.");
+
+        var boundary = connection.ReceivedFrames.Snapshot().Last(f => f.Type == "response.create").Sequence;
+
+        // The browser keeps streaming mic audio the whole time the retry is pending, same as a
+        // real guest's open mic -- none of it gets a speech_started reply (the rule was removed
+        // above), so on_guest_speech() never runs for any of these frames.
+        for (var i = 0; i < 6; i++)
+        {
+            await browser.SendInputAudioAppendAsync("dGVzdA==", ct);
+            await Task.Delay(TimeSpan.FromMilliseconds(150), ct);
+        }
+
+        // PR #123 review item 1: this row's own precondition. The appends above "must still
+        // reach the fake (proving echo suppression isn't what's blocking them)" per this
+        // method's doc comment, but nothing checked that until now -- if the echo cooldown ever
+        // grew past EchoCooldownWait, every append would be silently dropped by rtmt.py's
+        // echo-suppression `continue` before reaching the fake, and this row would still pass
+        // vacuously (the retry fires on its own timer either way). Asserting at least one append
+        // past `boundary` actually landed at the fake closes that gap, so an echo-cooldown
+        // regression can no longer make this row pass for the wrong reason.
+        Assert.Contains(connection.ReceivedFrames.Snapshot(),
+            f => f.Sequence > boundary && f.Type == "input_audio_buffer.append");
+
+        // Keep streaming mic audio past the initial burst above, all the way until the retry
+        // itself arrives -- matching this row's own doc comment ("the browser keeps streaming
+        // every mic buffer upstream ... while a retry is pending"), rather than stopping after a
+        // fixed handful of frames sent well before the profile's 3.6s second-retry delay
+        // elapses. None of these get a speech_started reply either (the rule stays removed for
+        // the whole row), so they can't accidentally cancel the retry themselves.
+        using var streamingCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var streamingTask = Task.Run(async () =>
+        {
+            try
+            {
+                while (true)
+                {
+                    await browser.SendInputAudioAppendAsync("dGVzdA==", streamingCts.Token);
+                    await Task.Delay(TimeSpan.FromMilliseconds(150), streamingCts.Token);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected: cancelled below once the retry's own response.create is observed.
+            }
+        }, ct);
+
+        // CONFORMANCE_RATE_LIMIT_SECOND_RETRY_DELAY_SECONDS=3.6 on this profile (see class doc
+        // comment) -- the pending retry must still reach the fake on schedule despite the
+        // ongoing, speech_started-free audio stream above.
+        var retriedResponseCreate = await connection.ReceivedFrames.WaitForAsync(
+            f => f.Sequence > boundary && f.Type == "response.create", FrameTimeout, ct);
+        Assert.True(retriedResponseCreate is not null,
+            "Expected the pending retry's response.create to still fire even though the browser kept " +
+            "sending audio frames the fake never acknowledged with speech_started.");
+
+        streamingCts.Cancel();
+        await streamingTask;
     });
 }
