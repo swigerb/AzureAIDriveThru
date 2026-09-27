@@ -215,3 +215,40 @@ Fixed `useAzureSpeech.tsx`: (1) `onReceivedToolResponse` parameter was declared 
   - Guard: `src/locales/__tests__/locales.test.ts` (23 tests) scans every locale value plus user-visible source and `index.html` for Contoso, Mercer, VoiceRAG, "Talk to your data" (4 langs), the old footer, Dunkin, coffee-chat; also key parity, no empties, Sonic title, footer services.
   - `Array.prototype.at` isn't in the tsconfig lib; use `slice(-2)[0]` in tests.
 - vitest 65 → 116. Build green. No `npm install`; lockfile unchanged.
+
+## 2026-09-26 — issue #80 F2 (wave 1 of the persona-theming epic)
+
+- **Scope check matters more than the task brief.** My brief said "refactor hard-coded Sonic
+  colors/logos/text into the theme", but #80's own F-table (docs/persona-architecture.md §9)
+  defines F2 as colors only — logos/copy are F3, both blocked on backend work (`/api/personas`,
+  a persona manifest) that Rick's wave plan on #20 puts in waves 6-7, not wave 1. Read the issue's
+  own breakdown, not just the task brief, before scoping a slice — they can (and here, did)
+  disagree, and the issue wins. Called this out explicitly in the PR and a decision note
+  (`.squad/decisions/inbox/morty-80-f2.md`).
+- **HSL round-trip isn't byte-exact.** `--brand-red: 341 100% 45%` and `--brand-blue: 208 52% 33%`
+  do not reproduce `#E40046`/`#285780` exactly — integer-degree HSL rounding drifts ~1-2 RGB units
+  per channel. Already true today (shadcn components use the HSL tokens; raw hex is used
+  everywhere else) and imperceptible, but "looks IDENTICAL" is a hard bar for a theming-groundwork
+  PR. Added a second, exact-hex token layer (`--brand-red-hex` etc., plus "veil" tokens for
+  literal `rgba()` shadow/gradient spots) instead of migrating everything to the lossy HSL tokens.
+  Verified with a Playwright before/after diff: the 1440x900 viewport light-mode screenshot came
+  back byte-identical (0 px differ); full-page dark-mode differed by <=1 RGB unit on 0.05% of
+  pixels (AA/animation-timing noise, not a real color change).
+- `lib/personaTheme.ts` is the seam: `PersonaTheme`/`PersonaBaseColors` (HSL, matches persona.json's
+  documented `ui.theme.light.*` shape) + `PersonaAccentPalette` (hex, a frontend-only extension not
+  yet in `personas/schema.json` — deliberately, to keep this slice out of `personas/**`) +
+  `applyTheme()`. Wired up once in `index.tsx` with `SONIC_THEME` so the pathway is actually
+  exercised now, not just defined dead code, ready for F1's `PersonaProvider` to call with a
+  fetched theme later.
+- Added `src/__tests__/brandColorTokens.test.ts`: an `import.meta.glob` guard (same pattern as
+  `locales.test.ts`) that scans every source file except `index.css`/`personaTheme.ts` for Sonic's
+  brand hex codes and their rgb() decimal equivalents, so F2's "no brand hex values remain" bar
+  can't silently regress in a later PR.
+- Reused `git stash` inside the same worktree to flip between origin/dev's baseline and my branch
+  for before/after screenshots, instead of standing up a second worktree just for a visual diff —
+  simpler and no extra cleanup.
+- vitest 171 (was 116, +2 files: personaTheme.test.ts, brandColorTokens.test.ts). Build green.
+  Category=Browser conformance (5 tests) green locally against .NET 11 RC1. No `npm install`;
+  lockfile unchanged. `origin/dev` picked up #89 (repo rename to AzureAIDriveThru) mid-task;
+  rebased cleanly since it only touched README/azure.yaml/devcontainer/a backend test — no
+  frontend overlap.

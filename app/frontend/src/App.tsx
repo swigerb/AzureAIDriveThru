@@ -59,8 +59,8 @@ const heroHighlights: Array<{ title: string; detail: string; tone: HighlightTone
 ];
 
 const heroCallouts = [
-    { label: "Slush of the Day", value: "Cherry Limeade", accent: "#E40046" },
-    { label: "Carhop Pick", value: "SuperSONIC Cheeseburger", accent: "#285780" }
+    { label: "Slush of the Day", value: "Cherry Limeade", accent: "var(--brand-primary-hex)" },
+    { label: "Carhop Pick", value: "SuperSONIC Cheeseburger", accent: "var(--brand-secondary-hex)" }
 ];
 
 function SonicApp() {
@@ -623,7 +623,7 @@ function SonicApp() {
                                 <Button
                                     onClick={onToggleListening}
                                     className={`h-12 w-60 border-none font-semibold shadow-lg transition-colors ${
-                                        isRecording ? "bg-[#285780] text-white hover:bg-[#18344D]" : "bg-[#E40046] text-white hover:bg-[#C31B24]"
+                                        isRecording ? "bg-brand-secondary text-white hover:bg-brand-ink" : "bg-brand-primary text-white hover:bg-brand-primary-strong"
                                     }`}
                                     aria-label={isRecording ? t("app.stopRecording") : t("app.startRecording")}
                                 >
@@ -676,8 +676,8 @@ function SonicApp() {
                 </div>
             </div>
             <footer className="mx-auto mt-8 max-w-4xl space-y-2 text-center text-xs text-muted-foreground">
-                <p className="font-semibold uppercase tracking-[0.35em] text-[#285780]/80">{t("app.footer")}</p>
-                <p className="text-[11px] leading-relaxed text-[#18344D]/80">
+                <p className="font-semibold uppercase tracking-[0.35em] text-brand-secondary/80">{t("app.footer")}</p>
+                <p className="text-[11px] leading-relaxed text-brand-ink/80">
                     Disclaimer: This project is a non-commercial demo application created for educational and illustrative purposes only. It is not
                     affiliated with, endorsed, or sponsored by Inspire Brands, Inc. or Sonic Corp. Any references to Sonic Drive-In or use of Sonic-inspired colors or
                     themes are solely for demonstration and do not represent an official product.
@@ -689,16 +689,16 @@ function SonicApp() {
 
 const BrandHero = memo(function BrandHero() {
     return (
-        <section className="hero-card rounded-[32px] border border-white/40 bg-white/80 p-6 shadow-[0_25px_70px_rgba(40,87,128,0.18)] backdrop-blur-lg">
+        <section className="hero-card rounded-[32px] border border-white/40 bg-white/80 p-6 shadow-[0_25px_70px_var(--brand-secondary-veil-18)] backdrop-blur-lg">
             <div className="flex flex-col gap-8 lg:flex-row lg:items-center">
                 <div className="flex-1 space-y-5">
                     <div className="flex flex-wrap items-center gap-3">
                         <img src={sonicLogo} alt="Sonic Drive-In logo" className="h-20 w-auto drop-shadow-xs" loading="lazy" />
-                        <span className="rounded-full bg-[#E40046]/10 px-3 py-1 text-xs font-black uppercase tracking-[0.3em] text-[#E40046]">
+                        <span className="rounded-full bg-brand-primary/10 px-3 py-1 text-xs font-black uppercase tracking-[0.3em] text-brand-primary">
                             Voice Ordering Demo
                         </span>
                     </div>
-                    <h1 className="text-4xl font-black leading-tight text-[#E40046] sm:text-5xl">Sonic ordering powered by Azure conversation intelligence</h1>
+                    <h1 className="text-4xl font-black leading-tight text-brand-primary sm:text-5xl">Sonic ordering powered by Azure conversation intelligence</h1>
                     <p className="max-w-2xl text-base text-muted-foreground">
                         Recreate the Sonic Drive-In experience with slushes, burgers, and carhop favorites styled after America's Drive-In—now
                         voice activated with Azure OpenAI + Azure AI Search grounding.
@@ -714,19 +714,19 @@ const BrandHero = memo(function BrandHero() {
                     </div>
                 </div>
                 <div className="relative flex flex-1 items-center justify-center">
-                    <div className="absolute inset-0 -z-10 rounded-[32px] bg-linear-to-br from-[#E40046]/10 via-[#F2F8FA] to-[#FEDD00]/15 opacity-80 blur-3xl"></div>
+                    <div className="absolute inset-0 -z-10 rounded-[32px] bg-linear-to-br from-brand-primary/10 via-brand-surface-tint to-brand-accent/15 opacity-80 blur-3xl"></div>
                     <div className="grid w-full gap-4 sm:grid-cols-2">
-                        <div className="rounded-3xl border border-[#E40046]/20 bg-white/90 p-4 shadow-[0_25px_45px_rgba(228,0,70,0.12)]">
+                        <div className="rounded-3xl border border-brand-primary/20 bg-white/90 p-4 shadow-[0_25px_45px_var(--brand-primary-veil-12)]">
                             <div className="mb-3 flex items-center gap-3">
-                                <div className="rounded-2xl bg-[#E40046]/10 p-3">
+                                <div className="rounded-2xl bg-brand-primary/10 p-3">
                                     <SlushArt />
                                 </div>
                                 <div>
-                                    <p className="text-xs font-bold uppercase tracking-wide text-[#E40046]">Signature slushes</p>
-                                    <p className="text-sm font-semibold text-[#18344D]">Cherry Limeade & more</p>
+                                    <p className="text-xs font-bold uppercase tracking-wide text-brand-primary">Signature slushes</p>
+                                    <p className="text-sm font-semibold text-brand-ink">Cherry Limeade & more</p>
                                 </div>
                             </div>
-                            <ul className="text-xs font-medium text-[#18344D]/80">
+                            <ul className="text-xs font-medium text-brand-ink/80">
                                 {heroCallouts.map(callout => (
                                     <li key={callout.label} className="flex items-center justify-between rounded-full bg-white/80 px-3 py-1">
                                         <span>{callout.label}</span>
@@ -735,19 +735,19 @@ const BrandHero = memo(function BrandHero() {
                                 ))}
                             </ul>
                         </div>
-                        <div className="rounded-3xl border border-[#285780]/25 bg-linear-to-br from-[#285780]/10 to-[#FEDD00]/10 p-4 shadow-[0_25px_45px_rgba(40,87,128,0.15)]">
+                        <div className="rounded-3xl border border-brand-secondary/25 bg-linear-to-br from-brand-secondary/10 to-brand-accent/10 p-4 shadow-[0_25px_45px_var(--brand-secondary-veil-15)]">
                             <div className="mb-3 flex items-center gap-3">
                                 <div className="rounded-2xl bg-white/60 p-3">
                                     <BurgerArt />
                                 </div>
                                 <div>
-                                    <p className="text-xs font-bold uppercase tracking-wide text-[#285780]">Carhop favorite</p>
-                                    <p className="text-sm font-semibold text-[#18344D]">SuperSONIC® Double Cheeseburger</p>
+                                    <p className="text-xs font-bold uppercase tracking-wide text-brand-secondary">Carhop favorite</p>
+                                    <p className="text-sm font-semibold text-brand-ink">SuperSONIC® Double Cheeseburger</p>
                                 </div>
                             </div>
-                            <div className="rounded-2xl bg-white/80 p-3 text-sm font-semibold text-[#18344D]">
+                            <div className="rounded-2xl bg-white/80 p-3 text-sm font-semibold text-brand-ink">
                                 <p>100% pure beef with melty American cheese</p>
-                                <p className="text-xs text-[#E40046]">Perfect pairing: Large Tots & a Shake</p>
+                                <p className="text-xs text-brand-primary">Perfect pairing: Large Tots & a Shake</p>
                             </div>
                         </div>
                     </div>
@@ -759,9 +759,9 @@ const BrandHero = memo(function BrandHero() {
 
 function HeroHighlightCard({ title, detail, tone }: { title: string; detail: string; tone: HighlightTone }) {
     const gradientMap: Record<HighlightTone, string> = {
-        red: "from-[#E40046] to-[#FF4D7A]",
-        blue: "from-[#285780] to-[#137AC9]",
-        yellow: "from-[#FEDD00] to-[#FFE84D]"
+        red: "from-brand-primary to-brand-primary-light",
+        blue: "from-brand-secondary to-brand-secondary-strong",
+        yellow: "from-brand-accent to-brand-accent-light"
     };
 
     return (
@@ -782,7 +782,7 @@ const SessionTokenPanel = memo(function SessionTokenPanel({
     const [expanded, setExpanded] = useState(false);
 
     return (
-        <div className="rounded-xl border border-white/30 bg-white/90 font-mono text-xs shadow-xs dark:border-white/10 dark:bg-[#18344D]/90">
+        <div className="rounded-xl border border-white/30 bg-white/90 font-mono text-xs shadow-xs dark:border-white/10 dark:bg-brand-ink/90">
             <button
                 type="button"
                 onClick={() => setExpanded(prev => !prev)}
@@ -791,19 +791,19 @@ const SessionTokenPanel = memo(function SessionTokenPanel({
                 aria-label="Toggle session token history"
             >
                 <div className="flex min-w-0 flex-wrap items-center gap-2">
-                    <span className="font-semibold text-[#285780] dark:text-[#74D2E7]">Session:</span>
-                    <span className="break-all text-[#18344D] dark:text-gray-200">
+                    <span className="font-semibold text-brand-secondary dark:text-brand-secondary-tint">Session:</span>
+                    <span className="break-all text-brand-ink dark:text-gray-200">
                         {identifiers.sessionToken || ""}
                     </span>
-                    <span className="mx-1 text-[#18344D]/40 dark:text-gray-500">|</span>
-                    <span className="whitespace-nowrap rounded-full bg-[#285780]/10 px-1.5 py-0.5 font-semibold text-[#285780] dark:bg-[#74D2E7]/10 dark:text-[#74D2E7]">
+                    <span className="mx-1 text-brand-ink/40 dark:text-gray-500">|</span>
+                    <span className="whitespace-nowrap rounded-full bg-brand-secondary/10 px-1.5 py-0.5 font-semibold text-brand-secondary dark:bg-brand-secondary-tint/10 dark:text-brand-secondary-tint">
                         Round #{identifiers.roundTripIndex}
                     </span>
                 </div>
                 <motion.span
                     animate={{ rotate: expanded ? 180 : 0 }}
                     transition={{ duration: 0.2 }}
-                    className="shrink-0 text-[#285780]/60 dark:text-white/50"
+                    className="shrink-0 text-brand-secondary/60 dark:text-white/50"
                 >
                     <ChevronDown size={18} />
                 </motion.span>
@@ -823,12 +823,12 @@ const SessionTokenPanel = memo(function SessionTokenPanel({
                                 {history.map((entry, i) => (
                                     <div
                                         key={`${entry.roundTripIndex}-${entry.roundTripToken}-${i}`}
-                                        className={`flex items-start gap-2 rounded px-2 py-1 ${i === 0 ? "bg-[#E40046]/5 dark:bg-[#E40046]/10" : ""}`}
+                                        className={`flex items-start gap-2 rounded px-2 py-1 ${i === 0 ? "bg-brand-primary/5 dark:bg-brand-primary/10" : ""}`}
                                     >
-                                        <span className="w-16 shrink-0 font-semibold text-[#285780] dark:text-[#74D2E7]">
+                                        <span className="w-16 shrink-0 font-semibold text-brand-secondary dark:text-brand-secondary-tint">
                                             Round #{entry.roundTripIndex}
                                         </span>
-                                        <span className="break-all text-[#18344D]/60 dark:text-gray-400">
+                                        <span className="break-all text-brand-ink/60 dark:text-gray-400">
                                             {entry.roundTripToken || ""}
                                         </span>
                                     </div>
@@ -845,14 +845,14 @@ const SessionTokenPanel = memo(function SessionTokenPanel({
 function SlushArt() {
     return (
         <svg width="48" height="48" viewBox="0 0 48 48" fill="none" role="img" aria-label="Sonic slush illustration">
-            <path d="M16 8h16l-2 32H18L16 8z" fill="#74D2E7" stroke="#285780" strokeWidth="2" />
-            <path d="M14 8h20v4H14z" fill="#285780" />
-            <path d="M20 16c2 3 6 3 8 0" stroke="#FEDD00" strokeWidth="2" strokeLinecap="round" />
-            <circle cx="22" cy="24" r="1.5" fill="#E40046" />
-            <circle cx="28" cy="20" r="1.5" fill="#E40046" />
-            <circle cx="24" cy="30" r="1.2" fill="#FEDD00" />
-            <path d="M24 4v4" stroke="#E40046" strokeWidth="2" strokeLinecap="round" />
-            <path d="M20 5l1 3" stroke="#285780" strokeWidth="1.5" strokeLinecap="round" />
+            <path d="M16 8h16l-2 32H18L16 8z" fill="var(--brand-secondary-tint)" stroke="var(--brand-secondary-hex)" strokeWidth="2" />
+            <path d="M14 8h20v4H14z" fill="var(--brand-secondary-hex)" />
+            <path d="M20 16c2 3 6 3 8 0" stroke="var(--brand-accent)" strokeWidth="2" strokeLinecap="round" />
+            <circle cx="22" cy="24" r="1.5" fill="var(--brand-primary-hex)" />
+            <circle cx="28" cy="20" r="1.5" fill="var(--brand-primary-hex)" />
+            <circle cx="24" cy="30" r="1.2" fill="var(--brand-accent)" />
+            <path d="M24 4v4" stroke="var(--brand-primary-hex)" strokeWidth="2" strokeLinecap="round" />
+            <path d="M20 5l1 3" stroke="var(--brand-secondary-hex)" strokeWidth="1.5" strokeLinecap="round" />
         </svg>
     );
 }
@@ -860,14 +860,14 @@ function SlushArt() {
 function BurgerArt() {
     return (
         <svg width="48" height="48" viewBox="0 0 48 48" fill="none" role="img" aria-label="Sonic burger illustration">
-            <path d="M10 22c0-8 6-14 14-14s14 6 14 14H10z" fill="#FEDD00" stroke="#285780" strokeWidth="2" />
-            <rect x="9" y="22" width="30" height="4" rx="1" fill="#328500" />
-            <rect x="9" y="26" width="30" height="3" rx="1" fill="#E40046" />
-            <rect x="9" y="29" width="30" height="4" rx="1" fill="#C9CFD4" />
-            <path d="M10 33c0 4 6 7 14 7s14-3 14-7H10z" fill="#FEDD00" stroke="#285780" strokeWidth="2" />
-            <circle cx="16" cy="16" r="1" fill="#E40046" />
-            <circle cx="24" cy="13" r="1" fill="#E40046" />
-            <circle cx="32" cy="16" r="1" fill="#E40046" />
+            <path d="M10 22c0-8 6-14 14-14s14 6 14 14H10z" fill="var(--brand-accent)" stroke="var(--brand-secondary-hex)" strokeWidth="2" />
+            <rect x="9" y="22" width="30" height="4" rx="1" fill="var(--brand-success)" />
+            <rect x="9" y="26" width="30" height="3" rx="1" fill="var(--brand-primary-hex)" />
+            <rect x="9" y="29" width="30" height="4" rx="1" fill="var(--brand-neutral)" />
+            <path d="M10 33c0 4 6 7 14 7s14-3 14-7H10z" fill="var(--brand-accent)" stroke="var(--brand-secondary-hex)" strokeWidth="2" />
+            <circle cx="16" cy="16" r="1" fill="var(--brand-primary-hex)" />
+            <circle cx="24" cy="13" r="1" fill="var(--brand-primary-hex)" />
+            <circle cx="32" cy="16" r="1" fill="var(--brand-primary-hex)" />
         </svg>
     );
 }
