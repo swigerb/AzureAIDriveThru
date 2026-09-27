@@ -224,14 +224,12 @@ entries:
   increase_reason: ''
 - file: app/backend/tests/test_rate_limit.py
   brand: sonic
-  max: 3
-  issue: '#80'
+  max: 2
+  issue: '#78'
   reason: 'Backend test fixtures/paths reference personas/sonic/** directly because
     it''s the only persona pack that exists yet -- #78/#79 land the other packs, at
-    which point these tests get parameterized per-persona instead of hardcoding Sonic.
-    Raised by 1 for #80 F7: ApologyClipTests now asserts the clip lives at the persona
-    pack''s own personas/sonic/assets/audio/ path (the frontend''s copy was retired).'
-  increase_reason: '#80'
+    which point these tests get parameterized per-persona instead of hardcoding Sonic.'
+  increase_reason: ''
 - file: app/backend/tests/test_rtmt.py
   brand: sonic
   max: 16
@@ -281,15 +279,6 @@ entries:
     edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
     red as a non-Sonic-brand-hex test fixture, not real branding.'
   increase_reason: ''
-- file: app/frontend/src/__tests__/App.rateLimit.test.tsx
-  brand: sonic
-  max: 2
-  issue: '#80'
-  reason: 'Rick''s PR-110 review item 1 (issue #80): a comment explains why this suite now
-    boots through a mocked `/api/personas` fixture persona (`test-alpha`) instead of the
-    hard-coded Sonic fallback the review had deleted, naming "Sonic" twice only to describe
-    that historical fix -- no Sonic string is exercised at runtime.'
-  increase_reason: '#80'
 - file: app/frontend/src/__tests__/brandColorTokens.test.ts
   brand: mcdonalds
   max: 1
@@ -317,15 +306,6 @@ entries:
     edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
     red as a non-Sonic-brand-hex test fixture, not real branding.'
   increase_reason: ''
-- file: app/frontend/src/context/__tests__/persona-context.test.tsx
-  brand: sonic
-  max: 3
-  issue: '#80'
-  reason: 'Rick''s PR-110 review item 1 + item 4 (issue #80): a file-level comment and one
-    test title name "Sonic" only as the concrete example of the brand this suite deliberately
-    no longer hard-codes -- fixture ids (test-alpha/test-beta) exercise the actual
-    NEUTRAL-defaults/no-persona-hard-coded logic these tests cover.'
-  increase_reason: '#80'
 - file: app/frontend/src/context/auth-context.tsx
   brand: sonic
   max: 1
@@ -335,16 +315,6 @@ entries:
     edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
     red as a non-Sonic-brand-hex test fixture, not real branding.'
   increase_reason: ''
-- file: app/frontend/src/context/persona-context.tsx
-  brand: sonic
-  max: 1
-  issue: '#80'
-  reason: 'Rick''s PR-110 review item 1 (issue #80): the hard-coded `FALLBACK_ID`/
-    `FALLBACK_SUMMARY`/`FALLBACK_DETAIL` Sonic fallback this review required deleting is
-    gone -- the one remaining hit is a file-level comment naming "Sonic" only as the
-    example brand no pack (Sonic or otherwise) may be hard-coded as, now that NEUTRAL
-    shared defaults are used instead.'
-  increase_reason: '#80'
 - file: app/frontend/src/data/sonic-menu-items.json
   brand: sonic
   max: 421
@@ -471,14 +441,12 @@ entries:
   increase_reason: ''
 - file: scripts/generate_apology_clips.py
   brand: sonic
-  max: 2
-  issue: '#80'
+  max: 1
+  issue: '#78'
   reason: 'Operational scripts (deploy/build/benchmark/menu-maintenance) are Sonic-only
     pending other persona packs; #78/#79 will need them parameterized or duplicated
-    per persona. Raised from 1 to 2 for #80 F7: OUT_DIR now points at the real pack
-    path personas/sonic/assets/audio/ (the retired frontend copy''s replacement),
-    plus the pre-existing "Sonic Drive-In carhop" system-prompt literal.'
-  increase_reason: '#80'
+    per persona.'
+  increase_reason: ''
 - file: scripts/smoke_realtime.py
   brand: sonic
   max: 1
