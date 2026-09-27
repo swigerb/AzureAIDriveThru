@@ -109,7 +109,7 @@ export default memo(function OrderSummary({ order }: { order: OrderSummaryProps 
                 </button>
             </div>
             <div className={`space-y-2 ${isExpanded ? "block" : "hidden md:block"}`}>
-                {items.length === 0 && <p className="text-sm text-muted-foreground dark:text-white/70">Add a slush, burger, or shake to kick things off.</p>}
+                {items.length === 0 && <p className="text-sm text-muted-foreground dark:text-white/70">{t("ticket.emptyHint")}</p>}
                 {items.map((item, index) => (
                     <OrderItemRow key={index} item={item} />
                 ))}
@@ -120,7 +120,11 @@ export default memo(function OrderSummary({ order }: { order: OrderSummaryProps 
                         <span className="font-mono dark:text-white/90">{totalDisplay ?? formatMoney(total)}</span>
                     </div>
                     <div className="flex justify-between text-sm text-gray-900 dark:text-white">
-                        <span>Tax (8%)</span>
+                        {/* PR-110 review item 1 (issue #80): the tax rate is persona-configurable
+                            (persona.json's pricing.taxRate) but not yet on the wire for the
+                            frontend to render -- showing the rate here is a backend follow-up
+                            tracked on #80, so this reads "Tax" with no rate until then. */}
+                        <span>{t("ticket.tax")}</span>
                         <span className="font-mono dark:text-white/90">{taxDisplay ?? formatMoney(tax)}</span>
                     </div>
                 </div>

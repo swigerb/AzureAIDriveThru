@@ -1,6 +1,6 @@
 {
     "app": {
-        "title": "Pedidos por voz de Sonic",
+        "title": "Pedidos por voz",
         "footer": "Creado con Microsoft Foundry, Azure OpenAI y Azure AI",
         "showTranscript": "Mostrar transcripción",
         "stopRecording": "Detener grabación",
@@ -9,7 +9,7 @@
         "newOrder": "Empezar un pedido nuevo"
     },
     "status": {
-        "notRecordingMessage": "¡Ordena desde el Drive-In favorito de América!",
+        "notRecordingMessage": "Toca el micrófono para hacer tu pedido.",
         "conversationInProgress": "Conversación en progreso",
         "sessionEndedIdle": "La sesión terminó por inactividad. Toca el micrófono para empezar un nuevo pedido.",
         "connectionLost": "Se perdió la conexión. Toca el micrófono para empezar de nuevo.",
@@ -31,13 +31,15 @@
     },
     "menu": {
         "title": "Menú",
-        "button": "Ver el menú de Sonic",
+        "button": "Ver el menú",
         "loading": "Cargando el menú…",
         "loadError": "No se pudo cargar el menú. Inténtalo de nuevo más tarde."
     },
     "ticket": {
-        "kicker": "Boleto del carhop",
-        "title": "Tu pedido de Sonic"
+        "kicker": "Boleto del pedido",
+        "title": "Tu pedido",
+        "emptyHint": "Agrega artículos para empezar.",
+        "tax": "Impuesto"
     },
     "hero": {
         "badge": "Demostración de pedidos por voz",

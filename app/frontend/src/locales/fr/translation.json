@@ -1,6 +1,6 @@
 {
     "app": {
-        "title": "Commande vocale Sonic",
+        "title": "Commande vocale",
         "footer": "Conçu avec Microsoft Foundry, Azure OpenAI et Azure AI",
         "showTranscript": "Afficher la transcription",
         "stopRecording": "Arrêter l'enregistrement",
@@ -9,7 +9,7 @@
         "newOrder": "Commencer une nouvelle commande"
     },
     "status": {
-        "notRecordingMessage": "Commandons chez America's Drive-In !",
+        "notRecordingMessage": "Touchez le micro pour passer votre commande.",
         "conversationInProgress": "Conversation en cours",
         "sessionEndedIdle": "Session terminée pour inactivité. Touchez le micro pour commencer une nouvelle commande.",
         "connectionLost": "Connexion perdue. Touchez le micro pour recommencer.",
@@ -31,13 +31,15 @@
     },
     "menu": {
         "title": "Menu",
-        "button": "Voir le menu Sonic",
+        "button": "Voir le menu",
         "loading": "Chargement du menu…",
         "loadError": "Impossible de charger le menu. Veuillez réessayer plus tard."
     },
     "ticket": {
-        "kicker": "Ticket du carhop",
-        "title": "Votre commande Sonic"
+        "kicker": "Ticket de commande",
+        "title": "Votre commande",
+        "emptyHint": "Ajoutez des articles pour commencer.",
+        "tax": "Taxe"
     },
     "hero": {
         "badge": "Démo de commande vocale",

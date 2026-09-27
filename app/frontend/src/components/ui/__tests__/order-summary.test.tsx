@@ -25,7 +25,11 @@ describe("OrderSummary", () => {
         const emptySummary: OrderSummaryProps = { items: [], total: 0, tax: 0, finalTotal: 0 };
         render(<OrderSummary order={emptySummary} />);
 
-        expect(screen.getByText(/Add a slush, burger, or shake/i)).toBeInTheDocument();
+        // react-i18next is globally mocked (test/setup.ts) to echo the key itself -- issue #80 F3
+        // (Rick's PR-110 review item 1): this text is now the neutral `ticket.emptyHint` key, with
+        // Sonic's own flavor text ("Add a slush, burger, or shake...") living in
+        // personas/sonic/persona.json's ui.strings instead of the shared component.
+        expect(screen.getByText("ticket.emptyHint")).toBeInTheDocument();
     });
 
     // #47: Rick's two repro values are distinct IEEE-754 doubles that both mean the same exact

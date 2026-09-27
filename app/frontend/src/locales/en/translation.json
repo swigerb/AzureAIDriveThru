@@ -1,6 +1,6 @@
 {
     "app": {
-        "title": "Sonic Voice Ordering",
+        "title": "Voice Ordering",
         "footer": "Built with Microsoft Foundry, Azure OpenAI, and Azure AI",
         "showTranscript": "Show transcript",
         "stopRecording": "Stop recording",
@@ -9,7 +9,7 @@
         "newOrder": "Start a new order"
     },
     "status": {
-        "notRecordingMessage": "Let's order from America's Drive-In!",
+        "notRecordingMessage": "Tap the mic to place your order.",
         "conversationInProgress": "Conversation in progress",
         "sessionEndedIdle": "Session ended after inactivity. Tap the mic to start a new order.",
         "connectionLost": "Connection lost. Tap the mic to start again.",
@@ -31,13 +31,15 @@
     },
     "menu": {
         "title": "Menu",
-        "button": "View Sonic Menu",
+        "button": "View Menu",
         "loading": "Loading menu…",
         "loadError": "Couldn't load the menu. Please try again later."
     },
     "ticket": {
-        "kicker": "Carhop ticket",
-        "title": "Your Sonic Order"
+        "kicker": "Order ticket",
+        "title": "Your Order",
+        "emptyHint": "Add items to get started.",
+        "tax": "Tax"
     },
     "hero": {
         "badge": "Voice Ordering Demo",

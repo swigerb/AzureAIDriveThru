@@ -1,6 +1,6 @@
 {
     "app": {
-        "title": "Sonic 音声注文",
+        "title": "音声注文",
         "footer": "Microsoft Foundry、Azure OpenAI、Azure AI で構築",
         "showTranscript": "トランスクリプトを表示",
         "stopRecording": "録音を停止",
@@ -9,7 +9,7 @@
         "newOrder": "新しい注文を始める"
     },
     "status": {
-        "notRecordingMessage": "アメリカのドライブインで注文しよう！",
+        "notRecordingMessage": "マイクをタップして注文してください。",
         "conversationInProgress": "会話が進行中",
         "sessionEndedIdle": "操作がなかったためセッションが終了しました。マイクをタップして新しい注文を始めてください。",
         "connectionLost": "接続が切れました。マイクをタップしてもう一度始めてください。",
@@ -31,13 +31,15 @@
     },
     "menu": {
         "title": "メニュー",
-        "button": "Sonicのメニューを見る",
+        "button": "メニューを見る",
         "loading": "メニューを読み込んでいます…",
         "loadError": "メニューを読み込めませんでした。しばらくしてからもう一度お試しください。"
     },
     "ticket": {
-        "kicker": "カーホップ伝票",
-        "title": "あなたのSonicのご注文"
+        "kicker": "注文伝票",
+        "title": "ご注文",
+        "emptyHint": "商品を追加して始めましょう。",
+        "tax": "税"
     },
     "hero": {
         "badge": "音声注文デモ",

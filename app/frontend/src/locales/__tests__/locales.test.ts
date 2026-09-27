@@ -1,9 +1,14 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 // Guard against wording left over from the templates this app grew from
 // (VoiceRAG's "Talk to your data" / "Azure AI Search + Azure OpenAI", Contoso
-// sample names, the previous brand). Every locale must carry Sonic wording and
-// the same keys as English.
+// sample names, the previous brand). Every locale must carry brand-NEUTRAL
+// wording (Rick's PR-110 review item 1/6, issue #80 F1/F3/F6: the shared
+// locale files back every persona, including the neutral loading shell
+// before a pack loads, so they may not hardcode any one persona's brand)
+// and the same keys as English.
 
 type Tree = { [key: string]: string | Tree };
 
@@ -67,15 +72,30 @@ describe("locale files", () => {
         expect(Object.entries(flatten(locales[lang])).filter(([, value]) => !value.trim())).toEqual([]);
     });
 
-    it.each(languages)("%s names Sonic in the app title", lang => {
-        expect(flatten(locales[lang])["app.title"]).toMatch(/Sonic/);
-    });
-
     it.each(languages.filter(lang => lang !== "en"))("%s credits the same Microsoft services as English", lang => {
         const footer = flatten(locales[lang])["app.footer"];
         for (const service of ["Microsoft Foundry", "Azure OpenAI", "Azure AI"]) {
             expect(footer).toContain(service);
         }
+    });
+});
+
+describe("sonic persona pack strings", () => {
+    // Rick's PR-110 review item 1 (issue #80 F1/F3): the shared locale files are brand-neutral now
+    // (see the "locale files" describe block above), so this is where the "Sonic" brand guard
+    // moves to -- personas/sonic/persona.json's ui.strings overlay, not the shared translation.json.
+    const personaPath = resolve(process.cwd(), "..", "..", "personas", "sonic", "persona.json");
+    const sonicPersona = JSON.parse(readFileSync(personaPath, "utf-8")) as {
+        ui: { strings: Record<string, Record<string, string>> };
+    };
+    const sonicLocales = Object.keys(sonicPersona.ui.strings).sort();
+
+    it("overrides every UI language", () => {
+        expect(sonicLocales).toEqual(["en", "es", "fr", "ja"]);
+    });
+
+    it.each(sonicLocales)("%s names Sonic in the app title override", lang => {
+        expect(sonicPersona.ui.strings[lang]["app.title"]).toMatch(/Sonic/);
     });
 });
 
