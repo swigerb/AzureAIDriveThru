@@ -71,9 +71,14 @@ internal static class PersonaSmokeExpectations
     public static Expectation For(string personaId)
     {
         Assert.True(ById.TryGetValue(personaId, out var expectation),
-            $"PersonaSmokeExpectations has no entry for discovered persona '{personaId}' -- " +
-            "teach this map its greeting/searchable-item/orderable-item expectations as part of " +
-            "the same PR that adds the pack.");
+            $"PersonaSmokeTests.cs's PersonaSmokeExpectations.ById has no entry for discovered " +
+            $"persona '{personaId}' -- teach this map its expectations as part of the same PR " +
+            "that adds the pack, filling in all five Expectation fields: GreetingSubstring (a " +
+            "substring of the pack's OWN prompts/greeting.yaml greeting text), SearchableOwnItem " +
+            "(an item name from the pack's OWN menu/menuItems.json that its search index must " +
+            "return), and OrderableItemName/OrderableItemSize/OrderableItemPrice (a name, one of " +
+            "its sizes, and that size's price, all taken from that SAME menu/menuItems.json entry " +
+            "-- the size and price must match exactly or the add-to-order smoke step will fail).");
         return expectation!;
     }
 }
