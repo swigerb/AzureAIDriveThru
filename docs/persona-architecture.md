@@ -465,6 +465,18 @@ starts a new session.
 **#64, decided (decision 3).** Floats do not get the happy-hour price, and they can fill the combo drink slot.
 They are real Sonic menu items (4.3, #72), not a keyword rule.
 
+- **A pack refuses to start if two menu items collide on their lookup key, or an alias collides
+  with another item's own key or another item's own alias (#128, decided).** `_menu_key`'s
+  modifier-stripping (this section, `strip_modifiers`) is by design -- but that exact same
+  stripping can silently collapse two differently-named items (e.g. several differently-priced
+  "(N piece)" size variants of the same base name) into one lookup key, with whichever one loaded
+  last winning and the others unreachable/mispriced. `menu_utils.validate_menu_key_collisions`
+  (Python) and `MenuKeyValidator.ValidateNoCollisions` (C#) are the single implementation of this
+  rule in each backend, run eagerly for every enabled persona at process startup (Python also runs
+  it again whenever a `MenuCatalog` is built, so no code path can ever construct a
+  degraded/last-write-wins catalog) -- same fail-fast convention, same "one contract, two backends"
+  requirement as every other startup validation in this doc.
+
 ### 6.1 Required rejection-message keys, validated at startup (#125, decided)
 
 Every structured rejection above (`not_on_menu`, `size_not_available`, `machine_unavailable`,

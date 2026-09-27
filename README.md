@@ -400,7 +400,7 @@ Alternatively, you can manually build and run the Docker container:
 
 # Build the Docker image
 docker build -t sonic-drive-in-app \
-  -f ./app/Dockerfile ./app
+  -f ./app/Dockerfile .
 
 # Run the container with your environment variables
 docker run -p 8000:8000 --env-file ./app/backend/.env sonic-drive-in-app:latest
@@ -472,7 +472,7 @@ To deploy the demo app to Azure:
    - Look for backend environment variables in `./app/backend/.env`
    - Look for or create frontend environment variables in `./app/frontend/.env`
    - Use the Dockerfile at `./app/Dockerfile`
-   - Use the Docker context at `./app`
+   - Use the Docker context at the repo root (`.`)
    
 3. For more control, you can specify custom paths:
 
