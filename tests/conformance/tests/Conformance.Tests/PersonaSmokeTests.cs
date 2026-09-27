@@ -143,12 +143,24 @@ file static class PersonaSmokeScenario
 
         // 3. A basic add-to-order of an on-menu item works -- and (Rick's PR #108 second review
         //    item B) the amount actually CHARGED is the pack's own listed menu price, not just
-        //    that the item landed in the order at all. Pre-tax ("total", not "finalTotal"): the
-        //    quantity is always 1 here, so this is exactly OrderableItemPrice for any pack whose
-        //    smoke item isn't happy-hour-eligible (see the "prefer a non-happyHourDiscounted
-        //    item" guidance in PersonaSmokeExpectations.For's template -- this fixture runs on
-        //    the real wall clock, not a FixedClock, so a happy-hour-eligible item's charged price
-        //    would be time-of-day-dependent and this exact-match assertion would flake).
+        //    that the item landed in the order at all. The backend trusts whatever price
+        //    `update_order` is called with (order_state.py::handle_order_update never re-derives
+        //    it from the menu), so echoing expected.OrderableItemPrice back through the order
+        //    total alone would only prove "the math didn't change the number I was given" -- it
+        //    could never catch a smoke.json literal that had drifted from the pack's real menu
+        //    price. PersonaMenuPrice.Read re-reads that SAME persona's own menu/menuItems.json
+        //    fresh, independent of smoke.json, so the assertion below genuinely proves
+        //    smoke.json's price literal (and therefore what gets charged) matches the real menu.
+        var realMenuPrice = PersonaMenuPrice.Read(
+            fixture.PersonasDirectory, personaId, expected.OrderableItemName, expected.OrderableItemSize);
+        Assert.Equal(realMenuPrice, expected.OrderableItemPrice);
+
+        //    Pre-tax ("total", not "finalTotal"): the quantity is always 1 here, so this is
+        //    exactly OrderableItemPrice for any pack whose smoke item isn't happy-hour-eligible
+        //    (see the "prefer a non-happyHourDiscounted item" guidance in
+        //    PersonaSmokeExpectations.For's template -- this fixture runs on the real wall clock,
+        //    not a FixedClock, so a happy-hour-eligible item's charged price would be
+        //    time-of-day-dependent and this exact-match assertion would flake).
         var addResult = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
             [("add", expected.OrderableItemName, expected.OrderableItemSize, 1, expected.OrderableItemPrice)],
