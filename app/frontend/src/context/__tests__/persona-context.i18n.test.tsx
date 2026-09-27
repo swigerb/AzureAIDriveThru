@@ -56,7 +56,11 @@ function detailFor(id: string, strings: Record<string, string>): PersonaDetail {
 const BETA_DETAIL = detailFor("test-beta", {
     "ticket.kicker": "BETA TICKET",
     "ticket.title": "Your Beta Order",
-    "status.notRecordingMessage": "Let's order from Beta!"
+    "status.notRecordingMessage": "Let's order from Beta!",
+    // Only test-beta overrides this key -- test-alpha (below) deliberately leaves it undefined,
+    // mirroring Dunkin's real-world pack (issue #119 item 1 follow-up): its `ui.strings` covers
+    // only 5 keys and never touches `ticket.emptyHint` at all.
+    "ticket.emptyHint": "Add a beta widget to kick things off."
 });
 const ALPHA_DETAIL = detailFor("test-alpha", {
     "ticket.kicker": "ALPHA TICKET",
@@ -139,5 +143,33 @@ describe("ticket/status copy on persona switch (issue #119 item 1)", () => {
         expect(screen.queryByText("BETA TICKET")).not.toBeInTheDocument();
         expect(screen.queryByText("Your Beta Order")).not.toBeInTheDocument();
         expect(screen.queryByText("Let's order from Beta!")).not.toBeInTheDocument();
+    });
+
+    it("falls back to the neutral base copy -- not the previous persona's override -- for a key the new persona doesn't define", async () => {
+        // Regression for the bug Unity's Dunkin verification surfaced (issue #119 item 1
+        // follow-up): Dunkin's real pack only defines 5 `ui.strings` keys and never touches
+        // `ticket.emptyHint`, yet after switching Sonic -> Dunkin the ticket kept showing Sonic's
+        // `ticket.emptyHint` override instead of the shared neutral copy. test-beta here plays
+        // Sonic's role (it overrides `ticket.emptyHint`); test-alpha plays Dunkin's role (it
+        // doesn't).
+        mockFetchSequence(url => {
+            if (url === "/api/personas") return { ok: true, body: TWO_PERSONA_INDEX };
+            if (url === "/api/personas/test-beta") return { ok: true, body: BETA_DETAIL };
+            if (url === "/api/personas/test-alpha") return { ok: true, body: ALPHA_DETAIL };
+            return { ok: false, body: null };
+        });
+        renderApp();
+
+        await waitFor(() => expect(screen.getByText("Add a beta widget to kick things off.")).toBeInTheDocument());
+
+        await act(async () => {
+            screen.getByText("select alpha").click();
+        });
+
+        await waitFor(() => expect(screen.getByText("ALPHA TICKET")).toBeInTheDocument());
+        // The bug: without a reset-to-base before each merge, this assertion would still find
+        // test-beta's override live in the resource store even though test-alpha is now active.
+        expect(screen.queryByText("Add a beta widget to kick things off.")).not.toBeInTheDocument();
+        expect(screen.getByText("Add items to get started.")).toBeInTheDocument();
     });
 });

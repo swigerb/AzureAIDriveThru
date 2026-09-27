@@ -614,3 +614,74 @@ validation and loads personas correctly (the earlier "FATAL: Failed to load pers
 of failure is gone). Lesson banked: "add it to both loaders" in this repo always means Python *and*
 C#, and schema-only local validation is not proof of a synced fix — must either build+test the C#
 project directly or explicitly force the dotnet conformance leg locally before pushing.
+
+## Addendum (2026-09-28, second push): a distinct, deeper #119 bug -- cumulative i18n merge, not re-render
+
+A peer agent verifying an unmerged, not-yet-built persona pack reported that switching personas
+mid-session left the order ticket showing a mix of old and new persona copy. My first instinct was
+that this was the same re-render bug already fixed by `react.bindI18nStore: "added removed"` in
+`i18n/config.ts` -- it was not. Reproduced locally by pulling just the `personas/<pack>` subtree
+of the unmerged branch (`git archive <ref> -- personas | tar -x`, discarding its stale copies of
+`personas/sonic`/schema files, which predate this branch's #117/#119 work) into a scratch
+`PERSONAS_DIR`, then live-testing a Sonic -> other-pack switch with Playwright against a real
+running dev server (not just the existing unit test, which happened not to exercise this path).
+Confirmed `ticket.kicker`/`ticket.title`/`status.notRecordingMessage` DID update correctly (the
+re-render fix is fine and untouched) -- but `ticket.emptyHint` stayed on Sonic's override text
+even after the switch, despite the shared base `locales/en/translation.json` already being fully
+neutral (`"Add items to get started."`) and the other pack's `ui.strings` never mentioning that
+key at all (by design -- packs only override what's brand-specific, everything else should fall
+through to the shared neutral base).
+
+Root cause: `persona-context.tsx`'s `applyDetail` calls `i18next.addResourceBundle(locale,
+"translation", unflatten(table), true, true)` on every persona load, with `deep=true`. That merge
+is *cumulative on top of whatever is currently live* in the i18next resource store -- it adds/
+overwrites only the keys the new table actually defines; it never resets or removes keys the new
+persona is silent on. So once Sonic (which does override `ticket.emptyHint`) merges in first, that
+override permanently pollutes the live 'en' bundle -- any later persona that doesn't redefine that
+same key keeps showing Sonic's value forever, masking the neutral base underneath. This is a
+structural bug, not specific to one key or one pack: any key any earlier persona ever set, that a
+later persona doesn't re-set, leaks forward indefinitely across an arbitrary chain of switches.
+
+Fix: split the four locale JSON imports out of `i18n/config.ts` into a new, side-effect-free
+`i18n/baseResources.ts` (plain JSON re-exports only, no `i18next.init()` call) so `persona-
+context.tsx` can safely import the pristine base tables without accidentally triggering a real
+`i18next.init()` as an import side effect in test files that rely on the real singleton staying
+uninitialized (they globally mock `react-i18next` and never otherwise touch real `i18next`).
+`i18n/config.ts` now sources its own `resources: {...}` init option from that same shared map
+(single source of truth, no behavior change there). In `applyDetail`, before merging the current
+persona's overrides, now loop over every known locale and call `addResourceBundle(locale,
+"translation", structuredClone(baseTranslationResources[locale]), false, true)` -- a shallow,
+overwrite-true "add" that wholesale replaces the live bundle back to the pristine base -- *then*
+merge the persona's own overrides deep on top, same as before. Cloning matters: without
+`structuredClone`, the subsequent deep merge would mutate the shared base object in place,
+corrupting it for every future reset. Resetting every locale (not just the ones the current
+persona's `ui.strings` happens to mention) closes the gap for a locale a previous persona touched
+that the current one doesn't reference at all.
+
+Added a new regression test to `persona-context.i18n.test.tsx` alongside the existing re-render
+one: a `test-beta` fixture persona overrides `ticket.emptyHint`, a `test-alpha` fixture persona
+does not; asserts that after switching test-beta -> test-alpha, the DOM shows the shared neutral
+copy ("Add items to get started."), not test-beta's leftover override. This is the test case that
+would have caught the bug -- the existing test's two fixture personas happened to define exactly
+the same three keys, so a leak could never show up there.
+
+One process note: this repo already has an established convention (a `locales.test.ts` guard from
+the #80/#117 work) that no user-visible source file outside `__tests__`/`test/` may contain any of
+a fixed list of brand/template-leftover strings, including the literal word naming the unmerged
+pack used in this investigation. My first draft of the comments above named it directly in
+`persona-context.tsx` and the new `baseResources.ts` -- caught immediately by `npm run test`'s
+existing "has no template leftovers" guard failing, not a manual review. Reworded to describe the
+situation generically ("a pack whose `ui.strings` doesn't cover every key") instead. Lesson: that
+guard exists precisely to catch this, and it worked as designed -- but I should have remembered
+its `\bdunkin/i` pattern before writing brand-specific narrative comments into shared source at
+all, not relied on the test suite to catch it after the fact.
+
+Verified end-to-end with Playwright against a live dev server (not just the unit test): fresh
+Sonic load shows Sonic's own `ticket.emptyHint` override; switching Sonic -> the other pack now
+correctly shows the neutral base copy (previously stuck on Sonic's text); switching back the other
+pack -> Sonic correctly restores Sonic's own override (confirms the fix isn't a one-way
+Band-Aid -- both directions merge against a fresh base every time). Also re-confirmed live that
+`menu-panel.tsx`'s category icon handling (the other #119-item-1 follow-up flagged in the same
+report) is unaffected and already correct: an undefined category in the other pack's real menu
+data renders the neutral fallback icon, not a mismapped Sonic-category emoji -- no code change
+needed there, that part of the follow-up report was against pre-fix `dev`, not this branch.

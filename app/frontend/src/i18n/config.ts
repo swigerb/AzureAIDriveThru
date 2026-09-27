@@ -3,10 +3,7 @@ import LanguageDetector from "i18next-browser-languagedetector";
 import HttpApi from "i18next-http-backend";
 import { initReactI18next } from "react-i18next";
 
-import enTranslation from "../locales/en/translation.json";
-import esTranslation from "../locales/es/translation.json";
-import frTranslation from "../locales/fr/translation.json";
-import jaTranslation from "../locales/ja/translation.json";
+import { baseTranslationResources } from "./baseResources";
 
 export const supportedLngs: { [key: string]: { name: string; locale: string } } = {
     en: {
@@ -35,10 +32,10 @@ i18next
     // for all options read: https://www.i18next.com/overview/configuration-options
     .init({
         resources: {
-            en: { translation: enTranslation },
-            es: { translation: esTranslation },
-            fr: { translation: frTranslation },
-            ja: { translation: jaTranslation }
+            en: { translation: baseTranslationResources.en },
+            es: { translation: baseTranslationResources.es },
+            fr: { translation: baseTranslationResources.fr },
+            ja: { translation: baseTranslationResources.ja }
         },
         fallbackLng: "en",
         supportedLngs: Object.keys(supportedLngs),

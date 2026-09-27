@@ -1,6 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, ReactNode } from "react";
 import i18next from "i18next";
 
+import { baseTranslationResources } from "@/i18n/baseResources";
+
 import { applyTheme, applyDarkTheme, resolvePersonaTheme, PersonaWireTheme } from "@/lib/personaTheme";
 import { personaAssetUrl } from "@/lib/personaAssets";
 import { DEFAULT_VOICE } from "@/lib/voices";
@@ -159,6 +161,19 @@ export function PersonaProvider({ children }: { children: ReactNode }) {
         // `i18next` singleton. Skipping the merge there is harmless: the mocked `useTranslation()`
         // already echoes back whatever key a component asks for.
         if (typeof i18next.addResourceBundle === "function") {
+            // Issue 119 item 1 (follow-up, found via a partner pack's verification pass): reset
+            // every locale's "translation" bundle back to the pristine, persona-neutral base
+            // *before* merging the current persona's overrides on top. `addResourceBundle`'s merge
+            // (the `deep=true` below) is cumulative across calls -- it only adds/overwrites the
+            // keys the new table actually contains, it never removes ones the new table omits.
+            // Without this reset, a pack whose `ui.strings` doesn't cover every key (some packs
+            // intentionally define only a handful of brand-specific keys, e.g. no
+            // `ticket.emptyHint` override at all) silently kept showing whatever the *previously
+            // active* persona last set that key to (e.g. Sonic, which does define
+            // `ticket.emptyHint`), instead of falling back to the shared neutral copy.
+            for (const locale of Object.keys(baseTranslationResources)) {
+                i18next.addResourceBundle(locale, "translation", structuredClone(baseTranslationResources[locale]), false, true);
+            }
             for (const [locale, table] of Object.entries(detail.strings)) {
                 i18next.addResourceBundle(locale, "translation", unflatten(table), true, true);
             }
