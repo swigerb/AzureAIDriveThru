@@ -39,7 +39,9 @@
         "kicker": "注文伝票",
         "title": "ご注文",
         "emptyHint": "商品を追加して始めましょう。",
-        "tax": "税"
+        "tax": "税",
+        "included": "含む",
+        "componentsLabel": "この商品に含まれるもの"
     },
     "hero": {
         "badge": "音声注文デモ",

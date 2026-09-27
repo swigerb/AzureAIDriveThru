@@ -39,7 +39,9 @@
         "kicker": "Order ticket",
         "title": "Your Order",
         "emptyHint": "Add items to get started.",
-        "tax": "Tax"
+        "tax": "Tax",
+        "included": "Included",
+        "componentsLabel": "Included with this item"
     },
     "hero": {
         "badge": "Voice Ordering Demo",

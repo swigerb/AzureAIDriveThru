@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import OrderSummary, { calculateOrderSummary, formatMoney, OrderItem, OrderSummaryProps } from "../order-summary";
 
 describe("OrderSummary", () => {
@@ -89,5 +89,71 @@ describe("OrderSummary", () => {
 
         // line item + Subtotal + Total Due all agree, since no *Display strings were supplied.
         expect(screen.getAllByText("$88.05")).toHaveLength(3);
+    });
+
+    // #77/#80 F5: the ticket renders a bundle/combo/meal's `components` (design doc §9 row F5,
+    // tests/conformance/README.md's "Order-summary wire schema") as included sub-lines under the
+    // parent line -- they're already priced into the parent's own `price`, never their own priced
+    // or removable row.
+    describe("bundle components (issue #80 F5)", () => {
+        it("renders each absorbed/auto-filled component under its combo/meal line, marked included", () => {
+            const items: OrderItem[] = [
+                {
+                    item: "SONIC® Cheeseburger Combo",
+                    size: "standard",
+                    quantity: 1,
+                    price: 9.19,
+                    display: "SONIC® Cheeseburger Combo",
+                    components: ["Medium World Famous Fries", "Medium Coca-Cola®"]
+                }
+            ];
+            const summary: OrderSummaryProps = { items, total: 9.19, tax: 0, finalTotal: 9.19 };
+            render(<OrderSummary order={summary} />);
+
+            expect(screen.getByText("SONIC® Cheeseburger Combo")).toBeInTheDocument();
+            expect(screen.getByText("Medium World Famous Fries")).toBeInTheDocument();
+            expect(screen.getByText("Medium Coca-Cola®")).toBeInTheDocument();
+            // react-i18next is mocked (test/setup.ts) to echo the key -- "ticket.included" is the
+            // real English value ("Included") once i18next itself renders it for real.
+            expect(screen.getAllByText("ticket.included")).toHaveLength(2);
+        });
+
+        it("does not render a components list for an a-la-carte item with none", () => {
+            const items: OrderItem[] = [{ item: "Large Tots", size: "standard", quantity: 1, price: 3.29, display: "Large Tots" }];
+            const summary: OrderSummaryProps = { items, total: 3.29, tax: 0, finalTotal: 3.29 };
+            render(<OrderSummary order={summary} />);
+
+            expect(screen.queryByText("ticket.included")).not.toBeInTheDocument();
+            expect(screen.queryByRole("list")).not.toBeInTheDocument();
+        });
+
+        it("renders the components sub-line as an accessible list, one <li> per component", () => {
+            const items: OrderItem[] = [
+                {
+                    item: "$6 Meal",
+                    size: "standard",
+                    quantity: 1,
+                    price: 6,
+                    display: "$6 Meal",
+                    components: ["Medium Fries", "Coca-Cola"]
+                }
+            ];
+            const summary: OrderSummaryProps = { items, total: 6, tax: 0, finalTotal: 6 };
+            render(<OrderSummary order={summary} />);
+
+            const list = screen.getByRole("list");
+            expect(list).toHaveAccessibleName();
+            expect(within(list).getAllByRole("listitem")).toHaveLength(2);
+        });
+
+        it("keeps rendering an empty components array the same as no components at all", () => {
+            const items: OrderItem[] = [
+                { item: "Mozzarella Sticks", size: "standard", quantity: 1, price: 3.49, display: "Mozzarella Sticks", components: [] }
+            ];
+            const summary: OrderSummaryProps = { items, total: 3.49, tax: 0, finalTotal: 3.49 };
+            render(<OrderSummary order={summary} />);
+
+            expect(screen.queryByRole("list")).not.toBeInTheDocument();
+        });
     });
 });

@@ -39,7 +39,9 @@
         "kicker": "Ticket de commande",
         "title": "Votre commande",
         "emptyHint": "Ajoutez des articles pour commencer.",
-        "tax": "Taxe"
+        "tax": "Taxe",
+        "included": "Inclus",
+        "componentsLabel": "Inclus avec cet article"
     },
     "hero": {
         "badge": "Démo de commande vocale",

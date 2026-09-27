@@ -39,7 +39,9 @@
         "kicker": "Boleto del pedido",
         "title": "Tu pedido",
         "emptyHint": "Agrega artículos para empezar.",
-        "tax": "Impuesto"
+        "tax": "Impuesto",
+        "included": "Incluido",
+        "componentsLabel": "Incluido con este artículo"
     },
     "hero": {
         "badge": "Demostración de pedidos por voz",

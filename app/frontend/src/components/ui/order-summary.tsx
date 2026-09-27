@@ -8,6 +8,13 @@ export interface OrderItem {
     quantity: number;
     price: number;
     display: string;
+    // #77/#80 F5: bundle-slot item(s) absorbed into (or auto-filled onto) this line, e.g.
+    // ["Medium Fries", "Coca-Cola"] for a combo/meal (tests/conformance/README.md's
+    // "Order-summary wire schema"). Optional and defaults to undefined/empty for an a-la-carte
+    // line, which renders exactly as it always has -- these are already priced into this line's
+    // own `price` (they aren't separate, removable, or separately priced order lines), so the
+    // ticket shows each as an included, $0 sub-line rather than its own priced row.
+    components?: string[];
 }
 
 export interface OrderSummaryProps {
@@ -74,12 +81,31 @@ export function calculateOrderSummary(items: OrderItem[]): OrderSummaryProps {
 }
 
 const OrderItemRow = memo(function OrderItemRow({ item }: { item: OrderItem }) {
+    const { t } = useTranslation();
+    const components = item.components ?? [];
+
     return (
-        <div className="flex justify-between rounded-2xl bg-white/70 px-3 py-2 text-sm text-gray-700 shadow-xs dark:bg-white/5 dark:text-white">
-            <span className="font-semibold">
-                {item.display} {item.quantity > 1 && `(x${item.quantity})`}
-            </span>
-            <span className="font-mono text-brand-primary dark:text-brand-primary-tint">{formatMoney(item.price * item.quantity)}</span>
+        <div className="rounded-2xl bg-white/70 px-3 py-2 text-sm text-gray-700 shadow-xs dark:bg-white/5 dark:text-white">
+            <div className="flex justify-between">
+                <span className="font-semibold">
+                    {item.display} {item.quantity > 1 && `(x${item.quantity})`}
+                </span>
+                <span className="font-mono text-brand-primary dark:text-brand-primary-tint">{formatMoney(item.price * item.quantity)}</span>
+            </div>
+            {/* #77/#80 F5: a combo/meal's absorbed or auto-filled sides/drinks render as included
+                sub-lines under the parent line, not as their own priced (or removable) rows --
+                they're already paid for by the parent line's own price above. A <ul> (rather than
+                more <div>s) gives screen readers the "N items" / list-item semantics for free. */}
+            {components.length > 0 && (
+                <ul className="mt-1 space-y-0.5 pl-4" aria-label={t("ticket.componentsLabel")}>
+                    {components.map((component, index) => (
+                        <li key={`${component}-${index}`} className="flex justify-between text-xs text-gray-500 dark:text-white/70">
+                            <span>{component}</span>
+                            <span className="font-mono italic">{t("ticket.included")}</span>
+                        </li>
+                    ))}
+                </ul>
+            )}
         </div>
     );
 });
