@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from aiohttp import web
 
 import conformance_hooks
+import default_persona
 from config_loader import get_config
 from order_state import SessionIdentifiers, order_state_singleton
 
@@ -327,8 +328,9 @@ class SessionManager:
 
         *persona* (#74, optional): the persona this session is bound to for its entire
         lifetime (no mid-conversation switching); threaded straight through to
-        ``order_state_singleton.create_session()``. Omitted: unchanged, unbound-session
-        behavior (the default single-persona deployment)."""
+        ``order_state_singleton.create_session()``. Omitted: binds to the deployment's
+        default persona (mandatory catalog, #74/Rick's PR #102 review item 2 -- there is
+        no more unbound-session state)."""
         session_id = order_state_singleton.create_session(persona=persona)
         self._session_map[ws] = session_id
         self._attached[session_id] = ws
@@ -511,13 +513,13 @@ class SessionManager:
         *requested_persona_id* (#74, optional): the persona id this resume request
         connected with (``/realtime?persona=<id>``). A session can only ever resume
         under the SAME persona it was originally bound to -- no mid-conversation
-        persona switching, ever, including across a transport drop/resume. Mismatched
-        (or, symmetrically, a bound session resumed with none specified, or an
-        originally-unbound session resumed with one specified) -> rejected as
-        ``"persona_mismatch"`` BEFORE the presented resume id is consumed, so the
-        guest's real credential stays valid for a legitimate retry. Omitted entirely
-        (``None``, the default): skips this check -- unchanged, single-persona/no
-        persona-param-in-URL behavior.
+        persona switching, ever, including across a transport drop/resume. Omitted
+        entirely (``None``) means "the caller means the deployment default persona"
+        (#74/Rick's PR #102 review item 2: the persona catalog is mandatory, so
+        there is no more "unbound session"/"skip the check" state) -- it resolves to
+        ``default_persona.get_default_persona().id`` before comparing. Mismatched ->
+        rejected as ``"persona_mismatch"`` BEFORE the presented resume id is
+        consumed, so the guest's real credential stays valid for a legitimate retry.
         """
         if not self.resume_enabled:
             return ResumeOutcome(False, reason="disabled")
@@ -540,14 +542,14 @@ class SessionManager:
             self.end_session(session_id, "resume attempted after expiry")
             return ResumeOutcome(False, reason="expired")
 
-        if requested_persona_id is not None:
-            bound_persona_id = order_state_singleton.get_persona_id(session_id)
-            if bound_persona_id != requested_persona_id:
-                logger.info(
-                    "Resume rejected for session %s: bound persona %r != requested persona %r (persona_mismatch)",
-                    session_id, bound_persona_id, requested_persona_id,
-                )
-                return ResumeOutcome(False, reason="persona_mismatch")
+        effective_requested_persona_id = requested_persona_id or default_persona.get_default_persona().id
+        bound_persona_id = order_state_singleton.get_persona_id(session_id)
+        if bound_persona_id != effective_requested_persona_id:
+            logger.info(
+                "Resume rejected for session %s: bound persona %r != requested persona %r (persona_mismatch)",
+                session_id, bound_persona_id, effective_requested_persona_id,
+            )
+            return ResumeOutcome(False, reason="persona_mismatch")
 
         # Consume the presented id before anything else can use it.
         self._resume_index.pop(digest, None)
@@ -637,6 +639,7 @@ class SessionManager:
                 "sessionToken": identifiers.session_token,
                 "roundTripIndex": identifiers.round_trip_index,
                 "roundTripToken": identifiers.round_trip_token,
+                "personaId": identifiers.persona_id,
                 **(extra or {}),
             }
         )

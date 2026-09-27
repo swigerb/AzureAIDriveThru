@@ -10,39 +10,26 @@ from azure.identity import DefaultAzureCredential
 from azure.search.documents.aio import SearchClient
 from azure.search.documents.models import VectorizableTextQuery
 
-import menu_utils
+import default_persona
 from config_loader import get_config
-from menu_utils import (
-    SIZE_MAP,
-    canonical_size_key,
-    infer_category as _infer_category,
-    is_extra_item,
-    normalize_size,
-    requires_machine,
-    resolve_menu_item,
-    strip_modifiers,
-)
+from menu_utils import strip_modifiers
 from order_state import order_state_singleton
 from rtmt import RTMiddleTier, Tool, ToolResult, ToolResultDirection
 
 logger = logging.getLogger(__name__)
 
-# #74: these menu_utils re-exports (canonical_size_key, is_extra_item, normalize_size,
-# requires_machine, resolve_menu_item, _infer_category) are no longer called directly
-# in this module's own function bodies -- every persona-aware call site below goes through
-# a resolved `menu` (MenuCatalog or the bare menu_utils module, see _menu_for()) instead so
-# a genuinely bound persona's own menu data is used. They stay imported and re-exported here
-# ONLY for backward compatibility: several existing tests (test_tools_search.py,
-# test_tool_calling.py) import these names directly from `tools`, and menu_utils's own
-# module-level functions ARE the correct default/no-persona behavior these tests exercise.
+# #74 (Rick's PR #102 review, item 2): every session is bound to a persona (the deployment
+# default when none was explicitly requested) -- there is no unbound/no-persona code path left,
+# so nothing here reads a module-level Sonic menu/size/category global. A caller that used to
+# import `canonical_size_key`/`normalize_size`/`is_extra_item`/`requires_machine`/
+# `resolve_menu_item`/`infer_category`/`SIZE_MAP` straight from this module (or from
+# ``menu_utils``) now resolves the exact same methods off a real ``MenuCatalog`` instance instead
+# -- ``default_persona.get_default_menu_catalog()`` for the deployment default, or
+# ``order_state_singleton.get_menu_catalog(session_id)`` for a specific session's own bound
+# persona (see ``_menu_for`` below). Tests construct their fixture the same way (see
+# tests/test_tool_calling.py's/test_tools_search.py's ``_SONIC`` fixture).
 __all__ = [
-    "_infer_category",
     "attach_tools_rtmt",
-    "canonical_size_key",
-    "is_extra_item",
-    "normalize_size",
-    "requires_machine",
-    "resolve_menu_item",
 ]
 
 # Load centralized config
@@ -51,50 +38,39 @@ _cache_cfg = _config.get("cache", {})
 _search_cfg = _config.get("search", {})
 _biz_cfg = _config.get("business_rules", {})
 
-# Module-level prompt loader — set by attach_tools_rtmt() at startup. This remains the
-# DEFAULT/fallback used for a session with no bound persona (unchanged single-persona
-# behavior); see _prompt_loader_for() below.
+# Module-level prompt loader — set by attach_tools_rtmt() at startup. This is the
+# DEPLOYMENT-WIDE default a persona with no registered override falls back to (not a
+# Sonic-specific global -- every persona ultimately gets a real, non-None prompt_loader, either
+# its own registered one or this shared one); see _prompt_loader_for() below.
 _prompt_loader = None
 
 # #74: per-persona search/prompt runtime context, keyed by persona id, registered by
-# attach_tools_rtmt()'s optional `personas` argument. Empty (the default) preserves today's
-# exact single-persona behavior -- every session falls back to the module-level
-# _prompt_loader/search config above via _persona_registry.get(pid) returning None.
+# attach_tools_rtmt()'s `personas` argument.
 _persona_registry: dict[str, dict[str, Any]] = {}
 
 # #74: the single deployment-wide search context (client + field config), captured by
-# attach_tools_rtmt()'s own positional params -- this is the fallback _search_dispatch()
-# uses for an unbound session or a persona with no registered override, i.e. today's exact
-# single-persona search behavior when `personas=` is omitted.
+# attach_tools_rtmt()'s own positional params -- the fallback _search_dispatch() uses for a
+# persona with no registered override of its own.
 _default_search_ctx: dict[str, Any] = {}
 
 
 def _menu_for(session_id: str | None):
-    """This session's bound persona :class:`~menu_utils.MenuCatalog`, or the shared
-    ``menu_utils`` module itself (duck-typed: identical function names) for an unbound
-    session -- mirrors ``order_state.py``'s own ``_menu_for`` so every persona-specific
-    lookup in this module (menu resolution, size keys, category/extra/machine checks)
-    reads from the session's own bound persona (#74)."""
+    """This session's bound persona :class:`~menu_utils.MenuCatalog` (#74; every session has
+    one -- ``order_state_singleton.get_menu_catalog`` itself falls back to the deployment
+    default for an unknown/expired id), or the deployment default catalog directly when there is
+    no *session_id* at all (a direct call, e.g. from a test)."""
     if session_id is None:
-        return menu_utils
+        return default_persona.get_default_menu_catalog()
     return order_state_singleton.get_menu_catalog(session_id)
-
-
-def _size_map_for(menu) -> dict[str, str]:
-    """The size-code -> display-string map for *menu* (a MenuCatalog or the bare
-    ``menu_utils`` module, see ``_menu_for``). The module has no ``size_map`` attribute of
-    its own (its equivalent is the top-level ``SIZE_MAP`` constant), so this falls back to
-    that for the unbound/default path."""
-    return getattr(menu, "size_map", None) or SIZE_MAP
 
 
 def _prompt_loader_for(session_id: str | None):
     """This session's bound persona's ``PromptLoader``, or the module-level default
-    (``_prompt_loader``, set by ``attach_tools_rtmt()``) if the session is unbound or its
-    persona has no registered runtime context (#74)."""
+    (``_prompt_loader``, set by ``attach_tools_rtmt()``) if the session's persona has no
+    registered runtime context (#74)."""
     if session_id is not None:
         pid = order_state_singleton.get_persona_id(session_id)
-        ctx = _persona_registry.get(pid) if pid else None
+        ctx = _persona_registry.get(pid)
         if ctx is not None and ctx.get("prompt_loader") is not None:
             return ctx["prompt_loader"]
     return _prompt_loader
@@ -195,10 +171,11 @@ def validate_customization(item_name: str, mods_string: str, prompt_loader=None,
     """Return an error message if the mods are nonsensical for the item category, else None.
 
     *prompt_loader*/*menu* (#74): the caller's resolved per-session persona context, if any;
-    both default to the module-level fallbacks (``_prompt_loader``, the ``menu_utils`` module)
-    when omitted, so every existing direct call keeps behaving exactly as before."""
+    both default to the deployment default (``_prompt_loader``, ``default_persona`` catalog)
+    when omitted, so a direct call with no session in hand still classifies against a real,
+    fully-loaded persona catalog -- never a Sonic-only module shortcut."""
     prompt_loader = prompt_loader if prompt_loader is not None else _prompt_loader
-    menu = menu or menu_utils
+    menu = menu or default_persona.get_default_menu_catalog()
     # PR #50 review (third round, minor): reuse the one shared strip_modifiers() helper instead of
     # a second, independent ad-hoc `.split("(")[0]` implementation of the same paren-stripping rule
     # (menu_utils.py's classification functions and order_state.py's combo-conversion logic already
@@ -217,9 +194,9 @@ def validate_customization(item_name: str, mods_string: str, prompt_loader=None,
 
 
 def _format_size_human_readable(size: str, menu=None) -> str:
-    """Convert size codes to human-readable format using *menu*'s (or the shared default's)
-    size map."""
-    menu = menu or menu_utils
+    """Convert size codes to human-readable format using *menu*'s (or the deployment default
+    persona's) size map."""
+    menu = menu or default_persona.get_default_menu_catalog()
     result = menu.normalize_size(size)
     return result if result else size.capitalize()
 
@@ -261,12 +238,12 @@ async def search(
     """Execute a hybrid Azure AI Search query with caching and safe fallbacks.
 
     *menu*/*prompt_loader*/*persona_id* (#74): the caller's resolved per-session persona
-    context, if any. All three default to the module-level fallbacks (the ``menu_utils``
-    module, ``_prompt_loader``, and an unnamespaced cache) when omitted, so every existing
+    context, if any. All three default to the deployment default (the ``default_persona``
+    catalog, ``_prompt_loader``, and an unnamespaced cache) when omitted, so every existing
     direct call (e.g. in tests) keeps behaving exactly as before; ``_search_dispatch`` (used
     by the registered "search" tool) is the only caller that passes them.
     """
-    menu = menu or menu_utils
+    menu = menu or default_persona.get_default_menu_catalog()
     prompt_loader = prompt_loader if prompt_loader is not None else _prompt_loader
 
     query = args["query"]
@@ -522,7 +499,7 @@ async def update_order(args, session_id: str) -> ToolResult:
 
         requested_size = menu.canonical_size_key(size)
         if requested_size not in menu_item["sizes"]:
-            size_map = _size_map_for(menu)
+            size_map = menu.size_map
             available_sizes = [size_map.get(s, s.capitalize()) for s in menu_item["sizes"]]
             logger.info(
                 "Rejected unsupported size '%s' for '%s' in session %s (size_not_available); available: %s",

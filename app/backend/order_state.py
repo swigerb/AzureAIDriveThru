@@ -1,5 +1,4 @@
 import logging
-import os
 import threading
 import uuid
 from dataclasses import dataclass
@@ -8,15 +7,8 @@ from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
 import conformance_hooks
-import menu_utils
-from config_loader import get_config
-from menu_utils import (
-    _menu_key,
-    bundle_slots,
-    get_catalog_for_persona,
-    infer_combo_component,
-    is_happy_hour_discounted,
-)
+import default_persona
+from menu_utils import _menu_key, get_catalog_for_persona
 from models import OrderItem, OrderSummary
 from money_utils import format_money, to_decimal
 
@@ -27,53 +19,31 @@ __all__ = ["OrderState", "SessionIdentifiers", "order_state_singleton", "is_happ
 
 logger = logging.getLogger("order_state")
 
-_config = get_config()
-_biz_cfg = _config.get("business_rules", {})
 
-# Configurable store timezone — defaults to Sonic HQ (Oklahoma City).
-# Override via STORE_TIMEZONE env var for stores in other time zones.
-_STORE_TZ = ZoneInfo(os.environ.get("STORE_TIMEZONE", "America/Chicago"))
+def is_happy_hour(session: dict | None = None) -> bool:
+    """Whether *now* (store-local time) falls in a happy-hour window -- *session*'s own bound
+    persona (#74) if given, else the DEFAULT persona's (for a caller with no session in hand,
+    e.g. ``get_menu_catalog``/``is_happy_hour_for_session`` below for an unknown/expired session
+    id, or a direct call with no session at all).
 
-
-def is_happy_hour() -> bool:
-    """Check if the current time is within the happy hour window (store-local time)."""
-    now = conformance_hooks.now(_STORE_TZ)
-    start = _biz_cfg.get("happy_hour_start", 14)
-    end = _biz_cfg.get("happy_hour_end", 16)
-    return start <= now.hour < end
-
-
-def _infer_combo_component(item_name: str) -> str:
-    """Combo-slot-filling check only (sides vs drinks vs "" for neither).
-
-    Delegates to the shared ``infer_combo_component`` in menu_utils to avoid drift (#39). This is
-    a SEPARATE question from happy-hour discount eligibility -- see ``_is_happy_hour_discounted``
-    below -- and must never be used to derive it (PR #50 review).
-    """
-    return infer_combo_component(item_name)
-
-
-def _bundle_slots(item_name: str) -> tuple[str, ...]:
-    """The component slots *item_name* itself absorbs when added (sides/drinks/both/neither).
-
-    Delegates to the shared ``bundle_slots`` in menu_utils to avoid drift (Rick's PR #99 review,
-    decision 1). This answers "how many, and which, slots does THIS bundle item provide" -- a
-    SEPARATE question from ``_infer_combo_component`` above, which answers "can this OTHER item
-    fill one of those slots". A combo/Dinner/Wacky-Pack/Meal's own slot capacity must be read from
-    its data (``bundle.slots``), never assumed to be one side plus one drink just because its name
-    contains the word "combo".
-    """
-    return bundle_slots(item_name)
-
-
-def _is_happy_hour_discounted(item_name: str) -> bool:
-    """Happy-hour discount eligibility check only -- SEPARATE from combo-slot-filling above.
-
-    Delegates to the shared ``is_happy_hour_discounted`` in menu_utils to avoid drift (#39 / PR
-    #50 review: don't derive this from ``_infer_combo_component`` -- they happen to agree on most
-    items today, but combo-slot rules and happy-hour rules are independent business questions.
-    """
-    return is_happy_hour_discounted(item_name)
+    This is the SINGLE place happy-hour is ever computed for ANY session -- ``_is_happy_hour_for``
+    below always calls this, never duplicates its own copy of the window/timezone lookup -- and
+    the target of every ``@patch("order_state.is_happy_hour", ...)`` call site across the test
+    suite, which mocks the whole function regardless of which session (or none) it's called
+    with/without."""
+    if session is not None:
+        window = session.get("_happy_hour_window")
+        tz = session["_tz"]
+    else:
+        persona = default_persona.get_default_persona()
+        happy_hour_cfg = persona.manifest.pricing.happyHour
+        window = (happy_hour_cfg.startHour, happy_hour_cfg.endHour) if happy_hour_cfg is not None else None
+        tz = ZoneInfo(persona.manifest.store.timezone)
+    if window is None:
+        return False
+    now = conformance_hooks.now(tz)
+    start_hour, end_hour = window
+    return start_hour <= now.hour < end_hour
 
 
 @dataclass
@@ -81,6 +51,9 @@ class SessionIdentifiers:
     session_token: str
     round_trip_index: int
     round_trip_token: str
+    # #74 (Rick's PR #102 review, item 4): the persona this session is bound to -- every
+    # session has one (the deployment default when none was requested), so this is never None.
+    persona_id: str
 
 
 class OrderState:
@@ -136,38 +109,21 @@ class OrderState:
             )
 
     def _menu_for(self, session: dict):
-        """Return this session's own :class:`~menu_utils.MenuCatalog` if it's bound to a
-        persona, else the shared ``menu_utils`` module itself -- which exposes the identical set
-        of function names (``canonical_size_key``, ``normalize_size``, ``infer_combo_component``,
-        ``bundle_slots``, ``is_happy_hour_discounted``, ...) as free functions. Every call site
-        below can therefore call ``menu.<name>(...)`` uniformly regardless of whether a persona is
-        bound (#74) -- the no-persona/default path is unchanged (single source of truth, the same
-        module-level functions every other caller/test already uses)."""
-        return session.get("_menu") or menu_utils
+        """Return this session's own :class:`~menu_utils.MenuCatalog` (#74, Rick's PR #102
+        review item 2: every session is bound to a persona -- the deployment default when none
+        was explicitly requested -- so this is never a module-level fallback)."""
+        return session["_menu"]
 
     def _pricing_for(self, session: dict) -> tuple[Decimal, Decimal]:
-        """Return this session's own ``(tax_rate, happy_hour_discount)`` as Decimals -- from its
-        bound persona's ``pricing`` config if any (#74), else the shared module-level
-        ``_biz_cfg`` default (unchanged no-persona behavior)."""
-        if session.get("_persona_id") is None:
-            return (
-                to_decimal(_biz_cfg.get("tax_rate", 0.08)),
-                to_decimal(_biz_cfg.get("happy_hour_discount", 0.5)),
-            )
+        """Return this session's own ``(tax_rate, happy_hour_discount)`` as Decimals, from its
+        bound persona's ``pricing`` config (#74; every session has one)."""
         return session["_tax_rate"], session["_happy_hour_discount"]
 
     def _is_happy_hour_for(self, session: dict) -> bool:
-        """Whether *now* (store-local time) falls in this session's own happy-hour window -- from
-        its bound persona's ``pricing.happyHour``/``store.timezone`` if any (#74), else the shared
-        module-level ``is_happy_hour()`` default (unchanged no-persona behavior)."""
-        if session.get("_persona_id") is None:
-            return is_happy_hour()
-        window = session.get("_happy_hour_window")
-        if window is None:
-            return False
-        now = conformance_hooks.now(session["_tz"])
-        start_hour, end_hour = window
-        return start_hour <= now.hour < end_hour
+        """Whether *now* falls in this session's own happy-hour window (#74; every session has
+        one). Delegates to the single module-level ``is_happy_hour(session)`` so there is
+        exactly one implementation of the window/timezone lookup, not a second copy here."""
+        return is_happy_hour(session)
 
     def _update_summary(self, session_id: str):
         session = self.sessions[session_id]
@@ -204,13 +160,13 @@ class OrderState:
     def create_session(self, persona: "Persona | None" = None) -> str:
         """Create a new, empty order-state session.
 
-        *persona* (#74): when given, this session's menu/pricing/happy-hour/timezone are all
-        sourced from *persona*'s own catalog instead of the shared module-level defaults -- see
-        ``_menu_for``/``_pricing_for``/``_is_happy_hour_for`` above. ``persona=None`` (the
-        default) preserves EXACTLY today's single-persona (env-driven default catalog) behavior,
-        so every existing caller (hundreds of ``create_session()`` call sites across the test
-        suite) is unaffected.
+        *persona* (#74, Rick's PR #102 review item 2): the session is bound to *persona*, or to
+        the deployment-wide default (``default_persona.get_default_persona()``) when omitted --
+        every session has exactly one bound persona, through the same ``MenuCatalog``/pricing
+        path either way. There is no unbound-session state and no module-level Sonic-only
+        fallback.
         """
+        persona = persona or default_persona.get_default_persona()
         session_id = str(uuid.uuid4())
         session_token = str(uuid.uuid4())
         empty_summary = OrderSummary(
@@ -222,6 +178,7 @@ class OrderState:
             taxDisplay=format_money(0),
             finalTotalDisplay=format_money(0),
         )
+        happy_hour_cfg = persona.manifest.pricing.happyHour
         self.sessions[session_id] = {
             "order_summary": empty_summary,
             "order_summary_json": empty_summary.model_dump_json(),
@@ -230,22 +187,19 @@ class OrderState:
             "round_trip_token": self._format_round_trip_token(session_token, 0),
             # #97: the thread/event-loop this session is confined to for the rest of its life.
             "_owner_thread": threading.get_ident(),
-            "_persona_id": persona.id if persona is not None else None,
+            "_persona_id": persona.id,
+            "_menu": get_catalog_for_persona(persona),
+            "_tz": ZoneInfo(persona.manifest.store.timezone),
+            "_tax_rate": to_decimal(persona.manifest.pricing.taxRate),
+            "_happy_hour_discount": (
+                to_decimal(happy_hour_cfg.priceMultiplier) if happy_hour_cfg is not None else to_decimal("1")
+            ),
+            "_happy_hour_window": (
+                (happy_hour_cfg.startHour, happy_hour_cfg.endHour) if happy_hour_cfg is not None else None
+            ),
         }
-        if persona is not None:
-            session = self.sessions[session_id]
-            session["_menu"] = get_catalog_for_persona(persona)
-            session["_tz"] = ZoneInfo(persona.manifest.store.timezone)
-            session["_tax_rate"] = to_decimal(persona.manifest.pricing.taxRate)
-            happy_hour_cfg = persona.manifest.pricing.happyHour
-            if happy_hour_cfg is not None:
-                session["_happy_hour_discount"] = to_decimal(happy_hour_cfg.priceMultiplier)
-                session["_happy_hour_window"] = (happy_hour_cfg.startHour, happy_hour_cfg.endHour)
-            else:
-                session["_happy_hour_discount"] = to_decimal("1")
-                session["_happy_hour_window"] = None
         self._reset_order_state(self.sessions[session_id])
-        logger.info("Session created: %s", session_id)
+        logger.info("Session created: %s (persona=%s)", session_id, persona.id)
         return session_id
 
     def delete_session(self, session_id: str) -> None:
@@ -503,15 +457,12 @@ class OrderState:
         # Aggregate quantities by display name
         counts = {}
         for oi in items:
-            # #74: a persona-bound session speaks its OWN size vocabulary (``sizes.spokenAs``,
-            # e.g. a future persona's own "44 oz" -> "Route 44" equivalent) via its MenuCatalog;
-            # the no-persona default path keeps today's literal Sonic "RT 44"/"RT44" substitution
-            # unchanged, since the shared ``menu_utils`` module has no spokenAs data of its own.
-            bound_menu = session.get("_menu")
-            if bound_menu is not None:
-                clean_name = bound_menu.spoken(oi.display)
-            else:
-                clean_name = oi.display.replace("RT 44", "Route 44").replace("RT44", "Route 44")
+            # #74: every session is bound to a persona (the default when none was requested), so
+            # readback always speaks that persona's OWN size vocabulary (``sizes.spokenAs``) via
+            # its MenuCatalog -- there is no separate, hardcoded "RT 44"/"RT44" -> "Route 44"
+            # substitution path anymore (that substitution is now simply Sonic's own persona pack
+            # data, reached through the exact same ``.spoken()`` call every persona uses).
+            clean_name = session["_menu"].spoken(oi.display)
             # Convert parenthesized mods to speech-friendly format
             # e.g. "Sonic Cheeseburger (No Lettuce)" -> "Sonic Cheeseburger with no lettuce"
             if "(" in clean_name and ")" in clean_name:
@@ -555,6 +506,7 @@ class OrderState:
             session_token=session["session_token"],
             round_trip_index=session["round_trip_index"],
             round_trip_token=session["round_trip_token"],
+            persona_id=session["_persona_id"],
         )
 
     def advance_round_trip(self, session_id: str) -> SessionIdentifiers:
@@ -569,32 +521,32 @@ class OrderState:
         )
         return self.get_session_identifiers(session_id)
 
-    def get_persona_id(self, session_id: str) -> "str | None":
-        """The persona id this session was bound to at ``create_session`` time, ``None`` for
-        the default (env-driven, no-persona-argument) path, or ``None`` if *session_id* isn't a
-        live session at all (#74) -- defensive, since callers like ``session_manager.py``'s
-        resume mismatch check may probe an id that has already expired/ended."""
+    def get_persona_id(self, session_id: str) -> str:
+        """The persona id this session is bound to -- every session has one (#74; the deployment
+        default when none was explicitly requested). Falls back to the default persona's own id
+        for a *session_id* that isn't a live session at all -- defensive, since callers like
+        ``session_manager.py``'s resume mismatch check may probe an id that has already
+        expired/ended, and there is no other, unbound notion of persona to fall back to."""
         if session_id not in self.sessions:
-            return None
+            return default_persona.get_default_persona().id
         self._check_owner(session_id)
-        return self.sessions[session_id].get("_persona_id")
+        return self.sessions[session_id]["_persona_id"]
 
     def get_menu_catalog(self, session_id: str):
         """Public, session-scoped counterpart of ``_menu_for`` for callers outside this module
-        (``tools.py``) that need this session's own persona-aware menu resolution (#74). Returns
-        the bound :class:`~menu_utils.MenuCatalog`, or the shared ``menu_utils`` module itself
-        (duck-typed: identical function names) for an unbound or unknown session -- the same
-        default-path fallback ``_menu_for`` already gives every internal call site."""
+        (``tools.py``) that need this session's own persona-bound menu resolution (#74). Falls
+        back to the default persona's own catalog for an unknown/expired session id (unbound
+        sessions no longer exist)."""
         if session_id not in self.sessions:
-            return menu_utils
+            return default_persona.get_default_menu_catalog()
         self._check_owner(session_id)
         return self._menu_for(self.sessions[session_id])
 
     def is_happy_hour_for_session(self, session_id: str) -> bool:
         """Public, session-scoped counterpart of ``_is_happy_hour_for`` for callers outside this
         module (``tools.py``) that need this session's own happy-hour status (#74). Falls back to
-        the shared module-level ``is_happy_hour()`` for an unbound or unknown session (unchanged
-        default-path behavior)."""
+        the shared module-level ``is_happy_hour()`` (the default persona's own happy-hour window)
+        for an unknown/expired session id."""
         if session_id not in self.sessions:
             return is_happy_hour()
         self._check_owner(session_id)

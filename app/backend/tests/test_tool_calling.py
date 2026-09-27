@@ -16,11 +16,8 @@ from unittest.mock import AsyncMock, patch
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from menu_utils import (
-    canonical_size_key,
-    infer_category,
-    normalize_size,
-)
+from default_persona import get_default_persona
+from menu_utils import get_catalog_for_persona
 from order_state import order_state_singleton
 from rtmt import ToolResult, ToolResultDirection
 from tools import (
@@ -32,12 +29,20 @@ from tools import (
     _search_cfg,
     _SearchCache,
     get_order,
-    is_extra_item,
     reset_order,
     search,
     update_order,
     validate_customization,
 )
+
+# #74: the default (env-driven) persona's own MenuCatalog -- replaces the old
+# module-level menu_utils free functions (normalize_size/canonical_size_key/
+# infer_category) these tests used to call directly. Every session (including the
+# default one) now resolves its menu through this exact same MenuCatalog path, so
+# testing through it here (instead of a since-deleted module-level shortcut) proves
+# the real, only, code path -- a mutation re-adding a Sonic-only module global would
+# have nothing left to make these tests pass against.
+_SONIC = get_catalog_for_persona(get_default_persona())
 
 # ── Helpers ──
 
@@ -752,59 +757,59 @@ class NormalizeSizeTests(unittest.TestCase):
     """Test size normalization."""
 
     def test_canonical_sizes(self):
-        self.assertEqual(normalize_size("small"), "Small")
-        self.assertEqual(normalize_size("medium"), "Medium")
-        self.assertEqual(normalize_size("large"), "Large")
-        self.assertEqual(normalize_size("mini"), "Mini")
+        self.assertEqual(_SONIC.normalize_size("small"), "Small")
+        self.assertEqual(_SONIC.normalize_size("medium"), "Medium")
+        self.assertEqual(_SONIC.normalize_size("large"), "Large")
+        self.assertEqual(_SONIC.normalize_size("mini"), "Mini")
 
     def test_aliases(self):
-        self.assertEqual(normalize_size("s"), "Small")
-        self.assertEqual(normalize_size("m"), "Medium")
-        self.assertEqual(normalize_size("l"), "Large")
-        self.assertEqual(normalize_size("rt44"), "Route 44")
-        self.assertEqual(normalize_size("rt 44"), "Route 44")
-        self.assertEqual(normalize_size("44"), "Route 44")
-        self.assertEqual(normalize_size("44oz"), "Route 44")
+        self.assertEqual(_SONIC.normalize_size("s"), "Small")
+        self.assertEqual(_SONIC.normalize_size("m"), "Medium")
+        self.assertEqual(_SONIC.normalize_size("l"), "Large")
+        self.assertEqual(_SONIC.normalize_size("rt44"), "Route 44")
+        self.assertEqual(_SONIC.normalize_size("rt 44"), "Route 44")
+        self.assertEqual(_SONIC.normalize_size("44"), "Route 44")
+        self.assertEqual(_SONIC.normalize_size("44oz"), "Route 44")
 
     def test_punctuation_and_spelling_aliases_still_display_route_44(self):
         """PR #50 review follow-up: "Route-44" and "rt. 44" must display like every other Route
         44 spelling -- these previously fell through to "" because normalize_size looked up
         SIZE_ALIASES verbatim instead of sharing canonical_size_key's punctuation-stripped lookup.
         """
-        self.assertEqual(normalize_size("Route-44"), "Route 44")
-        self.assertEqual(normalize_size("rt. 44"), "Route 44")
-        self.assertEqual(normalize_size("44 oz"), "Route 44")
+        self.assertEqual(_SONIC.normalize_size("Route-44"), "Route 44")
+        self.assertEqual(_SONIC.normalize_size("rt. 44"), "Route 44")
+        self.assertEqual(_SONIC.normalize_size("44 oz"), "Route 44")
 
     def test_extra_large_alias_displays_extra_large(self):
         """PR #50 review follow-up: "Extra Large" must resolve through the same alias table as
         its own short form "xl" so the two spellings can never end up on different order lines.
         """
-        self.assertEqual(normalize_size("Extra Large"), "Extra Large")
-        self.assertEqual(normalize_size("xl"), "Extra Large")
+        self.assertEqual(_SONIC.normalize_size("Extra Large"), "Extra Large")
+        self.assertEqual(_SONIC.normalize_size("xl"), "Extra Large")
 
     def test_hidden_sizes_return_empty(self):
-        self.assertEqual(normalize_size("standard"), "")
-        self.assertEqual(normalize_size("n/a"), "")
-        self.assertEqual(normalize_size("na"), "")
-        self.assertEqual(normalize_size("none"), "")
-        self.assertEqual(normalize_size("n.a."), "")
-        self.assertEqual(normalize_size(""), "")
+        self.assertEqual(_SONIC.normalize_size("standard"), "")
+        self.assertEqual(_SONIC.normalize_size("n/a"), "")
+        self.assertEqual(_SONIC.normalize_size("na"), "")
+        self.assertEqual(_SONIC.normalize_size("none"), "")
+        self.assertEqual(_SONIC.normalize_size("n.a."), "")
+        self.assertEqual(_SONIC.normalize_size(""), "")
 
     def test_case_insensitive(self):
-        self.assertEqual(normalize_size("SMALL"), "Small")
-        self.assertEqual(normalize_size("Medium"), "Medium")
-        self.assertEqual(normalize_size("LARGE"), "Large")
+        self.assertEqual(_SONIC.normalize_size("SMALL"), "Small")
+        self.assertEqual(_SONIC.normalize_size("Medium"), "Medium")
+        self.assertEqual(_SONIC.normalize_size("LARGE"), "Large")
 
     def test_whitespace_stripped(self):
-        self.assertEqual(normalize_size("  small  "), "Small")
-        self.assertEqual(normalize_size(" rt44 "), "Route 44")
+        self.assertEqual(_SONIC.normalize_size("  small  "), "Small")
+        self.assertEqual(_SONIC.normalize_size(" rt44 "), "Route 44")
 
     def test_unknown_size_returns_empty(self):
-        self.assertEqual(normalize_size("jumbo"), "")
-        self.assertEqual(normalize_size("venti"), "")
+        self.assertEqual(_SONIC.normalize_size("jumbo"), "")
+        self.assertEqual(_SONIC.normalize_size("venti"), "")
 
     def test_none_input_returns_empty(self):
-        self.assertEqual(normalize_size(None), "")
+        self.assertEqual(_SONIC.normalize_size(None), "")
 
 
 class CanonicalSizeKeyTests(unittest.TestCase):
@@ -820,56 +825,56 @@ class CanonicalSizeKeyTests(unittest.TestCase):
         aliases = ["rt44", "rt 44", "44", "44oz", "44 oz", "route44", "Route-44", "rt. 44", "Route 44", "ROUTE 44"]
         for alias in aliases:
             with self.subTest(alias=alias):
-                self.assertEqual(canonical_size_key(alias), "route 44")
+                self.assertEqual(_SONIC.canonical_size_key(alias), "route 44")
 
     def test_extra_large_and_xl_collapse_to_one_key(self):
-        self.assertEqual(canonical_size_key("Extra Large"), "xl")
-        self.assertEqual(canonical_size_key("xl"), "xl")
-        self.assertEqual(canonical_size_key("XL"), "xl")
+        self.assertEqual(_SONIC.canonical_size_key("Extra Large"), "xl")
+        self.assertEqual(_SONIC.canonical_size_key("xl"), "xl")
+        self.assertEqual(_SONIC.canonical_size_key("XL"), "xl")
 
     def test_key_is_always_lowercase(self):
         for raw in ["MEDIUM", "Small", "  Large  ", "RT44"]:
             with self.subTest(raw=raw):
-                self.assertEqual(canonical_size_key(raw), canonical_size_key(raw).lower())
+                self.assertEqual(_SONIC.canonical_size_key(raw), _SONIC.canonical_size_key(raw).lower())
 
 
 class InferCategoryTests(unittest.TestCase):
     """Test category inference from item names."""
 
     def test_slush_keywords(self):
-        self.assertIn("slush", infer_category("Cherry Limeade"))
-        self.assertIn("slush", infer_category("Ocean Water"))
+        self.assertIn("slush", _SONIC.infer_category("Cherry Limeade"))
+        self.assertIn("slush", _SONIC.infer_category("Ocean Water"))
 
     def test_shake_keywords(self):
-        cat = infer_category("Vanilla Classic Shake")
+        cat = _SONIC.infer_category("Vanilla Classic Shake")
         self.assertTrue("shake" in cat)
-        cat2 = infer_category("Turtle Truffle Nut Blast")
+        cat2 = _SONIC.infer_category("Turtle Truffle Nut Blast")
         self.assertTrue("shake" in cat2)
 
     def test_burger_keywords(self):
-        cat = infer_category("Sonic Cheeseburger")
+        cat = _SONIC.infer_category("Sonic Cheeseburger")
         self.assertTrue("burger" in cat or "combo" in cat)
 
     def test_hot_dog_keywords(self):
-        self.assertIn("hot dog", infer_category("Chili Cheese Coney"))
+        self.assertIn("hot dog", _SONIC.infer_category("Chili Cheese Coney"))
 
     def test_sides_keywords(self):
-        cat = infer_category("Tots")
+        cat = _SONIC.infer_category("Tots")
         self.assertTrue("side" in cat or cat != "")
-        cat2 = infer_category("Onion Rings")
+        cat2 = _SONIC.infer_category("Onion Rings")
         self.assertTrue("side" in cat2 or cat2 != "")
 
     def test_drink_keywords(self):
-        cat = infer_category("Sweet Iced Tea")
+        cat = _SONIC.infer_category("Sweet Iced Tea")
         self.assertTrue("drink" in cat)
-        cat2 = infer_category("All Natural Lemonade")
+        cat2 = _SONIC.infer_category("All Natural Lemonade")
         self.assertTrue("drink" in cat2)
 
     def test_unknown_returns_empty(self):
-        self.assertEqual(infer_category("Mystery Item XYZ 999"), "")
+        self.assertEqual(_SONIC.infer_category("Mystery Item XYZ 999"), "")
 
     def test_case_insensitive(self):
-        cat = infer_category("CHERRY LIMEADE")
+        cat = _SONIC.infer_category("CHERRY LIMEADE")
         self.assertTrue(len(cat) > 0)
 
     def test_off_menu_malt_no_longer_falls_back_to_shake_category(self):
@@ -877,7 +882,7 @@ class InferCategoryTests(unittest.TestCase):
         "Chocolate Malt". Now that the fallback is removed, this off-menu name correctly infers
         no category at all instead of guessing "shake"; a mutation re-adding the fallback would
         make this assertion fail."""
-        self.assertEqual(infer_category("Chocolate Malt"), "")
+        self.assertEqual(_SONIC.infer_category("Chocolate Malt"), "")
 
 
 class FormatSizeHumanReadableTests(unittest.TestCase):
@@ -898,27 +903,27 @@ class IsExtraItemTests(unittest.TestCase):
     """Test extra item detection."""
 
     def test_recognized_extras(self):
-        self.assertTrue(is_extra_item("Flavor Add-In"))
-        self.assertTrue(is_extra_item("Whipped Cream"))
-        self.assertTrue(is_extra_item("Add Bacon"))
+        self.assertTrue(_SONIC.is_extra_item("Flavor Add-In"))
+        self.assertTrue(_SONIC.is_extra_item("Whipped Cream"))
+        self.assertTrue(_SONIC.is_extra_item("Add Bacon"))
 
     def test_non_extras(self):
-        self.assertFalse(is_extra_item("Cherry Limeade"))
-        self.assertFalse(is_extra_item("Tots"))
-        self.assertFalse(is_extra_item("Sonic Cheeseburger"))
+        self.assertFalse(_SONIC.is_extra_item("Cherry Limeade"))
+        self.assertFalse(_SONIC.is_extra_item("Tots"))
+        self.assertFalse(_SONIC.is_extra_item("Sonic Cheeseburger"))
 
     def test_case_insensitive(self):
-        self.assertTrue(is_extra_item("ADD BACON"))
-        self.assertTrue(is_extra_item("whipped cream"))
+        self.assertTrue(_SONIC.is_extra_item("ADD BACON"))
+        self.assertTrue(_SONIC.is_extra_item("whipped cream"))
 
     def test_off_menu_names_are_not_extras(self):
         """#73: "Extra Patty"/"Extra Cheese" are not real menuItems.json items at all -- the old
         EXTRAS_KEYWORDS substring list matched them even though neither is a real extra; they are
         now rejected outright as not_on_menu by update_order's on-menu gate before is_extra_item
         would ever be reached for them (see NotOnMenuRejectionTests below)."""
-        self.assertFalse(is_extra_item("Extra Patty"))
-        self.assertFalse(is_extra_item("Extra Cheese"))
-        self.assertFalse(is_extra_item("EXTRA PATTY"))
+        self.assertFalse(_SONIC.is_extra_item("Extra Patty"))
+        self.assertFalse(_SONIC.is_extra_item("Extra Cheese"))
+        self.assertFalse(_SONIC.is_extra_item("EXTRA PATTY"))
 
 
 class ExtrasValidationTests(unittest.TestCase):

@@ -21,6 +21,7 @@ from azure.core.credentials import AzureKeyCredential
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 
 import conformance_hooks
+import default_persona
 from audio_pipeline import (
     _GA_TO_LEGACY_EVENTS,
     _PASSTHROUGH_SERVER_TYPES,
@@ -1223,10 +1224,14 @@ class RTMiddleTier:
         self._prompt_loader = prompt_loader
         self._sessions = SessionManager(prompt_loader=prompt_loader)
         self.app_secret: bytes = b""  # set by app.py at startup
-        # #74: the enabled-persona catalog, set by app.py at startup. None (the default)
-        # preserves today's exact single-persona behavior -- `_websocket_handler` skips all
-        # persona resolution/404 logic entirely when this is unset, exactly like before #74.
-        self.persona_catalog = None
+        # #74/Rick's PR #102 review item 2: the enabled-persona catalog is MANDATORY --
+        # set here to the deployment default catalog so it is never None, then
+        # replaced by app.py at startup with its own already-loaded catalog (via
+        # `default_persona.configure_default_catalog`) to avoid double-loading. Every
+        # session, including one that connects with no `?persona=` at all, resolves a
+        # real persona through this same catalog (`_websocket_handler` binds it to
+        # `DEFAULT_PERSONA` -- there is no more "no catalog configured" fallback path).
+        self.persona_catalog = default_persona.get_default_catalog()
         # #74: per-persona PromptLoader, keyed by persona id, set by app.py at startup
         # alongside `persona_catalog`. Empty (the default) preserves today's single
         # deployment-wide `self.system_message`/greeting behavior for every session.
@@ -2001,10 +2006,12 @@ class RTMiddleTier:
                 loop = asyncio.get_running_loop()
                 session_id = self._sessions.get_session_id(ws)
                 greeting_sent = self._sessions.has_sent_greeting(session_id) if session_id else False
-                # #74: this session's bound persona, resolved once. None for the default/
-                # single-persona deployment (no persona catalog configured), or for a session
-                # created before this connection resolved one -- either way, every lookup below
-                # falls back to the deployment-wide default, exactly like before #74.
+                # #74/Rick's PR #102 review item 2: this session's bound persona,
+                # resolved once. The persona catalog is mandatory, so every session
+                # (including one created with no `?persona=`) is bound to a real
+                # persona id (`DEFAULT_PERSONA` at minimum) -- `persona_id` is only
+                # None here if `session_id` itself is unknown (no session tracked
+                # for this socket yet).
                 persona_id = order_state_singleton.get_persona_id(session_id) if session_id else None
                 # Set once the model has produced audio on this upstream socket;
                 # from then on GA refuses voice changes (see _build_session).
@@ -2060,7 +2067,7 @@ class RTMiddleTier:
                     persona_prompt_loader = self.persona_prompt_loaders.get(persona_id)
                     if persona_prompt_loader is not None:
                         system_message = persona_prompt_loader.get_system_prompt()
-                    if self.persona_catalog is not None and persona_id in self.persona_catalog:
+                    if persona_id in self.persona_catalog:
                         persona_voice = _sanitize_voice(
                             self.persona_catalog.get(persona_id).manifest.voice.default, self.allowed_voices
                         )
@@ -2602,23 +2609,16 @@ class RTMiddleTier:
         )
 
         # ── Persona binding (#74) ──
-        # `self.persona_catalog` is None for the default/single-persona
-        # deployment (no catalog configured) -- every request behaves
-        # exactly as before #74, `persona` stays None, and
-        # `create_session`/`_forward_messages` fall back to the
-        # deployment-wide defaults untouched. When a catalog IS configured,
-        # the persona is picked once, here, before the WebSocket upgrade
-        # (design doc 5.2): a missing `?persona=` uses `DEFAULT_PERSONA`, an
-        # unknown or disabled one gets a plain HTTP 404 -- never a silent
-        # fallback -- and it is fixed for the life of the session (no
-        # mid-conversation switching).
-        persona = None
-        if self.persona_catalog is not None:
-            requested_persona_id = request.query.get("persona") or self.persona_catalog.default_persona_id
-            if requested_persona_id not in self.persona_catalog:
-                logger.warning("Rejected WebSocket for unknown/disabled persona: %s", requested_persona_id)
-                return web.Response(status=404, text=f"Unknown or disabled persona: {requested_persona_id!r}")
-            persona = self.persona_catalog.get(requested_persona_id)
+        # The persona catalog is mandatory (#74/Rick's PR #102 review item 2): the
+        # persona is picked once, here, before the WebSocket upgrade (design doc
+        # 5.2): a missing `?persona=` uses `DEFAULT_PERSONA`, an unknown or disabled
+        # one gets a plain HTTP 404 -- never a silent fallback -- and it is fixed
+        # for the life of the session (no mid-conversation switching).
+        requested_persona_id = request.query.get("persona") or self.persona_catalog.default_persona_id
+        if requested_persona_id not in self.persona_catalog:
+            logger.warning("Rejected WebSocket for unknown/disabled persona: %s", requested_persona_id)
+            return web.Response(status=404, text=f"Unknown or disabled persona: {requested_persona_id!r}")
+        persona = self.persona_catalog.get(requested_persona_id)
 
         await ws.prepare(request)
         

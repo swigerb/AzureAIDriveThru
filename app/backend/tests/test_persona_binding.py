@@ -28,6 +28,7 @@ sys.path.append(str(Path(__file__).resolve().parent))
 
 from test_session_bootstrap import BROWSER_SESSION_UPDATE, _RealtimeHarness
 
+import default_persona
 import menu_utils
 from order_state import order_state_singleton
 from persona_loader import PersonaCatalog
@@ -162,11 +163,17 @@ class OrderStatePersonaBindingTests(unittest.TestCase):
         sid_b = self._new_session(self.beta)
         self.assertFalse(order_state_singleton.is_happy_hour_for_session(sid_b))
 
-    def test_unbound_session_behaves_exactly_as_before_74(self):
-        """No persona argument at all -- today's single-persona-deployment default
-        path -- must be completely unaffected."""
+    def test_default_bound_session_binds_to_the_real_default_persona(self):
+        """No persona argument at all -- the deployment default binding path (#74, Rick's PR
+        #102 review item 2) -- resolves to a REAL persona id (the deployment's own default,
+        e.g. "sonic"), never ``None``: there is no more unbound-session state to be "exactly as
+        before" about -- every session, including this one, is bound through the identical
+        mandatory-catalog path."""
         sid = self._new_session()
-        self.assertIsNone(order_state_singleton.get_persona_id(sid))
+        self.assertEqual(
+            order_state_singleton.get_persona_id(sid),
+            default_persona.get_default_persona().id,
+        )
 
 
 class NoMidConversationPersonaSwitchTests(unittest.TestCase):
@@ -231,24 +238,36 @@ class ResumePersonaMismatchTests(unittest.TestCase):
         # credential (retried against the correct persona) still works.
         self.assertIn(sid, order_state_singleton.sessions)
 
-    def test_resume_of_an_unbound_session_requesting_a_persona_is_rejected(self):
-        """Symmetric case: a session that connected with no persona bound (None)
-        can't be "claimed" into a persona via resume either."""
-        sid = self.sm.create_session(_ws())   # no persona
+    def test_resume_of_a_default_bound_session_requesting_a_persona_is_rejected(self):
+        """Symmetric case: a session bound to the real deployment default (no persona arg,
+        #74's mandatory-catalog path) can't be "claimed" into a different persona via resume
+        either -- the mismatch check is unconditional now, not skipped for default-bound
+        sessions."""
+        sid = self.sm.create_session(_ws())   # binds to the real default persona
         resume_id = self.sm.issue_resume_id(sid)
         outcome = self.sm.resume(_ws(), resume_id, requested_persona_id="test-alpha")
         self.assertFalse(outcome.accepted)
         self.assertEqual(outcome.reason, "persona_mismatch")
 
-    def test_resume_with_no_persona_requested_skips_the_check(self):
-        """requested_persona_id=None means "the caller didn't ask" (a deployment with
-        no persona_catalog configured at all, per resume()'s own docstring) -- this
-        is the unchanged, pre-#74 single-persona-deployment behavior, not a mismatch."""
+    def test_resume_with_no_persona_requested_matches_a_default_bound_session(self):
+        """requested_persona_id=None means "the caller means the deployment default"
+        (#74/Rick's review item 2 -- the mismatch check is unconditional, never skipped) --
+        a session itself bound to that same real default therefore matches."""
+        sid = self.sm.create_session(_ws())   # binds to the real default persona
+        resume_id = self.sm.issue_resume_id(sid)
+        outcome = self.sm.resume(_ws(), resume_id, requested_persona_id=None)
+        self.assertTrue(outcome.accepted)
+
+    def test_resume_with_no_persona_requested_mismatches_a_non_default_bound_session(self):
+        """requested_persona_id=None resolves to the real deployment default, so a session
+        bound to some OTHER persona (here the fixture's "test-alpha", not the real default)
+        is correctly rejected as a mismatch -- there is no more "skip the check" state."""
         alpha = self.catalog.get("test-alpha")
         sid = self.sm.create_session(_ws(), persona=alpha)
         resume_id = self.sm.issue_resume_id(sid)
         outcome = self.sm.resume(_ws(), resume_id, requested_persona_id=None)
-        self.assertTrue(outcome.accepted)
+        self.assertFalse(outcome.accepted)
+        self.assertEqual(outcome.reason, "persona_mismatch")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
