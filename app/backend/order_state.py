@@ -197,6 +197,14 @@ class OrderState:
             "_happy_hour_window": (
                 (happy_hour_cfg.startHour, happy_hour_cfg.endHour) if happy_hour_cfg is not None else None
             ),
+            # Issue #76 part 2 (Rick's PR #108 review, required item 1/2): this session's own
+            # bound persona's OWN banner text -- None whenever that persona doesn't announce
+            # (ADR-001 decision 6: some packs announce happy hour and others don't; a persona
+            # with no happyHour config at all, or announce: false, never gets a banner at all,
+            # regardless of the clock).
+            "_happy_hour_banner": (
+                happy_hour_cfg.banner if happy_hour_cfg is not None and happy_hour_cfg.announce else None
+            ),
         }
         self._reset_order_state(self.sessions[session_id])
         logger.info("Session created: %s (persona=%s)", session_id, persona.id)
@@ -551,6 +559,25 @@ class OrderState:
             return is_happy_hour()
         self._check_owner(session_id)
         return self._is_happy_hour_for(self.sessions[session_id])
+
+    def get_happy_hour_banner_note(self, session_id: str) -> str:
+        """The trailing `` [<banner>]`` text ``tools.py`` appends to ``update_order``/``get_order``
+        results while happy hour is active (#76 part 2, Rick's PR #108 review required item 1/2):
+        this session's own bound persona's OWN ``pricing.happyHour.banner`` -- never a hardcoded
+        literal -- so each pack that opts in to announcing happy hour (`announce: true`, ADR-001
+        decision 6) gets its own wording verbatim, and a persona with `announce: false` (or no
+        `happyHour` config at all, decision 5; e.g. test-beta) never gets a banner regardless of
+        the clock. Returns ``""`` whenever no banner should be shown. Falls back to the default
+        persona's own banner for an unknown/expired session id, matching
+        ``is_happy_hour_for_session``'s own fallback."""
+        if not self.is_happy_hour_for_session(session_id):
+            return ""
+        if session_id not in self.sessions:
+            happy_hour_cfg = default_persona.get_default_persona().manifest.pricing.happyHour
+            banner = happy_hour_cfg.banner if happy_hour_cfg is not None and happy_hour_cfg.announce else None
+        else:
+            banner = self.sessions[session_id].get("_happy_hour_banner")
+        return f" {banner}" if banner else ""
 
 # Create a singleton instance of OrderState
 order_state_singleton = OrderState()
