@@ -56,6 +56,11 @@ function useDemoData(personaId: string, enabled: boolean) {
     useEffect(() => {
         if (!enabled) return;
         let cancelled = false;
+        // Rick's PR-110 review item 5 (issue #80 F7): clear immediately on a persona switch so
+        // the previous pack's demo data doesn't linger on screen while the new pack's fetch
+        // (below) is in flight.
+        setDummyOrder({ items: [], total: 0, tax: 0, finalTotal: 0 });
+        setDummyTranscripts([]);
 
         (async () => {
             try {
@@ -560,6 +565,25 @@ function SonicApp() {
         return () => window.removeEventListener("resize", checkMobile);
     }, []);
 
+    // Rick's PR-110 review item 5 (issue #80 F7): the picker only allows a switch once
+    // recording has stopped and the ticket is empty, but a finished conversation can still
+    // leave transcripts/session identifiers on screen -- clear all of that (and end any
+    // lingering realtime session) so the new persona starts on a genuinely fresh slate.
+    // useRealTime already namespaces the resume id per persona.id, so no separate handling
+    // is needed there.
+    const handleSelectPersona = (personaId: string) => {
+        realtime.endSession();
+        resumePendingRef.current = null;
+        resumedSessionRef.current = false;
+        serverSessionLostRef.current = false;
+        setOrder(initialOrder);
+        setTranscripts([]);
+        setSessionIdentifiers(null);
+        setTokenHistory([]);
+        setConnectionNotice(null);
+        selectPersona(personaId);
+    };
+
     return (
         <div className={`min-h-screen bg-background p-4 text-foreground ${theme}`}>
             <div className="mx-auto max-w-7xl space-y-6">
@@ -581,7 +605,7 @@ function SonicApp() {
                         <PersonaPicker
                             personas={personas}
                             currentId={current.id}
-                            onSelect={selectPersona}
+                            onSelect={handleSelectPersona}
                             disabled={isRecording || order.items.length > 0}
                         />
                         <Suspense fallback={null}>
