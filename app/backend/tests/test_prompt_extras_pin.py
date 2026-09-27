@@ -89,12 +89,13 @@ class PromptExtrasPinnedToMenuIsExtraItemsTests(unittest.TestCase):
             self.assertIn(name, menu_by_lower)
             self.assertEqual(price, menu_by_lower[name], name)
 
-    def test_there_are_exactly_three_priced_extras_today(self):
+    def test_there_are_exactly_five_priced_extras_today(self):
         """Sanity/mutation guard: pins the current count (flavor add-in, add bacon, whipped
-        topping) so silently adding or dropping an isExtra item on either side without updating
-        the other is caught even if names/prices happen to still line up in every other pair."""
-        self.assertEqual(len(self.menu_extras), 3, self.menu_extras)
-        self.assertEqual(len(self.prompt_extras), 3, self.prompt_extras)
+        topping, plus #72 Part 2's sweet cream and jalapeños) so silently adding or dropping an
+        isExtra item on either side without updating the other is caught even if names/prices
+        happen to still line up in every other pair."""
+        self.assertEqual(len(self.menu_extras), 5, self.menu_extras)
+        self.assertEqual(len(self.prompt_extras), 5, self.prompt_extras)
 
 
 if __name__ == "__main__":

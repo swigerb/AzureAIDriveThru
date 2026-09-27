@@ -434,14 +434,6 @@
       "unitPrice": "10.99"
     },
     {
-      "item": "All-American SONIC Smasher™ Combo",
-      "category": "Combos",
-      "comboSlot": "none",
-      "happyHourDiscounted": false,
-      "size": "Standard",
-      "unitPrice": "9.49"
-    },
-    {
       "item": "All-American Bacon SONIC Smasher™ Combo",
       "category": "Combos",
       "comboSlot": "none",
@@ -472,14 +464,6 @@
       "happyHourDiscounted": false,
       "size": "Standard",
       "unitPrice": "8.49"
-    },
-    {
-      "item": "Jr Double Cheeseburger Combo",
-      "category": "Combos",
-      "comboSlot": "none",
-      "happyHourDiscounted": false,
-      "size": "Standard",
-      "unitPrice": "6.99"
     },
     {
       "item": "Triple SONIC Smasher™ Combo",
@@ -592,6 +576,870 @@
       "happyHourDiscounted": false,
       "size": "Standard",
       "unitPrice": "0.20"
+    },
+    {
+      "item": "All-American Bacon Triple SONIC Smasher™",
+      "category": "Burgers & Sandwiches",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "8.09"
+    },
+    {
+      "item": "All-American Triple SONIC Smasher™",
+      "category": "Burgers & Sandwiches",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "7.09"
+    },
+    {
+      "item": "Grilled Cheese Sandwich",
+      "category": "Burgers & Sandwiches",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "2.19"
+    },
+    {
+      "item": "Plain SONIC® Cheeseburger",
+      "category": "Burgers & Sandwiches",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "5.29"
+    },
+    {
+      "item": "Blood Orange Recharger with Red Bull®",
+      "category": "Slushes & Drinks",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": true,
+      "size": "Medium",
+      "unitPrice": "3.99"
+    },
+    {
+      "item": "Blue Coconut Slush",
+      "category": "Slushes & Drinks",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": true,
+      "size": "Medium",
+      "unitPrice": "2.79"
+    },
+    {
+      "item": "Blue Raspberry Lemonade",
+      "category": "Slushes & Drinks",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": true,
+      "size": "Medium",
+      "unitPrice": "3.39"
+    },
+    {
+      "item": "Canada Dry®",
+      "category": "Slushes & Drinks",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": true,
+      "size": "Medium",
+      "unitPrice": "2.49"
+    },
+    {
+      "item": "Cherry Limeade Slush",
+      "category": "Slushes & Drinks",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": true,
+      "size": "Medium",
+      "unitPrice": "3.49"
+    },
+    {
+      "item": "Cocoberry Cream",
+      "category": "Slushes & Drinks",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": true,
+      "size": "Medium",
+      "unitPrice": "3.69"
+    },
+    {
+      "item": "Cranberry Lemonade",
+      "category": "Slushes & Drinks",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": true,
+      "size": "Medium",
+      "unitPrice": "3.39"
+    },
+    {
+      "item": "Cranberry Slush",
+      "category": "Slushes & Drinks",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": true,
+      "size": "Medium",
+      "unitPrice": "2.79"
+    },
+    {
+      "item": "Diet Cherry Limeade",
+      "category": "Slushes & Drinks",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": true,
+      "size": "Medium",
+      "unitPrice": "2.89"
+    },
+    {
+      "item": "Diet Limeade",
+      "category": "Slushes & Drinks",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": true,
+      "size": "Medium",
+      "unitPrice": "2.89"
+    },
+    {
+      "item": "Dragon Fruit Lemonade",
+      "category": "Slushes & Drinks",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": true,
+      "size": "Medium",
+      "unitPrice": "3.39"
+    },
+    {
+      "item": "Dragon Fruit Recharger with Red Bull®",
+      "category": "Slushes & Drinks",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": true,
+      "size": "Medium",
+      "unitPrice": "3.99"
+    },
+    {
+      "item": "Fanta® Orange",
+      "category": "Slushes & Drinks",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": true,
+      "size": "Medium",
+      "unitPrice": "2.49"
+    },
+    {
+      "item": "Fruited Dragon Slush",
+      "category": "Slushes & Drinks",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": true,
+      "size": "Medium",
+      "unitPrice": "3.29"
+    },
+    {
+      "item": "Green Apple Slush",
+      "category": "Slushes & Drinks",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": true,
+      "size": "Medium",
+      "unitPrice": "2.69"
+    },
+    {
+      "item": "Half Sweet Tea / Half Lemonade",
+      "category": "Slushes & Drinks",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": true,
+      "size": "Medium",
+      "unitPrice": "3.39"
+    },
+    {
+      "item": "Half Sweet Tea / Half Unsweet Tea",
+      "category": "Slushes & Drinks",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": true,
+      "size": "Medium",
+      "unitPrice": "2.49"
+    },
+    {
+      "item": "Half Unsweet Tea / Half Lemonade",
+      "category": "Slushes & Drinks",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": true,
+      "size": "Medium",
+      "unitPrice": "3.39"
+    },
+    {
+      "item": "Hi-C® Fruit Punch",
+      "category": "Slushes & Drinks",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": true,
+      "size": "Medium",
+      "unitPrice": "2.49"
+    },
+    {
+      "item": "Lemonade Slush",
+      "category": "Slushes & Drinks",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": true,
+      "size": "Medium",
+      "unitPrice": "3.49"
+    },
+    {
+      "item": "Limeade",
+      "category": "Slushes & Drinks",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": true,
+      "size": "Medium",
+      "unitPrice": "2.89"
+    },
+    {
+      "item": "Limeade Slush",
+      "category": "Slushes & Drinks",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": true,
+      "size": "Medium",
+      "unitPrice": "3.49"
+    },
+    {
+      "item": "Mango Slush",
+      "category": "Slushes & Drinks",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": true,
+      "size": "Medium",
+      "unitPrice": "2.79"
+    },
+    {
+      "item": "Medium Cherry Flavor Bubble Slush",
+      "category": "Slushes & Drinks",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": true,
+      "size": "Standard",
+      "unitPrice": "1.99"
+    },
+    {
+      "item": "Medium Green Apple Flavor Bubble Slush",
+      "category": "Slushes & Drinks",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": true,
+      "size": "Standard",
+      "unitPrice": "1.99"
+    },
+    {
+      "item": "POWERADE® Mountain Berry Blast® Drink",
+      "category": "Slushes & Drinks",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": true,
+      "size": "Medium",
+      "unitPrice": "2.49"
+    },
+    {
+      "item": "POWERADE® Mountain Berry Blast® Slush",
+      "category": "Slushes & Drinks",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": true,
+      "size": "Medium",
+      "unitPrice": "2.79"
+    },
+    {
+      "item": "Peach Slush",
+      "category": "Slushes & Drinks",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": true,
+      "size": "Medium",
+      "unitPrice": "2.79"
+    },
+    {
+      "item": "Rainbow Slush",
+      "category": "Slushes & Drinks",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": true,
+      "size": "Standard",
+      "unitPrice": "2.99"
+    },
+    {
+      "item": "Red Bull® Slush",
+      "category": "Slushes & Drinks",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": true,
+      "size": "Medium",
+      "unitPrice": "4.29"
+    },
+    {
+      "item": "Shark Bite",
+      "category": "Slushes & Drinks",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": true,
+      "size": "Medium",
+      "unitPrice": "3.49"
+    },
+    {
+      "item": "Strawberry Cheesecake Cream Cooler",
+      "category": "Slushes & Drinks",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": true,
+      "size": "Medium",
+      "unitPrice": "4.69"
+    },
+    {
+      "item": "Strawberry Lemonade",
+      "category": "Slushes & Drinks",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": true,
+      "size": "Medium",
+      "unitPrice": "3.89"
+    },
+    {
+      "item": "Twisted Flamingo",
+      "category": "Slushes & Drinks",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": true,
+      "size": "Medium",
+      "unitPrice": "3.19"
+    },
+    {
+      "item": "Twisted Lime Recharger with Red Bull®",
+      "category": "Slushes & Drinks",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": true,
+      "size": "Medium",
+      "unitPrice": "3.99"
+    },
+    {
+      "item": "Unsweet Iced Tea",
+      "category": "Slushes & Drinks",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": true,
+      "size": "Medium",
+      "unitPrice": "2.49"
+    },
+    {
+      "item": "Caramel Classic Shake",
+      "category": "Shakes & Ice Cream",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": false,
+      "size": "Medium",
+      "unitPrice": "4.69"
+    },
+    {
+      "item": "Cheesecake Master Shake®",
+      "category": "Shakes & Ice Cream",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": false,
+      "size": "Medium",
+      "unitPrice": "5.39"
+    },
+    {
+      "item": "Chocolate Chip Cookie Dough Blast®",
+      "category": "Shakes & Ice Cream",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": false,
+      "size": "Medium",
+      "unitPrice": "5.89"
+    },
+    {
+      "item": "Chocolate Chunk Brownie Blast®",
+      "category": "Shakes & Ice Cream",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": false,
+      "size": "Medium",
+      "unitPrice": "5.89"
+    },
+    {
+      "item": "Chocolate Peanut Butter Shake Made With REESE’S",
+      "category": "Shakes & Ice Cream",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": false,
+      "size": "Medium",
+      "unitPrice": "5.39"
+    },
+    {
+      "item": "Hot Fudge Classic Shake",
+      "category": "Shakes & Ice Cream",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": false,
+      "size": "Medium",
+      "unitPrice": "4.69"
+    },
+    {
+      "item": "OREO® Chocolate Master Shake®",
+      "category": "Shakes & Ice Cream",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": false,
+      "size": "Medium",
+      "unitPrice": "5.39"
+    },
+    {
+      "item": "OREO® Peanut Butter Master Shake®",
+      "category": "Shakes & Ice Cream",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": false,
+      "size": "Medium",
+      "unitPrice": "5.39"
+    },
+    {
+      "item": "SONIC Blast® made with HEATH®",
+      "category": "Shakes & Ice Cream",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": false,
+      "size": "Medium",
+      "unitPrice": "5.89"
+    },
+    {
+      "item": "SONIC Blast® made with M&M’S® Chocolate Candies",
+      "category": "Shakes & Ice Cream",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": false,
+      "size": "Medium",
+      "unitPrice": "5.89"
+    },
+    {
+      "item": "Strawberry Cheesecake Master Shake®",
+      "category": "Shakes & Ice Cream",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": false,
+      "size": "Medium",
+      "unitPrice": "5.39"
+    },
+    {
+      "item": "Strawberry Sundae",
+      "category": "Shakes & Ice Cream",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "3.19"
+    },
+    {
+      "item": "Turtle Truffle Nut Blast®",
+      "category": "Shakes & Ice Cream",
+      "comboSlot": "drinks",
+      "happyHourDiscounted": false,
+      "size": "Medium",
+      "unitPrice": "5.89"
+    },
+    {
+      "item": "Vanilla Cup",
+      "category": "Shakes & Ice Cream",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "1.39"
+    },
+    {
+      "item": "$6 All-American Smasher™ Meal",
+      "category": "Combos",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "6.00"
+    },
+    {
+      "item": "3 Piece Crispy Tenders Combo",
+      "category": "Combos",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "8.89"
+    },
+    {
+      "item": "5 Piece Crispy Tenders Combo",
+      "category": "Combos",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "9.99"
+    },
+    {
+      "item": "All-American Bacon Triple SONIC Smasher™ Combo",
+      "category": "Combos",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "11.99"
+    },
+    {
+      "item": "All-American Hot Dog Combo",
+      "category": "Combos",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "7.19"
+    },
+    {
+      "item": "All-American Triple SONIC Smasher™ Combo",
+      "category": "Combos",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "10.99"
+    },
+    {
+      "item": "Bacon Breakfast Burrito Combo",
+      "category": "Combos",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "7.39"
+    },
+    {
+      "item": "Bacon Breakfast TOASTER® Combo",
+      "category": "Combos",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "7.89"
+    },
+    {
+      "item": "Chili Cheese Coney Combo",
+      "category": "Combos",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "7.19"
+    },
+    {
+      "item": "Crispy Tenders Dinner - 3 piece",
+      "category": "Combos",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "8.89"
+    },
+    {
+      "item": "Crispy Tenders Dinner - 5 piece",
+      "category": "Combos",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "9.99"
+    },
+    {
+      "item": "Footlong Quarter Pound Coney Combo",
+      "category": "Combos",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "9.19"
+    },
+    {
+      "item": "French Toast Sticks Combo",
+      "category": "Combos",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "5.19"
+    },
+    {
+      "item": "Lg Premium Chicken Bites Combo",
+      "category": "Combos",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "9.79"
+    },
+    {
+      "item": "Med Premium Chicken Bites Combo",
+      "category": "Combos",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "8.99"
+    },
+    {
+      "item": "Plain SONIC® Cheeseburger Combo",
+      "category": "Combos",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "9.19"
+    },
+    {
+      "item": "Sausage Breakfast Burrito Combo",
+      "category": "Combos",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "7.39"
+    },
+    {
+      "item": "Sausage Breakfast TOASTER® Combo",
+      "category": "Combos",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "7.89"
+    },
+    {
+      "item": "SuperSONIC® Breakfast Burrito Combo",
+      "category": "Combos",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "8.19"
+    },
+    {
+      "item": "Ultimate Meat & Cheese Breakfast Burrito™ Combo",
+      "category": "Combos",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "7.99"
+    },
+    {
+      "item": "Buffalo Crispy Tender Wrap",
+      "category": "Extras & Sides",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "1.99"
+    },
+    {
+      "item": "Cheesy Baja Crispy Tender Wrap",
+      "category": "Extras & Sides",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "1.99"
+    },
+    {
+      "item": "Sweet Cream",
+      "category": "Extras & Sides",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "0.50"
+    },
+    {
+      "item": "Jalapeños",
+      "category": "Extras & Sides",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "0.80"
+    },
+    {
+      "item": "Bacon BREAKFAST TOASTER®",
+      "category": "National Breakfast Entrees",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "4.29"
+    },
+    {
+      "item": "Bacon Breakfast Burrito",
+      "category": "National Breakfast Entrees",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "3.59"
+    },
+    {
+      "item": "French Toast Sticks",
+      "category": "National Breakfast Entrees",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "3.59"
+    },
+    {
+      "item": "Jr. Bacon, Egg and Cheese Breakfast Burrito",
+      "category": "National Breakfast Entrees",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "1.79"
+    },
+    {
+      "item": "Jr. Sausage, Egg and Cheese Breakfast Burrito",
+      "category": "National Breakfast Entrees",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "1.79"
+    },
+    {
+      "item": "Salted Caramel Toffee Croissant Bites",
+      "category": "National Breakfast Entrees",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "1.99"
+    },
+    {
+      "item": "Sausage BREAKFAST TOASTER®",
+      "category": "National Breakfast Entrees",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "4.29"
+    },
+    {
+      "item": "Sausage Breakfast Burrito",
+      "category": "National Breakfast Entrees",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "3.59"
+    },
+    {
+      "item": "SuperSONIC® Breakfast Burrito",
+      "category": "National Breakfast Entrees",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "4.59"
+    },
+    {
+      "item": "Ultimate Meat & Cheese Breakfast Burrito™",
+      "category": "National Breakfast Entrees",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "4.59"
+    },
+    {
+      "item": "Bacon, Egg and Cheese Brioche Breakfast Sandwich",
+      "category": "Local Breakfast Favorites",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "4.29"
+    },
+    {
+      "item": "Sausage, Egg and Cheese Brioche Breakfast Sandwich",
+      "category": "Local Breakfast Favorites",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "4.29"
+    },
+    {
+      "item": "Coffee",
+      "category": "Breakfast Drinks",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "2.19"
+    },
+    {
+      "item": "French Vanilla Cold Brew Iced Coffee",
+      "category": "Breakfast Drinks",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Medium",
+      "unitPrice": "3.49"
+    },
+    {
+      "item": "Original Cold Brew Iced Coffee",
+      "category": "Breakfast Drinks",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Medium",
+      "unitPrice": "3.49"
+    },
+    {
+      "item": "Simply® Orange Juice",
+      "category": "Breakfast Drinks",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "2.49"
+    },
+    {
+      "item": "3 Piece Crispy Tender Dinner",
+      "category": "Local Chicken",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "5.49"
+    },
+    {
+      "item": "5 Piece Crispy Tender Dinner",
+      "category": "Local Chicken",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "6.99"
+    },
+    {
+      "item": "Chicken Club TOASTER®",
+      "category": "Local Chicken",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "6.69"
+    },
+    {
+      "item": "Corn Dog Wacky Pack®",
+      "category": "Wacky Pack® Kids Meals",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "4.59"
+    },
+    {
+      "item": "Crispy Tenders Wacky Pack®",
+      "category": "Wacky Pack® Kids Meals",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "4.79"
+    },
+    {
+      "item": "Grilled Cheese Wacky Pack®",
+      "category": "Wacky Pack® Kids Meals",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "4.29"
+    },
+    {
+      "item": "Hamburger Wacky Pack®",
+      "category": "Wacky Pack® Kids Meals",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "4.59"
+    },
+    {
+      "item": "Hot Dog Wacky Pack®",
+      "category": "Wacky Pack® Kids Meals",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "4.29"
+    },
+    {
+      "item": "Bottled Water",
+      "category": "Other",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "1.99"
+    },
+    {
+      "item": "Cup of Ice",
+      "category": "Other",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Medium",
+      "unitPrice": "0.49"
+    },
+    {
+      "item": "Milk Jug (1%) - White",
+      "category": "Other",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "1.39"
+    },
+    {
+      "item": "Minute Maid® 100% Apple Juice Box",
+      "category": "Other",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "1.59"
+    },
+    {
+      "item": "Red Bull Energy Drink",
+      "category": "Other",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Standard",
+      "unitPrice": "3.19"
+    },
+    {
+      "item": "Water",
+      "category": "Other",
+      "comboSlot": "none",
+      "happyHourDiscounted": false,
+      "size": "Medium",
+      "unitPrice": "0.49"
     }
   ]
 }

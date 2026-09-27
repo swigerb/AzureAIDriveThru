@@ -392,7 +392,11 @@ class TestComboMenuItems:
     def test_combo_items_in_menu_category_map(self):
         from menu_utils import MENU_CATEGORY_MAP
         combos_in_map = {k: v for k, v in MENU_CATEGORY_MAP.items() if "combo" in k}
-        assert len(combos_in_map) == 10, f"Expected 10 combo entries, got {len(combos_in_map)}"
+        # issue #72 Part 2: full export import grew Combos to 28 items; 25 of those 28 literally
+        # contain "combo" in their name (the other 3 -- "$6 All-American Smasher™ Meal" and the
+        # two "Crispy Tenders Dinner - N piece" items -- are Combos-category bundles that don't
+        # use the word "combo").
+        assert len(combos_in_map) == 25, f"Expected 25 combo entries, got {len(combos_in_map)}"
         # All combos should map to "combos" category
         for name, cat in combos_in_map.items():
             assert cat == "combos", f"{name} mapped to '{cat}' instead of 'combos'"

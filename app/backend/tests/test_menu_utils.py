@@ -551,11 +551,14 @@ class MenuCategoryMapDirectResolutionTests(unittest.TestCase):
 
 class TrademarkAndCurlyApostropheNormalisationTests(unittest.TestCase):
     """PR #50 review round 5, should-fix item 4: "™" and the curly apostrophe "\u2019" must be
-    normalised in ``_menu_key()`` exactly like "®" already is. Eight ``menuItems.json`` names carry
-    "™" (the "SONIC Smasher™" family, plain and Combo variants) and one carries "\u2019" (the
-    "SONIC Blast® made with REESE'S" -- the raw JSON name uses the curly apostrophe verbatim). All
-    nine previously missed their own ``MENU_CATEGORY_MAP`` entry and relied on keyword-fallback
-    luck exactly like the OREO Blast's NBSP did before round 4."""
+    normalised in ``_menu_key()`` exactly like "®" already is. Fourteen ``menuItems.json`` names
+    carry "™" (the "SONIC Smasher™" family, plain and Combo variants, plus the "$6 All-American
+    Smasher™ Meal" and "Ultimate Meat & Cheese Breakfast Burrito™" pair added by issue #72 Part 2's
+    full export import) and three carry "\u2019" (the "SONIC Blast® made with REESE'S"/"...M&M'S®
+    Chocolate Candies" family and "Chocolate Peanut Butter Shake Made With REESE'S", also added by
+    Part 2 -- the raw JSON names use the curly apostrophe verbatim). All originally missed their
+    own ``MENU_CATEGORY_MAP`` entry and relied on keyword-fallback luck exactly like the OREO
+    Blast's NBSP did before round 4."""
 
     @classmethod
     def setUpClass(cls):
@@ -566,8 +569,8 @@ class TrademarkAndCurlyApostropheNormalisationTests(unittest.TestCase):
     def test_menu_data_has_the_expected_special_character_names(self):
         """Sanity check on the fixture itself so this test class fails loudly, not silently, if
         ``menuItems.json`` ever changes which names carry these characters."""
-        self.assertEqual(len(self.tm_names), 8, self.tm_names)
-        self.assertEqual(len(self.curly_apostrophe_names), 1, self.curly_apostrophe_names)
+        self.assertEqual(len(self.tm_names), 14, self.tm_names)
+        self.assertEqual(len(self.curly_apostrophe_names), 3, self.curly_apostrophe_names)
 
     def test_trademark_symbol_is_stripped_from_the_menu_key(self):
         for name in self.tm_names:
