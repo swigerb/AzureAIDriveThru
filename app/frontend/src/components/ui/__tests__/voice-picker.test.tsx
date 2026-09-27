@@ -9,7 +9,7 @@ import { DEFAULT_VOICE, VOICE_OPTIONS, resolveVoice } from "@/lib/voices";
 // anything else, probed live 2026-09-22).
 const GA_REALTIME_VOICES = ["alloy", "ash", "ballad", "cedar", "coral", "echo", "marin", "sage", "shimmer", "verse"];
 
-function renderSettings(voiceChoice: string) {
+function renderSettings(voiceChoice: string, roleName?: string) {
     return render(
         <AzureSpeechProvider>
             <DummyDataProvider>
@@ -23,6 +23,7 @@ function renderSettings(voiceChoice: string) {
                     onLogToFileChange={() => {}}
                     voiceChoice={voiceChoice}
                     onVoiceChoiceChange={() => {}}
+                    roleName={roleName}
                 />
             </DummyDataProvider>
         </AzureSpeechProvider>
@@ -33,7 +34,7 @@ describe("Carhop voice picker", () => {
     beforeEach(() => localStorage.clear());
 
     it("offers every gpt-realtime-2.1 voice and defaults to marin", async () => {
-        renderSettings(resolveVoice(localStorage.getItem("voiceChoice")));
+        renderSettings(resolveVoice(localStorage.getItem("voiceChoice")), "carhop");
         await userEvent.click(screen.getByRole("button", { name: /open settings/i }));
 
         const picker = (await screen.findByLabelText("Select carhop voice")) as HTMLSelectElement;
@@ -47,7 +48,7 @@ describe("Carhop voice picker", () => {
     });
 
     it("marks the OpenAI-recommended voices", async () => {
-        renderSettings(DEFAULT_VOICE);
+        renderSettings(DEFAULT_VOICE, "carhop");
         await userEvent.click(screen.getByRole("button", { name: /open settings/i }));
         const picker = await screen.findByLabelText("Select carhop voice");
 
@@ -65,5 +66,38 @@ describe("Carhop voice picker", () => {
         expect(resolveVoice("nova")).toBe("marin");
         expect(resolveVoice(null)).toBe("marin");
         expect(resolveVoice("")).toBe("marin");
+    });
+
+    // Issue #119 item 2: the voice label/aria-label must follow the active persona's roleName
+    // (persona.schema.json) instead of hard-coding a specific brand's "Carhop", and must fall
+    // back to a brand-neutral label when no persona has loaded yet (roleName omitted/empty).
+    it("labels the voice picker for a different persona's role name", async () => {
+        renderSettings(DEFAULT_VOICE, "barista");
+        await userEvent.click(screen.getByRole("button", { name: /open settings/i }));
+
+        expect(await screen.findByText("Barista Voice")).toBeInTheDocument();
+        expect(await screen.findByLabelText("Select barista voice")).toBeInTheDocument();
+        expect(screen.queryByText("Carhop Voice")).not.toBeInTheDocument();
+    });
+
+    it("falls back to a neutral label when no persona roleName is available", async () => {
+        renderSettings(DEFAULT_VOICE);
+        await userEvent.click(screen.getByRole("button", { name: /open settings/i }));
+
+        expect(await screen.findByText("Voice")).toBeInTheDocument();
+        expect(await screen.findByLabelText("Select voice")).toBeInTheDocument();
+        expect(screen.queryByText("Carhop Voice")).not.toBeInTheDocument();
+    });
+
+    // Issue #119 item 2 (Rick review round 2): roleName is not restricted to a single lowercase
+    // word by the schema (`{ "type": "string", "minLength": 1 }`), so a multi-word role name like
+    // a "team member" pack must title-case every word for the visible label ("Team Member
+    // Voice"), while the aria-label stays lowercase to match roleName as written.
+    it("title-cases every word of a multi-word role name", async () => {
+        renderSettings(DEFAULT_VOICE, "team member");
+        await userEvent.click(screen.getByRole("button", { name: /open settings/i }));
+
+        expect(await screen.findByText("Team Member Voice")).toBeInTheDocument();
+        expect(await screen.findByLabelText("Select team member voice")).toBeInTheDocument();
     });
 });

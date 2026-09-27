@@ -10,6 +10,7 @@ at least one test in TestActiveWhenSet must fail. Having both inert- and
 active-path tests is what makes this a real mutation check rather than a test
 that only ever exercises the disabled branch.
 """
+import asyncio
 import importlib
 import sys
 from datetime import datetime, timedelta
@@ -69,10 +70,12 @@ def _reset_conformance_hooks_module(monkeypatch):
     reload()."""
     monkeypatch.delenv("CONFORMANCE_TEST_HOOKS", raising=False)
     monkeypatch.delenv("CONFORMANCE_FIXED_NOW", raising=False)
+    monkeypatch.delenv("CONFORMANCE_CASCADE_FAKE_TOKEN", raising=False)
     importlib.reload(conformance_hooks)
     yield
     monkeypatch.delenv("CONFORMANCE_TEST_HOOKS", raising=False)
     monkeypatch.delenv("CONFORMANCE_FIXED_NOW", raising=False)
+    monkeypatch.delenv("CONFORMANCE_CASCADE_FAKE_TOKEN", raising=False)
     importlib.reload(conformance_hooks)
 
 
@@ -278,6 +281,40 @@ class TestSecondsFailsFastOnInvalidOverride:
         monkeypatch.setenv("CONFORMANCE_IDLE_TIMEOUT_SECONDS", "not-a-number")
         importlib.reload(conformance_hooks)  # must not raise
         assert conformance_hooks.seconds("CONFORMANCE_IDLE_TIMEOUT_SECONDS", 300) == 300
+
+
+class TestCascadeCredential:
+    """Issue #82: `cascade_credential()` is inert (returns None, so app.py
+    constructs the real DefaultAzureCredential) unless BOTH hooks are enabled
+    AND CONFORMANCE_CASCADE_FAKE_TOKEN is set -- mirrors the same two-gate
+    shape `seconds()`/`now()` already use, plus its own third condition (the
+    token value itself)."""
+
+    def test_none_when_hooks_disabled_even_with_token_set(self, monkeypatch):
+        monkeypatch.setenv("CONFORMANCE_CASCADE_FAKE_TOKEN", "fake-token")
+        importlib.reload(conformance_hooks)
+        assert conformance_hooks.cascade_credential() is None
+
+    def test_none_when_hooks_enabled_but_token_unset(self, monkeypatch):
+        _enable(monkeypatch)
+        assert conformance_hooks.cascade_credential() is None
+
+    def test_none_when_hooks_enabled_but_token_empty(self, monkeypatch):
+        _enable(monkeypatch, CONFORMANCE_CASCADE_FAKE_TOKEN="")
+        assert conformance_hooks.cascade_credential() is None
+
+    def test_fake_credential_returns_the_configured_token_for_any_scope(self, monkeypatch):
+        _enable(monkeypatch, CONFORMANCE_CASCADE_FAKE_TOKEN="fake-cascade-token")
+        credential = conformance_hooks.cascade_credential()
+        assert credential is not None
+        token = asyncio.run(credential.get_token("https://cognitiveservices.azure.com/.default"))
+        assert token.token == "fake-cascade-token"
+
+    def test_fake_credential_close_is_a_harmless_noop(self, monkeypatch):
+        _enable(monkeypatch, CONFORMANCE_CASCADE_FAKE_TOKEN="fake-cascade-token")
+        credential = conformance_hooks.cascade_credential()
+        assert credential is not None
+        asyncio.run(credential.close())  # must not raise
 
 
 class TestHappyHourIntegration:

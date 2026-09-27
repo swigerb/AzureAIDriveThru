@@ -22,9 +22,19 @@ public sealed class PythonBackendOptions
 /// <summary>
 /// Builds the exact environment variable set `app/backend/app.py` needs to start against the
 /// fakes, tracing every env var it reads (see app.py / order_state.py / tools.py / rtmt.py).
-/// Always sets RUNNING_IN_PRODUCTION=true so the backend never calls `load_dotenv()` and picks
+/// Defaults RUNNING_IN_PRODUCTION=true so the backend never calls `load_dotenv()` and picks
 /// up a developer's local `.env` — every value the process needs is set explicitly here instead,
-/// which keeps the harness deterministic regardless of what's on a given machine.
+/// which keeps the harness deterministic regardless of what's on a given machine. Exception:
+/// Rick's PR #118 review item 4 added app.py's own startup guard that refuses to start with
+/// CONFORMANCE_TEST_HOOKS=1 alongside RUNNING_IN_PRODUCTION=true (a real deployment must never
+/// run with test hooks live) -- and every <see cref="BackendProfile"/> except
+/// <see cref="BackendProfiles.HooksOff"/> sets CONFORMANCE_TEST_HOOKS=1 to unlock the S1
+/// response.create allow-list behaviour (see BackendProfiles.Default's own doc comment), so this
+/// builder downgrades RUNNING_IN_PRODUCTION to "false" whenever the caller's ExtraEnvironment
+/// enables test hooks -- a conformance-harness process with hooks on is never modelling a real
+/// deployment, so the guard must not fire for it. Only <see cref="BackendProfiles.HooksOff"/>
+/// (CONFORMANCE_TEST_HOOKS left unset, "the exact shape of a real deployment") keeps
+/// RUNNING_IN_PRODUCTION=true, matching what main.bicep actually sets in Azure.
 /// </summary>
 public static class BackendEnvironment
 {
@@ -94,6 +104,20 @@ public static class BackendEnvironment
         foreach (var (key, value) in options.ExtraEnvironment)
         {
             env[key] = value;
+        }
+
+        // Rick's PR #118 review item 4: app.py's own startup guard refuses to run with
+        // CONFORMANCE_TEST_HOOKS=1 alongside RUNNING_IN_PRODUCTION=true. Every profile except
+        // BackendProfiles.HooksOff sets CONFORMANCE_TEST_HOOKS=1 (see that profile's own doc
+        // comment), so once hooks are on this is never modelling a real deployment -- downgrade
+        // RUNNING_IN_PRODUCTION so the guard doesn't fire and this harness can keep launching the
+        // fakes-backed backend every other scenario in this suite depends on. Uses conformance_
+        // hooks.py's own exact-match semantics (only the literal string "1" enables hooks --
+        // README.md's "Test hooks" table) so this stays in lockstep with the guard it's working
+        // around.
+        if (env.TryGetValue("CONFORMANCE_TEST_HOOKS", out var hooks) && hooks == "1")
+        {
+            env["RUNNING_IN_PRODUCTION"] = "false";
         }
 
         return env;

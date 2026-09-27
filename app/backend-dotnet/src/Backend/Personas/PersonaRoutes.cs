@@ -177,7 +177,9 @@ public static class PersonaRoutes
 
     private static JsonObject BuildPersonaDetailBody(Persona persona, ModelCatalog modelCatalog)
     {
-        var result = new JsonObject { ["id"] = persona.Id };
+        // Rick's #120 review round 2, required item 4: `roleName` is pinned on the wire
+        // (design doc section 5.2), matching Python's `_persona_detail_body`.
+        var result = new JsonObject { ["id"] = persona.Id, ["roleName"] = persona.RoleName };
 
         // Spread `ui`'s own top-level fields (title, theme, assets, strings, hero, legal) into
         // the result, mirroring Python's `**manifest.ui.model_dump(exclude_none=True)` dict

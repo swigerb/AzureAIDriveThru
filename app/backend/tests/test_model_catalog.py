@@ -205,6 +205,49 @@ class TestDeploymentMapValidationErrors:
             ModelCatalog.load(config=_VALID_CATALOG_CFG, environ={"AZURE_AI_MODEL_DEPLOYMENTS": '{"gpt-realtime-mini": ""}'})
 
 
+class TestCascadeAudioConfig:
+    """`models.cascade` (issue #82, design doc section 7.2): the cascade pipeline's own
+    transcription/tts catalog ids -- not `models.catalog` rows, a separate optional section."""
+
+    def test_absent_cascade_section_yields_none(self):
+        catalog = ModelCatalog.load(config=_VALID_CATALOG_CFG, environ={})
+        assert catalog.cascade_audio is None
+
+    def test_valid_cascade_section_loads(self):
+        cfg = {**_VALID_CATALOG_CFG, "models": {**_VALID_CATALOG_CFG["models"], "cascade": {
+            "transcription": "gpt-4o-transcribe", "tts": "gpt-4o-mini-tts",
+        }}}
+        catalog = ModelCatalog.load(config=cfg, environ={})
+        assert catalog.cascade_audio is not None
+        assert catalog.cascade_audio.transcription == "gpt-4o-transcribe"
+        assert catalog.cascade_audio.tts == "gpt-4o-mini-tts"
+
+    def test_non_mapping_cascade_section_raises(self):
+        cfg = {"models": {"cascade": ["not-a-dict"]}}
+        with pytest.raises(ModelValidationError, match="must be a mapping"):
+            ModelCatalog.load(config=cfg, environ={})
+
+    def test_unknown_field_raises(self):
+        cfg = {"models": {"cascade": {"transcription": "a", "tts": "b", "bogus": 1}}}
+        with pytest.raises(ModelValidationError, match="unknown field"):
+            ModelCatalog.load(config=cfg, environ={})
+
+    def test_missing_field_raises(self):
+        cfg = {"models": {"cascade": {"transcription": "a"}}}
+        with pytest.raises(ModelValidationError, match="missing required field"):
+            ModelCatalog.load(config=cfg, environ={})
+
+    def test_empty_transcription_raises(self):
+        cfg = {"models": {"cascade": {"transcription": "  ", "tts": "b"}}}
+        with pytest.raises(ModelValidationError, match="'transcription' must be a non-empty string"):
+            ModelCatalog.load(config=cfg, environ={})
+
+    def test_empty_tts_raises(self):
+        cfg = {"models": {"cascade": {"transcription": "a", "tts": ""}}}
+        with pytest.raises(ModelValidationError, match="'tts' must be a non-empty string"):
+            ModelCatalog.load(config=cfg, environ={})
+
+
 class TestRealConfigYaml:
     """The actual config.yaml shipped in this repo must itself load cleanly and contain the
     expected realtime rows -- a regression guard distinct from the synthetic-config unit tests
@@ -219,6 +262,26 @@ class TestRealConfigYaml:
         assert catalog.get("gpt-realtime-2.1").pipeline == "realtime"
         assert catalog.get("gpt-realtime-2.1").reasoning is True
         assert catalog.get("gpt-realtime-mini").reasoning is False
+
+    def test_real_config_yaml_has_two_qualifying_cascade_models(self):
+        """#82 acceptance: at least one OpenAI-format and one non-OpenAI-format cascade model,
+        both with toolCalling true -- `gpt-5-mini`/`phi-4` were catalogued (unused placeholders)
+        by #75; #82 is what makes them real, selectable entries."""
+        from config_loader import get_config
+
+        catalog = ModelCatalog.load(config=get_config(), environ={})
+        assert catalog.get("gpt-5-mini").pipeline == "cascade"
+        assert catalog.get("gpt-5-mini").tool_calling is True
+        assert catalog.get("phi-4").pipeline == "cascade"
+        assert catalog.get("phi-4").tool_calling is True
+
+    def test_real_config_yaml_has_cascade_audio_config(self):
+        from config_loader import get_config
+
+        catalog = ModelCatalog.load(config=get_config(), environ={})
+        assert catalog.cascade_audio is not None
+        assert catalog.cascade_audio.transcription
+        assert catalog.cascade_audio.tts
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

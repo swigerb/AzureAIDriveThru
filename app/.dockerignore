@@ -5,5 +5,10 @@
 ## Will be built by multistage docker build
 **/static
 
+# Persona menu source workbooks (raw ingestion spreadsheets, not needed at runtime -- see
+# scripts/sonic_menu_ingestion_search.ipynb / setup_search_index.py, which only ever read the
+# already-transformed personas/<id>/menu/menuItems.json)
+personas/*/menu/source/
+
 # Frontend
 **/node_modules

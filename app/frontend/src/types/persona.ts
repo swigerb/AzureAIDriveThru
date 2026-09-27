@@ -60,6 +60,9 @@ export interface PersonaModels {
  * `lib/personaAssets.ts`). */
 export interface PersonaDetail {
     id: string;
+    /** Persona.schema.json's required top-level role name (e.g. "carhop"), used to build a
+     * persona-aware voice label instead of hard-coding one brand's role (issue 119). */
+    roleName: string;
     title: string;
     theme: PersonaWireTheme;
     assets: { logo: string; favicon: string; apologyClip?: string };

@@ -430,6 +430,11 @@ class AppStartupTests(unittest.IsolatedAsyncioTestCase):
              patch("app.attach_tools_rtmt"), \
              patch.dict(os.environ, {
                  "RUNNING_IN_PRODUCTION": "1",
+                 # See test_app.py's _run_create_app comment: this suite's own conftest.py sets
+                 # CONFORMANCE_TEST_HOOKS=1 process-wide for unrelated reasons; a genuine
+                 # production simulation overrides it back off so Rick's #118 review item 4
+                 # prod guard doesn't treat this as the real, forbidden combination.
+                 "CONFORMANCE_TEST_HOOKS": "",
                  "AZURE_OPENAI_EASTUS2_ENDPOINT": "https://fake.openai.azure.com",
                  "AZURE_OPENAI_REALTIME_DEPLOYMENT": "gpt-realtime-2.1",
                  "AZURE_OPENAI_EASTUS2_API_KEY": "fake-key",
@@ -476,6 +481,7 @@ class HealthEndpointTests(unittest.IsolatedAsyncioTestCase):
              patch("app.attach_tools_rtmt"), \
              patch.dict(os.environ, {
                  "RUNNING_IN_PRODUCTION": "1",
+                 "CONFORMANCE_TEST_HOOKS": "",
                  "AZURE_OPENAI_EASTUS2_ENDPOINT": "https://fake.openai.azure.com",
                  "AZURE_OPENAI_REALTIME_DEPLOYMENT": "gpt-realtime-2.1",
                  "AZURE_OPENAI_EASTUS2_API_KEY": "fake-key",
@@ -507,6 +513,7 @@ class CorsConfigTests(unittest.IsolatedAsyncioTestCase):
              patch("app.attach_tools_rtmt"), \
              patch.dict(os.environ, {
                  "RUNNING_IN_PRODUCTION": "1",
+                 "CONFORMANCE_TEST_HOOKS": "",
                  "AZURE_OPENAI_EASTUS2_ENDPOINT": "https://fake.openai.azure.com",
                  "AZURE_OPENAI_REALTIME_DEPLOYMENT": "gpt-realtime-2.1",
                  "AZURE_OPENAI_EASTUS2_API_KEY": "fake-key",

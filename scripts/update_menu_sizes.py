@@ -5,8 +5,8 @@ Adds Mini and RT 44 sizes to drink/slush/shake/blast items.
 import json
 from pathlib import Path
 
-DATA_DIR = Path(__file__).resolve().parent.parent / "app" / "frontend" / "src" / "data"
-PRODUCTION_FILE = DATA_DIR / "sonic-menu-items.json"
+PRODUCTION_FILE = Path(__file__).resolve().parent.parent / "personas" / "sonic" / "menu" / "source" / "sonic-menu-items.json"
+DATA_DIR = PRODUCTION_FILE.parent.parent
 MENU_FILE = DATA_DIR / "menuItems.json"
 
 SIZE_PREFIXES = [

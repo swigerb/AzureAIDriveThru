@@ -9,10 +9,13 @@ import aiohttp
 from aiohttp import web
 from azure.core.credentials import AzureKeyCredential
 from azure.identity import AzureDeveloperCliCredential, DefaultAzureCredential
+from azure.identity.aio import DefaultAzureCredential as AsyncDefaultAzureCredential
 from azure.search.documents.aio import SearchClient
 from dotenv import load_dotenv
 
+import conformance_hooks
 import default_persona
+from cascade_processor import CascadeProcessor
 from config_loader import get_config
 from model_catalog import ModelCatalog, ModelValidationError
 from persona_loader import Persona, PersonaCatalog, PersonaValidationError
@@ -56,6 +59,7 @@ _startup_checks = {
     "prompts_loaded": False,
     "config_loaded": True,  # validated at module load by get_config()
     "env_vars": False,
+    "prod_guard": False,
 }
 
 # Populated by create_app() from the validated persona pack catalog (issue #70). Read by
@@ -213,14 +217,15 @@ def _personas_index_body(catalog: PersonaCatalog) -> dict:
 
 
 def _persona_detail_body(persona: Persona, model_catalog: ModelCatalog) -> dict:
-    """`GET /api/personas/{id}` response body (design doc section 5.2): the pack's `ui`
-    block, plus `voice.default`, `locales`, `features.dayparts`, `menuUrl`, and the
-    selectable `models` per pipeline. Callers must check the persona is enabled first
+    """`GET /api/personas/{id}` response body (design doc section 5.2): `roleName`, the
+    pack's `ui` block, plus `voice.default`, `locales`, `features.dayparts`, `menuUrl`, and
+    the selectable `models` per pipeline. Callers must check the persona is enabled first
     (404 otherwise) -- this function assumes it already is. *model_catalog* is mandatory
     (Rick's PR #106 review item 3) -- see `_model_pipelines_body`."""
     manifest = persona.manifest
     return {
         "id": persona.id,
+        "roleName": manifest.roleName,
         **manifest.ui.model_dump(exclude_none=True),
         "voice": {"default": manifest.voice.default},
         "locales": manifest.locales.model_dump(exclude_none=True),
@@ -480,6 +485,24 @@ def register_persona_routes(app: web.Application, catalog: PersonaCatalog, model
 async def create_app() -> web.Application:
     """Configure and return the aiohttp application for realtime ordering."""
 
+    # 0. Production guard (Rick's PR #118 review, required item 4): refuse to start with
+    # CONFORMANCE_TEST_HOOKS=1 (conformance_hooks.py's fake credentials/timers/HTTP overrides
+    # active) AND RUNNING_IN_PRODUCTION both set -- a deployed app must never run with test
+    # hooks live, and this must fail loudly at startup rather than silently 401ing on the
+    # first request or, worse, accepting a fake bearer token in prod. Checked before even the
+    # dev-mode .env load below and before the required-env-vars check, since this is the one
+    # startup failure that must never be masked by any other. Uses hooks_enabled_now() (a live
+    # re-check), not the frozen HOOKS_ENABLED constant, so this guard reflects this process's
+    # actual environment even if some earlier import already froze that constant differently.
+    if conformance_hooks.hooks_enabled_now() and _get_bool_env("RUNNING_IN_PRODUCTION", False):
+        logger.critical(
+            "FATAL: CONFORMANCE_TEST_HOOKS=1 is set alongside RUNNING_IN_PRODUCTION=1. "
+            "Test-only fake credentials, timers, and HTTP overrides must never be active in "
+            "a deployed environment. Refusing to start."
+        )
+        sys.exit(1)
+    _startup_checks["prod_guard"] = True
+
     if not _get_bool_env("RUNNING_IN_PRODUCTION", False):
         logger.info("Running in development mode; loading values from .env")
         load_dotenv()
@@ -610,10 +633,9 @@ async def create_app() -> web.Application:
     # Issue #75: the shared model catalog + deployment map, so `_websocket_handler` can
     # resolve/validate `?model=` (`RTMiddleTier.resolve_model` -> `resolve_realtime_model`)
     # against something other than the always-empty catalog `RTMiddleTier.__init__` defaults
-    # to. `ProcessorRegistry` is the seam #82's cascade pipeline (and #81's local pipeline)
-    # will register alongside `rtmt` on -- only one entry today, but it's the concrete thing
-    # a "processor seam bypassed" mutation test exercises (see `processors.py`'s own
-    # docstring): nothing here is unused, `_websocket_handler`'s registry lookup is intact.
+    # to. `rtmt.processor_registry` is reassigned again below, once the cascade processor
+    # (#82) is constructed, to include it alongside `rtmt` -- this intermediate value keeps
+    # the realtime-only path correct even if that later assignment is ever removed.
     rtmt.model_catalog = model_catalog
     rtmt.processor_registry = ProcessorRegistry([rtmt])
 
@@ -666,6 +688,35 @@ async def create_app() -> web.Application:
         prompt_loader=prompt_loader,
         personas=persona_search_contexts,
     )
+
+    # Issue #82: the cascade pipeline processor (STT -> Foundry chat model with tool
+    # calling -> TTS), registered alongside `rtmt` on the same `ProcessorRegistry` seam
+    # #75 built for exactly this -- `_websocket_handler` dispatches `?model=` to whichever
+    # processor's catalog entry claims it, so no rtmt.py edit is needed. It shares rtmt's
+    # own `tools` dict (Beth's #77 tools, unedited) and `SessionManager` instance so
+    # tool calling and session-lifecycle behavior (idle timeout, concurrency limit,
+    # session metadata/round-trip tokens) are identical on both pipelines. The Foundry
+    # chat model client uses DefaultAzureCredential only (design doc 7.4 / issue #82) --
+    # never an API key -- via a dedicated async credential (the SDK's async
+    # `ChatCompletionsClient` needs an async `get_token`, unlike the sync `credential`
+    # above used for the realtime/search clients). conformance_hooks.cascade_credential()
+    # substitutes a fake, static-token credential only when CONFORMANCE_TEST_HOOKS=1 AND
+    # CONFORMANCE_CASCADE_FAKE_TOKEN are both set (the conformance harness's own child
+    # process); every other process (real deployments, `python -m pytest`, a developer's
+    # local run) gets exactly today's real DefaultAzureCredential, unchanged.
+    cascade_credential = conformance_hooks.cascade_credential() or AsyncDefaultAzureCredential()
+    cascade_processor = CascadeProcessor(
+        tools=rtmt.tools,
+        sessions=rtmt._sessions,
+        persona_catalog=_persona_catalog,
+        persona_prompt_loaders=prompt_loaders,
+        model_catalog=model_catalog,
+        foundry_endpoint=os.environ.get("AZURE_AI_FOUNDRY_ENDPOINT"),
+        audio_endpoint=llm_endpoint,
+        credential=cascade_credential,
+        default_voice=os.environ.get("AZURE_OPENAI_REALTIME_VOICE_CHOICE") or model_cfg.get("default_voice", "marin"),
+    )
+    rtmt.processor_registry = ProcessorRegistry([rtmt, cascade_processor])
 
     rtmt.attach_to_app(app, "/realtime")
 
