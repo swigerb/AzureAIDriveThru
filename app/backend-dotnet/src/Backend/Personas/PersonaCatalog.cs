@@ -201,7 +201,14 @@ public sealed class PersonaCatalog
                 $"Persona '{personaId}': prompts directory not found at {promptsDir}.");
         }
 
-        return manifest with { Menu = menu };
+        return manifest with
+        {
+            Menu = menu,
+            PackDir = packDir,
+            AssetsDir = Path.Combine(packDir, "assets"),
+            MenuPath = menuPath,
+            PromptsDir = promptsDir,
+        };
     }
 
     private static JsonNode LoadJsonFile(string path, string personaId)

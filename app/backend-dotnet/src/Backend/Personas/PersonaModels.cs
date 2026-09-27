@@ -39,6 +39,15 @@ public sealed record Persona
     /// menu/menuItems.json has been separately loaded and validated.</summary>
     [JsonIgnore]
     public PersonaMenu Menu { get; init; } = null!;
+
+    // Not part of the JSON -- populated by PersonaCatalog.LoadOnePersona alongside Menu, mirroring
+    // persona_loader.py's Persona.assets_dir/menu_path/prompts_dir (issue #12 part 2). These are
+    // the traversal boundary/content-hash inputs for the persona asset/menu HTTP routes and the
+    // per-persona PromptLoader, resolved once at startup rather than recomputed per request.
+    [JsonIgnore] public string PackDir { get; init; } = null!;
+    [JsonIgnore] public string AssetsDir { get; init; } = null!;
+    [JsonIgnore] public string MenuPath { get; init; } = null!;
+    [JsonIgnore] public string PromptsDir { get; init; } = null!;
 }
 
 public sealed record PersonaLocales

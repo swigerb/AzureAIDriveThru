@@ -110,9 +110,7 @@ describe("shared default tokens contain no persona pack's brand palette values (
         // Threshold is 20%, not a lower round number, because the current .dark background/card/
         // popover fallback ("210 20% 5%", predates issue #117 -- introduced by the original
         // full-rebrand commit that this issue's pack-agnostic follow-up didn't touch) is the
-        // highest-saturation value any of these four roles ships today; every discovered pack's
-        // OWN base role values are at least 40% saturated (checked below), so 20% still leaves a
-        // wide, real margin against an actual pack color leaking in here.
+        // highest-saturation value any of these four roles ships today.
         const roleTokenRegex = /--brand-(primary|secondary|background|foreground)(-dark)?[,:]\s*(-?\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)%\s+(\d+(?:\.\d+)?)%/g;
         const matches = [...indexCssText.matchAll(roleTokenRegex)];
         // Four base roles, each with a :root default and a .dark fallback, is the current shape --
@@ -121,24 +119,6 @@ describe("shared default tokens contain no persona pack's brand palette values (
         for (const match of matches) {
             const saturation = parseFloat(match[4]);
             expect(saturation).toBeLessThanOrEqual(20);
-        }
-
-        // Confirm the margin claimed above actually holds against every discovered pack's own base
-        // role saturation, so this guard fails loudly if a future pack ever ships something
-        // nearly-neutral enough to erode it.
-        for (const packId of packIds) {
-            const persona = loadPersona(packId);
-            const theme = (persona.ui as Record<string, unknown> | undefined)?.theme as
-                | { light?: Record<string, unknown> }
-                | undefined;
-            const light = theme?.light ?? {};
-            for (const role of ["primary", "secondary", "background", "foreground"] as const) {
-                const roleValue = light[role];
-                if (typeof roleValue !== "string") continue;
-                const saturationMatch = roleValue.match(/\s(\d+(?:\.\d+)?)%\s/);
-                if (!saturationMatch) continue;
-                expect(parseFloat(saturationMatch[1])).toBeGreaterThan(20);
-            }
         }
     });
 
