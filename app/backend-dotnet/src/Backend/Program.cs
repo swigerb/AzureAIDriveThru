@@ -103,7 +103,10 @@ catch (ModelValidationException exc)
     logger.LogCritical("FATAL: Failed to load model catalog - {Message}", exc.Message);
     return 1;
 }
-startupChecks.Pass("model_catalog_loaded");
+// No dedicated StartupChecks entry: app.py's own `_startup_checks` dict (Health/StartupChecks.cs's
+// port) has no "model catalog" key either -- reaching this line at all already proves the catalog
+// loaded (same "validated at module load" reasoning as config_loaded), and /health's shape must
+// stay byte-for-byte identical to Python's, so no new field is added here.
 
 // ── 6. Processor registry (issue #75, design doc section 7.4): only "realtime" is registered
 // this wave -- its own model resolution is fully ported (Models/ModelDispatch.cs's
