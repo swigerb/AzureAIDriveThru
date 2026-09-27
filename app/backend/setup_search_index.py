@@ -1,21 +1,48 @@
 """
-setup_search_index.py — Headless Azure AI Search index setup for Sonic menu items.
+setup_search_index.py — Headless Azure AI Search ingestion, one index per enabled persona pack.
 
-Reads menu items from personas/sonic/menu/menuItems.json (issue #70: persona pack skeleton and
-loader), generates embeddings using Azure OpenAI text-embedding-3-large, creates/updates the
-search index with an AzureOpenAIVectorizer (for VectorizableTextQuery at query time), and uploads
-documents.
+Issue #84 (P2-15): every enabled persona pack (``personas/<id>/`` -- see ``persona_loader.py``,
+issue #70) gets its own Azure AI Search index on the new environment's own Search service
+(ADR-001 decision 7 / issue #85), conventionally named ``<persona>-menu-items``. The index NAME
+is never guessed or hardcoded here -- it is read
+straight from each pack's ``persona.json`` (``search.indexName``), the same field
+``app.py``/``tools.py`` use to build each session's bound-persona ``SearchClient`` (#74). The
+document schema is one superset shared by every persona (id/category/name/description/
+longDescription/origin/caffeineContent/brewingMethod/popularity/sizes/embedding) -- brands whose
+menu items don't populate every optional field simply upload an empty string for it.
 
-Idempotent: safe to re-run. Uses DefaultAzureCredential for AAD authentication.
+For each targeted persona this script: generates embeddings for its menu items using Azure OpenAI
+text-embedding-3-large, creates/updates that persona's index with an ``AzureOpenAIVectorizer``
+(for query-time ``VectorizableTextQuery``), and uploads documents with stable, sanitized
+``category_name``-derived ids via ``merge_or_upload_documents``, then deletes every document in
+that index whose id is no longer in the pack's menu, and verifies the index's document count
+equals the plan's.
+
+Idempotent: safe to re-run for one persona, a subset, or every enabled persona. An item removed
+from a pack's menu is removed from its index on the next run (it would otherwise stay searchable
+and the carhop would offer something ``update_order`` rejects as ``not_on_menu``). A run never
+touches another persona's index. Uses ``DefaultAzureCredential`` only: no Azure OpenAI or Search
+key is ever read, issued, or stored.
+
+Usage:
+    python setup_search_index.py                      # every enabled persona (the azd hook's usage)
+    python setup_search_index.py --persona <id>       # one persona
+    python setup_search_index.py --persona <a>,<b>    # a subset (comma-separated or repeated --persona)
+    python setup_search_index.py --dry-run            # plan only -- no Azure calls, no credential needed
 """
 
+from __future__ import annotations
+
+import argparse
 import json
 import logging
 import os
 import re
 import subprocess
 import sys
-from pathlib import Path
+import time
+from collections.abc import Sequence
+from dataclasses import dataclass, field
 
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 from azure.search.documents import SearchClient
@@ -41,6 +68,8 @@ from dotenv import load_dotenv
 from openai import AzureOpenAI
 from rich.logging import RichHandler
 
+from persona_loader import Persona, PersonaCatalog
+
 logging.basicConfig(
     level=logging.WARNING,
     format="%(message)s",
@@ -55,11 +84,10 @@ logger.setLevel(logging.INFO)
 # ---------------------------------------------------------------------------
 EMBEDDING_MODEL = "text-embedding-3-large"
 EMBEDDING_DIMENSIONS = 3072
-# issue #70: menu data now lives in the Sonic persona pack, not app/frontend/src/data/.
-# PERSONAS_DIR/DEFAULT_PERSONA are the same env vars persona_loader.py and menu_utils.py read.
-_ACTIVE_PERSONA = os.environ.get("DEFAULT_PERSONA", "sonic")
-_PERSONAS_DIR = Path(os.environ.get("PERSONAS_DIR") or (Path(__file__).resolve().parents[2] / "personas"))
-MENU_DATA_PATH = _PERSONAS_DIR / _ACTIVE_PERSONA / "menu" / "menuItems.json"
+
+# Search indexing is near-real-time, so the post-ingest document count can lag for a moment.
+_COUNT_VERIFY_ATTEMPTS = 10
+_COUNT_VERIFY_DELAY_SECONDS = 2.0
 
 
 def load_azd_env():
@@ -263,70 +291,245 @@ def upload_documents(
         )
 
 
-def main() -> None:
-    load_azd_env()
+def delete_stale_documents(search_client: SearchClient, keep_ids: set[str]) -> int:
+    """Delete every document in *search_client*'s index whose id isn't in *keep_ids*.
 
-    logger.info("Checking if we need to set up Azure AI Search index...")
-    # AZURE_SEARCH_REUSE_EXISTING is an *infrastructure* flag — it tells Bicep not
-    # to provision a new search service. It must NOT skip index setup: the free
-    # SKU allows one service but three indexes per subscription, so sibling demos
-    # share one service while each owning its own index. Conflating the two left
-    # a demo pointing at an index that was never created.
-    if os.environ.get("AZURE_SEARCH_SKIP_INDEX_SETUP") == "true":
-        logger.info(
-            "AZURE_SEARCH_SKIP_INDEX_SETUP is set — leaving the index untouched."
+    Lists the index's ids (the SDK pages through every result), then deletes the difference in
+    batches. Returns the number of documents deleted.
+    """
+    existing_ids = [doc["id"] for doc in search_client.search(search_text="*", select=["id"])]
+    stale_ids = sorted(doc_id for doc_id in existing_ids if doc_id not in keep_ids)
+    batch_size = 100
+    for i in range(0, len(stale_ids), batch_size):
+        search_client.delete_documents([{"id": doc_id} for doc_id in stale_ids[i : i + batch_size]])
+    return len(stale_ids)
+
+
+def verify_document_count(
+    search_client: SearchClient,
+    expected: int,
+    *,
+    index_name: str,
+    attempts: int = _COUNT_VERIFY_ATTEMPTS,
+    delay_seconds: float = _COUNT_VERIFY_DELAY_SECONDS,
+    sleep=time.sleep,
+) -> None:
+    """Fail unless the index's document count reaches *expected* (issue #84 acceptance).
+
+    Retries briefly because Azure AI Search indexing is near-real-time.
+    """
+    actual = None
+    for attempt in range(attempts):
+        actual = search_client.get_document_count()
+        if actual == expected:
+            return
+        if attempt < attempts - 1:
+            sleep(delay_seconds)
+    raise RuntimeError(
+        f"Index '{index_name}' holds {actual} document(s) after ingest; the plan has {expected}."
+    )
+
+
+@dataclass
+class PersonaIngestPlan:
+    """What would be (or, outside ``--dry-run``, is being) ingested for one persona."""
+
+    persona_id: str
+    index_name: str
+    documents: list[dict] = field(repr=False)
+    texts_for_embedding: list[str] = field(repr=False)
+
+    @property
+    def document_count(self) -> int:
+        return len(self.documents)
+
+
+def resolve_target_personas(catalog: PersonaCatalog, requested: Sequence[str] | None) -> list[Persona]:
+    """Resolve which of *catalog*'s enabled personas this run should ingest.
+
+    *requested* (``--persona``, repeatable and/or comma-separated): a subset of the enabled
+    persona ids. Omitted/empty (the default): every enabled persona in *catalog*, so a plain
+    re-run of this script -- the azd ``postprovision`` hook's usage, and both
+    ``scripts/setup_search_index.ps1``/``.sh`` -- always builds one index per enabled persona
+    with no separate persona loop needed at the shell-script layer.
+
+    Raises ``SystemExit`` naming any requested id that isn't an enabled persona, so a typo in
+    ``--persona`` fails fast instead of silently ingesting nothing for it.
+    """
+    if not requested:
+        return [catalog.get(pid) for pid in catalog.ids]
+
+    ids: list[str] = []
+    for item in requested:
+        ids.extend(p.strip() for p in item.split(",") if p.strip())
+
+    unknown = [pid for pid in ids if pid not in catalog]
+    if unknown:
+        raise SystemExit(
+            f"--persona named {unknown} -- not in the enabled persona catalog ({', '.join(catalog.ids) or '(none)'})"
         )
-        return
+    return [catalog.get(pid) for pid in ids]
 
-    # Read configuration from environment
-    index_name = os.environ["AZURE_SEARCH_INDEX"]
+
+def build_plan(persona: Persona) -> PersonaIngestPlan:
+    """Load *persona*'s menu data and turn it into a :class:`PersonaIngestPlan`.
+
+    Read-only: never touches Azure. Safe to call for every target persona before deciding
+    whether this is a dry run.
+    """
+    menu_path = persona.menu_path
+    if not menu_path.exists():
+        logger.critical("Persona '%s': menu data file not found at %s", persona.id, menu_path)
+        sys.exit(1)
+    with menu_path.open(encoding="utf-8") as f:
+        menu_data = json.load(f)
+    documents, texts_for_embedding = prepare_documents(menu_data)
+    return PersonaIngestPlan(
+        persona_id=persona.id,
+        index_name=persona.manifest.search.indexName,
+        documents=documents,
+        texts_for_embedding=texts_for_embedding,
+    )
+
+
+def ingest_plan(
+    plan: PersonaIngestPlan,
+    *,
+    index_client: SearchIndexClient,
+    openai_client: AzureOpenAI,
+    search_endpoint: str,
+    openai_endpoint: str,
+    embedding_deployment: str,
+    credential,
+) -> None:
+    """Create/update *plan*'s index and merge-or-upload its documents (idempotent)."""
+    logger.info(
+        "Persona '%s': setting up Azure AI Search index '%s'...", plan.persona_id, plan.index_name
+    )
+    create_or_update_index(index_client, plan.index_name, openai_endpoint, embedding_deployment)
+
+    logger.info(
+        "Persona '%s': generating embeddings for %d document(s)...",
+        plan.persona_id,
+        plan.document_count,
+    )
+    embeddings = generate_embeddings(openai_client, plan.texts_for_embedding, embedding_deployment)
+    for doc, emb in zip(plan.documents, embeddings):
+        doc["embedding"] = emb
+
+    search_client = SearchClient(
+        search_endpoint, plan.index_name, credential, user_agent="setup_search_index"
+    )
+    upload_documents(search_client, plan.documents)
+    deleted = delete_stale_documents(search_client, {doc["id"] for doc in plan.documents})
+    logger.info("Persona '%s': deleted %d stale document(s) no longer on the menu.", plan.persona_id, deleted)
+    verify_document_count(search_client, plan.document_count, index_name=plan.index_name)
+    logger.info("Persona '%s': search index setup complete.", plan.persona_id)
+
+def run(
+    catalog: PersonaCatalog,
+    requested: Sequence[str] | None,
+    *,
+    dry_run: bool,
+) -> list[PersonaIngestPlan]:
+    """Build (or, in dry-run mode, plan) one index per targeted persona.
+
+    Returns the plans that were built, for callers (including tests) to assert on. In dry-run
+    mode this makes zero Azure calls and needs no credential -- only the persona packs on disk
+    are read.
+    """
+    plans = [build_plan(p) for p in resolve_target_personas(catalog, requested)]
+
+    if dry_run:
+        for plan in plans:
+            logger.info(
+                "[dry-run] persona '%s': index '%s', %d document(s) planned",
+                plan.persona_id,
+                plan.index_name,
+                plan.document_count,
+            )
+        return plans
+
     search_endpoint = os.environ["AZURE_SEARCH_ENDPOINT"]
     openai_endpoint = os.environ["AZURE_OPENAI_EASTUS2_ENDPOINT"]
-    embedding_deployment = os.environ.get(
-        "AZURE_OPENAI_EMBEDDING_DEPLOYMENT", EMBEDDING_MODEL
-    )
+    embedding_deployment = os.environ.get("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", EMBEDDING_MODEL)
 
-    logger.info("Setting up Azure AI Search index '%s'...", index_name)
-
-    # Authenticate with DefaultAzureCredential (works with azd auth + managed identity)
+    # Authenticate with DefaultAzureCredential only (works with azd auth + managed identity) --
+    # no Azure OpenAI or Search key is ever read, issued, or stored.
     credential = DefaultAzureCredential()
-    token_provider = get_bearer_token_provider(
-        credential, "https://cognitiveservices.azure.com/.default"
-    )
-
-    # Load menu data
-    if not MENU_DATA_PATH.exists():
-        logger.critical("Menu data file not found at %s", MENU_DATA_PATH)
-        sys.exit(1)
-    with open(MENU_DATA_PATH, encoding="utf-8") as f:
-        menu_data = json.load(f)
-    logger.info("Loaded menu data from %s", MENU_DATA_PATH)
-
-    # Create or update the index
+    token_provider = get_bearer_token_provider(credential, "https://cognitiveservices.azure.com/.default")
     index_client = SearchIndexClient(search_endpoint, credential)
-    create_or_update_index(
-        index_client, index_name, openai_endpoint, embedding_deployment
-    )
-
-    # Prepare documents and generate embeddings
-    documents, texts_for_embedding = prepare_documents(menu_data)
-    logger.info("Prepared %d documents for indexing", len(documents))
-
     openai_client = AzureOpenAI(
         azure_ad_token_provider=token_provider,
         api_version="2024-06-01",
         azure_endpoint=openai_endpoint,
     )
-    logger.info("Generating embeddings for %d documents...", len(documents))
-    embeddings = generate_embeddings(openai_client, texts_for_embedding, embedding_deployment)
-    for i, emb in enumerate(embeddings):
-        documents[i]["embedding"] = emb
-    logger.info("Embeddings generated successfully")
 
-    # Upload documents
-    search_client = SearchClient(search_endpoint, index_name, credential)
-    upload_documents(search_client, documents)
-    logger.info("Search index setup complete!")
+    for plan in plans:
+        ingest_plan(
+            plan,
+            index_client=index_client,
+            openai_client=openai_client,
+            search_endpoint=search_endpoint,
+            openai_endpoint=openai_endpoint,
+            embedding_deployment=embedding_deployment,
+            credential=credential,
+        )
+
+    return plans
+
+
+def _build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Build one Azure AI Search index per enabled persona pack (issue #84). "
+            "Index names come from each pack's persona.json (search.indexName)."
+        )
+    )
+    parser.add_argument(
+        "--persona",
+        action="append",
+        default=None,
+        metavar="ID[,ID...]",
+        help=(
+            "Restrict ingestion to these persona id(s) -- repeatable and/or comma-separated. "
+            "Default: every persona PersonaCatalog.load() enables (PERSONAS env var, or every "
+            "pack found under PERSONAS_DIR when PERSONAS is unset)."
+        ),
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help=(
+            "Print the planned index name and document count for each targeted persona and "
+            "exit -- no Azure Search/OpenAI calls, no credential required, no azd env loaded."
+        ),
+    )
+    parser.add_argument(
+        "--personas-dir",
+        default=None,
+        metavar="PATH",
+        help="Override PERSONAS_DIR (mainly for local testing against a fixture pack directory).",
+    )
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> None:
+    args = _build_arg_parser().parse_args(argv)
+
+    if not args.dry_run:
+        load_azd_env()
+        # A live run may opt out of touching Azure at all (e.g. AZURE_SEARCH_REUSE_EXISTING plus
+        # indexes a prior run already populated). This is a manual escape hatch, never set
+        # automatically by infra -- AZURE_SEARCH_REUSE_EXISTING itself is a Bicep-only flag ("don't
+        # provision a new Search *service*") and must NOT imply skipping index setup, since every
+        # enabled persona still needs its own index created on whichever service is in play.
+        if os.environ.get("AZURE_SEARCH_SKIP_INDEX_SETUP") == "true":
+            logger.info("AZURE_SEARCH_SKIP_INDEX_SETUP is set — leaving every persona's index untouched.")
+            return
+
+    catalog = PersonaCatalog.load(personas_dir=args.personas_dir)
+    run(catalog, args.persona, dry_run=args.dry_run)
 
 
 if __name__ == "__main__":

@@ -69,8 +69,16 @@ azd env new <new-env-name>
 azd env set AZURE_SUBSCRIPTION_ID <subscription-guid>
 azd env set AZURE_LOCATION eastus2
 azd env set AZURE_RESOURCE_GROUP rg-<new-env-name>
+azd env set AZURE_OPENAI_SERVICE_LOCATION eastus2
 azd provision --preview
 ```
+
+`AZURE_OPENAI_SERVICE_LOCATION` has no tracked default (`openAiServiceLocation`
+in `main.parameters.json` is `${AZURE_OPENAI_SERVICE_LOCATION}` with no
+`=default`) -- it must be set explicitly or `azd provision --preview` fails to
+resolve the substitution. `eastus2` matches the realtime/embedding model
+availability the rest of this doc assumes; only change it if you know the
+target region also has the required model capacity.
 
 `azd provision --preview` is a read-only what-if: it resolves the
 `${VAR=default}` substitutions in `main.parameters.json` the same way a real
@@ -80,6 +88,26 @@ under `azd`), but it never applies anything. Never run this against an
 existing environment's `.azure/<env>` folder, and never run `azd
 provision`/`azd up`/`azd down` (without `--preview`) as part of validating a
 skeleton/infra-only change.
+
+### Production Environment: `azureaidrivethru-prod`
+
+The tracked default for `DEFAULT_PERSONA` is empty (section above), which is
+correct for a demo/dev environment serving every enabled persona. A production
+environment sets its default persona explicitly, so the choice is recorded in
+that environment's `.azure/<env>` folder rather than in tracked infra:
+
+```bash
+azd env select azureaidrivethru-prod
+azd env set DEFAULT_PERSONA <persona-id>
+azd provision
+```
+
+The production value is recorded in the deploy checklist on issue #87.
+
+This only changes which persona a session gets when it doesn't name one
+(`app/backend/persona_loader.py`'s fallback); it does not restrict `PERSONAS`
+-- every enabled persona pack still gets its own index and is still
+reachable by a session that requests it explicitly.
 
 ## Enable Entra ID Authentication (EasyAuth)
 
