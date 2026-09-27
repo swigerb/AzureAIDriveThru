@@ -238,6 +238,55 @@ class OrderState:
         display = f"{formatted_size}{item_name}".strip()
 
         if action == "add":
+            # #104: the unit price charged is always this persona's own menu price for
+            # (item_name, size) -- never the tool call's own `price` argument. The model can
+            # invent a price, carry one over from the wrong size, or pre-apply a discount; since
+            # #73 every accepted item already resolved through the on-menu gate in tools.py, so
+            # menu.price_for() (menu_utils.MenuCatalog) is the single source of truth for what a
+            # guest is charged. This is the ONE place that source of truth is applied -- callers
+            # that build an order directly (tests, a future admin tool) get the same guarantee as
+            # the realtime tool-call path, instead of a second, easy-to-forget copy of this check
+            # in tools.py. The tool-call `price` is only ever used for the debug comparison below;
+            # see docs/persona-architecture.md section 6.
+            menu_price = menu.price_for(item_name, size)
+            if menu_price is not None:
+                # The prompt no longer tells the model to send a price (0ab2119), so a null,
+                # non-numeric or omitted `price` is now a likely, well-formed input -- it must
+                # never crash the add. Only compare against the menu price when the tool call
+                # actually sent a real number (bool is deliberately excluded: `isinstance(True,
+                # int)` is True in Python, but a bare `true`/`false` is never a meaningful price).
+                # Any other type (``None``, a string, a bool) is ignored with its own debug log;
+                # the menu price is always charged either way.
+                if isinstance(price, (int, float)) and not isinstance(price, bool):
+                    if to_decimal(price) != to_decimal(menu_price):
+                        logger.debug(
+                            "Tool call price $%.2f for '%s' (%s) differs from menu price $%.2f; "
+                            "charging the menu price (session=%s)",
+                            price, item_name, size, menu_price, session_id,
+                        )
+                else:
+                    logger.debug(
+                        "Tool call price %r for '%s' (%s) is not numeric; ignoring it and "
+                        "charging the menu price $%.2f (session=%s)",
+                        price, item_name, size, menu_price, session_id,
+                    )
+                price = menu_price
+            else:
+                # No menu record for this exact (item, size) -- an on-menu item that somehow
+                # reached here without going through tools.py's on-menu/size gate (e.g. a direct
+                # caller that builds an order without going through update_order's own-menu
+                # validation at all -- see docs/persona-architecture.md section 6's "direct-caller
+                # fallback" note), or a pack with a missing price (guarded against by
+                # test_menu_data_completeness.py's every-size-has-a-price data test). Fall back to
+                # the caller-supplied price rather than silently charging $0 -- logged with %r,
+                # never %.2f, since this price was never validated as numeric in the first place
+                # (the null/non-numeric guard above only runs when a menu price was found).
+                logger.warning(
+                    "No menu price found for '%s' size '%s'; falling back to the caller-supplied "
+                    "price %r (session=%s)",
+                    item_name, size, price, session_id,
+                )
+
             is_combo = "combo" in item_name.lower()
             # Rick's PR #99 review, decision 1: the item's OWN bundle slots, read from the pack's
             # ``bundle.slots`` field (via menu_utils.bundle_slots) -- NOT derived from the word

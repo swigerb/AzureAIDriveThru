@@ -115,7 +115,7 @@ class QuantityLimitTests(unittest.TestCase):
             "item_name": "Cherry Limeade",
             "size": "large",
             "quantity": 1,
-            "price": 3.49,
+            "price": 3.39,
         }, session_id))
 
         self.assertEqual(result.destination, ToolResultDirection.TO_BOTH)
@@ -130,7 +130,7 @@ class QuantityLimitTests(unittest.TestCase):
             "item_name": "Cherry Limeade",
             "size": "large",
             "quantity": 1,
-            "price": 3.49,
+            "price": 3.39,
         }, session_id))
 
         self.assertEqual(result.destination, ToolResultDirection.TO_SERVER)
@@ -146,7 +146,7 @@ class QuantityLimitTests(unittest.TestCase):
             "item_name": "Cherry Limeade",
             "size": "medium",
             "quantity": 1,
-            "price": 2.99,
+            "price": 2.89,
         }, session_id))
 
         self.assertEqual(result.destination, ToolResultDirection.TO_BOTH)
