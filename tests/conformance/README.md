@@ -360,8 +360,8 @@ rather than silently assumed.
 All name/switch combinations below are covered, each pinned on its own dedicated fixture in
 `ReasoningDeploymentFixtures.cs` (a distinct deployment name and/or env var forces its own backend
 process, since `AZURE_OPENAI_REALTIME_DEPLOYMENT`/`AZURE_OPENAI_REALTIME_REASONING_MODEL` are read
-once at Python module-import time). Every fixture below binds the session to sonic's own realtime
-default model (`gpt-realtime-2.1`, catalog `reasoning: true`) regardless of the deployment name
+once at Python module-import time). Every fixture below binds the session to the default persona's
+own realtime default model (`gpt-realtime-2.1`, catalog `reasoning: true`) regardless of the deployment name
 override — the deployment name only changes what the fake upstream's rejection behavior does, not
 which model the session binds to — so input 3 (the catalog) is held constant at `true` in every row
 here; see `ModelSelectionConformanceTests.Reasoning_is_sent_only_for_a_catalog_reasoning_model_not_the_other_selectable_one`
