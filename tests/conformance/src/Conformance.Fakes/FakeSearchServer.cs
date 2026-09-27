@@ -8,15 +8,26 @@ namespace Conformance.Fakes;
 /// <summary>
 /// A Kestrel-hosted fake of the Azure AI Search REST surface the backend's
 /// `azure-search-documents` client calls (POST /indexes('{name}')/docs/search.post.search).
-/// Answers from `app/frontend/src/data/menuItems.json` (via <see cref="MenuIndex"/>) rather than
-/// a real index, and accepts the exact body shape the SDK sends: `search`, `queryType`,
-/// `semanticConfiguration`, `select` (comma-joined string), `top`, and `vectorQueries`.
+/// Answers from each persona pack's own `menu/menuItems.json` (via <see cref="MenuIndex"/>)
+/// rather than a real index, and accepts the exact body shape the SDK sends: `search`,
+/// `queryType`, `semanticConfiguration`, `select` (comma-joined string), `top`, and
+/// `vectorQueries`.
+///
+/// Issue #76 part 2: this is now MULTI-index -- one Kestrel host answering every persona's own
+/// index name (see <see cref="MenuIndex.ResolveIndexPaths"/>) with only that SAME persona's own
+/// menu documents, routed by the route's own `indexName` (previously ignored entirely: every
+/// index name, real or not, answered from one single-pack document set). This is what the real
+/// backend's per-persona `SearchClient` (app/backend/app.py's `persona_search_contexts`, one
+/// client per enabled persona pointed at its own `persona.manifest.search.indexName`) actually
+/// depends on to prove cross-persona search isolation end to end -- see
+/// PersonaSearchIsolationConformanceTests.cs.
 /// </summary>
 public sealed class FakeSearchServer : IAsyncDisposable
 {
-    private readonly string _menuItemsJsonPath;
+    private readonly IReadOnlyDictionary<string, string> _indexNameToMenuItemsJsonPath;
     private WebApplication? _app;
-    private IReadOnlyList<MenuDocument> _documents = [];
+    private IReadOnlyDictionary<string, IReadOnlyList<MenuDocument>> _documentsByIndex =
+        new Dictionary<string, IReadOnlyList<MenuDocument>>(StringComparer.Ordinal);
 
     public FrameLog ReceivedRequests { get; } = new();
 
@@ -74,14 +85,20 @@ public sealed class FakeSearchServer : IAsyncDisposable
         }
     }
 
-    public FakeSearchServer(string menuItemsJsonPath)
+    /// <param name="indexNameToMenuItemsJsonPath">Every Azure AI Search index name this fake
+    /// should answer, mapped to that SAME index's own `menu/menuItems.json` path -- typically
+    /// built via <see cref="MenuIndex.ResolveIndexPaths"/> from whichever personas the fixture's
+    /// backend is actually launched with, so the fake never loads (and can never accidentally
+    /// leak) a persona's documents under an index name the backend never queries.</param>
+    public FakeSearchServer(IReadOnlyDictionary<string, string> indexNameToMenuItemsJsonPath)
     {
-        _menuItemsJsonPath = menuItemsJsonPath;
+        _indexNameToMenuItemsJsonPath = indexNameToMenuItemsJsonPath;
     }
 
     public async Task StartAsync(CancellationToken cancellationToken = default, int? fixedPort = null)
     {
-        _documents = MenuIndex.Load(_menuItemsJsonPath);
+        _documentsByIndex = _indexNameToMenuItemsJsonPath.ToDictionary(
+            kv => kv.Key, kv => MenuIndex.Load(kv.Value), StringComparer.Ordinal);
 
         var builder = WebApplication.CreateBuilder();
         builder.Logging.ClearProviders();
@@ -110,6 +127,29 @@ public sealed class FakeSearchServer : IAsyncDisposable
         if (string.IsNullOrEmpty(LastApiKeyHeader))
         {
             context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            return;
+        }
+
+        // Issue #76 part 2: the whole point of the multi-index fake -- look the requested index
+        // up in whatever set this fake was actually started with, rather than always answering
+        // from one shared document set regardless of which index the caller's SearchClient
+        // targeted. An index name this fake was never given (a disabled persona, a typo, or a
+        // genuinely unknown index) 404s with an Azure-AI-Search-shaped error body, exactly like
+        // the real service would for a nonexistent index -- never silently falls back to someone
+        // else's documents.
+        if (!_documentsByIndex.TryGetValue(indexName, out var documents))
+        {
+            context.Response.StatusCode = StatusCodes.Status404NotFound;
+            context.Response.ContentType = "application/json;odata.metadata=none";
+            var notFoundBody = new JsonObject
+            {
+                ["error"] = new JsonObject
+                {
+                    ["code"] = "ResourceNotFound",
+                    ["message"] = $"The index '{indexName}' for service was not found.",
+                },
+            };
+            await context.Response.WriteAsync(notFoundBody.ToJsonString(), context.RequestAborted).ConfigureAwait(false);
             return;
         }
 
@@ -146,7 +186,7 @@ public sealed class FakeSearchServer : IAsyncDisposable
             return;
         }
 
-        var matches = Filter(searchText).Take(top);
+        var matches = Filter(documents, searchText).Take(top);
 
         var values = new JsonArray();
         foreach (var doc in matches)
@@ -159,15 +199,15 @@ public sealed class FakeSearchServer : IAsyncDisposable
         await context.Response.WriteAsync(response.ToJsonString(), context.RequestAborted).ConfigureAwait(false);
     }
 
-    private IEnumerable<MenuDocument> Filter(string? searchText)
+    private static IEnumerable<MenuDocument> Filter(IReadOnlyList<MenuDocument> documents, string? searchText)
     {
         if (string.IsNullOrWhiteSpace(searchText) || searchText == "*")
         {
-            return _documents;
+            return documents;
         }
 
         var terms = searchText.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        var matched = _documents.Where(d => terms.Any(term =>
+        var matched = documents.Where(d => terms.Any(term =>
             d.Name.Contains(term, StringComparison.OrdinalIgnoreCase) ||
             d.Description.Contains(term, StringComparison.OrdinalIgnoreCase) ||
             d.Category.Contains(term, StringComparison.OrdinalIgnoreCase))).ToList();
@@ -175,7 +215,7 @@ public sealed class FakeSearchServer : IAsyncDisposable
         // A real semantic/vector search never returns zero rows for a plausible menu question;
         // fall back to the full catalog so tools.py's happy path always has something to reason
         // over, matching how the real ranked/semantic index behaves for near-miss queries.
-        return matched.Count > 0 ? matched : _documents;
+        return matched.Count > 0 ? matched : documents;
     }
 
     private static JsonObject ProjectDocument(MenuDocument doc, string[]? selectFields)

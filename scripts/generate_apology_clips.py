@@ -2,7 +2,7 @@
 """Generate the carhop's pre-recorded "one moment" apology clips.
 
 When the realtime model is rate-limited twice in a row, the browser plays
-app/frontend/public/audio/apology-<lang>.wav (see docs/rate_limit_recovery.md).
+personas/<persona-id>/assets/audio/apology-<lang>.wav (see docs/rate_limit_recovery.md).
 The clip has to be local audio: the model is the thing that is rate-limited, so
 it can't say sorry at that moment. This script records one clip per UI language
 with the live model, once, so it can be re-run if the default voice changes:
@@ -36,7 +36,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import smoke_realtime  # noqa: E402
 
-OUT_DIR = smoke_realtime.REPO_ROOT / "app" / "frontend" / "public" / "audio"
+from default_persona import get_default_persona  # noqa: E402
+
+# Rick's PR-110 review item 2 (issue #80): the pack to write into comes from the persona
+# catalog's own default (`default_persona.py`, #74's single source of truth for "no persona
+# specified"), never a literal hard-coded pack id. `--persona` (choosing a NON-default pack) is
+# #83's; defaulting to the catalog's default persona is enough for this script today.
+OUT_DIR = get_default_persona().assets_dir / "audio"
 SAMPLE_RATE = 24_000
 
 # One per locale in app/frontend/src/locales (and APOLOGY_LANGUAGES in lib/apology.ts).

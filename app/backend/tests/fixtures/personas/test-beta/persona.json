@@ -40,7 +40,7 @@
   "machines": { "soda_machine": { "status": "operational", "label": "Soda machine is down" } },
 
   "models": {
-    "realtime": { "default": "gpt-realtime-mini", "allowed": ["gpt-realtime-mini"] }
+    "realtime": { "default": "gpt-realtime-mini", "allowed": ["gpt-realtime-mini", "gpt-realtime-2.1"] }
   },
 
   "strategies": { "searchQueryRewrite": "none" },

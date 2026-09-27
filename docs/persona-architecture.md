@@ -518,8 +518,10 @@ Local mode is selectable only when `/health` reports it available (models presen
 - **Same files.** Both backends read the same `config.yaml` catalog, the same `AZURE_AI_MODEL_DEPLOYMENTS`, the
   same `persona.json`, and expose the same `/api/personas/{id}` model list and `?model=` contract.
 - **Realtime.** The chosen deployment goes into the upstream URL (`/openai/v1/realtime?model=<deployment>`).
-  `reasoning` is sent only when the catalog says so; the current name heuristic stays only as the `auto`
-  fallback.
+  Whether `reasoning` is sent is decided in this order: a runtime rejection latch (always wins, for the rest
+  of the process); then the explicit `AZURE_OPENAI_REALTIME_REASONING_MODEL` switch (`true`/`false`, an
+  operator-level override); then the bound model's catalog `reasoning` flag; the deployment-name heuristic is
+  only the `auto` fallback, reached when the switch is unset and no model is bound yet.
 - **Cascade.** Chat calls go through the Foundry resource's OpenAI-compatible v1 endpoint, the one surface that
   serves both Azure OpenAI and Foundry Models deployments:
   - Python uses the `openai` SDK;

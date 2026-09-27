@@ -1,0 +1,39 @@
+{
+  "menuItems": [
+    {
+      "category": "drinks",
+      "items": [
+        {
+          "name": "Beta Root Beer",
+          "sizes": [
+            { "size": "regular", "price": 2.29 },
+            { "size": "jumbo", "price": 3.29 }
+          ],
+          "description": "Test Beta's house root beer.",
+          "aliases": ["root beer"],
+          "requiresMachine": "soda_machine"
+        }
+      ]
+    },
+    {
+      "category": "mains",
+      "items": [
+        {
+          "name": "Beta Double Burger",
+          "sizes": [
+            { "size": "regular", "price": 4.49 }
+          ],
+          "description": "Test Beta's double-patty burger."
+        },
+        {
+          "name": "Beta Cheese Sauce",
+          "sizes": [
+            { "size": "regular", "price": 0.79 }
+          ],
+          "description": "Test Beta's cheese sauce add-in.",
+          "isExtra": true
+        }
+      ]
+    }
+  ]
+}

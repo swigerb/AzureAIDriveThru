@@ -23,6 +23,6 @@ export const VOICE_OPTIONS: readonly VoiceOption[] = [
 // Keep in sync with model.default_voice in app/backend/config.yaml.
 export const DEFAULT_VOICE = "marin";
 
-export function resolveVoice(stored: string | null | undefined): string {
-    return stored && VOICE_OPTIONS.some(v => v.value === stored) ? stored : DEFAULT_VOICE;
+export function resolveVoice(stored: string | null | undefined, fallback: string = DEFAULT_VOICE): string {
+    return stored && VOICE_OPTIONS.some(v => v.value === stored) ? stored : fallback;
 }
