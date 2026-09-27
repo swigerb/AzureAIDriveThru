@@ -243,10 +243,24 @@ class OrderState:
             # see docs/persona-architecture.md section 6.
             menu_price = menu.price_for(item_name, size)
             if menu_price is not None:
-                if to_decimal(price) != to_decimal(menu_price):
+                # The prompt no longer tells the model to send a price (0ab2119), so a null,
+                # non-numeric or omitted `price` is now a likely, well-formed input -- it must
+                # never crash the add. Only compare against the menu price when the tool call
+                # actually sent a real number (bool is deliberately excluded: `isinstance(True,
+                # int)` is True in Python, but a bare `true`/`false` is never a meaningful price).
+                # Any other type (``None``, a string, a bool) is ignored with its own debug log;
+                # the menu price is always charged either way.
+                if isinstance(price, (int, float)) and not isinstance(price, bool):
+                    if to_decimal(price) != to_decimal(menu_price):
+                        logger.debug(
+                            "Tool call price $%.2f for '%s' (%s) differs from menu price $%.2f; "
+                            "charging the menu price (session=%s)",
+                            price, item_name, size, menu_price, session_id,
+                        )
+                else:
                     logger.debug(
-                        "Tool call price $%.2f for '%s' (%s) differs from menu price $%.2f; "
-                        "charging the menu price (session=%s)",
+                        "Tool call price %r for '%s' (%s) is not numeric; ignoring it and "
+                        "charging the menu price $%.2f (session=%s)",
                         price, item_name, size, menu_price, session_id,
                     )
                 price = menu_price

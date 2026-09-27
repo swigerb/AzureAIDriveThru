@@ -425,7 +425,7 @@ update_order_tool_schema = {
             },
             "price": { 
                 "type": "number", 
-                "description": "Ignored; the server prices from the menu. Kept in the schema for backward compatibility only -- do not rely on this value being charged."
+                "description": "Ignored; the server prices from the menu."
             }
         },
         "required": ["action", "item_name", "size", "quantity"],

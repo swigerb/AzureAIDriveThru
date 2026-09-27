@@ -40,7 +40,7 @@ tools:
           description: "Quantity of the item to update. Represents the number of items."
         price:
           type: "number"
-          description: "Ignored (#104): the server always charges the resolved menu item's own price for the requested size, never this value. Kept for backward compatibility with older prompts/clients; do not rely on sending it to affect pricing."
+          description: "Ignored; the server prices from the menu."
       required:
         - "action"
         - "item_name"
