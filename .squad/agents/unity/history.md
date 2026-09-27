@@ -521,3 +521,73 @@ Since `app/frontend/` is off-limits, the middleware (`rtmt.py` + `audio_pipeline
   step explicitly pending rather than guessing at a template that doesn't exist
   yet. Pushed, watched CI to completion (all 8 checks green), reported back to
   the coordinator with head SHA on the PR itself.
+
+### 2026-09-28: PR #110 (#80, `squad/80-picker-assets`) round 3 — Rick's review
+- **Item 1 (logo):** test-alpha's fixture `logo.svg` was a size-less 1px circle
+  (no `viewBox`/`width`/`height`), so it loaded 200, `onError` never fired, and
+  the browser reserved a `300x150` intrinsic box that offset the hero badge.
+  Replaced it in place with a real 160x48 wordmark SVG (rounded rect + "ALPHA"
+  text) and hardened `BrandHero`'s `<img>` with `max-w-[14rem] object-contain`
+  so a future size-less logo can't blow out the layout again — belt-and-braces,
+  not just a fixture swap. Verified visually via Playwright: the badge sits
+  flush next to "VOICE ORDERING DEMO" with no offset. Added
+  `App.brandHero.test.tsx` (test-alpha image + hardening classes; test-beta
+  text fallback).
+- **Item 2 (baseline):** the two "raise" root causes were both hardcoded
+  `personas/sonic/...` paths (`generate_apology_clips.py`,
+  `test_rate_limit.py`) — fixed by deriving the path from
+  `default_persona.get_default_persona().assets_dir` instead, which reverted
+  both counts to dev's baseline (no raise needed at all). The three "new
+  entries" were legitimate persona-context/test files already in scope for
+  #80 — reworded their comments to drop brand-name prose rather than lower
+  the bar for the guard. **Gotcha:** `regenerate_rebrand_baseline.py` only
+  recomputes numeric `max`; it does NOT revert `issue`/`reason` text once a
+  count returns to baseline — that has to be hand-restored to dev's exact
+  wording (`git show origin/dev:...`) or the diff shows a spurious text-only
+  change even with the right number. Confirmed clean via both
+  `git diff origin/dev -- rebrand_baseline.yaml` (decreases/removals only) and
+  the CI script itself,
+  `check_rebrand_baseline_against_base.py <base-baseline>` (exit 0).
+- **Item 3 (loading shell):** spinner recolored to `border-muted-foreground`
+  (was `border-primary`); a `data-persona-loading` attribute on
+  `<html>` (toggled by a `useEffect` keyed off `!personaReady`) drives new
+  `index.css` rules that hide the body's gradient background and the
+  `::before`/`::after` decorative blobs until a persona resolves. Verified via
+  a Playwright `page.route` delay on `/api/personas` to reliably freeze the
+  loading state long enough to screenshot it (a local backend resolves too
+  fast to catch by chance).
+- **Item 4 (PR #106 coordination):** #106 (Birdperson round 3, issue #75)
+  merged to dev *during* this session — merged `origin/dev` again
+  post-implementation (clean, no conflicts) and re-validated everything
+  against the real shape rather than trusting the pre-merge assumption. The
+  frontend types (`PersonaModelOption {id,label,reasoning}`,
+  `PersonaModelPipeline {default, models?: PersonaModelOption[]}`) already
+  matched exactly what `app.py`'s `_model_pipelines_body`/`_selectable_models`
+  emit post-merge — built this against the PR description ahead of the merge
+  landing, and it held up byte-for-byte once verified against dev's real
+  `app.py`. **Gotcha:** `brandColorTokens.test.ts`'s hex-literal guard
+  (`/#(?:[0-9a-f]{8}|[0-9a-f]{6}|[0-9a-f]{4}|[0-9a-f]{3})(?![0-9a-f])/gi`)
+  flags bare `#106`/`#110`-style refs in source comments as false-positive hex
+  colors, because 3+ pure-digit numbers are also valid hex — write "PR 106" /
+  "issue 80" without the `#` in `app/frontend/src` comments instead (`#75`/
+  `#80` are safe only because they're 2 digits, below the regex's 3-digit
+  floor).
+- **Validation:** `npx vitest run` 230/230; `npm run build` clean;
+  `dotnet test --filter Category=Browser` 5/5;
+  `dotnet test --filter Category!=Browser` (python backend) 647/647 (up from
+  637 pre-#106-merge); `pytest app/backend/tests` 1147 passed/168 subtests (up
+  from 1073); `ruff check .` clean. Two separate Python venvs were needed in
+  this worktree: a repo-root one (`<worktree>/.venv`) that
+  `Conformance.Harness.PythonBackendLauncher` hardcodes for the dotnet test
+  harness, and `app/backend/.venv` only for the one-off baseline regeneration
+  script — conflating them wastes time chasing a launcher failure that's
+  actually just the wrong venv location.
+- **Screenshots** (Playwright, real backend serving a scratch `PERSONAS_DIR`
+  combining `personas/` + the two fixture packs, never committed): test-alpha
+  light (logo aligned), test-beta light (text fallback), first-load neutral
+  shell (delayed `/api/personas` route to freeze the loading state), Sonic
+  light + dark (regression, unchanged).
+- 6 commits on top of the two `origin/dev` merges (`ff3aee4` pre-work,
+  `73826c0` post-#106), pushed, no force-push, no rebase. PR #110 commented
+  addressed to Rick mapping all 4 items with the baseline diff pasted inline;
+  did not merge.

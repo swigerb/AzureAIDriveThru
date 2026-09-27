@@ -13,21 +13,28 @@ namespace Conformance.Tests.Scenarios.Ordering;
 /// order doesn't go stale, and (b) caps consecutive failures (<c>_TOOL_FAILURE_CAP</c> = 2) so it
 /// stops silently auto-continuing after that many failures in a row with no success between them.
 ///
-/// Both scenarios here deliberately use <c>update_order</c> with a string <c>price</c>
-/// (<c>"cheap"</c>) rather than a missing required argument: <c>tools.py</c>'s own layer-2
-/// validation only checks <c>action</c>/<c>item_name</c>/<c>size</c>/<c>quantity</c> presence, so
-/// a call with all four present but a non-numeric price sails past it and hits the unguarded
-/// `price &lt;= 0.0` comparison at <c>tools.py:~391</c>, raising a genuine <c>TypeError</c> that
-/// only rtmt.py's layer-1 <c>except</c> block catches -- exactly the failure mode Rick's S3 "S3"
-/// probe describes, and the only way this black-box harness can reach layer 1 through
-/// <c>update_order</c>'s own front door (see <see cref="ToolErrorSessionSurvivesTests"/>'s
-/// missing-<c>item_name</c> script, which is caught by layer 2 instead and never reaches here).
+/// Both scenarios here deliberately use <c>update_order</c> with a string <c>quantity</c>
+/// (<c>"two"</c>) rather than a missing required argument: <c>tools.py</c>'s own layer-2
+/// validation only checks <c>action</c>/<c>item_name</c>/<c>size</c>/<c>quantity</c> *presence*,
+/// so a call with all four present but a wrong-typed quantity sails past it. Rick's #104 review
+/// (PR #107) moved this scenario off a non-numeric <c>price</c> (<c>"cheap"</c>): #104 made the
+/// tool call's own <c>price</c> ignored rather than validated, and <c>order_state.py</c>'s
+/// menu-vs-tool-call comparison only ever runs on an actual <c>int</c>/<c>float</c> (never a
+/// <c>bool</c>) tool price, so a non-numeric price is now silently ignored instead of raising --
+/// it no longer reaches layer 1 at all. A string <c>quantity</c> still does: it sails past
+/// layer 2's presence check, then raises a genuine Python <c>TypeError</c> at <c>tools.py</c>'s
+/// per-item quantity-limit check (<c>new_item_qty = existing_qty + quantity</c>, an <c>int +
+/// str</c>) before the whole-order limit sum is ever reached, which only rtmt.py's layer-1
+/// <c>except</c> block catches -- exactly the failure mode Rick's S3 "S3" probe describes, and
+/// the only way this black-box harness can reach layer 1 through <c>update_order</c>'s own front
+/// door (see <see cref="ToolErrorSessionSurvivesTests"/>'s missing-<c>item_name</c> script, which
+/// is caught by layer 2 instead and never reaches here).
 /// </summary>
 [Collection(ConformanceCollection.Name)]
 public sealed class ToolFailureCapAndTicketRefreshTests(ConformanceFixture fixture)
 {
-    private const string BadPriceArgs =
-        """{"action":"add","item_name":"Tots","size":"medium","quantity":1,"price":"cheap"}""";
+    private const string BadQuantityArgs =
+        """{"action":"add","item_name":"Tots","size":"medium","quantity":"two","price":2.79}""";
 
     [Fact]
     public Task A_genuine_tool_exception_refreshes_the_guests_ticket() => fixture.RunAsync(async () =>
@@ -36,11 +43,11 @@ public sealed class ToolFailureCapAndTicketRefreshTests(ConformanceFixture fixtu
         var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
         await using var _ = browser;
 
-        const string callId = "call_bad_price_ticket";
+        const string callId = "call_bad_quantity_ticket";
         var browserWatermark = browser.ReceivedFrames.Count;
 
         connection.Script.Enqueue(new ResponseScript([
-            new FunctionCallEvent(Name: "update_order", ArgumentsJson: BadPriceArgs, CallId: callId),
+            new FunctionCallEvent(Name: "update_order", ArgumentsJson: BadQuantityArgs, CallId: callId),
             new DoneEvent(),
         ]));
         await browser.SendResponseCreateAsync(ct);
@@ -115,17 +122,17 @@ public sealed class ToolFailureCapAndTicketRefreshTests(ConformanceFixture fixtu
         var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
         await using var _ = browser;
 
-        // Two consecutive genuine tool exceptions (both a string "price", same shape as
+        // Two consecutive genuine tool exceptions (both a string "quantity", same shape as
         // A_genuine_tool_exception_refreshes_the_guests_ticket above), with no success in
         // between -- exactly rtmt.py's _TOOL_FAILURE_CAP (2) in a row. The first failure's
         // auto-continue must still fire as always; the SECOND failure reaches the cap and must
         // suppress it.
         connection.Script.Enqueue(new ResponseScript([
-            new FunctionCallEvent(Name: "update_order", ArgumentsJson: BadPriceArgs, CallId: "call_cap_a"),
+            new FunctionCallEvent(Name: "update_order", ArgumentsJson: BadQuantityArgs, CallId: "call_cap_a"),
             new DoneEvent(),
         ]));
         connection.Script.Enqueue(new ResponseScript([
-            new FunctionCallEvent(Name: "update_order", ArgumentsJson: BadPriceArgs, CallId: "call_cap_b"),
+            new FunctionCallEvent(Name: "update_order", ArgumentsJson: BadQuantityArgs, CallId: "call_cap_b"),
             new DoneEvent(),
         ]));
         // Nothing else is queued -- if the cap is broken, a THIRD auto-continue falls through to
@@ -224,9 +231,9 @@ public sealed class ToolFailureCapAndTicketRefreshTests(ConformanceFixture fixtu
         var (browser, connection, _) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
         await using var _b = browser;
         foreach (var (name, args, id) in new[] {
-            ("update_order", BadPriceArgs, "f1"), ("get_order", "{}", "g1"),
-            ("update_order", BadPriceArgs, "f2"), ("get_order", "{}", "g2"),
-            ("update_order", BadPriceArgs, "f3"), ("get_order", "{}", "g3") })
+            ("update_order", BadQuantityArgs, "f1"), ("get_order", "{}", "g1"),
+            ("update_order", BadQuantityArgs, "f2"), ("get_order", "{}", "g2"),
+            ("update_order", BadQuantityArgs, "f3"), ("get_order", "{}", "g3") })
             connection.Script.Enqueue(new ResponseScript([new FunctionCallEvent(name, args, id), new DoneEvent()]));
 
         await browser.SendResponseCreateAsync(ct);   // the only guest/browser action
@@ -257,11 +264,11 @@ public sealed class ToolFailureCapAndTicketRefreshTests(ConformanceFixture fixtu
         await using var _ = browser;
 
         connection.Script.Enqueue(new ResponseScript([
-            new FunctionCallEvent(Name: "update_order", ArgumentsJson: BadPriceArgs, CallId: "call_reset_a"),
+            new FunctionCallEvent(Name: "update_order", ArgumentsJson: BadQuantityArgs, CallId: "call_reset_a"),
             new DoneEvent(),
         ]));
         connection.Script.Enqueue(new ResponseScript([
-            new FunctionCallEvent(Name: "update_order", ArgumentsJson: BadPriceArgs, CallId: "call_reset_b"),
+            new FunctionCallEvent(Name: "update_order", ArgumentsJson: BadQuantityArgs, CallId: "call_reset_b"),
             new DoneEvent(),
         ]));
         await browser.SendResponseCreateAsync(ct);
@@ -313,7 +320,7 @@ public sealed class ToolFailureCapAndTicketRefreshTests(ConformanceFixture fixtu
         // number, not comparable to connection.ReceivedFrames' independent counter).
         var connectionWatermarkForCallC = connection.ReceivedFrames.Count;
         connection.Script.Enqueue(new ResponseScript([
-            new FunctionCallEvent(Name: "update_order", ArgumentsJson: BadPriceArgs, CallId: "call_reset_c"),
+            new FunctionCallEvent(Name: "update_order", ArgumentsJson: BadQuantityArgs, CallId: "call_reset_c"),
             new DoneEvent(),
         ]));
         await browser.SendResponseCreateAsync(ct);

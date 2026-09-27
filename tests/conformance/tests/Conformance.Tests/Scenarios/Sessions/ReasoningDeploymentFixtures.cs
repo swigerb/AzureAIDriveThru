@@ -29,11 +29,23 @@ public sealed class Gpt21DzConformanceCollection : ICollectionFixture<Gpt21DzCon
 
 /// <summary>
 /// gpt-realtime-1.5-style deployments are NOT reasoning-capable by name (they answer `reasoning`
-/// with `invalid_value` and drop the whole session.update, tools included).
+/// with `invalid_value` and drop the whole session.update, tools included). PR #106 review round
+/// 3 (Rick, issue #75): the session's bound model (sonic's own realtime default, gpt-realtime-2.1,
+/// catalog `reasoning: true`) no longer decides this on its own -- the explicit
+/// `AZURE_OPENAI_REALTIME_REASONING_MODEL` switch now outranks the catalog too, so this fixture
+/// sets it to `false` to model how an operator actually runs a 1.5 deployment (disabling
+/// reasoning for the whole process, since the deployment itself cannot accept it, regardless of
+/// which model the catalog says is bound). Without this, the catalog's `reasoning: true` would
+/// leak `reasoning` into every bootstrap on this fixture and the real 1.5 deployment would reject
+/// it -- exactly the scenario this switch exists to prevent.
 /// </summary>
 public sealed class Gpt15ConformanceFixture : ConformanceFixture
 {
     protected override string? Deployment => "gpt-realtime-1.5-conformance";
+
+    protected override BackendProfile Profile { get; } = new(
+        "Gpt15",
+        new Dictionary<string, string> { ["AZURE_OPENAI_REALTIME_REASONING_MODEL"] = "false" });
 }
 
 [CollectionDefinition(Name)]

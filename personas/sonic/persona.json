@@ -90,7 +90,32 @@
         "status.notRecordingMessage": "Let's order from America's Drive-In!",
         "ticket.kicker": "Carhop ticket",
         "ticket.title": "Your Sonic Order",
-        "menu.button": "View Sonic Menu"
+        "menu.button": "View Sonic Menu",
+        "ticket.emptyHint": "Add a slush, burger, or shake to kick things off."
+      },
+      "es": {
+        "app.title": "Pedidos por voz de Sonic",
+        "status.notRecordingMessage": "¡Ordena desde el Drive-In favorito de América!",
+        "ticket.kicker": "Boleto del carhop",
+        "ticket.title": "Tu pedido de Sonic",
+        "menu.button": "Ver el menú de Sonic",
+        "ticket.emptyHint": "Agrega un slush, una hamburguesa o un batido para empezar."
+      },
+      "fr": {
+        "app.title": "Commande vocale Sonic",
+        "status.notRecordingMessage": "Commandons chez America's Drive-In !",
+        "ticket.kicker": "Ticket du carhop",
+        "ticket.title": "Votre commande Sonic",
+        "menu.button": "Voir le menu Sonic",
+        "ticket.emptyHint": "Ajoutez un slush, un burger ou un milkshake pour commencer."
+      },
+      "ja": {
+        "app.title": "Sonic 音声注文",
+        "status.notRecordingMessage": "アメリカのドライブインで注文しよう！",
+        "ticket.kicker": "カーホップ伝票",
+        "ticket.title": "あなたのSonicのご注文",
+        "menu.button": "Sonicのメニューを見る",
+        "ticket.emptyHint": "スラッシュ、バーガー、シェイクを追加して始めましょう。"
       }
     },
     "hero": { "headline": "Sonic ordering powered by Azure conversation intelligence", "callouts": [] },

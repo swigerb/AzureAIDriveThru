@@ -7,10 +7,10 @@ namespace Conformance.Tests.Scenarios.Ordering;
 
 /// <summary>
 /// Issue #9: `update_order` add/remove/modify scenarios — quantities, sizes (including Route 44),
-/// zero/negative price rejection, and both the per-item and whole-order quantity limits. Scripts
-/// real scripted-function-call turns against the real Python backend (see
-/// OrderScenarioHelpers.cs) and asserts on the `tool_result` JSON order summary
-/// (extension.middle_tier_tool_response) that reaches the browser, exactly as
+/// tool-call price is ignored in favor of the resolved menu price (#104), and both the per-item
+/// and whole-order quantity limits. Scripts real scripted-function-call turns against the real
+/// Python backend (see OrderScenarioHelpers.cs) and asserts on the `tool_result` JSON order
+/// summary (extension.middle_tier_tool_response) that reaches the browser, exactly as
 /// app/backend/tests/test_order_state.py and test_tool_calling.py assert against the in-process
 /// order state directly.
 /// </summary>
@@ -118,26 +118,114 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
         Assert.Equal(0, order.GetProperty("items").GetArrayLength());
     });
 
-    [Fact]
-    public Task Adding_an_item_at_zero_or_negative_price_is_rejected_and_nothing_is_added() => fixture.RunAsync(async () =>
+    /// <summary>
+    /// #104 acceptance criterion (Rick's issue #104 constraints): the unit price charged always
+    /// comes from the resolved menu record for (item, size), never the tool call's own `price`
+    /// argument -- the price parameter is accepted (kept in the tool schema so a caller can still
+    /// send one) but ignored, only ever logged if it disagrees with the menu. Covers a wrong price
+    /// that undercharges (0.0, previously rejected outright pre-#104), a negative price, a price
+    /// that overcharges, and a JSON `null` price -- all four must still add the item and charge
+    /// exactly the real menu price (Tots, medium = 2.79). `price` is passed as a raw JSON fragment
+    /// string (not a `double` InlineData interpolated with `{{}}`) so `"null"` can be expressed
+    /// directly and no culture-sensitive `double`-to-string formatting is in play. Rick's PR #107
+    /// review, required item 1: a `null` tool price must never crash the add (guarded in
+    /// order_state.py -- see `Adding_an_item_with_a_null_or_omitted_tool_call_price_is_charged_the_menu_price`
+    /// below for the omitted-argument case, which can't be a `[Theory]` row since "omitted" means
+    /// no JSON key at all, not a value). A mutation that reverts to trusting the tool-call price
+    /// (e.g. re-introducing tools.py's old price&lt;=0 rejection, or reading `price` straight
+    /// through in order_state.py's add branch) fails this by either rejecting the add outright,
+    /// crashing on the `null` case, or charging the wrong amount.
+    /// </summary>
+    [Theory]
+    [InlineData("0.0")]
+    [InlineData("-5.00")]
+    [InlineData("999.99")]
+    [InlineData("null")]
+    [InlineData("\"cheap\"")]
+    [InlineData("true")]
+    public Task Adding_an_item_with_a_wrong_tool_call_price_is_charged_the_menu_price(string toolCallPriceJson) => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
         var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
         await using var _ = browser;
 
-        // tools.py::update_order rejects action=="add" && price<=0.0 with a TO_SERVER-only apology
-        // (never reaches the browser), so this step must be scripted with toClient:false or the
-        // wait for extension.middle_tier_tool_response would time out.
-        var rejected = await OrderScenarioHelpers.CallToolAsync(
+        var result = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "update_order",
-            """{"action":"add","item_name":"Tots","size":"medium","quantity":1,"price":0.0}""",
-            "call_zero_price", roundTripIndex, ct, toClient: false);
-        Assert.Null(rejected.ToolResultJson);
+            $$"""{"action":"add","item_name":"Tots","size":"medium","quantity":1,"price":{{toolCallPriceJson}}}""",
+            "call_wrong_tool_price", roundTripIndex, ct);
+
+        Assert.NotNull(result.ToolResultJson);
+        var order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        Assert.Equal(1, order.GetProperty("items").GetArrayLength());
+        OrderScenarioHelpers.AssertMoneyEqual(2.79m, order.GetProperty("total").GetDecimal(),
+            $"A wrong tool-call price ({toolCallPriceJson}) must be ignored and 'Tots' (medium) charged " +
+            "its real menu price, 2.79 -- not the tool-call price, not rejected outright, and not a crash.");
+    });
+
+    /// <summary>
+    /// Rick's PR #107 review, required item 1 (the omitted-argument twin of the `[Theory]` above):
+    /// `update_order` with the `price` key left out of the JSON entirely. `tools.py` defaults a
+    /// missing `price` to `0.0` via `args.get("price", 0.0)`, which is already numeric and never
+    /// crashed even before the null/non-numeric guard, but it must still be ignored the same as
+    /// every other tool-call price and the real menu price charged.
+    /// </summary>
+    [Fact]
+    public Task Adding_an_item_with_an_omitted_tool_call_price_is_charged_the_menu_price() => fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using var _ = browser;
 
         var result = await OrderScenarioHelpers.CallToolAsync(
-            connection, browser, "get_order", "{}", "call_get_after_zero_price", rejected.RoundTripIndex, ct);
+            connection, browser, "update_order",
+            """{"action":"add","item_name":"Tots","size":"medium","quantity":1}""",
+            "call_omitted_tool_price", roundTripIndex, ct);
+
+        Assert.NotNull(result.ToolResultJson);
         var order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
-        Assert.Equal(0, order.GetProperty("items").GetArrayLength());
+        Assert.Equal(1, order.GetProperty("items").GetArrayLength());
+        OrderScenarioHelpers.AssertMoneyEqual(2.79m, order.GetProperty("total").GetDecimal(),
+            "An omitted tool-call price must default harmlessly and 'Tots' (medium) still be " +
+            "charged its real menu price, 2.79.");
+    });
+
+    /// <summary>
+    /// Rick's PR #107 review, required item 2 (wrong-size carry-over acceptance row): adding a
+    /// Cherry Limeade medium (menu price 2.89), removing it, then re-adding it as a large but with
+    /// the stale medium price (2.89) still on the tool call -- the resolved size is `large`, so the
+    /// charge must be the large menu price (3.39), never the carried-over medium price. Mirrors
+    /// app/backend/tests/test_tool_calling.py's
+    /// test_resize_wrong_size_price_carryover_charges_new_size_menu_price. Non-drink-adjacent
+    /// timing note doesn't apply here (Cherry Limeade prices used deliberately match Rick's review
+    /// numbers exactly; happy-hour timing is irrelevant to this add/remove/re-add sequence since no
+    /// discount step is involved).
+    /// </summary>
+    [Fact]
+    public Task Adding_the_wrong_size_with_a_stale_price_carried_over_is_charged_the_new_size_menu_price() => fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using var _ = browser;
+
+        await OrderScenarioHelpers.CallToolAsync(
+            connection, browser, "update_order",
+            """{"action":"add","item_name":"Cherry Limeade","size":"medium","quantity":1,"price":2.89}""",
+            "call_add_medium", roundTripIndex, ct);
+        await OrderScenarioHelpers.CallToolAsync(
+            connection, browser, "update_order",
+            """{"action":"remove","item_name":"Cherry Limeade","size":"medium","quantity":1,"price":2.89}""",
+            "call_remove_medium", roundTripIndex, ct);
+        var result = await OrderScenarioHelpers.CallToolAsync(
+            connection, browser, "update_order",
+            """{"action":"add","item_name":"Cherry Limeade","size":"large","quantity":1,"price":2.89}""",
+            "call_add_large_stale_price", roundTripIndex, ct);
+
+        Assert.NotNull(result.ToolResultJson);
+        var order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        Assert.Equal(1, order.GetProperty("items").GetArrayLength());
+        OrderScenarioHelpers.AssertMoneyEqual(3.39m, order.GetProperty("total").GetDecimal(),
+            "A large re-add with the medium's stale tool-call price (2.89) carried over must be " +
+            "charged the large's real menu price, 3.39 -- never the carried-over medium price.");
     });
 
     [Theory]
