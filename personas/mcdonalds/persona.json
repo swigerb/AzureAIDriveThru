@@ -52,7 +52,9 @@
     "fries & sides": ["whipped cream", "chocolate", "vanilla", "strawberry"],
     "burgers": ["whipped cream", "cherry", "strawberry fruit"]
   },
-  "machines": { "ice_cream_machine": "down", "fryer": "operational" },
+  "machines": {
+    "ice_cream_machine": { "status": "down", "label": "Ice cream machine is down for cleaning" }
+  },
 
   "models": {
     "realtime": { "default": "gpt-realtime-2.1", "allowed": ["gpt-realtime-2.1", "gpt-realtime-mini"] },

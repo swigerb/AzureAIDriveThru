@@ -616,7 +616,11 @@
             "slots": [
               "sides",
               "drinks"
-            ]
+            ],
+            "autoFill": {
+              "sides": "{size} World Famous Fries®"
+            },
+            "defaultSize": "Medium"
           },
           "isExtra": false,
           "menuPeriod": "allDay",
@@ -650,7 +654,11 @@
             "slots": [
               "sides",
               "drinks"
-            ]
+            ],
+            "autoFill": {
+              "sides": "{size} World Famous Fries®"
+            },
+            "defaultSize": "Medium"
           },
           "isExtra": false,
           "menuPeriod": "allDay",
@@ -684,7 +692,11 @@
             "slots": [
               "sides",
               "drinks"
-            ]
+            ],
+            "autoFill": {
+              "sides": "{size} World Famous Fries®"
+            },
+            "defaultSize": "Medium"
           },
           "isExtra": false,
           "menuPeriod": "allDay",
@@ -718,7 +730,11 @@
             "slots": [
               "sides",
               "drinks"
-            ]
+            ],
+            "autoFill": {
+              "sides": "{size} World Famous Fries®"
+            },
+            "defaultSize": "Medium"
           },
           "isExtra": false,
           "menuPeriod": "allDay",
@@ -752,7 +768,11 @@
             "slots": [
               "sides",
               "drinks"
-            ]
+            ],
+            "autoFill": {
+              "sides": "{size} World Famous Fries®"
+            },
+            "defaultSize": "Medium"
           },
           "isExtra": false,
           "menuPeriod": "allDay",
@@ -786,7 +806,11 @@
             "slots": [
               "sides",
               "drinks"
-            ]
+            ],
+            "autoFill": {
+              "sides": "{size} World Famous Fries®"
+            },
+            "defaultSize": "Medium"
           },
           "isExtra": false,
           "menuPeriod": "allDay",
@@ -820,7 +844,11 @@
             "slots": [
               "sides",
               "drinks"
-            ]
+            ],
+            "autoFill": {
+              "sides": "{size} World Famous Fries®"
+            },
+            "defaultSize": "Medium"
           },
           "isExtra": false,
           "menuPeriod": "allDay",
@@ -854,7 +882,11 @@
             "slots": [
               "sides",
               "drinks"
-            ]
+            ],
+            "autoFill": {
+              "sides": "{size} World Famous Fries®"
+            },
+            "defaultSize": "Medium"
           },
           "isExtra": false,
           "menuPeriod": "allDay",
@@ -888,7 +920,11 @@
             "slots": [
               "sides",
               "drinks"
-            ]
+            ],
+            "autoFill": {
+              "sides": "{size} World Famous Fries®"
+            },
+            "defaultSize": "Medium"
           },
           "isExtra": false,
           "menuPeriod": "allDay",
@@ -922,7 +958,11 @@
             "slots": [
               "sides",
               "drinks"
-            ]
+            ],
+            "autoFill": {
+              "sides": "{size} World Famous Fries®"
+            },
+            "defaultSize": "Medium"
           },
           "isExtra": false,
           "menuPeriod": "allDay"
@@ -947,7 +987,11 @@
             "slots": [
               "sides",
               "drinks"
-            ]
+            ],
+            "autoFill": {
+              "sides": "{size} World Famous Fries®"
+            },
+            "defaultSize": "Medium"
           },
           "isExtra": false,
           "menuPeriod": "allDay",
@@ -1339,7 +1383,10 @@
             "slots": [
               "sides",
               "drinks"
-            ]
+            ],
+            "autoFill": {
+              "sides": "Hash Browns"
+            }
           },
           "isExtra": false,
           "menuPeriod": "breakfast",
@@ -1365,7 +1412,10 @@
             "slots": [
               "sides",
               "drinks"
-            ]
+            ],
+            "autoFill": {
+              "sides": "Hash Browns"
+            }
           },
           "isExtra": false,
           "menuPeriod": "breakfast",
@@ -1391,7 +1441,10 @@
             "slots": [
               "sides",
               "drinks"
-            ]
+            ],
+            "autoFill": {
+              "sides": "Hash Browns"
+            }
           },
           "isExtra": false,
           "menuPeriod": "breakfast"
@@ -1416,7 +1469,10 @@
             "slots": [
               "sides",
               "drinks"
-            ]
+            ],
+            "autoFill": {
+              "sides": "Hash Browns"
+            }
           },
           "isExtra": false,
           "menuPeriod": "breakfast",
@@ -1442,7 +1498,10 @@
             "slots": [
               "sides",
               "drinks"
-            ]
+            ],
+            "autoFill": {
+              "sides": "Hash Browns"
+            }
           },
           "isExtra": false,
           "menuPeriod": "breakfast",
@@ -1468,7 +1527,10 @@
             "slots": [
               "sides",
               "drinks"
-            ]
+            ],
+            "autoFill": {
+              "sides": "Hash Browns"
+            }
           },
           "isExtra": false,
           "menuPeriod": "breakfast",

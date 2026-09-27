@@ -1,5 +1,11 @@
 version: "1.0.0"
 messages:
+  # Catch-all fallback (forward guidance from #125, ahead of it landing: every rejection key the
+  # shared engines can emit must be defined so a missing key doesn't fail startup once #125 lands).
+  # Deliberately generic/short and never guest-blaming, for any failure that doesn't have its own
+  # more specific key below.
+  generic_error: "Sorry, something went wrong with that. Could you say that again?"
+
   # Search errors
   search_service_unavailable: "I'm sorry, I can't reach our menu data right now."
   search_no_results: "No matching menu entries found."
@@ -35,6 +41,23 @@ messages:
   size_not_available: >-
     I'm sorry, {{item_name}} isn't available in that size. We have it in
     {{available_sizes}} -- would you like one of those?
+
+  # #77: add-time rejection when a real, on-menu item needs a machine (persona.json
+  # `machines.<key>.status`) that this store's own equipment is currently "down" (here, only
+  # `ice_cream_machine` -- there is no `fryer` entry because no menu item requires one). Same
+  # structured (TO_SERVER) rejection shape as item_not_on_menu/size_not_available above --
+  # {{machine_label}} is `machines.<key>.label` itself, so this pack doesn't need a second,
+  # differently-worded copy of the same outage text.
+  machine_unavailable: >-
+    I'm sorry, {{item_name}} isn't available right now -- {{machine_label}}. Would you like to
+    try something else instead?
+
+  # #77: `modify` (resize in place) for an on-menu item that isn't in the order. Same structured
+  # (TO_SERVER) rejection shape, reason "not_in_order", so the model never tells the guest an item
+  # was changed when nothing was.
+  item_not_in_order: >-
+    {{item_name}} isn't in the order, so nothing was changed. Call get_order to check what's in
+    the order, then ask the guest whether they'd like to add it.
 
   # Quantity limit messages
   per_item_limit_maxed: >-

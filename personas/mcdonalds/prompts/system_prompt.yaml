@@ -154,7 +154,7 @@ sections:
       - Only prompt for a drink if that specific slot is currently empty on the order screen AND the guest did NOT mention it in their current or recent utterance
       - Trust the [SYSTEM HINT] for what's still missing — it reflects backend state AFTER each update_order call
       - REMEMBER: If you still have unprocessed items from the guest's utterance, add them BEFORE responding to the hint
-      - Changing an existing meal's SIZE (e.g., 'make that a large') isn't supported as an in-place resize yet — remove the meal and add it again at the new size, and re-confirm the drink
+      - Changing an existing item's SIZE (e.g., 'make that a large') is an in-place resize: call update_order with action 'modify', the item's name, and the new size — do NOT remove and re-add it, and its already-included meal components carry over unchanged
 
   - name: "TOOL_HINTS"
     priority: 13
