@@ -186,33 +186,35 @@ jobs:
           retention-days: 7
 
   # Part of issue #7 (S1.1) / #11 (S1.5): the shared black-box conformance suite, against every
-  # backend/persona combination it can currently run.
+  # backend it can currently run.
   #
   # Backend axis: "python" runs the full suite (matching PythonBackendLauncher's real relay/order
   # pipeline). #76 added "dotnet" here once the C# skeleton (issue #12 S2) had a health/config/
   # persona-pack/static-files surface worth gating on -- it deliberately does NOT run the full
-  # suite (the skeleton has no realtime relay or order pipeline yet), only the scoped
-  # health/auth/static/origin-validation subset docs/dotnet_mapping.md documents as already
-  # green (11 scenarios). Before this, CONFORMANCE_BACKEND=dotnet FAILED the suite by default in
-  # CI on purpose (PR #22 review item 15 -- DotnetPlaceholderPolicy/CiEnvironment.IsCi always
-  # ignore the CONFORMANCE_ALLOW_SKIP=1 opt-in when GITHUB_ACTIONS=true), precisely so CI could
-  # never silently report green with zero real backend coverage; the dotnet leg below now gets
-  # real (if partial) coverage instead of being skipped.
+  # suite (the skeleton has no realtime relay or order pipeline yet), only the scenarios tagged
+  # `[Trait("Dotnet", "ready")]` (docs/dotnet_mapping.md: 11 scenarios today, grown by a
+  # `DotnetTraitCoverageTests` floor of >= 11 so the count can't silently shrink). Before this,
+  # CONFORMANCE_BACKEND=dotnet FAILED the suite by default in CI on purpose (PR #22 review item
+  # 15 -- DotnetPlaceholderPolicy/CiEnvironment.IsCi always ignore the CONFORMANCE_ALLOW_SKIP=1
+  # opt-in when GITHUB_ACTIONS=true), precisely so CI could never silently report green with zero
+  # real backend coverage; the dotnet leg below now gets real (if partial) coverage instead of
+  # being skipped.
   #
-  # Persona axis: "sonic" only for now -- #78/#79 add the McDonald's/Dunkin persona packs, at
-  # which point this list grows with no other change needed (ConformancePersonas' own disk
-  # discovery already makes every persona pack under personas/ visible for free). Model/pipeline
-  # axes are a later wave (docs/persona-architecture.md section 8); this matrix shape is designed
-  # so they slot in the same way (a new `matrix:` key plus, if a leg needs a different filter,
-  # another conditional step like the dotnet-only ones below).
+  # Persona axis: intentionally not a matrix axis. CONFORMANCE_PERSONAS is left unset, so
+  # ConformancePersonas' own disk discovery enables every pack under personas/ that exists on
+  # disk (today: just Sonic) -- the same behaviour the backend itself falls back to. This means
+  # #78/#79 landing more persona packs needs no workflow edit at all; if run time ever requires
+  # sharding by persona, that can be added later (design doc section 8: "the suite's run time
+  # grows ... it is sharded if needed"). Model/pipeline axes are a later wave (design doc
+  # section 8); a new `matrix:` key plus, if a leg needs a different filter, another conditional
+  # step like the dotnet-only ones below is how they'd slot in.
   conformance:
-    name: Conformance suite (persona=${{ matrix.persona }}, backend=${{ matrix.backend }})
+    name: Conformance suite (backend=${{ matrix.backend }})
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        persona: [sonic]
         backend: [python, dotnet]
     steps:
       - name: Checkout
@@ -292,21 +294,23 @@ jobs:
           # Resolved from a repo-root-relative .venv by PythonBackendLauncher (python leg only);
           # DotnetBackendLauncher resolves app/backend-dotnet directly instead.
           CONFORMANCE_BACKEND: ${{ matrix.backend }}
-          # Issue #76: explicit today (matrix.persona is always "sonic"), matching what
-          # ConformancePersonas would already resolve to via disk discovery -- set explicitly so
-          # the persona axis actually exercises the harness's env-var wiring end-to-end, not just
-          # its own unit tests, and so a future persona value here needs no other CI change.
-          CONFORMANCE_PERSONAS: ${{ matrix.persona }}
+          # Issue #76 (Rick's PR #101 review item 2): deliberately left unset -- ConformancePersonas'
+          # own disk discovery already resolves to every pack under personas/ that exists today
+          # (just Sonic), exactly matching the backend's own un-overridden fallback. Set this
+          # explicitly only if run time ever requires shrinking the enabled set for a given leg.
         run: |
           set -o pipefail
           if [ "${{ matrix.backend }}" = "dotnet" ]; then
-            # #76: only the scenarios docs/dotnet_mapping.md documents as green against the C#
-            # skeleton (health/auth-token/static-index/origin-validation) -- the skeleton has no
-            # realtime relay or order pipeline yet (issue #12 S2 scope), so the full suite's
-            # remaining scenarios would fail for a reason unrelated to this leg's actual purpose.
-            # Security.OriginValidationTests.Exact_origin_is_accepted needs a real session/protocol
-            # pipeline that doesn't exist until a later wave -- excluded, not yet supported.
-            FILTER='(FullyQualifiedName~HealthEndpoint|FullyQualifiedName~AuthSession|FullyQualifiedName~StaticIndexHtml|FullyQualifiedName~OriginValidationTests)&FullyQualifiedName!~Security.OriginValidationTests.Exact_origin_is_accepted'
+            # #76 (Rick's PR #101 review item 1): only the scenarios tagged
+            # [Trait("Dotnet", "ready")] -- exactly the set docs/dotnet_mapping.md documents as
+            # green against the C# skeleton (health/auth-token/static-index/origin-validation
+            # subset; 11 scenarios today, floor-checked by DotnetTraitCoverageTests) -- the
+            # skeleton has no realtime relay or order pipeline yet (issue #12 S2 scope), so the
+            # full suite's remaining scenarios would fail for a reason unrelated to this leg's
+            # actual purpose. Growing dotnet coverage (C# PRs #13-#16) means adding the trait in
+            # the test files themselves; this filter and DotnetTraitCoverageTests' floor both pick
+            # up a newly tagged scenario automatically, with no workflow edit.
+            FILTER='Dotnet=ready&Category!=Browser'
           else
             FILTER='Category!=Browser'
           fi
@@ -334,7 +338,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: conformance-results-${{ matrix.persona }}-${{ matrix.backend }}
+          name: conformance-results-${{ matrix.backend }}
           path: |
             tests/conformance/TestResults
             tests/conformance/conformance-output.log
