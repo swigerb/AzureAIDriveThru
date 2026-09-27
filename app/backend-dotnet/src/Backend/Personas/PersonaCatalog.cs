@@ -194,6 +194,12 @@ public sealed class PersonaCatalog
                 $"Persona '{personaId}': {menuPath} failed model validation: {exc.Message}");
         }
 
+        // #128: two menu items normalizing to the same lookup key (or a colliding alias) must
+        // fail startup for every enabled persona, not silently let the last one loaded win. One
+        // implementation of the rule, shared with Python's menu_utils.validate_menu_key_collisions
+        // (design doc section 6) -- see MenuKeyValidator's own doc comment.
+        MenuKeyValidator.ValidateNoCollisions(menu, personaId, menuPath);
+
         var promptsDir = Path.Combine(packDir, "prompts");
         if (!Directory.Exists(promptsDir))
         {

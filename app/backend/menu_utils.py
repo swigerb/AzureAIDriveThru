@@ -35,10 +35,84 @@ __all__ = [
     "strip_modifiers",
     "_menu_key",
     "MenuCatalog",
+    "MenuKeyCollisionError",
+    "validate_menu_key_collisions",
     "get_catalog_for_persona",
 ]
 
 logger = logging.getLogger(__name__)
+
+
+class MenuKeyCollisionError(Exception):
+    """Raised when a persona pack's ``menu/menuItems.json`` has two menu items whose
+    ``_menu_key(name)`` collide, or an alias whose ``_menu_key`` collides with another item's own
+    lookup key or another item's own alias (issue #128).
+
+    ``_menu_key``'s modifier-stripping (see its own doc comment) is BY DESIGN -- "Tots" and "Tots
+    (Extra Crispy)" must classify identically -- but that exact same stripping silently collapsed
+    a draft pack's five differently-priced "(N piece)" nugget-size items into one key, with
+    whichever one loaded last winning and the other four unreachable/mispriced (the class of
+    correctness bug #87 warns about, first caught for issue #128). Raising here, at load time,
+    means a colliding pack can never load a degraded/last-write-wins catalog: the message always
+    names the persona pack and every colliding name, so the fix is obvious from the error message
+    alone -- the same fail-fast convention as ``persona_loader.PersonaValidationError`` (design doc
+    section 6)."""
+
+
+def validate_menu_key_collisions(menu_raw: dict, pack_label: str, menu_path: Path | str = "") -> None:
+    """Raise :class:`MenuKeyCollisionError` if *menu_raw* (a pack's own parsed ``menuItems.json``)
+    has two menu items whose ``_menu_key(name)`` collide, or an alias whose ``_menu_key`` collides
+    with another item's own lookup key or another item's own alias (issue #128; design doc
+    section 6). *pack_label* (usually the persona id) and *menu_path* (if given) are folded into
+    the error message so a broken pack is fixable from the message alone.
+
+    Two passes, not one: every item's own key must be fully known (pass 1) before any alias is
+    checked (pass 2), so an alias declared on an EARLIER item that collides with a LATER item's own
+    key is still caught, regardless of file order.
+
+    This is the single implementation of the rule -- both ``_load_menu_data`` below (the actual
+    per-persona ``MenuCatalog`` loader) and ``persona_loader.PersonaCatalog.load()`` (process
+    startup, every enabled persona, before any session ever binds to it) call this same function,
+    so a colliding pack fails identically and immediately no matter which path constructs it first.
+    """
+    location_suffix = f" in {menu_path}" if menu_path else ""
+    item_names_by_key: dict[str, str] = {}
+    ordered_items: list[tuple[str, list[str]]] = []
+    for category_entry in menu_raw.get("menuItems", []):
+        for item in category_entry.get("items", []):
+            name = item.get("name")
+            if not name:
+                continue
+            key = _menu_key(name)
+            if key in item_names_by_key:
+                raise MenuKeyCollisionError(
+                    f"Persona '{pack_label}': menu items '{item_names_by_key[key]}' and '{name}' "
+                    f"both normalize to the same lookup key '{key}'{location_suffix} -- rename "
+                    "one so they resolve distinctly (design doc section 6)."
+                )
+            item_names_by_key[key] = name
+            ordered_items.append((name, list(item.get("aliases") or ())))
+
+    alias_owner: dict[str, str] = {}
+    for name, aliases in ordered_items:
+        for alias in aliases:
+            alias_key = _menu_key(alias)
+            if not alias_key:
+                continue
+            if alias_key in item_names_by_key and item_names_by_key[alias_key] != name:
+                raise MenuKeyCollisionError(
+                    f"Persona '{pack_label}': alias '{alias}' on item '{name}' normalizes to "
+                    f"'{alias_key}', which collides with menu item "
+                    f"'{item_names_by_key[alias_key]}''s own lookup key{location_suffix} -- an "
+                    "ambiguous alias must not resolve silently (design doc section 6)."
+                )
+            if alias_key in alias_owner and alias_owner[alias_key] != name:
+                raise MenuKeyCollisionError(
+                    f"Persona '{pack_label}': alias '{alias}' (normalized '{alias_key}') is "
+                    f"declared on both '{alias_owner[alias_key]}' and '{name}'{location_suffix} -- "
+                    "an ambiguous alias must not resolve silently (design doc section 6)."
+                )
+            alias_owner[alias_key] = name
 
 # #74: the two functions below are parameterized on (size_map, size_aliases, hidden_sizes) so
 # ``MenuCatalog`` (below) can share the EXACT SAME algorithm for every persona's own sizes block --
@@ -188,13 +262,16 @@ def _menu_key(item_name: str) -> str:
 def _load_menu_data(
     menu_path: Path,
     size_key_fn: Any,
+    persona_id: str = "",
 ) -> tuple[dict[str, dict], dict[str, str]]:
     """Load every menu item from a pack's menu/menuItems.json, once, keyed by ``_menu_key(name)``.
 
     ``menu_path``/``size_key_fn`` (#74): a specific persona's own ``menu_path`` and its OWN
     size-alias resolver -- see ``MenuCatalog.from_persona`` below, the only caller -- so two
     personas with different size vocabularies each get correctly keyed ``sizes``/``prices`` maps,
-    one loader implementation, not a second copy per persona.
+    one loader implementation, not a second copy per persona. ``persona_id`` (#128) is only used to
+    name the pack in a :class:`MenuKeyCollisionError` message; it falls back to the menu file's own
+    grandparent directory name (``.../personas/<id>/menu/menuItems.json``) when omitted.
 
     Returns ``(item_fields, alias_map)``:
 
@@ -212,12 +289,20 @@ def _load_menu_data(
       on-menu resolution) -- not just the combo side slot as #60 originally scoped it (design doc
       section 4.3/6, issue #71). For "Tots" this is observably identical to #60's narrower scope:
       see ``TotsAliasResolvesEverywhereTests`` in test_menu_utils.py.
+
+    Raises :class:`MenuKeyCollisionError` (#128, issue #87's correctness-bug class) if two items
+    normalize to the same lookup key, or an alias collides with another item's own key or another
+    item's own alias -- see :func:`validate_menu_key_collisions`, called below BEFORE this
+    function's own ``item_fields``/``alias_map`` are built, so a colliding pack never gets a
+    partial/last-write-wins catalog, not even transiently.
     """
     if not menu_path.exists():
         return {}, {}
     try:
         with menu_path.open("r", encoding="utf-8") as f:
             data = json.load(f)
+        pack_label = persona_id or menu_path.parent.parent.name
+        validate_menu_key_collisions(data, pack_label, menu_path)
         item_fields: dict[str, dict] = {}
         alias_map: dict[str, str] = {}
         for category_entry in data.get("menuItems", []):
@@ -289,6 +374,10 @@ def _load_menu_data(
                     if alias_key:
                         alias_map[alias_key] = key
         return item_fields, alias_map
+    except MenuKeyCollisionError:
+        # #128: a colliding pack must fail fast, never be logged-and-swallowed into an empty/
+        # degraded catalog by the generic handler below -- re-raise before it's reached.
+        raise
     except Exception as exc:  # pragma: no cover
         logger.warning("Failed to load menu items: %s", exc)
         return {}, {}
@@ -404,7 +493,9 @@ class MenuCatalog:
         def _size_key_fn(size: str) -> str:
             return _canonical_size_key_for(size, size_aliases, hidden_sizes)
 
-        item_fields, alias_map = _load_menu_data(persona.menu_path, size_key_fn=_size_key_fn)
+        item_fields, alias_map = _load_menu_data(
+            persona.menu_path, size_key_fn=_size_key_fn, persona_id=persona.id
+        )
         extras_cfg = persona.manifest.extras
         bundles_cfg = persona.manifest.bundles
         machines = {key: (m.status, m.label) for key, m in persona.manifest.machines.items()}
