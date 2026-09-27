@@ -47,14 +47,6 @@ entries:
     name all three brands. Also rescues ''mcdonalds'' for the Local-mode paragraph''s
     reference to the upstream voice_rag McDonald''s demo this repo was forked from.'
   increase_reason: ''
-- file: app/backend/app.py
-  brand: sonic
-  max: 1
-  issue: '#74'
-  reason: 'Backend config/persona/prompt loader defaults, logger names and illustrative
-    docstring examples still default/hardcode to the single Sonic persona pending
-    #74''s session-scoped persona binding.'
-  increase_reason: ''
 - file: app/backend/audio_pipeline.py
   brand: sonic
   max: 4
@@ -104,7 +96,7 @@ entries:
   increase_reason: ''
 - file: app/backend/order_state.py
   brand: sonic
-  max: 2
+  max: 1
   issue: '#74'
   reason: 'Backend config/persona/prompt loader defaults, logger names and illustrative
     docstring examples still default/hardcode to the single Sonic persona pending

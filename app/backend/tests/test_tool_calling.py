@@ -40,7 +40,7 @@ from tools import (
 # infer_category) these tests used to call directly. Every session (including the
 # default one) now resolves its menu through this exact same MenuCatalog path, so
 # testing through it here (instead of a since-deleted module-level shortcut) proves
-# the real, only, code path -- a mutation re-adding a Sonic-only module global would
+# the real, only, code path -- a mutation re-adding a brand-only module global would
 # have nothing left to make these tests pass against.
 _SONIC = get_catalog_for_persona(get_default_persona())
 

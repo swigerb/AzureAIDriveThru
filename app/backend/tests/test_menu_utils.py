@@ -6,24 +6,19 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 import menu_utils
+from default_persona import get_default_persona
 from menu_utils import strip_modifiers
-from persona_loader import PersonaCatalog
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _GOLDEN_CATEGORIES_PATH = _REPO_ROOT / "tests" / "conformance" / "testdata" / "golden-menu-categories.json"
 _MENU_ITEMS_PATH = _REPO_ROOT / "personas" / "sonic" / "menu" / "menuItems.json"
 
-# #74 (Rick's PR #102 review, item 2): the module-level Sonic globals (SIZE_MAP,
+# #74 (Rick's PR #102 review, item 2): the module-level brand-specific globals (SIZE_MAP,
 # MENU_CATEGORY_MAP, etc.) are gone from menu_utils -- every classification below now goes
-# through a real MenuCatalog, built here from the real (non-fixture) Sonic persona pack, exactly
+# through a real MenuCatalog, built here from the deployment's real default persona pack, exactly
 # the same way `order_state.py`/`tools.py` resolve ANY bound persona's menu. This is not a
-# behavior change: it is the same Sonic data, loaded through the one remaining code path.
-_SONIC_PERSONA = PersonaCatalog.load(
-    personas_dir=_REPO_ROOT / "personas",
-    enabled=["sonic"],
-    default_persona_id="sonic",
-).get("sonic")
-_SONIC = menu_utils.get_catalog_for_persona(_SONIC_PERSONA)
+# behavior change: it is the same underlying data, loaded through the one remaining code path.
+_SONIC = menu_utils.get_catalog_for_persona(get_default_persona())
 
 
 def _load_golden_categories() -> list[dict]:

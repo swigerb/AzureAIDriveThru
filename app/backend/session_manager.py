@@ -639,7 +639,7 @@ class SessionManager:
                 "sessionToken": identifiers.session_token,
                 "roundTripIndex": identifiers.round_trip_index,
                 "roundTripToken": identifiers.round_trip_token,
-                "personaId": identifiers.persona_id,
+                "persona": identifiers.persona_id,
                 **(extra or {}),
             }
         )

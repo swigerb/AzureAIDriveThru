@@ -2,7 +2,8 @@
 
 Scope covered here:
   * a TEST-ONLY fixture persona pack (tests/fixtures/personas/{test-alpha,test-beta}) --
-    NOT the real personas/ directory, since only Sonic exists there today -- proves
+    NOT the real personas/ directory, since only the deployment's single default persona
+    pack exists there today -- proves
     multi-persona isolation is real, not just plausible from reading the code;
   * /realtime?persona=<id> binding: unknown id -> 404 before the WS upgrade, omitted
     falls back to the deployment default, a valid id binds the whole session (persona
@@ -13,7 +14,8 @@ Scope covered here:
   * no mid-conversation persona switching: OrderState exposes no setter for an existing
     session's persona id.
 
-Rick's #92 note ("remove the hardcoded PromptLoader(brand='sonic')") and the #97 fold-in
+Rick's #92 note ("remove the hardcoded PromptLoader with a fixed brand argument") and the
+#97 fold-in
 (explicit per-session event-loop confinement for OrderState) are covered by
 test_app.py / test_performance.py respectively -- not duplicated here.
 """
@@ -127,7 +129,7 @@ class MenuCatalogIsolationTests(unittest.TestCase):
 class OrderStatePersonaBindingTests(unittest.TestCase):
     """#74: order_state.py sessions bound to different personas get their own menu
     catalog, happy-hour behavior, and persona id -- no cross-session leakage through
-    module globals (the whole point of removing the Sonic module-level singletons)."""
+    module globals (the whole point of removing the brand-specific module-level singletons)."""
 
     def setUp(self):
         catalog = _load_fixture_catalog()
@@ -165,8 +167,8 @@ class OrderStatePersonaBindingTests(unittest.TestCase):
 
     def test_default_bound_session_binds_to_the_real_default_persona(self):
         """No persona argument at all -- the deployment default binding path (#74, Rick's PR
-        #102 review item 2) -- resolves to a REAL persona id (the deployment's own default,
-        e.g. "sonic"), never ``None``: there is no more unbound-session state to be "exactly as
+        #102 review item 2) -- resolves to a REAL persona id (the deployment's own default),
+        never ``None``: there is no more unbound-session state to be "exactly as
         before" about -- every session, including this one, is bound through the identical
         mandatory-catalog path."""
         sid = self._new_session()

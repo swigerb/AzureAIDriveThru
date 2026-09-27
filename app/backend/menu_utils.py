@@ -5,11 +5,11 @@ inference. :class:`MenuCatalog` is the single source of truth for both -- one
 implementation, instantiated once per enabled persona from that persona's OWN
 ``sizes``/``menu/menuItems.json`` data (design doc 4.4, #74), so two personas with
 different size vocabularies or menus can never leak into each other. There is no
-module-level Sonic-specific fallback: #74 (Rick's PR #102 review, item 2) removes
+module-level brand-specific fallback: #74 (Rick's PR #102 review, item 2) removes
 the old module-level ``SIZE_MAP``/``SIZE_ALIASES``/``MENU_CATEGORY_MAP`` globals and
 their free functions entirely -- a session with no persona explicitly bound resolves
 its menu through :mod:`default_persona`'s catalog default, the exact same
-``MenuCatalog`` path as any other persona, never a second, Sonic-only code path.
+``MenuCatalog`` path as any other persona, never a second, single-brand-only code path.
 
 #73 (ADR-001 decision 4: "No off-menu. If it's not on the menu in our source data, you cannot
 order it."): every keyword/substring fallback that used to classify a name NOT found in the

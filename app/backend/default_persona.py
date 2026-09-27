@@ -1,6 +1,6 @@
 """The single source of truth for "no persona specified" (#74, Rick's PR #102 review item 2).
 
-Every module that used to keep its own module-level Sonic globals as a "no persona
+Every module that used to keep its own module-level brand-specific globals as a "no persona
 catalog configured" fallback (``order_state.py``, ``tools.py``, ``rtmt.py``,
 ``session_manager.py``) now imports THIS module instead. There is no dual path any
 more: a session created with no persona argument, a WebSocket connected with no
@@ -12,7 +12,7 @@ persona id), never a distinct code path.
 
 Self-initializes at plain ``import`` time from :meth:`PersonaCatalog.load`'s own
 env-driven defaults (``PERSONAS_DIR``/``PERSONAS``/``DEFAULT_PERSONA``) -- the exact
-same defaults that reproduce today's single-Sonic-pack behavior byte for byte. This
+same defaults that reproduce today's single-default-persona-pack behavior byte for byte. This
 matters because at least one test (``test_conformance_hooks.py``'s
 ``_isolated_order_state()``) execs a completely independent copy of ``order_state.py``
 via ``importlib.util.spec_from_file_location`` that is never registered in

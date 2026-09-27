@@ -20,14 +20,14 @@ logger = logging.getLogger(__name__)
 
 # #74 (Rick's PR #102 review, item 2): every session is bound to a persona (the deployment
 # default when none was explicitly requested) -- there is no unbound/no-persona code path left,
-# so nothing here reads a module-level Sonic menu/size/category global. A caller that used to
-# import `canonical_size_key`/`normalize_size`/`is_extra_item`/`requires_machine`/
+# so nothing here reads a module-level brand-specific menu/size/category global. A caller that
+# used to import `canonical_size_key`/`normalize_size`/`is_extra_item`/`requires_machine`/
 # `resolve_menu_item`/`infer_category`/`SIZE_MAP` straight from this module (or from
 # ``menu_utils``) now resolves the exact same methods off a real ``MenuCatalog`` instance instead
 # -- ``default_persona.get_default_menu_catalog()`` for the deployment default, or
 # ``order_state_singleton.get_menu_catalog(session_id)`` for a specific session's own bound
 # persona (see ``_menu_for`` below). Tests construct their fixture the same way (see
-# tests/test_tool_calling.py's/test_tools_search.py's ``_SONIC`` fixture).
+# tests/test_tool_calling.py's/test_tools_search.py's default-persona menu-catalog fixture).
 __all__ = [
     "attach_tools_rtmt",
 ]
@@ -40,7 +40,7 @@ _biz_cfg = _config.get("business_rules", {})
 
 # Module-level prompt loader — set by attach_tools_rtmt() at startup. This is the
 # DEPLOYMENT-WIDE default a persona with no registered override falls back to (not a
-# Sonic-specific global -- every persona ultimately gets a real, non-None prompt_loader, either
+# brand-specific global -- every persona ultimately gets a real, non-None prompt_loader, either
 # its own registered one or this shared one); see _prompt_loader_for() below.
 _prompt_loader = None
 
@@ -173,7 +173,7 @@ def validate_customization(item_name: str, mods_string: str, prompt_loader=None,
     *prompt_loader*/*menu* (#74): the caller's resolved per-session persona context, if any;
     both default to the deployment default (``_prompt_loader``, ``default_persona`` catalog)
     when omitted, so a direct call with no session in hand still classifies against a real,
-    fully-loaded persona catalog -- never a Sonic-only module shortcut."""
+    fully-loaded persona catalog -- never a single-brand-only module shortcut."""
     prompt_loader = prompt_loader if prompt_loader is not None else _prompt_loader
     menu = menu or default_persona.get_default_menu_catalog()
     # PR #50 review (third round, minor): reuse the one shared strip_modifiers() helper instead of

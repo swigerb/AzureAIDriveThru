@@ -163,7 +163,7 @@ class OrderState:
         *persona* (#74, Rick's PR #102 review item 2): the session is bound to *persona*, or to
         the deployment-wide default (``default_persona.get_default_persona()``) when omitted --
         every session has exactly one bound persona, through the same ``MenuCatalog``/pricing
-        path either way. There is no unbound-session state and no module-level Sonic-only
+        path either way. There is no unbound-session state and no module-level brand-only
         fallback.
         """
         persona = persona or default_persona.get_default_persona()
@@ -460,8 +460,8 @@ class OrderState:
             # #74: every session is bound to a persona (the default when none was requested), so
             # readback always speaks that persona's OWN size vocabulary (``sizes.spokenAs``) via
             # its MenuCatalog -- there is no separate, hardcoded "RT 44"/"RT44" -> "Route 44"
-            # substitution path anymore (that substitution is now simply Sonic's own persona pack
-            # data, reached through the exact same ``.spoken()`` call every persona uses).
+            # substitution path anymore (that substitution is now simply the default persona's own
+            # pack data, reached through the exact same ``.spoken()`` call every persona uses).
             clean_name = session["_menu"].spoken(oi.display)
             # Convert parenthesized mods to speech-friendly format
             # e.g. "Sonic Cheeseburger (No Lettuce)" -> "Sonic Cheeseburger with no lettuce"

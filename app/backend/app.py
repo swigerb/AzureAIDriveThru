@@ -11,6 +11,7 @@ from azure.identity import AzureDeveloperCliCredential, DefaultAzureCredential
 from azure.search.documents.aio import SearchClient
 from dotenv import load_dotenv
 
+import default_persona
 from config_loader import get_config
 from persona_loader import Persona, PersonaCatalog, PersonaValidationError
 from prompt_loader import PromptLoader
@@ -263,7 +264,7 @@ async def create_app() -> web.Application:
     _startup_checks["personas_loaded"] = True
 
     # 3. Build one PromptLoader per enabled persona pack (issue #74; #92 review note --
-    # removes the hardcoded PromptLoader(brand="sonic")). Each loader reads from its own
+    # removes the single hardcoded default-brand PromptLoader). Each loader reads from its own
     # catalog-resolved Persona.prompts_dir, so a pack doesn't need to live under
     # PERSONAS_DIR/<id>/prompts for prompt loading to find it (same fail-fast behavior as
     # before: a missing/malformed prompts dir aborts startup, naming the persona).
@@ -334,10 +335,17 @@ async def create_app() -> web.Application:
     # _websocket_handler can resolve `?persona=`, reject an unknown one with 404 before the
     # WebSocket upgrade, and _forward_messages can use each session's own bound persona's
     # system prompt and default voice instead of the deployment-wide defaults above (which
-    # remain exactly the default persona's -- unchanged Sonic behavior when `?persona` is
-    # omitted, since `_persona_catalog.default_persona_id` is "sonic" today).
+    # remain exactly the default persona's -- unchanged behavior when `?persona` is
+    # omitted, since it resolves to `_persona_catalog.default_persona_id` today).
     rtmt.persona_catalog = _persona_catalog
     rtmt.persona_prompt_loaders = prompt_loaders
+
+    # Issue #74 (Rick's PR #102 review, item 2): every other module that resolves a
+    # persona/menu when none is explicitly passed (order_state, tools, and this module's own
+    # asset/menu routes below) goes through `default_persona`, not a private duplicate of the
+    # catalog. Point it at the one catalog this process just validated, so those call sites
+    # see the exact same enabled packs / default id as the WebSocket path above.
+    default_persona.configure_default_catalog(_persona_catalog)
 
     # One search index per persona (design doc 3.2/5.2): the shared field-schema config
     # below (semantic configuration, identifier/content/embedding fields, vector/ranker
