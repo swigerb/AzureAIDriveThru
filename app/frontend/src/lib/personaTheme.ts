@@ -9,8 +9,8 @@
  *
  * The `light`/`dark` base colors hold the four keys the design doc's abridged `persona.json` sample
  * documents today (`primary`, `secondary`, `background`, `foreground`, each an "H S% L%" triplet
- * with no `hsl()` wrapper -- exactly how persona.json and index.css's existing `--brand-red`/
- * `--brand-blue`/`--brand-light`/`--brand-dark` tokens already store them). `accents` is this
+ * with no `hsl()` wrapper -- exactly how persona.json and index.css's existing `--brand-primary`/
+ * `--brand-secondary`/`--brand-background`/`--brand-foreground` tokens already store them). `accents` is this
  * slice's own addition: every other brand color Sonic's components had hard-coded as literal hex
  * (87 of them per the design doc's diff, ~96 by this repo's current count) collapses into these
  * named slots. `accents` isn't in persona.schema.json yet -- promoting it there, if a second
@@ -121,21 +121,27 @@ export const SONIC_THEME: PersonaTheme = {
  * The `--brand-*` CSS custom properties `index.css` reads. `applyTheme` writes into these; nothing
  * else should call `style.setProperty` for them, so this map is the single source of truth for the
  * variable names on both sides.
+ *
+ * Names are roles (`primary`/`secondary`/`accent`/...), not Sonic's colors -- a future persona's
+ * `primary` could be any hue and would still write through the same `--brand-primary` variable.
+ * Only the *values* SONIC_THEME supplies happen to be red today (PR #91 review round 2: the
+ * round-1 names, `--brand-red`/`--brand-blue`/`--brand-yellow`, baked Sonic's colors into the
+ * variable names themselves, which would mislabel every other persona).
  */
 export const PERSONA_THEME_CSS_VARS = {
-    primary: "--brand-red",
-    secondary: "--brand-blue",
-    background: "--brand-light",
-    foreground: "--brand-dark",
-    primaryHex: "--brand-red-hex",
-    primaryStrong: "--brand-red-strong",
-    primaryLight: "--brand-red-light",
-    primaryTintOnDark: "--brand-red-tint",
-    secondaryHex: "--brand-blue-hex",
-    secondaryStrong: "--brand-blue-strong",
-    secondaryTintOnDark: "--brand-blue-tint",
-    accent: "--brand-yellow",
-    accentLight: "--brand-yellow-light",
+    primary: "--brand-primary",
+    secondary: "--brand-secondary",
+    background: "--brand-background",
+    foreground: "--brand-foreground",
+    primaryHex: "--brand-primary-hex",
+    primaryStrong: "--brand-primary-strong",
+    primaryLight: "--brand-primary-light",
+    primaryTintOnDark: "--brand-primary-tint",
+    secondaryHex: "--brand-secondary-hex",
+    secondaryStrong: "--brand-secondary-strong",
+    secondaryTintOnDark: "--brand-secondary-tint",
+    accent: "--brand-accent",
+    accentLight: "--brand-accent-light",
     ink: "--brand-ink",
     surfaceTint: "--brand-surface-tint",
     surfaceDark: "--brand-surface-dark",
