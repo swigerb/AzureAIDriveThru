@@ -43,7 +43,12 @@ class ExtrasRuleTests(unittest.TestCase):
         )
 
         self.assertEqual(result.destination, ToolResultDirection.TO_SERVER)
-        self.assertIn("extras", result.text.lower())
+        # #77: extras rejections are now a structured dict (status/item_added/reason/message),
+        # matching not_on_menu/machine_unavailable -- not a bare apology string. A hot dog is a
+        # blocked base category, not merely "no allowed base item yet".
+        self.assertEqual(result.text["status"], "rejected")
+        self.assertEqual(result.text["reason"], "extras_blocked_category")
+        self.assertIn("extras", result.text["message"].lower())
 
         summary = order_state_singleton.get_order_summary(session_id)
         self.assertEqual(len(summary.items), 1)
@@ -95,7 +100,9 @@ class ExtrasRuleTests(unittest.TestCase):
         )
 
         self.assertEqual(result.destination, ToolResultDirection.TO_SERVER)
-        self.assertIn("extras", result.text.lower())
+        self.assertEqual(result.text["status"], "rejected")
+        self.assertEqual(result.text["reason"], "extras_blocked_category")
+        self.assertIn("extras", result.text["message"].lower())
 
         summary = order_state_singleton.get_order_summary(session_id)
         self.assertEqual(len(summary.items), 1)
@@ -166,7 +173,9 @@ class ExtrasRuleTests(unittest.TestCase):
             )
         )
         self.assertEqual(result.destination, ToolResultDirection.TO_SERVER)
-        self.assertIn("extras", result.text.lower())
+        self.assertEqual(result.text["status"], "rejected")
+        self.assertEqual(result.text["reason"], "extras_blocked_category")
+        self.assertIn("extras", result.text["message"].lower())
 
     def test_allow_extra_with_multiple_drinks(self):
         """Multiple drinks in the order — extras should still be allowed."""
@@ -208,7 +217,8 @@ class ExtrasRuleTests(unittest.TestCase):
             )
         )
         self.assertEqual(result.destination, ToolResultDirection.TO_SERVER)
-        self.assertIn("can't add them", result.text.lower())
+        self.assertEqual(result.text["reason"], "extras_blocked_category")
+        self.assertIn("can't add them", result.text["message"].lower())
 
     def test_non_extra_item_always_allowed(self):
         """Non-extra items should always be addable regardless of order contents."""

@@ -497,7 +497,13 @@ class TestBundleSlotsByPackData:
         summary = order_state_singleton.get_order_summary(sid)
         assert math.isclose(summary.total, 6.0, rel_tol=1e-9)
 
-    def test_item_without_bundle_absorbs_nothing(self):
+    # Pre-existing gap (unrelated to #77): this test never fixed the clock, so it silently
+    # depended on real wall-clock time never landing inside the persona's own 14:00-16:00
+    # happy-hour window -- Cherry Limeade is `happyHourDiscounted:true`, so a run that happens
+    # to execute during that window got it silently half-priced, breaking the "no discount"
+    # assertion below. Matches every other happy-hour-adjacent test in this file/`test_extras_rules.py`.
+    @patch("order_state.is_happy_hour", return_value=False)
+    def test_item_without_bundle_absorbs_nothing(self, _mock_hh):
         """A plain (non-bundle) item must not absorb any side or drink."""
         sid = order_state_singleton.create_session()
         order_state_singleton.handle_order_update(
