@@ -9,10 +9,12 @@ import aiohttp
 from aiohttp import web
 from azure.core.credentials import AzureKeyCredential
 from azure.identity import AzureDeveloperCliCredential, DefaultAzureCredential
+from azure.identity.aio import DefaultAzureCredential as AsyncDefaultAzureCredential
 from azure.search.documents.aio import SearchClient
 from dotenv import load_dotenv
 
 import default_persona
+from cascade_processor import CascadeProcessor
 from config_loader import get_config
 from model_catalog import ModelCatalog, ModelValidationError
 from persona_loader import Persona, PersonaCatalog, PersonaValidationError
@@ -610,10 +612,9 @@ async def create_app() -> web.Application:
     # Issue #75: the shared model catalog + deployment map, so `_websocket_handler` can
     # resolve/validate `?model=` (`RTMiddleTier.resolve_model` -> `resolve_realtime_model`)
     # against something other than the always-empty catalog `RTMiddleTier.__init__` defaults
-    # to. `ProcessorRegistry` is the seam #82's cascade pipeline (and #81's local pipeline)
-    # will register alongside `rtmt` on -- only one entry today, but it's the concrete thing
-    # a "processor seam bypassed" mutation test exercises (see `processors.py`'s own
-    # docstring): nothing here is unused, `_websocket_handler`'s registry lookup is intact.
+    # to. `rtmt.processor_registry` is reassigned again below, once the cascade processor
+    # (#82) is constructed, to include it alongside `rtmt` -- this intermediate value keeps
+    # the realtime-only path correct even if that later assignment is ever removed.
     rtmt.model_catalog = model_catalog
     rtmt.processor_registry = ProcessorRegistry([rtmt])
 
@@ -666,6 +667,31 @@ async def create_app() -> web.Application:
         prompt_loader=prompt_loader,
         personas=persona_search_contexts,
     )
+
+    # Issue #82: the cascade pipeline processor (STT -> Foundry chat model with tool
+    # calling -> TTS), registered alongside `rtmt` on the same `ProcessorRegistry` seam
+    # #75 built for exactly this -- `_websocket_handler` dispatches `?model=` to whichever
+    # processor's catalog entry claims it, so no rtmt.py edit is needed. It shares rtmt's
+    # own `tools` dict (Beth's #77 tools, unedited) and `SessionManager` instance so
+    # tool calling and session-lifecycle behavior (idle timeout, concurrency limit,
+    # session metadata/round-trip tokens) are identical on both pipelines. The Foundry
+    # chat model client uses DefaultAzureCredential only (design doc 7.4 / issue #82) --
+    # never an API key -- via a dedicated async credential (the SDK's async
+    # `ChatCompletionsClient` needs an async `get_token`, unlike the sync `credential`
+    # above used for the realtime/search clients).
+    cascade_credential = AsyncDefaultAzureCredential()
+    cascade_processor = CascadeProcessor(
+        tools=rtmt.tools,
+        sessions=rtmt._sessions,
+        persona_catalog=_persona_catalog,
+        persona_prompt_loaders=prompt_loaders,
+        model_catalog=model_catalog,
+        foundry_endpoint=os.environ.get("AZURE_AI_FOUNDRY_ENDPOINT"),
+        audio_endpoint=llm_endpoint,
+        credential=cascade_credential,
+        default_voice=os.environ.get("AZURE_OPENAI_REALTIME_VOICE_CHOICE") or model_cfg.get("default_voice", "marin"),
+    )
+    rtmt.processor_registry = ProcessorRegistry([rtmt, cascade_processor])
 
     rtmt.attach_to_app(app, "/realtime")
 
