@@ -228,7 +228,7 @@ public sealed class ModelCatalog
         var reasoning = false;
         if (dict.TryGetValue("reasoning", out var reasoningRaw) && reasoningRaw is not null)
         {
-            if (reasoningRaw is not bool reasoningBool)
+            if (!TryParseBool(reasoningRaw, out var reasoningBool))
             {
                 throw new ModelValidationException($"config.yaml models.catalog[{index}] ('{id}')'s 'reasoning' must be a bool.");
             }
@@ -238,7 +238,7 @@ public sealed class ModelCatalog
         bool? toolCalling = null;
         if (dict.TryGetValue("toolCalling", out var toolCallingRaw) && toolCallingRaw is not null)
         {
-            if (toolCallingRaw is not bool toolCallingBool)
+            if (!TryParseBool(toolCallingRaw, out var toolCallingBool))
             {
                 throw new ModelValidationException($"config.yaml models.catalog[{index}] ('{id}')'s 'toolCalling' must be a bool.");
             }
@@ -256,6 +256,28 @@ public sealed class ModelCatalog
         }
 
         return new ModelEntry(id, pipeline, label, reasoning, toolCalling, runtime);
+    }
+
+    /// <summary>
+    /// YamlDotNet's untyped `Deserialize&lt;object?&gt;()` returns every scalar as a plain string
+    /// (see Configuration/SecurityConfig.cs's own doc comment for the same gotcha) -- so
+    /// `reasoning: true` in config.yaml comes back as the string "True"/"true", not the bool
+    /// `true`. Tolerates both shapes for the same reason SecurityConfig.ParseBool does.
+    /// </summary>
+    private static bool TryParseBool(object value, out bool result)
+    {
+        switch (value)
+        {
+            case bool b:
+                result = b;
+                return true;
+            case string s when bool.TryParse(s, out var parsed):
+                result = parsed;
+                return true;
+            default:
+                result = false;
+                return false;
+        }
     }
 
     private static IReadOnlyDictionary<string, string> ParseDeploymentMap(string? raw)

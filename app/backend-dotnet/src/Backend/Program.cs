@@ -3,6 +3,7 @@ using Backend;
 using Backend.Auth;
 using Backend.Configuration;
 using Backend.Health;
+using Backend.Models;
 using Backend.Personas;
 using Backend.Prompts;
 using Backend.Realtime;
@@ -11,9 +12,10 @@ using Microsoft.Extensions.FileProviders;
 
 // Host wiring (issue #12 S2): config, persona-pack loading, health, auth token endpoint, static
 // files, one event loop per session -- mirrors app/backend/app.py's create_app() startup sequence
-// and route table (docs/dotnet_mapping.md). Persona/model per-session binding is wave 7 (#74/#75)
-// -- /realtime here only proves the SessionActor mechanics, it does not yet route to any
-// persona-specific pipeline.
+// and route table (docs/dotnet_mapping.md). Persona/model per-session binding (#74/#75) is wired
+// below: /realtime resolves persona+model and dispatches to a registered pipeline processor
+// before the WebSocket upgrade; the realtime processor's own relay loop (owning frames after the
+// upgrade) is issue #13's job, not this wave's.
 
 var runningInProduction = ParseBool(Environment.GetEnvironmentVariable("RUNNING_IN_PRODUCTION"));
 
@@ -86,6 +88,35 @@ catch (PromptLoadException exc)
 }
 startupChecks.Pass("prompts_loaded");
 
+// ── 5. Model catalog (issue #75, design doc section 7.2): config.yaml's models.catalog +
+// AZURE_AI_MODEL_DEPLOYMENTS. Fail-fast if any enabled persona's own pipeline default isn't
+// catalogued for that pipeline (Rick's PR #106 review item 1) -- an unusable default should stop
+// startup, not surface as a confusing 404 on the first ?model=-omitted request. ──────────────
+ModelCatalog modelCatalog;
+try
+{
+    modelCatalog = ModelCatalog.FromConfig(appConfig);
+    modelCatalog.ValidatePersonaDefaults(personaCatalog, logger);
+}
+catch (ModelValidationException exc)
+{
+    logger.LogCritical("FATAL: Failed to load model catalog - {Message}", exc.Message);
+    return 1;
+}
+startupChecks.Pass("model_catalog_loaded");
+
+// ── 6. Processor registry (issue #75, design doc section 7.4): only "realtime" is registered
+// this wave -- its own model resolution is fully ported (Models/ModelDispatch.cs's
+// ResolveRealtimeModel), but ProcessAsync is a deliberate stub; the real upstream relay is #13. A
+// model catalogued for "cascade"/"local" 404s at dispatch time until their own processors land. ──
+var processorRegistry = new ProcessorRegistry();
+processorRegistry.Register(new RealtimeProcessor(
+    modelCatalog,
+    Environment.GetEnvironmentVariable("AZURE_OPENAI_REALTIME_DEPLOYMENT")!,
+    logger));
+
+var assetCacheConfig = AssetCacheConfig.FromConfig(appConfig);
+
 logger.LogInformation(
     "Startup validation passed: personas={Personas}, prompts loaded ({Chars} chars), config valid, {Count}/{Count} env vars set",
     string.Join(", ", personaCatalog.Ids), promptLoader.SystemPrompt.Length, requiredEnvVars.Length, requiredEnvVars.Length);
@@ -105,18 +136,20 @@ app.MapGet("/health", () => HealthEndpoint.Handle(startupChecks, personaCatalog)
 
 app.MapGet("/api/auth/session", () => Results.Json(new { token = tokenService.Create(expirySeconds: 900) }));
 
-// `/api/personas` is deliberately NOT mapped this wave (PR #96 review, required item 2): the
-// shape sketched here (`{personas: [ids], defaultPersona, models}`) diverges from the wire
-// contract pinned in docs/persona-architecture.md section 5.2
-// (`{default, personas: [{id, displayName, logoUrl, theme}], backends}`). Python is the
-// reference and defines the endpoint first (#74), with conformance pinning its exact shape;
-// this backend follows in the persona-binding half of #12 rather than shipping a
-// divergent shape that would become a second contract.
+// `/api/personas`, `/api/personas/{id}`, `/personas/{id}/menu.json`,
+// `/personas/{id}/assets/{*assetPath}` (issue #74/#12, design doc section 5.2): the persona
+// discovery/asset HTTP surface, matching the wire contract Python defines and conformance pins.
+// See Personas/PersonaRoutes.cs for the ported route handlers.
+PersonaRoutes.Map(app, personaCatalog, modelCatalog, assetCacheConfig);
 
 app.UseWebSockets();
 
-// One sequential event loop per session (issue #12), reachable at /realtime. No pipeline is
-// bound yet (wave 7 seam) -- this proves the actor/registry mechanics, not any relay behaviour.
+// One sequential event loop per session (issue #12), reachable at /realtime. Persona+model
+// binding (issue #74/#75) happens once, before the WebSocket upgrade -- an unknown/disabled
+// persona or an unselectable model 404s here exactly like rtmt.py's `_websocket_handler`, in the
+// same plain-text (not JSON) shape, distinct from the JSON 404s the HTTP persona routes above
+// return. The resolved processor's ProcessAsync (RealtimeProcessor is a stub this wave -- #13
+// lands the real upstream relay) then owns the session's mailbox loop as before.
 app.MapGet("/realtime", async (HttpContext context) =>
 {
     if (!context.WebSockets.IsWebSocketRequest)
@@ -142,9 +175,40 @@ app.MapGet("/realtime", async (HttpContext context) =>
         return rejection;
     }
 
+    // Persona resolution (issue #74): omitted ?persona= binds to DEFAULT_PERSONA; unknown/disabled
+    // 404s as plain text -- rtmt.py's _websocket_handler rejects here with `web.Response(status=
+    // 404, text=...)`, not the JSON shape the HTTP persona routes use, since this is still a
+    // pre-upgrade HTTP response on the /realtime endpoint itself, not a persona-discovery route.
+    var requestedPersonaId = context.Request.Query["persona"].ToString();
+    var personaId = string.IsNullOrEmpty(requestedPersonaId) ? personaCatalog.DefaultPersonaId : requestedPersonaId;
+    if (!personaCatalog.Contains(personaId))
+    {
+        return Results.Text($"Unknown or disabled persona: '{personaId}'", statusCode: 404);
+    }
+    var persona = personaCatalog.Get(personaId);
+
+    // Model dispatch + resolution (issue #75): resolves which pipeline processor owns this
+    // session, then validates the requested (or defaulted) model against that persona/pipeline.
+    // Both stages 404 as plain text on failure, same as rtmt.py.
+    var requestedModelId = context.Request.Query["model"].ToString();
+    string pipelineName;
+    IPipelineProcessor processor;
+    ResolvedModel resolvedModel;
+    try
+    {
+        (pipelineName, processor) = ModelDispatch.DispatchProcessor(
+            persona, string.IsNullOrEmpty(requestedModelId) ? null : requestedModelId, modelCatalog, processorRegistry);
+        resolvedModel = processor.ResolveModel(persona, string.IsNullOrEmpty(requestedModelId) ? null : requestedModelId);
+    }
+    catch (ModelSelectionException exc)
+    {
+        return Results.Text(exc.Message, statusCode: 404);
+    }
+
     var sessionId = Guid.NewGuid().ToString("n");
     using var socket = await context.WebSockets.AcceptWebSocketAsync().ConfigureAwait(false);
-    var actor = sessionRegistry.GetOrAdd(sessionId, id => new SessionActor(id));
+    var metadata = new SessionMetadata(persona.Id, resolvedModel.Id, pipelineName);
+    var actor = sessionRegistry.GetOrAdd(sessionId, id => new SessionActor(id, processor, metadata));
     try
     {
         var buffer = new byte[4096];
