@@ -136,7 +136,7 @@ def _conformance_testdata_pack_id(rel_posix: str):
 
     Mirrors ``_persona_pack_id``'s ownership rule for personas/<id>/** itself: a pack's own
     per-persona golden conformance fixtures (#78/#79 -- e.g.
-    tests/conformance/testdata/personas/dunkin/golden-menu-categories.json) are sourced from
+    tests/conformance/testdata/personas/<id>/smoke.json) are sourced from
     that pack's own menu/pricing and so may say its own brand, same as the pack that sourced
     them. Checked BEFORE the generic tests/conformance/testdata/ DIRECTORY_EXCEPTIONS entry
     (which only ever rescues 'sonic', for the original flat golden files that predate any

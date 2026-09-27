@@ -479,3 +479,66 @@
     24-core busy-loop load post-merge. Head `773561f` (merge commit) on top of `3908cb5`
     (#68) / `3c6a799` (#103) / `126398b` (#95). Did not merge -- PR opened for the team, "Refs
     #95, #103, #68" (nothing closed).
+
+## 2026-09-28 — squad/127-pack-happy-hour PR #133 (#127, per-pack happy-hour conformance)
+
+- **Real-pack Theory rows need per-row backend instances, not one shared fixture:** every
+  prior happy-hour test (`PersonaHappyHourConformanceTests`, `HappyHourBoundaryTests`) pins a
+  SINGLE shared clock/persona pair via a static `[CollectionDefinition]`/`ICollectionFixture`,
+  because the persona id and instant are compile-time constants there. #127 needed a Theory
+  over `ConformancePersonas.DiscoverFromDisk()` where each real pack has its own timezone and
+  window, so the pinned "inside" and "outside" instants differ per pack. Solved by making
+  `RealPackHappyHourFixture` a normal (non-static) `ConformanceFixture` subclass with a primary
+  constructor `(string personaId, DateTimeOffset instant)`, instantiated directly inside the
+  Theory body via `await using` + explicit `InitializeAsync()`/`RunAsync(...)` calls -- legal
+  because `ConformanceFixture` is `IAsyncLifetime`, which in xunit.v3 is just
+  `IAsyncDisposable` plus an `InitializeAsync()` method, not a magic xunit-only lifecycle hook.
+  New pattern for this codebase; documented inline for the next brand pack (#112) to copy.
+- **IANA timezone IDs resolve natively on this Windows box under .NET 11** --
+  `TimeZoneInfo.FindSystemTimeZoneById("America/Chicago")` etc. just works (ICU-backed), no
+  Windows-ID mapping table needed. Verified with a disposable scratch console project before
+  trusting it in the real Theory, then deleted the scratch project.
+- **"Just outside the window" is safest computed, never hand-written:** `outsideInstant =
+  insideInstant.AddSeconds(-1)`, derived from the SAME resolved UTC instant as "inside", makes
+  the boundary DST/timezone-safe by construction -- no manual wall-clock arithmetic that could
+  silently drift a pack's own DST rules.
+- **`file`-scoped classes don't cross files, even same namespace:** the existing
+  `PersonaHappyHourTestSupport` helper is `file static class` in a different .cs file, so it's
+  invisible to the new Theory's file -- had to duplicate it locally as
+  `RealPackHappyHourTestSupport`. A small, deliberate duplication rather than widening the
+  original's visibility for one caller.
+- **Coverage-test parity is worth adding even when it's currently a no-op:** mirrored
+  `PersonaSmokeCoverageTests.cs`'s exact shape (`RealPackHappyHourCoverageTests`,
+  independently re-discovering packs from disk and reflecting into the Theory's own
+  `[MemberData]` source) so a future accidental shrink of `DiscoveredPersonaIds()` fails loudly
+  even though today it's a 1:1 passthrough to `DiscoverFromDisk()`.
+- **Golden-file decision: DELETED, not wired in.** `testdata/personas/dunkin/golden-menu-
+  categories.json` / `golden-order-pricing.json` were never consumed by any C# fixture; their
+  `businessRules` block only duplicated `persona.json`'s own fields (a second, driftable source
+  of truth for exactly what this Theory now reads directly); their DST-boundary-matrix richness
+  exceeds #127's one-inside/one-outside-instant scope and remains scoped to a single other
+  pack's own dedicated boundary tests, which Dunkin never had an equivalent of; and their
+  tax/size-display/extras sections are a materially larger, out-of-scope conformance surface.
+  Rationale recorded inline in Dunkin's own `smoke.json` description.
+- **Rebrand guard (`test_rebrand_verification.py`) polices per-pack *testdata* prose too, not
+  just code:** my first draft of Dunkin's `smoke.json` description explained the golden-file
+  deletion by naming the OTHER real pack by brand for contrast ("remains Sonic-specific...")
+  -- failed `test_brand_word_counts_match_the_checked_in_baseline` because that literal
+  brand word appeared inside `personas/dunkin/**`. Fixed by rephrasing to "a single other,
+  unrelated pack's own dedicated test files" with no brand literal at all. Good reminder that
+  the no-brand-literal rule for #127 (shared C#) has a testdata-side twin already enforced by
+  CI, and it applies even to *my own* documentation prose, not just executable code.
+- **Mutation testing, exactly per the two required cases:** committed first (`08e9593`), then
+  (1) hardcoded `_happy_hour_discount` to `to_decimal("0.5")` in `order_state.py` regardless of
+  pack -- Sonic's row still passed (its own multiplier IS 0.5, a coincidence), Dunkin's row
+  failed with the exact loud message naming its own real multiplier (0.75); (2) hardcoded
+  `_happy_hour_announce` to `False` -- BOTH real packs' rows failed on the banner assertion,
+  since both currently have `announce:true`. Reverted both mutations (`git checkout --`),
+  re-verified a clean working tree and the full 677/677 conformance suite green again before
+  pushing.
+- Final validation: new Theory 2/2 rows pass (sonic, dunkin) + 1 coverage test; full
+  HappyHour+Smoke filter 61/61; full `.NET` conformance suite 677/677; pytest 1174 passed / 168
+  subtests; ruff clean. Head `08e959340371239a5acbe9fc3e368204cdd11cd1` on top of `06759fd`
+  (origin/dev). PR #133, "Refs #127" (nothing closed -- #112/McDonald's still open, so the
+  disabled-pack code path is correct but unexercised by a real pack until it lands). Did not
+  merge.
