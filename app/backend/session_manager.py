@@ -317,15 +317,29 @@ class SessionManager:
         """Record guest activity. Drives the idle clock (which also bounds the grace hold)."""
         self._last_activity[session_id] = self._clock()
 
-    def create_session(self, ws: web.WebSocketResponse, persona=None) -> str:
+    def create_session(self, ws: web.WebSocketResponse, persona=None, model_id: str | None = None,
+                        model_deployment: str | None = None, model_reasoning: bool | None = None,
+                        model_pipeline: str | None = None) -> str:
         """Create a new order session and map it to the WebSocket connection.
 
         *persona* (#74, optional): the persona this session is bound to for its entire
         lifetime (no mid-conversation switching); threaded straight through to
         ``order_state_singleton.create_session()``. Omitted: binds to the deployment's
         default persona (mandatory catalog, #74/Rick's PR #102 review item 2 -- there is
-        no more unbound-session state)."""
-        session_id = order_state_singleton.create_session(persona=persona)
+        no more unbound-session state).
+
+        *model_id*/*model_deployment*/*model_reasoning*/*model_pipeline* (#75, optional):
+        this session's own bound realtime model -- resolved once, by the caller
+        (``rtmt.py::_websocket_handler``, via ``processors.dispatch_processor`` + the
+        returned processor's own ``resolve_model()``), BEFORE the socket is even prepared,
+        exactly like *persona* above (no mid-conversation model switching either). Omitted:
+        binds to *persona*'s own ``models.realtime.default`` (see
+        ``order_state.OrderState.create_session``) -- today's exact, unchanged path.
+        *model_pipeline* (Rick's PR #106 review item 3) omitted defaults to ``"realtime"``."""
+        session_id = order_state_singleton.create_session(
+            persona=persona, model_id=model_id, model_deployment=model_deployment,
+            model_reasoning=model_reasoning, model_pipeline=model_pipeline,
+        )
         self._session_map[ws] = session_id
         self._attached[session_id] = ws
         self._context_monitors[session_id] = ContextMonitor(session_id)
@@ -508,7 +522,8 @@ class SessionManager:
         self._resume_index[digest] = session_id
         return resume_id
 
-    def resume(self, ws: web.WebSocketResponse, resume_id: object, requested_persona_id: str | None = None) -> ResumeOutcome:
+    def resume(self, ws: web.WebSocketResponse, resume_id: object, requested_persona_id: str | None = None,
+               requested_model_id: str | None = None) -> ResumeOutcome:
         """Re-attach the session identified by ``resume_id`` to ``ws``.
 
         Single use: the presented id is consumed and a rotated one is returned.
@@ -526,7 +541,16 @@ class SessionManager:
         ``default_persona.get_default_persona().id`` before comparing. Mismatched ->
         rejected as ``"persona_mismatch"`` BEFORE the presented resume id is
         consumed, so the guest's real credential stays valid for a legitimate retry.
-        """
+
+        *requested_model_id* (#75, optional): the realtime model id this resume
+        request's OWN (provisional) session already resolved to (``/realtime?model=``,
+        validated by ``RTMiddleTier.resolve_model()`` before this socket was even
+        prepared) -- mirrors *requested_persona_id* exactly: a session can only ever
+        resume under the SAME model it was originally bound to, no mid-conversation
+        model switching. Omitted entirely (``None``) resolves to the bound persona's
+        own ``models.realtime.default`` before comparing. Mismatched -> rejected as
+        ``"model_mismatch"`` BEFORE the presented resume id is consumed, same as
+        ``"persona_mismatch"`` above."""
         if not self.resume_enabled:
             return ResumeOutcome(False, reason="disabled")
         if not isinstance(resume_id, str) or not (_RESUME_ID_MIN_LEN <= len(resume_id) <= _RESUME_ID_MAX_LEN):
@@ -556,6 +580,26 @@ class SessionManager:
                 session_id, bound_persona_id, effective_requested_persona_id,
             )
             return ResumeOutcome(False, reason="persona_mismatch")
+
+        # #75 bug fix (this revision, PR #106 review): an omitted `?model=` on resume means
+        # "this SESSION's own bound persona's default model", not the deployment-wide default
+        # persona's default -- using the latter here incorrectly compared against the WRONG
+        # persona's default for any session bound to a non-default persona whose own default
+        # model id differs from the deployment default persona's, silently misfiring
+        # model_mismatch (or, worse, wrongly matching) depending on which ids happened to
+        # collide. Reads the session's OWN bound persona's default straight off what
+        # `create_session` already captured from the concrete `Persona` object at creation
+        # time -- no catalog lookup of any kind, since there is no reliable persona catalog to
+        # reach for here (a session may be bound via a persona from a catalog this module has
+        # no other handle on, e.g. a caller's own fixture/test catalog).
+        effective_requested_model_id = requested_model_id or order_state_singleton.get_persona_default_model_id(session_id)
+        bound_model_id = order_state_singleton.get_model_id(session_id)
+        if bound_model_id != effective_requested_model_id:
+            logger.info(
+                "Resume rejected for session %s: bound model %r != requested model %r (model_mismatch)",
+                session_id, bound_model_id, effective_requested_model_id,
+            )
+            return ResumeOutcome(False, reason="model_mismatch")
 
         # Consume the presented id before anything else can use it.
         self._resume_index.pop(digest, None)
@@ -646,6 +690,15 @@ class SessionManager:
                 "roundTripIndex": identifiers.round_trip_index,
                 "roundTripToken": identifiers.round_trip_token,
                 "persona": identifiers.persona_id,
+                # Issue #75, design doc section 5.2/7.5: the realtime model this session is
+                # bound to, alongside the persona it's already been reporting since #74 --
+                # so the browser's F11 debug panel (and any future model picker, #80) can
+                # show what's actually live for THIS session without a second round trip.
+                "model": identifiers.model_id,
+                # Rick's PR #106 review item 3: which pipeline `model` belongs to -- so
+                # Morty's model picker (F10) can group/label models by pipeline without a
+                # second round trip to `/api/personas`, exactly like `model` above.
+                "pipeline": identifiers.pipeline,
                 **(extra or {}),
             }
         )

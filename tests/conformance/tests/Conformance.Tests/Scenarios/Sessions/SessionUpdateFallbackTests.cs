@@ -188,12 +188,19 @@ public sealed class UnrelatedErrorsDoNotTriggerFallbackTests(ConformanceFixture 
 /// comes back), so there is only ever one candidate either strategy could possibly correlate
 /// against; a test that actually needs two simultaneously-outstanding candidates to tell the two
 /// strategies apart is a separate, not-yet-written scenario.
-/// Deliberately runs on <see cref="Gpt15ConformanceFixture"/> (never sends `reasoning`), not the
-/// plain Default deployment: this is about the guard's loop protection alone, and the Default
-/// deployment's bootstrap already sends `reasoning` by default, which would make the scripted
-/// rejection here ALSO flip rtmt.py's process-wide `_reasoning_rejected` latch — a real,
-/// observable side effect this test must not cause, since <see cref="ConformanceCollection"/> is
-/// shared by every other Default-deployment scenario in the suite.
+/// Deliberately runs on <see cref="Gpt15ConformanceFixture"/> rather than the plain Default
+/// deployment: this is about the guard's loop protection alone, and this fixture's bootstrap must
+/// NOT legitimately contain `reasoning` (PR #106 review round 3, Rick: this fixture now sets
+/// <c>AZURE_OPENAI_REALTIME_REASONING_MODEL=false</c>, an operator disabling reasoning for a 1.5
+/// deployment, which outranks the session's bound model's catalog `reasoning: true` -- see
+/// ReasoningDeploymentFixtures.cs's <see cref="Gpt15ConformanceFixture"/> doc comment and
+/// ReasoningByDeploymentTests.cs's own top-level doc comment). With no `reasoning` key in the
+/// bootstrap, this test's scripted rejection is the sole reason the fallback fires -- it does not
+/// also trip rtmt.py's process-wide `_reasoning_rejected` latch as a side effect (see the
+/// allowedNewBackendErrors remark below) -- kept on the dedicated
+/// <see cref="Gpt15ConformanceCollection"/> regardless, so that any future change to this
+/// fixture's reasoning behaviour stays isolated from every other Default-deployment scenario in
+/// the suite.
 /// </summary>
 [Collection(Gpt15ConformanceCollection.Name)]
 public sealed class SecondSessionUpdateRejectionLoopGuardTests(Gpt15ConformanceFixture fixture)
@@ -265,11 +272,15 @@ public sealed class SecondSessionUpdateRejectionLoopGuardTests(Gpt15ConformanceF
         Assert.Equal(1, browserErrorCount);
     },
     // Three deterministic backend ERROR-level log lines are this scenario's own subject matter:
-    // "Upstream REJECTED session.update ..." (recovering the bootstrap's rejection), "Fallback
-    // session.update ... was ALSO rejected ..." (refusing to loop), and the generic "OpenAI
-    // Realtime API error: ..." fall-through log for the second rejection once it's let through to
-    // the browser. All three are proven-expected above, not unhandled. (Unlike
-    // SessionUpdateFallbackTests, gpt-realtime-1.5 never sends `reasoning`, so there's no fourth
-    // "rejected reasoning-model options" log line here.)
+    // "Upstream REJECTED session.update ..." (recovering the bootstrap's scripted rejection),
+    // "Fallback session.update ... was ALSO rejected ..." (refusing to loop), and the generic
+    // "OpenAI Realtime API error: ..." fall-through log for the second rejection once it's let
+    // through to the browser. PR #106 review round 3 (Rick, issue #75): back to 3 -- this
+    // fixture's bootstrap no longer legitimately contains `reasoning` (it now sets
+    // AZURE_OPENAI_REALTIME_REASONING_MODEL=false, which outranks the bound model's catalog
+    // `reasoning: true`; see this class's own doc comment), so the scripted rejection's
+    // `rejected` payload no longer contains "reasoning", and the extra "... rejected
+    // reasoning-model options ..." latch-flip log line the round-2 misconfiguration produced as a
+    // side effect is gone. All three lines are proven-expected above, not unhandled.
     allowedNewBackendErrors: 3);
 }
