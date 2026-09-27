@@ -191,9 +191,9 @@ See the comments left on those issues directly for this wave's position. Summary
   `PERSONAS_DIR` from the launch contract (it already forwarded `PERSONAS`/`DEFAULT_PERSONA`, but
   was silently dropping fixture-specific persona directory overrides, mirroring the Python
   launcher's `BackendEnvironment.cs`); without that fix, every `PersonaConformanceFixtures`-derived
-  fixture (test-alpha/test-beta packs) silently fell back to the real repo's sonic-only `personas/`
-  tree when run against dotnet, and any row asserting on the fixture packs failed for the wrong
-  reason. Run locally with
+  fixture (test-alpha/test-beta packs) silently fell back to the real repo's default-persona-only
+  `personas/` tree when run against dotnet, and any row asserting on the fixture packs failed for
+  the wrong reason. Run locally with
   `CONFORMANCE_BACKEND=dotnet dotnet test Conformance.slnx --filter "Dotnet=ready"`
   (repo root needs a built frontend at `app/backend/static` -- `npm run build` in `app/frontend`
   -- for the static-file scenario). **31/31 tagged scenarios passing** against the real C# skeleton
