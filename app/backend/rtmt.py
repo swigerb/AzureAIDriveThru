@@ -51,7 +51,9 @@ from audio_pipeline import (
     vlogger,
 )
 from config_loader import get_config
+from model_catalog import ModelCatalog
 from order_state import order_state_singleton
+from processors import ResolvedModel, resolve_realtime_model
 from rate_limit import RateLimitRecovery, RateLimitSettings, is_rate_limit_error
 from session_manager import (
     MIDDLE_TIER_ITEM_ID_PREFIX,
@@ -1176,6 +1178,11 @@ class RTMiddleTier:
     endpoint: str
     deployment: str
     key: str | None = None
+
+    # #75/design doc section 7.4: RTMiddleTier IS the "realtime" pipeline processor -- see
+    # `processors.PipelineProcessor`. A future cascade (#82) / local (#81) processor would
+    # declare its own `pipeline_name` and register alongside this one.
+    pipeline_name: str = "realtime"
     
     # Tools are server-side only for now, though the case could be made for client-side tools
     # in addition to server-side tools that are invisible to the client
@@ -1236,6 +1243,14 @@ class RTMiddleTier:
         # alongside `persona_catalog`. Empty (the default) preserves today's single
         # deployment-wide `self.system_message`/greeting behavior for every session.
         self.persona_prompt_loaders: dict[str, Any] = {}
+        # #75: the shared model catalog (config.yaml `models.catalog` + `AZURE_AI_MODEL_
+        # DEPLOYMENTS`), set here to an empty-but-valid catalog so it is never None, then
+        # replaced by app.py at startup with the one it loaded (same "mandatory, safe default,
+        # app.py installs the real one" pattern as `persona_catalog` above). An empty catalog
+        # never breaks the default-model path (`resolve_model` below never consults it for a
+        # persona's own default realtime model) -- it only means no NON-default `?model=` is
+        # selectable yet.
+        self.model_catalog = ModelCatalog(entries={}, deployments={})
         # Flipped if the deployment rejects `reasoning` at runtime despite the
         # name check, so later sessions stop sending it.
         self._reasoning_rejected = False
@@ -1277,6 +1292,17 @@ class RTMiddleTier:
     def reasoning_enabled(self) -> bool:
         """Whether `reasoning` will be sent upstream."""
         return normalize_reasoning_effort(self.reasoning_effort) is not None and self._reasoning_model()
+
+    def resolve_model(self, persona, requested_model_id: str | None) -> ResolvedModel:
+        """`processors.PipelineProcessor`'s one required method (#75, design doc section 7.4).
+        Validates *requested_model_id* (or `persona`'s own realtime default, when `None`)
+        against `persona`'s `models.realtime` allow-list and `self.model_catalog`/deployment map.
+        Raises `processors.ModelSelectionError` on an unknown, disallowed, cross-wired or
+        undeployed model -- `_websocket_handler` turns that into the same plain HTTP 404 an
+        unknown/disabled persona already gets, before the WebSocket upgrade."""
+        return resolve_realtime_model(
+            persona, requested_model_id, self.model_catalog, self.deployment, pipeline_name=self.pipeline_name
+        )
 
     def _build_session(self, session: dict, voice_locked: bool = False, voice: str | None = _VOICE_UNSET, system_message: str | None = _SYSTEM_MESSAGE_UNSET) -> dict:
         """Overlay the server-owned configuration onto a legacy-shaped session
