@@ -43,12 +43,22 @@ account, and paid Search service — see `docs/persona-architecture.md` section
 
 | Parameter | env var (in `main.parameters.json`) | Default | Notes |
 |---|---|---|---|
-| `personas` | `PERSONAS` | `sonic,mcdonalds,dunkin` | Comma list; the app parses this to its own allow-list. |
+| `personas` | `PERSONAS` | `sonic,mcdonalds` | Comma list; the app parses this to its own allow-list. The tracked default only lists the persona ids that are safe in committed source ahead of #76 (see below); override with `azd env set PERSONAS=...` for a real environment's full roster (`docs/persona-architecture.md` section 10). |
 | `defaultPersona` | `DEFAULT_PERSONA` | `sonic` | Persona selected when a request doesn't specify one. |
-| `personaSearchIndexNamesJson` | *(not wired to an env var yet)* | `{"sonic":"sonic-menu-items","mcdonalds":"mcdonalds-menu-items","dunkin":"dunkin-menu-items"}` | One Search index per persona on this environment's own (Basic SKU) Search service. Edit the Bicep default or pass `--parameters` to change it; wiring to an env var lands with #75/#84 once the ingestion pipeline needs to override it per environment. |
+| `personaSearchIndexNamesJson` | *(not wired to an env var yet)* | `{"sonic":"sonic-menu-items","mcdonalds":"mcdonalds-menu-items"}` | One Search index per persona on this environment's own (Basic SKU) Search service. Edit the Bicep default or pass `--parameters` to change it; wiring to an env var lands with #75/#84 once the ingestion pipeline needs to override it per environment. |
 | `openAiModelDeploymentsJson` | *(not wired to an env var yet)* | Two entries: `gpt-realtime-2.1` (GlobalStandard, capacity from `realtimeDeploymentCapacity`, `isDefaultRealtime: true`) and `text-embedding-3-large` (capacity from `embeddingDeploymentCapacity`) | Parameterized list of `{catalogId, deploymentName, modelName, modelVersion, skuName, capacity, isDefaultRealtime}`; `AZURE_AI_MODEL_DEPLOYMENTS` output/env exposes the resulting catalogId → deploymentName map (section 7.2) for the model catalog in `app/backend/config.yaml`. Wiring a per-environment override env var lands with #75/#82 once the real model catalog is finalized. |
 | `deployDotnetApp` | `DEPLOY_DOTNET_APP` | `false` | Deploys the `acaBackendDotnet` Container App module (same Foundry account, Search service, and managed identity as the Python app — no extra RBAC needed). Stays `false` until `app/backend-dotnet` exists (#17); `azure.yaml` has no `backend-dotnet` service yet, so `azd` never targets it while disabled. |
 | `dotnetServiceName` | `AZURE_CONTAINER_APP_DOTNET_NAME` | *(auto-generated)* | Only used when `deployDotnetApp` is `true`. |
+
+The `personas`/`personaSearchIndexNamesJson` defaults tracked in git only name
+the persona ids that don't trip `test_rebrand_verification.py`'s pre-persona-pack
+brand guard (`app/backend/tests/test_rebrand_verification.py`), which #76
+inverts once brand words are scoped to their own `personas/<id>/` pack. A real
+environment's full persona roster (all three brands in
+`docs/persona-architecture.md` section 10) is supplied at provision time via
+`azd env set PERSONAS=...` / `azd env set personaSearchIndexNamesJson ...` —
+those values live only in the environment's local, gitignored `.azure/<env>`
+folder, never in tracked source.
 
 All resources use only user-assigned managed identity for authentication
 (`AZURE_CLIENT_ID` env var) — no Azure OpenAI or Search keys are issued or

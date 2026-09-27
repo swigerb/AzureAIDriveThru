@@ -97,18 +97,25 @@ param realtimeDeploymentCapacity int
 param embeddingDeploymentCapacity int
 
 // --- Persona picker (ADR-001, docs/persona-architecture.md section 10) ---
-// This environment is independent of rg-sonic-demo / rg-mcd-demo / rg-dunkin-demo:
-// its own Foundry (Azure OpenAI) account, its own paid AI Search service, one
-// index per persona. Adding a fourth persona is a parameter change here plus a
-// personas/<id>/ pack (#70) -- no other Bicep edits.
-@description('Allow-list of persona ids served by this environment, comma-separated (matches the app PERSONAS env var, e.g. "sonic,mcdonalds,dunkin"). Each id needs a personas/<id>/ pack (#70, #78, #79) and an entry in personaSearchIndexNamesJson before the app can actually serve it.')
-param personas string = 'sonic,mcdonalds,dunkin'
+// This environment is independent of the old demo resource groups (see
+// docs/persona-architecture.md section 10 for the full list): its own
+// Foundry (Azure OpenAI) account, its own paid AI Search service, one index
+// per persona. Adding another persona is a parameter change here plus a
+// personas/<id>/ pack (#70) -- no other Bicep edits. The tracked default
+// below only lists the persona ids that are safe to spell out in committed
+// source ahead of #76 (which inverts test_rebrand_verification.py's
+// pre-persona-pack brand guard); the full persona list for a real
+// environment -- see docs/persona-architecture.md section 10 for the
+// complete roster -- is supplied via `azd env set PERSONAS=...` /
+// personaSearchIndexNamesJson at provision time (not committed to git).
+@description('Allow-list of persona ids served by this environment, comma-separated (matches the app PERSONAS env var). Each id needs a personas/<id>/ pack (#70, #78, #79) and an entry in personaSearchIndexNamesJson before the app can actually serve it. Override at provision time (azd env set PERSONAS=...) for the environment\'s full persona roster.')
+param personas string = 'sonic,mcdonalds'
 
 @description('Default persona id when a session omits ?persona= (app DEFAULT_PERSONA env var). Should be one of the comma-separated ids in personas.')
 param defaultPersona string = 'sonic'
 
-@description('JSON object mapping persona id to its AI Search index name on this environment\'s own Search service (10.2). The postprovision ingestion hook (#84) creates/updates one index per entry. Surfaced to the app as the AZURE_SEARCH_INDEXES env var.')
-param personaSearchIndexNamesJson string = '{"sonic":"sonic-menu-items","mcdonalds":"mcdonalds-menu-items","dunkin":"dunkin-menu-items"}'
+@description('JSON object mapping persona id to its AI Search index name on this environment\'s own Search service (10.2). The postprovision ingestion hook (#84) creates/updates one index per entry. Surfaced to the app as the AZURE_SEARCH_INDEXES env var. Override at provision time for the environment\'s full persona roster (see the personas param description).')
+param personaSearchIndexNamesJson string = '{"sonic":"sonic-menu-items","mcdonalds":"mcdonalds-menu-items"}'
 
 @description('JSON array of Foundry/Azure OpenAI model deployments to create on this environment\'s own account (section 7.2, 10.3). Each entry: catalogId (matches app/backend/config.yaml models.catalog), deploymentName, modelName, modelVersion, skuName, capacity, isDefaultRealtime (exactly one entry should be true -- it becomes AZURE_OPENAI_REALTIME_DEPLOYMENT). realtimeDeploymentCapacity/embeddingDeploymentCapacity above still override the matching entries by catalogId, so the existing "bump a param, azd provision" scaling flow (10.3) keeps working. Only the two models already qualified for this repo ship by default; the alternative realtime model and the cascade chat/transcription/TTS models (#75, #82) are added the same way once Unity fixes the real catalog -- no Bicep changes needed to add a model, only a new array entry.')
 param openAiModelDeploymentsJson string = '[{"catalogId":"gpt-realtime-2.1","deploymentName":"gpt-realtime-2.1","modelName":"gpt-realtime-2.1","modelVersion":"2026-07-07","skuName":"GlobalStandard","capacity":10,"isDefaultRealtime":true},{"catalogId":"text-embedding-3-large","deploymentName":"text-embedding-3-large","modelName":"text-embedding-3-large","modelVersion":"1","skuName":"Standard","capacity":30,"isDefaultRealtime":false}]'
@@ -334,7 +341,11 @@ module acaBackendDotnet 'core/host/container-app-upsert.bicep' = if (deployDotne
     containerRegistryName: containerApps.outputs.registryName
     containerAppsEnvironmentName: containerApps.outputs.environmentName
     identityType: 'UserAssigned'
-    tags: union(tags, { 'azd-service-name': 'backend-dotnet' })
+    // No 'azd-service-name' tag yet: azure.yaml has no matching service
+    // entry until #17 adds app/backend-dotnet, and
+    // test_azd_service_wiring.py's test_bicep_service_tags_match_azure_yaml
+    // guard requires every tag here to have one. Add both together in #17.
+    tags: tags
     targetPort: 8000
     containerCpuCoreCount: '1.0'
     containerMemory: '2Gi'

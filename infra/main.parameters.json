@@ -108,7 +108,7 @@
       "value": "${AZURE_OPENAI_EMB_DIMENSIONS}"
     },
     "personas": {
-      "value": "${PERSONAS=sonic,mcdonalds,dunkin}"
+      "value": "${PERSONAS=sonic,mcdonalds}"
     },
     "defaultPersona": {
       "value": "${DEFAULT_PERSONA=sonic}"
