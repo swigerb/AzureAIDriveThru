@@ -552,6 +552,58 @@ Since `app/frontend/` is off-limits, the middleware (`rtmt.py` + `audio_pipeline
   (was `border-primary`); a `data-persona-loading` attribute on
   `<html>` (toggled by a `useEffect` keyed off `!personaReady`) drives new
   `index.css` rules that hide the body's gradient background and the
+
+### 2026-09-27/28: PR #112 (#78, `squad/78-mcdonalds-pack`) round 5 — Rick-2's 5 changes, PR marked READY
+- **Coordinator paraphrase vs. Rick's literal wording:** the coordinator's
+  round-5 message said machine status enum was `"down"|"up"`; reading Rick's
+  actual PR comments (`gh pr view 112 --json comments`) and the schema itself
+  showed the real value is `"down"|"operational"`. **Lesson reinforced:** when
+  a coordinator message paraphrases a reviewer's ask, always cross-check the
+  literal PR comment (and the schema, if one exists) before implementing —
+  the paraphrase can silently drop or alter exact enum/string values.
+- **Sibling repo has 3 different menu export files with different item
+  counts/numbering** (`app/frontend/src/data/menuItems.json` 71 items,
+  `mcdonalds-menu-items.json` 134 items, `scripts/build_mcdonalds_menu.py`
+  generator missing items present in the built JSON). Spent real effort
+  chasing a suspected mealNumber/menuPeriod gap that turned out to be a red
+  herring — `mcdonalds-menu-items.json` was always the correct canonical
+  source (confirmed by exact category-count match to my own pack). **Lesson:**
+  when a sibling repo has multiple menu data files, pin down which one was the
+  actual import source ONCE (record it) rather than re-deriving it every time
+  a discrepancy shows up — I'd already established this in an earlier round
+  but had to re-derive it here after losing that context to summarization.
+- **`order_state.py` vs. `tools.py` layering matters for manual verification:**
+  calling `order_state.OrderState.handle_order_update()` directly bypasses
+  every add-time guard (machine-down rejection, size validation, extras
+  rules) — those all live one layer up, in `tools.py`'s `update_order()`. A
+  quick manual check that calls the lower-level function will silently "pass"
+  even when a guard would have rejected the real tool call. Always exercise
+  the actual `tools.update_order(args, session_id)` async entry point (via
+  `asyncio.run`) for any behavioral verification, not the order-state layer
+  underneath it.
+- **First pack to expose `"modify"`:** added it to my own
+  `tool_schemas.yaml`'s `action` enum ahead of Sonic's own pack (which still
+  only has `add`/`remove`) — same proactive-adoption pattern as the earlier
+  #107 price-wording fix. Worth remembering for future rounds: my pack tends
+  to end up first-mover on new shared-engine capabilities that land as
+  backend features gated by each pack's own opt-in data, since the
+  coordinator routes "prove this shared feature end-to-end" asks to whichever
+  PR is active when the feature lands.
+- Verified all 5 changes end-to-end via the real `tools.update_order()`
+  guarded path in a scratch script (deleted before commit, never pushed):
+  meal-order autofill onto the ticket, in-place resize via `modify` with
+  components carried over unchanged, machine-down rejection using the pack's
+  own label text, and item-not-in-order rejection on `modify`.
+- Full validation green: pytest 1173+168 subtests, ruff clean, .NET Backend
+  Tests 82, full conformance 669/669, smoke+golden filtered 211/211 (mcdonalds
+  present in the smoke Theory). Brand baseline regenerate was a pure line-
+  ending no-op — discarded rather than committing a content-free diff.
+- Pushed `squad/78-mcdonalds-pack` -> `3dd785b`. CI green (8/8). Marked PR
+  #112 READY for review (first round this PR left DRAFT status) per explicit
+  new coordinator instruction, now that #77/#116 landed. Posted a status
+  comment on the PR covering all 5 changes, verification counts, and the
+  known McChicken® Meal single-size cosmetic autofill quirk (flagged, not
+  fixed — source-verbatim, out of scope for a data-only PR).
   `::before`/`::after` decorative blobs until a persona resolves. Verified via
   a Playwright `page.route` delay on `/api/personas` to reliably freeze the
   loading state long enough to screenshot it (a local backend resolves too
