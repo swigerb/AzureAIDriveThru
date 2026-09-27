@@ -14,7 +14,10 @@ allowed only
   2. inside the explicitly listed cross-brand docs (docs/adr/**, docs/persona-architecture.md)
      that compare all three brands by design (ADR-001, design doc section 16);
   3. inside one of exactly two DIRECTORY_EXCEPTIONS for generated/golden content
-     (app/backend/static/, tests/conformance/testdata/) -- see rebrand_scan.py;
+     (app/backend/static/, tests/conformance/testdata/) -- see rebrand_scan.py. A pack's own
+     per-persona conformance testdata subfolder (tests/conformance/testdata/personas/<id>/**,
+     #78/#79) is instead classified under rule 1's same per-pack-ownership logic, not limited
+     to the flat directory exception's sonic-only rule;
   4. inside a shared-code file+brand pair that has an exact-match entry in the checked-in
      BASELINE (rebrand_baseline.yaml) -- the entry's line-hit count must equal the file's
      real count today: a rise means a new/uncontrolled reference snuck in, a silent drop
@@ -28,8 +31,12 @@ except two intentional McDonald's-brand-hex test fixtures -- if a stray "Dunkin"
 up in shared code, it would still fail (no baseline entry would cover it).
 
 The old "crew member" (should be carhop) and "coffee-chat" (old repo name) terminology checks
-are unrelated to the brand-pack architecture and are unchanged by this inversion -- they still
-apply everywhere except the same repo-meta/historical exclusions as before.
+are unrelated to the brand-pack architecture and mostly unchanged by this inversion -- they
+still apply everywhere except the same repo-meta/historical exclusions as before, with one
+exception: "crew member" is scoped to SHARED code only (outside personas/<id>/**), since #78/
+#79 give each pack its own role-name vocabulary and a pack (e.g. McDonald's) may legitimately
+use "crew member" as its own, unlike Sonic's "carhop" -- see _is_inside_a_persona_pack.
+"coffee-chat" has no such legitimate per-pack use, so it is unaffected.
 
 Author: Birdperson (Tester); brand-word guard replaced with a per-file baseline in round 2
 (Beth, PR #101 review response, issue #76).
@@ -49,6 +56,7 @@ from rebrand_scan import (  # noqa: E402
     _classify_hit,
     _count_brand_occurrences,
     _load_baseline,
+    _persona_pack_id,
     _relative_posix,
 )
 
@@ -126,6 +134,16 @@ def _collect_source_files(excluded_dirs: set[str], excluded_files: set[str]) -> 
 
 def _collect_terminology_scan_files() -> list[Path]:
     return _collect_source_files(TERMINOLOGY_EXCLUDED_DIRS, TERMINOLOGY_EXCLUDED_FILES)
+
+
+# "crew member" is SHARED-CODE vocabulary only: pre-#76 it named a Sonic-only rebrand target
+# (session_manager.py's role-name string had to become "carhop"), but #78/#79 give every pack
+# its own roleName/vocabulary -- e.g. McDonald's real staff title is legitimately "crew member".
+# A persona's own pack (personas/<id>/**) must be free to use it, same principle as the
+# brand-word guard's per-pack-ownership rule above; "coffee-chat" (old repo name) has no such
+# legitimate use anywhere a pack would need, so it keeps scanning everywhere unchanged.
+def _is_inside_a_persona_pack(filepath: Path) -> bool:
+    return _persona_pack_id(_relative_posix(filepath)) is not None
 
 
 def _scan_for_forbidden(files: list[Path]) -> list[tuple[Path, int, str, str]]:
@@ -337,14 +355,74 @@ class TestRebrandVerification(unittest.TestCase):
             _classify_hit("app/backend/static/assets/app.js", "dunkin", 1, {})
         )
 
+    def test_conformance_testdata_persona_subfolder_may_say_its_own_brand(self):
+        """#78/#79: a pack's own per-persona conformance testdata subfolder
+        (tests/conformance/testdata/personas/<id>/**) may say its own brand -- mirrors
+        personas/<id>/**'s ownership rule, so a new pack's golden fixtures aren't limited to
+        the flat tests/conformance/testdata/ directory exception's sonic-only rule."""
+        for count in (0, 1, 999):
+            with self.subTest(count=count):
+                self.assertIsNone(
+                    _classify_hit(
+                        "tests/conformance/testdata/personas/dunkin/golden-menu-categories.json",
+                        "dunkin", count, {},
+                    )
+                )
+                self.assertIsNone(
+                    _classify_hit(
+                        "tests/conformance/testdata/personas/mcdonalds/golden-order-pricing.json",
+                        "mcdonalds", count, {},
+                    )
+                )
+
+    def test_conformance_testdata_persona_subfolder_forbids_a_foreign_brand(self):
+        """Mutation-style unit check: a pack's per-persona testdata subfolder only rescues its
+        OWN brand -- a foreign brand word there is still forbidden, and no BASELINE entry can
+        rescue it (same as personas/<id>/**'s cross-brand-leak rule)."""
+        self.assertIsNotNone(
+            _classify_hit(
+                "tests/conformance/testdata/personas/dunkin/golden-menu-categories.json",
+                "sonic", 1, {},
+            )
+        )
+        self.assertIsNotNone(
+            _classify_hit(
+                "tests/conformance/testdata/personas/dunkin/golden-menu-categories.json",
+                "mcdonalds", 1,
+                {("tests/conformance/testdata/personas/dunkin/golden-menu-categories.json", "mcdonalds"):
+                    BaselineEntry(
+                        "tests/conformance/testdata/personas/dunkin/golden-menu-categories.json",
+                        "mcdonalds", 1, "#78",
+                    )},
+            )
+        )
+
+    def test_conformance_testdata_flat_files_are_unaffected_by_the_persona_subfolder_rule(self):
+        """Sanity: a file directly under tests/conformance/testdata/ (not inside a personas/
+        subfolder) still only goes through the flat, sonic-only DIRECTORY_EXCEPTIONS entry --
+        the new per-persona rule must not accidentally widen what the flat files are allowed
+        to say."""
+        self.assertIsNone(
+            _classify_hit("tests/conformance/testdata/golden-menu-categories.json", "sonic", 1, {})
+        )
+        self.assertIsNotNone(
+            _classify_hit("tests/conformance/testdata/golden-menu-categories.json", "dunkin", 1, {})
+        )
+
     # ── Terminology checks (unrelated to brand packs; unchanged by #76) ──
 
     def test_no_crew_member_references(self):
-        """'crew member' should have been replaced with 'carhop' everywhere."""
+        """'crew member' should have been replaced with 'carhop' in SHARED code. Scoped away
+        from a persona's own pack (personas/<id>/**, #78/#79): a pack may legitimately use
+        'crew member' as its own role-name vocabulary (e.g. McDonald's real staff title) even
+        though Sonic's own vocabulary is 'carhop' -- see the module docstring above
+        _is_inside_a_persona_pack."""
         files = _collect_terminology_scan_files()
         pattern, label = FORBIDDEN_PATTERNS[1]  # crew member
         hits = []
         for filepath in files:
+            if _is_inside_a_persona_pack(filepath):
+                continue
             try:
                 lines = filepath.read_text(encoding="utf-8", errors="replace").splitlines()
             except Exception:
@@ -358,6 +436,15 @@ class TestRebrandVerification(unittest.TestCase):
             hits, [],
             f"\n{len(hits)} file(s) still reference '{label}':\n" + "\n".join(hits),
         )
+
+    def test_persona_pack_may_legitimately_use_crew_member(self):
+        """Sanity: the shared-code-only scoping (test_no_crew_member_references /
+        test_no_terminology_forbidden_terms_combined) skips a hit precisely when
+        _persona_pack_id recognizes the path as inside personas/<id>/** -- so a pack (e.g.
+        McDonald's, whose real staff title is legitimately 'crew member', #78) is never
+        flagged for using its own vocabulary, unlike Sonic's own choice of 'carhop'."""
+        self.assertIsNotNone(_persona_pack_id("personas/mcdonalds/prompts/system_prompt.yaml"))
+        self.assertIsNone(_persona_pack_id("app/backend/session_manager.py"))
 
     def test_no_coffee_chat_references(self):
         """Old repo name 'coffee-chat' should not appear in source files."""
@@ -384,13 +471,17 @@ class TestRebrandVerification(unittest.TestCase):
 
     def test_no_terminology_forbidden_terms_combined(self):
         """Catch-all: scan every source file for crew-member/coffee-chat at once (dunkin is
-        covered separately/more precisely by the brand-word guard above)."""
+        covered separately/more precisely by the brand-word guard above). 'crew member' hits
+        inside a persona's own pack are also skipped here, same scoping rationale as
+        test_no_crew_member_references."""
         files = _collect_terminology_scan_files()
         hits = _scan_for_forbidden(files)
         formatted = []
         for filepath, line_no, line_text, label in hits:
             if label == "dunkin":
                 continue  # superseded by test_no_disallowed_brand_words_in_shared_code
+            if label.startswith("crew member") and _is_inside_a_persona_pack(filepath):
+                continue  # shared-code-only check; packs may use their own vocabulary (#78/#79)
             rel = filepath.relative_to(PROJECT_ROOT)
             formatted.append(f"  [{label}] {rel}:{line_no}  →  {line_text}")
 
