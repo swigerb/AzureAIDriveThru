@@ -345,6 +345,82 @@ Detailed technical learnings from demo readiness, debugging, and prompt external
   in the suite -- only a hypothetical pattern documented in the README. Before relying on it for a
   Python-only feature's conformance rows, expect to have to build the first real usage from
   scratch, not just follow an existing example.
+## 2026-09-27 — #75 (P2-6) model catalog, processor interface, per-session realtime model selection
+
+- New worktree `SonicAIDriveThru-wt\p2-75` off `origin/dev` (71daa9f, which already carries #74's
+  mandatory persona catalog + per-session binding). Branch `squad/75-model-flexibility`, draft PR
+  #106 pushed after the first landing increment, four commits total, marked ready once validation
+  was green.
+- **Catalog is deliberately environment-agnostic**: `config.yaml`'s `models.catalog` entries carry
+  no deployment name at all -- just `id`, `pipeline` (realtime|cascade|local), `label`, and
+  capability flags (`reasoning`, `toolCalling`, `runtime`). Deployment names live entirely in a new
+  env var, `AZURE_AI_MODEL_DEPLOYMENTS` (JSON map of catalog id -> Foundry deployment name), parsed
+  by `ModelCatalog.load()`. This mirrors the persona catalog's own env-var-for-environment-specifics
+  pattern and kept #75 from ever needing to touch `infra/**` (Unity's #93 lane) -- I only needed to
+  *name* the env var and post it as a PR/issue comment, never define the Bicep side of it.
+- **The processor interface question turned out to already be answered**: `processors.py`'s
+  `ProcessorRegistry` class existed from the very first commit of this feature (written before I
+  picked back up after a compaction) -- #75's actual remaining processor-interface work was just
+  wiring `rtmt.model_catalog` / `rtmt.processor_registry = ProcessorRegistry([rtmt])` into
+  `app.py`, not building a new registry class. Don't assume "processor interface" work means new
+  scaffolding; check what's already there before designing more.
+- **`_startup_checks` gotcha**: adding a new key to the module-level `_startup_checks` dict for the
+  model catalog (even defaulted `False`) broke 3 existing `/health` tests in `test_app.py` that
+  manually call `_startup_checks.update(personas_loaded=True, prompts_loaded=True,
+  config_loaded=True, env_vars=True)` with an exact 4-key set and then assert `all(...)` -- a 5th
+  key never set `True` by that literal call makes `all()` fail. Resolution: don't add a
+  `model_catalog_loaded` key at all; the catalog load is still fail-fast (`sys.exit(1)` on
+  `ModelValidationError`, same pattern as the persona catalog), just not reflected in `/health`.
+  Documented the omission in a code comment rather than silently skipping it, so the next reader
+  doesn't "fix" it by adding the key back and re-breaking those tests.
+- **The omitted-`?model=` path never touches the catalog at all, by design** (#75 acceptance:
+  "keep behavior identical when no model param is given"): `resolve_realtime_model`'s
+  default/persona-default branch resolves straight to the caller's `default_deployment` argument
+  and always sets `reasoning=None` (meaning "use the old deployment-name heuristic"), unconditionally,
+  before the catalog or `AZURE_AI_MODEL_DEPLOYMENTS` is even consulted. I initially wrote a test
+  asserting `get_model_deployment(sid) is None` for this path, which is simply wrong -- the
+  deployment is always the concrete configured default, never `None`. Only `reasoning` is `None`
+  here.
+- **Reasoning override has two independent gates, not one**: `reasoning_enabled()` requires BOTH
+  `normalize_reasoning_effort(self.reasoning_effort)` to be non-`None` (i.e. `reasoning_effort` is
+  actually configured, e.g. from `model.reasoning_effort` in a real deployment's config) AND
+  `_reasoning_model(reasoning_override)` to be true. A test that sets `reasoning_override=True`
+  (via selecting a catalog `reasoning: true` model) but never configures `rtmt.reasoning_effort`
+  will observe no `reasoning` field at all and look like the override is broken -- it isn't; the
+  effort gate is just unmet. Any reasoning-override test needs `self.rtmt.reasoning_effort` set to
+  a valid value first.
+- **`FakeGARealtime` shared mutable state across sequential `ws_connect()` calls in one test**:
+  `_RealtimeHarness.asyncSetUp()` creates exactly one `self.fake` per test *method*. Two sequential
+  `ws_connect()` calls in the same test method share that fake's `session["voice"]`/
+  `assistant_audio` state -- a second connection requesting a different bound voice than the first
+  (after the first produced assistant audio) triggers a genuine `cannot_update_voice` rejection
+  from the fake, which cascades into rtmt.py's real fallback-recovery logic and silently strips
+  unrelated fields (like `reasoning`) from the observed bootstrap update, producing a misleading
+  failure that looks like the feature under test is broken. Fix: one independent test *method* per
+  scenario that needs its own fresh upstream session, not two `ws_connect()` calls in one body.
+- **Session-creation-vs-upstream-connect race in tests**: `self.rtmt._sessions.active_session_count
+  >= 1` goes true inside `_websocket_handler`, *before* `_forward_messages()` is even awaited (and
+  therefore before the upstream `ws_connect` happens). A test asserting something about the
+  upstream connection itself (e.g. which `?model=` deployment name was dialed) must gate on a
+  signal from the fake's own `handler()` (I added `FakeGARealtime.connect_model_params`), not on
+  `active_session_count`.
+- **Conformance baseline (634) splits across two `dotnet test` filter invocations, matching CI
+  exactly**: `--filter "Category!=Browser"` (629 tests) + a separate `--filter "Category=Browser"`
+  run (5 tests) = 634. Running only the first filter looks like a passing-but-short run (629/629,
+  100% green) that actually silently skips 5 baseline tests -- always run both filters (or drop the
+  filter entirely, which the python leg's own `dotnet test Conformance.slnx --no-restore` without
+  `--filter` also covers) before reporting a baseline-matching total.
+- Mutation checks all done by temporarily editing the exact line the acceptance criteria named
+  (`resolve_realtime_model`'s `is_selectable` call for #1, its default-branch deployment expression
+  for #2, `ModelCatalog.is_selectable`'s `entry.pipeline == pipeline` clause for #3), confirming the
+  expected tests failed, then reverting and re-confirming `git diff` was empty before moving on --
+  never left a mutation in place across a tool-call boundary.
+- No conformance rows added for model selection itself: the task allowed this ("untagged unless the
+  C# skeleton supports it") and the C# skeleton's `[Trait("Dotnet", "ready")]` set doesn't cover
+  model selection yet (it's Python-only, `/realtime?model=` isn't in the dotnet-ready scenario list).
+- PR #106 marked ready for review (not merged). Posted `AZURE_AI_MODEL_DEPLOYMENTS`'s exact shape as
+  a comment on both #93 (Unity's infra PR) and #85, per the task's explicit instruction to comment
+  on both rather than just one.
 
 **PR #110 revision (round 2), Rick's review, issue #80 (2026-09-28)**: Revised a REJECTED PR
 (original author Morty, locked out) covering ADR-001's runtime persona theming end to end -- all

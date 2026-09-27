@@ -38,6 +38,29 @@ model:
   # (2.1 already batches calls; `false` serialises them and is ~1.3s slower).
   parallel_tool_calls: null
 
+# Shared model catalog (issue #75, design doc section 7.2): the facts about each Foundry model
+# that are the same on every deployment. A persona's own `models` block (persona.json, #74) says
+# which of these it allows per pipeline and its own default; `AZURE_AI_MODEL_DEPLOYMENTS` (env,
+# a JSON map of catalog id -> Foundry deployment name, emitted by Bicep -- see
+# infra/model-deployments.json, #93) says which ones actually exist on THIS deployment. A catalog
+# entry with no deployment mapped isn't selectable (section 7.3: "catalog ∩ deployment ∩
+# persona-allowed"). See app/backend/model_catalog.py.
+#
+# The realtime pipeline's OWN default model (a persona's `models.realtime.default`) is the one
+# exception: it always resolves to AZURE_OPENAI_REALTIME_DEPLOYMENT (today's back-compat
+# deployment), whether or not AZURE_AI_MODEL_DEPLOYMENTS maps it, so omitting `?model=` on
+# `/realtime` is byte-for-byte unchanged (#75 acceptance). `cascade`/`local` entries below are not
+# yet selectable through any endpoint -- #82 and #81 wire those pipelines up -- they're catalogued
+# now so a persona's own cascade/local allow-lists (already supported since #74) name real,
+# recognized models.
+models:
+  catalog:
+    - { id: gpt-realtime-2.1, pipeline: realtime, label: "GPT Realtime 2.1", reasoning: true }
+    - { id: gpt-realtime-mini, pipeline: realtime, label: "GPT Realtime mini", reasoning: false }
+    - { id: gpt-5-mini, pipeline: cascade, label: "GPT-5 mini", toolCalling: true }
+    - { id: phi-4, pipeline: cascade, label: "Phi-4 (Foundry)", toolCalling: true }
+    - { id: phi-4-mini-local, pipeline: local, label: "Phi-4 mini (on device)", runtime: onnx }
+
 vad:
   type: "server_vad"
   threshold: 0.5

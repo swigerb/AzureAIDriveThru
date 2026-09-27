@@ -51,7 +51,15 @@ from audio_pipeline import (
     vlogger,
 )
 from config_loader import get_config
+from model_catalog import ModelCatalog
 from order_state import order_state_singleton
+from processors import (
+    ModelSelectionError,
+    ProcessorRegistry,
+    ResolvedModel,
+    dispatch_processor,
+    resolve_realtime_model,
+)
 from rate_limit import RateLimitRecovery, RateLimitSettings, is_rate_limit_error
 from session_manager import (
     MIDDLE_TIER_ITEM_ID_PREFIX,
@@ -631,6 +639,19 @@ _VOICE_UNSET = object()
 # an explicit override -- this session's own bound persona's system prompt.
 _SYSTEM_MESSAGE_UNSET = object()
 
+# Sentinel default for the `reasoning_override` keyword threaded through
+# `_build_session` and its callers (#75, mirrors `_VOICE_UNSET`/
+# `_SYSTEM_MESSAGE_UNSET` above). `None` is itself meaningful for
+# `resolve_model`'s `ResolvedModel.reasoning` ("this session's own bound
+# model uses the process-wide name-heuristic/config-driven decision" -- the
+# persona's own default realtime model, today's unchanged path), so a
+# distinct sentinel marks "caller didn't pass one" and falls back to that
+# same heuristic (`_reasoning_model`'s pre-#75 behaviour). `_forward_messages`
+# is the only caller that ever passes an explicit override -- a bool, from
+# this session's own bound (non-default) model's catalog `reasoning` flag
+# (design doc section 7.4: "reasoning sent only when the catalog says so").
+_REASONING_UNSET = object()
+
 
 # Exact-match fast path for the browser's mic-audio frame (PR #49 review
 # round 2, "M1"). `_process_message_to_server`'s previous fast path used
@@ -1176,6 +1197,11 @@ class RTMiddleTier:
     endpoint: str
     deployment: str
     key: str | None = None
+
+    # #75/design doc section 7.4: RTMiddleTier IS the "realtime" pipeline processor -- see
+    # `processors.PipelineProcessor`. A future cascade (#82) / local (#81) processor would
+    # declare its own `pipeline_name` and register alongside this one.
+    pipeline_name: str = "realtime"
     
     # Tools are server-side only for now, though the case could be made for client-side tools
     # in addition to server-side tools that are invisible to the client
@@ -1236,6 +1262,21 @@ class RTMiddleTier:
         # alongside `persona_catalog`. Empty (the default) preserves today's single
         # deployment-wide `self.system_message`/greeting behavior for every session.
         self.persona_prompt_loaders: dict[str, Any] = {}
+        # #75: the shared model catalog (config.yaml `models.catalog` + `AZURE_AI_MODEL_
+        # DEPLOYMENTS`), set here to an empty-but-valid catalog so it is never None, then
+        # replaced by app.py at startup with the one it loaded (same "mandatory, safe default,
+        # app.py installs the real one" pattern as `persona_catalog` above). An empty catalog
+        # never breaks the default-model path (`resolve_model` below never consults it for a
+        # persona's own default realtime model) -- it only means no NON-default `?model=` is
+        # selectable yet.
+        self.model_catalog = ModelCatalog(entries={}, deployments={})
+        # #75/Rick's PR #106 review item 5: the processor registry is mandatory too (same
+        # "safe default here, app.py installs/extends the real one" pattern as
+        # `persona_catalog`/`model_catalog` above) -- defaulted to a registry containing only
+        # `self` (the realtime pipeline processor) so a deployment with no other pipelines
+        # registered yet keeps working exactly as before. A future cascade (#82) / local (#81)
+        # processor is added here by app.py, never by editing this class.
+        self.processor_registry = ProcessorRegistry([self])
         # Flipped if the deployment rejects `reasoning` at runtime despite the
         # name check, so later sessions stop sending it.
         self._reasoning_rejected = False
@@ -1263,22 +1304,44 @@ class RTMiddleTier:
         return json.dumps({"type": "session.update", "event_id": event_id or _new_event_id("sonic_voice"),
                            "session": ga_session})
 
-    def _reasoning_model(self) -> bool:
+    def _reasoning_model(self, reasoning_override: bool | None = _REASONING_UNSET) -> bool:
         """Whether reasoning-model-only fields may be sent upstream at all.
 
         A runtime rejection always wins; then the explicit `reasoning_model`
-        switch; the deployment-name check is only the default."""
+        switch (true/false -- an operator-level kill switch that overrides
+        what the catalog says a model supports); then *reasoning_override*
+        (#75: this session's own bound, explicitly-selected model's catalog
+        `reasoning` flag -- see `_REASONING_UNSET`); the deployment-name
+        check is the last resort, used only when the switch is `auto`
+        (`self.reasoning_model is None`) and no catalog entry is bound to
+        this session (PR #106 review round 3, Rick: the catalog records what
+        a model supports, the switch records what this environment allows)."""
         if self._reasoning_rejected:
             return False
         if self.reasoning_model is not None:
             return self.reasoning_model
+        if reasoning_override is not _REASONING_UNSET:
+            return bool(reasoning_override)
         return deployment_supports_reasoning(getattr(self, "deployment", None))
 
-    def reasoning_enabled(self) -> bool:
+    def reasoning_enabled(self, reasoning_override: bool | None = _REASONING_UNSET) -> bool:
         """Whether `reasoning` will be sent upstream."""
-        return normalize_reasoning_effort(self.reasoning_effort) is not None and self._reasoning_model()
+        return normalize_reasoning_effort(self.reasoning_effort) is not None and self._reasoning_model(reasoning_override)
 
-    def _build_session(self, session: dict, voice_locked: bool = False, voice: str | None = _VOICE_UNSET, system_message: str | None = _SYSTEM_MESSAGE_UNSET) -> dict:
+    def resolve_model(self, persona, requested_model_id: str | None) -> ResolvedModel:
+        """`processors.PipelineProcessor`'s `resolve_model` method (#75, design doc section
+        7.4). Validates *requested_model_id* (or `persona`'s own realtime default, when
+        `None`) against `persona`'s `models.realtime` allow-list and `self.model_catalog`/
+        deployment map -- Rick's PR #106 review item 1: EVERY id, including the default,
+        goes through the catalog here; there is no default-path special case. Raises
+        `processors.ModelSelectionError` on an unknown, disallowed, cross-wired or undeployed
+        model -- `_websocket_handler` turns that into the same plain HTTP 404 an
+        unknown/disabled persona already gets, before the WebSocket upgrade."""
+        return resolve_realtime_model(
+            persona, requested_model_id, self.model_catalog, self.deployment, pipeline_name=self.pipeline_name
+        )
+
+    def _build_session(self, session: dict, voice_locked: bool = False, voice: str | None = _VOICE_UNSET, system_message: str | None = _SYSTEM_MESSAGE_UNSET, reasoning_override: bool | None = _REASONING_UNSET) -> dict:
         """Overlay the server-owned configuration onto a legacy-shaped session
         and translate it to the GA shape.
 
@@ -1297,6 +1360,12 @@ class RTMiddleTier:
         `_SYSTEM_MESSAGE_UNSET`. `_forward_messages` passes this session's own
         bound persona's system prompt explicitly, the same way it already
         does for `voice`.
+
+        `reasoning_override` (#75): whether this session's own bound model is
+        a reasoning model, or omit for the process-wide name-heuristic/config
+        decision -- see `_REASONING_UNSET`. `_forward_messages` passes this
+        session's own bound (non-default) model's catalog `reasoning` flag
+        explicitly, the same way it already does for `voice`/`system_message`.
         """
         effective_system_message = self.system_message if system_message is _SYSTEM_MESSAGE_UNSET else system_message
         if effective_system_message is not None:
@@ -1328,7 +1397,7 @@ class RTMiddleTier:
         # an unsupported one takes the tools down with it.
         session.pop("reasoning", None)
         session.pop("parallel_tool_calls", None)
-        if self._reasoning_model():
+        if self._reasoning_model(reasoning_override):
             if (effort := normalize_reasoning_effort(self.reasoning_effort)) is not None:
                 session["reasoning"] = {"effort": effort}
             if self.parallel_tool_calls is not None:
@@ -1342,7 +1411,7 @@ class RTMiddleTier:
             logger.info("session.update: assistant audio already present — omitting voice so the update is not rejected")
         return ga_session
 
-    def build_bootstrap_session_update(self, event_id: str | None = None, voice: str | None = _VOICE_UNSET, system_message: str | None = _SYSTEM_MESSAGE_UNSET) -> str:
+    def build_bootstrap_session_update(self, event_id: str | None = None, voice: str | None = _VOICE_UNSET, system_message: str | None = _SYSTEM_MESSAGE_UNSET, reasoning_override: bool | None = _REASONING_UNSET) -> str:
         """Serialise the session.update the middle tier sends as the very first
         frame on every upstream socket, before any browser traffic is relayed.
 
@@ -1352,23 +1421,23 @@ class RTMiddleTier:
         voice locks and every later session.update carrying our voice is
         rejected, so tools are never registered for that conversation.
         """
-        session = self._build_session(copy.deepcopy(_BOOTSTRAP_CLIENT_SESSION), voice=voice, system_message=system_message)
+        session = self._build_session(copy.deepcopy(_BOOTSTRAP_CLIENT_SESSION), voice=voice, system_message=system_message, reasoning_override=reasoning_override)
         return json.dumps({"type": "session.update", "event_id": event_id or _new_event_id("sonic_bootstrap"),
                            "session": session})
 
-    def build_fallback_session_update(self, event_id: str | None = None, voice: str | None = _VOICE_UNSET, system_message: str | None = _SYSTEM_MESSAGE_UNSET) -> str:
+    def build_fallback_session_update(self, event_id: str | None = None, voice: str | None = _VOICE_UNSET, system_message: str | None = _SYSTEM_MESSAGE_UNSET, reasoning_override: bool | None = _REASONING_UNSET) -> str:
         """Serialise the minimal session.update sent when GA rejects one of ours.
 
         Only `type`, `instructions`, `tools` and `tool_choice` -- whatever field
         got the original rejected, the carhop keeps its tools and persona.
         """
-        full = self._build_session({}, voice_locked=True, voice=voice, system_message=system_message)
+        full = self._build_session({}, voice_locked=True, voice=voice, system_message=system_message, reasoning_override=reasoning_override)
         session = {key: full[key] for key in _FALLBACK_SESSION_KEYS if key in full}
         return json.dumps({"type": "session.update", "event_id": event_id or _new_event_id("sonic_fallback"),
                            "session": session})
 
     async def _recover_rejected_session_update(self, message: dict, server_ws, guard: "_SessionUpdateGuard | None",
-                                               session_id: str | None, voice: str | None = _VOICE_UNSET) -> bool:
+                                               session_id: str | None, voice: str | None = _VOICE_UNSET, reasoning_override: bool | None = _REASONING_UNSET) -> bool:
         """Handle an upstream `error` that rejects one of our session.updates.
 
         Returns True if the error was consumed (a fallback was sent), False if
@@ -1399,7 +1468,7 @@ class RTMiddleTier:
             logger.error("Deployment %s rejected reasoning-model options; no longer sending `reasoning` / "
                          "`parallel_tool_calls` from this process. Set model.reasoning_effort to \"\" for this "
                          "deployment.", getattr(self, "deployment", "?"))
-        fallback = guard.track(self.build_fallback_session_update(voice=voice), fallback_of=event_id)
+        fallback = guard.track(self.build_fallback_session_update(voice=voice, reasoning_override=reasoning_override), fallback_of=event_id)
         await server_ws.send_str(fallback)
         return True
 
@@ -1485,7 +1554,7 @@ class RTMiddleTier:
             },
         }
 
-    async def _process_message_to_client(self, msg: str, client_ws: web.WebSocketResponse, server_ws: web.WebSocketResponse, tools_pending: dict[str, RTToolCall], verbose: bool = False, guard: "_SessionUpdateGuard | None" = None, on_session_created: Callable[[], Awaitable[None]] | None = None, recovery: RateLimitRecovery | None = None, voice: str | None = _VOICE_UNSET, tool_failures: "_ToolFailureTracker | None" = None) -> str | None:
+    async def _process_message_to_client(self, msg: str, client_ws: web.WebSocketResponse, server_ws: web.WebSocketResponse, tools_pending: dict[str, RTToolCall], verbose: bool = False, guard: "_SessionUpdateGuard | None" = None, on_session_created: Callable[[], Awaitable[None]] | None = None, recovery: RateLimitRecovery | None = None, voice: str | None = _VOICE_UNSET, tool_failures: "_ToolFailureTracker | None" = None, reasoning_override: bool | None = _REASONING_UNSET) -> str | None:
         data = msg.data
 
         # FAST PATH: extract type via regex without full JSON parse.
@@ -1530,7 +1599,7 @@ class RTMiddleTier:
                 case "error":
                     # A rejected session.update of ours is recovered here (minimal
                     # fallback) instead of surfacing as a user-facing failure.
-                    if await self._recover_rejected_session_update(message, server_ws, guard, session_id, voice=voice):
+                    if await self._recover_rejected_session_update(message, server_ws, guard, session_id, voice=voice, reasoning_override=reasoning_override):
                         _vlog(verbose, "  ⚠ session.update rejected — fallback sent: %s", json.dumps(message, default=str)[:500])
                         return None
                     # A rate-limited response is retried (see rate_limit.py), not surfaced.
@@ -1858,7 +1927,7 @@ class RTMiddleTier:
 
         return updated_message
 
-    async def _process_message_to_server(self, msg: str, ws: web.WebSocketResponse, verbose: bool = False, voice_locked: bool = False, guard: "_SessionUpdateGuard | None" = None, voice: str | None = _VOICE_UNSET, limiter: "_ClientFrameDropWarningLimiter | None" = None) -> "tuple[str | None, str | None]":
+    async def _process_message_to_server(self, msg: str, ws: web.WebSocketResponse, verbose: bool = False, voice_locked: bool = False, guard: "_SessionUpdateGuard | None" = None, voice: str | None = _VOICE_UNSET, limiter: "_ClientFrameDropWarningLimiter | None" = None, reasoning_override: bool | None = _REASONING_UNSET) -> "tuple[str | None, str | None]":
         """Validate and forward one browser→upstream frame, or drop it.
 
         Returns `(forwarded, sent_type)`: `forwarded` is the exact string to
@@ -1941,7 +2010,7 @@ class RTMiddleTier:
                         "to the server's own default (session=%s)", session_id)
                     sanitized_td = copy.deepcopy(_BOOTSTRAP_CLIENT_SESSION["turn_detection"])
                 session_in["turn_detection"] = sanitized_td
-            session = self._build_session(session_in, voice_locked=voice_locked, voice=voice)
+            session = self._build_session(session_in, voice_locked=voice_locked, voice=voice, reasoning_override=reasoning_override)
             tool_names = [t.get("name", "?") for t in session["tools"]]
             filtered["session"] = session
             # Every session.update carries an event_id so a rejection can
@@ -1984,11 +2053,28 @@ class RTMiddleTier:
         # Echo suppression — delegates to EchoSuppressor
         echo = EchoSuppressor()
 
+        # #75: resolve THIS session's own bound model deployment/reasoning flag
+        # BEFORE opening the upstream connection -- `session_id` must be known
+        # before `params={"model": ...}` is built below (previously computed
+        # further down, after the connection had already been opened against
+        # the process-wide default deployment for every session, regardless of
+        # what `?model=` resolved to). The bound values were already validated
+        # once, in `_websocket_handler`, before the WebSocket upgrade
+        # (`resolve_model`/`ModelSelectionError`) -- this just reads them back.
+        # `bound_deployment` is None (falls back to `self.deployment`, today's
+        # unchanged behaviour) for the persona's own default realtime model;
+        # `bound_reasoning` is None the same way (falls back to `_REASONING_UNSET`,
+        # the process-wide name-heuristic) -- see `resolve_realtime_model`.
+        session_id = self._sessions.get_session_id(ws)
+        bound_deployment = order_state_singleton.get_model_deployment(session_id) if session_id else None
+        bound_reasoning = order_state_singleton.get_model_reasoning(session_id) if session_id else None
+        reasoning_override = _REASONING_UNSET if bound_reasoning is None else bound_reasoning
+
         async with aiohttp.ClientSession(
             base_url=self.endpoint,
             timeout=_WS_CONNECT_TIMEOUT,
         ) as session:
-            params = {"model": self.deployment}
+            params = {"model": bound_deployment or self.deployment}
             headers = {}
             if "x-ms-client-request-id" in ws.headers:
                 headers["x-ms-client-request-id"] = ws.headers["x-ms-client-request-id"]
@@ -2004,7 +2090,9 @@ class RTMiddleTier:
                 compress=0,  # Azure OpenAI declines deflate anyway; don't offer it.
             ) as target_ws:
                 loop = asyncio.get_running_loop()
-                session_id = self._sessions.get_session_id(ws)
+                # `session_id` (and this session's bound model deployment/reasoning
+                # flag) were already resolved above, before this upstream connection
+                # was opened -- see the #75 comment above `aiohttp.ClientSession(...)`.
                 greeting_sent = self._sessions.has_sent_greeting(session_id) if session_id else False
                 # #74/Rick's PR #102 review item 2: this session's bound persona,
                 # resolved once. The persona catalog is mandatory, so every session
@@ -2089,11 +2177,11 @@ class RTMiddleTier:
                 # frame. Events are processed in order, so nothing the browser
                 # sends (mic audio included) can reach an unconfigured session.
                 await target_ws.send_str(guard.track(
-                    self.build_bootstrap_session_update(voice=voice, system_message=system_message)
+                    self.build_bootstrap_session_update(voice=voice, system_message=system_message, reasoning_override=reasoning_override)
                 ))
                 logger.info("Upstream session bootstrapped with %d tools before relaying client traffic "
                             "(reasoning=%s, session=%s)", len(self.tools),
-                            normalize_reasoning_effort(self.reasoning_effort) if self.reasoning_enabled() else "off",
+                            normalize_reasoning_effort(self.reasoning_effort) if self.reasoning_enabled(reasoning_override) else "off",
                             session_id)
 
                 async def send_greeting_once(trigger: str = "unknown"):
@@ -2192,7 +2280,10 @@ class RTMiddleTier:
                         presented = json.loads(data).get("resume_id")
                     except (ValueError, AttributeError):
                         presented = None
-                    outcome = self._sessions.resume(ws, presented, requested_persona_id=persona_id)
+                    outcome = self._sessions.resume(
+                        ws, presented, requested_persona_id=persona_id,
+                        requested_model_id=order_state_singleton.get_model_id(session_id) if session_id else None,
+                    )
                     resume_decided.set()
                     if not outcome.accepted:
                         logger.info("Resume rejected (reason=%s, resume id %s); starting fresh session %s",
@@ -2416,7 +2507,7 @@ class RTMiddleTier:
                                 if (verbose or _VERBOSE_GLOBAL) and audio_frame_count % 50 == 0:
                                     _vlog(verbose, "─── [Client → Server] Audio frame #%d ───", audio_frame_count)
                             # Forward client message to OpenAI.
-                            new_msg, sent_type = await self._process_message_to_server(msg, ws, verbose, voice_locked=assistant_audio_seen, guard=guard, voice=voice, limiter=drop_limiter)
+                            new_msg, sent_type = await self._process_message_to_server(msg, ws, verbose, voice_locked=assistant_audio_seen, guard=guard, voice=voice, limiter=drop_limiter, reasoning_override=reasoning_override)
                             # PR #49 review round 2, "F1": idle reset, nudge
                             # cancel and the greeting trigger used to be keyed
                             # on raw substring checks against msg.data,
@@ -2555,7 +2646,8 @@ class RTMiddleTier:
 
                             new_msg = await self._process_message_to_client(msg, ws, target_ws, tools_pending, verbose, guard=guard,
                                                                             on_session_created=on_session_created,
-                                                                            recovery=recovery, voice=voice, tool_failures=tool_failures)
+                                                                            recovery=recovery, voice=voice, tool_failures=tool_failures,
+                                                                            reasoning_override=reasoning_override)
                             if new_msg is not None:
                                 await ws.send_str(new_msg)
                         elif msg.type == aiohttp.WSMsgType.ERROR:
@@ -2615,13 +2707,6 @@ class RTMiddleTier:
             await ws.close()
             return ws
 
-        ws = web.WebSocketResponse(
-            heartbeat=_WS_HEARTBEAT_SEC,
-            autoping=True,
-            autoclose=True,
-            compress=_WS_COMPRESS,
-        )
-
         # ── Persona binding (#74) ──
         # The persona catalog is mandatory (#74/Rick's PR #102 review item 2): the
         # persona is picked once, here, before the WebSocket upgrade (design doc
@@ -2634,9 +2719,66 @@ class RTMiddleTier:
             return web.Response(status=404, text=f"Unknown or disabled persona: {requested_persona_id!r}")
         persona = self.persona_catalog.get(requested_persona_id)
 
+        # ── Processor dispatch (#75, Rick's PR #106 review item 5) ──
+        # Which PIPELINE the requested (or, when omitted, persona-defaulted) model belongs
+        # to -- and which processor handles that pipeline -- is resolved from the shared
+        # catalog/registry here, BEFORE any processor-specific code runs. This is the seam
+        # that lets a cascade model (#82) be routed to a cascade processor without
+        # `RTMiddleTier.handle` ever being entered, even though this method lives on
+        # `RTMiddleTier` itself: the routing decision never assumes "the pipeline is mine".
+        requested_model_id = request.query.get("model")
+        try:
+            processor = dispatch_processor(persona, requested_model_id, self.model_catalog, self.processor_registry)
+        except ModelSelectionError as e:
+            logger.warning("Rejected WebSocket for unknown model / unregistered pipeline: %s (%s)", requested_model_id, e)
+            return web.Response(status=404, text=f"Unknown or disallowed model: {requested_model_id!r}")
+
+        # ── Model selection (#75) ──
+        # Persona-allow-list + catalog + deployment validation, scoped to the ONE pipeline
+        # `processor` just claimed above (design doc 5.2/7.3; Rick's PR #106 review item 1 --
+        # no default-path special case: EVERY model, including the persona's own default,
+        # resolves through the catalog here). An unknown, disallowed, cross-wired (wrong
+        # pipeline) or undeployed model gets the same plain HTTP 404 an unknown/disabled
+        # persona already gets -- never a silent fallback -- and it is fixed for the life of
+        # the session (no mid-conversation switching; see `resume`'s `model_mismatch`
+        # rejection).
+        try:
+            resolved_model = processor.resolve_model(persona, requested_model_id)
+        except ModelSelectionError as e:
+            logger.warning("Rejected WebSocket for unknown/disallowed model: %s (%s)", requested_model_id, e)
+            return web.Response(status=404, text=f"Unknown or disallowed model: {requested_model_id!r}")
+
+        # ── Dispatch (#75, Rick's PR #106 review item 5) ──
+        # `processor` owns everything from here on -- the WebSocket upgrade, session
+        # creation and the relay loop -- through its own `handle`. For every model
+        # selectable today that's `self` (`RTMiddleTier`, the realtime pipeline
+        # processor), so this call is a no-op indirection until #82/#81 register a second
+        # processor -- see `tests/test_processors.py::TestDispatchProcessor` for the proof
+        # that a fake cascade processor is reached here instead of `RTMiddleTier.handle`.
+        return await processor.handle(request, persona, resolved_model)
+
+    async def handle(self, request: web.Request, persona, resolved_model: ResolvedModel) -> web.StreamResponse:
+        """`processors.PipelineProcessor`'s other required method (#75, design doc section
+        7.4; Rick's PR #106 review item 5). Owns this connection's ENTIRE lifetime from
+        here on: the WebSocket upgrade, session creation, the relay/processing loop and
+        teardown. Reached only through `_websocket_handler`'s dispatch seam above, once
+        `dispatch_processor` has picked `self` for `resolved_model`'s own pipeline and
+        `resolve_model` has already validated it -- this is today's exact previous
+        `_websocket_handler` tail, moved here verbatim so it is reachable only through that
+        seam and never a fallback default."""
+        ws = web.WebSocketResponse(
+            heartbeat=_WS_HEARTBEAT_SEC,
+            autoping=True,
+            autoclose=True,
+            compress=_WS_COMPRESS,
+        )
         await ws.prepare(request)
-        
-        self._sessions.create_session(ws, persona=persona)
+
+        self._sessions.create_session(
+            ws, persona=persona, model_id=resolved_model.id,
+            model_deployment=resolved_model.deployment, model_reasoning=resolved_model.reasoning,
+            model_pipeline=resolved_model.pipeline,
+        )
 
         try:
             await self._forward_messages(ws)
