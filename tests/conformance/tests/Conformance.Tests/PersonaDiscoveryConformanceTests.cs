@@ -13,6 +13,12 @@ namespace Conformance.Tests;
 /// catalog yet, so <see cref="DotnetTraitCoverageTests"/>'s dotnet CI leg
 /// (<c>Dotnet=ready&amp;Category!=Browser</c>) must skip these -- they still run in the main/full
 /// CI leg, which always launches the real Python backend.
+///
+/// Rick's PR #120 review round 2, required item 4: <c>Api_persona_detail_returns_200_for_the_default_persona</c>
+/// now also pins <c>roleName</c> on the wire (design doc section 5.2). Still deliberately untagged
+/// for the same reason as the class overall: PR #122's C# <c>PersonaRoutes.BuildPersonaDetailBody</c>
+/// doesn't emit <c>roleName</c> yet, so this row would fail on the dotnet backend today. Whichever
+/// of #120 or #122 merges second is expected to make this row pass on both backends.
 /// </summary>
 [Collection(ConformanceCollection.Name)]
 public sealed class PersonaDiscoveryConformanceTests(ConformanceFixture fixture)
@@ -62,6 +68,14 @@ public sealed class PersonaDiscoveryConformanceTests(ConformanceFixture fixture)
         using var document = JsonDocument.Parse(await response.Content.ReadAsStreamAsync(ct));
         Assert.Equal("sonic", document.RootElement.GetProperty("id").GetString());
         Assert.False(string.IsNullOrWhiteSpace(document.RootElement.GetProperty("menuUrl").GetString()));
+
+        // Rick's #120 review round 2, required item 4: `roleName` is a new field on the pinned
+        // wire contract (design doc section 5.2) -- read the expected value from Sonic's OWN
+        // persona.json (never a literal) so this row can't silently drift from the pack it proves.
+        var personaJsonPath = Path.Combine(fixture.PersonasDirectory, "sonic", "persona.json");
+        using var personaDocument = JsonDocument.Parse(await File.ReadAllTextAsync(personaJsonPath, ct));
+        var expectedRoleName = personaDocument.RootElement.GetProperty("roleName").GetString();
+        Assert.Equal(expectedRoleName, document.RootElement.GetProperty("roleName").GetString());
     });
 
     [Fact]
