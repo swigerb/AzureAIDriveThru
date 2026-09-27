@@ -1,10 +1,13 @@
-# Rebrand baseline (#76 round 2) -- checked-in ratchet of every shared-code brand-word
+# Rebrand baseline (#76 round 3) -- checked-in ratchet of every shared-code brand-word
 # reference outside a persona pack / the cross-brand docs / the two directory
-# exceptions in rebrand_scan.py. Regenerate/lower after a fix by running:
+# exceptions in rebrand_scan.py. Lower after a fix by running:
 #   python app/backend/tests/regenerate_rebrand_baseline.py
-# from the repo root -- it rescans and rewrites this file to match reality; review the
-# diff (counts should only ever go down except when a change legitimately adds one) and
-# make sure every new/changed entry still has an `issue` reference.
+# from the repo root -- by default this ONLY lowers counts (and drops entries that hit
+# 0); it refuses (exit 1, writes nothing) if any count would rise or a new (file, brand)
+# entry would be added. A genuine raise/new entry requires:
+#   python app/backend/tests/regenerate_rebrand_baseline.py --allow-increase --increase-reason '#123'
+# where '#123' names the issue that justifies the increase -- it is stamped onto every
+# raised/new entry as `increase_reason` (validated the same way as `issue`).
 entries:
 - file: .copilot/skills/sonic-menu-parsing/SKILL.md
   brand: sonic
@@ -13,18 +16,21 @@ entries:
   reason: 'Copilot skill describing how to parse personas/sonic''s own menu JSON specifically;
     #78/#79 will need an equivalent (or generalized) skill once other persona menu
     files exist.'
+  increase_reason: ''
 - file: .github/workflows/conformance.yml
   brand: sonic
   max: 2
   issue: '#76'
   reason: This groundwork's own disk-discovery comments name Sonic as the only pack
     that exists today; no further CI edit is needed once other packs are added.
+  increase_reason: ''
 - file: DEPLOY.md
   brand: sonic
   max: 5
   issue: '#86'
   reason: 'Deployment walkthrough uses the Sonic app name/image tag as its running
     example; same top-level-docs naming work as #86.'
+  increase_reason: ''
 - file: README.md
   brand: mcdonalds
   max: 1
@@ -32,6 +38,7 @@ entries:
   reason: 'Top-level README currently reads Sonic-only; #86 tracks updating it to
     name all three brands. Also rescues ''mcdonalds'' for the Local-mode paragraph''s
     reference to the upstream voice_rag McDonald''s demo this repo was forked from.'
+  increase_reason: ''
 - file: README.md
   brand: sonic
   max: 17
@@ -39,6 +46,7 @@ entries:
   reason: 'Top-level README currently reads Sonic-only; #86 tracks updating it to
     name all three brands. Also rescues ''mcdonalds'' for the Local-mode paragraph''s
     reference to the upstream voice_rag McDonald''s demo this repo was forked from.'
+  increase_reason: ''
 - file: app/backend/app.py
   brand: sonic
   max: 1
@@ -46,6 +54,7 @@ entries:
   reason: 'Backend config/persona/prompt loader defaults, logger names and illustrative
     docstring examples still default/hardcode to the single Sonic persona pending
     #74''s session-scoped persona binding.'
+  increase_reason: ''
 - file: app/backend/audio_pipeline.py
   brand: sonic
   max: 4
@@ -53,6 +62,7 @@ entries:
   reason: 'Backend config/persona/prompt loader defaults, logger names and illustrative
     docstring examples still default/hardcode to the single Sonic persona pending
     #74''s session-scoped persona binding.'
+  increase_reason: ''
 - file: app/backend/config.yaml
   brand: sonic
   max: 1
@@ -60,6 +70,7 @@ entries:
   reason: 'Backend config/persona/prompt loader defaults, logger names and illustrative
     docstring examples still default/hardcode to the single Sonic persona pending
     #74''s session-scoped persona binding.'
+  increase_reason: ''
 - file: app/backend/config_loader.py
   brand: sonic
   max: 1
@@ -67,6 +78,7 @@ entries:
   reason: 'Backend config/persona/prompt loader defaults, logger names and illustrative
     docstring examples still default/hardcode to the single Sonic persona pending
     #74''s session-scoped persona binding.'
+  increase_reason: ''
 - file: app/backend/conformance_hooks.py
   brand: sonic
   max: 1
@@ -74,6 +86,7 @@ entries:
   reason: 'Backend config/persona/prompt loader defaults, logger names and illustrative
     docstring examples still default/hardcode to the single Sonic persona pending
     #74''s session-scoped persona binding.'
+  increase_reason: ''
 - file: app/backend/menu_utils.py
   brand: sonic
   max: 9
@@ -81,13 +94,14 @@ entries:
   reason: 'Backend config/persona/prompt loader defaults, logger names and illustrative
     docstring examples still default/hardcode to the single Sonic persona pending
     #74''s session-scoped persona binding.'
+  increase_reason: ''
 - file: app/backend/money_utils.py
   brand: sonic
   max: 1
   issue: '#74'
   reason: Backend config/persona/prompt loader defaults, logger names and illustrative
     docstring examples still default/hardcode to the single Sonic persona pending
-    #74's session-scoped persona binding.
+  increase_reason: ''
 - file: app/backend/order_state.py
   brand: sonic
   max: 2
@@ -95,6 +109,7 @@ entries:
   reason: 'Backend config/persona/prompt loader defaults, logger names and illustrative
     docstring examples still default/hardcode to the single Sonic persona pending
     #74''s session-scoped persona binding.'
+  increase_reason: ''
 - file: app/backend/persona_loader.py
   brand: sonic
   max: 7
@@ -102,6 +117,7 @@ entries:
   reason: 'Backend config/persona/prompt loader defaults, logger names and illustrative
     docstring examples still default/hardcode to the single Sonic persona pending
     #74''s session-scoped persona binding.'
+  increase_reason: ''
 - file: app/backend/prompt_loader.py
   brand: sonic
   max: 3
@@ -109,6 +125,7 @@ entries:
   reason: 'Backend config/persona/prompt loader defaults, logger names and illustrative
     docstring examples still default/hardcode to the single Sonic persona pending
     #74''s session-scoped persona binding.'
+  increase_reason: ''
 - file: app/backend/rate_limit.py
   brand: sonic
   max: 1
@@ -116,6 +133,7 @@ entries:
   reason: 'Backend config/persona/prompt loader defaults, logger names and illustrative
     docstring examples still default/hardcode to the single Sonic persona pending
     #74''s session-scoped persona binding.'
+  increase_reason: ''
 - file: app/backend/rtmt.py
   brand: sonic
   max: 2
@@ -123,6 +141,7 @@ entries:
   reason: 'Backend config/persona/prompt loader defaults, logger names and illustrative
     docstring examples still default/hardcode to the single Sonic persona pending
     #74''s session-scoped persona binding.'
+  increase_reason: ''
 - file: app/backend/session_manager.py
   brand: sonic
   max: 3
@@ -130,6 +149,7 @@ entries:
   reason: 'Backend config/persona/prompt loader defaults, logger names and illustrative
     docstring examples still default/hardcode to the single Sonic persona pending
     #74''s session-scoped persona binding.'
+  increase_reason: ''
 - file: app/backend/setup_search_index.py
   brand: sonic
   max: 4
@@ -137,6 +157,7 @@ entries:
   reason: 'Backend config/persona/prompt loader defaults, logger names and illustrative
     docstring examples still default/hardcode to the single Sonic persona pending
     #74''s session-scoped persona binding.'
+  increase_reason: ''
 - file: app/backend/tests/test_combo_orders.py
   brand: sonic
   max: 31
@@ -144,6 +165,7 @@ entries:
   reason: 'Backend test fixtures/paths reference personas/sonic/** directly because
     it''s the only persona pack that exists yet -- #78/#79 land the other packs, at
     which point these tests get parameterized per-persona instead of hardcoding Sonic.'
+  increase_reason: ''
 - file: app/backend/tests/test_conformance_hooks.py
   brand: sonic
   max: 1
@@ -151,6 +173,7 @@ entries:
   reason: 'Backend test fixtures/paths reference personas/sonic/** directly because
     it''s the only persona pack that exists yet -- #78/#79 land the other packs, at
     which point these tests get parameterized per-persona instead of hardcoding Sonic.'
+  increase_reason: ''
 - file: app/backend/tests/test_extras_rules.py
   brand: sonic
   max: 1
@@ -158,6 +181,7 @@ entries:
   reason: 'Backend test fixtures/paths reference personas/sonic/** directly because
     it''s the only persona pack that exists yet -- #78/#79 land the other packs, at
     which point these tests get parameterized per-persona instead of hardcoding Sonic.'
+  increase_reason: ''
 - file: app/backend/tests/test_menu_utils.py
   brand: sonic
   max: 7
@@ -165,6 +189,7 @@ entries:
   reason: 'Backend test fixtures/paths reference personas/sonic/** directly because
     it''s the only persona pack that exists yet -- #78/#79 land the other packs, at
     which point these tests get parameterized per-persona instead of hardcoding Sonic.'
+  increase_reason: ''
 - file: app/backend/tests/test_order_resume.py
   brand: sonic
   max: 1
@@ -172,6 +197,7 @@ entries:
   reason: 'Backend test fixtures/paths reference personas/sonic/** directly because
     it''s the only persona pack that exists yet -- #78/#79 land the other packs, at
     which point these tests get parameterized per-persona instead of hardcoding Sonic.'
+  increase_reason: ''
 - file: app/backend/tests/test_order_state.py
   brand: sonic
   max: 1
@@ -179,6 +205,7 @@ entries:
   reason: 'Backend test fixtures/paths reference personas/sonic/** directly because
     it''s the only persona pack that exists yet -- #78/#79 land the other packs, at
     which point these tests get parameterized per-persona instead of hardcoding Sonic.'
+  increase_reason: ''
 - file: app/backend/tests/test_performance.py
   brand: sonic
   max: 1
@@ -186,6 +213,7 @@ entries:
   reason: 'Backend test fixtures/paths reference personas/sonic/** directly because
     it''s the only persona pack that exists yet -- #78/#79 land the other packs, at
     which point these tests get parameterized per-persona instead of hardcoding Sonic.'
+  increase_reason: ''
 - file: app/backend/tests/test_persona_loader.py
   brand: sonic
   max: 46
@@ -193,6 +221,7 @@ entries:
   reason: 'Backend test fixtures/paths reference personas/sonic/** directly because
     it''s the only persona pack that exists yet -- #78/#79 land the other packs, at
     which point these tests get parameterized per-persona instead of hardcoding Sonic.'
+  increase_reason: ''
 - file: app/backend/tests/test_persona_pack_drift_guard.py
   brand: sonic
   max: 12
@@ -200,6 +229,7 @@ entries:
   reason: 'Backend test fixtures/paths reference personas/sonic/** directly because
     it''s the only persona pack that exists yet -- #78/#79 land the other packs, at
     which point these tests get parameterized per-persona instead of hardcoding Sonic.'
+  increase_reason: ''
 - file: app/backend/tests/test_prompt_extras_pin.py
   brand: sonic
   max: 4
@@ -207,6 +237,7 @@ entries:
   reason: 'Backend test fixtures/paths reference personas/sonic/** directly because
     it''s the only persona pack that exists yet -- #78/#79 land the other packs, at
     which point these tests get parameterized per-persona instead of hardcoding Sonic.'
+  increase_reason: ''
 - file: app/backend/tests/test_prompt_loading.py
   brand: sonic
   max: 11
@@ -214,6 +245,7 @@ entries:
   reason: 'Backend test fixtures/paths reference personas/sonic/** directly because
     it''s the only persona pack that exists yet -- #78/#79 land the other packs, at
     which point these tests get parameterized per-persona instead of hardcoding Sonic.'
+  increase_reason: ''
 - file: app/backend/tests/test_rate_limit.py
   brand: sonic
   max: 2
@@ -221,6 +253,7 @@ entries:
   reason: 'Backend test fixtures/paths reference personas/sonic/** directly because
     it''s the only persona pack that exists yet -- #78/#79 land the other packs, at
     which point these tests get parameterized per-persona instead of hardcoding Sonic.'
+  increase_reason: ''
 - file: app/backend/tests/test_rtmt.py
   brand: sonic
   max: 16
@@ -228,6 +261,7 @@ entries:
   reason: 'Backend test fixtures/paths reference personas/sonic/** directly because
     it''s the only persona pack that exists yet -- #78/#79 land the other packs, at
     which point these tests get parameterized per-persona instead of hardcoding Sonic.'
+  increase_reason: ''
 - file: app/backend/tests/test_security.py
   brand: sonic
   max: 13
@@ -235,6 +269,7 @@ entries:
   reason: 'Backend test fixtures/paths reference personas/sonic/** directly because
     it''s the only persona pack that exists yet -- #78/#79 land the other packs, at
     which point these tests get parameterized per-persona instead of hardcoding Sonic.'
+  increase_reason: ''
 - file: app/backend/tests/test_session_bootstrap.py
   brand: sonic
   max: 4
@@ -242,6 +277,7 @@ entries:
   reason: 'Backend test fixtures/paths reference personas/sonic/** directly because
     it''s the only persona pack that exists yet -- #78/#79 land the other packs, at
     which point these tests get parameterized per-persona instead of hardcoding Sonic.'
+  increase_reason: ''
 - file: app/backend/tests/test_tool_calling.py
   brand: sonic
   max: 11
@@ -249,6 +285,7 @@ entries:
   reason: 'Backend test fixtures/paths reference personas/sonic/** directly because
     it''s the only persona pack that exists yet -- #78/#79 land the other packs, at
     which point these tests get parameterized per-persona instead of hardcoding Sonic.'
+  increase_reason: ''
 - file: app/backend/tests/test_tools_search.py
   brand: sonic
   max: 2
@@ -256,6 +293,7 @@ entries:
   reason: 'Backend test fixtures/paths reference personas/sonic/** directly because
     it''s the only persona pack that exists yet -- #78/#79 land the other packs, at
     which point these tests get parameterized per-persona instead of hardcoding Sonic.'
+  increase_reason: ''
 - file: app/frontend/index.html
   brand: sonic
   max: 1
@@ -264,6 +302,7 @@ entries:
     #80''s persona-aware runtime theming (frontend is out of this issue''s scope to
     edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
     red as a non-Sonic-brand-hex test fixture, not real branding.'
+  increase_reason: ''
 - file: app/frontend/src/App.tsx
   brand: sonic
   max: 13
@@ -272,6 +311,7 @@ entries:
     #80''s persona-aware runtime theming (frontend is out of this issue''s scope to
     edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
     red as a non-Sonic-brand-hex test fixture, not real branding.'
+  increase_reason: ''
 - file: app/frontend/src/__tests__/brandColorTokens.test.ts
   brand: mcdonalds
   max: 1
@@ -280,6 +320,7 @@ entries:
     #80''s persona-aware runtime theming (frontend is out of this issue''s scope to
     edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
     red as a non-Sonic-brand-hex test fixture, not real branding.'
+  increase_reason: ''
 - file: app/frontend/src/__tests__/brandColorTokens.test.ts
   brand: sonic
   max: 4
@@ -288,6 +329,7 @@ entries:
     #80''s persona-aware runtime theming (frontend is out of this issue''s scope to
     edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
     red as a non-Sonic-brand-hex test fixture, not real branding.'
+  increase_reason: ''
 - file: app/frontend/src/components/ui/__tests__/order-summary.test.tsx
   brand: sonic
   max: 2
@@ -296,6 +338,7 @@ entries:
     #80''s persona-aware runtime theming (frontend is out of this issue''s scope to
     edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
     red as a non-Sonic-brand-hex test fixture, not real branding.'
+  increase_reason: ''
 - file: app/frontend/src/components/ui/order-summary.tsx
   brand: sonic
   max: 1
@@ -304,6 +347,7 @@ entries:
     #80''s persona-aware runtime theming (frontend is out of this issue''s scope to
     edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
     red as a non-Sonic-brand-hex test fixture, not real branding.'
+  increase_reason: ''
 - file: app/frontend/src/context/auth-context.tsx
   brand: sonic
   max: 1
@@ -312,6 +356,7 @@ entries:
     #80''s persona-aware runtime theming (frontend is out of this issue''s scope to
     edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
     red as a non-Sonic-brand-hex test fixture, not real branding.'
+  increase_reason: ''
 - file: app/frontend/src/data/dummyTranscripts.json
   brand: sonic
   max: 7
@@ -320,6 +365,7 @@ entries:
     #80''s persona-aware runtime theming (frontend is out of this issue''s scope to
     edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
     red as a non-Sonic-brand-hex test fixture, not real branding.'
+  increase_reason: ''
 - file: app/frontend/src/data/menuItems.json
   brand: sonic
   max: 103
@@ -328,6 +374,7 @@ entries:
     #80''s persona-aware runtime theming (frontend is out of this issue''s scope to
     edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
     red as a non-Sonic-brand-hex test fixture, not real branding.'
+  increase_reason: ''
 - file: app/frontend/src/data/sonic-menu-items.json
   brand: sonic
   max: 421
@@ -336,6 +383,7 @@ entries:
     #80''s persona-aware runtime theming (frontend is out of this issue''s scope to
     edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
     red as a non-Sonic-brand-hex test fixture, not real branding.'
+  increase_reason: ''
 - file: app/frontend/src/hooks/useRealtime.tsx
   brand: sonic
   max: 1
@@ -344,6 +392,7 @@ entries:
     #80''s persona-aware runtime theming (frontend is out of this issue''s scope to
     edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
     red as a non-Sonic-brand-hex test fixture, not real branding.'
+  increase_reason: ''
 - file: app/frontend/src/index.css
   brand: sonic
   max: 8
@@ -352,6 +401,7 @@ entries:
     #80''s persona-aware runtime theming (frontend is out of this issue''s scope to
     edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
     red as a non-Sonic-brand-hex test fixture, not real branding.'
+  increase_reason: ''
 - file: app/frontend/src/index.tsx
   brand: sonic
   max: 1
@@ -360,6 +410,7 @@ entries:
     #80''s persona-aware runtime theming (frontend is out of this issue''s scope to
     edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
     red as a non-Sonic-brand-hex test fixture, not real branding.'
+  increase_reason: ''
 - file: app/frontend/src/lib/__tests__/personaTheme.test.ts
   brand: sonic
   max: 2
@@ -368,6 +419,7 @@ entries:
     #80''s persona-aware runtime theming (frontend is out of this issue''s scope to
     edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
     red as a non-Sonic-brand-hex test fixture, not real branding.'
+  increase_reason: ''
 - file: app/frontend/src/lib/personaTheme.ts
   brand: sonic
   max: 5
@@ -376,6 +428,7 @@ entries:
     #80''s persona-aware runtime theming (frontend is out of this issue''s scope to
     edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
     red as a non-Sonic-brand-hex test fixture, not real branding.'
+  increase_reason: ''
 - file: app/frontend/src/locales/__tests__/locales.test.ts
   brand: sonic
   max: 4
@@ -384,6 +437,7 @@ entries:
     #80''s persona-aware runtime theming (frontend is out of this issue''s scope to
     edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
     red as a non-Sonic-brand-hex test fixture, not real branding.'
+  increase_reason: ''
 - file: app/frontend/src/locales/en/translation.json
   brand: sonic
   max: 1
@@ -392,6 +446,7 @@ entries:
     #80''s persona-aware runtime theming (frontend is out of this issue''s scope to
     edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
     red as a non-Sonic-brand-hex test fixture, not real branding.'
+  increase_reason: ''
 - file: app/frontend/src/locales/es/translation.json
   brand: sonic
   max: 1
@@ -400,6 +455,7 @@ entries:
     #80''s persona-aware runtime theming (frontend is out of this issue''s scope to
     edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
     red as a non-Sonic-brand-hex test fixture, not real branding.'
+  increase_reason: ''
 - file: app/frontend/src/locales/fr/translation.json
   brand: sonic
   max: 1
@@ -408,6 +464,7 @@ entries:
     #80''s persona-aware runtime theming (frontend is out of this issue''s scope to
     edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
     red as a non-Sonic-brand-hex test fixture, not real branding.'
+  increase_reason: ''
 - file: app/frontend/src/locales/ja/translation.json
   brand: sonic
   max: 1
@@ -416,36 +473,42 @@ entries:
     #80''s persona-aware runtime theming (frontend is out of this issue''s scope to
     edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
     red as a non-Sonic-brand-hex test fixture, not real branding.'
+  increase_reason: ''
 - file: docs/customizing_deploy.md
   brand: sonic
   max: 3
   issue: '#78'
   reason: Non-ADR docs use the Sonic persona as the illustrative current example pending
     other persona packs landing.
+  increase_reason: ''
 - file: docs/dotnet_mapping.md
   brand: sonic
   max: 1
   issue: '#78'
   reason: Non-ADR docs use the Sonic persona as the illustrative current example pending
     other persona packs landing.
+  increase_reason: ''
 - file: docs/existing_services.md
   brand: sonic
   max: 2
   issue: '#78'
   reason: Non-ADR docs use the Sonic persona as the illustrative current example pending
     other persona packs landing.
+  increase_reason: ''
 - file: docs/order_resume.md
   brand: sonic
   max: 1
   issue: '#78'
   reason: Non-ADR docs use the Sonic persona as the illustrative current example pending
     other persona packs landing.
+  increase_reason: ''
 - file: infra/main.parameters.json
   brand: sonic
   max: 1
   issue: '#78'
   reason: Infra default naming/tags reference Sonic pending other persona packs landing.
     (Recorded here only -- infra/** itself is out of this issue's scope to edit.)
+  increase_reason: ''
 - file: scripts/benchmark_reasoning.py
   brand: sonic
   max: 5
@@ -453,6 +516,7 @@ entries:
   reason: 'Operational scripts (deploy/build/benchmark/menu-maintenance) are Sonic-only
     pending other persona packs; #78/#79 will need them parameterized or duplicated
     per persona.'
+  increase_reason: ''
 - file: scripts/deploy.sh
   brand: sonic
   max: 1
@@ -460,6 +524,7 @@ entries:
   reason: 'Operational scripts (deploy/build/benchmark/menu-maintenance) are Sonic-only
     pending other persona packs; #78/#79 will need them parameterized or duplicated
     per persona.'
+  increase_reason: ''
 - file: scripts/docker-build.sh
   brand: sonic
   max: 2
@@ -467,6 +532,7 @@ entries:
   reason: 'Operational scripts (deploy/build/benchmark/menu-maintenance) are Sonic-only
     pending other persona packs; #78/#79 will need them parameterized or duplicated
     per persona.'
+  increase_reason: ''
 - file: scripts/e2e_order_resume.py
   brand: sonic
   max: 4
@@ -474,6 +540,7 @@ entries:
   reason: 'Operational scripts (deploy/build/benchmark/menu-maintenance) are Sonic-only
     pending other persona packs; #78/#79 will need them parameterized or duplicated
     per persona.'
+  increase_reason: ''
 - file: scripts/extract_production_items.py
   brand: sonic
   max: 2
@@ -481,6 +548,7 @@ entries:
   reason: 'Operational scripts (deploy/build/benchmark/menu-maintenance) are Sonic-only
     pending other persona packs; #78/#79 will need them parameterized or duplicated
     per persona.'
+  increase_reason: ''
 - file: scripts/generate_apology_clips.py
   brand: sonic
   max: 1
@@ -488,6 +556,7 @@ entries:
   reason: 'Operational scripts (deploy/build/benchmark/menu-maintenance) are Sonic-only
     pending other persona packs; #78/#79 will need them parameterized or duplicated
     per persona.'
+  increase_reason: ''
 - file: scripts/smoke_realtime.py
   brand: sonic
   max: 1
@@ -495,6 +564,7 @@ entries:
   reason: 'Operational scripts (deploy/build/benchmark/menu-maintenance) are Sonic-only
     pending other persona packs; #78/#79 will need them parameterized or duplicated
     per persona.'
+  increase_reason: ''
 - file: scripts/update_menu_sizes.py
   brand: sonic
   max: 2
@@ -502,8 +572,10 @@ entries:
   reason: 'Operational scripts (deploy/build/benchmark/menu-maintenance) are Sonic-only
     pending other persona packs; #78/#79 will need them parameterized or duplicated
     per persona.'
+  increase_reason: ''
 - file: tests/conformance/README.md
   brand: sonic
   max: 14
   issue: '#78'
   reason: Harness docs reference Sonic as the only persona pack that exists today.
+  increase_reason: ''

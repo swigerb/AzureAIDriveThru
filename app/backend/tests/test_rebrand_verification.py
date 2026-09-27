@@ -194,6 +194,20 @@ class TestRebrandVerification(unittest.TestCase):
             f"\nBaseline entries missing a valid issue reference (e.g. '#74'): {bad}",
         )
 
+    def test_baseline_entries_with_an_increase_reason_have_a_valid_format(self):
+        """`increase_reason` is only set by regenerate_rebrand_baseline.py's
+        ``--allow-increase`` path (PR #101 round 3, Rick's review) on a raised/brand-new
+        entry -- when present it must be a well-formed issue reference like '#123', the same
+        as `issue`, so a raise can't be laundered through a free-text non-reference."""
+        bad = [
+            (e.file, e.brand, e.increase_reason) for e in BASELINE.values()
+            if e.increase_reason and not re.fullmatch(r"#\d+", e.increase_reason)
+        ]
+        self.assertEqual(
+            bad, [],
+            f"\nBaseline entries with a malformed increase_reason (e.g. want '#123'): {bad}",
+        )
+
     def test_baseline_entries_are_unique_per_file_and_brand(self):
         """Sanity: rebrand_scan._load_baseline already raises on a literal YAML duplicate, but
         assert it here too so a future refactor of the loader can't silently swallow one."""

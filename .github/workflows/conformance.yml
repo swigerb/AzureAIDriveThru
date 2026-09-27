@@ -78,6 +78,25 @@ jobs:
           set -o pipefail
           python -m pytest app/backend/tests -q --junitxml=pytest-results.xml 2>&1 | tee pytest-output.log
 
+      # PR #101 round 3 (Rick's review, optional/recommended): the regen script's
+      # --allow-increase refusal only protects people who run it -- nothing stops a hand-edit
+      # of rebrand_baseline.yaml that skips it entirely. This step makes any such raise (or
+      # brand-new entry) visible in CI by diffing the checked-in baseline against the PR's
+      # base branch and failing if the increase/new-entry lacks a valid `increase_reason`.
+      # Only meaningful on pull_request events, where github.base_ref is set.
+      - name: Rebrand baseline ratchet vs base branch
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch origin "${{ github.base_ref }}" --depth=1
+          # `|| true`: if the base branch predates rebrand_baseline.yaml, git show exits
+          # non-zero and (with bash's default -e for run steps) would abort the step before
+          # the python script's own graceful "not found -- skipping" fallback gets a chance to
+          # run. Tolerating the failure here leaves an empty/missing file, which the script
+          # already handles as "nothing to ratchet against yet".
+          git show "origin/${{ github.base_ref }}:app/backend/tests/rebrand_baseline.yaml" \
+            > base-rebrand-baseline.yaml || true
+          python app/backend/tests/check_rebrand_baseline_against_base.py base-rebrand-baseline.yaml
+
       - name: Upload pytest results on failure
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

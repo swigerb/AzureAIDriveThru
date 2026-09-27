@@ -71,6 +71,11 @@ BRAND_EXCLUDED_FILES = {
     "test_rebrand_verification.py",
     "rebrand_scan.py",
     "regenerate_rebrand_baseline.py",
+    # Unit tests for the regen script (PR #101 round 3) use "sonic" purely as fixture/example
+    # data for BaselineEntry objects, not a real shared-code brand reference -- same rationale
+    # as excluding test_rebrand_verification.py itself.
+    "test_regenerate_rebrand_baseline.py",
+    "test_check_rebrand_baseline_against_base.py",
     # The baseline itself necessarily lists every brand word it tracks (as data, in `file`/
     # `brand` fields), which would otherwise make it its own violation.
     "rebrand_baseline.yaml",
@@ -161,7 +166,12 @@ class BaselineEntry:
     `max` MUST equal the real current count -- test_brand_word_counts_match_the_baseline
     fails the moment it doesn't, in either direction (see this module's docstring). `issue`
     MUST be a GitHub issue reference like "#74", validated by
-    test_every_baseline_entry_has_a_valid_issue_reference.
+    test_every_baseline_entry_has_a_valid_issue_reference. `increase_reason` is set only when
+    regenerate_rebrand_baseline.py raised this entry's `max` (or added it as brand-new) via
+    ``--allow-increase``; when present it MUST also be a GitHub issue reference like "#123",
+    validated by test_baseline_entries_with_an_increase_reason_have_a_valid_format (PR #101
+    round 3, Rick's review: the regen script previously rewrote every `max` to today's count
+    unconditionally, so a brand-word increase could be laundered by re-running it).
     """
 
     file: str  # POSIX-style, repo-root-relative, exact file (no trailing slash / no globs)
@@ -169,6 +179,7 @@ class BaselineEntry:
     max: int
     issue: str
     reason: str = field(default="")
+    increase_reason: str = field(default="")
 
 
 def _load_baseline(path: Path = BASELINE_PATH) -> dict[tuple[str, str], BaselineEntry]:
@@ -192,6 +203,7 @@ def _load_baseline(path: Path = BASELINE_PATH) -> dict[tuple[str, str], Baseline
             max=int(item["max"]),
             issue=item.get("issue", ""),
             reason=item.get("reason", ""),
+            increase_reason=item.get("increase_reason", ""),
         )
         key = (entry.file, entry.brand)
         if key in result:
@@ -205,18 +217,29 @@ def _dump_baseline(entries: list[BaselineEntry], path: Path = BASELINE_PATH) -> 
     ordered = sorted(entries, key=lambda e: (e.file, e.brand))
     payload = {
         "entries": [
-            {"file": e.file, "brand": e.brand, "max": e.max, "issue": e.issue, "reason": e.reason}
+            {
+                "file": e.file,
+                "brand": e.brand,
+                "max": e.max,
+                "issue": e.issue,
+                "reason": e.reason,
+                "increase_reason": e.increase_reason,
+            }
             for e in ordered
         ],
     }
     header = (
-        "# Rebrand baseline (#76 round 2) -- checked-in ratchet of every shared-code brand-word\n"
+        "# Rebrand baseline (#76 round 3) -- checked-in ratchet of every shared-code brand-word\n"
         "# reference outside a persona pack / the cross-brand docs / the two directory\n"
-        "# exceptions in rebrand_scan.py. Regenerate/lower after a fix by running:\n"
+        "# exceptions in rebrand_scan.py. Lower after a fix by running:\n"
         "#   python app/backend/tests/regenerate_rebrand_baseline.py\n"
-        "# from the repo root -- it rescans and rewrites this file to match reality; review the\n"
-        "# diff (counts should only ever go down except when a change legitimately adds one) and\n"
-        "# make sure every new/changed entry still has an `issue` reference.\n"
+        "# from the repo root -- by default this ONLY lowers counts (and drops entries that hit\n"
+        "# 0); it refuses (exit 1, writes nothing) if any count would rise or a new (file, brand)\n"
+        "# entry would be added. A genuine raise/new entry requires:\n"
+        "#   python app/backend/tests/regenerate_rebrand_baseline.py --allow-increase "
+        "--increase-reason '#123'\n"
+        "# where '#123' names the issue that justifies the increase -- it is stamped onto every\n"
+        "# raised/new entry as `increase_reason` (validated the same way as `issue`).\n"
     )
     with path.open("w", encoding="utf-8", newline="\n") as f:
         f.write(header)
