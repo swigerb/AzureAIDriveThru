@@ -42,3 +42,7 @@ system_hints:
 delta_templates:
   item_added: "Added {{quantity}} {{display_name}} — your total is now {{total}}"
   item_removed: "Removed {{quantity}} {{display_name}} — your total is now {{total}}"
+  # #77: `modify` is engine-supported shared code but dormant for every real persona today (its
+  # own tool_schemas.yaml lists only add/remove) -- present for parity with item_added/removed,
+  # not because Sonic's own prompt ever offers it.
+  item_modified: "Changed {{display_name}} — your total is now {{total}}"

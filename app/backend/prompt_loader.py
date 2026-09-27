@@ -122,11 +122,16 @@ class PromptLoader:
         return f" ({generic.get('hint', '')})" if generic.get("hint") else ""
 
     def get_delta_template(self, action: str) -> str:
-        """Return the delta text template for 'add' or 'remove' actions."""
+        """Return the delta text template for 'add', 'remove', or 'modify' actions."""
         self._maybe_reload()
         templates = self._cache["hints"].get("delta_templates", {})
         if action == "add":
             return templates.get("item_added", "Added {{quantity}} {{display_name}} — your total is now {{total}}")
+        if action == "modify":
+            # #77: `modify` resizes an existing order line in place (design doc section 3.3 row
+            # 21) -- distinct wording from "remove" so the guest doesn't hear their item was taken
+            # off the order when it was actually just resized.
+            return templates.get("item_modified", "Changed {{display_name}} — your total is now {{total}}")
         return templates.get("item_removed", "Removed {{quantity}} {{display_name}} — your total is now {{total}}")
 
     def render_template(self, template_str: str, **kwargs: Any) -> str:

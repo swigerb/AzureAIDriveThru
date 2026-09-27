@@ -119,6 +119,51 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
     });
 
     /// <summary>
+    /// #77 (rick-2's PR #116 review): a `modify` for an on-menu item that isn't in the order
+    /// must come back as the structured rejection (status "rejected", item_added false, reason
+    /// "not_in_order", the menu's item name, a non-empty message from the pack's
+    /// `item_not_in_order` error message), sent to the model only, and must leave the order
+    /// untouched. Before this, the backend logged a no-op but still told the model the item was
+    /// "Changed". A mutation that removes the check in tools.py fails this row.
+    /// </summary>
+    [Fact]
+    public Task Modifying_an_item_that_is_not_in_the_order_is_rejected_and_changes_nothing() => fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using var _ = browser;
+
+        var rejected = await OrderScenarioHelpers.CallToolAsync(
+            connection, browser, "update_order",
+            JsonSerializer.Serialize(new
+            {
+                action = "modify",
+                item_name = "Tots",
+                size = "medium",
+                quantity = 1,
+                price = 2.79m,
+            }),
+            "call_modify_missing", roundTripIndex, ct, toClient: false);
+        Assert.Null(rejected.ToolResultJson);
+        OrderScenarioHelpers.AssertRejectionShape(
+            rejected.FunctionCallOutputText, expectedReason: "not_in_order", expectedItemName: "Tots");
+        using (var doc = JsonDocument.Parse(rejected.FunctionCallOutputText))
+        {
+            var message = doc.RootElement.GetProperty("message").GetString()!;
+            Assert.Contains("Tots", message);
+            Assert.DoesNotContain("An error occurred", message);
+        }
+
+        var result = await OrderScenarioHelpers.CallToolAsync(
+            connection, browser, "get_order", "{}", "call_get_after_modify_missing", rejected.RoundTripIndex, ct);
+        Assert.Equal(0, OrderScenarioHelpers.GetOrderItemCount(result.ToolResultJson!));
+        OrderScenarioHelpers.AssertMoneyEqual(
+            0m,
+            OrderScenarioHelpers.GetOrderTotal(result.ToolResultJson!),
+            "A rejected modify must leave the order exactly as it was.");
+    });
+
+    /// <summary>
     /// #104 acceptance criterion (Rick's issue #104 constraints): the unit price charged always
     /// comes from the resolved menu record for (item, size), never the tool call's own `price`
     /// argument -- the price parameter is accepted (kept in the tool schema so a caller can still
@@ -191,14 +236,15 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
 
     /// <summary>
     /// Rick's PR #107 review, required item 2 (wrong-size carry-over acceptance row): adding a
-    /// Cherry Limeade medium (menu price 2.89), removing it, then re-adding it as a large but with
-    /// the stale medium price (2.89) still on the tool call -- the resolved size is `large`, so the
-    /// charge must be the large menu price (3.39), never the carried-over medium price. Mirrors
+    /// Tots medium (menu price 2.79), removing it, then re-adding it as a large but with the
+    /// stale medium price (2.79) still on the tool call -- the resolved size is `large`, so the
+    /// charge must be the large menu price (3.49), never the carried-over medium price. Mirrors
     /// app/backend/tests/test_tool_calling.py's
-    /// test_resize_wrong_size_price_carryover_charges_new_size_menu_price. Non-drink-adjacent
-    /// timing note doesn't apply here (Cherry Limeade prices used deliberately match Rick's review
-    /// numbers exactly; happy-hour timing is irrelevant to this add/remove/re-add sequence since no
-    /// discount step is involved).
+    /// test_resize_wrong_size_price_carryover_charges_new_size_menu_price. Non-drink item
+    /// deliberately (originally used Cherry Limeade, which is `happyHourDiscounted:true` and made
+    /// this test's total non-deterministic depending on the real 14:00-16:00 happy-hour window --
+    /// same precedent as the "non-drink item deliberately" comment on
+    /// Adding_the_same_item_and_size_twice_merges_into_one_line_with_summed_quantity above).
     /// </summary>
     [Fact]
     public Task Adding_the_wrong_size_with_a_stale_price_carried_over_is_charged_the_new_size_menu_price() => fixture.RunAsync(async () =>
@@ -209,23 +255,23 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
 
         await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "update_order",
-            """{"action":"add","item_name":"Cherry Limeade","size":"medium","quantity":1,"price":2.89}""",
+            """{"action":"add","item_name":"Tots","size":"medium","quantity":1,"price":2.79}""",
             "call_add_medium", roundTripIndex, ct);
         await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "update_order",
-            """{"action":"remove","item_name":"Cherry Limeade","size":"medium","quantity":1,"price":2.89}""",
+            """{"action":"remove","item_name":"Tots","size":"medium","quantity":1,"price":2.79}""",
             "call_remove_medium", roundTripIndex, ct);
         var result = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "update_order",
-            """{"action":"add","item_name":"Cherry Limeade","size":"large","quantity":1,"price":2.89}""",
+            """{"action":"add","item_name":"Tots","size":"large","quantity":1,"price":2.79}""",
             "call_add_large_stale_price", roundTripIndex, ct);
 
         Assert.NotNull(result.ToolResultJson);
         var order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
         Assert.Equal(1, order.GetProperty("items").GetArrayLength());
-        OrderScenarioHelpers.AssertMoneyEqual(3.39m, order.GetProperty("total").GetDecimal(),
-            "A large re-add with the medium's stale tool-call price (2.89) carried over must be " +
-            "charged the large's real menu price, 3.39 -- never the carried-over medium price.");
+        OrderScenarioHelpers.AssertMoneyEqual(3.49m, order.GetProperty("total").GetDecimal(),
+            "A large re-add with the medium's stale tool-call price (2.79) carried over must be " +
+            "charged the large's real menu price, 3.49 -- never the carried-over medium price.");
     });
 
     [Theory]
