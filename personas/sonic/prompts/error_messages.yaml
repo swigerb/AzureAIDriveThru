@@ -4,6 +4,12 @@ messages:
   search_service_unavailable: "I'm sorry, I can't reach our menu data right now."
   search_no_results: "No matching menu entries found."
 
+  # Generic fallback (#125, fail-fast follow-up to #116): the shared engine's catch-all key,
+  # required in every pack even though nothing in tools.py/rtmt.py renders it by name today --
+  # kept here so Sonic's key set matches the required set validated at startup
+  # (docs/persona-architecture.md section 6).
+  generic_error: "Sorry, something went wrong. Could you try that again?"
+
   # Customization errors
   invalid_mod: "I can't add {{forbidden_item}} to a {{base_name}} — that's a new one! Want to try a different topping?"
   nonsensical_mod_redirect: "That's a creative idea! How about a different topping?"

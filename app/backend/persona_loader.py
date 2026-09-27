@@ -44,14 +44,13 @@ __all__ = [
     "PersonaCatalog",
     "Persona",
     "PersonaValidationError",
+    "default_personas_dir",
+    "resolve_personas_dir",
 ]
 
 logger = logging.getLogger("persona-loader")
 
-# personas/ sits at the repo root (design doc section 4.1): app/backend/persona_loader.py is two
-# levels below it (app/backend/ -> app/ -> repo root).
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-_DEFAULT_PERSONAS_DIR = _REPO_ROOT / "personas"
+_PERSONA_SCHEMA_FILENAME = "persona.schema.json"
 
 
 class PersonaValidationError(Exception):
@@ -60,6 +59,77 @@ class PersonaValidationError(Exception):
     Always names the persona id, the file, and (when available) the offending field path, so a
     broken pack is fixable from the error message alone -- never a silent partial load.
     """
+
+
+# ---------------------------------------------------------------------------
+# Default personas/ directory resolution (#129 review round 2): pick the directory by
+# EXISTENCE, not by path depth. The old ``default_repo_root`` picked ``parents[2]`` whenever a
+# module's path happened to be deep enough, and fell back to the module's own directory only
+# when it wasn't -- so it silently chose the wrong directory whenever a container WORKDIR moved
+# one level deeper than exactly ``/app``, and it would have silently used a stray ``personas/``
+# two levels up in a deep checkout even when the real one sat right next to the module.
+# ---------------------------------------------------------------------------
+
+
+def _personas_dir_candidates(module_path: Path) -> list[Path]:
+    """The two default personas/ locations tried for a module at *module_path*, checkout layout
+    first: ``module_dir.parent.parent / "personas"`` (repo checkout -- this module lives at
+    ``<repo>/app/backend/<module>.py``, two levels below the repo root) then
+    ``module_dir / "personas"`` (flattened container image layout -- the backend is copied
+    straight onto ``/app`` and ``personas/`` sits right next to it; see ``app/Dockerfile``).
+    """
+    module_dir = module_path.resolve().parent
+    return [module_dir.parent.parent / "personas", module_dir / "personas"]
+
+
+def default_personas_dir(module_path: Path) -> Path | None:
+    """The first candidate from :func:`_personas_dir_candidates` that actually contains
+    ``persona.schema.json`` -- the marker that a directory is a real pack root, not just an
+    empty or unrelated ``personas/`` folder that happens to exist at one of these paths (for
+    example a stray directory two levels up in a deeply-nested checkout, or a WORKDIR that moved
+    one level deeper than ``/app``). Returns ``None`` if neither candidate qualifies; callers
+    should name both tried paths in their own error message.
+    """
+    for candidate in _personas_dir_candidates(module_path):
+        if (candidate / _PERSONA_SCHEMA_FILENAME).is_file():
+            return candidate
+    return None
+
+
+def resolve_personas_dir(module_path: Path) -> Path:
+    """Resolve the personas directory for a module at *module_path* when the caller has no
+    explicit directory of its own (:meth:`PersonaCatalog.load`'s ``personas_dir=None``, and
+    ``prompt_loader``'s module-level default -- both call this ONE implementation so the two
+    loaders always agree on where packs live).
+
+    An explicit ``PERSONAS_DIR`` env var always wins, and must both exist and contain
+    ``persona.schema.json`` -- an operator-set variable that silently points at the wrong place
+    should fail loudly, not fall through to a guess. Otherwise the first of
+    :func:`default_personas_dir`'s candidates wins, chosen by *existence*, not by path depth.
+
+    Raises ``PersonaValidationError`` naming every path tried when nothing qualifies.
+    """
+    env_value = os.environ.get("PERSONAS_DIR")
+    if env_value:
+        env_dir = Path(env_value).resolve()
+        if (env_dir / _PERSONA_SCHEMA_FILENAME).is_file():
+            return env_dir
+        raise PersonaValidationError(
+            f"PERSONAS_DIR env var '{env_dir}' does not exist or does not contain "
+            f"{_PERSONA_SCHEMA_FILENAME}."
+        )
+
+    candidates = _personas_dir_candidates(module_path)
+    for candidate in candidates:
+        if (candidate / _PERSONA_SCHEMA_FILENAME).is_file():
+            return candidate
+
+    tried = "\n".join(f"  - {c}" for c in candidates)
+    raise PersonaValidationError(
+        "Could not resolve a default personas directory: no PERSONAS_DIR env var is set, and "
+        f"none of the following contain {_PERSONA_SCHEMA_FILENAME}:\n{tried}\n"
+        "Set the PERSONAS_DIR environment variable to the persona packs directory."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -353,15 +423,17 @@ class PersonaCatalog:
         Raises ``PersonaValidationError`` naming the pack, file and field on the first invalid
         enabled pack -- this is the "refuse to start on an invalid pack" contract.
         """
-        base_dir = Path(personas_dir) if personas_dir is not None else Path(
-            os.environ.get("PERSONAS_DIR") or _DEFAULT_PERSONAS_DIR
-        )
-        base_dir = base_dir.resolve()
-
-        if not base_dir.is_dir():
-            raise PersonaValidationError(
-                f"PERSONAS_DIR '{base_dir}' does not exist or is not a directory."
-            )
+        if personas_dir is not None:
+            base_dir = Path(personas_dir).resolve()
+            if not base_dir.is_dir():
+                raise PersonaValidationError(
+                    f"PERSONAS_DIR '{base_dir}' does not exist or is not a directory."
+                )
+        else:
+            # resolve_personas_dir() already guarantees the returned directory exists and
+            # contains persona.schema.json, or raises PersonaValidationError naming every path
+            # it tried -- nothing further to check here.
+            base_dir = resolve_personas_dir(Path(__file__))
 
         persona_schema = _load_json_schema(base_dir / "persona.schema.json")
         menu_schema = _load_json_schema(base_dir / "menu.schema.json")

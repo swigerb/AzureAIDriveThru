@@ -19,7 +19,7 @@
 From the root directory, execute the following commands:
 
 ```bash
-docker build -t sonic-drive-in-app -f ./app/Dockerfile ./app
+docker build -t sonic-drive-in-app -f ./app/Dockerfile .
 docker run -p 8000:8000 --env-file ./app/backend/.env sonic-drive-in-app:latest
 ```
 
@@ -31,7 +31,7 @@ After testing locally, deploy the application with:
 ./scripts/deploy.sh \
     --env-file ./app/backend/.env \
     --dockerfile ./app/Dockerfile \
-    --context ./app \
+    --context . \
     sonic-drive-in-assistant
 ```
 
