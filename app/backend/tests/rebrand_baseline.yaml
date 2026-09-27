@@ -239,7 +239,7 @@ entries:
     which point these tests get parameterized per-persona instead of hardcoding Sonic.
     Raised by 1 for #80 F7: ApologyClipTests now asserts the clip lives at the persona
     pack''s own personas/sonic/assets/audio/ path (the frontend''s copy was retired).'
-  increase_reason: ''
+  increase_reason: '#80'
 - file: app/backend/tests/test_rtmt.py
   brand: sonic
   max: 16
@@ -309,7 +309,7 @@ entries:
     default persona''s (id `sonic`) pack-relative clip URL for each UI language, now that
     the clips are served from `personas/sonic/assets/audio/**` instead of a duplicated
     frontend copy that was retired.'
-  increase_reason: ''
+  increase_reason: '#80'
 - file: app/frontend/src/__tests__/brandColorTokens.test.ts
   brand: mcdonalds
   max: 1
@@ -354,7 +354,7 @@ entries:
     (matching the backend''s real default persona), so these unit tests necessarily
     exercise that literal id/URL/title in their fixtures and assertions (query-param
     precedence, localStorage persistence, offline/error fallback behavior, etc.).'
-  increase_reason: ''
+  increase_reason: '#80'
 - file: app/frontend/src/context/persona-context.tsx
   brand: sonic
   max: 8
@@ -364,7 +364,7 @@ entries:
     renders correctly the instant it mounts, before `/api/personas` responds. Every hit
     here is real bundled content (display name, title, ticket/menu copy, hero headline,
     trademark disclaimer), not decorative prose.'
-  increase_reason: ''
+  increase_reason: '#80'
 - file: app/frontend/src/data/sonic-menu-items.json
   brand: sonic
   max: 421
@@ -434,7 +434,7 @@ entries:
     #80 F1/F3: PersonaProvider''s bundled fallback now needs default `app.title`,
     `ticket.title`, and `menu.button` copy that mirrors the real Sonic persona pack, used
     only until `/api/personas` responds.'
-  increase_reason: ''
+  increase_reason: '#80'
 - file: app/frontend/src/locales/es/translation.json
   brand: sonic
   max: 3
@@ -446,7 +446,7 @@ entries:
     #80 F1/F3: PersonaProvider''s bundled fallback now needs default `app.title`,
     `ticket.title`, and `menu.button` copy that mirrors the real Sonic persona pack, used
     only until `/api/personas` responds.'
-  increase_reason: ''
+  increase_reason: '#80'
 - file: app/frontend/src/locales/fr/translation.json
   brand: sonic
   max: 3
@@ -458,7 +458,7 @@ entries:
     #80 F1/F3: PersonaProvider''s bundled fallback now needs default `app.title`,
     `ticket.title`, and `menu.button` copy that mirrors the real Sonic persona pack, used
     only until `/api/personas` responds.'
-  increase_reason: ''
+  increase_reason: '#80'
 - file: app/frontend/src/locales/ja/translation.json
   brand: sonic
   max: 1
@@ -552,7 +552,7 @@ entries:
     per persona. Raised from 1 to 2 for #80 F7: OUT_DIR now points at the real pack path
     personas/sonic/assets/audio/ (the retired frontend copy''s replacement), plus the
     pre-existing "Sonic Drive-In carhop" system-prompt literal.'
-  increase_reason: ''
+  increase_reason: '#80'
 - file: scripts/smoke_realtime.py
   brand: sonic
   max: 1
