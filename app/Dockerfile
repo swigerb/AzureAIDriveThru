@@ -38,9 +38,13 @@ RUN python -m pip install --no-cache-dir -r requirements.txt
 # Copy backend application source
 COPY ./backend/ /app
 
-# Provide menu metadata to the backend at runtime (used for extras/category rules).
-RUN mkdir -p /app/data
-COPY ./frontend/src/data/menuItems.json /app/data/menuItems.json
+# Persona packs (issue #70): prompts, menu data, and schemas the backend loads at startup.
+# PERSONAS_DIR is set explicitly because the container's directory depth differs from the repo
+# checkout (backend/ is flattened onto /app), so the module-level relative-path fallback in
+# persona_loader.py / prompt_loader.py / menu_utils.py / setup_search_index.py would not resolve
+# correctly without it.
+COPY ./personas /app/personas
+ENV PERSONAS_DIR=/app/personas
 
 # Copy the freshly-built frontend assets last so they are not overwritten by the backend source copy.
 COPY --from=build-stage /backend/static /app/static

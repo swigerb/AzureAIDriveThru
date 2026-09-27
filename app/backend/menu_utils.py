@@ -211,23 +211,21 @@ def _menu_key(item_name: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Menu category map (loaded once from menuItems.json)
+# Menu category map (loaded once from the Sonic persona pack's menu/menuItems.json)
 # ---------------------------------------------------------------------------
+# issue #70 (persona pack skeleton and loader): the per-brand env var overrides
+# (SONIC_MENU_ITEMS_PATH / MENU_ITEMS_PATH) are removed -- the menu now always loads from the
+# persona pack, whose location is controlled by PERSONAS_DIR (same variable persona_loader.py and
+# prompt_loader.py read). Hardcoded to "sonic" for now; per-session persona selection is future
+# work (#74).
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_PERSONAS_DIR = Path(os.environ.get("PERSONAS_DIR") or (_REPO_ROOT / "personas"))
+_ACTIVE_PERSONA = os.environ.get("DEFAULT_PERSONA", "sonic")
+
+
 def _load_menu_category_map() -> dict[str, str]:
-    env_override = (
-        os.environ.get("SONIC_MENU_ITEMS_PATH")
-        or os.environ.get("MENU_ITEMS_PATH")
-    )
-
-    candidate_paths: list[Path] = []
-    if env_override:
-        candidate_paths.append(Path(env_override))
-
-    candidate_paths.append(Path(__file__).resolve().parent / "data" / "menuItems.json")
-    candidate_paths.append(Path(__file__).resolve().parent.parent / "frontend" / "src" / "data" / "menuItems.json")
-
-    menu_path = next((path for path in candidate_paths if path.exists()), None)
-    if menu_path is None:
+    menu_path = _PERSONAS_DIR / _ACTIVE_PERSONA / "menu" / "menuItems.json"
+    if not menu_path.exists():
         return {}
     try:
         with menu_path.open("r", encoding="utf-8") as f:

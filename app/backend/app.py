@@ -11,6 +11,7 @@ from azure.identity import AzureDeveloperCliCredential, DefaultAzureCredential
 from dotenv import load_dotenv
 
 from config_loader import get_config
+from persona_loader import PersonaCatalog, PersonaValidationError
 from prompt_loader import PromptLoader
 from rtmt import RTMiddleTier, configure_realtime_model, create_hmac_token
 from tools import attach_tools_rtmt
@@ -46,10 +47,15 @@ _REQUIRED_ENV_VARS = [
 
 # Startup validation state — read by /health endpoint
 _startup_checks = {
+    "personas_loaded": False,
     "prompts_loaded": False,
     "config_loaded": True,  # validated at module load by get_config()
     "env_vars": False,
 }
+
+# Populated by create_app() from the validated persona pack catalog (issue #70). Read by
+# /health to list the loaded personas -- additive, does not change any existing /health field.
+_persona_catalog: PersonaCatalog | None = None
 
 
 def _get_bool_env(variable_name: str, default: bool = False) -> bool:
@@ -126,14 +132,15 @@ async def _index_handler(_request: web.Request) -> web.FileResponse:
 
 async def _health_handler(_request: web.Request) -> web.Response:
     all_ok = all(_startup_checks.values())
-    return web.json_response(
-        {
-            "status": "healthy" if all_ok else "unhealthy",
-            "version": _APP_VERSION,
-            "checks": _startup_checks,
-        },
-        status=200 if all_ok else 503,
-    )
+    body = {
+        "status": "healthy" if all_ok else "unhealthy",
+        "version": _APP_VERSION,
+        "checks": _startup_checks,
+    }
+    # Additive (issue #70): list the loaded persona packs once the catalog has been validated.
+    if _persona_catalog is not None:
+        body["personas"] = _persona_catalog.ids
+    return web.json_response(body, status=200 if all_ok else 503)
 
 
 async def _check_service_connectivity() -> None:
@@ -175,7 +182,17 @@ async def create_app() -> web.Application:
         sys.exit(1)
     _startup_checks["env_vars"] = True
 
-    # 2. Load prompts from YAML (fail-fast on missing/malformed files)
+    # 2. Load and validate every enabled persona pack (issue #70). Refuses to start on an
+    # invalid pack, naming the persona, file and field. Fails fast, same as prompt loading below.
+    global _persona_catalog
+    try:
+        _persona_catalog = PersonaCatalog.load()
+    except PersonaValidationError as exc:
+        logger.critical("FATAL: Failed to load persona pack(s) — %s", exc)
+        sys.exit(1)
+    _startup_checks["personas_loaded"] = True
+
+    # 3. Load prompts from YAML (fail-fast on missing/malformed files)
     try:
         prompt_loader = PromptLoader(brand="sonic")
     except (FileNotFoundError, ValueError) as exc:
@@ -183,12 +200,13 @@ async def create_app() -> web.Application:
         sys.exit(1)
     _startup_checks["prompts_loaded"] = True
 
-    # 3. Optional: verify Azure service connectivity (non-blocking)
+    # 4. Optional: verify Azure service connectivity (non-blocking)
     await _check_service_connectivity()
 
     env_count = len(_REQUIRED_ENV_VARS)
     logger.info(
-        "✅ Startup validation passed: prompts loaded, config valid, %d/%d env vars set",
+        "✅ Startup validation passed: personas=%s, prompts loaded, config valid, %d/%d env vars set",
+        ", ".join(_persona_catalog.ids),
         env_count,
         env_count,
     )
