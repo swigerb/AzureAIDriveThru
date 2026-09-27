@@ -237,17 +237,18 @@ class OrderState:
 
         display = f"{formatted_size}{item_name}".strip()
 
-        if action == "add":
-            # #104: the unit price charged is always this persona's own menu price for
-            # (item_name, size) -- never the tool call's own `price` argument. The model can
-            # invent a price, carry one over from the wrong size, or pre-apply a discount; since
-            # #73 every accepted item already resolved through the on-menu gate in tools.py, so
-            # menu.price_for() (menu_utils.MenuCatalog) is the single source of truth for what a
-            # guest is charged. This is the ONE place that source of truth is applied -- callers
-            # that build an order directly (tests, a future admin tool) get the same guarantee as
-            # the realtime tool-call path, instead of a second, easy-to-forget copy of this check
-            # in tools.py. The tool-call `price` is only ever used for the debug comparison below;
-            # see docs/persona-architecture.md section 6.
+        if action in ("add", "modify"):
+            # #104 / #77 (`modify` re-prices the same way an `add` does): the unit price charged
+            # is always this persona's own menu price for (item_name, size) -- never the tool
+            # call's own `price` argument. The model can invent a price, carry one over from the
+            # wrong size, or pre-apply a discount; since #73 every accepted item already resolved
+            # through the on-menu gate in tools.py, so menu.price_for() (menu_utils.MenuCatalog)
+            # is the single source of truth for what a guest is charged. This is the ONE place
+            # that source of truth is applied -- callers that build an order directly (tests, a
+            # future admin tool) get the same guarantee as the realtime tool-call path, instead of
+            # a second, easy-to-forget copy of this check in tools.py. The tool-call `price` is
+            # only ever used for the debug comparison below; see docs/persona-architecture.md
+            # section 6.
             menu_price = menu.price_for(item_name, size)
             if menu_price is not None:
                 # The prompt no longer tells the model to send a price (0ab2119), so a null,
@@ -287,7 +288,22 @@ class OrderState:
                     item_name, size, price, session_id,
                 )
 
-            is_combo = "combo" in item_name.lower()
+        if action == "add":
+            # #77 (shared bundle engine, docs/persona-architecture.md section 3.3 row 20): whether
+            # this item's own name carries one of THIS persona's ``bundles.nameMarkers`` (one
+            # pack's own ``["combo"]``, another's ``["meal"]``, a third pack's ``[]`` -- never
+            # true, no bundles at all) -- replaces the old hardcoded ``"combo" in
+            # item_name.lower()`` check, which only ever matched one pack's own combos and would
+            # silently never fire for a differently-worded bundle name like "Big Mac Meal".
+            # Exactly reproduces today's behavior for the pack whose own persona.json
+            # ``nameMarkers`` IS ``["combo"]``, while generalizing for every other pack.
+            # ``convertStandalone`` (also persona-owned) gates whether a name-marker match should
+            # even attempt the standalone-removal below at all -- a pack with no bundles sets this
+            # ``false`` and skips it outright regardless of its (empty) ``nameMarkers``.
+            name_markers = menu.bundle_name_markers
+            is_combo = menu.bundle_convert_standalone and any(
+                marker in item_name.lower() for marker in name_markers
+            )
             # Rick's PR #99 review, decision 1: the item's OWN bundle slots, read from the pack's
             # ``bundle.slots`` field (via menu_utils.bundle_slots) -- NOT derived from the word
             # "combo" in its name. "is_combo" above stays name-based and is used ONLY for the
@@ -307,10 +323,13 @@ class OrderState:
                 # menu-lookup functions use elsewhere (paren-stripping, whitespace/NBSP collapse,
                 # lowercasing, "®" removal) -- one rule, one implementation, not two independently
                 # maintained copies of the same "®"-removal logic.
-                combo_base = _menu_key(item_name).replace(" combo", "").strip()
+                combo_base = _menu_key(item_name)
+                for marker in name_markers:
+                    combo_base = combo_base.replace(f" {marker}", "")
+                combo_base = combo_base.strip()
                 for i, existing in enumerate(order_state):
-                    if "combo" in existing.item.lower():
-                        continue  # skip other combos
+                    if menu.bundle_slots(existing.item):
+                        continue  # skip other bundle items, not just other "combo"-named ones
                     existing_base = _menu_key(existing.item)
                     if existing_base == combo_base:
                         # Carry customization mods (e.g., "Pickles Only") to the combo
@@ -407,9 +426,11 @@ class OrderState:
             )
             if existing_item_index != -1:
                 order_state[existing_item_index].quantity += quantity
+                bundle_item_ref = order_state[existing_item_index]
                 logger.debug("Updated quantity for %s in session %s", display, session_id)
             else:
-                order_state.append(OrderItem(item=item_name, size=size, quantity=quantity, price=price, display=display))
+                bundle_item_ref = OrderItem(item=item_name, size=size, quantity=quantity, price=price, display=display)
+                order_state.append(bundle_item_ref)
                 logger.debug("Added %s to session %s", display, session_id)
 
             # ── Bundle pivot: absorb standalone sides/drinks into a newly added bundle ──
@@ -426,6 +447,11 @@ class OrderState:
                     # never free-absorb a pre-existing standalone side.
                     if component == "sides" and "sides" in own_bundle_slots and not absorbed_side:
                         logger.info("Absorbing '%s' into new bundle '%s'", existing.display, item_name)
+                        # #77: record what this bundle actually absorbed on its OWN order line
+                        # (design doc section 3.3 row 22, "components on the wire") -- additive,
+                        # never replaces the existing display-string rebuild elsewhere.
+                        bundle_item_ref.components.append(existing.display)
+                        session["absorbed_side_display"] = existing.display
                         if existing.quantity > 1:
                             existing.quantity -= 1
                         else:
@@ -433,6 +459,8 @@ class OrderState:
                         absorbed_side = True
                     elif component == "drinks" and "drinks" in own_bundle_slots and not absorbed_drink:
                         logger.info("Absorbing '%s' into new bundle '%s'", existing.display, item_name)
+                        bundle_item_ref.components.append(existing.display)
+                        session["absorbed_drink_display"] = existing.display
                         if existing.quantity > 1:
                             existing.quantity -= 1
                         else:
@@ -444,6 +472,62 @@ class OrderState:
                     session["absorbed_sides"] += 1
                 if absorbed_drink:
                     session["absorbed_drinks"] += 1
+
+                # ── #77: bundle-slot auto-fill (design doc section 3.3 row 19) -- a slot this
+                # item's OWN pack opts into filling by default (menu.bundle_autofill, keyed off
+                # menu.schema.json's ``bundle.autoFill``) that WASN'T just absorbed above from a
+                # pre-existing standalone item gets its default filler the instant the bundle is
+                # added -- e.g. a numbered meal's side defaulting to "Medium Fries" with no
+                # follow-up add call needed. No real pack populates ``autoFill`` yet (every real
+                # persona's own slots stay absorb-only, unchanged), so this is a no-op today for
+                # every shipped pack -- exercised only by fixture packs that opt in.
+                size_label = menu.normalize_size(size) or ""
+                autofill = menu.bundle_autofill(item_name, resolved_size_label=size_label)
+                if "sides" in autofill and not absorbed_side:
+                    filler_display = autofill["sides"]
+                    bundle_item_ref.components.append(filler_display)
+                    session["absorbed_side_display"] = filler_display
+                    session["absorbed_sides"] += 1
+                    result_info["autofilled"] = result_info.get("autofilled", []) + [filler_display]
+                if "drinks" in autofill and not absorbed_drink:
+                    filler_display = autofill["drinks"]
+                    bundle_item_ref.components.append(filler_display)
+                    session["absorbed_drink_display"] = filler_display
+                    session["absorbed_drinks"] += 1
+                    result_info["autofilled"] = result_info.get("autofilled", []) + [filler_display]
+
+        elif action == "modify":
+            # #77 (docs/persona-architecture.md section 3.3 row 21, "Resize in place"): change an
+            # existing order line's SIZE without a separate remove+re-add -- shared engine code,
+            # exposed only when a persona's OWN tool_schemas.yaml lists "modify" in its `action`
+            # enum (no real pack does today; see tools.py's `update_order_tool_schema`). Finds the
+            # first existing line for *item_name* at ANY size (the guest doesn't say the old size
+            # out loud -- "make that a large" -- only the item and the new size), re-prices it at
+            # the new size from this persona's own menu data (never the tool call's own `price`),
+            # and re-prefixes its display with the new size -- its own already-absorbed
+            # ``components`` (a combo's side/drink) carry over unchanged, since resizing a meal
+            # doesn't change what came with it.
+            existing_item_index = next(
+                (index for index, order_item in enumerate(order_state) if order_item.item == item_name),
+                -1
+            )
+            if existing_item_index != -1:
+                target = order_state[existing_item_index]
+                old_size = target.size
+                old_display = target.display
+                target.size = size
+                target.price = price
+                target.display = display
+                result_info["modified_from_size"] = old_size
+                result_info["modified_to_size"] = size
+                logger.info(
+                    "Modified '%s' from '%s' to '%s' in session %s", item_name, old_display, display, session_id,
+                )
+            else:
+                logger.warning(
+                    "Modify requested for '%s' but it isn't in the order for session %s -- no-op",
+                    item_name, session_id,
+                )
 
         elif action == "remove":
             existing_item_index = next((index for index, order_item in enumerate(order_state) if order_item.item == item_name and order_item.size == size), -1)
@@ -487,11 +571,16 @@ class OrderState:
         side_count += session.get("absorbed_sides", 0)
         drink_count += session.get("absorbed_drinks", 0)
 
+        # #77 (design doc section 3.3 row 18, "missingPartText"): each pack's own wording for what
+        # to ask the guest for next -- the default persona's own text is unchanged ("a side
+        # (fries or tots)" / "a drink or slush"); every other pack supplies its own via
+        # ``bundle.missingPartText`` in persona.json. Falls back to a generic phrase so a pack
+        # that doesn't set this at all never crashes or reads as blank.
         missing = []
         if side_count < side_capacity:
-            missing.append("a side (fries or tots)")
+            missing.append(menu.bundle_missing_part_text.get("sides", "a side"))
         if drink_count < drink_capacity:
-            missing.append("a drink or slush")
+            missing.append(menu.bundle_missing_part_text.get("drinks", "a drink"))
 
         return {
             "is_complete": len(missing) == 0,

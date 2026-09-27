@@ -11,6 +11,12 @@ class OrderItem(BaseModel):
     quantity: int
     price: float
     display: str
+    # #77: additive, defaults to [] for every persona -- the bundle-slot component(s) absorbed
+    # into (or auto-filled onto) this line, e.g. ["Medium Fries", "Coca-Cola"] for a meal/combo.
+    # Every OTHER field on this model stays exactly as-is for an item that bundles nothing (an
+    # a-la-carte item's ``components`` is simply []); the wire ticket renders it only when present
+    # (docs/persona-architecture.md section 3.3 row 22, tests/conformance/README.md wire schema).
+    components: list[str] = []
 
 
 class OrderSummary(BaseModel):
