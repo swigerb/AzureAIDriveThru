@@ -464,15 +464,13 @@ class CascadeProcessor:
         if task is None or task.done():
             state.current_turn_task = None
             return
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-        except Exception:
-            logger.exception("Cascade: in-flight turn raised while being cancelled (session=%s)", state.session_id)
-        logger.info("Cascade: cancelled in-flight turn: %s (session=%s)", reason, state.session_id)
-        state.current_turn_task = None
+        # MUTATION (Rick's #118 review item 2 evidence -- reverted in the very next commit):
+        # task.cancel() is intentionally skipped so the in-flight turn's /chat/completions
+        # request is never aborted by the client. Expected effect: the C# conformance row
+        # Cascade_barge_in_cancels_the_in_flight_turn_before_it_speaks's
+        # `Assert.True(firstRequest.Aborted, ...)` fails, proving that assertion actually detects
+        # a cancellation regression instead of passing regardless of whether cancellation works.
+        logger.info("Cascade: (mutation) NOT cancelling in-flight turn: %s (session=%s)", reason, state.session_id)
 
     async def _process_turn(self, ws: web.WebSocketResponse, session_id: str, state: _CascadeSessionState, turn_audio: bytes) -> None:
         if not turn_audio:
