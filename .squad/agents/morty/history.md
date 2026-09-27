@@ -379,6 +379,54 @@ Fixed `useAzureSpeech.tsx`: (1) `onReceivedToolResponse` parameter was declared 
   generate_apology_clips.py). Regenerating the baseline needed both directions (some counts fell,
   some rose) — `regenerate_rebrand_baseline.py` is deliberately lower-only and refuses to write
   *anything* if any pair needs to rise, and `--allow-increase` was off-limits per instructions —
+
+### 2026-09-29: PR #118 round-3 (#82 cascade) — event-driven conformance + shared-fake FIFO hazard
+
+- **xUnit v3 `ICollectionFixture` = one shared mutable fake for the whole file.** All
+  `CascadeConformanceTests` rows share ONE `FakeChatCompletionsServer` instance (`fixture.Chat`)
+  and its single FIFO scripted-response queue across the whole `[Collection(...)]` lifetime.
+  Within-collection execution order is NOT declaration/file order (confirmed empirically via TRX
+  `startTime` attributes) — it's reflection/test-ID based and semi-stable per build. Any row that
+  enqueues N scripted responses but lets fewer than N actual requests happen before disposing its
+  browser leaves the surplus sitting in the queue for whichever row runs next to accidentally
+  dequeue — a genuine, timing-dependent, structural bug, not "just a flake." The established
+  (correct) convention every other multi-round row follows: always wait for the FINAL scripted
+  response's client-visible effect (`response.audio_transcript.delta` / `response.done`) before
+  the test method returns. `Cascade_update_order_pricing_matches_the_same_menu_and_tax_math_as_realtime`
+  was the one row that violated it — turned out to be Rick's exact "1 pre-existing failure
+  (671/674)," confirmed by cross-referencing commit history (it was added in this PR's own first
+  commit, predating the barge-in/429 rows Rick flagged as timing-based) and by TRX-ordering three
+  seemingly-unrelated failures back to this one root cause in a single baseline run.
+- **Event-driven fakes over wall-clock windows:** replaced a scripted `ResponseDelay` + polling
+  loop + fixed post-delay with `HoldNextResponse()` (a `TaskCompletionSource`-backed gate the test
+  releases explicitly), `WaitForRequestCountAsync(n, timeout)` (await the fake actually having
+  received N requests), and per-request `Aborted` tracking (so a test can positively assert the
+  client aborted an in-flight request instead of merely "it didn't answer yet"). Bounded negative
+  waits are still fine for the final "must never arrive" check — keep them short (established
+  convention elsewhere in this repo: ~1-1.5s) and justify them in a doc comment against whatever
+  mechanism could still theoretically deliver the thing being ruled out.
+- **Mutation-testing a cancellation assert:** the cheapest, cleanest mutation to disable
+  `_cancel_current_turn`'s effect is to skip `task.cancel()` entirely and return early — NOT to
+  keep `await task` afterward, since awaiting a task that's still suspended on a test-controlled
+  gate (that the test only releases *after* the assertion the mutation is supposed to break)
+  deadlocks the session's WS message loop instead of failing fast. Commit the mutation, run only
+  the affected test to capture the failure message, revert in an immediate follow-up commit, then
+  re-run the full suite to reconfirm green.
+- **`git add -p` scripted via piped y/n answers** (`"y\nn\nn\nn" | git add -p file`) reliably
+  splits one file's working-tree diff into separate commits by hunk, when the edits genuinely
+  land in non-overlapping regions (e.g., one bugfix hunk vs. three hunks that are really one
+  logical rewrite) — much faster than reconstructing edits from scratch to get clean commit
+  boundaries.
+- **CPU-load evidence for "no wall-clock" claims:** `Start-Process powershell -ArgumentList
+  '-NoProfile','-Command','<tight busy loop>'` (one per `[Environment]::ProcessorCount`, tracked
+  by PID) reliably drives `\Processor(_Total)\% Processor Time` to 100%; `Stop-Process -Id
+  <PID>` only accepts literal integers in this environment's tool surface, not a variable/array
+  expansion in the same call — stop each PID with its own literal `-Id N` invocation (batch a few
+  per command) rather than looping over a collected PID array.
+- **`gh issue create`/`gh pr comment` require the scoped `GH_TOKEN`** (`gh auth token --user
+  swigerb`) even for read-adjacent write calls in this multi-account setup — the ambient/default
+  `gh` auth returns `GraphQL: Unauthorized: As an Enterprise Managed User, you cannot access this
+  content` for mutations.
   so I ran it once to confirm/apply every legitimate lowering, then hand-edited
   `rebrand_baseline.yaml` directly for the handful of raises/new entries, always stamping a real
   `issue: '#80'` **and** `increase_reason: '#80'` (both fields are checked, separately, by two
