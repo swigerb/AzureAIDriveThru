@@ -310,3 +310,93 @@
   not-yet-existing persona ("McDonald's"/"Dunkin") in a `.yml` comment tripped the guard
   before it was allowlisted -- worth remembering before adding forward-looking comments to
   any scanned file.
+
+## 2026-09-27 — squad/76-part2-multi-index PR #108 (#76 part 2, harness only)
+
+- The fake search server previously served ONE fixed catalog regardless of which index name
+  the backend's tool actually queried, which meant the four pytest-only per-persona rules
+  (per Rick's note on #20) had no C#-side conformance equivalent -- multi-index routing was
+  the actual unblocker, not a smoke-test writing exercise. Once `FakeSearchServer` loads and
+  serves each persona's own menu data keyed by index name (mirroring the backend's real
+  resolution), a same-shaped isolation row (session A never sees session B's items) becomes
+  trivial to write and is the highest-signal single test for this whole stream.
+- When a fixture pack's own data doesn't actually exercise the property you'd naively want to
+  test (here: neither test-alpha's nor test-beta's menu items opt into `happyHourDiscounted`,
+  so "assert the item gets discounted" would be vacuously testing nothing), look for the
+  complementary property that the fixture DOES exercise honestly instead of reaching for an
+  out-of-scope fixture-data edit. Same item + same persona at two clock instants (inside vs.
+  just outside the happy-hour window) asserting EQUAL totals proves "the persona-level flag
+  doesn't blanket-discount a non-opted item" and "a `happyHour: null` persona is
+  clock-invariant" -- both real, useful conformance properties -- without touching shared
+  Python-owned fixture JSON.
+- A wildcard (`"*"`) search query only reliably round-trips through the fake's default
+  `top_results=3` cap when the whole catalog has ≤3 items. A smoke Theory meant to run
+  uniformly across both small fixture packs (3 items) and a persona's real, much larger
+  catalog (sonic) needs to search by the expected item's OWN NAME, not a wildcard, or the
+  large-catalog row will silently get the wrong (truncated) result set and fail for a reason
+  that has nothing to do with the property under test.
+- Deliberately failing loud (`Assert.True` with a message naming the pack) rather than
+  quietly falling through is worth doing in TWO places for this kind of "runs once per
+  discovered pack" design: (1) inside the expectations lookup, so a newly discovered pack
+  with no registered expectations breaks the *build/first-run* obviously, and (2) in a
+  SEPARATE coverage test that independently re-discovers packs from disk and cross-checks
+  against the Theory's own live `[MemberData]` method via reflection (not a hand-copied
+  list) -- because a mutation that shrinks the Theory's own data-source method to quietly
+  drop a persona leaves the Theory itself green (fewer rows, all still passing) and only the
+  independent coverage test catches it. Confirmed by mutation: shrinking
+  `FixturePersonaIds()` to drop `test-beta` left the smoke Theory green but failed the
+  coverage test with a clear message.
+- xUnit v3 in this repo (`xunit.v3.mtp-off` 4.0.1) changed `TheoryData<T>` to implement
+  `IEnumerable<TheoryDataRow<T>>` (not v2's plain `IEnumerable<object[]>`) -- each row's
+  actual value is on `.Data`. When a project doesn't have a `Directory.Packages.props` at the
+  repo root, check nested folders (`tests/conformance/Directory.Packages.props` here) before
+  assuming central package management isn't in use; when even that's ambiguous, loading the
+  already-built test assembly's own `xunit.v3.core.dll` via reflection and inspecting the
+  live type is faster and more reliable than guessing from version-number docs.
+- **PR #107 revision, Rick's #104 review round 2 (2026-09-28):** Took over PR #107
+  (squad/104-menu-price, issue #104: price from the menu, not the tool call) after Rick
+  rejected it and Beth was locked out; worked in a fresh worktree
+  (SonicAIDriveThru-wt\p2-104-r2), merged origin/dev first (no rebase/force-push, #109
+  already in). Addressed all 7 required changes: (1) crash-safety guard for
+  null/non-numeric/omitted tool price (never compared, never crashes) plus moving
+  ToolFailureCapAndTicketRefreshTests's crash trigger off the now-harmless tool price onto
+  a string quantity -- confirmed empirically the exception actually fires at the per-item
+  quantity-limit check, not the whole-order sum Rick's review text guessed, since
+  	ools.py::update_order has no internal try/except and only an unrelated earlier
+  search-like function does; (2) wrong-size carry-over (.39) and pre-discounted happy-hour
+  (.445, never .725) acceptance rows in both pytest and C# conformance; (3) reverted the
+  brand-baseline raise, generic-izing the one new README path mention to
+  personas/<id>/menu/menuItems.json -- and caught a second, self-inflicted baseline
+  violation from my own new test's docstring mentioning the brand by name, fixed the same
+  way; (4) deleted the dead price_validation_failed error key after grepping pp/ to
+  confirm nothing reads it; (5) unified the schema description in both
+  	ool_schemas.yaml and 	ools.py's hardcoded copy; (6) shrunk
+  docs/persona-architecture.md section 6's #104 bullet from ~29 lines to one paragraph,
+  removed em dashes this PR had introduced (careful to leave every pre-existing em dash in
+  the same files alone -- git diff origin/dev -- <file> | grep '^+.*—' is the precise way
+  to isolate exactly the lines a branch actually added, not a whole-file style sweep), and
+  added a new data test (	est_menu_data_completeness.py) asserting every item size in
+  every currently-loaded persona pack (real personas/ plus the 	est-alpha/	est-beta
+  fixtures) has a matching menu price; (7) rewrote the stale PR body and posted a correction
+  to Unity, since PR comments can't be edited by another author and git history
+  (git log --oneline -- <file>) is the reliable way to verify an authorship claim rather
+  than trusting the comment text.
+  - **Real bug found via the docs work, not the code review:** while documenting the
+    "direct-caller fallback" (menu.price_for returns None -> falls back to the
+    caller-supplied price) for item 6, noticed its logger.warning used %.2f on a price
+    that isn't guaranteed numeric in that branch specifically (the null/non-numeric guard
+    added for item 1 only runs inside the sibling if menu_price is not None: branch) --
+    would have crashed on a non-numeric price reaching that path. Fixed with %r. Writing
+    the doc for a fallback path is a good forcing function for actually reading it closely.
+  - **Mutation testing is worth doing twice, on purpose, per change:** re-trusting the tool
+    price (price = menu_price commented out) failed 8 pytest cases and 7+ C# conformance
+    tests -- including a pydantic_core.ValidationError crash on the null/omitted-price
+    cases, since the schema no longer requires the model to send a numeric price at all, so
+    removing the server-side guard doesn't just mis-price, it can crash the tool call
+    outright. Removing the null/non-numeric isinstance guard crashed both null- and
+    non-numeric-price pytest cases with decimal.InvalidOperation from 	o_decimal(). Both
+    reverted cleanly and the suite verified green again after each -- confirming the tests
+    actually exercise the code they claim to, not just pass vacuously.
+  - Final validation: pytest 1064 passed / 165 subtests, ruff clean; full .NET conformance
+    (RC1 SDK, dotnet test) 640 passed / 0 failed; all 8 GitHub Actions checks green on the
+    pushed branch. Head 488bc5b. Did not merge -- left for the team.

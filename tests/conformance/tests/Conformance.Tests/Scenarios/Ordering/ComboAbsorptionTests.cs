@@ -99,7 +99,7 @@ public sealed class ComboAbsorptionTests(HappyHourJustBeforeOpenFixture fixture)
             connection, browser,
             [
                 ("add", "SONIC® Cheeseburger (No Onions)", "standard", 1, 5.29m),
-                ("add", "SONIC® Cheeseburger Combo", "standard", 1, 8.49m),
+                ("add", "SONIC® Cheeseburger Combo", "standard", 1, 9.19m),
             ],
             roundTripIndex, ct);
 
@@ -107,7 +107,7 @@ public sealed class ComboAbsorptionTests(HappyHourJustBeforeOpenFixture fixture)
         var items = order.GetProperty("items");
         Assert.Equal(1, items.GetArrayLength());
         Assert.Contains("(No Onions)", items[0].GetProperty("item").GetString());
-        OrderScenarioHelpers.AssertMoneyEqual(8.49m, order.GetProperty("total").GetDecimal());
+        OrderScenarioHelpers.AssertMoneyEqual(9.19m, order.GetProperty("total").GetDecimal());
     });
 
     [Fact]
@@ -123,7 +123,7 @@ public sealed class ComboAbsorptionTests(HappyHourJustBeforeOpenFixture fixture)
         var result = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
             [
-                ("add", "SONIC® Cheeseburger Combo", "standard", 1, 8.49m),
+                ("add", "SONIC® Cheeseburger Combo", "standard", 1, 9.19m),
                 ("add", "Tots", "medium", 1, 2.79m),
                 ("add", "Cherry Limeade", "medium", 1, 2.89m),
                 ("reset", "", "", 0, 0m),
@@ -132,7 +132,7 @@ public sealed class ComboAbsorptionTests(HappyHourJustBeforeOpenFixture fixture)
                 // Medium Cherry Limeade & Medium Groovy Fries" after reset+fresh-combo+one side).
                 // (PR #50 review: Onion Rings is not a combo-side allow-list item -- see
                 // GoldenMenuComboSlotTheoryTests -- so it can no longer stand in here.)
-                ("add", "SONIC® Cheeseburger Combo", "standard", 1, 8.49m),
+                ("add", "SONIC® Cheeseburger Combo", "standard", 1, 9.19m),
                 ("add", "Groovy Fries", "medium", 1, 2.79m),
             ],
             roundTripIndex, ct);

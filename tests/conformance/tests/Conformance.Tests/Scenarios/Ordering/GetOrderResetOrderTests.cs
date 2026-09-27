@@ -71,7 +71,7 @@ public sealed class GetOrderResetOrderTests(ConformanceFixture fixture)
             connection, browser,
             [
                 ("add", "Tots", "medium", 1, 2.79m),
-                ("add", "Cherry Limeade", "medium", 1, 2.99m),
+                ("add", "Cherry Limeade", "medium", 1, 2.89m),
             ],
             roundTripIndex, ct);
         var beforeReset = JsonDocument.Parse(added.ToolResultJson!).RootElement;

@@ -197,6 +197,13 @@ class OrderState:
             "_happy_hour_window": (
                 (happy_hour_cfg.startHour, happy_hour_cfg.endHour) if happy_hour_cfg is not None else None
             ),
+            # #113: this session's own bound persona's happy-hour banner/announce switch --
+            # tools.py's ONLY source for the text appended to update_order/get_order results.
+            # A pack with `pricing.happyHour: null` (decision 5, e.g. a no-happy-hour brand pack
+            # like test-beta) gets
+            # `announce=False`/`banner=""` here, so it can never announce regardless of clock.
+            "_happy_hour_announce": happy_hour_cfg.announce if happy_hour_cfg is not None else False,
+            "_happy_hour_banner": happy_hour_cfg.banner if happy_hour_cfg is not None else "",
         }
         self._reset_order_state(self.sessions[session_id])
         logger.info("Session created: %s (persona=%s)", session_id, persona.id)
@@ -231,6 +238,55 @@ class OrderState:
         display = f"{formatted_size}{item_name}".strip()
 
         if action == "add":
+            # #104: the unit price charged is always this persona's own menu price for
+            # (item_name, size) -- never the tool call's own `price` argument. The model can
+            # invent a price, carry one over from the wrong size, or pre-apply a discount; since
+            # #73 every accepted item already resolved through the on-menu gate in tools.py, so
+            # menu.price_for() (menu_utils.MenuCatalog) is the single source of truth for what a
+            # guest is charged. This is the ONE place that source of truth is applied -- callers
+            # that build an order directly (tests, a future admin tool) get the same guarantee as
+            # the realtime tool-call path, instead of a second, easy-to-forget copy of this check
+            # in tools.py. The tool-call `price` is only ever used for the debug comparison below;
+            # see docs/persona-architecture.md section 6.
+            menu_price = menu.price_for(item_name, size)
+            if menu_price is not None:
+                # The prompt no longer tells the model to send a price (0ab2119), so a null,
+                # non-numeric or omitted `price` is now a likely, well-formed input -- it must
+                # never crash the add. Only compare against the menu price when the tool call
+                # actually sent a real number (bool is deliberately excluded: `isinstance(True,
+                # int)` is True in Python, but a bare `true`/`false` is never a meaningful price).
+                # Any other type (``None``, a string, a bool) is ignored with its own debug log;
+                # the menu price is always charged either way.
+                if isinstance(price, (int, float)) and not isinstance(price, bool):
+                    if to_decimal(price) != to_decimal(menu_price):
+                        logger.debug(
+                            "Tool call price $%.2f for '%s' (%s) differs from menu price $%.2f; "
+                            "charging the menu price (session=%s)",
+                            price, item_name, size, menu_price, session_id,
+                        )
+                else:
+                    logger.debug(
+                        "Tool call price %r for '%s' (%s) is not numeric; ignoring it and "
+                        "charging the menu price $%.2f (session=%s)",
+                        price, item_name, size, menu_price, session_id,
+                    )
+                price = menu_price
+            else:
+                # No menu record for this exact (item, size) -- an on-menu item that somehow
+                # reached here without going through tools.py's on-menu/size gate (e.g. a direct
+                # caller that builds an order without going through update_order's own-menu
+                # validation at all -- see docs/persona-architecture.md section 6's "direct-caller
+                # fallback" note), or a pack with a missing price (guarded against by
+                # test_menu_data_completeness.py's every-size-has-a-price data test). Fall back to
+                # the caller-supplied price rather than silently charging $0 -- logged with %r,
+                # never %.2f, since this price was never validated as numeric in the first place
+                # (the null/non-numeric guard above only runs when a menu price was found).
+                logger.warning(
+                    "No menu price found for '%s' size '%s'; falling back to the caller-supplied "
+                    "price %r (session=%s)",
+                    item_name, size, price, session_id,
+                )
+
             is_combo = "combo" in item_name.lower()
             # Rick's PR #99 review, decision 1: the item's OWN bundle slots, read from the pack's
             # ``bundle.slots`` field (via menu_utils.bundle_slots) -- NOT derived from the word
@@ -551,6 +607,29 @@ class OrderState:
             return is_happy_hour()
         self._check_owner(session_id)
         return self._is_happy_hour_for(self.sessions[session_id])
+
+    def get_happy_hour_banner_for_session(self, session_id: str) -> str:
+        """#113: the happy-hour banner text ``tools.py`` (``update_order``/``get_order``) should
+        append to its result for THIS session, and the ONLY place that decision is made --
+        never a hardcoded brand string in ``tools.py`` again. Returns ``" " + banner`` (the
+        historic leading-space/positioning, so the default pack's output stays byte-identical)
+        when this session's own bound persona's ``pricing.happyHour`` is non-null, its
+        ``announce`` flag is true, AND happy hour is currently active for this session --
+        otherwise ``""``. A pack with `happyHour: null` (decision 5) or `announce: false` can
+        never announce, regardless of the clock. Falls back to the default persona's own
+        happy-hour config for an unknown/expired session id, same fallback pattern as
+        ``is_happy_hour_for_session``/``get_menu_catalog`` above."""
+        if session_id not in self.sessions:
+            persona = default_persona.get_default_persona()
+            happy_hour_cfg = persona.manifest.pricing.happyHour
+            if happy_hour_cfg is not None and happy_hour_cfg.announce and is_happy_hour():
+                return f" {happy_hour_cfg.banner}"
+            return ""
+        self._check_owner(session_id)
+        session = self.sessions[session_id]
+        if session["_happy_hour_announce"] and self._is_happy_hour_for(session):
+            return f" {session['_happy_hour_banner']}"
+        return ""
 
 # Create a singleton instance of OrderState
 order_state_singleton = OrderState()
