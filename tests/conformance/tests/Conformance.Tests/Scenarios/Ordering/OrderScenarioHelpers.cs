@@ -269,11 +269,14 @@ public static class OrderScenarioHelpers
     /// returns for both <c>not_on_menu</c> and <c>size_not_available</c> -- <c>tools.py</c> hands
     /// <c>ToolResult</c> a Python dict (not a string) for either rejection, and <c>ToolResult
     /// .to_text()</c> (rtmt.py) JSON-encodes it verbatim onto the wire as this call's
-    /// `function_call_output.output`, so this is the C# side of that exact contract:
+    /// `function_call_output.output`, so this is the C# side of that contract: same keys, types
+    /// and values, compared parsed (docs/persona-architecture.md section 6) --
     /// <c>{"status": "rejected", "item_added": false, "reason": ..., "item_name": ...,
-    /// "message": ..., ["available_sizes": [...]]}</c>. Pass <paramref name="expectedAvailableSizes"/>
-    /// (only meaningful for <c>size_not_available</c>) to also assert the exact ordered list of
-    /// human-readable size labels the item is actually offered in.
+    /// "message": ..., ["available_sizes": [...]]}</c> and NO other keys (#76 cheap follow-up:
+    /// this now also fails on any key beyond that documented set). Pass
+    /// <paramref name="expectedAvailableSizes"/> (only meaningful for <c>size_not_available</c>)
+    /// to also assert the exact ordered list of human-readable size labels the item is actually
+    /// offered in.
     /// </summary>
     public static void AssertRejectionShape(
         string functionCallOutputText,
@@ -300,6 +303,19 @@ public static class OrderScenarioHelpers
                 .ToArray();
             Assert.Equal(expectedAvailableSizes, actualSizes);
         }
+
+        // docs/persona-architecture.md section 6 (Rick's PR #100 review, cheap follow-up):
+        // the C# port only needs to mirror "the same keys, types and values, compared parsed"
+        // -- not a byte-for-byte string -- but that still means no *extra* keys the Python
+        // side never emits. available_sizes only belongs on a size_not_available rejection.
+        var allowedKeys = expectedReason == "size_not_available"
+            ? new[] { "status", "item_added", "reason", "item_name", "message", "available_sizes" }
+            : new[] { "status", "item_added", "reason", "item_name", "message" };
+        var actualKeys = root.EnumerateObject().Select(p => p.Name).ToArray();
+        var unexpectedKeys = actualKeys.Except(allowedKeys).ToArray();
+        Assert.True(unexpectedKeys.Length == 0,
+            $"Rejection object has unexpected extra key(s) not in the documented contract: " +
+            $"{string.Join(", ", unexpectedKeys)} (full keys: {string.Join(", ", actualKeys)})");
     }
 
     /// <summary>
