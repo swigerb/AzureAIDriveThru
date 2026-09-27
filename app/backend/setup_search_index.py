@@ -1,9 +1,9 @@
 """
 setup_search_index.py — Headless Azure AI Search index setup for Sonic menu items.
 
-Reads menu items from app/frontend/src/data/menuItems.json, generates embeddings
-using Azure OpenAI text-embedding-3-large, creates/updates the search index with
-an AzureOpenAIVectorizer (for VectorizableTextQuery at query time), and uploads
+Reads menu items from personas/sonic/menu/menuItems.json (issue #70: persona pack skeleton and
+loader), generates embeddings using Azure OpenAI text-embedding-3-large, creates/updates the
+search index with an AzureOpenAIVectorizer (for VectorizableTextQuery at query time), and uploads
 documents.
 
 Idempotent: safe to re-run. Uses DefaultAzureCredential for AAD authentication.
@@ -55,7 +55,11 @@ logger.setLevel(logging.INFO)
 # ---------------------------------------------------------------------------
 EMBEDDING_MODEL = "text-embedding-3-large"
 EMBEDDING_DIMENSIONS = 3072
-MENU_DATA_PATH = Path(__file__).resolve().parent.parent / "frontend" / "src" / "data" / "menuItems.json"
+# issue #70: menu data now lives in the Sonic persona pack, not app/frontend/src/data/.
+# PERSONAS_DIR/DEFAULT_PERSONA are the same env vars persona_loader.py and menu_utils.py read.
+_ACTIVE_PERSONA = os.environ.get("DEFAULT_PERSONA", "sonic")
+_PERSONAS_DIR = Path(os.environ.get("PERSONAS_DIR") or (Path(__file__).resolve().parents[2] / "personas"))
+MENU_DATA_PATH = _PERSONAS_DIR / _ACTIVE_PERSONA / "menu" / "menuItems.json"
 
 
 def load_azd_env():

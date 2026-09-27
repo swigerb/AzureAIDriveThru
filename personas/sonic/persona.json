@@ -1,0 +1,99 @@
+{
+  "$schema": "../persona.schema.json",
+  "schemaVersion": 1,
+  "id": "sonic",
+  "displayName": "Sonic Drive-In",
+  "roleName": "carhop",
+  "locales": { "default": "en", "supported": ["en", "es", "fr", "ja"] },
+  "store": { "timezone": "America/Chicago" },
+  "voice": { "default": "marin" },
+  "search": { "indexName": "sonic-menu-items", "contentFields": ["description"] },
+
+  "pricing": {
+    "taxRate": "0.08",
+    "happyHour": {
+      "startHour": 14,
+      "endHour": 16,
+      "priceMultiplier": "0.5",
+      "announce": true,
+      "banner": "[HAPPY HOUR ACTIVE: slushes and fountain drinks are half-price; shakes, Blasts and sundaes are full price]"
+    }
+  },
+
+  "sizes": {
+    "canonical": {
+      "mini": "Mini",
+      "small": "Small",
+      "medium": "Medium",
+      "large": "Large",
+      "xl": "Extra Large",
+      "route 44": "Route 44",
+      "standard": "Standard"
+    },
+    "aliases": {
+      "s": "small",
+      "m": "medium",
+      "l": "large",
+      "extralarge": "xl",
+      "rt 44": "route 44",
+      "rt44": "route 44",
+      "44": "route 44",
+      "44oz": "route 44",
+      "route44": "route 44"
+    },
+    "spokenAs": { "RT 44": "Route 44", "RT44": "Route 44" },
+    "hidden": ["", "standard", "n/a", "na", "none", "n.a."],
+    "default": null
+  },
+
+  "bundles": {
+    "nameMarkers": ["combo"],
+    "convertStandalone": true,
+    "missingPartText": { "sides": "a side (fries or tots)", "drinks": "a drink or slush" }
+  },
+
+  "extras": {
+    "allowedBaseCategories": ["slushes & drinks", "shakes & ice cream", "burgers & sandwiches", "drinks", "slushes", "shakes", "combos"],
+    "blockedBaseCategories": ["hot dogs & tots", "sides", "hot dogs"],
+    "splitCombinedNames": false
+  },
+
+  "invalidModifiers": {
+    "shake": ["lettuce", "tomato", "onion", "mustard", "ketchup", "pickle", "jalapeño", "relish"],
+    "slush": ["lettuce", "tomato", "onion", "mustard", "ketchup", "pickle", "jalapeño", "cheese", "bacon", "patty"],
+    "drink": ["lettuce", "tomato", "onion", "mustard", "ketchup", "pickle", "jalapeño", "cheese", "bacon", "patty"],
+    "side": ["whipped cream", "chocolate", "vanilla", "strawberry"],
+    "hot dog": ["whipped cream", "chocolate", "vanilla", "strawberry"]
+  },
+  "machines": { "ice_cream_machine": "down", "slush_machine": "operational", "fryer": "operational" },
+
+  "models": {
+    "realtime": { "default": "gpt-realtime-2.1", "allowed": ["gpt-realtime-2.1", "gpt-realtime-mini"] },
+    "cascade": { "default": "gpt-5-mini", "allowed": ["gpt-5-mini", "phi-4"] },
+    "local": { "default": "phi-4-mini-local", "allowed": ["phi-4-mini-local"] }
+  },
+
+  "strategies": { "searchQueryRewrite": "none" },
+  "features": { "dayparts": false },
+
+  "ui": {
+    "title": "Sonic Drive-In Voice Ordering",
+    "theme": {
+      "light": { "primary": "341 100% 45%", "secondary": "208 52% 33%", "background": "195 44% 96%", "foreground": "208 53% 20%" },
+      "dark": { "primary": "347 100% 71%" },
+      "font": { "family": "Nunito Sans", "importUrl": "https://fonts.googleapis.com/css2?family=Nunito+Sans:wght@400;600;700;800;900&display=swap" }
+    },
+    "assets": { "logo": "assets/logo.svg", "favicon": "assets/favicon.ico", "apologyClip": "assets/audio/apology-{lang}.wav" },
+    "strings": {
+      "en": {
+        "app.title": "Sonic Voice Ordering",
+        "status.notRecordingMessage": "Let's order from America's Drive-In!",
+        "ticket.kicker": "Carhop ticket",
+        "ticket.title": "Your Sonic Order",
+        "menu.button": "View Sonic Menu"
+      }
+    },
+    "hero": { "headline": "Sonic ordering powered by Azure conversation intelligence", "callouts": [] },
+    "legal": "Disclaimer: This project is a non-commercial demo application created for educational and illustrative purposes only. It is not affiliated with, endorsed, or sponsored by Inspire Brands, Inc. or Sonic Corp. Any references to Sonic Drive-In or use of Sonic-inspired colors or themes are solely for demonstration and do not represent an official product."
+  }
+}

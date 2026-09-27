@@ -25,22 +25,9 @@ from prompt_loader import PromptLoader
 
 @pytest.fixture
 def brand_dir(tmp_path):
-    """Create a temporary brand directory with valid YAML prompt files."""
-    brand = tmp_path / "prompts" / "testbrand"
+    """Create a temporary persona pack prompts directory with valid YAML files."""
+    brand = tmp_path / "personas" / "testbrand" / "prompts"
     brand.mkdir(parents=True)
-
-    # Manifest
-    (brand / "manifest.yaml").write_text(yaml.dump({
-        "version": "1.0.0",
-        "brand": "testbrand",
-        "files": {
-            "system_prompt": "system_prompt.yaml",
-            "greeting": "greeting.yaml",
-            "tool_schemas": "tool_schemas.yaml",
-            "error_messages": "error_messages.yaml",
-            "hints": "hints.yaml",
-        },
-    }), encoding="utf-8")
 
     # System prompt
     (brand / "system_prompt.yaml").write_text(yaml.dump({
@@ -101,8 +88,8 @@ def brand_dir(tmp_path):
 
 @pytest.fixture
 def loader(brand_dir):
-    """Return a PromptLoader pointed at the temp brand directory."""
-    with patch("prompt_loader._PROMPTS_DIR", brand_dir.parent):
+    """Return a PromptLoader pointed at the temp persona pack's personas/ directory."""
+    with patch("prompt_loader._PERSONAS_DIR", brand_dir.parent.parent):
         return PromptLoader(brand="testbrand")
 
 
@@ -172,32 +159,25 @@ class TestLoadValidPrompts:
 
 class TestMissingFiles:
     def test_missing_brand_directory_raises(self, tmp_path):
-        with patch("prompt_loader._PROMPTS_DIR", tmp_path):
+        with patch("prompt_loader._PERSONAS_DIR", tmp_path / "personas"):
             with pytest.raises(FileNotFoundError, match="Prompt directory not found"):
                 PromptLoader(brand="nonexistent")
 
-    def test_missing_manifest_raises(self, tmp_path):
-        brand = tmp_path / "badbrand"
-        brand.mkdir()
-        with patch("prompt_loader._PROMPTS_DIR", tmp_path):
-            with pytest.raises(FileNotFoundError, match="manifest.yaml not found"):
-                PromptLoader(brand="badbrand")
-
     def test_missing_system_prompt_file_raises(self, brand_dir):
         (brand_dir / "system_prompt.yaml").unlink()
-        with patch("prompt_loader._PROMPTS_DIR", brand_dir.parent):
+        with patch("prompt_loader._PERSONAS_DIR", brand_dir.parent.parent):
             with pytest.raises(FileNotFoundError, match="System prompt file not found"):
                 PromptLoader(brand="testbrand")
 
     def test_missing_greeting_file_raises(self, brand_dir):
         (brand_dir / "greeting.yaml").unlink()
-        with patch("prompt_loader._PROMPTS_DIR", brand_dir.parent):
+        with patch("prompt_loader._PERSONAS_DIR", brand_dir.parent.parent):
             with pytest.raises(FileNotFoundError, match="Greeting file not found"):
                 PromptLoader(brand="testbrand")
 
     def test_missing_tool_schemas_file_raises(self, brand_dir):
         (brand_dir / "tool_schemas.yaml").unlink()
-        with patch("prompt_loader._PROMPTS_DIR", brand_dir.parent):
+        with patch("prompt_loader._PERSONAS_DIR", brand_dir.parent.parent):
             with pytest.raises(FileNotFoundError, match="Tool schemas file not found"):
                 PromptLoader(brand="testbrand")
 
@@ -211,7 +191,7 @@ class TestValidationErrors:
         (brand_dir / "system_prompt.yaml").write_text(
             yaml.dump({"version": "1.0.0", "sections": []}), encoding="utf-8"
         )
-        with patch("prompt_loader._PROMPTS_DIR", brand_dir.parent):
+        with patch("prompt_loader._PERSONAS_DIR", brand_dir.parent.parent):
             with pytest.raises(ValueError, match="must have a 'sections' list"):
                 PromptLoader(brand="testbrand")
 
@@ -219,7 +199,7 @@ class TestValidationErrors:
         (brand_dir / "system_prompt.yaml").write_text(
             yaml.dump({"version": "1.0.0"}), encoding="utf-8"
         )
-        with patch("prompt_loader._PROMPTS_DIR", brand_dir.parent):
+        with patch("prompt_loader._PERSONAS_DIR", brand_dir.parent.parent):
             with pytest.raises(ValueError, match="must have a 'sections' list"):
                 PromptLoader(brand="testbrand")
 
@@ -227,7 +207,7 @@ class TestValidationErrors:
         (brand_dir / "greeting.yaml").write_text(
             yaml.dump({"version": "1.0.0", "greeting": {"item": {}}}), encoding="utf-8"
         )
-        with patch("prompt_loader._PROMPTS_DIR", brand_dir.parent):
+        with patch("prompt_loader._PERSONAS_DIR", brand_dir.parent.parent):
             with pytest.raises(ValueError, match="must have a 'type' field"):
                 PromptLoader(brand="testbrand")
 
@@ -235,7 +215,7 @@ class TestValidationErrors:
         (brand_dir / "greeting.yaml").write_text(
             yaml.dump({"version": "1.0.0"}), encoding="utf-8"
         )
-        with patch("prompt_loader._PROMPTS_DIR", brand_dir.parent):
+        with patch("prompt_loader._PERSONAS_DIR", brand_dir.parent.parent):
             with pytest.raises(ValueError, match="must have a 'greeting' key"):
                 PromptLoader(brand="testbrand")
 
@@ -243,7 +223,7 @@ class TestValidationErrors:
         (brand_dir / "tool_schemas.yaml").write_text(
             yaml.dump({"version": "1.0.0", "tools": []}), encoding="utf-8"
         )
-        with patch("prompt_loader._PROMPTS_DIR", brand_dir.parent):
+        with patch("prompt_loader._PERSONAS_DIR", brand_dir.parent.parent):
             with pytest.raises(ValueError, match="non-empty 'tools' list"):
                 PromptLoader(brand="testbrand")
 
@@ -251,7 +231,7 @@ class TestValidationErrors:
         (brand_dir / "tool_schemas.yaml").write_text(
             yaml.dump({"version": "1.0.0", "tools": [{"type": "function"}]}), encoding="utf-8"
         )
-        with patch("prompt_loader._PROMPTS_DIR", brand_dir.parent):
+        with patch("prompt_loader._PERSONAS_DIR", brand_dir.parent.parent):
             with pytest.raises(ValueError, match="missing 'name'"):
                 PromptLoader(brand="testbrand")
 
@@ -259,7 +239,7 @@ class TestValidationErrors:
         (brand_dir / "tool_schemas.yaml").write_text(
             yaml.dump({"version": "1.0.0", "tools": [{"name": "foo"}]}), encoding="utf-8"
         )
-        with patch("prompt_loader._PROMPTS_DIR", brand_dir.parent):
+        with patch("prompt_loader._PERSONAS_DIR", brand_dir.parent.parent):
             with pytest.raises(ValueError, match="missing 'type'"):
                 PromptLoader(brand="testbrand")
 
@@ -267,7 +247,7 @@ class TestValidationErrors:
         (brand_dir / "system_prompt.yaml").write_text(
             "sections:\n  - [broken", encoding="utf-8"
         )
-        with patch("prompt_loader._PROMPTS_DIR", brand_dir.parent):
+        with patch("prompt_loader._PERSONAS_DIR", brand_dir.parent.parent):
             with pytest.raises((ValueError, yaml.YAMLError)):
                 PromptLoader(brand="testbrand")
 
@@ -275,7 +255,7 @@ class TestValidationErrors:
         (brand_dir / "system_prompt.yaml").write_text(
             "- item1\n- item2\n", encoding="utf-8"
         )
-        with patch("prompt_loader._PROMPTS_DIR", brand_dir.parent):
+        with patch("prompt_loader._PERSONAS_DIR", brand_dir.parent.parent):
             with pytest.raises(ValueError, match="must be a YAML mapping"):
                 PromptLoader(brand="testbrand")
 

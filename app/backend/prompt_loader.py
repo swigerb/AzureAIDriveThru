@@ -1,7 +1,7 @@
 """Prompt loader for Sonic AI Drive-Thru.
 
-Loads YAML prompt files from app/backend/prompts/{brand}/ at startup.
-Validates required sections, caches in memory, and provides a clean API.
+Loads YAML prompt files from personas/{brand}/prompts/ at startup (issue #70 -- persona pack
+skeleton and loader). Validates required sections, caches in memory, and provides a clean API.
 
 Usage:
     from prompt_loader import PromptLoader
@@ -13,6 +13,7 @@ Usage:
     hints = loader.get_hints()
 """
 
+import json
 import logging
 import os
 import threading
@@ -27,18 +28,22 @@ __all__ = ["PromptLoader"]
 
 logger = logging.getLogger("prompt-loader")
 
-_PROMPTS_DIR = Path(__file__).parent / "prompts"
+# personas/ sits at the repo root (design doc section 4.1); this module lives at
+# app/backend/prompt_loader.py, two levels below it. Overridable via the PERSONAS_DIR env var
+# (same variable persona_loader.py reads), so both modules agree on where packs live.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_PERSONAS_DIR = Path(os.environ.get("PERSONAS_DIR") or (_REPO_ROOT / "personas"))
 
 # Jinja2 environment for rendering error message templates
 _jinja_env = Environment(loader=BaseLoader(), undefined=__import__("jinja2").StrictUndefined)
 
 
 class PromptLoader:
-    """Loads and caches prompt YAML files for a given brand."""
+    """Loads and caches prompt YAML files for a given brand's persona pack."""
 
     def __init__(self, brand: str = "sonic"):
         self._brand = brand
-        self._brand_dir = _PROMPTS_DIR / brand
+        self._brand_dir = _PERSONAS_DIR / brand / "prompts"
         self._cache: dict[str, Any] = {}
         self._last_load_time: float = 0.0
         self._dev_mode = os.environ.get("DEV_MODE", "").lower() in ("true", "1", "yes")
@@ -129,57 +134,47 @@ class PromptLoader:
     # ── Loading & Validation ────────────────────────────────────────────────
 
     def _load_all(self) -> None:
-        """Load all YAML files for the brand. Fail-fast on errors."""
+        """Load all YAML files for the brand's persona pack. Fail-fast on errors."""
         if not self._brand_dir.is_dir():
             raise FileNotFoundError(
                 f"Prompt directory not found: {self._brand_dir}. "
-                f"Expected prompts at app/backend/prompts/{self._brand}/"
+                f"Expected prompts at personas/{self._brand}/prompts/ "
+                f"(PERSONAS_DIR={_PERSONAS_DIR})"
             )
-
-        # Load manifest to discover files
-        manifest = self._load_yaml("manifest.yaml")
-        if manifest is None:
-            raise FileNotFoundError(
-                f"manifest.yaml not found in {self._brand_dir}. "
-                "This file lists which prompt files to load."
-            )
-
-        files = manifest.get("files", {})
 
         # Load system prompt
-        sp_data = self._load_yaml(files.get("system_prompt", "system_prompt.yaml"))
+        sp_data = self._load_yaml("system_prompt.yaml")
         if sp_data is None:
-            raise FileNotFoundError(f"System prompt file not found: {files.get('system_prompt')}")
+            raise FileNotFoundError("System prompt file not found: system_prompt.yaml")
         self._cache["system_prompt"] = self._assemble_system_prompt(sp_data)
 
         # Load greeting
-        gr_data = self._load_yaml(files.get("greeting", "greeting.yaml"))
+        gr_data = self._load_yaml("greeting.yaml")
         if gr_data is None:
-            raise FileNotFoundError(f"Greeting file not found: {files.get('greeting')}")
+            raise FileNotFoundError("Greeting file not found: greeting.yaml")
         self._validate_greeting(gr_data)
         greeting_msg = gr_data["greeting"]
         self._cache["greeting"] = greeting_msg
         # Pre-serialize for WebSocket
-        import json
         self._cache["greeting_json"] = json.dumps(greeting_msg)
 
         # Load tool schemas
-        ts_data = self._load_yaml(files.get("tool_schemas", "tool_schemas.yaml"))
+        ts_data = self._load_yaml("tool_schemas.yaml")
         if ts_data is None:
-            raise FileNotFoundError(f"Tool schemas file not found: {files.get('tool_schemas')}")
+            raise FileNotFoundError("Tool schemas file not found: tool_schemas.yaml")
         self._validate_tool_schemas(ts_data)
         self._cache["tool_schemas"] = ts_data["tools"]
 
         # Load error messages
-        em_data = self._load_yaml(files.get("error_messages", "error_messages.yaml"))
+        em_data = self._load_yaml("error_messages.yaml")
         if em_data is None:
-            raise FileNotFoundError(f"Error messages file not found: {files.get('error_messages')}")
+            raise FileNotFoundError("Error messages file not found: error_messages.yaml")
         self._cache["error_messages"] = em_data.get("messages", {})
 
         # Load hints
-        hints_data = self._load_yaml(files.get("hints", "hints.yaml"))
+        hints_data = self._load_yaml("hints.yaml")
         if hints_data is None:
-            raise FileNotFoundError(f"Hints file not found: {files.get('hints')}")
+            raise FileNotFoundError("Hints file not found: hints.yaml")
         self._cache["hints"] = hints_data
 
         self._last_load_time = time.time()

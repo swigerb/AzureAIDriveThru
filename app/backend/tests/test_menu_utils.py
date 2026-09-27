@@ -16,7 +16,7 @@ from menu_utils import (
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _GOLDEN_CATEGORIES_PATH = _REPO_ROOT / "tests" / "conformance" / "testdata" / "golden-menu-categories.json"
-_MENU_ITEMS_PATH = _REPO_ROOT / "app" / "frontend" / "src" / "data" / "menuItems.json"
+_MENU_ITEMS_PATH = _REPO_ROOT / "personas" / "sonic" / "menu" / "menuItems.json"
 
 
 def _load_golden_categories() -> list[dict]:
