@@ -267,11 +267,16 @@ class OrderState:
             else:
                 # No menu record for this exact (item, size) -- an on-menu item that somehow
                 # reached here without going through tools.py's on-menu/size gate (e.g. a direct
-                # test call), or a pack with a missing price. Fall back to the caller-supplied
-                # price rather than silently charging $0.
+                # caller that builds an order without going through update_order's own-menu
+                # validation at all -- see docs/persona-architecture.md section 6's "direct-caller
+                # fallback" note), or a pack with a missing price (guarded against by
+                # test_menu_data_completeness.py's every-size-has-a-price data test). Fall back to
+                # the caller-supplied price rather than silently charging $0 -- logged with %r,
+                # never %.2f, since this price was never validated as numeric in the first place
+                # (the null/non-numeric guard above only runs when a menu price was found).
                 logger.warning(
                     "No menu price found for '%s' size '%s'; falling back to the caller-supplied "
-                    "price $%.2f (session=%s)",
+                    "price %r (session=%s)",
                     item_name, size, price, session_id,
                 )
 

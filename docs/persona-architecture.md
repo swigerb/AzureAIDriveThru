@@ -407,35 +407,20 @@ starts a new session.
   Scenarios that order an off-menu name only as a fixture (for example "Small Fries") switch to real items.
 - **The golden table is checked, not generated.** `golden-menu-categories.json` stays hand-owned and is
   checked against each menu, so the golden file remains an independent oracle.
-- **The unit price always comes from the menu, never the tool call (#104, decided).** The old #28 N23
-  rule ("the unit price still comes from the tool argument... taking it from the menu is a possible
-  follow-up") is superseded. `update_order`'s `add` action always charges the resolved menu item's own
-  per-size price (`menu_utils.MenuCatalog.price_for`, applied once in `order_state.py::handle_order_update`
-  — the single place this must be enforced for both the realtime tool-call path and any other caller that
-  builds an order directly, so the C# port needs exactly one equivalent choke point, not one per call site).
-  - **Tool schema stays backward-compatible.** The `price` argument is kept in `update_order`'s JSON
-    schema (both the live prompt-driven schema in `personas/<persona>/prompts/tool_schemas.yaml` and
-    `tools.py`'s hardcoded fallback) so an older prompt/client that still sends one isn't rejected, but its
-    description says the value is ignored. A model-supplied price is never charged; it is only ever
-    compared to the resolved menu price for a `logger.debug`/`logger.warning` mismatch log, never for
-    pricing, and never surfaced to the guest or the client.
-  - **Applies uniformly to combos and extras too**, since both go through the same generic `add` path:
-    a combo keeps its own bundle price with its absorbed items priced at $0 (bundle/extras absorption
-    logic itself is #77's separate concern — #104 only changed *which* price feeds that path); a
-    priced extra (`isExtra`) is charged its own menu price like any other line item; happy hour still
-    applies its discount on top of the resolved menu price, not the tool-call price; resizing an item
-    re-prices it at the new size's menu price.
-  - **C# port contract (#14).** The equivalent .NET `update_order` handler must resolve price the same
-    way — from its own menu lookup, at `add`/resize time, ignoring any client-/model-supplied `price` for
-    charging purposes — so the wire-level rejection and pricing behavior conformance pins (this section,
-    and `tests/conformance/README.md`'s "Tool-call price is ignored; the menu is the source of truth
-    (#104)" note) hold for both backends identically.
-  - **Acceptance proof.** A wrong tool-call price (zero, negative, or an arbitrary value that disagrees
-    with the menu) is charged the real menu price and the add still succeeds:
-    `app/backend/tests/test_tool_calling.py::test_add_wrong_tool_price_charges_menu_price` (Python) and
-    `UpdateOrderAddRemoveModifyTests.Adding_an_item_with_a_wrong_tool_call_price_is_charged_the_menu_price`
-    (C# conformance, a `[Theory]` over the same three cases). A mutation that reverts to reading `price`
-    straight through in `order_state.py`'s `add` branch fails both.
+- **The unit price always comes from the menu, never the tool call (#104, decided).** Supersedes the
+  old #28 N23 rule (trust the tool call's price verbatim). `update_order`'s `add` always charges
+  `menu_utils.MenuCatalog.price_for`'s resolved per-size price, applied once in
+  `order_state.py::handle_order_update`, the one choke point for both the realtime tool-call path and
+  any direct caller (a test, an admin tool) building an order without going through `tools.py`'s
+  on-menu gate; the C# port needs that same single choke point (#14). Applies uniformly to combos,
+  extras, happy hour and resizes. The tool call's own `price` stays in the schema, described as
+  "ignored," purely for backward compatibility, and is only ever used for a debug/warn mismatch log,
+  never for charging. If `price_for` finds no menu record at all, this same branch falls back to the
+  caller-supplied price (never a silent $0, and never a crash on a null/non-numeric one) instead;
+  `app/backend/tests/test_menu_data_completeness.py` asserts every item/size in every real and
+  fixture pack has a matching price, so an on-menu `add` should never actually reach that fallback.
+  Acceptance proof: `test_tool_calling.py::test_add_wrong_tool_price_charges_menu_price` and
+  `UpdateOrderAddRemoveModifyTests.Adding_an_item_with_a_wrong_tool_call_price_is_charged_the_menu_price`.
 
 **#64, decided (decision 3).** Floats do not get the happy-hour price, and they can fill the combo drink slot.
 They are real Sonic menu items (4.3, #72), not a keyword rule.
