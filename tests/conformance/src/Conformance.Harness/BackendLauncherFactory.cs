@@ -11,10 +11,20 @@ internal sealed class ExternalBackend(Uri baseUri) : IBackendUnderTest
 
 /// <summary>
 /// Chooses which backend implementation the conformance suite talks to, per `CONFORMANCE_BACKEND`
-/// (python|dotnet) or an explicit `CONFORMANCE_BACKEND_URL` override. `dotnet` is an S2 placeholder
-/// (issue #7): it FAILS the suite by default (PR #22 review item 15) so CI can never silently skip
-/// real backend coverage, and only skips when a developer opts in locally via
-/// CONFORMANCE_ALLOW_SKIP=1 (see <see cref="DotnetPlaceholderPolicy"/> -- ignored in CI even then).
+/// (python|dotnet) or an explicit `CONFORMANCE_BACKEND_URL` override.
+///
+/// S2 (issue #12) update: `dotnet` now starts the real C# skeleton via
+/// <see cref="DotnetBackendLauncher"/> instead of always throwing. That backend is a skeleton this
+/// wave (host/config/persona-pack loading/health/auth-token/static-files) -- it does not yet
+/// implement the realtime relay or order pipeline, so running the *full* suite against it will
+/// fail every scenario that needs those. Until a later wave fills those in, only run a scoped
+/// subset (health + auth-token scenarios) against CONFORMANCE_BACKEND=dotnet locally -- see
+/// docs/dotnet_mapping.md for exactly what is/isn't covered. This factory change does not add
+/// "dotnet" to the CI matrix (.github/workflows/conformance.yml) itself -- that axis is owned
+/// separately per the wave plan; CI continues to run CONFORMANCE_BACKEND=python only until that
+/// axis's owner adds the dotnet leg.
+/// <see cref="DotnetPlaceholderPolicy"/> is left in place (with its own tests) for any caller that
+/// still wants the old fail/skip-by-default behaviour instead of actually starting the backend.
 /// </summary>
 public static class BackendLauncherFactory
 {
@@ -32,16 +42,14 @@ public static class BackendLauncherFactory
 
         var target = (Environment.GetEnvironmentVariable("CONFORMANCE_BACKEND") ?? "python").Trim().ToLowerInvariant();
         var contract = BackendContract.ForPort(realtimeBaseUri, searchBaseUri, port, deployment);
-        var options = new PythonBackendOptions
-        {
-            ExtraEnvironment = extraEnvironment ?? new Dictionary<string, string>(),
-        };
+        var env = extraEnvironment ?? new Dictionary<string, string>();
 
         return target switch
         {
-            "python" => await PythonBackendLauncher.StartAsync(contract, options, cancellationToken).ConfigureAwait(false),
-            "dotnet" => throw DotnetPlaceholderPolicy.BuildException(
-                Environment.GetEnvironmentVariable("CONFORMANCE_ALLOW_SKIP"), CiEnvironment.IsCi),
+            "python" => await PythonBackendLauncher.StartAsync(
+                contract, new PythonBackendOptions { ExtraEnvironment = env }, cancellationToken).ConfigureAwait(false),
+            "dotnet" => await DotnetBackendLauncher.StartAsync(
+                contract, new DotnetBackendOptions { ExtraEnvironment = env }, cancellationToken).ConfigureAwait(false),
             _ => throw new InvalidOperationException(
                 $"Unknown CONFORMANCE_BACKEND '{target}' — expected 'python' or 'dotnet'."),
         };
