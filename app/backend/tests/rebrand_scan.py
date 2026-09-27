@@ -10,7 +10,8 @@ Rick's #101 review round-2 replaced the old directory-prefix ALLOWLIST with:
 
   1. Two DIRECTORY_EXCEPTIONS (generated/golden content, no per-file ratchet
      needed): ``app/backend/static/`` (gitignored frontend build output) and
-     ``tests/conformance/testdata/`` (golden data sourced from Sonic).
+     ``tests/conformance/testdata/`` (golden data sourced from Sonic, for the
+     original flat golden files that predate any per-persona subfolder).
   2. A checked-in per-file BASELINE (``rebrand_baseline.yaml``) for every
      other shared-code brand-word reference, keyed by (file, brand), each
      entry recording the exact current line-hit count and an issue reference.
@@ -20,7 +21,11 @@ Rick's #101 review round-2 replaced the old directory-prefix ALLOWLIST with:
 
 Everywhere else (a persona's own pack, or the cross-brand docs that compare
 all three brands by design) a brand word is classified without reference to
-the baseline at all -- see ``_classify_hit``.
+the baseline at all -- see ``_classify_hit``. A pack's own per-persona
+conformance testdata subfolder (``tests/conformance/testdata/personas/<id>/**``,
+#78/#79) is classified the same way as the pack's own ``personas/<id>/**`` --
+see ``_conformance_testdata_pack_id`` -- rather than being limited to the
+flat directory exception's sonic-only rule.
 """
 from __future__ import annotations
 
@@ -117,6 +122,27 @@ def _is_cross_brand_doc(rel_posix: str) -> bool:
     return rel_posix == "docs/persona-architecture.md" or rel_posix.startswith("docs/adr/")
 
 
+_CONFORMANCE_TESTDATA_PERSONAS_PREFIX = "tests/conformance/testdata/personas/"
+
+
+def _conformance_testdata_pack_id(rel_posix: str):
+    """Returns the persona id if rel_posix is under
+    tests/conformance/testdata/personas/<id>/**, else None.
+
+    Mirrors ``_persona_pack_id``'s ownership rule for personas/<id>/** itself: a pack's own
+    per-persona golden conformance fixtures (#78/#79 -- e.g.
+    tests/conformance/testdata/personas/dunkin/golden-menu-categories.json) are sourced from
+    that pack's own menu/pricing and so may say its own brand, same as the pack that sourced
+    them. Checked BEFORE the generic tests/conformance/testdata/ DIRECTORY_EXCEPTIONS entry
+    (which only ever rescues 'sonic', for the original flat golden files that predate any
+    per-persona subfolder) so a new pack's own subfolder isn't limited to the sonic-only rule."""
+    if not rel_posix.startswith(_CONFORMANCE_TESTDATA_PERSONAS_PREFIX):
+        return None
+    remainder = rel_posix[len(_CONFORMANCE_TESTDATA_PERSONAS_PREFIX):]
+    parts = remainder.split("/")
+    return parts[0] if parts and parts[0] else None
+
+
 # ── Directory exceptions (generated/golden content; no per-file ratchet) ─────────────────
 
 @dataclass(frozen=True)
@@ -143,9 +169,12 @@ DIRECTORY_EXCEPTIONS: list[DirectoryException] = [
     ),
     DirectoryException(
         "tests/conformance/testdata/", frozenset({"sonic"}), "#78",
-        "Golden order-pricing/menu-category datasets are sourced from Sonic's own menu and "
-        "will move to testdata/personas/sonic/ once other packs exist (design doc section 8); "
-        "a per-file baseline count would just churn as golden fixtures are added/edited.",
+        "Golden order-pricing/menu-category datasets sourced from Sonic's own menu (design doc "
+        "section 8); a per-file baseline count would just churn as golden fixtures are "
+        "added/edited. Only covers files directly here, not a personas/<id>/ subfolder -- see "
+        "_conformance_testdata_pack_id, which lets each pack's own per-persona testdata "
+        "subfolder (tests/conformance/testdata/personas/<id>/**, #78/#79) say its own brand "
+        "the same way personas/<id>/** does, instead of being limited to this sonic-only rule.",
     ),
 ]
 
@@ -283,6 +312,16 @@ def _classify_hit(
         return (
             f"'{brand}' appears inside the '{pack_id}' persona pack (personas/{pack_id}/**) -- "
             f"a persona pack must only reference its own brand"
+        )
+
+    testdata_pack_id = _conformance_testdata_pack_id(rel_posix)
+    if testdata_pack_id is not None:
+        if brand == testdata_pack_id:
+            return None
+        return (
+            f"'{brand}' appears inside the '{testdata_pack_id}' per-persona conformance "
+            f"testdata ({_CONFORMANCE_TESTDATA_PERSONAS_PREFIX}{testdata_pack_id}/**) -- it "
+            f"may only reference its own brand, same as personas/{testdata_pack_id}/**"
         )
 
     exc = _directory_exception_for(rel_posix)
