@@ -141,6 +141,8 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
     [InlineData("-5.00")]
     [InlineData("999.99")]
     [InlineData("null")]
+    [InlineData("\"cheap\"")]
+    [InlineData("true")]
     public Task Adding_an_item_with_a_wrong_tool_call_price_is_charged_the_menu_price(string toolCallPriceJson) => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
