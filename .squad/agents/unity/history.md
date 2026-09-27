@@ -263,3 +263,47 @@ Since `app/frontend/` is off-limits, the middleware (`rtmt.py` + `audio_pipeline
   - Not covered black-box: `reasoning`/`parallel_tool_calls` scrub (#29b) — only
     sent by a reasoning-model deployment, not worth a dedicated `BackendProfile`;
     covered at the Python unit level only.
+
+  ## 2026-09-27 — PR #93 revision 2 (issue #85, new environment infra)
+
+  Under strict reviewer lockout: Squanchy authored PR #93, Rick rejected it, Squanchy is
+  locked out, I own the revision. Worktree `SonicAIDriveThru-wt\p2-85-r2`, merged
+  `origin/dev` in first (no rebase, no force-push).
+
+  - **AVM module `endpoint` output is not trustworthy for AIServices-kind accounts.**
+    `br/public:avm/res/cognitive-services/account` outputs `endpoint` as literally
+    `cognitiveService.properties.endpoint` — the generic multi-service Foundry endpoint.
+    For a plain `OpenAI`-kind account this happens to already be the
+    `.openai.azure.com` host, which is presumably why nobody had hit this before; for an
+    `AIServices`-kind account (this PR's item 1: `kind` changed from `OpenAI` to
+    `AIServices`, immutable after creation) it is not guaranteed to be. **Lesson:** when
+    a module's kind changes, re-check every output that used to be "obviously" the right
+    value — build the realtime host explicitly from `customSubDomainName` instead of
+    trusting the module, and confirm the format against the actual product docs
+    (Foundry realtime docs show `https://{your-resource}.openai.azure.com` works
+    regardless of kind).
+  - **`azd provision --preview`'s console summary doesn't show property values for
+    brand-new `Create` resources** — only name/type/operation, no SKU/capacity/kind
+    diff (ARM `whatIf` only computes property-level deltas against something that
+    already exists). To actually *prove* a tracked default like "Search SKU is basic"
+    or "realtime capacity is 10" took effect from a clean env state, re-run the
+    equivalent `az deployment sub what-if` directly with the same resolved parameter
+    values and read the full JSON `changes[].after` properties — much stronger evidence
+    than the azd summary alone, and worth doing whenever a review specifically asks for
+    proof of a default, not just "it deploys".
+  - **A code comment can trip a brand-name guard just as easily as real logic.** Wrote
+    an inline Bicep comment for the empty-PERSONAS default that named a specific brand
+    as an example (to illustrate "a new pack landing") and it failed
+    `test_rebrand_verification.py`'s pre-persona-pack brand guard exactly like a real
+    reference would have. Reworded to describe the situation generically. Comments are
+    still source text to these guards — don't assume "it's just a comment" is safe.
+  - Final validation: `az bicep build` clean (13 warnings, same classes as `origin/dev`'s
+    14, no new types); `azd provision --preview` from a clean, newly-created local azd
+    env succeeded (real ARM whatIf, no overrides for SKU/capacity/personas); direct
+    `az deployment sub what-if` on the same clean-env values confirmed Search SKU
+    `basic`, realtime capacity `10`, account `kind: AIServices`, per-model `format`,
+    the explicit `.openai.azure.com` endpoint, and `PERSONAS`/`AZURE_SEARCH_INDEXES`
+    both absent from the container app env when personas is empty; pytest 903
+    passed/1 pre-existing unrelated failure; ruff clean. One commit (`ac7e7da`),
+    pushed, no force-push. PR #93 commented (mapped items 1-5 to Rick), issue #87
+    got an explicit AIServices realtime smoke-check item. Did not merge.
