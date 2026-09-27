@@ -1,21 +1,22 @@
 /**
  * Runtime persona theming groundwork (issue #80, design doc §4.2 and §9 row F2).
  *
- * `PersonaTheme` mirrors the `ui.theme` shape a persona pack's `persona.json` will expose once
- * `PersonaProvider` (F1) can fetch `/api/personas/<id>` (blocked on #74). Until then, `SONIC_THEME`
- * below is the only theme in play and `applyTheme` is called once, at bootstrap, with that
- * hard-coded object -- so the UI renders visually identical to the pre-theming build while proving
- * the runtime plumbing works end to end.
+ * `PersonaTheme` mirrors the `ui.theme` shape a persona pack's `persona.json` exposes via
+ * `/api/personas/<id>`. `PersonaProvider` (context/persona-context.tsx) fetches that wire shape and
+ * calls `resolvePersonaTheme`/`applyTheme`/`applyDarkTheme` below for every persona, including the
+ * default one -- there is no persona-specific special case anywhere in this file (issue #117:
+ * shared code must not hard-code any one persona's palette).
  *
- * The `light`/`dark` base colors hold the four keys the design doc's abridged `persona.json` sample
- * documents today (`primary`, `secondary`, `background`, `foreground`, each an "H S% L%" triplet
- * with no `hsl()` wrapper -- exactly how persona.json and index.css's existing `--brand-primary`/
- * `--brand-secondary`/`--brand-background`/`--brand-foreground` tokens already store them). `accents` is this
- * slice's own addition: every other brand color this persona's components had hard-coded as literal hex
- * (87 of them per the design doc's diff, ~96 by this repo's current count) collapses into these
- * named slots. `accents` isn't in persona.schema.json yet -- promoting it there, if a second
- * persona needs it, is a follow-up for whoever picks up F1/F3+ (and for Summer, who owns the
- * schema).
+ * The `light`/`dark` base colors hold the four keys `persona.json` documents (`primary`,
+ * `secondary`, `background`, `foreground`, each an "H S% L%" triplet with no `hsl()` wrapper --
+ * exactly how `index.css`'s `--brand-primary`/`--brand-secondary`/`--brand-background`/
+ * `--brand-foreground` tokens already store them). `accents` is an extended hex palette (issue #80
+ * F2) every persona pack may optionally author (`personas/persona.schema.json`'s `_ThemeAccents`);
+ * any key a pack omits falls back to `deriveAccents`'s synthesized value. `surface` (issue #117) is
+ * an optional palette of shadcn UI slot tokens (`--card-foreground`, `--secondary`, `--muted`,
+ * `--accent`, `--destructive`, `--border`/`--input`, `--chart-2..5`) that `index.css` used to hard-code
+ * to one persona's values; a pack that omits `surface` simply gets the shared neutral defaults
+ * baked into `index.css`'s `var(--surface-x, <neutral literal>)` fallbacks.
  */
 
 /** An "H S% L%" triplet, unwrapped -- the same string format persona.json uses for its theme colors. */
@@ -49,7 +50,7 @@ export interface PersonaAccentPalette {
     secondaryStrong: string;
     /** Shade of `secondary` legible on dark surfaces (dark-mode text/badges). */
     secondaryTintOnDark: string;
-    /** Accent hue distinct from primary/secondary (the default persona's yellow). */
+    /** Accent hue distinct from primary/secondary. */
     accent: string;
     /** Lighter shade of `accent`, used as a gradient endpoint. */
     accentLight: string;
@@ -67,54 +68,73 @@ export interface PersonaAccentPalette {
     neutral: string;
 }
 
+/**
+ * Optional shadcn UI slot palette (issue #117). Every key is optional: a pack that doesn't author
+ * `surface` simply renders the shared neutral defaults `index.css` falls back to. This is the
+ * LIGHT-mode shape; see `PersonaSurfaceDarkTokens` for the (smaller) set of dark-only overrides.
+ */
+export interface PersonaSurfaceTokens {
+    /** Feeds `--card-foreground` and `--popover-foreground` (light only -- dark already derives from the `foreground` dark override, see `PERSONA_THEME_DARK_CSS_VARS`). */
+    cardForeground: string;
+    /** Feeds the shadcn `--secondary` slot (distinct from the brand role `secondary` above). */
+    secondary: string;
+    secondaryForeground: string;
+    /** Feeds the shadcn `--muted` slot. */
+    muted: string;
+    mutedForeground: string;
+    /** Feeds the shadcn `--accent` slot. Mode-invariant: the same value is used in both `:root` and `.dark`. */
+    accent: string;
+    accentForeground: string;
+    /** Feeds the shadcn `--destructive` slot. */
+    destructive: string;
+    /** Feeds both `--border` and `--input`. */
+    border: string;
+    /** Feeds `--chart-4`. Mode-invariant: the same value is used in both `:root` and `.dark`. */
+    chart4: string;
+    /** Feeds `--chart-5` (light only -- see `PersonaSurfaceDarkTokens.chart5` for the dark value). */
+    chart5: string;
+}
+
+/**
+ * Dark-only shadcn UI slot overrides (issue #117). `accent`/`chart4` are intentionally absent here
+ * because they're mode-invariant and only ever set once, from `PersonaSurfaceTokens` above.
+ */
+export interface PersonaSurfaceDarkTokens {
+    secondary: string;
+    muted: string;
+    destructive: string;
+    border: string;
+    /** Feeds `--chart-2` in dark mode (light mode instead derives `--chart-2` from the brand `secondary` role -- see `index.css`). */
+    chart2: string;
+    /** Feeds `--chart-3` in dark mode (light mode instead derives `--chart-3` from the shadcn `--accent` slot -- see `index.css`). */
+    chart3: string;
+    chart5: string;
+}
+
 export interface PersonaThemeFont {
     family: string;
     importUrl: string;
 }
 
 export interface PersonaTheme {
-    light: PersonaBaseColors & { accents: PersonaAccentPalette };
+    light: PersonaBaseColors & { accents: PersonaAccentPalette; surface?: Partial<PersonaSurfaceTokens> };
     /** Only the keys a persona wants to override in dark mode -- matches persona.json's abridged `dark` block. */
-    dark?: Partial<PersonaBaseColors> & { accents?: Partial<PersonaAccentPalette> };
+    dark?: Partial<PersonaBaseColors> & {
+        accents?: Partial<PersonaAccentPalette>;
+        surface?: Partial<PersonaSurfaceDarkTokens>;
+    };
     font: PersonaThemeFont;
 }
 
 /**
- * The default persona's theme (and, until #78/#79 land, the only one). Every value here must
- * match the corresponding hard-coded default already baked into `index.css`'s `:root`/`.dark`
- * blocks -- `personaTheme.test.ts` guards that the two never drift apart.
+ * The app-wide default font (used by every persona that doesn't declare its own `ui.theme.font`).
+ * `index.css` already unconditionally `@import`s this same family/weights for the base UI font
+ * regardless of which persona is active, so this isn't any one persona's brand font -- it's the
+ * shared fallback for personas that don't bring their own.
  */
-export const SONIC_THEME: PersonaTheme = {
-    light: {
-        primary: "341 100% 45%",
-        secondary: "208 52% 33%",
-        background: "195 44% 96%",
-        foreground: "208 53% 20%",
-        accents: {
-            primaryHex: "#E40046",
-            primaryStrong: "#C31B24",
-            primaryLight: "#FF4D7A",
-            primaryTintOnDark: "#FF6B8A",
-            secondaryHex: "#285780",
-            secondaryStrong: "#137AC9",
-            secondaryTintOnDark: "#74D2E7",
-            accent: "#FEDD00",
-            accentLight: "#FFE84D",
-            ink: "#18344D",
-            surfaceTint: "#F2F8FA",
-            surfaceDark: "#0F1A24",
-            surfaceDarkAlt: "#152231",
-            success: "#328500",
-            neutral: "#C9CFD4"
-        }
-    },
-    dark: {
-        primary: "341 100% 55%"
-    },
-    font: {
-        family: "Nunito Sans",
-        importUrl: "https://fonts.googleapis.com/css2?family=Nunito+Sans:wght@400;600;700;800;900&display=swap"
-    }
+export const DEFAULT_THEME_FONT: PersonaThemeFont = {
+    family: "Nunito Sans",
+    importUrl: "https://fonts.googleapis.com/css2?family=Nunito+Sans:wght@400;600;700;800;900&display=swap"
 };
 
 /**
@@ -122,11 +142,10 @@ export const SONIC_THEME: PersonaTheme = {
  * else should call `style.setProperty` for them, so this map is the single source of truth for the
  * variable names on both sides.
  *
- * Names are roles (`primary`/`secondary`/`accent`/...), not brand colors -- a future persona's
- * `primary` could be any hue and would still write through the same `--brand-primary` variable.
- * Only the *values* SONIC_THEME supplies happen to be red today (PR #91 review round 2: the
- * round-1 names, `--brand-red`/`--brand-blue`/`--brand-yellow`, baked the default persona's colors into the
- * variable names themselves, which would mislabel every other persona).
+ * Names are roles (`primary`/`secondary`/`accent`/...), not brand colors -- a persona's `primary`
+ * could be any hue and would still write through the same `--brand-primary` variable (PR #91 review
+ * round 2: the round-1 names, `--brand-red`/`--brand-blue`/`--brand-yellow`, baked one persona's
+ * colors into the variable names themselves, which would mislabel every other persona).
  */
 export const PERSONA_THEME_CSS_VARS = {
     primary: "--brand-primary",
@@ -151,17 +170,33 @@ export const PERSONA_THEME_CSS_VARS = {
 } as const;
 
 /**
+ * The `--surface-*` CSS custom properties `index.css` reads for the shadcn UI slot tokens (issue
+ * #117). Applied the same way as `PERSONA_THEME_CSS_VARS` above -- via `applyTheme`'s inline style,
+ * light mode only. `accent`/`chart4` are mode-invariant (the value set here is also what `.dark`
+ * uses, via the SAME underlying var name, since `index.css` never redeclares those two in `.dark`).
+ */
+export const PERSONA_SURFACE_CSS_VARS = {
+    cardForeground: "--surface-card-foreground",
+    secondary: "--surface-secondary",
+    secondaryForeground: "--surface-secondary-foreground",
+    muted: "--surface-muted",
+    mutedForeground: "--surface-muted-foreground",
+    accent: "--surface-accent",
+    accentForeground: "--surface-accent-foreground",
+    destructive: "--surface-destructive",
+    border: "--surface-border",
+    chart4: "--surface-chart4",
+    chart5: "--surface-chart5"
+} as const;
+
+/**
  * Applies a persona theme's light-mode tokens to `root`'s inline style, where they take priority
  * over `index.css`'s static defaults. Dark-mode overrides are left to the existing `.dark` class
- * selector for now -- `theme.dark` is accepted here only so its shape is exercised; wiring it into
- * the live `.dark` variables is F1's job, once `PersonaProvider` exists to decide when a dark-mode
- * switch actually happens.
- *
- * This is the seam: `App`/`index.tsx` calls `applyTheme(SONIC_THEME)` once today. Swapping that
- * argument for a theme fetched from `/api/personas/<id>` is the only change F1 needs to make here.
+ * selector -- see `applyDarkTheme` below.
  */
 export function applyTheme(theme: PersonaTheme, root: HTMLElement = document.documentElement): void {
     const vars = PERSONA_THEME_CSS_VARS;
+    const surfaceVars = PERSONA_SURFACE_CSS_VARS;
     const { light } = theme;
     const set = (name: string, value: string | undefined) => {
         if (value) root.style.setProperty(name, value);
@@ -187,6 +222,21 @@ export function applyTheme(theme: PersonaTheme, root: HTMLElement = document.doc
     set(vars.surfaceDarkAlt, light.accents.surfaceDarkAlt);
     set(vars.success, light.accents.success);
     set(vars.neutral, light.accents.neutral);
+
+    const surface = light.surface;
+    if (surface) {
+        set(surfaceVars.cardForeground, surface.cardForeground);
+        set(surfaceVars.secondary, surface.secondary);
+        set(surfaceVars.secondaryForeground, surface.secondaryForeground);
+        set(surfaceVars.muted, surface.muted);
+        set(surfaceVars.mutedForeground, surface.mutedForeground);
+        set(surfaceVars.accent, surface.accent);
+        set(surfaceVars.accentForeground, surface.accentForeground);
+        set(surfaceVars.destructive, surface.destructive);
+        set(surfaceVars.border, surface.border);
+        set(surfaceVars.chart4, surface.chart4);
+        set(surfaceVars.chart5, surface.chart5);
+    }
 }
 
 /**
@@ -205,13 +255,27 @@ export function applyTheme(theme: PersonaTheme, root: HTMLElement = document.doc
  *
  * Only `primary`/`background`/`foreground` are listed (no `secondary`) because those are the only
  * three base roles `index.css`'s `.dark` block derives from brand tokens today -- `--secondary` (and
- * `--muted`/`--accent`/`--destructive`/etc.) are intentionally independent literal grays in both
- * `:root` and `.dark`, unchanged by this slice.
+ * `--muted`/`--accent`/`--destructive`/etc.) go through `PERSONA_SURFACE_DARK_CSS_VARS` below instead.
  */
 export const PERSONA_THEME_DARK_CSS_VARS = {
     primary: "--brand-primary-dark",
     background: "--brand-background-dark",
     foreground: "--brand-foreground-dark"
+} as const;
+
+/**
+ * The dark-only `--surface-*-dark` CSS custom properties `index.css`'s `.dark` block reads (issue
+ * #117), applied the same way as `PERSONA_THEME_DARK_CSS_VARS` above -- only via `applyDarkTheme`'s
+ * injected `<style>`, never inline, for the same cascade reason documented there.
+ */
+export const PERSONA_SURFACE_DARK_CSS_VARS = {
+    secondary: "--surface-secondary-dark",
+    muted: "--surface-muted-dark",
+    destructive: "--surface-destructive-dark",
+    border: "--surface-border-dark",
+    chart2: "--surface-chart2-dark",
+    chart3: "--surface-chart3-dark",
+    chart5: "--surface-chart5-dark"
 } as const;
 
 const DARK_THEME_STYLE_ELEMENT_ID = "persona-dark-theme-overrides";
@@ -225,24 +289,23 @@ const DARK_THEME_STYLE_ELEMENT_ID = "persona-dark-theme-overrides";
  * would render on its own if `applyDarkTheme` never ran at all.
  *
  * Issue #80 F1/F3 (Rick's #110 review, item 3): a persona whose `dark` block only sets some tokens
- * (the default persona sets only `primary`) used to leak that persona's LIGHT `background`/
- * `foreground` into dark mode instead -- for the default persona that's a pale blue-white
- * (`"195 44% 96%"`), which reads as "half the page didn't go dark". Falling back to these DEFAULT
- * dark values instead (rather than `theme.light.*`) keeps the rest of the page dark like every
- * other pack, regardless of what a pack's `dark` block chooses to override.
+ * used to leak that persona's LIGHT `background`/`foreground` into dark mode instead. Falling back
+ * to these DEFAULT dark values instead (rather than `theme.light.*`) keeps the rest of the page dark
+ * like every other pack, regardless of what a pack's `dark` block chooses to override.
  */
 export const DEFAULT_DARK_BACKGROUND: HslTriplet = "210 20% 5%";
 export const DEFAULT_DARK_FOREGROUND: HslTriplet = "0 0% 98%";
 
 /**
- * Injects (or updates) a `<style>` element holding a `.dark { --brand-x-dark: ...; }` rule for the
- * given persona theme's dark-mode overrides. `primary` falls back to the theme's own light value
- * (a persona with no dark accent at all still gets ITS brand hue, just at the light-mode
- * lightness); `background`/`foreground` fall back to the shared `DEFAULT_DARK_*` constants above
- * instead, so a persona with no `dark` block (both fixture personas in
- * `app/backend/tests/fixtures/personas`) or one that only overrides `primary` (the default
- * persona) still renders a coherent dark page instead of leaking a light-mode background/text
- * color, a previous persona's dark colors, or the default persona's.
+ * Injects (or updates) a `<style>` element holding a `.dark { --brand-x-dark: ...; --surface-x-dark:
+ * ...; }` rule for the given persona theme's dark-mode overrides. `primary` falls back to the
+ * theme's own light value (a persona with no dark accent at all still gets ITS brand hue, just at
+ * the light-mode lightness); `background`/`foreground` fall back to the shared `DEFAULT_DARK_*`
+ * constants above instead, so a persona with no `dark` block still renders a coherent dark page
+ * instead of leaking a light-mode background/text color, a previous persona's dark colors, or the
+ * default neutral values. `surface.*` dark keys have no fallback here at all -- an omitted key just
+ * means the CSS rule doesn't declare that property, so `index.css`'s own
+ * `var(--surface-x-dark, <neutral literal>)` fallback applies instead.
  *
  * A `<style>` tag (not inline styles) is required here specifically so the `.dark` selector keeps
  * normal cascade behavior -- see `PERSONA_THEME_DARK_CSS_VARS`'s doc comment for why inline styles
@@ -250,10 +313,25 @@ export const DEFAULT_DARK_FOREGROUND: HslTriplet = "0 0% 98%";
  */
 export function applyDarkTheme(theme: PersonaTheme, doc: Document = document): void {
     const vars = PERSONA_THEME_DARK_CSS_VARS;
+    const surfaceVars = PERSONA_SURFACE_DARK_CSS_VARS;
     const dark = theme.dark ?? {};
     const primary = dark.primary ?? theme.light.primary;
     const background = dark.background ?? DEFAULT_DARK_BACKGROUND;
     const foreground = dark.foreground ?? DEFAULT_DARK_FOREGROUND;
+    const surface = dark.surface;
+
+    const lines = [
+        `  ${vars.primary}: ${primary};`,
+        `  ${vars.background}: ${background};`,
+        `  ${vars.foreground}: ${foreground};`
+    ];
+    if (surface?.secondary) lines.push(`  ${surfaceVars.secondary}: ${surface.secondary};`);
+    if (surface?.muted) lines.push(`  ${surfaceVars.muted}: ${surface.muted};`);
+    if (surface?.destructive) lines.push(`  ${surfaceVars.destructive}: ${surface.destructive};`);
+    if (surface?.border) lines.push(`  ${surfaceVars.border}: ${surface.border};`);
+    if (surface?.chart2) lines.push(`  ${surfaceVars.chart2}: ${surface.chart2};`);
+    if (surface?.chart3) lines.push(`  ${surfaceVars.chart3}: ${surface.chart3};`);
+    if (surface?.chart5) lines.push(`  ${surfaceVars.chart5}: ${surface.chart5};`);
 
     let style = doc.getElementById(DARK_THEME_STYLE_ELEMENT_ID) as HTMLStyleElement | null;
     if (!style) {
@@ -262,7 +340,7 @@ export function applyDarkTheme(theme: PersonaTheme, doc: Document = document): v
         doc.head.appendChild(style);
     }
 
-    style.textContent = `.dark {\n  ${vars.primary}: ${primary};\n  ${vars.background}: ${background};\n  ${vars.foreground}: ${foreground};\n}`;
+    style.textContent = `.dark {\n${lines.join("\n")}\n}`;
 }
 
 function parseHslTriplet(triplet: HslTriplet): { h: number; s: number; l: number } {
@@ -300,14 +378,14 @@ function hslToHex(h: number, s: number, l: number): string {
 
 /**
  * Derives a full `PersonaAccentPalette` from just a persona's four base HSL roles (issue #80 F1/F3,
- * design doc §4.2: `accents` isn't in `persona.schema.json`, so any non-default persona needs one
- * synthesized rather than authored). Not meant to be a perfect design-system generator -- just a
- * reasonable, deterministic set of tints/shades so a second persona's illustrations, gradients, and
- * dark-mode surfaces aren't flatly monochrome, without requiring a color-math dependency.
+ * design doc §4.2: any persona without a curated `accents` block needs one synthesized rather than
+ * authored). Not meant to be a perfect design-system generator -- just a reasonable, deterministic
+ * set of tints/shades so a persona's illustrations, gradients, and dark-mode surfaces aren't flatly
+ * monochrome, without requiring a color-math dependency.
  *
- * The default persona itself never calls this: `resolvePersonaTheme` below keeps returning
- * `SONIC_THEME`'s exact, hand-tuned hex constants for that persona's id so nothing here can
- * regress F2's byte-identical guarantee (`personaTheme.test.ts`).
+ * `success`/`neutral` are universal, brand-independent placeholders (not tied to any one persona's
+ * palette) since no current component actually renders them -- see `PersonaAccentPalette`'s doc
+ * comments.
  */
 export function deriveAccents(colors: PersonaBaseColors): PersonaAccentPalette {
     const primary = parseHslTriplet(colors.primary);
@@ -330,30 +408,34 @@ export function deriveAccents(colors: PersonaBaseColors): PersonaAccentPalette {
         surfaceTint: hslToHex(background.h, clampNumber(background.s, 0, 40), 97),
         surfaceDark: hslToHex(foreground.h, clampNumber(foreground.s, 0, 30), 10),
         surfaceDarkAlt: hslToHex(foreground.h, clampNumber(foreground.s, 0, 30), 14),
-        success: "#328500",
-        neutral: "#C9CFD4"
+        success: "#16A34A",
+        neutral: "#9CA3AF"
     };
 }
 
 /**
  * Builds a full `PersonaTheme` (light accents + optional dark overrides + font) from the base wire
  * shape `/api/personas/<id>` returns (`ui.theme.light`/`ui.theme.dark`, each just the four HSL
- * roles -- see design doc §5.2 and `personas/<id>/persona.json`). The default persona's id always
- * resolves to the literal `SONIC_THEME` (same object identity for `accents`/`font`) so this never
- * regresses F2's pixel-identical guarantee; any other persona id gets `deriveAccents` and a
- * `font` fallback of the default persona's own (until a persona pack declares its own webfont,
- * which is out of scope here).
+ * roles plus optional `accents`/`surface` -- see design doc §5.2 and `personas/<id>/persona.json`).
+ * Every persona -- including the default one -- goes through the same generic path: a pack MAY
+ * author its own accents (`personas/persona.schema.json`'s `_ThemeAccents`) -- any key it supplies
+ * wins; any key it omits falls back to `deriveAccents`'s synthesized value, so a pack can override
+ * just e.g. `accent` without having to author all 15 keys. `surface` is passed through unchanged
+ * (never derived) since it has no synthesis fallback -- an omitted `surface` key simply lets
+ * `index.css`'s own neutral default apply. `font` falls back to the shared `DEFAULT_THEME_FONT`
+ * for any persona that doesn't declare its own webfont.
  */
 export interface PersonaWireTheme {
-    light: PersonaBaseColors & { accents?: Partial<PersonaAccentPalette> };
-    dark?: Partial<PersonaBaseColors> & { accents?: Partial<PersonaAccentPalette> };
+    light: PersonaBaseColors & { accents?: Partial<PersonaAccentPalette>; surface?: Partial<PersonaSurfaceTokens> };
+    dark?: Partial<PersonaBaseColors> & {
+        accents?: Partial<PersonaAccentPalette>;
+        surface?: Partial<PersonaSurfaceDarkTokens>;
+    };
     font?: PersonaThemeFont;
 }
 
 export function resolvePersonaTheme(personaId: string, wireTheme: PersonaWireTheme): PersonaTheme {
-    if (personaId === "sonic") {
-        return SONIC_THEME;
-    }
+    void personaId; // Every persona resolves the same way -- kept for API stability/logging call sites.
 
     // A pack MAY author its own accents (personas/persona.schema.json's `_ThemeAccents`) --
     // any key it supplies wins; any key it omits falls back to `deriveAccents`'s synthesized
@@ -366,9 +448,10 @@ export function resolvePersonaTheme(personaId: string, wireTheme: PersonaWireThe
     return {
         light: {
             ...wireTheme.light,
-            accents
+            accents,
+            surface: wireTheme.light.surface
         },
         dark: wireTheme.dark,
-        font: wireTheme.font ?? SONIC_THEME.font
+        font: wireTheme.font ?? DEFAULT_THEME_FONT
     };
 }

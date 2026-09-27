@@ -287,6 +287,7 @@ Field rules:
 | `models` | Which catalog models the persona allows, and its default per pipeline (section 7). The deployment decides which ones exist; the session picks one of the allowed. |
 | `strategies` | A closed set. P2 has one slot, `searchQueryRewrite`, with the values `none` and `meal_numbers`. Adding a value needs both backends and a conformance scenario in the same PR series. |
 | `ui` | Everything the browser needs before it connects. It is served by `/api/personas/<id>`. Prompts and rules are never served to the browser. |
+| `ui.theme.{light,dark}.surface` | Optional shadcn-style UI slot palette (issue #117, `personaTheme.ts`'s `PersonaSurfaceTokens`/`PersonaSurfaceDarkTokens`): backs the shared shadcn tokens (`card`/`secondary`/`muted`/`accent`/`destructive`/`border`/`input`/`ring`/`chart-N`) that `index.css` previously hard-coded to one persona's palette. Every key is optional; a pack that omits `surface` gets the shared neutral defaults `index.css` falls back to. |
 
 ### 4.3 Per-item menu fields (#51)
 
@@ -295,6 +296,7 @@ Field rules:
 
 | Field | Type, default | Meaning | Replaces |
 | --- | --- | --- | --- |
+| `menuItems[].icon` | string, optional (category-level, not per-item) | The category's own emoji/icon (`menuItems.json`, `menu.schema.json`), rendered in `menu-panel.tsx`. A category that omits it falls back to the shared neutral `DEFAULT_CATEGORY_ICON` | `menu-panel.tsx`'s hardcoded category→icon map |
 | `comboSlot` | `"sides" \| "drinks" \| "none"`, default `"none"` | Can this item fill a bundle's included side or drink slot? The values match `golden-menu-categories.json` exactly, so golden rows can be compared field by field | `_COMBO_SIDE_ITEMS`, `_SUNDAES`, `_COMBO_DRINK_CATEGORIES` and the category-derived rule |
 | `happyHourDiscounted` | bool, default `false` | Does the happy-hour multiplier apply? Independent of `comboSlot` (PR #50 rule) | `_SHAKES_AND_BLASTS_HAPPY_HOUR_DISCOUNTED`, Dunkin's `happy_hour_categories`, McD's keyword check |
 | `aliases` | string[], default `[]` | Exact spoken names that resolve to this item after `_menu_key` normalization | `_TOTS_ALIASES` |
@@ -361,7 +363,7 @@ starts a new session.
 | Surface | Contract |
 | --- | --- |
 | `GET /api/personas` | `{ "default": "sonic", "personas": [ { "id", "displayName", "logoUrl", "theme" } ], "backends": [ { "id": "python", "url" }, { "id": "dotnet", "url" } ] }`, enabled personas only; `backends` lists the deployed backends (section 10) |
-| `GET /api/personas/{id}` | The pack's `ui` block, plus `voice.default`, `locales`, `features.dayparts`, `menuUrl`, and the selectable `models` per pipeline (section 7). 404 if not enabled |
+| `GET /api/personas/{id}` | The pack's `ui` block, plus `roleName`, `voice.default`, `locales`, `features.dayparts`, `menuUrl`, and the selectable `models` per pipeline (section 7). 404 if not enabled |
 | `GET /personas/{id}/assets/*`, `GET /personas/{id}/menu.json` | Static files from the pack, immutable caching (the existing compression and caching middleware) |
 | `GET /realtime?persona={id}&model={id}` | Omitted persona: `DEFAULT_PERSONA`. Omitted model: the persona's default realtime model. Unknown or not enabled: **HTTP 404 before the WebSocket upgrade**, never a silent fallback. Both are fixed for the session |
 | `extension.metadata` | Gains `persona`, `model` and `pipeline` (additive) |

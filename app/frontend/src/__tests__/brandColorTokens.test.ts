@@ -17,11 +17,11 @@ import { describe, expect, it } from "vitest";
 // inside brackets, so the same regexes that catch a plain CSS/inline-style literal catch those too.
 
 // The only two places a literal color may legitimately live: index.css (the token definitions
-// themselves) and lib/personaTheme.ts (SONIC_THEME, the default theme object that feeds those
-// tokens at runtime). Everything else under src -- every component, every other stylesheet --
-// must reference a token instead. Test files are excluded because their fixtures (including this
-// file's own self-test literals below) legitimately contain color literals as *data*, not as
-// unguarded UI colors.
+// themselves) and lib/personaTheme.ts (deriveAccents's neutral fallback hex constants, which feed
+// personas that don't author their own `accents`). Everything else under src -- every component,
+// every other stylesheet -- must reference a token instead. Test files are excluded because their
+// fixtures (including this file's own self-test literals below) legitimately contain color
+// literals as *data*, not as unguarded UI colors.
 const sources: Record<string, string> = import.meta.glob<string>(
     ["../**/*.{ts,tsx,css}", "!../index.css", "!../lib/personaTheme.ts", "!../**/__tests__/**", "!../test/**"],
     { eager: true, query: "?raw", import: "default" }

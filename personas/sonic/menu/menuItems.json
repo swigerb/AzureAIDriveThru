@@ -2,6 +2,7 @@
   "menuItems": [
     {
       "category": "Burgers & Sandwiches",
+      "icon": "🍔",
       "items": [
         {
           "name": "SuperSONIC® Double Cheeseburger",
@@ -251,6 +252,7 @@
     },
     {
       "category": "Hot Dogs & Tots",
+      "icon": "🌭",
       "items": [
         {
           "name": "All-American Dog",
@@ -499,6 +501,7 @@
     },
     {
       "category": "Slushes & Drinks",
+      "icon": "🧊",
       "items": [
         {
           "name": "Cherry Limeade",
@@ -2212,6 +2215,7 @@
     },
     {
       "category": "Shakes & Ice Cream",
+      "icon": "🥤",
       "items": [
         {
           "name": "Vanilla Classic Shake",
@@ -2950,6 +2954,7 @@
     },
     {
       "category": "Combos",
+      "icon": "🍟",
       "items": [
         {
           "name": "SONIC® Cheeseburger Combo",

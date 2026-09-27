@@ -13,11 +13,10 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(SCRIPT_DIR)
 
 POS_DATA_PATH = os.path.join(
-    REPO_ROOT, "app", "frontend", "src", "data", "sonic-menu-items.json"
+    REPO_ROOT, "personas", "sonic", "menu", "source", "sonic-menu-items.json"
 )
-UI_MENU_PATH = os.path.join(
-    REPO_ROOT, "app", "frontend", "src", "data", "menuItems.json"
-)
+# The generated UI menu file lives one directory up from the raw export's "source" folder.
+UI_MENU_PATH = os.path.join(os.path.dirname(os.path.dirname(POS_DATA_PATH)), "menuItems.json")
 
 
 # ── helpers (identical to the notebook) ──────────────────────────────────
