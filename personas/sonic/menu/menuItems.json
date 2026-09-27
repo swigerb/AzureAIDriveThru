@@ -15,7 +15,11 @@
                     "longDescription": "Two 100% pure seasoned beef patties layered with two slices of melty American cheese, crinkle cut pickles, ketchup, onions, creamy mayo, lettuce, and tomatoes on a golden, toasted bun.",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/80a2642d-472c-4280-ec09-e2920b673a00/download"
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/80a2642d-472c-4280-ec09-e2920b673a00/download",
+                    "comboSlot": "none",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "isExtra": false
                 },
                 {
                     "name": "SuperSONIC® Bacon Double Cheeseburger",
@@ -29,7 +33,11 @@
                     "longDescription": "Two 100% pure seasoned beef patties layered with two slices of melty American cheese, crispy bacon, creamy mayo, lettuce, and tomatoes on a golden, toasted bun.",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/b76d0535-73c9-476c-f982-83633b166300/download"
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/b76d0535-73c9-476c-f982-83633b166300/download",
+                    "comboSlot": "none",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "isExtra": false
                 },
                 {
                     "name": "SONIC® Cheeseburger",
@@ -43,7 +51,11 @@
                     "longDescription": "A 100% pure seasoned beef patty layered with melty American cheese, crinkle cut pickles, ketchup, onions, creamy mayo, lettuce, and tomatoes on a golden, toasted bun.",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/b585c466-6c41-4b18-90dc-d8f2e9e91b00/download"
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/b585c466-6c41-4b18-90dc-d8f2e9e91b00/download",
+                    "comboSlot": "none",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "isExtra": false
                 },
                 {
                     "name": "All-American SONIC Smasher™",
@@ -57,7 +69,11 @@
                     "longDescription": "Two patties made with Angus beef, seasoned, smashed and seared, crispy on the edges, and juicy in the middle. Layered with two slices of melty American cheese, crinkle-cut pickles, ketchup, onions, creamy mayo, lettuce, and tomato, served on a pillowy soft potato bun. ",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/8fac6668-f28c-4f25-10bb-3b30afce7300/download"
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/8fac6668-f28c-4f25-10bb-3b30afce7300/download",
+                    "comboSlot": "none",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "isExtra": false
                 },
                 {
                     "name": "All-American Bacon SONIC Smasher™",
@@ -71,7 +87,11 @@
                     "longDescription": "Two patties made with Angus beef, seasoned, smashed and seared, crispy on the edges, and juicy in the middle. Layered with two slices of melty American cheese, crispy bacon, crinkle-cut pickles, ketchup, onions, creamy mayo, lettuce, and tomato, served on a pillowy soft potato bun. ",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/d4d721cf-c38e-498e-9c04-2845e2440800/download"
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/d4d721cf-c38e-498e-9c04-2845e2440800/download",
+                    "comboSlot": "none",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "isExtra": false
                 },
                 {
                     "name": "Jr Double Cheeseburger",
@@ -85,7 +105,11 @@
                     "longDescription": "Our Jr Double Cheeseburger starts with two juicy, 100% pure beef patties, seasoned and layered with a slice of melty American cheese, pickles, ketchup, and mustard, all on a golden, toasted bun.",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/69546e16-cd1f-46ff-009b-28a3212d7400/download"
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/69546e16-cd1f-46ff-009b-28a3212d7400/download",
+                    "comboSlot": "none",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "isExtra": false
                 },
                 {
                     "name": "Double SONIC Smasher™",
@@ -99,7 +123,11 @@
                     "longDescription": "The Double SONIC® Smasher has two patties made with Angus beef, seasoned patties smashed and seared, crispy on the edges and juicy in the middle. It’s then layered with two slices of melty American cheese, a creamy, tangy Smasher sauce, crinkle-cut pickles, diced onions, and served on a pillowy soft potato bun.\n",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/7cfda31c-49a7-4e74-5c78-bc9daf98b200/download"
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/7cfda31c-49a7-4e74-5c78-bc9daf98b200/download",
+                    "comboSlot": "none",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "isExtra": false
                 },
                 {
                     "name": "Crispy Chicken Sandwich",
@@ -113,7 +141,11 @@
                     "longDescription": "A crispy chicken fillet with pickles, lettuce, and mayonnaise on a brioche bun.",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/d87a5a68-81f6-43b6-26d8-def986a6a800/download"
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/d87a5a68-81f6-43b6-26d8-def986a6a800/download",
+                    "comboSlot": "none",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "isExtra": false
                 },
                 {
                     "name": "Triple SONIC Smasher™",
@@ -127,7 +159,11 @@
                     "longDescription": "The Triple SONIC® Smasher has three patties made with Angus beef, seasoned patties smashed and seared, crispy on the edges and juicy in the middle. It’s then layered with three slices of melty American cheese, a creamy, tangy Smasher sauce, crinkle-cut pickles, diced onions, and served on a pillowy soft potato bun.\n",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/d560ca02-54d3-4308-b94a-419781bc6e00/download"
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/d560ca02-54d3-4308-b94a-419781bc6e00/download",
+                    "comboSlot": "none",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "isExtra": false
                 },
                 {
                     "name": "Fish Sandwich",
@@ -141,7 +177,11 @@
                     "longDescription": "Our Fish Sandwich features a 100% Wild Caught Alaska Pollock Fillet, creamy tartar sauce and lettuce on a golden, toasted bun.",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/577738fb-6903-4e77-a27b-5be724522600/download"
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/577738fb-6903-4e77-a27b-5be724522600/download",
+                    "comboSlot": "none",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "isExtra": false
                 }
             ]
         },
@@ -160,7 +200,11 @@
                     "longDescription": "SONIC's All-American Dog is topped with ketchup, yellow mustard, relish, diced onions and served in a soft, warm bakery bun.",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/52ef56d9-a7bd-470c-0dd8-db4461a8c000/download"
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/52ef56d9-a7bd-470c-0dd8-db4461a8c000/download",
+                    "comboSlot": "none",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "isExtra": false
                 },
                 {
                     "name": "Chili Cheese Coney",
@@ -174,7 +218,11 @@
                     "longDescription": "SONIC's Chili Cheese Coney is a hot dog topped with warm chili and melty cheddar cheese served in a soft, warm bakery bun.",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/d409fb36-21c4-4060-bc91-57c516556d00/download"
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/d409fb36-21c4-4060-bc91-57c516556d00/download",
+                    "comboSlot": "none",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "isExtra": false
                 },
                 {
                     "name": "Footlong Quarter Pound Coney",
@@ -188,7 +236,11 @@
                     "longDescription": "SONIC's Footlong Quarter Pound Coney is a grilled hot dog topped with warm chili and melty cheddar cheese served in a soft, warm bakery bun.",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/42df8449-0a4f-4795-7f50-978cf6ea4c00/download"
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/42df8449-0a4f-4795-7f50-978cf6ea4c00/download",
+                    "comboSlot": "none",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "isExtra": false
                 },
                 {
                     "name": "Tots",
@@ -210,7 +262,26 @@
                     "longDescription": "Crispy tots fried to a golden brown and lightly seasoned with salt.",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/aa7ee5c3-b016-4c20-302f-fe60897f4d00/download"
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/aa7ee5c3-b016-4c20-302f-fe60897f4d00/download",
+                    "comboSlot": "sides",
+                    "happyHourDiscounted": false,
+                    "aliases": [
+                        "tot",
+                        "tots",
+                        "tater tot",
+                        "tater tots",
+                        "tator tot",
+                        "tator tots",
+                        "tatertot",
+                        "tatertots",
+                        "tatortot",
+                        "tatortots",
+                        "tater-tot",
+                        "tater-tots",
+                        "tator-tot",
+                        "tator-tots"
+                    ],
+                    "isExtra": false
                 },
                 {
                     "name": "Groovy Fries",
@@ -232,7 +303,11 @@
                     "longDescription": "Fried thin and golden brown with grooves designed for dipping! They’re served hot, crispy, and perfectly salted. Add a side of our new Groovy Sauce for dipping!​",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/42a7a54d-9872-41bd-58d3-c9370872fc00/download"
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/42a7a54d-9872-41bd-58d3-c9370872fc00/download",
+                    "comboSlot": "sides",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "isExtra": false
                 },
                 {
                     "name": "Corn Dog",
@@ -246,7 +321,11 @@
                     "longDescription": "A delicious dog wrapped in sweet corn batter fried to a crispy golden-brown. Don't forget the ketchup or mustard.",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/5503aa71-5d13-4e85-1a00-68c900e4a200/download"
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/5503aa71-5d13-4e85-1a00-68c900e4a200/download",
+                    "comboSlot": "none",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "isExtra": false
                 },
                 {
                     "name": "Chili Cheese Tots",
@@ -268,7 +347,11 @@
                     "longDescription": "Crispy, golden tots smothered with warm chili and melty cheddar cheese.",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/f364e808-ead7-4c3f-d35b-bff91685df00/download"
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/f364e808-ead7-4c3f-d35b-bff91685df00/download",
+                    "comboSlot": "none",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "isExtra": false
                 },
                 {
                     "name": "Mozzarella Sticks",
@@ -290,7 +373,11 @@
                     "longDescription": "Crispy on the outside, gooey on the inside! Our Mozzarella Sticks are made with melty, real mozzarella cheese breaded and perfectly fried.  Add a sauce of your choice for dipping!",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/1787761a-f1ea-4c35-af88-248431d64200/download"
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/1787761a-f1ea-4c35-af88-248431d64200/download",
+                    "comboSlot": "none",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "isExtra": false
                 },
                 {
                     "name": "Onion Rings",
@@ -312,7 +399,11 @@
                     "longDescription": "Crispy and golden Onion Rings",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/a031310e-acc2-46e3-7427-64ce37731200/download"
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/a031310e-acc2-46e3-7427-64ce37731200/download",
+                    "comboSlot": "none",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "isExtra": false
                 },
                 {
                     "name": "Ched 'R' Peppers",
@@ -334,7 +425,11 @@
                     "longDescription": "Fried until crispy, these breaded jalapeno peppers are filled with melty cheddar cheese and add a sauce of your choice for dipping!",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/443765db-e418-4abb-a45c-390f5fdeb400/download"
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/443765db-e418-4abb-a45c-390f5fdeb400/download",
+                    "comboSlot": "none",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "isExtra": false
                 }
             ]
         },
@@ -369,7 +464,11 @@
                     "longDescription": "Our iconic Cherry Limeade infuses fresh-squeezed lime and sweet cherry flavor and is poured over SONIC's famous ice!",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/e01edf42-3739-445b-7f95-d29937a5b400/download"
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/e01edf42-3739-445b-7f95-d29937a5b400/download",
+                    "comboSlot": "drinks",
+                    "happyHourDiscounted": true,
+                    "aliases": [],
+                    "isExtra": false
                 },
                 {
                     "name": "Ocean Water®",
@@ -399,7 +498,11 @@
                     "longDescription": "Our signature Ocean Water is sweet and refreshing with the hint of Blue Coconut flavor, served over SONIC's famous ice.",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/8fb45110-623f-4725-8792-838041357200/download"
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/8fb45110-623f-4725-8792-838041357200/download",
+                    "comboSlot": "drinks",
+                    "happyHourDiscounted": true,
+                    "aliases": [],
+                    "isExtra": false
                 },
                 {
                     "name": "Blue Raspberry Slush",
@@ -429,7 +532,11 @@
                     "longDescription": "Sweet and tangy blue raspberry icy slush",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/7e4699da-8080-4d7e-c4c4-dca771bba600/download"
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/7e4699da-8080-4d7e-c4c4-dca771bba600/download",
+                    "comboSlot": "drinks",
+                    "happyHourDiscounted": true,
+                    "aliases": [],
+                    "isExtra": false
                 },
                 {
                     "name": "Strawberry Slush",
@@ -459,7 +566,11 @@
                     "longDescription": "Strawberry icy slush with real strawberries",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/1d366d9e-f62c-4410-0aa9-941e85570c00/download"
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/1d366d9e-f62c-4410-0aa9-941e85570c00/download",
+                    "comboSlot": "drinks",
+                    "happyHourDiscounted": true,
+                    "aliases": [],
+                    "isExtra": false
                 },
                 {
                     "name": "Cherry Slush",
@@ -489,7 +600,11 @@
                     "longDescription": "Sweet cherry icy slush",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/770a6220-62a2-4674-feb9-75fd3c522f00/download"
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/770a6220-62a2-4674-feb9-75fd3c522f00/download",
+                    "comboSlot": "drinks",
+                    "happyHourDiscounted": true,
+                    "aliases": [],
+                    "isExtra": false
                 },
                 {
                     "name": "All Natural Lemonade",
@@ -519,7 +634,11 @@
                     "longDescription": "All natural Lemonade, made with real fruit lemons.",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/ef218444-03fd-45cf-2088-a4547b1fbf00/download"
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/ef218444-03fd-45cf-2088-a4547b1fbf00/download",
+                    "comboSlot": "drinks",
+                    "happyHourDiscounted": true,
+                    "aliases": [],
+                    "isExtra": false
                 },
                 {
                     "name": "Grape Slush",
@@ -549,7 +668,11 @@
                     "longDescription": "The sweet flavor of Grape in an icy Slush",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/dc0d4973-f818-48e3-2a58-0fa3ca49d800/download"
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/dc0d4973-f818-48e3-2a58-0fa3ca49d800/download",
+                    "comboSlot": "drinks",
+                    "happyHourDiscounted": true,
+                    "aliases": [],
+                    "isExtra": false
                 },
                 {
                     "name": "Cranberry Limeade",
@@ -579,7 +702,11 @@
                     "longDescription": "Limeade made with real lime and cranberry flavoring.",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/1cfc9dee-9fb2-43c3-1b48-05edd3dbaa00/download"
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/1cfc9dee-9fb2-43c3-1b48-05edd3dbaa00/download",
+                    "comboSlot": "drinks",
+                    "happyHourDiscounted": true,
+                    "aliases": [],
+                    "isExtra": false
                 },
                 {
                     "name": "Sweet Iced Tea",
@@ -609,7 +736,11 @@
                     "longDescription": "Freshly brewed sweet tea served over SONIC's famous ice.",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/335ba53d-3e4d-4018-da92-2a482f8a1500/download"
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/335ba53d-3e4d-4018-da92-2a482f8a1500/download",
+                    "comboSlot": "drinks",
+                    "happyHourDiscounted": true,
+                    "aliases": [],
+                    "isExtra": false
                 },
                 {
                     "name": "Strawberry Limeade",
@@ -639,7 +770,11 @@
                     "longDescription": "Strawberry limeade made with lime and real strawberry.",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/39a9cdfd-4b29-4d75-de8b-c12767a56e00/download"
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/39a9cdfd-4b29-4d75-de8b-c12767a56e00/download",
+                    "comboSlot": "drinks",
+                    "happyHourDiscounted": true,
+                    "aliases": [],
+                    "isExtra": false
                 }
             ]
         },
@@ -670,7 +805,12 @@
                     "longDescription": "Our Vanilla Shake is made with creamy vanilla soft serve and finished with whipped topping and a cherry.",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/b6ebeb24-53c7-4f63-7ecc-23fecf83c400/download"
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/b6ebeb24-53c7-4f63-7ecc-23fecf83c400/download",
+                    "comboSlot": "drinks",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "requiresMachine": "ice_cream_machine",
+                    "isExtra": false
                 },
                 {
                     "name": "Chocolate Classic Shake",
@@ -696,7 +836,12 @@
                     "longDescription": "Our Chocolate Shake is made with creamy vanilla soft serve, rich chocolate sauce, and finished with whipped topping and a cherry.",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/4e7576bc-a0fd-433c-b430-0f2b16d19200/download"
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/4e7576bc-a0fd-433c-b430-0f2b16d19200/download",
+                    "comboSlot": "drinks",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "requiresMachine": "ice_cream_machine",
+                    "isExtra": false
                 },
                 {
                     "name": "Strawberry Classic Shake",
@@ -722,7 +867,12 @@
                     "longDescription": "Our Strawberry Shake is made with creamy vanilla soft serve, real strawberries, and finished with whipped topping and a cherry.",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/15ddec4e-4d3f-4493-77f0-4c6c87f9ec00/download"
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/15ddec4e-4d3f-4493-77f0-4c6c87f9ec00/download",
+                    "comboSlot": "drinks",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "requiresMachine": "ice_cream_machine",
+                    "isExtra": false
                 },
                 {
                     "name": "Peanut Butter Classic Shake",
@@ -748,7 +898,12 @@
                     "longDescription": "Our Peanut Butter Shake is made with sweet vanilla soft serve, creamy peanut butter and finished with whipped topping and a cherry.",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/47745a83-d60d-4d45-8431-e989881be100/download"
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/47745a83-d60d-4d45-8431-e989881be100/download",
+                    "comboSlot": "drinks",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "requiresMachine": "ice_cream_machine",
+                    "isExtra": false
                 },
                 {
                     "name": "SONIC Blast® made with REESE’S",
@@ -770,7 +925,12 @@
                     "longDescription": "REESE’S Peanut Butter Cups swirled with SONIC’s creamy vanilla soft serve & topped with more REESE’S Peanut Butter Cups",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/66d19fca-7e7e-4a6d-2a1e-ea8c33cc7200/download"
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/66d19fca-7e7e-4a6d-2a1e-ea8c33cc7200/download",
+                    "comboSlot": "drinks",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "requiresMachine": "ice_cream_machine",
+                    "isExtra": false
                 },
                 {
                     "name": "SONIC Blast® made with OREO® Cookie Pieces",
@@ -792,7 +952,12 @@
                     "longDescription": "OREO® Cookie pieces swirled with SONIC’s creamy vanilla soft serve & topped with more Oreo® Cookie pieces",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/ce235294-a6bd-4f9b-f3e5-8235aa8e2000/download"
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/ce235294-a6bd-4f9b-f3e5-8235aa8e2000/download",
+                    "comboSlot": "drinks",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "requiresMachine": "ice_cream_machine",
+                    "isExtra": false
                 },
                 {
                     "name": "OREO® Cheesecake Master Shake®",
@@ -818,7 +983,12 @@
                     "longDescription": "Creamy vanilla soft serve mixed with the rich flavor of cheesecake, graham cracker crumbs and OREO® Cookie Pieces into a thick and creamy shake, finished with whipped topping, more graham cracker crumbs and a cherry.",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/d2c03630-fb1f-4577-c4a3-c1bdfb43c600/download"
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/d2c03630-fb1f-4577-c4a3-c1bdfb43c600/download",
+                    "comboSlot": "drinks",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "requiresMachine": "ice_cream_machine",
+                    "isExtra": false
                 },
                 {
                     "name": "Hot Fudge Sundae",
@@ -832,7 +1002,12 @@
                     "longDescription": "Our Hot Fudge Sundaes start with creamy, vanilla soft serve swirled together with hot fudge, and finished with whipped topping and a cherry.",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/a7d39de2-8f7b-431d-c776-7df84dcfee00/download"
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/a7d39de2-8f7b-431d-c776-7df84dcfee00/download",
+                    "comboSlot": "none",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "requiresMachine": "ice_cream_machine",
+                    "isExtra": false
                 },
                 {
                     "name": "Banana Classic Shake",
@@ -858,7 +1033,12 @@
                     "longDescription": "Our Banana Shake is made with creamy vanilla soft serve, bananas and finished with whipped topping and a cherry.",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/8b707628-27df-43c1-abdc-a164487c7b00/download"
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/8b707628-27df-43c1-abdc-a164487c7b00/download",
+                    "comboSlot": "drinks",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "requiresMachine": "ice_cream_machine",
+                    "isExtra": false
                 },
                 {
                     "name": "Caramel Sundae",
@@ -872,7 +1052,12 @@
                     "longDescription": "Caramel Sundaes start with creamy, vanilla soft serve swirled together with caramel and finished with whipped topping and a cherry.",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/03487758-7de6-42fe-1c22-cfc7f645ec00/download"
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/03487758-7de6-42fe-1c22-cfc7f645ec00/download",
+                    "comboSlot": "none",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "requiresMachine": "ice_cream_machine",
+                    "isExtra": false
                 }
             ]
         },
@@ -891,7 +1076,17 @@
                     "longDescription": "SONIC® Cheeseburger bundled with your choice of a side (Tots or Fries) and a drink. Includes medium side and medium drink. Side and drink are included in the combo price.",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": ""
+                    "image": "",
+                    "comboSlot": "none",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "bundle": {
+                        "slots": [
+                            "sides",
+                            "drinks"
+                        ]
+                    },
+                    "isExtra": false
                 },
                 {
                     "name": "SuperSONIC® Double Cheeseburger Combo",
@@ -905,7 +1100,17 @@
                     "longDescription": "SuperSONIC® Double Cheeseburger bundled with your choice of a side (Tots or Fries) and a drink. Includes medium side and medium drink. Side and drink are included in the combo price.",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": ""
+                    "image": "",
+                    "comboSlot": "none",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "bundle": {
+                        "slots": [
+                            "sides",
+                            "drinks"
+                        ]
+                    },
+                    "isExtra": false
                 },
                 {
                     "name": "SuperSONIC® Bacon Double Cheeseburger Combo",
@@ -919,7 +1124,17 @@
                     "longDescription": "SuperSONIC® Bacon Double Cheeseburger bundled with your choice of a side (Tots or Fries) and a drink. Includes medium side and medium drink. Side and drink are included in the combo price.",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": ""
+                    "image": "",
+                    "comboSlot": "none",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "bundle": {
+                        "slots": [
+                            "sides",
+                            "drinks"
+                        ]
+                    },
+                    "isExtra": false
                 },
                 {
                     "name": "All-American SONIC Smasher™ Combo",
@@ -933,7 +1148,17 @@
                     "longDescription": "All-American SONIC Smasher™ bundled with your choice of a side (Tots or Fries) and a drink. Includes medium side and medium drink. Side and drink are included in the combo price.",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": ""
+                    "image": "",
+                    "comboSlot": "none",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "bundle": {
+                        "slots": [
+                            "sides",
+                            "drinks"
+                        ]
+                    },
+                    "isExtra": false
                 },
                 {
                     "name": "All-American Bacon SONIC Smasher™ Combo",
@@ -947,7 +1172,17 @@
                     "longDescription": "All-American Bacon SONIC Smasher™ bundled with your choice of a side (Tots or Fries) and a drink. Includes medium side and medium drink. Side and drink are included in the combo price.",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": ""
+                    "image": "",
+                    "comboSlot": "none",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "bundle": {
+                        "slots": [
+                            "sides",
+                            "drinks"
+                        ]
+                    },
+                    "isExtra": false
                 },
                 {
                     "name": "Crispy Chicken Sandwich Combo",
@@ -961,7 +1196,17 @@
                     "longDescription": "Crispy Chicken Sandwich bundled with your choice of a side (Tots or Fries) and a drink. Includes medium side and medium drink. Side and drink are included in the combo price.",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": ""
+                    "image": "",
+                    "comboSlot": "none",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "bundle": {
+                        "slots": [
+                            "sides",
+                            "drinks"
+                        ]
+                    },
+                    "isExtra": false
                 },
                 {
                     "name": "Double SONIC Smasher™ Combo",
@@ -975,7 +1220,17 @@
                     "longDescription": "Double SONIC Smasher™ bundled with your choice of a side (Tots or Fries) and a drink. Includes medium side and medium drink. Side and drink are included in the combo price.",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": ""
+                    "image": "",
+                    "comboSlot": "none",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "bundle": {
+                        "slots": [
+                            "sides",
+                            "drinks"
+                        ]
+                    },
+                    "isExtra": false
                 },
                 {
                     "name": "Fish Sandwich Combo",
@@ -989,7 +1244,17 @@
                     "longDescription": "Fish Sandwich bundled with your choice of a side (Tots or Fries) and a drink. Includes medium side and medium drink. Side and drink are included in the combo price.",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": ""
+                    "image": "",
+                    "comboSlot": "none",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "bundle": {
+                        "slots": [
+                            "sides",
+                            "drinks"
+                        ]
+                    },
+                    "isExtra": false
                 },
                 {
                     "name": "Jr Double Cheeseburger Combo",
@@ -1003,7 +1268,17 @@
                     "longDescription": "Jr Double Cheeseburger bundled with your choice of a side (Tots or Fries) and a drink. Includes medium side and medium drink. Side and drink are included in the combo price.",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": ""
+                    "image": "",
+                    "comboSlot": "none",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "bundle": {
+                        "slots": [
+                            "sides",
+                            "drinks"
+                        ]
+                    },
+                    "isExtra": false
                 },
                 {
                     "name": "Triple SONIC Smasher™ Combo",
@@ -1017,7 +1292,17 @@
                     "longDescription": "Triple SONIC Smasher™ bundled with your choice of a side (Tots or Fries) and a drink. Includes medium side and medium drink. Side and drink are included in the combo price.",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": ""
+                    "image": "",
+                    "comboSlot": "none",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "bundle": {
+                        "slots": [
+                            "sides",
+                            "drinks"
+                        ]
+                    },
+                    "isExtra": false
                 }
             ]
         },
@@ -1044,7 +1329,11 @@
                     "longDescription": "Crispy tots fried to a golden brown and topped with melted cheese",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/4a4ca662-fc5f-4314-aafc-a587d8132400/download"
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/4a4ca662-fc5f-4314-aafc-a587d8132400/download",
+                    "comboSlot": "none",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "isExtra": false
                 },
                 {
                     "name": "Cheese Groovy Fries",
@@ -1066,7 +1355,11 @@
                     "longDescription": "Fried thin and golden brown topped with melted cheese.",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/0b4f01f0-d0ac-47ad-aaed-c02b45946500/download"
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/0b4f01f0-d0ac-47ad-aaed-c02b45946500/download",
+                    "comboSlot": "none",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "isExtra": false
                 },
                 {
                     "name": "Chili Cheese Groovy Fries",
@@ -1088,7 +1381,11 @@
                     "longDescription": "Fried thin and golden brown smothered in warm chili and topped with cheddar cheese.",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/2d01a611-ee8b-471e-6e51-da9fd3c32500/download"
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/2d01a611-ee8b-471e-6e51-da9fd3c32500/download",
+                    "comboSlot": "none",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "isExtra": false
                 },
                 {
                     "name": "Premium Chicken Bites",
@@ -1110,7 +1407,11 @@
                     "longDescription": "",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/3a37bc8e-8f5a-4d58-e771-4183f78aef00/download"
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/3a37bc8e-8f5a-4d58-e771-4183f78aef00/download",
+                    "comboSlot": "none",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "isExtra": false
                 },
                 {
                     "name": "FRITOS® Chili Cheese Wrap",
@@ -1124,7 +1425,11 @@
                     "longDescription": "Crunchy FRITOS®, warm chili and melted cheddar cheese in a warm, 10” flour tortilla.",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/031342cc-de80-4c40-7552-06f41b5cb200/download"
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/031342cc-de80-4c40-7552-06f41b5cb200/download",
+                    "comboSlot": "none",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "isExtra": false
                 },
                 {
                     "name": "Soft Pretzel Twist",
@@ -1138,7 +1443,11 @@
                     "longDescription": "A tasty twist on a classic. Enjoy a warm butter-flavored soft pretzel topped with salt. Enjoy it by itself, or pair it with one of SONIC's great dipping sauce options.",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/842cf05e-892e-47af-898b-5eb1020e3e00/download"
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/842cf05e-892e-47af-898b-5eb1020e3e00/download",
+                    "comboSlot": "none",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "isExtra": false
                 },
                 {
                     "name": "Fritos Chili Cheese Pie",
@@ -1160,7 +1469,11 @@
                     "longDescription": "Crunchy FRITOS® topped with signature chili and melted cheddar cheese.",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/727ef87b-b324-47ca-236a-1456a61a5300/download"
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/727ef87b-b324-47ca-236a-1456a61a5300/download",
+                    "comboSlot": "none",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "isExtra": false
                 },
                 {
                     "name": "Crispy Tenders - 3 Piece",
@@ -1174,7 +1487,11 @@
                     "longDescription": "Three 100% all-white meat chicken tenders are crispy and packed with flavor. Enjoy them by themself, or pair them with SONIC's great dipping sauce options.",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/ca91d6bc-71d0-4d80-4d6a-d3c9831fe600/download"
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/ca91d6bc-71d0-4d80-4d6a-d3c9831fe600/download",
+                    "comboSlot": "none",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "isExtra": false
                 },
                 {
                     "name": "Crispy Tenders - 5 Piece",
@@ -1188,7 +1505,11 @@
                     "longDescription": "Five 100% all-white meat chicken tenders are crispy and packed with flavor. Enjoy them by themself, or pair them with SONIC's great dipping sauce options.",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/2b39ce5d-ca8e-447e-8c17-abd07085a000/download"
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/2b39ce5d-ca8e-447e-8c17-abd07085a000/download",
+                    "comboSlot": "none",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "isExtra": false
                 },
                 {
                     "name": "FRITOS® Chili Cheese Jr. Wrap",
@@ -1202,7 +1523,11 @@
                     "longDescription": "Crunchy FRITOS®, warm chili and melted cheddar cheese in a warm, 8” flour tortilla.",
                     "origin": "Sonic Drive-In Menu",
                     "popularity": "",
-                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/3cdb690a-82b0-4599-4213-13821c7aef00/download"
+                    "image": "https://imagedelivery.net/cyuZzWywsYlsu7DPQZIgOg/3cdb690a-82b0-4599-4213-13821c7aef00/download",
+                    "comboSlot": "none",
+                    "happyHourDiscounted": false,
+                    "aliases": [],
+                    "isExtra": false
                 }
             ]
         }

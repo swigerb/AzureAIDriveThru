@@ -30,6 +30,57 @@ def _load_menu_item_names() -> set[str]:
     return {item["name"] for category in data["menuItems"] for item in category["items"]}
 
 
+def _load_menu_item_raw_fields() -> dict[str, dict]:
+    """Read menuItems.json directly (no ``menu_utils`` involved at all) -- item name ->
+    ``{"comboSlot", "happyHourDiscounted"}`` exactly as authored in the pack, defaulting missing
+    fields the same way the schema documents (``"none"`` / ``False``). Used to check the golden
+    table against the RAW DATA itself (issue #71), independent of whether ``menu_utils``'s loader
+    or classification functions have a bug."""
+    with _MENU_ITEMS_PATH.open("r", encoding="utf-8") as f:
+        data = json.load(f)
+    fields: dict[str, dict] = {}
+    for category in data["menuItems"]:
+        for item in category["items"]:
+            fields[item["name"]] = {
+                "comboSlot": item.get("comboSlot", "none"),
+                "happyHourDiscounted": bool(item.get("happyHourDiscounted", False)),
+            }
+    return fields
+
+
+class GoldenTableCheckedAgainstPackDataTests(unittest.TestCase):
+    """issue #71: the golden category table is CHECKED AGAINST the persona pack's data, not
+    generated from it -- menuItems.json is hand-authored per the design doc (section 4.3/6) and
+    the golden table is an independent, hand-authored oracle; this test compares the two directly,
+    reading menuItems.json's raw ``comboSlot``/``happyHourDiscounted`` fields with no
+    ``menu_utils`` code involved at all (see ``InferComboComponentGoldenCategoryTests`` above for
+    the equivalent check that goes THROUGH ``infer_combo_component``/``is_happy_hour_discounted``,
+    which additionally proves the loader/classification functions agree with the raw data)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.golden = _load_golden_categories()
+        cls.pack_fields = _load_menu_item_raw_fields()
+
+    def test_every_golden_row_matches_the_pack_items_raw_fields(self):
+        mismatches = []
+        for row in self.golden:
+            pack_item = self.pack_fields.get(row["item"])
+            if pack_item is None:
+                mismatches.append(f"{row['item']!r}: not found in menuItems.json")
+                continue
+            if pack_item["comboSlot"] != row["comboSlot"]:
+                mismatches.append(
+                    f"{row['item']!r}: pack comboSlot {pack_item['comboSlot']!r} != golden {row['comboSlot']!r}"
+                )
+            if pack_item["happyHourDiscounted"] != row["happyHourDiscounted"]:
+                mismatches.append(
+                    f"{row['item']!r}: pack happyHourDiscounted {pack_item['happyHourDiscounted']!r} "
+                    f"!= golden {row['happyHourDiscounted']!r}"
+                )
+        self.assertEqual(mismatches, [], "\n".join(mismatches))
+
+
 class InferComboComponentGoldenCategoryTests(unittest.TestCase):
     """#39 / PR #50 review: every menuItems.json item must classify into its documented
     combo-slot (side/drink/none, ``infer_combo_component``) AND happy-hour-discount eligibility
@@ -132,10 +183,10 @@ class InferComboComponentGoldenCategoryTests(unittest.TestCase):
 
     def test_shakes_and_blasts_are_full_price_during_happy_hour(self):
         """Brian's decision (2026-09-25, #39 follow-up): Shakes & Blasts are NOT happy-hour
-        discounted -- full price. This is deliberately the ONE test that pins the answer, so
-        ``menu_utils._SHAKES_AND_BLASTS_HAPPY_HOUR_DISCOUNTED`` stays a one-line switch and this
-        test is the one line that documents/enforces today's (now final) answer. Combo-drink-slot
-        eligibility is unaffected -- a separate question (PR #50 review)."""
+        discounted -- full price. Since #71 this is a permanent, explicit
+        ``happyHourDiscounted: false`` on every Shakes & Ice Cream item in menuItems.json (not a
+        Python switch any more), and this test is what pins/documents that final answer.
+        Combo-drink-slot eligibility is unaffected -- a separate question (PR #50 review)."""
         self.assertFalse(is_happy_hour_discounted("Vanilla Classic Shake"))
         self.assertFalse(is_happy_hour_discounted("SONIC Blast® made with OREO® Cookie Pieces"))
         self.assertEqual(infer_combo_component("Vanilla Classic Shake"), "drinks")
@@ -190,27 +241,24 @@ class CustomisedItemMenuLookupTests(unittest.TestCase):
     def test_customised_category_matches_base_item_category(self):
         self.assertEqual(infer_category("Tots (Extra Crispy)"), infer_category("Tots"))
 
-    def test_flipping_the_shakes_and_blasts_flag_changes_every_shake_blast_variant(self):
-        """PR #50 review: prove the flag is genuinely the ONE single switch -- flipping it must
-        change EVERY shake/blast, plain or customised, on-menu (menuItems.json category match) or
-        off-menu (keyword fallback only), never just some of them."""
+    def test_shakes_and_blasts_are_never_happy_hour_discounted_plain_or_customised(self):
+        """PR #50 review's original intent (a single answer for every shake/blast, plain or
+        customised, on-menu or off-menu) still holds under #71's data-driven classification --
+        there is simply no longer a switch to flip: ``happyHourDiscounted: false`` on every
+        Shakes & Ice Cream pack item, and the off-menu keyword fallback (see
+        ``menu_utils._keyword_fallback_happy_hour_discounted``) is hardcoded to the same permanent
+        answer."""
         on_menu_plain = "Vanilla Classic Shake"
         on_menu_customised = "Vanilla Classic Shake (No Whip)"
         on_menu_blast_customised = "SONIC Blast® made with OREO® Cookie Pieces (Extra Candy)"
         off_menu_plain = "Chocolate Malt"
         off_menu_customised = "Chocolate Malt (Extra Malt)"
 
-        # Baseline: the flag is now False (Brian's decision, 2026-09-25) -- no variant is discounted.
         for name in (on_menu_plain, on_menu_customised, on_menu_blast_customised, off_menu_plain, off_menu_customised):
             self.assertFalse(is_happy_hour_discounted(name), name)
 
-        with patch.object(menu_utils, "_SHAKES_AND_BLASTS_HAPPY_HOUR_DISCOUNTED", True):
-            for name in (on_menu_plain, on_menu_customised, on_menu_blast_customised, off_menu_plain, off_menu_customised):
-                self.assertTrue(is_happy_hour_discounted(name), name)
-
-        # Combo-drink-slot eligibility is a SEPARATE question and must NOT be affected by the flag.
-        with patch.object(menu_utils, "_SHAKES_AND_BLASTS_HAPPY_HOUR_DISCOUNTED", True):
-            self.assertEqual(infer_combo_component(off_menu_customised), "drinks")
+        # Combo-drink-slot eligibility is a SEPARATE question, unaffected either way.
+        self.assertEqual(infer_combo_component(off_menu_customised), "drinks")
 
 
 class TotsAliasNormalisationTests(unittest.TestCase):
@@ -247,13 +295,41 @@ class TotsAliasNormalisationTests(unittest.TestCase):
         for name in ("Loaded Tots Supreme", "chilli cheese tots", "totstastic snack"):
             self.assertEqual(infer_combo_component(name), "", name)
 
-    def test_tots_alias_does_not_affect_category_or_happy_hour_discount(self):
-        """Scoped to combo-side-slot classification only (#60) -- the alias must not leak into
-        category inference (already correctly "sides" via the pre-existing substring keyword
-        fallback) or happy-hour-discount eligibility (Tots was never a drink, discounted or not)."""
+    def test_tots_alias_resolves_the_same_category_as_the_real_tots_item(self):
+        """issue #71 (deliberate behaviour change from #60): aliases now resolve for EVERY
+        lookup, not just the combo side slot -- so an alias like "Tater Tot" now resolves via
+        ``MENU_CATEGORY_MAP`` to "Tots"'s real category ("Hot Dogs & Tots"), not the pre-#71
+        keyword-fallback answer ("sides"). Functionally equivalent for downstream behaviour
+        (tools.py's upsell hint and extras rules block both categories identically), but the
+        string itself changes -- pinned here on purpose. Happy-hour-discount eligibility is
+        unaffected either way (Tots was never a drink, discounted or not)."""
         for name in ("Tater Tot", "Tater Tots", "Tator Tots"):
-            self.assertEqual(infer_category(name), "sides", name)
+            self.assertEqual(infer_category(name), "hot dogs & tots", name)
             self.assertFalse(is_happy_hour_discounted(name), name)
+
+
+class AliasResolvesIdenticallyOnEveryLookupTests(unittest.TestCase):
+    """issue #71: an alias must be OBSERVABLY IDENTICAL to its canonical item across ALL THREE
+    classification lookups (category, combo slot, happy-hour discount) -- not just the combo side
+    slot #60 originally scoped. Pins the exact requirement from the issue text: flipping a name
+    between an alias and the real item name must never change the answer to any of the three
+    questions."""
+
+    def test_every_tots_alias_matches_the_canonical_tots_item_on_every_axis(self):
+        canonical = "Tots"
+        aliases = (
+            "Tot", "tot", "Tots", "TOTS",
+            "Tater Tot", "Tater Tots", "Tator Tot", "Tator Tots",
+            "tatertot", "tatertots", "tatortot", "tatortots",
+            "tater-tot", "tater-tots", "tator-tot", "tator-tots",
+        )
+        for alias in aliases:
+            with self.subTest(alias=alias):
+                self.assertEqual(infer_category(alias), infer_category(canonical), alias)
+                self.assertEqual(infer_combo_component(alias), infer_combo_component(canonical), alias)
+                self.assertEqual(
+                    is_happy_hour_discounted(alias), is_happy_hour_discounted(canonical), alias
+                )
 
 
 class MoreTotsAliasFormsTests(unittest.TestCase):
@@ -262,8 +338,8 @@ class MoreTotsAliasFormsTests(unittest.TestCase):
     (confirmed via ``_menu_key("Tater-Tot") == "tater-tot"``, not "tater tot") -- a hyphen is not
     whitespace and none of ``strip_modifiers``'s ``.split()``/``" ".join(...)`` pass, nor any of
     ``_menu_key``'s three symbol-replacements, touch it. So the hyphenated forms need their OWN
-    keys in ``_TOTS_ALIASES``; they are not already covered by the "tater tot"/"tator tot" (space)
-    entries added for #60."""
+    entries in "Tots"'s ``aliases`` list in menuItems.json; they are not already covered by the
+    "tater tot"/"tator tot" (space) entries added for #60."""
 
     def test_one_word_forms_fill_the_combo_side_slot(self):
         for name in ("tatertot", "TaterTot", "tatertots", "TATERTOTS", "tatortot", "tatortots"):
@@ -277,9 +353,11 @@ class MoreTotsAliasFormsTests(unittest.TestCase):
         for name in ("Tater-Tots (Extra Crispy)", "TaterTots (Extra Crispy)"):
             self.assertEqual(infer_combo_component(name), "sides", name)
 
-    def test_new_alias_forms_do_not_affect_category_or_happy_hour_discount(self):
+    def test_new_alias_forms_resolve_the_same_category_as_the_real_tots_item(self):
+        """See ``test_tots_alias_resolves_the_same_category_as_the_real_tots_item`` above (#71):
+        every alias form resolves category too, now -- not "sides" any more."""
         for name in ("tatertots", "tater-tots"):
-            self.assertEqual(infer_category(name), "sides", name)
+            self.assertEqual(infer_category(name), "hot dogs & tots", name)
             self.assertFalse(is_happy_hour_discounted(name), name)
 
     def test_near_miss_spellings_still_charged_in_full(self):
@@ -299,13 +377,14 @@ class SizeWordFailSafeTests(unittest.TestCase):
 
     def test_size_word_in_the_name_text_is_charged_in_full(self):
         """"Large Tater Tots" -- the size word is part of the name text, so it survives
-        ``_menu_key()`` and the resulting key ("large tater tots") is not in ``_TOTS_ALIASES``."""
+        ``_menu_key()`` and the resulting key ("large tater tots") is not one of "Tots"'s
+        ``aliases`` in menuItems.json."""
         self.assertEqual(infer_combo_component("Large Tater Tots"), "", "Large Tater Tots")
 
     def test_size_word_as_a_bracketed_modifier_still_absorbs(self):
         """"Tater Tots (Large)" -- the size word is a bracketed modifier, stripped by
         ``strip_modifiers`` before the alias lookup runs, leaving "Tater Tots" which does
-        resolve via ``_TOTS_ALIASES``."""
+        resolve via "Tots"'s ``aliases``."""
         self.assertEqual(infer_combo_component("Tater Tots (Large)"), "sides", "Tater Tots (Large)")
 
 
@@ -314,22 +393,16 @@ class KeywordFallbackPrecedenceTests(unittest.TestCase):
     fountain-drink keywords BEFORE the shake/blast/malt keywords, so an off-menu name that
     happens to contain both a fountain word and a shake/blast word (e.g. "Cherry Limeade Shake"
     contains "limeade"; "Sweet Tea Blast" contains "tea") returned the fountain-drink answer
-    (always discounted) instead of obeying ``_SHAKES_AND_BLASTS_HAPPY_HOUR_DISCOUNTED`` -- the
-    single flag Brian's decision made the ONE switch for every shake/blast. The fix checks the
-    shake/blast/malt regex FIRST. Combo-drink-slot eligibility (``_keyword_fallback_combo_drink``)
-    is an unconditional OR of all three regexes and was never order-dependent -- these names must
-    still fill the combo drink slot regardless of which keyword "wins" for the discount
-    question."""
+    (always discounted) instead of the shake/blast answer (never discounted -- Brian's decision,
+    confirmed permanent by #71). The fix checks the shake/blast/malt regex FIRST.
+    Combo-drink-slot eligibility (``_keyword_fallback_combo_drink``) is an unconditional OR of all
+    three regexes and was never order-dependent -- these names must still fill the combo drink
+    slot regardless of which keyword "wins" for the discount question."""
 
     def test_shake_blast_names_containing_a_fountain_word_are_not_discounted(self):
         for name in ("Cherry Limeade Shake", "Strawberry Lemonade Shake", "Dr Pepper Shake", "Sweet Tea Blast"):
             self.assertFalse(is_happy_hour_discounted(name), name)
             self.assertEqual(infer_combo_component(name), "drinks", name)
-
-    def test_shake_blast_names_containing_a_fountain_word_obey_the_flag(self):
-        with patch.object(menu_utils, "_SHAKES_AND_BLASTS_HAPPY_HOUR_DISCOUNTED", True):
-            for name in ("Cherry Limeade Shake", "Strawberry Lemonade Shake", "Dr Pepper Shake", "Sweet Tea Blast"):
-                self.assertTrue(is_happy_hour_discounted(name), name)
 
     def test_pure_fountain_names_are_still_unconditionally_discounted(self):
         """Sanity check: a name with no shake/blast/malt keyword at all is unaffected by the
@@ -380,13 +453,9 @@ class KeywordOverCorrectionTests(unittest.TestCase):
     ``MENU_CATEGORY_MAP``. The steak/tea word-boundary fix from round 4 must still hold (proven by
     ``KeywordFallbackWordBoundaryTests`` above, which stays green)."""
 
-    def test_milkshake_is_recognised_as_a_shake_and_obeys_the_flag(self):
+    def test_milkshake_is_recognised_as_a_shake_and_is_never_discounted(self):
         self.assertEqual(infer_combo_component("Chocolate Milkshake"), "drinks")
         self.assertFalse(is_happy_hour_discounted("Chocolate Milkshake"))
-        with patch.object(menu_utils, "_SHAKES_AND_BLASTS_HAPPY_HOUR_DISCOUNTED", True):
-            self.assertTrue(is_happy_hour_discounted("Chocolate Milkshake"))
-            # Combo-drink-slot eligibility is unconditional -- unaffected by the flag.
-            self.assertEqual(infer_combo_component("Chocolate Milkshake"), "drinks")
 
     def test_slush_spoken_variants_still_match(self):
         for name in ("Cherry Slushes", "Blue Raspberry Slushie", "Grape Slushy"):
