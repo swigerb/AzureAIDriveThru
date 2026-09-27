@@ -1,0 +1,68 @@
+version: "1.0.0"
+tools:
+  - name: "search"
+    type: "function"
+    description: >-
+      Search the McDonald's menu for items, prices, sizes, and availability.
+      The menu data is in English — translate to and from English if needed.
+      Results are formatted as a source name first in square brackets, followed
+      by the text content, and a line with '-----' at the end of each result.
+    parameters:
+      type: "object"
+      properties:
+        query:
+          type: "string"
+          description: "Search query for McDonald's menu items (e.g., 'Big Mac', 'number 1 meal', 'McFlurry sizes')"
+      required:
+        - "query"
+      additionalProperties: false
+
+  - name: "update_order"
+    type: "function"
+    description: "Update the current McDonald's order by adding, removing, or modifying menu items on the order screen."
+    parameters:
+      type: "object"
+      properties:
+        action:
+          type: "string"
+          description: "Action to perform: 'add', 'remove', or 'modify' (resize an existing item in place, e.g. 'make that a large')."
+          enum:
+            - "add"
+            - "remove"
+            - "modify"
+        item_name:
+          type: "string"
+          description: "Name of the McDonald's menu item to update, e.g., 'Big Mac'."
+        size:
+          type: "string"
+          description: "Size of the item to update, e.g., 'Large'."
+        quantity:
+          type: "integer"
+          description: "Quantity of the item to update. Represents the number of items."
+        price:
+          type: "number"
+          description: "Ignored; the server prices from the menu."
+      required:
+        - "action"
+        - "item_name"
+        - "size"
+        - "quantity"
+      additionalProperties: false
+
+  - name: "get_order"
+    type: "function"
+    description: "Retrieve the current McDonald's order summary from the order screen, including all items and the total."
+    parameters:
+      type: "object"
+      properties: {}
+      required: []
+      additionalProperties: false
+
+  - name: "reset_order"
+    type: "function"
+    description: "Clear all items from the current McDonald's order and start a fresh order."
+    parameters:
+      type: "object"
+      properties: {}
+      required: []
+      additionalProperties: false
