@@ -58,8 +58,8 @@ const BETA_DETAIL = detailFor("test-beta", {
     "ticket.title": "Your Beta Order",
     "status.notRecordingMessage": "Let's order from Beta!",
     // Only test-beta overrides this key -- test-alpha (below) deliberately leaves it undefined,
-    // mirroring Dunkin's real-world pack (issue #119 item 1 follow-up): its `ui.strings` covers
-    // only 5 keys and never touches `ticket.emptyHint` at all.
+    // mirroring a real-world pack (issue #119 item 1 follow-up) whose `ui.strings` intentionally
+    // covers only a handful of brand-specific keys and never touches `ticket.emptyHint` at all.
     "ticket.emptyHint": "Add a beta widget to kick things off."
 });
 const ALPHA_DETAIL = detailFor("test-alpha", {
@@ -146,12 +146,13 @@ describe("ticket/status copy on persona switch (issue #119 item 1)", () => {
     });
 
     it("falls back to the neutral base copy -- not the previous persona's override -- for a key the new persona doesn't define", async () => {
-        // Regression for the bug Unity's Dunkin verification surfaced (issue #119 item 1
-        // follow-up): Dunkin's real pack only defines 5 `ui.strings` keys and never touches
-        // `ticket.emptyHint`, yet after switching Sonic -> Dunkin the ticket kept showing Sonic's
-        // `ticket.emptyHint` override instead of the shared neutral copy. test-beta here plays
-        // Sonic's role (it overrides `ticket.emptyHint`); test-alpha plays Dunkin's role (it
-        // doesn't).
+        // Regression for a bug surfaced by a partner squad's verification of an unmerged pack
+        // (issue #119 item 1 follow-up): that pack's real `ui.strings` only defines a handful of
+        // brand-specific keys and never touches `ticket.emptyHint`, yet after switching from the
+        // app's default persona the ticket kept showing that default persona's `ticket.emptyHint`
+        // override instead of the shared neutral copy. test-beta here plays the default persona's
+        // role (it overrides `ticket.emptyHint`); test-alpha plays the other pack's role (it
+        // doesn't override that key at all).
         mockFetchSequence(url => {
             if (url === "/api/personas") return { ok: true, body: TWO_PERSONA_INDEX };
             if (url === "/api/personas/test-beta") return { ok: true, body: BETA_DETAIL };

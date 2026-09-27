@@ -169,8 +169,8 @@ export function PersonaProvider({ children }: { children: ReactNode }) {
             // Without this reset, a pack whose `ui.strings` doesn't cover every key (some packs
             // intentionally define only a handful of brand-specific keys, e.g. no
             // `ticket.emptyHint` override at all) silently kept showing whatever the *previously
-            // active* persona last set that key to (e.g. Sonic, which does define
-            // `ticket.emptyHint`), instead of falling back to the shared neutral copy.
+            // active* persona (one that does define `ticket.emptyHint`) last set that key to,
+            // instead of falling back to the shared neutral copy.
             for (const locale of Object.keys(baseTranslationResources)) {
                 i18next.addResourceBundle(locale, "translation", structuredClone(baseTranslationResources[locale]), false, true);
             }
