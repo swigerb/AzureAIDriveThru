@@ -189,44 +189,12 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
             "charged its real menu price, 2.79.");
     });
 
-    /// <summary>
-    /// Rick's PR #107 review, required item 2 (wrong-size carry-over acceptance row): adding a
-    /// Cherry Limeade medium (menu price 2.89), removing it, then re-adding it as a large but with
-    /// the stale medium price (2.89) still on the tool call -- the resolved size is `large`, so the
-    /// charge must be the large menu price (3.39), never the carried-over medium price. Mirrors
-    /// app/backend/tests/test_tool_calling.py's
-    /// test_resize_wrong_size_price_carryover_charges_new_size_menu_price. Non-drink-adjacent
-    /// timing note doesn't apply here (Cherry Limeade prices used deliberately match Rick's review
-    /// numbers exactly; happy-hour timing is irrelevant to this add/remove/re-add sequence since no
-    /// discount step is involved).
-    /// </summary>
-    [Fact]
-    public Task Adding_the_wrong_size_with_a_stale_price_carried_over_is_charged_the_new_size_menu_price() => fixture.RunAsync(async () =>
-    {
-        var ct = TestContext.Current.CancellationToken;
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-        await using var _ = browser;
-
-        await OrderScenarioHelpers.CallToolAsync(
-            connection, browser, "update_order",
-            """{"action":"add","item_name":"Cherry Limeade","size":"medium","quantity":1,"price":2.89}""",
-            "call_add_medium", roundTripIndex, ct);
-        await OrderScenarioHelpers.CallToolAsync(
-            connection, browser, "update_order",
-            """{"action":"remove","item_name":"Cherry Limeade","size":"medium","quantity":1,"price":2.89}""",
-            "call_remove_medium", roundTripIndex, ct);
-        var result = await OrderScenarioHelpers.CallToolAsync(
-            connection, browser, "update_order",
-            """{"action":"add","item_name":"Cherry Limeade","size":"large","quantity":1,"price":2.89}""",
-            "call_add_large_stale_price", roundTripIndex, ct);
-
-        Assert.NotNull(result.ToolResultJson);
-        var order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
-        Assert.Equal(1, order.GetProperty("items").GetArrayLength());
-        OrderScenarioHelpers.AssertMoneyEqual(3.39m, order.GetProperty("total").GetDecimal(),
-            "A large re-add with the medium's stale tool-call price (2.89) carried over must be " +
-            "charged the large's real menu price, 3.39 -- never the carried-over medium price.");
-    });
+    // #121: the wrong-size-carryover acceptance row (Cherry Limeade medium -> remove -> re-add
+    // as large with the stale medium price) moved to its own class/collection below, pinned to
+    // a fixed clock outside happy hour -- Cherry Limeade is happy-hour eligible, and this class
+    // runs under the ambient ConformanceCollection (real wall-clock time), so it flaked whenever
+    // the suite happened to run inside the real 14:00-16:00 America/Chicago window. See
+    // UpdateOrderAddRemoveModifyClockPinnedTests below for the root-cause note and the test.
 
     [Theory]
     [MemberData(nameof(Route44AliasCases))]
@@ -516,5 +484,63 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
         }
         Assert.Equal(maxTotal, finalQty);
         Assert.Equal(3, order.GetProperty("items").GetArrayLength());
+    });
+}
+
+/// <summary>
+/// #121: split out of <see cref="UpdateOrderAddRemoveModifyTests"/> above. That class runs under
+/// the ambient <see cref="ConformanceCollection"/> (real wall-clock time, see
+/// <see cref="BackendProfiles.Default"/>) -- fine for its other rows, which deliberately use
+/// non-drink items, but NOT fine here: this row uses Cherry Limeade, a happy-hour-eligible
+/// fountain drink (personas/sonic/persona.json's `pricing.happyHour`, 14:00-16:00 America/Chicago,
+/// 50% off), and asserts an exact FULL-PRICE total. Root cause of #121 (confirmed by running this
+/// scenario's Python-side twin,
+/// app/backend/tests/test_tool_calling.py::UpdateOrderAddTests::test_resize_wrong_size_price_carryover_charges_new_size_menu_price,
+/// with the clock explicitly pinned both inside and outside the window via
+/// CONFORMANCE_TEST_HOOKS=1/CONFORMANCE_FIXED_NOW): outside the window it passes every time,
+/// inside it fails identically to the original report every time -- this was never a menu-pricing
+/// regression from the P2-6/P2-7/P2-11 persona-pack work, only a test that never pinned the
+/// clock. Needs its own dedicated collection/backend process since CONFORMANCE_FIXED_NOW is read
+/// once at Python-module-import time (see FixedClockConformanceFixture's doc).
+/// </summary>
+[Collection(FixedClockOutsideHappyHourConformanceCollection.Name)]
+public sealed class UpdateOrderAddRemoveModifyClockPinnedTests(FixedClockOutsideHappyHourConformanceFixture fixture)
+{
+    /// <summary>
+    /// Rick's PR #107 review, required item 2 (wrong-size carry-over acceptance row): adding a
+    /// Cherry Limeade medium (menu price 2.89), removing it, then re-adding it as a large but with
+    /// the stale medium price (2.89) still on the tool call -- the resolved size is `large`, so the
+    /// charge must be the large menu price (3.39), never the carried-over medium price. Mirrors
+    /// app/backend/tests/test_tool_calling.py's
+    /// test_resize_wrong_size_price_carryover_charges_new_size_menu_price. Pinned to a fixed clock
+    /// outside happy hour (see class doc, #121) since Cherry Limeade is happy-hour eligible and
+    /// this assertion checks an exact full-price total.
+    /// </summary>
+    [Fact]
+    public Task Adding_the_wrong_size_with_a_stale_price_carried_over_is_charged_the_new_size_menu_price() => fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using var _ = browser;
+
+        await OrderScenarioHelpers.CallToolAsync(
+            connection, browser, "update_order",
+            """{"action":"add","item_name":"Cherry Limeade","size":"medium","quantity":1,"price":2.89}""",
+            "call_add_medium", roundTripIndex, ct);
+        await OrderScenarioHelpers.CallToolAsync(
+            connection, browser, "update_order",
+            """{"action":"remove","item_name":"Cherry Limeade","size":"medium","quantity":1,"price":2.89}""",
+            "call_remove_medium", roundTripIndex, ct);
+        var result = await OrderScenarioHelpers.CallToolAsync(
+            connection, browser, "update_order",
+            """{"action":"add","item_name":"Cherry Limeade","size":"large","quantity":1,"price":2.89}""",
+            "call_add_large_stale_price", roundTripIndex, ct);
+
+        Assert.NotNull(result.ToolResultJson);
+        var order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        Assert.Equal(1, order.GetProperty("items").GetArrayLength());
+        OrderScenarioHelpers.AssertMoneyEqual(3.39m, order.GetProperty("total").GetDecimal(),
+            "A large re-add with the medium's stale tool-call price (2.89) carried over must be " +
+            "charged the large's real menu price, 3.39 -- never the carried-over medium price.");
     });
 }

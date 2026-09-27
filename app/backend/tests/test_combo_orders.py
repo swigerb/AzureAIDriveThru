@@ -497,8 +497,16 @@ class TestBundleSlotsByPackData:
         summary = order_state_singleton.get_order_summary(sid)
         assert math.isclose(summary.total, 6.0, rel_tol=1e-9)
 
-    def test_item_without_bundle_absorbs_nothing(self):
-        """A plain (non-bundle) item must not absorb any side or drink."""
+    @patch("order_state.is_happy_hour", return_value=False)
+    def test_item_without_bundle_absorbs_nothing(self, _mock_hh):
+        """A plain (non-bundle) item must not absorb any side or drink.
+
+        #121: pins the clock outside happy hour -- Cherry Limeade is a happy-hour-eligible
+        fountain drink (the persona's `pricing.happyHour` config), and this asserts an
+        exact full-price total, so without pinning this flaked whenever the suite happened to run
+        inside the real 14:00-16:00 America/Chicago window (same root cause as the sibling
+        UpdateOrderAddRemoveModifyTests C# scenario and test_tool_calling.py's
+        test_resize_wrong_size_price_carryover_charges_new_size_menu_price below)."""
         sid = order_state_singleton.create_session()
         order_state_singleton.handle_order_update(
             sid, "add", "SONIC® Cheeseburger", "standard", 1, 5.29

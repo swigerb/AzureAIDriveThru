@@ -421,13 +421,22 @@ class UpdateOrderAddTests(unittest.TestCase):
         self.assertEqual(len(summary.items), 1)
         self.assertTrue(math.isclose(summary.items[0].price, 2.79, rel_tol=1e-9))
 
-    def test_resize_wrong_size_price_carryover_charges_new_size_menu_price(self):
+    @patch("order_state.is_happy_hour", return_value=False)
+    def test_resize_wrong_size_price_carryover_charges_new_size_menu_price(self, _mock_hh):
         """Rick's #104 review, required item 2 (wrong-size carry-over): this persona has no
         `modify` action, so a resize is remove-then-add. A model that carries the OLD size's
         tool-call price over when re-adding at a NEW size must still be charged the NEW size's
         real menu price, never the stale one it echoed back. Cherry Limeade medium (real price
         2.89) is removed, then re-added as large but with the medium price (2.89) mistakenly
-        repeated; the add must charge the large menu price (3.39), not 2.89."""
+        repeated; the add must charge the large menu price (3.39), not 2.89.
+
+        #121: pins the clock outside happy hour -- Cherry Limeade is a happy-hour-eligible
+        fountain drink, and this asserts an exact full-price total (3.39), so without pinning
+        this flaked whenever the suite happened to run inside the real 14:00-16:00
+        America/Chicago window. Confirmed via manual repro with CONFORMANCE_TEST_HOOKS=1 /
+        CONFORMANCE_FIXED_NOW pinned both inside and outside the window: outside it always
+        passed, inside it always failed identically to the original report -- this was never a
+        menu-pricing regression, only an unpinned clock."""
         sid = _make_session()
         _run(update_order({
             "action": "add", "item_name": "Cherry Limeade",

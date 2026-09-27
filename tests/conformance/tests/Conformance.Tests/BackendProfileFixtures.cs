@@ -110,6 +110,28 @@ public sealed class FixedClockConformanceCollection : ICollectionFixture<FixedCl
 }
 
 /// <summary>
+/// Frozen at 2026-07-04T09:00:00-05:00 (America/Chicago, CDT) -- well clear of the 14:00-16:00
+/// happy-hour window, so scenarios that assert an exact FULL-PRICE total for a happy-hour-
+/// eligible item (e.g. a fountain drink) don't depend on what time of day the suite happens to
+/// run (#121: UpdateOrderAddRemoveModifyTests's wrong-size-carryover test used ambient wall-clock
+/// time with Cherry Limeade -- a happy-hour-eligible drink -- and flaked whenever CI happened to
+/// run inside the real window). Deliberate counterpart of <see cref="FixedClockConformanceFixture"/>
+/// above, which is frozen INSIDE the window instead.
+/// </summary>
+public sealed class FixedClockOutsideHappyHourConformanceFixture : ConformanceFixture
+{
+    public static readonly DateTimeOffset Instant = new(2026, 7, 4, 9, 0, 0, TimeSpan.FromHours(-5));
+
+    protected override BackendProfile Profile => BackendProfiles.FixedClock(Instant);
+}
+
+[CollectionDefinition(Name)]
+public sealed class FixedClockOutsideHappyHourConformanceCollection : ICollectionFixture<FixedClockOutsideHappyHourConformanceFixture>
+{
+    public const string Name = "ConformanceFixedClockOutsideHappyHour";
+}
+
+/// <summary>
 /// CONFORMANCE_TEST_HOOKS unset -- the real-deployment shape (PR #49 review round 2 follow-up,
 /// "G1"). See <see cref="BackendProfiles.HooksOff"/>'s docstring for why this needs its own
 /// dedicated collection/process rather than reusing the Default fixture.
