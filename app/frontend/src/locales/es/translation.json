@@ -1,7 +1,7 @@
 {
     "app": {
         "title": "Pedidos por voz de Sonic",
-        "footer": "Creado con Azure AI, Azure OpenAI y Azure Speech",
+        "footer": "Creado con Microsoft Foundry, Azure OpenAI y Azure AI",
         "showTranscript": "Mostrar transcripción",
         "stopRecording": "Detener grabación",
         "startRecording": "Comenzar grabación",
@@ -30,6 +30,33 @@
         "description": "Archivos utilizados para fundamentar las respuestas."
     },
     "menu": {
-        "title": "Menú"
+        "title": "Menú",
+        "button": "Ver el menú de Sonic",
+        "loading": "Cargando el menú…",
+        "loadError": "No se pudo cargar el menú. Inténtalo de nuevo más tarde."
+    },
+    "ticket": {
+        "kicker": "Boleto del carhop",
+        "title": "Tu pedido de Sonic"
+    },
+    "hero": {
+        "badge": "Demostración de pedidos por voz",
+        "subhead": "Un asistente de pedidos por voz basado en personajes, fundamentado con Microsoft Foundry, Azure OpenAI y Azure AI Search.",
+        "poweredBy": "Microsoft Foundry · Azure OpenAI · Azure AI Search",
+        "calloutsTitle": "Destacados del menú",
+        "highlights": {
+            "fastOrders": {
+                "title": "Pedidos rápidos",
+                "detail": "Los clientes ordenan por voz en segundos, sin desplazarse por el menú."
+            },
+            "foundryPowered": {
+                "title": "Impulsado por Foundry",
+                "detail": "La inteligencia conversacional funciona con Microsoft Foundry y Azure OpenAI."
+            },
+            "liveMenu": {
+                "title": "Menú en vivo",
+                "detail": "Cada pedido se fundamenta con los datos de menú en vivo del personaje."
+            }
+        }
     }
 }

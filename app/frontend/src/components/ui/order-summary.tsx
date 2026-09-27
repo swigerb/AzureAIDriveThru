@@ -1,5 +1,6 @@
 import { useState, memo } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 export interface OrderItem {
     item: string;
@@ -84,6 +85,7 @@ const OrderItemRow = memo(function OrderItemRow({ item }: { item: OrderItem }) {
 });
 
 export default memo(function OrderSummary({ order }: { order: OrderSummaryProps }) {
+    const { t } = useTranslation();
     const [isExpanded, setIsExpanded] = useState(true);
     const { items, total, tax, finalTotal, totalDisplay, taxDisplay, finalTotalDisplay } = order;
 
@@ -91,8 +93,8 @@ export default memo(function OrderSummary({ order }: { order: OrderSummaryProps 
         <div className="rounded-3xl border border-brand-secondary/20 bg-linear-to-br from-white via-brand-surface-tint to-brand-accent/5 p-5 shadow-[0_20px_45px_var(--brand-secondary-veil-12)] dark:border-white/15 dark:bg-linear-to-br dark:from-brand-surface-dark dark:via-brand-surface-dark-alt dark:to-brand-surface-dark">
             <div className="mb-4 flex items-center justify-between">
                 <div>
-                    <p className="text-xs font-bold uppercase tracking-[0.3em] text-brand-primary dark:text-brand-primary-tint">Carhop ticket</p>
-                    <h2 className="text-2xl font-black text-brand-primary dark:text-brand-primary-tint">Your Sonic Order</h2>
+                    <p className="text-xs font-bold uppercase tracking-[0.3em] text-brand-primary dark:text-brand-primary-tint">{t("ticket.kicker")}</p>
+                    <h2 className="text-2xl font-black text-brand-primary dark:text-brand-primary-tint">{t("ticket.title")}</h2>
                 </div>
                 <button onClick={() => setIsExpanded(!isExpanded)} className="flex items-center text-sm text-gray-500 dark:text-gray-300 md:hidden">
                     {isExpanded ? (

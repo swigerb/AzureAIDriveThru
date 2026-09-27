@@ -24,6 +24,11 @@ type Parameters = {
     aoaiApiKeyOverride?: string;
     aoaiModelOverride?: string;
 
+    /** Issue #80 F1: the session's persona, set once before connecting (ADR-001 decision 2 --
+     * no mid-conversation switching) and sent as `/realtime?persona=<id>` (rtmt.py reads it via
+     * `request.query.get("persona")`, falling back to the catalog default when omitted). */
+    personaId?: string;
+
     enableInputAudioTranscription?: boolean;
     onWebSocketOpen?: () => void;
     onWebSocketClose?: () => void;
@@ -128,6 +133,7 @@ export default function useRealTime({
     aoaiEndpointOverride,
     aoaiApiKeyOverride,
     aoaiModelOverride,
+    personaId,
     enableInputAudioTranscription,
     onWebSocketOpen,
     onWebSocketClose,
@@ -171,7 +177,11 @@ export default function useRealTime({
             return `${aoaiEndpointOverride}/openai/v1/realtime?api-key=${aoaiApiKeyOverride}&model=${aoaiModelOverride}`;
         }
         const base = `/realtime`;
-        return sessionToken ? `${base}?token=${encodeURIComponent(sessionToken)}` : base;
+        const params = new URLSearchParams();
+        if (sessionToken) params.set("token", sessionToken);
+        if (personaId) params.set("persona", personaId);
+        const query = params.toString();
+        return query ? `${base}?${query}` : base;
     };
 
     const wsEndpoint = buildWsEndpoint();

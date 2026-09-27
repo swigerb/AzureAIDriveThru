@@ -105,7 +105,7 @@ export default function Settings({ isMobile, showSessionTokens, onShowSessionTok
                         Azure Backend
                     </Label>
                     <p className="text-sm text-gray-600 dark:text-gray-400">
-                        Toggle between Azure OpenAI real-time API and Azure Speech SDK (STT, LLM(GPT-4o), TTS)
+                        Toggle between Azure OpenAI's real-time API and a cascaded speech-to-text / LLM / text-to-speech pipeline (STT, LLM(GPT-4o), TTS)
                     </p>
                 </div>
                 <div className="ml-4 flex items-center gap-3 shrink-0">
@@ -133,6 +133,26 @@ export default function Settings({ isMobile, showSessionTokens, onShowSessionTok
                 <div className="ml-4 flex items-center gap-3 shrink-0">
                     <span className="min-w-[5rem] text-right text-xs text-muted-foreground">{useDummyData ? "Dummy Data" : "Real Data"}</span>
                     <Switch id="dummy-data" checked={useDummyData} onCheckedChange={handleDummyDataChange} aria-label="Toggle dummy data" />
+                </div>
+            </div>
+            {/* Issue #80: model/backend pickers depend on Summer's #75 (in flight, not yet
+                merged) -- this row is only a seam, matching the "Azure Backend" row's
+                disabled-Switch + WIP-Tooltip convention above, so the control exists and is
+                discoverable without inventing #75's API. Wire it up (persona.models.*, per
+                design doc section 7) once #75 lands. */}
+            <div className="flex items-start justify-between">
+                <div className="flex-1 space-y-0.5">
+                    <Label htmlFor="model-picker" className="text-gray-900 dark:text-gray-100">
+                        Model
+                    </Label>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">Choose which model powers the conversation</p>
+                </div>
+                <div className="ml-4 flex items-center gap-3 shrink-0">
+                    <Tooltip content="Work in progress (#75)">
+                        <div>
+                            <Switch id="model-picker" checked={false} onCheckedChange={() => {}} aria-label="Toggle model picker" disabled />
+                        </div>
+                    </Tooltip>
                 </div>
             </div>
             <div className="flex items-start justify-between">

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense, memo } from "react";
+import { useState, useEffect, useRef, useCallback, lazy, Suspense, memo } from "react";
 import { Mic, MicOff, Menu, MessageSquare, LogOut, ChevronDown } from "lucide-react";
 import { FaGithub } from "react-icons/fa";
 import { AnimatePresence, motion } from "framer-motion";
@@ -10,8 +10,9 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/co
 
 import StatusMessage, { ConnectionNotice } from "@/components/ui/status-message";
 import MenuPanel from "@/components/ui/menu-panel";
-import OrderSummary, { calculateOrderSummary, OrderSummaryProps } from "@/components/ui/order-summary";
+import OrderSummary, { calculateOrderSummary, OrderItem, OrderSummaryProps } from "@/components/ui/order-summary";
 import TranscriptPanel from "@/components/ui/transcript-panel";
+import PersonaPicker from "@/components/ui/persona-picker";
 const Settings = lazy(() => import("@/components/ui/settings"));
 import useRealTime from "@/hooks/useRealtime";
 import useAzureSpeech from "@/hooks/useAzureSpeech";
@@ -24,15 +25,13 @@ import { ThemeProvider, useTheme } from "./context/theme-context";
 import { DummyDataProvider, useDummyDataContext } from "@/context/dummy-data-context";
 import { AzureSpeechProvider, useAzureSpeechOnContext } from "@/context/azure-speech-context";
 import { AuthProvider, useAuth } from "@/context/auth-context";
+import { PersonaProvider, usePersonaContext } from "@/context/persona-context";
 import { resolveVoice } from "@/lib/voices";
 import { apologyClipUrl, playApologyClip } from "@/lib/apology";
+import { personaAssetUrl } from "@/lib/personaAssets";
+import type { PersonaDetail } from "@/types/persona";
 
-import dummyTranscriptsData from "@/data/dummyTranscripts.json";
-import dummyOrderData from "@/data/dummyOrder.json";
 import azureLogo from "@/assets/azurelogo.svg";
-import sonicLogo from "@/assets/sonic-logo.svg";
-
-type HighlightTone = "red" | "blue" | "yellow";
 
 type SessionIdentifiersState = {
     sessionToken: string;
@@ -40,28 +39,53 @@ type SessionIdentifiersState = {
     roundTripToken: string;
 };
 
-const heroHighlights: Array<{ title: string; detail: string; tone: HighlightTone }> = [
-    {
-        title: "Rewards Ready",
-        detail: "Voice orders auto-sync with Sonic rewards and deals",
-        tone: "red"
-    },
-    {
-        title: "Azure Infusion",
-        detail: "Azure OpenAI + Speech keep conversations flowing",
-        tone: "blue"
-    },
-    {
-        title: "Live Menu",
-        detail: "Azure AI Search keeps Sonic menu items current",
-        tone: "yellow"
-    }
-];
+/**
+ * Issue #80 F7: the dummy/demo transcripts and order the "Dummy Data" settings toggle shows are no
+ * longer bundled with the frontend (`src/data/dummyTranscripts.json`/`dummyOrder.json` are
+ * retired) -- they're fetched from the active persona's pack at the conventional
+ * `assets/demo/{dummyOrder,dummyTranscripts}.json` paths (same `personaAssetUrl` fallback the
+ * apology clip already uses, since these aren't declared fields on `PersonaDetail.assets`). A
+ * persona that ships no demo data simply renders the empty state -- this is a debug/demo-only
+ * feature, so that's an acceptable, non-crashing degradation rather than something to paper over
+ * with a re-embedded copy of Sonic's data.
+ */
+function useDemoData(personaId: string, enabled: boolean) {
+    const [dummyOrder, setDummyOrder] = useState<OrderSummaryProps>({ items: [], total: 0, tax: 0, finalTotal: 0 });
+    const [dummyTranscripts, setDummyTranscripts] = useState<Array<{ text: string; isUser: boolean; timestamp: Date }>>([]);
 
-const heroCallouts = [
-    { label: "Slush of the Day", value: "Cherry Limeade", accent: "var(--brand-primary-hex)" },
-    { label: "Carhop Pick", value: "SuperSONIC Cheeseburger", accent: "var(--brand-secondary-hex)" }
-];
+    useEffect(() => {
+        if (!enabled) return;
+        let cancelled = false;
+
+        (async () => {
+            try {
+                const response = await fetch(personaAssetUrl(personaId, "assets/demo/dummyOrder.json"));
+                if (!response.ok) throw new Error(`dummyOrder.json request failed: ${response.status}`);
+                const items = (await response.json()) as OrderItem[];
+                if (!cancelled) setDummyOrder(calculateOrderSummary(items));
+            } catch {
+                if (!cancelled) setDummyOrder({ items: [], total: 0, tax: 0, finalTotal: 0 });
+            }
+        })();
+
+        (async () => {
+            try {
+                const response = await fetch(personaAssetUrl(personaId, "assets/demo/dummyTranscripts.json"));
+                if (!response.ok) throw new Error(`dummyTranscripts.json request failed: ${response.status}`);
+                const raw = (await response.json()) as Array<{ text: string; isUser: boolean; timestamp: string }>;
+                if (!cancelled) setDummyTranscripts(raw.map(transcript => ({ ...transcript, timestamp: new Date(transcript.timestamp) })));
+            } catch {
+                if (!cancelled) setDummyTranscripts([]);
+            }
+        })();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [personaId, enabled]);
+
+    return { dummyOrder, dummyTranscripts };
+}
 
 function SonicApp() {
     const { t, i18n } = useTranslation();
@@ -71,16 +95,10 @@ function SonicApp() {
     const { useDummyData } = useDummyDataContext();
     const { theme } = useTheme();
     const { logout, authEnabled } = useAuth();
+    const { personas, current, logoUrl, selectPersona } = usePersonaContext();
 
     const [transcripts, setTranscripts] = useState<Array<{ text: string; isUser: boolean; timestamp: Date }>>([]);
-    const dummyTranscripts = useMemo<Array<{ text: string; isUser: boolean; timestamp: Date }>>(
-        () =>
-            dummyTranscriptsData.map(transcript => ({
-                ...transcript,
-                timestamp: new Date(transcript.timestamp)
-            })),
-        []
-    );
+    const { dummyOrder, dummyTranscripts } = useDemoData(current.id, useDummyData);
 
     const initialOrder: OrderSummaryProps = {
         items: [],
@@ -88,8 +106,6 @@ function SonicApp() {
         tax: 0,
         finalTotal: 0
     };
-
-    const dummyOrder = useMemo<OrderSummaryProps>(() => calculateOrderSummary(dummyOrderData), []);
 
     const [order, setOrder] = useState<OrderSummaryProps>(initialOrder);
     const [sessionIdentifiers, setSessionIdentifiers] = useState<SessionIdentifiersState | null>(null);
@@ -106,7 +122,7 @@ function SonicApp() {
         return localStorage.getItem("verboseLogToFile") === "true";
     });
     const [voiceChoice, setVoiceChoice] = useState<string>(() => {
-        return resolveVoice(localStorage.getItem("voiceChoice"));
+        return resolveVoice(localStorage.getItem("voiceChoice"), current.voice.default);
     });
 
     useEffect(() => {
@@ -173,6 +189,7 @@ function SonicApp() {
     }, []);
 
     const realtime = useRealTime({
+        personaId: current.id,
         enableInputAudioTranscription: true,
         onWebSocketOpen: () => console.log("WebSocket connection opened"),
         onWebSocketClose: () => console.log("WebSocket connection closed"),
@@ -294,10 +311,18 @@ function SonicApp() {
             if (apologyPlayingRef.current) return;
             apologyPlayingRef.current = true;
             muteAudioRecording();
-            void playApologyClip(apologyClipUrl(i18n.language)).finally(() => {
+            const clipUrl = apologyClipUrl(current.id, current.assets.apologyClip, i18n.language);
+            const finishApology = () => {
                 apologyPlayingRef.current = false;
                 if (isSessionActiveRef.current && !isAiSpeakingRef.current) unmuteAudioRecording();
-            });
+            };
+            if (clipUrl) {
+                void playApologyClip(clipUrl).finally(finishApology);
+            } else {
+                // This persona declares no apology clip -- unmute right away instead of playing
+                // nothing for the usual clip duration.
+                finishApology();
+            }
         },
         onReceivedInputAudioTranscriptionCompleted: message => {
             const newTranscriptItem = {
@@ -544,12 +569,21 @@ function SonicApp() {
                         target="_blank"
                         rel="noopener noreferrer"
                         className="inline-flex items-center gap-1 rounded-full bg-white/80 px-3 py-1 text-primary transition hover:text-accent"
-                        title="View Sonic Voice Ordering source"
+                        title="View source on GitHub"
                     >
                         <FaGithub className="h-4 w-4" />
                         <span>Source on GitHub</span>
                     </a>
                     <div className="flex items-center gap-2">
+                        {/* Issue #80 F1: the picker sets the persona for the NEXT session only
+                            (ADR-001 decision 2) -- disabled once a conversation is active or the
+                            guest has items on their ticket, rather than resetting either mid-flight. */}
+                        <PersonaPicker
+                            personas={personas}
+                            currentId={current.id}
+                            onSelect={selectPersona}
+                            disabled={isRecording || order.items.length > 0}
+                        />
                         <Suspense fallback={null}>
                             <Settings
                                 isMobile={isMobile}
@@ -586,7 +620,7 @@ function SonicApp() {
 
                 {sessionIdentifiers && showSessionTokens && <SessionTokenPanel identifiers={sessionIdentifiers} history={tokenHistory} />}
 
-                <BrandHero />
+                <BrandHero logoUrl={logoUrl} persona={current} />
 
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-3 md:gap-8">
                     {/* Mobile Menu Button */}
@@ -594,12 +628,12 @@ function SonicApp() {
                         <SheetTrigger asChild>
                             <Button variant="outline" className="mb-4 flex w-full items-center justify-center md:hidden">
                                 <Menu className="mr-2 h-4 w-4" />
-                                View Sonic Menu
+                                {t("menu.button")}
                             </Button>
                         </SheetTrigger>
                         <SheetContent side="left" className="w-[300px] sm:w-[400px]">
                             <SheetHeader>
-                                <SheetTitle>Sonic Favorites</SheetTitle>
+                                <SheetTitle>{t("menu.title")}</SheetTitle>
                             </SheetHeader>
                             <div className="h-[calc(100vh-4rem)] overflow-auto pr-4">
                                 <MenuPanel />
@@ -609,7 +643,7 @@ function SonicApp() {
 
                     {/* Desktop Menu Panel */}
                     <Card className="hidden p-6 md:block">
-                        <h2 className="mb-4 text-center font-semibold text-primary">Sonic Favorites</h2>
+                        <h2 className="mb-4 text-center font-semibold text-primary">{t("menu.title")}</h2>
                         <div className="h-[calc(100vh-13rem)] overflow-auto pr-4">
                             <MenuPanel />
                         </div>
@@ -677,85 +711,78 @@ function SonicApp() {
             </div>
             <footer className="mx-auto mt-8 max-w-4xl space-y-2 text-center text-xs text-muted-foreground">
                 <p className="font-semibold uppercase tracking-[0.35em] text-brand-secondary/80">{t("app.footer")}</p>
-                <p className="text-[11px] leading-relaxed text-brand-ink/80">
-                    Disclaimer: This project is a non-commercial demo application created for educational and illustrative purposes only. It is not
-                    affiliated with, endorsed, or sponsored by Inspire Brands, Inc. or Sonic Corp. Any references to Sonic Drive-In or use of Sonic-inspired colors or
-                    themes are solely for demonstration and do not represent an official product.
-                </p>
+                <p className="text-[11px] leading-relaxed text-brand-ink/80">{current.legal}</p>
             </footer>
         </div>
     );
 }
 
-const BrandHero = memo(function BrandHero() {
+// Issue #80 F3: every persona-flavored piece of hero copy below now comes from the pack
+// (`logoUrl`/`persona.hero.headline`/`persona.hero.callouts`) rather than a Sonic-specific literal
+// baked into this component. The three highlight cards and the "powered by" strip are genuinely
+// app-level (not persona) chrome, so they stay i18n keys under `hero.*` -- decision 8 (docs/
+// persona-architecture.md, ADR-001) says neutral app strings lead with Microsoft Foundry, so
+// that's where "Azure Speech" was dropped from (the persona's own `hero.headline` is pack content
+// this component doesn't otherwise touch).
+const HERO_HIGHLIGHT_KEYS = [
+    { key: "fastOrders", tone: "red" as const },
+    { key: "foundryPowered", tone: "blue" as const },
+    { key: "liveMenu", tone: "yellow" as const }
+];
+
+const BrandHero = memo(function BrandHero({ logoUrl, persona }: { logoUrl: string; persona: PersonaDetail }) {
+    const { t } = useTranslation();
+
     return (
-        <section className="hero-card rounded-[32px] border border-white/40 bg-white/80 p-6 shadow-[0_25px_70px_var(--brand-secondary-veil-18)] backdrop-blur-lg">
+        <section className="hero-card rounded-[32px] border border-white/40 bg-white/80 p-6 shadow-[0_25px_70px_var(--brand-secondary-veil-18)] backdrop-blur-lg dark:border-white/10 dark:bg-brand-ink/80">
             <div className="flex flex-col gap-8 lg:flex-row lg:items-center">
                 <div className="flex-1 space-y-5">
                     <div className="flex flex-wrap items-center gap-3">
-                        <img src={sonicLogo} alt="Sonic Drive-In logo" className="h-20 w-auto drop-shadow-xs" loading="lazy" />
-                        <span className="rounded-full bg-brand-primary/10 px-3 py-1 text-xs font-black uppercase tracking-[0.3em] text-brand-primary">
-                            Voice Ordering Demo
+                        <img src={logoUrl} alt={`${persona.title} logo`} className="h-20 w-auto drop-shadow-xs" loading="lazy" />
+                        <span className="rounded-full bg-brand-primary/10 px-3 py-1 text-xs font-black uppercase tracking-[0.3em] text-brand-primary dark:bg-white/10 dark:text-brand-primary-tint">
+                            {t("hero.badge")}
                         </span>
                     </div>
-                    <h1 className="text-4xl font-black leading-tight text-brand-primary sm:text-5xl">Sonic ordering powered by Azure conversation intelligence</h1>
-                    <p className="max-w-2xl text-base text-muted-foreground">
-                        Recreate the Sonic Drive-In experience with slushes, burgers, and carhop favorites styled after America's Drive-In—now
-                        voice activated with Azure OpenAI + Azure AI Search grounding.
-                    </p>
+                    <h1 className="text-4xl font-black leading-tight text-brand-primary sm:text-5xl dark:text-brand-primary-tint">{persona.hero.headline}</h1>
+                    <p className="max-w-2xl text-base text-muted-foreground">{t("hero.subhead")}</p>
                     <div className="grid gap-3 sm:grid-cols-3">
-                        {heroHighlights.map(highlight => (
-                            <HeroHighlightCard key={highlight.title} {...highlight} />
+                        {HERO_HIGHLIGHT_KEYS.map(({ key, tone }) => (
+                            <HeroHighlightCard key={key} title={t(`hero.highlights.${key}.title`)} detail={t(`hero.highlights.${key}.detail`)} tone={tone} />
                         ))}
                     </div>
                     <div className="flex flex-wrap items-center gap-2 text-xs font-semibold uppercase tracking-[0.3em] text-muted-foreground">
                         <img src={azureLogo} alt="Microsoft Azure" className="h-6 w-auto" loading="lazy" />
-                        <span>Azure OpenAI · Azure Speech · Azure AI Search</span>
+                        <span>{t("hero.poweredBy")}</span>
                     </div>
                 </div>
-                <div className="relative flex flex-1 items-center justify-center">
-                    <div className="absolute inset-0 -z-10 rounded-[32px] bg-linear-to-br from-brand-primary/10 via-brand-surface-tint to-brand-accent/15 opacity-80 blur-3xl"></div>
-                    <div className="grid w-full gap-4 sm:grid-cols-2">
-                        <div className="rounded-3xl border border-brand-primary/20 bg-white/90 p-4 shadow-[0_25px_45px_var(--brand-primary-veil-12)]">
+                {persona.hero.callouts.length > 0 && (
+                    <div className="relative flex flex-1 items-center justify-center">
+                        <div className="absolute inset-0 -z-10 rounded-[32px] bg-linear-to-br from-brand-primary/10 via-brand-surface-tint to-brand-accent/15 opacity-80 blur-3xl dark:from-brand-primary/20 dark:via-brand-surface-dark-alt dark:to-brand-accent/20"></div>
+                        <div className="w-full rounded-3xl border border-brand-primary/20 bg-white/90 p-4 shadow-[0_25px_45px_var(--brand-primary-veil-12)] dark:border-white/10 dark:bg-brand-ink/90">
                             <div className="mb-3 flex items-center gap-3">
-                                <div className="rounded-2xl bg-brand-primary/10 p-3">
-                                    <SlushArt />
+                                <div className="rounded-2xl bg-brand-primary/10 p-3 dark:bg-white/10">
+                                    <VoiceArt />
                                 </div>
-                                <div>
-                                    <p className="text-xs font-bold uppercase tracking-wide text-brand-primary">Signature slushes</p>
-                                    <p className="text-sm font-semibold text-brand-ink">Cherry Limeade & more</p>
-                                </div>
+                                <p className="text-xs font-bold uppercase tracking-wide text-brand-primary dark:text-brand-primary-tint">
+                                    {t("hero.calloutsTitle")}
+                                </p>
                             </div>
-                            <ul className="text-xs font-medium text-brand-ink/80">
-                                {heroCallouts.map(callout => (
-                                    <li key={callout.label} className="flex items-center justify-between rounded-full bg-white/80 px-3 py-1">
-                                        <span>{callout.label}</span>
-                                        <span style={{ color: callout.accent }}>{callout.value}</span>
+                            <ul className="space-y-1 text-xs font-medium text-brand-ink/80 dark:text-white/80">
+                                {persona.hero.callouts.map(callout => (
+                                    <li key={callout} className="rounded-full bg-white/80 px-3 py-1 dark:bg-white/10">
+                                        {callout}
                                     </li>
                                 ))}
                             </ul>
                         </div>
-                        <div className="rounded-3xl border border-brand-secondary/25 bg-linear-to-br from-brand-secondary/10 to-brand-accent/10 p-4 shadow-[0_25px_45px_var(--brand-secondary-veil-15)]">
-                            <div className="mb-3 flex items-center gap-3">
-                                <div className="rounded-2xl bg-white/60 p-3">
-                                    <BurgerArt />
-                                </div>
-                                <div>
-                                    <p className="text-xs font-bold uppercase tracking-wide text-brand-secondary">Carhop favorite</p>
-                                    <p className="text-sm font-semibold text-brand-ink">SuperSONIC® Double Cheeseburger</p>
-                                </div>
-                            </div>
-                            <div className="rounded-2xl bg-white/80 p-3 text-sm font-semibold text-brand-ink">
-                                <p>100% pure beef with melty American cheese</p>
-                                <p className="text-xs text-brand-primary">Perfect pairing: Large Tots & a Shake</p>
-                            </div>
-                        </div>
                     </div>
-                </div>
+                )}
             </div>
         </section>
     );
 });
+
+type HighlightTone = "red" | "blue" | "yellow";
 
 function HeroHighlightCard({ title, detail, tone }: { title: string; detail: string; tone: HighlightTone }) {
     const gradientMap: Record<HighlightTone, string> = {
@@ -842,32 +869,16 @@ const SessionTokenPanel = memo(function SessionTokenPanel({
     );
 });
 
-function SlushArt() {
+// Issue #80 F3: one persona-neutral decorative mark (a stylized sound wave) replaces the two
+// Sonic-specific illustrations (a slush cup, a burger) that used to sit beside the hero callouts.
+function VoiceArt() {
     return (
-        <svg width="48" height="48" viewBox="0 0 48 48" fill="none" role="img" aria-label="Sonic slush illustration">
-            <path d="M16 8h16l-2 32H18L16 8z" fill="var(--brand-secondary-tint)" stroke="var(--brand-secondary-hex)" strokeWidth="2" />
-            <path d="M14 8h20v4H14z" fill="var(--brand-secondary-hex)" />
-            <path d="M20 16c2 3 6 3 8 0" stroke="var(--brand-accent)" strokeWidth="2" strokeLinecap="round" />
-            <circle cx="22" cy="24" r="1.5" fill="var(--brand-primary-hex)" />
-            <circle cx="28" cy="20" r="1.5" fill="var(--brand-primary-hex)" />
-            <circle cx="24" cy="30" r="1.2" fill="var(--brand-accent)" />
-            <path d="M24 4v4" stroke="var(--brand-primary-hex)" strokeWidth="2" strokeLinecap="round" />
-            <path d="M20 5l1 3" stroke="var(--brand-secondary-hex)" strokeWidth="1.5" strokeLinecap="round" />
-        </svg>
-    );
-}
-
-function BurgerArt() {
-    return (
-        <svg width="48" height="48" viewBox="0 0 48 48" fill="none" role="img" aria-label="Sonic burger illustration">
-            <path d="M10 22c0-8 6-14 14-14s14 6 14 14H10z" fill="var(--brand-accent)" stroke="var(--brand-secondary-hex)" strokeWidth="2" />
-            <rect x="9" y="22" width="30" height="4" rx="1" fill="var(--brand-success)" />
-            <rect x="9" y="26" width="30" height="3" rx="1" fill="var(--brand-primary-hex)" />
-            <rect x="9" y="29" width="30" height="4" rx="1" fill="var(--brand-neutral)" />
-            <path d="M10 33c0 4 6 7 14 7s14-3 14-7H10z" fill="var(--brand-accent)" stroke="var(--brand-secondary-hex)" strokeWidth="2" />
-            <circle cx="16" cy="16" r="1" fill="var(--brand-primary-hex)" />
-            <circle cx="24" cy="13" r="1" fill="var(--brand-primary-hex)" />
-            <circle cx="32" cy="16" r="1" fill="var(--brand-primary-hex)" />
+        <svg width="48" height="48" viewBox="0 0 48 48" fill="none" role="img" aria-label="Voice ordering illustration">
+            <rect x="6" y="20" width="4" height="8" rx="2" fill="var(--brand-secondary-hex)" />
+            <rect x="14" y="14" width="4" height="20" rx="2" fill="var(--brand-primary-hex)" />
+            <rect x="22" y="8" width="4" height="32" rx="2" fill="var(--brand-accent)" />
+            <rect x="30" y="14" width="4" height="20" rx="2" fill="var(--brand-primary-hex)" />
+            <rect x="38" y="20" width="4" height="8" rx="2" fill="var(--brand-secondary-hex)" />
         </svg>
     );
 }
@@ -896,14 +907,16 @@ function App() {
 
 export default function RootApp() {
     return (
-        <AuthProvider>
-            <ThemeProvider>
-                <DummyDataProvider>
-                    <AzureSpeechProvider>
-                        <App />
-                    </AzureSpeechProvider>
-                </DummyDataProvider>
-            </ThemeProvider>
-        </AuthProvider>
+        <PersonaProvider>
+            <AuthProvider>
+                <ThemeProvider>
+                    <DummyDataProvider>
+                        <AzureSpeechProvider>
+                            <App />
+                        </AzureSpeechProvider>
+                    </DummyDataProvider>
+                </ThemeProvider>
+            </AuthProvider>
+        </PersonaProvider>
     );
 }

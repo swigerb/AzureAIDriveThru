@@ -1,7 +1,8 @@
-import menuItemsData from "@/data/menuItems.json";
-import { memo, useCallback, useState } from "react";
+import { memo, useCallback, useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { ChevronDown } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import { usePersonaContext } from "@/context/persona-context";
 
 interface Size {
     size: string;
@@ -19,22 +20,62 @@ interface MenuCategory {
     items: MenuItem[];
 }
 
+interface MenuDocument {
+    menuItems: MenuCategory[];
+}
+
 const categoryIcons: Record<string, string> = {
     "Burgers & Sandwiches": "🍔",
     "Shakes & Ice Cream": "🥤",
     "Slushes & Drinks": "🧊",
     "Hot Dogs & Tots": "🌭",
-    "Combos": "🍟",
+    Combos: "🍟",
     Extras: "✨"
 };
 
-const menuItems = menuItemsData.menuItems as MenuCategory[];
-
-// All categories expanded by default
-const initialExpanded = new Set<string>(menuItems.map(c => c.category));
-
+/**
+ * Issue #80 F4: the menu now comes entirely from the active persona's pack (`menuUrl`, a
+ * server-computed `/personas/{id}/menu.json?v=<hash>` URL -- design doc §5.2), replacing the old
+ * bundled `src/data/menuItems.json` copy. There's no hardcoded fallback menu: `menuUrl` always
+ * points at a real, schema-validated file the backend already refused to start without (see
+ * `persona_loader.py`'s `menu_path`/`menu.schema.json` validation), so a failed fetch is a genuine
+ * runtime/network problem worth surfacing, not a data-shape gap to paper over.
+ */
 export default memo(function MenuPanel() {
-    const [expanded, setExpanded] = useState<Set<string>>(() => new Set(initialExpanded));
+    const { current } = usePersonaContext();
+    const { t } = useTranslation();
+    const [menu, setMenu] = useState<MenuCategory[] | null>(null);
+    const [error, setError] = useState(false);
+    const [expanded, setExpanded] = useState<Set<string>>(() => new Set<string>());
+
+    useEffect(() => {
+        let cancelled = false;
+        setMenu(null);
+        setError(false);
+
+        (async () => {
+            try {
+                const response = await fetch(current.menuUrl);
+                if (!response.ok) {
+                    throw new Error(`menu.json request failed: ${response.status}`);
+                }
+                const data = (await response.json()) as MenuDocument;
+                if (!cancelled) {
+                    setMenu(data.menuItems);
+                    // All categories expanded by default, same as the previous static menu.
+                    setExpanded(new Set(data.menuItems.map(c => c.category)));
+                }
+            } catch {
+                if (!cancelled) {
+                    setError(true);
+                }
+            }
+        })();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [current.menuUrl]);
 
     const toggle = useCallback((category: string) => {
         setExpanded(prev => {
@@ -48,9 +89,25 @@ export default memo(function MenuPanel() {
         });
     }, []);
 
+    if (error) {
+        return (
+            <p role="alert" className="p-4 text-sm text-destructive">
+                {t("menu.loadError")}
+            </p>
+        );
+    }
+
+    if (!menu) {
+        return (
+            <p aria-live="polite" className="p-4 text-sm text-muted-foreground">
+                {t("menu.loading")}
+            </p>
+        );
+    }
+
     return (
         <div className="space-y-4">
-            {menuItems.map(category => {
+            {menu.map(category => {
                 const isOpen = expanded.has(category.category);
                 return (
                     <div
