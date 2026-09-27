@@ -34,10 +34,19 @@ function originMatches(url: string, origin: string): boolean {
  * the caller's current `personaId`/`modelId` rather than copying `window.location.search`,
  * guaranteeing both survive the hop to the other backend's hostname (design doc §10.1's "Option
  * A: two container apps, header switch navigates between hostnames, no proxy").
+ *
+ * Rick's PR 134 review nit: refuses any scheme other than `http:`/`https:` before returning a URL
+ * a caller could hand to `location.assign` -- `backend.url` comes from `/api/personas`' server
+ * config, not guest input, but rejecting anything else here is cheap defense against a
+ * misconfigured entry (e.g. a stray `javascript:`/`file:` URL) turning a picker click into script
+ * execution or a local file navigation.
  */
 export function backendTargetUrl(backend: PersonaBackendEntry, personaId: string, modelId: string): string {
     const base = backend.url || (typeof window !== "undefined" ? window.location.origin : "");
     const url = new URL(base);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+        throw new Error(`Refusing to navigate to backend "${backend.id}": unsupported URL scheme "${url.protocol}"`);
+    }
     if (personaId) url.searchParams.set("persona", personaId);
     if (modelId) url.searchParams.set("model", modelId);
     return url.toString();

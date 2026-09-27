@@ -1,3 +1,5 @@
+import { useTranslation } from "react-i18next";
+
 import { Label } from "@/components/ui/label";
 import { Tooltip } from "@/components/ui/tooltip";
 import { backendTargetUrl, currentBackendId } from "@/lib/backends";
@@ -19,7 +21,6 @@ const BACKEND_LABELS: Record<string, string> = {
 };
 
 const LOCK_HINT_ID = "backend-picker-lock-hint";
-const LOCK_HINT_TEXT = "Locked for this order -- start a new order to switch";
 
 /**
  * Python / C# (.NET) backend switch (issue #80 F11, design doc §9 row F11 and §10.1's "Option A:
@@ -34,8 +35,14 @@ const LOCK_HINT_TEXT = "Locked for this order -- start a new order to switch";
  * the target URL is built explicitly from the caller's current `personaId`/`modelId` props (see
  * `lib/backends.ts`'s `backendTargetUrl`) rather than by copying `window.location.search`, so both
  * choices survive the hop to the other backend's hostname.
+ *
+ * Rick's PR 134 review nit: `backendTargetUrl` refuses any scheme other than `http:`/`https:`
+ * (throws) -- `backend.url` is server config, not guest input, but it's cheap defense against a
+ * misconfigured entry turning a click into a `javascript:`/`file:` navigation. The throw is caught
+ * here so a bad entry silently declines to navigate rather than surfacing as an uncaught error.
  */
 export default function BackendPicker({ backends, personaId, modelId, disabled }: BackendPickerProps) {
+    const { t } = useTranslation();
     if (backends.length < 2) return null;
 
     const currentId = currentBackendId(backends);
@@ -44,7 +51,11 @@ export default function BackendPicker({ backends, personaId, modelId, disabled }
         if (id === currentId) return;
         const target = backends.find(backend => backend.id === id);
         if (!target) return;
-        window.location.assign(backendTargetUrl(target, personaId, modelId));
+        try {
+            window.location.assign(backendTargetUrl(target, personaId, modelId));
+        } catch (error) {
+            console.error("Refusing to navigate to backend:", error);
+        }
     };
 
     const select = (
@@ -68,10 +79,10 @@ export default function BackendPicker({ backends, personaId, modelId, disabled }
     return (
         <div className="flex items-center gap-2">
             <Label htmlFor="backend-picker" className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                Backend
+                {t("picker.backendLabel")}
             </Label>
             {disabled ? (
-                <Tooltip content={LOCK_HINT_TEXT}>
+                <Tooltip content={t("picker.lockedHint")}>
                     <div>{select}</div>
                 </Tooltip>
             ) : (
@@ -79,7 +90,7 @@ export default function BackendPicker({ backends, personaId, modelId, disabled }
             )}
             {disabled && (
                 <span id={LOCK_HINT_ID} className="sr-only">
-                    {LOCK_HINT_TEXT}
+                    {t("picker.lockedHint")}
                 </span>
             )}
         </div>

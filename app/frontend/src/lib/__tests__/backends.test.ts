@@ -68,4 +68,17 @@ describe("backendTargetUrl", () => {
         expect(url.searchParams.has("persona")).toBe(false);
         expect(url.searchParams.has("model")).toBe(false);
     });
+
+    // Rick's PR 134 review nit: `backend.url` is server config (not guest input), but a
+    // misconfigured entry with a `javascript:`/`file:` scheme must never be handed to
+    // `location.assign` -- only http:/https: targets are ever returned.
+    it("throws rather than returning a URL for a disallowed scheme", () => {
+        expect(() => backendTargetUrl({ id: "evil", url: "javascript:alert(1)" }, "test-alpha", "gpt-realtime-2.1")).toThrow();
+        expect(() => backendTargetUrl({ id: "evil", url: "file:///etc/passwd" }, "test-alpha", "gpt-realtime-2.1")).toThrow();
+    });
+
+    it("allows both http: and https: schemes", () => {
+        expect(() => backendTargetUrl({ id: "dotnet", url: "https://dotnet.example.com" }, "", "")).not.toThrow();
+        expect(() => backendTargetUrl({ id: "dotnet", url: "http://dotnet.example.com" }, "", "")).not.toThrow();
+    });
 });

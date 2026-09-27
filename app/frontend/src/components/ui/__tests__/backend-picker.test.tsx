@@ -95,6 +95,27 @@ describe("BackendPicker", () => {
 
         const describedById = select.getAttribute("aria-describedby");
         expect(describedById).toBeTruthy();
-        expect(document.getElementById(describedById!)).toHaveTextContent("Locked for this order -- start a new order to switch");
+        // react-i18next is globally mocked (test/setup.ts) to echo the key -- "picker.lockedHint"
+        // is the real English value once i18next renders it for real.
+        expect(document.getElementById(describedById!)).toHaveTextContent("picker.lockedHint");
+    });
+
+    // Rick's PR 134 review nit: `backend.url` is server config, but `backendTargetUrl` (lib/backends.ts)
+    // now refuses any scheme other than http:/https: as cheap defense-in-depth. The picker must
+    // swallow that throw rather than let a misconfigured entry surface as an uncaught error or
+    // (worse) actually navigate.
+    it("declines to navigate when the target backend's url uses a disallowed scheme", async () => {
+        const badBackends: PersonaBackendEntry[] = [
+            { id: "python", url: "" },
+            { id: "evil", url: "javascript:alert(1)" }
+        ];
+        const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+        render(<BackendPicker backends={badBackends} personaId="test-alpha" modelId="gpt-realtime-2.1" disabled={false} />);
+
+        await userEvent.selectOptions(screen.getByLabelText("Select backend"), "evil");
+
+        expect(window.location.assign).not.toHaveBeenCalled();
+        expect(consoleError).toHaveBeenCalled();
+        consoleError.mockRestore();
     });
 });

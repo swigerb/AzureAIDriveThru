@@ -95,12 +95,18 @@ const OrderItemRow = memo(function OrderItemRow({ item }: { item: OrderItem }) {
             {/* #77/#80 F5: a combo/meal's absorbed or auto-filled sides/drinks render as included
                 sub-lines under the parent line, not as their own priced (or removable) rows --
                 they're already paid for by the parent line's own price above. A <ul> (rather than
-                more <div>s) gives screen readers the "N items" / list-item semantics for free. */}
+                more <div>s) gives screen readers the "N items" / list-item semantics for free.
+                Rick's PR 134 review nit: for a quantity > 1 line, each component is one meal's
+                worth per the parent line's own quantity -- the same "(xN)" the parent line's own
+                display already carries above -- rather than rendering the component name once as
+                if only a single meal's worth of it were included. */}
             {components.length > 0 && (
                 <ul className="mt-1 space-y-0.5 pl-4" aria-label={t("ticket.componentsLabel")}>
                     {components.map((component, index) => (
                         <li key={`${component}-${index}`} className="flex justify-between text-xs text-gray-500 dark:text-white/70">
-                            <span>{component}</span>
+                            <span>
+                                {component} {item.quantity > 1 && `(x${item.quantity})`}
+                            </span>
                             <span className="font-mono italic">{t("ticket.included")}</span>
                         </li>
                     ))}

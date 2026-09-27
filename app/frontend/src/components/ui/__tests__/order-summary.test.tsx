@@ -155,5 +155,43 @@ describe("OrderSummary", () => {
 
             expect(screen.queryByRole("list")).not.toBeInTheDocument();
         });
+
+        // Rick's PR 134 review nit: for a quantity > 1 line, each component sub-line shows the
+        // same "(xN)" the parent line's own display already carries, since each meal's worth of
+        // the combo brings its own copy of the component.
+        it("shows the parent line's quantity on each included sub-line when quantity > 1", () => {
+            const items: OrderItem[] = [
+                {
+                    item: "Cheeseburger Combo",
+                    size: "standard",
+                    quantity: 2,
+                    price: 9.19,
+                    display: "Cheeseburger Combo",
+                    components: ["Medium World Famous Fries", "Medium Coca-Cola®"]
+                }
+            ];
+            const summary: OrderSummaryProps = { items, total: 18.38, tax: 0, finalTotal: 18.38 };
+            render(<OrderSummary order={summary} />);
+
+            expect(screen.getByText(/Medium World Famous Fries \(x2\)/)).toBeInTheDocument();
+            expect(screen.getByText(/Medium Coca-Cola® \(x2\)/)).toBeInTheDocument();
+        });
+
+        it("omits the quantity suffix on included sub-lines when quantity is 1", () => {
+            const items: OrderItem[] = [
+                {
+                    item: "Cheeseburger Combo",
+                    size: "standard",
+                    quantity: 1,
+                    price: 9.19,
+                    display: "Cheeseburger Combo",
+                    components: ["Medium World Famous Fries"]
+                }
+            ];
+            const summary: OrderSummaryProps = { items, total: 9.19, tax: 0, finalTotal: 9.19 };
+            render(<OrderSummary order={summary} />);
+
+            expect(screen.queryByText(/Medium World Famous Fries \(x/)).not.toBeInTheDocument();
+        });
     });
 });
