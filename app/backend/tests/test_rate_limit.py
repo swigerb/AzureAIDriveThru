@@ -627,10 +627,17 @@ class ApologyClipTests(unittest.TestCase):
         self.assertEqual(sorted(self.gen.APOLOGY_PHRASES), locales)
 
     def test_clips_are_short_24khz_mono_pcm16_speech(self):
+        from default_persona import get_default_persona
+
         for lang in self.gen.APOLOGY_PHRASES:
             with self.subTest(lang):
                 path = self.gen.clip_path(lang)
-                self.assertEqual(path.parent, self.REPO / "app" / "frontend" / "public" / "audio")
+                # Issue #80 F7: the clips now live in the persona pack (single source of truth --
+                # the frontend's own copies were retired once App.tsx started reading
+                # personaAssetUrl()/apologyClipUrl() from the pack instead) -- specifically
+                # whichever pack the persona catalog resolves as its own default, not a
+                # literal hard-coded pack id.
+                self.assertEqual(path.parent, get_default_persona().assets_dir / "audio")
                 with wave.open(str(path), "rb") as wav:
                     self.assertEqual((wav.getnchannels(), wav.getsampwidth(), wav.getframerate()), (1, 2, 24_000))
                     seconds = wav.getnframes() / wav.getframerate()

@@ -31,7 +31,7 @@ const TranscriptItem = memo(function TranscriptItem({
             <div
                 className={`rounded-lg p-3 ${
                     transcript.isUser
-                        ? "ml-auto max-w-[85%] bg-purple-100 dark:bg-purple-900 dark:text-white"
+                        ? "ml-auto max-w-[85%] bg-brand-secondary/15 text-brand-ink dark:bg-brand-secondary-strong/40 dark:text-white"
                         : "max-w-[85%] bg-gray-100 dark:bg-gray-800 dark:text-gray-100"
                 }`}
             >

@@ -1,7 +1,7 @@
 {
     "app": {
-        "title": "Commande vocale Sonic",
-        "footer": "Conçu avec Azure AI, Azure OpenAI et Azure Speech",
+        "title": "Commande vocale",
+        "footer": "Conçu avec Microsoft Foundry, Azure OpenAI et Azure AI",
         "showTranscript": "Afficher la transcription",
         "stopRecording": "Arrêter l'enregistrement",
         "startRecording": "Commencer l'enregistrement",
@@ -9,7 +9,7 @@
         "newOrder": "Commencer une nouvelle commande"
     },
     "status": {
-        "notRecordingMessage": "Commandons chez America's Drive-In !",
+        "notRecordingMessage": "Touchez le micro pour passer votre commande.",
         "conversationInProgress": "Conversation en cours",
         "sessionEndedIdle": "Session terminée pour inactivité. Touchez le micro pour commencer une nouvelle commande.",
         "connectionLost": "Connexion perdue. Touchez le micro pour recommencer.",
@@ -30,6 +30,35 @@
         "description": "Fichiers utilisés pour ancrer les réponses."
     },
     "menu": {
-        "title": "Menu"
+        "title": "Menu",
+        "button": "Voir le menu",
+        "loading": "Chargement du menu…",
+        "loadError": "Impossible de charger le menu. Veuillez réessayer plus tard."
+    },
+    "ticket": {
+        "kicker": "Ticket de commande",
+        "title": "Votre commande",
+        "emptyHint": "Ajoutez des articles pour commencer.",
+        "tax": "Taxe"
+    },
+    "hero": {
+        "badge": "Démo de commande vocale",
+        "subhead": "Un assistant de commande vocale piloté par personnage, ancré par Microsoft Foundry, Azure OpenAI et Azure AI Search.",
+        "poweredBy": "Microsoft Foundry · Azure OpenAI · Azure AI Search",
+        "calloutsTitle": "Points forts du menu",
+        "highlights": {
+            "fastOrders": {
+                "title": "Commandes rapides",
+                "detail": "Les clients commandent à la voix en quelques secondes, sans faire défiler le menu."
+            },
+            "foundryPowered": {
+                "title": "Propulsé par Foundry",
+                "detail": "L'intelligence conversationnelle s'appuie sur Microsoft Foundry et Azure OpenAI."
+            },
+            "liveMenu": {
+                "title": "Menu en direct",
+                "detail": "Chaque commande est ancrée sur les données de menu en direct du personnage."
+            }
+        }
     }
 }

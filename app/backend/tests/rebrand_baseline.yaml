@@ -206,14 +206,6 @@ entries:
     it''s the only persona pack that exists yet -- #78/#79 land the other packs, at
     which point these tests get parameterized per-persona instead of hardcoding Sonic.'
   increase_reason: ''
-- file: app/backend/tests/test_persona_pack_drift_guard.py
-  brand: sonic
-  max: 12
-  issue: '#78'
-  reason: 'Backend test fixtures/paths reference personas/sonic/** directly because
-    it''s the only persona pack that exists yet -- #78/#79 land the other packs, at
-    which point these tests get parameterized per-persona instead of hardcoding Sonic.'
-  increase_reason: ''
 - file: app/backend/tests/test_prompt_extras_pin.py
   brand: sonic
   max: 4
@@ -287,15 +279,6 @@ entries:
     edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
     red as a non-Sonic-brand-hex test fixture, not real branding.'
   increase_reason: ''
-- file: app/frontend/src/App.tsx
-  brand: sonic
-  max: 13
-  issue: '#80'
-  reason: 'Frontend UI copy, locales, theming and menu data are Sonic-only pending
-    #80''s persona-aware runtime theming (frontend is out of this issue''s scope to
-    edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
-    red as a non-Sonic-brand-hex test fixture, not real branding.'
-  increase_reason: ''
 - file: app/frontend/src/__tests__/brandColorTokens.test.ts
   brand: mcdonalds
   max: 1
@@ -316,15 +299,6 @@ entries:
   increase_reason: ''
 - file: app/frontend/src/components/ui/__tests__/order-summary.test.tsx
   brand: sonic
-  max: 2
-  issue: '#80'
-  reason: 'Frontend UI copy, locales, theming and menu data are Sonic-only pending
-    #80''s persona-aware runtime theming (frontend is out of this issue''s scope to
-    edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
-    red as a non-Sonic-brand-hex test fixture, not real branding.'
-  increase_reason: ''
-- file: app/frontend/src/components/ui/order-summary.tsx
-  brand: sonic
   max: 1
   issue: '#80'
   reason: 'Frontend UI copy, locales, theming and menu data are Sonic-only pending
@@ -341,36 +315,9 @@ entries:
     edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
     red as a non-Sonic-brand-hex test fixture, not real branding.'
   increase_reason: ''
-- file: app/frontend/src/data/dummyTranscripts.json
-  brand: sonic
-  max: 7
-  issue: '#80'
-  reason: 'Frontend UI copy, locales, theming and menu data are Sonic-only pending
-    #80''s persona-aware runtime theming (frontend is out of this issue''s scope to
-    edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
-    red as a non-Sonic-brand-hex test fixture, not real branding.'
-  increase_reason: ''
-- file: app/frontend/src/data/menuItems.json
-  brand: sonic
-  max: 103
-  issue: '#80'
-  reason: 'Frontend UI copy, locales, theming and menu data are Sonic-only pending
-    #80''s persona-aware runtime theming (frontend is out of this issue''s scope to
-    edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
-    red as a non-Sonic-brand-hex test fixture, not real branding.'
-  increase_reason: ''
 - file: app/frontend/src/data/sonic-menu-items.json
   brand: sonic
   max: 421
-  issue: '#80'
-  reason: 'Frontend UI copy, locales, theming and menu data are Sonic-only pending
-    #80''s persona-aware runtime theming (frontend is out of this issue''s scope to
-    edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
-    red as a non-Sonic-brand-hex test fixture, not real branding.'
-  increase_reason: ''
-- file: app/frontend/src/hooks/useRealtime.tsx
-  brand: sonic
-  max: 1
   issue: '#80'
   reason: 'Frontend UI copy, locales, theming and menu data are Sonic-only pending
     #80''s persona-aware runtime theming (frontend is out of this issue''s scope to
@@ -386,72 +333,31 @@ entries:
     edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
     red as a non-Sonic-brand-hex test fixture, not real branding.'
   increase_reason: ''
-- file: app/frontend/src/index.tsx
+- file: app/frontend/src/lib/__tests__/personaTheme.test.ts
   brand: sonic
   max: 1
   issue: '#80'
   reason: 'Frontend UI copy, locales, theming and menu data are Sonic-only pending
     #80''s persona-aware runtime theming (frontend is out of this issue''s scope to
     edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
-    red as a non-Sonic-brand-hex test fixture, not real branding.'
-  increase_reason: ''
-- file: app/frontend/src/lib/__tests__/personaTheme.test.ts
-  brand: sonic
-  max: 2
-  issue: '#80'
-  reason: 'Frontend UI copy, locales, theming and menu data are Sonic-only pending
-    #80''s persona-aware runtime theming (frontend is out of this issue''s scope to
-    edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
-    red as a non-Sonic-brand-hex test fixture, not real branding.'
+    red as a non-Sonic-brand-hex test fixture, not real branding. Lowered from 2 to
+    1: #80 F1/F3 trimmed decorative "Sonic" comment prose down to the one functionally
+    necessary literal (`resolvePersonaTheme("sonic", ...)`).'
   increase_reason: ''
 - file: app/frontend/src/lib/personaTheme.ts
   brand: sonic
-  max: 5
+  max: 1
   issue: '#80'
   reason: 'Frontend UI copy, locales, theming and menu data are Sonic-only pending
     #80''s persona-aware runtime theming (frontend is out of this issue''s scope to
     edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
-    red as a non-Sonic-brand-hex test fixture, not real branding.'
+    red as a non-Sonic-brand-hex test fixture, not real branding. Lowered from 5 to
+    1: #80 F1/F3 trimmed decorative "Sonic" comment prose down to the one functionally
+    necessary literal (`personaId === "sonic"`).'
   increase_reason: ''
 - file: app/frontend/src/locales/__tests__/locales.test.ts
   brand: sonic
   max: 4
-  issue: '#80'
-  reason: 'Frontend UI copy, locales, theming and menu data are Sonic-only pending
-    #80''s persona-aware runtime theming (frontend is out of this issue''s scope to
-    edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
-    red as a non-Sonic-brand-hex test fixture, not real branding.'
-  increase_reason: ''
-- file: app/frontend/src/locales/en/translation.json
-  brand: sonic
-  max: 1
-  issue: '#80'
-  reason: 'Frontend UI copy, locales, theming and menu data are Sonic-only pending
-    #80''s persona-aware runtime theming (frontend is out of this issue''s scope to
-    edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
-    red as a non-Sonic-brand-hex test fixture, not real branding.'
-  increase_reason: ''
-- file: app/frontend/src/locales/es/translation.json
-  brand: sonic
-  max: 1
-  issue: '#80'
-  reason: 'Frontend UI copy, locales, theming and menu data are Sonic-only pending
-    #80''s persona-aware runtime theming (frontend is out of this issue''s scope to
-    edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
-    red as a non-Sonic-brand-hex test fixture, not real branding.'
-  increase_reason: ''
-- file: app/frontend/src/locales/fr/translation.json
-  brand: sonic
-  max: 1
-  issue: '#80'
-  reason: 'Frontend UI copy, locales, theming and menu data are Sonic-only pending
-    #80''s persona-aware runtime theming (frontend is out of this issue''s scope to
-    edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
-    red as a non-Sonic-brand-hex test fixture, not real branding.'
-  increase_reason: ''
-- file: app/frontend/src/locales/ja/translation.json
-  brand: sonic
-  max: 1
   issue: '#80'
   reason: 'Frontend UI copy, locales, theming and menu data are Sonic-only pending
     #80''s persona-aware runtime theming (frontend is out of this issue''s scope to

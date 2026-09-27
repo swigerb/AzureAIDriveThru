@@ -15,6 +15,11 @@ namespace Conformance.Tests.Scenarios.Ordering;
 /// dataset's happyHourBoundaryInstants block for the source of these expectations. Tax rate and
 /// happy-hour discount are read from the golden file's businessRules block (PR #38 review item 6)
 /// rather than hardcoded here, so both this suite and a golden-data update stay in lockstep.
+/// Rick's PR #108 review, required item 1: HappyHourAtOpenTests/HappyHourJustBeforeOpenTests also
+/// carry the banner-text proof (Sonic's OWN banner, read from personas/sonic/persona.json at test
+/// time) -- app/backend/tools.py used to hardcode Sonic's banner literal regardless of session
+/// persona, so no conformance test anywhere asserted the banner text before this; see
+/// PersonaHappyHourConformanceTests.cs for the equivalent test-alpha proof.
 /// </summary>
 file static class HappyHourBoundaryTestSupport
 {
@@ -28,18 +33,28 @@ file static class HappyHourBoundaryTestSupport
     // size_not_available, so this uses the real "medium" size instead.
     public const string DrinkItemSize = "medium";
 
-    public static async Task<decimal> AddOneDrinkAndReadFinalTotalAsync(ConformanceFixture fixture, CancellationToken ct)
+    public static async Task<ToolCallResult> AddOneDrinkAndReadResultAsync(ConformanceFixture fixture, CancellationToken ct)
     {
         var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
         await using var _ = browser;
 
-        var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+        return await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
             [("add", DrinkItemName, DrinkItemSize, 1, DrinkPrice)],
             roundTripIndex, ct);
+    }
 
+    public static async Task<decimal> AddOneDrinkAndReadFinalTotalAsync(ConformanceFixture fixture, CancellationToken ct)
+    {
+        var result = await AddOneDrinkAndReadResultAsync(fixture, ct);
         return OrderScenarioHelpers.GetOrderFinalTotal(result.ToolResultJson!);
     }
+
+    // Rick's PR #108 review, required item 1: read Sonic's own banner text from its OWN
+    // personas/sonic/persona.json rather than typing it as a literal in the test, so the
+    // assertion stays truthful to whatever the pack actually declares.
+    public static string SonicHappyHourBanner() =>
+        PersonaHappyHourBanner.Read(RepoPaths.PersonasDirectory(RepoPaths.FindRepoRoot()), "sonic");
 
     public static decimal FullPriceFinalTotal(decimal unitPrice) =>
         unitPrice * (1 + GoldenOrderPricingData.Load(RepoPaths.FindRepoRoot()).BusinessRules.TaxRate);
@@ -62,6 +77,21 @@ public sealed class HappyHourJustBeforeOpenTests(HappyHourJustBeforeOpenFixture 
         OrderScenarioHelpers.AssertMoneyEqual(
             HappyHourBoundaryTestSupport.FullPriceFinalTotal(HappyHourBoundaryTestSupport.DrinkPrice), finalTotal);
     });
+
+    // Rick's PR #108 review, required item 1: "just before the window ... no banner and full
+    // price". Paired with HappyHourAtOpenTests's banner fact below -- same drink, same tool --
+    // one instant either side of 14:00:00.
+    [Fact]
+    public Task At_13_59_59_the_banner_is_absent() => fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var result = await HappyHourBoundaryTestSupport.AddOneDrinkAndReadResultAsync(fixture, ct);
+        Assert.DoesNotContain(
+            HappyHourBoundaryTestSupport.SonicHappyHourBanner(), result.FunctionCallOutputText);
+        OrderScenarioHelpers.AssertMoneyEqual(
+            HappyHourBoundaryTestSupport.FullPriceFinalTotal(HappyHourBoundaryTestSupport.DrinkPrice),
+            OrderScenarioHelpers.GetOrderFinalTotal(result.ToolResultJson!));
+    });
 }
 
 [Collection(HappyHourAtOpenCollection.Name)]
@@ -74,6 +104,22 @@ public sealed class HappyHourAtOpenTests(HappyHourAtOpenFixture fixture)
         var finalTotal = await HappyHourBoundaryTestSupport.AddOneDrinkAndReadFinalTotalAsync(fixture, ct);
         OrderScenarioHelpers.AssertMoneyEqual(
             HappyHourBoundaryTestSupport.HappyHourFinalTotal(HappyHourBoundaryTestSupport.DrinkPrice), finalTotal);
+    });
+
+    // Rick's PR #108 review, required item 1: an eligible drink's update_order result must
+    // contain Sonic's OWN banner (read from personas/sonic/persona.json, not typed here) AND the
+    // discount must be applied, in the SAME assertion -- proving the banner and the discount are
+    // both driven by the same is_happy_hour_for_session() truth, not independently coincidental.
+    [Fact]
+    public Task At_14_00_00_an_eligible_drink_announces_Sonics_own_banner_and_is_discounted() => fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var result = await HappyHourBoundaryTestSupport.AddOneDrinkAndReadResultAsync(fixture, ct);
+        Assert.Contains(
+            HappyHourBoundaryTestSupport.SonicHappyHourBanner(), result.FunctionCallOutputText);
+        OrderScenarioHelpers.AssertMoneyEqual(
+            HappyHourBoundaryTestSupport.HappyHourFinalTotal(HappyHourBoundaryTestSupport.DrinkPrice),
+            OrderScenarioHelpers.GetOrderFinalTotal(result.ToolResultJson!));
     });
 
     [Fact]

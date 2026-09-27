@@ -23,22 +23,39 @@ public static class OrderScenarioHelpers
     /// greeting's round trip to fully complete (tools_pending cleared, backend ready for a new
     /// turn) — the same sequence every existing scenario repeats before scripting its own turn.
     /// </summary>
+    /// <summary>
+    /// Connects a fresh browser client, asserts no connections leaked from a previous scenario,
+    /// waits for the accepted upstream connection, starts the session, and waits for the
+    /// greeting's round trip to fully complete (tools_pending cleared, backend ready for a new
+    /// turn) — the same sequence every existing scenario repeats before scripting its own turn.
+    ///
+    /// Issue #76 part 2: <paramref name="persona"/> (default null, unchanged behaviour for every
+    /// existing caller) connects with <c>?persona=&lt;id&gt;</c> — see
+    /// <see cref="RealtimeBrowserClient.ConnectAsync"/> — for scenarios that need to bind a
+    /// specific persona's session on a fixture with more than one enabled persona (e.g.
+    /// <see cref="TwoPersonaConformanceFixture"/>), mirroring the pattern
+    /// PersonaBusinessRuleConformanceTests.cs's private <c>ConnectAndGreetAsPersonaAsync</c>
+    /// helper already established for that file alone.
+    /// </summary>
     public static async Task<(RealtimeBrowserClient Browser, FakeRealtimeConnection Connection, int RoundTripIndex)> ConnectAndGreetAsync(
-        ConformanceFixture fixture, CancellationToken ct)
+        ConformanceFixture fixture, CancellationToken ct, string? persona = null)
     {
         var noneOpen = await fixture.Realtime.WaitForNoOpenConnectionsAsync(FrameTimeout, ct);
         Assert.True(noneOpen, $"Expected no open upstream connections at test start, but " +
             $"{fixture.Realtime.OpenConnectionCount} are still open — a previous test leaked a connection.");
 
         var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, persona: persona, cancellationToken: ct);
         var connection = await connectionTask;
-        Assert.True(connection is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        Assert.True(connection is not null,
+            $"No upstream connection was accepted within {FrameTimeout}" +
+            (persona is null ? "." : $" for persona={persona}."));
 
         await browser.SendStartSessionAsync(cancellationToken: ct);
         var greetingRoundTrip = await browser.ReceivedFrames.WaitForAsync(
             f => f.Type == "extension.round_trip_token", FrameTimeout, ct);
-        Assert.True(greetingRoundTrip is not null, "Greeting round trip never completed.");
+        Assert.True(greetingRoundTrip is not null,
+            "Greeting round trip never completed" + (persona is null ? "." : $" for persona={persona}."));
 
         var roundTripIndex = greetingRoundTrip!.Json.GetProperty("roundTripIndex").GetInt32();
         return (browser, connection!, roundTripIndex);
