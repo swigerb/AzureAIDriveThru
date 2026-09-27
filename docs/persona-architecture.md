@@ -526,24 +526,28 @@ which one is running.
 | --- | --- | --- | --- |
 | `realtime` | A Foundry realtime model, speech to speech (today's `gpt-realtime-2.1`, plus alternatives such as a smaller realtime model) | Azure | Today's `rtmt.py`; selectable per session in #75 |
 | `cascade` | Transcription (`gpt-4o-transcribe`), then a Foundry **chat** model with tool calling (OpenAI or non-OpenAI), then TTS (`gpt-4o-mini-tts`) -- all Azure OpenAI audio and chat models on the same Foundry AIServices account; **not** Azure Speech, which isn't used and has no SDK or resource in this pipeline | Azure | New in #82; parity with `realtime` below |
-| `local` | Whisper, then Phi-4 mini (ONNX), then Piper, all on-device (McDonald's local mode, now persona-agnostic) | Developer machine; off by default | Ported in #81 |
+| `local` | Whisper, then Phi-4 mini (ONNX), then Piper, all on-device (McDonald's local mode, now persona-agnostic) | Developer machine, through a companion runtime process (7.6); off unless `LOCAL_RUNTIME_ENDPOINT` is set | #81 part 1: processor, runtime contract, conformance; part 2: the runtime itself |
 
-**Cascade turn-taking parity (Rick's PR #118 review item 6/6).** The frontend can't tell pipelines apart, so
-`cascade` matches `realtime`'s observable behavior for:
+**Turn-taking parity.** The frontend can't tell pipelines apart, so `cascade` (Rick's PR #118 review item 6)
+and `local` (#81 part 1) match `realtime`'s observable behavior where the demo needs it:
 
-- **Greeting on connect** -- the persona's `greeting.yaml`, spoken through TTS, with the same `response.*` frames.
-- **Barge-in** -- a local `speech_started` cancels the in-flight chat call and TTS stream; no further
-  `response.audio.delta` is sent for the cancelled turn.
-- **Rate limit** -- a 429 from chat, transcription or TTS goes down the same rate-limit notice path the frontend
-  already handles for `realtime` (`extension.rate_limited`), not a silent failed turn.
+| Behavior | `realtime` | `cascade` | `local` |
+| --- | --- | --- | --- |
+| Greeting on connect: the persona's `greeting.yaml`, spoken, with the same `response.*` frames | yes | yes | yes |
+| Barge-in: a `speech_started` cancels the in-flight model call and speech; nothing more is sent for the cancelled turn | yes (upstream VAD) | yes (local VAD) | yes (local VAD) |
+| Upstream failure is never silent | rate limit: `extension.rate_limited` | a 429 from chat, transcription or TTS: the same `extension.rate_limited` path | runtime unreachable or failing: the pack's `generic_error` text as the assistant transcript (no retry ladder: no quota to wait out) |
+| Resume (grace hold, rehydration) | yes | deferred to #126 | deferred to #126 |
+| Idle nudge | yes | deferred to #126 | deferred to #126 |
+| Echo suppression after playback | yes | deferred to #126 | deferred to #126 |
 
-Each has a conformance row (`tests/conformance/.../Scenarios/Cascade/CascadeConformanceTests.cs`).
+Each "yes" on `cascade` and `local` has a conformance row (`tests/conformance/.../Scenarios/Cascade/` and
+`Scenarios/Local/`).
 
-**Explicitly deferred, tracked in #126:** resume (a reconnect on `cascade` today gets a fresh session, with no
-grace-hold/rehydration equivalent to `realtime`'s), the idle-nudge, and echo suppression (`cascade_processor.py`
-never imports `audio_pipeline.py`'s `EchoSuppressor`, so there is no cooldown window after TTS playback the way
-`realtime` has). None of these are required for the P2 demo's happy path or the conformance rows above; each
-needs its own design pass before landing on `cascade`.
+**Explicitly deferred, tracked in #126:** resume (a reconnect on `cascade` or `local` today gets a fresh session,
+with no grace-hold/rehydration equivalent to `realtime`'s), the idle-nudge, and echo suppression (neither
+`cascade_processor.py` nor `local_processor.py` imports `audio_pipeline.py`'s `EchoSuppressor`, so there is no
+cooldown window after playback the way `realtime` has). None of these are required for the P2 demo's happy path
+or the conformance rows above; each needs its own design pass before landing on either pipeline.
 
 ### 7.2 Config shape
 
@@ -580,7 +584,7 @@ There are three layers, each owned by one team:
 | Session | Which allowed model this conversation uses | The Settings model picker, sent as `?model=` at connect. Locked for the session |
 
 Selectable = catalog ∩ deployment ∩ persona-allowed. The pipeline follows from the chosen model's `pipeline`.
-Local mode is selectable only when `/health` reports it available (models present on the machine).
+Local mode is selectable only when `LOCAL_RUNTIME_ENDPOINT` points at a companion runtime (7.6).
 
 ### 7.4 How both backends honor it
 
@@ -622,8 +626,9 @@ Local mode is selectable only when `/health` reports it available (models presen
 - **Cascade gets new harness fakes** (#82): `FakeChatCompletionsServer` (scripted tool calls, like
   `ResponseScript`), `FakeTranscription` and `FakeTts`. A representative ordering subset runs per persona on the
   cascade pipeline.
-- **Local mode is not in CI conformance,** because the models are too large. It's covered by unit tests with
-  mocked models, plus the manual UX checklist.
+- **Local mode runs in CI conformance against a fake runtime** (#81 part 1): `FakeLocalRuntimeServer` stands in
+  for the companion process, so the rows need no model weights (7.6). The real runtime is covered by the manual UX
+  checklist in #81 part 2.
 
 ### 7.6 Local mode: as-built design (#81)
 
@@ -657,7 +662,7 @@ implement it as a *persona-agnostic* pipeline behind the same `PipelineProcessor
   for a `pipeline: local` catalog model means `LOCAL_RUNTIME_ENDPOINT` (an env var, `model_catalog.py`)
   is set, not an `AZURE_AI_MODEL_DEPLOYMENTS` entry. Concretely (`processors.resolve_local_model`):
   1. The persona must have a `models.local` block at all (local mode isn't automatically enabled
-     for every persona the way realtime is -- McDonald's/Sonic/Dunkin/Wendy's opt in per pack).
+     for every persona the way realtime is; each pack opts in, and every shipped pack does).
   2. The requested (or defaulted) model id must be in that pack's `models.local.allowed` list.
   3. The id must be catalogued for `pipeline: local` in `config.yaml`.
   4. `LOCAL_RUNTIME_ENDPOINT` must be set -- **there is no back-compat fallback for the default the
@@ -682,19 +687,36 @@ implement it as a *persona-agnostic* pipeline behind the same `PipelineProcessor
   (`extension.session_metadata`, `extension.round_trip_token`) reuses the same `SessionManager`/
   `order_state_singleton` calls `cascade` makes.
 - **No rate-limit retry ladder.** Unlike `cascade`'s Azure-quota-aware `extension.rate_limited`
-  path, a `LocalRuntimeError` from the companion process (unreachable, malformed response, ...)
-  just ends the turn cleanly and logs -- there's no Azure quota to retry against for an on-device
-  runtime.
+  path, a `LocalRuntimeError` from the companion process (unreachable, error status, malformed
+  response) ends the turn with the pack's own `generic_error` text sent as the assistant
+  transcript (`response.created`, `response.audio_transcript.delta`, `response.done`; no speech,
+  since the runtime that failed is also the TTS engine). There's no Azure quota to retry against
+  for an on-device runtime, but the guest is never left in silence.
 - **Zero `rtmt.py` edits.** `LocalProcessor` registers into the same `ProcessorRegistry`
   `dispatch_processor` already resolves purely from the catalog (`resolve_model`/`handle`, section
   7.4's "Processor interface"); `app.py` is the only file that wires it up
   (`ProcessorRegistry([rtmt, cascade_processor, local_processor])`).
-- **Conformance.** Same approach as documented above for cascade's fakes: `local` is exercised by
-  Python unit tests against a fake/scripted `LocalRuntimeClient`
-  (`tests/test_local_processor.py`: tool-calling, pricing, `not_on_menu`, persona-binding rows) and
-  a real-HTTP-server-backed fake for the wire contract itself (`tests/test_local_runtime.py`), not
-  the C# conformance suite -- same "too large for CI" rationale as the original 7.5 note, now
-  additionally true because the companion process itself isn't part of this repo's CI image.
+- **Conformance.** The C# harness fakes the companion process itself: `FakeLocalRuntimeServer`
+  (`tests/conformance/src/Conformance.Fakes/`) serves `/v1/transcribe`, `/v1/chat` (scripted
+  content and tool calls, plus a held-response gate that records whether the backend aborted the
+  request) and `/v1/speak`. The rows in `Scenarios/Local/` are untagged (Python only until the C#
+  backend ports local, section 17) and event-driven (frame waits and request-arrival signals, no
+  sleeps):
+  - session metadata carries pipeline `local`, the bound persona and its local model, for every
+    shipped pack;
+  - without `LOCAL_RUNTIME_ENDPOINT`, `?model=<local>` gets a pre-upgrade 404 and
+    `/api/personas/{id}` omits the local model (and lists it once a runtime is configured);
+  - greeting on connect, through `/v1/chat` and `/v1/speak`;
+  - a `get_order` tool round trip reaching the browser as `extension.middle_tier_tool_response`;
+  - the `not_on_menu` structured rejection in the tool message fed back to `/v1/chat`;
+  - barge-in, proven by the first turn's held `/v1/chat` request being aborted by the backend;
+  - an unreachable runtime sending the pack's `generic_error` notice for both a failed greeting
+    and a failed guest turn.
+
+  Python unit tests cover the same seams in-process (`tests/test_local_processor.py` against a
+  scripted `LocalRuntimeClient`, `tests/test_local_runtime.py` for the HTTP wire contract). The
+  harness strips any ambient `LOCAL_RUNTIME_*` variable from the backend-under-test environment,
+  so a developer's own runtime can't turn local mode on for the default fixture.
 
 ## 8. Conformance and test dimensions
 
