@@ -1,0 +1,19 @@
+# Issue #129: moved from app/.dockerignore -- the Docker build context is now the repo root
+# (azure.yaml's docker.context: ..), and Docker only reads .dockerignore from the context root,
+# so an app/.dockerignore would silently stop applying.
+.git
+
+# Backend
+**/*.pyc
+**/.env
+
+## Will be built by multistage docker build
+**/static
+
+# Frontend
+**/node_modules
+
+# Persona menu source workbooks (raw ingestion spreadsheets, not needed at runtime -- see
+# scripts/sonic_menu_ingestion_search.ipynb / setup_search_index.py, which only ever read the
+# already-transformed personas/<id>/menu/menuItems.json)
+personas/*/menu/source/
