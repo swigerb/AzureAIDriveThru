@@ -37,7 +37,7 @@
   "invalidModifiers": {
     "main": ["mustard"]
   },
-  "machines": { "soda_machine": "operational" },
+  "machines": { "soda_machine": { "status": "operational", "label": "Our soda machine is down right now" } },
 
   "models": {
     "realtime": { "default": "gpt-realtime-mini", "allowed": ["gpt-realtime-mini"] }

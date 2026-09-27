@@ -128,6 +128,19 @@ class _Extras(BaseModel):
     splitCombinedNames: bool
 
 
+class _Machine(BaseModel):
+    """#77: a single machine's own status + guest-facing OOS label, straight from the pack.
+
+    Replaces the old bare ``{"soda_machine": "down"}`` string-status map -- the label used to be
+    a Python-side, name-keyed dict (``tools.py``'s ``_MACHINE_OOS_LABELS``) that only one pack's
+    two machine keys ever populated, so a second pack's machine silently degraded to a generic
+    "<key> is down" string. Every persona now owns its own label for its own machines."""
+
+    model_config = ConfigDict(extra="forbid")
+    status: str
+    label: str
+
+
 class _ModelPipeline(BaseModel):
     model_config = ConfigDict(extra="forbid")
     default: str
@@ -239,7 +252,7 @@ class PersonaManifest(BaseModel):
     bundles: _Bundles
     extras: _Extras
     invalidModifiers: dict[str, list[str]]
-    machines: dict[str, str]
+    machines: dict[str, _Machine]
     models: _Models
     strategies: _Strategies
     features: _Features

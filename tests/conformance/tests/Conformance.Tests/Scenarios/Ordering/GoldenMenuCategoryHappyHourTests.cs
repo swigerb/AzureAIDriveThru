@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Conformance.Harness;
 using Xunit;
 
@@ -29,17 +30,42 @@ public sealed class GoldenMenuCategoryHappyHourTests(HappyHourAtOpenFixture fixt
         { "Corn Dog", "Standard", 1.99m }, // never happy-hour-discounted: Hot Dogs & Tots category, but a real entree, not a fillable side
     };
 
+    // #77: mirrors GoldenMenuComboSlotTheoryTests.RequiresACurrentlyDownMachine -- Sonic's real
+    // persona.json has machines.ice_cream_machine "down", so "Shakes & Ice Cream" items now hit
+    // the new add-time machine_unavailable gate before happy-hour pricing is ever computed. That's
+    // this issue's own acceptance criterion, not a regression; the underlying HappyHourDiscounted
+    // classification these two rows exist to pin is still exhaustively covered at the unit level
+    // by app/backend/tests/test_menu_utils.py (which generates this golden dataset and calls
+    // is_happy_hour_discounted() directly, with no add-time machine gate in the way). Checking the
+    // row's own requiresMachine against persona.json's machines block (not a category-name proxy)
+    // keeps this correct if a future representative item also needs a currently-down machine.
+    private static bool RequiresACurrentlyDownMachine(MenuCategoryCase row, IReadOnlySet<string> currentlyDownMachines) =>
+        row.RequiresMachine is { } machine && currentlyDownMachines.Contains(machine);
+
     [Theory]
     [MemberData(nameof(RepresentativeItems))]
     public Task Golden_happy_hour_discounted_flag_determines_the_happy_hour_discount(string item, string size, decimal unitPrice) =>
         fixture.RunAsync(async () =>
         {
             var ct = TestContext.Current.CancellationToken;
-            var golden = GoldenMenuCategoryData.Load(RepoPaths.FindRepoRoot());
+            var repoRoot = RepoPaths.FindRepoRoot();
+            var golden = GoldenMenuCategoryData.Load(repoRoot);
             var categoryCase = golden.Items.Single(c => c.Item == item);
+            var currentlyDownMachines = GoldenMenuCategoryData.LoadCurrentlyDownMachines(repoRoot);
 
             var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
             await using var _ = browser;
+
+            if (RequiresACurrentlyDownMachine(categoryCase, currentlyDownMachines))
+            {
+                var rejected = await OrderScenarioHelpers.CallToolAsync(
+                    connection, browser, "update_order",
+                    JsonSerializer.Serialize(new { action = "add", item_name = item, size, quantity = 1, price = unitPrice }),
+                    "call_reject", roundTripIndex, ct, toClient: false);
+                OrderScenarioHelpers.AssertRejectionShape(
+                    rejected.FunctionCallOutputText, expectedReason: "machine_unavailable", expectedItemName: item);
+                return;
+            }
 
             var result = await OrderScenarioHelpers.RunOrderStepsAsync(
                 connection, browser,
@@ -47,7 +73,7 @@ public sealed class GoldenMenuCategoryHappyHourTests(HappyHourAtOpenFixture fixt
                 roundTripIndex, ct);
 
             var finalTotal = OrderScenarioHelpers.GetOrderFinalTotal(result.ToolResultJson!);
-            var rules = GoldenOrderPricingData.Load(RepoPaths.FindRepoRoot()).BusinessRules;
+            var rules = GoldenOrderPricingData.Load(repoRoot).BusinessRules;
             var expectedTotal = categoryCase.HappyHourDiscounted
                 ? unitPrice * rules.HappyHourDiscount * (1 + rules.TaxRate)
                 : unitPrice * (1 + rules.TaxRate);
