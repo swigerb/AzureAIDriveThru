@@ -11,6 +11,12 @@ import { Tooltip } from "@/components/ui/tooltip";
 import { VOICE_OPTIONS } from "@/lib/voices";
 import type { PersonaModels } from "@/types/persona";
 
+/** Capitalizes the first letter of a persona's `roleName` (e.g. "carhop" -> "Carhop") for display;
+ * leaves everything else untouched since roleName is a single lowercase word per the schema. */
+function capitalize(word: string): string {
+    return word.length > 0 ? word[0].toUpperCase() + word.slice(1) : word;
+}
+
 interface SettingsProps {
     isMobile: boolean;
     showSessionTokens: boolean;
@@ -21,6 +27,11 @@ interface SettingsProps {
     onLogToFileChange: (checked: boolean) => void;
     voiceChoice: string;
     onVoiceChoiceChange: (voice: string) => void;
+    /** Current persona's top-level role name (persona.schema.json's required `roleName`, e.g.
+     * "carhop"), used to build a persona-aware voice label/aria-label instead of hard-coding one
+     * brand's role (issue 119). Falls back to a neutral "Voice" label when empty (the
+     * brand-neutral placeholder persona-context.tsx renders before any pack loads). */
+    roleName?: string;
     /** Current persona's model options (design doc §7), per PR 106 (issue #75). Optional: this
      * branch's backend doesn't emit it yet, so the model-switch seam below must tolerate absence. */
     models?: PersonaModels;
@@ -36,6 +47,7 @@ export default function Settings({
     onLogToFileChange,
     voiceChoice,
     onVoiceChoiceChange,
+    roleName,
     models
 }: SettingsProps) {
     const [isDarkMode, setIsDarkMode] = useState(() => {
@@ -44,6 +56,8 @@ export default function Settings({
     const { useAzureSpeechOn, setUseAzureSpeechOn } = useAzureSpeechOnContext();
     const { useDummyData, setUseDummyData } = useDummyDataContext();
     const realtimeModels = models?.realtime.models ?? [];
+    const voiceLabel = roleName ? `${capitalize(roleName)} Voice` : "Voice";
+    const voiceAriaLabel = roleName ? `Select ${roleName} voice` : "Select voice";
 
     useEffect(() => {
         localStorage.setItem("isDarkMode", isDarkMode.toString());
@@ -96,7 +110,7 @@ export default function Settings({
             <div className="flex items-start justify-between">
                 <div className="flex-1 space-y-0.5">
                     <Label htmlFor="voice-choice" className="text-gray-900 dark:text-gray-100">
-                        Carhop Voice
+                        {voiceLabel}
                     </Label>
                     <p className="text-sm text-gray-600 dark:text-gray-400">Choose the drive-thru assistant voice</p>
                 </div>
@@ -106,7 +120,7 @@ export default function Settings({
                         value={voiceChoice}
                         onChange={(e) => onVoiceChoiceChange(e.target.value)}
                         className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
-                        aria-label="Select carhop voice"
+                        aria-label={voiceAriaLabel}
                     >
                         {VOICE_OPTIONS.map(voice => (
                             <option key={voice.value} value={voice.value}>

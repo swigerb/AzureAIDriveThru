@@ -1,0 +1,143 @@
+import { render, screen, waitFor } from "@testing-library/react";
+import { act } from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// Issue #119 item 1: every other test file in this suite runs against `test/setup.ts`'s global
+// `react-i18next` stub (a `t` that just echoes its key), which can never catch a re-render
+// regression in the real i18next wiring. This is the one file that needs the REAL hook plus a
+// REAL, initialized i18next singleton, so it must opt out of that stub and pull in the real
+// `i18n/config.ts` (whose `.init()` call is what sets `react.bindI18nStore` -- the actual fix).
+vi.unmock("react-i18next");
+
+import "../../i18n/config";
+import { PersonaProvider, usePersonaContext } from "../persona-context";
+import OrderSummary from "@/components/ui/order-summary";
+import StatusMessage from "@/components/ui/status-message";
+import type { PersonaDetail, PersonasIndexResponse } from "@/types/persona";
+
+const TWO_PERSONA_INDEX: PersonasIndexResponse = {
+    default: "test-beta",
+    personas: [
+        {
+            id: "test-beta",
+            displayName: "Test Beta",
+            logoUrl: "/personas/test-beta/assets/logo.svg",
+            theme: { light: { primary: "341 100% 45%", secondary: "208 52% 33%", background: "195 44% 96%", foreground: "208 53% 20%" } }
+        },
+        {
+            id: "test-alpha",
+            displayName: "Test Alpha",
+            logoUrl: "/personas/test-alpha/assets/logo.svg",
+            theme: { light: { primary: "200 80% 50%", secondary: "40 60% 40%", background: "0 0% 98%", foreground: "0 0% 10%" } }
+        }
+    ],
+    backends: []
+};
+
+function detailFor(id: string, strings: Record<string, string>): PersonaDetail {
+    const summary = TWO_PERSONA_INDEX.personas.find(p => p.id === id)!;
+    return {
+        id,
+        roleName: "tester",
+        title: `${summary.displayName} Fixture`,
+        theme: summary.theme,
+        assets: { logo: "assets/logo.svg", favicon: "assets/favicon.ico" },
+        strings: { en: strings },
+        hero: { headline: `${summary.displayName} fixture pack`, callouts: [] },
+        legal: "Fixture-only disclaimer.",
+        voice: { default: "marin" },
+        locales: { default: "en", supported: ["en"] },
+        features: { dayparts: false },
+        menuUrl: `/personas/${id}/menu.json`,
+        models: { realtime: { default: "gpt-realtime-2.1", models: [{ id: "gpt-realtime-2.1", label: "GPT Realtime 2.1", reasoning: true }] } }
+    };
+}
+
+const BETA_DETAIL = detailFor("test-beta", {
+    "ticket.kicker": "BETA TICKET",
+    "ticket.title": "Your Beta Order",
+    "status.notRecordingMessage": "Let's order from Beta!"
+});
+const ALPHA_DETAIL = detailFor("test-alpha", {
+    "ticket.kicker": "ALPHA TICKET",
+    "ticket.title": "Your Alpha Order",
+    "status.notRecordingMessage": "Let's order from Alpha!"
+});
+
+function mockFetchSequence(handler: (url: string) => { ok: boolean; body: unknown }) {
+    vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string) => {
+            const { ok, body } = handler(url);
+            return { ok, status: ok ? 200 : 404, json: async () => body };
+        })
+    );
+}
+
+/** Mirrors the real ticket + status-message pair as they're actually mounted together in
+ * `App.tsx`, so the assertions below cover the exact consumer components #119 reported as stale
+ * after a switch, not a synthetic probe. */
+function TicketAndStatus() {
+    const { ready, selectPersona } = usePersonaContext();
+    if (!ready) return null;
+    return (
+        <div>
+            <OrderSummary order={{ items: [], total: 0, tax: 0, finalTotal: 0 }} />
+            <StatusMessage isRecording={false} />
+            <button onClick={() => selectPersona("test-alpha")}>select alpha</button>
+        </div>
+    );
+}
+
+function renderApp() {
+    return render(
+        <PersonaProvider>
+            <TicketAndStatus />
+        </PersonaProvider>
+    );
+}
+
+beforeEach(() => {
+    localStorage.clear();
+    window.history.pushState({}, "", "/");
+});
+
+afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    document.documentElement.removeAttribute("style");
+    document.title = "";
+});
+
+describe("ticket/status copy on persona switch (issue #119 item 1)", () => {
+    it("updates already-mounted ticket and status copy when selectPersona switches persona", async () => {
+        mockFetchSequence(url => {
+            if (url === "/api/personas") return { ok: true, body: TWO_PERSONA_INDEX };
+            if (url === "/api/personas/test-beta") return { ok: true, body: BETA_DETAIL };
+            if (url === "/api/personas/test-alpha") return { ok: true, body: ALPHA_DETAIL };
+            return { ok: false, body: null };
+        });
+        renderApp();
+
+        // Starts on the catalog default (test-beta)'s copy.
+        await waitFor(() => expect(screen.getByText("BETA TICKET")).toBeInTheDocument());
+        expect(screen.getByText("Your Beta Order")).toBeInTheDocument();
+        expect(screen.getByText("Let's order from Beta!")).toBeInTheDocument();
+
+        // This is the regression: before `i18n/config.ts` set `react.bindI18nStore`, these same
+        // mounted OrderSummary/StatusMessage instances kept showing test-beta's copy forever,
+        // because `useTranslation()` never re-rendered on `persona-context.tsx`'s
+        // `addResourceBundle` merge -- only a full remount (or a `languageChanged`/`loaded` event,
+        // neither of which `addResourceBundle` fires) would have picked up the new strings.
+        await act(async () => {
+            screen.getByText("select alpha").click();
+        });
+
+        await waitFor(() => expect(screen.getByText("ALPHA TICKET")).toBeInTheDocument());
+        expect(screen.getByText("Your Alpha Order")).toBeInTheDocument();
+        expect(screen.getByText("Let's order from Alpha!")).toBeInTheDocument();
+        expect(screen.queryByText("BETA TICKET")).not.toBeInTheDocument();
+        expect(screen.queryByText("Your Beta Order")).not.toBeInTheDocument();
+        expect(screen.queryByText("Let's order from Beta!")).not.toBeInTheDocument();
+    });
+});

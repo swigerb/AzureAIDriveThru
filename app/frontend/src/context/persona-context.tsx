@@ -45,6 +45,7 @@ const NEUTRAL_SUMMARY: PersonaSummary = {
 };
 const NEUTRAL_DETAIL: PersonaDetail = {
     id: NEUTRAL_ID,
+    roleName: "",
     title: "",
     theme: NEUTRAL_THEME,
     assets: { logo: "", favicon: "" },

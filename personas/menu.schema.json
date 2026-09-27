@@ -20,6 +20,7 @@
       "required": ["category", "items"],
       "properties": {
         "category": { "type": "string", "minLength": 1 },
+        "icon": { "type": "string", "minLength": 1 },
         "items": {
           "type": "array",
           "minItems": 1,

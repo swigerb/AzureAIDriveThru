@@ -26,6 +26,7 @@ const TWO_PERSONA_INDEX: PersonasIndexResponse = {
 
 const ALPHA_DETAIL: PersonaDetail = {
     id: "test-alpha",
+    roleName: "tester",
     title: "Test Alpha Fixture",
     theme: TWO_PERSONA_INDEX.personas[1].theme,
     assets: { logo: "assets/logo.svg", favicon: "assets/favicon.ico" },
