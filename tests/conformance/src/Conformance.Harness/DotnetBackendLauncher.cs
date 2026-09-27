@@ -55,6 +55,12 @@ internal static class DotnetBackendEnvironment
             ["APP_SESSION_SECRET"] = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)),
             ["RATE_LIMIT_RECOVERY_ENABLED"] = "true",
 
+            // Issue #76: same PERSONAS/DEFAULT_PERSONA contract as BackendEnvironment (Python) --
+            // app/backend-dotnet/src/Backend/Personas/PersonaCatalog.cs reads the same env var
+            // names with the same fallback semantics.
+            ["PERSONAS"] = string.Join(",", contract.Personas),
+            ["DEFAULT_PERSONA"] = contract.DefaultPersona,
+
             // .NET-specific: make sure ASP.NET Core doesn't pick up a stray Development-only
             // behaviour (e.g. developer exception pages) from an inherited ASPNETCORE_ENVIRONMENT.
             ["ASPNETCORE_ENVIRONMENT"] = "Production",

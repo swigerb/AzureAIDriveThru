@@ -68,6 +68,13 @@ public static class BackendEnvironment
             ["APP_SESSION_SECRET"] = RandomSecret(),
             ["RATE_LIMIT_RECOVERY_ENABLED"] = "true",
 
+            // Issue #76: mirrors app/backend/persona_loader.py's own PERSONAS/DEFAULT_PERSONA env
+            // vars explicitly, instead of relying on the backend's identical fallback defaults --
+            // see ConformancePersonas' own doc comment for why this is a no-op behaviour change
+            // today (only personas/sonic exists on disk).
+            ["PERSONAS"] = string.Join(",", contract.Personas),
+            ["DEFAULT_PERSONA"] = contract.DefaultPersona,
+
             // ── Python-launcher-specific extras: quirks of this particular process (the
             // CPython interpreter's own env vars), not part of the neutral contract a future
             // .NET launcher would also need to satisfy. ──

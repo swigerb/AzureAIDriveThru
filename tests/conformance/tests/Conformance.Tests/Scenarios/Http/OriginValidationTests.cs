@@ -23,6 +23,7 @@ namespace Conformance.Tests;
 /// skipped until #25 lands.
 /// </summary>
 [Collection(ConformanceCollection.Name)]
+[Trait("Dotnet", "ready")]
 public sealed class OriginValidationTests(ConformanceFixture fixture)
 {
     private static async Task<string> FetchTokenAsync(Uri backendBaseUri, CancellationToken ct)

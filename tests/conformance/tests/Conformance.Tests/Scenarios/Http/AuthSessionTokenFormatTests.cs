@@ -17,6 +17,7 @@ namespace Conformance.Tests;
 /// one, per this stream's own scope.
 /// </summary>
 [Collection(ConformanceCollection.Name)]
+[Trait("Dotnet", "ready")]
 public sealed class AuthSessionTokenFormatTests(ConformanceFixture fixture)
 {
     private static readonly Regex HexSha256 = new("^[0-9a-f]{64}$", RegexOptions.Compiled);
