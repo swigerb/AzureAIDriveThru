@@ -227,6 +227,33 @@ Fixed `useAzureSpeech.tsx`: (1) `onReceivedToolResponse` parameter was declared 
 ## 2026-09-28 — PR #107 re-review (squad/104-menu-price, r3)
 
 - `PythonBackendLauncher` also needs `app/backend/static/index.html` to exist (aiohttp's `add_static` raises at app-creation without the directory) — it's gitignored (built via `npm run build`), but a placeholder `<html>` file is enough to boot the backend for conformance; no frontend build needed just to run the C# suite.
+
+## 2026-09-28 — PR #108 round 4 (squad/76-part2-multi-index)
+
+- Rick's round 4 review had all three items land as harness/comment-only changes, no product code:
+  the smoke add step's stale pre-#107 comment, the fixture-pack coverage failure message needing to
+  name *both* `FixturePackPersonaSmokeTests.FixturePersonaIds()` and the persona list
+  `TwoPersonaConformanceFixture` launches with (or an explicit exclusion), and de-branding a handful
+  of shared-C# comments. Read the actual `TwoPersonaConformanceFixture.Personas` property
+  (`[PersonaA, PersonaB]`) before writing the message text that references it — the wording has to
+  match a real, checkable thing, not just restate the reviewer's prose.
+- The task brief's "PR #106 (test-gamma fixture pack)" conditional turned out stale: `gh pr view 106`
+  showed an unrelated open PR (model catalog, issue #75), and the actual `test-gamma` fixture commit
+  lives on `squad/75-model-flexibility`, not merged into `dev`. Always verify a task brief's PR-number
+  claims against `gh pr view`/`git log --all` before acting on them — a wrong number here would have
+  meant editing coverage lists for a pack that doesn't exist on this branch yet.
+- Mutating "the backend trusts the tool price" for #107-era code: `order_state.py`'s
+  `price = menu_price` (~line 273) is the single override line; commenting it out to a `pass` and
+  running just `--filter "FullyQualifiedName~PersonaSmokeTests"` (3 tests: sonic/test-alpha/
+  test-beta) is enough to see all three fail on the charged-total assertion — no need to run the
+  full 657-test suite to prove the mutation lands. `git checkout -- <file>` cleanly reverts a
+  single-line comment-swap like this; re-ran the same filtered 3 tests to confirm the revert restored
+  green before moving on.
+- Full local validation this round: `dotnet test Conformance.slnx --filter "Category!=Browser"`
+  652/652; `--filter "Category=Browser"` 5/5 (657/657 total, matching round 3's own count exactly —
+  no new scenarios landed on `dev` since); `python -m pytest app/backend/tests -q` 1077 passed/168
+  subtests; `ruff check .` clean. `.venv` and `app/backend/static` (via `npm ci && npm run build`)
+  both had to be built fresh in this worktree — neither survives a `git worktree add`.
 - Adding two `[InlineData]` rows (`"\"cheap\""`, `"true"`) to an existing string-typed Theory needed no other code changes — Rick's PR #107 re-review confirmed the Python fix (`order_state.py`'s `isinstance(price, (int, float)) and not isinstance(price, bool)` guard) already covers non-numeric/bool tool prices; the conformance port was just missing rows, not missing behavior. Ran the six-row Theory alone (`--filter FullyQualifiedName~Adding_an_item_with_a_wrong_tool_call_price_is_charged_the_menu_price`) before the full suite to isolate the change under test.
 - Full conformance suite (642 tests) had 5 pre-existing failures, all in `OrderResumeBrowserTests` (`Category=Browser`, real headless Edge via Playwright's `channel: msedge`), each timing out with "No upstream connection was accepted within 00:00:30" — reproduced in isolation too, so not suite-ordering flakiness. That file wasn't touched by this PR or by dev since #26, Rick's review says CI is 8/8, and no proxy env vars were set in this shell, so this looks like a sandbox-specific gap in real-browser mic/audio emulation (headless Edge + getUserMedia) rather than a product regression — flagged in the PR comment rather than touched.
 - `app/backend/static/` is gitignored frontend build output; a fresh worktree without a frontend build fails 7 unrelated `test_app.py`/`test_performance.py` tests on `pytest -q` (missing static dir). Not a code bug — either `npm run build` the frontend or copy an existing built `static/` folder from another checkout/worktree into the new one (never committed, gitignored either way) to get a fully green run without spending frontend build time on unrelated backend-test work.
