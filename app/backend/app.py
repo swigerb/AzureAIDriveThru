@@ -217,14 +217,15 @@ def _personas_index_body(catalog: PersonaCatalog) -> dict:
 
 
 def _persona_detail_body(persona: Persona, model_catalog: ModelCatalog) -> dict:
-    """`GET /api/personas/{id}` response body (design doc section 5.2): the pack's `ui`
-    block, plus `voice.default`, `locales`, `features.dayparts`, `menuUrl`, and the
-    selectable `models` per pipeline. Callers must check the persona is enabled first
+    """`GET /api/personas/{id}` response body (design doc section 5.2): `roleName`, the
+    pack's `ui` block, plus `voice.default`, `locales`, `features.dayparts`, `menuUrl`, and
+    the selectable `models` per pipeline. Callers must check the persona is enabled first
     (404 otherwise) -- this function assumes it already is. *model_catalog* is mandatory
     (Rick's PR #106 review item 3) -- see `_model_pipelines_body`."""
     manifest = persona.manifest
     return {
         "id": persona.id,
+        "roleName": manifest.roleName,
         **manifest.ui.model_dump(exclude_none=True),
         "voice": {"default": manifest.voice.default},
         "locales": manifest.locales.model_dump(exclude_none=True),

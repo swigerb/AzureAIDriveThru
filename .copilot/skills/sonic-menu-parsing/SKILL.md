@@ -4,7 +4,7 @@
 Whenever you need to parse the production `sonic-menu-items.json` data — for ingestion, analysis, or any backend/tool code that works with menu items.
 
 ## Data Source
-`app/frontend/src/data/sonic-menu-items.json` (UTF-8 encoded, ~1.3MB)
+`personas/sonic/menu/source/sonic-menu-items.json` (UTF-8 encoded, ~1.3MB)
 
 ## Structure
 ```

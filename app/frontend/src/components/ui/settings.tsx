@@ -10,6 +10,21 @@ import ModelPicker from "@/components/ui/model-picker";
 import { VOICE_OPTIONS } from "@/lib/voices";
 import type { PersonaModels } from "@/types/persona";
 
+/** Capitalizes the first letter of a single word (e.g. "carhop" -> "Carhop"), leaving the rest
+ * untouched. */
+function capitalize(word: string): string {
+    return word.length > 0 ? word[0].toUpperCase() + word.slice(1) : word;
+}
+
+/** Title-cases every whitespace-separated word in a persona's `roleName` for display in the
+ * voice label (e.g. "carhop" -> "Carhop", "team member" -> "Team Member"). The schema only
+ * guarantees `{ "type": "string", "minLength": 1 }` -- roleName is not restricted to a single
+ * lowercase word, so a multi-word role name needs every word capitalized, not just the first
+ * character of the whole string. */
+function titleCase(roleName: string): string {
+    return roleName.split(/\s+/).map(capitalize).join(" ");
+}
+
 interface SettingsProps {
     isMobile: boolean;
     showSessionTokens: boolean;
@@ -20,6 +35,11 @@ interface SettingsProps {
     onLogToFileChange: (checked: boolean) => void;
     voiceChoice: string;
     onVoiceChoiceChange: (voice: string) => void;
+    /** Current persona's top-level role name (persona.schema.json's required `roleName`, e.g.
+     * "carhop"), used to build a persona-aware voice label/aria-label instead of hard-coding one
+     * brand's role (issue 119). Falls back to a neutral "Voice" label when empty (the
+     * brand-neutral placeholder persona-context.tsx renders before any pack loads). */
+    roleName?: string;
     /** Current persona's model options (design doc §7), from `/api/personas/{id}` (issue #80 F10,
      * PR 106/#75). Optional purely so `<Settings>` still renders before the persona detail's
      * first fetch resolves -- `App.tsx` always has a real value (`current.models`, even the
@@ -45,6 +65,7 @@ export default function Settings({
     onLogToFileChange,
     voiceChoice,
     onVoiceChoiceChange,
+    roleName,
     models,
     modelId = "",
     onModelChange = () => {},
@@ -54,6 +75,8 @@ export default function Settings({
         return localStorage.getItem("isDarkMode") === "true";
     });
     const { useDummyData, setUseDummyData } = useDummyDataContext();
+    const voiceLabel = roleName ? `${titleCase(roleName)} Voice` : "Voice";
+    const voiceAriaLabel = roleName ? `Select ${roleName} voice` : "Select voice";
 
     useEffect(() => {
         localStorage.setItem("isDarkMode", isDarkMode.toString());
@@ -99,20 +122,20 @@ export default function Settings({
                     <Switch id="dark-mode" checked={isDarkMode} onCheckedChange={handleDarkModeChange} aria-label="Toggle dark mode" />
                 </div>
             </div>
-            <div className="flex items-start justify-between">
+            <div className="flex flex-col gap-2">
                 <div className="flex-1 space-y-0.5">
                     <Label htmlFor="voice-choice" className="text-gray-900 dark:text-gray-100">
-                        Carhop Voice
+                        {voiceLabel}
                     </Label>
                     <p className="text-sm text-gray-600 dark:text-gray-400">Choose the drive-thru assistant voice</p>
                 </div>
-                <div className="ml-4 flex flex-col items-end shrink-0">
+                <div className="flex flex-col">
                     <select
                         id="voice-choice"
                         value={voiceChoice}
                         onChange={(e) => onVoiceChoiceChange(e.target.value)}
-                        className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
-                        aria-label="Select carhop voice"
+                        className="w-full min-w-0 rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+                        aria-label={voiceAriaLabel}
                     >
                         {VOICE_OPTIONS.map(voice => (
                             <option key={voice.value} value={voice.value}>
