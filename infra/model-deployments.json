@@ -18,5 +18,45 @@
     "skuName": "Standard",
     "capacity": 30,
     "isDefaultRealtime": false
+  },
+  {
+    "catalogId": "gpt-5-mini",
+    "deploymentName": "gpt-5-mini",
+    "modelName": "gpt-5-mini",
+    "modelVersion": "2026-08-07",
+    "format": "OpenAI",
+    "skuName": "GlobalStandard",
+    "capacity": 1,
+    "isDefaultRealtime": false
+  },
+  {
+    "catalogId": "phi-4",
+    "deploymentName": "phi-4",
+    "modelName": "Phi-4",
+    "modelVersion": "1",
+    "format": "Microsoft",
+    "skuName": "GlobalStandard",
+    "capacity": 1,
+    "isDefaultRealtime": false
+  },
+  {
+    "catalogId": "gpt-4o-transcribe",
+    "deploymentName": "gpt-4o-transcribe",
+    "modelName": "gpt-4o-transcribe",
+    "modelVersion": "2025-03-20",
+    "format": "OpenAI",
+    "skuName": "GlobalStandard",
+    "capacity": 1,
+    "isDefaultRealtime": false
+  },
+  {
+    "catalogId": "gpt-4o-mini-tts",
+    "deploymentName": "gpt-4o-mini-tts",
+    "modelName": "gpt-4o-mini-tts",
+    "modelVersion": "2025-03-20",
+    "format": "OpenAI",
+    "skuName": "GlobalStandard",
+    "capacity": 1,
+    "isDefaultRealtime": false
   }
 ]
