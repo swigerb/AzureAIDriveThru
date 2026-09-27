@@ -18,5 +18,49 @@
     "skuName": "Standard",
     "capacity": 30,
     "isDefaultRealtime": false
+  },
+  {
+    "catalogId": "gpt-5-mini",
+    "deploymentName": "gpt-5-mini",
+    "modelName": "gpt-5-mini",
+    "_comment": "Rick's #118 review item 2: 2026-08-07 does not exist in eastus2 -- verified read-only via `az cognitiveservices model list -l eastus2`, only 2025-08-07 is listed (GlobalStandard, chatCompletion/assistants/agentsV2/responses). Capacity 50 per review item 3 (1 unit is ~1K TPM, too small for a ~2.5K-token system prompt plus tool schemas and history); quota check (`az cognitiveservices usage list -l eastus2`) showed OpenAI.GlobalStandard.gpt-5-mini at 170/1000 used, so 50 fits with headroom to spare. See design doc 10.3.",
+    "modelVersion": "2025-08-07",
+    "format": "OpenAI",
+    "skuName": "GlobalStandard",
+    "capacity": 50,
+    "isDefaultRealtime": false
+  },
+  {
+    "catalogId": "phi-4",
+    "deploymentName": "phi-4",
+    "modelName": "Phi-4",
+    "_comment": "Rick's #118 review item 2: version 1 does not exist in eastus2 -- verified read-only, versions 2-7 are listed (GlobalStandard, chatCompletion only -- no assistants/agentsV2, which is why review item 4 requires live tool-calling qualification in #87 before this is selectable by any persona). 7 is the newest listed version. Capacity 20 per review item 3; quota check showed AIServices.GlobalStandard.Phi-4 at 0/1000 used.",
+    "modelVersion": "7",
+    "format": "Microsoft",
+    "skuName": "GlobalStandard",
+    "capacity": 20,
+    "isDefaultRealtime": false
+  },
+  {
+    "catalogId": "gpt-4o-transcribe",
+    "deploymentName": "gpt-4o-transcribe",
+    "modelName": "gpt-4o-transcribe",
+    "_comment": "Rick's #118 review item 2: 2025-03-20 confirmed listed in eastus2 (GlobalStandard, audioTranscriptions). Capacity 10 per review item 3; quota check showed OpenAI.GlobalStandard.gpt-4o-transcribe at 0/400 used.",
+    "modelVersion": "2025-03-20",
+    "format": "OpenAI",
+    "skuName": "GlobalStandard",
+    "capacity": 10,
+    "isDefaultRealtime": false
+  },
+  {
+    "catalogId": "gpt-4o-mini-tts",
+    "deploymentName": "gpt-4o-mini-tts",
+    "modelName": "gpt-4o-mini-tts",
+    "_comment": "Rick's #118 review item 2: 2025-03-20 confirmed listed in eastus2 (GlobalStandard, audioSpeech); 2025-12-15 is also listed and may be preferred once Unity's live voice-quality check (#87) passes, but that check needs a deployed resource this offline revision doesn't have -- keeping the already-verified 2025-03-20 for now. Capacity 10 per review item 3; quota check showed OpenAI.GlobalStandard.gpt-4o-mini-tts at 0/600 used.",
+    "modelVersion": "2025-03-20",
+    "format": "OpenAI",
+    "skuName": "GlobalStandard",
+    "capacity": 10,
+    "isDefaultRealtime": false
   }
 ]

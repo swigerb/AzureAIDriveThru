@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net.WebSockets;
 using System.Runtime.ExceptionServices;
 using System.Text.Json;
@@ -298,6 +299,91 @@ public sealed class FakeRealtimeUpstreamServer : IAsyncDisposable
     public string? ExpectedApiKey { get; set; }
 
     /// <summary>
+    /// Issue #82: bearer token cascade's own STT/TTS calls must present on
+    /// `/openai/v1/audio/transcriptions` and `/openai/v1/audio/speech` below. These two routes
+    /// live on THIS fake (not a separate one) because the cascade pipeline's design deliberately
+    /// reuses the SAME `AZURE_OPENAI_EASTUS2_ENDPOINT` account/base URI the realtime pipeline
+    /// already points at (see `app.py`'s `audio_endpoint=llm_endpoint` and
+    /// `infra/main.bicep`'s single `AIServices`-kind account) -- a genuinely separate fake process
+    /// would misrepresent the actual deployed topology. Checked independently of
+    /// <see cref="RequireApiKey"/>/<see cref="ExpectedApiKey"/> above, which gate only the
+    /// WebSocket `api-key` header realtime sends -- cascade never sends `api-key` at all, only
+    /// `Authorization: Bearer &lt;token&gt;` (DefaultAzureCredential, or the conformance harness's
+    /// own fake credential -- see `conformance_hooks.py`'s `cascade_credential()`). Null (the
+    /// default) disables the check entirely, same convention as <see cref="ExpectedApiKey"/>.
+    /// </summary>
+    public string? ExpectedCascadeBearerToken { get; set; }
+
+    /// <summary>The transcript text the NEXT `/openai/v1/audio/transcriptions` call returns.
+    /// Defaults to a harmless canned sentence; a cascade scenario that needs specific guest
+    /// speech to drive tool calling sets this before triggering that turn.</summary>
+    public string NextTranscript { get; set; } = "I would like to order, please.";
+
+    /// <summary>The raw bytes the NEXT `/openai/v1/audio/speech` call returns as its response
+    /// body. Defaults to a short, arbitrary-but-valid byte sequence -- a cascade scenario that
+    /// only asserts *some* audio streamed back (not its exact content) never needs to set this.</summary>
+    public byte[] NextTtsAudio { get; set; } = [1, 2, 3, 4];
+
+    /// <summary>Every `/openai/v1/audio/transcriptions` request's own `model` form field, in
+    /// arrival order -- lets a test assert cascade's transcription deployment name reached this
+    /// fake, the same way <see cref="FakeRealtimeConnection.ModelQueryParam"/> proves it for the
+    /// realtime WS `?model=`.</summary>
+    public IReadOnlyList<string> TranscriptionRequestModels => [.. _transcriptionRequestModels];
+    private readonly ConcurrentQueue<string> _transcriptionRequestModels = new();
+
+    /// <summary>Every `/openai/v1/audio/speech` request's own `model` field, in arrival order.</summary>
+    public IReadOnlyList<string> TtsRequestModels => [.. _ttsRequestModels];
+    private readonly ConcurrentQueue<string> _ttsRequestModels = new();
+
+    /// <summary>Every `/openai/v1/audio/speech` request's own `input` (the text TTS'd), in
+    /// arrival order -- lets a test assert the cascade final answer text actually reached TTS.</summary>
+    public IReadOnlyList<string> TtsRequestInputs => [.. _ttsRequestInputs];
+    private readonly ConcurrentQueue<string> _ttsRequestInputs = new();
+
+    private bool CheckCascadeBearerToken(HttpContext context)
+    {
+        if (ExpectedCascadeBearerToken is null)
+        {
+            return true;
+        }
+        var header = context.Request.Headers.Authorization.ToString();
+        return string.Equals(header, $"Bearer {ExpectedCascadeBearerToken}", StringComparison.Ordinal);
+    }
+
+    private async Task HandleTranscriptionAsync(HttpContext context)
+    {
+        if (!CheckCascadeBearerToken(context))
+        {
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            return;
+        }
+
+        var form = await context.Request.ReadFormAsync().ConfigureAwait(false);
+        _transcriptionRequestModels.Enqueue(form["model"].ToString());
+
+        context.Response.ContentType = "application/json";
+        await context.Response.WriteAsync(
+            new JsonObject { ["text"] = NextTranscript }.ToJsonString()).ConfigureAwait(false);
+    }
+
+    private async Task HandleSpeechAsync(HttpContext context)
+    {
+        if (!CheckCascadeBearerToken(context))
+        {
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            return;
+        }
+
+        using var document = await JsonDocument.ParseAsync(context.Request.Body).ConfigureAwait(false);
+        var root = document.RootElement;
+        _ttsRequestModels.Enqueue(root.TryGetProperty("model", out var modelProp) ? modelProp.GetString() ?? "" : "");
+        _ttsRequestInputs.Enqueue(root.TryGetProperty("input", out var inputProp) ? inputProp.GetString() ?? "" : "");
+
+        context.Response.ContentType = "application/octet-stream";
+        await context.Response.Body.WriteAsync(NextTtsAudio).ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// Waits for the next upstream connection accepted after this call — not one already open —
     /// so tests can assert on a specific connection's own <see cref="FakeRealtimeConnection.ReceivedFrames"/>
     /// instead of a server-wide log that every past and future connection shares.
@@ -376,6 +462,11 @@ public sealed class FakeRealtimeUpstreamServer : IAsyncDisposable
         app.UseWebSockets();
         app.MapGet("/", () => Results.Ok());
         app.Map("/openai/v1/realtime", HandleConnectionAsync);
+        // Issue #82: cascade's STT/TTS reuse this same fake's base URI -- see
+        // ExpectedCascadeBearerToken's own doc comment above for why these two routes live here
+        // instead of on a separate fake process.
+        app.MapPost("/openai/v1/audio/transcriptions", HandleTranscriptionAsync);
+        app.MapPost("/openai/v1/audio/speech", HandleSpeechAsync);
 
         await app.StartAsync(cancellationToken).ConfigureAwait(false);
         _app = app;
