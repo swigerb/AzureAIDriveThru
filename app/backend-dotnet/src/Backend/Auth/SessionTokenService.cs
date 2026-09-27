@@ -44,9 +44,15 @@ public sealed class SessionTokenService(byte[] secret)
         var payloadB64 = token[..lastDot];
         var signature = token[(lastDot + 1)..];
 
+        // PR #96 review nit: Python's hmac.compare_digest(sig, expected_sig) is a plain
+        // case-sensitive byte comparison against hexdigest()'s always-lowercase output, so an
+        // uppercase-hex signature never matches there. Comparing the presented signature
+        // as-is (no .ToLowerInvariant()) against our always-lowercase expectedSignature mirrors
+        // that exactly -- a previous draft lowercased the presented signature first, which
+        // accepted uppercase hex that Python rejects.
         var expectedSignature = Sign(payloadB64);
         if (!CryptographicOperations.FixedTimeEquals(
-                Encoding.ASCII.GetBytes(signature.ToLowerInvariant()),
+                Encoding.ASCII.GetBytes(signature),
                 Encoding.ASCII.GetBytes(expectedSignature)))
         {
             return false;

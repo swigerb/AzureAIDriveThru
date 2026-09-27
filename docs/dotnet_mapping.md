@@ -6,9 +6,10 @@ change to one backend has an obvious place to look for its counterpart in the ot
 deliberately deferred or reduced in the C# port is written down instead of discovered by surprise.
 
 Wave 2 (issue #12) builds the C# **skeleton**: host, config loading, persona pack loading, health,
-the auth token endpoint, static file serving, and one event loop per session. It does **not** wire
-up the realtime relay, order state machine, search grounding, or per-session persona/model
-selection -- those are later waves (#13+, #74/#75 for wave 7's persona/model binding).
+the auth token endpoint, a `/realtime` pre-upgrade auth gate (Origin + optional session-token
+validation), static file serving, and one event loop per session. It does **not** wire up the
+realtime relay, order state machine, search grounding, or per-session persona/model selection --
+those are later waves (#13+, #74/#75 for wave 7's persona/model binding).
 
 ## Module mapping
 
@@ -21,8 +22,11 @@ selection -- those are later waves (#13+, #74/#75 for wave 7's persona/model bin
 | `config_loader.py` | `Configuration/AppConfig.cs` | Both backends load the SAME `app/backend/config.yaml` (not duplicated). Exposes the raw parsed sections (`IReadOnlyDictionary<string, object?>`) rather than a fully strongly-typed model of every field -- later waves can bind specific sections (`audio`, `business_rules`, ...) as they need them. |
 | (none yet -- design doc section 7, Python's own #75, still open) | `Models/ModelCatalog.cs` | See "Known ambiguity: `models.catalog`" below. |
 | `prompt_loader.py` | `Prompts/PromptLoader.cs` | Loads/validates `system_prompt.yaml`, `greeting.yaml`, `tool_schemas.yaml`, `error_messages.yaml`, `hints.yaml` for one persona. See "Deliberate scope reductions" below for what's excluded. |
-| `rtmt.py`'s `create_hmac_token` / `validate_hmac_token` | `Auth/SessionTokenService.cs` | Byte-for-byte compatible: same payload JSON spacing (`{"exp": N}`), same URL-safe base64 (padding kept), same HMAC-SHA256-as-lowercase-hex signature, same "split on the last `.`" framing, constant-time signature comparison. See spike #44. |
+| `rtmt.py`'s `create_hmac_token` / `validate_hmac_token` | `Auth/SessionTokenService.cs` | Byte-for-byte compatible: same payload JSON spacing (`{"exp": N}`), same URL-safe base64 (padding kept), same HMAC-SHA256-as-lowercase-hex signature, same "split on the last `.`" framing, constant-time signature comparison. See spike #44. PR #96 review nit: an earlier draft lowercased the *presented* signature before comparing, silently accepting uppercase hex that Python's `hmac.compare_digest` rejects -- fixed, covered by `Validate_RejectsUppercaseSignature`. |
 | `app.py`'s `load_app_secret()` | `Auth/AppSecretProvider.cs` | Reads `APP_SESSION_SECRET`; warns if short; generates a random 32-byte secret if unset (warning only when running in production). |
+| `config.yaml`'s `security` section (rtmt.py's module-level `_security_cfg`) | `Configuration/SecurityConfig.cs` | Typed, tolerant view of `security.allowed_origins` (list, default `[]`) and `security.require_session_token` (bool, default `false`) -- handles the YamlDotNet string-scalar gotcha below the same way `PromptLoader.ParsePriority` does. |
+| `rtmt.py`'s `_origin_matches_host` | `Realtime/OriginValidator.cs` | Exact, case-insensitive authority match only (never a suffix/substring match) -- mirrors `urllib.parse.urlsplit(origin).netloc` comparison semantics via `Uri.Authority`. |
+| `rtmt.py`'s `_websocket_handler`'s pre-upgrade Origin + token checks ("Task 3"/"Task 4") | `Realtime/RealtimeAuthGate.cs` | PR #96 review, required item 1 -- see "`/realtime` auth enforcement (PR #96)" below for the full decision record. |
 | (module-level `_startup_checks` dict + `/health` handler) | `Health/StartupChecks.cs`, `Health/HealthEndpoint.cs` | Same JSON shape: `{status, version, checks, personas}`, 200 if every check passed else 503. |
 | (aiohttp route table's WebSocket handler + per-session state) | `Sessions/SessionActor.cs`, `Sessions/SessionRegistry.cs`, `Sessions/IPipelineProcessor.cs` | One `Channel<SessionEvent>`-backed sequential event loop per session (issue #12's "one event loop per session"), held in a shared `SessionRegistry`. `IPipelineProcessor` is an explicit, currently-unbound seam for wave 7's persona/model-specific pipeline -- the skeleton proves the actor/registry mechanics without any relay logic. |
 | (repo-relative path resolution, implicit via `os.path` calls) | `RepoRootLocator.cs` | Walks up from the running assembly looking for a directory containing both `personas/` and `azure.yaml`. A dev/CI convenience only -- production containers are expected to set `PERSONAS_DIR`, `CONFIG_PATH`, and `STATIC_FILES_DIR` explicitly. |
@@ -45,6 +49,43 @@ selection -- those are later waves (#13+, #74/#75 for wave 7's persona/model bin
   wave 7 (#74/#75), not this wave. `PersonaCatalog.DefaultPersonaId` and `PromptLoader` are wired
   up for the *default* persona only; `/realtime` and `SessionActor` do not yet know how to bind a
   session to a specific persona or model pipeline.
+- **`/api/personas` is not mapped this wave** (PR #96 review, required item 2). An earlier draft
+  mapped it with the shape `{personas: [ids], defaultPersona, models}`, which diverges from the
+  wire contract pinned in `docs/persona-architecture.md` section 5.2:
+  `{default, personas: [{id, displayName, logoUrl, theme}], backends}`. Python defines this
+  endpoint first (#74) and conformance will pin its exact shape there; this backend maps it in the
+  persona-binding half of #12 (or whenever #74 lands) rather than shipping a second, divergent
+  contract in the meantime. `Models/ModelCatalog.cs` is left in place, unwired -- it is still the
+  right home for wave 7's model-catalog binding once #75 settles the ambiguity below.
+
+## `/realtime` auth enforcement (PR #96)
+
+PR #96's first draft accepted any WebSocket unconditionally. Rick's review (required item 1)
+required either enforcing Python's pre-upgrade Origin + HMAC-token checks with the same rejection
+statuses, or leaving `/realtime` unmapped until #13.
+
+**Chosen: enforce both** (`Realtime/RealtimeAuthGate.cs`, wired into `Program.cs`'s `/realtime`
+handler before `AcceptWebSocketAsync`). Rationale:
+
+- **Origin check** -- unconditional in Python (`_origin_matches_host` against the Host header,
+  plus an `allowed_origins` allow-list; 403 "Origin not allowed" on mismatch). The conformance
+  suite already has real, over-the-wire scenarios for this
+  (`Scenarios/Http/OriginValidationTests.cs` and `Scenarios/Security/OriginValidationTests.cs`),
+  which run against whichever backend `CONFORMANCE_BACKEND` selects with no dotnet-specific
+  filter -- so dotnet parity is provable today, not just plausible.
+- **Session-token check** -- gated in Python by `config.yaml`'s `security.require_session_token`
+  (default `false`); when enabled, an invalid/missing HMAC token gets 401 "Invalid or expired
+  token". No conformance scenario currently flips `require_session_token=true` (neither
+  `BackendEnvironment.cs` nor `DotnetBackendEnvironment.cs` override it), so this half is not
+  independently provable over the wire yet. It's ported anyway, rather than skipped, because: (a)
+  `SessionTokenService` already exists, so this is genuinely "a few lines" per Rick's review; (b)
+  the config-gated behavior defaults to a no-op identical to Python's default, so it changes no
+  observable behavior for any scenario that runs today; and (c) implementing the *same*
+  config-gated logic Python has isn't new/unproven behavior, it's mirroring -- the alternative
+  (enforcing Origin only) would leave the two backends' `/realtime` route with different auth
+  *shapes*, not just different current defaults. `Realtime/RealtimeAuthGateTests.cs` unit-tests
+  both branches directly (pure-function style, matching `Health/HealthEndpointTests.cs`); only
+  the Origin half is additionally proven over the wire by conformance this wave.
 
 ## Known ambiguity: `models.catalog`
 
@@ -82,6 +123,9 @@ should be revisited to match it exactly and this ambiguity note removed.
   actually enforces the fail-fast guarantee. (First draft of `StartupChecks` omitted this key
   entirely, which `Scenarios/Http/HealthEndpointExtendedTests.cs` caught once
   `DotnetBackendLauncher` existed to run it for real.)
+- **Default port** (PR #96 review nit) -- an earlier draft defaulted `PORT` to `8765`; Python's
+  `app.py` defaults to `int(os.environ.get("PORT", 8000))`. Aligned to `8000` so the two backends
+  behave identically when `PORT` is unset (both still fully overridable via the `PORT` env var).
 
 ## Build/test conventions
 
@@ -133,19 +177,33 @@ See the comments left on those issues directly for this wave's position. Summary
 - `DotnetBackendLauncher` (`tests/conformance/src/Conformance.Harness/DotnetBackendLauncher.cs`,
   implementing `IBackendUnderTest`) -- added this wave, wired into `BackendLauncherFactory`'s
   `CONFORMANCE_BACKEND=dotnet` branch (replacing the old always-throw placeholder). Run locally
-  with `CONFORMANCE_BACKEND=dotnet dotnet test Conformance.slnx --filter "FullyQualifiedName~HealthEndpoint|FullyQualifiedName~AuthSession|FullyQualifiedName~StaticIndexHtml"`
+  with `CONFORMANCE_BACKEND=dotnet dotnet test Conformance.slnx --filter "(FullyQualifiedName~HealthEndpoint|FullyQualifiedName~AuthSession|FullyQualifiedName~StaticIndexHtml|FullyQualifiedName~OriginValidationTests)&FullyQualifiedName!~Security.OriginValidationTests.Exact_origin_is_accepted"`
   (repo root needs a built frontend at `app/backend/static` -- `npm run build` in `app/frontend`
-  -- for the static-file scenario). **6/6 passing** against the real C# skeleton today:
+  -- for the static-file scenario). **11/11 passing** against the real C# skeleton today (up from
+  6/6 before PR #96's revision):
   `HealthEndpointTests.Health_endpoint_returns_200`,
   `HealthEndpointExtendedTests.Health_endpoint_reports_version_and_per_check_breakdown`,
   `StaticIndexHtmlTests.Root_route_serves_index_html_with_cache_control_no_cache`,
-  `AuthSessionTests.Auth_session_endpoint_returns_a_token`, and both
-  `AuthSessionTokenFormatTests` cases. Not run: the rest of the ~458-scenario suite (realtime
-  bootstrap/relay, session resume, ordering, rate-limiting, browser) -- all of that needs real
-  relay/pipeline logic that does not exist until a later wave (#13+). This factory change does
-  NOT add `dotnet` to the CI matrix (`.github/workflows/conformance.yml`) -- that axis's owner is
-  separate per the wave plan; CI still runs `CONFORMANCE_BACKEND=python` only, and
-  `DotnetPlaceholderPolicy`/its tests are left in place unchanged for whoever wires that leg in.
+  `AuthSessionTests.Auth_session_endpoint_returns_a_token`, both
+  `AuthSessionTokenFormatTests` cases, all 3 of `Scenarios/Http/OriginValidationTests.cs`
+  (`Exact_host_origin_is_accepted`, `Unrelated_foreign_origin_is_rejected_with_403`,
+  `Lookalike_suffix_origin_is_rejected`), and 2 of 3 in
+  `Scenarios/Security/OriginValidationTests.cs`
+  (`Lookalike_suffix_origin_is_rejected_with_403`, `Missing_origin_is_accepted_unchanged`) -- these
+  6 Origin scenarios are the over-the-wire proof backing the "`/realtime` auth enforcement" section
+  above. **Deliberately excluded**:
+  `Scenarios/Security/OriginValidationTests.Exact_origin_is_accepted`, which additionally asserts a
+  `session.created` protocol frame arrives after the handshake -- that requires a real
+  session/protocol pipeline, which is explicitly out of scope this wave (`SessionActor` doesn't
+  route to any pipeline yet; wave 3+, #13) and is not part of what Rick's review asked this
+  revision to prove. Not run: the rest of the ~458-scenario suite (realtime relay, session resume,
+  ordering, rate-limiting, browser) -- all of that needs real relay/pipeline logic that does not
+  exist until a later wave (#13+). This factory change does NOT add `dotnet` to the CI
+  `conformance` matrix (`.github/workflows/conformance.yml`) -- that axis's owner is separate
+  (#76) per the wave plan; CI's `conformance` job still runs `CONFORMANCE_BACKEND=python` only,
+  and `DotnetPlaceholderPolicy`/its tests are left in place unchanged for whoever wires that leg
+  in. (PR #96's required item 3 instead added a separate, additive `dotnet-tests` job that runs
+  only `app/backend-dotnet`'s own xUnit suite -- it does not touch this conformance matrix.)
 - A richer `Models/ModelCatalog.cs` shape (display name, pipeline, deployment mapping) once #75
   defines what `models.catalog` actually looks like in Python.
 - Session-level persona/model binding (`SessionActor`/`/realtime` accepting a `?persona=`/`?model=`

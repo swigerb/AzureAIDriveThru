@@ -88,4 +88,20 @@ public sealed class SessionTokenServiceTests
 
         Assert.Matches(@"^\{""exp"": \d+\}$", payloadJson);
     }
+
+    [Fact]
+    public void Validate_RejectsUppercaseSignature()
+    {
+        // PR #96 review nit: Python's hmac.compare_digest compares the presented signature
+        // byte-for-byte against hexdigest()'s always-lowercase output, so an otherwise-correct
+        // signature re-cased to uppercase must be rejected, not silently accepted. A previous
+        // draft called .ToLowerInvariant() on the presented signature before comparing, which
+        // broke this parity.
+        var service = new SessionTokenService(Secret);
+        var token = service.Create();
+        var lastDot = token.LastIndexOf('.');
+        var uppercased = token[..(lastDot + 1)] + token[(lastDot + 1)..].ToUpperInvariant();
+
+        Assert.False(service.Validate(uppercased));
+    }
 }
