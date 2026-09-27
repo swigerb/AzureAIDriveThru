@@ -99,26 +99,26 @@ param embeddingDeploymentCapacity int
 // --- Persona picker (ADR-001, docs/persona-architecture.md section 10) ---
 // This environment is independent of the old demo resource groups (see
 // docs/persona-architecture.md section 10 for the full list): its own
-// Foundry (Azure OpenAI) account, its own paid AI Search service, one index
-// per persona. Adding another persona is a parameter change here plus a
-// personas/<id>/ pack (#70) -- no other Bicep edits. The tracked default
-// below only lists the persona ids that are safe to spell out in committed
-// source ahead of #76 (which inverts test_rebrand_verification.py's
-// pre-persona-pack brand guard); the full persona list for a real
-// environment -- see docs/persona-architecture.md section 10 for the
-// complete roster -- is supplied via `azd env set PERSONAS=...` /
-// personaSearchIndexNamesJson at provision time (not committed to git).
-@description('Allow-list of persona ids served by this environment, comma-separated (matches the app PERSONAS env var). Each id needs a personas/<id>/ pack (#70, #78, #79) and an entry in personaSearchIndexNamesJson before the app can actually serve it. Override at provision time (azd env set PERSONAS=...) for the environment\'s full persona roster.')
-param personas string = 'sonic,mcdonalds'
+// Foundry (Azure OpenAI) account, its own paid AI Search service. Adding
+// another persona is a personas/<id>/ pack (#70) -- no Bicep edits. Index
+// names are NOT tracked here: each pack's own persona.json `search.indexName`
+// (4.2) is the one source of truth, read by the #84 ingestion hook and by
+// the app itself. The tracked default for `personas` is empty on purpose
+// (Rick's review of #93): an empty PERSONAS env var makes the app's own
+// loader (app/backend/persona_loader.py, PersonaCatalog.load) enable every
+// pack it finds under PERSONAS_DIR, so no brand name needs to sit in
+// committed infra ahead of #76 (which inverts test_rebrand_verification.py's
+// pre-persona-pack brand guard) and no later flip is needed when a new
+// brand's pack (#79) lands. Override at provision time (azd env set
+// PERSONAS=...) only to restrict this environment to a subset of packs.
+@description('Allow-list of persona ids served by this environment, comma-separated (matches the app PERSONAS env var). Empty (the tracked default) means "every persona pack found under PERSONAS_DIR" -- app/backend/persona_loader.py discovers them automatically. Override at provision time (azd env set PERSONAS=...) only to restrict this environment to a subset of packs.')
+param personas string = ''
 
-@description('Default persona id when a session omits ?persona= (app DEFAULT_PERSONA env var). Should be one of the comma-separated ids in personas.')
+@description('Default persona id when a session omits ?persona= (app DEFAULT_PERSONA env var). Should be one of the comma-separated ids in personas, or left to the app default (sonic) when personas is empty.')
 param defaultPersona string = 'sonic'
 
-@description('JSON object mapping persona id to its AI Search index name on this environment\'s own Search service (10.2). The postprovision ingestion hook (#84) creates/updates one index per entry. Surfaced to the app as the AZURE_SEARCH_INDEXES env var. Override at provision time for the environment\'s full persona roster (see the personas param description).')
-param personaSearchIndexNamesJson string = '{"sonic":"sonic-menu-items","mcdonalds":"mcdonalds-menu-items"}'
-
-@description('JSON array of Foundry/Azure OpenAI model deployments to create on this environment\'s own account (section 7.2, 10.3). Each entry: catalogId (matches app/backend/config.yaml models.catalog), deploymentName, modelName, modelVersion, skuName, capacity, isDefaultRealtime (exactly one entry should be true -- it becomes AZURE_OPENAI_REALTIME_DEPLOYMENT). realtimeDeploymentCapacity/embeddingDeploymentCapacity above still override the matching entries by catalogId, so the existing "bump a param, azd provision" scaling flow (10.3) keeps working. Only the two models already qualified for this repo ship by default; the alternative realtime model and the cascade chat/transcription/TTS models (#75, #82) are added the same way once Unity fixes the real catalog -- no Bicep changes needed to add a model, only a new array entry.')
-param openAiModelDeploymentsJson string = '[{"catalogId":"gpt-realtime-2.1","deploymentName":"gpt-realtime-2.1","modelName":"gpt-realtime-2.1","modelVersion":"2026-07-07","skuName":"GlobalStandard","capacity":10,"isDefaultRealtime":true},{"catalogId":"text-embedding-3-large","deploymentName":"text-embedding-3-large","modelName":"text-embedding-3-large","modelVersion":"1","skuName":"Standard","capacity":30,"isDefaultRealtime":false}]'
+@description('JSON array of Foundry/Azure OpenAI model deployments to create on this environment\'s own account (section 7.2, 10.3). Each entry: catalogId (matches app/backend/config.yaml models.catalog), deploymentName, modelName, modelVersion, format (Foundry model-format id, defaults to OpenAI), skuName, capacity, isDefaultRealtime (exactly one entry should be true -- it becomes AZURE_OPENAI_REALTIME_DEPLOYMENT). realtimeDeploymentCapacity/embeddingDeploymentCapacity above still override the matching entries by catalogId, so the existing "bump a param, azd provision" scaling flow (10.3) keeps working. The tracked list lives in infra/model-deployments.json (Rick\'s review of #93): adding a #82 model is one JSON entry there, no Bicep edits.')
+param openAiModelDeploymentsData array = loadJsonContent('model-deployments.json')
 
 // --- C# backend (section 10.1 option A, 10.2; added by S7, #17) ---
 // The module is always present so #17 only has to flip this flag, but it
@@ -294,17 +294,11 @@ module acaBackend 'core/host/container-app-upsert.bicep' = {
       // Free SKU has no semantic ranker; the app must not request one or every
       // query returns HTTP 400.
       AZURE_SEARCH_SEMANTIC_RANKER: actualSearchServiceSemanticRankerLevel
-      // One index per persona (10.2), keyed by persona id; #84's ingestion hook
-      // creates/updates each one on this environment's own Search service.
-      AZURE_SEARCH_INDEXES: string(personaSearchIndexNames)
       AZURE_OPENAI_EASTUS2_ENDPOINT: resolvedOpenAiEndpoint
       AZURE_OPENAI_REALTIME_DEPLOYMENT: reuseExistingOpenAi ? openAiRealtimeDeployment : defaultRealtimeDeployment.deploymentName
       AZURE_OPENAI_REALTIME_VOICE_CHOICE: openAiRealtimeVoiceChoice
       // Catalog id -> deployment name for every model this environment created (7.2).
       AZURE_AI_MODEL_DEPLOYMENTS: string(modelDeploymentsMap)
-      // Persona allow-list and default (4.2, 10.2). PERSONAS is the app's own
-      // parsing of this comma list; kept as one string here to match it exactly.
-      PERSONAS: personas
       DEFAULT_PERSONA: defaultPersona
       RUNNING_IN_PRODUCTION: 'true'
       // Changing a secret alone does not restart running replicas; a changed
@@ -314,6 +308,11 @@ module acaBackend 'core/host/container-app-upsert.bicep' = {
       // For using managed identity to access Azure resources. See https://github.com/microsoft/azure-container-apps/issues/442
       AZURE_CLIENT_ID: acaIdentity.outputs.clientId
     },
+    // Persona allow-list (4.2, 10.2): omit PERSONAS entirely when empty (the
+    // tracked default) so app/backend/persona_loader.py's own "no PERSONAS ->
+    // enable every pack found under PERSONAS_DIR" behavior applies, instead of
+    // the app seeing an explicit empty string (Rick's review of #93).
+    empty(personas) ? {} : { PERSONAS: personas },
     // Optional overrides of model.reasoning_effort / reasoning_model / transcription_model
     // in app/backend/config.yaml; unset means the config.yaml value applies.
     empty(openAiRealtimeReasoningEffort) ? {} : { AZURE_OPENAI_REALTIME_REASONING_EFFORT: openAiRealtimeReasoningEffort },
@@ -356,7 +355,7 @@ module acaBackendDotnet 'core/host/container-app-upsert.bicep' = if (deployDotne
     stickySessionsAffinity: 'sticky'
     // Same Foundry account, Search service and persona/model config as the
     // Python app (10.2). EasyAuth for this app arrives with #17.
-    env: {
+    env: union({
       AZURE_SEARCH_ENDPOINT: resolvedSearchEndpoint
       AZURE_SEARCH_INDEX: searchIndexName
       AZURE_SEARCH_SEMANTIC_CONFIGURATION: searchSemanticConfiguration
@@ -366,16 +365,16 @@ module acaBackendDotnet 'core/host/container-app-upsert.bicep' = if (deployDotne
       AZURE_SEARCH_EMBEDDING_FIELD: searchEmbeddingField
       AZURE_SEARCH_USE_VECTOR_QUERY: searchUseVectorQuery
       AZURE_SEARCH_SEMANTIC_RANKER: actualSearchServiceSemanticRankerLevel
-      AZURE_SEARCH_INDEXES: string(personaSearchIndexNames)
       AZURE_OPENAI_EASTUS2_ENDPOINT: resolvedOpenAiEndpoint
       AZURE_OPENAI_REALTIME_DEPLOYMENT: reuseExistingOpenAi ? openAiRealtimeDeployment : defaultRealtimeDeployment.deploymentName
       AZURE_OPENAI_REALTIME_VOICE_CHOICE: openAiRealtimeVoiceChoice
       AZURE_AI_MODEL_DEPLOYMENTS: string(modelDeploymentsMap)
-      PERSONAS: personas
       DEFAULT_PERSONA: defaultPersona
       RUNNING_IN_PRODUCTION: 'true'
       AZURE_CLIENT_ID: acaIdentity.outputs.clientId
-    }
+    },
+    // Same "omit when empty" persona behavior as the Python app's env, above.
+    empty(personas) ? {} : { PERSONAS: personas })
   }
 }
 
@@ -384,21 +383,31 @@ var embedModel = 'text-embedding-3-large'
 // Computed once so both container apps (and the outputs below) reference the
 // same value instead of repeating the reuseExisting ternary at every call site.
 var resolvedSearchEndpoint = reuseExistingSearch ? searchEndpoint : 'https://${searchService.outputs.name}.search.windows.net'
-var resolvedOpenAiEndpoint = reuseExistingOpenAi ? openAiEndpoint : openAi.outputs.endpoint
+// The AVM cognitive-services/account module's generic `endpoint` output
+// (cognitiveService.properties.endpoint) is the multi-service Foundry
+// endpoint for an `AIServices`-kind account, not the OpenAI-compatible host.
+// The realtime relay (rtmt.py) needs the `<subdomain>.openai.azure.com` host
+// specifically (Rick's review of #93; confirmed against the Foundry realtime
+// docs, which show `https://{your-resource}.openai.azure.com` regardless of
+// account kind) -- built explicitly from the same customSubDomainName passed
+// to the module below, instead of trusting the module's generic output.
+var openAiCustomSubDomainName = !empty(openAiServiceName)
+  ? openAiServiceName
+  : '${abbrs.cognitiveServicesAccounts}${resourceToken}'
+var resolvedOpenAiEndpoint = reuseExistingOpenAi ? openAiEndpoint : 'https://${openAiCustomSubDomainName}.openai.azure.com'
 
-// Parsed persona config (section 10.2)
-var personaSearchIndexNames = json(personaSearchIndexNamesJson)
-
-// The model deployment list (10.3) with the two existing scale-only params
-// (realtimeDeploymentCapacity, embeddingDeploymentCapacity) still overriding
-// their matching entries by catalogId, so "bump a param, azd provision" keeps
-// working for the two knobs the design calls out even though the list itself
-// is now data, not hardcoded Bicep.
+// The model deployment list (10.3, tracked in infra/model-deployments.json --
+// Rick's review of #93: adding a #82 model is one JSON entry there, no Bicep
+// edits) with the two existing scale-only params (realtimeDeploymentCapacity,
+// embeddingDeploymentCapacity) still overriding their matching entries by
+// catalogId, so "bump a param, azd provision" keeps working for the two
+// knobs the design calls out even though the list itself is data, not
+// hardcoded Bicep.
 var capacityOverridesByCatalogId = {
   'gpt-realtime-2.1': realtimeDeploymentCapacity
   '${embedModel}': embeddingDeploymentCapacity
 }
-var openAiModelDeployments = [for d in json(openAiModelDeploymentsJson): union(d, {
+var openAiModelDeployments = [for d in openAiModelDeploymentsData: union(d, {
   capacity: capacityOverridesByCatalogId[?d.catalogId] ?? d.capacity
 })]
 // Exactly one entry should be isDefaultRealtime: true -- it feeds
@@ -413,7 +422,10 @@ var modelDeploymentsMap = reduce(openAiModelDeployments, {}, (cur, d) => union(c
 var openAiDeployments = [for d in openAiModelDeployments: {
   name: d.deploymentName
   model: {
-    format: 'OpenAI'
+    // Per-model Foundry format id (Rick's review of #93), defaulting to
+    // OpenAI so an entry that omits it (or an older cached parameter file)
+    // still deploys exactly as before.
+    format: d.?format ?? 'OpenAI'
     name: d.modelName
     version: d.modelVersion
   }
@@ -430,10 +442,13 @@ module openAi 'br/public:avm/res/cognitive-services/account:0.8.0' = if (!reuseE
     name: !empty(openAiServiceName) ? openAiServiceName : '${abbrs.cognitiveServicesAccounts}${resourceToken}'
     location: openAiServiceLocation
     tags: tags
-    kind: 'OpenAI'
-    customSubDomainName: !empty(openAiServiceName)
-      ? openAiServiceName
-      : '${abbrs.cognitiveServicesAccounts}${resourceToken}'
+    // A Foundry (multi-service AI Services) account, not a plain OpenAI one
+    // (Rick's review of #93): #82's non-OpenAI Foundry chat models can only
+    // deploy on an `AIServices`-kind account, and `kind` is immutable after
+    // the first provision. The realtime host stays `<subdomain>.openai.azure.com`
+    // regardless (see resolvedOpenAiEndpoint above and openAiCustomSubDomainName).
+    kind: 'AIServices'
+    customSubDomainName: openAiCustomSubDomainName
     sku: 'S0'
     deployments: openAiDeployments
     disableLocalAuth: true
@@ -616,9 +631,6 @@ output AZURE_SEARCH_USE_VECTOR_QUERY bool = searchUseVectorQuery
 // semantic queries. On the free SKU this resolves to 'disabled', and sending
 // query_type="semantic" to a service without the ranker returns HTTP 400.
 output AZURE_SEARCH_SEMANTIC_RANKER string = actualSearchServiceSemanticRankerLevel
-// One index per persona (10.2), keyed by persona id -- JSON object so the app
-// and the #84 ingestion hook read the same shape as AZURE_AI_MODEL_DEPLOYMENTS.
-output AZURE_SEARCH_INDEXES string = string(personaSearchIndexNames)
 
 output AZURE_STORAGE_ENDPOINT string = 'https://${storage.outputs.name}.blob.core.windows.net'
 output AZURE_STORAGE_ACCOUNT string = storage.outputs.name

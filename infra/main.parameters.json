@@ -75,7 +75,7 @@
       "value": "${AZURE_SEARCH_SERVICE_LOCATION}"
     },
     "searchServiceSkuName": {
-      "value": "${AZURE_SEARCH_SERVICE_SKU=standard}"
+      "value": "${AZURE_SEARCH_SERVICE_SKU=basic}"
     },
     "searchServiceSemanticRankerLevel": {
       "value": "${AZURE_SEARCH_SEMANTIC_RANKER=free}"
@@ -99,7 +99,7 @@
       "value": "${AZURE_CONTAINER_APP_NAME}"
     },
     "realtimeDeploymentCapacity": {
-      "value": "${AZURE_OPENAI_REALTIME_DEPLOYMENT_CAPACITY=1}"
+      "value": "${AZURE_OPENAI_REALTIME_DEPLOYMENT_CAPACITY=10}"
     },
     "embeddingDeploymentCapacity": {
       "value": "${AZURE_OPENAI_EMB_DEPLOYMENT_CAPACITY=30}"
@@ -108,7 +108,7 @@
       "value": "${AZURE_OPENAI_EMB_DIMENSIONS}"
     },
     "personas": {
-      "value": "${PERSONAS=sonic,mcdonalds}"
+      "value": "${PERSONAS=}"
     },
     "defaultPersona": {
       "value": "${DEFAULT_PERSONA=sonic}"
