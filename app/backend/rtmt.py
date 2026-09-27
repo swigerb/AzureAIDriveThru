@@ -620,6 +620,16 @@ def _sanitize_voice(candidate: Any, allowed_voices: frozenset[str]) -> str | Non
 # frozen value, per #43.
 _VOICE_UNSET = object()
 
+# Sentinel default for the `system_message` keyword threaded through
+# `_build_session` and its two callers (#74, mirrors `_VOICE_UNSET` above).
+# `None` already means something for `self.system_message` ("send no
+# `instructions` field at all"), so a distinct sentinel marks "caller didn't
+# pass an override" and falls back to `self.system_message`, the pre-#74
+# single-persona behaviour every existing caller (production and tests)
+# still relies on. `_forward_messages` is the only caller that ever passes
+# an explicit override -- this session's own bound persona's system prompt.
+_SYSTEM_MESSAGE_UNSET = object()
+
 
 # Exact-match fast path for the browser's mic-audio frame (PR #49 review
 # round 2, "M1"). `_process_message_to_server`'s previous fast path used
@@ -1213,6 +1223,14 @@ class RTMiddleTier:
         self._prompt_loader = prompt_loader
         self._sessions = SessionManager(prompt_loader=prompt_loader)
         self.app_secret: bytes = b""  # set by app.py at startup
+        # #74: the enabled-persona catalog, set by app.py at startup. None (the default)
+        # preserves today's exact single-persona behavior -- `_websocket_handler` skips all
+        # persona resolution/404 logic entirely when this is unset, exactly like before #74.
+        self.persona_catalog = None
+        # #74: per-persona PromptLoader, keyed by persona id, set by app.py at startup
+        # alongside `persona_catalog`. Empty (the default) preserves today's single
+        # deployment-wide `self.system_message`/greeting behavior for every session.
+        self.persona_prompt_loaders: dict[str, Any] = {}
         # Flipped if the deployment rejects `reasoning` at runtime despite the
         # name check, so later sessions stop sending it.
         self._reasoning_rejected = False
@@ -1255,7 +1273,7 @@ class RTMiddleTier:
         """Whether `reasoning` will be sent upstream."""
         return normalize_reasoning_effort(self.reasoning_effort) is not None and self._reasoning_model()
 
-    def _build_session(self, session: dict, voice_locked: bool = False, voice: str | None = _VOICE_UNSET) -> dict:
+    def _build_session(self, session: dict, voice_locked: bool = False, voice: str | None = _VOICE_UNSET, system_message: str | None = _SYSTEM_MESSAGE_UNSET) -> dict:
         """Overlay the server-owned configuration onto a legacy-shaped session
         and translate it to the GA shape.
 
@@ -1268,9 +1286,16 @@ class RTMiddleTier:
         `voice`: the voice to apply, or omit for `self.voice_choice` (the
         config-level default) -- see `_VOICE_UNSET`. `_forward_messages`
         always passes this connection's own frozen voice explicitly (#43).
+
+        `system_message` (#74): the instructions to apply, or omit for
+        `self.system_message` (the deployment-wide default) -- see
+        `_SYSTEM_MESSAGE_UNSET`. `_forward_messages` passes this session's own
+        bound persona's system prompt explicitly, the same way it already
+        does for `voice`.
         """
-        if self.system_message is not None:
-            session["instructions"] = self.system_message
+        effective_system_message = self.system_message if system_message is _SYSTEM_MESSAGE_UNSET else system_message
+        if effective_system_message is not None:
+            session["instructions"] = effective_system_message
         if self.temperature is not None:
             session["temperature"] = self.temperature
         if self.max_tokens is not None:
@@ -1312,7 +1337,7 @@ class RTMiddleTier:
             logger.info("session.update: assistant audio already present — omitting voice so the update is not rejected")
         return ga_session
 
-    def build_bootstrap_session_update(self, event_id: str | None = None, voice: str | None = _VOICE_UNSET) -> str:
+    def build_bootstrap_session_update(self, event_id: str | None = None, voice: str | None = _VOICE_UNSET, system_message: str | None = _SYSTEM_MESSAGE_UNSET) -> str:
         """Serialise the session.update the middle tier sends as the very first
         frame on every upstream socket, before any browser traffic is relayed.
 
@@ -1322,17 +1347,17 @@ class RTMiddleTier:
         voice locks and every later session.update carrying our voice is
         rejected, so tools are never registered for that conversation.
         """
-        session = self._build_session(copy.deepcopy(_BOOTSTRAP_CLIENT_SESSION), voice=voice)
+        session = self._build_session(copy.deepcopy(_BOOTSTRAP_CLIENT_SESSION), voice=voice, system_message=system_message)
         return json.dumps({"type": "session.update", "event_id": event_id or _new_event_id("sonic_bootstrap"),
                            "session": session})
 
-    def build_fallback_session_update(self, event_id: str | None = None, voice: str | None = _VOICE_UNSET) -> str:
+    def build_fallback_session_update(self, event_id: str | None = None, voice: str | None = _VOICE_UNSET, system_message: str | None = _SYSTEM_MESSAGE_UNSET) -> str:
         """Serialise the minimal session.update sent when GA rejects one of ours.
 
         Only `type`, `instructions`, `tools` and `tool_choice` -- whatever field
         got the original rejected, the carhop keeps its tools and persona.
         """
-        full = self._build_session({}, voice_locked=True, voice=voice)
+        full = self._build_session({}, voice_locked=True, voice=voice, system_message=system_message)
         session = {key: full[key] for key in _FALLBACK_SESSION_KEYS if key in full}
         return json.dumps({"type": "session.update", "event_id": event_id or _new_event_id("sonic_fallback"),
                            "session": session})
@@ -1976,6 +2001,11 @@ class RTMiddleTier:
                 loop = asyncio.get_running_loop()
                 session_id = self._sessions.get_session_id(ws)
                 greeting_sent = self._sessions.has_sent_greeting(session_id) if session_id else False
+                # #74: this session's bound persona, resolved once. None for the default/
+                # single-persona deployment (no persona catalog configured), or for a session
+                # created before this connection resolved one -- either way, every lookup below
+                # falls back to the deployment-wide default, exactly like before #74.
+                persona_id = order_state_singleton.get_persona_id(session_id) if session_id else None
                 # Set once the model has produced audio on this upstream socket;
                 # from then on GA refuses voice changes (see _build_session).
                 assistant_audio_seen = False
@@ -2016,7 +2046,26 @@ class RTMiddleTier:
                 # guest's own choice back to the default. Every later use of
                 # "voice" in this coroutine (session.update rebuilding, echo)
                 # reads this local, never a shared field.
+                #
+                # #74: a session's bound persona's own default voice and system
+                # prompt override the deployment-wide defaults below, exactly
+                # once, the same way the config default seeds "voice" above --
+                # neither is ever reseeded from another guest's session. The
+                # persona's voice still goes through `_sanitize_voice` so a
+                # persona pack can never hand a guest a voice this deployment
+                # hasn't enabled (`model.allowed_voices`).
                 voice = self.voice_choice
+                system_message = self.system_message
+                if persona_id is not None:
+                    persona_prompt_loader = self.persona_prompt_loaders.get(persona_id)
+                    if persona_prompt_loader is not None:
+                        system_message = persona_prompt_loader.get_system_prompt()
+                    if self.persona_catalog is not None and persona_id in self.persona_catalog:
+                        persona_voice = _sanitize_voice(
+                            self.persona_catalog.get(persona_id).manifest.voice.default, self.allowed_voices
+                        )
+                        if persona_voice is not None:
+                            voice = persona_voice
 
                 _vlog(verbose, "\n═══ [SESSION] Connected ═══\n"
                                "Session ID: %s\n"
@@ -2025,7 +2074,9 @@ class RTMiddleTier:
                 # Configure the upstream session BEFORE relaying a single browser
                 # frame. Events are processed in order, so nothing the browser
                 # sends (mic audio included) can reach an unconfigured session.
-                await target_ws.send_str(guard.track(self.build_bootstrap_session_update(voice=voice)))
+                await target_ws.send_str(guard.track(
+                    self.build_bootstrap_session_update(voice=voice, system_message=system_message)
+                ))
                 logger.info("Upstream session bootstrapped with %d tools before relaying client traffic "
                             "(reasoning=%s, session=%s)", len(self.tools),
                             normalize_reasoning_effort(self.reasoning_effort) if self.reasoning_enabled() else "off",
@@ -2122,7 +2173,7 @@ class RTMiddleTier:
                         presented = json.loads(data).get("resume_id")
                     except (ValueError, AttributeError):
                         presented = None
-                    outcome = self._sessions.resume(ws, presented)
+                    outcome = self._sessions.resume(ws, presented, requested_persona_id=persona_id)
                     resume_decided.set()
                     if not outcome.accepted:
                         logger.info("Resume rejected (reason=%s, resume id %s); starting fresh session %s",
@@ -2549,9 +2600,29 @@ class RTMiddleTier:
             autoclose=True,
             compress=_WS_COMPRESS,
         )
+
+        # ── Persona binding (#74) ──
+        # `self.persona_catalog` is None for the default/single-persona
+        # deployment (no catalog configured) -- every request behaves
+        # exactly as before #74, `persona` stays None, and
+        # `create_session`/`_forward_messages` fall back to the
+        # deployment-wide defaults untouched. When a catalog IS configured,
+        # the persona is picked once, here, before the WebSocket upgrade
+        # (design doc 5.2): a missing `?persona=` uses `DEFAULT_PERSONA`, an
+        # unknown or disabled one gets a plain HTTP 404 -- never a silent
+        # fallback -- and it is fixed for the life of the session (no
+        # mid-conversation switching).
+        persona = None
+        if self.persona_catalog is not None:
+            requested_persona_id = request.query.get("persona") or self.persona_catalog.default_persona_id
+            if requested_persona_id not in self.persona_catalog:
+                logger.warning("Rejected WebSocket for unknown/disabled persona: %s", requested_persona_id)
+                return web.Response(status=404, text=f"Unknown or disabled persona: {requested_persona_id!r}")
+            persona = self.persona_catalog.get(requested_persona_id)
+
         await ws.prepare(request)
         
-        self._sessions.create_session(ws)
+        self._sessions.create_session(ws, persona=persona)
 
         try:
             await self._forward_messages(ws)

@@ -276,7 +276,7 @@ class SessionManager:
         else:
             self._greeting_template = _DEFAULT_GREETING_MSG
 
-    def build_greeting_msg(self) -> str:
+    def build_greeting_msg(self, greeting_template: str | None = None) -> str:
         """A fresh `conversation.item.create` for the greeting, with a brand-new
         middle-tier item id stamped on *this* call (swigerb/SonicAIDriveThru#29
         follow-up, PR #30 review "G1" / item 1).
@@ -288,8 +288,13 @@ class SessionManager:
         (e.g. a resume that happens before the conversation ever started, which
         re-greets rather than rehydrating). Mirrors `build_rehydration_item`
         and `build_nudge_item`, which already build a fresh item -- id
-        included -- on every call rather than caching one at init."""
-        return _with_middle_tier_item_id(self._greeting_template)
+        included -- on every call rather than caching one at init.
+
+        *greeting_template* (#74, optional): a per-persona greeting JSON string
+        (from the bound persona's own PromptLoader) to use for THIS call instead of
+        the deployment-wide default captured at construction. Omitted: unchanged,
+        single-persona behavior (``self._greeting_template``)."""
+        return _with_middle_tier_item_id(greeting_template if greeting_template is not None else self._greeting_template)
 
     @property
     def idle_timeout_seconds(self) -> float:
@@ -317,9 +322,14 @@ class SessionManager:
         """Record guest activity. Drives the idle clock (which also bounds the grace hold)."""
         self._last_activity[session_id] = self._clock()
 
-    def create_session(self, ws: web.WebSocketResponse) -> str:
-        """Create a new order session and map it to the WebSocket connection."""
-        session_id = order_state_singleton.create_session()
+    def create_session(self, ws: web.WebSocketResponse, persona=None) -> str:
+        """Create a new order session and map it to the WebSocket connection.
+
+        *persona* (#74, optional): the persona this session is bound to for its entire
+        lifetime (no mid-conversation switching); threaded straight through to
+        ``order_state_singleton.create_session()``. Omitted: unchanged, unbound-session
+        behavior (the default single-persona deployment)."""
+        session_id = order_state_singleton.create_session(persona=persona)
         self._session_map[ws] = session_id
         self._attached[session_id] = ws
         self._context_monitors[session_id] = ContextMonitor(session_id)
@@ -490,13 +500,24 @@ class SessionManager:
         self._resume_index[digest] = session_id
         return resume_id
 
-    def resume(self, ws: web.WebSocketResponse, resume_id: object) -> ResumeOutcome:
+    def resume(self, ws: web.WebSocketResponse, resume_id: object, requested_persona_id: str | None = None) -> ResumeOutcome:
         """Re-attach the session identified by ``resume_id`` to ``ws``.
 
         Single use: the presented id is consumed and a rotated one is returned.
         The provisional session created for ``ws`` on connect is ended. If the
         resumed session is still attached to another socket (half-open), that
         socket is handed back as ``stale_ws`` to be closed with 4002.
+
+        *requested_persona_id* (#74, optional): the persona id this resume request
+        connected with (``/realtime?persona=<id>``). A session can only ever resume
+        under the SAME persona it was originally bound to -- no mid-conversation
+        persona switching, ever, including across a transport drop/resume. Mismatched
+        (or, symmetrically, a bound session resumed with none specified, or an
+        originally-unbound session resumed with one specified) -> rejected as
+        ``"persona_mismatch"`` BEFORE the presented resume id is consumed, so the
+        guest's real credential stays valid for a legitimate retry. Omitted entirely
+        (``None``, the default): skips this check -- unchanged, single-persona/no
+        persona-param-in-URL behavior.
         """
         if not self.resume_enabled:
             return ResumeOutcome(False, reason="disabled")
@@ -518,6 +539,15 @@ class SessionManager:
         if now - last > self.idle_timeout_seconds or (expires is not None and now >= expires):
             self.end_session(session_id, "resume attempted after expiry")
             return ResumeOutcome(False, reason="expired")
+
+        if requested_persona_id is not None:
+            bound_persona_id = order_state_singleton.get_persona_id(session_id)
+            if bound_persona_id != requested_persona_id:
+                logger.info(
+                    "Resume rejected for session %s: bound persona %r != requested persona %r (persona_mismatch)",
+                    session_id, bound_persona_id, requested_persona_id,
+                )
+                return ResumeOutcome(False, reason="persona_mismatch")
 
         # Consume the presented id before anything else can use it.
         self._resume_index.pop(digest, None)
