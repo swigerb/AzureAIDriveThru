@@ -1811,15 +1811,20 @@ survives, just without the extras):
    torn down between the exception and the refresh attempt), the refresh is skipped — no exception,
    no client push — never at the cost of the primary apology already having reached the server.
    `ToolFailureCapAndTicketRefreshTests.A_genuine_tool_exception_refreshes_the_guests_ticket` is the
-   black-box proof: it scripts `update_order` with a non-numeric `price` (`"cheap"`, present but the
-   wrong type — sails past `tools.py`'s layer-2 *presence* validation, then reaches
-   `order_state.py`'s #104 menu-vs-tool-call price comparison, where `Decimal("cheap")` raises a
-   genuine `decimal.InvalidOperation`, the only vector that reaches layer 1 through
-   `update_order`'s normal front door black-box; a missing-argument script like the original #36 repro
-   never reaches layer 1 at all, because layer 2 already turns it into a graceful non-raising
-   `ToolResult` — see the layering discussion above), then asserts a `get_order`-tagged
-   `extension.middle_tier_tool_response` arrives at the browser, distinct from (and not to be confused
-   with) the missing `update_order`-tagged one.
+   black-box proof: it scripts `update_order` with a string `quantity` (`"two"`, present but the
+   wrong type -- sails past `tools.py`'s layer-2 *presence* validation, then raises a genuine
+   Python `TypeError` at `tools.py`'s per-item quantity-limit check (`new_item_qty = existing_qty +
+   quantity`, an `int + str`), before the whole-order limit sum is ever reached), the only vector
+   that reaches layer 1 through `update_order`'s normal front door black-box; a missing-argument
+   script like the original #36 repro never reaches layer 1 at all, because layer 2 already turns
+   it into a graceful non-raising `ToolResult` -- see the layering discussion above. (Rick's #104
+   review, PR #107: this scenario used to script a non-numeric `price` (`"cheap"`), which raised
+   `decimal.InvalidOperation` inside `order_state.py`'s menu-vs-tool-call comparison. #104 made a
+   non-numeric tool-call `price` silently ignored rather than compared at all (never a crash), so
+   the scenario moved to a string `quantity` instead, still a present-but-wrong-type argument that
+   sails past layer 2's presence check and raises inside the tool handler.) It then asserts a
+   `get_order`-tagged `extension.middle_tier_tool_response` arrives at the browser, distinct from
+   (and not to be confused with) the missing `update_order`-tagged one.
 2. **Consecutive-failure cap.** A per-connection `_ToolFailureTracker` counts **consecutive failed
    tool-call rounds since the last guest turn** — not consecutive failed *calls*, and not reset by
    tool success (see the round-2 update below; text above described an earlier, superseded design).
@@ -1832,7 +1837,7 @@ survives, just without the extras):
    that (same streak, still no guest turn) goes back to sending nothing at all, so the apology itself
    can't restart an unbounded loop.
    `ToolFailureCapAndTicketRefreshTests.Consecutive_tool_exceptions_suppress_the_auto_continue_at_the_cap`
-   is the black-box proof: two consecutive `price:"cheap"` failures (the first's auto-continue must
+   is the black-box proof: two consecutive `quantity:"two"` failures (the first's auto-continue must
    still fire, driving the second automatically with no browser action; the second is the cap-th and
    must not auto-continue a third). Because nothing else is queued on the fake, an erroneous third
    auto-continue would fall through to `ResponseScript.Default` (plain audio, no tool call) — which,
@@ -1929,11 +1934,15 @@ different directions, each asserting the same three things: a `function_call_out
 server, the session survives (a further round trip / tool call still works), and no stray
 `extension.middle_tier_tool_response` for the failed call reaches the browser.
 
-1. **Non-numeric `price`** (`update_order(price:"cheap")`) — a genuine exception *inside* the tool
+1. **String `quantity`** (`update_order(quantity:"two")`) — a genuine exception *inside* the tool
    handler, after `tools.py`'s own layer-2 presence validation has already passed. This is
    `ToolFailureCapAndTicketRefreshTests.A_genuine_tool_exception_refreshes_the_guests_ticket`,
    already added and mutation-verified as part of S2 above (S2 and S3 share this one scenario —
-   deliberately not duplicated).
+   deliberately not duplicated). (Rick's #104 review, PR #107: this used to be a non-numeric
+   `price`; #104 made a non-numeric tool-call `price` silently ignored rather than compared, so the
+   scenario moved to a string `quantity`, still present-but-wrong-typed, still raising a `TypeError`
+   inside the tool handler before layer 1's `except Exception` net — see the class doc comment on
+   `ToolFailureCapAndTicketRefreshTests` for the exact line.)
 2. **Malformed (non-JSON) `arguments`** (`"{not json"`) — the *other* way into layer 1: rtmt.py's
    `args = json.loads(item["arguments"])` is itself the first line inside the `try` block, before
    `tool.target(...)` is ever called, so a malformed argument string raises
