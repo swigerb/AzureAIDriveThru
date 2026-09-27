@@ -47,6 +47,12 @@ class CreateAppConfigTests(unittest.IsolatedAsyncioTestCase):
              patch("app._check_service_connectivity", new_callable=AsyncMock), \
              patch.dict(os.environ, {
                  "RUNNING_IN_PRODUCTION": "1",
+                 # This suite's own conftest.py sets CONFORMANCE_TEST_HOOKS=1 process-wide
+                 # (for unrelated reasons -- see that file's docstring); a genuine production
+                 # simulation must override it back off for this scope, or the new prod guard
+                 # (Rick's #118 review item 4) would treat this as the real, forbidden
+                 # combination it's designed to catch.
+                 "CONFORMANCE_TEST_HOOKS": "",
                  "AZURE_OPENAI_EASTUS2_ENDPOINT": "https://fake.openai.azure.com",
                  "AZURE_OPENAI_REALTIME_DEPLOYMENT": "gpt-realtime-2.1",
                  "AZURE_OPENAI_EASTUS2_API_KEY": "fake-key",
@@ -86,13 +92,73 @@ class CreateAppConfigTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("get_order", mock_instance.system_message)
 
 
+class ProductionGuardTests(unittest.IsolatedAsyncioTestCase):
+    """Rick's PR #118 review, required item 4: refuse to start with
+    CONFORMANCE_TEST_HOOKS=1 alongside RUNNING_IN_PRODUCTION=1."""
+
+    async def test_refuses_to_start_with_conformance_hooks_in_production(self):
+        """Supplies every required env var and mocks all downstream startup work so that,
+        absent the guard, create_app() would otherwise succeed. This ensures the SystemExit
+        asserted here can only come from the prod_guard check itself, not incidentally from
+        the (also SystemExit-raising) missing-required-env-vars check -- a guard that's been
+        neutered (e.g. `if False:`) must still fail this test."""
+        with patch("app.RTMiddleTier") as mock_cls, \
+             patch("app.attach_tools_rtmt"), \
+             patch("app._check_service_connectivity", new_callable=AsyncMock), \
+             patch.dict(os.environ, {
+                 "RUNNING_IN_PRODUCTION": "1",
+                 "CONFORMANCE_TEST_HOOKS": "1",
+                 "AZURE_OPENAI_EASTUS2_ENDPOINT": "https://fake.openai.azure.com",
+                 "AZURE_OPENAI_REALTIME_DEPLOYMENT": "gpt-realtime-2.1",
+                 "AZURE_OPENAI_EASTUS2_API_KEY": "fake-key",
+                 "AZURE_SEARCH_API_KEY": "fake-search-key",
+                 "AZURE_SEARCH_ENDPOINT": "https://fake.search.windows.net",
+                 "AZURE_SEARCH_INDEX": "test-index",
+                 "AZURE_OPENAI_REALTIME_VOICE_CHOICE": "",
+             }, clear=True):
+            mock_cls.return_value = MagicMock()
+            from app import create_app
+            with self.assertRaises(SystemExit):
+                await create_app()
+
+    async def test_allows_conformance_hooks_when_not_in_production(self):
+        """A mutated guard that used `or` instead of `and` would refuse to start here too --
+        CONFORMANCE_TEST_HOOKS=1 alone (the normal shape for local dev/CI) must never be
+        fatal on its own."""
+        with patch("app.RTMiddleTier") as mock_cls, \
+             patch("app.attach_tools_rtmt"), \
+             patch("app._check_service_connectivity", new_callable=AsyncMock), \
+             patch.dict(os.environ, {
+                 "CONFORMANCE_TEST_HOOKS": "1",
+                 "AZURE_OPENAI_EASTUS2_ENDPOINT": "https://fake.openai.azure.com",
+                 "AZURE_OPENAI_REALTIME_DEPLOYMENT": "gpt-realtime-2.1",
+                 "AZURE_OPENAI_EASTUS2_API_KEY": "fake-key",
+                 "AZURE_SEARCH_API_KEY": "fake-search-key",
+                 "AZURE_SEARCH_ENDPOINT": "https://fake.search.windows.net",
+                 "AZURE_SEARCH_INDEX": "test-index",
+                 "AZURE_OPENAI_REALTIME_VOICE_CHOICE": "",
+             }, clear=True):
+            mock_instance = MagicMock()
+            mock_cls.return_value = mock_instance
+            from app import create_app
+            app = await create_app()
+            self.assertIsNotNone(app)
+
+    async def test_allows_production_without_conformance_hooks(self):
+        """A mutated guard that checked RUNNING_IN_PRODUCTION alone (ignoring
+        CONFORMANCE_TEST_HOOKS entirely) would refuse to start every normal
+        production deployment -- this must keep succeeding."""
+        mock_cls, mock_instance = await CreateAppConfigTests()._run_create_app()
+        self.assertIsNotNone(mock_instance)
+
+
 class HealthEndpointTests(unittest.IsolatedAsyncioTestCase):
     """Tests for the /health endpoint response structure."""
 
     async def test_health_returns_200_when_all_checks_pass(self):
         from app import _health_handler, _startup_checks
         original = dict(_startup_checks)
-        _startup_checks.update(personas_loaded=True, prompts_loaded=True, config_loaded=True, env_vars=True)
+        _startup_checks.update(personas_loaded=True, prompts_loaded=True, config_loaded=True, env_vars=True, prod_guard=True)
         try:
             response = await _health_handler(MagicMock())
             self.assertEqual(response.status, 200)
@@ -106,7 +172,7 @@ class HealthEndpointTests(unittest.IsolatedAsyncioTestCase):
     async def test_health_returns_503_when_check_fails(self):
         from app import _health_handler, _startup_checks
         original = dict(_startup_checks)
-        _startup_checks.update(personas_loaded=True, prompts_loaded=False, config_loaded=True, env_vars=True)
+        _startup_checks.update(personas_loaded=True, prompts_loaded=False, config_loaded=True, env_vars=True, prod_guard=True)
         try:
             response = await _health_handler(MagicMock())
             self.assertEqual(response.status, 503)
@@ -119,7 +185,7 @@ class HealthEndpointTests(unittest.IsolatedAsyncioTestCase):
     async def test_health_response_has_required_fields(self):
         from app import _health_handler, _startup_checks
         original = dict(_startup_checks)
-        _startup_checks.update(personas_loaded=True, prompts_loaded=True, config_loaded=True, env_vars=True)
+        _startup_checks.update(personas_loaded=True, prompts_loaded=True, config_loaded=True, env_vars=True, prod_guard=True)
         try:
             response = await _health_handler(MagicMock())
             body = json.loads(response.body)

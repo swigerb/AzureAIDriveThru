@@ -297,6 +297,8 @@ module acaBackend 'core/host/container-app-upsert.bicep' = {
       AZURE_OPENAI_EASTUS2_ENDPOINT: resolvedOpenAiEndpoint
       AZURE_OPENAI_REALTIME_DEPLOYMENT: reuseExistingOpenAi ? openAiRealtimeDeployment : defaultRealtimeDeployment.deploymentName
       AZURE_OPENAI_REALTIME_VOICE_CHOICE: openAiRealtimeVoiceChoice
+      // Issue #82: the cascade pipeline's Foundry chat client endpoint.
+      AZURE_AI_FOUNDRY_ENDPOINT: resolvedFoundryEndpoint
       // Catalog id -> deployment name for every model this environment created (7.2).
       AZURE_AI_MODEL_DEPLOYMENTS: string(modelDeploymentsMap)
       RUNNING_IN_PRODUCTION: 'true'
@@ -371,6 +373,9 @@ module acaBackendDotnet 'core/host/container-app-upsert.bicep' = if (deployDotne
       AZURE_OPENAI_EASTUS2_ENDPOINT: resolvedOpenAiEndpoint
       AZURE_OPENAI_REALTIME_DEPLOYMENT: reuseExistingOpenAi ? openAiRealtimeDeployment : defaultRealtimeDeployment.deploymentName
       AZURE_OPENAI_REALTIME_VOICE_CHOICE: openAiRealtimeVoiceChoice
+      // Issue #82: the cascade pipeline's Foundry chat client endpoint (unused by the
+      // .NET backend until it ports the cascade processor -- see issue #82's scope note).
+      AZURE_AI_FOUNDRY_ENDPOINT: resolvedFoundryEndpoint
       AZURE_AI_MODEL_DEPLOYMENTS: string(modelDeploymentsMap)
       RUNNING_IN_PRODUCTION: 'true'
       AZURE_CLIENT_ID: acaIdentity.outputs.clientId
@@ -398,6 +403,16 @@ var openAiCustomSubDomainName = !empty(openAiServiceName)
   ? openAiServiceName
   : '${abbrs.cognitiveServicesAccounts}${resourceToken}'
 var resolvedOpenAiEndpoint = reuseExistingOpenAi ? openAiEndpoint : 'https://${openAiCustomSubDomainName}.openai.azure.com'
+// Issue #82: the cascade pipeline's Foundry chat model calls (azure-ai-inference SDK,
+// DefaultAzureCredential only) go through the Azure AI Model Inference API instead of
+// the OpenAI-compatible host above -- the surface that also serves the design's
+// non-OpenAI-format models (Phi-4), which the OpenAI-compatible endpoint cannot.
+// Same account, same `openAiCustomSubDomainName`, different DNS name and `/models`
+// route suffix (Microsoft Learn: Azure AI Model Inference API reference). Reuse mode
+// has no dedicated override param yet (no reuse-existing environment has exercised
+// cascade so far); it derives from the same subdomain as resolvedOpenAiEndpoint until
+// one is needed.
+var resolvedFoundryEndpoint = 'https://${openAiCustomSubDomainName}.services.ai.azure.com/models'
 
 // The model deployment list (10.3, tracked in infra/model-deployments.json --
 // Rick's review of #93: adding a #82 model is one JSON entry there, no Bicep
@@ -460,6 +475,15 @@ module openAi 'br/public:avm/res/cognitive-services/account:0.8.0' = if (!reuseE
     roleAssignments: [
       {
         roleDefinitionIdOrName: 'Cognitive Services OpenAI User'
+        principalId: principalId
+        principalType: principalType
+      }
+      {
+        // Issue #82 (Rick's #82 review notes): the cascade pipeline's Foundry chat
+        // client calls the Azure AI Model Inference API (resolvedFoundryEndpoint),
+        // which authorizes against the generic "Cognitive Services User" role rather
+        // than (or in addition to) "Cognitive Services OpenAI User" above.
+        roleDefinitionIdOrName: 'Cognitive Services User'
         principalId: principalId
         principalType: principalType
       }
@@ -554,6 +578,24 @@ module openAiRoleBackend 'core/security/role.bicep' = {
   }
 }
 
+// Issue #82 (Rick's PR #118 review, required item 6): the cascade pipeline's Foundry chat
+// client (ChatCompletionsClient against resolvedFoundryEndpoint) authorizes with the generic
+// "Cognitive Services User" role, same as the `principalId` grant already on the `openAi`
+// module above -- that earlier grant only covers the deploying user's own `az` session/local
+// dev, never the deployed container app, so without this module the deployed backend's
+// managed identity 401s the very first cascade chat-completions call. STT/TTS need no separate
+// grant here: they call the SAME AIServices account's `/openai/v1/audio/*` routes, already
+// covered by `openAiRoleBackend`'s "Cognitive Services OpenAI User" below.
+module openAiRoleBackendCascade 'core/security/role.bicep' = {
+  scope: openAiResourceGroup
+  name: 'openai-role-backend-cascade'
+  params: {
+    principalId: acaBackend.outputs.identityPrincipalId
+    roleDefinitionId: 'a97b65f3-24c7-4388-baec-2e87135dc908' // Cognitive Services User
+    principalType: 'ServicePrincipal'
+  }
+}
+
 // Used to issue search queries
 // https://learn.microsoft.com/azure/search/search-security-rbac
 module searchRoleBackend 'core/security/role.bicep' = {
@@ -611,6 +653,9 @@ output AZURE_TENANT_ID string = tenantId
 output AZURE_RESOURCE_GROUP string = resourceGroup.name
 
 output AZURE_OPENAI_EASTUS2_ENDPOINT string = resolvedOpenAiEndpoint
+// Issue #82: the cascade pipeline's Foundry chat client endpoint (see
+// resolvedFoundryEndpoint above). Container apps read this as AZURE_AI_FOUNDRY_ENDPOINT.
+output AZURE_AI_FOUNDRY_ENDPOINT string = resolvedFoundryEndpoint
 output AZURE_OPENAI_REALTIME_DEPLOYMENT string = reuseExistingOpenAi
   ? openAiRealtimeDeployment
   : defaultRealtimeDeployment.deploymentName

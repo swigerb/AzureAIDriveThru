@@ -477,8 +477,25 @@ which one is running.
 | Pipeline | Models | Where it runs | Status |
 | --- | --- | --- | --- |
 | `realtime` | A Foundry realtime model, speech to speech (today's `gpt-realtime-2.1`, plus alternatives such as a smaller realtime model) | Azure | Today's `rtmt.py`; selectable per session in #75 |
-| `cascade` | Foundry transcription, then a Foundry **chat** model with tool calling (OpenAI or non-OpenAI), then text to speech | Azure | New in #82 |
+| `cascade` | Transcription (`gpt-4o-transcribe`), then a Foundry **chat** model with tool calling (OpenAI or non-OpenAI), then TTS (`gpt-4o-mini-tts`) -- all Azure OpenAI audio and chat models on the same Foundry AIServices account; **not** Azure Speech, which isn't used and has no SDK or resource in this pipeline | Azure | New in #82; parity with `realtime` below |
 | `local` | Whisper, then Phi-4 mini (ONNX), then Piper, all on-device (McDonald's local mode, now persona-agnostic) | Developer machine; off by default | Ported in #81 |
+
+**Cascade turn-taking parity (Rick's PR #118 review item 6/6).** The frontend can't tell pipelines apart, so
+`cascade` matches `realtime`'s observable behavior for:
+
+- **Greeting on connect** -- the persona's `greeting.yaml`, spoken through TTS, with the same `response.*` frames.
+- **Barge-in** -- a local `speech_started` cancels the in-flight chat call and TTS stream; no further
+  `response.audio.delta` is sent for the cancelled turn.
+- **Rate limit** -- a 429 from chat, transcription or TTS goes down the same rate-limit notice path the frontend
+  already handles for `realtime` (`extension.rate_limited`), not a silent failed turn.
+
+Each has a conformance row (`tests/conformance/.../Scenarios/Cascade/CascadeConformanceTests.cs`).
+
+**Explicitly deferred, tracked in #126:** resume (a reconnect on `cascade` today gets a fresh session, with no
+grace-hold/rehydration equivalent to `realtime`'s), the idle-nudge, and echo suppression (`cascade_processor.py`
+never imports `audio_pipeline.py`'s `EchoSuppressor`, so there is no cooldown window after TTS playback the way
+`realtime` has). None of these are required for the P2 demo's happy path or the conformance rows above; each
+needs its own design pass before landing on `cascade`.
 
 ### 7.2 Config shape
 
@@ -526,12 +543,19 @@ Local mode is selectable only when `/health` reports it available (models presen
   of the process); then the explicit `AZURE_OPENAI_REALTIME_REASONING_MODEL` switch (`true`/`false`, an
   operator-level override); then the bound model's catalog `reasoning` flag; the deployment-name heuristic is
   only the `auto` fallback, reached when the switch is unset and no model is bound yet.
-- **Cascade.** Chat calls go through the Foundry resource's OpenAI-compatible v1 endpoint, the one surface that
-  serves both Azure OpenAI and Foundry Models deployments:
-  - Python uses the `openai` SDK;
-  - C# uses the OpenAI .NET SDK against the same endpoint;
-  - tool definitions come from the pack's `tool_schemas.yaml`, converted to chat-tool shape once;
-  - transcription and TTS use the catalog's `cascade.transcription` and `cascade.tts` deployments.
+- **Cascade.** Chat calls go through the Foundry resource's `/models` endpoint, the one surface that serves both
+  Azure OpenAI and Foundry Models (non-OpenAI, for example Phi-4) deployments in the same chat-completions shape:
+  - **SDK choice (Rick's #118 review, non-blocking item):** Python uses `azure-ai-inference`
+    (`azure.ai.inference.aio.ChatCompletionsClient`, `1.0.0b9`, REST `2024-05-01-preview`), **not** the plain
+    `openai` SDK -- the `openai` SDK's chat-completions client assumes an OpenAI-shaped deployment and doesn't
+    target Foundry's model-agnostic `/models` route. C# follows the same choice for parity: `Azure.AI.Inference`
+    (NuGet), not the OpenAI .NET SDK, so both backends can select a non-OpenAI catalog model (Phi-4, once
+    qualified in #87) without a backend-specific code path.
+  - Transcription and TTS are **Azure OpenAI audio models on the same AIServices account**
+    (`gpt-4o-transcribe` through `/openai/v1/audio/transcriptions`, `gpt-4o-mini-tts` through
+    `/openai/v1/audio/speech`) -- **not Azure Speech**; there is no Speech SDK or resource in this pipeline. The
+    catalog's `cascade.transcription` and `cascade.tts` entries name the deployments.
+  - Tool definitions come from the pack's `tool_schemas.yaml`, converted to chat-tool shape once.
 - **Local.** Python runs ONNX Runtime GenAI, Whisper and Piper (ported from McDonald's). C# parity for local mode
   was resolved in section 17: port it, last in the C# track.
 - **Processor interface.** Both backends implement `realtime`, `cascade` and `local` behind one interface that
@@ -640,9 +664,16 @@ small and scales after cutover.
 | --- | --- | --- | --- | --- |
 | `gpt-realtime-2.1` (realtime default) | GlobalStandard | **10 or less** | Scale up (for example to 40) once #88 deletes `cog-axgpampkq3yfa` | Bicep param `realtimeDeploymentCapacity`; scaling is a param change plus `azd provision`, then the smoke again |
 | One alternative realtime model (for example `gpt-realtime-mini`) | GlobalStandard | Small | Unchanged | Separate quota bucket with headroom; proves the model picker live |
-| Cascade chat models (#82 list) | GlobalStandard | Small | Unchanged | Only models that pass Unity's tool-calling qualification |
-| Transcription and TTS for cascade | GlobalStandard | Small | Unchanged | Catalog `cascade.transcription` and `cascade.tts` |
+| `gpt-5-mini` (cascade chat, OpenAI) | GlobalStandard | **50** | Unchanged | Version `2025-08-07` (`2026-08-07` doesn't exist in eastus2, verified read-only). 1 unit is ~1K TPM; a cascade turn (~2.5K-token system prompt plus tool schemas and history) needs more than 1. `OpenAI.GlobalStandard.gpt-5-mini` usage was 170/1000 at review time, so 50 fits with headroom (#118 review item 3) |
+| `Phi-4` (cascade chat, non-OpenAI) | GlobalStandard | **20** | Unchanged | Version `7` (`1` doesn't exist; versions 2-7 are listed). Catalog-only until Unity's live tool-calling qualification in #87 passes (the eastus2 listing shows only `chatCompletion`, not `assistants`/`agentsV2`) -- removed from every persona's `models.cascade.allowed` until then. `AIServices.GlobalStandard.Phi-4` usage was 0/1000 at review time |
+| `gpt-4o-transcribe` (cascade transcription) | GlobalStandard | **10** | Unchanged | Version `2025-03-20`, confirmed listed (`audioTranscriptions`). `OpenAI.GlobalStandard.gpt-4o-transcribe` usage was 0/400 at review time |
+| `gpt-4o-mini-tts` (cascade TTS) | GlobalStandard | **10** | Unchanged | Version `2025-03-20`, confirmed listed (`audioSpeech`); `2025-12-15` is also listed and may be preferred once Unity's live voice-quality check in #87 passes. `OpenAI.GlobalStandard.gpt-4o-mini-tts` usage was 0/600 at review time |
 | `text-embedding-3-large` | Standard | 30 | Unchanged | Ingestion and query embeddings |
+
+All four cascade figures (versions, SKUs and capacities) were verified read-only against eastus2
+(`az cognitiveservices model list -l eastus2`) and quota headroom against the subscription's current usage
+(`az cognitiveservices usage list -l eastus2`) for Rick's #118 review items 2 and 3; see `infra/model-deployments.json`
+for the exact deployment entries.
 
 DataZoneStandard is not used: the US data-zone pool for `gpt-realtime-2.1` is exhausted by the siblings. Live
 smoke and the manual checklist run serially, so 10 units are enough for verification; CI never touches quota.
