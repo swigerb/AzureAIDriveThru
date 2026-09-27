@@ -7,7 +7,7 @@ were implemented but had no dedicated Python test yet -- ``modify``, the add-tim
 
 test_combo_orders.py already proves the bundle engine is data-driven against a real production
 pack's own data (several different ``bundle.slots`` shapes); this file instead uses a dedicated,
-non-brand-coupled fixture persona -- ``test-gamma`` (tests/fixtures/personas/test-gamma) -- built
+non-brand-coupled fixture persona -- ``test-delta`` (tests/fixtures/personas/test-delta) -- built
 specifically to opt into every one of these #77 features at once, so the "works for ANY pack, not
 just one brand's data" acceptance criterion has its own direct proof, independent of any real
 production menu. ``test-alpha``/``test-beta`` (used elsewhere for persona-isolation proofs)
@@ -40,14 +40,14 @@ def _run(coro):
     return asyncio.run(coro)
 
 
-def _load_gamma_catalog() -> PersonaCatalog:
+def _load_delta_catalog() -> PersonaCatalog:
     """The #77-dedicated fixture pack: opts into bundle autoFill, numbered meals +
     searchQueryRewrite, splitCombinedNames, and a currently-down machine -- all at once, so every
     #77 engine surface has one non-brand-coupled pack proving it works for "ANY pack"."""
     return PersonaCatalog.load(
         personas_dir=FIXTURES_DIR,
-        enabled=["test-gamma"],
-        default_persona_id="test-gamma",
+        enabled=["test-delta"],
+        default_persona_id="test-delta",
     )
 
 
@@ -62,12 +62,12 @@ def _load_alpha_catalog() -> PersonaCatalog:
     )
 
 
-class GammaFixtureTestCase(unittest.TestCase):
+class DeltaFixtureTestCase(unittest.TestCase):
     """Shared setUp/session-cleanup for every #77 engine test below."""
 
     def setUp(self):
-        self.gamma = _load_gamma_catalog().get("test-gamma")
-        self.menu = menu_utils.get_catalog_for_persona(self.gamma)
+        self.delta = _load_delta_catalog().get("test-delta")
+        self.menu = menu_utils.get_catalog_for_persona(self.delta)
         self._sessions_created: list[str] = []
         self.addCleanup(self._cleanup_sessions)
 
@@ -76,7 +76,7 @@ class GammaFixtureTestCase(unittest.TestCase):
             order_state_singleton.delete_session(sid)
 
     def _new_session(self) -> str:
-        sid = order_state_singleton.create_session(persona=self.gamma)
+        sid = order_state_singleton.create_session(persona=self.delta)
         self._sessions_created.append(sid)
         return sid
 
@@ -86,27 +86,27 @@ class GammaFixtureTestCase(unittest.TestCase):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-class MealNumberLookupTests(GammaFixtureTestCase):
+class MealNumberLookupTests(DeltaFixtureTestCase):
     def test_single_match_for_a_number_only_one_item_claims(self):
-        self.assertEqual(self.menu.meal_number_candidates("1"), ["Gamma Meal"])
+        self.assertEqual(self.menu.meal_number_candidates("1"), ["Delta Meal"])
 
     def test_both_matches_for_a_number_two_items_share(self):
         """A breakfast and a lunch meal sharing meal number "2" (design doc section 3.3 row 23,
         "a breakfast/lunch overlap") must BOTH come back -- never just the first one found."""
         self.assertEqual(
             self.menu.meal_number_candidates("2"),
-            ["Gamma Breakfast Meal", "Gamma Lunch Meal"],
+            ["Delta Breakfast Meal", "Delta Lunch Meal"],
         )
 
     def test_empty_for_a_number_no_item_claims(self):
         self.assertEqual(self.menu.meal_number_candidates("99"), [])
 
     def test_rewrite_search_query_appends_the_single_candidate_name(self):
-        self.assertEqual(self.menu.rewrite_search_query("number 1 please"), "number 1 please Gamma Meal")
+        self.assertEqual(self.menu.rewrite_search_query("number 1 please"), "number 1 please Delta Meal")
 
     def test_rewrite_search_query_appends_every_shared_candidate(self):
         rewritten = self.menu.rewrite_search_query("I'll get a number 2")
-        self.assertEqual(rewritten, "I'll get a number 2 Gamma Breakfast Meal Gamma Lunch Meal")
+        self.assertEqual(rewritten, "I'll get a number 2 Delta Breakfast Meal Delta Lunch Meal")
 
     def test_rewrite_search_query_is_a_noop_with_no_digit_in_the_query(self):
         self.assertEqual(self.menu.rewrite_search_query("cola"), "cola")
@@ -127,57 +127,57 @@ class MealNumberLookupTests(GammaFixtureTestCase):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-class BundleAutoFillTests(GammaFixtureTestCase):
+class BundleAutoFillTests(DeltaFixtureTestCase):
     def test_autofill_fills_every_unabsorbed_slot_on_add(self):
-        """Adding "Gamma Meal" with nothing pre-existing in the order to absorb: BOTH of its
+        """Adding "Delta Meal" with nothing pre-existing in the order to absorb: BOTH of its
         ``bundle.autoFill`` slots (sides, drinks) get their own default filler the instant the
         bundle itself is added -- no follow-up add call needed."""
         sid = self._new_session()
         result_info = order_state_singleton.handle_order_update(
-            sid, "add", "Gamma Meal", "regular", 1, 5.99,
+            sid, "add", "Delta Meal", "regular", 1, 5.99,
         )
         self.assertEqual(
             sorted(result_info.get("autofilled", [])),
-            sorted(["Gamma Fries (Regular)", "Gamma Cola (Regular)"]),
+            sorted(["Delta Fries (Regular)", "Delta Cola (Regular)"]),
         )
         items = order_state_singleton.get_order_items(sid)
         self.assertEqual(len(items), 1)
-        self.assertIn("Gamma Fries (Regular)", items[0].components)
-        self.assertIn("Gamma Cola (Regular)", items[0].components)
+        self.assertIn("Delta Fries (Regular)", items[0].components)
+        self.assertIn("Delta Cola (Regular)", items[0].components)
 
     def test_autofill_uses_the_requested_size_not_just_the_bundle_default(self):
         sid = self._new_session()
         result_info = order_state_singleton.handle_order_update(
-            sid, "add", "Gamma Meal", "large", 1, 7.49,
+            sid, "add", "Delta Meal", "large", 1, 7.49,
         )
         self.assertEqual(
             sorted(result_info.get("autofilled", [])),
-            sorted(["Gamma Fries (Large)", "Gamma Cola (Large)"]),
+            sorted(["Delta Fries (Large)", "Delta Cola (Large)"]),
         )
 
     def test_absorption_of_a_real_preexisting_standalone_item_wins_over_autofill(self):
-        """A real standalone "Gamma Fries" already in the order gets ABSORBED into the bundle's
+        """A real standalone "Delta Fries" already in the order gets ABSORBED into the bundle's
         "sides" slot (the pre-#77 absorption behavior, unchanged); auto-fill only ever fires for a
         slot that absorption did NOT just cover -- here, only "drinks"."""
         sid = self._new_session()
-        order_state_singleton.handle_order_update(sid, "add", "Gamma Fries", "regular", 1, 1.99)
+        order_state_singleton.handle_order_update(sid, "add", "Delta Fries", "regular", 1, 1.99)
         result_info = order_state_singleton.handle_order_update(
-            sid, "add", "Gamma Meal", "regular", 1, 5.99,
+            sid, "add", "Delta Meal", "regular", 1, 5.99,
         )
-        self.assertEqual(result_info.get("autofilled", []), ["Gamma Cola (Regular)"])
+        self.assertEqual(result_info.get("autofilled", []), ["Delta Cola (Regular)"])
         items = order_state_singleton.get_order_items(sid)
-        bundle_line = next(i for i in items if i.item == "Gamma Meal")
+        bundle_line = next(i for i in items if i.item == "Delta Meal")
         # The absorbed real fries display, not the synthetic auto-fill filler text.
-        self.assertIn("Gamma Fries", bundle_line.components[0])
-        self.assertIn("Gamma Cola (Regular)", bundle_line.components)
+        self.assertIn("Delta Fries", bundle_line.components[0])
+        self.assertIn("Delta Cola (Regular)", bundle_line.components)
         # The standalone fries line itself is gone -- absorbed, not double-counted.
-        self.assertFalse(any(i.item == "Gamma Fries" for i in items))
+        self.assertFalse(any(i.item == "Delta Fries" for i in items))
 
     def test_a_bundle_item_with_no_autofill_data_stays_absorb_only(self):
         """Regression guard: an item whose OWN pack never populates ``bundle.autoFill`` (every
         real pack today) must get an empty autofill map, not a KeyError/crash -- checked directly
         against MenuCatalog since no fixture item currently has bundle slots without autoFill."""
-        self.assertEqual(self.menu.bundle_autofill("Gamma Burger"), {})
+        self.assertEqual(self.menu.bundle_autofill("Delta Burger"), {})
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -186,26 +186,26 @@ class BundleAutoFillTests(GammaFixtureTestCase):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-class SplitCombinedNameTests(GammaFixtureTestCase):
+class SplitCombinedNameTests(DeltaFixtureTestCase):
     def test_menu_catalog_splits_a_known_base_plus_known_extra(self):
         self.assertEqual(
-            self.menu.try_split_combined_name("Gamma Latte with Extra Shot"),
-            ("Gamma Latte", "Gamma Extra Shot"),
+            self.menu.try_split_combined_name("Delta Latte with Extra Shot"),
+            ("Delta Latte", "Delta Extra Shot"),
         )
 
     def test_menu_catalog_returns_none_when_the_extra_part_is_not_a_real_extra(self):
-        self.assertIsNone(self.menu.try_split_combined_name("Gamma Latte with Whipped Cream"))
+        self.assertIsNone(self.menu.try_split_combined_name("Delta Latte with Whipped Cream"))
 
     def test_menu_catalog_returns_none_when_the_base_part_is_not_on_the_menu(self):
         self.assertIsNone(self.menu.try_split_combined_name("Nonexistent Thing with Extra Shot"))
 
     def test_menu_catalog_returns_none_with_no_connector_word_at_all(self):
-        self.assertIsNone(self.menu.try_split_combined_name("Gamma Latte Extra Shot"))
+        self.assertIsNone(self.menu.try_split_combined_name("Delta Latte Extra Shot"))
 
     def test_update_order_offers_suggested_calls_for_a_combined_off_menu_name(self):
         sid = self._new_session()
         result = _run(tools.update_order({
-            "action": "add", "item_name": "Gamma Latte with Extra Shot",
+            "action": "add", "item_name": "Delta Latte with Extra Shot",
             "size": "regular", "quantity": 1, "price": 4.24,
         }, sid))
         self.assertEqual(result.destination, ToolResultDirection.TO_SERVER)
@@ -213,8 +213,8 @@ class SplitCombinedNameTests(GammaFixtureTestCase):
         self.assertEqual(
             result.text["suggested_calls"],
             [
-                {"action": "add", "item_name": "Gamma Latte"},
-                {"action": "add", "item_name": "Gamma Extra Shot"},
+                {"action": "add", "item_name": "Delta Latte"},
+                {"action": "add", "item_name": "Delta Extra Shot"},
             ],
         )
         # Nothing was actually added -- the split is only ever a suggestion to the model.
@@ -242,15 +242,15 @@ class SplitCombinedNameTests(GammaFixtureTestCase):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-class ModifyActionTests(GammaFixtureTestCase):
+class ModifyActionTests(DeltaFixtureTestCase):
     def test_modify_resizes_in_place_and_reprices_from_the_menu_never_the_tool_calls_own_price(self):
         sid = self._new_session()
         _run(tools.update_order({
-            "action": "add", "item_name": "Gamma Latte",
+            "action": "add", "item_name": "Delta Latte",
             "size": "regular", "quantity": 1, "price": 3.49,
         }, sid))
         result = _run(tools.update_order({
-            "action": "modify", "item_name": "Gamma Latte",
+            "action": "modify", "item_name": "Delta Latte",
             "size": "large", "quantity": 1, "price": 999.99,  # deliberately bogus -- must be ignored
         }, sid))
         self.assertEqual(result.destination, ToolResultDirection.TO_BOTH)
@@ -265,23 +265,23 @@ class ModifyActionTests(GammaFixtureTestCase):
         3.3 row 21: "its own already-absorbed components carry over unchanged")."""
         sid = self._new_session()
         _run(tools.update_order({
-            "action": "add", "item_name": "Gamma Meal",
+            "action": "add", "item_name": "Delta Meal",
             "size": "regular", "quantity": 1, "price": 5.99,
         }, sid))
         _run(tools.update_order({
-            "action": "modify", "item_name": "Gamma Meal",
+            "action": "modify", "item_name": "Delta Meal",
             "size": "large", "quantity": 1, "price": 7.49,
         }, sid))
         items = order_state_singleton.get_order_items(sid)
-        bundle_line = next(i for i in items if i.item == "Gamma Meal")
+        bundle_line = next(i for i in items if i.item == "Delta Meal")
         self.assertEqual(bundle_line.size, "large")
-        self.assertIn("Gamma Fries (Regular)", bundle_line.components)
-        self.assertIn("Gamma Cola (Regular)", bundle_line.components)
+        self.assertIn("Delta Fries (Regular)", bundle_line.components)
+        self.assertIn("Delta Cola (Regular)", bundle_line.components)
 
     def test_modify_is_a_noop_when_the_item_was_never_added(self):
         sid = self._new_session()
         _run(tools.update_order({
-            "action": "modify", "item_name": "Gamma Latte",
+            "action": "modify", "item_name": "Delta Latte",
             "size": "large", "quantity": 1, "price": 4.29,
         }, sid))
         self.assertEqual(order_state_singleton.get_order_items(sid), [])
@@ -292,15 +292,15 @@ class ModifyActionTests(GammaFixtureTestCase):
         directly via handle_order_update (bypassing tools.py's add-time gate) to simulate "this
         was added before the machine went down", exactly the scenario the comment describes."""
         sid = self._new_session()
-        order_state_singleton.handle_order_update(sid, "add", "Gamma Shake", "regular", 1, 2.99)
+        order_state_singleton.handle_order_update(sid, "add", "Delta Shake", "regular", 1, 2.99)
         result = _run(tools.update_order({
-            "action": "modify", "item_name": "Gamma Shake",
+            "action": "modify", "item_name": "Delta Shake",
             "size": "regular", "quantity": 1, "price": 2.99,
         }, sid))
         self.assertEqual(result.destination, ToolResultDirection.TO_BOTH)
         items = order_state_singleton.get_order_items(sid)
         self.assertEqual(len(items), 1)
-        self.assertEqual(items[0].item, "Gamma Shake")
+        self.assertEqual(items[0].item, "Delta Shake")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -308,11 +308,11 @@ class ModifyActionTests(GammaFixtureTestCase):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-class MachineUnavailableRejectionTests(GammaFixtureTestCase):
+class MachineUnavailableRejectionTests(DeltaFixtureTestCase):
     def test_add_of_a_currently_down_machine_item_is_rejected(self):
         sid = self._new_session()
         result = _run(tools.update_order({
-            "action": "add", "item_name": "Gamma Shake",
+            "action": "add", "item_name": "Delta Shake",
             "size": "regular", "quantity": 1, "price": 2.99,
         }, sid))
         self.assertEqual(result.destination, ToolResultDirection.TO_SERVER)
@@ -323,8 +323,8 @@ class MachineUnavailableRejectionTests(GammaFixtureTestCase):
         self.assertEqual(result.text["status"], "rejected")
         self.assertFalse(result.text["item_added"])
         self.assertEqual(result.text["reason"], "machine_unavailable")
-        self.assertEqual(result.text["item_name"], "Gamma Shake")
-        self.assertIn("Gamma machine is down", result.text["message"])
+        self.assertEqual(result.text["item_name"], "Delta Shake")
+        self.assertIn("Delta machine is down", result.text["message"])
         self.assertEqual(order_state_singleton.get_order_items(sid), [])
 
     def test_a_persona_with_the_same_machine_key_operational_is_unaffected(self):
@@ -349,7 +349,7 @@ class MachineUnavailableRejectionTests(GammaFixtureTestCase):
         a name that would be rejected on add must still be a harmless no-op, not a rejection."""
         sid = self._new_session()
         result = _run(tools.update_order({
-            "action": "remove", "item_name": "Gamma Shake",
+            "action": "remove", "item_name": "Delta Shake",
             "size": "regular", "quantity": 1,
         }, sid))
         self.assertEqual(result.destination, ToolResultDirection.TO_BOTH)

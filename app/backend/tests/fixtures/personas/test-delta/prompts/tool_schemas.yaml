@@ -2,7 +2,7 @@ version: "1.0.0"
 tools:
   - name: "search"
     type: "function"
-    description: "Search the Test Gamma fixture menu."
+    description: "Search the Test Delta fixture menu."
     parameters:
       type: "object"
       properties:

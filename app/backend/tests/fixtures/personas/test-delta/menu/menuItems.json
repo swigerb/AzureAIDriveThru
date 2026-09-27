@@ -4,34 +4,34 @@
       "category": "meals",
       "items": [
         {
-          "name": "Gamma Meal",
+          "name": "Delta Meal",
           "sizes": [
             { "size": "regular", "price": 5.99 },
             { "size": "large", "price": 7.49 }
           ],
-          "description": "Test Gamma's numbered meal -- a main plus an auto-filled side and drink.",
+          "description": "Test Delta's numbered meal -- a main plus an auto-filled side and drink.",
           "mealNumber": "1",
           "bundle": {
             "slots": ["sides", "drinks"],
-            "autoFill": { "sides": "Gamma Fries ({size})", "drinks": "Gamma Cola ({size})" },
+            "autoFill": { "sides": "Delta Fries ({size})", "drinks": "Delta Cola ({size})" },
             "defaultSize": "regular"
           }
         },
         {
-          "name": "Gamma Breakfast Meal",
+          "name": "Delta Breakfast Meal",
           "sizes": [
             { "size": "regular", "price": 4.99 }
           ],
-          "description": "Test Gamma's breakfast numbered meal, sharing meal number 2 with the lunch meal.",
+          "description": "Test Delta's breakfast numbered meal, sharing meal number 2 with the lunch meal.",
           "mealNumber": "2",
           "menuPeriod": "breakfast"
         },
         {
-          "name": "Gamma Lunch Meal",
+          "name": "Delta Lunch Meal",
           "sizes": [
             { "size": "regular", "price": 6.49 }
           ],
-          "description": "Test Gamma's lunch numbered meal, sharing meal number 2 with the breakfast meal.",
+          "description": "Test Delta's lunch numbered meal, sharing meal number 2 with the breakfast meal.",
           "mealNumber": "2",
           "menuPeriod": "lunch"
         }
@@ -41,29 +41,29 @@
       "category": "drinks",
       "items": [
         {
-          "name": "Gamma Latte",
+          "name": "Delta Latte",
           "sizes": [
             { "size": "regular", "price": 3.49 },
             { "size": "large", "price": 4.29 }
           ],
-          "description": "Test Gamma's house latte -- the base item for the splitCombinedNames test."
+          "description": "Test Delta's house latte -- the base item for the splitCombinedNames test."
         },
         {
-          "name": "Gamma Extra Shot",
+          "name": "Delta Extra Shot",
           "sizes": [
             { "size": "regular", "price": 0.75 }
           ],
-          "description": "Test Gamma's chargeable espresso shot add-in.",
+          "description": "Test Delta's chargeable espresso shot add-in.",
           "aliases": ["Extra Shot"],
           "isExtra": true
         },
         {
-          "name": "Gamma Shake",
+          "name": "Delta Shake",
           "sizes": [
             { "size": "regular", "price": 2.99 }
           ],
-          "description": "Test Gamma's shake -- requires the (currently down) gamma_machine, for the machine_unavailable test.",
-          "requiresMachine": "gamma_machine"
+          "description": "Test Delta's shake -- requires the (currently down) delta_machine, for the machine_unavailable test.",
+          "requiresMachine": "delta_machine"
         }
       ]
     },
@@ -71,11 +71,11 @@
       "category": "mains",
       "items": [
         {
-          "name": "Gamma Burger",
+          "name": "Delta Burger",
           "sizes": [
             { "size": "regular", "price": 3.99 }
           ],
-          "description": "Test Gamma's plain burger -- an on-menu item with no bundle/machine/extra fields, for baseline add/modify checks."
+          "description": "Test Delta's plain burger -- an on-menu item with no bundle/machine/extra fields, for baseline add/modify checks."
         }
       ]
     },
@@ -83,11 +83,11 @@
       "category": "sides",
       "items": [
         {
-          "name": "Gamma Fries",
+          "name": "Delta Fries",
           "sizes": [
             { "size": "regular", "price": 1.99 }
           ],
-          "description": "Test Gamma's standalone fries -- a real side a guest can order before the meal, to prove absorption wins over auto-fill for a slot that's already covered.",
+          "description": "Test Delta's standalone fries -- a real side a guest can order before the meal, to prove absorption wins over auto-fill for a slot that's already covered.",
           "comboSlot": "sides"
         }
       ]

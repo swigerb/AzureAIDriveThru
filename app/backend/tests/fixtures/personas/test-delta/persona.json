@@ -1,13 +1,13 @@
 {
   "$schema": "../persona.schema.json",
   "schemaVersion": 1,
-  "id": "test-gamma",
-  "displayName": "Test Gamma Meal Co.",
-  "roleName": "gamma-runner",
+  "id": "test-delta",
+  "displayName": "Test Delta Meal Co.",
+  "roleName": "delta-runner",
   "locales": { "default": "en", "supported": ["en"] },
   "store": { "timezone": "America/New_York" },
   "voice": { "default": "alloy" },
-  "search": { "indexName": "test-gamma-menu-items", "contentFields": ["description"] },
+  "search": { "indexName": "test-delta-menu-items", "contentFields": ["description"] },
 
   "pricing": {
     "taxRate": "0.07",
@@ -37,7 +37,7 @@
   "invalidModifiers": {
     "drink": ["onion"]
   },
-  "machines": { "gamma_machine": { "status": "down", "label": "Gamma machine is down" } },
+  "machines": { "delta_machine": { "status": "down", "label": "Delta machine is down" } },
 
   "models": {
     "realtime": { "default": "gpt-realtime-2.1", "allowed": ["gpt-realtime-2.1"] }
@@ -47,13 +47,13 @@
   "features": { "dayparts": true },
 
   "ui": {
-    "title": "Test Gamma Voice Ordering",
+    "title": "Test Delta Voice Ordering",
     "theme": {
       "light": { "primary": "150 80% 35%", "secondary": "150 40% 25%", "background": "0 0% 96%", "foreground": "0 0% 10%" }
     },
     "assets": { "logo": "assets/logo.svg", "favicon": "assets/favicon.ico" },
-    "strings": { "en": { "app.title": "Test Gamma Voice Ordering" } },
-    "hero": { "headline": "Test Gamma fixture pack", "callouts": [] },
+    "strings": { "en": { "app.title": "Test Delta Voice Ordering" } },
+    "hero": { "headline": "Test Delta fixture pack", "callouts": [] },
     "legal": "TEST-ONLY fixture pack (#77) -- not a real brand, used only by the Python backend test suite to prove the shared bundle/extras engines' `bundle.autoFill`, `mealNumber`/`searchQueryRewrite: \"meal_numbers\"`, and `extras.splitCombinedNames` behavior work for ANY real pack."
   }
 }
