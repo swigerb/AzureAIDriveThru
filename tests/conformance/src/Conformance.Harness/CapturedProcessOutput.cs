@@ -201,11 +201,31 @@ public sealed class CapturedProcessOutput
     /// how long it takes when there is nothing to detect.
     /// </para>
     /// <para>
+    /// #103 (PR #123 review): <paramref name="idleWindow"/>/<paramref name="quietFor"/> are
+    /// derived from <see cref="_lastAppendUtc"/> (a <see cref="DateTimeOffset"/>), but the actual
+    /// wait below is a <c>Task.Delay</c> timer, whose resolution is coarser than that clock
+    /// (~1ms on Linux, ~15.6ms on Windows) -- so a delay armed for exactly "however long is left
+    /// of the idle window" can fire slightly *before* that much wall-clock time has genuinely
+    /// elapsed since the last append. Returning <c>true</c> straight off that timer firing would
+    /// let a caller observe <c>completedUtc - LastAppendUtc &lt; idleWindow</c> despite this
+    /// method's own contract (see below) -- a real flake, not a test artifact, since
+    /// <c>CapturedProcessOutputWaitTests</c> asserts that exact inequality with no margin. Every
+    /// loop iteration below -- not just the first -- therefore re-derives <c>quietFor</c> fresh
+    /// from <see cref="_lastAppendUtc"/> rather than assuming a completed timer means a full
+    /// window has passed: if the real elapsed time is still short, <c>idleNeeded</c> comes out
+    /// positive again and the loop waits out just the shortfall (typically converging after one
+    /// extra sub-millisecond-to-low-double-digit-millisecond iteration); if a new line landed
+    /// instead, <see cref="_lastAppendUtc"/> has moved forward and <c>idleNeeded</c> comes out as
+    /// a full fresh <paramref name="idleWindow"/> (the ordinary re-arm case). Both cases are
+    /// handled identically without needing to distinguish *why* the loop is re-entering.
+    /// </para>
+    /// <para>
     /// Returns <c>true</c> once the backend has gone quiet for a full <paramref
-    /// name="idleWindow"/>; <c>false</c> if <paramref name="maxWait"/> elapsed first (#66 S4) --
-    /// still never throws for a mere cap hit, only for a genuine <paramref
-    /// name="cancellationToken"/> cancellation (#66 S3), so callers can decide how loudly to
-    /// surface a cap hit rather than have it silently mean "quiescent".
+    /// name="idleWindow"/> -- guaranteed measured against <see cref="_lastAppendUtc"/> itself, so
+    /// it can no longer flake in either direction (#103); <c>false</c> if <paramref
+    /// name="maxWait"/> elapsed first (#66 S4) -- still never throws for a mere cap hit, only for
+    /// a genuine <paramref name="cancellationToken"/> cancellation (#66 S3), so callers can decide
+    /// how loudly to surface a cap hit rather than have it silently mean "quiescent".
     /// </para>
     /// </summary>
     public async Task<bool> WaitForOutputQuiescenceAsync(
@@ -214,7 +234,6 @@ public sealed class CapturedProcessOutput
         CancellationToken cancellationToken = default)
     {
         var deadline = DateTimeOffset.UtcNow + maxWait;
-        var firstIteration = true;
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -229,14 +248,12 @@ public sealed class CapturedProcessOutput
             lock (_signalGate)
             {
                 signalTask = _signal.Task;
-                // #66 S1 fast path: only ever applies on the FIRST iteration -- every later
-                // iteration got here because a new line just landed and re-armed the debounce, so
-                // this can only ever shortcut the common "already silent" case, never a line still
-                // being dispatched.
-                var quietFor = firstIteration ? DateTimeOffset.UtcNow - _lastAppendUtc : TimeSpan.Zero;
+                // #103: re-derived fresh on EVERY iteration (not gated to the first) -- see this
+                // method's own doc comment above for why a completed idle timer alone can't be
+                // trusted as proof that a full idleWindow has really elapsed.
+                var quietFor = DateTimeOffset.UtcNow - _lastAppendUtc;
                 idleNeeded = quietFor >= idleWindow ? TimeSpan.Zero : idleWindow - quietFor;
             }
-            firstIteration = false;
 
             if (idleNeeded <= TimeSpan.Zero)
             {
@@ -251,12 +268,14 @@ public sealed class CapturedProcessOutput
             if (completed == idleTask)
             {
                 await idleTask.ConfigureAwait(false); // rethrows only for a genuine cancellation.
-                // waitFor was clipped to whatever was left of maxWait (never a full idle window):
-                // the cap was hit before quiescence was ever observed, not the other way around.
-                return !cappedByDeadline;
             }
-            // A new line landed (signalTask completed first) -- loop and re-arm a fresh idle
-            // window instead of returning early on a stale one.
+            // Loop back regardless of which task completed: the top of the loop re-derives
+            // quietFor from the authoritative _lastAppendUtc, which -- without needing to know
+            // whether we got here via a new line or a (possibly early-firing, #103) idle timer --
+            // either confirms a full idleWindow has genuinely passed (returns true above) or
+            // waits out whatever is left (a genuine re-arm, or just a timer-resolution
+            // shortfall). A cap hit that fired the idleTask above is caught by the deadline check
+            // at the very top of this same loop iteration, immediately after looping back.
         }
     }
 
