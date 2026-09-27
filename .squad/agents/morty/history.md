@@ -594,3 +594,23 @@ Fixed `useAzureSpeech.tsx`: (1) `onReceivedToolResponse` parameter was declared 
   ("Carhop Voice" / "Team member Voice" / "Alpha-hop Voice"). Saved under the session's
   `ux/p2-117/` folder alongside the #117 screenshots. Cleaned up: stopped both scratch dev
   servers by PID, deleted both `$env:TEMP` scratch persona directories.
+
+## Addendum (2026-09-28, same push): C# loader was missed on first pass for the menu icon field
+
+When I added the optional icon field to personas/menu.schema.json for issue 119, I updated the
+Python schema, the backend fixture copy, and the Sonic menu data — but forgot this repo has a
+second, parallel backend implementation at `app/backend-dotnet` with its own strict-mode C#
+record classes (`MenuModels.cs`) mirroring the same schema. That loader has no tolerance for
+unmapped JSON properties, so it threw `PersonaValidationException` on every persona load once the
+real Sonic pack carried an `icon` value — a fail-fast startup error, not a soft warning. Local
+`dotnet test` runs I did earlier didn't catch it because they were exercising the Python-backend
+conformance leg by default (`CONFORMANCE_BACKEND` must be set explicitly to pick the dotnet leg).
+The gap only surfaced once real CI ran the `backend=dotnet` conformance matrix leg and the C#
+unit tests job, both red. Fixed by adding a nullable `Icon` property to
+`PersonaMenuCategory` in `MenuModels.cs` (mirrors the Python field, no schema semantics change).
+Verified locally: `dotnet test` in `app/backend-dotnet` now passes 82/82 (was 74/82), and a
+targeted `CONFORMANCE_BACKEND=dotnet` conformance run confirms the backend now completes startup
+validation and loads personas correctly (the earlier "FATAL: Failed to load persona pack(s)" class
+of failure is gone). Lesson banked: "add it to both loaders" in this repo always means Python *and*
+C#, and schema-only local validation is not proof of a synced fix — must either build+test the C#
+project directly or explicitly force the dotnet conformance leg locally before pushing.

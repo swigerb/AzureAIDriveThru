@@ -14,6 +14,8 @@ public sealed record PersonaMenuCategory
 {
     [JsonPropertyName("category")] public required string Category { get; init; }
     [JsonPropertyName("items")] public required List<PersonaMenuItem> Items { get; init; }
+    // Optional icon glyph (issue 119); the frontend falls back to a neutral default when absent.
+    [JsonPropertyName("icon")] public string? Icon { get; init; }
 }
 
 public sealed record PersonaMenuItem
