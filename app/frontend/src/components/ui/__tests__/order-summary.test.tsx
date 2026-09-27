@@ -11,7 +11,10 @@ describe("OrderSummary", () => {
         const summary = calculateOrderSummary(sampleItems);
         render(<OrderSummary order={summary} />);
 
-        expect(screen.getByText("Your Sonic Order")).toBeInTheDocument();
+        // react-i18next is globally mocked (test/setup.ts) to echo the key itself, so the ticket
+        // title now asserts on the i18n key ("ticket.title") rather than its pack-supplied English
+        // value ("Your Sonic Order") -- issue #80 F3.
+        expect(screen.getByText("ticket.title")).toBeInTheDocument();
         expect(screen.getByText(/SuperSONIC® Double Cheeseburger/)).toBeInTheDocument();
         expect(screen.getByText(/Large Tots/)).toBeInTheDocument();
         expect(screen.getByText(`$${summary.total.toFixed(2)}`)).toBeInTheDocument();

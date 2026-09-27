@@ -108,11 +108,11 @@ afterEach(() => {
 
 describe("rate-limit recovery in the app", () => {
     it.each([
-        ["en", "/audio/apology-en.wav"],
-        ["es", "/audio/apology-es.wav"],
-        ["fr-CA", "/audio/apology-fr.wav"],
-        ["ja", "/audio/apology-ja.wav"],
-        ["de", "/audio/apology-en.wav"]
+        ["en", "/personas/sonic/assets/audio/apology-en.wav"],
+        ["es", "/personas/sonic/assets/audio/apology-es.wav"],
+        ["fr-CA", "/personas/sonic/assets/audio/apology-fr.wav"],
+        ["ja", "/personas/sonic/assets/audio/apology-ja.wav"],
+        ["de", "/personas/sonic/assets/audio/apology-en.wav"]
     ])("attempt 1 plays the apology clip for UI language %s", async (language, url) => {
         lang.current = language;
         await startConversation();

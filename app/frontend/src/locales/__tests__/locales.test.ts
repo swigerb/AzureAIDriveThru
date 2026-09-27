@@ -71,9 +71,9 @@ describe("locale files", () => {
         expect(flatten(locales[lang])["app.title"]).toMatch(/Sonic/);
     });
 
-    it.each(languages.filter(lang => lang !== "en"))("%s credits the same Azure services as English", lang => {
+    it.each(languages.filter(lang => lang !== "en"))("%s credits the same Microsoft services as English", lang => {
         const footer = flatten(locales[lang])["app.footer"];
-        for (const service of ["Azure AI", "Azure OpenAI", "Azure Speech"]) {
+        for (const service of ["Microsoft Foundry", "Azure OpenAI", "Azure AI"]) {
             expect(footer).toContain(service);
         }
     });

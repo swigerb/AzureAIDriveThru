@@ -17,11 +17,16 @@ describe("apology clip lookup", () => {
         [null, "en"]
     ])("%s -> %s", (language, expected) => {
         expect(apologyLanguage(language)).toBe(expected);
-        expect(apologyClipUrl(language)).toBe(`/audio/apology-${expected}.wav`);
+        expect(apologyClipUrl("sonic", "assets/audio/apology-{lang}.wav", language)).toBe(`/personas/sonic/assets/audio/apology-${expected}.wav`);
     });
 
     it("covers exactly the four UI languages", () => {
         expect([...APOLOGY_LANGUAGES]).toEqual(["en", "es", "fr", "ja"]);
+    });
+
+    it("returns null when a persona declares no apology clip template", () => {
+        expect(apologyClipUrl("sonic", undefined, "en")).toBeNull();
+        expect(apologyClipUrl("sonic", null, "en")).toBeNull();
     });
 });
 
