@@ -10,7 +10,16 @@
             { "size": "large", "price": 2.99 }
           ],
           "description": "Test Alpha's house cola, served ice cold.",
-          "aliases": ["cola"]
+          "aliases": ["cola"],
+          "requiresMachine": "soda_machine"
+        },
+        {
+          "name": "Alpha Flavor Shot",
+          "sizes": [
+            { "size": "small", "price": 0.59 }
+          ],
+          "description": "Test Alpha's flavor add-in for drinks.",
+          "isExtra": true
         }
       ]
     },

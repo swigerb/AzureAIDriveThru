@@ -20,6 +20,7 @@ Rick's #92 note ("remove the hardcoded PromptLoader with a fixed brand argument"
 test_app.py / test_performance.py respectively -- not duplicated here.
 """
 
+import asyncio
 import os
 import sys
 import unittest
@@ -33,8 +34,10 @@ from test_session_bootstrap import BROWSER_SESSION_UPDATE, _RealtimeHarness
 
 import default_persona
 import menu_utils
+import tools
 from order_state import order_state_singleton
 from persona_loader import PersonaCatalog
+from prompt_loader import PromptLoader
 from session_manager import SessionManager
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures" / "personas"
@@ -56,6 +59,26 @@ def _ws():
     ws = MagicMock()
     ws.close = AsyncMock()
     return ws
+
+
+def _run(coro):
+    return asyncio.run(coro)
+
+
+def _make_mock_search_client(records):
+    """Create a mock SearchClient that returns an async iterable of *records* -- same shape
+    as test_tool_calling.py's helper of the same name, duplicated locally so this file has no
+    cross-test-module import dependency for something this small."""
+    client = AsyncMock()
+
+    async def _fake_search(**kwargs):
+        async def _async_iter():
+            for r in records:
+                yield r
+        return _async_iter()
+
+    client.search = _fake_search
+    return client
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -177,6 +200,137 @@ class OrderStatePersonaBindingTests(unittest.TestCase):
             order_state_singleton.get_persona_id(sid),
             default_persona.get_default_persona().id,
         )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PER-SESSION BUSINESS RULES (Rick's PR #102 review, round 3, required item 1): every
+# session applies its OWN bound persona's machine-outage/extras-gate/invalid-modifier/
+# greeting/role-name rules -- none of these read a shared, brand-only module constant
+# anymore. test-alpha and test-beta are configured with deliberately OPPOSITE
+# extras allow/block categories and their own machine status/invalid-modifier/
+# greeting/roleName data (see their persona.json/menuItems.json/prompts/greeting.yaml)
+# so the same order-composition/query/machine-key scenario proves real per-session
+# isolation, not just "two personas that happen to behave the same."
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class PersonaBusinessRuleIsolationTests(unittest.TestCase):
+    """Mutation check (see decision note): reintroducing any of tools.py's deleted
+    MOCK_MACHINE_STATUS/ALLOWED_EXTRA_CATEGORIES/BLOCKED_EXTRA_CATEGORIES/INVALID_MODS
+    module constants (even just for ONE of the checks below) collapses test-alpha's and
+    test-beta's results back to being identical, failing at least one assertion here."""
+
+    def setUp(self):
+        self.catalog = _load_fixture_catalog()
+        self.alpha = self.catalog.get("test-alpha")
+        self.beta = self.catalog.get("test-beta")
+        self._sessions_created: list[str] = []
+        self.addCleanup(self._cleanup_sessions)
+        tools._search_cache.clear()
+
+    def _cleanup_sessions(self):
+        for sid in self._sessions_created:
+            order_state_singleton.delete_session(sid)
+
+    def _new_session(self, persona) -> str:
+        sid = order_state_singleton.create_session(persona=persona)
+        self._sessions_created.append(sid)
+        return sid
+
+    # ── machines / OOS annotation ──────────────────────────────────────────────
+
+    def test_same_machine_key_is_down_for_alpha_but_operational_for_beta(self):
+        """Both packs key their soda fountain as `soda_machine` -- alpha's persona.json marks
+        it "down", beta's marks it "operational". A shared module-level MOCK_MACHINE_STATUS
+        could only ever pick ONE of these for both personas at once."""
+        sid_a = self._new_session(self.alpha)
+        sid_b = self._new_session(self.beta)
+        menu_a = order_state_singleton.get_menu_catalog(sid_a)
+        menu_b = order_state_singleton.get_menu_catalog(sid_b)
+
+        result_a = _run(tools.search(
+            _make_mock_search_client([{"id": "1", "name": "Alpha Cola", "category": "drinks", "sizes": "N/A"}]),
+            "cfg", "id", "description", "embedding", False, {"query": "cola"}, menu=menu_a,
+        ))
+        result_b = _run(tools.search(
+            _make_mock_search_client([{"id": "1", "name": "Beta Root Beer", "category": "drinks", "sizes": "N/A"}]),
+            "cfg", "id", "description", "embedding", False, {"query": "root beer"}, menu=menu_b,
+        ))
+        self.assertIn("OOS", result_a.text)
+        self.assertNotIn("OOS", result_b.text)
+
+    # ── extras allow/block gate ─────────────────────────────────────────────────
+
+    def test_extras_gate_gives_opposite_outcomes_for_the_same_base_category(self):
+        """alpha allows extras on "drinks" and blocks them on "mains"; beta is configured the
+        exact opposite. Both sessions add their OWN "mains"-category base item, then try to
+        add their OWN isExtra item -- alpha's extra must be rejected (mains blocked), beta's
+        must be accepted (mains allowed) -- proving the SAME category name drives opposite
+        real behavior per persona, not a shared module-level allow/block list."""
+        sid_a = self._new_session(self.alpha)
+        _run(tools.update_order({"action": "add", "item_name": "Alpha Burger", "size": "small", "quantity": 1, "price": 3.99}, sid_a))
+        _run(tools.update_order({"action": "add", "item_name": "Alpha Flavor Shot", "size": "small", "quantity": 1, "price": 0.59}, sid_a))
+        alpha_items = [oi.item for oi in order_state_singleton.get_order_items(sid_a)]
+        self.assertNotIn("Alpha Flavor Shot", alpha_items, "alpha blocks extras on 'mains' -- must be rejected")
+
+        sid_b = self._new_session(self.beta)
+        _run(tools.update_order({"action": "add", "item_name": "Beta Double Burger", "size": "regular", "quantity": 1, "price": 4.49}, sid_b))
+        _run(tools.update_order({"action": "add", "item_name": "Beta Cheese Sauce", "size": "regular", "quantity": 1, "price": 0.79}, sid_b))
+        beta_items = [oi.item for oi in order_state_singleton.get_order_items(sid_b)]
+        self.assertIn("Beta Cheese Sauce", beta_items, "beta allows extras on 'mains' -- must be accepted")
+
+    # ── invalid modifiers ────────────────────────────────────────────────────────
+
+    def test_invalid_modifiers_are_rejected_per_persona_own_rules_only(self):
+        """alpha's own rule blocks "onion" on its "drinks" category; beta's own (different)
+        rule blocks "mustard" on its "mains" category. Each rule only fires for its OWN
+        persona/category pairing -- proving invalid_modifiers is read off the bound
+        MenuCatalog, not a shared module-level dict."""
+        menu_a = menu_utils.get_catalog_for_persona(self.alpha)
+        menu_b = menu_utils.get_catalog_for_persona(self.beta)
+
+        self.assertIsNotNone(tools.validate_customization("Alpha Cola", "onion", menu=menu_a))
+        self.assertIsNotNone(tools.validate_customization("Beta Double Burger", "mustard", menu=menu_b))
+        # Cross-checks: alpha's rule never fires for beta's category/word and vice versa.
+        self.assertIsNone(tools.validate_customization("Beta Double Burger", "onion", menu=menu_b))
+        self.assertIsNone(tools.validate_customization("Alpha Cola", "mustard", menu=menu_a))
+
+    # ── greeting text ────────────────────────────────────────────────────────────
+
+    def test_greeting_text_comes_from_each_persona_own_pack(self):
+        """The SAME shared SessionManager instance, given each persona's own PromptLoader-built
+        greeting override, renders each pack's own greeting.yaml text -- never a hardcoded
+        brand-specific string (the deleted _DEFAULT_GREETING_MSG)."""
+        sm = SessionManager()
+        loader_a = PromptLoader(brand=self.alpha.id, prompts_dir=self.alpha.prompts_dir)
+        loader_b = PromptLoader(brand=self.beta.id, prompts_dir=self.beta.prompts_dir)
+        msg_a = sm.build_greeting_msg(loader_a.get_greeting_json_str())
+        msg_b = sm.build_greeting_msg(loader_b.get_greeting_json_str())
+        self.assertIn("Test Alpha Drive-In", msg_a)
+        self.assertIn("Test Beta Burger Co.", msg_b)
+        self.assertNotIn("Test Beta", msg_a)
+        self.assertNotIn("Test Alpha", msg_b)
+
+    # ── role name (nudge text / transcript-replay label) ────────────────────────
+
+    def test_nudge_and_rehydration_role_label_use_each_persona_own_role_name(self):
+        """Both were rendered from a hardcoded "carhop" string before this round; now both are
+        templated on the bound persona's own roleName ("alpha-hop"/"beta-runner"), matching
+        the greeting check above in proving no shared brand-only text remains."""
+        sm = SessionManager()
+        sid_a = self._new_session(self.alpha)
+        sid_b = self._new_session(self.beta)
+        sm.record_turn(sid_a, "carhop", "one alpha cola coming up")
+        sm.record_turn(sid_b, "carhop", "one beta root beer coming up")
+
+        nudge_a = sm.build_nudge_item(role_name=self.alpha.manifest.roleName)
+        nudge_b = sm.build_nudge_item(role_name=self.beta.manifest.roleName)
+        self.assertIn("alpha-hop", nudge_a)
+        self.assertIn("beta-runner", nudge_b)
+
+        rehydration_a = sm.build_rehydration_item(sid_a, role_name=self.alpha.manifest.roleName)
+        rehydration_b = sm.build_rehydration_item(sid_b, role_name=self.beta.manifest.roleName)
+        self.assertIn("Alpha-hop: one alpha cola coming up", rehydration_a)
+        self.assertIn("Beta-runner: one beta root beer coming up", rehydration_b)
 
 
 class NoMidConversationPersonaSwitchTests(unittest.TestCase):

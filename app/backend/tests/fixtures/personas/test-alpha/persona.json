@@ -40,8 +40,10 @@
     "splitCombinedNames": false
   },
 
-  "invalidModifiers": {},
-  "machines": {},
+  "invalidModifiers": {
+    "drink": ["onion"]
+  },
+  "machines": { "soda_machine": "down" },
 
   "models": {
     "realtime": { "default": "gpt-realtime-2.1", "allowed": ["gpt-realtime-2.1"] }

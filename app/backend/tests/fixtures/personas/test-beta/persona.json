@@ -29,13 +29,15 @@
   },
 
   "extras": {
-    "allowedBaseCategories": ["drinks"],
-    "blockedBaseCategories": ["mains"],
+    "allowedBaseCategories": ["mains"],
+    "blockedBaseCategories": ["drinks"],
     "splitCombinedNames": false
   },
 
-  "invalidModifiers": {},
-  "machines": {},
+  "invalidModifiers": {
+    "main": ["mustard"]
+  },
+  "machines": { "soda_machine": "operational" },
 
   "models": {
     "realtime": { "default": "gpt-realtime-mini", "allowed": ["gpt-realtime-mini"] }
