@@ -493,19 +493,30 @@ class ApiPersonasResponseShapeTests(unittest.TestCase):
         )
 
     def test_persona_summary_has_the_designed_fields(self):
-        summary = self._summary_body(self.catalog.get("test-alpha"))
+        from app import _content_hash
+        persona = self.catalog.get("test-alpha")
+        summary = self._summary_body(persona)
         self.assertEqual(summary["id"], "test-alpha")
         self.assertEqual(summary["displayName"], "Test Alpha Drive-In")
-        self.assertEqual(summary["logoUrl"], "/personas/test-alpha/assets/logo.svg")
+        # Rick's PR #102 review item 2: logoUrl carries a `?v=<content-hash>` of the actual
+        # on-disk logo file, so this asserts the exact hash of the fixture file, not just a
+        # prefix/shape check -- a stronger guarantee that the URL really is pinned to the
+        # file's current bytes.
+        expected_hash = _content_hash(persona.assets_dir / "logo.svg")
+        self.assertEqual(summary["logoUrl"], f"/personas/test-alpha/assets/logo.svg?v={expected_hash}")
         self.assertIn("light", summary["theme"])
 
     def test_persona_detail_has_voice_locales_features_menu_and_models(self):
-        detail = self._detail_body(self.catalog.get("test-beta"))
+        from app import _content_hash
+        persona = self.catalog.get("test-beta")
+        detail = self._detail_body(persona)
         self.assertEqual(detail["id"], "test-beta")
         self.assertEqual(detail["voice"], {"default": "cedar"})
         self.assertEqual(detail["locales"]["default"], "en")
         self.assertEqual(detail["features"], {"dayparts": False})
-        self.assertEqual(detail["menuUrl"], "/personas/test-beta/menu.json")
+        # Rick's PR #102 review item 2: same content-hash versioning as logoUrl above.
+        expected_hash = _content_hash(persona.menu_path)
+        self.assertEqual(detail["menuUrl"], f"/personas/test-beta/menu.json?v={expected_hash}")
         self.assertEqual(detail["models"]["realtime"]["default"], "gpt-realtime-mini")
         self.assertNotIn("cascade", detail["models"])
         self.assertNotIn("local", detail["models"])
@@ -615,28 +626,64 @@ class PersonaAssetAndMenuRouteTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         await self.client.close()
 
-    async def test_logo_asset_returns_200_with_immutable_cache_header(self):
-        from app import _STATIC_IMMUTABLE_MAX_AGE
-        resp = await self.client.get("/personas/test-alpha/assets/logo.svg")
+    async def test_logo_asset_returns_200_with_immutable_cache_header_when_v_matches(self):
+        from app import _STATIC_IMMUTABLE_MAX_AGE, _content_hash
+        persona = self.catalog.get("test-alpha")
+        expected_hash = _content_hash(persona.assets_dir / "logo.svg")
+        resp = await self.client.get(f"/personas/test-alpha/assets/logo.svg?v={expected_hash}")
         self.assertEqual(resp.status, 200)
         self.assertIn("<svg", await resp.text())
         self.assertEqual(
             resp.headers["Cache-Control"], f"public, max-age={_STATIC_IMMUTABLE_MAX_AGE}, immutable",
         )
+        # Non-blocking (Rick's PR #102 review): explicit content type + nosniff.
+        self.assertEqual(resp.content_type, "image/svg+xml")
+        self.assertEqual(resp.headers["X-Content-Type-Options"], "nosniff")
+
+    async def test_logo_asset_gets_short_cache_header_when_v_is_missing(self):
+        """Rick's PR #102 review item 2: an unversioned request must NEVER get the
+        year-long immutable policy -- a later pack update could silently serve stale
+        content for a year to anyone still holding that plain URL."""
+        from app import _STATIC_DEFAULT_MAX_AGE
+        resp = await self.client.get("/personas/test-alpha/assets/logo.svg")
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(resp.headers["Cache-Control"], f"public, max-age={_STATIC_DEFAULT_MAX_AGE}")
+        self.assertNotIn("immutable", resp.headers["Cache-Control"])
+
+    async def test_logo_asset_gets_short_cache_header_when_v_is_stale(self):
+        """A `v` that doesn't match the file's CURRENT hash (e.g. minted before a pack
+        edit) must fall back to the short policy too, not just a missing `v`."""
+        from app import _STATIC_DEFAULT_MAX_AGE
+        resp = await self.client.get("/personas/test-alpha/assets/logo.svg?v=0000000000000000")
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(resp.headers["Cache-Control"], f"public, max-age={_STATIC_DEFAULT_MAX_AGE}")
+        self.assertNotIn("immutable", resp.headers["Cache-Control"])
 
     async def test_nested_asset_path_returns_200(self):
         resp = await self.client.get("/personas/test-alpha/assets/sub/icon.png")
         self.assertEqual(resp.status, 200)
 
-    async def test_menu_json_returns_200_as_application_json_with_immutable_cache_header(self):
-        from app import _STATIC_IMMUTABLE_MAX_AGE
-        resp = await self.client.get("/personas/test-alpha/menu.json")
+    async def test_menu_json_returns_200_as_application_json_with_immutable_cache_header_when_v_matches(self):
+        from app import _STATIC_IMMUTABLE_MAX_AGE, _content_hash
+        persona = self.catalog.get("test-alpha")
+        expected_hash = _content_hash(persona.menu_path)
+        resp = await self.client.get(f"/personas/test-alpha/menu.json?v={expected_hash}")
         self.assertEqual(resp.status, 200)
         self.assertEqual(resp.content_type, "application/json")
         self.assertEqual(
             resp.headers["Cache-Control"], f"public, max-age={_STATIC_IMMUTABLE_MAX_AGE}, immutable",
         )
+        self.assertEqual(resp.headers["X-Content-Type-Options"], "nosniff")
         self.assertIn("menuItems", await resp.json())
+
+    async def test_menu_json_gets_short_cache_header_when_v_is_missing_or_stale(self):
+        from app import _STATIC_DEFAULT_MAX_AGE
+        for query in ("", "?v=0000000000000000"):
+            with self.subTest(query=query):
+                resp = await self.client.get(f"/personas/test-alpha/menu.json{query}")
+                self.assertEqual(resp.status, 200)
+                self.assertEqual(resp.headers["Cache-Control"], f"public, max-age={_STATIC_DEFAULT_MAX_AGE}")
+                self.assertNotIn("immutable", resp.headers["Cache-Control"])
 
     async def test_asset_404s_for_unknown_persona_id(self):
         resp = await self.client.get("/personas/does-not-exist/assets/logo.svg")

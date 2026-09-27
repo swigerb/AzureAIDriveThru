@@ -1,4 +1,5 @@
 import gzip
+import hashlib
 import logging
 import os
 import sys
@@ -72,6 +73,18 @@ def _get_bool_env(variable_name: str, default: bool = False) -> bool:
 # Persona discovery endpoints (issue #74, design doc section 5.2)
 # ---------------------------------------------------------------------------
 
+def _content_hash(path: Path) -> str:
+    """Short, stable content-hash for the `?v=` query param on persona asset/menu URLs
+    (Rick's PR #102 review item 2). Recomputed fresh from the file's current bytes on every
+    request (see `_asset_cache_headers`), never cached across a file edit -- so a stale `?v=`
+    from a URL minted before a pack update simply falls through to the short/no-cache
+    fallback below instead of being trusted. 16 hex chars (64 bits) of SHA-256 is plenty of
+    collision resistance for a cache-busting token; the full digest would just make the URL
+    (and every response referencing it) needlessly longer.
+    """
+    return hashlib.sha256(path.read_bytes()).hexdigest()[:16]
+
+
 def _persona_logo_url(persona: Persona) -> str:
     """Static asset URL served by the `/personas/{id}/assets/*` route below (design doc
     section 5.2, Rick's PR #102 review item 5).
@@ -82,14 +95,31 @@ def _persona_logo_url(persona: Persona) -> str:
     (`<pack>/assets`) itself, to keep that route's traversal boundary scoped to just the
     assets subtree. Strip the redundant leading `assets/` here so the URL this function
     builds is one the asset route can actually resolve, instead of doubling that segment.
+
+    Rick's PR #102 review item 2: the URL carries a `?v=<content-hash>` of the logo file
+    itself, so the asset route (`_asset_cache_headers`) can tell a request that's actually
+    pinned to this exact content (safe to cache for a year, immutably) apart from an
+    unversioned or stale-hash request (which might get different bytes the next time this
+    same path is requested, e.g. after a pack update) -- never immutable caching by default.
+    Falls back to no `?v=` (rare: schema validation doesn't check the logo file itself
+    exists on disk, only that persona.json's string field is present) rather than raising --
+    an unversioned URL still works, just without the year-long cache policy.
     """
     logo = persona.manifest.ui.assets.logo
-    return f"/personas/{persona.id}/assets/{logo.removeprefix('assets/')}"
+    relative = logo.removeprefix('assets/')
+    route = f"/personas/{persona.id}/assets/{relative}"
+    resolved = _resolve_persona_asset_path(persona, relative)
+    if resolved is not None:
+        route += f"?v={_content_hash(resolved)}"
+    return route
 
 
 def _persona_menu_url(persona: Persona) -> str:
-    """See `_persona_logo_url` -- same route family, for `/personas/{id}/menu.json`."""
-    return f"/personas/{persona.id}/menu.json"
+    """See `_persona_logo_url` -- same route family and `?v=<content-hash>` versioning
+    scheme, for `/personas/{id}/menu.json`. Unlike the logo, `persona.menu_path` is
+    guaranteed to exist (persona_loader.py's `PersonaCatalog.load` fails fast at startup if
+    the menu file is missing), so this always carries a `?v=`."""
+    return f"/personas/{persona.id}/menu.json?v={_content_hash(persona.menu_path)}"
 
 
 def _model_pipelines_body(models) -> dict:
@@ -197,10 +227,42 @@ def _resolve_persona_asset_path(persona: Persona, requested_path: str) -> Path |
     return resolved
 
 
-def _asset_cache_headers(response: web.Response) -> None:
-    """Immutable caching (design doc section 5.2: "immutable caching, the existing
-    compression and caching middleware"), same policy as the hashed frontend bundles."""
-    response.headers["Cache-Control"] = f"public, max-age={_STATIC_IMMUTABLE_MAX_AGE}, immutable"
+# Non-blocking (Rick's PR #102 review): explicit content types for persona asset files,
+# instead of trusting `mimetypes.guess_type`'s OS-dependent registry (e.g. `.svg`/`.ico` are
+# missing from Python's default table on some platforms, silently falling back to
+# `application/octet-stream`; `.wav` can resolve to `audio/x-wav` instead of `audio/wav`
+# depending on the local `mimetypes` database).
+_ASSET_CONTENT_TYPES = {
+    ".svg": "image/svg+xml",
+    ".wav": "audio/wav",
+    ".ico": "image/x-icon",
+    ".json": "application/json",
+}
+
+
+def _asset_cache_headers(response: web.Response, request: web.Request, expected_v: str | None) -> None:
+    """Content-hash versioned caching (Rick's PR #102 review item 2): year-long immutable
+    caching on a URL with no content-hash pinning it to a specific set of bytes was wrong --
+    a later pack update could silently serve stale content for a year to anyone still holding
+    the unversioned URL. Only a request whose `?v=` query param matches *this file's current*
+    content hash (`expected_v`, computed fresh per-request by the caller via `_content_hash`)
+    is safe to mark immutable: that exact URL can never resolve to different bytes later,
+    because a future edit changes the file's hash and therefore the URL a fresh
+    `_persona_logo_url`/`_persona_menu_url` call would mint. An unversioned request (no `v`
+    at all -- e.g. a client that cached an old response body containing a pre-versioning URL,
+    or hit the route directly) or one carrying a stale/mismatched hash gets the same short,
+    revalidate-often policy as any other mutable static file (`_STATIC_DEFAULT_MAX_AGE` --
+    previously defined but unused; this is that "short/no-cache policy consistent with
+    existing static handling" now actually wired up), never the immutable policy.
+    """
+    requested_v = request.query.get("v")
+    if expected_v is not None and requested_v == expected_v:
+        response.headers["Cache-Control"] = f"public, max-age={_STATIC_IMMUTABLE_MAX_AGE}, immutable"
+    else:
+        response.headers["Cache-Control"] = f"public, max-age={_STATIC_DEFAULT_MAX_AGE}"
+    # Non-blocking (Rick's PR #102 review): defense-in-depth against content-type sniffing on
+    # these persona-supplied (not first-party-authored) files.
+    response.headers["X-Content-Type-Options"] = "nosniff"
 
 
 def load_app_secret(environ=None) -> bytes:
@@ -333,7 +395,15 @@ def register_persona_routes(app: web.Application, catalog: PersonaCatalog) -> No
         if resolved is None:
             return web.json_response({"error": f"Unknown persona asset: {asset_path!r}"}, status=404)
         resp = web.FileResponse(resolved)
-        _asset_cache_headers(resp)
+        # Non-blocking (Rick's PR #102 review): pin the content type for known persona-asset
+        # extensions instead of trusting the local `mimetypes` registry (see
+        # `_ASSET_CONTENT_TYPES`'s docstring). Must be set before `_asset_cache_headers`
+        # returns the response, since `FileResponse` only guesses a Content-Type if one
+        # isn't already present in its headers at prepare() time.
+        content_type = _ASSET_CONTENT_TYPES.get(resolved.suffix.lower())
+        if content_type is not None:
+            resp.headers["Content-Type"] = content_type
+        _asset_cache_headers(resp, request, _content_hash(resolved))
         return resp
 
     async def get_persona_menu(request: web.Request) -> web.Response:
@@ -347,7 +417,7 @@ def register_persona_routes(app: web.Application, catalog: PersonaCatalog) -> No
         # (which explicitly skips FileResponse) applies to this JSON payload too, matching
         # design doc section 5.2 ("the existing compression and caching middleware").
         resp = web.Response(body=menu_path.read_bytes(), content_type="application/json")
-        _asset_cache_headers(resp)
+        _asset_cache_headers(resp, request, _content_hash(menu_path))
         return resp
 
     app.add_routes([
