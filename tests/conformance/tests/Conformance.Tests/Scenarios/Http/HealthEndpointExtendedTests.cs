@@ -14,6 +14,7 @@ namespace Conformance.Tests;
 /// one, per this stream's own scope.
 /// </summary>
 [Collection(ConformanceCollection.Name)]
+[Trait("Dotnet", "ready")]
 public sealed class HealthEndpointExtendedTests(ConformanceFixture fixture)
 {
     [Fact]
