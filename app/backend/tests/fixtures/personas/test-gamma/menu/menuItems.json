@@ -1,0 +1,96 @@
+{
+  "menuItems": [
+    {
+      "category": "meals",
+      "items": [
+        {
+          "name": "Gamma Meal",
+          "sizes": [
+            { "size": "regular", "price": 5.99 },
+            { "size": "large", "price": 7.49 }
+          ],
+          "description": "Test Gamma's numbered meal -- a main plus an auto-filled side and drink.",
+          "mealNumber": "1",
+          "bundle": {
+            "slots": ["sides", "drinks"],
+            "autoFill": { "sides": "Gamma Fries ({size})", "drinks": "Gamma Cola ({size})" },
+            "defaultSize": "regular"
+          }
+        },
+        {
+          "name": "Gamma Breakfast Meal",
+          "sizes": [
+            { "size": "regular", "price": 4.99 }
+          ],
+          "description": "Test Gamma's breakfast numbered meal, sharing meal number 2 with the lunch meal.",
+          "mealNumber": "2",
+          "menuPeriod": "breakfast"
+        },
+        {
+          "name": "Gamma Lunch Meal",
+          "sizes": [
+            { "size": "regular", "price": 6.49 }
+          ],
+          "description": "Test Gamma's lunch numbered meal, sharing meal number 2 with the breakfast meal.",
+          "mealNumber": "2",
+          "menuPeriod": "lunch"
+        }
+      ]
+    },
+    {
+      "category": "drinks",
+      "items": [
+        {
+          "name": "Gamma Latte",
+          "sizes": [
+            { "size": "regular", "price": 3.49 },
+            { "size": "large", "price": 4.29 }
+          ],
+          "description": "Test Gamma's house latte -- the base item for the splitCombinedNames test."
+        },
+        {
+          "name": "Gamma Extra Shot",
+          "sizes": [
+            { "size": "regular", "price": 0.75 }
+          ],
+          "description": "Test Gamma's chargeable espresso shot add-in.",
+          "aliases": ["Extra Shot"],
+          "isExtra": true
+        },
+        {
+          "name": "Gamma Shake",
+          "sizes": [
+            { "size": "regular", "price": 2.99 }
+          ],
+          "description": "Test Gamma's shake -- requires the (currently down) gamma_machine, for the machine_unavailable test.",
+          "requiresMachine": "gamma_machine"
+        }
+      ]
+    },
+    {
+      "category": "mains",
+      "items": [
+        {
+          "name": "Gamma Burger",
+          "sizes": [
+            { "size": "regular", "price": 3.99 }
+          ],
+          "description": "Test Gamma's plain burger -- an on-menu item with no bundle/machine/extra fields, for baseline add/modify checks."
+        }
+      ]
+    },
+    {
+      "category": "sides",
+      "items": [
+        {
+          "name": "Gamma Fries",
+          "sizes": [
+            { "size": "regular", "price": 1.99 }
+          ],
+          "description": "Test Gamma's standalone fries -- a real side a guest can order before the meal, to prove absorption wins over auto-fill for a slot that's already covered.",
+          "comboSlot": "sides"
+        }
+      ]
+    }
+  ]
+}
