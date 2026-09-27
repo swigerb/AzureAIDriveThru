@@ -24,9 +24,28 @@ from typing import Any
 import yaml
 from jinja2 import BaseLoader, Environment
 
-__all__ = ["PromptLoader"]
+__all__ = ["PromptLoader", "REQUIRED_ERROR_MESSAGE_KEYS"]
 
 logger = logging.getLogger("prompt-loader")
+
+# #125 (fail-fast follow-up to #116): every structured rejection tools.py's update_order/modify
+# path can return renders one of these keys via PromptLoader.render_error, plus generic_error as
+# the shared fallback. There is no per-key default -- error_messages.yaml is per-pack only (design
+# doc section 6) -- so a pack missing any of these used to silently fall back to
+# render_error's "An error occurred (<key>)." placeholder at runtime instead of failing startup
+# like a missing greeting/tool schema does. Mirrored byte-for-byte (same values, same order) in
+# app/backend-dotnet/src/Backend/Prompts/PromptLoader.cs's RequiredErrorMessageKeys;
+# tests/test_prompt_loading.py::test_required_error_message_keys_match_dotnet parses that C# file
+# and asserts the two lists are equal, so the two can never silently drift apart.
+REQUIRED_ERROR_MESSAGE_KEYS: tuple[str, ...] = (
+    "generic_error",
+    "item_not_on_menu",  # #73: update_order add -- item_name doesn't resolve on the menu at all
+    "size_not_available",  # #73: update_order add -- item resolves, requested size doesn't
+    "item_not_in_order",  # #116: update_order modify -- item resolves, isn't in the order yet
+    "machine_unavailable",  # #116: update_order add -- item's requiresMachine is reported "down"
+    "extras_blocked_category",  # #116: update_order add -- an extra with a blocked base category
+    "extras_no_base_item",  # #116: update_order add -- an extra with no allowed base item yet
+)
 
 # personas/ sits at the repo root (design doc section 4.1); this module lives at
 # app/backend/prompt_loader.py, two levels below it. Overridable via the PERSONAS_DIR env var
@@ -192,7 +211,9 @@ class PromptLoader:
         em_data = self._load_yaml("error_messages.yaml")
         if em_data is None:
             raise FileNotFoundError("Error messages file not found: error_messages.yaml")
-        self._cache["error_messages"] = em_data.get("messages", {})
+        error_messages = em_data.get("messages", {})
+        self._validate_error_messages(error_messages)
+        self._cache["error_messages"] = error_messages
 
         # Load hints
         hints_data = self._load_yaml("hints.yaml")
@@ -258,6 +279,17 @@ class PromptLoader:
             raise ValueError("greeting.yaml must have a 'greeting' key")
         if "type" not in greeting:
             raise ValueError("greeting must have a 'type' field")
+
+    def _validate_error_messages(self, messages: dict) -> None:
+        """#125 (fail-fast follow-up to #116): every key in REQUIRED_ERROR_MESSAGE_KEYS must be
+        present so the model never gets render_error's "An error occurred (<key>)." placeholder
+        text in place of the pack's own guidance for a real, reachable rejection path."""
+        missing = [key for key in REQUIRED_ERROR_MESSAGE_KEYS if key not in messages]
+        if missing:
+            raise ValueError(
+                f"error_messages.yaml for persona pack '{self._brand}' is missing required "
+                f"rejection-message key(s): {', '.join(missing)}"
+            )
 
     def _validate_tool_schemas(self, data: dict) -> None:
         """Validate tool schemas structure."""

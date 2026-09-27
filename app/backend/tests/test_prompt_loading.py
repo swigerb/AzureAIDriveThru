@@ -6,6 +6,7 @@ error edge cases.
 """
 
 import json
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -17,6 +18,7 @@ import yaml
 # Ensure the backend package is importable
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import prompt_loader as prompt_loader_module
 from prompt_loader import PromptLoader
 
 # ---------------------------------------------------------------------------
@@ -60,12 +62,21 @@ def brand_dir(tmp_path):
         ],
     }), encoding="utf-8")
 
-    # Error messages (with Jinja2 template)
+    # Error messages (with Jinja2 template). Includes all seven of prompt_loader.py's
+    # REQUIRED_ERROR_MESSAGE_KEYS (#125) plus two extra keys used only by this file's own
+    # Jinja2-rendering tests, so this fixture pack loads under the new startup validation.
     (brand / "error_messages.yaml").write_text(yaml.dump({
         "version": "1.0.0",
         "messages": {
             "not_found": "Sorry, I could not find {{ item_name }}.",
             "limit_hit": "Max {{ max_qty }} per item.",
+            "generic_error": "Sorry, something went wrong. Please try again.",
+            "item_not_on_menu": "Sorry, {{ item_name }} isn't on our menu.",
+            "size_not_available": "Sorry, {{ item_name }} isn't available in that size.",
+            "item_not_in_order": "{{ item_name }} isn't in the order.",
+            "machine_unavailable": "Sorry, {{ item_name }} isn't available right now.",
+            "extras_blocked_category": "Extras can't be added to that category right now.",
+            "extras_no_base_item": "Extras need a base item in the order first.",
         },
     }), encoding="utf-8")
 
@@ -243,6 +254,39 @@ class TestValidationErrors:
             with pytest.raises(ValueError, match="missing 'type'"):
                 PromptLoader(brand="testbrand")
 
+    # #125 (fail-fast follow-up to #116): error_messages.yaml missing one of
+    # prompt_loader.REQUIRED_ERROR_MESSAGE_KEYS must fail startup the same way a missing greeting
+    # does, naming both the pack and the missing key(s) -- never a silent runtime fallback to
+    # render_error's "An error occurred (<key>)." placeholder.
+    def test_error_messages_missing_one_required_key_raises(self, brand_dir):
+        messages = {key: "placeholder" for key in prompt_loader_module.REQUIRED_ERROR_MESSAGE_KEYS}
+        del messages["extras_no_base_item"]
+        (brand_dir / "error_messages.yaml").write_text(
+            yaml.dump({"version": "1.0.0", "messages": messages}), encoding="utf-8"
+        )
+        with patch("prompt_loader._PERSONAS_DIR", brand_dir.parent.parent):
+            with pytest.raises(ValueError, match="missing required rejection-message key"):
+                PromptLoader(brand="testbrand")
+
+    def test_error_messages_missing_all_required_keys_names_each_one(self, brand_dir):
+        (brand_dir / "error_messages.yaml").write_text(
+            yaml.dump({"version": "1.0.0", "messages": {"generic": "Something went wrong."}}),
+            encoding="utf-8",
+        )
+        with patch("prompt_loader._PERSONAS_DIR", brand_dir.parent.parent):
+            with pytest.raises(ValueError) as exc_info:
+                PromptLoader(brand="testbrand")
+        message = str(exc_info.value)
+        assert "testbrand" in message
+        for key in prompt_loader_module.REQUIRED_ERROR_MESSAGE_KEYS:
+            assert key in message
+
+    def test_error_messages_with_all_required_keys_does_not_raise(self, brand_dir):
+        # Baseline proof the fixture (and the validation itself) isn't accidentally over-strict:
+        # the brand_dir fixture's error_messages.yaml already has every required key.
+        with patch("prompt_loader._PERSONAS_DIR", brand_dir.parent.parent):
+            PromptLoader(brand="testbrand")  # must not raise
+
     def test_malformed_yaml_raises(self, brand_dir):
         (brand_dir / "system_prompt.yaml").write_text(
             "sections:\n  - [broken", encoding="utf-8"
@@ -348,6 +392,10 @@ class TestProductionPrompts:
         msgs = loader.get_error_messages()
         assert isinstance(msgs, dict)
         assert len(msgs) > 0
+        # #125: also proves the pack carries every required rejection-message key, not just
+        # that construction didn't raise.
+        for key in prompt_loader_module.REQUIRED_ERROR_MESSAGE_KEYS:
+            assert key in msgs
 
     def test_sonic_upsell_hint_for_burger(self):
         loader = PromptLoader(brand="sonic")
@@ -372,6 +420,42 @@ class HappyHourPromptWordingTests(unittest.TestCase):
         loader = PromptLoader(brand="sonic")
         prompt = loader.get_system_prompt()
         self.assertIn("Slushes and fountain drinks are HALF-PRICE every day", prompt)
+
+
+# ===========================================================================
+# Cross-backend required-key parity (#125)
+# ===========================================================================
+
+class RequiredErrorMessageKeysMatchDotnetTests(unittest.TestCase):
+    """#125 (design doc section 6): the required rejection-message key set is defined once as
+    prompt_loader.REQUIRED_ERROR_MESSAGE_KEYS and mirrored byte-for-byte in C#'s
+    app/backend-dotnet/src/Backend/Prompts/PromptLoader.cs (RequiredErrorMessageKeys). This test
+    parses the real C# source file directly (never a second hardcoded literal copy here) so the
+    two lists can never silently drift apart -- if either file's list changes without the other,
+    this test fails. Backend.Tests's PromptLoaderTests.RequiredErrorMessageKeys_MatchPython is the
+    mirror image, parsing this Python file from the C# side."""
+
+    def test_python_and_dotnet_required_error_message_keys_are_equal(self):
+        repo_root = Path(__file__).resolve().parents[3]
+        dotnet_file = repo_root / "app" / "backend-dotnet" / "src" / "Backend" / "Prompts" / "PromptLoader.cs"
+        self.assertTrue(dotnet_file.is_file(), f"Expected to find {dotnet_file}")
+
+        source = dotnet_file.read_text(encoding="utf-8")
+        marker = "RequiredErrorMessageKeys ="
+        start = source.index(marker)
+        list_start = source.index("[", start)
+        list_end = source.index("]", list_start)
+        body = source[list_start + 1:list_end]
+
+        dotnet_keys = re.findall(r'"([^"]+)"', body)
+
+        self.assertEqual(
+            list(prompt_loader_module.REQUIRED_ERROR_MESSAGE_KEYS),
+            dotnet_keys,
+            "prompt_loader.REQUIRED_ERROR_MESSAGE_KEYS and PromptLoader.cs's "
+            "RequiredErrorMessageKeys have drifted apart -- keep the two lists identical "
+            "(design doc section 6).",
+        )
 
 
 if __name__ == "__main__":

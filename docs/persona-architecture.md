@@ -465,6 +465,52 @@ starts a new session.
 **#64, decided (decision 3).** Floats do not get the happy-hour price, and they can fill the combo drink slot.
 They are real Sonic menu items (4.3, #72), not a keyword rule.
 
+### 6.1 Required rejection-message keys, validated at startup (#125, decided)
+
+Every structured rejection above (`not_on_menu`, `size_not_available`, `machine_unavailable`,
+`extras_blocked_category`, `extras_no_base_item`, `not_in_order`) renders its `message` from the
+persona's own `error_messages.yaml` via `prompt_loader.render_error(<key>, ...)`. This is the
+canonical, single list of keys every persona pack's `error_messages.yaml` **must** define:
+
+| Required key               | Rendered for reason (this section)                       |
+|-----------------------------|------------------------------------------------------------|
+| `generic_error`             | shared catch-all fallback (no dedicated reason yet)         |
+| `item_not_on_menu`          | `not_on_menu`                                               |
+| `size_not_available`        | `size_not_available`                                        |
+| `item_not_in_order`         | `not_in_order` (`modify` target missing)                     |
+| `machine_unavailable`       | `machine_unavailable`                                        |
+| `extras_blocked_category`   | `extras_blocked_category`                                    |
+| `extras_no_base_item`       | `extras_no_base_item`                                        |
+
+**One list, two mirrors, kept in sync by a test in each language.** The list above is duplicated
+verbatim, in the same order, as an ordered constant in both loaders:
+
+- Python: `prompt_loader.REQUIRED_ERROR_MESSAGE_KEYS` (`app/backend/prompt_loader.py`).
+- C#: `PromptLoader.RequiredErrorMessageKeys` (`app/backend-dotnet/src/Backend/Prompts/PromptLoader.cs`).
+
+Rather than externalizing the list to a shared file (which would mean plumbing a new path through
+both loaders' constructors and every test fixture's directory layout), each language's test suite
+parses the *other* language's source file as plain text and asserts the two ordered lists are
+equal:
+`RequiredErrorMessageKeys_MatchPython` (`PromptLoaderTests.cs`) parses `prompt_loader.py`;
+`test_python_and_dotnet_required_error_message_keys_are_equal`
+(`RequiredErrorMessageKeysMatchDotnetTests` in `test_prompt_loading.py`) parses `PromptLoader.cs`.
+A drift in either direction fails whichever suite runs.
+
+**Both loaders fail fast at startup if a pack is missing any required key.** `PromptLoader`'s
+constructor (C#) / `_load_all()` (Python) validates `error_messages.yaml` immediately after
+loading it, before the pack is considered usable, and raises naming both the persona/brand and
+every missing key (not just the first one) -- `PromptLoadException` in C#, `ValueError` in
+Python. This applies to every persona a process constructs a loader for: in Python, `app.py`'s
+`create_app()` builds one `PromptLoader` per enabled persona at startup (so a broken pack fails
+the whole process before it serves traffic), plus `default_persona.py`'s lazily-cached default;
+in C# today, `Program.cs` constructs one `PromptLoader` for the default persona only (multi-persona
+prompt loading is a later wave, `docs/dotnet_mapping.md`).
+
+Draft persona packs land the required keys themselves as part of their own PR (Dunkin's pack
+already has all seven; a future McDonald's pack must add them too) -- this validation does not
+touch `personas/dunkin/**` or `personas/mcdonalds/**`.
+
 ## 7. Model flexibility on Microsoft Foundry
 
 Decision 8 makes model flexibility one of the demo's three themes, alongside Microsoft Foundry and persona
