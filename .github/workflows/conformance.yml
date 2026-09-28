@@ -585,7 +585,7 @@ jobs:
             if find /app \( -name bin -o -name obj -o -name TestResults -o -name "*.user" \) 2>/dev/null | grep -q .; then
               echo "build artifacts leaked into the image" >&2; exit 1
             fi
-            # R5 (Rick's #152 review): only the tracked appsettings.json belongs in /app --
+            # R5 (PR #152 review): only the tracked appsettings.json belongs in /app --
             # appsettings.Development.json (or any other environment-specific appsettings) must
             # never leak in, since .dockerignore only re-includes the app/backend-dotnet subtree
             # and appsettings.*.json is where local dev secrets usually live.
