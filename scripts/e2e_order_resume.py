@@ -23,7 +23,7 @@ Scenarios
 
 Not part of the default test run (needs a browser). To run:
     .\\.venv\\Scripts\\python.exe -m pip install playwright      # via the proxy
-    cd app/frontend && npm run build && cd ../..
+    cd app/frontend && VITE_AUTH_MODE=Development npm run build && cd ../..
     .\\.venv\\Scripts\\python.exe scripts/e2e_order_resume.py [--channel msedge|chrome|chromium] [--headed]
 `--channel chromium` needs `python -m playwright install chromium`; msedge/chrome use the
 installed browser. Exit code 0 = all checks passed.
@@ -498,7 +498,7 @@ async def main() -> int:
     parser.add_argument("--headed", action="store_true")
     args = parser.parse_args()
     if not (STATIC / "index.html").exists():
-        print("Build the frontend first: cd app/frontend && npm run build")
+        print("Build the frontend first: cd app/frontend && VITE_AUTH_MODE=Development npm run build")
         return 2
 
     logs = LogCapture()

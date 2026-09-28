@@ -5,6 +5,15 @@ FROM node:22-slim AS build-stage
 
 WORKDIR /frontend
 
+# Auth-mode build selector (design 18.6, issue GH-145 / PR GH-148 review round 2, item B1).
+# Defaults to Entra for a real production image; override with
+# `--build-arg VITE_AUTH_MODE=Development` for a smoke-test build that doesn't need real Entra
+# ids (see the CI docker-build job in .github/workflows/conformance.yml). Wiring the SPA's
+# VITE_ENTRA_TENANT_ID/VITE_ENTRA_CLIENT_ID build args for an actual Entra image build is
+# tracked separately under issue GH-146 -- intentionally not added here to keep this edit minimal.
+ARG VITE_AUTH_MODE=Entra
+ENV VITE_AUTH_MODE=${VITE_AUTH_MODE}
+
 # Copy dependency manifests first for optimal layer caching
 # Issue #129: paths are repo-root relative -- the build context is the repo root
 # (azure.yaml's docker.context), not this app/ directory.

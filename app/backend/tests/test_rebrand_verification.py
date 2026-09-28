@@ -45,11 +45,18 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+# Aliased (rather than imported under its own name) because this test file already defines a
+# same-named local `_collect_source_files` for the terminology scan (different exclusion
+# rules) -- importing the un-aliased name would shadow it.
 from rebrand_scan import (  # noqa: E402
+    BRAND_EXCLUDED_DIRS,
+    BRAND_EXCLUDED_FILES,
     BRAND_PATTERNS,
     DIRECTORY_EXCEPTIONS,
+    SCAN_EXTENSIONS as BRAND_SCAN_EXTENSIONS,  # noqa: E402
     BaselineEntry,
     _classify_hit,
+    _collect_source_files as _collect_brand_scan_files,  # noqa: E402
     _conformance_testdata_pack_id,
     _count_brand_occurrences,
     _load_baseline,
@@ -197,6 +204,17 @@ class TestRebrandVerification(unittest.TestCase):
         self.assertEqual(
             bad, [],
             f"\nBaseline entries missing a valid issue reference (e.g. '#74'): {bad}",
+        )
+
+    def test_every_baseline_entry_has_a_non_empty_reason(self):
+        """Every BASELINE entry must carry a human-readable `reason` -- the 55 .cs entries
+        added by #105 originally shipped with `reason: ''`, which is exactly the kind of
+        untracked, unexplained permanent exception this test (and its issue-reference sibling
+        above) exists to prevent (#105 round 2, Rick's review)."""
+        bad = [(e.file, e.brand) for e in BASELINE.values() if not e.reason.strip()]
+        self.assertEqual(
+            bad, [],
+            f"\nBaseline entries missing a non-empty reason: {bad}",
         )
 
     def test_baseline_entries_with_an_increase_reason_have_a_valid_format(self):
@@ -633,6 +651,40 @@ class TestRebrandVerification(unittest.TestCase):
                 ext, extensions_found,
                 f"Scanner did not find any {ext} files — check SCAN_EXTENSIONS / TERMINOLOGY_EXCLUDED_DIRS",
             )
+
+    def test_brand_scan_finds_every_scan_extension_type(self):
+        """#105/#108: the brand-word scanner (rebrand_scan.SCAN_EXTENSIONS) added ".cs" to
+        cover the C# backend and conformance harness, which #108's review flagged as an
+        entirely unscanned gap. This is the brand-scan equivalent of
+        test_scan_finds_expected_file_types above -- it would have caught ".cs" being added
+        to SCAN_EXTENSIONS without also collecting any real .cs files (e.g. a typo in the
+        extension, or bin/obj swallowing every hit). Only the extensions guaranteed to have
+        real files today are asserted (mirrors the terminology self-check's narrower list --
+        e.g. ".env-sample" legitimately has none right now)."""
+        self.assertIn(".cs", BRAND_SCAN_EXTENSIONS, "rebrand_scan.SCAN_EXTENSIONS lost '.cs'")
+        files = _collect_brand_scan_files(BRAND_EXCLUDED_DIRS, BRAND_EXCLUDED_FILES)
+        extensions_found = {p.suffix for p in files}
+        for ext in (".py", ".cs", ".html", ".md"):
+            self.assertIn(
+                ext, extensions_found,
+                f"Brand-word scanner did not find any {ext} files — check "
+                f"rebrand_scan.SCAN_EXTENSIONS / BRAND_EXCLUDED_DIRS",
+            )
+
+    def test_brand_scan_excludes_dotnet_build_output(self):
+        """#105/#108: bin/ and obj/ under the newly-scanned .cs tree are generated MSBuild
+        output, not hand-edited source -- scanning them would double-count hits and churn the
+        baseline on every build, the same reason app/backend/static/ is a DIRECTORY_EXCEPTION
+        rather than a per-file baseline entry."""
+        files = _collect_brand_scan_files(BRAND_EXCLUDED_DIRS, BRAND_EXCLUDED_FILES)
+        offenders = [
+            p for p in files
+            if p.suffix == ".cs" and ("bin" in p.parts or "obj" in p.parts)
+        ]
+        self.assertEqual(
+            offenders, [],
+            f"Brand-word scanner picked up .cs file(s) under bin/ or obj/: {offenders}",
+        )
 
 
 if __name__ == "__main__":

@@ -37,6 +37,12 @@ jobs:
     name: Python backend unit tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # #105: the "PR's own issue" extraction step and the open-issue GitHub API check both
+    # need to read issues (the pull_request event/its body is already available without any
+    # extra permission; `issues: read` is what the API lookup itself needs).
+    permissions:
+      contents: read
+      issues: read
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -66,6 +72,12 @@ jobs:
 
       - name: Build frontend (app/backend/static is gitignored and required by app.py's add_static)
         working-directory: app/frontend
+        # This CI leg builds the frontend only to exercise the Python backend's static-file
+        # serving (StaticIndexHtmlTests etc.) -- it never signs in a real user, so it explicitly
+        # opts into the unauthenticated Development pass-through build (item B1, PR GH-148 review
+        # round 2). An unset VITE_AUTH_MODE now fails `npm run build` outright.
+        env:
+          VITE_AUTH_MODE: Development
         run: |
           npm ci
           npm run build
@@ -78,23 +90,88 @@ jobs:
           set -o pipefail
           python -m pytest app/backend/tests -q --junitxml=pytest-results.xml 2>&1 | tee pytest-output.log
 
-      # PR #101 round 3 (Rick's review, optional/recommended): the regen script's
-      # --allow-increase refusal only protects people who run it -- nothing stops a hand-edit
-      # of rebrand_baseline.yaml that skips it entirely. This step makes any such raise (or
-      # brand-new entry) visible in CI by diffing the checked-in baseline against the PR's
-      # base branch and failing if the increase/new-entry lacks a valid `increase_reason`.
-      # Only meaningful on pull_request events, where github.base_ref is set.
-      - name: Rebrand baseline ratchet vs base branch
+      # #105: on a pull_request, extract every issue this PR's body refs/closes/fixes/resolves
+      # (via any keyword form, case-insensitive) so the ratchet step below can refuse an
+      # increase_reason that cites one of them: a RAISE may not cite ANY of them (self-
+      # justification), and NO entry (RAISE or brand-new) may cite one this PR actually
+      # CLOSES, because merging would close it and the post-merge push-to-dev re-check would
+      # then fail "issue is not open" on a green merge (#105 R1, round 2, Rick's PR #153
+      # review -- the previous single-match, four-keyword regex missed close/closed/fix/
+      # fixed/resolve/resolved and any match after the first).
+      # Written to $GITHUB_ENV (not interpolated into the run script) specifically to avoid
+      # a script-injection risk from untrusted PR-body content.
+      - name: Determine this PR's own issue reference
         if: github.event_name == 'pull_request'
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
         run: |
-          git fetch origin "${{ github.base_ref }}" --depth=1
-          # `|| true`: if the base branch predates rebrand_baseline.yaml, git show exits
-          # non-zero and (with bash's default -e for run steps) would abort the step before
-          # the python script's own graceful "not found -- skipping" fallback gets a chance to
-          # run. Tolerating the failure here leaves an empty/missing file, which the script
-          # already handles as "nothing to ratchet against yet".
-          git show "origin/${{ github.base_ref }}:app/backend/tests/rebrand_baseline.yaml" \
-            > base-rebrand-baseline.yaml || true
+          python - <<'PY' >> "$GITHUB_ENV"
+          import os
+          import sys
+
+          sys.path.insert(0, "app/backend/tests")
+          from check_rebrand_baseline_against_base import parse_pr_issue_refs
+
+          body = os.environ.get("PR_BODY") or ""
+          issues, closes = parse_pr_issue_refs(body)
+          if issues:
+              print(f"REBRAND_PR_ISSUES={','.join(sorted(issues))}")
+          if closes:
+              print(f"REBRAND_PR_CLOSES={','.join(sorted(closes))}")
+          PY
+
+      # PR #101 round 3 (Rick's review): the regen script's --allow-increase refusal only
+      # protects people who run it -- nothing stops a hand-edit of rebrand_baseline.yaml that
+      # skips it entirely. This step makes any such raise (or brand-new entry) visible in CI
+      # by diffing the checked-in baseline against a base-branch copy of the file.
+      #
+      # #105 broadened this from pull_request-only to also run on push-to-dev (issue #24's
+      # "catch anything that reached dev without a PR check" rationale applies here too),
+      # comparing against github.event.before instead of github.base_ref, and skipping the
+      # very first push to a new/empty ref (github.event.before is all-zeros then -- there is
+      # no prior commit to diff against).
+      - name: Rebrand baseline ratchet vs base branch
+        if: |
+          github.event_name == 'pull_request' ||
+          (github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000')
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          # #105: mandatory in CI -- if GITHUB_TOKEN/GITHUB_REPOSITORY are somehow unavailable
+          # here, the script fails every raise/new entry closed rather than silently skipping
+          # the open-issue verification.
+          REBRAND_REQUIRE_ISSUE_API_CHECK: "1"
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch origin "${{ github.base_ref }}" --depth=1
+            base_ref="origin/${{ github.base_ref }}"
+          else
+            # #105 R2 (round 2, Rick's PR #153 review): this fetch must NOT be tolerated with
+            # `|| true` -- an unreachable before-SHA (e.g. a force-push, or the commit having
+            # been garbage-collected) is exactly the "reached dev without a real check" case
+            # this step exists to catch (issue #24). Swallowing the failure here made the
+            # `git show` below fail too, which the script's own "base baseline not
+            # found/parseable" fallback then silently treated as "nothing to ratchet against
+            # yet" -- the whole ratchet was skipped instead of failing.
+            if ! git fetch origin "${{ github.event.before }}" --depth=1; then
+              echo "::error::Failed to fetch the pre-push commit (${{ github.event.before }}) -- cannot verify the rebrand baseline ratchet for this push. This is NOT the same as the base predating rebrand_baseline.yaml (see below); refusing to silently skip."
+              exit 1
+            fi
+            base_ref="${{ github.event.before }}"
+          fi
+          # Only treat "the baseline file genuinely doesn't exist at base_ref" as the graceful
+          # skip case -- NOT "the fetch above failed" (that already exited 1 for push, and a
+          # PR's `git fetch` above has bash's default -e already aborting the step on failure).
+          # `git cat-file -e` distinguishes "file missing at this ref" (which git show would
+          # also report, but indistinguishably from a dozen other failure modes) from every
+          # other kind of git error.
+          if git cat-file -e "${base_ref}:app/backend/tests/rebrand_baseline.yaml" 2>/dev/null; then
+            git show "${base_ref}:app/backend/tests/rebrand_baseline.yaml" \
+              > base-rebrand-baseline.yaml
+          else
+            echo "::warning::rebrand_baseline.yaml does not exist at ${base_ref} -- nothing to ratchet against yet (base branch/commit predates it)."
+            > base-rebrand-baseline.yaml
+          fi
           python app/backend/tests/check_rebrand_baseline_against_base.py base-rebrand-baseline.yaml
 
       - name: Upload pytest results on failure
@@ -129,6 +206,11 @@ jobs:
 
       - name: npm run build
         working-directory: app/frontend
+        # Frontend-only CI leg -- exercises the browser bundle/build tooling itself, not real
+        # Entra sign-in, so it explicitly opts into the Development pass-through (item B1, PR
+        # GH-148 review round 2). An unset VITE_AUTH_MODE now fails this build outright.
+        env:
+          VITE_AUTH_MODE: Development
         run: npm run build
 
       - name: npm test
@@ -270,6 +352,11 @@ jobs:
         # TryFindStaticDir falls back to app/backend/static too) -- StaticIndexHtmlTests is part of
         # the dotnet leg's scoped subset, so this step isn't python-only.
         working-directory: app/frontend
+        # Conformance harness only -- no real Entra sign-in here, so opt into the Development
+        # pass-through explicitly (item B1, PR GH-148 review round 2). An unset VITE_AUTH_MODE now
+        # fails `npm run build` outright.
+        env:
+          VITE_AUTH_MODE: Development
         run: |
           npm ci
           npm run build
@@ -410,6 +497,11 @@ jobs:
 
       - name: Build frontend (app/backend/static is gitignored and required by app.py's add_static)
         working-directory: app/frontend
+        # Browser conformance suite drives the built SPA without real Entra sign-in, so this leg
+        # explicitly opts into the Development pass-through (item B1, PR GH-148 review round 2).
+        # An unset VITE_AUTH_MODE now fails `npm run build` outright.
+        env:
+          VITE_AUTH_MODE: Development
         run: |
           npm ci
           npm run build
@@ -487,7 +579,10 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Build backend image (no push)
-        run: docker build -f app/Dockerfile -t azureaidrivethru-backend:ci .
+        # This is a smoke test of the image build/contents, not real Entra auth (item B1, PR
+        # GH-148 review round 2) -- ARG VITE_AUTH_MODE defaults to Entra in app/Dockerfile, which
+        # needs real Entra ids this job does not have, so pin it to Development here explicitly.
+        run: docker build -f app/Dockerfile --build-arg VITE_AUTH_MODE=Development -t azureaidrivethru-backend:ci .
 
       - name: Verify the image contents (persona packs load, nothing extra)
         run: |

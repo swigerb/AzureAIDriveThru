@@ -404,7 +404,7 @@ else
 {
     logger.LogWarning(
         "Static files directory not found (STATIC_FILES_DIR unset and no app/backend/static next " +
-        "to the repo root) - '/' will 404. Run `npm run build` in app/frontend first.");
+        "to the repo root) - '/' will 404. Run `VITE_AUTH_MODE=Development npm run build` in app/frontend first.");
 }
 
 app.Run();

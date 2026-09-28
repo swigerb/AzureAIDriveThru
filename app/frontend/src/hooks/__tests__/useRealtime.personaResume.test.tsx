@@ -8,12 +8,12 @@ import useRealTime, { resumeStorageKey } from "../useRealtime";
 // persona's resume id -- these tests guard that each persona gets its own sessionStorage slot.
 
 const ws = vi.hoisted(() => ({
-    calls: [] as Array<{ url: string | null; options: any; connect: boolean }>,
+    calls: [] as Array<{ url: string | (() => string | Promise<string>) | null; options: any; connect: boolean }>,
     send: vi.fn()
 }));
 
 vi.mock("react-use-websocket", () => ({
-    default: (url: string | null, options: any, connect: boolean) => {
+    default: (url: string | (() => string | Promise<string>) | null, options: any, connect: boolean) => {
         ws.calls.push({ url, options, connect });
         return { sendJsonMessage: ws.send, readyState: 1 };
     },
@@ -21,6 +21,10 @@ vi.mock("react-use-websocket", () => ({
 }));
 
 const last = () => ws.calls[ws.calls.length - 1];
+// PR GH-148 review round 2, item B2: `useRealtime` hands react-use-websocket an async URL
+// factory, not a plain string -- see `useRealtime.test.tsx` for the full rationale. This mock
+// only records the reference, so a test that needs the resolved URL must call this itself.
+const resolveUrl = async (call = last()) => (typeof call.url === "function" ? await call.url() : call.url);
 let tokenCounter = 0;
 
 beforeEach(() => {
@@ -36,7 +40,7 @@ beforeEach(() => {
 
 async function renderForPersona(personaId: string | undefined) {
     const hook = renderHook(({ id }: { id: string | undefined }) => useRealTime({ personaId: id }), { initialProps: { id: personaId } });
-    await waitFor(() => expect(last().url).not.toBeNull());
+    await waitFor(() => expect(last()).toBeDefined());
     return hook;
 }
 
@@ -87,7 +91,7 @@ describe("useRealTime resume id storage, keyed per persona", () => {
         const { rerender } = await renderForPersona("test-alpha");
 
         rerender({ id: "test-beta" });
-        await waitFor(() => expect(last().url).toContain("persona=test-beta"));
+        await waitFor(async () => expect(await resolveUrl()).toContain("persona=test-beta"));
 
         act(() => last().options.onOpen(new Event("open")));
 
