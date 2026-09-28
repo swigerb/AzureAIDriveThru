@@ -27,6 +27,9 @@ public sealed class InheritedEnvironmentFilterTests
         startInfo.Environment["HTTP_PROXY"] = "http://corp-proxy.contoso.com:8080";
         startInfo.Environment["https_proxy"] = "http://corp-proxy.contoso.com:8080";
         startInfo.Environment["VERBOSE_LOGGING"] = "true";
+        // Issue #81: an ambient local runtime would silently make local mode selectable.
+        startInfo.Environment["LOCAL_RUNTIME_ENDPOINT"] = "http://localhost:8100";
+        startInfo.Environment["local_runtime_voice_choice"] = "en_US-amy-medium";
         // Unrelated vars a normal shell always has -- must survive untouched.
         startInfo.Environment["PATH"] = "C:\\some\\path";
         startInfo.Environment["USERNAME"] = "brswig";
@@ -40,6 +43,8 @@ public sealed class InheritedEnvironmentFilterTests
         Assert.False(startInfo.Environment.ContainsKey("HTTP_PROXY"));
         Assert.False(startInfo.Environment.ContainsKey("https_proxy"));
         Assert.False(startInfo.Environment.ContainsKey("VERBOSE_LOGGING"));
+        Assert.False(startInfo.Environment.ContainsKey("LOCAL_RUNTIME_ENDPOINT"));
+        Assert.False(startInfo.Environment.ContainsKey("local_runtime_voice_choice"));
 
         Assert.Equal("C:\\some\\path", startInfo.Environment["PATH"]);
         Assert.Equal("brswig", startInfo.Environment["USERNAME"]);
