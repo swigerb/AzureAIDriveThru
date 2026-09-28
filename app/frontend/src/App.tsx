@@ -737,7 +737,7 @@ function SonicApp() {
             </div>
             <footer className="mx-auto mt-8 max-w-4xl space-y-2 text-center text-xs text-muted-foreground">
                 <p className="font-semibold uppercase tracking-[0.35em] text-brand-secondary/80">{t("app.footer")}</p>
-                <p className="text-[11px] leading-relaxed text-brand-ink/80">{current.legal}</p>
+                <p className="text-[11px] leading-relaxed text-brand-ink/80 dark:text-white/80">{current.legal}</p>
             </footer>
         </div>
     );
