@@ -244,6 +244,94 @@ See the comments left on those issues directly for this wave's position. Summary
   Still not covered: actually forwarding the resolved persona/model into a live Azure OpenAI
   realtime session (`RealtimeProcessor.ProcessAsync` is a no-op stub) -- issue #13.
 
+## Issue #13 (S3): `RealtimeProcessor` browser&lt;-&gt;Azure OpenAI Realtime GA relay
+
+`RealtimeProcessor.ProcessAsync` is no longer a no-op stub: it dials the upstream Azure OpenAI
+Realtime GA WebSocket, bootstraps the session (persona instructions/voice/tools, catalog-resolved
+deployment, reasoning-effort precedence identical to `rtmt.py`'s `_build_session`), then relays
+frames bidirectionally with voice-lock, a minimal-session-update fallback on a rejected bootstrap,
+the greeting gate, mic-audio echo suppression, barge-in (`response.cancel`) handling, and the
+client/server key allow-list scrub (`ClientServerFilter`). Tool calls flow through a new
+`IToolExecutor` seam (`Tools/IToolExecutor.cs`) with a `StubToolExecutor` thin adapter until #14's
+real tool/order-state implementation lands (interface shape agreed with Summer via comments on
+#14/#140, then re-aligned in this revision to drop the `sessionId` parameter per #14's merged PR
+#149 contract).
+
+**Conformance `Dotnet=ready`: 33 -&gt; 71 test methods, all passing**
+(`CONFORMANCE_BACKEND=dotnet dotnet test Conformance.slnx --filter "Dotnet=ready"` is green,
+71/71). The 38 newly-tagged this revision, all confirmed real-backend scenarios (not harness
+self-tests):
+
+- `PersonaDiscoveryConformanceTests` -- the 5th method (session-metadata echo), previously blocked
+  on a real `session.created`/`extension.session_metadata` frame -- now tagged.
+- `ModelSelectionConformanceTests` -- the remaining explicit-model, reasoning-only-for-catalog-model,
+  and omitted-model/pipeline-metadata rows, all previously blocked on the same real-relay echo.
+- `SessionUpdateFallbackTests.cs` (all 3 classes): a rejected reasoning bootstrap recovers via
+  exactly one minimal fallback with no error reaching the browser, unrelated errors never trigger a
+  fallback, and rejecting the fallback itself sends no second fallback (loop guard).
+- `GreetingTimeoutFallbackTests`, `GreetingWithoutAudioUnmutesTests`, `HeartbeatPongSurvivalTests`,
+  `SessionBootstrapGaShapeTests`, `SmokeSessionBootstrapTests` (class-level).
+- `Scenarios/BargeIn/ResponseCancelRelayTests` (both methods) -- real backend-dependent barge-in
+  relay, distinct from the harness-only `ResponseCancelTests` (left untagged).
+- `ResponseDoneRoundTripTests`, `SessionUpdatedClientVisibilityTests` (session.updated never leaks
+  `instructions`/`tools`), `UpdateOrderToolCallTests` (proves #13's tool-call wire plumbing through
+  `StubToolExecutor`, not #14's real order logic).
+- `VoiceLockTests`, and 6 of `VoicePickerTests`'s methods (the resume/session-end methods and the
+  file's own `HasTurnDetection` static-predicate self-test stay untagged; the former pend #15, the
+  latter is not a real-backend scenario regardless of backend).
+- `ReasoningByDeploymentTests.cs` (all 4 classes, class-level) -- reasoning-effort precedence for
+  the default/DZ deployments and the explicit-off switch, exactly mirroring `rtmt.py`.
+- `Scenarios/Security/ScrubHardeningTests`, `Scenarios/Security/ResponseCreateHooksGateTests`
+  (class-level, both now fully passing).
+
+**Bugs found and fixed via the conformance sweep** (none were pre-existing scope reductions --
+these are genuine parity gaps against `rtmt.py`):
+1. `SessionIdentifiers` was missing a `pipeline` field in `extension.session_metadata` --
+   `rtmt.py`'s `emit_session_identifiers` always includes `pipeline` (`"realtime"` here); added
+   `SessionIdentifiers.Pipeline`.
+2. Both the rejected-bootstrap fallback (`HandleErrorAsync`) and the browser-forwarded
+   `session.update` path (`ProcessClientMessage`) called `RealtimeSessionBuilder.BuildSession`
+   without a `systemMessage:` argument, so `instructions` (and by extension `tools`) were never
+   re-stamped on those two paths -- only the initial bootstrap call site passed it. `rtmt.py`'s
+   `_build_session` unconditionally re-stamps `instructions`/`tools` on every session.update
+   regardless of what the client sent (see `ClientToServerAllowListTests`'s doc comment). Fixed
+   both call sites.
+3. A client/upstream frame with a duplicate top-level JSON key (e.g. two `"type"` fields) crashed
+   the relay loop for that connection: `System.Text.Json.Nodes.JsonNode.Parse(...) as JsonObject`
+   throws `ArgumentException` (not `JsonException`) on a duplicate top-level key -- a documented
+   .NET behavior difference from `JsonDocument`, which tolerates duplicates. Both malformed-frame
+   guard clauses (`RelayBrowserToUpstreamAsync`, `RelayUpstreamToBrowserAsync`) only caught
+   `JsonException`; widened to `catch (Exception ex) when (ex is JsonException or ArgumentException)`.
+
+**Known remaining gap**: `Scenarios/Security/AllowListBypassHardeningTests
+.Duplicate_top_level_type_key_is_resolved_by_last_value_or_the_whole_frame_is_dropped` still times
+out (a liveness-probe assertion, not a crash) even after fix 3 above. The `ArgumentException`
+catch-widening was independently verified correct in isolation (`JsonNode.Parse` on the exact
+duplicate-key payload reproduces the exception), and the aggregate targeted sweep improved after
+the fix (243/40 -&gt; 245/38 failing before the fallback/instructions fix above was even counted),
+but this one specific scenario's root cause was not isolated in the time available -- the test
+harness only surfaces captured backend stdout/stderr on a *failing* test, which made ad-hoc debug
+tracing inconclusive (no output at all appeared for this specific failing case, including
+unconditional trace lines that should fire regardless). Left untagged; flagged for follow-up.
+
+Also still gapped, believed to depend on #14's real tool-executor/order-state landing (not
+investigated further this revision, `StubToolExecutor` is deliberately inert beyond the one
+scripted `UpdateOrderToolCallTests` scenario): `HappyHourPricingTests`,
+`PersonaBusinessRuleConformanceTests`, `PersonaSearchIsolationConformanceTests`,
+`FixturePackPersonaSmokeTests`, `RealPackPersonaSmokeTests`. And believed to depend on #15 (session
+resume): `CloseCodeTests`, `IdleCloseCodeTests`, `IdleTimeoutTests`, `VoicePickerTests`'s
+`Resumed_*`/session-end methods. `WholeSessionLeakTests` (0/1) was not investigated this revision.
+The whole `RateLimit` scenario family remains untagged (documented scope cut, this issue's rate-limit
+*notice* relay is covered by other tagged scenarios; the ladder/backoff family is out of scope for
+#13). A handful of failures (`CapturedProcessOutputTests`, `CapturedProcessOutputWaitTests`,
+`WindowsJobObjectTests`) are pre-existing harness self-tests unrelated to `CONFORMANCE_BACKEND` and
+out of scope.
+
+ADR-002 (ready, dev 96b6f6f) adds Entra auth in front of `/realtime`; that's issue #147 (after #13)
+and was explicitly out of scope this revision, but the WebSocket upgrade handler in
+`RealtimeProcessor`/`Sessions/SessionActor.cs` keeps its existing pre-upgrade validation ordering
+so a future auth check slots in ahead of persona/model resolution without restructuring.
+
 ## Traversal defense mutation-test note (PR #122 review item 1)
 
 Rick's PR #122 review flagged that the pinned conformance rows were **blind on both backends**:
