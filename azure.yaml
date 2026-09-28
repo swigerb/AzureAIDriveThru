@@ -17,6 +17,21 @@ services:
       # root. docker.path is left at its default (./Dockerfile, also service-relative), which
       # already points at app/Dockerfile correctly.
       context: ..
+  # S7 (#17): second container app for the C# backend, disabled by default at the infra level
+  # (infra/main.bicep's deployDotnetApp = false) until app/backend-dotnet is feature-complete
+  # (#13/#14) -- this service entry only tells azd HOW to build/deploy it once that flag flips,
+  # and gives it the 'backend-dotnet' azd-service-name tag main.bicep's acaBackendDotnet module
+  # already sets (Rick's #17 review comment).
+  backend-dotnet:
+    project: ./app/backend-dotnet
+    language: csharp
+    host: containerapp
+    docker:
+      remoteBuild: true
+      # Same repo-root-context convention as the Python service above (#129, #131): two levels
+      # up from ./app/backend-dotnet reaches the repo root, matching
+      # app/backend-dotnet/Dockerfile's COPY paths and .dockerignore's allowlist.
+      context: ../..
 hooks:
     postprovision:
       windows:
@@ -81,3 +96,8 @@ pipeline:
     - AZURE_AI_MODEL_DEPLOYMENTS
     - DEPLOY_DOTNET_APP
     - AZURE_CONTAINER_APP_DOTNET_NAME
+    - BACKEND_DOTNET_INGRESS_ENABLED
+    - ENTRA_TENANT_ID
+    - ENTRA_CLIENT_ID
+    - ENTRA_API_SCOPE
+    - ENTRA_APP_ROLE
