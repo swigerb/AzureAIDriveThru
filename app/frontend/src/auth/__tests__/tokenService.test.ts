@@ -62,7 +62,7 @@ describe('acquireApiToken', () => {
     });
   });
 
-  it('passes forceRefresh through to MSAL (used on a 401 retry and before every WS connect)', async () => {
+  it('passes forceRefresh through to MSAL when explicitly requested (used on a 401 retry)', async () => {
     acquireTokenSilent.mockResolvedValue({ accessToken: 'tok' });
     await acquireApiToken({ forceRefresh: true });
     expect(acquireTokenSilent).toHaveBeenCalledWith(expect.objectContaining({ forceRefresh: true }));

@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, act } from '@testing-library/react';
+import { render, screen, act, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { InteractionStatus } from '@azure/msal-browser';
-import { AUTH_FORBIDDEN_EVENT } from '../authorizedFetch';
+import { AUTH_FORBIDDEN_EVENT, AUTH_REQUIRED_EVENT } from '../authorizedFetch';
+import { setRedirectError, resetRedirectErrorForTests } from '../redirectError';
 
 const { mockAuthMode } = vi.hoisted(() => ({
   mockAuthMode: { mode: 'entra' as 'entra' | 'development' },
@@ -12,6 +13,12 @@ vi.mock('../authMode', () => ({
 }));
 vi.mock('../authConfig', () => ({
   loginRequest: { scopes: ['api://client/access_as_user'] },
+  authConfig: { isConfigured: true },
+}));
+
+const acquireApiToken = vi.fn();
+vi.mock('../tokenService', () => ({
+  acquireApiToken: (...args: unknown[]) => acquireApiToken(...args),
 }));
 
 const useIsAuthenticated = vi.fn();
@@ -34,12 +41,15 @@ beforeEach(() => {
   useMsal.mockReset();
   loginRedirect.mockReset();
   logoutRedirect.mockReset();
+  acquireApiToken.mockReset();
+  acquireApiToken.mockResolvedValue('fresh-token');
   useMsal.mockReturnValue({
     instance: { loginRedirect, logoutRedirect },
     inProgress: InteractionStatus.None,
     accounts: [],
   });
   window.sessionStorage.clear();
+  resetRedirectErrorForTests();
 });
 
 describe('AuthGate — unconfigured (Development pass-through)', () => {
@@ -112,7 +122,7 @@ describe('AuthGate — Entra gate (configured)', () => {
     expect(screen.queryByTestId('protected-child')).not.toBeInTheDocument();
   });
 
-  it('Retry clears the forbidden state and re-renders the app', async () => {
+  it('Retry forces a fresh token (S1: roles claim is baked in at issuance) and re-renders the app', async () => {
     useIsAuthenticated.mockReturnValue(true);
     render(<AuthGate>{child}</AuthGate>);
     act(() => {
@@ -122,7 +132,8 @@ describe('AuthGate — Entra gate (configured)', () => {
 
     await userEvent.click(screen.getByTestId('auth-retry-button'));
 
-    expect(screen.getByTestId('protected-child')).toBeInTheDocument();
+    expect(acquireApiToken).toHaveBeenCalledWith({ forceRefresh: true });
+    await waitFor(() => expect(screen.getByTestId('protected-child')).toBeInTheDocument());
   });
 
   it('"Sign in with a different account" signs out and marks an explicit sign-out', async () => {
@@ -137,5 +148,90 @@ describe('AuthGate — Entra gate (configured)', () => {
 
     expect(logoutRedirect).toHaveBeenCalledTimes(1);
     expect(window.sessionStorage.getItem('drivethru.auth.explicitSignOut')).toBe('1');
+  });
+
+  it('shows the neutral Foundry subtitle regardless of state (S3)', () => {
+    useIsAuthenticated.mockReturnValue(false);
+    render(<AuthGate>{child}</AuthGate>);
+    expect(screen.getByText('AI Drive-Thru, a Microsoft Foundry realtime demo')).toBeInTheDocument();
+    expect(screen.queryByText('Sign in to continue')).not.toBeInTheDocument();
+  });
+});
+
+describe('AuthGate — B3: AUTH_REQUIRED_EVENT (token permanently unusable)', () => {
+  it('drops a "still authenticated" session back to a sign-in state and auto-redirects once', () => {
+    useIsAuthenticated.mockReturnValue(true);
+    render(<AuthGate>{child}</AuthGate>);
+    expect(screen.getByTestId('protected-child')).toBeInTheDocument();
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent(AUTH_REQUIRED_EVENT));
+    });
+
+    // Busy (redirectStarting) outranks the auth-required message so the button never flashes (S2).
+    expect(screen.getByTestId('auth-signing-in')).toBeInTheDocument();
+    expect(screen.queryByTestId('protected-child')).not.toBeInTheDocument();
+    expect(loginRedirect).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not loop: a second AUTH_REQUIRED_EVENT does not call loginRedirect again', () => {
+    useIsAuthenticated.mockReturnValue(true);
+    render(<AuthGate>{child}</AuthGate>);
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent(AUTH_REQUIRED_EVENT));
+    });
+    act(() => {
+      window.dispatchEvent(new CustomEvent(AUTH_REQUIRED_EVENT));
+    });
+
+    expect(loginRedirect).toHaveBeenCalledTimes(1);
+  });
+
+  it('clears a forbidden state when auth is required instead (they cannot both show)', () => {
+    useIsAuthenticated.mockReturnValue(true);
+    render(<AuthGate>{child}</AuthGate>);
+    act(() => {
+      window.dispatchEvent(new CustomEvent(AUTH_FORBIDDEN_EVENT));
+    });
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent(AUTH_REQUIRED_EVENT));
+    });
+
+    expect(screen.queryByTestId('auth-forbidden')).not.toBeInTheDocument();
+  });
+});
+
+describe('AuthGate — B4: redirect-error state (handleRedirectPromise failed)', () => {
+  it('shows the AADSTS50105 "not assigned" message and a manual sign-in button, without auto-redirecting', () => {
+    setRedirectError({ errorCode: 'server_error', errorMessage: 'AADSTS50105: user not assigned to app' });
+    useIsAuthenticated.mockReturnValue(false);
+    render(<AuthGate>{child}</AuthGate>);
+
+    expect(screen.getByTestId('auth-redirect-error')).toHaveTextContent(/not assigned to this app/i);
+    expect(screen.queryByTestId('protected-child')).not.toBeInTheDocument();
+    expect(loginRedirect).not.toHaveBeenCalled();
+  });
+
+  it('shows a generic message for an unclassified redirect failure (never the raw MSAL message)', () => {
+    setRedirectError({ errorCode: 'network_error', errorMessage: 'tenant abc123 client def456 failed' });
+    useIsAuthenticated.mockReturnValue(false);
+    render(<AuthGate>{child}</AuthGate>);
+
+    const message = screen.getByTestId('auth-redirect-error');
+    expect(message).toHaveTextContent(/didn.t complete/i);
+    expect(message).not.toHaveTextContent(/abc123|def456/);
+  });
+
+  it('clicking "Sign in" clears the redirect error and starts a fresh loginRedirect', async () => {
+    setRedirectError({ errorCode: 'user_cancelled' });
+    useIsAuthenticated.mockReturnValue(false);
+    render(<AuthGate>{child}</AuthGate>);
+    expect(screen.getByTestId('auth-redirect-error')).toHaveTextContent(/cancelled/i);
+
+    await userEvent.click(screen.getByTestId('auth-signin-button'));
+
+    expect(loginRedirect).toHaveBeenCalledTimes(1);
   });
 });

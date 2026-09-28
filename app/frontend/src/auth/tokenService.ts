@@ -11,7 +11,10 @@ import { getMsalInstance } from './msalInstance';
  * calls MSAL directly with no provider indirection.
  */
 export interface AcquireTokenOptions {
-  /** Force a fresh token from Entra (used on a 401 retry, and before every WebSocket connect). */
+  /** Force a fresh token from Entra (used on a 401 retry). NOT used before every WebSocket
+   * connect -- `useRealtime`'s connect-URL factory (item B2) calls this WITHOUT forceRefresh on
+   * every attempt; MSAL renews the token itself once it's within its own expiry offset, so a
+   * forced refresh on every single connect/reconnect would be wasteful. */
   readonly forceRefresh?: boolean;
 }
 
