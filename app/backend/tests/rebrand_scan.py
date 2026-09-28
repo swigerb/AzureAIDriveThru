@@ -47,6 +47,10 @@ SCAN_EXTENSIONS = {
     ".html", ".css", ".json", ".md",
     ".yaml", ".yml", ".bicep", ".env-sample",
     ".sh",
+    # #105/#108: the C# backend (app/backend-dotnet/**) and its conformance harness
+    # (tests/conformance/**) were never scanned for brand words at all -- ".cs" closes that
+    # gap. bin/obj (below) are excluded so build output isn't double-counted/churned.
+    ".cs",
 }
 SCAN_FILENAMES = {"Dockerfile"}
 
@@ -56,6 +60,10 @@ BASE_EXCLUDED_DIRS = {
     ".git", "node_modules", "__pycache__",
     ".venv", "venv", "env",
     ".squad",
+    # #105/#108: MSBuild output for the newly-scanned .cs files -- generated, not hand-edited,
+    # and would otherwise churn the baseline on every build (same rationale as the
+    # app/backend/static/ DIRECTORY_EXCEPTION already gives npm's build output).
+    "bin", "obj",
 }
 
 # Canonical brand -> matching pattern. A pack under personas/<id>/** may only contain the
@@ -76,6 +84,10 @@ BRAND_EXCLUDED_FILES = {
     "test_rebrand_verification.py",
     "rebrand_scan.py",
     "regenerate_rebrand_baseline.py",
+    # #105: this CI ratchet script's own docstrings/comments illustrate its rules with a real
+    # brand word (e.g. explaining the #109 foreign-brand bug it closes) -- tooling about the
+    # guard, not shared product code, same rationale as excluding rebrand_scan.py itself.
+    "check_rebrand_baseline_against_base.py",
     # Unit tests for the regen script (PR #101 round 3) use "sonic" purely as fixture/example
     # data for BaselineEntry objects, not a real shared-code brand reference -- same rationale
     # as excluding test_rebrand_verification.py itself.
