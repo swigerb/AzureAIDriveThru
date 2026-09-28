@@ -542,6 +542,65 @@
   (origin/dev). PR #133, "Refs #127" (nothing closed -- #112/McDonald's still open, so the
   disabled-pack code path is correct but unexercised by a real pack until it lands). Did not
   merge.
+- **#105 brand-guard ratchet hardening (2026-09-28):** `check_rebrand_baseline_against_base.py`
+  (from #101) rewritten to close all four gaps plus the blind spot from #105's issue body:
+  (1) a raise/new entry's `increase_reason` must be new relative to the base entry's own
+  reason -- a sticky reused reason on an already-raised entry now fails; (2) every raise/new
+  entry's `increase_reason` is checked via `check_issue_is_open()` against the real GitHub API
+  (`GITHUB_TOKEN`/`GITHUB_REPOSITORY`, gated mandatory-in-CI by
+  `REBRAND_REQUIRE_ISSUE_API_CHECK=1`, fail-closed if the check can't run) -- must exist, be
+  open, and not be a PR; (3) every allowed raise/new entry now emits a
+  `::warning file=...::RAISE/NEW <file> [<brand>] ... (<reason>)` annotation so reviewers see it
+  on the PR checks page (the missing-base-baseline skip case is also now `::warning::`, not a
+  plain print); (4) `push` events to `dev` are now checked too (workflow step reads
+  `github.event.before`, skipping the all-zero SHA case), not just `pull_request`.
+  **#109's exact bug** (a brand-new entry for a brand the file never tracked, baselined via
+  `--allow-increase` using the PR's own issue) is now refused unconditionally regardless of
+  `increase_reason`, whenever the file already carries a baseline entry for a *different*
+  brand -- `_existing_brands_for_file()` checks the base branch's own entries for that file.
+  Files with zero prior entries are unaffected. Additionally rejects any RAISE whose
+  `increase_reason` equals the PR's own linked issue (`REBRAND_PR_ISSUE`, extracted from the PR
+  body via a new workflow step, passed through `env:` rather than interpolated into the run
+  script to avoid injection) -- deliberately scoped to raises only, not brand-new entries.
+  **Design conflict found and resolved during CI simulation:** the issue itself requires the
+  new `.cs` `SCAN_EXTENSIONS` entry's seeded baseline entries to be "attributed to this issue"
+  (#105) -- but naively applying the self-citation rule to *all* new entries (not just raises)
+  meant this PR's own 55 seeded `.cs` entries would fail its own new rule, since
+  `REBRAND_PR_ISSUE=#105` in CI for this very PR. Resolved by re-reading Rick's original #109
+  example closely: it combined self-citation *with* a foreign brand slipped into an
+  already-tracked file (bug (4), already closed unconditionally above) -- by the time (4) has
+  run, every surviving "new" (not "raise") case is necessarily a wholly-new-file case with zero
+  prior entries, since if the file already tracked that exact (file, brand) key the entry
+  wouldn't be "new" at all. There is no separate "already-settled decision" a brand-new
+  scan-coverage PR could cite instead of its own issue -- the PR adding the coverage IS that
+  decision. Scoped the self-citation check to `label == "RAISE"` only; added
+  `test_new_entry_on_a_brand_new_file_may_cite_the_prs_own_issue` (green) and converted the old
+  new-entry self-citation test into a RAISE-shaped one
+  (`test_raise_citing_the_prs_own_issue_fails`). Also added `.cs`/`.csproj`-adjacent scanning:
+  `.cs` added to `rebrand_scan.py`'s `SCAN_EXTENSIONS`, `bin`/`obj` added to
+  `BASE_EXCLUDED_DIRS` (confirmed this constant is NOT shared with
+  `test_rebrand_verification.py`'s own same-named terminology-scan constant -- only affects
+  brand scanning), and seeded 55 new `(file, brand)` baseline entries across
+  `app/backend-dotnet/**` and `tests/conformance/**/*.cs` (all `issue`/`increase_reason` =
+  `#105`), none from `bin`/`obj`. Added `test_brand_scan_finds_every_scan_extension_type` and
+  `test_brand_scan_excludes_dotnet_build_output` to `test_rebrand_verification.py`.
+  **Mutation-tested every new rule** (fresh-reason-on-raise, foreign-brand refusal, RAISE-only
+  self-citation rejection, API-check-required fail-closed, warning-surfacing): for each,
+  temporarily disabled the guard (`if False and <condition>:  # MUTATION`), ran the targeted
+  test file, confirmed exactly the expected test(s) failed (never more, never fewer), then
+  restored the original line and verified via `Compare-Object` against a `.orig` backup that
+  the restored file was byte-identical before deleting the backup. All 6 mutations (5 original
+  + the RAISE-scoping fix) confirmed correctly caught.
+  **CI-simulated the real ratchet check** by fetching `origin/dev`'s actual
+  `rebrand_baseline.yaml` and running the checker against it locally with
+  `GITHUB_REPOSITORY=swigerb/AzureAIDriveThru` and `REBRAND_PR_ISSUE=#105` (matching exactly
+  what the real workflow step would set for this PR): after the RAISE-scoping fix, exits 0,
+  correctly emitting all 55 `NEW ... (#105)` warnings and nothing else; separately confirmed
+  the `REBRAND_REQUIRE_ISSUE_API_CHECK=1`-without-token path still fails closed (exit 1,
+  reports all 55 entries as unverifiable) as it must in CI if secrets are ever missing.
+  Final validation: ruff clean; full pytest 1385 passed/2 skipped/222 subtests (up from 1384 --
+  1 new test); `test_check_rebrand_baseline_against_base.py` 18/18; `test_rebrand_verification`
+  61 passed/8 subtests; `git status --short` shows exactly the 6 intended modified files.
 - **Cleanup: dead Sonic-copy fallback + unused error key removed (branch `squad/cleanup-dead-copy`):**
   Two independent dead-code deletions. (1) `personas/dunkin/prompts/error_messages.yaml`'s
   `price_validation_failed` key: confirmed via `git grep` it's the only reference anywhere in the

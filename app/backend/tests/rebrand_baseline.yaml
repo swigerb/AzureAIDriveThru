@@ -47,6 +47,124 @@ entries:
     name all three brands. Also rescues ''mcdonalds'' for the Local-mode paragraph''s
     reference to the upstream voice_rag McDonald''s demo this repo was forked from.'
   increase_reason: ''
+- file: app/backend-dotnet/src/Backend/Personas/MenuKeyValidator.cs
+  brand: sonic
+  max: 2
+  issue: '#105'
+  reason: C# port mirrors Python's default-persona fallback and brand examples in
+    comments; remove with the persona-neutral default (#76).
+  increase_reason: '#105'
+- file: app/backend-dotnet/src/Backend/Personas/PersonaCatalog.cs
+  brand: sonic
+  max: 3
+  issue: '#105'
+  reason: C# port mirrors Python's default-persona fallback and brand examples in
+    comments; remove with the persona-neutral default (#76).
+  increase_reason: '#105'
+- file: app/backend-dotnet/src/Backend/Personas/PersonaModels.cs
+  brand: sonic
+  max: 1
+  issue: '#105'
+  reason: C# port mirrors Python's default-persona fallback and brand examples in
+    comments; remove with the persona-neutral default (#76).
+  increase_reason: '#105'
+- file: app/backend-dotnet/src/Backend/Program.cs
+  brand: sonic
+  max: 1
+  issue: '#105'
+  reason: C# port mirrors Python's default-persona fallback and brand examples in
+    comments; remove with the persona-neutral default (#76).
+  increase_reason: '#105'
+- file: app/backend-dotnet/tests/Backend.Tests/Models/ModelCatalogTests.cs
+  brand: sonic
+  max: 2
+  issue: '#105'
+  reason: 'Fixture/test data naming a real persona pack id (sonic/mcdonalds/dunkin)
+    for conformance or unit-test coverage across all three packs -- expected, the
+    same class as the #78 Python test baseline entries; remove only if the pack roster
+    or its test coverage changes.'
+  increase_reason: '#105'
+- file: app/backend-dotnet/tests/Backend.Tests/Models/ModelDispatchTests.cs
+  brand: sonic
+  max: 3
+  issue: '#105'
+  reason: 'Fixture/test data naming a real persona pack id (sonic/mcdonalds/dunkin)
+    for conformance or unit-test coverage across all three packs -- expected, the
+    same class as the #78 Python test baseline entries; remove only if the pack roster
+    or its test coverage changes.'
+  increase_reason: '#105'
+- file: app/backend-dotnet/tests/Backend.Tests/Personas/MenuKeyValidatorTests.cs
+  brand: sonic
+  max: 1
+  issue: '#105'
+  reason: 'Fixture/test data naming a real persona pack id (sonic/mcdonalds/dunkin)
+    for conformance or unit-test coverage across all three packs -- expected, the
+    same class as the #78 Python test baseline entries; remove only if the pack roster
+    or its test coverage changes.'
+  increase_reason: '#105'
+- file: app/backend-dotnet/tests/Backend.Tests/Personas/PersonaAssetResolverTests.cs
+  brand: sonic
+  max: 7
+  issue: '#105'
+  reason: 'Fixture/test data naming a real persona pack id (sonic/mcdonalds/dunkin)
+    for conformance or unit-test coverage across all three packs -- expected, the
+    same class as the #78 Python test baseline entries; remove only if the pack roster
+    or its test coverage changes.'
+  increase_reason: '#105'
+- file: app/backend-dotnet/tests/Backend.Tests/Personas/PersonaCatalogTests.cs
+  brand: dunkin
+  max: 3
+  issue: '#105'
+  reason: 'Fixture/test data naming a real persona pack id (sonic/mcdonalds/dunkin)
+    for conformance or unit-test coverage across all three packs -- expected, the
+    same class as the #78 Python test baseline entries; remove only if the pack roster
+    or its test coverage changes.'
+  increase_reason: '#105'
+- file: app/backend-dotnet/tests/Backend.Tests/Personas/PersonaCatalogTests.cs
+  brand: mcdonalds
+  max: 3
+  issue: '#105'
+  reason: 'Fixture/test data naming a real persona pack id (sonic/mcdonalds/dunkin)
+    for conformance or unit-test coverage across all three packs -- expected, the
+    same class as the #78 Python test baseline entries; remove only if the pack roster
+    or its test coverage changes.'
+  increase_reason: '#105'
+- file: app/backend-dotnet/tests/Backend.Tests/Personas/PersonaCatalogTests.cs
+  brand: sonic
+  max: 33
+  issue: '#105'
+  reason: 'Fixture/test data naming a real persona pack id (sonic/mcdonalds/dunkin)
+    for conformance or unit-test coverage across all three packs -- expected, the
+    same class as the #78 Python test baseline entries; remove only if the pack roster
+    or its test coverage changes.'
+  increase_reason: '#105'
+- file: app/backend-dotnet/tests/Backend.Tests/TestSupport/PersonaPackFixture.cs
+  brand: dunkin
+  max: 1
+  issue: '#105'
+  reason: 'Fixture/test data naming a real persona pack id (sonic/mcdonalds/dunkin)
+    for conformance or unit-test coverage across all three packs -- expected, the
+    same class as the #78 Python test baseline entries; remove only if the pack roster
+    or its test coverage changes.'
+  increase_reason: '#105'
+- file: app/backend-dotnet/tests/Backend.Tests/TestSupport/PersonaPackFixture.cs
+  brand: mcdonalds
+  max: 1
+  issue: '#105'
+  reason: 'Fixture/test data naming a real persona pack id (sonic/mcdonalds/dunkin)
+    for conformance or unit-test coverage across all three packs -- expected, the
+    same class as the #78 Python test baseline entries; remove only if the pack roster
+    or its test coverage changes.'
+  increase_reason: '#105'
+- file: app/backend-dotnet/tests/Backend.Tests/TestSupport/PersonaPackFixture.cs
+  brand: sonic
+  max: 4
+  issue: '#105'
+  reason: 'Fixture/test data naming a real persona pack id (sonic/mcdonalds/dunkin)
+    for conformance or unit-test coverage across all three packs -- expected, the
+    same class as the #78 Python test baseline entries; remove only if the pack roster
+    or its test coverage changes.'
+  increase_reason: '#105'
 - file: app/backend/audio_pipeline.py
   brand: sonic
   max: 4
@@ -424,3 +542,365 @@ entries:
   issue: '#78'
   reason: Harness docs reference Sonic as the only persona pack that exists today.
   increase_reason: ''
+- file: tests/conformance/src/Conformance.Harness/BackendContract.cs
+  brand: sonic
+  max: 1
+  issue: '#105'
+  reason: Doc-comment/example text illustrating the harness against the repo's only
+    real pack today (sonic); not a runtime default -- update once other packs exist
+    for the harness to exercise (#76).
+  increase_reason: '#105'
+- file: tests/conformance/src/Conformance.Harness/BackendEnvironment.cs
+  brand: sonic
+  max: 1
+  issue: '#105'
+  reason: Doc-comment/example text illustrating the harness against the repo's only
+    real pack today (sonic); not a runtime default -- update once other packs exist
+    for the harness to exercise (#76).
+  increase_reason: '#105'
+- file: tests/conformance/src/Conformance.Harness/BackendLauncherFactory.cs
+  brand: sonic
+  max: 4
+  issue: '#105'
+  reason: Doc-comment/example text illustrating the harness against the repo's only
+    real pack today (sonic); not a runtime default -- update once other packs exist
+    for the harness to exercise (#76).
+  increase_reason: '#105'
+- file: tests/conformance/src/Conformance.Harness/ConformancePersonas.cs
+  brand: dunkin
+  max: 1
+  issue: '#105'
+  reason: Doc-comment/example text illustrating the harness against the repo's only
+    real pack today (sonic); not a runtime default -- update once other packs exist
+    for the harness to exercise (#76).
+  increase_reason: '#105'
+- file: tests/conformance/src/Conformance.Harness/ConformancePersonas.cs
+  brand: mcdonalds
+  max: 3
+  issue: '#105'
+  reason: Doc-comment/example text illustrating the harness against the repo's only
+    real pack today (sonic); not a runtime default -- update once other packs exist
+    for the harness to exercise (#76).
+  increase_reason: '#105'
+- file: tests/conformance/src/Conformance.Harness/ConformancePersonas.cs
+  brand: sonic
+  max: 7
+  issue: '#105'
+  reason: Doc-comment/example text illustrating the harness against the repo's only
+    real pack today (sonic); not a runtime default -- update once other packs exist
+    for the harness to exercise (#76).
+  increase_reason: '#105'
+- file: tests/conformance/src/Conformance.Harness/DotnetBackendLauncher.cs
+  brand: sonic
+  max: 1
+  issue: '#105'
+  reason: Doc-comment/example text illustrating the harness against the repo's only
+    real pack today (sonic); not a runtime default -- update once other packs exist
+    for the harness to exercise (#76).
+  increase_reason: '#105'
+- file: tests/conformance/src/Conformance.Harness/RepoPaths.cs
+  brand: sonic
+  max: 3
+  issue: '#105'
+  reason: RepoPaths.cs hardcodes the sonic pack's own personas/sonic/menu/menuItems.json
+    path as a repo-root sanity-check landmark, and the repo name in the error raised
+    when that landmark is missing; both assume today's single-pack layout, not a persona-neutral
+    one (#76).
+  increase_reason: '#105'
+- file: tests/conformance/tests/Conformance.Tests/CapturedProcessOutputTests.cs
+  brand: sonic
+  max: 5
+  issue: '#105'
+  reason: 'Fixture/test data naming a real persona pack id (sonic/mcdonalds/dunkin)
+    for conformance or unit-test coverage across all three packs -- expected, the
+    same class as the #78 Python test baseline entries; remove only if the pack roster
+    or its test coverage changes.'
+  increase_reason: '#105'
+- file: tests/conformance/tests/Conformance.Tests/CapturedProcessOutputWaitTests.cs
+  brand: sonic
+  max: 2
+  issue: '#105'
+  reason: 'Fixture/test data naming a real persona pack id (sonic/mcdonalds/dunkin)
+    for conformance or unit-test coverage across all three packs -- expected, the
+    same class as the #78 Python test baseline entries; remove only if the pack roster
+    or its test coverage changes.'
+  increase_reason: '#105'
+- file: tests/conformance/tests/Conformance.Tests/ConformanceFixture.cs
+  brand: sonic
+  max: 2
+  issue: '#105'
+  reason: 'Fixture/test data naming a real persona pack id (sonic/mcdonalds/dunkin)
+    for conformance or unit-test coverage across all three packs -- expected, the
+    same class as the #78 Python test baseline entries; remove only if the pack roster
+    or its test coverage changes.'
+  increase_reason: '#105'
+- file: tests/conformance/tests/Conformance.Tests/ConformancePersonasTests.cs
+  brand: dunkin
+  max: 13
+  issue: '#105'
+  reason: 'Fixture/test data naming a real persona pack id (sonic/mcdonalds/dunkin)
+    for conformance or unit-test coverage across all three packs -- expected, the
+    same class as the #78 Python test baseline entries; remove only if the pack roster
+    or its test coverage changes.'
+  increase_reason: '#105'
+- file: tests/conformance/tests/Conformance.Tests/ConformancePersonasTests.cs
+  brand: mcdonalds
+  max: 11
+  issue: '#105'
+  reason: 'Fixture/test data naming a real persona pack id (sonic/mcdonalds/dunkin)
+    for conformance or unit-test coverage across all three packs -- expected, the
+    same class as the #78 Python test baseline entries; remove only if the pack roster
+    or its test coverage changes.'
+  increase_reason: '#105'
+- file: tests/conformance/tests/Conformance.Tests/ConformancePersonasTests.cs
+  brand: sonic
+  max: 15
+  issue: '#105'
+  reason: 'Fixture/test data naming a real persona pack id (sonic/mcdonalds/dunkin)
+    for conformance or unit-test coverage across all three packs -- expected, the
+    same class as the #78 Python test baseline entries; remove only if the pack roster
+    or its test coverage changes.'
+  increase_reason: '#105'
+- file: tests/conformance/tests/Conformance.Tests/ExternalModeProfilePolicyTests.cs
+  brand: dunkin
+  max: 2
+  issue: '#105'
+  reason: 'Fixture/test data naming a real persona pack id (sonic/mcdonalds/dunkin)
+    for conformance or unit-test coverage across all three packs -- expected, the
+    same class as the #78 Python test baseline entries; remove only if the pack roster
+    or its test coverage changes.'
+  increase_reason: '#105'
+- file: tests/conformance/tests/Conformance.Tests/ExternalModeProfilePolicyTests.cs
+  brand: mcdonalds
+  max: 3
+  issue: '#105'
+  reason: 'Fixture/test data naming a real persona pack id (sonic/mcdonalds/dunkin)
+    for conformance or unit-test coverage across all three packs -- expected, the
+    same class as the #78 Python test baseline entries; remove only if the pack roster
+    or its test coverage changes.'
+  increase_reason: '#105'
+- file: tests/conformance/tests/Conformance.Tests/HappyHourPricingTests.cs
+  brand: sonic
+  max: 2
+  issue: '#105'
+  reason: 'Fixture/test data naming a real persona pack id (sonic/mcdonalds/dunkin)
+    for conformance or unit-test coverage across all three packs -- expected, the
+    same class as the #78 Python test baseline entries; remove only if the pack roster
+    or its test coverage changes.'
+  increase_reason: '#105'
+- file: tests/conformance/tests/Conformance.Tests/MenuIndexResolveIndexPathsTests.cs
+  brand: sonic
+  max: 5
+  issue: '#105'
+  reason: 'Fixture/test data naming a real persona pack id (sonic/mcdonalds/dunkin)
+    for conformance or unit-test coverage across all three packs -- expected, the
+    same class as the #78 Python test baseline entries; remove only if the pack roster
+    or its test coverage changes.'
+  increase_reason: '#105'
+- file: tests/conformance/tests/Conformance.Tests/PersonaAssetRouteConformanceTests.cs
+  brand: sonic
+  max: 16
+  issue: '#105'
+  reason: 'Fixture/test data naming a real persona pack id (sonic/mcdonalds/dunkin)
+    for conformance or unit-test coverage across all three packs -- expected, the
+    same class as the #78 Python test baseline entries; remove only if the pack roster
+    or its test coverage changes.'
+  increase_reason: '#105'
+- file: tests/conformance/tests/Conformance.Tests/PersonaBusinessRuleConformanceTests.cs
+  brand: sonic
+  max: 2
+  issue: '#105'
+  reason: 'Fixture/test data naming a real persona pack id (sonic/mcdonalds/dunkin)
+    for conformance or unit-test coverage across all three packs -- expected, the
+    same class as the #78 Python test baseline entries; remove only if the pack roster
+    or its test coverage changes.'
+  increase_reason: '#105'
+- file: tests/conformance/tests/Conformance.Tests/PersonaDisabledPackConformanceTests.cs
+  brand: sonic
+  max: 1
+  issue: '#105'
+  reason: 'Fixture/test data naming a real persona pack id (sonic/mcdonalds/dunkin)
+    for conformance or unit-test coverage across all three packs -- expected, the
+    same class as the #78 Python test baseline entries; remove only if the pack roster
+    or its test coverage changes.'
+  increase_reason: '#105'
+- file: tests/conformance/tests/Conformance.Tests/PersonaDiscoveryConformanceTests.cs
+  brand: sonic
+  max: 10
+  issue: '#105'
+  reason: 'Fixture/test data naming a real persona pack id (sonic/mcdonalds/dunkin)
+    for conformance or unit-test coverage across all three packs -- expected, the
+    same class as the #78 Python test baseline entries; remove only if the pack roster
+    or its test coverage changes.'
+  increase_reason: '#105'
+- file: tests/conformance/tests/Conformance.Tests/Scenarios/Cascade/CascadeConformanceFixtures.cs
+  brand: sonic
+  max: 2
+  issue: '#105'
+  reason: 'Fixture/test data naming a real persona pack id (sonic/mcdonalds/dunkin)
+    for conformance or unit-test coverage across all three packs -- expected, the
+    same class as the #78 Python test baseline entries; remove only if the pack roster
+    or its test coverage changes.'
+  increase_reason: '#105'
+- file: tests/conformance/tests/Conformance.Tests/Scenarios/Cascade/CascadeConformanceTests.cs
+  brand: sonic
+  max: 3
+  issue: '#105'
+  reason: 'Fixture/test data naming a real persona pack id (sonic/mcdonalds/dunkin)
+    for conformance or unit-test coverage across all three packs -- expected, the
+    same class as the #78 Python test baseline entries; remove only if the pack roster
+    or its test coverage changes.'
+  increase_reason: '#105'
+- file: tests/conformance/tests/Conformance.Tests/Scenarios/Ordering/ComboAbsorptionTests.cs
+  brand: sonic
+  max: 6
+  issue: '#105'
+  reason: 'Fixture/test data naming a real persona pack id (sonic/mcdonalds/dunkin)
+    for conformance or unit-test coverage across all three packs -- expected, the
+    same class as the #78 Python test baseline entries; remove only if the pack roster
+    or its test coverage changes.'
+  increase_reason: '#105'
+- file: tests/conformance/tests/Conformance.Tests/Scenarios/Ordering/CustomisedItemMenuLookupTests.cs
+  brand: sonic
+  max: 9
+  issue: '#105'
+  reason: 'Fixture/test data naming a real persona pack id (sonic/mcdonalds/dunkin)
+    for conformance or unit-test coverage across all three packs -- expected, the
+    same class as the #78 Python test baseline entries; remove only if the pack roster
+    or its test coverage changes.'
+  increase_reason: '#105'
+- file: tests/conformance/tests/Conformance.Tests/Scenarios/Ordering/GoldenMenuCategoryData.cs
+  brand: sonic
+  max: 2
+  issue: '#105'
+  reason: 'Fixture/test data naming a real persona pack id (sonic/mcdonalds/dunkin)
+    for conformance or unit-test coverage across all three packs -- expected, the
+    same class as the #78 Python test baseline entries; remove only if the pack roster
+    or its test coverage changes.'
+  increase_reason: '#105'
+- file: tests/conformance/tests/Conformance.Tests/Scenarios/Ordering/GoldenMenuCategoryHappyHourTests.cs
+  brand: sonic
+  max: 1
+  issue: '#105'
+  reason: 'Fixture/test data naming a real persona pack id (sonic/mcdonalds/dunkin)
+    for conformance or unit-test coverage across all three packs -- expected, the
+    same class as the #78 Python test baseline entries; remove only if the pack roster
+    or its test coverage changes.'
+  increase_reason: '#105'
+- file: tests/conformance/tests/Conformance.Tests/Scenarios/Ordering/GoldenMenuComboSlotTheoryTests.cs
+  brand: sonic
+  max: 4
+  issue: '#105'
+  reason: 'Fixture/test data naming a real persona pack id (sonic/mcdonalds/dunkin)
+    for conformance or unit-test coverage across all three packs -- expected, the
+    same class as the #78 Python test baseline entries; remove only if the pack roster
+    or its test coverage changes.'
+  increase_reason: '#105'
+- file: tests/conformance/tests/Conformance.Tests/Scenarios/Ordering/HappyHourBoundaryTests.cs
+  brand: sonic
+  max: 7
+  issue: '#105'
+  reason: 'Fixture/test data naming a real persona pack id (sonic/mcdonalds/dunkin)
+    for conformance or unit-test coverage across all three packs -- expected, the
+    same class as the #78 Python test baseline entries; remove only if the pack roster
+    or its test coverage changes.'
+  increase_reason: '#105'
+- file: tests/conformance/tests/Conformance.Tests/Scenarios/Ordering/PersonaHappyHourBanner.cs
+  brand: sonic
+  max: 2
+  issue: '#105'
+  reason: 'Fixture/test data naming a real persona pack id (sonic/mcdonalds/dunkin)
+    for conformance or unit-test coverage across all three packs -- expected, the
+    same class as the #78 Python test baseline entries; remove only if the pack roster
+    or its test coverage changes.'
+  increase_reason: '#105'
+- file: tests/conformance/tests/Conformance.Tests/Scenarios/Ordering/PersonaHappyHourConformanceTests.cs
+  brand: sonic
+  max: 4
+  issue: '#105'
+  reason: 'Fixture/test data naming a real persona pack id (sonic/mcdonalds/dunkin)
+    for conformance or unit-test coverage across all three packs -- expected, the
+    same class as the #78 Python test baseline entries; remove only if the pack roster
+    or its test coverage changes.'
+  increase_reason: '#105'
+- file: tests/conformance/tests/Conformance.Tests/Scenarios/Ordering/RealPackMealNumberConformanceTests.cs
+  brand: mcdonalds
+  max: 2
+  issue: '#105'
+  reason: 'Fixture/test data naming a real persona pack id (sonic/mcdonalds/dunkin)
+    for conformance or unit-test coverage across all three packs -- expected, the
+    same class as the #78 Python test baseline entries; remove only if the pack roster
+    or its test coverage changes.'
+  increase_reason: '#105'
+- file: tests/conformance/tests/Conformance.Tests/Scenarios/Ordering/SearchToolTests.cs
+  brand: sonic
+  max: 4
+  issue: '#105'
+  reason: 'Fixture/test data naming a real persona pack id (sonic/mcdonalds/dunkin)
+    for conformance or unit-test coverage across all three packs -- expected, the
+    same class as the #78 Python test baseline entries; remove only if the pack roster
+    or its test coverage changes.'
+  increase_reason: '#105'
+- file: tests/conformance/tests/Conformance.Tests/Scenarios/Ordering/ToolFailureCapAndTicketRefreshTests.cs
+  brand: sonic
+  max: 1
+  issue: '#105'
+  reason: 'Fixture/test data naming a real persona pack id (sonic/mcdonalds/dunkin)
+    for conformance or unit-test coverage across all three packs -- expected, the
+    same class as the #78 Python test baseline entries; remove only if the pack roster
+    or its test coverage changes.'
+  increase_reason: '#105'
+- file: tests/conformance/tests/Conformance.Tests/Scenarios/Ordering/UpdateOrderAddRemoveModifyTests.cs
+  brand: sonic
+  max: 2
+  issue: '#105'
+  reason: 'Fixture/test data naming a real persona pack id (sonic/mcdonalds/dunkin)
+    for conformance or unit-test coverage across all three packs -- expected, the
+    same class as the #78 Python test baseline entries; remove only if the pack roster
+    or its test coverage changes.'
+  increase_reason: '#105'
+- file: tests/conformance/tests/Conformance.Tests/Scenarios/Sessions/ModelSelectionConformanceFixtures.cs
+  brand: sonic
+  max: 3
+  issue: '#105'
+  reason: 'Fixture/test data naming a real persona pack id (sonic/mcdonalds/dunkin)
+    for conformance or unit-test coverage across all three packs -- expected, the
+    same class as the #78 Python test baseline entries; remove only if the pack roster
+    or its test coverage changes.'
+  increase_reason: '#105'
+- file: tests/conformance/tests/Conformance.Tests/Scenarios/Sessions/ModelSelectionConformanceTests.cs
+  brand: sonic
+  max: 8
+  issue: '#105'
+  reason: 'Fixture/test data naming a real persona pack id (sonic/mcdonalds/dunkin)
+    for conformance or unit-test coverage across all three packs -- expected, the
+    same class as the #78 Python test baseline entries; remove only if the pack roster
+    or its test coverage changes.'
+  increase_reason: '#105'
+- file: tests/conformance/tests/Conformance.Tests/Scenarios/Sessions/ReasoningByDeploymentTests.cs
+  brand: sonic
+  max: 4
+  issue: '#105'
+  reason: 'Fixture/test data naming a real persona pack id (sonic/mcdonalds/dunkin)
+    for conformance or unit-test coverage across all three packs -- expected, the
+    same class as the #78 Python test baseline entries; remove only if the pack roster
+    or its test coverage changes.'
+  increase_reason: '#105'
+- file: tests/conformance/tests/Conformance.Tests/Scenarios/Sessions/ReasoningDeploymentFixtures.cs
+  brand: sonic
+  max: 1
+  issue: '#105'
+  reason: 'Fixture/test data naming a real persona pack id (sonic/mcdonalds/dunkin)
+    for conformance or unit-test coverage across all three packs -- expected, the
+    same class as the #78 Python test baseline entries; remove only if the pack roster
+    or its test coverage changes.'
+  increase_reason: '#105'
+- file: tests/conformance/tests/Conformance.Tests/Scenarios/Sessions/VoicePickerTests.cs
+  brand: sonic
+  max: 2
+  issue: '#105'
+  reason: 'Fixture/test data naming a real persona pack id (sonic/mcdonalds/dunkin)
+    for conformance or unit-test coverage across all three packs -- expected, the
+    same class as the #78 Python test baseline entries; remove only if the pack roster
+    or its test coverage changes.'
+  increase_reason: '#105'
