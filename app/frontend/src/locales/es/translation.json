@@ -39,7 +39,19 @@
         "kicker": "Boleto del pedido",
         "title": "Tu pedido",
         "emptyHint": "Agrega artículos para empezar.",
-        "tax": "Impuesto"
+        "tax": "Impuesto",
+        "included": "Incluido",
+        "componentsLabel": "Incluido con este artículo"
+    },
+    "picker": {
+        "backendLabel": "Backend",
+        "modelLabel": "Modelo",
+        "modelDescription": "Elige qué modelo impulsa la conversación",
+        "lockedHint": "Bloqueado para este pedido -- empieza un nuevo pedido para cambiar",
+        "reasoningSuffix": "(razonamiento)",
+        "realtimeGroup": "Tiempo real",
+        "cascadeGroup": "Cascada",
+        "noModelsAvailable": "No hay modelos disponibles"
     },
     "hero": {
         "badge": "Demostración de pedidos por voz",

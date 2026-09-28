@@ -50,12 +50,13 @@ one behavior (McDonald's meal-number lookup) needs a named strategy.
    A shared catalog lists the models, Bicep maps each to the deployment that exists, the persona allows a subset,
    and the session picks one.
 7. **One new, independent Azure environment, two backends.** Subscription `BrianSwiger-Microsoft-External-2026`,
-   eastus2, azd env `azureaidrivethru-prod`, resource group `rg-azureaidrivethru-prod`. It has its own Foundry
-   (Azure OpenAI) account, its own paid AI Search service with one index per persona, and one ACA environment
-   with a Python and a .NET container app. It has zero dependency on the old resource groups. Realtime starts at
-   GlobalStandard capacity 10 or less (the spare quota) and scales after cutover. Both apps serve the same
-   frontend, and a header switch moves between their hostnames, keeping persona and model. There is no proxy on
-   the audio path.
+   eastus2 (every resource except AI Search, which is in eastus because eastus2 had no Basic-SKU Search capacity
+   at provision time, #87), azd env `azureaidrivethru-prod`, resource group `rg-azureaidrivethru-prod`. It has
+   its own Foundry (Azure OpenAI) account, its own paid AI Search service with one index per persona, and one ACA
+   environment with a Python and a .NET container app. It has zero dependency on the old resource groups.
+   Realtime starts at GlobalStandard capacity 10 or less (the spare quota) and scales after cutover. Both apps
+   serve the same frontend, and a header switch moves between their hostnames, keeping persona and model. There
+   is no proxy on the audio path.
 8. **Runtime theming.** A `PersonaProvider` applies theme tokens and manifest copy, replacing the hard-coded brand
    colors. The frontend gains persona, model and backend pickers. This is the approved exception to the "no
    frontend changes" rule.

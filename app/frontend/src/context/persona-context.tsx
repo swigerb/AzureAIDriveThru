@@ -6,7 +6,7 @@ import { baseTranslationResources } from "@/i18n/baseResources";
 import { applyTheme, applyDarkTheme, resolvePersonaTheme, PersonaWireTheme } from "@/lib/personaTheme";
 import { personaAssetUrl } from "@/lib/personaAssets";
 import { DEFAULT_VOICE } from "@/lib/voices";
-import type { PersonaDetail, PersonaSummary, PersonasIndexResponse } from "@/types/persona";
+import type { PersonaBackendEntry, PersonaDetail, PersonaSummary, PersonasIndexResponse } from "@/types/persona";
 
 const STORAGE_KEY = "personaId";
 const QUERY_PARAM = "persona";
@@ -64,6 +64,9 @@ const NEUTRAL_DETAIL: PersonaDetail = {
 interface PersonaContextValue {
     /** Enabled personas (design doc §5.2's `/api/personas` list) -- at least the fallback entry. */
     personas: PersonaSummary[];
+    /** This deployment's backend(s) (design doc §5.2/§10.1's `/api/personas` `backends[]`). Issue
+     * #80 F11: the backend picker stays hidden entirely whenever this has fewer than two entries. */
+    backends: PersonaBackendEntry[];
     /** The active persona's full detail (design doc §5.2's `/api/personas/{id}`). */
     current: PersonaDetail;
     /** This persona's logo URL -- only ever available from the summary list (see `types/persona.ts`). */
@@ -129,6 +132,7 @@ function initialPersonaId(defaultId: string): string {
  */
 export function PersonaProvider({ children }: { children: ReactNode }) {
     const [personas, setPersonas] = useState<PersonaSummary[]>([NEUTRAL_SUMMARY]);
+    const [backends, setBackends] = useState<PersonaBackendEntry[]>([]);
     const [current, setCurrent] = useState<PersonaDetail>(NEUTRAL_DETAIL);
     const [personaId, setPersonaId] = useState<string>(() => initialPersonaId(NEUTRAL_ID));
     const [ready, setReady] = useState(false);
@@ -223,6 +227,7 @@ export function PersonaProvider({ children }: { children: ReactNode }) {
 
             catalogRef.current = index;
             setPersonas(index.personas);
+            setBackends(index.backends ?? []);
             const resolvedId = index.personas.some(p => p.id === personaId) ? personaId : index.default;
             setPersonaId(resolvedId);
             await loadPersona(resolvedId);
@@ -249,8 +254,8 @@ export function PersonaProvider({ children }: { children: ReactNode }) {
     const logoUrl = useMemo(() => personas.find(p => p.id === personaId)?.logoUrl ?? NEUTRAL_SUMMARY.logoUrl, [personas, personaId]);
 
     const value = useMemo<PersonaContextValue>(
-        () => ({ personas, current, logoUrl, ready, error, selectPersona }),
-        [personas, current, logoUrl, ready, error, selectPersona]
+        () => ({ personas, backends, current, logoUrl, ready, error, selectPersona }),
+        [personas, backends, current, logoUrl, ready, error, selectPersona]
     );
 
     return <PersonaContext.Provider value={value}>{children}</PersonaContext.Provider>;
