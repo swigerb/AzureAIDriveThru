@@ -1,6 +1,9 @@
 import useWebSocket, { ReadyState } from "react-use-websocket";
 import { useRef, useCallback, useEffect, useState } from "react";
 
+import { acquireApiToken } from "@/auth/tokenService";
+import { authConfig } from "@/auth/authConfig";
+import { AUTH_REQUIRED_EVENT } from "@/auth/authorizedFetch";
 import {
     InputAudioBufferAppendCommand,
     InputAudioBufferClearCommand,
@@ -144,6 +147,32 @@ async function fetchSessionToken(): Promise<string | null> {
     }
 }
 
+/**
+ * Issue GH-145 (ADR-002, design §18.7, PR GH-148 review round 2 item B2): the `/realtime`
+ * WebSocket carries a fresh Entra bearer token as `?access_token=`, acquired right before every
+ * connect/reconnect -- initial mount, every background reconnect after a transport close, the
+ * `session_ended` reconnect, and a manual `reconnect()` -- so a long-idle browser tab never
+ * presents a stale token to the middle tier. Returns `null` when unconfigured (Development
+ * pass-through, see `authConfig.ts`) or when the visitor is signed out, in which case
+ * `access_token` is simply omitted from the URL (see `getSocketUrl` below); `AuthGate` (not this
+ * hook) owns interactive sign-in.
+ */
+async function fetchAccessToken(): Promise<string | null> {
+    try {
+        return await acquireApiToken();
+    } catch {
+        return null;
+    }
+}
+
+/** Refreshes both the HMAC session token (`/api/auth/session`) and the Entra access token in
+ * parallel -- used at every connect/reconnect site so neither one is ever stale relative to the
+ * other. */
+async function fetchConnectTokens(): Promise<{ sessionToken: string | null; accessToken: string | null }> {
+    const [sessionToken, accessToken] = await Promise.all([fetchSessionToken(), fetchAccessToken()]);
+    return { sessionToken, accessToken };
+}
+
 export default function useRealTime({
     useDirectAoaiApi,
     aoaiEndpointOverride,
@@ -172,41 +201,59 @@ export default function useRealTime({
     onReceivedRateLimited,
     onReceivedError
 }: Parameters) {
-    const [sessionToken, setSessionToken] = useState<string | null>(null);
-    // Don't open the socket until the token fetch settles, otherwise the first
-    // socket is torn down and replaced as soon as the token arrives.
-    const [tokenReady, setTokenReady] = useState(!!useDirectAoaiApi);
     const [shouldConnect, setShouldConnect] = useState(true);
 
     // Recomputed every render (cheap) so a `personaId` change (persona switch) is picked up by
     // every closure below on its very next render, without needing its own memoization seam.
     const resumeStore = createResumeStore(personaId);
 
-    // Fetch a session token on mount (graceful — null means no token required)
-    useEffect(() => {
-        if (useDirectAoaiApi) return;
-        fetchSessionToken().then(token => {
-            setSessionToken(token);
-            setTokenReady(true);
-        });
-    }, [useDirectAoaiApi]);
-
-    const buildWsEndpoint = () => {
+    /**
+     * PR GH-148 review round 2, item B2: an async URL FACTORY, not a plain string. react-use-
+     * websocket's `getUrl` (`node_modules/react-use-websocket/dist/lib/get-url.js`) awaits `url()`
+     * fresh on every call to `startRef.current()` -- initial mount, every background reconnect
+     * (`shouldReconnect` returning true after a transport close), and every explicit `reconnect()`
+     * below (which just flips `shouldConnect`) -- so this factory, not a value computed once into
+     * React state, is what has to fetch a fresh HMAC session token and a fresh Entra access token
+     * per attempt. The previous implementation fetched both tokens ONCE on mount into
+     * `sessionToken`/`accessToken` state and built a plain string URL from that state; react-use-
+     * websocket's own auto-reconnect logic re-used that SAME string on every retry, so a
+     * long-idle tab kept presenting an increasingly stale token on every background reconnect and
+     * resume attempt (stale HMAC token after its 900s TTL, and eventually a stale Entra token too).
+     *
+     * When Entra is configured (`authConfig.isConfigured`) but `acquireApiToken()` resolves to
+     * `null` (signed out, or MSAL has no cached account), this dispatches `AUTH_REQUIRED_EVENT`
+     * (item B3 -- `EntraAuthGate` listens and drops back to sign-in) and THROWS. `getUrl` catches
+     * that; react-use-websocket never sets `retryOnError` here, so it does not retry and instead
+     * resolves the whole call to `null`, which makes the library log "Failed to get a valid URL.
+     * WebSocket connection aborted." and leaves the socket CLOSED -- i.e. this hook never opens a
+     * `/realtime` socket without a bearer token for a configured-but-signed-out visitor. This is
+     * distinct from the Development pass-through (`authConfig.isConfigured === false`), where a
+     * `null` access token is the expected, intentional case and the connection proceeds without
+     * `access_token` in the URL.
+     */
+    const getSocketUrl = useCallback(async (): Promise<string> => {
         if (useDirectAoaiApi) {
             // GA realtime surface: /openai/v1/realtime addressed by `model`,
-            // replacing the retired /openai/realtime?deployment=&api-version= form.
+            // replacing the retired /openai/realtime?deployment=&api-version= form. Never carries
+            // an Entra token: this is the direct-AOAI debug mode, a different origin entirely.
             return `${aoaiEndpointOverride}/openai/v1/realtime?api-key=${aoaiApiKeyOverride}&model=${aoaiModelOverride}`;
         }
+
+        const { sessionToken, accessToken } = await fetchConnectTokens();
+        if (authConfig.isConfigured && !accessToken) {
+            window.dispatchEvent(new CustomEvent(AUTH_REQUIRED_EVENT));
+            throw new Error("Entra access token unavailable for /realtime connect; aborting.");
+        }
+
         const base = `/realtime`;
         const params = new URLSearchParams();
         if (sessionToken) params.set("token", sessionToken);
+        if (accessToken) params.set("access_token", accessToken);
         if (personaId) params.set("persona", personaId);
         if (modelId) params.set("model", modelId);
         const query = params.toString();
         return query ? `${base}?${query}` : base;
-    };
-
-    const wsEndpoint = buildWsEndpoint();
+    }, [useDirectAoaiApi, aoaiEndpointOverride, aoaiApiKeyOverride, aoaiModelOverride, personaId, modelId]);
 
     // Ref to break circular dependency: callbacks need sendJsonMessage,
     // but sendJsonMessage comes from useWebSocket which takes the callbacks.
@@ -311,7 +358,7 @@ export default function useRealTime({
         modelId
     ]);
 
-    const { sendJsonMessage, readyState } = useWebSocket(tokenReady ? wsEndpoint : null, {
+    const { sendJsonMessage, readyState } = useWebSocket(getSocketUrl, {
         onOpen: () => {
             openRef.current = true;
             // Literal first frame on every open when this tab holds a resume id.
@@ -333,14 +380,17 @@ export default function useRealTime({
                 endingRef.current = false;
                 resumeStore.clear();
                 setShouldConnect(false);
-                if (useDirectAoaiApi) {
-                    setShouldConnect(true);
-                } else {
-                    fetchSessionToken().then(token => {
-                        setSessionToken(token);
-                        setShouldConnect(true);
-                    });
-                }
+                // A genuine async gap (not two synchronous calls) so React commits the `false`
+                // state as its own render before flipping back to `true`: React 18 batches
+                // same-net-value setState calls made within one synchronous event into a single
+                // no-op commit (`Object.is(true, true)` bails out of scheduling a render), and the
+                // socket-managing effect (keyed on this `connect` boolean) would never see a
+                // transition -- so no fresh socket would open for this explicit "start a new
+                // order" close (`shouldReconnect` deliberately returns `false` for `kind ===
+                // "ended"`, so the library's own auto-reconnect never picks this up either).
+                // `getSocketUrl` above fetches its own fresh token(s) on the resulting connect
+                // attempt (item B2), so this gap no longer needs to pre-fetch anything itself.
+                Promise.resolve().then(() => setShouldConnect(true));
             } else if (kind !== "transport") {
                 // Final for this session: no background reconnect, and nothing
                 // queued for it may leak into the next one.
@@ -348,10 +398,12 @@ export default function useRealTime({
                 pendingRef.current = [];
                 // 4002 keeps the id: another socket owns the session now.
                 if (kind !== "superseded") resumeStore.clear();
-            } else if (event.code === 4001 || event.reason?.includes("expired")) {
-                // 401 close → refresh token and retry
-                fetchSessionToken().then(setSessionToken);
             }
+            // A 401/expired-token close (kind === "transport", incl. code 4001) needs no explicit
+            // token refresh here (item B2): `shouldReconnect` below returns `true` for any
+            // transport close, and react-use-websocket's own background reconnect calls
+            // `getSocketUrl` fresh on that next attempt, which fetches a brand new session token
+            // and Entra access token itself.
             const resuming = kind === "transport" && !useDirectAoaiApi && !!resumeStore.get();
             onConnectionLost?.({ code: event.code, reason: event.reason ?? "", idle: kind === "idle", kind, resuming });
             onWebSocketClose?.();
@@ -373,13 +425,12 @@ export default function useRealTime({
 
     const isConnected = readyState === ReadyState.OPEN;
 
-    // Re-open after an idle close or exhausted retries, with a fresh token
-    // (the old one may have expired while the page sat idle).
-    const reconnect = useCallback(async () => {
+    // Re-open after an idle close or exhausted retries. No token pre-fetch needed here (item B2):
+    // `getSocketUrl` fetches a fresh session token and Entra access token itself on this attempt.
+    const reconnect = useCallback(() => {
         if (shouldConnect) return;
-        if (!useDirectAoaiApi) setSessionToken(await fetchSessionToken());
         setShouldConnect(true);
-    }, [shouldConnect, useDirectAoaiApi]);
+    }, [shouldConnect]);
 
     // Keep ref in sync so onMessageReceived can call sendJsonMessage
     useEffect(() => {
