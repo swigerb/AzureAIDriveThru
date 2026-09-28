@@ -40,6 +40,7 @@ beforeEach(() => {
   useIsAuthenticated.mockReset();
   useMsal.mockReset();
   loginRedirect.mockReset();
+  loginRedirect.mockResolvedValue(undefined);
   logoutRedirect.mockReset();
   acquireApiToken.mockReset();
   acquireApiToken.mockResolvedValue('fresh-token');
@@ -136,6 +137,22 @@ describe('AuthGate — Entra gate (configured)', () => {
     await waitFor(() => expect(screen.getByTestId('protected-child')).toBeInTheDocument());
   });
 
+  it('R2: Retry does not throw an unhandled rejection when the forced refresh itself fails', async () => {
+    acquireApiToken.mockRejectedValueOnce(new Error('network down'));
+    useIsAuthenticated.mockReturnValue(true);
+    render(<AuthGate>{child}</AuthGate>);
+    act(() => {
+      window.dispatchEvent(new CustomEvent(AUTH_FORBIDDEN_EVENT));
+    });
+    await screen.findByTestId('auth-forbidden');
+
+    await userEvent.click(screen.getByTestId('auth-retry-button'));
+
+    // The forbidden state is still cleared and the (still-cached) token re-renders the app, even
+    // though the forced refresh itself rejected.
+    await waitFor(() => expect(screen.getByTestId('protected-child')).toBeInTheDocument());
+  });
+
   it('"Sign in with a different account" signs out and marks an explicit sign-out', async () => {
     useIsAuthenticated.mockReturnValue(true);
     render(<AuthGate>{child}</AuthGate>);
@@ -203,6 +220,75 @@ describe('AuthGate — B3: AUTH_REQUIRED_EVENT (token permanently unusable)', ()
   });
 });
 
+describe('AuthGate — R1: the AUTH_REQUIRED_EVENT auto-redirect guard survives page loads', () => {
+  it('auto-redirects at most once across three simulated page loads (a persistent 401 never loops)', () => {
+    useIsAuthenticated.mockReturnValue(true);
+
+    // Each render/unmount pair simulates a full page load: `loginRedirect()` in real life
+    // navigates away and Entra's SSO cookie brings the visitor straight back, which is a brand
+    // new mount with a brand new `useRef` -- but the SAME `sessionStorage`, since it's the same
+    // tab. Round 1's per-mount ref guard would call `loginRedirect` on every one of these; the
+    // sessionStorage-backed guard must not.
+    for (let i = 0; i < 2; i += 1) {
+      const { unmount } = render(<AuthGate>{child}</AuthGate>);
+      act(() => {
+        window.dispatchEvent(new CustomEvent(AUTH_REQUIRED_EVENT));
+      });
+      unmount();
+    }
+
+    expect(loginRedirect).toHaveBeenCalledTimes(1);
+
+    // The third mount shows the manual button instead of auto-redirecting again.
+    render(<AuthGate>{child}</AuthGate>);
+    act(() => {
+      window.dispatchEvent(new CustomEvent(AUTH_REQUIRED_EVENT));
+    });
+    expect(screen.getByTestId('auth-required-message')).toBeInTheDocument();
+    expect(screen.getByTestId('auth-signin-button')).toBeInTheDocument();
+    expect(loginRedirect).toHaveBeenCalledTimes(1);
+  });
+
+  it('a manual Sign in click re-arms the auth-required auto-redirect guard for the next load', async () => {
+    useIsAuthenticated.mockReturnValue(true);
+    // Simulate a PRIOR page load having already auto-redirected once.
+    window.sessionStorage.setItem('drivethru.auth.authRequiredRedirected', '1');
+
+    render(<AuthGate>{child}</AuthGate>);
+    act(() => {
+      window.dispatchEvent(new CustomEvent(AUTH_REQUIRED_EVENT));
+    });
+    // The guard from the prior load blocks this one -- it shows the manual button instead.
+    expect(loginRedirect).not.toHaveBeenCalled();
+    const button = await screen.findByTestId('auth-signin-button');
+
+    await userEvent.click(button);
+    expect(loginRedirect).toHaveBeenCalledTimes(1);
+    // The manual click cleared the guard, so a future persistent-401 page load gets its own
+    // single automatic redirect again, instead of staying blocked forever.
+    expect(window.sessionStorage.getItem('drivethru.auth.authRequiredRedirected')).toBeNull();
+  });
+
+  it('fails safe to the manual button (no redirect) when sessionStorage throws', () => {
+    const getItemSpy = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('sessionStorage unavailable (private mode)');
+    });
+    try {
+      useIsAuthenticated.mockReturnValue(true);
+      render(<AuthGate>{child}</AuthGate>);
+      act(() => {
+        window.dispatchEvent(new CustomEvent(AUTH_REQUIRED_EVENT));
+      });
+
+      expect(loginRedirect).not.toHaveBeenCalled();
+      expect(screen.getByTestId('auth-required-message')).toBeInTheDocument();
+      expect(screen.getByTestId('auth-signin-button')).toBeInTheDocument();
+    } finally {
+      getItemSpy.mockRestore();
+    }
+  });
+});
+
 describe('AuthGate — B4: redirect-error state (handleRedirectPromise failed)', () => {
   it('shows the AADSTS50105 "not assigned" message and a manual sign-in button, without auto-redirecting', () => {
     setRedirectError({ errorCode: 'server_error', errorMessage: 'AADSTS50105: user not assigned to app' });
@@ -235,3 +321,56 @@ describe('AuthGate — B4: redirect-error state (handleRedirectPromise failed)',
     expect(loginRedirect).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('AuthGate — R2: a rejected loginRedirect() must not get stuck on "Signing you in..."', () => {
+  it('a loginRedirect rejection (user_cancelled, the Back-button/bfcache case) clears busy and shows the cancelled state', async () => {
+    loginRedirect.mockRejectedValueOnce({ errorCode: 'user_cancelled' });
+    useIsAuthenticated.mockReturnValue(false);
+    render(<AuthGate>{child}</AuthGate>);
+
+    const message = await screen.findByTestId('auth-redirect-error');
+    expect(message).toHaveTextContent(/cancelled/i);
+    expect(screen.getByTestId('auth-signin-button')).toBeInTheDocument();
+    expect(screen.queryByTestId('auth-signing-in')).not.toBeInTheDocument();
+    // It must not retry loginRedirect on its own.
+    expect(loginRedirect).toHaveBeenCalledTimes(1);
+  });
+
+  it('classifies access_denied as cancelled too', async () => {
+    loginRedirect.mockRejectedValueOnce({ errorCode: 'access_denied' });
+    useIsAuthenticated.mockReturnValue(false);
+    render(<AuthGate>{child}</AuthGate>);
+
+    const message = await screen.findByTestId('auth-redirect-error');
+    expect(message).toHaveTextContent(/cancelled/i);
+  });
+
+  it('classifies AADSTS65004 (declined consent) as cancelled too', async () => {
+    loginRedirect.mockRejectedValueOnce({ errorCode: 'server_error', errorMessage: 'AADSTS65004: user declined consent' });
+    useIsAuthenticated.mockReturnValue(false);
+    render(<AuthGate>{child}</AuthGate>);
+
+    const message = await screen.findByTestId('auth-redirect-error');
+    expect(message).toHaveTextContent(/cancelled/i);
+  });
+});
+
+describe('AuthGate — R3: the redirect-error screen shows Entra\'s error code next to the friendly message', () => {
+  it('shows AADSTS50105 next to the "not assigned" message', () => {
+    setRedirectError({ errorCode: 'server_error', errorMessage: 'AADSTS50105: user not assigned to app' });
+    useIsAuthenticated.mockReturnValue(false);
+    render(<AuthGate>{child}</AuthGate>);
+
+    expect(screen.getByTestId('auth-redirect-error-code')).toHaveTextContent('AADSTS50105');
+  });
+
+  it('shows the AADSTS code from an unclassified failure without leaking the raw message (a UPN, here)', () => {
+    setRedirectError({ errorCode: 'server_error', errorMessage: 'AADSTS90072: user x@y.com needs assignment' });
+    useIsAuthenticated.mockReturnValue(false);
+    render(<AuthGate>{child}</AuthGate>);
+
+    expect(screen.getByTestId('auth-redirect-error-code')).toHaveTextContent('AADSTS90072');
+    expect(screen.queryByText(/x@y\.com/)).not.toBeInTheDocument();
+  });
+});
+

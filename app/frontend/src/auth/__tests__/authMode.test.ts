@@ -3,7 +3,10 @@ import { resolveAuthMode, validateEntraIds, type RawAuthModeEnv } from '../authM
 
 const VALID_TENANT = '11111111-1111-1111-1111-111111111111';
 const VALID_CLIENT = '33333333-3333-3333-3333-333333333333';
-const VALID_DOMAIN_TENANT = 'contoso.onmicrosoft.com';
+// R5 (PR GH-148 review round 2): the tenant id must be a GUID -- a directory domain like
+// `contoso.onmicrosoft.com` is REJECTED, matching design 18.6's "non-GUID id fails" and 18.5's
+// "the backend applies the same rule as the frontend".
+const DOMAIN_TENANT = 'contoso.onmicrosoft.com';
 
 function env(overrides: Partial<RawAuthModeEnv> = {}): RawAuthModeEnv {
   return { DEV: false, ...overrides };
@@ -19,12 +22,12 @@ describe('authMode -- resolveAuthMode', () => {
       ).toEqual({ mode: 'entra' });
     });
 
-    it('resolves to entra with a verified directory-domain tenant (case-insensitive mode)', () => {
-      expect(
+    it('throws on a directory-domain tenant (R5: tenant id must be a GUID, case-insensitive mode)', () => {
+      expect(() =>
         resolveAuthMode(
-          env({ VITE_AUTH_MODE: 'ENTRA', VITE_ENTRA_TENANT_ID: VALID_DOMAIN_TENANT, VITE_ENTRA_CLIENT_ID: VALID_CLIENT }),
+          env({ VITE_AUTH_MODE: 'ENTRA', VITE_ENTRA_TENANT_ID: DOMAIN_TENANT, VITE_ENTRA_CLIENT_ID: VALID_CLIENT }),
         ),
-      ).toEqual({ mode: 'entra' });
+      ).toThrow(/not a valid GUID/i);
     });
 
     it('throws when both ids are blank', () => {
@@ -109,16 +112,16 @@ describe('authMode -- resolveAuthMode', () => {
 });
 
 describe('authMode -- validateEntraIds', () => {
-  it('accepts a GUID tenant + GUID client and a directory-domain tenant', () => {
+  it('accepts a GUID tenant + GUID client', () => {
     expect(validateEntraIds(VALID_TENANT, VALID_CLIENT).ok).toBe(true);
-    expect(validateEntraIds(VALID_DOMAIN_TENANT, VALID_CLIENT).ok).toBe(true);
   });
 
-  it('rejects empty, placeholder, all-zero, and malformed ids', () => {
+  it('rejects empty, placeholder, all-zero, malformed, and directory-domain tenant ids (R5)', () => {
     expect(validateEntraIds('', VALID_CLIENT).ok).toBe(false);
     expect(validateEntraIds(VALID_TENANT, '').ok).toBe(false);
     expect(validateEntraIds('00000000-0000-0000-0000-000000000000', VALID_CLIENT).ok).toBe(false);
     expect(validateEntraIds(VALID_TENANT, 'not-a-guid').ok).toBe(false);
     expect(validateEntraIds('tenant', VALID_CLIENT).ok).toBe(false);
+    expect(validateEntraIds(DOMAIN_TENANT, VALID_CLIENT).ok).toBe(false);
   });
 });

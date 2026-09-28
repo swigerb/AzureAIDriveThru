@@ -73,8 +73,8 @@ describe('validateEntraConfig', () => {
     expect(validateEntraConfig(VALID_TENANT, VALID_CLIENT)).toEqual({ ok: true });
   });
 
-  it('accepts a verified directory domain as the tenant', () => {
-    expect(validateEntraConfig('contoso.onmicrosoft.com', VALID_CLIENT).ok).toBe(true);
+  it('rejects a verified directory domain as the tenant (R5: tenant id must be a GUID)', () => {
+    expect(validateEntraConfig('contoso.onmicrosoft.com', VALID_CLIENT).ok).toBe(false);
   });
 
   it.each([
@@ -86,9 +86,10 @@ describe('validateEntraConfig', () => {
     ['00000000-0000-0000-0000-000000000000', VALID_CLIENT, 'all-zero GUID tenant'],
     [VALID_TENANT, '00000000-0000-0000-0000-000000000000', 'all-zero GUID client'],
     ['your-tenant-id', VALID_CLIENT, 'scaffold token tenant'],
-    ['not-a-guid-or-domain', VALID_CLIENT, 'malformed tenant'],
+    ['not-a-guid-tenant', VALID_CLIENT, 'malformed tenant'],
     [VALID_TENANT, 'not-a-guid', 'non-GUID client'],
-    ['tenant', VALID_CLIENT, 'non-GUID non-domain tenant'],
+    ['tenant', VALID_CLIENT, 'non-GUID tenant'],
+    ['contoso.onmicrosoft.com', VALID_CLIENT, 'directory-domain tenant (R5)'],
   ])('rejects %s / %s (%s)', (tenant, client) => {
     const result = validateEntraConfig(tenant, client);
     expect(result.ok).toBe(false);

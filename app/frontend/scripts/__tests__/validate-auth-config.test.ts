@@ -89,9 +89,12 @@ describe('validate-auth-config -- validateAuthConfig', () => {
 });
 
 describe('validate-auth-config -- validateEntraIds', () => {
-  it('accepts GUID tenant + GUID client and a directory-domain tenant', () => {
+  it('accepts a GUID tenant + GUID client', () => {
     expect(validateEntraIds(VALID_TENANT, VALID_CLIENT).ok).toBe(true);
-    expect(validateEntraIds('contoso.onmicrosoft.com', VALID_CLIENT).ok).toBe(true);
+  });
+
+  it('rejects a directory-domain tenant (R5: tenant id must be a GUID)', () => {
+    expect(validateEntraIds('contoso.onmicrosoft.com', VALID_CLIENT).ok).toBe(false);
   });
 
   it('rejects empty, placeholder, all-zero, and malformed ids', () => {

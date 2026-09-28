@@ -6,8 +6,15 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { loginRequest } from '../authConfig';
 import { acquireApiToken } from '../tokenService';
 import { AUTH_FORBIDDEN_EVENT, AUTH_REQUIRED_EVENT } from '../authorizedFetch';
-import { markExplicitSignOut, consumeExplicitSignOut, clearExplicitSignOut } from '../signOut';
-import { getRedirectError, clearRedirectError, type RedirectError } from '../redirectError';
+import {
+  markExplicitSignOut,
+  consumeExplicitSignOut,
+  clearExplicitSignOut,
+  hasAuthRequiredRedirected,
+  markAuthRequiredRedirected,
+  clearAuthRequiredRedirected,
+} from '../signOut';
+import { getRedirectError, clearRedirectError, classifyRedirectError, type RedirectError } from '../redirectError';
 
 /**
  * The live Entra sign-in gate (ADR-002, design §18.6, issue GH-145). Rendered only when
@@ -22,17 +29,29 @@ import { getRedirectError, clearRedirectError, type RedirectError } from '../red
  * The auto-redirect must never loop, so an EXPLICIT sign-out (here or from the in-app logout
  * control, see `../signOut.ts`) sets a sessionStorage flag that survives the full-page redirect
  * round trip (in-memory React state does not) and suppresses the next auto-redirect until the
- * visitor clicks "Sign in with Microsoft" again. The same "at most once per page load" guard
- * (`autoRedirectAttempted`) also covers two runtime failure paths added in PR GH-148 review round
- * 2:
- *   - item B3: `AUTH_REQUIRED_EVENT` (a persistent 401 from `authorizedFetch`, or a null Entra
+ * visitor clicks "Sign in with Microsoft" again. The initial-mount auto-redirect below uses a
+ * `useRef` guard (`autoRedirectAttempted`), which is fine to reset every fresh page load -- that's
+ * a new visit, not a loop. Two runtime failure paths added in PR GH-148 review round 2 need more
+ * than that:
+ *   - item B3/R1: `AUTH_REQUIRED_EVENT` (a persistent 401 from `authorizedFetch`, or a null Entra
  *     token on a WebSocket connect attempt from `useRealtime`, item B2) means whatever token the
- *     app was using no longer works at all -- this drops back to a sign-in state rather than
- *     leave the app rendered with a token that will never succeed.
- *   - item B4: a failed `handleRedirectPromise()` (cancelled, consent required, or AADSTS50105 --
- *     see `../redirectError.ts`) is read once on mount and shown as a friendly error with a
+ *     app was using no longer works at all -- this drops back to a sign-in state. Round 1 shipped
+ *     this guarded only by the same per-mount `useRef`, but `loginRedirect()` navigates away, so
+ *     the redirect round trip ends on a BRAND NEW page load with a fresh ref -- a backend that
+ *     keeps answering 401 would auto-redirect forever. `hasAuthRequiredRedirected()` /
+ *     `markAuthRequiredRedirected()` (`../signOut.ts`) use `sessionStorage` instead, which
+ *     survives that round trip, so this path redirects automatically at most once per tab session
+ *     until the visitor clicks "Sign in" again (which clears the flag, same as an explicit
+ *     sign-out).
+ *   - item B4/R2: a failed `handleRedirectPromise()` (cancelled, consent required, or AADSTS50105
+ *     -- see `../redirectError.ts`) is read once on mount and shown as a friendly error with a
  *     manual "Sign in" button, with the auto-redirect suppressed while it's present -- otherwise a
- *     reload would just repeat the same failing redirect forever.
+ *     reload would just repeat the same failing redirect forever. Round 2 also catches a
+ *     `loginRedirect()` call itself rejecting -- msal-browser rejects with `user_cancelled` when
+ *     the visitor presses Back from the Entra page and the browser restores the app from bfcache,
+ *     which is the most common way to cancel a redirect sign-in. Before this fix that rejection
+ *     was silently dropped and `redirectStarting` was never reset, so the restored page stayed
+ *     stuck on "Signing you in..." forever with no button.
  */
 export function EntraAuthGate({ children }: { children: ReactNode }) {
   const { instance, inProgress } = useMsal();
@@ -52,7 +71,14 @@ export function EntraAuthGate({ children }: { children: ReactNode }) {
 
   const startLoginRedirect = useCallback(() => {
     setRedirectStarting(true);
-    void instance.loginRedirect(loginRequest);
+    // Item R2: a rejected `loginRedirect()` (most commonly `user_cancelled` from a Back-button
+    // bfcache restore -- see the class doc comment above) must clear `redirectStarting` and show
+    // the classified error instead of leaving the gate stuck on "Signing you in..." forever with
+    // an unhandled rejection. This never retries on its own.
+    instance.loginRedirect(loginRequest).catch((error: unknown) => {
+      setRedirectStarting(false);
+      setRedirectErrorState(classifyRedirectError(error));
+    });
   }, [instance]);
 
   useEffect(() => {
@@ -62,13 +88,18 @@ export function EntraAuthGate({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    // Item B3: see the class doc comment above for why this exists and shares
-    // `autoRedirectAttempted` with the initial-mount auto-redirect effect below.
+    // Item R1 (round 2): `AUTH_REQUIRED_EVENT` can fire again after the FULL redirect round trip
+    // this same handler starts (`loginRedirect()` navigates away and the visitor comes back on a
+    // brand new page load) -- a per-mount `useRef` (round 1's B3) resets on that new load and
+    // cannot stop a persistently-401ing backend from looping forever. `hasAuthRequiredRedirected`
+    // is backed by `sessionStorage` instead, so it survives the round trip: this redirects
+    // automatically at most once per tab session, and every event after that just shows the
+    // auth-required message with a manual "Sign in" button.
     const onAuthRequired = () => {
       setForbidden(false);
       setAuthRequired(true);
-      if (!autoRedirectAttempted.current) {
-        autoRedirectAttempted.current = true;
+      if (!hasAuthRequiredRedirected()) {
+        markAuthRequiredRedirected();
         startLoginRedirect();
       }
     };
@@ -79,6 +110,10 @@ export function EntraAuthGate({ children }: { children: ReactNode }) {
   const signIn = useCallback(() => {
     clearExplicitSignOut();
     clearRedirectError();
+    // Item R1: a manual "Sign in" click is the ONE thing (besides an explicit sign-out) allowed
+    // to re-arm the auth-required auto-redirect guard, so a genuinely new session gets its one
+    // automatic retry too (e.g. after the 24-hour SPA refresh token expires).
+    clearAuthRequiredRedirected();
     setRedirectErrorState(null);
     setSignedOut(false);
     setForbidden(false);
@@ -91,6 +126,7 @@ export function EntraAuthGate({ children }: { children: ReactNode }) {
 
   const signOut = useCallback(() => {
     markExplicitSignOut();
+    clearAuthRequiredRedirected();
     void instance.logoutRedirect();
   }, [instance]);
 
@@ -99,7 +135,10 @@ export function EntraAuthGate({ children }: { children: ReactNode }) {
   // genuinely NEW token (not merely clearing the local `forbidden` flag, which just re-renders
   // with whatever token is already cached) can actually pick up a newly-granted role.
   const retryForbidden = useCallback(() => {
-    void acquireApiToken({ forceRefresh: true }).finally(() => setForbidden(false));
+    // Item R2: a failed forced refresh must not become an unhandled rejection.
+    void acquireApiToken({ forceRefresh: true })
+      .catch(() => null)
+      .finally(() => setForbidden(false));
   }, []);
 
   const busy =
@@ -174,6 +213,14 @@ export function EntraAuthGate({ children }: { children: ReactNode }) {
               <p data-testid="auth-redirect-error" className="text-sm text-destructive">
                 {redirectError.message}
               </p>
+              {/* Item R3: Entra's own error code, so Brian can triage the exact failure (18.13
+                  step 3) -- never the raw error message, which can carry the signed-in user's
+                  UPN. Omitted entirely when classification found no code to show. */}
+              {redirectError.code ? (
+                <p data-testid="auth-redirect-error-code" className="text-xs text-muted-foreground">
+                  Error code: {redirectError.code}
+                </p>
+              ) : null}
               <Button data-testid="auth-signin-button" size="lg" onClick={signIn}>
                 Sign in with Microsoft
               </Button>

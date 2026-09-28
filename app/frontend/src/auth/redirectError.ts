@@ -19,6 +19,14 @@ export interface RedirectError {
   /** Friendly, classified copy for the gate to show. Never the raw MSAL error message: that can
    * embed tenant/app ids and isn't meant for an end user. */
   readonly message: string;
+  /**
+   * Entra's own error code (PR GH-148 review round 2, item R3, design 18.6: "shows Entra's error
+   * code with a short explanation"), so Brian can triage the exact Entra failure (18.13 step 3)
+   * without ever seeing the raw error message, which can carry the signed-in user's UPN. The first
+   * `AADSTS\d+` match in the raw error message, else the MSAL `errorCode` when it looks like a
+   * plain code (`^[a-z_]+$`); `null` when neither is present.
+   */
+  readonly code: string | null;
 }
 
 type MsalErrorShape = {
@@ -41,8 +49,18 @@ export function classifyRedirectError(error: unknown): RedirectError {
     (typeof shape.message === 'string' && shape.message) ||
     '';
 
-  if (errorCode === 'user_cancelled') {
-    return { kind: 'cancelled', message: 'Sign-in was cancelled.' };
+  // R3 (PR GH-148 review round 2): the code Brian needs for triage, never shown without the
+  // friendly message next to it. The AADSTS code (if the raw message carries one) wins over the
+  // MSAL errorCode, since it's the more specific, Entra-assigned identifier.
+  const aadstsMatch = /AADSTS\d+/.exec(errorMessage);
+  const code = aadstsMatch ? aadstsMatch[0] : /^[a-z_]+$/.test(errorCode) ? errorCode : null;
+
+  // item R2 (round 2): `user_cancelled` is a genuine MSAL error code for a user-cancelled
+  // interactive flow. `access_denied` and AADSTS65004 ("the user declined to consent") are the
+  // same outcome from the visitor's perspective -- they backed out of the Entra prompt -- so they
+  // are classified the same way rather than falling through to the generic "unknown" message.
+  if (errorCode === 'user_cancelled' || errorCode === 'access_denied' || /AADSTS65004/.test(errorMessage)) {
+    return { kind: 'cancelled', message: 'Sign-in was cancelled.', code };
   }
 
   // Entra itself blocking pre-auth (the app registration exists, but this user/tenant was never
@@ -52,6 +70,7 @@ export function classifyRedirectError(error: unknown): RedirectError {
     return {
       kind: 'not_assigned',
       message: "You're not assigned to this app yet. Ask Brian to assign you access in Entra, then try again.",
+      code,
     };
   }
 
@@ -59,10 +78,11 @@ export function classifyRedirectError(error: unknown): RedirectError {
     return {
       kind: 'consent_required',
       message: 'Need admin approval to sign in. Ask Brian to grant consent for this app, then try again.',
+      code,
     };
   }
 
-  return { kind: 'unknown', message: "Sign-in didn't complete. Please try again." };
+  return { kind: 'unknown', message: "Sign-in didn't complete. Please try again.", code };
 }
 
 let redirectError: RedirectError | null = null;

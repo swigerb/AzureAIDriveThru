@@ -19,6 +19,13 @@ if [ "$PRODUCTION_MODE" != "--production" ]; then
     echo ""
     echo "Building frontend"
     echo ""
+    # ADR-002 / design 18.6, PR GH-148 review round 2 item R4: `vite.config.ts`'s auth-mode build
+    # guard now fails closed on an unset VITE_AUTH_MODE with no Entra ids configured (this is a
+    # local dev build, so there are none) -- every local developer's `npm run build` here would
+    # otherwise fail. Local dev is the intentional unauthenticated pass-through case, so pin
+    # VITE_AUTH_MODE=Development unless the caller already set one (an Entra dev box testing real
+    # sign-in, say).
+    export VITE_AUTH_MODE="${VITE_AUTH_MODE:-Development}"
     npm run build
     if [ $? -ne 0 ]; then
         echo "Failed to build frontend"

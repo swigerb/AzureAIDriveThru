@@ -49,9 +49,6 @@ export interface ResolvedAuthMode {
 const GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const EMPTY_GUID = '00000000-0000-0000-0000-000000000000';
 
-/** A single-tenant directory: a real GUID, or a verified domain (e.g. fabrikam.onmicrosoft.com). */
-const TENANT_DOMAIN_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i;
-
 /**
  * True when a configuration value is obviously a placeholder rather than a real id: empty, an
  * angle-bracket template (`<your-tenant-id>`), the all-zero GUID, or a well-known scaffold token.
@@ -82,8 +79,8 @@ export function validateEntraIds(tenantId: string, clientId: string): EntraIdVal
   if (isPlaceholder(tenant)) {
     return { ok: false, error: 'Entra tenant id is missing or a placeholder.' };
   }
-  if (!(GUID_RE.test(tenant) || TENANT_DOMAIN_RE.test(tenant))) {
-    return { ok: false, error: 'Entra tenant id is not a valid GUID or directory domain.' };
+  if (!GUID_RE.test(tenant)) {
+    return { ok: false, error: 'Entra tenant id is not a valid GUID.' };
   }
   if (isPlaceholder(client)) {
     return { ok: false, error: 'Entra client id is missing or a placeholder.' };
