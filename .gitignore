@@ -156,6 +156,12 @@ data/**/*.md5
 .DS_Store
 data/transformed_menu_items/
 
+# Local on-device mode (issue #81): downloaded model weights (Whisper/Phi-4-mini ONNX/Piper
+# voices) -- never committed. scripts/download_local_models.* populates this at the repo root by
+# default (LOCAL_RUNTIME_CHAT_MODEL_DIR/LOCAL_RUNTIME_TTS_MODEL_DIR default to models/phi4-mini,
+# models/piper -- local_runtime/config.py).
+/models/
+
 # Verbose log output
 app/backend/logs/
 
