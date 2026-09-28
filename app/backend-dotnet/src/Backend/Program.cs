@@ -8,6 +8,7 @@ using Backend.Personas;
 using Backend.Prompts;
 using Backend.Realtime;
 using Backend.Sessions;
+using Backend.Tools;
 using Microsoft.Extensions.FileProviders;
 
 // Host wiring (issue #12 S2): config, persona-pack loading, health, auth token endpoint, static
@@ -75,10 +76,10 @@ catch (ConfigValidationException exc)
 
 // ── 4. Prompts for the default persona (Python: PromptLoader(brand="sonic") hardcoded; here
 // persona-aware via the catalog's DefaultPersonaId -- per-session persona selection is wave 7) ──
+var personasDir = Environment.GetEnvironmentVariable("PERSONAS_DIR") ?? Path.Combine(RepoRootLocator.Find(), "personas");
 PromptLoader promptLoader;
 try
 {
-    var personasDir = Environment.GetEnvironmentVariable("PERSONAS_DIR") ?? Path.Combine(RepoRootLocator.Find(), "personas");
     promptLoader = new PromptLoader(personasDir, personaCatalog.DefaultPersonaId);
 }
 catch (PromptLoadException exc)
@@ -108,15 +109,112 @@ catch (ModelValidationException exc)
 // loaded (same "validated at module load" reasoning as config_loaded), and /health's shape must
 // stay byte-for-byte identical to Python's, so no new field is added here.
 
+// ── 5b. Realtime session config (issue #13): config.yaml's `model`/`audio` sections plus their
+// env overrides, exactly mirroring rtmt.py's configure_realtime_model. ─────────────────────────
+var modelSection = appConfig.TryGetSection("model");
+var audioSection = appConfig.TryGetSection("audio");
+var realtimeDeployment = Environment.GetEnvironmentVariable("AZURE_OPENAI_REALTIME_DEPLOYMENT")!;
+
+var voiceChoiceOverride = Environment.GetEnvironmentVariable("AZURE_OPENAI_REALTIME_VOICE_CHOICE");
+var voiceChoice = !string.IsNullOrEmpty(voiceChoiceOverride) ? voiceChoiceOverride : ReadString(modelSection, "default_voice") ?? "marin";
+
+var transcriptionModelOverride = Environment.GetEnvironmentVariable("AZURE_OPENAI_REALTIME_TRANSCRIPTION_MODEL");
+var transcriptionModel = !string.IsNullOrEmpty(transcriptionModelOverride) ? transcriptionModelOverride : ReadString(modelSection, "transcription_model") ?? "whisper-1";
+
+var reasoningEffortOverride = Environment.GetEnvironmentVariable("AZURE_OPENAI_REALTIME_REASONING_EFFORT");
+var reasoningEffortSource = !string.IsNullOrEmpty(reasoningEffortOverride) ? reasoningEffortOverride : ReadString(modelSection, "reasoning_effort");
+var reasoningEffort = ReasoningRules.NormalizeReasoningEffort(reasoningEffortSource);
+
+var reasoningModelOverride = Environment.GetEnvironmentVariable("AZURE_OPENAI_REALTIME_REASONING_MODEL");
+var reasoningModelSource = !string.IsNullOrEmpty(reasoningModelOverride) ? reasoningModelOverride : ReadString(modelSection, "reasoning_model");
+var reasoningModel = ReasoningRules.ParseReasoningModel(reasoningModelSource);
+
+var configuredVoices = ReadStringList(modelSection, "allowed_voices");
+IReadOnlySet<string> allowedVoices = configuredVoices is { Count: > 0 }
+    ? new HashSet<string>(configuredVoices, StringComparer.Ordinal)
+    : ClientServerFilter.DefaultAllowedVoices;
+if (!allowedVoices.Contains(voiceChoice))
+{
+    // rtmt.py's configure_realtime_model raises ValueError for exactly this at startup (#57 FU2)
+    // -- a default voice GA would reject on every bootstrap session.update is a fail-fast, not a
+    // per-session error.
+    logger.LogCritical(
+        "FATAL: The default voice '{Voice}' (AZURE_OPENAI_REALTIME_VOICE_CHOICE / model.default_voice) is not in model.allowed_voices ({AllowedVoices})",
+        voiceChoice, string.Join(", ", allowedVoices.OrderBy(v => v, StringComparer.Ordinal)));
+    return 1;
+}
+
+var sessionConfig = new RealtimeSessionConfig
+{
+    Deployment = realtimeDeployment,
+    // Deliberately left null: rtmt.py's per-message session.update rebuild
+    // (_process_message_to_server) omits system_message too, relying on GA to keep the
+    // bootstrap value -- the persona system prompt is only ever passed explicitly to the
+    // bootstrap session.update builder call inside RealtimeProcessor.RunSessionAsync.
+    SystemMessage = null,
+    Temperature = ReadDouble(modelSection, "temperature") ?? 0.6,
+    MaxTokens = ReadInt(modelSection, "max_response_output_tokens") ?? 4096,
+    VoiceChoice = voiceChoice,
+    TranscriptionModel = transcriptionModel,
+    ReasoningEffort = reasoningEffort,
+    ParallelToolCalls = ReadBool(modelSection, "parallel_tool_calls"),
+    ReasoningModel = reasoningModel,
+};
+if (sessionConfig.ReasoningEffort is not null && !sessionConfig.IsReasoningModel(Overridable<bool?>.Unset))
+{
+    logger.LogInformation(
+        "Deployment {Deployment} is not treated as a reasoning model (reasoning_model={ReasoningModel}); `reasoning` (effort={Effort}) will not be sent",
+        realtimeDeployment, reasoningModel is null ? "auto" : reasoningModel.Value.ToString(), sessionConfig.ReasoningEffort);
+}
+
+// ── 5c. Per-persona prompts + a stub tool executor (issue #13/#14 coordination seam): #14 lands
+// the real IToolExecutor backed by the order/tools domain logic Summer is porting in parallel;
+// until then every catalogued tool name resolves through StubToolExecutor's fixed stub replies. ──
+var promptLoaders = new Dictionary<string, PromptLoader>(StringComparer.Ordinal)
+{
+    [personaCatalog.DefaultPersonaId] = promptLoader,
+};
+var allToolNames = new HashSet<string>(StringComparer.Ordinal);
+foreach (var personaId in personaCatalog.Ids)
+{
+    if (!promptLoaders.TryGetValue(personaId, out var loader))
+    {
+        loader = new PromptLoader(personasDir, personaId);
+        promptLoaders[personaId] = loader;
+    }
+    foreach (var schema in loader.ToolSchemas)
+    {
+        if (schema.TryGetValue("name", out var nameObj) && nameObj?.ToString() is { Length: > 0 } toolName)
+        {
+            allToolNames.Add(toolName);
+        }
+    }
+}
+var toolExecutor = new StubToolExecutor(allToolNames);
+
+var upstreamEndpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_EASTUS2_ENDPOINT")!;
+var upstreamApiKey = Environment.GetEnvironmentVariable("AZURE_OPENAI_EASTUS2_API_KEY") ?? string.Empty;
+var echoCooldownSeconds = ReadDouble(audioSection, "echo_cooldown_seconds") ?? 1.5;
+
 // ── 6. Processor registry (issue #75, design doc section 7.4): only "realtime" is registered
 // this wave -- its own model resolution is fully ported (Models/ModelDispatch.cs's
-// ResolveRealtimeModel), but ProcessAsync is a deliberate stub; the real upstream relay is #13. A
-// model catalogued for "cascade"/"local" 404s at dispatch time until their own processors land. ──
+// ResolveRealtimeModel). Issue #13 lands the real upstream relay (RunSessionAsync, called
+// directly from the /realtime handler below); ProcessAsync stays a deliberate stub since the
+// realtime pipeline never posts to a session's generic mailbox. A model catalogued for
+// "cascade"/"local" 404s at dispatch time until their own processors land. ──────────────────────
 var processorRegistry = new ProcessorRegistry();
-processorRegistry.Register(new RealtimeProcessor(
+var realtimeProcessor = new RealtimeProcessor(
     modelCatalog,
-    Environment.GetEnvironmentVariable("AZURE_OPENAI_REALTIME_DEPLOYMENT")!,
-    logger));
+    realtimeDeployment,
+    upstreamEndpoint,
+    upstreamApiKey,
+    sessionConfig,
+    promptLoaders,
+    toolExecutor,
+    allowedVoices,
+    echoCooldownSeconds,
+    logger: logger);
+processorRegistry.Register(realtimeProcessor);
 
 var assetCacheConfig = AssetCacheConfig.FromConfig(appConfig);
 
@@ -245,19 +343,32 @@ app.MapGet("/realtime", async (HttpContext context) =>
     var actor = sessionRegistry.GetOrAdd(sessionId, id => new SessionActor(id, processor, metadata));
     try
     {
-        // #13 (Rick's #12 review note): reassemble fragmented frames instead of the previous
-        // single-ReceiveAsync-into-a-4096-byte-buffer loop, which silently truncated/misdelivered
-        // any message spanning multiple WebSocket frames or exceeding 4096 bytes. See
-        // Realtime/WebSocketFrameReader.cs.
-        while (socket.State == WebSocketState.Open)
+        if (processor is RealtimeProcessor realtimeProc)
         {
-            var frame = await WebSocketFrameReader.ReadMessageAsync(socket, context.RequestAborted).ConfigureAwait(false);
-            if (frame is null)
+            // Issue #13: the realtime pipeline owns its own bidirectional relay directly (session
+            // bootstrap, voice lock, greeting gate, tool-call dispatch, echo suppression/barge-in,
+            // rejected-session-update recovery, rate-limit notice) instead of draining the generic
+            // per-session mailbox -- see RealtimeProcessor.RunSessionAsync's own doc comment.
+            await realtimeProc.RunSessionAsync(socket, persona, resolvedModel, sessionId, context.RequestAborted)
+                .ConfigureAwait(false);
+        }
+        else
+        {
+            // #13 (Rick's #12 review note): reassemble fragmented frames instead of the previous
+            // single-ReceiveAsync-into-a-4096-byte-buffer loop, which silently truncated/misdelivered
+            // any message spanning multiple WebSocket frames or exceeding 4096 bytes. See
+            // Realtime/WebSocketFrameReader.cs. Only reachable once a non-realtime pipeline (e.g.
+            // "cascade"/"local") registers its own processor -- none does yet.
+            while (socket.State == WebSocketState.Open)
             {
-                await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, null, context.RequestAborted).ConfigureAwait(false);
-                break;
+                var frame = await WebSocketFrameReader.ReadMessageAsync(socket, context.RequestAborted).ConfigureAwait(false);
+                if (frame is null)
+                {
+                    await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, null, context.RequestAborted).ConfigureAwait(false);
+                    break;
+                }
+                actor.Post(new RawFrameEvent(frame.Payload, frame.MessageType));
             }
-            actor.Post(new RawFrameEvent(frame.Payload, frame.MessageType));
         }
     }
     finally
@@ -301,6 +412,42 @@ return 0;
 
 static bool ParseBool(string? value) =>
     value is not null && (value.Equals("true", StringComparison.OrdinalIgnoreCase) || value == "1");
+
+// config.yaml section readers for issue #13's RealtimeSessionConfig wiring: YamlDotNet's untyped
+// Deserialize<object?>() returns every scalar as a plain string (Configuration/SecurityConfig.cs's
+// doc comment has the same gotcha), so these all parse from string rather than pattern-matching a
+// native numeric/bool type. A YAML `null`/absent key/absent section all fall through to `null`,
+// matching Python's dict.get(key) returning None for the same three cases.
+static string? ReadString(IDictionary<object, object>? section, string key) =>
+    section is not null && section.TryGetValue(key, out var raw) && raw is not null ? raw.ToString() : null;
+
+static double? ReadDouble(IDictionary<object, object>? section, string key) =>
+    section is not null && section.TryGetValue(key, out var raw) && raw is not null
+        ? Convert.ToDouble(raw, System.Globalization.CultureInfo.InvariantCulture)
+        : null;
+
+static int? ReadInt(IDictionary<object, object>? section, string key) =>
+    section is not null && section.TryGetValue(key, out var raw) && raw is not null
+        ? Convert.ToInt32(raw, System.Globalization.CultureInfo.InvariantCulture)
+        : null;
+
+static bool? ReadBool(IDictionary<object, object>? section, string key)
+{
+    if (section is null || !section.TryGetValue(key, out var raw) || raw is null)
+    {
+        return null;
+    }
+    return raw is bool boolValue ? boolValue : bool.Parse(raw.ToString()!);
+}
+
+static List<string>? ReadStringList(IDictionary<object, object>? section, string key)
+{
+    if (section is null || !section.TryGetValue(key, out var raw) || raw is not IEnumerable<object> list)
+    {
+        return null;
+    }
+    return list.Select(v => v?.ToString() ?? string.Empty).ToList();
+}
 
 // Rick's PR #122 review item 2: matches Python's `!r` for the two shapes `requested_model_id`
 // can take here -- `None` (bare, no quotes) when `?model=` was absent, `'value'` (single-quoted)
