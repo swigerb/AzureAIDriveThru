@@ -53,9 +53,9 @@ describe('buildAuthConfig', () => {
 
   it('resolves a different redirect URI per origin, for the two-hostname backend switch', () => {
     const env: RawAuthEnv = { VITE_ENTRA_TENANT_ID: 't', VITE_ENTRA_CLIENT_ID: 'c' };
-    const hostA = buildAuthConfig(env, 'https://sonic.example.net');
+    const hostA = buildAuthConfig(env, 'https://hosta.example.net');
     const hostB = buildAuthConfig(env, 'https://mcd.example.net');
-    expect(hostA.msalConfig.auth.redirectUri).toBe('https://sonic.example.net');
+    expect(hostA.msalConfig.auth.redirectUri).toBe('https://hosta.example.net');
     expect(hostB.msalConfig.auth.redirectUri).toBe('https://mcd.example.net');
   });
 

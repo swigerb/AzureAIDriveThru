@@ -44,23 +44,23 @@ describe('isAuthorizedFetchTarget', () => {
 
   it('matches a persona menu.json', async () => {
     const { isAuthorizedFetchTarget } = await freshModule();
-    expect(isAuthorizedFetchTarget('/personas/sonic/menu.json')).toBe(true);
-    expect(isAuthorizedFetchTarget(`${location.origin}/personas/sonic/menu.json`)).toBe(true);
+    expect(isAuthorizedFetchTarget('/personas/test-alpha/menu.json')).toBe(true);
+    expect(isAuthorizedFetchTarget(`${location.origin}/personas/test-alpha/menu.json`)).toBe(true);
   });
 
   it('matches demo/other JSON under a persona assets path', async () => {
     const { isAuthorizedFetchTarget } = await freshModule();
-    expect(isAuthorizedFetchTarget('/personas/sonic/assets/demo/dummyOrder.json')).toBe(true);
-    expect(isAuthorizedFetchTarget('/personas/sonic/assets/demo/dummyTranscripts.json')).toBe(true);
+    expect(isAuthorizedFetchTarget('/personas/test-alpha/assets/demo/dummyOrder.json')).toBe(true);
+    expect(isAuthorizedFetchTarget('/personas/test-alpha/assets/demo/dummyTranscripts.json')).toBe(true);
   });
 
   it('does NOT match public branding assets under a persona assets path', async () => {
     const { isAuthorizedFetchTarget } = await freshModule();
-    expect(isAuthorizedFetchTarget('/personas/sonic/assets/logo.svg')).toBe(false);
-    expect(isAuthorizedFetchTarget('/personas/sonic/assets/favicon.ico')).toBe(false);
-    expect(isAuthorizedFetchTarget('/personas/sonic/assets/audio/apology-en.wav')).toBe(false);
-    expect(isAuthorizedFetchTarget('/personas/sonic/assets/hero.png')).toBe(false);
-    expect(isAuthorizedFetchTarget('/personas/sonic/assets/hero.PNG')).toBe(false);
+    expect(isAuthorizedFetchTarget('/personas/test-alpha/assets/logo.svg')).toBe(false);
+    expect(isAuthorizedFetchTarget('/personas/test-alpha/assets/favicon.ico')).toBe(false);
+    expect(isAuthorizedFetchTarget('/personas/test-alpha/assets/audio/apology-en.wav')).toBe(false);
+    expect(isAuthorizedFetchTarget('/personas/test-alpha/assets/hero.png')).toBe(false);
+    expect(isAuthorizedFetchTarget('/personas/test-alpha/assets/hero.PNG')).toBe(false);
   });
 
   it('does not match the SPA shell or other same-origin static assets', async () => {
@@ -130,14 +130,14 @@ describe('installAuthorizedFetch', () => {
     acquireApiToken.mockResolvedValue('tok-menu');
     installAuthorizedFetch();
 
-    await window.fetch('/personas/sonic/menu.json');
+    await window.fetch('/personas/test-alpha/menu.json');
     expect(authHeader(0)).toBe('Bearer tok-menu');
 
-    await window.fetch('/personas/sonic/assets/demo/dummyOrder.json');
+    await window.fetch('/personas/test-alpha/assets/demo/dummyOrder.json');
     expect(authHeader(1)).toBe('Bearer tok-menu');
 
     acquireApiToken.mockClear();
-    await window.fetch('/personas/sonic/assets/logo.svg');
+    await window.fetch('/personas/test-alpha/assets/logo.svg');
     expect(acquireApiToken).not.toHaveBeenCalled();
     expect(authHeader(2)).toBeNull();
   });
