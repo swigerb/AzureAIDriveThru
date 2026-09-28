@@ -424,15 +424,6 @@ entries:
     edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
     red as a non-Sonic-brand-hex test fixture, not real branding.'
   increase_reason: ''
-- file: app/frontend/src/context/auth-context.tsx
-  brand: sonic
-  max: 1
-  issue: '#80'
-  reason: 'Frontend UI copy, locales, theming and menu data are Sonic-only pending
-    #80''s persona-aware runtime theming (frontend is out of this issue''s scope to
-    edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
-    red as a non-Sonic-brand-hex test fixture, not real branding.'
-  increase_reason: ''
 - file: app/frontend/src/index.css
   brand: sonic
   max: 2
