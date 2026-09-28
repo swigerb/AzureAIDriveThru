@@ -25,13 +25,13 @@
     "note": "a modifier group in the middle of the name is stripped exactly like a trailing one"
   },
   {
-    "input": "SuperSONIC\u00ae Double Cheeseburger",
-    "key": "supersonic double cheeseburger",
+    "input": "Deluxe\u00ae Double Cheeseburger",
+    "key": "deluxe double cheeseburger",
     "note": "registered trademark symbol (U+00AE) stripped, name lowercased"
   },
   {
-    "input": "SONIC Smasher\u2122",
-    "key": "sonic smasher",
+    "input": "Deluxe Smasher\u2122",
+    "key": "deluxe smasher",
     "note": "trademark symbol (U+2122) stripped"
   },
   {
@@ -65,8 +65,8 @@
     "note": "a non-breaking space (U+00A0) between words is still whitespace for the split/join collapse"
   },
   {
-    "input": "SONIC\u00ae Cheeseburger\u2122 (No Onions)",
-    "key": "sonic cheeseburger",
+    "input": "Deluxe\u00ae Cheeseburger\u2122 (No Onions)",
+    "key": "deluxe cheeseburger",
     "note": "both trademark symbols and a modifier suffix combined on one name"
   },
   {
@@ -95,8 +95,8 @@
     "note": "trademark symbol plus a modifier suffix"
   },
   {
-    "input": "SuperSONIC\u00ae Double Cheeseburger (No Pickles) (Extra Sauce)",
-    "key": "supersonic double cheeseburger",
+    "input": "Deluxe\u00ae Double Cheeseburger (No Pickles) (Extra Sauce)",
+    "key": "deluxe double cheeseburger",
     "note": "registered trademark symbol plus two separate modifier groups"
   }
 ]

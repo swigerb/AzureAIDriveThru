@@ -142,15 +142,6 @@ entries:
     docstring examples still default/hardcode to the single Sonic persona pending
     #74''s session-scoped persona binding.'
   increase_reason: ''
-- file: app/backend/tests/fixtures/menu_key_vectors.json
-  brand: sonic
-  max: 4
-  issue: '#14'
-  reason: 'Golden menu-key vectors (input strings for menu_utils._menu_key /
-    MenuKeyValidator.MenuKey) reference real Sonic menu item names, which is
-    the point of the fixture -- it is asserted byte-for-byte by both the
-    Python and C# test suites (#137).'
-  increase_reason: '#14'
 - file: app/backend/tests/test_combo_orders.py
   brand: sonic
   max: 31
