@@ -143,6 +143,20 @@ function runMatrix() {
     },
     { mode: 'development', rawMode: 'Development', env: { VITE_AUTH_MODE: 'Development' }, expectBuild: true },
     { mode: 'unset-unconfigured', rawMode: '', env: {}, expectBuild: false },
+    {
+      // Rick's follow-up note on #145 (re-review of PR #148, item B1): `NODE_ENV=development vite
+      // build` (no `--mode` flag, no `VITE_AUTH_MODE`, no ids) resolves Vite's own `mode` to
+      // 'development' and bakes `import.meta.env.DEV === true` into the bundle -- proven separately
+      // by inspecting `resolveConfig`'s output for this exact combination. The guard in
+      // `vite.config.ts` must NOT be fooled by that: it keys its own `isDevServer` flag on Vite's
+      // `command` (`command === 'serve'`), which stays `false` for every `vite build` regardless of
+      // `NODE_ENV`/`mode`, so this build must still fail closed exactly like the plain
+      // 'unset-unconfigured' scenario above.
+      mode: 'unset-unconfigured-node-env-development',
+      rawMode: '',
+      env: { NODE_ENV: 'development' },
+      expectBuild: false,
+    },
   ];
 
   console.log(
