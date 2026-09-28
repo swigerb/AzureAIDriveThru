@@ -1,39 +1,206 @@
 #!/usr/bin/env python
 """CI-only check: compare the checked-in rebrand_baseline.yaml against the PR's base branch
-and fail on any `max` increase, or brand-new (file, brand) entry, that lacks a valid
-`increase_reason`.
+(or, on a push to dev, the pre-push commit) and fail on any unjustified change.
 
-This is the "make raises visible even if someone edits the YAML by hand" check Rick
-recommended (PR #101 round 3) as a belt-and-suspenders companion to
-regenerate_rebrand_baseline.py's --allow-increase refusal: the regen script only protects
-people who run it -- nothing stops a hand-edit of the YAML that skips it entirely. This
-script closes that gap in CI by diffing against the base branch's committed copy via git
-history, rather than trusting the local working tree's own (unverifiable) history.
+Round 1 (PR #101 round 3) only checked "does a `max` increase / brand-new entry have a
+validly-formatted `increase_reason`?". Issue #105 hardened every corner that left open:
+
+  1. A raise's `increase_reason` must be a FRESH reason, not the same one already recorded on
+     the entry being raised -- reusing a stale reason across multiple raises would let a
+     single old, possibly-unrelated decision cover an unbounded number of later increases.
+  2. The `increase_reason` must reference a real, OPEN GitHub issue (verified against the
+     GitHub REST API with GITHUB_TOKEN) -- a syntactically-valid-looking but fake/closed/
+     already-fixed issue reference no longer passes. If the API check can't run at all in a
+     context where it's required, that fails closed (see REBRAND_REQUIRE_ISSUE_API_CHECK
+     below) rather than silently trusting the reference.
+  3. A RAISE's `increase_reason` may not cite the PR's OWN issue (REBRAND_PR_ISSUE, extracted
+     from the PR body in CI) -- the issue that justifies raising an EXISTING entry must be a
+     separate, already-settled decision, not "because this very PR is making the change".
+     Deliberately scoped to raises only, not brand-new entries -- see item 4's note on why a
+     brand-new entry legitimately may (and, per issue #105 itself, must) cite the PR that
+     first adds tracking for it.
+  4. A brand-new (file, brand) entry is refused outright -- regardless of `increase_reason` --
+     if that file already has a baseline entry for a DIFFERENT brand. This is the exact shape
+     of the #109 bug (a foreign brand quietly baselined into a file that only ever tracked
+     "sonic"). A file with NO prior baseline entries at all (e.g. a newly-scanned .cs file,
+     #105's own SCAN_EXTENSIONS change) is unaffected -- it may still gain its first entry(ies)
+     for any brand it actually contains, self-citing the PR that added its scan coverage (item
+     3 does not apply to these -- there is no "previous" decision to point to instead).
+  5. This check now also runs on `push` to dev (comparing against `github.event.before`, see
+     .github/workflows/conformance.yml), not only on pull_request -- issue #24's original
+     "catch anything that reached dev without a PR check" rationale applies to this ratchet
+     too, not just the rest of the suite.
+  6. Every ALLOWED raise/new entry is surfaced as a `::warning::` GitHub Actions annotation on
+     the PR's checks (not just a silent pass) -- an authorized increase should still be
+     visible to reviewers, not buried in green.
+  7. The missing-base-baseline skip (base branch predates rebrand_baseline.yaml) is now a
+     `::warning::` annotation too, not a plain, easy-to-miss print.
 
 Usage (see .github/workflows/conformance.yml, python-tests job):
 
     python app/backend/tests/check_rebrand_baseline_against_base.py <path-to-base-baseline.yaml>
 
-Exits 0 (and prints nothing alarming) if:
-  * the base baseline can't be found/parsed (e.g. the base branch predates this file) -- there
-    is nothing meaningful to ratchet against yet, so this is a no-op rather than a false
-    failure that would block every PR forever; or
-  * every `max` increase / brand-new entry relative to the base branch already carries a
-    validly-formatted `increase_reason` (matching '#123', same as `issue`).
+Environment variables (all optional for local/manual runs; CI sets every one of them):
+    GITHUB_TOKEN                    Bearer token for the GitHub REST API issue lookup.
+    GITHUB_REPOSITORY               "owner/name" of the repo to look issues up in.
+    REBRAND_PR_ISSUE                This PR's own issue reference (e.g. "#105"), if known --
+                                     any increase_reason equal to this is rejected (item 3).
+    REBRAND_REQUIRE_ISSUE_API_CHECK Set to "1"/"true" to make the open-issue API check
+                                     mandatory: if GITHUB_TOKEN/GITHUB_REPOSITORY are missing,
+                                     or the API call fails for any reason, every raise/new
+                                     entry fails closed instead of being silently trusted. CI
+                                     always sets this; local/manual runs default to skipping
+                                     the API call (with a warning) when it's unset, so the
+                                     other rules remain runnable without a token.
 
-Exits 1 and lists every offending entry otherwise.
+Exits 0 if the base baseline can't be found/parsed (nothing to ratchet against yet -- a no-op
+rather than a false failure that would block every PR forever) or every change passes all of
+the above. Exits 1 and lists every offending entry otherwise.
 """
 from __future__ import annotations
 
+import json
+import os
 import re
 import sys
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from rebrand_scan import BASELINE_PATH, _load_baseline  # noqa: E402
+from rebrand_scan import BASELINE_PATH, BaselineEntry, _load_baseline  # noqa: E402
 
 ISSUE_REF_RE = re.compile(r"#\d+")
+
+REBRAND_PR_ISSUE_ENV = "REBRAND_PR_ISSUE"
+REQUIRE_ISSUE_API_ENV = "REBRAND_REQUIRE_ISSUE_API_CHECK"
+GITHUB_TOKEN_ENV = "GITHUB_TOKEN"  # noqa: S105 -- this is an env var NAME, not a secret
+GITHUB_REPOSITORY_ENV = "GITHUB_REPOSITORY"
+
+_TRUTHY = {"1", "true", "True", "yes", "on"}
+
+
+def check_issue_is_open(issue_ref: str, repo: str, token: str) -> str | None:
+    """Verify *issue_ref* (e.g. '#123') is an OPEN GitHub issue (not a pull request, not
+    closed, not missing) in *repo* ('owner/name'), via the GitHub REST API.
+
+    Returns None if it checks out, else a short human-readable reason it doesn't. ANY
+    failure -- network error, timeout, non-200 status, malformed JSON -- is treated the same
+    as "not verified open" (fail-closed, #105 item 2): a raise/new entry citing an issue we
+    can't positively confirm is open must not be silently trusted.
+    """
+    number = issue_ref.lstrip("#")
+    url = f"https://api.github.com/repos/{repo}/issues/{number}"
+    req = urllib.request.Request(  # noqa: S310 -- fixed https://api.github.com host, not user input
+        url,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "rebrand-baseline-ratchet-check",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310
+            if resp.status != 200:
+                return f"GitHub API returned HTTP {resp.status} for issue {issue_ref}"
+            payload = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        return f"GitHub API returned HTTP {exc.code} for issue {issue_ref}"
+    except Exception as exc:  # noqa: BLE001 -- fail-closed on ANY error, not just HTTP ones
+        return f"GitHub API lookup for issue {issue_ref} failed: {exc!r}"
+
+    if "pull_request" in payload:
+        return f"{issue_ref} is a pull request, not an issue"
+    if payload.get("state") != "open":
+        return f"{issue_ref} is not open (state={payload.get('state')!r})"
+    return None
+
+
+def _existing_brands_for_file(baseline: dict[tuple[str, str], BaselineEntry], file: str) -> set[str]:
+    return {brand for (f, brand) in baseline if f == file}
+
+
+def _check_entry(
+    entry: BaselineEntry,
+    prior: BaselineEntry | None,
+    base: dict[tuple[str, str], BaselineEntry],
+    *,
+    pr_issue: str | None,
+    require_api_check: bool,
+    token: str,
+    repo: str,
+) -> tuple[str | None, str | None]:
+    """Check one head baseline entry against its base-branch counterpart (``prior``, or None
+    if brand-new). Returns (problem, warning): at most one is non-None. ``problem`` means the
+    entry fails the ratchet (caller should fail CI); ``warning`` means it's an ALLOWED raise/
+    new entry worth surfacing (item 6). Both None means "unchanged or lowered -- nothing to
+    say"."""
+    desc = f"{entry.file} [{entry.brand}]"
+
+    if prior is None:
+        existing_brands = _existing_brands_for_file(base, entry.file)
+        if existing_brands and entry.brand not in existing_brands:
+            return (
+                f"NEW   {desc} = {entry.max} -- {entry.file} already has a baseline entry "
+                f"for {sorted(existing_brands)}, not '{entry.brand}': a brand-new entry may "
+                f"only add a brand a file doesn't already track (#105, closing the #109 gap)",
+                None,
+            )
+        label, prior_max = "NEW", None
+    else:
+        if entry.max <= prior.max:
+            return None, None  # unchanged or lowered -- never needs a reason
+        label, prior_max = "RAISE", prior.max
+
+    reason = entry.increase_reason or ""
+    if not ISSUE_REF_RE.fullmatch(reason):
+        suffix = f" {prior_max} -> {entry.max}" if prior_max is not None else f" = {entry.max}"
+        return f"{label} {desc}{suffix} (no valid increase_reason vs base branch)", None
+
+    if label == "RAISE" and reason == (prior.increase_reason or ""):
+        return (
+            f"RAISE {desc} {prior_max} -> {entry.max} reuses the same increase_reason "
+            f"({reason}) as the entry it's raising -- #105 requires a fresh reason naming "
+            f"why THIS raise is justified, not the reason recorded for a previous one",
+            None,
+        )
+
+    if label == "RAISE" and pr_issue and reason == pr_issue:
+        # Scoped to RAISES only -- deliberately NOT applied to brand-new entries on a file
+        # with zero prior baseline entries at all. Rick's #109 example combined self-citation
+        # WITH a foreign brand slipped into an already-tracked file (item 4 above already
+        # refuses that unconditionally); it was never about a PR seeding first-time coverage
+        # for code that was simply never scanned before (e.g. #105's own .cs seeding, which
+        # the issue explicitly requires be "attributed to this issue"). Blocking self-citation
+        # on NEW entries too would make that kind of legitimate scan-expansion PR impossible
+        # to land in one pass.
+        suffix = f" {prior_max} -> {entry.max}" if prior_max is not None else f" = {entry.max}"
+        return (
+            f"{label} {desc}{suffix} cites this PR's own issue ({reason}) as its "
+            f"increase_reason -- the issue justifying a raise must be a separate, "
+            f"already-settled decision, not the change this PR itself is making",
+            None,
+        )
+
+    if require_api_check:
+        if not (token and repo):
+            suffix = f" {prior_max} -> {entry.max}" if prior_max is not None else f" = {entry.max}"
+            return (
+                f"{label} {desc}{suffix}: cannot verify {reason} is an open GitHub issue -- "
+                f"GITHUB_TOKEN/GITHUB_REPOSITORY are required when "
+                f"{REQUIRE_ISSUE_API_ENV}=1 (#105: fail closed rather than trust an "
+                f"unverified reference)",
+                None,
+            )
+        api_problem = check_issue_is_open(reason, repo, token)
+        if api_problem is not None:
+            suffix = f" {prior_max} -> {entry.max}" if prior_max is not None else f" = {entry.max}"
+            return f"{label} {desc}{suffix}: increase_reason {reason} -- {api_problem}", None
+
+    suffix = f" {prior_max} -> {entry.max}" if prior_max is not None else f" = {entry.max}"
+    return None, f"{label} {desc}{suffix} ({reason})"
 
 
 def main(argv: list[str]) -> int:
@@ -46,35 +213,53 @@ def main(argv: list[str]) -> int:
     try:
         base = _load_baseline(base_path)
     except (FileNotFoundError, ValueError):
-        print(f"Base baseline at {base_path} not found/parseable -- skipping ratchet check.")
+        print(
+            f"::warning::Base baseline at {base_path} not found/parseable -- skipping "
+            f"rebrand ratchet check (nothing to ratchet against yet)."
+        )
         return 0
 
+    pr_issue = (os.environ.get(REBRAND_PR_ISSUE_ENV) or "").strip() or None
+    require_api_check = (os.environ.get(REQUIRE_ISSUE_API_ENV) or "").strip() in _TRUTHY
+    token = (os.environ.get(GITHUB_TOKEN_ENV) or "").strip()
+    repo = (os.environ.get(GITHUB_REPOSITORY_ENV) or "").strip()
+
+    if require_api_check and not (token and repo):
+        print(
+            f"::warning::{REQUIRE_ISSUE_API_ENV}=1 but GITHUB_TOKEN/GITHUB_REPOSITORY are "
+            f"not both set -- every raise/new entry needing the open-issue check will fail "
+            f"closed below."
+        )
+
     problems: list[str] = []
+    warnings: list[str] = []
     for key, entry in sorted(head.items()):
         prior = base.get(key)
-        if prior is None:
-            if not ISSUE_REF_RE.fullmatch(entry.increase_reason or ""):
-                problems.append(
-                    f"NEW   {entry.file} [{entry.brand}] = {entry.max} "
-                    f"(no valid increase_reason vs base branch)"
-                )
-            continue
-        if entry.max > prior.max and not ISSUE_REF_RE.fullmatch(entry.increase_reason or ""):
-            problems.append(
-                f"RAISE {entry.file} [{entry.brand}] {prior.max} -> {entry.max} "
-                f"(no valid increase_reason vs base branch)"
-            )
+        problem, warning = _check_entry(
+            entry, prior, base,
+            pr_issue=pr_issue, require_api_check=require_api_check, token=token, repo=repo,
+        )
+        if problem is not None:
+            problems.append(problem)
+        if warning is not None:
+            warnings.append(warning)
+
+    for warning in warnings:
+        print(f"::warning file=app/backend/tests/rebrand_baseline.yaml::{warning}")
 
     if problems:
         print(
-            f"{len(problems)} rebrand_baseline.yaml change(s) vs the base branch lack a valid "
-            f"`increase_reason` (e.g. '#123'):"
+            f"{len(problems)} rebrand_baseline.yaml change(s) vs the base branch failed the "
+            f"ratchet check:"
         )
         for p in problems:
             print(f"  {p}")
         return 1
 
-    print(f"OK: no unjustified baseline raises vs the base branch ({len(head)} head entries checked).")
+    print(
+        f"OK: no unjustified baseline raises vs the base branch ({len(head)} head entries "
+        f"checked, {len(warnings)} allowed raise(s)/new entry(ies))."
+    )
     return 0
 
 
