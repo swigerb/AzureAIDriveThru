@@ -245,16 +245,19 @@ app.MapGet("/realtime", async (HttpContext context) =>
     var actor = sessionRegistry.GetOrAdd(sessionId, id => new SessionActor(id, processor, metadata));
     try
     {
-        var buffer = new byte[4096];
+        // #13 (Rick's #12 review note): reassemble fragmented frames instead of the previous
+        // single-ReceiveAsync-into-a-4096-byte-buffer loop, which silently truncated/misdelivered
+        // any message spanning multiple WebSocket frames or exceeding 4096 bytes. See
+        // Realtime/WebSocketFrameReader.cs.
         while (socket.State == WebSocketState.Open)
         {
-            var received = await socket.ReceiveAsync(buffer, context.RequestAborted).ConfigureAwait(false);
-            if (received.MessageType == WebSocketMessageType.Close)
+            var frame = await WebSocketFrameReader.ReadMessageAsync(socket, context.RequestAborted).ConfigureAwait(false);
+            if (frame is null)
             {
                 await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, null, context.RequestAborted).ConfigureAwait(false);
                 break;
             }
-            actor.Post(new RawFrameEvent(buffer[..received.Count].ToArray(), received.MessageType));
+            actor.Post(new RawFrameEvent(frame.Payload, frame.MessageType));
         }
     }
     finally
