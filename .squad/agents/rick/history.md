@@ -84,3 +84,11 @@
   - JwtBearer runs before the endpoint, so the Entra check comes before Origin on both backends. Otherwise C# and Python would disagree (401 vs 403).
   - `azd provision` re-enables ingress, so deploy the auth image before provisioning.
   - The C# static-files middleware must never serve `menu.json` or asset JSON.
+
+## 2026-09-28 - ADR-002 revised for the independent review (PR #142, R1 to R5)
+
+- **R1, access logs:** `aiohttp.GunicornWebWorker` raises `ValueError` on any gunicorn `%(x)s` directive, and aiohttp's `%r` carries the query string, so no format can redact it. A `PathOnlyAccessLogger` class goes on both run paths: a new async `create_runner()` factory for gunicorn (which returns an `AppRunner`, so it must also carry keep-alive and shutdown itself) and `run_app` for `python app.py`.
+- **R2, rollout:** single-revision mode keeps the old revision active when the new one fails, so "fails fast" isn't fail-closed. Deactivate pre-auth revisions before `azd provision`, check active revisions after, and make Verify check every active revision.
+- **R3/R4:** explicit `Development` never overrides configured ids (backend and frontend). A built pass-through bundle needs `VITE_AUTH_MODE=Development`; the Dockerfile defaults to `Entra`; the guard reads `loadEnv`.
+- **R5:** no automatic retry after a failed redirect. An unassigned user is stopped by Entra (`AADSTS50105`), not by our 403 screen.
+- **Lesson:** check the worker's source, not gunicorn's docs, before specifying a gunicorn flag for aiohttp.

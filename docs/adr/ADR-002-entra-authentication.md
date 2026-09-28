@@ -62,20 +62,25 @@ In-app validation is code that both backends share through one contract, and the
 
    Python uses PyJWT with `cryptography` and `PyJWKClient`. C# uses `Microsoft.AspNetCore.Authentication.JwtBearer`
    with explicit parameters, not Microsoft.Identity.Web. Tokens never reach a log: access logs record the
-   path without the query string.
+   path without the query string. In Python that takes a path-only access logger class wired into both the
+   gunicorn factory and `python app.py`, because the aiohttp gunicorn worker rejects gunicorn format
+   directives and aiohttp's `%r` includes the query string (design 18.4).
 6. **Two modes: `Entra` and `Development`.**
    - With a tenant and client id configured, the backend runs Entra in any environment.
    - Pass-through, with a synthetic local identity, happens only when nothing is configured and the process is
-     not Production.
+     not Production. `AUTH_MODE=Development` with any Entra id set fails fast: it can't switch validation off.
    - Production fails fast unless `AUTH_MODE=Entra` and the ids are valid.
    - An unknown mode fails in every environment.
+   - The frontend mirrors this. A pass-through bundle needs an explicit `VITE_AUTH_MODE=Development`, the
+     Dockerfile defaults the mode to `Entra`, and the build guard reads what Vite bakes in (`loadEnv`).
 
    We don't adopt Retail Pulse's provider-neutral mode contract.
 7. **Infra:**
    - both container apps pin `AUTH_MODE=Entra`, their production flag and the `ENTRA_*` ids;
    - EasyAuth is removed from Bicep, and the postprovision hook disables it on both apps;
    - the SPA's public ids reach the image build as Docker build args from the azd env (`azure.yaml`
-     `docker.buildArgs`, and `scripts/docker-build.sh`), never through a `.env` file.
+     `docker.buildArgs`, and `scripts/docker-build.sh`), never through a `.env` file. `ARG VITE_AUTH_MODE`
+     defaults to `Entra`, so a build that loses its args fails instead of shipping a pass-through bundle.
 8. **Two hostnames, one registration.** There's one SPA redirect URI per origin, and MSAL caches per origin in
    `sessionStorage`. The Entra SSO session makes the backend switch a silent redirect. No CORS is needed:
    each host serves its own SPA.
@@ -88,8 +93,15 @@ In-app validation is code that both backends share through one contract, and the
       signature, and valid. They run on REST and on `/realtime`, plus the mode and logging rows.
     - The default fixture runs in Entra mode.
 11. **Unlock gate.** Staging ingress is re-enabled only when Python, frontend and infra have shipped, and it
-    stays on only if `Verify-ProductionAuth.ps1` passes against the live app. The C# app never goes public
-    without its parity work.
+    stays on only if `Verify-ProductionAuth.ps1` passes against the live app. Because the apps run in
+    single-revision mode, a failed new revision leaves the old one active; so every pre-auth revision is
+    deactivated before `azd provision`, the active revisions are checked right after it, and Verify fails if
+    any active revision isn't the new image with `AUTH_MODE=Entra` (design 18.10). The C# app never goes
+    public without its parity work.
+12. **Sign-in never loops.** The gate starts `loginRedirect` automatically only on a clean load. After a
+    sign-out, a 403, or a failed redirect (cancelled, admin approval needed, `AADSTS50105` not assigned) it
+    shows the error and a manual **Sign in** button. An unassigned user is stopped by Entra at sign-in, not by
+    our 403 screen, which is for a token without the role or scope.
 
 ## Consequences
 
@@ -102,14 +114,18 @@ In-app validation is code that both backends share through one contract, and the
 **Costs and risks**
 - Every demo viewer needs an account in the tenant (a member or a B2B guest) and the `DriveThru.User` role.
   That is the point, but it adds a step before a customer demo.
-- `azd provision` re-enables external ingress. The rollout order in design 18.10 keeps an unauthenticated
-  revision from ever being public.
+- `azd provision` re-enables external ingress, and in single-revision mode a failed new revision leaves the
+  old unauthenticated one active. The rollout in design 18.10 deactivates every pre-auth revision before
+  provisioning and checks the active revisions after it, so an unauthenticated revision is never public.
 - The Entra access token is in the `/realtime` URL, as it is in Retail Pulse. The mitigations: the
-  query-string token is read only on that path, and access logs drop query strings on both backends
-  (pinned by conformance).
+  query-string token is read only on that path, and access logs record only the path on both backends
+  (pinned by conformance on `python app.py`, and by unit and Dockerfile tests on the gunicorn path).
 - The default conformance fixture moves to Entra mode. That touches the harness clients once.
 - The Playwright UX runs use Development pass-through, because MSAL can't sign in against a fake issuer.
   Sign-in UX is covered by vitest with a mocked MSAL, plus the manual checklist.
+- A built pass-through bundle is a deliberate difference from Retail Pulse, which passes through only under
+  `import.meta.env.DEV`. We allow it only with an explicit `VITE_AUTH_MODE=Development`, because the harness
+  and Playwright serve built bundles.
 
 ## Alternatives considered
 

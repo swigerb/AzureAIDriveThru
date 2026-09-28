@@ -988,7 +988,7 @@ realtime quota. It's locked (ingress disabled, min replicas 0) until this ships;
 | Delegated scope | `access_as_user` (enabled) | Exposed as `api://{clientId}/access_as_user` |
 | Access token version | `requestedAccessTokenVersion = 2` | **Tighter than Retail Pulse:** we accept only the v2 issuer, not the v1 `sts.windows.net` form |
 | App role | `DriveThru.User`, member type User, enabled | Required on every protected route |
-| Service principal | `appRoleAssignmentRequired = true` | An unassigned user can't sign in at all |
+| Service principal | `appRoleAssignmentRequired = true` | An unassigned user is stopped **by Entra at sign-in** (`AADSTS50105`, possibly on Entra's own error page) and never gets a token. Our 403 screen (18.6) covers a different case: a token without the role or the scope |
 | SPA redirect URIs | `https://<python-fqdn>`, `https://<dotnet-fqdn>` (with #17), `http://localhost:8000`, `http://localhost:5173` | Bare origins, SPA platform only. **Tighter than Retail Pulse:** no Web platform redirect URIs |
 | Pre-authorized client | Azure CLI (`04b07795-8ddb-461a-bbee-02f9e1bf7b46`) on `access_as_user` | Allows `az account get-access-token --scope api://{clientId}/access_as_user` for the headless checks in 18.11 |
 | Initial assignment | The person who runs Setup (Brian) | Others are added with `-AssignUserUpn` or in Enterprise applications, Users and groups |
@@ -1086,7 +1086,33 @@ Retail Pulse; every reconnect presents a fresh token. Resume stays keyed on the 
 | Scope | `scp`, a space-delimited list, contains `ENTRA_API_SCOPE` (`access_as_user`). A token without `scp` (app-only) is rejected; Retail Pulse's `AllowAppOnlyTokens` opt-in is not ported |
 | Failure | 401 with `WWW-Authenticate: Bearer` and `{"error":"unauthorized"}` for a missing, malformed, badly signed, expired, wrong-issuer or wrong-audience token. 403 with `{"error":"forbidden"}` for a valid token without the role or scope |
 | Principal | `oid`, `tid` and `name` exposed to handlers. `request["principal"]` in Python, `HttpContext.User` in C# |
-| Logging | Never log a token. Access logs record the path **without** the query string: in Python, gunicorn's `--access-logformat` uses `%(U)s` rather than `%(r)s`, and the aiohttp runner uses a path-only access logger; in C#, `Microsoft.AspNetCore.Hosting.Diagnostics` is raised to Warning, because its Information "Request starting" line includes the query string. The existing `?token=` HMAC leak is fixed by the same change |
+| Logging | Never log a token. Access logs record the path **without** the query string. In Python that's a path-only access logger class on both run paths (below); a log **format** can't do it. In C#, `Microsoft.AspNetCore.Hosting.Diagnostics` is raised to Warning, because its Information "Request starting" line includes the query string. The existing `?token=` HMAC leak is fixed by the same change |
+
+**Python access logging (both run paths).** A gunicorn format fix doesn't work. The app runs
+`aiohttp.GunicornWebWorker`, whose `_get_valid_log_format` raises `ValueError` on any gunicorn `%(name)s`
+directive (aiohttp 3.14.3 `worker.py`), so `--access-logformat '%(U)s'` would crash the worker at boot. aiohttp's
+own format has no path-only directive: `%r` is the full request line, query string included, and the default
+format (`%a %t "%r" ...`) is what leaks `?token=` today. So:
+- **`PathOnlyAccessLogger(aiohttp.abc.AbstractAccessLogger)`** in a new `app/backend/access_log.py`. It logs the
+  method, `request.path` (never `path_qs`, `rel_url`, `url` or `raw_path`), the status and the elapsed time.
+- **One helper, `access_log_kwargs()`,** returns `{"access_log_class": PathOnlyAccessLogger}`. Both run paths
+  spread it, so neither can drift. Each path keeps its own timeouts.
+- **gunicorn:** the worker accepts an async factory that returns a `web.AppRunner`, and then uses that runner
+  as-is. A new async factory `create_runner()` in `app.py` awaits `create_app()` and returns
+  `web.AppRunner(app, access_log=logging.getLogger("gunicorn.access"), keepalive_timeout=65,
+  shutdown_timeout=28.5, **access_log_kwargs())`. The Dockerfile CMD
+  targets `app:create_runner`. `create_app()` keeps returning a `web.Application`, so the tests and
+  `python app.py` don't change shape. Because the worker then ignores gunicorn's `--keep-alive` and its derived
+  shutdown timeout, the runner carries those values itself (65 s keep-alive and a 28.5 s shutdown, the worker's
+  95% of the 30 s graceful timeout). The CMD drops `--keep-alive`, which would be silently ignored, and keeps
+  `--graceful-timeout`, which the arbiter still uses. The CMD never sets `--access-logformat`.
+- **`python app.py`:** `web.run_app(create_app(), host=..., port=..., shutdown_timeout=..., keepalive_timeout=...,
+  **access_log_kwargs())`, with the timeouts from `config.yaml` `connection`, as today.
+- **Tests:** a unit test sends `/realtime?access_token=x&token=y` through the logger and asserts neither value
+  appears; a test asserts `create_runner()` returns a runner with `PathOnlyAccessLogger`; a test asserts the
+  `__main__` path passes `access_log_kwargs()` to `run_app`; and a Dockerfile test asserts the CMD targets
+  `app:create_runner` and contains no `%(` and no `--access-logformat`. Conformance row 14 runs `python app.py`,
+  not gunicorn, so it doesn't cover the deployed path by itself.
 
 **Python:** `PyJWT[crypto]` (PyJWT plus `cryptography`) with `jwt.PyJWKClient`. Its synchronous fetch runs through
 `asyncio.to_thread`, so the event loop never blocks on a cache miss. It all lives in one new module,
@@ -1113,10 +1139,16 @@ The mode is resolved at startup, the same way on both backends. There's no auto-
 | `Entra` | Valid | Any | Entra enforced |
 | `Entra` | Missing or placeholder | Any | **Fail fast** |
 | unset | Valid | Not Production | Entra enforced. Configured always means enforced, which is what lets conformance test real validation black-box |
+| unset | Partial, placeholder or non-GUID | Any | **Fail fast** (the same rule as the frontend, 18.6) |
 | unset | None | Not Production | Development pass-through, with a synthetic identity (`oid` `00000000-0000-0000-0000-000000000001`, the role and the scope) and a loud startup warning |
-| `Development` | Any | Not Production | Development pass-through |
+| `Development` | None | Not Production | Development pass-through, the same as the row above |
+| `Development` | Any id set (`ENTRA_TENANT_ID` or `ENTRA_CLIENT_ID`, valid or not) | Any | **Fail fast.** Pass-through happens only when Entra is unconfigured, so a configured process can never skip validation |
 | unset or `Development` | Any | **Production** | **Fail fast** |
 | anything else | Any | Any | **Fail fast** |
+
+Explicit `Development` exists only so that a launcher can state its intent, mirroring the frontend's
+`VITE_AUTH_MODE=Development` (18.6). It never overrides configured ids: an id set with `Development` is treated as
+a misconfiguration, not as a request to bypass Entra.
 
 "Production" means `RUNNING_IN_PRODUCTION=true` for Python and `ASPNETCORE_ENVIRONMENT=Production` for C#. Both are
 pinned on the container apps.
@@ -1151,10 +1183,10 @@ Ported from Retail Pulse `src/RetailPulse.Web/src/auth/`, trimmed to Entra. New 
 | Piece | Behavior |
 | --- | --- |
 | `authConfig.ts` | Builds the MSAL config from `VITE_ENTRA_TENANT_ID`, `VITE_ENTRA_CLIENT_ID` and `VITE_ENTRA_API_SCOPE` (default `access_as_user`). The scope is `api://{clientId}/access_as_user`; the authority is `https://login.microsoftonline.com/{tenant}`; the redirect URI is `window.location.origin`; `navigateToLoginRequestUrl` is on, so `?persona=&model=` survive sign-in. The cache is `sessionStorage`, and PII logging is off |
-| Mode and fail-closed | `VITE_AUTH_MODE=Entra` (set by the image build) with a missing, placeholder or non-GUID id renders a configuration-error screen and makes no API or WebSocket call. The Vite build also fails in that case. With no ids and no mode, local dev passes through, as in Retail Pulse |
-| Auth-mode marker | The build writes `<meta name="drivethru-auth-mode" content="Entra">` (or `Development`) into `index.html`, which `Verify-ProductionAuth.ps1` reads |
-| `AuthGate` | Wraps `PersonaProvider` and `App`, so nothing persona-related loads before sign-in. The sign-in screen uses neutral product branding. An unauthenticated load **starts `loginRedirect` automatically**, which the Entra SSO cookie makes silent on the second hostname. After an explicit sign-out or a 403 it shows a button instead, so it can never loop. A 403 shows "not authorized: ask Brian to assign you **DriveThru.User**" |
-| `authorizedFetch` | Adds the bearer to every **same-origin** `fetch()`, which covers `/api/*`, `menu.json` and asset JSON, and never to a cross-origin request (the direct-AOAI debug mode keeps its own key). A 401 forces a token refresh and one retry, then goes back to sign-in; a 403 goes to access denied |
+| Mode and fail-closed | **A pass-through bundle needs an explicit `VITE_AUTH_MODE=Development`.** The CI, harness and Playwright builds set it. Every other build fails closed. The resolver, used the same way by `vite.config.ts` (build guard and marker) and by `authConfig.ts` (runtime): **`Entra`** with valid ids builds an Entra bundle; `Entra` with a missing, placeholder or non-GUID id fails. **`Development`** with no ids builds a pass-through bundle; `Development` with any id set fails (the mirror of the backend rule in 18.5). **No mode:** valid ids build an Entra bundle (configured means enforced, as on the backend); with no ids a production build (`vite build`) fails, and only the dev server (`import.meta.env.DEV`, `npm run dev`) passes through, as in Retail Pulse's `authMode.ts`. Any partial or placeholder id fails in every mode. **An unknown mode** fails. The guard and the marker read the values Vite actually bakes in, through `loadEnv(mode, root, "VITE_")` (so `.env`, `.env.local` and `.env.[mode]` files count, not only `process.env`). At runtime, a bundle that somehow reaches a browser misconfigured renders a configuration-error screen and makes no API or WebSocket call. **Deliberate difference from Retail Pulse:** RP decides pass-through on `import.meta.env.DEV`; we also allow it in a production build, but only with the explicit mode, because the harness and Playwright serve built bundles |
+| Auth-mode marker | The build writes `<meta name="drivethru-auth-mode" content="Entra">` (or `Development`) into `index.html`, from the same `loadEnv` values as the guard, which `Verify-ProductionAuth.ps1` reads |
+| `AuthGate` | Wraps `PersonaProvider` and `App`, so nothing persona-related loads before sign-in. The sign-in screen uses neutral product branding. An unauthenticated load **starts `loginRedirect` automatically**, which the Entra SSO cookie makes silent on the second hostname. **No-loop rule:** the automatic redirect happens only on a clean load. After an explicit sign-out, a 403, or a **failed redirect** it shows a manual **Sign in** button instead. A failed redirect is `handleRedirectPromise` throwing because Entra returned an error: the user cancelled, `consent_required` ("Need admin approval", 18.13 step 3), or `AADSTS50105` (not assigned). The gate then shows Entra's error code and message with the **Sign in** button, never retries `loginRedirect` on its own, and never shows the "deployment misconfigured" screen, which is only for a bad build. A 403 (a token without the role or the scope) shows "not authorized: ask Brian to assign you **DriveThru.User**". An unassigned user usually never reaches our screens: Entra stops them at sign-in with `AADSTS50105`, often on Entra's own page (18.1) |
+| `authorizedFetch` | Adds the bearer only to the explicit protected same-origin paths: `/api/**`, `/personas/{id}/menu.json`, and `/personas/{id}/assets/**` except the anonymous branding types (18.2). Never to any other request, and never cross-origin (the direct-AOAI debug mode keeps its own key). A 401 forces a token refresh and one retry, then goes back to sign-in; a 403 goes to access denied |
 | WebSocket | Before each connect: acquire the token silently, then fetch `/api/auth/session` with it, then open `/realtime?persona=&model=&token=<hmac>&access_token=<entra>`. The same happens on reconnect and resume (18.3) |
 | Removed | The legacy `context/auth-context.tsx` (`VITE_AUTH_URL`, `VITE_AUTH_ENABLED`) and its `.env` defaults |
 
@@ -1178,8 +1210,8 @@ Ported from Retail Pulse `src/RetailPulse.Web/src/auth/`, trimmed to Entra. New 
 | Dotnet app env (#17) | The same, plus `ASPNETCORE_ENVIRONMENT=Production` and the `APP_SESSION_SECRET` secret (the same param as Python) |
 | EasyAuth removed | Delete `enableAuth`, `authClientId`, `authClientSecret`, the `aad-client-secret` secret plumbing, the `containerAppAuth` module and `core/security/container-app-auth.bicep`. `DEPLOY.md`'s EasyAuth section is replaced |
 | postprovision | New `scripts/postprovision_auth.ps1` and `.sh`, run before `write_env`: `az containerapp auth update --enabled false` for every container app in the environment, and removal of a leftover `aad-client-secret`. Idempotent, and it fails the hook on error, as in Retail Pulse |
-| SPA build values | `ARG VITE_AUTH_MODE VITE_ENTRA_TENANT_ID VITE_ENTRA_CLIENT_ID VITE_ENTRA_API_SCOPE` in the **build stage only** of `app/Dockerfile` (and `Dockerfile.dotnet` from #17). `azure.yaml` `docker.buildArgs` sets `VITE_AUTH_MODE=Entra` and `VITE_ENTRA_*=${ENTRA_*}` from the azd env, for both services. `scripts/docker-build.sh` passes the same `--build-arg`s from the environment. The Dockerfile's `.env` generation and `.dockerignore`'s `!app/frontend/.env` exception are removed, so build args are the only path in. These are public identifiers; the old "avoid ARG" comment is rewritten to say so |
-| Contract test | A pytest guard (next to `test_azd_service_wiring.py`) asserting: both apps pin `AUTH_MODE=Entra` and their production flag; no app sets `ENTRA_INSTANCE`; no EasyAuth module or secret remains; `buildArgs` carry the four `VITE_*` values for every service |
+| SPA build values | `ARG VITE_AUTH_MODE=Entra` plus `ARG VITE_ENTRA_TENANT_ID VITE_ENTRA_CLIENT_ID VITE_ENTRA_API_SCOPE` in the **build stage only** of `app/Dockerfile` (and `Dockerfile.dotnet` from #17). **The mode defaults to `Entra`,** so an image build that loses its build args (the remote-build risk below) fails the Vite guard instead of shipping a Development bundle. `azure.yaml` `docker.buildArgs` sets `VITE_AUTH_MODE=Entra` and `VITE_ENTRA_*=${ENTRA_*}` from the azd env, for both services. `scripts/docker-build.sh` passes the same `--build-arg`s from the environment. The CI Docker job (`conformance.yml`) passes `--build-arg VITE_AUTH_MODE=Development` explicitly, and every CI `npm run build` step sets `VITE_AUTH_MODE=Development`. The Dockerfile's `.env` generation and `.dockerignore`'s `!app/frontend/.env` exception are removed, so build args are the only path in. These are public identifiers; the old "avoid ARG" comment is rewritten to say so |
+| Contract test | A pytest guard (next to `test_azd_service_wiring.py`) asserting: both apps pin `AUTH_MODE=Entra` and their production flag; no app sets `ENTRA_INSTANCE`; no EasyAuth module or secret remains; `buildArgs` carry the four `VITE_*` values for every service; each Dockerfile declares `ARG VITE_AUTH_MODE=Entra` |
 
 The azd remote build (`remoteBuild: true`) must pass `buildArgs` through to ACR. Squanchy verifies this on the
 first deploy. If it doesn't, that service sets `remoteBuild: false`, which is a one-line fallback.
@@ -1190,28 +1222,42 @@ first deploy. If it doesn't, that service sets `remoteBuild: false`, which is a 
 | --- | --- |
 | `scripts/Setup-EntraAuth.ps1` | Creates or reconciles the registration in 18.1 through `az rest` against Graph, with the caller's delegated token. Preview by default; nothing is written without `-Apply`. Create-only by display name: it fails on a name collision and never adopts by name. Reconcile needs `-ClientId` or `-AppObjectId`, plus ownership and the managed tag. Sets the v2 token version, the scope, the role, SPA-only redirect URIs (`-FrontendOrigin`, `-RedirectUri`, `-FromAzdEnv`) and the Azure CLI pre-authorization; sets `appRoleAssignmentRequired`; and assigns the caller (or `-AssignUserUpn`). Creates no secrets, reads no `.env` file, and prints only ids plus the `azd env set` lines |
 | `scripts/Verify-EntraAuth.ps1` | Read-only check of the registration: single tenant; no password or key credentials; `api://{clientId}`; the scope and role present and enabled; v2 tokens; at least one SPA redirect URI and no Web ones; `appRoleAssignmentRequired`. Non-zero exit on any gap |
-| `scripts/Verify-ProductionAuth.ps1` | Read-only live posture for **each** deployed app. **Env pins:** `AUTH_MODE=Entra`; the production flag; the `ENTRA_*` values matching the expected ids (printed redacted); no `ENTRA_INSTANCE`. **EasyAuth:** passes only on an observed `platform.enabled == false` (an unknown state is a failure) and no `aad-client-secret`. **Anonymous probes:** `/` is 200 and carries the `Entra` marker; `/health` is 200; a branding asset is 200; `/api/personas`, `/api/auth/session`, `menu.json` and asset JSON are 401; `/api/personas?access_token=<synthetic>` is 401; the `/realtime` upgrade is 401 with no token and with a synthetic token. **Registration:** delegates to `Verify-EntraAuth.ps1`. **Optional `-Authenticated`:** gets a delegated token through `az account get-access-token` and expects 200 from `/api/personas`, never printing the token |
+| `scripts/Verify-ProductionAuth.ps1` | Read-only live posture for **each** deployed app. **Env pins:** `AUTH_MODE=Entra`; the production flag; the `ENTRA_*` values matching the expected ids (printed redacted); no `ENTRA_INSTANCE`. **Active revisions:** lists every revision with `properties.active == true`, not only the app template. Each must run the expected image (`-ExpectedImage`, default the azd env `SERVICE_<NAME>_IMAGE_NAME`) and carry the same env pins; any active revision on another image or without `AUTH_MODE=Entra` fails, and zero active revisions fails. **EasyAuth:** passes only on an observed `platform.enabled == false` (an unknown state is a failure) and no `aad-client-secret`. **Anonymous probes:** `/` is 200 and carries the `Entra` marker; `/health` is 200; a branding asset is 200; `/api/personas`, `/api/auth/session`, `menu.json` and asset JSON are 401; `/api/personas?access_token=<synthetic>` is 401; the `/realtime` upgrade is 401 with no token and with a synthetic token. **Registration:** delegates to `Verify-EntraAuth.ps1`. **Optional `-Authenticated`:** gets a delegated token through `az account get-access-token` and expects 200 from `/api/personas`, never printing the token |
 
 Pester or pytest source-scan tests pin the safety properties, like Retail Pulse's `SetupEntraAuthScriptContractTests`:
 writes only under `-Apply`, no credential creation, no `.env` reads, no token output.
 
 ### 18.10 Rollout and unlock order
 
-**`azd provision` re-enables external ingress and sets min replicas to 1.** So the order has to guarantee that no
-unauthenticated revision is ever public:
+**`azd provision` re-enables external ingress and sets min replicas to 1.** And the apps use
+`activeRevisionsMode: Single` (`infra/core/host/container-app.bicep`): ACA keeps the previous revision active until
+a new one is ready, and keeps it if the new one never becomes ready. So "the new image fails fast" doesn't fail
+closed by itself. It leaves the **old, unauthenticated revision** active, and if the provisioned revision also
+fails (a bad id, a missing secret), `azd provision` has just made that old revision public (min replicas 0 is no
+protection: HTTP scaling wakes it). The order therefore removes every pre-auth revision before ingress can come
+back:
 
 1. The Python backend, frontend and infra changes merge to `dev`.
-2. Brian runs Setup (18.12), then `azd env set` the printed ids.
-3. `azd deploy` while ingress is still disabled. The new image in Production without `AUTH_MODE` fails fast, which
-   fails closed and stays dark.
+2. Brian runs Setup (18.13), then `azd env set` the printed ids.
+3. `azd deploy` while ingress is still disabled. The new image in Production without `AUTH_MODE` fails fast. **That
+   is expected:** `azd deploy` may report the revision as failed or unhealthy. Don't "fix" it by provisioning
+   early.
+   - **3a. Deactivate the pre-auth revisions.** List the active revisions:
+     `az containerapp revision list -n <app> -g rg-azureaidrivethru-prod --query "[?properties.active].{name:name,image:properties.template.containers[0].image}"`.
+     Deactivate every revision not running the new image with `az containerapp revision deactivate`. If the CLI
+     refuses in Single mode, first run `az containerapp revision set-mode --mode multiple`; step 4 restores
+     `Single` from Bicep. Re-list, and go on only when **no pre-auth revision is active** (zero active revisions
+     is fine: ingress is off and nothing serves).
 4. `azd provision`. This pins `AUTH_MODE=Entra` and the ids and re-enables ingress; the revision it creates runs
    the new image with the new env. Postprovision disables EasyAuth.
-5. Run `Verify-ProductionAuth.ps1` right away (and `-Authenticated`). If anything fails, run
-   `az containerapp ingress disable` and fix it.
+   - **4a. Check before anything else.** Confirm exactly one active revision, on the new image, with
+     `AUTH_MODE=Entra` in its env. If not, run `az containerapp ingress disable` at once, then fix it.
+5. Run `Verify-ProductionAuth.ps1` right away (and `-Authenticated`). It repeats the 4a check on every active
+   revision (18.9). If anything fails, run `az containerapp ingress disable` and fix it.
 6. Brian signs in on the live URL, and the lock note on #85 is closed out.
 
-Never run `azd provision` or `azd up` against `azureaidrivethru-prod` before step 3 has put the new image in place.
-The dotnet app (#17) goes live only after the C# parity work, with the same verification.
+Never run `azd provision` or `azd up` against `azureaidrivethru-prod` before step 3a has left no pre-auth revision
+active. The dotnet app (#17) goes live only after the C# parity work, with the same steps and verification.
 
 ### 18.11 Conformance
 
@@ -1251,9 +1297,9 @@ A backend that doesn't enforce auth yet ignores the extra env and tokens, so the
 | 11 | Bad Origin and no token on `/realtime` | 401 (the Entra check runs first on both backends) |
 | 12 | Anonymous allow-list: `/`, `/health`, `/personas/sonic/assets/logo.svg`, an apology clip | 200 with no token. `/personas/sonic/assets/demo/dummyOrder.json` is 401 |
 | 13 | Unknown persona on `/realtime` with no token | 401, not 404 |
-| 14 | Logging: after rows 8 and 10, the captured backend output contains neither token | Pass |
-| 15 | Modes (launch-and-exit rows): Production and unconfigured; Production with `AUTH_MODE=Development`; unknown `AUTH_MODE`; `ENTRA_INSTANCE=http://` to a non-loopback host; Entra with a placeholder client id | The process exits non-zero before listening |
-| 16 | Development pass-through (non-Production, unconfigured) | 200 with no token; `/realtime` opens |
+| 14 | Logging: after rows 8 and 10, the captured backend output contains neither token | Pass. The harness runs `python app.py`, not gunicorn, so the deployed gunicorn path is pinned by the unit and Dockerfile tests in 18.4 |
+| 15 | Modes (launch-and-exit rows): Production and unconfigured; Production with `AUTH_MODE=Development`; `AUTH_MODE=Development` with `ENTRA_TENANT_ID` and `ENTRA_CLIENT_ID` set, not Production; `AUTH_MODE=Development` with only one id set, not Production; unknown `AUTH_MODE`; `ENTRA_INSTANCE=http://` to a non-loopback host; Entra with a placeholder client id | The process exits non-zero before listening |
+| 16 | Development pass-through (non-Production, unconfigured, with `AUTH_MODE` unset and with `AUTH_MODE=Development`) | 200 with no token; `/realtime` opens |
 
 Rows are turned on per backend when that backend's auth lands: by the Python issue for `python`, and by the C#
 issue for `dotnet`, through the existing `DotnetPlaceholderPolicy` pattern. The gate then requires both legs.
@@ -1263,10 +1309,10 @@ issue for `dotnet`, through the existing `DotnetPlaceholderPolicy` pattern. The 
 | Issue | Work | Owner | Milestone | Depends on |
 | --- | --- | --- | --- | --- |
 | #143 | Harness `FakeEntraIssuer`, Entra-mode default fixture, token-attaching clients, rows 1 to 16 | Birdperson | P2 | This ADR |
-| #144 | Python: `entra_auth.py`, route matrix, `/realtime` check order, layered session token, modes, access-log redaction | Unity | P2 | This ADR; #143 harness part lands first |
-| #145 | Frontend: MSAL `AuthGate`, `authorizedFetch`, per-connect WebSocket tokens, fail-closed config, marker, removal of legacy auth | Morty | P2 | This ADR. Mocked MSAL, so it can start now |
-| #146 | Infra: Bicep pins and EasyAuth removal, postprovision, build args, Setup and Verify scripts, contract test, `DEPLOY.md`, then the rollout in 18.10 | Squanchy | P2 | This ADR for the scripts; #144 and #145 for the rollout |
-| #147 | C#: JwtBearer parity, fallback policy, layered session token, check order, log level, dotnet rows on | Beth | S5 | #13, #143; it gates #17 |
+| #144 | Python: `entra_auth.py`, route matrix, `/realtime` check order, layered session token, modes (explicit `Development` with ids fails fast), path-only access logger on both run paths | Unity | P2 | This ADR; #143 harness part lands first |
+| #145 | Frontend: MSAL `AuthGate` (no retry after a failed redirect), `authorizedFetch` on the protected path list, per-connect WebSocket tokens, fail-closed config (explicit `Development` for pass-through bundles, `loadEnv`), marker, removal of legacy auth | Morty | P2 | This ADR. Mocked MSAL, so it can start now |
+| #146 | Infra: Bicep pins and EasyAuth removal, postprovision, build args (`VITE_AUTH_MODE=Entra` default), Setup and Verify scripts (active-revision check), contract test, `DEPLOY.md`, then the rollout in 18.10 (deactivate pre-auth revisions before provisioning) | Squanchy | P2 | This ADR for the scripts; #144 and #145 for the rollout |
+| #147 | C#: JwtBearer parity, fallback policy, layered session token, check order, modes (explicit `Development` with ids fails fast), log level, dotnet rows on | Beth | S5 | #13, #143; it gates #17 |
 
 **Order:** #143 harness first, then #144. Meanwhile #145 and the #146 scripts proceed. Brian runs Setup once the #146
 scripts merge. Then the #146 rollout (18.10) unlocks staging. #147 follows #13 and must land before #17 makes
@@ -1282,5 +1328,7 @@ the dotnet app public.
    creates an app registration in his tenant.
 3. Only if the first sign-in shows "Need admin approval": grant admin consent for `AzureAIDriveThru` once
    (Enterprise applications, Permissions), or ask the tenant admin. Retail Pulse, in the same tenant, is the
-   precedent.
-4. Assign `DriveThru.User` to anyone else who should use the demo.
+   precedent. The gate shows Entra's error with a **Sign in** button and doesn't retry by itself (18.6), so press
+   it after consent is granted.
+4. Assign `DriveThru.User` to anyone else who should use the demo. Someone who isn't assigned is stopped by Entra
+   at sign-in with `AADSTS50105`, not by the app.
