@@ -122,37 +122,18 @@ public static class DotnetBackendLauncher
     // afterwards starts the already-built Backend.dll directly (`dotnet "<dll>"`, never
     // `run`/`build`/`restore` -- see BuildStartInfo/DotnetBackendLauncherStartInfoTests).
     //
-    // R1 fix (Rick's #151 review): the rule is "build exactly once per test process", not "build
-    // if the dll is missing". A dll on disk proves nothing about whether it reflects the source
-    // that's about to run against it -- neither Conformance.Harness.csproj nor
+    // R1 fix (Rick's #151 review, round 1): the rule is "build exactly once per test process",
+    // not "build if the dll is missing". A dll on disk proves nothing about whether it reflects
+    // the source that's about to run against it -- neither Conformance.Harness.csproj nor
     // Conformance.Tests.csproj has a ProjectReference to Backend.csproj, so a plain `dotnet test`
     // never rebuilds it, and a stale dll from an earlier run would otherwise be launched silently.
-    // The single cached Task below (not a bool/path pair) is what makes "exactly once" true even
-    // under concurrent callers: every caller either observes the same completed task (fast path)
-    // or blocks briefly on the gate to either join the in-flight build or start the one and only
-    // build, never a second one.
-    private static readonly SemaphoreSlim BuildGate = new(1, 1);
-    private static Task<string>? _buildTask;
-
-    /// <summary>
-    /// Build-runner seam for tests (issue #135). Production always resolves to
-    /// <see cref="RunBuildAsync"/>; unit tests substitute a fake here so
-    /// <see cref="EnsureBuiltAsync"/>'s gating/dedup behaviour can be asserted deterministically,
-    /// with no real MSBuild invocation and no SDK required. Call <see cref="ResetForTests"/>
-    /// between test cases so the shared static build cache doesn't leak across tests.
-    /// </summary>
-    internal static Func<string, CancellationToken, Task> RunBuild = RunBuildAsync;
-
-    /// <summary>
-    /// Test-only reset of the shared build cache and the <see cref="RunBuild"/> seam (issue #135).
-    /// Production code never calls this: a real test process is meant to build Backend.csproj at
-    /// most once, by design. This exists purely so unit tests can each start from a clean slate.
-    /// </summary>
-    internal static void ResetForTests()
-    {
-        _buildTask = null;
-        RunBuild = RunBuildAsync;
-    }
+    //
+    // R1 fix (Rick's #151 review, round 2): the gate is now an INSTANCE, <see
+    // cref="DotnetBackendBuildGate"/> -- see that type's own doc comment for why. This field is
+    // the one and only shared instance real fixtures use; unit tests construct their own private
+    // instances instead of touching anything here, so nothing a test does can ever be observed by
+    // a real fixture calling StartAsync concurrently in another xunit collection.
+    private static readonly DotnetBackendBuildGate Builder = new(RunBuildAsync);
 
     public static async Task<IBackendUnderTest> StartAsync(
         BackendContract contract, DotnetBackendOptions options, CancellationToken cancellationToken = default)
@@ -166,7 +147,7 @@ public static class DotnetBackendLauncher
                 csprojPath);
         }
 
-        var dllPath = await EnsureBuiltAsync(csprojPath, cancellationToken).ConfigureAwait(false);
+        var dllPath = await Builder.EnsureBuiltAsync(csprojPath, cancellationToken).ConfigureAwait(false);
 
         var env = DotnetBackendEnvironment.Build(contract, options);
         var startInfo = BuildStartInfo(dllPath);
@@ -307,64 +288,23 @@ public static class DotnetBackendLauncher
     private const string TargetFramework = "net11.0";
 
     /// <summary>
-    /// Builds Backend.csproj EXACTLY ONCE per test process (issue #135) -- never conditioned on
-    /// whether a dll already happens to exist on disk (R1: a pre-existing dll proves nothing about
-    /// whether it matches the source about to run against it). The single cached
-    /// <see cref="_buildTask"/> is the source of truth: once it completes successfully, every
-    /// later caller takes the lock-free fast path and just awaits that same completed task; while
-    /// it's in flight (or hasn't started), callers briefly take <see cref="BuildGate"/> only long
-    /// enough to either observe the in-flight/faulted task or kick off the one build, then release
-    /// the gate and await the task outside the lock -- so the build itself never serializes
-    /// backend *starts*, only the decision of who runs it.
+    /// Runs the real MSBuild build (issue #135). Always called by <see cref="Builder"/>'s
+    /// <see cref="DotnetBackendBuildGate.EnsureBuiltAsync"/> with <see cref="CancellationToken.None"/>
+    /// (R2 of Rick's #151 round-2 review) -- the <paramref name="cancellationToken"/> parameter
+    /// exists only to satisfy the <c>Func&lt;string, CancellationToken, Task&gt;</c> seam shape the
+    /// gate expects (and so tests substituting a fake here can still accept a token), not because
+    /// this build is ever meant to be cancelled by an individual caller. A single caller's
+    /// cancellation must stop THAT caller's wait, never the shared build every other caller is
+    /// also waiting on -- see <see cref="DotnetBackendBuildGate"/>'s own doc comment.
     /// </summary>
-    internal static async Task<string> EnsureBuiltAsync(string csprojPath, CancellationToken cancellationToken)
-    {
-        if (_buildTask is { IsCompletedSuccessfully: true })
-        {
-            return await _buildTask.ConfigureAwait(false);
-        }
-
-        await BuildGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            // A failed build must not poison every future caller: if the cached task faulted,
-            // the next caller through here retries with a fresh build.
-            if (_buildTask is null || _buildTask.IsFaulted)
-            {
-                _buildTask = BuildAndResolveAsync(csprojPath, cancellationToken);
-            }
-        }
-        finally
-        {
-            BuildGate.Release();
-        }
-
-        return await _buildTask.ConfigureAwait(false);
-    }
-
-    private static async Task<string> BuildAndResolveAsync(string csprojPath, CancellationToken cancellationToken)
-    {
-        await RunBuild(csprojPath, cancellationToken).ConfigureAwait(false);
-
-        var dllPath = ResolveDllPath(csprojPath);
-        if (!File.Exists(dllPath))
-        {
-            throw new InvalidOperationException(
-                $"'dotnet build \"{csprojPath}\"' completed but the expected output " +
-                $"'{dllPath}' is still missing. Check the Configuration/TargetFramework assumptions " +
-                "in DotnetBackendLauncher.ResolveDllPath against Backend.csproj/Directory.Build.props.");
-        }
-
-        return dllPath;
-    }
-
     private static async Task RunBuildAsync(string csprojPath, CancellationToken cancellationToken)
     {
-        // R2 fix (Rick's #151 review): no `--no-restore`. A developer whose only interaction with
-        // this repo is `dotnet test tests/conformance` has never restored the Backend project --
-        // `dotnet run` used to restore implicitly, and this launcher replaced `dotnet run` (issue
-        // #135) without keeping that behaviour. Restore is a no-op when the assets are already
-        // current, so this doesn't cost CI anything (its prebuild step already restored/built).
+        // R2 fix (Rick's #151 review, round 1): no `--no-restore`. A developer whose only
+        // interaction with this repo is `dotnet test tests/conformance` has never restored the
+        // Backend project -- `dotnet run` used to restore implicitly, and this launcher replaced
+        // `dotnet run` (issue #135) without keeping that behaviour. Restore is a no-op when the
+        // assets are already current, so this doesn't cost CI anything (its prebuild step already
+        // restored/built).
         var buildInfo = new ProcessStartInfo("dotnet", $"build \"{csprojPath}\"")
         {
             RedirectStandardOutput = true,
