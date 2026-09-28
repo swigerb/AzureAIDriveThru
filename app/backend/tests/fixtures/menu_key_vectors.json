@@ -1,0 +1,102 @@
+[
+  {
+    "input": "Tots (Extra Crispy)",
+    "key": "tots",
+    "note": "trailing modifier suffix stripped"
+  },
+  {
+    "input": "Chili Cheese Tots (Extra Cheese)",
+    "key": "chili cheese tots",
+    "note": "multi-word base name, trailing modifier suffix stripped"
+  },
+  {
+    "input": "Cherry Limeade",
+    "key": "cherry limeade",
+    "note": "already-normalized name is a no-op passthrough"
+  },
+  {
+    "input": "Tots (Extra Crispy) (No Salt)",
+    "key": "tots",
+    "note": "two separate modifier groups both stripped"
+  },
+  {
+    "input": "Chili Cheese (Extra Cheese) Tots",
+    "key": "chili cheese tots",
+    "note": "a modifier group in the middle of the name is stripped exactly like a trailing one"
+  },
+  {
+    "input": "SuperSONIC\u00ae Double Cheeseburger",
+    "key": "supersonic double cheeseburger",
+    "note": "registered trademark symbol (U+00AE) stripped, name lowercased"
+  },
+  {
+    "input": "SONIC Smasher\u2122",
+    "key": "sonic smasher",
+    "note": "trademark symbol (U+2122) stripped"
+  },
+  {
+    "input": "REESE\u2019S",
+    "key": "reese's",
+    "note": "curly apostrophe (U+2019) normalized to a plain ASCII apostrophe"
+  },
+  {
+    "input": "Dr Pepper\u00ae",
+    "key": "dr pepper",
+    "note": "registered trademark symbol with no modifier suffix present"
+  },
+  {
+    "input": "Tots (Extra (Really) Crispy)",
+    "key": "tots crispy)",
+    "note": "nested parentheses are a deliberate fail-safe: only the inner group matches, leaving a stray close-paren rather than risking a wrong collapse to a real menu key"
+  },
+  {
+    "input": "Tater-Tot",
+    "key": "tater-tot",
+    "note": "a hyphen is not whitespace and is not one of the three symbol-replacement rules, so it survives untouched (distinguishes from the space-separated \"Tater Tot\" spelling)"
+  },
+  {
+    "input": "  Tots   (Extra Crispy)  ",
+    "key": "tots",
+    "note": "surrounding/internal whitespace runs collapse the same way modifier-suffix whitespace does"
+  },
+  {
+    "input": "Cherry\u00a0Limeade",
+    "key": "cherry limeade",
+    "note": "a non-breaking space (U+00A0) between words is still whitespace for the split/join collapse"
+  },
+  {
+    "input": "SONIC\u00ae Cheeseburger\u2122 (No Onions)",
+    "key": "sonic cheeseburger",
+    "note": "both trademark symbols and a modifier suffix combined on one name"
+  },
+  {
+    "input": "REESE\u2019S Peanut Butter Cup Blast\u00ae (Large)",
+    "key": "reese's peanut butter cup blast",
+    "note": "curly apostrophe, registered trademark symbol, and a modifier suffix combined"
+  },
+  {
+    "input": "Route 44",
+    "key": "route 44",
+    "note": "digits in the name are left alone -- only symbols/parens/case are normalized"
+  },
+  {
+    "input": "TOTS",
+    "key": "tots",
+    "note": "case-only normalization with nothing else to strip"
+  },
+  {
+    "input": "Ocean Water\u00ae",
+    "key": "ocean water",
+    "note": "another plain registered-trademark-symbol example, distinct base name"
+  },
+  {
+    "input": "Master Shake\u2122 (Extra Whip)",
+    "key": "master shake",
+    "note": "trademark symbol plus a modifier suffix"
+  },
+  {
+    "input": "SuperSONIC\u00ae Double Cheeseburger (No Pickles) (Extra Sauce)",
+    "key": "supersonic double cheeseburger",
+    "note": "registered trademark symbol plus two separate modifier groups"
+  }
+]

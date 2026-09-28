@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Backend.Personas;
 
 namespace Backend.Tests.Personas;
@@ -132,5 +133,37 @@ public sealed class MenuKeyValidatorTests
         var exc = Assert.Throws<PersonaValidationException>(
             () => MenuKeyValidator.ValidateNoCollisions(menu, "test-pack", "some/path/menuItems.json"));
         Assert.Contains("some/path/menuItems.json", exc.Message);
+    }
+
+    // ── shared golden vectors (Rick's #137 review note) ─────────────────────────────────────
+    // app/backend/tests/fixtures/menu_key_vectors.json is the SAME file
+    // app/backend/tests/test_menu_utils.py's own MenuKeyVectorTests loads -- one shared set of
+    // ~20 input -> lookup-key examples asserted by BOTH backends' test suites, so a future change
+    // to either _menu_key (Python) or MenuKeyValidator.MenuKey (C#) that quietly drifts the two
+    // apart fails here in whichever backend didn't change, rather than only surfacing as a live
+    // cross-backend behavior difference nobody wrote a test for.
+    public static IEnumerable<object[]> SharedMenuKeyVectors()
+    {
+        var path = Path.Combine(
+            RepoRootLocator.Find(), "app", "backend", "tests", "fixtures", "menu_key_vectors.json");
+        using var doc = JsonDocument.Parse(File.ReadAllText(path));
+        foreach (var vector in doc.RootElement.EnumerateArray())
+        {
+            yield return [vector.GetProperty("input").GetString()!, vector.GetProperty("key").GetString()!];
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(SharedMenuKeyVectors))]
+    public void MenuKey_MatchesTheSharedGoldenVectorFile(string input, string expectedKey) =>
+        Assert.Equal(expectedKey, MenuKeyValidator.MenuKey(input));
+
+    [Fact]
+    public void SharedMenuKeyVectors_HasAtLeastTwentyEntries()
+    {
+        // Guard against the golden file itself quietly shrinking back below the ~20 examples
+        // Rick's #137 review note asked for.
+        Assert.True(SharedMenuKeyVectors().Count() >= 20,
+            "Expected at least 20 shared menu-key vectors in menu_key_vectors.json.");
     }
 }
