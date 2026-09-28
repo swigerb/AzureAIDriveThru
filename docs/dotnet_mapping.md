@@ -257,9 +257,9 @@ real tool/order-state implementation lands (interface shape agreed with Summer v
 #14/#140, then re-aligned in this revision to drop the `sessionId` parameter per #14's merged PR
 #149 contract).
 
-**Conformance `Dotnet=ready`: 33 -&gt; 71 test methods, all passing**
+**Conformance `Dotnet=ready`: 33 -&gt; 72 test methods, all passing**
 (`CONFORMANCE_BACKEND=dotnet dotnet test Conformance.slnx --filter "Dotnet=ready"` is green,
-71/71). The 38 newly-tagged this revision, all confirmed real-backend scenarios (not harness
+72/72). The 39 newly-tagged this revision, all confirmed real-backend scenarios (not harness
 self-tests):
 
 - `PersonaDiscoveryConformanceTests` -- the 5th method (session-metadata echo), previously blocked
@@ -283,6 +283,10 @@ self-tests):
   the default/DZ deployments and the explicit-off switch, exactly mirroring `rtmt.py`.
 - `Scenarios/Security/ScrubHardeningTests`, `Scenarios/Security/ResponseCreateHooksGateTests`
   (class-level, both now fully passing).
+- `Scenarios/Transport/CloseCodeTests.Guest_initiated_end_session_closes_with_1000_session_ended`
+  -- a guest-initiated `extension.end_session` now closes the browser socket with the fixed
+  1000/"session_ended" shape (`rtmt.py`'s `_forward_messages` branch), needing no session-registry
+  state unlike the file's other two scenarios (4002 supersede, 4000 idle timeout -- both still #15).
 
 **Bugs found and fixed via the conformance sweep** (none were pre-existing scope reductions --
 these are genuine parity gaps against `rtmt.py`):
@@ -319,8 +323,11 @@ investigated further this revision, `StubToolExecutor` is deliberately inert bey
 scripted `UpdateOrderToolCallTests` scenario): `HappyHourPricingTests`,
 `PersonaBusinessRuleConformanceTests`, `PersonaSearchIsolationConformanceTests`,
 `FixturePackPersonaSmokeTests`, `RealPackPersonaSmokeTests`. And believed to depend on #15 (session
-resume): `CloseCodeTests`, `IdleCloseCodeTests`, `IdleTimeoutTests`, `VoicePickerTests`'s
-`Resumed_*`/session-end methods. `WholeSessionLeakTests` (0/1) was not investigated this revision.
+resume): `CloseCodeTests`'s remaining 4002-supersede scenario, `IdleCloseCodeTests`,
+`IdleTimeoutTests`, `VoicePickerTests`'s
+`Resumed_*`/session-end methods. `WholeSessionLeakTests` (0/1, confirmed this revision: its own
+doc comment requires a disconnect+resume and a silence nudge, i.e. #15's resume/rehydration
+machinery -- not a bug, correctly deferred).
 The whole `RateLimit` scenario family remains untagged (documented scope cut, this issue's rate-limit
 *notice* relay is covered by other tagged scenarios; the ladder/backoff family is out of scope for
 #13). A handful of failures (`CapturedProcessOutputTests`, `CapturedProcessOutputWaitTests`,
@@ -331,6 +338,11 @@ ADR-002 (ready, dev 96b6f6f) adds Entra auth in front of `/realtime`; that's iss
 and was explicitly out of scope this revision, but the WebSocket upgrade handler in
 `RealtimeProcessor`/`Sessions/SessionActor.cs` keeps its existing pre-upgrade validation ordering
 so a future auth check slots in ahead of persona/model resolution without restructuring.
+
+`origin/dev` was merged into this branch this revision (merge commit `7e99761`, no rebase/force-push,
+picking up `383e212`/`4a52af4` -- none of which touch files this issue's work modifies). The
+`Dotnet=ready` count (72/72) and the full C# unit-test suite (230/230) were both reconfirmed green
+after the merge.
 
 ## Traversal defense mutation-test note (PR #122 review item 1)
 
