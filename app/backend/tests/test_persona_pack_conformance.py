@@ -12,6 +12,8 @@ import unittest
 import wave
 from pathlib import Path
 
+import yaml
+
 REPO = Path(__file__).resolve().parents[3]
 sys.path.append(str(REPO / "app" / "backend"))
 
@@ -29,6 +31,22 @@ def _greeting_text(persona: Persona) -> str:
     loader = PromptLoader(brand=persona.id, prompts_dir=persona.prompts_dir)
     greeting = loader.get_greeting()
     return greeting["item"]["content"][0]["text"]
+
+
+def _system_prompt_sections(persona: Persona) -> dict[str, str]:
+    """Return {section_name: content} for a pack's own system_prompt.yaml, read directly
+    (not through PromptLoader, which only exposes the already-assembled prompt string)."""
+    data = yaml.safe_load((persona.prompts_dir / "system_prompt.yaml").read_text(encoding="utf-8"))
+    return {section["name"]: section["content"] for section in data["sections"]}
+
+
+def _update_order_actions(persona: Persona) -> set[str]:
+    """Return the 'action' enum update_order's tool schema declares for this pack."""
+    data = yaml.safe_load((persona.prompts_dir / "tool_schemas.yaml").read_text(encoding="utf-8"))
+    for tool in data["tools"]:
+        if tool["name"] == "update_order":
+            return set(tool["parameters"]["properties"]["action"]["enum"])
+    raise AssertionError(f"{persona.id} has no update_order tool schema")
 
 
 class VoiceConformanceTests(unittest.TestCase):
@@ -116,12 +134,137 @@ class ApologyClipConformanceTests(unittest.TestCase):
                                   f"declared locales {sorted(declared)}")
 
 
+class PromptSectionConformanceTests(unittest.TestCase):
+    """#83 (P2-14) prompt review: every pack's sectioned system_prompt.yaml must share the
+    same core section set and the same tool-usage rules, with only genuinely brand/menu-
+    specific sections (combos/meals, happy hour, 'modify') differing -- and only when that
+    pack's own config says they should."""
+
+    # Sections that encode shared infra/tool-usage rules (never send a price, search before
+    # ordering, [SYSTEM HINT]/[OOS] handling, quantity limits, closing-with-total, etc.) --
+    # every pack needs these regardless of brand or menu shape.
+    _CORE_SECTIONS = frozenset({
+        "IDENTITY", "VOICE_STYLE", "TOOL_CALLING_RULES", "MENU_AND_PRICING", "ORDERING",
+        "CUSTOMIZATIONS_AND_MODS", "CONVERSATIONAL_FLOW", "BRAND_IDENTITY", "TOOL_HINTS",
+        "SUGGESTIVE_SELLING", "ORDER_CHANGE_AFTER_CLOSING", "CLOSING_AN_ORDER",
+        "QUANTITY_LIMITS", "TECHNICAL_GUARDRAILS", "PERSONALIZATION", "VISUAL_SYNC",
+        "OUT_OF_STOCK", "BOUNDARIES",
+    })
+
+    def test_every_pack_has_the_core_section_set(self):
+        catalog = PersonaCatalog.load()
+        for persona_id in catalog.ids:
+            with self.subTest(persona_id):
+                names = set(_system_prompt_sections(catalog.get(persona_id)).keys())
+                missing = self._CORE_SECTIONS - names
+                self.assertFalse(missing, f"{persona_id} is missing core sections {sorted(missing)}")
+
+    def test_happy_hour_section_presence_matches_the_packs_own_pricing_config(self):
+        """A HAPPY_HOUR section should exist only when the pack's own persona.json enables
+        and announces one -- never hard-coded on, never silently dropped."""
+        catalog = PersonaCatalog.load()
+        for persona_id in catalog.ids:
+            with self.subTest(persona_id):
+                persona = catalog.get(persona_id)
+                has_section = "HAPPY_HOUR" in _system_prompt_sections(persona)
+                is_configured = persona.manifest.pricing.happyHour is not None
+                self.assertEqual(has_section, is_configured,
+                                  f"{persona_id}: HAPPY_HOUR section present={has_section} but "
+                                  f"pricing.happyHour configured={is_configured}")
+
+    def test_combo_or_meal_bundle_section_presence_matches_the_packs_own_bundle_config(self):
+        """Combo/meal bundling instructions (e.g. COMBO_LOGIC, COMBO_PIVOT_RULES, or a
+        bundle-name-synonym section) should exist only for a pack whose own persona.json
+        declares bundle name markers -- a pack that sells no bundles (nameMarkers: []) rightly
+        has none."""
+        catalog = PersonaCatalog.load()
+        for persona_id in catalog.ids:
+            with self.subTest(persona_id):
+                persona = catalog.get(persona_id)
+                names = _system_prompt_sections(persona).keys()
+                has_bundle_section = any("COMBO" in n or "MEAL" in n for n in names)
+                bundles_configured = bool(persona.manifest.bundles.nameMarkers)
+                self.assertEqual(has_bundle_section, bundles_configured,
+                                  f"{persona_id}: bundle section present={has_bundle_section} but "
+                                  f"bundles.nameMarkers={persona.manifest.bundles.nameMarkers!r}")
+
+    def test_modify_action_is_only_referenced_by_a_pack_whose_schema_supports_it(self):
+        """'modify' (in-place resize) is only supported by packs whose own update_order
+        schema lists 'modify' in the action enum -- a pack's prompt must not tell the model
+        to call an action its own tool schema doesn't accept, and vice versa."""
+        catalog = PersonaCatalog.load()
+        for persona_id in catalog.ids:
+            with self.subTest(persona_id):
+                persona = catalog.get(persona_id)
+                content = " ".join(_system_prompt_sections(persona).values())
+                prompt_references_modify = "action 'modify'" in content
+                schema_supports_modify = "modify" in _update_order_actions(persona)
+                self.assertEqual(prompt_references_modify, schema_supports_modify,
+                                  f"{persona_id}: prompt references action 'modify'="
+                                  f"{prompt_references_modify} but schema supports it="
+                                  f"{schema_supports_modify}")
+
+    def test_every_pack_documents_the_same_never_send_a_price_rule(self):
+        catalog = PersonaCatalog.load()
+        for persona_id in catalog.ids:
+            with self.subTest(persona_id):
+                menu_section = _system_prompt_sections(catalog.get(persona_id))["MENU_AND_PRICING"]
+                self.assertIn("price", menu_section.lower())
+                self.assertRegex(menu_section.lower(), r"never (pass|send)? ?a price|price.*ignored")
+
+    def test_every_pack_documents_the_same_search_before_ordering_rule(self):
+        catalog = PersonaCatalog.load()
+        for persona_id in catalog.ids:
+            with self.subTest(persona_id):
+                menu_section = _system_prompt_sections(catalog.get(persona_id))["MENU_AND_PRICING"]
+                self.assertIn("ALWAYS call search BEFORE adding any item", menu_section)
+
+    def test_every_pack_documents_the_same_not_on_menu_handling(self):
+        """The exact not-on-menu rejection sentence must be identical across packs -- this is
+        shared tool-contract behavior (update_order rejects off-menu items), not brand voice."""
+        catalog = PersonaCatalog.load()
+        expected = ("update_order REJECTS anything not on our menu (exact name or a real "
+                    "alias) — if that happens, apologize briefly and offer the closest real "
+                    "menu item instead of retrying the same name")
+        for persona_id in catalog.ids:
+            with self.subTest(persona_id):
+                menu_section = _system_prompt_sections(catalog.get(persona_id))["MENU_AND_PRICING"]
+                self.assertIn(expected, menu_section)
+
+
 class MutationIsCaughtTests(unittest.TestCase):
     """Each check must fail closed on a real defect, not just always pass on today's clean data."""
 
     def test_a_voice_outside_the_allow_list_is_rejected(self):
         with self.assertRaises(AssertionError):
             self.assertIn("not-a-real-voice", _DEFAULT_ALLOWED_VOICES)
+
+    def test_a_pack_missing_a_core_section_is_caught(self):
+        real_names = set(_system_prompt_sections(PersonaCatalog.load().get(
+            PersonaCatalog.load().default_persona_id)).keys())
+        mutated_names = real_names - {"OUT_OF_STOCK"}  # simulate an accidentally deleted section
+        missing = PromptSectionConformanceTests._CORE_SECTIONS - mutated_names
+        with self.assertRaises(AssertionError):
+            self.assertFalse(missing, f"missing core sections {sorted(missing)}")
+
+    def test_a_happy_hour_section_mismatched_with_config_is_caught(self):
+        catalog = PersonaCatalog.load()
+        # Take the pack that has pricing.happyHour == None; pretend its prompt has a
+        # HAPPY_HOUR section anyway (a copy-paste from a pack that does offer one).
+        no_happy_hour_id = next(p for p in catalog.ids if catalog.get(p).manifest.pricing.happyHour is None)
+        persona = catalog.get(no_happy_hour_id)
+        has_section = True  # mutated: as if HAPPY_HOUR had been copy-pasted in
+        is_configured = persona.manifest.pricing.happyHour is not None
+        with self.assertRaises(AssertionError):
+            self.assertEqual(has_section, is_configured)
+
+    def test_a_not_on_menu_sentence_altered_in_one_pack_is_caught(self):
+        catalog = PersonaCatalog.load()
+        persona = catalog.get(catalog.default_persona_id)
+        menu_section = _system_prompt_sections(persona)["MENU_AND_PRICING"]
+        mutated = menu_section.replace("REJECTS anything not on our menu", "politely allows anything")
+        with self.assertRaises(AssertionError):
+            self.assertIn("update_order REJECTS anything not on our menu", mutated)
 
     def test_a_greeting_naming_the_wrong_brand_is_caught(self):
         catalog = PersonaCatalog.load()
