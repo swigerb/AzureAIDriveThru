@@ -419,14 +419,6 @@ entries:
     pending other persona packs; #78/#79 will need them parameterized or duplicated
     per persona.'
   increase_reason: ''
-- file: scripts/generate_apology_clips.py
-  brand: sonic
-  max: 1
-  issue: '#78'
-  reason: 'Operational scripts (deploy/build/benchmark/menu-maintenance) are Sonic-only
-    pending other persona packs; #78/#79 will need them parameterized or duplicated
-    per persona.'
-  increase_reason: ''
 - file: scripts/smoke_realtime.py
   brand: sonic
   max: 1

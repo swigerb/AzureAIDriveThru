@@ -583,15 +583,16 @@ class ApologyClipTests(unittest.TestCase):
     def test_clips_are_short_24khz_mono_pcm16_speech(self):
         from default_persona import get_default_persona
 
+        out_dir = get_default_persona().assets_dir / "audio"
         for lang in self.gen.APOLOGY_PHRASES:
             with self.subTest(lang):
-                path = self.gen.clip_path(lang)
+                path = self.gen.clip_path(out_dir, lang)
                 # Issue #80 F7: the clips now live in the persona pack (single source of truth --
                 # the frontend's own copies were retired once App.tsx started reading
                 # personaAssetUrl()/apologyClipUrl() from the pack instead) -- specifically
                 # whichever pack the persona catalog resolves as its own default, not a
                 # literal hard-coded pack id.
-                self.assertEqual(path.parent, get_default_persona().assets_dir / "audio")
+                self.assertEqual(path.parent, out_dir)
                 with wave.open(str(path), "rb") as wav:
                     self.assertEqual((wav.getnchannels(), wav.getsampwidth(), wav.getframerate()), (1, 2, 24_000))
                     seconds = wav.getnframes() / wav.getframerate()
@@ -616,6 +617,35 @@ class ApologyClipTests(unittest.TestCase):
         with wave.open(str(out), "rb") as wav:
             self.assertEqual((wav.getnchannels(), wav.getsampwidth(), wav.getframerate()), (1, 2, 24_000))
             self.assertEqual(wav.readframes(3), pcm)
+
+    def test_no_persona_resolves_to_the_catalog_default(self):
+        from default_persona import get_default_persona
+        self.assertIs(self.gen.resolve_persona(None), get_default_persona())
+
+    def test_unknown_persona_is_a_smoke_error(self):
+        with self.assertRaises(self.gen.smoke_realtime.SmokeError):
+            self.gen.resolve_persona("not-a-real-persona-id")
+
+    def test_every_pack_resolves_its_own_out_dir_and_voice_instructions(self):
+        """--persona (#83, P2-14): every enabled pack gets its OWN audio dir and its OWN
+        displayName/roleName in the voice instructions -- never one hard-coded brand's."""
+        from persona_loader import PersonaCatalog
+
+        catalog = PersonaCatalog.load()
+        seen_dirs, seen_instructions = set(), set()
+        for persona_id in catalog.ids:
+            with self.subTest(persona_id):
+                persona = self.gen.resolve_persona(persona_id)
+                self.assertEqual(persona.id, persona_id)
+                out_dir = self.gen.out_dir_for(persona)
+                self.assertEqual(out_dir, persona.assets_dir / "audio")
+                instructions = self.gen.voice_instructions_for(persona)
+                self.assertIn(persona.manifest.displayName, instructions)
+                self.assertIn(persona.manifest.roleName, instructions)
+                seen_dirs.add(out_dir)
+                seen_instructions.add(instructions)
+        self.assertEqual(len(seen_dirs), len(catalog.ids), "every pack should write to its own directory")
+        self.assertEqual(len(seen_instructions), len(catalog.ids), "every pack should get its own voice instructions")
 
 
 if __name__ == "__main__":
