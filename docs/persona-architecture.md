@@ -1,7 +1,8 @@
 # Persona architecture: one drive-thru app, three brands, two backends
 
 - **Issue:** #19 (P1 design spike), including the design for #51. Part of epic #6.
-- **Decision record:** [ADR-001](adr/ADR-001-persona-architecture.md)
+- **Decision record:** [ADR-001](adr/ADR-001-persona-architecture.md); authentication:
+  [ADR-002](adr/ADR-002-entra-authentication.md) (Proposed, section 18)
 - **Status:** **Accepted**, 2026-09-26T22:29:32-04:00, with Brian's decisions (section 16),
   including the environment details of 22:52 (decision 11). Proposed 2026-09-25T19:10:59-04:00.
 - **Author:** Rick (lead)
@@ -269,7 +270,7 @@ All money values are quoted decimal strings, so C# reads them as `decimal` witho
       "en": { "app.title": "Sonic Voice Ordering", "status.notRecordingMessage": "Let's order from America's Drive-In!",
               "ticket.kicker": "Carhop ticket", "ticket.title": "Your Sonic Order", "menu.button": "View Sonic Menu" }
     },
-    "hero": { "headline": "Sonic ordering powered by Azure conversation intelligence", "callouts": [] },
+    "hero": { "headline": "Sonic ordering powered by Microsoft Foundry", "callouts": [] },
     "legal": "Disclaimer: This project is a non-commercial demo application ... not affiliated with, endorsed, or sponsored by Inspire Brands, Inc. or Sonic Corp. ..."
   }
 }
@@ -368,7 +369,7 @@ starts a new session.
 | `GET /realtime?persona={id}&model={id}` | Omitted persona: `DEFAULT_PERSONA`. Omitted model: the persona's default realtime model. Unknown or not enabled: **HTTP 404 before the WebSocket upgrade**, never a silent fallback. Both are fixed for the session |
 | `extension.metadata` | Gains `persona`, `model` and `pipeline` (additive) |
 | Resume | The held session remembers its persona and model. `extension.resume` from a socket opened with a different persona or model gets `extension.resume_rejected` with `reason: "persona_mismatch"` or `"model_mismatch"`, then a fresh session (the existing rejection path, then metadata) |
-| Session token, Origin checks, EasyAuth | Unchanged. The persona and model are not secrets and are not in the HMAC token |
+| Session token, Origin checks, authentication | Entra ID per section 18 (ADR-002, which replaces EasyAuth): every route above except `/personas/{id}/assets/*` branding files needs a bearer, and `/realtime` takes it as `?access_token`. The HMAC session token gains the caller's `oid`. The persona and model are not secrets and are not in the HMAC token |
 
 ## 6. Menu rules: #51, #64 and no off-menu ordering (decided)
 
@@ -778,7 +779,7 @@ down (section 11).
 | Setting | Value |
 | --- | --- |
 | Subscription | `BrianSwiger-Microsoft-External-2026` (`44847a42-6b69-4e6c-b7e5-ce7140469dd6`), the one the current demos use |
-| Region | `eastus2` (all resources, including Search) |
+| Region | `eastus2` for every resource except AI Search, which is in `eastus` (eastus2 had no Basic-SKU Search capacity at provision time, #87; see 10.2) |
 | azd env | `azureaidrivethru-prod` |
 | Resource group | `rg-azureaidrivethru-prod` |
 | Dependencies | **None** on `rg-sonic-demo`, `rg-mcd-demo` or `rg-dunkin-demo`. The `*_REUSE_EXISTING` flags stay `false`; no app setting, role assignment or hook may name an old resource. #87 checks this before cutover |
@@ -787,9 +788,9 @@ down (section 11).
 
 | Option | Pros | Cons |
 | --- | --- | --- |
-| **A. Two container apps (Python and .NET) in one ACA environment. Each serves the same frontend build, and a header switch navigates between the two hostnames (recommended)** | No proxy on the audio path, so the S8 A/B measures the backends themselves. EasyAuth and sticky sessions work per app as they do today. Independent scale and rollback. Trivial A/B | Two hostnames (one per backend, each with all three personas); the URL changes when you switch backend |
+| **A. Two container apps (Python and .NET) in one ACA environment. Each serves the same frontend build, and a header switch navigates between the two hostnames (recommended)** | No proxy on the audio path, so the S8 A/B measures the backends themselves. In-app Entra auth (section 18) and sticky sessions work per app. Independent scale and rollback. Trivial A/B | Two hostnames (one per backend, each with all three personas); the URL changes when you switch backend |
 | B. A third "front" app that serves the SPA and proxies `/realtime` and `/api` to an internal backend chosen by a selector | One hostname | An extra WebSocket hop for every audio frame; the proxy must preserve affinity for resume; one more component to secure and scale |
-| C. Azure Front Door with path routing | One hostname, managed | Added cost; EasyAuth and cookies per origin; overkill for a demo |
+| C. Azure Front Door with path routing | One hostname, managed | Added cost; auth and cookies per origin; overkill for a demo |
 
 **Recommendation: A.** "All three personas on one URL" holds on each backend. The backend switch keeps persona
 and model, and an Entra SSO session makes the hop seamless. Option A is accepted (section 17); B stays the
@@ -800,12 +801,12 @@ fallback if a single hostname is ever required.
 | Resource | Notes |
 | --- | --- |
 | Microsoft Foundry (Azure OpenAI) account and project | **Its own** account, never `cog-axgpampkq3yfa`. Deployments in 10.3 |
-| AI Search | **Its own paid service** (Basic SKU, eastus2). The free slot is taken by the old shared `gptkb-axgpampkq3yfa`, and paid removes the 3-index cap. One index per persona: `sonic-menu-items`, `mcdonalds-menu-items`, `dunkin-menu-items`, ingested from each pack's `menu/menuItems.json` by the postprovision hook (#84). The identity gets data-plane roles only on this service |
+| AI Search | **Its own paid service** (Basic SKU). Provisioned in **East US**, not eastus2 like the rest of the environment -- eastus2 had no Basic-SKU Search capacity left at provision time (#87), so Brian approved splitting it out via the existing `searchServiceLocation`/`AZURE_SEARCH_SERVICE_LOCATION` param (already in `infra/main.bicep`, wired only to the Search module). The free slot is taken by the old shared `gptkb-axgpampkq3yfa`, and paid removes the 3-index cap. One index per persona: `sonic-menu-items`, `mcdonalds-menu-items`, `dunkin-menu-items`, ingested from each pack's `menu/menuItems.json` by the postprovision hook (#84). The identity gets data-plane roles only on this service |
 | Storage | Its own account for ingestion, as today |
 | ACA environment, Log Analytics, ACR, user-assigned identity | Its own, as today, with `AzureAIDriveThru` names |
-| Container app `python` | One gunicorn worker, sticky ingress, `/health` probe, EasyAuth, `APP_SESSION_SECRET`, `PERSONAS=sonic,mcdonalds,dunkin`, `DEFAULT_PERSONA=sonic`, `AZURE_AI_MODEL_DEPLOYMENTS` (#85, #87) |
+| Container app `python` | One gunicorn worker, sticky ingress, `/health` probe, in-app Entra auth (`AUTH_MODE=Entra`, `ENTRA_*`, EasyAuth disabled; section 18), `APP_SESSION_SECRET`, `PERSONAS=sonic,mcdonalds,dunkin`, `DEFAULT_PERSONA=sonic`, `AZURE_AI_MODEL_DEPLOYMENTS` (#85, #87) |
 | Container app `dotnet` | Same settings and the same Foundry account, Search and identity. Added by S7 (#17) |
-| Entra | **One** new app registration with redirect URIs for both hostnames, created by Squanchy with Brian's account during #85 (section 17). The three old registrations are deleted at cutover (#88) |
+| Entra | **One** new app registration, `AzureAIDriveThru` (single tenant, public SPA client, `access_as_user`, role `DriveThru.User`, assignment required), with SPA redirect URIs for both hostnames. Created by `Setup-EntraAuth.ps1` run as Brian (section 18). The three old registrations are deleted at cutover (#88) |
 
 ### 10.3 Model deployments and capacity
 
@@ -960,5 +961,418 @@ starts; he confirms only the two destructive teardown steps in #88.
    (#72).
 2. **Entra:** Squanchy creates the one new app registration with Brian's signed-in account during #85, with
    redirect URIs for both backend hostnames. The three old registrations are deleted at cutover (#88).
+   **Superseded 2026-09-27 by ADR-002 (section 18):** in-app Entra ID following Retail Pulse, not EasyAuth. The
+   registration is created by `Setup-EntraAuth.ps1`, run as Brian.
 3. **C# local mode:** ported, last in the C# track (#13).
 4. **Two backend hostnames:** accepted (section 10.1, option A). Option B stays the fallback.
+
+## 18. Authentication: Entra ID following Retail Pulse (ADR-002)
+
+**Status:** Proposed, 2026-09-27 ([ADR-002](adr/ADR-002-entra-authentication.md)). It supersedes EasyAuth
+everywhere in this document. The reference is Retail Pulse (`swigerb/retail-pulse`: ADR-005,
+`docs/authentication-entra.md`, `docs/authentication-matrix.md`, `scripts/Setup-EntraAuth.ps1`,
+`scripts/Verify-EntraAuth.ps1`, `scripts/Verify-ProductionAuth.ps1`). It's deployed in the same subscription and
+tenant, so everything below is already proven there, except where noted as a deliberate difference.
+
+**Why now:** staging (`capps-backend-pwvzk3t22wttm`) was public with no authentication, so anyone could spend our
+realtime quota. It's locked (ingress disabled, min replicas 0) until this ships; the undo commands are on #85.
+
+### 18.1 App registration
+
+| Setting | Value | Note |
+| --- | --- | --- |
+| Display name | `AzureAIDriveThru` | Tagged `AzureAIDriveThruManaged`. The Setup script never adopts an app by name |
+| Audience | Single tenant (`AzureADMyOrg`) | The subscription's tenant, the same as Retail Pulse |
+| Client type | Public SPA client, auth code + PKCE | **No** client secret, password or certificate credential |
+| App ID URI | `api://{clientId}` | |
+| Delegated scope | `access_as_user` (enabled) | Exposed as `api://{clientId}/access_as_user` |
+| Access token version | `requestedAccessTokenVersion = 2` | **Tighter than Retail Pulse:** we accept only the v2 issuer, not the v1 `sts.windows.net` form |
+| App role | `DriveThru.User`, member type User, enabled | Required on every protected route |
+| Service principal | `appRoleAssignmentRequired = true` | An unassigned user is stopped **by Entra at sign-in** (`AADSTS50105`, possibly on Entra's own error page) and never gets a token. Our 403 screen (18.6) covers a different case: a token without the role or the scope |
+| SPA redirect URIs | `https://<python-fqdn>`, `https://<dotnet-fqdn>` (with #17), `http://localhost:8000`, `http://localhost:5173` | Bare origins, SPA platform only. **Tighter than Retail Pulse:** no Web platform redirect URIs |
+| Pre-authorized client | Azure CLI (`04b07795-8ddb-461a-bbee-02f9e1bf7b46`) on `access_as_user` | Allows `az account get-access-token --scope api://{clientId}/access_as_user` for the headless checks in 18.11 |
+| Initial assignment | The person who runs Setup (Brian) | Others are added with `-AssignUserUpn` or in Enterprise applications, Users and groups |
+
+Demo viewers outside the tenant are invited as B2B guests and assigned the role. No multi-tenant registration.
+
+### 18.2 Route matrix
+
+The rule is **deny by default**. Anonymous access is an allow-list, and any new route is protected unless it's
+added to that list on purpose. Each backend has a unit test that walks its route table, like Retail Pulse's
+`EndpointAuthorizationCoverageTests`.
+
+| Route | Access | Why |
+| --- | --- | --- |
+| `GET /` (SPA shell) and the SPA bundle (the static route) | Anonymous | The sign-in gate has to load before sign-in. The bundle holds only public ids |
+| `GET /health` | Anonymous | The ACA probe can't send a bearer. Retail Pulse does the same |
+| `GET /personas/{id}/assets/*` for `.svg .png .jpg .webp .ico .wav .mp3` | Anonymous (**public branding**) | Loaded by `<img>`, `<audio>`, the favicon and CSS, which can't carry a bearer. See below |
+| `GET /personas/{id}/assets/*` for any other type (today `demo/*.json`) | Entra | Fetched with `fetch()`, so it can carry the bearer. Deny by default |
+| `GET /personas/{id}/menu.json` | Entra | Fetched with `fetch()` |
+| `GET /api/personas`, `GET /api/personas/{id}` | Entra | `/api/*` has no exceptions. The sign-in screen is neutral product branding, so it needs no persona data |
+| `GET /api/auth/session` | Entra | Mints the layered session token for the caller (18.3) |
+| `GET /realtime` (WebSocket) | Entra via `?access_token`, plus the session token | 18.3 |
+| Anything else | Entra, or 404 | Deny by default |
+
+**Public branding assets, not signed URLs or a cookie.** This is the simplest safe option.
+- The files are logos, favicons and pre-recorded apology clips. The logos are the brands' public marks, and a clip
+  is one generic sentence.
+- The existing guard already limits the route to enabled packs and to real files under the pack's `assets/`
+  directory (segment checks, symlink-resolved containment).
+- We add an extension allow-list for anonymous access, and a persona-loader check that nothing else lives under
+  `assets/` except `demo/*.json`, which is protected.
+- Signed URLs would need signing on both backends and change the URL on every mint, which breaks the immutable
+  `?v=` caching.
+- A cookie would bring back cookie auth and CSRF handling for public files.
+- Fetching assets as blobs with a bearer can't cover the favicon or CSS, and it delays the rate-limit apology clip,
+  which has to play instantly.
+
+### 18.3 WebSocket and the session token
+
+Browsers can't set headers on a WebSocket, so `/realtime` reads the Entra access token from `?access_token`. That
+query parameter is honored on `/realtime` **only**: on any other path it's ignored, so a token there still gets
+401. This matches Retail Pulse's `/hubs` rule.
+
+**The HMAC session token is kept and layered**, not replaced:
+
+| Step | Behavior |
+| --- | --- |
+| Mint | `GET /api/auth/session` is protected like every `/api/*` route. Its token gains an `oid` claim, the caller's Entra object id. The TTL stays 900 s |
+| Require | In Entra mode `require_session_token` is forced on; `config.yaml` can't turn it off. In Development pass-through it follows `config.yaml`, as today (default off) |
+| Bind | `/realtime` rejects with 401 unless the session token is valid, has an `oid`, and that `oid` equals the Entra token's `oid` |
+| Frontend | It fetches a fresh session token, with the bearer, before **every** connect, including reconnects and resumes. That fixes today's fetch-once-per-mount, which would fail a reconnect after 15 minutes once the token is required |
+
+**Check order** on `/realtime`, identical on both backends:
+1. Entra (401 or 403). It runs in middleware before the handler, so an unauthenticated caller learns nothing about
+   personas, models or origins.
+2. Origin (403).
+3. Session token (401).
+4. The concurrency limit, then the persona and model 404s, unchanged.
+
+This makes a bad Origin plus no token a 401 on both backends, which conformance pins.
+
+**Why keep and layer rather than replace:**
+- **Contract stability.** Both backends already implement `/api/auth/session` and `?token` (the C# port has
+  `SessionTokenService` and `RealtimeAuthGate`), and the suite pins them. Replacing them in the middle of the C#
+  port changes both backends and the suite for no gain. Layering costs about 20 lines per backend.
+- **Development mode.** With Entra unconfigured, the HMAC token and the Origin check remain the local guard, as
+  today.
+- **One identity per session.** Both credentials name the same `oid`, so logs and any later per-user limit have a
+  single identity to key on.
+
+**The honest limit:** the layer isn't a second factor against a stolen Entra token, because that token can mint a
+session token. The mitigations for a token in a URL are these:
+- the query-string token is read only on `/realtime`;
+- tokens are never logged (18.4);
+- the session token is short-lived.
+
+If a security review wants more, the upgrade path is a single-use session ticket as the **only** `/realtime`
+credential, so the Entra token never appears in a URL (ADR-002 alternatives).
+
+A socket is authenticated at the upgrade. A session that outlives its access token keeps running, as in
+Retail Pulse; every reconnect presents a fresh token. Resume stays keyed on the resume id, as Brian decided on
+2026-09-22 (no principal binding). This design doesn't change that.
+
+### 18.4 Token validation (parity contract)
+
+| Check | Value (both backends) |
+| --- | --- |
+| Algorithm | RS256 only. `none` and HS* are rejected |
+| Signing keys | The tenant JWKS, from OIDC discovery at `{ENTRA_INSTANCE}{tenant}/v2.0/.well-known/openid-configuration`. Fetched lazily (never at startup, so an Entra outage can't crash-loop the app), cached for 24 h, and re-fetched on an unknown `kid` at most once every 5 minutes |
+| Issuer | Exactly `{ENTRA_INSTANCE}{tenant}/v2.0`, which is `https://login.microsoftonline.com/{tenant}/v2.0` in Azure |
+| Tenant | `tid` equals `ENTRA_TENANT_ID`. Redundant with the issuer, and checked on purpose |
+| Audience | `{clientId}` or `api://{clientId}` |
+| Lifetime | `exp` and `nbf` required, with a 5-minute clock skew (the ASP.NET default and Retail Pulse's value, set explicitly on both backends) |
+| Role | `roles` contains `ENTRA_APP_ROLE` (`DriveThru.User`) |
+| Scope | `scp`, a space-delimited list, contains `ENTRA_API_SCOPE` (`access_as_user`). A token without `scp` (app-only) is rejected; Retail Pulse's `AllowAppOnlyTokens` opt-in is not ported |
+| Failure | 401 with `WWW-Authenticate: Bearer` and `{"error":"unauthorized"}` for a missing, malformed, badly signed, expired, wrong-issuer or wrong-audience token. 403 with `{"error":"forbidden"}` for a valid token without the role or scope |
+| Principal | `oid`, `tid` and `name` exposed to handlers. `request["principal"]` in Python, `HttpContext.User` in C# |
+| Logging | Never log a token. Access logs record the path **without** the query string. In Python that's an access logger class that records the matched route template, on both run paths (below); a log **format** can't do it. In C#, `Microsoft.AspNetCore.Hosting.Diagnostics` is raised to Warning, because its Information "Request starting" line includes the query string. The existing `?token=` HMAC leak is fixed by the same change |
+
+**Python access logging (both run paths).** A gunicorn format fix doesn't work. The app runs
+`aiohttp.GunicornWebWorker`, whose `_get_valid_log_format` raises `ValueError` on any gunicorn `%(name)s`
+directive (aiohttp 3.14.3 `worker.py`), so `--access-logformat '%(U)s'` would crash the worker at boot. aiohttp's
+own format has no path-only directive: `%r` is the full request line, query string included, and the default
+format (`%a %t "%r" ...`) is what leaks `?token=` today. So:
+- **`PathOnlyAccessLogger(aiohttp.abc.AbstractAccessLogger)`** in a new `app/backend/access_log.py`. It logs the
+  method, the **matched route's template** (`request.match_info.route.resource.canonical`, for example
+  `/personas/{persona_id}/menu.json`, or `<unmatched>` when no route matched), the status and the elapsed time.
+  Never `path_qs`, `rel_url`, `url` or `raw_path`, and not `request.path` either: it's percent-decoded, so a
+  hand-crafted `/realtime%3Faccess_token=X` would log as `/realtime?access_token=X`. The template also keeps
+  free-form paths out of the log.
+- **One helper, `access_log_kwargs()`,** returns `{"access_log_class": PathOnlyAccessLogger}`. Both run paths
+  spread it, so neither can drift. Each path keeps its own timeouts.
+- **gunicorn:** the worker accepts an async factory that returns a `web.AppRunner`, and then uses that runner
+  as-is. A new async factory `create_runner()` in `app.py` awaits `create_app()` and returns
+  `web.AppRunner(app, logger=logging.getLogger("gunicorn.error"), access_log=logging.getLogger("gunicorn.access"),
+  keepalive_timeout=65, shutdown_timeout=28.5, **access_log_kwargs())`. aiohttp's server errors go to gunicorn's
+  error log on purpose, as they do when the worker builds the runner itself. The Dockerfile CMD
+  targets `app:create_runner`. `create_app()` keeps returning a `web.Application`, so the tests and
+  `python app.py` don't change shape. Because the worker then ignores gunicorn's `--keep-alive` and its derived
+  shutdown timeout, the runner carries those values itself (65 s keep-alive and a 28.5 s shutdown, the worker's
+  95% of the 30 s graceful timeout). The CMD drops `--keep-alive`, which would be silently ignored, and keeps
+  `--graceful-timeout`, which the arbiter still uses. The CMD never sets `--access-logformat`.
+- **A startup failure must stop gunicorn.** `create_app()` fails fast with `sys.exit(1)` (missing env vars,
+  persona packs, catalogs, the production guard, and now the 18.5 mode checks). Under `GunicornWebWorker` that
+  doesn't stop the process: `SystemExit` bypasses the arbiter's boot-failure path (gunicorn 23 `arbiter.py`), which
+  halts the master with exit code 3 only when the worker raises an `Exception` before it has booted. With
+  `SystemExit` the worker exits 1 and the master respawns it, about 100 boots in 8 seconds, with the port accepting
+  TCP and HTTP hanging. That still fails closed, but it floods Log Analytics and makes "fails fast" untrue in the
+  container. So `create_runner()` wraps `await create_app()` in `try` / `except SystemExit as exc:` and
+  `raise RuntimeError("startup failed") from exc`. gunicorn logs `Worker failed to boot.` once and the master
+  exits 3. `python app.py` is unchanged and still exits non-zero.
+- **`python app.py`:** `web.run_app(create_app(), host=..., port=..., shutdown_timeout=..., keepalive_timeout=...,
+  **access_log_kwargs())`, with the timeouts from `config.yaml` `connection`, as today.
+- **Tests:** a unit test sends `/realtime?access_token=x&token=y` and `/realtime%3Faccess_token=x` through the
+  logger and asserts neither value appears; a test asserts `create_runner()` returns a runner with
+  `PathOnlyAccessLogger`; a test asserts `create_runner()` raises an `Exception`, not `SystemExit`, when
+  `create_app()` exits; a test asserts the `__main__` path passes `access_log_kwargs()` to `run_app`; and a
+  Dockerfile test asserts the CMD targets `app:create_runner` and contains no `%(` and no `--access-logformat`.
+  Conformance rows 14 and 15 run `python app.py`, not gunicorn, so they don't cover the deployed path by themselves.
+- **CI image-boot check** (new work: today's Docker job replaces the CMD with `sh -c`, so gunicorn has never booted
+  in CI). It runs the built image with its **default CMD**:
+  - **positive:** non-Production and unconfigured (Development pass-through), with placeholder values for the four
+    `_REQUIRED_ENV_VARS` (without them `create_app()` exits and there's nothing to probe). Wait, with a timeout,
+    for 200 from `/health`, then request `/realtime?access_token=CANARY&token=CANARY` and `/health?token=CANARY`.
+    `docker logs` must contain the `/health` access line and must not contain `CANARY`;
+  - **negative:** the same image with `RUNNING_IN_PRODUCTION=true` and no `AUTH_MODE` exits non-zero within
+    30 seconds, with exactly one `Booting worker` line in its log.
+
+**Python:** `PyJWT[crypto]` (PyJWT plus `cryptography`) with `jwt.PyJWKClient`. Its synchronous fetch runs through
+`asyncio.to_thread`, so the event loop never blocks on a cache miss. It all lives in one new module,
+`app/backend/entra_auth.py`, holding the settings, the validator and the aiohttp middleware. We rejected `msal` and
+`azure-identity` because they acquire tokens and don't validate incoming ones.
+
+**C#:** `Microsoft.AspNetCore.Authentication.JwtBearer` with explicit `TokenValidationParameters`:
+- `ValidAlgorithms = RS256`, `MapInboundClaims = false`, and `RoleClaimType = roles`;
+- the role and scope enforced in an authorization policy used as both `DefaultPolicy` and `FallbackPolicy`;
+- `.AllowAnonymous()` only on the 18.2 allow-list, where the SPA static-files middleware is anonymous by
+  position;
+- `OnMessageReceived` reading `access_token` only when the path is `/realtime`.
+
+We don't use Microsoft.Identity.Web: its `AzureAd` conventions and issuer handling make parity with PyJWT and
+the fake issuer harder. `menu.json` and asset JSON must be endpoints, never served by the static-files
+middleware, or they would bypass the policy.
+
+### 18.5 Modes and the configuration contract
+
+The mode is resolved at startup, the same way on both backends. There's no auto-detection of a provider. "Fail fast"
+means the process exits non-zero before it listens: under gunicorn that's a worker boot failure that stops the
+master (exit 3), never a respawn loop (18.4).
+
+| `AUTH_MODE` | Ids configured | Environment | Result |
+| --- | --- | --- | --- |
+| `Entra` | Valid | Any | Entra enforced |
+| `Entra` | Missing or placeholder | Any | **Fail fast** |
+| unset | Valid | Not Production | Entra enforced. Configured always means enforced, which is what lets conformance test real validation black-box |
+| unset | Partial, placeholder or non-GUID | Any | **Fail fast** (the same rule as the frontend, 18.6) |
+| unset | None | Not Production | Development pass-through, with a synthetic identity (`oid` `00000000-0000-0000-0000-000000000001`, the role and the scope) and a loud startup warning |
+| `Development` | None | Not Production | Development pass-through, the same as the row above |
+| `Development` | Any id set (`ENTRA_TENANT_ID` or `ENTRA_CLIENT_ID`, valid or not) | Any | **Fail fast.** Pass-through happens only when Entra is unconfigured, so a configured process can never skip validation |
+| unset or `Development` | Any | **Production** | **Fail fast** |
+| anything else | Any | Any | **Fail fast** |
+
+Explicit `Development` exists only so that a launcher can state its intent, mirroring the frontend's
+`VITE_AUTH_MODE=Development` (18.6). It never overrides configured ids: an id set with `Development` is treated as
+a misconfiguration, not as a request to bypass Entra.
+
+"Production" means `RUNNING_IN_PRODUCTION=true` for Python and `ASPNETCORE_ENVIRONMENT=Production` for C#. Both are
+pinned on the container apps.
+
+Both backends read the **same flat environment names**, not Retail Pulse's `MicrosoftEntra__*`, so one Bicep env
+block serves both apps:
+
+| Name | Default | Notes |
+| --- | --- | --- |
+| `AUTH_MODE` | none | `Entra` or `Development`. Pinned to `Entra` in Azure |
+| `ENTRA_TENANT_ID` | none | A GUID. The Bicep default is the subscription's tenant |
+| `ENTRA_CLIENT_ID` | none | A GUID, from the Setup output |
+| `ENTRA_API_SCOPE` | `access_as_user` | |
+| `ENTRA_APP_ROLE` | `DriveThru.User` | |
+| `ENTRA_INSTANCE` | `https://login.microsoftonline.com/` | Must be `https://`, except plain `http://` to a loopback host (`127.0.0.1`, `::1`, `localhost`), which the harness's HTTP-only fake issuer needs (fakes stay HTTP, #23). Never set in Azure, which `Verify-ProductionAuth.ps1` checks |
+| `APP_SESSION_SECRET` | none | Already a container app secret for Python. **Required** in Production Entra mode (a fail fast, not today's warning), and added to the dotnet app |
+
+We don't port Retail Pulse's separate `Security__RequireAuth` knob. Retail Pulse has it for a legacy disabled
+mode. Our resolver can't express "disabled" outside Development, so a third knob would only be a new way to
+misconfigure. In Azure, "require auth" is `AUTH_MODE=Entra` plus the production flag, and anything else won't
+boot.
+
+**Why only two modes:** Retail Pulse's provider-neutral contract (Entra, GitHub BFF, Anonymous) exists because
+Retail Pulse built real second providers. We have one audience (Brian and invited viewers in his tenant) and no
+second provider on the roadmap. Porting the contract would double the auth surface on two backends and in the
+suite. The resolver is still explicit (an unknown mode fails), so adding a mode later is additive.
+
+### 18.6 Frontend (MSAL)
+
+Ported from Retail Pulse `src/RetailPulse.Web/src/auth/`, trimmed to Entra. New `app/frontend/src/auth/`:
+
+| Piece | Behavior |
+| --- | --- |
+| `authConfig.ts` | Builds the MSAL config from `VITE_ENTRA_TENANT_ID`, `VITE_ENTRA_CLIENT_ID` and `VITE_ENTRA_API_SCOPE` (default `access_as_user`). The scope is `api://{clientId}/access_as_user`; the authority is `https://login.microsoftonline.com/{tenant}`; the redirect URI is `window.location.origin`; `navigateToLoginRequestUrl` is on, so `?persona=&model=` survive sign-in. The cache is `sessionStorage`, and PII logging is off |
+| Mode and fail-closed | **A pass-through bundle needs an explicit `VITE_AUTH_MODE=Development`.** The CI, harness and Playwright builds set it. Every other build fails closed. The resolver, used the same way by `vite.config.ts` (build guard and marker) and by `authConfig.ts` (runtime): **`Entra`** with valid ids builds an Entra bundle; `Entra` with a missing, placeholder or non-GUID id fails. **`Development`** with no ids builds a pass-through bundle; `Development` with any id set fails (the mirror of the backend rule in 18.5). **No mode:** valid ids build an Entra bundle (configured means enforced, as on the backend); with no ids a production build (`vite build`) fails, and only the dev server (`import.meta.env.DEV`, `npm run dev`) passes through, as in Retail Pulse's `authMode.ts`. Any partial or placeholder id fails in every mode. **An unknown mode** fails. The guard and the marker read the values Vite actually bakes in, through `loadEnv(mode, root, "VITE_")` (so `.env`, `.env.local` and `.env.[mode]` files count, not only `process.env`). At runtime, a bundle that somehow reaches a browser misconfigured renders a configuration-error screen and makes no API or WebSocket call. **Deliberate difference from Retail Pulse:** RP decides pass-through on `import.meta.env.DEV`; we also allow it in a production build, but only with the explicit mode, because the harness and Playwright serve built bundles |
+| Auth-mode marker | The build writes `<meta name="drivethru-auth-mode" content="Entra">` (or `Development`) into `index.html`, from the same `loadEnv` values as the guard, which `Verify-ProductionAuth.ps1` reads |
+| `AuthGate` | Wraps `PersonaProvider` and `App`, so nothing persona-related loads before sign-in. The sign-in screen uses neutral product branding. An unauthenticated load **starts `loginRedirect` automatically**, which the Entra SSO cookie makes silent on the second hostname. **No-loop rule:** the automatic redirect happens only on a clean load. After an explicit sign-out, a 403, or a **failed redirect** it shows a manual **Sign in** button instead. A failed redirect is `handleRedirectPromise` throwing because Entra returned an error: the user cancelled, `consent_required` ("Need admin approval", 18.13 step 3), or `AADSTS50105` (not assigned). The gate then shows Entra's error code and message with the **Sign in** button, never retries `loginRedirect` on its own, and never shows the "deployment misconfigured" screen, which is only for a bad build. A 403 (a token without the role or the scope) shows "not authorized: ask Brian to assign you **DriveThru.User**". An unassigned user usually never reaches our screens: Entra stops them at sign-in with `AADSTS50105`, often on Entra's own page (18.1) |
+| `authorizedFetch` | Adds the bearer only to the explicit protected same-origin paths: `/api/**`, `/personas/{id}/menu.json`, and `/personas/{id}/assets/**` except the anonymous branding types (18.2). Never to any other request, and never cross-origin (the direct-AOAI debug mode keeps its own key). A 401 forces a token refresh and one retry, then goes back to sign-in; a 403 goes to access denied |
+| WebSocket | Before each connect: acquire the token silently, then fetch `/api/auth/session` with it, then open `/realtime?persona=&model=&token=<hmac>&access_token=<entra>`. The same happens on reconnect and resume (18.3) |
+| Removed | The legacy `context/auth-context.tsx` (`VITE_AUTH_URL`, `VITE_AUTH_ENABLED`) and its `.env` defaults |
+
+### 18.7 Two backend hostnames
+
+- **One registration** with one SPA redirect URI per origin (18.1). `Setup-EntraAuth.ps1 -FromAzdEnv` reads
+  `BACKEND_URI` and `BACKEND_DOTNET_URI`, so adding the dotnet host in #17 means re-running Setup.
+- **MSAL state per host.** MSAL's cache is per origin, so the other hostname starts with an empty cache. The gate's
+  automatic `loginRedirect` goes to Entra as a top-level navigation, which uses the first-party SSO cookie. It
+  returns without a prompt and without depending on third-party cookies (unlike `ssoSilent` in an iframe).
+  Persona and model survive in the URL.
+- **No CORS.** Each host serves its own SPA, every API and WebSocket call is same-origin, and the backend switch is
+  a navigation. `security.allowed_origins` stays empty, and the Origin check stays same-origin.
+
+### 18.8 Infra and the image build
+
+| Change | Detail |
+| --- | --- |
+| Bicep params | `entraTenantId` (default `tenant().tenantId`), `entraClientId`, `entraApiScope`, `entraAppRole`, mapped in `main.parameters.json` from the azd env `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, `ENTRA_API_SCOPE` and `ENTRA_APP_ROLE` |
+| Ingress switch | `backendIngressEnabled` (bool, **default `true`**) in `main.bicep`, from the azd env `BACKEND_INGRESS_ENABLED` (`"${BACKEND_INGRESS_ENABLED=true}"` in `main.parameters.json`, so an unset variable means on), passed to the Python app's `ingressEnabled` (the module param already exists). The dotnet app gets `backendDotnetIngressEnabled` from `BACKEND_DOTNET_INGRESS_ENABLED` with #17. It's what makes the 18.10 rollout dark until verified. The default keeps every other environment unchanged |
+| Python app env | `AUTH_MODE=Entra`, the four `ENTRA_*` values, and `RUNNING_IN_PRODUCTION=true` (already pinned) |
+| Dotnet app env (#17) | The same, plus `ASPNETCORE_ENVIRONMENT=Production` and the `APP_SESSION_SECRET` secret (the same param as Python) |
+| EasyAuth removed | Delete `enableAuth`, `authClientId`, `authClientSecret`, the `aad-client-secret` secret plumbing, the `containerAppAuth` module and `core/security/container-app-auth.bicep`. `DEPLOY.md`'s EasyAuth section is replaced |
+| postprovision | New `scripts/postprovision_auth.ps1` and `.sh`, run before `write_env`: `az containerapp auth update --enabled false` for every container app in the environment, and removal of a leftover `aad-client-secret`. Idempotent, and it fails the hook on error, as in Retail Pulse |
+| SPA build values | `ARG VITE_AUTH_MODE=Entra` plus `ARG VITE_ENTRA_TENANT_ID VITE_ENTRA_CLIENT_ID VITE_ENTRA_API_SCOPE` in the **build stage only** of `app/Dockerfile` (and `Dockerfile.dotnet` from #17). **The mode defaults to `Entra`,** so an image build that loses its build args (the remote-build risk below) fails the Vite guard instead of shipping a Development bundle. `azure.yaml` `docker.buildArgs` sets `VITE_AUTH_MODE=Entra` and `VITE_ENTRA_*=${ENTRA_*}` from the azd env, for both services. `scripts/docker-build.sh` passes the same `--build-arg`s from the environment. The CI Docker job (`conformance.yml`) passes `--build-arg VITE_AUTH_MODE=Development` explicitly, and every CI `npm run build` step sets `VITE_AUTH_MODE=Development`. The Dockerfile's `.env` generation and `.dockerignore`'s `!app/frontend/.env` exception are removed, so build args are the only path in. These are public identifiers; the old "avoid ARG" comment is rewritten to say so |
+| Contract test | A pytest guard (next to `test_azd_service_wiring.py`) asserting: both apps pin `AUTH_MODE=Entra` and their production flag; no app sets `ENTRA_INSTANCE`; no EasyAuth module or secret remains; `buildArgs` carry the four `VITE_*` values for every service; each Dockerfile declares `ARG VITE_AUTH_MODE=Entra`; `backendIngressEnabled` defaults to `true`, is mapped from `BACKEND_INGRESS_ENABLED`, and is wired to the Python app's `ingressEnabled` (and the dotnet app's with #17) |
+
+The azd remote build (`remoteBuild: true`) must pass `buildArgs` through to ACR. Squanchy verifies this on the
+first deploy. If it doesn't, that service sets `remoteBuild: false`, which is a one-line fallback.
+
+### 18.9 Scripts (ported, non-secret)
+
+| Script | What it does |
+| --- | --- |
+| `scripts/Setup-EntraAuth.ps1` | Creates or reconciles the registration in 18.1 through `az rest` against Graph, with the caller's delegated token. Preview by default; nothing is written without `-Apply`. Create-only by display name: it fails on a name collision and never adopts by name. Reconcile needs `-ClientId` or `-AppObjectId`, plus ownership and the managed tag. Sets the v2 token version, the scope, the role, SPA-only redirect URIs (`-FrontendOrigin`, `-RedirectUri`, `-FromAzdEnv`) and the Azure CLI pre-authorization; sets `appRoleAssignmentRequired`; and assigns the caller (or `-AssignUserUpn`). With `-FromAzdEnv` it fails on an empty `BACKEND_URI` (the azd env value is blank while ingress is off, 18.10), rather than reconciling the redirect URIs without it. Creates no secrets, reads no `.env` file, and prints only ids plus the `azd env set` lines |
+| `scripts/Verify-EntraAuth.ps1` | Read-only check of the registration: single tenant; no password or key credentials; `api://{clientId}`; the scope and role present and enabled; v2 tokens; at least one SPA redirect URI and no Web ones; `appRoleAssignmentRequired`. Non-zero exit on any gap |
+| `scripts/Verify-ProductionAuth.ps1` | Read-only live posture for **each** deployed app. **Env pins:** `AUTH_MODE=Entra`; the production flag; the `ENTRA_*` values matching the expected ids (printed redacted); no `ENTRA_INSTANCE`. **Active revisions:** lists every revision with `properties.active == true`, not only the app template. Each must run the expected image (`-ExpectedImage`, default the azd env `SERVICE_<NAME>_IMAGE_NAME`) and carry the same env pins; any active revision on another image or without `AUTH_MODE=Entra` fails, and zero active revisions fails. **EasyAuth:** passes only on an observed `platform.enabled == false` (an unknown state is a failure) and no `aad-client-secret`. **Anonymous probes:** `/` is 200 and carries the `Entra` marker; `/health` is 200; a branding asset is 200; `/api/personas`, `/api/auth/session`, `menu.json` and asset JSON are 401; `/api/personas?access_token=<synthetic>` is 401; the `/realtime` upgrade is 401 with no token and with a synthetic token. **Registration:** delegates to `Verify-EntraAuth.ps1`. **`-RevisionsOnly`:** runs only the env-pin, active-revision and EasyAuth checks, through `az`, with no HTTP probes, so it works while ingress is off (18.10 step 4a); it also fails if ingress is enabled, since it's the dark check. **Optional `-Authenticated`:** gets a delegated token through `az account get-access-token` and expects 200 from `/api/personas`, never printing the token |
+
+Pester or pytest source-scan tests pin the safety properties, like Retail Pulse's `SetupEntraAuthScriptContractTests`:
+writes only under `-Apply`, no credential creation, no `.env` reads, no token output.
+
+### 18.10 Rollout and unlock order
+
+**Today, `azd provision` re-enables external ingress and sets min replicas to 1.** And the apps use
+`activeRevisionsMode: Single` (`infra/core/host/container-app.bicep`): ACA keeps the previous revision active until
+a new one is ready, and keeps it if the new one never becomes ready. So "the new image fails fast" doesn't fail
+closed by itself. It leaves the **old, unauthenticated revision** active, and if the provisioned revision also
+fails (a bad id, a missing secret), a provision that turns ingress on makes that old revision public (min
+replicas 0 is no protection: HTTP scaling wakes it). Deactivating revisions by hand doesn't fix this reliably:
+it isn't documented to work in Single mode while the latest revision isn't ready, switching to Multiple mode
+changes a second production setting mid-rollout, and ingress would still come on before any post-provision check.
+
+**So enabling ingress is the last step, and it's a separate provision.** The modules already have the switch:
+`ingressEnabled` in `container-app.bicep`, passed through by `container-app-upsert.bicep`. `main.bicep` exposes it
+as `backendIngressEnabled`, mapped in `main.parameters.json` from the azd env `BACKEND_INGRESS_ENABLED`, **defaulting
+to `true`** so no other environment changes (18.8). The revision mode never changes.
+
+1. The Python backend, frontend and infra changes merge to `dev`.
+2. Brian runs Setup (18.13), then `azd env set` the printed ids.
+3. `azd deploy` while ingress is still disabled. The new image in Production without `AUTH_MODE` fails fast (under
+   gunicorn that's a clean exit, 18.4). **That is expected:** `azd deploy` may report the revision as failed or
+   unhealthy. Don't "fix" it by provisioning with ingress on.
+4. **Dark provision:** `azd env set BACKEND_INGRESS_ENABLED false`, then `azd provision`. This pins
+   `AUTH_MODE=Entra` and the ids and sets min replicas to 1 with ingress still off. Postprovision disables EasyAuth.
+   The new revision starts, and its `/health` probe decides readiness while nothing is public. In Single mode ACA
+   retires the old revisions on its own once the new one is ready.
+   - **4a. Check while dark:** `Verify-ProductionAuth.ps1 -RevisionsOnly` (18.9). It must show exactly one active
+     revision, on the new image, with `AUTH_MODE=Entra`, healthy and running. If an old revision is still active,
+     the new one isn't ready: read its logs and fix it while dark. Don't touch the revision mode.
+   - There's no manual deactivation and no `set-mode` step. Listing revisions by hand
+     (`az containerapp revision list -n <app> -g rg-azureaidrivethru-prod --query "[?properties.active]"`) is an
+     optional cross-check, never a gate.
+5. **Public provision:** `azd env set BACKEND_INGRESS_ENABLED true`, then `azd provision`. Ingress is app
+   configuration, not revision template, so this creates no new revision. Run `Verify-ProductionAuth.ps1` (and
+   `-Authenticated`) at once. It repeats the active-revision check. On any failure, run
+   `az containerapp ingress disable` (or set the variable back to `false` and provision), then fix it.
+6. Brian signs in on the live URL, and the lock note on #85 is closed out.
+
+**The rule:** never run `azd provision` or `azd up` against `azureaidrivethru-prod` with `BACKEND_INGRESS_ENABLED`
+true (or unset) until 4a has passed with ingress off.
+
+**Side effects of the dark provision:**
+- With ingress off, the module's `uri` output is empty (`container-app.bicep`), so `BACKEND_URI` in the azd env is
+  blank until step 5. Setup already ran at step 2. Nothing else reads it today (the postprovision and postdeploy
+  hooks don't), and any new hook that reads it must tolerate an empty value. `Setup-EntraAuth.ps1 -FromAzdEnv`
+  **fails** on an empty `BACKEND_URI` instead of reconciling the redirect URIs without it.
+- There's no HTTP scale rule while ingress is off. Min replicas 1 keeps the revision running for the probe.
+
+The dotnet app (#17) goes live only after the C# parity work, with the same steps and verification (its own
+`BACKEND_DOTNET_INGRESS_ENABLED`, wired the same way).
+
+### 18.11 Conformance
+
+**Harness:** Birdperson's new `FakeEntraIssuer` in `Conformance.Fakes`, an HTTP loopback server that serves:
+- `/{tenant}/v2.0/.well-known/openid-configuration`, with the issuer `http://127.0.0.1:{port}/{tenant}/v2.0`;
+- a JWKS with one published RSA key;
+- a second, unpublished key for the bad-signature row;
+- a `Mint(claims overrides)` helper.
+
+**Fixtures:** the harness runs backends as Production (`RUNNING_IN_PRODUCTION=true`,
+`ASPNETCORE_ENVIRONMENT=Production`), and Production without Entra now fails fast. So:
+- The **default fixture runs in Entra mode** against the fake issuer (`ENTRA_INSTANCE` pointing at the loopback
+  address).
+- The harness HTTP client and `RealtimeBrowserClient` attach a valid token by default: the header for REST, and
+  `?access_token` plus the HMAC `?token` for `/realtime`. Every existing scenario then exercises the authenticated
+  path.
+- A `DevelopmentPassThrough` fixture (non-Production, unconfigured) runs the mode rows and the Playwright UX runs.
+
+A backend that doesn't enforce auth yet ignores the extra env and tokens, so the harness can land first.
+
+**Rows,** run on both backends. Each runs on REST (`/api/personas`, `/api/auth/session`, `menu.json`) and on
+`/realtime` unless noted:
+
+| # | Case | Expected |
+| --- | --- | --- |
+| 1 | No token | 401 with `WWW-Authenticate: Bearer`; on `/realtime`, 401 before the upgrade |
+| 2 | Wrong tenant (issuer and `tid` of another tenant, signed with the published key) | 401 |
+| 3 | Wrong audience | 401 |
+| 4 | Missing role | 403 |
+| 5 | Missing scope; app-only token (roles, no `scp`) | 403 |
+| 6 | Expired past the skew (`exp` = now minus 10 min) | 401 |
+| 6b | Expired inside the skew (`exp` = now minus 1 min) | Accepted (pins the 5-minute skew on both backends) |
+| 7 | Bad signature (unpublished key); `alg: none`; HS256 | 401 |
+| 8 | Valid | 200. On `/realtime`, the socket opens and `extension.metadata` arrives |
+| 9 | A valid token as `?access_token` on a REST path | 401 (the query token is read on `/realtime` only) |
+| 10 | `/realtime` with a valid Entra token and no session token; with a session token minted for another `oid`; with both matching | 401; 401; opens |
+| 11 | Bad Origin and no token on `/realtime` | 401 (the Entra check runs first on both backends) |
+| 12 | Anonymous allow-list: `/`, `/health`, `/personas/sonic/assets/logo.svg`, an apology clip | 200 with no token. `/personas/sonic/assets/demo/dummyOrder.json` is 401 |
+| 13 | Unknown persona on `/realtime` with no token | 401, not 404 |
+| 14 | Logging: after rows 8 and 10, the captured backend output contains neither token | Pass. The harness runs `python app.py`, not gunicorn, so the deployed gunicorn path is pinned by the unit and Dockerfile tests in 18.4 |
+| 15 | Modes (launch-and-exit rows): Production and unconfigured; Production with `AUTH_MODE=Development`; `AUTH_MODE=Development` with `ENTRA_TENANT_ID` and `ENTRA_CLIENT_ID` set, not Production; `AUTH_MODE=Development` with only one id set, not Production; unknown `AUTH_MODE`; `ENTRA_INSTANCE=http://` to a non-loopback host; Entra with a placeholder client id | The process exits non-zero before listening. The harness runs `python app.py`; the gunicorn image is covered by #144's CI boot check (18.4) |
+| 16 | Development pass-through (non-Production, unconfigured, with `AUTH_MODE` unset and with `AUTH_MODE=Development`) | 200 with no token; `/realtime` opens |
+
+Rows are turned on per backend when that backend's auth lands: by the Python issue for `python`, and by the C#
+issue for `dotnet`, through the existing `DotnetPlaceholderPolicy` pattern. The gate then requires both legs.
+
+### 18.12 Work breakdown
+
+| Issue | Work | Owner | Milestone | Depends on |
+| --- | --- | --- | --- | --- |
+| #143 | Harness `FakeEntraIssuer`, Entra-mode default fixture, token-attaching clients, rows 1 to 16 | Birdperson | P2 | This ADR |
+| #144 | Python: `entra_auth.py`, route matrix, `/realtime` check order, layered session token, modes (explicit `Development` with ids fails fast), route-template access logger on both run paths, `create_runner()` turning a startup exit into a clean gunicorn halt, CI image-boot check | Unity | P2 | This ADR; #143 harness part lands first |
+| #145 | Frontend: MSAL `AuthGate` (no retry after a failed redirect), `authorizedFetch` on the protected path list, per-connect WebSocket tokens, fail-closed config (explicit `Development` for pass-through bundles, `loadEnv`), marker, removal of legacy auth | Morty | P2 | This ADR. Mocked MSAL, so it can start now |
+| #146 | Infra: Bicep pins, `backendIngressEnabled` switch, EasyAuth removal, postprovision, build args (`VITE_AUTH_MODE=Entra` default), Setup and Verify scripts (active-revision check, `-RevisionsOnly`), contract test, `DEPLOY.md`, then the rollout in 18.10 (dark provision, check, then enable ingress) | Squanchy | P2 | This ADR for the scripts; #144 and #145 for the rollout |
+| #147 | C#: JwtBearer parity, fallback policy, layered session token, check order, modes (explicit `Development` with ids fails fast), log level, dotnet rows on | Beth | S5 | #13, #143; it gates #17 |
+
+**Order:** #143 harness first, then #144. Meanwhile #145 and the #146 scripts proceed. Brian runs Setup once the #146
+scripts merge. Then the #146 rollout (18.10) unlocks staging. #147 follows #13 and must land before #17 makes
+the dotnet app public.
+
+### 18.13 What Brian does
+
+1. Review and accept this ADR (the PR).
+2. When the Setup script merges, from the repo root with the azd env selected:
+   `az login --tenant <tenant-id>`, then `./scripts/Setup-EntraAuth.ps1 -TenantId <tenant-id> -FromAzdEnv`
+   (preview), then the same command with `-Apply`. It creates the registration and assigns him `DriveThru.User`.
+   He then runs the `azd env set` lines it prints. Squanchy can drive it, but it has to run as Brian, because it
+   creates an app registration in his tenant.
+3. Only if the first sign-in shows "Need admin approval": grant admin consent for `AzureAIDriveThru` once
+   (Enterprise applications, Permissions), or ask the tenant admin. Retail Pulse, in the same tenant, is the
+   precedent. The gate shows Entra's error with a **Sign in** button and doesn't retry by itself (18.6), so press
+   it after consent is granted.
+4. Assign `DriveThru.User` to anyone else who should use the demo. Someone who isn't assigned is stopped by Entra
+   at sign-in with `AADSTS50105`, not by the app.

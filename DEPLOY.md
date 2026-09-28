@@ -48,6 +48,7 @@ account, and paid Search service; see `docs/persona-architecture.md` section
 | `openAiModelDeployments` | *(not wired to an env var)* | `infra/model-deployments.json` (loaded via `loadJsonContent()`): `gpt-realtime-2.1` (GlobalStandard, capacity from `realtimeDeploymentCapacity`, `isDefaultRealtime: true`) and `text-embedding-3-large` (capacity from `embeddingDeploymentCapacity`) | Each entry is `{catalogId, deploymentName, modelName, modelVersion, format, skuName, capacity, isDefaultRealtime}` (`format` is the Foundry model-format id, defaults to `OpenAI` when omitted). `AZURE_AI_MODEL_DEPLOYMENTS` output/env exposes the resulting catalogId to deploymentName map (section 7.2) for the model catalog in `app/backend/config.yaml`. Adding a #82 model is one new entry in `infra/model-deployments.json`, no Bicep edits. |
 | `realtimeDeploymentCapacity` | `AZURE_OPENAI_REALTIME_DEPLOYMENT_CAPACITY` | `10` | Scale-only override for the `gpt-realtime-2.1` entry above (section 10.3): bump the param, then `azd provision`. |
 | `searchServiceSkuName` | `AZURE_SEARCH_SERVICE_SKU` | `basic` | Paid tier for a clean-clone `azd up` (design section 10.2): Basic removes the free tier's 3-index cap at roughly a third of Standard's cost. |
+| `searchServiceLocation` | `AZURE_SEARCH_SERVICE_LOCATION` | *(empty -- falls back to `location`)* | Independent region override for the Search module only (same pattern as `openAiServiceLocation`/`AZURE_OPENAI_SERVICE_LOCATION`). Set this when the main `location` has no Basic-SKU Search capacity: `azureaidrivethru-prod` (#87) uses `eastus` here while everything else stays in `eastus2` (design section 10.2). |
 | `deployDotnetApp` | `DEPLOY_DOTNET_APP` | `false` | Deploys the `acaBackendDotnet` Container App module (same Foundry account, Search service, and managed identity as the Python app, no extra RBAC needed). Stays `false` until `app/backend-dotnet` exists (#17); `azure.yaml` has no `backend-dotnet` service yet, so `azd` never targets it while disabled. |
 | `dotnetServiceName` | `AZURE_CONTAINER_APP_DOTNET_NAME` | *(auto-generated)* | Only used when `deployDotnetApp` is `true`. |
 
@@ -110,6 +111,10 @@ This only changes which persona a session gets when it doesn't name one
 reachable by a session that requests it explicitly.
 
 ## Enable Entra ID Authentication (EasyAuth)
+
+> **Superseded by [ADR-002](docs/adr/ADR-002-entra-authentication.md).** Do not enable EasyAuth. The app moves
+> to in-app Entra ID validation following Retail Pulse (design doc section 18), and this section is replaced
+> by the new Setup and Verify scripts when that work lands.
 
 Authentication is **opt-in** — a plain `azd up` deploys without auth. To protect
 the app with Entra ID (single-tenant), follow these one-time steps.
