@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { InteractionStatus } from '@azure/msal-browser';
 import { AUTH_FORBIDDEN_EVENT, AUTH_REQUIRED_EVENT } from '../authorizedFetch';
 import { setRedirectError, resetRedirectErrorForTests } from '../redirectError';
+import { signOutInteractive } from '../signOut';
 
 const { mockAuthMode } = vi.hoisted(() => ({
   mockAuthMode: { mode: 'entra' as 'entra' | 'development' },
@@ -30,6 +31,16 @@ vi.mock('@azure/msal-react', () => ({
   useMsal: () => useMsal(),
 }));
 
+// R2: signOutInteractive() (the in-app header logout control's entry point) reaches MSAL through
+// `getMsalInstance()` in `signOut.ts`, not through the `useMsal()` hook `EntraAuthGate` uses --
+// this is a SEPARATE mock so a test of one path can't be satisfied by a call on the other path.
+const msalInstanceLogoutRedirect = vi.fn();
+vi.mock('../msalInstance', () => ({
+  getMsalInstance: () => ({
+    logoutRedirect: (...args: unknown[]) => msalInstanceLogoutRedirect(...args),
+  }),
+}));
+
 // Imported after the mocks above are registered.
 import { AuthGate } from '../AuthGate';
 
@@ -42,6 +53,7 @@ beforeEach(() => {
   loginRedirect.mockReset();
   loginRedirect.mockResolvedValue(undefined);
   logoutRedirect.mockReset();
+  msalInstanceLogoutRedirect.mockReset();
   acquireApiToken.mockReset();
   acquireApiToken.mockResolvedValue('fresh-token');
   useMsal.mockReturnValue({
@@ -286,6 +298,66 @@ describe('AuthGate — R1: the AUTH_REQUIRED_EVENT auto-redirect guard survives 
     } finally {
       getItemSpy.mockRestore();
     }
+  });
+
+  it('R1 (round 3): does not loop when sessionStorage can read but setItem throws (e.g. quota exceeded)', () => {
+    // The MSAL token cache also lives in sessionStorage, so a full quota is a realistic way for
+    // reads to keep working while writes fail. Simulate three full "page loads" (render, dispatch,
+    // unmount) the same way the round-1 loop test above does: a caller that only checked "did
+    // setItem throw" would misread every failed write as a successfully armed guard and redirect
+    // every single time.
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('quota exceeded', 'QuotaExceededError');
+    });
+    try {
+      useIsAuthenticated.mockReturnValue(true);
+      for (let i = 0; i < 3; i += 1) {
+        const { unmount } = render(<AuthGate>{child}</AuthGate>);
+        act(() => {
+          window.dispatchEvent(new CustomEvent(AUTH_REQUIRED_EVENT));
+        });
+        unmount();
+      }
+
+      expect(loginRedirect).not.toHaveBeenCalled();
+
+      render(<AuthGate>{child}</AuthGate>);
+      act(() => {
+        window.dispatchEvent(new CustomEvent(AUTH_REQUIRED_EVENT));
+      });
+      expect(screen.getByTestId('auth-required-message')).toBeInTheDocument();
+      expect(screen.getByTestId('auth-signin-button')).toBeInTheDocument();
+    } finally {
+      setItemSpy.mockRestore();
+    }
+  });
+});
+
+describe('AuthGate — R2 (round 3): sign-out clears the auth-required-redirected guard', () => {
+  // Mutation coverage: removing `clearAuthRequiredRedirected()` from either sign-out path below
+  // must fail one of these two tests -- previously it passed all 24 tests with no coverage at all.
+  it('"Sign in with a different account" clears the guard and calls logoutRedirect', async () => {
+    window.sessionStorage.setItem('drivethru.auth.authRequiredRedirected', '1');
+    useIsAuthenticated.mockReturnValue(true);
+    render(<AuthGate>{child}</AuthGate>);
+    act(() => {
+      window.dispatchEvent(new CustomEvent(AUTH_FORBIDDEN_EVENT));
+    });
+    await screen.findByTestId('auth-forbidden');
+
+    await userEvent.click(screen.getByTestId('auth-switch-account-button'));
+
+    expect(window.sessionStorage.getItem('drivethru.auth.authRequiredRedirected')).toBeNull();
+    expect(logoutRedirect).toHaveBeenCalledTimes(1);
+  });
+
+  it('signOutInteractive() (the in-app header logout control) clears the guard', () => {
+    window.sessionStorage.setItem('drivethru.auth.authRequiredRedirected', '1');
+
+    signOutInteractive();
+
+    expect(window.sessionStorage.getItem('drivethru.auth.authRequiredRedirected')).toBeNull();
+    expect(msalInstanceLogoutRedirect).toHaveBeenCalledTimes(1);
   });
 });
 

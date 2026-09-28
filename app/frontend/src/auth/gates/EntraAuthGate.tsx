@@ -98,8 +98,13 @@ export function EntraAuthGate({ children }: { children: ReactNode }) {
     const onAuthRequired = () => {
       setForbidden(false);
       setAuthRequired(true);
-      if (!hasAuthRequiredRedirected()) {
-        markAuthRequiredRedirected();
+      // Item R1 (round 3): only redirect when the flag is durably armed -- i.e.
+      // `markAuthRequiredRedirected()` actually wrote it AND read it back -- not merely when the
+      // write didn't throw. Otherwise a `sessionStorage` that can read but not write (e.g. a
+      // `QuotaExceededError` from the MSAL cache filling it) never looks "already redirected" and
+      // this fires loginRedirect on every single load, which is exactly the loop this guard
+      // exists to prevent.
+      if (!hasAuthRequiredRedirected() && markAuthRequiredRedirected()) {
         startLoginRedirect();
       }
     };

@@ -67,11 +67,25 @@ export function hasAuthRequiredRedirected(): boolean {
   }
 }
 
-export function markAuthRequiredRedirected(): void {
+/**
+ * True only when the flag is now durably set: written, then read back (PR GH-148 review round 3,
+ * item R1). `setItem` can throw while `getItem` still works -- e.g. `QuotaExceededError`, since
+ * the MSAL token cache also lives in `sessionStorage` and can fill it -- so a caller that only
+ * checked for a thrown write would wrongly believe the guard is armed. `hasAuthRequiredRedirected`
+ * would then keep reading back `false` forever, and the caller would redirect on every single
+ * load: exactly the loop ADR-002 item 12 forbids. Reading the value back after the write, rather
+ * than trusting that `setItem` not throwing means it landed, is what makes this safe.
+ */
+export function markAuthRequiredRedirected(): boolean {
   try {
     window.sessionStorage.setItem(AUTH_REQUIRED_REDIRECTED_KEY, '1');
+    return window.sessionStorage.getItem(AUTH_REQUIRED_REDIRECTED_KEY) === '1';
   } catch {
-    // sessionStorage may be unavailable; hasAuthRequiredRedirected() already fails safe above.
+    // sessionStorage may be unavailable, or the write itself may have thrown (e.g. quota
+    // exceeded); either way, the guard did not actually get armed, so callers must not proceed as
+    // though it had. hasAuthRequiredRedirected() already fails safe on read to "true" above, but a
+    // caller that gates the redirect on THIS return value never gets that far in the same tick.
+    return false;
   }
 }
 
