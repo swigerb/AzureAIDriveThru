@@ -257,9 +257,9 @@ real tool/order-state implementation lands (interface shape agreed with Summer v
 #14/#140, then re-aligned in this revision to drop the `sessionId` parameter per #14's merged PR
 #149 contract).
 
-**Conformance `Dotnet=ready`: 33 -&gt; 72 test methods, all passing**
+**Conformance `Dotnet=ready`: 33 -&gt; 77 test methods, all passing**
 (`CONFORMANCE_BACKEND=dotnet dotnet test Conformance.slnx --filter "Dotnet=ready"` is green,
-72/72). The 39 newly-tagged this revision, all confirmed real-backend scenarios (not harness
+77/77). The 44 newly-tagged this revision, all confirmed real-backend scenarios (not harness
 self-tests):
 
 - `PersonaDiscoveryConformanceTests` -- the 5th method (session-metadata echo), previously blocked
@@ -287,6 +287,9 @@ self-tests):
   -- a guest-initiated `extension.end_session` now closes the browser socket with the fixed
   1000/"session_ended" shape (`rtmt.py`'s `_forward_messages` branch), needing no session-registry
   state unlike the file's other two scenarios (4002 supersede, 4000 idle timeout -- both still #15).
+- `Scenarios/Security/AllowListBypassHardeningTests` (all 5 methods, class-level) -- the fast-path
+  anchoring, per-type top-level-key rebuild, and (per fix 4 below) the duplicate-top-level-key
+  drop-frame-and-stay-alive contract are all confirmed matching `rtmt.py`'s hardening.
 
 **Bugs found and fixed via the conformance sweep** (none were pre-existing scope reductions --
 these are genuine parity gaps against `rtmt.py`):
@@ -306,17 +309,23 @@ these are genuine parity gaps against `rtmt.py`):
    .NET behavior difference from `JsonDocument`, which tolerates duplicates. Both malformed-frame
    guard clauses (`RelayBrowserToUpstreamAsync`, `RelayUpstreamToBrowserAsync`) only caught
    `JsonException`; widened to `catch (Exception ex) when (ex is JsonException or ArgumentException)`.
+4. Fix 3 above was necessary but not sufficient: `JsonObject`'s backing dictionary is built
+   *lazily*, on the first property access, not during `JsonNode.Parse` itself -- so the duplicate-key
+   `ArgumentException` was actually being thrown one line later, inside `GetString(message, "type")`,
+   which sat just *outside* the widened try/catch. That escaped exception killed the relay loop's
+   task outright, which is exactly why `AllowListBypassHardeningTests`'s duplicate-key scenario kept
+   timing out waiting for the post-frame liveness probe even after fix 3 landed -- the socket never
+   processed another frame because the loop that reads it had already died. Fixed by moving the
+   first property access (`GetString(message, "type")`) inside the same try block as `Parse`, on
+   both the client-&gt;server and server-&gt;browser sides. Reproduced and confirmed in isolation with a
+   throwaway `dotnet run probe.cs` script before touching the real code: `JsonNode.Parse` on a
+   duplicate-key payload returns successfully, but the very next property access on the result
+   throws `"An item with the same key has already been added"`.
 
-**Known remaining gap**: `Scenarios/Security/AllowListBypassHardeningTests
-.Duplicate_top_level_type_key_is_resolved_by_last_value_or_the_whole_frame_is_dropped` still times
-out (a liveness-probe assertion, not a crash) even after fix 3 above. The `ArgumentException`
-catch-widening was independently verified correct in isolation (`JsonNode.Parse` on the exact
-duplicate-key payload reproduces the exception), and the aggregate targeted sweep improved after
-the fix (243/40 -&gt; 245/38 failing before the fallback/instructions fix above was even counted),
-but this one specific scenario's root cause was not isolated in the time available -- the test
-harness only surfaces captured backend stdout/stderr on a *failing* test, which made ad-hoc debug
-tracing inconclusive (no output at all appeared for this specific failing case, including
-unconditional trace lines that should fire regardless). Left untagged; flagged for follow-up.
+All 5 `AllowListBypassHardeningTests` methods pass and are tagged after this fix (the other 4 had
+apparently never been run against the tagged/untagged boundary before -- they turned out to already
+be passing once actually attempted, unrelated to fix 4; only the duplicate-key one needed the code
+change).
 
 Also still gapped, believed to depend on #14's real tool-executor/order-state landing (not
 investigated further this revision, `StubToolExecutor` is deliberately inert beyond the one
@@ -341,8 +350,9 @@ so a future auth check slots in ahead of persona/model resolution without restru
 
 `origin/dev` was merged into this branch this revision (merge commit `7e99761`, no rebase/force-push,
 picking up `383e212`/`4a52af4` -- none of which touch files this issue's work modifies). The
-`Dotnet=ready` count (72/72) and the full C# unit-test suite (230/230) were both reconfirmed green
-after the merge.
+`Dotnet=ready` count (72/72 at that point) and the full C# unit-test suite (230/230) were both
+reconfirmed green after the merge; the duplicate-key fix (bug 4 above) and its 5 newly-tagged
+`AllowListBypassHardeningTests` scenarios landed afterward, bringing the final count to 77/77.
 
 ## Traversal defense mutation-test note (PR #122 review item 1)
 

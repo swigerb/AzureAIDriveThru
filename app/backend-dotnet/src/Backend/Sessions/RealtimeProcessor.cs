@@ -342,24 +342,28 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                 }
 
                 JsonObject message;
+                string msgType;
                 try
                 {
                     message = JsonNode.Parse(Encoding.UTF8.GetString(frame.Payload)) as JsonObject
                         ?? throw new JsonException("Client frame was not a JSON object.");
+                    // JsonObject's backing dictionary is built lazily on first property access, not
+                    // during Parse itself -- so a frame with a duplicate top-level key (e.g. two
+                    // "type" fields) does NOT throw here. It throws "An item with the same key has
+                    // already been added" (ArgumentException) the first time something indexes into
+                    // the object, which is why GetString(...) has to stay inside this try too: a
+                    // parse that "succeeds" can still defer-fail on the very next line, and if that
+                    // throw escaped uncaught it would kill this relay loop outright (verified via
+                    // Scenarios/Security/AllowListBypassHardeningTests.cs's duplicate-key probe,
+                    // which timed out waiting for post-frame liveness until this was fixed).
+                    msgType = GetString(message, "type") ?? "";
                 }
                 catch (Exception ex) when (ex is JsonException or ArgumentException)
                 {
-                    // ArgumentException: JsonNode.Parse builds JsonObject via a dictionary keyed on
-                    // property name, so a frame with a duplicate top-level key (e.g. two "type"
-                    // fields) throws "An item with the same key has already been added" instead of
-                    // a JsonException -- a distinct failure mode from ordinary malformed JSON, but
-                    // the same "drop this one frame, keep the socket alive" contract applies (see
-                    // Scenarios/Security/AllowListBypassHardeningTests.cs's duplicate-key probe).
                     _logger?.LogWarning("Dropped malformed/non-object client→server frame (session={SessionId})", sessionId);
                     continue;
                 }
 
-                var msgType = GetString(message, "type") ?? "";
                 if (msgType.Length == 0)
                 {
                     _logger?.LogWarning("Dropped client→server frame with a missing/non-string type (session={SessionId})", sessionId);
@@ -750,21 +754,22 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                 }
 
                 JsonObject message;
+                string msgType;
                 try
                 {
                     message = JsonNode.Parse(Encoding.UTF8.GetString(frame.Payload)) as JsonObject
                         ?? throw new JsonException("Upstream frame was not a JSON object.");
+                    // Same lazy-dictionary deferred-throw hazard as the client→server side above --
+                    // GetString(...) has to stay inside this try (see that side's comment for why),
+                    // kept consistent even though the fake upstream in practice never sends a
+                    // duplicate-key frame, so a future real-upstream one can't crash the relay.
+                    msgType = GetString(message, "type") ?? "";
                 }
                 catch (Exception ex) when (ex is JsonException or ArgumentException)
                 {
-                    // Same duplicate-top-level-key ArgumentException as the client→server side
-                    // above -- kept consistent even though the fake upstream in practice never
-                    // sends one, so a future real-upstream duplicate key can't crash the relay.
                     _logger?.LogWarning("Dropped malformed/non-object server→client frame (session={SessionId})", sessionId);
                     continue;
                 }
-
-                var msgType = GetString(message, "type") ?? "";
 
                 // Echo-suppression/barge-in side effects -- independent of the passthrough/switch
                 // dispatch below, mirroring rtmt.py's dual marker-substring + switch-case wiring

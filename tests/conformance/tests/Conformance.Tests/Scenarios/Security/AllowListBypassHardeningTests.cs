@@ -43,6 +43,7 @@ public sealed class AllowListBypassHardeningTests(ConformanceFixture fixture)
     private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Duplicate_top_level_type_key_is_resolved_by_last_value_or_the_whole_frame_is_dropped() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -92,6 +93,7 @@ public sealed class AllowListBypassHardeningTests(ConformanceFixture fixture)
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Nested_type_substring_in_item_does_not_bypass_system_role_rejection() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -123,6 +125,7 @@ public sealed class AllowListBypassHardeningTests(ConformanceFixture fixture)
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Nested_type_substring_on_session_update_does_not_skip_session_key_filtering() =>
         fixture.RunAsync(async () =>
     {
@@ -158,6 +161,7 @@ public sealed class AllowListBypassHardeningTests(ConformanceFixture fixture)
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Extra_top_level_key_on_an_allowed_type_never_reaches_upstream() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -185,6 +189,7 @@ public sealed class AllowListBypassHardeningTests(ConformanceFixture fixture)
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Malformed_frames_are_dropped_without_closing_the_socket() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
