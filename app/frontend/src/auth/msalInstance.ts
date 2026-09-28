@@ -43,7 +43,10 @@ export function initializeMsal(): Promise<void> {
     const msal = getMsalInstance();
     await msal.initialize();
 
-    const redirectResult = await msal.handleRedirectPromise();
+    // `navigateToLoginRequestUrl: true` restores the pre-sign-in URL (e.g. ?persona=&model=)
+    // after the redirect round-trip -- this option moved from `Configuration.auth` to a
+    // `handleRedirectPromise` call option in this MSAL major version.
+    const redirectResult = await msal.handleRedirectPromise({ navigateToLoginRequestUrl: true });
     if (redirectResult?.account) {
       msal.setActiveAccount(redirectResult.account);
     } else if (!msal.getActiveAccount()) {

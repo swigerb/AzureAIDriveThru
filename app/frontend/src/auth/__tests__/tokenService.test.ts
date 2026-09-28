@@ -69,7 +69,7 @@ describe('acquireApiToken', () => {
   });
 
   it('returns null (never throws) on InteractionRequiredAuthError -- AuthGate owns sign-in, not a fetch', async () => {
-    acquireTokenSilent.mockRejectedValue(new InteractionRequiredAuthError('interaction_required'));
+    acquireTokenSilent.mockRejectedValue(new InteractionRequiredAuthError('interaction_required', 'test-correlation-id'));
     await expect(acquireApiToken()).resolves.toBeNull();
   });
 

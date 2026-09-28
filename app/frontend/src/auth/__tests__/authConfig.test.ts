@@ -48,7 +48,6 @@ describe('buildAuthConfig', () => {
     const cfg = buildAuthConfig({ VITE_ENTRA_TENANT_ID: 't', VITE_ENTRA_CLIENT_ID: 'c' }, ORIGIN);
     expect(cfg.msalConfig.auth.redirectUri).toBe(ORIGIN);
     expect(cfg.msalConfig.auth.postLogoutRedirectUri).toBe(ORIGIN);
-    expect(cfg.msalConfig.auth.navigateToLoginRequestUrl).toBe(true);
     expect(cfg.msalConfig.cache?.cacheLocation).toBe('sessionStorage');
   });
 

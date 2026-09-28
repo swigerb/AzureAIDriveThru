@@ -59,13 +59,10 @@ export function buildAuthConfig(
       authority: `${INSTANCE}/${tenantId}`,
       redirectUri: origin,
       postLogoutRedirectUri: origin,
-      // Restores the pre-sign-in URL (e.g. ?persona=&model=) after the redirect round-trip.
-      navigateToLoginRequestUrl: true,
     },
     cache: {
       // sessionStorage keeps tokens out of long-lived localStorage; cleared on tab close.
       cacheLocation: 'sessionStorage',
-      storeAuthStateInCookie: false,
     },
     system: {
       loggerOptions: {
@@ -88,6 +85,12 @@ export function buildAuthConfig(
 }
 
 export const authConfig: ResolvedAuthConfig = buildAuthConfig(import.meta.env as unknown as RawAuthEnv);
+
+/**
+ * Named re-export of `authConfig.loginRequest` so callers (`EntraAuthGate.tsx`) can import the
+ * scopes to request without pulling in the whole resolved config object.
+ */
+export const loginRequest: RedirectRequest = authConfig.loginRequest;
 
 /** A canonical GUID (accepts any case); rejects the all-zero GUID as a placeholder. */
 const GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

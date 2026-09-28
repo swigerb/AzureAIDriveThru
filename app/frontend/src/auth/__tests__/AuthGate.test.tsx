@@ -88,7 +88,7 @@ describe('AuthGate — Entra gate (configured)', () => {
     useIsAuthenticated.mockReturnValue(false);
     useMsal.mockReturnValue({
       instance: { loginRedirect, logoutRedirect },
-      inProgress: InteractionStatus.Login,
+      inProgress: InteractionStatus.AcquireToken,
       accounts: [],
     });
     render(<AuthGate>{child}</AuthGate>);

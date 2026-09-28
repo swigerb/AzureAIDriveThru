@@ -51,7 +51,7 @@ export function EntraAuthGate({ children }: { children: ReactNode }) {
   }, [instance]);
 
   const busy =
-    inProgress === InteractionStatus.Login ||
+    inProgress === InteractionStatus.AcquireToken ||
     inProgress === InteractionStatus.HandleRedirect ||
     inProgress === InteractionStatus.Startup;
 
