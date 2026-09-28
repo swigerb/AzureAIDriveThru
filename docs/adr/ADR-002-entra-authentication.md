@@ -1,9 +1,9 @@
 # ADR-002: Entra authentication following Retail Pulse
 
 - **Status:** Proposed, 2026-09-27. Brian reviews the PR; nothing is implemented until he accepts it.
-- **Issues:** #85 (staging stays locked until this ships). Implemented by the issues listed in design doc
-  section 18.12. Part of epic #6.
-- **Supersedes:** EasyAuth everywhere in ADR-001 and the design doc (sections 5.2, 10.1, 10.2, 17 item 2).
+- **Issues:** #85 (staging stays locked until this ships). Implemented by #143 to #147 (design doc
+  section 18.12). Part of epic #6.
+- **Supersedes:** the EasyAuth plan in the design doc (sections 5.2, 10.1, 10.2, 17 item 2), `DEPLOY.md` and #85.
 - **Deciders:** Brian Swiger (owner), Rick (lead)
 - **Full design:** [`docs/persona-architecture.md` section 18](../persona-architecture.md#18-authentication-entra-id-following-retail-pulse-adr-002)
 - **Reference implementation:** `swigerb/retail-pulse` ADR-005, `docs/authentication-entra.md`,

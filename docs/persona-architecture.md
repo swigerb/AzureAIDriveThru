@@ -1262,14 +1262,14 @@ issue for `dotnet`, through the existing `DotnetPlaceholderPolicy` pattern. The 
 
 | Issue | Work | Owner | Milestone | Depends on |
 | --- | --- | --- | --- | --- |
-| {C} | Harness `FakeEntraIssuer`, Entra-mode default fixture, token-attaching clients, rows 1 to 16 | Birdperson | P2 | This ADR |
-| {A} | Python: `entra_auth.py`, route matrix, `/realtime` check order, layered session token, modes, access-log redaction | Unity | P2 | This ADR; {C} harness part lands first |
-| {B} | Frontend: MSAL `AuthGate`, `authorizedFetch`, per-connect WebSocket tokens, fail-closed config, marker, removal of legacy auth | Morty | P2 | This ADR. Mocked MSAL, so it can start now |
-| {D} | Infra: Bicep pins and EasyAuth removal, postprovision, build args, Setup and Verify scripts, contract test, `DEPLOY.md`, then the rollout in 18.10 | Squanchy | P2 | This ADR for the scripts; {A} and {B} for the rollout |
-| {E} | C#: JwtBearer parity, fallback policy, layered session token, check order, log level, dotnet rows on | Beth | S5 | #13, {C}; it gates #17 |
+| #143 | Harness `FakeEntraIssuer`, Entra-mode default fixture, token-attaching clients, rows 1 to 16 | Birdperson | P2 | This ADR |
+| #144 | Python: `entra_auth.py`, route matrix, `/realtime` check order, layered session token, modes, access-log redaction | Unity | P2 | This ADR; #143 harness part lands first |
+| #145 | Frontend: MSAL `AuthGate`, `authorizedFetch`, per-connect WebSocket tokens, fail-closed config, marker, removal of legacy auth | Morty | P2 | This ADR. Mocked MSAL, so it can start now |
+| #146 | Infra: Bicep pins and EasyAuth removal, postprovision, build args, Setup and Verify scripts, contract test, `DEPLOY.md`, then the rollout in 18.10 | Squanchy | P2 | This ADR for the scripts; #144 and #145 for the rollout |
+| #147 | C#: JwtBearer parity, fallback policy, layered session token, check order, log level, dotnet rows on | Beth | S5 | #13, #143; it gates #17 |
 
-**Order:** {C} harness first, then {A}. Meanwhile {B} and the {D} scripts proceed. Brian runs Setup once the {D}
-scripts merge. Then the {D} rollout (18.10) unlocks staging. {E} follows #13 and must land before #17 makes
+**Order:** #143 harness first, then #144. Meanwhile #145 and the #146 scripts proceed. Brian runs Setup once the #146
+scripts merge. Then the #146 rollout (18.10) unlocks staging. #147 follows #13 and must land before #17 makes
 the dotnet app public.
 
 ### 18.13 What Brian does

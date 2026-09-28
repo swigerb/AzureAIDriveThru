@@ -73,3 +73,14 @@
 - **Model flexibility is a pipeline question, not just a deployment name:** realtime models swap by deployment, but showcasing non-OpenAI Foundry models needs a cascade pipeline (STT, chat with tools, TTS) behind the same browser contract (#82). Keep one processor interface so conformance treats the pipeline as a dimension.
 - **Environment:** the Search service and the Azure OpenAI resource both live in `rg-sonic-demo`, and the siblings reuse them. So "keep the indexes" plus "tear down everything else" means moving the free Search service into the new resource group on Day 30, not deleting it.
 - **Tooling gotcha:** PowerShell flattens a single-element `@(@('a','b'))` into `@('a','b')`, so `$pair[0]` became a character and a global `Replace` corrupted seven issue bodies. I restored them from the source script and verified them line by line. Use ordered hashtables (old to new) for replacement lists.
+
+## 2026-09-27 - ADR-002: Entra authentication following Retail Pulse (#85, PR #142)
+
+- **Proposed, not merged.** In-app Entra ID like Retail Pulse, not EasyAuth. Design is in section 18. The work is split into #143 (harness, first), #144 (Python, Unity), #145 (frontend, Morty), #146 (infra, scripts and rollout, Squanchy) and #147 (C#, Beth, S5, gates #17).
+- **Keep and layer the HMAC token:** it gets an `oid` binding and is required in Entra mode. I was honest that it isn't a second factor against a stolen Entra token. The ticket-only `/realtime` credential is the recorded upgrade path.
+- **Gotchas found while designing:**
+  - The harness launches backends as **Production**, so fail-fast forces an Entra-mode default fixture. That needs the fake issuer on loopback `http` (fakes stay HTTP, #23).
+  - The gunicorn `%(r)s` format and ASP.NET's "Request starting" line both log query strings, so the WebSocket token (and today's `?token=`) would reach Log Analytics.
+  - JwtBearer runs before the endpoint, so the Entra check comes before Origin on both backends. Otherwise C# and Python would disagree (401 vs 403).
+  - `azd provision` re-enables ingress, so deploy the auth image before provisioning.
+  - The C# static-files middleware must never serve `menu.json` or asset JSON.
