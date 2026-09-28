@@ -147,9 +147,6 @@ param runningOnAdo string = ''
 @description('Used by azd for containerapps deployment')
 param webAppExists bool
 
-@description('Used by azd for the .NET container app deployment (S7, #17). Defaults false, unlike webAppExists, since azure.yaml only gains the backend-dotnet service (and azd only starts generating SERVICE_BACKEND_DOTNET_RESOURCE_EXISTS) with this same change.')
-param dotnetAppExists bool = false
-
 @allowed(['Consumption', 'D4', 'D8', 'D16', 'D32', 'E4', 'E8', 'E16', 'E32', 'NC24-A100', 'NC48-A100', 'NC96-A100'])
 param azureContainerAppsWorkloadProfile string
 
@@ -192,11 +189,16 @@ var effectiveAppSessionSecret = !empty(appSessionSecret) ? appSessionSecret : ap
 // pass-through backend. This wave (#17) only wires the C# app's env with the same names Python
 // will read once #146 (EasyAuth removal, tracked separately -- section 18.12) lands; it does not
 // modify the Python app's existing EasyAuth wiring above, to avoid conflicting with that PR.
-@description('Entra ID tenant id for AUTH_MODE=Entra token validation (ADR-002 18.1/18.4). Defaults to the deployment subscription tenant; override only if the app registration lives in a different tenant.')
-param entraTenantId string = tenant().tenantId
+@description('Entra ID tenant id for AUTH_MODE=Entra token validation (ADR-002 18.1/18.4). Empty falls back to the deployment subscription tenant (effectiveEntraTenantId below); override only if the app registration lives in a different tenant. Left empty rather than defaulted to tenant().tenantId because azd sends the literal empty string from main.parameters.json\'s ENTRA_TENANT_ID default-value syntax when the env var is unset, which would override a non-empty Bicep default with an empty string.')
+param entraTenantId string = ''
 
 @description('Entra ID application (client) id for AUTH_MODE=Entra token validation (ADR-002 18.1/18.4). Empty until Setup-EntraAuth.ps1 (#146) creates the registration -- both backends fail fast in Production without a valid id, so an empty value here just means this environment is not provisioned in Production mode yet.')
 param entraClientId string = ''
+
+// Same pattern as effectiveAppSessionSecret above: an empty entraTenantId (the value azd actually
+// sends when ENTRA_TENANT_ID is unset -- see the param description) falls back to the
+// subscription's own tenant here instead of relying on the param default, which azd bypasses.
+var effectiveEntraTenantId = !empty(entraTenantId) ? entraTenantId : tenant().tenantId
 
 @description('Delegated scope required on an Entra access token (ADR-002 18.1/18.4).')
 param entraApiScope string = 'access_as_user'
@@ -208,7 +210,7 @@ param entraAppRole string = 'DriveThru.User'
 // being publicly reachable. Independent of the Python app's own (not yet added -- #146) switch,
 // because the C# app must not go public before its Entra parity work lands (#147, design 18.12);
 // deployDotnetApp alone only controls whether the container app resource exists at all.
-@description('Ingress switch for the .NET container app. Defaults false: the C# app stays internal-only (no public ingress) even when deployDotnetApp is true, until #147 lands its own Entra token validation. Maps to the azd env BACKEND_DOTNET_INGRESS_ENABLED.')
+@description('Ingress switch for the .NET container app. Defaults false: the C# app gets no ingress (not even environment-internal) even when deployDotnetApp is true, until #147 lands its own Entra token validation. Maps to the azd env BACKEND_DOTNET_INGRESS_ENABLED.')
 param backendDotnetIngressEnabled bool = false
 
 // Figure out if we're running as a user or service principal
@@ -369,12 +371,18 @@ module acaBackendDotnet 'core/host/container-app-upsert.bicep' = if (deployDotne
     name: !empty(dotnetServiceName) ? dotnetServiceName : '${abbrs.webSitesContainerApps}backend-dotnet-${resourceToken}'
     location: location
     identityName: acaIdentityName
-    exists: dotnetAppExists
+    // No azure.yaml service exists for this app yet (added by the #17 go-live PR), so azd
+    // never reports an existing resource for it.
+    exists: false
     workloadProfile: azureContainerAppsWorkloadProfile
     containerRegistryName: containerApps.outputs.registryName
     containerAppsEnvironmentName: containerApps.outputs.environmentName
     identityType: 'UserAssigned'
-    tags: union(tags, { 'azd-service-name': 'backend-dotnet' })
+    // No 'azd-service-name' tag yet: azure.yaml has no matching service entry until the #17
+    // go-live PR adds app/backend-dotnet, and test_azd_service_wiring.py's
+    // test_bicep_service_tags_match_azure_yaml guard requires every tag here to have one. Add
+    // both together in that PR.
+    tags: tags
     targetPort: 8000
     containerCpuCoreCount: '1.0'
     containerMemory: '2Gi'
@@ -423,8 +431,11 @@ module acaBackendDotnet 'core/host/container-app-upsert.bicep' = if (deployDotne
       // Same fingerprint trick as the Python app: a changed secret changes the template, so
       // every replica restarts together instead of old and new replicas disagreeing.
       APP_SESSION_SECRET_FINGERPRINT: uniqueString(effectiveAppSessionSecret)
+      // Design 18.8: pinned alongside RUNNING_IN_PRODUCTION so the C# app never runs its
+      // Development-environment behaviors (e.g. developer exception pages) in Azure.
+      ASPNETCORE_ENVIRONMENT: 'Production'
       AUTH_MODE: 'Entra'
-      ENTRA_TENANT_ID: entraTenantId
+      ENTRA_TENANT_ID: effectiveEntraTenantId
       ENTRA_CLIENT_ID: entraClientId
       ENTRA_API_SCOPE: entraApiScope
       ENTRA_APP_ROLE: entraAppRole

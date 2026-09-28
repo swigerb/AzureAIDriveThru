@@ -545,9 +545,10 @@ jobs:
             python -c "import app; print(\"import app OK with PERSONAS_DIR unset\")"
           '
 
-  # S7 (#17) prep: mirrors docker-build above for app/backend-dotnet/Dockerfile. deployDotnetApp
-  # is still false by default (infra/main.bicep) -- this job only proves the IMAGE builds and
-  # starts cleanly, not that it's deployed anywhere yet.
+  # S7 (#17) prep: mirrors docker-build above for app/Dockerfile.dotnet (renamed from
+  # app/backend-dotnet/Dockerfile, Rick's #152 review, R7). deployDotnetApp is still false by
+  # default (infra/main.bicep) -- this job only proves the IMAGE builds and starts cleanly, not
+  # that it's deployed anywhere yet.
   docker-build-dotnet:
     name: Docker image build (C# backend)
     runs-on: ubuntu-latest
@@ -557,7 +558,10 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Build backend-dotnet image (no push)
-        run: docker build -f app/backend-dotnet/Dockerfile -t azureaidrivethru-backend-dotnet:ci .
+        # Same smoke-test rationale as docker-build's Python leg above (item B1, PR GH-148 review
+        # round 2) -- ARG VITE_AUTH_MODE defaults to Entra in app/Dockerfile.dotnet, which needs
+        # real Entra ids this job does not have, so pin it to Development here explicitly.
+        run: docker build -f app/Dockerfile.dotnet --build-arg VITE_AUTH_MODE=Development -t azureaidrivethru-backend-dotnet:ci .
 
       - name: Verify static/config files present, nothing extra leaked in
         run: |
@@ -580,6 +584,13 @@ jobs:
             fi
             if find /app \( -name bin -o -name obj -o -name TestResults -o -name "*.user" \) 2>/dev/null | grep -q .; then
               echo "build artifacts leaked into the image" >&2; exit 1
+            fi
+            # R5 (Rick's #152 review): only the tracked appsettings.json belongs in /app --
+            # appsettings.Development.json (or any other environment-specific appsettings) must
+            # never leak in, since .dockerignore only re-includes the app/backend-dotnet subtree
+            # and appsettings.*.json is where local dev secrets usually live.
+            if find /app -maxdepth 1 -name "appsettings.*.json" | grep -q .; then
+              echo "environment-specific appsettings leaked into the image" >&2; exit 1
             fi
             if find / -maxdepth 4 -name ".env*" 2>/dev/null | grep -q .; then
               echo ".env files leaked into the image:" >&2; find / -maxdepth 4 -name ".env*" >&2; exit 1
@@ -614,24 +625,22 @@ jobs:
             azureaidrivethru-backend-dotnet:ci)"
           trap 'docker logs "$container_id" || true; docker rm -f "$container_id" >/dev/null 2>&1 || true' EXIT
 
-          for i in $(seq 1 30); do
-            if curl -fsS http://localhost:8000/health -o /tmp/health.json; then
-              break
-            fi
-            if [ "$i" -eq 30 ]; then
-              echo "Backend never responded on /health" >&2
-              exit 1
-            fi
-            sleep 1
-          done
+          # R6 (Rick's #152 review): event-driven instead of a 30s wall-clock poll. Kestrel logs
+          # "Now listening on" (Microsoft.Hosting.Lifetime) only after startup validation passes;
+          # if the process exits first, `docker logs -f` ends and grep fails instead of the loop
+          # silently retrying for the full window. The job's timeout-minutes is the only clock.
+          if ! grep -m1 -q 'Now listening on' <(docker logs -f "$container_id" 2>&1); then
+            echo "C# backend exited before listening" >&2; exit 1
+          fi
+          curl -fsS http://localhost:8000/health -o "$RUNNER_TEMP/health.json"
 
-          cat /tmp/health.json
-          status="$(jq -r '.status' /tmp/health.json)"
+          cat "$RUNNER_TEMP/health.json"
+          status="$(jq -r '.status' "$RUNNER_TEMP/health.json")"
           test "$status" = "healthy" || { echo "status was '$status', not 'healthy'" >&2; exit 1; }
-          jq -e '.checks | to_entries | all(.value == true)' /tmp/health.json >/dev/null \
+          jq -e '.checks | to_entries | all(.value == true)' "$RUNNER_TEMP/health.json" >/dev/null \
             || { echo "one or more startup checks did not pass" >&2; exit 1; }
 
-          actual_packs="$(jq -r '.personas[]' /tmp/health.json | sort | tr '\n' ' ')"
+          actual_packs="$(jq -r '.personas[]' "$RUNNER_TEMP/health.json" | sort | tr '\n' ' ')"
           if [ "${actual_packs% }" != "${expected_packs% }" ]; then
             echo "Persona packs mismatch: expected [${expected_packs% }] got [${actual_packs% }]" >&2
             exit 1

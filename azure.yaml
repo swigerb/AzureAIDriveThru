@@ -17,27 +17,18 @@ services:
       # root. docker.path is left at its default (./Dockerfile, also service-relative), which
       # already points at app/Dockerfile correctly.
       context: ..
-  # S7 (#17): second container app for the C# backend, disabled by default at the infra level
-  # (infra/main.bicep's deployDotnetApp = false) until app/backend-dotnet is feature-complete
-  # (#13/#14) -- this service entry only tells azd HOW to build/deploy it once that flag flips,
-  # and gives it the 'backend-dotnet' azd-service-name tag main.bicep's acaBackendDotnet module
-  # already sets (Rick's #17 review comment).
-  backend-dotnet:
-    # azd's csharp language handler requires `project` to resolve to the folder containing the
-    # single .csproj (it locates the project file during service init even with
-    # docker.remoteBuild: true) -- pointing at app/backend-dotnet itself ("could not locate a
-    # dotnet project file") fails, so this points at src/Backend where Backend.csproj lives.
-    project: ./app/backend-dotnet/src/Backend
-    language: csharp
-    host: containerapp
-    docker:
-      remoteBuild: true
-      # docker.path/context are resolved relative to the service dir above (src/Backend), not
-      # app/backend-dotnet -- path walks back up two levels to the real Dockerfile, and context
-      # walks back up four levels total to reach the repo root (#129, #131's convention),
-      # matching app/backend-dotnet/Dockerfile's COPY paths and .dockerignore's allowlist.
-      path: ../../Dockerfile
-      context: ../../../..
+  # S7 (#17) prep: app/backend-dotnet builds a real image (this PR), but the azure.yaml service
+  # entry itself is deliberately NOT added yet. `language: csharp` here would make azd resolve a
+  # dotnet project (editing Backend.csproj's UserSecretsId, writing outputs into dotnet
+  # user-secrets) on every provision/package/deploy, and with no matching infra/backend-dotnet
+  # resource `azd-service-name: backend-dotnet` tag, `azd deploy`/`azd up` would fail with
+  # "unable to find a resource tagged with 'azd-service-name: backend-dotnet'" in every
+  # environment that hasn't flipped DEPLOY_DOTNET_APP=true (Rick's #152 review, R1). The #17
+  # go-live PR adds this service back with `language: docker` (no csproj handling), `project:
+  # ./app`, `docker.path: ./Dockerfile.dotnet` and `docker.context: ..` (mirrors `backend` above),
+  # in the same commit that flips infra/main.bicep's deployDotnetApp to true, plus the
+  # SERVICE_BACKEND_DOTNET_RESOURCE_EXISTS mapping in infra/main.parameters.json and the
+  # 'azd-service-name': 'backend-dotnet' tag on acaBackendDotnet in infra/main.bicep.
 hooks:
     postprovision:
       windows:

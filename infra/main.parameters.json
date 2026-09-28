@@ -119,9 +119,6 @@
     "dotnetServiceName": {
       "value": "${AZURE_CONTAINER_APP_DOTNET_NAME}"
     },
-    "dotnetAppExists": {
-      "value": "${SERVICE_BACKEND_DOTNET_RESOURCE_EXISTS=false}"
-    },
     "backendDotnetIngressEnabled": {
       "value": "${BACKEND_DOTNET_INGRESS_ENABLED=false}"
     },
