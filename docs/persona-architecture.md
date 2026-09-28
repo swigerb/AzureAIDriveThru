@@ -778,7 +778,7 @@ down (section 11).
 | Setting | Value |
 | --- | --- |
 | Subscription | `BrianSwiger-Microsoft-External-2026` (`44847a42-6b69-4e6c-b7e5-ce7140469dd6`), the one the current demos use |
-| Region | `eastus2` (all resources, including Search) |
+| Region | `eastus2` for every resource except AI Search, which is in `eastus` (eastus2 had no Basic-SKU Search capacity at provision time, #87; see 10.2) |
 | azd env | `azureaidrivethru-prod` |
 | Resource group | `rg-azureaidrivethru-prod` |
 | Dependencies | **None** on `rg-sonic-demo`, `rg-mcd-demo` or `rg-dunkin-demo`. The `*_REUSE_EXISTING` flags stay `false`; no app setting, role assignment or hook may name an old resource. #87 checks this before cutover |
