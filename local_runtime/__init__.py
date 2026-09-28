@@ -7,9 +7,9 @@ separate, standalone process -- never imported by the main backend -- so the bac
 faster-whisper, Piper) declared in `local_runtime/requirements.txt` instead (issue #81's own
 "optional dependencies... requirements extra" acceptance line).
 
-Ported from the McDonald's sibling project's own local mode (`phi4_model.py`, `whisper_stt.py`,
-`piper_tts.py`), reshaped to serve the exact three-endpoint contract part 1 already documented and
-shipped a client for, instead of the sibling's in-process wiring:
+Ported from a sibling drive-thru project's own on-device local mode (`phi4_model.py`,
+`whisper_stt.py`, `piper_tts.py`), reshaped to serve the exact three-endpoint contract part 1 already
+documented and shipped a client for, instead of that reference's in-process wiring:
 
     POST /v1/transcribe  raw 16kHz mono PCM16              -> {"text": "..."}
     POST /v1/chat        {"messages": [...], "tools": [...]} -> {"content": ..., "tool_calls": [...]}

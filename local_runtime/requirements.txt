@@ -1,0 +1,22 @@
+# Optional, heavy dependencies for the local-runtime companion service ONLY -- kept separate from
+# app/backend/requirements.txt so the main backend (and its CI) never needs these installed; the
+# main backend only ever talks to this service over HTTP (see app/backend/local_runtime.py).
+#
+# Install with: pip install -r local_runtime/requirements.txt
+# (see README.md "On-device local mode" and scripts/download_local_models.py)
+
+aiohttp>=3.9,<4
+numpy>=1.26,<3
+
+# Speech-to-text (local_runtime/engines/stt.py)
+faster-whisper>=1.0,<2
+
+# Chat / tool calling (local_runtime/engines/chat.py)
+onnxruntime-genai>=0.4,<1
+onnxruntime>=1.18,<2
+
+# Text-to-speech (local_runtime/engines/tts.py)
+piper-tts>=1.2,<2
+
+# Model download / checksum verification (scripts/download_local_models.py)
+huggingface-hub>=0.23,<1

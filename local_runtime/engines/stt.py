@@ -1,5 +1,5 @@
-"""Whisper speech-to-text engine, ported from the McDonald's sibling project's own
-`app/backend/whisper_stt.py` onto this repo's `SttEngine` protocol.
+"""Whisper speech-to-text engine, ported from a sibling drive-thru project's own on-device
+reference implementation (`whisper_stt.py`) onto this repo's `SttEngine` protocol.
 
 `faster-whisper` is an optional dependency (`local_runtime/requirements.txt`, NOT
 `app/backend/requirements.txt`) -- this module must stay importable even when it isn't installed,
