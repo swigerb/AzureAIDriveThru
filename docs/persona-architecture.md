@@ -707,7 +707,7 @@ fallback if a single hostname is ever required.
 | Resource | Notes |
 | --- | --- |
 | Microsoft Foundry (Azure OpenAI) account and project | **Its own** account, never `cog-axgpampkq3yfa`. Deployments in 10.3 |
-| AI Search | **Its own paid service** (Basic SKU, eastus2). The free slot is taken by the old shared `gptkb-axgpampkq3yfa`, and paid removes the 3-index cap. One index per persona: `sonic-menu-items`, `mcdonalds-menu-items`, `dunkin-menu-items`, ingested from each pack's `menu/menuItems.json` by the postprovision hook (#84). The identity gets data-plane roles only on this service |
+| AI Search | **Its own paid service** (Basic SKU). Provisioned in **East US**, not eastus2 like the rest of the environment -- eastus2 had no Basic-SKU Search capacity left at provision time (#87), so Brian approved splitting it out via the existing `searchServiceLocation`/`AZURE_SEARCH_SERVICE_LOCATION` param (already in `infra/main.bicep`, wired only to the Search module). The free slot is taken by the old shared `gptkb-axgpampkq3yfa`, and paid removes the 3-index cap. One index per persona: `sonic-menu-items`, `mcdonalds-menu-items`, `dunkin-menu-items`, ingested from each pack's `menu/menuItems.json` by the postprovision hook (#84). The identity gets data-plane roles only on this service |
 | Storage | Its own account for ingestion, as today |
 | ACA environment, Log Analytics, ACR, user-assigned identity | Its own, as today, with `AzureAIDriveThru` names |
 | Container app `python` | One gunicorn worker, sticky ingress, `/health` probe, EasyAuth, `APP_SESSION_SECRET`, `PERSONAS=sonic,mcdonalds,dunkin`, `DEFAULT_PERSONA=sonic`, `AZURE_AI_MODEL_DEPLOYMENTS` (#85, #87) |
