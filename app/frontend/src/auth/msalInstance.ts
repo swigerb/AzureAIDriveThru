@@ -1,5 +1,6 @@
 import { EventType, PublicClientApplication, type AuthenticationResult } from '@azure/msal-browser';
 import { authConfig } from './authConfig';
+import { setRedirectError, clearRedirectError } from './redirectError';
 
 /**
  * Lazily-created MSAL PublicClientApplication singleton (ADR-002, design §18.6, issue GH-145).
@@ -46,7 +47,25 @@ export function initializeMsal(): Promise<void> {
     // `navigateToLoginRequestUrl: true` restores the pre-sign-in URL (e.g. ?persona=&model=)
     // after the redirect round-trip -- this option moved from `Configuration.auth` to a
     // `handleRedirectPromise` call option in this MSAL major version.
-    const redirectResult = await msal.handleRedirectPromise({ navigateToLoginRequestUrl: true });
+    //
+    // Item B4 (PR GH-148 review round 2, ADR-002 item 12, design §18.6/§18.12): a failed redirect
+    // (the visitor cancelled, admin consent is required, or AADSTS50105 -- this user/tenant was
+    // never assigned to the app) must NOT reject this promise. Before this fix it did: the
+    // rejection propagated to `index.tsx`'s bootstrap() catch block, which rendered
+    // `ConfigErrorScreen` (the wrong screen -- that's reserved for configuration failures, not a
+    // sign-in outcome) with no retry path, and a page reload just re-ran the same failing
+    // auto-redirect (a loop from the visitor's perspective). Catching it here keeps MSAL itself
+    // usable (accounts/silent acquisition still work) and stashes the classified error for
+    // `EntraAuthGate` to read once on mount instead, which shows a friendly message and a manual
+    // "Sign in" button -- and suppresses its own auto-redirect while that error is present.
+    let redirectResult: AuthenticationResult | null = null;
+    try {
+      redirectResult = await msal.handleRedirectPromise({ navigateToLoginRequestUrl: true });
+      clearRedirectError();
+    } catch (error) {
+      setRedirectError(error);
+    }
+
     if (redirectResult?.account) {
       msal.setActiveAccount(redirectResult.account);
     } else if (!msal.getActiveAccount()) {
