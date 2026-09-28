@@ -322,7 +322,7 @@ async def _synthesize(url: str, headers: dict, text: str, timeout: float, voice:
             "audio": {"input": {"turn_detection": None}, "output": {"voice": voice}}}})
         # The phrase goes in the response instructions, not a user turn: given a user
         # turn, gpt-realtime-2.1 answers the order instead of reading it. Live probe
-        # (Sonic, 2.1 and 2.1-dz, 3 runs each): user turn 1/6 verbatim, this 6/6.
+        # (the default pack, 2.1 and 2.1-dz, 3 runs each): user turn 1/6 verbatim, this 6/6.
         await ws.send_json({"type": "response.create", "response": {"instructions": synthesis_instructions(text)}})
         deadline = time.monotonic() + timeout
         while (remaining := deadline - time.monotonic()) > 0:

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the carhop's pre-recorded "one moment" apology clips.
+"""Generate the persona's pre-recorded "one moment" apology clips.
 
 When the realtime model is rate-limited twice in a row, the browser plays
 personas/<persona-id>/assets/audio/apology-<lang>.wav (see docs/rate_limit_recovery.md).

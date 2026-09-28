@@ -13,23 +13,27 @@ that SAME pack's own menu, machine status, and tax rate:
 
   1. every demo order line's item/size resolves to a real menu entry, at the real menu price;
   2. no demo order line depends on a machine the pack currently marks down;
-  3. the transcript's final summary line states a total that equals the order's own
-     price*quantity subtotal times (1 + the pack's own tax rate), rounded to cents;
+  3. the transcript's final summary line states a total that equals the order's own total,
+     computed with the SAME exact ``Decimal`` math and ``ROUND_HALF_UP`` rounding
+     ``order_state.py``'s own ticket uses (``money_utils.to_decimal``/``format_money``), and
+     compared as formatted ``"$NN.NN"`` strings -- never float arithmetic + ``round()``, which
+     can disagree with the ticket by a cent for some future pack's rate or prices;
   4. the transcript's final summary line never name-checks a REAL menu item that isn't actually
      part of the demo order (the exact defect Rick found: a transcript mentioning items the
      order doesn't contain).
 
 The validation logic lives in small, pure, brand-agnostic functions (``validate_demo_order``,
-``compute_order_total``, ``find_final_summary_amount``, ``validate_transcript_containment``) so
-a dedicated mutation test can call them directly against a deliberately corrupted in-memory copy
-of a real pack's order and prove the check actually fails closed -- never a check that always
-happens to pass.
+``compute_order_total``, ``find_final_summary_amount``, ``transcript_total_errors``,
+``validate_transcript_containment``) so a dedicated mutation test can call them directly against
+a deliberately corrupted in-memory copy of a real pack's order and prove the check actually fails
+closed -- never a check that always happens to pass.
 """
 
 import copy
 import json
 import re
 import sys
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -37,6 +41,7 @@ import pytest
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from menu_utils import MenuCatalog, get_catalog_for_persona  # noqa: E402
+from money_utils import format_money, to_decimal  # noqa: E402
 from persona_loader import Persona, PersonaCatalog  # noqa: E402
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -87,24 +92,55 @@ def validate_demo_order(order_lines: list[dict], menu_catalog: MenuCatalog) -> l
     return errors
 
 
-def compute_order_total(order_lines: list[dict], tax_rate: float) -> float:
-    """The subtotal (price * quantity, summed) times (1 + tax_rate), rounded to cents."""
-    subtotal = sum(line["price"] * line["quantity"] for line in order_lines)
-    return round(subtotal * (1 + tax_rate), 2)
+def compute_order_total(order_lines: list[dict], tax_rate) -> str:
+    """The demo order's total, computed and rounded EXACTLY the way order_state.py's own ticket
+    total is (#46, ``_update_summary``): accumulate ``price * quantity`` in exact ``Decimal``
+    with no intermediate rounding, then ``tax = subtotal * tax_rate``, then
+    ``total = subtotal + tax``, and format the single final result once with
+    ``money_utils.format_money`` (``ROUND_HALF_UP``) -- never float arithmetic + ``round()``,
+    which can disagree with the ticket by a cent for some future pack's rate or prices."""
+    subtotal = Decimal("0")
+    for line in order_lines:
+        subtotal += to_decimal(line["price"]) * line["quantity"]
+    tax = subtotal * to_decimal(tax_rate)
+    total = subtotal + tax
+    return format_money(total)
 
 
-def find_final_summary_amount(transcript_entries: list[dict]) -> tuple[str, float] | None:
+def find_final_summary_amount(transcript_entries: list[dict]) -> tuple[str, str] | None:
     """Scan a transcript backwards for the last entry that states a currency amount, and
     return ``(text, amount)`` for the LAST dollar amount in that entry's text -- the demo
     order-summary convention this repo's transcripts use ("...Your total is $NN.NN."). Prefers
     ``translation`` (the guest-facing English text) since several transcript lines are
-    non-English; falls back to ``text``. Returns ``None`` if no entry states an amount."""
+    non-English; falls back to ``text``. ``amount`` is the exact matched two-decimal-digit
+    string (e.g. ``"32.96"``), never round-tripped through ``float``, so it can be compared
+    character-for-character against ``money_utils.format_money``'s own ``"$NN.NN"`` string.
+    Returns ``None`` if no entry states an amount."""
     for entry in reversed(transcript_entries):
         text = entry.get("translation") or entry.get("text") or ""
         matches = _CURRENCY_RE.findall(text)
         if matches:
-            return text, float(matches[-1])
+            return text, matches[-1]
     return None
+
+
+def transcript_total_errors(order_lines: list[dict], transcript_entries: list[dict], tax_rate) -> list[str]:
+    """Every error found comparing a transcript's stated final total against the order's own
+    exact-decimal total (``compute_order_total``, i.e. the same math and rounding order_state.py's
+    ticket uses) -- comparing formatted ``"$NN.NN"`` strings, never floats. Empty list == the
+    transcript's stated total matches the order."""
+    expected = compute_order_total(order_lines, tax_rate)
+    found = find_final_summary_amount(transcript_entries)
+    if found is None:
+        return [
+            "no transcript entry states a currency total (expected a final summary line "
+            "like '...Your total is $NN.NN.')"
+        ]
+    _, stated_amount = found
+    stated = f"${stated_amount}"
+    if stated != expected:
+        return [f"transcript states total {stated} but the demo order's own decimal math computes to {expected}"]
+    return []
 
 
 def validate_transcript_containment(
@@ -193,19 +229,9 @@ class TestDemoTranscriptMatchesOrder:
         order = _load_json(persona.assets_dir / "demo" / "dummyOrder.json")
         transcript = _load_json(persona.assets_dir / "demo" / "dummyTranscripts.json")
 
-        tax_rate = float(persona.manifest.pricing.taxRate)
-        expected_total = compute_order_total(order, tax_rate)
-
-        found = find_final_summary_amount(transcript)
-        assert found is not None, (
-            f"{persona_id}: no transcript entry states a currency total "
-            "(expected a final summary line like '...Your total is $NN.NN.')"
-        )
-        _, stated_total = found
-        assert stated_total == expected_total, (
-            f"{persona_id}: transcript states total ${stated_total:.2f} but the demo order "
-            f"(subtotal * (1 + {tax_rate}) tax) computes to ${expected_total:.2f}"
-        )
+        tax_rate = persona.manifest.pricing.taxRate
+        errors = transcript_total_errors(order, transcript, tax_rate)
+        assert errors == [], f"{persona_id}: " + "; ".join(errors)
 
     @pytest.mark.parametrize("persona_id", _persona_ids())
     def test_transcript_summary_never_names_an_item_not_in_the_order(self, catalog, persona_id):
@@ -251,28 +277,52 @@ class TestMutationIsCaught:
         persona: Persona = catalog.get(persona_id)
         order = _load_json(persona.assets_dir / "demo" / "dummyOrder.json")
         transcript = _load_json(persona.assets_dir / "demo" / "dummyTranscripts.json")
-        tax_rate = float(persona.manifest.pricing.taxRate)
-        expected_total = compute_order_total(order, tax_rate)
+        tax_rate = persona.manifest.pricing.taxRate
 
-        found = find_final_summary_amount(transcript)
-        assert found is not None
-        _, stated_total = found
-        assert stated_total == expected_total  # ground truth is clean before mutating
+        # Ground truth: the real (fixed) demo data must be clean before we corrupt a copy of it.
+        assert transcript_total_errors(order, transcript, tax_rate) == []
 
         mutated = copy.deepcopy(transcript)
         for entry in reversed(mutated):
             text = entry.get("translation") or entry.get("text") or ""
-            if _CURRENCY_RE.search(text):
-                bad_total = round(expected_total + 5.00, 2)
-                entry["translation"] = re.sub(_CURRENCY_RE, f"${bad_total:.2f}", text)
+            match = _CURRENCY_RE.search(text)
+            if match:
+                bad_total = f"{float(match.group(1)) + 5.00:.2f}"
+                entry["translation"] = re.sub(_CURRENCY_RE, f"${bad_total}", text)
                 if "text" in entry:
-                    entry["text"] = re.sub(_CURRENCY_RE, f"${bad_total:.2f}", entry["text"])
+                    entry["text"] = re.sub(_CURRENCY_RE, f"${bad_total}", entry["text"])
                 break
 
-        mutated_found = find_final_summary_amount(mutated)
-        assert mutated_found is not None
-        _, mutated_total = mutated_found
-        assert mutated_total != expected_total, (
-            f"{persona_id}: mutating the transcript's stated total must change what "
-            "find_final_summary_amount reports"
+        errors = transcript_total_errors(order, mutated, tax_rate)
+        assert errors, (
+            f"{persona_id}: mutating the transcript's stated total must be caught by "
+            "transcript_total_errors"
+        )
+
+    @pytest.mark.parametrize("persona_id", _persona_ids())
+    def test_a_demo_line_requiring_a_down_machine_is_caught(self, catalog, persona_id):
+        persona: Persona = catalog.get(persona_id)
+        menu_catalog = get_catalog_for_persona(persona)
+        order = _load_json(persona.assets_dir / "demo" / "dummyOrder.json")
+
+        # Ground truth: the real (fixed) demo data must be clean before we corrupt a copy of it.
+        assert validate_demo_order(order, menu_catalog) == []
+
+        machine = next(
+            (m for m in (menu_catalog.requires_machine(line["item"]) for line in order) if m),
+            None,
+        )
+        if machine is None:
+            pytest.skip(f"{persona_id}'s demo order has no line that requires a machine")
+
+        # Corrupt a scratch copy of the catalog's own machine-status map only -- never the real
+        # persona data -- to prove the machine-down check actually fails closed.
+        mutated_catalog = copy.deepcopy(menu_catalog)
+        _, label = mutated_catalog.machines[machine]
+        mutated_catalog.machines[machine] = ("down", label)
+
+        errors = validate_demo_order(order, mutated_catalog)
+        assert errors, (
+            f"{persona_id}: forcing {machine!r} down for a demo order line that requires it "
+            "must be caught by validate_demo_order"
         )
