@@ -418,24 +418,53 @@ these are true:
    and the shared catalog entry in `app/backend/config.yaml`).
 2. `LOCAL_RUNTIME_ENDPOINT` is set to the base URL of a running companion process.
 
-To try it locally:
+The companion process itself lives in this repo at `local_runtime/` (issue #81 part 2): Whisper
+speech-to-text (`faster-whisper`), Phi-4-mini-instruct via ONNX Runtime GenAI for chat + tool
+calling, and Piper text-to-speech, all persona-agnostic (it knows nothing about any one brand --
+the persona's own system prompt and tools are sent to it on every `/v1/chat` call, the same way
+the cloud pipelines work).
 
-1. Stand up ANY HTTP server that implements the companion-process contract below, listening on
-   (for example) `http://localhost:8100`. There's no bundled reference server in this repo (out
-   of this issue's scope) -- the sibling drive-thru project's own local-mode runtimes
-   (Whisper-style STT / a small local LLM / Piper-style TTS) are one example of software that
-   could sit behind this HTTP boundary; any implementation satisfying the same three endpoints
-   works.
-2. Add `LOCAL_RUNTIME_ENDPOINT=http://localhost:8100` (and, optionally,
-   `LOCAL_RUNTIME_VOICE_CHOICE=<a voice name your companion process understands>`) to
-   `app/backend/.env` and start the app as in Option 1 or 2 above.
-3. `GET /api/personas` will now list the local model as `deployed: true` for any persona whose
-   allow-list includes it; the frontend (or a raw WebSocket client) selects it the same way it
-   selects any other model id.
+**Quick start (Docker, CPU-only, slow is fine):**
 
-**Companion-process HTTP contract** (see `app/backend/local_runtime.py` for the exact
-request/response shapes, and `docs/persona-architecture.md`'s local-mode design section for the
-full rationale):
+```bash
+# 1. Download the models once (several GB; gitignored under ./models/, never committed).
+python scripts/download_local_models.py            # PowerShell: scripts\download_local_models.ps1
+#    --variant cuda / --variant directml  for a GPU variant instead of the CPU default
+#    --voices amy,jenny                    to download fewer than all 4 Piper voices
+#    --skip-whisper                        to skip warming the STT cache
+
+# 2. Build and run both containers (backend + companion), wired together automatically.
+docker compose -f docker-compose.local.yml up --build
+```
+
+Open http://localhost:8000, pick a persona, and choose the `... (local)` entry in the model
+switcher -- it only appears once `LOCAL_RUNTIME_ENDPOINT` is set, which `docker-compose.local.yml`
+does for you (`http://companion:8100`, the companion's own compose service name).
+
+**Running without Docker** (e.g. to develop the companion itself):
+
+```bash
+# after scripts/download_local_models.py has populated ./models/
+pip install -r local_runtime/requirements.txt
+python -m local_runtime                              # starts the companion on :8100
+
+# in another shell
+echo "LOCAL_RUNTIME_ENDPOINT=http://localhost:8100" >> app/backend/.env
+python app/backend/app.py                            # or your usual backend start command
+```
+
+**Manual end-to-end check** (no live microphone needed -- drives the companion's three endpoints
+directly using a persona's own prompt/tools, TTS output fed back through STT as a stand-in for a
+real recording; `scripts/smoke_realtime.py` only applies to the realtime/cascade WebSocket
+pipelines, not this one):
+
+```bash
+python scripts/smoke_local_runtime.py --persona <persona-id> --model phi-4-mini-local
+```
+
+**Companion-process HTTP contract** (implemented in `local_runtime/server.py`; the exact same
+contract part 1's `app/backend/local_runtime.py` client already speaks -- see
+`docs/persona-architecture.md`'s local-mode design section for the full rationale):
 
 | Endpoint              | Request                                                     | Response                                        |
 | ---------------------- | ------------------------------------------------------------ | -------------------------------------------------- |
@@ -447,6 +476,13 @@ Tool schemas and results are the SAME flat, Realtime-API-style shapes the cloud 
 the local pipeline calls the exact same shared `tools` dict, so a tool call from an on-device
 model produces identical structured results, session metadata, and wire-protocol frames
 (`extension.middle_tier_tool_response`, etc.) as the realtime/cascade pipelines.
+
+Configuration (env vars, all optional, `local_runtime/config.py`): `LOCAL_RUNTIME_HOST`/`_PORT`,
+`LOCAL_RUNTIME_STT_MODEL`/`_DEVICE`/`_COMPUTE_TYPE`, `LOCAL_RUNTIME_CHAT_MODEL_DIR`/`_VARIANT`/
+`_DEVICE`/`_MAX_LENGTH`/`_TEMPERATURE`/`_TIMEOUT_SECONDS`, `LOCAL_RUNTIME_TTS_MODEL_DIR`/
+`_DEFAULT_VOICE`/`_LENGTH_SCALE`. A pack can also ship a shorter, on-device-tuned system prompt at
+`personas/<id>/prompts/local_system_prompt.yaml` (same shape as `system_prompt.yaml`) -- optional;
+falls back to the pack's normal system prompt when absent.
 
 ## Deploying to Azure
 

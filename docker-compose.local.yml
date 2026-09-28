@@ -1,0 +1,62 @@
+# Local on-device mode (issue #81, ADR-001 decision 7): runs the main backend next to the
+# companion local-runtime process on one machine, wired together over LOCAL_RUNTIME_ENDPOINT.
+# This is a developer/demo convenience, NOT a production deployment -- see infra/ for the real
+# Azure Container Apps topology, which this file intentionally does not touch or replace.
+#
+# Usage (see README.md "On-device local mode" for full details):
+#   1. scripts/download_local_models.ps1   (or .sh)   -- downloads Whisper/Phi-4-mini/Piper once
+#      into ./models/ (gitignored; NEVER committed).
+#   2. docker compose -f docker-compose.local.yml up --build
+#   3. Open http://localhost:8000, pick a persona, choose the "... (local)" model in the model
+#      switcher (only selectable once LOCAL_RUNTIME_ENDPOINT is set, which this file does for you).
+#
+# CPU-only by default. Both images run fine without a GPU (slow is fine per issue #81) -- there is
+# no GPU passthrough configured here; add `deploy.resources.reservations.devices` yourself for CUDA.
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: app/Dockerfile
+    image: azureai-drivethru-backend:local
+    ports:
+      - "8000:8000"
+    environment:
+      # Companion base URL (issue #81): the ONLY thing that makes a persona's `models.local`
+      # catalog entry (e.g. phi-4-mini-local) selectable at all (model_catalog.py).
+      LOCAL_RUNTIME_ENDPOINT: http://companion:8100
+      # Optional: override the default Piper voice /v1/speak uses (config.yaml's
+      # model.local_default_voice otherwise). Uncomment to force one:
+      # LOCAL_RUNTIME_VOICE_CHOICE: en_US-amy-medium
+      HOST: "0.0.0.0"
+      PORT: "8000"
+    env_file:
+      # Optional: reuse app/backend/.env if present for cloud credentials (harmless if the file
+      # doesn't exist -- compose skips a missing optional env_file entry with `required: false`).
+      - path: ./app/backend/.env
+        required: false
+    depends_on:
+      companion:
+        condition: service_healthy
+
+  companion:
+    build:
+      context: .
+      dockerfile: local_runtime/Dockerfile
+    image: azureai-drivethru-local-runtime:local
+    ports:
+      - "8100:8100"
+    environment:
+      LOCAL_RUNTIME_HOST: "0.0.0.0"
+      LOCAL_RUNTIME_PORT: "8100"
+      # Model directories inside the container all live under the single /models mount below, so
+      # one bind mount on the host (./models, gitignored) covers STT/chat/TTS + the HF cache.
+      LOCAL_RUNTIME_CHAT_MODEL_DIR: /models/phi4-mini
+      LOCAL_RUNTIME_TTS_MODEL_DIR: /models/piper
+      # faster-whisper/huggingface_hub cache -- keeps the Whisper download out of the image layer
+      # and off the container's ephemeral filesystem, so `docker compose down` doesn't lose it.
+      HF_HOME: /models/hf-cache
+    volumes:
+      - ./models:/models
+    # No published default voice/persona choice here -- this process is persona-agnostic (issue
+    # #81 scope) and serves whichever persona's /v1/chat messages it's sent.
