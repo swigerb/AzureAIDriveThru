@@ -601,3 +601,35 @@
   Final validation: ruff clean; full pytest 1385 passed/2 skipped/222 subtests (up from 1384 --
   1 new test); `test_check_rebrand_baseline_against_base.py` 18/18; `test_rebrand_verification`
   61 passed/8 subtests; `git status --short` shows exactly the 6 intended modified files.
+- **Cleanup: dead Sonic-copy fallback + unused error key removed (branch `squad/cleanup-dead-copy`):**
+  Two independent dead-code deletions. (1) `personas/dunkin/prompts/error_messages.yaml`'s
+  `price_validation_failed` key: confirmed via `git grep` it's the only reference anywhere in the
+  repo (no code reads it), confirmed via `gh issue view 125`'s required-error-key list
+  (`item_not_on_menu`, `size_not_available`, `item_not_in_order`, `machine_unavailable`,
+  `extras_blocked_category`, `extras_no_base_item`, `generic_error`) that it isn't required, and
+  confirmed no fixture pack (test-alpha/beta/gamma/delta) or other persona defines/uses it. Removed
+  the key and its comment header. (2) `app/backend/tools.py`'s upsell-hint code path had an
+  `if pl: ... else: <hardcoded literal upsell strings>` pattern where the `else` branch was a
+  word-for-word copy of `personas/sonic/prompts/hints.yaml`'s real `upsell_hints` content.
+  Call-site analysis of `attach_tools_rtmt` confirmed `app.py` (production) always passes a real
+  `prompt_loader`, so the `else` branch is unreachable in production. Removed it, leaving
+  `if pl: delta_text += pl.get_upsell_hint(category)`.
+  **Regression caught and fixed:** the pre-existing `UpsellHintTests` in `test_tool_calling.py`
+  accidentally exercised the now-deleted DEAD fallback (nothing in the test module patched
+  `tools._prompt_loader`, so it defaulted to `None`). Added a `setUp()` patching
+  `tools._prompt_loader` with a real `PromptLoader()` (relying on its default `brand="sonic"` param
+  rather than a literal string, to avoid inflating the brand-word baseline) so the tests now
+  exercise the real production code path. All 4 pre-existing assertions still pass unmodified
+  against the real `hints.yaml` text.
+  **Brand baseline:** regenerated via `regenerate_rebrand_baseline.py` with no `--allow-increase`
+  needed (first attempt did self-inflict a raise via new literal "sonic" mentions in prose/test
+  code, `test_tool_calling.py [sonic] 11 -> 14` -- caught by the ratchet, fixed by generic-izing the
+  wording and relying on `PromptLoader()`'s default brand arg; re-verified count back to 11). Final
+  regen produced a **byte-identical, zero-line diff** against the base baseline: neither deleted
+  block contains a literal brand-word ("sonic"/"dunkin"/"mcdonalds") occurrence -- the upsell-hint
+  fallback text is generic combo-shop language (confirmed via `git grep -i sonic app/backend/tools.py`
+  returning nothing, before and after), and the removed `price_validation_failed` line/key itself
+  never contained a brand word either. So the ratchet's real guarantee here is "no unjustified
+  raise", not a numeric decrease -- reverted the no-op baseline file rather than commit a spurious
+  line-ending diff. Full validation: `ruff check .` clean; `python -m pytest -q` 1370 passed / 2
+  skipped / 222 subtests.

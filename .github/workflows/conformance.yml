@@ -591,6 +591,109 @@ jobs:
             unset PERSONAS_DIR
             python -c "import app; print(\"import app OK with PERSONAS_DIR unset\")"
           '
+
+  # S7 (#17) prep: mirrors docker-build above for app/Dockerfile.dotnet (renamed from
+  # app/backend-dotnet/Dockerfile, Rick's #152 review, R7). deployDotnetApp is still false by
+  # default (infra/main.bicep) -- this job only proves the IMAGE builds and starts cleanly, not
+  # that it's deployed anywhere yet.
+  docker-build-dotnet:
+    name: Docker image build (C# backend)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build backend-dotnet image (no push)
+        # Same smoke-test rationale as docker-build's Python leg above (item B1, PR GH-148 review
+        # round 2) -- ARG VITE_AUTH_MODE defaults to Entra in app/Dockerfile.dotnet, which needs
+        # real Entra ids this job does not have, so pin it to Development here explicitly.
+        run: docker build -f app/Dockerfile.dotnet --build-arg VITE_AUTH_MODE=Development -t azureaidrivethru-backend-dotnet:ci .
+
+      - name: Verify static/config files present, nothing extra leaked in
+        run: |
+          set -euo pipefail
+          # --entrypoint sh is required: unlike the Python image's CMD (freely overridden by
+          # `docker run image sh -c ...`), this image sets ENTRYPOINT ["dotnet", "Backend.dll"],
+          # so an un-overridden `sh -c '...'` here is appended as ARGS to dotnet instead of
+          # replacing it -- silently launching the real app (which then fails fast on missing
+          # env vars) instead of running this static-content check.
+          docker run --rm --entrypoint sh azureaidrivethru-backend-dotnet:ci -c '
+            set -eu
+            # The frontend and config.yaml are built/copied into the image (same as the Python one).
+            test -f /app/static/index.html || { echo "/app/static/index.html missing" >&2; exit 1; }
+            test -f /app/config.yaml || { echo "/app/config.yaml missing" >&2; exit 1; }
+            # Excluded paths must be absent: only the published app, personas/, config.yaml and
+            # static/ belong in /app -- no source, no test project, no build artifacts.
+            if [ -e /app/backend-dotnet ]; then echo "app/backend-dotnet source leaked into the image" >&2; exit 1; fi
+            if find / -maxdepth 4 -iname "*Backend.Tests*" 2>/dev/null | grep -q .; then
+              echo "Backend.Tests project leaked into the image" >&2; exit 1
+            fi
+            if find /app \( -name bin -o -name obj -o -name TestResults -o -name "*.user" \) 2>/dev/null | grep -q .; then
+              echo "build artifacts leaked into the image" >&2; exit 1
+            fi
+            # R5 (PR #152 review): only the tracked appsettings.json belongs in /app --
+            # appsettings.Development.json (or any other environment-specific appsettings) must
+            # never leak in, since .dockerignore only re-includes the app/backend-dotnet subtree
+            # and appsettings.*.json is where local dev secrets usually live.
+            if find /app -maxdepth 1 -name "appsettings.*.json" | grep -q .; then
+              echo "environment-specific appsettings leaked into the image" >&2; exit 1
+            fi
+            if find / -maxdepth 4 -name ".env*" 2>/dev/null | grep -q .; then
+              echo ".env files leaked into the image:" >&2; find / -maxdepth 4 -name ".env*" >&2; exit 1
+            fi
+            echo "Image contents OK."
+          '
+          size_bytes="$(docker image inspect --format '{{.Size}}' azureaidrivethru-backend-dotnet:ci)"
+          echo "Image size: $((size_bytes / 1024 / 1024)) MiB (${size_bytes} bytes)"
+          echo "### Docker image (C# backend) size: $((size_bytes / 1024 / 1024)) MiB" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Verify persona packs load and /health passes (the C# app's own startup validation)
+        run: |
+          set -euo pipefail
+          # Same expected-pack computation as docker-build's Python verify step above.
+          expected_packs="$(find personas -mindepth 2 -maxdepth 2 -name persona.json -printf '%h\n' | xargs -n1 basename | sort | tr '\n' ' ')"
+          echo "Expected persona packs: ${expected_packs}"
+          test -n "${expected_packs}"
+
+          # Unlike Python's static `python -c "import persona_loader"` trick, Program.cs's
+          # startup validation (required env vars -> personas -> config.yaml -> prompts -> model
+          # catalog) only runs as part of a live process, so this needs a running container and
+          # its /health endpoint (Health/HealthEndpoint.cs), not a module import. The four env
+          # vars below are the minimum Program.cs requires to get past its fail-fast startup gate
+          # (tests/conformance/src/Conformance.Harness/DotnetBackendLauncher.cs uses the same
+          # kind of placeholder values) -- no real Azure call happens at startup this wave.
+          container_id="$(docker run -d \
+            -e AZURE_OPENAI_EASTUS2_ENDPOINT=https://ci-placeholder.openai.azure.com/ \
+            -e AZURE_OPENAI_REALTIME_DEPLOYMENT=ci-placeholder \
+            -e AZURE_SEARCH_ENDPOINT=https://ci-placeholder.search.windows.net \
+            -e AZURE_SEARCH_INDEX=ci-placeholder \
+            -p 8000:8000 \
+            azureaidrivethru-backend-dotnet:ci)"
+          trap 'docker logs "$container_id" || true; docker rm -f "$container_id" >/dev/null 2>&1 || true' EXIT
+
+          # R6 (Rick's #152 review): event-driven instead of a 30s wall-clock poll. Kestrel logs
+          # "Now listening on" (Microsoft.Hosting.Lifetime) only after startup validation passes;
+          # if the process exits first, `docker logs -f` ends and grep fails instead of the loop
+          # silently retrying for the full window. The job's timeout-minutes is the only clock.
+          if ! grep -m1 -q 'Now listening on' <(docker logs -f "$container_id" 2>&1); then
+            echo "C# backend exited before listening" >&2; exit 1
+          fi
+          curl -fsS http://localhost:8000/health -o "$RUNNER_TEMP/health.json"
+
+          cat "$RUNNER_TEMP/health.json"
+          status="$(jq -r '.status' "$RUNNER_TEMP/health.json")"
+          test "$status" = "healthy" || { echo "status was '$status', not 'healthy'" >&2; exit 1; }
+          jq -e '.checks | to_entries | all(.value == true)' "$RUNNER_TEMP/health.json" >/dev/null \
+            || { echo "one or more startup checks did not pass" >&2; exit 1; }
+
+          actual_packs="$(jq -r '.personas[]' "$RUNNER_TEMP/health.json" | sort | tr '\n' ' ')"
+          if [ "${actual_packs% }" != "${expected_packs% }" ]; then
+            echo "Persona packs mismatch: expected [${expected_packs% }] got [${actual_packs% }]" >&2
+            exit 1
+          fi
+          echo "C# backend /health OK: personas = ${actual_packs% }"
+
   # Issue #24: single aggregate required-status-check. Branch protection now pins only this job's
   # name, so growing the `conformance` matrix (e.g. adding backend: dotnet in S2) or adding a new
   # job to `needs:` below never requires another branch-protection edit -- it's added to `needs`
@@ -604,7 +707,7 @@ jobs:
   # required check that never ran is not the same as a required check that explicitly failed.
   conformance-gate:
     name: conformance-gate
-    needs: [python-tests, frontend-tests, dotnet-tests, conformance, conformance-browser, docker-build]
+    needs: [python-tests, frontend-tests, dotnet-tests, conformance, conformance-browser, docker-build, docker-build-dotnet]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
