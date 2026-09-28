@@ -206,6 +206,17 @@ class TestRebrandVerification(unittest.TestCase):
             f"\nBaseline entries missing a valid issue reference (e.g. '#74'): {bad}",
         )
 
+    def test_every_baseline_entry_has_a_non_empty_reason(self):
+        """Every BASELINE entry must carry a human-readable `reason` -- the 55 .cs entries
+        added by #105 originally shipped with `reason: ''`, which is exactly the kind of
+        untracked, unexplained permanent exception this test (and its issue-reference sibling
+        above) exists to prevent (#105 round 2, Rick's review)."""
+        bad = [(e.file, e.brand) for e in BASELINE.values() if not e.reason.strip()]
+        self.assertEqual(
+            bad, [],
+            f"\nBaseline entries missing a non-empty reason: {bad}",
+        )
+
     def test_baseline_entries_with_an_increase_reason_have_a_valid_format(self):
         """`increase_reason` is only set by regenerate_rebrand_baseline.py's
         ``--allow-increase`` path (PR #101 round 3, Rick's review) on a raised/brand-new

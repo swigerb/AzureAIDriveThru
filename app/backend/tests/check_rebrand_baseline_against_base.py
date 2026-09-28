@@ -13,12 +13,24 @@ validly-formatted `increase_reason`?". Issue #105 hardened every corner that lef
      already-fixed issue reference no longer passes. If the API check can't run at all in a
      context where it's required, that fails closed (see REBRAND_REQUIRE_ISSUE_API_CHECK
      below) rather than silently trusting the reference.
-  3. A RAISE's `increase_reason` may not cite the PR's OWN issue (REBRAND_PR_ISSUE, extracted
-     from the PR body in CI) -- the issue that justifies raising an EXISTING entry must be a
+  3. A RAISE's `increase_reason` may not cite ANY issue this PR itself references, via ANY
+     GitHub closing/non-closing keyword -- close(s/d), fix(es/ed), resolve(s/d), ref(s),
+     case-insensitive (REBRAND_PR_ISSUES, extracted from the PR body in CI via
+     `parse_pr_issue_refs()`) -- the issue that justifies raising an EXISTING entry must be a
      separate, already-settled decision, not "because this very PR is making the change".
      Deliberately scoped to raises only, not brand-new entries -- see item 4's note on why a
      brand-new entry legitimately may (and, per issue #105 itself, must) cite the PR that
      first adds tracking for it.
+  3b. Separately, and regardless of label (RAISE *or* brand-new), no entry's `increase_reason`
+     may cite an issue this PR CLOSES specifically (REBRAND_PR_CLOSES -- the subset of item 3
+     reached via a closing keyword, not a bare "Refs"). A brand-new entry that seeds
+     `increase_reason: '#N'` while the PR body says "Closes #N" would pass its own PR check,
+     then have #N closed by the merge, then fail the post-merge push-to-dev re-check with
+     "#N is not open" -- dev goes red right after a green merge. #105 round 2 (Rick's PR #153
+     review), closing that gap. Round 1's extraction regex also only recognised "Refs/Closes/
+     Fixes/Resolves" (missing "close", "closed", "fix", "fixed", "resolve", "resolved") and
+     kept only the FIRST match in the body -- both bypasses are fixed by
+     `parse_pr_issue_refs()` matching every occurrence of every keyword form.
   4. A brand-new (file, brand) entry is refused outright -- regardless of `increase_reason` --
      if that file already has a baseline entry for a DIFFERENT brand. This is the exact shape
      of the #109 bug (a foreign brand quietly baselined into a file that only ever tracked
@@ -43,8 +55,17 @@ Usage (see .github/workflows/conformance.yml, python-tests job):
 Environment variables (all optional for local/manual runs; CI sets every one of them):
     GITHUB_TOKEN                    Bearer token for the GitHub REST API issue lookup.
     GITHUB_REPOSITORY               "owner/name" of the repo to look issues up in.
-    REBRAND_PR_ISSUE                This PR's own issue reference (e.g. "#105"), if known --
-                                     any increase_reason equal to this is rejected (item 3).
+    REBRAND_PR_ISSUES               Comma-separated '#N' issue refs this PR's body mentions
+                                     via ANY supported keyword (close/closes/closed,
+                                     fix/fixes/fixed, resolve/resolves/resolved, ref/refs),
+                                     case-insensitive -- a RAISE's increase_reason may not
+                                     equal any of these (item 3).
+    REBRAND_PR_CLOSES               Comma-separated '#N' issue refs this PR's body mentions
+                                     via a CLOSING keyword specifically (REBRAND_PR_ISSUES
+                                     minus any ref/refs-only matches) -- NO entry, RAISE or
+                                     NEW, may cite one of these: merging this PR closes the
+                                     issue, so the post-merge push-to-dev check would then
+                                     fail (item 3b).
     REBRAND_REQUIRE_ISSUE_API_CHECK Set to "1"/"true" to make the open-issue API check
                                      mandatory: if GITHUB_TOKEN/GITHUB_REPOSITORY are missing,
                                      or the API call fails for any reason, every raise/new
@@ -73,12 +94,52 @@ from rebrand_scan import BASELINE_PATH, BaselineEntry, _load_baseline  # noqa: E
 
 ISSUE_REF_RE = re.compile(r"#\d+")
 
-REBRAND_PR_ISSUE_ENV = "REBRAND_PR_ISSUE"
+# #105 R1 (round 2, Rick's PR #153 review): GitHub recognises these closing keywords on a PR
+# body, case-insensitively, each optionally followed by a colon -- "close(s/d)", "fix(es/ed)",
+# "resolve(s/d)". "ref(s)" is NOT a closing keyword (it links an issue without closing it),
+# which is exactly why callers need both the full set (REBRAND_PR_ISSUES) and the
+# closing-only subset (REBRAND_PR_CLOSES) separately -- see parse_pr_issue_refs() below.
+PR_ISSUE_REF_RE = re.compile(
+    r"\b(close[sd]?|fix(?:e[sd])?|resolve[sd]?|refs?)\s*:?\s+#(\d+)",
+    re.IGNORECASE,
+)
+
+REBRAND_PR_ISSUES_ENV = "REBRAND_PR_ISSUES"
+REBRAND_PR_CLOSES_ENV = "REBRAND_PR_CLOSES"
 REQUIRE_ISSUE_API_ENV = "REBRAND_REQUIRE_ISSUE_API_CHECK"
 GITHUB_TOKEN_ENV = "GITHUB_TOKEN"  # noqa: S105 -- this is an env var NAME, not a secret
 GITHUB_REPOSITORY_ENV = "GITHUB_REPOSITORY"
 
 _TRUTHY = {"1", "true", "True", "yes", "on"}
+
+
+def parse_pr_issue_refs(body: str) -> tuple[frozenset[str], frozenset[str]]:
+    """Extract every issue reference this PR body makes via a supported keyword.
+
+    Returns ``(all_issues, closing_issues)``, both as frozensets of ``'#N'`` strings:
+
+    - *all_issues* is every issue referenced by ANY supported keyword -- close(s/d),
+      fix(es/ed), resolve(s/d), ref(s) -- case-insensitive, every match in the body (not just
+      the first).
+    - *closing_issues* is the subset referenced via a keyword GitHub itself treats as
+      CLOSING the issue on merge (i.e. *all_issues* minus any ref/refs-only matches).
+
+    #105 R1 (round 2, Rick's PR #153 review): the original single-match regex only recognised
+    "Refs/Closes/Fixes/Resolves" (missing GitHub's own "close", "closed", "fix", "fixed",
+    "resolve", "resolved" forms) and stopped at the first hit in the body -- both let a
+    closing reference slip past the checker uncaught. This helper is imported directly by the
+    "Determine this PR's own issue reference" workflow step so the regex is tested once, here,
+    rather than duplicated in workflow YAML.
+    """
+    all_issues: set[str] = set()
+    closing_issues: set[str] = set()
+    for match in PR_ISSUE_REF_RE.finditer(body or ""):
+        keyword = match.group(1).lower()
+        ref = f"#{match.group(2)}"
+        all_issues.add(ref)
+        if not keyword.startswith("ref"):
+            closing_issues.add(ref)
+    return frozenset(all_issues), frozenset(closing_issues)
 
 
 def check_issue_is_open(issue_ref: str, repo: str, token: str) -> str | None:
@@ -127,7 +188,8 @@ def _check_entry(
     prior: BaselineEntry | None,
     base: dict[tuple[str, str], BaselineEntry],
     *,
-    pr_issue: str | None,
+    pr_issues: frozenset[str],
+    pr_closes: frozenset[str],
     require_api_check: bool,
     token: str,
     repo: str,
@@ -167,7 +229,23 @@ def _check_entry(
             None,
         )
 
-    if label == "RAISE" and pr_issue and reason == pr_issue:
+    if reason in pr_closes:
+        # #105 R1b (round 2, Rick's PR #153 review), applies to EITHER label -- unlike the
+        # RAISE-only self-citation check below, a brand-new entry citing an issue this PR
+        # CLOSES is just as broken: the PR's own check passes, the merge closes the issue,
+        # and the post-merge push-to-dev re-check then fails "reason is not open" on a
+        # perfectly green merge.
+        suffix = f" {prior_max} -> {entry.max}" if prior_max is not None else f" = {entry.max}"
+        return (
+            f"{label} {desc}{suffix} cites {reason}, which this PR closes on merge -- the "
+            f"post-merge push-to-dev check re-verifies every entry's issue is still open, so "
+            f"this would fail closed right after a green merge; cite an issue that stays "
+            f"open, or reference this PR with a non-closing keyword (e.g. 'Refs {reason}') "
+            f"instead",
+            None,
+        )
+
+    if label == "RAISE" and reason in pr_issues:
         # Scoped to RAISES only -- deliberately NOT applied to brand-new entries on a file
         # with zero prior baseline entries at all. Rick's #109 example combined self-citation
         # WITH a foreign brand slipped into an already-tracked file (item 4 above already
@@ -203,6 +281,12 @@ def _check_entry(
     return None, f"{label} {desc}{suffix} ({reason})"
 
 
+def _parse_issue_ref_env(raw: str) -> frozenset[str]:
+    """Parse a comma-separated '#N,#M' env var value into a frozenset of '#N' strings,
+    ignoring blanks (e.g. an unset/empty env var, or a trailing comma)."""
+    return frozenset(ref.strip() for ref in raw.split(",") if ref.strip())
+
+
 def main(argv: list[str]) -> int:
     if len(argv) != 1:
         print("usage: check_rebrand_baseline_against_base.py <path-to-base-baseline.yaml>")
@@ -219,7 +303,8 @@ def main(argv: list[str]) -> int:
         )
         return 0
 
-    pr_issue = (os.environ.get(REBRAND_PR_ISSUE_ENV) or "").strip() or None
+    pr_issues = _parse_issue_ref_env(os.environ.get(REBRAND_PR_ISSUES_ENV) or "")
+    pr_closes = _parse_issue_ref_env(os.environ.get(REBRAND_PR_CLOSES_ENV) or "")
     require_api_check = (os.environ.get(REQUIRE_ISSUE_API_ENV) or "").strip() in _TRUTHY
     token = (os.environ.get(GITHUB_TOKEN_ENV) or "").strip()
     repo = (os.environ.get(GITHUB_REPOSITORY_ENV) or "").strip()
@@ -237,7 +322,8 @@ def main(argv: list[str]) -> int:
         prior = base.get(key)
         problem, warning = _check_entry(
             entry, prior, base,
-            pr_issue=pr_issue, require_api_check=require_api_check, token=token, repo=repo,
+            pr_issues=pr_issues, pr_closes=pr_closes,
+            require_api_check=require_api_check, token=token, repo=repo,
         )
         if problem is not None:
             problems.append(problem)
