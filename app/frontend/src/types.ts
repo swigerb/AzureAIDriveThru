@@ -96,7 +96,18 @@ export type ExtensionSessionMetadata = {
 
 // Same shape the ticket renders from JSON.parse(tool_result).
 export type OrderSummaryWire = {
-    items: { item: string; size: string; quantity: number; price: number; display: string }[];
+    items: {
+        item: string;
+        size: string;
+        quantity: number;
+        price: number;
+        display: string;
+        // #77/#80 F5, additive: bundle-slot item(s) absorbed into (or auto-filled onto) this
+        // line, e.g. ["Medium Fries", "Coca-Cola"] for a combo/meal. Defaults to [] on the wire
+        // (app/backend/models.py::OrderItem.components) for every a-la-carte line, so this stays
+        // optional here too -- an older payload that omits it entirely is still valid.
+        components?: string[];
+    }[];
     total: number;
     tax: number;
     finalTotal: number;

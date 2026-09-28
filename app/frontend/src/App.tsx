@@ -13,6 +13,7 @@ import MenuPanel from "@/components/ui/menu-panel";
 import OrderSummary, { calculateOrderSummary, OrderItem, OrderSummaryProps } from "@/components/ui/order-summary";
 import TranscriptPanel from "@/components/ui/transcript-panel";
 import PersonaPicker from "@/components/ui/persona-picker";
+import BackendPicker from "@/components/ui/backend-picker";
 const Settings = lazy(() => import("@/components/ui/settings"));
 import useRealTime from "@/hooks/useRealtime";
 import useAzureSpeech from "@/hooks/useAzureSpeech";
@@ -27,6 +28,7 @@ import { AzureSpeechProvider, useAzureSpeechOnContext } from "@/context/azure-sp
 import { AuthProvider, useAuth } from "@/context/auth-context";
 import { PersonaProvider, usePersonaContext } from "@/context/persona-context";
 import { resolveVoice } from "@/lib/voices";
+import { resolveModelId, modelStorageKey } from "@/lib/models";
 import { apologyClipUrl, playApologyClip } from "@/lib/apology";
 import { personaAssetUrl } from "@/lib/personaAssets";
 import type { PersonaDetail } from "@/types/persona";
@@ -100,7 +102,7 @@ function SonicApp() {
     const { useDummyData } = useDummyDataContext();
     const { theme } = useTheme();
     const { logout, authEnabled } = useAuth();
-    const { personas, current, logoUrl, selectPersona } = usePersonaContext();
+    const { personas, backends, current, logoUrl, selectPersona } = usePersonaContext();
 
     const [transcripts, setTranscripts] = useState<Array<{ text: string; isUser: boolean; timestamp: Date }>>([]);
     const { dummyOrder, dummyTranscripts } = useDemoData(current.id, useDummyData);
@@ -129,6 +131,13 @@ function SonicApp() {
     const [voiceChoice, setVoiceChoice] = useState<string>(() => {
         return resolveVoice(localStorage.getItem("voiceChoice"), current.voice.default);
     });
+    // Issue #80 F10: persisted per persona (unlike `voiceChoice` above), so switching personas
+    // never leaks one persona's chosen model onto another's -- `resolveModelId` falls back to
+    // this persona's own default whenever there's no stored choice yet, or the stored one is no
+    // longer one of this persona's selectable options.
+    const [modelId, setModelId] = useState<string>(() => {
+        return resolveModelId(localStorage.getItem(modelStorageKey(current.id)), current.models);
+    });
 
     useEffect(() => {
         localStorage.setItem("showSessionTokens", showSessionTokens.toString());
@@ -145,6 +154,38 @@ function SonicApp() {
     useEffect(() => {
         localStorage.setItem("voiceChoice", voiceChoice);
     }, [voiceChoice]);
+
+    // Re-resolves whenever the bound persona changes (initial load -- including a backend switch
+    // that carried `?model=` -- or a persona switch via `handleSelectPersona` below).
+    //
+    // Rick's PR 134 review, item 2: prefers `?model=` from the address bar (set by
+    // `lib/backends.ts`'s `backendTargetUrl` when hopping backends) over this persona's stored
+    // choice, validated through `resolveModelId` against THIS backend's own `/api/personas/{id}`
+    // list for the bound persona (`current.models` -- the C# catalog can differ from Python's): a
+    // listed id is adopted, an unlisted one falls through to the persona's default exactly like
+    // any other stale/invalid stored choice. Once consumed, `model` is stripped from the address
+    // bar with `history.replaceState` (leaving any other query params, e.g. `?persona=`, alone) so
+    // a later reload of this same URL doesn't keep re-pinning a choice the guest may since have
+    // changed via the picker.
+    //
+    // Rick's PR 134 review, item 4: persists the resolved id right here, in the same effect that
+    // computes it, rather than in a second effect keyed on `modelId` alone -- the previous split
+    // wrote whatever `modelId` last was under the NEW persona's storage key on the same commit
+    // `current` swapped to that persona (both effects run, in order, on the render where
+    // `current.id` changed), briefly leaving the new persona's key holding the OLD persona's model
+    // id. The only other write site is `onModelChange` below (an explicit user choice).
+    useEffect(() => {
+        const fromQuery = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("model") : null;
+        const resolved = resolveModelId(fromQuery ?? localStorage.getItem(modelStorageKey(current.id)), current.models);
+        setModelId(resolved);
+        localStorage.setItem(modelStorageKey(current.id), resolved);
+        if (fromQuery !== null && typeof window !== "undefined") {
+            const url = new URL(window.location.href);
+            url.searchParams.delete("model");
+            window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [current.id, current.models]);
 
     const handleSessionIdentifiers = useCallback((message: ExtensionSessionMetadata | ExtensionRoundTripToken) => {
         const snapshot: SessionIdentifiersState = {
@@ -195,6 +236,7 @@ function SonicApp() {
 
     const realtime = useRealTime({
         personaId: current.id,
+        modelId,
         enableInputAudioTranscription: true,
         onWebSocketOpen: () => console.log("WebSocket connection opened"),
         onWebSocketClose: () => console.log("WebSocket connection closed"),
@@ -584,6 +626,15 @@ function SonicApp() {
         selectPersona(personaId);
     };
 
+    // Rick's PR 134 review, item 4: the model picker's own explicit user choice -- the other
+    // persist site is the resolve effect above (a persona switch or an initial `?model=` arrival).
+    // Written under the CURRENT persona's key, matching whichever persona is bound at the moment
+    // of the click.
+    const handleModelChange = (id: string) => {
+        setModelId(id);
+        localStorage.setItem(modelStorageKey(current.id), id);
+    };
+
     return (
         <div className={`min-h-screen bg-background p-4 text-foreground ${theme}`}>
             <div className="mx-auto max-w-7xl space-y-6">
@@ -606,6 +657,13 @@ function SonicApp() {
                             personas={personas}
                             currentId={current.id}
                             onSelect={handleSelectPersona}
+                            disabled={isRecording || order.items.length > 0}
+                        />
+                        {/* Issue #80 F11: hides itself entirely below two `backends[]` entries. */}
+                        <BackendPicker
+                            backends={backends}
+                            personaId={current.id}
+                            modelId={modelId}
                             disabled={isRecording || order.items.length > 0}
                         />
                         <Suspense fallback={null}>
@@ -634,6 +692,9 @@ function SonicApp() {
                                 }}
                                 roleName={current.roleName}
                                 models={current.models}
+                                modelId={modelId}
+                                onModelChange={handleModelChange}
+                                modelDisabled={isRecording || order.items.length > 0}
                             />
                         </Suspense>
                         {authEnabled && (
