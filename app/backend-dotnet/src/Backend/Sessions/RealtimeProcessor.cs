@@ -345,17 +345,20 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                 string msgType;
                 try
                 {
-                    message = JsonNode.Parse(Encoding.UTF8.GetString(frame.Payload)) as JsonObject
+                    // Parse strictly: AllowDuplicateProperties = false makes JsonNode.Parse throw
+                    // JsonException immediately for a duplicate key at ANY depth (top-level "type"
+                    // as well as a nested duplicate inside "session"), instead of the old lazy
+                    // JsonObject dictionary deferring the throw (an ArgumentException) until
+                    // something later indexes into the offending object -- which, for a nested
+                    // duplicate, happened outside this try (inside ProcessClientMessage), faulting
+                    // the loop outright. The ArgumentException catch stays as a defense-in-depth
+                    // belt-and-suspenders for any other lazy-dictionary access this doesn't cover.
+                    message = JsonNode.Parse(
+                            Encoding.UTF8.GetString(frame.Payload),
+                            nodeOptions: null,
+                            documentOptions: new JsonDocumentOptions { AllowDuplicateProperties = false })
+                        as JsonObject
                         ?? throw new JsonException("Client frame was not a JSON object.");
-                    // JsonObject's backing dictionary is built lazily on first property access, not
-                    // during Parse itself -- so a frame with a duplicate top-level key (e.g. two
-                    // "type" fields) does NOT throw here. It throws "An item with the same key has
-                    // already been added" (ArgumentException) the first time something indexes into
-                    // the object, which is why GetString(...) has to stay inside this try too: a
-                    // parse that "succeeds" can still defer-fail on the very next line, and if that
-                    // throw escaped uncaught it would kill this relay loop outright (verified via
-                    // Scenarios/Security/AllowListBypassHardeningTests.cs's duplicate-key probe,
-                    // which timed out waiting for post-frame liveness until this was fixed).
                     msgType = GetString(message, "type") ?? "";
                 }
                 catch (Exception ex) when (ex is JsonException or ArgumentException)
@@ -364,57 +367,67 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                     continue;
                 }
 
-                if (msgType.Length == 0)
+                try
                 {
-                    _logger?.LogWarning("Dropped client→server frame with a missing/non-string type (session={SessionId})", sessionId);
-                    continue;
-                }
+                    if (msgType.Length == 0)
+                    {
+                        _logger?.LogWarning("Dropped client→server frame with a missing/non-string type (session={SessionId})", sessionId);
+                        continue;
+                    }
 
-                if (msgType == "extension.end_session")
-                {
-                    // Port of rtmt.py's _forward_messages: a guest-initiated end_session closes
-                    // the browser socket with the fixed 1000/"session_ended" shape immediately --
-                    // this needs no session registry/resume state (unlike the resume-triggered
-                    // 4002 supersede or the idle-timeout 4000, both #15) since it is purely "the
-                    // guest asked to leave right now".
-                    _logger?.LogInformation("Guest ended session (session={SessionId})", sessionId);
-                    await CloseIfOpenAsync(browserSocket, WebSocketCloseStatus.NormalClosure, SessionEndedCloseReason)
-                        .ConfigureAwait(false);
-                    break;
-                }
+                    if (msgType == "extension.end_session")
+                    {
+                        // Port of rtmt.py's _forward_messages: a guest-initiated end_session closes
+                        // the browser socket with the fixed 1000/"session_ended" shape immediately --
+                        // this needs no session registry/resume state (unlike the resume-triggered
+                        // 4002 supersede or the idle-timeout 4000, both #15) since it is purely "the
+                        // guest asked to leave right now".
+                        _logger?.LogInformation("Guest ended session (session={SessionId})", sessionId);
+                        await CloseIfOpenAsync(browserSocket, WebSocketCloseStatus.NormalClosure, SessionEndedCloseReason)
+                            .ConfigureAwait(false);
+                        break;
+                    }
 
-                if (msgType.StartsWith("extension.", StringComparison.Ordinal))
-                {
-                    await HandleClientExtensionMessageAsync(msgType, message).ConfigureAwait(false);
-                    continue;
-                }
+                    if (msgType.StartsWith("extension.", StringComparison.Ordinal))
+                    {
+                        await HandleClientExtensionMessageAsync(msgType, message).ConfigureAwait(false);
+                        continue;
+                    }
 
-                if (msgType == "input_audio_buffer.append" && state.Echo.ShouldSuppressAudio(NowSeconds()))
-                {
-                    continue;
-                }
+                    if (msgType == "input_audio_buffer.append" && state.Echo.ShouldSuppressAudio(NowSeconds()))
+                    {
+                        continue;
+                    }
 
-                var hooksEnabled = Environment.GetEnvironmentVariable("CONFORMANCE_TEST_HOOKS") == "1";
-                var (forwarded, sentType) = ProcessClientMessage(message, hooksEnabled);
-                if (forwarded is null)
-                {
-                    continue;
-                }
+                    var hooksEnabled = Environment.GetEnvironmentVariable("CONFORMANCE_TEST_HOOKS") == "1";
+                    var (forwarded, sentType) = ProcessClientMessage(message, hooksEnabled);
+                    if (forwarded is null)
+                    {
+                        continue;
+                    }
 
-                await SendTextAsync(upstream, forwarded.ToJsonString(), ct).ConfigureAwait(false);
+                    await SendTextAsync(upstream, forwarded.ToJsonString(), ct).ConfigureAwait(false);
 
-                if (sentType == "response.cancel")
-                {
-                    state.Echo.OnBargeIn();
-                }
-                else if (sentType == "response.create")
-                {
-                    state.Echo.OnExternalResponseCreate();
-                }
+                    if (sentType == "response.cancel")
+                    {
+                        state.Echo.OnBargeIn();
+                    }
+                    else if (sentType == "response.create")
+                    {
+                        state.Echo.OnExternalResponseCreate();
+                    }
 
-                if (!state.GreetingSent && sentType == "session.update")
+                    if (!state.GreetingSent && sentType == "session.update")
+                    {
+                        await SendGreetingOnceAsync("client-session.update").ConfigureAwait(false);
+                    }
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    await SendGreetingOnceAsync("client-session.update").ConfigureAwait(false);
+                    // R3: any per-frame processing/send failure must not fault this loop and end
+                    // the session silently -- log with the session id (never the payload, which
+                    // may carry guest PII/order details) and move on to the next frame.
+                    _logger?.LogWarning(ex, "Error processing client→server frame (session={SessionId})", sessionId);
                 }
             }
         }
@@ -757,12 +770,17 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                 string msgType;
                 try
                 {
-                    message = JsonNode.Parse(Encoding.UTF8.GetString(frame.Payload)) as JsonObject
-                        ?? throw new JsonException("Upstream frame was not a JSON object.");
-                    // Same lazy-dictionary deferred-throw hazard as the client→server side above --
-                    // GetString(...) has to stay inside this try (see that side's comment for why),
-                    // kept consistent even though the fake upstream in practice never sends a
+                    // See the client→server side's comment: strict parsing (AllowDuplicateProperties
+                    // = false) turns a duplicate key at any depth into an immediate JsonException
+                    // here, instead of a deferred ArgumentException from indexing into the object
+                    // later. Kept even though the fake upstream in practice never sends a
                     // duplicate-key frame, so a future real-upstream one can't crash the relay.
+                    message = JsonNode.Parse(
+                            Encoding.UTF8.GetString(frame.Payload),
+                            nodeOptions: null,
+                            documentOptions: new JsonDocumentOptions { AllowDuplicateProperties = false })
+                        as JsonObject
+                        ?? throw new JsonException("Upstream frame was not a JSON object.");
                     msgType = GetString(message, "type") ?? "";
                 }
                 catch (Exception ex) when (ex is JsonException or ArgumentException)
@@ -771,50 +789,60 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                     continue;
                 }
 
-                // Echo-suppression/barge-in side effects -- independent of the passthrough/switch
-                // dispatch below, mirroring rtmt.py's dual marker-substring + switch-case wiring
-                // collapsed into one pass since this port always fully parses (see class doc).
-                switch (msgType)
+                try
                 {
-                    case "response.output_audio.delta":
-                    case "response.audio.delta":
-                        state.AssistantAudioSeen = true;
-                        state.Echo.OnAudioDelta();
-                        break;
-                    case "response.output_audio.done":
-                    case "response.audio.done":
-                        state.Echo.OnAudioDone(NowSeconds());
-                        break;
-                    case "input_audio_buffer.speech_started":
-                        state.Echo.OnSpeechStarted();
-                        break;
-                    case "response.done":
-                        // swigerb/SonicAIDriveThru#48: a greeting that produced no audio (text-only
-                        // fallback, cancelled/failed before any audio) never reaches OnAudioDone --
-                        // response.done is the guaranteed event for every response, so it's the
-                        // fallback that ends greeting suppression instead of leaving the mic muted
-                        // until the guest physically interrupts.
-                        state.Echo.OnResponseDone(NowSeconds());
-                        break;
-                }
-
-                JsonObject? forward;
-                if (PassthroughEvents.ServerTypes.Contains(msgType))
-                {
-                    if (PassthroughEvents.GaToLegacy.TryGetValue(msgType, out var legacyType))
+                    // Echo-suppression/barge-in side effects -- independent of the passthrough/switch
+                    // dispatch below, mirroring rtmt.py's dual marker-substring + switch-case wiring
+                    // collapsed into one pass since this port always fully parses (see class doc).
+                    switch (msgType)
                     {
-                        message["type"] = legacyType;
+                        case "response.output_audio.delta":
+                        case "response.audio.delta":
+                            state.AssistantAudioSeen = true;
+                            state.Echo.OnAudioDelta();
+                            break;
+                        case "response.output_audio.done":
+                        case "response.audio.done":
+                            state.Echo.OnAudioDone(NowSeconds());
+                            break;
+                        case "input_audio_buffer.speech_started":
+                            state.Echo.OnSpeechStarted();
+                            break;
+                        case "response.done":
+                            // swigerb/SonicAIDriveThru#48: a greeting that produced no audio (text-only
+                            // fallback, cancelled/failed before any audio) never reaches OnAudioDone --
+                            // response.done is the guaranteed event for every response, so it's the
+                            // fallback that ends greeting suppression instead of leaving the mic muted
+                            // until the guest physically interrupts.
+                            state.Echo.OnResponseDone(NowSeconds());
+                            break;
                     }
-                    forward = message;
-                }
-                else
-                {
-                    forward = await DispatchServerMessageAsync(message, msgType).ConfigureAwait(false);
-                }
 
-                if (forward is not null)
+                    JsonObject? forward;
+                    if (PassthroughEvents.ServerTypes.Contains(msgType))
+                    {
+                        if (PassthroughEvents.GaToLegacy.TryGetValue(msgType, out var legacyType))
+                        {
+                            message["type"] = legacyType;
+                        }
+                        forward = message;
+                    }
+                    else
+                    {
+                        forward = await DispatchServerMessageAsync(message, msgType).ConfigureAwait(false);
+                    }
+
+                    if (forward is not null)
+                    {
+                        await SendTextAsync(browserSocket, forward.ToJsonString(), ct).ConfigureAwait(false);
+                    }
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    await SendTextAsync(browserSocket, forward.ToJsonString(), ct).ConfigureAwait(false);
+                    // R3: any per-frame processing/send failure must not fault this loop and end
+                    // the session silently -- log with the session id (never the payload, which
+                    // may carry guest PII/order details) and move on to the next frame.
+                    _logger?.LogWarning(ex, "Error processing server→client frame (session={SessionId})", sessionId);
                 }
             }
         }
@@ -864,16 +892,26 @@ public sealed class RealtimeProcessor : IPipelineProcessor
         }
     }
 
-    private static async Task SwallowAsync(Task task)
+    private async Task SwallowAsync(Task task)
     {
         try
         {
             await task.ConfigureAwait(false);
         }
-        catch (Exception)
+        catch (OperationCanceledException)
         {
-            // Already logged inside the loop itself -- this just keeps the outer finally from
-            // throwing while draining the counterpart task.
+            // Expected: linkedCts.Cancel() in the caller's finally is what unblocks the
+            // counterpart loop's pending ReadMessageAsync/SendTextAsync in the first place.
+        }
+        catch (Exception ex)
+        {
+            // R3: this used to say "already logged inside the loop itself", which was wrong for a
+            // send failure or any other exception the loop didn't itself expect and log -- that
+            // exception surfaced here with nothing in the logs at all. Both relay loops now catch
+            // and log their own per-frame failures, so reaching here at all means something above
+            // the per-frame try/catch faulted (e.g. the loop's own setup) -- log it at Error so a
+            // silently-ended session always leaves a trace.
+            _logger?.LogError(ex, "Unhandled exception draining a realtime relay loop");
         }
     }
 

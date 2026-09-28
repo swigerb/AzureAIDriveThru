@@ -227,4 +227,47 @@ public sealed class AllowListBypassHardeningTests(ConformanceFixture fixture)
 
         Assert.Null(browser.CloseStatus);
     });
+
+    [Fact]
+    [Trait("Dotnet", "ready")]
+    public Task Nested_duplicate_key_in_session_object_is_dropped_without_killing_the_relay_loop() => fixture.RunAsync(async () =>
+    {
+        // PR #140 R3: a duplicate key *nested* inside "session" (as opposed to the top-level
+        // duplicate covered by Duplicate_top_level_type_key_...  above) used to parse "session"
+        // successfully as far as JsonNode.Parse was concerned -- JsonObject's backing dictionary
+        // is built lazily, so the failure only surfaced as an ArgumentException the first time
+        // something indexed into the nested object, deep inside ProcessClientMessage, OUTSIDE the
+        // try/catch that guarded the initial parse. That fault killed RelayBrowserToUpstreamAsync
+        // outright with nothing logged (SwallowAsync's stale comment claimed it was "already
+        // logged inside the loop", which wasn't true for this path). Fixed by parsing strictly
+        // (AllowDuplicateProperties = false, which turns any duplicate key at any depth into an
+        // immediate JsonException at parse time) and by wrapping the rest of each loop's
+        // per-frame body in its own catch that logs and continues instead of faulting the loop.
+        var ct = TestContext.Current.CancellationToken;
+        var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
+        await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        var connection = await connectionTask;
+        Assert.True(connection is not null, "No upstream connection was accepted for the browser socket.");
+        var bootstrap = await connection!.ReceivedFrames.WaitForAsync(f => f.Sequence == 0, FrameTimeout, ct);
+        Assert.True(bootstrap is not null, "Bootstrap session.update never arrived.");
+
+        await browser.SendRawTextAsync(
+            """{"type":"session.update","session":{"voice":"marin","voice":"forged_via_nested_duplicate_key"}}""",
+            ct);
+
+        // Liveness proof: the socket must still accept and forward a subsequent legitimate frame,
+        // proving the nested-duplicate-key frame was dropped (logged, not silently faulting the
+        // loop) rather than having killed the relay loop or closed the connection.
+        await browser.SendInputAudioClearAsync(ct);
+        var liveness = await connection.ReceivedFrames.WaitForAsync(
+            f => f.Sequence > bootstrap!.Sequence && f.Type == "input_audio_buffer.clear", FrameTimeout, ct);
+        Assert.True(liveness is not null,
+            "The socket must stay open and keep processing frames after the nested-duplicate-key frame.");
+
+        foreach (var frame in connection.ReceivedFrames.Snapshot())
+        {
+            Assert.NotEqual("forged_via_nested_duplicate_key", frame.Json.TryGetProperty("session", out var s) && s.TryGetProperty("voice", out var v) ? v.GetString() : null);
+        }
+        Assert.Null(browser.CloseStatus);
+    });
 }
