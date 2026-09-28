@@ -66,6 +66,12 @@ jobs:
 
       - name: Build frontend (app/backend/static is gitignored and required by app.py's add_static)
         working-directory: app/frontend
+        # This CI leg builds the frontend only to exercise the Python backend's static-file
+        # serving (StaticIndexHtmlTests etc.) -- it never signs in a real user, so it explicitly
+        # opts into the unauthenticated Development pass-through build (item B1, PR GH-148 review
+        # round 2). An unset VITE_AUTH_MODE now fails `npm run build` outright.
+        env:
+          VITE_AUTH_MODE: Development
         run: |
           npm ci
           npm run build
@@ -129,6 +135,11 @@ jobs:
 
       - name: npm run build
         working-directory: app/frontend
+        # Frontend-only CI leg -- exercises the browser bundle/build tooling itself, not real
+        # Entra sign-in, so it explicitly opts into the Development pass-through (item B1, PR
+        # GH-148 review round 2). An unset VITE_AUTH_MODE now fails this build outright.
+        env:
+          VITE_AUTH_MODE: Development
         run: npm run build
 
       - name: npm test
@@ -270,6 +281,11 @@ jobs:
         # TryFindStaticDir falls back to app/backend/static too) -- StaticIndexHtmlTests is part of
         # the dotnet leg's scoped subset, so this step isn't python-only.
         working-directory: app/frontend
+        # Conformance harness only -- no real Entra sign-in here, so opt into the Development
+        # pass-through explicitly (item B1, PR GH-148 review round 2). An unset VITE_AUTH_MODE now
+        # fails `npm run build` outright.
+        env:
+          VITE_AUTH_MODE: Development
         run: |
           npm ci
           npm run build
@@ -410,6 +426,11 @@ jobs:
 
       - name: Build frontend (app/backend/static is gitignored and required by app.py's add_static)
         working-directory: app/frontend
+        # Browser conformance suite drives the built SPA without real Entra sign-in, so this leg
+        # explicitly opts into the Development pass-through (item B1, PR GH-148 review round 2).
+        # An unset VITE_AUTH_MODE now fails `npm run build` outright.
+        env:
+          VITE_AUTH_MODE: Development
         run: |
           npm ci
           npm run build
@@ -487,7 +508,10 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Build backend image (no push)
-        run: docker build -f app/Dockerfile -t azureaidrivethru-backend:ci .
+        # This is a smoke test of the image build/contents, not real Entra auth (item B1, PR
+        # GH-148 review round 2) -- ARG VITE_AUTH_MODE defaults to Entra in app/Dockerfile, which
+        # needs real Entra ids this job does not have, so pin it to Development here explicitly.
+        run: docker build -f app/Dockerfile --build-arg VITE_AUTH_MODE=Development -t azureaidrivethru-backend:ci .
 
       - name: Verify the image contents (persona packs load, nothing extra)
         run: |

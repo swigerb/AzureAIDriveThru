@@ -18,6 +18,14 @@ try {
         Write-Host "Restoring frontend npm packages"
         Write-Host ""
         Push-Location "$repoRoot/app/frontend"
+        # ADR-002 / design 18.6, PR GH-148 review round 2 item R4: `vite.config.ts`'s auth-mode
+        # build guard now fails closed on an unset VITE_AUTH_MODE with no Entra ids configured
+        # (this is a local dev build, so there are none) -- every local developer's `npm run
+        # build` here would otherwise fail. Local dev is the intentional unauthenticated
+        # pass-through case, so pin VITE_AUTH_MODE=Development unless the caller already set one
+        # (an Entra dev box testing real sign-in, say), and restore whatever was there before.
+        $prevMode = $env:VITE_AUTH_MODE
+        if (-not $env:VITE_AUTH_MODE) { $env:VITE_AUTH_MODE = "Development" }
         try {
             npm install
             if ($LASTEXITCODE -ne 0) {
@@ -33,6 +41,7 @@ try {
             }
         }
         finally {
+            $env:VITE_AUTH_MODE = $prevMode
             Pop-Location
         }
     }

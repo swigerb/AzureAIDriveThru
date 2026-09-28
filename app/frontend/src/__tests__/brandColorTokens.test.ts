@@ -16,14 +16,24 @@ import { describe, expect, it } from "vitest";
 // here: `bg-[#DA291C]` and `shadow-[0_4px_8px_rgba(0,0,0,0.2)]` just embed the literal CSS value
 // inside brackets, so the same regexes that catch a plain CSS/inline-style literal catch those too.
 
-// The only two places a literal color may legitimately live: index.css (the token definitions
-// themselves) and lib/personaTheme.ts (deriveAccents's neutral fallback hex constants, which feed
-// personas that don't author their own `accents`). Everything else under src -- every component,
-// every other stylesheet -- must reference a token instead. Test files are excluded because their
-// fixtures (including this file's own self-test literals below) legitimately contain color
-// literals as *data*, not as unguarded UI colors.
+// The only three places a literal color may legitimately live: index.css (the token definitions
+// themselves), lib/personaTheme.ts (deriveAccents's neutral fallback hex constants, which feed
+// personas that don't author their own `accents`), and auth/ConfigErrorScreen.tsx (issue #145 --
+// this screen renders when the auth bootstrap itself has already failed, so it deliberately makes
+// no assumption that `index.css`'s `--brand-*` custom properties loaded correctly, and uses its
+// own fully neutral, brand-free literal palette instead). Everything else under src -- every
+// component, every other stylesheet -- must reference a token instead. Test files are excluded
+// because their fixtures (including this file's own self-test literals below) legitimately contain
+// color literals as *data*, not as unguarded UI colors.
 const sources: Record<string, string> = import.meta.glob<string>(
-    ["../**/*.{ts,tsx,css}", "!../index.css", "!../lib/personaTheme.ts", "!../**/__tests__/**", "!../test/**"],
+    [
+        "../**/*.{ts,tsx,css}",
+        "!../index.css",
+        "!../lib/personaTheme.ts",
+        "!../auth/ConfigErrorScreen.tsx",
+        "!../**/__tests__/**",
+        "!../test/**"
+    ],
     { eager: true, query: "?raw", import: "default" }
 );
 
