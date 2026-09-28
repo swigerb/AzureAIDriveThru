@@ -8,6 +8,8 @@
     "prebuild": "node scripts/validate-auth-config.mjs",
     "build": "tsc -b && vite build",
     "validate:auth-config": "node scripts/validate-auth-config.mjs",
+    "test:auth-mode-matrix": "node scripts/auth-mode-build-matrix.mjs --gate-only",
+    "test:auth-mode-matrix:full": "node scripts/auth-mode-build-matrix.mjs --full",
     "preview": "vite preview",
     "format": "prettier --write ./src",
     "test": "vitest run --coverage"

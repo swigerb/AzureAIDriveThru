@@ -4,13 +4,13 @@ import userEvent from '@testing-library/user-event';
 import { InteractionStatus } from '@azure/msal-browser';
 import { AUTH_FORBIDDEN_EVENT } from '../authorizedFetch';
 
-const { mockAuthConfig } = vi.hoisted(() => ({
-  mockAuthConfig: { isConfigured: true },
+const { mockAuthMode } = vi.hoisted(() => ({
+  mockAuthMode: { mode: 'entra' as 'entra' | 'development' },
+}));
+vi.mock('../authMode', () => ({
+  getResolvedAuthMode: () => mockAuthMode,
 }));
 vi.mock('../authConfig', () => ({
-  get authConfig() {
-    return mockAuthConfig;
-  },
   loginRequest: { scopes: ['api://client/access_as_user'] },
 }));
 
@@ -29,7 +29,7 @@ import { AuthGate } from '../AuthGate';
 const child = <div data-testid="protected-child">app</div>;
 
 beforeEach(() => {
-  mockAuthConfig.isConfigured = true;
+  mockAuthMode.mode = 'entra';
   useIsAuthenticated.mockReset();
   useMsal.mockReset();
   loginRedirect.mockReset();
@@ -44,7 +44,7 @@ beforeEach(() => {
 
 describe('AuthGate — unconfigured (Development pass-through)', () => {
   it('renders children directly and never touches MSAL hooks', () => {
-    mockAuthConfig.isConfigured = false;
+    mockAuthMode.mode = 'development';
     render(<AuthGate>{child}</AuthGate>);
 
     expect(screen.getByTestId('protected-child')).toBeInTheDocument();

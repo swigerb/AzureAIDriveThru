@@ -1,5 +1,6 @@
 import type { Configuration, RedirectRequest } from '@azure/msal-browser';
 import { LogLevel } from '@azure/msal-browser';
+import { validateEntraIds } from './authMode';
 
 /**
  * Single-tenant Microsoft Entra SPA configuration (ADR-002, design doc §18.6, issue GH-145).
@@ -92,25 +93,6 @@ export const authConfig: ResolvedAuthConfig = buildAuthConfig(import.meta.env as
  */
 export const loginRequest: RedirectRequest = authConfig.loginRequest;
 
-/** A canonical GUID (accepts any case); rejects the all-zero GUID as a placeholder. */
-const GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const EMPTY_GUID = '00000000-0000-0000-0000-000000000000';
-
-/** A single-tenant directory: a real GUID, or a verified domain (e.g. fabrikam.onmicrosoft.com). */
-const TENANT_DOMAIN_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i;
-
-/**
- * True when a configuration value is obviously a placeholder rather than a real id: empty, an
- * angle-bracket template (`<your-tenant-id>`), the all-zero GUID, or a well-known scaffold token.
- * Live Entra must never boot on any of these.
- */
-function isPlaceholder(value: string): boolean {
-  const v = value.trim();
-  if (v === '' || v === EMPTY_GUID) return true;
-  if (/[<>]/.test(v) || /\s/.test(v)) return true;
-  return /(your[-_]?|placeholder|changeme|example|todo|xxxx+|\bfixme\b)/i.test(v);
-}
-
 export interface EntraConfigValidation {
   readonly ok: boolean;
   readonly error?: string;
@@ -120,24 +102,15 @@ export interface EntraConfigValidation {
  * Pure validator (unit-testable) proving that an explicit Entra deployment carries a NON-EMPTY,
  * VALID single-tenant tenant id and client id. A placeholder, empty, or malformed id fails -- so a
  * live Entra build can never silently fall back to an unauthenticated shell.
+ *
+ * Thin wrapper over `authMode.ts`'s `validateEntraIds` (PR GH-148 review round 2, item B1): the
+ * id-shape rules now live in ONE place, shared with the mode resolver used by both the runtime and
+ * the Vite build guard, so this file and `authMode.ts` can never quietly drift apart on what counts
+ * as a valid id. Kept here (rather than re-pointing every call site at `authMode.ts` directly) so
+ * existing callers/tests of `validateEntraConfig` are unaffected.
  */
 export function validateEntraConfig(tenantId: string, clientId: string): EntraConfigValidation {
-  const tenant = (tenantId ?? '').trim();
-  const client = (clientId ?? '').trim();
-
-  if (isPlaceholder(tenant)) {
-    return { ok: false, error: 'Entra tenant id is missing or a placeholder.' };
-  }
-  if (!(GUID_RE.test(tenant) || TENANT_DOMAIN_RE.test(tenant))) {
-    return { ok: false, error: 'Entra tenant id is not a valid GUID or directory domain.' };
-  }
-  if (isPlaceholder(client)) {
-    return { ok: false, error: 'Entra client id is missing or a placeholder.' };
-  }
-  if (!GUID_RE.test(client)) {
-    return { ok: false, error: 'Entra client id is not a valid GUID.' };
-  }
-  return { ok: true };
+  return validateEntraIds(tenantId, clientId);
 }
 
 /**
