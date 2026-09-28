@@ -28,6 +28,11 @@ type Parameters = {
      * no mid-conversation switching) and sent as `/realtime?persona=<id>` (rtmt.py reads it via
      * `request.query.get("persona")`, falling back to the catalog default when omitted). */
     personaId?: string;
+    /** Issue #80 F10: the session's chosen model, set once before connecting (same
+     * ADR-001 decision 2 rule as `personaId` -- no mid-conversation switching, locked while a
+     * session is active) and sent as `/realtime?model=<id>` (rtmt.py's `request.query.get("model")`,
+     * already merged via PR-106/PR-122, falls back to the persona's pipeline default when omitted). */
+    modelId?: string;
 
     enableInputAudioTranscription?: boolean;
     onWebSocketOpen?: () => void;
@@ -145,6 +150,7 @@ export default function useRealTime({
     aoaiApiKeyOverride,
     aoaiModelOverride,
     personaId,
+    modelId,
     enableInputAudioTranscription,
     onWebSocketOpen,
     onWebSocketClose,
@@ -195,6 +201,7 @@ export default function useRealTime({
         const params = new URLSearchParams();
         if (sessionToken) params.set("token", sessionToken);
         if (personaId) params.set("persona", personaId);
+        if (modelId) params.set("model", modelId);
         const query = params.toString();
         return query ? `${base}?${query}` : base;
     };
@@ -300,7 +307,8 @@ export default function useRealTime({
         onReceivedRateLimited,
         onReceivedError,
         useDirectAoaiApi,
-        personaId
+        personaId,
+        modelId
     ]);
 
     const { sendJsonMessage, readyState } = useWebSocket(tokenReady ? wsEndpoint : null, {
