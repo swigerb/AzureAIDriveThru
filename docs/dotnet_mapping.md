@@ -257,10 +257,10 @@ real tool/order-state implementation lands (interface shape agreed with Summer v
 #14/#140, then re-aligned in this revision to drop the `sessionId` parameter per #14's merged PR
 #149 contract).
 
-**Conformance `Dotnet=ready`: 33 -&gt; 77 test methods, all passing**
+**Conformance `Dotnet=ready`: 33 -&gt; 78 test methods, all passing**
 (`CONFORMANCE_BACKEND=dotnet dotnet test Conformance.slnx --filter "Dotnet=ready"` is green,
-77/77). The 44 newly-tagged this revision, all confirmed real-backend scenarios (not harness
-self-tests):
+78/78 -- 77/77 as of this issue's original submission, +1 from PR #140 round 2 R3 below). The 44
+newly-tagged this revision, all confirmed real-backend scenarios (not harness self-tests):
 
 - `PersonaDiscoveryConformanceTests` -- the 5th method (session-metadata echo), previously blocked
   on a real `session.created`/`extension.session_metadata` frame -- now tagged.
@@ -337,9 +337,15 @@ resume): `CloseCodeTests`'s remaining 4002-supersede scenario, `IdleCloseCodeTes
 `Resumed_*`/session-end methods. `WholeSessionLeakTests` (0/1, confirmed this revision: its own
 doc comment requires a disconnect+resume and a silence nudge, i.e. #15's resume/rehydration
 machinery -- not a bug, correctly deferred).
-The whole `RateLimit` scenario family remains untagged (documented scope cut, this issue's rate-limit
-*notice* relay is covered by other tagged scenarios; the ladder/backoff family is out of scope for
-#13). A handful of failures (`CapturedProcessOutputTests`, `CapturedProcessOutputWaitTests`,
+The `RateLimit` ladder (backoff retries of `response.create`, the `response.created` hook, the
+greeting-retry interplay `EchoSuppressor` already models) is deferred, tracked on #13 (not
+blocked) -- PR #140 round 2, Rick's review: the notice relay (one final `extension.rate_limited`
+on a 429, instead of Python's retry) is already covered by other tagged scenarios, and nothing
+about #13's own S1.2 acceptance is blocked by the ladder itself; it needs timers/`TimeProvider`
+and is a sizable separate port, tracked on #15 (S5: C# sessions and resilience, which already
+ports `rate_limit.py`) and flagged as an **#17 go-live blocker** for the deployed C# app in the
+meantime. So the whole `RateLimit` scenario family remains untagged here. A handful of failures
+(`CapturedProcessOutputTests`, `CapturedProcessOutputWaitTests`,
 `WindowsJobObjectTests`) are pre-existing harness self-tests unrelated to `CONFORMANCE_BACKEND` and
 out of scope.
 
@@ -353,6 +359,54 @@ picking up `383e212`/`4a52af4` -- none of which touch files this issue's work mo
 `Dotnet=ready` count (72/72 at that point) and the full C# unit-test suite (230/230) were both
 reconfirmed green after the merge; the duplicate-key fix (bug 4 above) and its 5 newly-tagged
 `AllowListBypassHardeningTests` scenarios landed afterward, bringing the final count to 77/77.
+
+### PR #140 round 2 (Rick's CHANGES REQUIRED review, R1-R7)
+
+Beth was locked out for this round; applied by Unity. All seven items from Rick's review:
+
+- **R1**: `RealtimeSessionBuilderTests.cs`'s two `"You are Sonic."` strings (added since #153
+  hardened the brand ratchet to scan `.cs` files) replaced with a neutral
+  `"You are a drive-thru assistant."`; `origin/dev` (1e5fe29) merged cleanly.
+- **R2**: `EchoSuppressor` and `SessionUpdateGuard` were mutated from both relay loops with no
+  synchronization. Both now take a private `lock (_sync)` around every public member (state
+  mutation under the lock, the flush send itself outside it in `EchoSuppressor`); doc comments
+  updated from "not thread-safe by design" to describe the synchronization. New Barrier-released,
+  10k-iteration stress tests for both; mutation-verified (removing the locks fails them).
+- **R3**: a duplicate key nested inside `session` (not just a top-level duplicate) parsed
+  "successfully" as far as `JsonNode.Parse` was concerned -- `JsonObject`'s backing dictionary is
+  lazy, so the failure surfaced later, outside the try/catch guarding the parse, killing the loop
+  with nothing logged. Both relay loops now parse with
+  `JsonDocumentOptions.AllowDuplicateProperties = false` (throws immediately, any depth) and wrap
+  the rest of the per-frame body in its own try/catch that logs a warning with the session id
+  (never the payload); `SwallowAsync` now logs non-cancellation exceptions at Error instead of
+  discarding them. New nested-duplicate-key conformance case in `AllowListBypassHardeningTests`.
+- **R4**: `WebSocketFrameReader` grew its `ArrayBufferWriter` without bound. Added a
+  `maxMessageBytes` parameter (default 4 MiB, matching aiohttp's `WebSocketResponse` default
+  `max_msg_size`); overflow closes with `WebSocketCloseStatus.MessageTooBig` (1009) via
+  `CloseOutputAsync` (no close-handshake wait) and returns null. New `FakeWebSocket` test double
+  and `WebSocketFrameReaderTests`; mutation-verified.
+- **R5**: the upstream connect only ever sent `api-key`, and the deployed C# app has none
+  configured (by design, #152's managed-identity RBAC). Added `Azure.Identity`; when the api-key
+  is empty, `RealtimeProcessor` now acquires a bearer token per connect from
+  `DefaultAzureCredential` (scope `https://cognitiveservices.azure.com/.default`, lazily
+  constructed only if actually needed) and sends `Authorization: Bearer <token>` instead, matching
+  rtmt.py's own fallback. Existing conformance scenarios are unaffected (their configured api-key
+  keeps them on the unchanged api-key path). The class doc and inline comment that conflated this
+  with #147 are corrected: #147 is the **inbound** Entra check on the browser-facing `/realtime`
+  upgrade; this is the **outbound** credential for the upstream Azure OpenAI connection itself, and
+  applies regardless of #147's status. New `UpstreamAuthHeaderTests` with a fake token provider;
+  mutation-verified.
+- **R6**: `DotnetTraitCoverageTests`'s floor raised from 11 to 78 (77 at PR #140's original head,
+  +1 from R3's new conformance case -- `--filter "Dotnet=ready&Category!=Browser"` is 78/78).
+- **R7**: PR body changed to `Refs #13` (was implicitly closing) and marked ready for review; a
+  checklist of everything still cut or deferred posted on #13 (audio-append fast path and
+  `TimeProvider` -- both explicit #13 acceptance items; the `RateLimit` ladder and the tool-failure
+  cap `_ToolFailureTracker`, both flagged as **#17 go-live blockers**; context-window monitoring;
+  heartbeat/dead-peer detection and connect timeout; the #14/#15 scenario lists above). The
+  `RateLimit` scope-cut wording above was reworded from "out of scope for #13" (Rick: it isn't --
+  #13's acceptance is all S1.2 scenarios green on both backends, and nothing blocks it) to
+  "deferred, tracked on #13 (not blocked)", additionally cross-referenced to #15 (S5, already
+  milestoned, already ports `rate_limit.py`) rather than filing a new duplicate issue.
 
 ## Traversal defense mutation-test note (PR #122 review item 1)
 
