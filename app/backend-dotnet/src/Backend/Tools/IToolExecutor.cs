@@ -31,29 +31,30 @@ public sealed record ToolResult(ToolResultDirection Destination, string ServerTe
 }
 
 /// <summary>
-/// Session-bound seam for executing one realtime tool call (issue #13/#14 coordination point --
-/// see issue #14 and PR #140 comments). <see cref="Backend.Sessions.RealtimeProcessor"/> calls this
-/// on every <c>response.output_item.done</c> function_call, exactly mirroring rtmt.py's
-/// <c>tool.target(args, session_id)</c> dispatch. #14's real order/search tool implementations bind
-/// here; until that lands, <see cref="StubToolExecutor"/> proves the relay's tool-call wire
-/// plumbing end-to-end (registration, execution, function_call_output upstream,
-/// extension.middle_tier_tool_response to the browser, auto response.create) without any real
-/// order/search logic.
+/// Session-bound seam for executing one realtime tool call -- the shape agreed on issue #14
+/// (comment: "IToolExecutor contract for #13/#140's relay to dispatch through") and already merged
+/// into #14's own `squad/14-csharp-tools-orders` branch (`Tools/SessionToolExecutor.cs`, PR #149) as
+/// the real implementation. <see cref="Backend.Sessions.RealtimeProcessor"/> calls
+/// <see cref="ExecuteAsync"/> on every <c>response.output_item.done</c> function_call, exactly
+/// mirroring rtmt.py's <c>tool.target(args, session_id)</c> dispatch -- session scoping happens by
+/// construction (one <c>IToolExecutor</c> instance per session's actor, composed once persona
+/// binding resolves), not by an extra per-call session id parameter, which is why this interface
+/// (unlike an earlier draft of it in this same PR) carries no <c>sessionId</c> argument. #14's real
+/// order/search tool implementation binds here; until that PR merges,
+/// <see cref="StubToolExecutor"/> proves the relay's tool-call wire plumbing end-to-end
+/// (registration, execution, function_call_output upstream, extension.middle_tier_tool_response to
+/// the browser, auto response.create) without any real order/search logic.
 /// </summary>
 public interface IToolExecutor
 {
     /// <summary>The tool names this executor recognises (mirrors rtmt.py's <c>self.tools</c> dict
     /// keys) -- used to build the bootstrap/session tool schema list and to detect an unknown tool
     /// name the same way rtmt.py's <c>self.tools.get(name)</c> miss does.</summary>
-    IReadOnlySet<string> ToolNames { get; }
+    IReadOnlyList<string> ToolNames { get; }
 
-    /// <summary>Executes one tool call. <paramref name="sessionId"/> is passed for every tool
-    /// (unlike Python's name-based `("update_order", "get_order", "reset_order", "search")`
-    /// special-case) -- a stub/thin adapter has no order-state tools to distinguish yet, and a real
-    /// #14 implementation can simply ignore it for a tool that doesn't need it. Must never throw
-    /// for a well-formed call; an execution failure should be reported via the returned
-    /// <see cref="ToolResult"/> or (for a genuinely unexpected fault) let the caller's own
-    /// catch-all produce the neutral fallback text, exactly like rtmt.py's `except Exception` around
-    /// `tool.target(...)`.</summary>
-    Task<ToolResult> ExecuteAsync(string toolName, JsonElement arguments, string? sessionId, CancellationToken cancellationToken);
+    /// <summary>Executes one tool call. Must never throw for a well-formed call; an execution
+    /// failure should be reported via the returned <see cref="ToolResult"/> or (for a genuinely
+    /// unexpected fault) let the caller's own catch-all produce the neutral fallback text, exactly
+    /// like rtmt.py's `except Exception` around `tool.target(...)`.</summary>
+    Task<ToolResult> ExecuteAsync(string toolName, JsonElement args, CancellationToken ct = default);
 }

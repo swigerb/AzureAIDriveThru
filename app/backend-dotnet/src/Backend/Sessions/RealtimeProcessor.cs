@@ -295,6 +295,7 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                 _sessionConfig, sessionIn, toolSchemas,
                 voiceLocked: state.AssistantAudioSeen,
                 voice: Overridable<string?>.Of(state.Voice),
+                systemMessage: Overridable<string?>.Of(systemMessage),
                 reasoningOverride: reasoningOverride);
             filtered["session"] = session;
             state.Guard.Stamp(filtered);
@@ -335,8 +336,14 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                     message = JsonNode.Parse(Encoding.UTF8.GetString(frame.Payload)) as JsonObject
                         ?? throw new JsonException("Client frame was not a JSON object.");
                 }
-                catch (JsonException)
+                catch (Exception ex) when (ex is JsonException or ArgumentException)
                 {
+                    // ArgumentException: JsonNode.Parse builds JsonObject via a dictionary keyed on
+                    // property name, so a frame with a duplicate top-level key (e.g. two "type"
+                    // fields) throws "An item with the same key has already been added" instead of
+                    // a JsonException -- a distinct failure mode from ordinary malformed JSON, but
+                    // the same "drop this one frame, keep the socket alive" contract applies (see
+                    // Scenarios/Security/AllowListBypassHardeningTests.cs's duplicate-key probe).
                     _logger?.LogWarning("Dropped malformed/non-object client→server frame (session={SessionId})", sessionId);
                     continue;
                 }
@@ -435,7 +442,8 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                 }
 
                 var fallback = RealtimeSessionBuilder.BuildFallbackSessionUpdate(
-                    _sessionConfig, toolSchemas, voice: Overridable<string?>.Of(state.Voice), reasoningOverride: reasoningOverride);
+                    _sessionConfig, toolSchemas, voice: Overridable<string?>.Of(state.Voice),
+                    systemMessage: Overridable<string?>.Of(systemMessage), reasoningOverride: reasoningOverride);
                 var fallbackPayload = state.Guard.Track(fallback.ToJsonString(), fallbackOf: rejectedEventId);
                 await SendTextAsync(upstream, fallbackPayload, ct).ConfigureAwait(false);
                 return null;
@@ -489,7 +497,7 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                 var argumentsJson = GetString(item, "arguments") ?? "{}";
                 using var argumentsDoc = JsonDocument.Parse(argumentsJson);
                 _logger?.LogInformation("Executing tool '{ToolName}' (session={SessionId})", toolName, sessionId);
-                var result = await _toolExecutor.ExecuteAsync(toolName, argumentsDoc.RootElement.Clone(), sessionId, ct)
+                var result = await _toolExecutor.ExecuteAsync(toolName, argumentsDoc.RootElement.Clone(), ct)
                     .ConfigureAwait(false);
                 _logger?.LogInformation("Tool '{ToolName}' result direction={Direction} (session={SessionId})",
                     toolName, result.Destination, sessionId);
@@ -723,8 +731,11 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                     message = JsonNode.Parse(Encoding.UTF8.GetString(frame.Payload)) as JsonObject
                         ?? throw new JsonException("Upstream frame was not a JSON object.");
                 }
-                catch (JsonException)
+                catch (Exception ex) when (ex is JsonException or ArgumentException)
                 {
+                    // Same duplicate-top-level-key ArgumentException as the client→server side
+                    // above -- kept consistent even though the fake upstream in practice never
+                    // sends one, so a future real-upstream duplicate key can't crash the relay.
                     _logger?.LogWarning("Dropped malformed/non-object server→client frame (session={SessionId})", sessionId);
                     continue;
                 }

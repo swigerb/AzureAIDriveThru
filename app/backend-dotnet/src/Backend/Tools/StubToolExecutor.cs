@@ -13,15 +13,14 @@ namespace Backend.Tools;
 /// </summary>
 public sealed class StubToolExecutor : IToolExecutor
 {
-    public IReadOnlySet<string> ToolNames { get; }
+    public IReadOnlyList<string> ToolNames { get; }
 
     public StubToolExecutor(IEnumerable<string> toolNames)
     {
-        ToolNames = new HashSet<string>(toolNames);
+        ToolNames = toolNames.Distinct().ToList();
     }
 
-    public Task<ToolResult> ExecuteAsync(
-        string toolName, JsonElement arguments, string? sessionId, CancellationToken cancellationToken)
+    public Task<ToolResult> ExecuteAsync(string toolName, JsonElement args, CancellationToken ct = default)
     {
         var result = new ToolResult(
             ToolResultDirection.ToBoth,
