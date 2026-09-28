@@ -117,12 +117,42 @@ public static class DotnetBackendLauncher
     // -- MSB4018 GenerateDepsFile file-lock flake. CI's own dotnet leg already runs
     // `dotnet build Backend.slnx --no-restore` before the suite starts (.github/workflows/
     // conformance.yml), so the rebuild here was pure waste even outside the race. Fixed
-    // structurally, not with retries: this gate makes sure AT MOST ONE build ever runs per test
+    // structurally, not with retries: this gate makes sure EXACTLY ONE build runs per test
     // process, however many fixtures call StartAsync (serially or in parallel), and every launch
     // afterwards starts the already-built Backend.dll directly (`dotnet "<dll>"`, never
     // `run`/`build`/`restore` -- see BuildStartInfo/DotnetBackendLauncherStartInfoTests).
+    //
+    // R1 fix (Rick's #151 review): the rule is "build exactly once per test process", not "build
+    // if the dll is missing". A dll on disk proves nothing about whether it reflects the source
+    // that's about to run against it -- neither Conformance.Harness.csproj nor
+    // Conformance.Tests.csproj has a ProjectReference to Backend.csproj, so a plain `dotnet test`
+    // never rebuilds it, and a stale dll from an earlier run would otherwise be launched silently.
+    // The single cached Task below (not a bool/path pair) is what makes "exactly once" true even
+    // under concurrent callers: every caller either observes the same completed task (fast path)
+    // or blocks briefly on the gate to either join the in-flight build or start the one and only
+    // build, never a second one.
     private static readonly SemaphoreSlim BuildGate = new(1, 1);
-    private static string? _builtDllPath;
+    private static Task<string>? _buildTask;
+
+    /// <summary>
+    /// Build-runner seam for tests (issue #135). Production always resolves to
+    /// <see cref="RunBuildAsync"/>; unit tests substitute a fake here so
+    /// <see cref="EnsureBuiltAsync"/>'s gating/dedup behaviour can be asserted deterministically,
+    /// with no real MSBuild invocation and no SDK required. Call <see cref="ResetForTests"/>
+    /// between test cases so the shared static build cache doesn't leak across tests.
+    /// </summary>
+    internal static Func<string, CancellationToken, Task> RunBuild = RunBuildAsync;
+
+    /// <summary>
+    /// Test-only reset of the shared build cache and the <see cref="RunBuild"/> seam (issue #135).
+    /// Production code never calls this: a real test process is meant to build Backend.csproj at
+    /// most once, by design. This exists purely so unit tests can each start from a clean slate.
+    /// </summary>
+    internal static void ResetForTests()
+    {
+        _buildTask = null;
+        RunBuild = RunBuildAsync;
+    }
 
     public static async Task<IBackendUnderTest> StartAsync(
         BackendContract contract, DotnetBackendOptions options, CancellationToken cancellationToken = default)
@@ -277,54 +307,65 @@ public static class DotnetBackendLauncher
     private const string TargetFramework = "net11.0";
 
     /// <summary>
-    /// Builds Backend.csproj at most once per test process (issue #135). The first caller to find
-    /// no existing DLL takes <see cref="BuildGate"/> and runs the (single) build; every other
-    /// caller -- whether it arrives before, during, or after that build -- either finds the DLL
-    /// already on disk (fast path, no lock needed) or blocks on the same gate and then re-checks,
-    /// so it never triggers a second, redundant/racing build of its own.
+    /// Builds Backend.csproj EXACTLY ONCE per test process (issue #135) -- never conditioned on
+    /// whether a dll already happens to exist on disk (R1: a pre-existing dll proves nothing about
+    /// whether it matches the source about to run against it). The single cached
+    /// <see cref="_buildTask"/> is the source of truth: once it completes successfully, every
+    /// later caller takes the lock-free fast path and just awaits that same completed task; while
+    /// it's in flight (or hasn't started), callers briefly take <see cref="BuildGate"/> only long
+    /// enough to either observe the in-flight/faulted task or kick off the one build, then release
+    /// the gate and await the task outside the lock -- so the build itself never serializes
+    /// backend *starts*, only the decision of who runs it.
     /// </summary>
-    private static async Task<string> EnsureBuiltAsync(string csprojPath, CancellationToken cancellationToken)
+    internal static async Task<string> EnsureBuiltAsync(string csprojPath, CancellationToken cancellationToken)
     {
-        var dllPath = ResolveDllPath(csprojPath);
-        if (_builtDllPath == dllPath && File.Exists(dllPath))
+        if (_buildTask is { IsCompletedSuccessfully: true })
         {
-            return dllPath;
+            return await _buildTask.ConfigureAwait(false);
         }
 
         await BuildGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            // Re-check with the gate held: either a prior fixture already built while we were
-            // waiting, or (in CI) the workflow's own prebuild step already produced this exact
-            // output before any fixture ever ran -- either way, nothing left to build.
-            if (File.Exists(dllPath))
+            // A failed build must not poison every future caller: if the cached task faulted,
+            // the next caller through here retries with a fresh build.
+            if (_buildTask is null || _buildTask.IsFaulted)
             {
-                _builtDllPath = dllPath;
-                return dllPath;
+                _buildTask = BuildAndResolveAsync(csprojPath, cancellationToken);
             }
-
-            await RunBuildAsync(csprojPath, cancellationToken).ConfigureAwait(false);
-
-            if (!File.Exists(dllPath))
-            {
-                throw new InvalidOperationException(
-                    $"'dotnet build \"{csprojPath}\" --no-restore' completed but the expected output " +
-                    $"'{dllPath}' is still missing. Check the Configuration/TargetFramework assumptions " +
-                    "in DotnetBackendLauncher.ResolveDllPath against Backend.csproj/Directory.Build.props.");
-            }
-
-            _builtDllPath = dllPath;
-            return dllPath;
         }
         finally
         {
             BuildGate.Release();
         }
+
+        return await _buildTask.ConfigureAwait(false);
+    }
+
+    private static async Task<string> BuildAndResolveAsync(string csprojPath, CancellationToken cancellationToken)
+    {
+        await RunBuild(csprojPath, cancellationToken).ConfigureAwait(false);
+
+        var dllPath = ResolveDllPath(csprojPath);
+        if (!File.Exists(dllPath))
+        {
+            throw new InvalidOperationException(
+                $"'dotnet build \"{csprojPath}\"' completed but the expected output " +
+                $"'{dllPath}' is still missing. Check the Configuration/TargetFramework assumptions " +
+                "in DotnetBackendLauncher.ResolveDllPath against Backend.csproj/Directory.Build.props.");
+        }
+
+        return dllPath;
     }
 
     private static async Task RunBuildAsync(string csprojPath, CancellationToken cancellationToken)
     {
-        var buildInfo = new ProcessStartInfo("dotnet", $"build \"{csprojPath}\" --no-restore")
+        // R2 fix (Rick's #151 review): no `--no-restore`. A developer whose only interaction with
+        // this repo is `dotnet test tests/conformance` has never restored the Backend project --
+        // `dotnet run` used to restore implicitly, and this launcher replaced `dotnet run` (issue
+        // #135) without keeping that behaviour. Restore is a no-op when the assets are already
+        // current, so this doesn't cost CI anything (its prebuild step already restored/built).
+        var buildInfo = new ProcessStartInfo("dotnet", $"build \"{csprojPath}\"")
         {
             RedirectStandardOutput = true,
             RedirectStandardError = true,
@@ -339,7 +380,7 @@ public static class DotnetBackendLauncher
 
         if (!buildProcess.Start())
         {
-            throw new InvalidOperationException($"Failed to start 'dotnet build \"{csprojPath}\" --no-restore'.");
+            throw new InvalidOperationException($"Failed to start 'dotnet build \"{csprojPath}\"'.");
         }
         buildProcess.BeginOutputReadLine();
         buildProcess.BeginErrorReadLine();
@@ -348,7 +389,7 @@ public static class DotnetBackendLauncher
         if (buildProcess.ExitCode != 0)
         {
             throw new InvalidOperationException(
-                $"'dotnet build \"{csprojPath}\" --no-restore' failed with exit code {buildProcess.ExitCode}.\n" +
+                $"'dotnet build \"{csprojPath}\"' failed with exit code {buildProcess.ExitCode}.\n" +
                 $"--- build stdout/stderr ---\n{buildOutput.Dump()}");
         }
     }
