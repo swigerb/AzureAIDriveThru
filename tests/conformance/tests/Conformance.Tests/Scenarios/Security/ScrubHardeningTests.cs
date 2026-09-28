@@ -46,6 +46,7 @@ namespace Conformance.Tests.Scenarios.Security;
 /// around.
 /// </summary>
 [Collection(ConformanceCollection.Name)]
+[Trait("Dotnet", "ready")]
 public sealed class ScrubHardeningTests(ConformanceFixture fixture)
 {
     private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);

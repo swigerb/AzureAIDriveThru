@@ -15,6 +15,7 @@ namespace Conformance.Tests;
 /// test's frame satisfy a "first frame" assertion — see PR #22 review item 5).
 /// </summary>
 [Collection(ConformanceCollection.Name)]
+[Trait("Dotnet", "ready")]
 public sealed class SmokeSessionBootstrapTests(ConformanceFixture fixture)
 {
     private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);

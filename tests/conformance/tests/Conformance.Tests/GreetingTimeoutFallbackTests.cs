@@ -16,6 +16,7 @@ public sealed class GreetingTimeoutFallbackTests(ShortTimersConformanceFixture f
     private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Greeting_still_fires_via_the_shortened_session_configured_timeout() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;

@@ -18,6 +18,7 @@ public sealed class UpdateOrderToolCallTests(ConformanceFixture fixture)
     private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Scripted_update_order_call_executes_and_notifies_the_browser() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
