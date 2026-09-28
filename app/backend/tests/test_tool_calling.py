@@ -777,7 +777,24 @@ class TaxCalculationTests(unittest.TestCase):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class UpsellHintTests(unittest.TestCase):
-    """Test category-based upsell hints in tool results."""
+    """Test category-based upsell hints in tool results.
+
+    Cleanup (#125-adjacent): ``tools.py`` used to fall back to a hardcoded, word-for-word
+    copy of the default persona pack's own ``prompts/hints.yaml`` upsell text whenever no
+    ``PromptLoader`` was attached -- dead in production (``app.py`` always attaches a real
+    one) and never exercised there. These tests used to rely on that dead fallback by
+    accident (nothing else in this test module configures ``tools._prompt_loader``). Wires
+    up a real ``PromptLoader`` (its default brand matches this test module's own default
+    persona/menu fixtures, ``_SONIC`` above) so they exercise the same prompt-driven path
+    production actually uses.
+    """
+
+    def setUp(self):
+        from prompt_loader import PromptLoader
+
+        patcher = patch("tools._prompt_loader", PromptLoader())
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def test_burger_triggers_combo_upsell(self):
         sid = _make_session()
