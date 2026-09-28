@@ -18,6 +18,10 @@
          personas/menu.schema.json, the SAME schema files the Python backend and CI validate
          against (docs/dotnet_mapping.md: jsonschema -> JsonSchema.Net). -->
     <PackageVersion Include="JsonSchema.Net" Version="7.3.4" />
+    <!-- PR #140 R5: managed-identity fallback for upstream realtime auth when no api-key is
+         configured (docs/dotnet_mapping.md: azure-identity's DefaultAzureCredential ->
+         Azure.Identity's DefaultAzureCredential, the same package family rtmt.py uses). -->
+    <PackageVersion Include="Azure.Identity" Version="1.13.2" />
     <!-- Test projects -->
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.10.0" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="4.0.0" />

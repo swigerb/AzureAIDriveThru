@@ -37,8 +37,10 @@ namespace Backend.Sessions;
 /// optimisations (every frame is fully JSON-parsed instead). A guest-initiated
 /// `extension.end_session` (1000/"session_ended") needs none of that registry state, so it *is*
 /// implemented here (issue #13's carried-over S1.2 transport acceptance). ADR-002's Entra auth to
-/// `/realtime` (#147) is NOT implemented here, but the single `upstream.Options.SetRequestHeader`
-/// call below is where it plugs in.
+/// `/realtime` (#147) is the INBOUND browser-facing check on Program.cs's pre-upgrade gate and is
+/// unrelated to this file: the upstream auth header chosen in <see cref="ResolveUpstreamAuthHeaderAsync"/>
+/// below (api-key, or a managed-identity bearer token when no key is configured -- PR #140 R5) is
+/// the OUTBOUND call to the Azure OpenAI realtime endpoint itself and applies regardless of #147.
 /// </summary>
 public sealed class RealtimeProcessor : IPipelineProcessor
 {
@@ -51,6 +53,7 @@ public sealed class RealtimeProcessor : IPipelineProcessor
     private readonly string _defaultDeployment;
     private readonly string _upstreamEndpoint;
     private readonly string _upstreamApiKey;
+    private readonly IUpstreamBearerTokenProvider? _bearerTokenProvider;
     private readonly RealtimeSessionConfig _sessionConfig;
     private readonly IReadOnlyDictionary<string, PromptLoader> _promptLoaders;
     private readonly IToolExecutor _toolExecutor;
@@ -70,12 +73,14 @@ public sealed class RealtimeProcessor : IPipelineProcessor
         IReadOnlySet<string>? allowedVoices = null,
         double echoCooldownSeconds = 1.5,
         double greetingTimeoutSeconds = 5.0,
-        ILogger? logger = null)
+        ILogger? logger = null,
+        IUpstreamBearerTokenProvider? bearerTokenProvider = null)
     {
         _catalog = catalog;
         _defaultDeployment = defaultDeployment;
         _upstreamEndpoint = upstreamEndpoint;
         _upstreamApiKey = upstreamApiKey;
+        _bearerTokenProvider = bearerTokenProvider;
         _sessionConfig = sessionConfig;
         _promptLoaders = promptLoaders;
         _toolExecutor = toolExecutor;
@@ -135,10 +140,12 @@ public sealed class RealtimeProcessor : IPipelineProcessor
         var deployment = string.IsNullOrEmpty(resolvedModel.Deployment) ? _defaultDeployment : resolvedModel.Deployment;
 
         using var upstream = new ClientWebSocket();
-        // ADR-002 (#147, explicitly NOT this task): Entra/bearer auth to /realtime would branch
-        // here to set an Authorization header instead of `api-key` -- kept to this one call so
-        // that future change stays small and localized.
-        upstream.Options.SetRequestHeader("api-key", _upstreamApiKey);
+        // PR #140 R5: NOT #147 (that's the inbound Entra check on the browser-facing /realtime
+        // upgrade in Program.cs) -- this picks the OUTBOUND credential for the Azure OpenAI
+        // realtime endpoint itself, api-key when one is configured, else a managed-identity
+        // bearer token, matching rtmt.py's DefaultAzureCredential fallback.
+        var (headerName, headerValue) = await ResolveUpstreamAuthHeaderAsync(cancellationToken).ConfigureAwait(false);
+        upstream.Options.SetRequestHeader(headerName, headerValue);
 
         try
         {
@@ -963,6 +970,26 @@ public sealed class RealtimeProcessor : IPipelineProcessor
             }
         }
         return list;
+    }
+
+    /// <summary>PR #140 R5: chooses the outbound auth header for the upstream Azure OpenAI
+    /// realtime connect -- `api-key` when one is configured (the only mode before this round),
+    /// else a managed-identity bearer token via <see cref="_bearerTokenProvider"/> (falling back
+    /// to the lazily-constructed real <see cref="DefaultAzureCredentialTokenProvider"/> if none
+    /// was injected), matching rtmt.py's <c>DefaultAzureCredential</c> fallback and its
+    /// <c>https://cognitiveservices.azure.com/.default</c> scope. Internal (not private) purely so
+    /// <see cref="UpstreamAuthHeaderTests"/> can exercise the selection without a real
+    /// ClientWebSocket or Azure credential.</summary>
+    internal async Task<(string HeaderName, string HeaderValue)> ResolveUpstreamAuthHeaderAsync(CancellationToken cancellationToken)
+    {
+        if (!string.IsNullOrEmpty(_upstreamApiKey))
+        {
+            return ("api-key", _upstreamApiKey);
+        }
+
+        var provider = _bearerTokenProvider ?? DefaultAzureCredentialTokenProvider.Instance.Value;
+        var token = await provider.GetTokenAsync(cancellationToken).ConfigureAwait(false);
+        return ("Authorization", $"Bearer {token}");
     }
 
     /// <summary>Builds the upstream GA realtime endpoint URI (`/openai/v1/realtime?model=...`),

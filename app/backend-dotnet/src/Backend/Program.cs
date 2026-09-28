@@ -214,6 +214,11 @@ var realtimeProcessor = new RealtimeProcessor(
     allowedVoices,
     echoCooldownSeconds,
     logger: logger);
+// PR #140 R5: bearerTokenProvider is left at its default (null) here deliberately --
+// RealtimeProcessor.ResolveUpstreamAuthHeaderAsync falls back to the lazily-constructed real
+// DefaultAzureCredentialTokenProvider itself, so a DefaultAzureCredential (which probes several
+// credential sources) is only ever actually constructed for a connection that has no api-key
+// configured and genuinely needs a managed-identity token.
 processorRegistry.Register(realtimeProcessor);
 
 var assetCacheConfig = AssetCacheConfig.FromConfig(appConfig);
