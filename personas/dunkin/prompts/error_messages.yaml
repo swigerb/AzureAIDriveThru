@@ -4,9 +4,6 @@ messages:
   search_service_unavailable: "I'm sorry, I can't reach our menu data right now."
   search_no_results: "No matching menu entries found."
 
-  # Pricing errors
-  price_validation_failed: "Hmm, I had a little glitch with the pricing on that one. Could you say that again?"
-
   # Generic fallback (coordinator round 4, #79/#77 parity ask): not rendered by any current
   # code path -- tools.py/rtmt.py have no lookup for this key today (only the fixture packs
   # test-alpha/test-beta/test-gamma/test-delta define it) -- kept here so Dunkin's key set

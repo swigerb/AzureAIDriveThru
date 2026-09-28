@@ -17,6 +17,18 @@ services:
       # root. docker.path is left at its default (./Dockerfile, also service-relative), which
       # already points at app/Dockerfile correctly.
       context: ..
+  # S7 (#17) prep: app/backend-dotnet builds a real image (this PR), but the azure.yaml service
+  # entry itself is deliberately NOT added yet. `language: csharp` here would make azd resolve a
+  # dotnet project (editing Backend.csproj's UserSecretsId, writing outputs into dotnet
+  # user-secrets) on every provision/package/deploy, and with no matching infra/backend-dotnet
+  # resource `azd-service-name: backend-dotnet` tag, `azd deploy`/`azd up` would fail with
+  # "unable to find a resource tagged with 'azd-service-name: backend-dotnet'" in every
+  # environment that hasn't flipped DEPLOY_DOTNET_APP=true (Rick's #152 review, R1). The #17
+  # go-live PR adds this service back with `language: docker` (no csproj handling), `project:
+  # ./app`, `docker.path: ./Dockerfile.dotnet` and `docker.context: ..` (mirrors `backend` above),
+  # in the same commit that flips infra/main.bicep's deployDotnetApp to true, plus the
+  # SERVICE_BACKEND_DOTNET_RESOURCE_EXISTS mapping in infra/main.parameters.json and the
+  # 'azd-service-name': 'backend-dotnet' tag on acaBackendDotnet in infra/main.bicep.
 hooks:
     postprovision:
       windows:
@@ -81,3 +93,8 @@ pipeline:
     - AZURE_AI_MODEL_DEPLOYMENTS
     - DEPLOY_DOTNET_APP
     - AZURE_CONTAINER_APP_DOTNET_NAME
+    - BACKEND_DOTNET_INGRESS_ENABLED
+    - ENTRA_TENANT_ID
+    - ENTRA_CLIENT_ID
+    - ENTRA_API_SCOPE
+    - ENTRA_APP_ROLE
