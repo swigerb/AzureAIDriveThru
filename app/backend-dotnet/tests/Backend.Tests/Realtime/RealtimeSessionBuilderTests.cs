@@ -22,7 +22,7 @@ public sealed class RealtimeSessionBuilderTests
         bool reasoningRejected = false) => new()
         {
             Deployment = deployment,
-            SystemMessage = "You are Sonic.",
+            SystemMessage = "You are a drive-thru assistant.",
             VoiceChoice = "marin",
             TranscriptionModel = "whisper-1",
             ReasoningEffort = reasoningEffort,
@@ -145,7 +145,7 @@ public sealed class RealtimeSessionBuilderTests
         Assert.StartsWith("sonic_bootstrap_", update["event_id"]!.GetValue<string>());
         var session = update["session"]!.AsObject();
         Assert.Equal("realtime", session["type"]!.GetValue<string>());
-        Assert.Equal("You are Sonic.", session["instructions"]!.GetValue<string>());
+        Assert.Equal("You are a drive-thru assistant.", session["instructions"]!.GetValue<string>());
         Assert.Equal("marin", session["audio"]!["output"]!["voice"]!.GetValue<string>());
         Assert.NotNull(session["audio"]!["input"]!["turn_detection"]);
         Assert.NotNull(session["audio"]!["input"]!["transcription"]);
