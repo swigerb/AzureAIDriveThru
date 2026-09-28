@@ -364,7 +364,7 @@ reconfirmed green after the merge; the duplicate-key fix (bug 4 above) and its 5
 
 Beth was locked out for this round; applied by Unity. All seven items from Rick's review:
 
-- **R1**: `RealtimeSessionBuilderTests.cs`'s two `"You are Sonic."` strings (added since #153
+- **R1**: `RealtimeSessionBuilderTests.cs`'s two old-brand-name greeting strings (added since #153
   hardened the brand ratchet to scan `.cs` files) replaced with a neutral
   `"You are a drive-thru assistant."`; `origin/dev` (1e5fe29) merged cleanly.
 - **R2**: `EchoSuppressor` and `SessionUpdateGuard` were mutated from both relay loops with no
