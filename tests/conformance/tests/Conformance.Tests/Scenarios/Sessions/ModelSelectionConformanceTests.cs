@@ -124,11 +124,12 @@ public sealed class ModelSelectionRejectionConformanceTests(ModelSelectionConfor
     public Task Model_catalogued_for_a_different_pipeline_is_rejected_with_404() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
-        // phi-4-mini-local is catalogued for the LOCAL pipeline (config.yaml) -- dispatch_processor
-        // resolves its pipeline straight from the catalog and finds no processor registered for
-        // "local" (app.py's ProcessorRegistry only ever registers RTMiddleTier/"realtime" and,
-        // since issue #82, CascadeProcessor/"cascade" -- "local" is still unimplemented), 404-ing
-        // before resolve_realtime_model's own allow-list check would even run.
+        // phi-4-mini-local is catalogued for the LOCAL pipeline (config.yaml). On the C# backend no
+        // processor is registered for "local" yet, so dispatch 404s before any realtime allow-list
+        // check runs. On the Python backend issue #81 registered LocalProcessor, so there is no
+        // unregistered pipeline left to target: this request now 404s in resolve_local_model
+        // instead (test-alpha declares no models.local block, and this fixture configures no
+        // LOCAL_RUNTIME_ENDPOINT). Local's own 404/positive rows live in Scenarios/Local.
         //
         // gpt-5-mini used to be this row's example (catalogued for cascade, which had no
         // processor registered yet) -- issue #82 registered CascadeProcessor for real, so

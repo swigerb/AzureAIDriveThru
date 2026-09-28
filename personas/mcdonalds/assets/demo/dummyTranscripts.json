@@ -44,24 +44,24 @@
         "translation": "What's in a McFlurry?"
     },
     {
-        "text": "Our McFlurry is creamy vanilla soft serve blended with your choice of mix-in — OREO Cookies or M&M'S Candies are our favorites! Want to add one?",
+        "text": "It's creamy vanilla soft serve blended with your choice of mix-in, but our ice cream machine is down right now so I can't make one. Can I interest you in a Baked Apple Pie instead?",
         "isUser": false,
         "timestamp": "2024-07-18T12:01:22Z",
-        "translation": "Our McFlurry is creamy vanilla soft serve blended with your choice of mix-in — OREO Cookies or M&M'S Candies are our favorites! Want to add one?"
+        "translation": "It's creamy vanilla soft serve blended with your choice of mix-in, but our ice cream machine is down right now so I can't make one. Can I interest you in a Baked Apple Pie instead?"
     },
-    { "text": "Ajoutez un McFlurry OREO et une tarte aux pommes, s'il vous plaît.", "isUser": true, "timestamp": "2024-07-18T12:01:35Z", "translation": "Add an OREO McFlurry and an apple pie, please." },
+    { "text": "D'accord, ajoutez juste une tarte aux pommes, s'il vous plaît.", "isUser": true, "timestamp": "2024-07-18T12:01:35Z", "translation": "Okay, just add an apple pie, please." },
     {
-        "text": "Parfait ! Un McFlurry OREO et une tarte aux pommes ajoutés. Voulez-vous le récapitulatif de la commande ?",
+        "text": "Parfait ! Une tarte aux pommes ajoutée. Voulez-vous le récapitulatif de la commande ?",
         "isUser": false,
         "timestamp": "2024-07-18T12:01:42Z",
-        "translation": "Perfect! One OREO McFlurry and one apple pie added. Would you like the order summary?"
+        "translation": "Perfect! One apple pie added. Would you like the order summary?"
     },
     { "text": "Yes, give me the total.", "isUser": true, "timestamp": "2024-07-18T12:01:50Z", "translation": "Yes, give me the total." },
     {
-        "text": "You have 2 Big Macs, 2 Medium World Famous Fries, 2 Large Coca-Colas, a 10 piece Chicken McNuggets, an OREO McFlurry, and a Baked Apple Pie. Your total is $38.03.",
+        "text": "You have 2 Big Macs, 2 Medium World Famous Fries, 2 Large Coca-Colas, a 10 piece Chicken McNuggets, and a Baked Apple Pie. Your total is $32.96.",
         "isUser": false,
         "timestamp": "2024-07-18T12:01:58Z",
-        "translation": "You have 2 Big Macs, 2 Medium World Famous Fries, 2 Large Coca-Colas, a 10 piece Chicken McNuggets, an OREO McFlurry, and a Baked Apple Pie. Your total is $38.03."
+        "translation": "You have 2 Big Macs, 2 Medium World Famous Fries, 2 Large Coca-Colas, a 10 piece Chicken McNuggets, and a Baked Apple Pie. Your total is $32.96."
     },
     { "text": "That's all, thanks!", "isUser": true, "timestamp": "2024-07-18T12:02:05Z", "translation": "That's all, thanks!" },
     {

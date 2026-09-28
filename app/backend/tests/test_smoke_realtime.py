@@ -23,6 +23,22 @@ sys.path.append(str(REPO / "scripts"))
 
 import smoke_realtime  # noqa: E402
 
+import model_catalog  # noqa: E402
+import persona_loader  # noqa: E402
+
+
+def _fake_model_catalog(deployments=None):
+    """A ModelCatalog built from an explicit fixture config/env (#83, P2-14 --model tests),
+    never the repo's real config.yaml/os.environ."""
+    environ = {"AZURE_AI_MODEL_DEPLOYMENTS": json.dumps(deployments)} if deployments else {}
+    return model_catalog.ModelCatalog.load(
+        config={"models": {"catalog": [
+            {"id": "gpt-realtime-2.1", "pipeline": "realtime", "label": "GPT Realtime 2.1"},
+            {"id": "phi-4", "pipeline": "cascade", "label": "Phi-4 (Foundry)"},
+        ]}},
+        environ=environ,
+    )
+
 CLEAN_ENV = {
     "AZURE_OPENAI_REALTIME_VOICE_CHOICE": "",
     "AZURE_OPENAI_REALTIME_REASONING_EFFORT": "",
@@ -31,7 +47,7 @@ CLEAN_ENV = {
     "AZURE_OPENAI_EASTUS2_API_KEY": "",
 }
 
-PHRASE = smoke_realtime.TRANSCRIPTION_PHRASE
+PHRASE = smoke_realtime._DEFAULT_TRANSCRIPTION_PHRASE
 # What gpt-realtime-2.1 produced when handed the phrase as a user turn: it took
 # the order instead of reading it. The old check passed this with a note.
 ANSWERED = "Sure, I can't place the order for you, but a large cherry limeade and medium tots sounds tasty!"
@@ -86,11 +102,17 @@ class EchoingRealtime:
 
 
 class TranscriptMatchTests(unittest.TestCase):
-    """A transcript passes only if it is the phrase, word for word."""
+    """A transcript passes only if it is the phrase, word for word.
+
+    Uses its own fixed test phrase (independent of smoke_realtime's actual default/persona
+    phrase, #83/P2-14) since these are pure algorithm tests of transcript_matches/
+    transcript_similarity's fuzzy-match tolerance, not of any particular phrase's wording."""
+
+    _TEST_PHRASE = "Hi, can I get a large cherry limeade and a medium tots, please?"
 
     def test_verbatim_and_formatting_variants_match(self):
         for transcript in (
-            PHRASE,
+            self._TEST_PHRASE,
             "hi can i get a large cherry limeade and a medium tots please",
             "  Hi, can I get a large cherry limeade, and a medium tots, please.  ",
             "Hi, can I get a large cherry lime-ade and a medium tots, please?",
@@ -100,7 +122,7 @@ class TranscriptMatchTests(unittest.TestCase):
             "Hey can I get a large cherry lime aid and a medium tot please",
         ):
             with self.subTest(transcript):
-                self.assertTrue(smoke_realtime.transcript_matches(PHRASE, transcript))
+                self.assertTrue(smoke_realtime.transcript_matches(self._TEST_PHRASE, transcript))
 
     def test_answers_and_paraphrases_do_not_match(self):
         for transcript in (
@@ -112,17 +134,18 @@ class TranscriptMatchTests(unittest.TestCase):
             "   ",
         ):
             with self.subTest(transcript):
-                self.assertFalse(smoke_realtime.transcript_matches(PHRASE, transcript))
+                self.assertFalse(smoke_realtime.transcript_matches(self._TEST_PHRASE, transcript))
 
     def test_normalisation(self):
         self.assertEqual(smoke_realtime.normalise_transcript("  Hi,   THERE!\n"), "hi there")
         self.assertEqual(smoke_realtime.normalise_transcript("申し訳ありません、少々お待ちください。"),
                          "申し訳ありません 少々お待ちください")
-        self.assertEqual(smoke_realtime.transcript_similarity(PHRASE, PHRASE.upper()), 1.0)
+        self.assertEqual(smoke_realtime.transcript_similarity(self._TEST_PHRASE, self._TEST_PHRASE.upper()), 1.0)
 
     def test_threshold_is_between_a_misspelling_and_a_paraphrase(self):
-        misspelt = smoke_realtime.transcript_similarity(PHRASE, PHRASE.replace("limeade", "lime aid"))
-        dropped = smoke_realtime.transcript_similarity(PHRASE, "Can I get a cherry limeade and tots?")
+        misspelt = smoke_realtime.transcript_similarity(
+            self._TEST_PHRASE, self._TEST_PHRASE.replace("limeade", "lime aid"))
+        dropped = smoke_realtime.transcript_similarity(self._TEST_PHRASE, "Can I get a cherry limeade and tots?")
         self.assertGreaterEqual(misspelt, smoke_realtime.TRANSCRIPT_MATCH_THRESHOLD)
         self.assertLess(dropped, smoke_realtime.TRANSCRIPT_MATCH_THRESHOLD)
 
@@ -264,13 +287,17 @@ class LiveShapeTests(_FakeServerCase):
 
 def _isolated_main(argv, env, azd):
     """Run main() with only `env` set for the names it reads, `azd` as the azd
-    env, and a fake run(); return (exit code, run kwargs, env seen by run)."""
+    env, and a fake run(); return (exit code, run kwargs, env seen by run).
+
+    `seen["kwargs"]` also carries the positional (endpoint, deployment) args
+    under "endpoint"/"deployment" keys (#83, P2-14: lets --model's resolved
+    deployment be asserted on)."""
     names = ["AZURE_TENANT_ID", "AZURE_SUBSCRIPTION_ID", "AZURE_OPENAI_EASTUS2_ENDPOINT",
              "AZURE_OPENAI_REALTIME_DEPLOYMENT", "AZURE_OPENAI_EASTUS2_API_KEY", *CLEAN_ENV]
     seen = {}
 
-    async def fake_run(*_a, **kwargs):
-        seen["kwargs"] = kwargs
+    async def fake_run(endpoint, deployment, **kwargs):
+        seen["kwargs"] = {**kwargs, "endpoint": endpoint, "deployment": deployment}
         seen["env"] = {n: os.environ.get(n) for n in CLEAN_ENV}
         return 0
     saved = {n: os.environ.pop(n, None) for n in names}
@@ -429,6 +456,133 @@ class TenantTests(unittest.TestCase):
         headers, built, _, _ = self._auth(None, None)
         self.assertEqual(built, [("default", None)])
         self.assertIn("Authorization", headers)
+
+
+class PersonaResolutionTests(unittest.TestCase):
+    """--persona (#83, P2-14) picks a real pack from the SAME PersonaCatalog app.create_app()
+    uses, or fails closed -- never a silent hardcoded-brand fallback."""
+
+    def test_no_persona_is_none(self):
+        self.assertIsNone(smoke_realtime.resolve_persona(None))
+
+    def test_every_enabled_pack_resolves_by_id(self):
+        catalog = persona_loader.PersonaCatalog.load()
+        for persona_id in catalog.ids:
+            with self.subTest(persona_id):
+                persona = smoke_realtime.resolve_persona(persona_id)
+                self.assertEqual(persona.id, persona_id)
+
+    def test_unknown_persona_is_a_smoke_error(self):
+        with self.assertRaises(smoke_realtime.SmokeError):
+            smoke_realtime.resolve_persona("not-a-real-persona-id")
+
+
+class TranscriptionPhraseTests(unittest.TestCase):
+    """The live-transcription phrase (#83, P2-14) names each persona's own menu, never a
+    single hardcoded brand's -- so every pack's smoke check exercises its own vocabulary."""
+
+    def test_no_persona_uses_the_brand_neutral_default(self):
+        self.assertEqual(smoke_realtime._transcription_phrase_for(None),
+                         smoke_realtime._DEFAULT_TRANSCRIPTION_PHRASE)
+
+    def test_every_pack_builds_a_phrase_from_its_own_menu(self):
+        import menu_utils
+        catalog = persona_loader.PersonaCatalog.load()
+        for persona_id in catalog.ids:
+            with self.subTest(persona_id):
+                persona = catalog.get(persona_id)
+                menu = menu_utils.get_catalog_for_persona(persona)
+                names = [fields["name"] for fields in menu.item_fields.values() if fields.get("name")]
+                phrase = smoke_realtime._transcription_phrase_for(persona)
+                self.assertIn(names[0], phrase)
+                self.assertIn(names[1], phrase)
+
+
+class BuildMiddleTierPersonaTests(unittest.TestCase):
+    """persona (#83, P2-14) swaps PromptLoader's pack, so each persona's own prompt/tools load."""
+
+    def test_no_persona_matches_the_legacy_single_brand_default(self):
+        default_rtmt = smoke_realtime.build_middle_tier("https://x", "d", environ={})
+        catalog = persona_loader.PersonaCatalog.load()
+        default_persona = catalog.get(catalog.default_persona_id)
+        persona_rtmt = smoke_realtime.build_middle_tier("https://x", "d", environ={}, persona=default_persona)
+        self.assertEqual(default_rtmt.system_message, persona_rtmt.system_message)
+
+    def test_each_pack_loads_its_own_system_prompt(self):
+        catalog = persona_loader.PersonaCatalog.load()
+        messages = {
+            persona_id: smoke_realtime.build_middle_tier(
+                "https://x", "d", environ={}, persona=catalog.get(persona_id)).system_message
+            for persona_id in catalog.ids
+        }
+        self.assertEqual(len(set(messages.values())), len(messages), "every pack should have a distinct prompt")
+
+
+class ModelDeploymentResolutionTests(unittest.TestCase):
+    """--model (#83, P2-14) resolves via the SAME catalog and persona-allowed rule
+    app.create_app() uses (design doc section 7.3: catalog and deployment and persona-allowed)."""
+
+    def test_no_model_is_none(self):
+        self.assertIsNone(smoke_realtime.resolve_model_deployment(None, None))
+
+    def test_unknown_catalog_id_is_a_smoke_error(self):
+        with patch.object(smoke_realtime, "ModelCatalog", SimpleNamespace(load=lambda: _fake_model_catalog())):
+            with self.assertRaises(smoke_realtime.SmokeError):
+                smoke_realtime.resolve_model_deployment("not-a-real-model-id", None)
+
+    def test_unmapped_deployment_is_a_smoke_error(self):
+        with patch.object(smoke_realtime, "ModelCatalog", SimpleNamespace(load=lambda: _fake_model_catalog())):
+            with self.assertRaises(smoke_realtime.SmokeError):
+                smoke_realtime.resolve_model_deployment("gpt-realtime-2.1", None)
+
+    def test_mapped_deployment_resolves(self):
+        fake = _fake_model_catalog({"gpt-realtime-2.1": "my-realtime-deployment"})
+        with patch.object(smoke_realtime, "ModelCatalog", SimpleNamespace(load=lambda: fake)):
+            deployment = smoke_realtime.resolve_model_deployment("gpt-realtime-2.1", None)
+        self.assertEqual(deployment, "my-realtime-deployment")
+
+    def test_model_not_allowed_for_persona_is_a_smoke_error(self):
+        catalog = persona_loader.PersonaCatalog.load()
+        persona = catalog.get(catalog.default_persona_id)
+        fake = _fake_model_catalog({"phi-4": "some-cascade-deployment"})
+        with patch.object(smoke_realtime, "ModelCatalog", SimpleNamespace(load=lambda: fake)):
+            with self.assertRaises(smoke_realtime.SmokeError):
+                smoke_realtime.resolve_model_deployment("phi-4", persona)
+
+
+class CliPersonaAndModelTests(unittest.TestCase):
+    """--persona/--model (#83, P2-14) reach run() and override --deployment when given."""
+
+    def test_persona_flag_is_threaded_into_run(self):
+        persona_id = persona_loader.PersonaCatalog.load().default_persona_id
+        code, kwargs, _ = _isolated_main(["--endpoint", "https://x", "--deployment", "d",
+                                          "--persona", persona_id], {}, {})
+        self.assertEqual(code, 0)
+        self.assertEqual(kwargs["persona"].id, persona_id)
+
+    def test_no_persona_flag_leaves_persona_none(self):
+        code, kwargs, _ = _isolated_main(["--endpoint", "https://x", "--deployment", "d"], {}, {})
+        self.assertEqual(code, 0)
+        self.assertIsNone(kwargs["persona"])
+
+    def test_unknown_persona_flag_exits_2(self):
+        code, _, _ = _isolated_main(["--endpoint", "https://x", "--deployment", "d",
+                                     "--persona", "not-a-real-persona-id"], {}, {})
+        self.assertEqual(code, 2)
+
+    def test_model_flag_overrides_deployment(self):
+        fake = _fake_model_catalog({"gpt-realtime-2.1": "resolved-deployment"})
+        with patch.object(smoke_realtime, "ModelCatalog", SimpleNamespace(load=lambda: fake)):
+            code, kwargs, _ = _isolated_main(
+                ["--endpoint", "https://x", "--deployment", "ignored", "--model", "gpt-realtime-2.1"], {}, {})
+        self.assertEqual(code, 0)
+        self.assertEqual(kwargs["deployment"], "resolved-deployment")
+
+    def test_unresolvable_model_flag_exits_2(self):
+        with patch.object(smoke_realtime, "ModelCatalog", SimpleNamespace(load=lambda: _fake_model_catalog())):
+            code, _, _ = _isolated_main(
+                ["--endpoint", "https://x", "--deployment", "d", "--model", "not-a-real-model-id"], {}, {})
+        self.assertEqual(code, 2)
 
 
 class PostdeployHookTests(unittest.TestCase):

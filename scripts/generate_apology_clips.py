@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Generate the carhop's pre-recorded "one moment" apology clips.
+"""Generate the persona's pre-recorded "one moment" apology clips.
 
 When the realtime model is rate-limited twice in a row, the browser plays
 personas/<persona-id>/assets/audio/apology-<lang>.wav (see docs/rate_limit_recovery.md).
 The clip has to be local audio: the model is the thing that is rate-limited, so
 it can't say sorry at that moment. This script records one clip per UI language
-with the live model, once, so it can be re-run if the default voice changes:
+with the live model, once, so it can be re-run if a pack's default voice changes:
 
-    python scripts/generate_apology_clips.py                  # all languages, voice marin
-    python scripts/generate_apology_clips.py --lang ja --voice cedar
+    python scripts/generate_apology_clips.py                  # default persona, all languages, voice marin
+    python scripts/generate_apology_clips.py --persona <persona-id> --lang ja --voice cedar
 
 Each clip is the realtime model reading the phrase from its response
 instructions (like the smoke check's test audio), 24 kHz mono PCM16, with the
@@ -37,12 +37,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import smoke_realtime  # noqa: E402
 
 from default_persona import get_default_persona  # noqa: E402
+from persona_loader import Persona, PersonaCatalog, PersonaValidationError  # noqa: E402
 
-# Rick's PR-110 review item 2 (issue #80): the pack to write into comes from the persona
-# catalog's own default (`default_persona.py`, #74's single source of truth for "no persona
-# specified"), never a literal hard-coded pack id. `--persona` (choosing a NON-default pack) is
-# #83's; defaulting to the catalog's default persona is enough for this script today.
-OUT_DIR = get_default_persona().assets_dir / "audio"
 SAMPLE_RATE = 24_000
 
 # One per locale in app/frontend/src/locales (and APOLOGY_LANGUAGES in lib/apology.ts).
@@ -53,14 +49,39 @@ APOLOGY_PHRASES = {
     "ja": "申し訳ありません、少々お待ちください。",
 }
 
-VOICE_INSTRUCTIONS = (
-    "You are the voice of a friendly Sonic Drive-In carhop. Say only what you are told to say, in the language it is "
-    "written in, in a warm, upbeat, apologetic tone, at a relaxed pace."
-)
+
+def resolve_persona(persona_id: str | None) -> Persona:
+    """*persona_id* (--persona, #83/P2-14), else the SAME catalog default
+    ``default_persona.py`` resolves "no persona specified" to elsewhere -- never a
+    literal hard-coded pack id."""
+    if persona_id is None:
+        return get_default_persona()
+    try:
+        catalog = PersonaCatalog.load()
+    except PersonaValidationError as exc:
+        raise smoke_realtime.SmokeError(f"could not load persona catalog: {exc}") from exc
+    try:
+        return catalog.get(persona_id)
+    except KeyError as exc:
+        raise smoke_realtime.SmokeError(str(exc)) from exc
 
 
-def clip_path(lang: str) -> Path:
-    return OUT_DIR / f"apology-{lang}.wav"
+def out_dir_for(persona: Persona) -> Path:
+    return persona.assets_dir / "audio"
+
+
+def voice_instructions_for(persona: Persona) -> str:
+    """Built from the persona's own manifest fields (displayName/roleName, #83/P2-14) --
+    no single pack's brand/role hard-coded for every other pack's clips."""
+    manifest = persona.manifest
+    return (
+        f"You are the voice of a friendly {manifest.displayName} {manifest.roleName}. Say only what you are "
+        "told to say, in the language it is written in, in a warm, upbeat, apologetic tone, at a relaxed pace."
+    )
+
+
+def clip_path(out_dir: Path, lang: str) -> Path:
+    return out_dir / f"apology-{lang}.wav"
 
 
 def trim_silence(pcm: bytes, threshold: int = 300, pad_ms: int = 60) -> bytes:
@@ -83,12 +104,13 @@ def write_wav(path: Path, pcm: bytes) -> None:
         wav.writeframes(pcm)
 
 
-async def synthesize(url: str, headers: dict, text: str, voice: str, timeout: float) -> bytes:
+async def synthesize(url: str, headers: dict, text: str, voice: str, timeout: float,
+                     voice_instructions: str) -> bytes:
     pcm = bytearray()
     async with aiohttp.ClientSession() as http, http.ws_connect(url, headers=headers) as ws:
         await ws.send_json({"type": "session.update", "session": {
             "type": "realtime",
-            "instructions": VOICE_INSTRUCTIONS,
+            "instructions": voice_instructions,
             "audio": {"input": {"turn_detection": None}, "output": {"voice": voice}}}})
         await ws.send_json({"type": "response.create",
                             "response": {"instructions": smoke_realtime.synthesis_instructions(text)}})
@@ -133,20 +155,20 @@ async def transcribe(url: str, headers: dict, pcm: bytes, lang: str, timeout: fl
 
 
 async def generate(url: str, headers: dict, langs: list[str], voice: str, verify: bool,
-                   attempts: int, timeout: float) -> int:
+                   attempts: int, timeout: float, out_dir: Path, voice_instructions: str) -> int:
     failed = []
     for lang in langs:
         phrase = APOLOGY_PHRASES[lang]
         for attempt in range(1, attempts + 1):
-            pcm = trim_silence(await synthesize(url, headers, phrase, voice, timeout))
+            pcm = trim_silence(await synthesize(url, headers, phrase, voice, timeout, voice_instructions))
             seconds = len(pcm) / 2 / SAMPLE_RATE
             transcript = await transcribe(url, headers, pcm, lang, timeout) if verify else None
             ok = not verify or smoke_realtime.transcript_matches(phrase, transcript)
             print(f"{lang} attempt {attempt}: {seconds:.2f}s"
                   + (f" transcript={transcript!r} {'OK' if ok else 'MISMATCH'}" if verify else ""))
             if ok and pcm:
-                write_wav(clip_path(lang), pcm)
-                print(f"  wrote {clip_path(lang).relative_to(smoke_realtime.REPO_ROOT)}")
+                write_wav(clip_path(out_dir, lang), pcm)
+                print(f"  wrote {clip_path(out_dir, lang).relative_to(smoke_realtime.REPO_ROOT)}")
                 break
         else:
             failed.append(lang)
@@ -160,6 +182,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--endpoint", help="Azure OpenAI endpoint (default: AZURE_OPENAI_EASTUS2_ENDPOINT)")
     parser.add_argument("--deployment", help="Realtime deployment (default: AZURE_OPENAI_REALTIME_DEPLOYMENT)")
+    parser.add_argument("--persona", help="Persona pack id to (re)generate apology clips for "
+                                          "(default: the persona catalog's own default persona)")
     parser.add_argument("--voice", default="marin", help="Voice (default marin, the app's default voice)")
     parser.add_argument("--lang", default=",".join(APOLOGY_PHRASES),
                         help=f"Comma-separated languages (default {','.join(APOLOGY_PHRASES)})")
@@ -176,6 +200,11 @@ def main(argv: list[str] | None = None) -> int:
     langs = [lang.strip() for lang in args.lang.split(",") if lang.strip()]
     if unknown := [lang for lang in langs if lang not in APOLOGY_PHRASES]:
         parser.error(f"unknown language(s) {unknown}; known: {list(APOLOGY_PHRASES)}")
+    try:
+        persona = resolve_persona(args.persona)
+    except smoke_realtime.SmokeError as exc:
+        print(f"Could not generate clips: {exc}", file=sys.stderr)
+        return 2
     azd_values = smoke_realtime._azd_env_values()
     endpoint = smoke_realtime.resolve_setting("AZURE_OPENAI_EASTUS2_ENDPOINT", args.endpoint, azd_values)
     deployment = smoke_realtime.resolve_setting("AZURE_OPENAI_REALTIME_DEPLOYMENT", args.deployment, azd_values)
@@ -186,7 +215,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         headers = smoke_realtime.get_auth_headers(tenant_id, subscription_id)
         return asyncio.run(generate(smoke_realtime.realtime_url(endpoint, deployment), headers, langs, args.voice,
-                                    not args.no_verify, args.attempts, args.timeout))
+                                    not args.no_verify, args.attempts, args.timeout,
+                                    out_dir_for(persona), voice_instructions_for(persona)))
     except (smoke_realtime.SmokeError, aiohttp.ClientError, OSError) as exc:
         print(f"Could not generate clips: {exc}", file=sys.stderr)
         return 2
