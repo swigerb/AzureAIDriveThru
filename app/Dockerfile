@@ -6,7 +6,9 @@ FROM node:22-slim AS build-stage
 WORKDIR /frontend
 
 # Copy dependency manifests first for optimal layer caching
-COPY frontend/package.json frontend/package-lock.json ./
+# Issue #129: paths are repo-root relative -- the build context is the repo root
+# (azure.yaml's docker.context), not this app/ directory.
+COPY app/frontend/package.json app/frontend/package-lock.json ./
 
 # Create a safe default .env if one is not present.
 # Note: Avoid ARG/ENV for these values to prevent accidental secret leakage.
@@ -17,7 +19,7 @@ RUN if [ ! -f .env ]; then \
 RUN npm ci --no-audit --no-fund && npm cache clean --force
 
 # Copy remaining frontend source (changes more often than deps)
-COPY frontend/ ./
+COPY app/frontend/ ./
 
 RUN npm run build
 
@@ -32,11 +34,11 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
 # Install Python deps before copying app source for layer caching
-COPY ./backend/requirements.txt /app/requirements.txt
+COPY ./app/backend/requirements.txt /app/requirements.txt
 RUN python -m pip install --no-cache-dir -r requirements.txt
 
 # Copy backend application source
-COPY ./backend/ /app
+COPY ./app/backend/ /app
 
 # Persona packs (issue #70): prompts, menu data, and schemas the backend loads at startup.
 # PERSONAS_DIR is set explicitly because the container's directory depth differs from the repo

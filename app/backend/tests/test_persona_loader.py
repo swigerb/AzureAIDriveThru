@@ -19,7 +19,13 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from persona_loader import Persona, PersonaCatalog, PersonaValidationError
+from persona_loader import (
+    Persona,
+    PersonaCatalog,
+    PersonaValidationError,
+    default_personas_dir,
+    resolve_personas_dir,
+)
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _REAL_PERSONAS_DIR = _REPO_ROOT / "personas"
@@ -353,6 +359,64 @@ class TestMutationSchemaViolations:
         assert "sonic" in str(exc_info.value)
         assert "menuItems.json" in str(exc_info.value)
 
+    def test_menu_item_key_collision_refuses_to_start(self, personas_copy):
+        """#128: two menu items that normalize to the same ``_menu_key`` (e.g. two differently
+        parenthesized variants of the same base name) must fail startup for every enabled
+        persona, not just silently let the second one loaded win. Uses whichever real pack sorts
+        first (brand-agnostic, like ``test_every_discovered_real_pack_validates`` above) rather
+        than hardcoding a brand name."""
+        persona_id = _discovered_persona_ids(personas_copy)[0]
+        menu_path = personas_copy / persona_id / "menu" / "menuItems.json"
+        data = json.loads(menu_path.read_text(encoding="utf-8"))
+        first_item = data["menuItems"][0]["items"][0]
+        colliding_item = dict(first_item)
+        colliding_item["name"] = f"{first_item['name']} (Party Size)"
+        data["menuItems"][0]["items"].append(colliding_item)
+        menu_path.write_text(json.dumps(data), encoding="utf-8")
+        with pytest.raises(PersonaValidationError) as exc_info:
+            PersonaCatalog.load(personas_dir=personas_copy)
+        message = str(exc_info.value)
+        assert persona_id in message
+        assert first_item["name"] in message
+        assert colliding_item["name"] in message
+        assert "same lookup key" in message
+
+    def test_menu_alias_collision_with_another_items_alias_refuses_to_start(self, personas_copy):
+        """#128: an alias declared on two different items must fail startup -- an ambiguous alias
+        must never resolve silently to whichever item happened to load last."""
+        persona_id = _discovered_persona_ids(personas_copy)[0]
+        menu_path = personas_copy / persona_id / "menu" / "menuItems.json"
+        data = json.loads(menu_path.read_text(encoding="utf-8"))
+        items = [item for category in data["menuItems"] for item in category["items"]]
+        items[0].setdefault("aliases", []).append("duplicate test alias")
+        items[1].setdefault("aliases", []).append("duplicate test alias")
+        menu_path.write_text(json.dumps(data), encoding="utf-8")
+        with pytest.raises(PersonaValidationError) as exc_info:
+            PersonaCatalog.load(personas_dir=personas_copy)
+        message = str(exc_info.value)
+        assert persona_id in message
+        assert "duplicate test alias" in message
+        assert items[0]["name"] in message
+        assert items[1]["name"] in message
+
+    def test_menu_alias_colliding_with_another_items_own_key_refuses_to_start(self, personas_copy):
+        """#128: an alias that happens to normalize to a DIFFERENT item's own name (not just
+        another alias) must also fail startup -- this is the half of the rule that isn't a
+        plain alias-vs-alias duplicate."""
+        persona_id = _discovered_persona_ids(personas_copy)[0]
+        menu_path = personas_copy / persona_id / "menu" / "menuItems.json"
+        data = json.loads(menu_path.read_text(encoding="utf-8"))
+        items = [item for category in data["menuItems"] for item in category["items"]]
+        target_name = items[1]["name"]
+        items[0].setdefault("aliases", []).append(target_name)
+        menu_path.write_text(json.dumps(data), encoding="utf-8")
+        with pytest.raises(PersonaValidationError) as exc_info:
+            PersonaCatalog.load(personas_dir=personas_copy)
+        message = str(exc_info.value)
+        assert persona_id in message
+        assert items[0]["name"] in message
+        assert target_name in message
+
     def test_missing_prompts_dir_refuses_to_start(self, personas_copy):
         shutil.rmtree(personas_copy / "sonic" / "prompts")
         with pytest.raises(PersonaValidationError, match="prompts directory not found"):
@@ -413,6 +477,96 @@ class TestFixtureSchemasMatchRealSchemas:
             "(never edit the fixture copy independently; see this test class's docstring "
             "for why they're two files instead of one shared file)."
         )
+
+
+# ===========================================================================
+# Default personas/ directory resolution: pick by EXISTENCE, not by path depth (#129 review
+# round 2). Covers both default_personas_dir (the two-candidate, schema-marker lookup) and
+# resolve_personas_dir (adds the PERSONAS_DIR env var override and the "nothing qualifies"
+# error naming every path tried).
+# ===========================================================================
+
+
+class TestDefaultPersonasDirResolution:
+    def test_checkout_layout_resolves_repo_root_personas(self, tmp_path):
+        """app/backend/<module>.py, two levels below a repo root that has personas/persona.schema.json."""
+        repo = tmp_path / "repo"
+        module = repo / "app" / "backend" / "persona_loader.py"
+        module.parent.mkdir(parents=True)
+        module.write_text("", encoding="utf-8")
+        personas = repo / "personas"
+        personas.mkdir()
+        (personas / "persona.schema.json").write_text("{}", encoding="utf-8")
+
+        assert default_personas_dir(module) == personas
+
+    def test_image_layout_picks_adjacent_personas_even_over_a_stray_dir_two_levels_up(self, tmp_path):
+        """The flattened container image puts the module and personas/ side by side (app/Dockerfile
+        copies both straight onto /app). This reproduces that at an ARBITRARY nesting depth --
+        not two levels, the old depth rule's lucky number -- with a stray personas/ sitting at
+        exactly the old rule's "two levels up" location too, but WITHOUT a persona.schema.json.
+        The adjacent, real personas/ (which does have the schema) must still win: existence, not
+        depth, decides."""
+        module_dir = tmp_path / "srv" / "some" / "nested" / "workdir" / "app"
+        module_dir.mkdir(parents=True)
+        module = module_dir / "persona_loader.py"
+        module.write_text("", encoding="utf-8")
+
+        # The stray "two levels up" directory: exists, but no schema -- must not be chosen.
+        stray = module_dir.parent.parent / "personas"
+        stray.mkdir(parents=True)
+
+        # The real candidate: right next to the module.
+        real_personas = module_dir / "personas"
+        real_personas.mkdir()
+        (real_personas / "persona.schema.json").write_text("{}", encoding="utf-8")
+
+        assert default_personas_dir(module) == real_personas
+
+    def test_neither_candidate_qualifying_returns_none(self, tmp_path):
+        module = tmp_path / "app" / "backend" / "persona_loader.py"
+        module.parent.mkdir(parents=True)
+        module.write_text("", encoding="utf-8")
+        # Neither default candidate directory exists at all.
+
+        assert default_personas_dir(module) is None
+
+
+class TestResolvePersonasDirEnvVarAndErrors:
+    def test_personas_dir_env_var_overrides_the_defaults(self, tmp_path, monkeypatch):
+        override = tmp_path / "override-personas"
+        override.mkdir()
+        (override / "persona.schema.json").write_text("{}", encoding="utf-8")
+        monkeypatch.setenv("PERSONAS_DIR", str(override))
+
+        # Any module path -- the env var short-circuits before either default candidate is
+        # even considered.
+        module = tmp_path / "app" / "backend" / "persona_loader.py"
+        assert resolve_personas_dir(module) == override.resolve()
+
+    def test_personas_dir_env_var_without_the_schema_raises(self, tmp_path, monkeypatch):
+        override = tmp_path / "override-personas"
+        override.mkdir()  # no persona.schema.json
+        monkeypatch.setenv("PERSONAS_DIR", str(override))
+
+        module = tmp_path / "app" / "backend" / "persona_loader.py"
+        with pytest.raises(PersonaValidationError, match="does not exist or does not contain"):
+            resolve_personas_dir(module)
+
+    def test_no_env_var_and_neither_candidate_qualifying_raises_naming_both_paths(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("PERSONAS_DIR", raising=False)
+        module = tmp_path / "app" / "backend" / "persona_loader.py"
+        module.parent.mkdir(parents=True)
+
+        module_dir = module.resolve().parent
+        checkout_candidate = module_dir.parent.parent / "personas"
+        image_candidate = module_dir / "personas"
+
+        with pytest.raises(PersonaValidationError) as exc_info:
+            resolve_personas_dir(module)
+        message = str(exc_info.value)
+        assert str(checkout_candidate) in message
+        assert str(image_candidate) in message
 
 
 if __name__ == "__main__":

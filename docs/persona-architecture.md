@@ -465,6 +465,18 @@ starts a new session.
 **#64, decided (decision 3).** Floats do not get the happy-hour price, and they can fill the combo drink slot.
 They are real Sonic menu items (4.3, #72), not a keyword rule.
 
+- **A pack refuses to start if two menu items collide on their lookup key, or an alias collides
+  with another item's own key or another item's own alias (#128, decided).** `_menu_key`'s
+  modifier-stripping (this section, `strip_modifiers`) is by design -- but that exact same
+  stripping can silently collapse two differently-named items (e.g. several differently-priced
+  "(N piece)" size variants of the same base name) into one lookup key, with whichever one loaded
+  last winning and the others unreachable/mispriced. `menu_utils.validate_menu_key_collisions`
+  (Python) and `MenuKeyValidator.ValidateNoCollisions` (C#) are the single implementation of this
+  rule in each backend, run eagerly for every enabled persona at process startup (Python also runs
+  it again whenever a `MenuCatalog` is built, so no code path can ever construct a
+  degraded/last-write-wins catalog) -- same fail-fast convention, same "one contract, two backends"
+  requirement as every other startup validation in this doc.
+
 ### 6.1 Required rejection-message keys, validated at startup (#125, decided)
 
 Every structured rejection above (`not_on_menu`, `size_not_available`, `machine_unavailable`,
@@ -526,24 +538,28 @@ which one is running.
 | --- | --- | --- | --- |
 | `realtime` | A Foundry realtime model, speech to speech (today's `gpt-realtime-2.1`, plus alternatives such as a smaller realtime model) | Azure | Today's `rtmt.py`; selectable per session in #75 |
 | `cascade` | Transcription (`gpt-4o-transcribe`), then a Foundry **chat** model with tool calling (OpenAI or non-OpenAI), then TTS (`gpt-4o-mini-tts`) -- all Azure OpenAI audio and chat models on the same Foundry AIServices account; **not** Azure Speech, which isn't used and has no SDK or resource in this pipeline | Azure | New in #82; parity with `realtime` below |
-| `local` | Whisper, then Phi-4 mini (ONNX), then Piper, all on-device (McDonald's local mode, now persona-agnostic) | Developer machine; off by default | Ported in #81 |
+| `local` | Whisper, then Phi-4 mini (ONNX), then Piper, all on-device (McDonald's local mode, now persona-agnostic) | Developer machine, through a companion runtime process (7.6); off unless `LOCAL_RUNTIME_ENDPOINT` is set | #81 part 1: processor, runtime contract, conformance; part 2: the runtime itself |
 
-**Cascade turn-taking parity (Rick's PR #118 review item 6/6).** The frontend can't tell pipelines apart, so
-`cascade` matches `realtime`'s observable behavior for:
+**Turn-taking parity.** The frontend can't tell pipelines apart, so `cascade` (Rick's PR #118 review item 6)
+and `local` (#81 part 1) match `realtime`'s observable behavior where the demo needs it:
 
-- **Greeting on connect** -- the persona's `greeting.yaml`, spoken through TTS, with the same `response.*` frames.
-- **Barge-in** -- a local `speech_started` cancels the in-flight chat call and TTS stream; no further
-  `response.audio.delta` is sent for the cancelled turn.
-- **Rate limit** -- a 429 from chat, transcription or TTS goes down the same rate-limit notice path the frontend
-  already handles for `realtime` (`extension.rate_limited`), not a silent failed turn.
+| Behavior | `realtime` | `cascade` | `local` |
+| --- | --- | --- | --- |
+| Greeting on connect: the persona's `greeting.yaml`, spoken, with the same `response.*` frames | yes | yes | yes |
+| Barge-in: a `speech_started` cancels the in-flight model call and speech; nothing more is sent for the cancelled turn | yes (upstream VAD) | yes (local VAD) | yes (local VAD) |
+| Upstream failure is never silent | rate limit: `extension.rate_limited` | a 429 from chat, transcription or TTS: the same `extension.rate_limited` path | runtime unreachable or failing: the pack's `generic_error` text as the assistant transcript (no retry ladder: no quota to wait out) |
+| Resume (grace hold, rehydration) | yes | deferred to #126 | deferred to #126 |
+| Idle nudge | yes | deferred to #126 | deferred to #126 |
+| Echo suppression after playback | yes | deferred to #126 | deferred to #126 |
 
-Each has a conformance row (`tests/conformance/.../Scenarios/Cascade/CascadeConformanceTests.cs`).
+Each "yes" on `cascade` and `local` has a conformance row (`tests/conformance/.../Scenarios/Cascade/` and
+`Scenarios/Local/`).
 
-**Explicitly deferred, tracked in #126:** resume (a reconnect on `cascade` today gets a fresh session, with no
-grace-hold/rehydration equivalent to `realtime`'s), the idle-nudge, and echo suppression (`cascade_processor.py`
-never imports `audio_pipeline.py`'s `EchoSuppressor`, so there is no cooldown window after TTS playback the way
-`realtime` has). None of these are required for the P2 demo's happy path or the conformance rows above; each
-needs its own design pass before landing on `cascade`.
+**Explicitly deferred, tracked in #126:** resume (a reconnect on `cascade` or `local` today gets a fresh session,
+with no grace-hold/rehydration equivalent to `realtime`'s), the idle-nudge, and echo suppression (neither
+`cascade_processor.py` nor `local_processor.py` imports `audio_pipeline.py`'s `EchoSuppressor`, so there is no
+cooldown window after playback the way `realtime` has). None of these are required for the P2 demo's happy path
+or the conformance rows above; each needs its own design pass before landing on either pipeline.
 
 ### 7.2 Config shape
 
@@ -580,7 +596,7 @@ There are three layers, each owned by one team:
 | Session | Which allowed model this conversation uses | The Settings model picker, sent as `?model=` at connect. Locked for the session |
 
 Selectable = catalog ∩ deployment ∩ persona-allowed. The pipeline follows from the chosen model's `pipeline`.
-Local mode is selectable only when `/health` reports it available (models present on the machine).
+Local mode is selectable only when `LOCAL_RUNTIME_ENDPOINT` points at a companion runtime (7.6).
 
 ### 7.4 How both backends honor it
 
@@ -622,8 +638,97 @@ Local mode is selectable only when `/health` reports it available (models presen
 - **Cascade gets new harness fakes** (#82): `FakeChatCompletionsServer` (scripted tool calls, like
   `ResponseScript`), `FakeTranscription` and `FakeTts`. A representative ordering subset runs per persona on the
   cascade pipeline.
-- **Local mode is not in CI conformance,** because the models are too large. It's covered by unit tests with
-  mocked models, plus the manual UX checklist.
+- **Local mode runs in CI conformance against a fake runtime** (#81 part 1): `FakeLocalRuntimeServer` stands in
+  for the companion process, so the rows need no model weights (7.6). The real runtime is covered by the manual UX
+  checklist in #81 part 2.
+
+### 7.6 Local mode: as-built design (#81)
+
+Section 7.1/7.4 above sketch local mode as Python loading ONNX Runtime GenAI/Whisper/Piper
+in-process, mirroring the sibling drive-thru project's own local mode as closely as possible. The
+as-built #81 design takes a different, deliberately lighter-weight shape once it came time to
+implement it as a *persona-agnostic* pipeline behind the same `PipelineProcessor` interface as
+`cascade` (#82):
+
+- **Companion-process boundary, not in-process model loading.** `LocalProcessor`
+  (`app/backend/local_processor.py`) never imports ONNX Runtime, Whisper or Piper directly. It
+  talks to a separate, external HTTP process -- "the companion local-runtime" -- over a small
+  three-endpoint contract (`app/backend/local_runtime.py`'s `HttpLocalRuntimeClient`):
+
+  | Endpoint              | Request                                                               | Response |
+  | ---------------------- | ------------------------------------------------------------------------ | ---------- |
+  | `POST /v1/transcribe`  | raw 16kHz mono PCM16, `Content-Type: application/octet-stream` (the client resamples from the mic's native 24kHz before sending) | `{"text": "..."}` |
+  | `POST /v1/chat`        | `{"messages": [...], "tools": [<flat tool schema>, ...]}` -- same flat, Realtime-API-style tool schema as `cascade`'s chat calls, no SDK-specific nesting | `{"content": str \| null, "tool_calls": [{"id", "name", "arguments"}]}` |
+  | `POST /v1/speak`       | `{"text": "...", "voice": "..."}`                                        | raw 24kHz mono PCM16 (already resampled server-side; the client does no TTS resampling) |
+
+  This keeps the main backend process light (no heavy ML runtimes/model weights on its own
+  dependency tree or its own memory footprint) and keeps `LocalProcessor` trivially testable with
+  a fake/scripted `LocalRuntimeClient` (`tests/test_local_processor.py`), the same way `cascade`'s
+  own tests substitute a fake chat client rather than standing up a real Foundry endpoint. The
+  companion process itself -- whatever implements the three endpoints above, whether that's a
+  direct port of the sibling project's Whisper/local-LLM/Piper runtimes or something else
+  entirely -- is out of this issue's scope (see README.md's "On-device local mode" section).
+- **Selection/gating (design doc section 7.3's "catalog ∩ deployment ∩ persona-allowed" reused,
+  with one term redefined):** the local pipeline has no per-model Foundry deployment at all --
+  there's one process-wide companion endpoint, not a deployment name per catalog id. So "deployed"
+  for a `pipeline: local` catalog model means `LOCAL_RUNTIME_ENDPOINT` (an env var, `model_catalog.py`)
+  is set, not an `AZURE_AI_MODEL_DEPLOYMENTS` entry. Concretely (`processors.resolve_local_model`):
+  1. The persona must have a `models.local` block at all (local mode isn't automatically enabled
+     for every persona the way realtime is; each pack opts in, and every shipped pack does).
+  2. The requested (or defaulted) model id must be in that pack's `models.local.allowed` list.
+  3. The id must be catalogued for `pipeline: local` in `config.yaml`.
+  4. `LOCAL_RUNTIME_ENDPOINT` must be set -- **there is no back-compat fallback for the default the
+     way realtime has one for `AZURE_OPENAI_REALTIME_DEPLOYMENT`.** An unconfigured runtime rejects
+     the persona's own local default exactly like any other undeployed id; local mode's whole
+     acceptance criterion ("OFF by default... only activates when the local runtime endpoint is
+     configured") depends on there being no such carve-out.
+  `GET /api/personas` reflects step 4 directly: a `pipeline: local` catalog entry reports
+  `deployed: true` (and is therefore listed as selectable) only once `LOCAL_RUNTIME_ENDPOINT` is
+  set for that process -- `ModelCatalog.is_deployed` special-cases `pipeline == "local"` to check
+  `local_runtime_endpoint` instead of the deployment map.
+- **`ResolvedModel.deployment` is repurposed** to carry the companion process's own base URL for
+  local sessions (instead of a Foundry deployment name) -- `LocalProcessor._run_session` builds its
+  `HttpLocalRuntimeClient` straight from it, mirroring how `realtime`/`cascade` treat `.deployment`
+  as "the place this model actually lives."
+- **Same tools, structured results, session metadata, wire protocol as realtime/cascade.**
+  `LocalProcessor` executes tool calls against the exact same shared `tools` dict `cascade`/
+  `realtime` use, with the byte-identical `ToolResultDirection`-gated send-to-client contract
+  (`extension.middle_tier_tool_response`, same `{previous_item_id, tool_name, tool_result}` shape)
+  -- a priced order ticket or a `not_on_menu` rejection reaches the frontend unchanged regardless
+  of which pipeline produced it. Session creation/metadata emission
+  (`extension.session_metadata`, `extension.round_trip_token`) reuses the same `SessionManager`/
+  `order_state_singleton` calls `cascade` makes.
+- **No rate-limit retry ladder.** Unlike `cascade`'s Azure-quota-aware `extension.rate_limited`
+  path, a `LocalRuntimeError` from the companion process (unreachable, error status, malformed
+  response) ends the turn with the pack's own `generic_error` text sent as the assistant
+  transcript (`response.created`, `response.audio_transcript.delta`, `response.done`; no speech,
+  since the runtime that failed is also the TTS engine). There's no Azure quota to retry against
+  for an on-device runtime, but the guest is never left in silence.
+- **Zero `rtmt.py` edits.** `LocalProcessor` registers into the same `ProcessorRegistry`
+  `dispatch_processor` already resolves purely from the catalog (`resolve_model`/`handle`, section
+  7.4's "Processor interface"); `app.py` is the only file that wires it up
+  (`ProcessorRegistry([rtmt, cascade_processor, local_processor])`).
+- **Conformance.** The C# harness fakes the companion process itself: `FakeLocalRuntimeServer`
+  (`tests/conformance/src/Conformance.Fakes/`) serves `/v1/transcribe`, `/v1/chat` (scripted
+  content and tool calls, plus a held-response gate that records whether the backend aborted the
+  request) and `/v1/speak`. The rows in `Scenarios/Local/` are untagged (Python only until the C#
+  backend ports local, section 17) and event-driven (frame waits and request-arrival signals, no
+  sleeps):
+  - session metadata carries pipeline `local`, the bound persona and its local model, for every
+    shipped pack;
+  - without `LOCAL_RUNTIME_ENDPOINT`, `?model=<local>` gets a pre-upgrade 404 and
+    `/api/personas/{id}` omits the local model (and lists it once a runtime is configured);
+  - greeting on connect, through `/v1/chat` and `/v1/speak`;
+  - a `get_order` tool round trip reaching the browser as `extension.middle_tier_tool_response`;
+  - the `not_on_menu` structured rejection in the tool message fed back to `/v1/chat`;
+  - barge-in, proven by the first turn's held `/v1/chat` request being aborted by the backend;
+  - an unreachable runtime sending the pack's `generic_error` notice for both a failed greeting
+    and a failed guest turn.
+
+  Python unit tests cover the same seams in-process (`tests/test_local_processor.py` against a
+  scripted `LocalRuntimeClient`, `tests/test_local_runtime.py` for the HTTP wire contract). The
+  harness strips any ambient `LOCAL_RUNTIME_*` variable from the backend-under-test environment,
+  so a developer's own runtime can't turn local mode on for the default fixture.
 
 ## 8. Conformance and test dimensions
 

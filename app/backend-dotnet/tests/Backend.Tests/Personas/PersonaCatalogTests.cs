@@ -151,6 +151,81 @@ public sealed class PersonaCatalogTests
     }
 
     [Fact]
+    public void MenuItemKeyCollision_Throws()
+    {
+        // #128: two menu items that normalize to the same lookup key (e.g. two differently
+        // parenthesized variants of the same base name) must fail startup, not silently let the
+        // second one loaded win.
+        using var fixture = new PersonaPackFixture();
+        string firstItemName = "", collidingName = "";
+        fixture.MutateMenuJson("sonic", obj =>
+        {
+            var items = obj["menuItems"]![0]!["items"]!.AsArray();
+            var firstItem = items[0]!.AsObject();
+            firstItemName = firstItem["name"]!.GetValue<string>();
+            var colliding = firstItem.DeepClone().AsObject();
+            collidingName = $"{firstItemName} (Party Size)";
+            colliding["name"] = collidingName;
+            items.Add(colliding);
+        });
+
+        var exc = Assert.Throws<PersonaValidationException>(() => PersonaCatalog.Load(personasDir: fixture.PersonasDir));
+        Assert.Contains("sonic", exc.Message);
+        Assert.Contains(firstItemName, exc.Message);
+        Assert.Contains(collidingName, exc.Message);
+        Assert.Contains("same lookup key", exc.Message);
+    }
+
+    [Fact]
+    public void MenuAliasCollisionWithAnotherItemsAlias_Throws()
+    {
+        // #128: an alias declared on two different items must fail startup -- an ambiguous alias
+        // must never resolve silently to whichever item happened to load last.
+        using var fixture = new PersonaPackFixture();
+        string firstItemName = "", secondItemName = "";
+        fixture.MutateMenuJson("sonic", obj =>
+        {
+            var items = obj["menuItems"]!.AsArray()
+                .SelectMany(category => category!["items"]!.AsArray())
+                .ToList();
+            firstItemName = items[0]!["name"]!.GetValue<string>();
+            secondItemName = items[1]!["name"]!.GetValue<string>();
+            items[0]!.AsObject()["aliases"]!.AsArray().Add("duplicate test alias");
+            items[1]!.AsObject()["aliases"]!.AsArray().Add("duplicate test alias");
+        });
+
+        var exc = Assert.Throws<PersonaValidationException>(() => PersonaCatalog.Load(personasDir: fixture.PersonasDir));
+        Assert.Contains("sonic", exc.Message);
+        Assert.Contains("duplicate test alias", exc.Message);
+        Assert.Contains(firstItemName, exc.Message);
+        Assert.Contains(secondItemName, exc.Message);
+    }
+
+    [Fact]
+    public void MenuAliasCollidingWithAnotherItemsOwnKey_Throws()
+    {
+        // #128: an alias that happens to normalize to a DIFFERENT item's own name (not just
+        // another alias) must also fail startup -- this is the half of the rule that isn't a
+        // plain alias-vs-alias duplicate.
+        using var fixture = new PersonaPackFixture();
+        string firstItemName = "", targetName = "";
+        fixture.MutateMenuJson("sonic", obj =>
+        {
+            var items = obj["menuItems"]!.AsArray()
+                .SelectMany(category => category!["items"]!.AsArray())
+                .ToList();
+            firstItemName = items[0]!["name"]!.GetValue<string>();
+            targetName = items[1]!["name"]!.GetValue<string>();
+            items[0]!.AsObject()["aliases"]!.AsArray().Add(targetName);
+        });
+
+        var exc = Assert.Throws<PersonaValidationException>(() => PersonaCatalog.Load(personasDir: fixture.PersonasDir));
+        Assert.Contains("sonic", exc.Message);
+        Assert.Contains(firstItemName, exc.Message);
+        Assert.Contains(targetName, exc.Message);
+    }
+
+    [Fact]
     public void MissingPromptsDirectory_Throws()
     {
         using var fixture = new PersonaPackFixture();

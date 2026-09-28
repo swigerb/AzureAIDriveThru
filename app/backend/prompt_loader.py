@@ -24,6 +24,8 @@ from typing import Any
 import yaml
 from jinja2 import BaseLoader, Environment
 
+from persona_loader import resolve_personas_dir
+
 __all__ = ["PromptLoader", "REQUIRED_ERROR_MESSAGE_KEYS"]
 
 logger = logging.getLogger("prompt-loader")
@@ -47,11 +49,11 @@ REQUIRED_ERROR_MESSAGE_KEYS: tuple[str, ...] = (
     "extras_no_base_item",  # #116: update_order add -- an extra with no allowed base item yet
 )
 
-# personas/ sits at the repo root (design doc section 4.1); this module lives at
-# app/backend/prompt_loader.py, two levels below it. Overridable via the PERSONAS_DIR env var
-# (same variable persona_loader.py reads), so both modules agree on where packs live.
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-_PERSONAS_DIR = Path(os.environ.get("PERSONAS_DIR") or (_REPO_ROOT / "personas"))
+# personas/ sits at the repo root in a checkout (design doc section 4.1), or right next to this
+# module in the flattened container image layout. resolve_personas_dir() is persona_loader.py's
+# one shared implementation (env var PERSONAS_DIR, else pick by existence, not by path depth) --
+# reused here so both loaders always agree on where packs live (#129 review round 2).
+_PERSONAS_DIR = resolve_personas_dir(Path(__file__))
 
 # Jinja2 environment for rendering error message templates
 _jinja_env = Environment(loader=BaseLoader(), undefined=__import__("jinja2").StrictUndefined)
@@ -86,6 +88,18 @@ class PromptLoader:
         """Return the assembled system prompt string from all sections."""
         self._maybe_reload()
         return self._cache["system_prompt"]
+
+    def get_local_system_prompt(self) -> str:
+        """Return the system prompt used by the `local` on-device pipeline (issue #81, design
+        doc section 7.5) -- personas/{brand}/prompts/local_system_prompt.yaml, in the SAME
+        `sections` shape as system_prompt.yaml, for packs that want a shorter/simpler prompt
+        tuned to a smaller on-device model. Optional: most persona packs don't (yet) define one
+        (writing local-tuned prompt content is a persona-pack content change, out of this
+        issue's own scope), so callers get the pack's normal cloud `get_system_prompt()`
+        instead, rather than an error."""
+        self._maybe_reload()
+        local_prompt = self._cache.get("local_system_prompt")
+        return local_prompt if local_prompt is not None else self._cache["system_prompt"]
 
     def get_greeting(self) -> dict:
         """Return the greeting message dict (conversation.item.create payload)."""
@@ -208,6 +222,13 @@ class PromptLoader:
         if hints_data is None:
             raise FileNotFoundError("Hints file not found: hints.yaml")
         self._cache["hints"] = hints_data
+
+        # Load the local-pipeline system prompt (issue #81), optional -- see
+        # get_local_system_prompt for why a missing file is not an error.
+        local_sp_data = self._load_yaml("local_system_prompt.yaml")
+        self._cache["local_system_prompt"] = (
+            self._assemble_system_prompt(local_sp_data) if local_sp_data is not None else None
+        )
 
         self._last_load_time = time.time()
         logger.info(

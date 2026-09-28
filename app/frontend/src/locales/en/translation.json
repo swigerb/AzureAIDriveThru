@@ -39,7 +39,19 @@
         "kicker": "Order ticket",
         "title": "Your Order",
         "emptyHint": "Add items to get started.",
-        "tax": "Tax"
+        "tax": "Tax",
+        "included": "Included",
+        "componentsLabel": "Included with this item"
+    },
+    "picker": {
+        "backendLabel": "Backend",
+        "modelLabel": "Model",
+        "modelDescription": "Choose which model powers the conversation",
+        "lockedHint": "Locked for this order -- start a new order to switch",
+        "reasoningSuffix": "(reasoning)",
+        "realtimeGroup": "Realtime",
+        "cascadeGroup": "Cascade",
+        "noModelsAvailable": "No models available"
     },
     "hero": {
         "badge": "Voice Ordering Demo",
