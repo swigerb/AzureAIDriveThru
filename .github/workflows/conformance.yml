@@ -562,7 +562,12 @@ jobs:
       - name: Verify static/config files present, nothing extra leaked in
         run: |
           set -euo pipefail
-          docker run --rm azureaidrivethru-backend-dotnet:ci sh -c '
+          # --entrypoint sh is required: unlike the Python image's CMD (freely overridden by
+          # `docker run image sh -c ...`), this image sets ENTRYPOINT ["dotnet", "Backend.dll"],
+          # so an un-overridden `sh -c '...'` here is appended as ARGS to dotnet instead of
+          # replacing it -- silently launching the real app (which then fails fast on missing
+          # env vars) instead of running this static-content check.
+          docker run --rm --entrypoint sh azureaidrivethru-backend-dotnet:ci -c '
             set -eu
             # The frontend and config.yaml are built/copied into the image (same as the Python one).
             test -f /app/static/index.html || { echo "/app/static/index.html missing" >&2; exit 1; }
