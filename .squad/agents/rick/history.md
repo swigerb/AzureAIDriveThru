@@ -73,3 +73,29 @@
 - **Model flexibility is a pipeline question, not just a deployment name:** realtime models swap by deployment, but showcasing non-OpenAI Foundry models needs a cascade pipeline (STT, chat with tools, TTS) behind the same browser contract (#82). Keep one processor interface so conformance treats the pipeline as a dimension.
 - **Environment:** the Search service and the Azure OpenAI resource both live in `rg-sonic-demo`, and the siblings reuse them. So "keep the indexes" plus "tear down everything else" means moving the free Search service into the new resource group on Day 30, not deleting it.
 - **Tooling gotcha:** PowerShell flattens a single-element `@(@('a','b'))` into `@('a','b')`, so `$pair[0]` became a character and a global `Replace` corrupted seven issue bodies. I restored them from the source script and verified them line by line. Use ordered hashtables (old to new) for replacement lists.
+
+## 2026-09-27 - ADR-002: Entra authentication following Retail Pulse (#85, PR #142)
+
+- **Proposed, not merged.** In-app Entra ID like Retail Pulse, not EasyAuth. Design is in section 18. The work is split into #143 (harness, first), #144 (Python, Unity), #145 (frontend, Morty), #146 (infra, scripts and rollout, Squanchy) and #147 (C#, Beth, S5, gates #17).
+- **Keep and layer the HMAC token:** it gets an `oid` binding and is required in Entra mode. I was honest that it isn't a second factor against a stolen Entra token. The ticket-only `/realtime` credential is the recorded upgrade path.
+- **Gotchas found while designing:**
+  - The harness launches backends as **Production**, so fail-fast forces an Entra-mode default fixture. That needs the fake issuer on loopback `http` (fakes stay HTTP, #23).
+  - The gunicorn `%(r)s` format and ASP.NET's "Request starting" line both log query strings, so the WebSocket token (and today's `?token=`) would reach Log Analytics.
+  - JwtBearer runs before the endpoint, so the Entra check comes before Origin on both backends. Otherwise C# and Python would disagree (401 vs 403).
+  - `azd provision` re-enables ingress, so deploy the auth image before provisioning.
+  - The C# static-files middleware must never serve `menu.json` or asset JSON.
+
+## 2026-09-28 - ADR-002 revised for the independent review (PR #142, R1 to R5)
+
+- **R1, access logs:** `aiohttp.GunicornWebWorker` raises `ValueError` on any gunicorn `%(x)s` directive, and aiohttp's `%r` carries the query string, so no format can redact it. A `PathOnlyAccessLogger` class goes on both run paths: a new async `create_runner()` factory for gunicorn (which returns an `AppRunner`, so it must also carry keep-alive and shutdown itself) and `run_app` for `python app.py`.
+- **R2, rollout:** single-revision mode keeps the old revision active when the new one fails, so "fails fast" isn't fail-closed. Deactivate pre-auth revisions before `azd provision`, check active revisions after, and make Verify check every active revision.
+- **R3/R4:** explicit `Development` never overrides configured ids (backend and frontend). A built pass-through bundle needs `VITE_AUTH_MODE=Development`; the Dockerfile defaults to `Entra`; the guard reads `loadEnv`.
+- **R5:** no automatic retry after a failed redirect. An unassigned user is stopped by Entra (`AADSTS50105`), not by our 403 screen.
+- **Lesson:** check the worker's source, not gunicorn's docs, before specifying a gunicorn flag for aiohttp.
+
+## 2026-09-28 - ADR-002 re-review F1/F2 (PR #142)
+
+- **F1, rollout:** hand-deactivating revisions in Single mode isn't a safe gate (undocumented while the latest revision isn't ready, and `set-mode multiple` changes a second prod setting). The modules already had `ingressEnabled`; `main.bicep` now exposes it as `backendIngressEnabled` from `BACKEND_INGRESS_ENABLED` (default `true`). Rollout: provision dark, `Verify-ProductionAuth.ps1 -RevisionsOnly`, then provision with ingress on and Verify. With ingress off the `uri` output (so `BACKEND_URI`) is blank; Setup `-FromAzdEnv` must refuse an empty value.
+- **F2, gunicorn boot failure:** `sys.exit` in the app factory raises `SystemExit`, which skips gunicorn's boot-failure halt, so the worker respawns about 100 times in 8 s. `create_runner()` turns it into `RuntimeError` (master exits 3). The CI Docker job never ran the real CMD, so #144 adds a positive boot check (placeholder required env vars, `CANARY` log scan) and a negative one (Production without `AUTH_MODE` exits within 30 s).
+- **Also taken from the non-blocking notes:** log the matched route template, not `request.path` (percent-decoded), and send aiohttp server errors to `gunicorn.error` on purpose.
+- **Lesson:** "fails fast" has to be proven under the real process manager, not only under `python app.py`.
