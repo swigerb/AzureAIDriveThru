@@ -3,6 +3,5 @@
     { "item": "World Famous Fries®", "size": "Medium", "quantity": 2, "price": 3.79, "display": "Medium World Famous Fries®" },
     { "item": "Coca-Cola®", "size": "Large", "quantity": 2, "price": 2.19, "display": "Large Coca-Cola®" },
     { "item": "10 Piece Chicken McNuggets®", "size": "Standard", "quantity": 1, "price": 5.29, "display": "10 Piece Chicken McNuggets®" },
-    { "item": "McFlurry® with OREO® Cookies", "size": "Regular", "quantity": 1, "price": 4.69, "display": "McFlurry® with OREO® Cookies" },
     { "item": "Baked Apple Pie", "size": "Standard", "quantity": 1, "price": 1.89, "display": "Baked Apple Pie" }
 ]

@@ -269,7 +269,7 @@ All money values are quoted decimal strings, so C# reads them as `decimal` witho
       "en": { "app.title": "Sonic Voice Ordering", "status.notRecordingMessage": "Let's order from America's Drive-In!",
               "ticket.kicker": "Carhop ticket", "ticket.title": "Your Sonic Order", "menu.button": "View Sonic Menu" }
     },
-    "hero": { "headline": "Sonic ordering powered by Azure conversation intelligence", "callouts": [] },
+    "hero": { "headline": "Sonic ordering powered by Microsoft Foundry", "callouts": [] },
     "legal": "Disclaimer: This project is a non-commercial demo application ... not affiliated with, endorsed, or sponsored by Inspire Brands, Inc. or Sonic Corp. ..."
   }
 }

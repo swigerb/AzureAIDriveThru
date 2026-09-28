@@ -20,10 +20,10 @@
     },
     { "text": "Tots for sure, make it two large tots.", "isUser": true, "timestamp": "2024-07-18T12:00:35Z", "translation": "Tots for sure, make it two large tots." },
     {
-        "text": "Two large tots added! Our tots are a drive-in classic. Want to add a shake or dessert?",
+        "text": "Two Large Tots added! Our tots are a drive-in classic. Want to add a slush or dessert?",
         "isUser": false,
         "timestamp": "2024-07-18T12:00:40Z",
-        "translation": "Two large tots added! Our tots are a drive-in classic. Want to add a shake or dessert?"
+        "translation": "Two Large Tots added! Our tots are a drive-in classic. Want to add a slush or dessert?"
     },
     {
         "text": "オレオピーナッツバターシェイクのミディアムを一つお願いします。",
@@ -32,10 +32,17 @@
         "translation": "I'd like one medium Oreo Peanut Butter Shake, please."
     },
     {
-        "text": "ミディアムのオレオピーナッツバターシェイクを追加しました。他に何かご注文はありますか？",
+        "text": "申し訳ございません、現在アイスクリームマシンが使用できません。代わりにミディアムのチェリーライムエイド・スラッシュはいかがですか？",
         "isUser": false,
         "timestamp": "2024-07-18T12:01:00Z",
-        "translation": "Medium Oreo Peanut Butter Shake added. Anything else for your order?"
+        "translation": "I'm sorry, our ice cream machine is down right now. Would you like a medium Cherry Limeade Slush instead?"
+    },
+    { "text": "Sure, that works.", "isUser": true, "timestamp": "2024-07-18T12:01:06Z", "translation": "Sure, that works." },
+    {
+        "text": "One Medium Cherry Limeade Slush added! Anything else for your order?",
+        "isUser": false,
+        "timestamp": "2024-07-18T12:01:10Z",
+        "translation": "One Medium Cherry Limeade Slush added! Anything else for your order?"
     },
     {
         "text": "What's in the Chili Cheese Coney?",
@@ -49,12 +56,12 @@
         "timestamp": "2024-07-18T12:01:20Z",
         "translation": "It's a premium beef hot dog topped with warm Sonic chili and melted shredded cheddar. A true carhop favorite! Want me to add some?"
     },
-    { "text": "Yes, add two Chili Cheese Coneys and some mozzarella sticks.", "isUser": true, "timestamp": "2024-07-18T12:01:32Z", "translation": "Yes, add two Chili Cheese Coneys and some mozzarella sticks." },
+    { "text": "Yes, add two Chili Cheese Coneys and a medium order of mozzarella sticks.", "isUser": true, "timestamp": "2024-07-18T12:01:32Z", "translation": "Yes, add two Chili Cheese Coneys and a medium order of mozzarella sticks." },
     {
-        "text": "Done! Two Chili Cheese Coneys and an order of Mozzarella Sticks. Want to add any flavor to your limeades?",
+        "text": "Done! Two Chili Cheese Coneys and a Medium Mozzarella Sticks. Want to add any flavor to your limeades?",
         "isUser": false,
         "timestamp": "2024-07-18T12:01:40Z",
-        "translation": "Done! Two Chili Cheese Coneys and an order of Mozzarella Sticks. Want to add any flavor to your limeades?"
+        "translation": "Done! Two Chili Cheese Coneys and a Medium Mozzarella Sticks. Want to add any flavor to your limeades?"
     },
     {
         "text": "Ajoutez de la vanille aux deux limeades, s'il vous plaît.",
@@ -70,10 +77,10 @@
     },
     { "text": "Yes, give me the totals.", "isUser": true, "timestamp": "2024-07-18T12:02:10Z", "translation": "Yes, give me the totals." },
     {
-        "text": "You have 2 SuperSONIC Double Cheeseburgers, 2 Large Cherry Limeades with vanilla, 2 Large Tots, 1 Medium Oreo PB Shake, 2 Chili Cheese Coneys, and Mozzarella Sticks. Your total is $48.49 with tax.",
+        "text": "You have 2 SuperSONIC Double Cheeseburgers, 2 Large Cherry Limeades with vanilla Flavor Add-In, 2 Large Tots, 1 Medium Cherry Limeade Slush, 2 Chili Cheese Coneys, and a Medium Mozzarella Sticks. Your total is $45.68 with tax.",
         "isUser": false,
         "timestamp": "2024-07-18T12:02:18Z",
-        "translation": "You have 2 SuperSONIC Double Cheeseburgers, 2 Large Cherry Limeades with vanilla, 2 Large Tots, 1 Medium Oreo PB Shake, 2 Chili Cheese Coneys, and Mozzarella Sticks. Your total is $48.49 with tax."
+        "translation": "You have 2 SuperSONIC Double Cheeseburgers, 2 Large Cherry Limeades with vanilla Flavor Add-In, 2 Large Tots, 1 Medium Cherry Limeade Slush, 2 Chili Cheese Coneys, and a Medium Mozzarella Sticks. Your total is $45.68 with tax."
     },
     { "text": "Perfect, let's close it out.", "isUser": true, "timestamp": "2024-07-18T12:02:26Z", "translation": "Perfect, let's close it out." },
     {

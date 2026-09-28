@@ -112,7 +112,7 @@
         "menu.button": "View McDonald's Menu"
       }
     },
-    "hero": { "headline": "McDonald's ordering powered by Azure conversation intelligence", "callouts": [] },
+    "hero": { "headline": "McDonald's ordering powered by Microsoft Foundry", "callouts": [] },
     "legal": "Disclaimer: This project is a non-commercial demo application created for educational and illustrative purposes only. It is not affiliated with, endorsed, or sponsored by McDonald's Corporation. Any references to McDonald's or use of McDonald's-inspired colors or themes are solely for demonstration and do not represent an official product."
   }
 }
