@@ -112,6 +112,10 @@ reachable by a session that requests it explicitly.
 
 ## Enable Entra ID Authentication (EasyAuth)
 
+> **Superseded by [ADR-002](docs/adr/ADR-002-entra-authentication.md).** Do not enable EasyAuth. The app moves
+> to in-app Entra ID validation following Retail Pulse (design doc section 18), and this section is replaced
+> by the new Setup and Verify scripts when that work lands.
+
 Authentication is **opt-in** — a plain `azd up` deploys without auth. To protect
 the app with Entra ID (single-tenant), follow these one-time steps.
 
