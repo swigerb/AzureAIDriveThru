@@ -2,7 +2,7 @@ import { EventType, PublicClientApplication, type AuthenticationResult } from '@
 import { authConfig } from './authConfig';
 
 /**
- * Lazily-created MSAL PublicClientApplication singleton (ADR-002, design §18.6, issue #145).
+ * Lazily-created MSAL PublicClientApplication singleton (ADR-002, design §18.6, issue GH-145).
  *
  * Construction is deferred so importing this module never throws when auth is unconfigured
  * (Development) -- MSAL requires a non-empty clientId. Only a configured Entra build calls

@@ -1,7 +1,7 @@
 /**
  * Safe, dependency-light configuration-error screen rendered by `src/index.tsx` when the auth
  * bootstrap fails closed (e.g. an explicit Entra build with missing/placeholder tenant/client
- * configuration) -- ADR-002, design §18.6, issue #145.
+ * configuration) -- ADR-002, design §18.6, issue GH-145.
  *
  * Intentionally has NO Tailwind/App/MSAL imports and makes NO API or WebSocket calls: it must
  * render safely even if something else in the bootstrap sequence is badly broken. The error text

@@ -1,6 +1,6 @@
 // @ts-check
 /**
- * Build-time fail-closed guard for the Entra SPA config (ADR-002 / design 18.6, issue #145).
+ * Build-time fail-closed guard for the Entra SPA config (ADR-002 / design 18.6, issue GH-145).
  * Ported from Retail Pulse's `scripts/validate-auth-config.mjs`, trimmed to our two-mode
  * contract (`Entra` / `Development` -- no GitHub/Anonymous). Runs as the npm `prebuild` step so
  * `npm run build` FAILS FAST when an explicit Entra build is missing/placeholder tenant/client ids.

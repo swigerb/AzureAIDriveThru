@@ -3,11 +3,11 @@ import { authConfig } from './authConfig';
 import { getMsalInstance } from './msalInstance';
 
 /**
- * Single-provider (Entra) token acquisition for the SPA (ADR-002, design §18.6, issue #145).
+ * Single-provider (Entra) token acquisition for the SPA (ADR-002, design §18.6, issue GH-145).
  *
  * Every protected REST call (`authorizedFetch`) and the `/realtime` WebSocket connect obtain their
  * bearer token here, so there is exactly one place that talks to MSAL. Unlike Retail Pulse (which
- * dispatches across Entra/GitHub/Anonymous providers), issue #145 is Entra-only, so this module
+ * dispatches across Entra/GitHub/Anonymous providers), issue GH-145 is Entra-only, so this module
  * calls MSAL directly with no provider indirection.
  */
 export interface AcquireTokenOptions {

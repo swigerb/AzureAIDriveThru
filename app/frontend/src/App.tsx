@@ -25,7 +25,9 @@ import { ExtensionMiddleTierToolResponse, ExtensionRateLimited, ExtensionRoundTr
 import { ThemeProvider, useTheme } from "./context/theme-context";
 import { DummyDataProvider, useDummyDataContext } from "@/context/dummy-data-context";
 import { AzureSpeechProvider, useAzureSpeechOnContext } from "@/context/azure-speech-context";
-import { AuthProvider, useAuth } from "@/context/auth-context";
+import { AuthGate } from "@/auth/AuthGate";
+import { authConfig } from "@/auth/authConfig";
+import { signOutInteractive } from "@/auth/signOut";
 import { PersonaProvider, usePersonaContext } from "@/context/persona-context";
 import { resolveVoice } from "@/lib/voices";
 import { resolveModelId, modelStorageKey } from "@/lib/models";
@@ -101,7 +103,6 @@ function SonicApp() {
     const { useAzureSpeechOn } = useAzureSpeechOnContext();
     const { useDummyData } = useDummyDataContext();
     const { theme } = useTheme();
-    const { logout, authEnabled } = useAuth();
     const { personas, backends, current, logoUrl, selectPersona } = usePersonaContext();
 
     const [transcripts, setTranscripts] = useState<Array<{ text: string; isUser: boolean; timestamp: Date }>>([]);
@@ -697,8 +698,8 @@ function SonicApp() {
                                 modelDisabled={isRecording || order.items.length > 0}
                             />
                         </Suspense>
-                        {authEnabled && (
-                            <Button variant="ghost" size="icon" className="rounded-full" onClick={logout} title="Logout">
+                        {authConfig.isConfigured && (
+                            <Button variant="ghost" size="icon" className="rounded-full" onClick={signOutInteractive} title="Logout">
                                 <LogOut className="h-4 w-4" />
                             </Button>
                         )}
@@ -996,9 +997,8 @@ function VoiceArt() {
     );
 }
 
-// Main app component with authentication wrapper
+// Main app component
 function App() {
-    const { isAuthenticated, isLoading, authEnabled } = useAuth();
     // Issue #80 F6, Rick's PR-110 review item 6: no persona's content -- logo, hero
     // copy, ticket strings -- ever paints before the requested persona (`?persona=` / localStorage
     // / the catalog's default) has actually been resolved and applied. Reusing the same neutral
@@ -1021,7 +1021,7 @@ function App() {
         };
     }, [personaReady]);
 
-    if (isLoading || !personaReady) {
+    if (!personaReady) {
         return (
             <div className="flex min-h-screen items-center justify-center">
                 <div className="text-center">
@@ -1032,17 +1032,13 @@ function App() {
         );
     }
 
-    if (!isAuthenticated && authEnabled) {
-        return null; // Auth provider will handle redirect
-    }
-
     return <SonicApp />;
 }
 
 export default function RootApp() {
     return (
-        <PersonaProvider>
-            <AuthProvider>
+        <AuthGate>
+            <PersonaProvider>
                 <ThemeProvider>
                     <DummyDataProvider>
                         <AzureSpeechProvider>
@@ -1050,7 +1046,7 @@ export default function RootApp() {
                         </AzureSpeechProvider>
                     </DummyDataProvider>
                 </ThemeProvider>
-            </AuthProvider>
-        </PersonaProvider>
+            </PersonaProvider>
+        </AuthGate>
     );
 }

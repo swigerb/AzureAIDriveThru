@@ -5,9 +5,10 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { loginRequest } from '../authConfig';
 import { AUTH_FORBIDDEN_EVENT } from '../authorizedFetch';
+import { markExplicitSignOut, consumeExplicitSignOut, clearExplicitSignOut } from '../signOut';
 
 /**
- * The live Entra sign-in gate (ADR-002, design §18.6, issue #145). Rendered only when
+ * The live Entra sign-in gate (ADR-002, design §18.6, issue GH-145). Rendered only when
  * `authConfig.isConfigured` -- see `AuthGate.tsx` for the pass-through dispatch.
  *
  * Behavior (design §18.6, verbatim): "Wraps `PersonaProvider` and `App`, so nothing
@@ -16,37 +17,11 @@ import { AUTH_FORBIDDEN_EVENT } from '../authorizedFetch';
  * silent on the second hostname. After an explicit sign-out or a 403 it shows a button instead, so
  * it can never loop. A 403 shows 'not authorized: ask Brian to assign you DriveThru.User'."
  *
- * The auto-redirect must never loop, so an EXPLICIT sign-out sets a sessionStorage flag that
- * survives the full-page redirect round trip (in-memory React state does not) and suppresses the
- * next auto-redirect until the visitor clicks "Sign in with Microsoft" again.
+ * The auto-redirect must never loop, so an EXPLICIT sign-out (here or from the in-app logout
+ * control, see `../signOut.ts`) sets a sessionStorage flag that survives the full-page redirect
+ * round trip (in-memory React state does not) and suppresses the next auto-redirect until the
+ * visitor clicks "Sign in with Microsoft" again.
  */
-const EXPLICIT_SIGN_OUT_KEY = 'drivethru.auth.explicitSignOut';
-
-function markExplicitSignOut(): void {
-  try {
-    window.sessionStorage.setItem(EXPLICIT_SIGN_OUT_KEY, '1');
-  } catch {
-    // sessionStorage may be unavailable (private mode); the worst case is one extra auto-redirect.
-  }
-}
-
-function consumeExplicitSignOut(): boolean {
-  try {
-    const flagged = window.sessionStorage.getItem(EXPLICIT_SIGN_OUT_KEY) === '1';
-    return flagged;
-  } catch {
-    return false;
-  }
-}
-
-function clearExplicitSignOut(): void {
-  try {
-    window.sessionStorage.removeItem(EXPLICIT_SIGN_OUT_KEY);
-  } catch {
-    // no-op
-  }
-}
-
 export function EntraAuthGate({ children }: { children: ReactNode }) {
   const { instance, inProgress } = useMsal();
   const isAuthenticated = useIsAuthenticated();

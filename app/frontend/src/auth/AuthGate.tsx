@@ -3,7 +3,7 @@ import { authConfig } from './authConfig';
 import { EntraAuthGate } from './gates/EntraAuthGate';
 
 /**
- * Sign-in gate for the SPA (ADR-002, design §18.6, issue #145). Single-provider (Entra) --
+ * Sign-in gate for the SPA (ADR-002, design §18.6, issue GH-145). Single-provider (Entra) --
  * unlike Retail Pulse's provider-neutral dispatcher, there is no mode switch here.
  *
  * `AuthGate` wraps `PersonaProvider` and `App` (see `src/App.tsx`'s `RootApp`), so nothing

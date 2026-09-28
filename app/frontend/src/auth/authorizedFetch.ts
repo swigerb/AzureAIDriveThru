@@ -3,7 +3,7 @@ import { authConfig } from './authConfig';
 
 /**
  * Global fetch interceptor that attaches the Entra bearer token to our protected same-origin
- * routes only (ADR-002, design §18.2/§18.6, issue #145).
+ * routes only (ADR-002, design §18.2/§18.6, issue GH-145).
  *
  * Rather than editing every call site (and risking a future call that forgets the header), token
  * attachment is centralized here: {@link installAuthorizedFetch} wraps `window.fetch` once at

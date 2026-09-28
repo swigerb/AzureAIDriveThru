@@ -2,13 +2,13 @@ import type { Configuration, RedirectRequest } from '@azure/msal-browser';
 import { LogLevel } from '@azure/msal-browser';
 
 /**
- * Single-tenant Microsoft Entra SPA configuration (ADR-002, design doc §18.6, issue #145).
+ * Single-tenant Microsoft Entra SPA configuration (ADR-002, design doc §18.6, issue GH-145).
  *
  * The SPA uses the OAuth authorization-code + PKCE flow with NO client secret. Tenant id, client
  * id, and the delegated API scope are build-time CONFIGURATION (not secrets) injected as
  * `VITE_ENTRA_*` values at build time. Left blank in Development so the app runs as an
  * unauthenticated pass-through shell without contacting Entra -- the backend enforces Production
- * separately (see `Verify-ProductionAuth.ps1`, issue #146); this frontend gate only covers
+ * separately (see `Verify-ProductionAuth.ps1`, issue GH-146); this frontend gate only covers
  * Development pass-through vs. an explicit Entra build.
  *
  * Trimmed from Retail Pulse's `src/auth/authConfig.ts`: single provider only (Entra), so there is
@@ -93,7 +93,7 @@ export const authConfig: ResolvedAuthConfig = buildAuthConfig(import.meta.env as
 const GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const EMPTY_GUID = '00000000-0000-0000-0000-000000000000';
 
-/** A single-tenant directory: a real GUID, or a verified domain (e.g. contoso.onmicrosoft.com). */
+/** A single-tenant directory: a real GUID, or a verified domain (e.g. fabrikam.onmicrosoft.com). */
 const TENANT_DOMAIN_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i;
 
 /**

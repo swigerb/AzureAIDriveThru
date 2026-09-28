@@ -1,10 +1,10 @@
 // @ts-check
 /**
- * Shared, deterministic auth-mode build-metadata helper for the SPA (design 18.6, issue #145).
+ * Shared, deterministic auth-mode build-metadata helper for the SPA (design 18.6, issue GH-145).
  *
  * The deployed SPA carries an IMMUTABLE, build-time record of the authentication mode it was
  * compiled for, as `<meta name="drivethru-auth-mode" content="Entra|Development">` baked into
- * `index.html` by the Vite build (see `vite.config.ts`). `scripts/Verify-ProductionAuth.ps1` (#146)
+ * `index.html` by the Vite build (see `vite.config.ts`). `scripts/Verify-ProductionAuth.ps1` (GH-146)
  * reads this tag to prove the deployed bundle is the enforcing build, not just its env pins.
  *
  * The value is NORMALIZED to a fixed enum at build time (never the raw VITE_AUTH_MODE), so an

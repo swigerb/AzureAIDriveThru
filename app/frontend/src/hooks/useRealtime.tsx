@@ -1,6 +1,7 @@
 import useWebSocket, { ReadyState } from "react-use-websocket";
 import { useRef, useCallback, useEffect, useState } from "react";
 
+import { acquireApiToken } from "@/auth/tokenService";
 import {
     InputAudioBufferAppendCommand,
     InputAudioBufferClearCommand,
@@ -144,6 +145,31 @@ async function fetchSessionToken(): Promise<string | null> {
     }
 }
 
+/**
+ * Issue GH-145 (ADR-002, design §18.7): the `/realtime` WebSocket carries a fresh Entra bearer
+ * token as `?access_token=`, acquired right before every connect/reconnect -- initial mount, the
+ * `session_ended` reconnect, the 401/expired-token reconnect, and a manual `reconnect()` -- so a
+ * long-idle browser tab never presents a stale token to the middle tier. Returns `null` when
+ * unconfigured (Development pass-through, see `authConfig.ts`) or when the visitor is signed out,
+ * in which case `access_token` is simply omitted from the URL (see `buildWsEndpoint` below);
+ * `AuthGate` (not this hook) owns interactive sign-in.
+ */
+async function fetchAccessToken(): Promise<string | null> {
+    try {
+        return await acquireApiToken();
+    } catch {
+        return null;
+    }
+}
+
+/** Refreshes both the HMAC session token (`/api/auth/session`) and the Entra access token in
+ * parallel -- used at every connect/reconnect site so neither one is ever stale relative to the
+ * other. */
+async function fetchConnectTokens(): Promise<{ sessionToken: string | null; accessToken: string | null }> {
+    const [sessionToken, accessToken] = await Promise.all([fetchSessionToken(), fetchAccessToken()]);
+    return { sessionToken, accessToken };
+}
+
 export default function useRealTime({
     useDirectAoaiApi,
     aoaiEndpointOverride,
@@ -173,6 +199,7 @@ export default function useRealTime({
     onReceivedError
 }: Parameters) {
     const [sessionToken, setSessionToken] = useState<string | null>(null);
+    const [accessToken, setAccessToken] = useState<string | null>(null);
     // Don't open the socket until the token fetch settles, otherwise the first
     // socket is torn down and replaced as soon as the token arrives.
     const [tokenReady, setTokenReady] = useState(!!useDirectAoaiApi);
@@ -182,11 +209,13 @@ export default function useRealTime({
     // every closure below on its very next render, without needing its own memoization seam.
     const resumeStore = createResumeStore(personaId);
 
-    // Fetch a session token on mount (graceful — null means no token required)
+    // Fetch a session token and a fresh Entra access token on mount (graceful — either being null
+    // means no token required/available for that piece).
     useEffect(() => {
         if (useDirectAoaiApi) return;
-        fetchSessionToken().then(token => {
-            setSessionToken(token);
+        fetchConnectTokens().then(({ sessionToken, accessToken }) => {
+            setSessionToken(sessionToken);
+            setAccessToken(accessToken);
             setTokenReady(true);
         });
     }, [useDirectAoaiApi]);
@@ -200,6 +229,7 @@ export default function useRealTime({
         const base = `/realtime`;
         const params = new URLSearchParams();
         if (sessionToken) params.set("token", sessionToken);
+        if (accessToken) params.set("access_token", accessToken);
         if (personaId) params.set("persona", personaId);
         if (modelId) params.set("model", modelId);
         const query = params.toString();
@@ -336,8 +366,9 @@ export default function useRealTime({
                 if (useDirectAoaiApi) {
                     setShouldConnect(true);
                 } else {
-                    fetchSessionToken().then(token => {
-                        setSessionToken(token);
+                    fetchConnectTokens().then(({ sessionToken, accessToken }) => {
+                        setSessionToken(sessionToken);
+                        setAccessToken(accessToken);
                         setShouldConnect(true);
                     });
                 }
@@ -349,8 +380,11 @@ export default function useRealTime({
                 // 4002 keeps the id: another socket owns the session now.
                 if (kind !== "superseded") resumeStore.clear();
             } else if (event.code === 4001 || event.reason?.includes("expired")) {
-                // 401 close → refresh token and retry
-                fetchSessionToken().then(setSessionToken);
+                // 401 close → refresh both tokens and retry
+                fetchConnectTokens().then(({ sessionToken, accessToken }) => {
+                    setSessionToken(sessionToken);
+                    setAccessToken(accessToken);
+                });
             }
             const resuming = kind === "transport" && !useDirectAoaiApi && !!resumeStore.get();
             onConnectionLost?.({ code: event.code, reason: event.reason ?? "", idle: kind === "idle", kind, resuming });
@@ -377,7 +411,11 @@ export default function useRealTime({
     // (the old one may have expired while the page sat idle).
     const reconnect = useCallback(async () => {
         if (shouldConnect) return;
-        if (!useDirectAoaiApi) setSessionToken(await fetchSessionToken());
+        if (!useDirectAoaiApi) {
+            const { sessionToken, accessToken } = await fetchConnectTokens();
+            setSessionToken(sessionToken);
+            setAccessToken(accessToken);
+        }
         setShouldConnect(true);
     }, [shouldConnect, useDirectAoaiApi]);
 
