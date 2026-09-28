@@ -62,9 +62,10 @@ In-app validation is code that both backends share through one contract, and the
 
    Python uses PyJWT with `cryptography` and `PyJWKClient`. C# uses `Microsoft.AspNetCore.Authentication.JwtBearer`
    with explicit parameters, not Microsoft.Identity.Web. Tokens never reach a log: access logs record the
-   path without the query string. In Python that takes a path-only access logger class wired into both the
-   gunicorn factory and `python app.py`, because the aiohttp gunicorn worker rejects gunicorn format
-   directives and aiohttp's `%r` includes the query string (design 18.4).
+   path without the query string. In Python that takes an access logger class that records the matched route
+   template, wired into both the gunicorn factory and `python app.py`, because the aiohttp gunicorn worker
+   rejects gunicorn format directives and aiohttp's `%r` includes the query string. The same gunicorn factory
+   turns a startup `sys.exit` into an exception, so a fail-fast stops gunicorn instead of looping (design 18.4).
 6. **Two modes: `Entra` and `Development`.**
    - With a tenant and client id configured, the backend runs Entra in any environment.
    - Pass-through, with a synthetic local identity, happens only when nothing is configured and the process is
@@ -94,10 +95,12 @@ In-app validation is code that both backends share through one contract, and the
     - The default fixture runs in Entra mode.
 11. **Unlock gate.** Staging ingress is re-enabled only when Python, frontend and infra have shipped, and it
     stays on only if `Verify-ProductionAuth.ps1` passes against the live app. Because the apps run in
-    single-revision mode, a failed new revision leaves the old one active; so every pre-auth revision is
-    deactivated before `azd provision`, the active revisions are checked right after it, and Verify fails if
-    any active revision isn't the new image with `AUTH_MODE=Entra` (design 18.10). The C# app never goes
-    public without its parity work.
+    single-revision mode, a failed new revision leaves the old one active, so enabling ingress is the last,
+    separate step: `main.bicep` exposes the modules' `ingressEnabled` as `backendIngressEnabled` (azd env
+    `BACKEND_INGRESS_ENABLED`, default `true`). The rollout provisions with ingress off, checks while dark that
+    exactly one active revision runs the new image with `AUTH_MODE=Entra`, then provisions with ingress on and
+    runs Verify (design 18.10). The revision mode never changes. The C# app never goes public without its
+    parity work.
 12. **Sign-in never loops.** The gate starts `loginRedirect` automatically only on a clean load. After a
     sign-out, a 403, or a failed redirect (cancelled, admin approval needed, `AADSTS50105` not assigned) it
     shows the error and a manual **Sign in** button. An unassigned user is stopped by Entra at sign-in, not by
@@ -114,12 +117,17 @@ In-app validation is code that both backends share through one contract, and the
 **Costs and risks**
 - Every demo viewer needs an account in the tenant (a member or a B2B guest) and the `DriveThru.User` role.
   That is the point, but it adds a step before a customer demo.
-- `azd provision` re-enables external ingress, and in single-revision mode a failed new revision leaves the
-  old unauthenticated one active. The rollout in design 18.10 deactivates every pre-auth revision before
-  provisioning and checks the active revisions after it, so an unauthenticated revision is never public.
+- `azd provision` re-enables external ingress by default, and in single-revision mode a failed new revision
+  leaves the old unauthenticated one active. The rollout in design 18.10 provisions dark first, checks the
+  active revisions while nothing is public, and turns ingress on only in a second provision, so an
+  unauthenticated revision is never public. During the dark window the azd env's `BACKEND_URI` is blank.
+- Startup failures must stop gunicorn. `sys.exit` inside the app factory makes gunicorn respawn the worker in
+  a hot loop, so the gunicorn factory turns it into an exception, which halts the master (design 18.4). A CI
+  check boots the real image both ways.
 - The Entra access token is in the `/realtime` URL, as it is in Retail Pulse. The mitigations: the
-  query-string token is read only on that path, and access logs record only the path on both backends
-  (pinned by conformance on `python app.py`, and by unit and Dockerfile tests on the gunicorn path).
+  query-string token is read only on that path, and access logs never carry the query string (Python logs
+  the matched route template; C# raises the hosting log level). This is pinned by conformance on
+  `python app.py`, and by unit, Dockerfile and image-boot tests on the gunicorn path.
 - The default conformance fixture moves to Entra mode. That touches the harness clients once.
 - The Playwright UX runs use Development pass-through, because MSAL can't sign in against a fake issuer.
   Sign-in UX is covered by vitest with a mocked MSAL, plus the manual checklist.

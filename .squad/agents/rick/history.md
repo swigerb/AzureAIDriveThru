@@ -92,3 +92,10 @@
 - **R3/R4:** explicit `Development` never overrides configured ids (backend and frontend). A built pass-through bundle needs `VITE_AUTH_MODE=Development`; the Dockerfile defaults to `Entra`; the guard reads `loadEnv`.
 - **R5:** no automatic retry after a failed redirect. An unassigned user is stopped by Entra (`AADSTS50105`), not by our 403 screen.
 - **Lesson:** check the worker's source, not gunicorn's docs, before specifying a gunicorn flag for aiohttp.
+
+## 2026-09-28 - ADR-002 re-review F1/F2 (PR #142)
+
+- **F1, rollout:** hand-deactivating revisions in Single mode isn't a safe gate (undocumented while the latest revision isn't ready, and `set-mode multiple` changes a second prod setting). The modules already had `ingressEnabled`; `main.bicep` now exposes it as `backendIngressEnabled` from `BACKEND_INGRESS_ENABLED` (default `true`). Rollout: provision dark, `Verify-ProductionAuth.ps1 -RevisionsOnly`, then provision with ingress on and Verify. With ingress off the `uri` output (so `BACKEND_URI`) is blank; Setup `-FromAzdEnv` must refuse an empty value.
+- **F2, gunicorn boot failure:** `sys.exit` in the app factory raises `SystemExit`, which skips gunicorn's boot-failure halt, so the worker respawns about 100 times in 8 s. `create_runner()` turns it into `RuntimeError` (master exits 3). The CI Docker job never ran the real CMD, so #144 adds a positive boot check (placeholder required env vars, `CANARY` log scan) and a negative one (Production without `AUTH_MODE` exits within 30 s).
+- **Also taken from the non-blocking notes:** log the matched route template, not `request.path` (percent-decoded), and send aiohttp server errors to `gunicorn.error` on purpose.
+- **Lesson:** "fails fast" has to be proven under the real process manager, not only under `python app.py`.
