@@ -31,13 +31,22 @@ namespace Backend.Sessions;
 /// Deliberate scope cuts from rtmt.py, documented in docs/dotnet_mapping.md: the tool
 /// failure-cap ladder (`_ToolFailureTracker`), the full rate-limit retry ladder
 /// (`rate_limit.py`'s `RateLimitRecovery` -- this sends one, final `extension.rate_limited`
-/// notice instead of retrying), session resume/rehydration (#15), context-window
-/// monitoring/turn recording, and the fast-path regex/marker-substring optimisations (every frame
-/// is fully JSON-parsed instead). ADR-002's Entra auth to `/realtime` (#147) is NOT implemented
-/// here, but the single `upstream.Options.SetRequestHeader` call below is where it plugs in.
+/// notice instead of retrying), session resume/rehydration itself -- `extension.resume`, the 4002
+/// supersede-close, and the 4000 idle-timeout close all need a real session registry and land with
+/// #15 -- context-window monitoring/turn recording, and the fast-path regex/marker-substring
+/// optimisations (every frame is fully JSON-parsed instead). A guest-initiated
+/// `extension.end_session` (1000/"session_ended") needs none of that registry state, so it *is*
+/// implemented here (issue #13's carried-over S1.2 transport acceptance). ADR-002's Entra auth to
+/// `/realtime` (#147) is NOT implemented here, but the single `upstream.Options.SetRequestHeader`
+/// call below is where it plugs in.
 /// </summary>
 public sealed class RealtimeProcessor : IPipelineProcessor
 {
+    /// <summary>Port of app/backend/session_manager.py's <c>SESSION_ENDED_CLOSE_REASON</c> --
+    /// paired with the standard <see cref="WebSocketCloseStatus.NormalClosure"/> (1000) code for a
+    /// guest-initiated <c>extension.end_session</c>.</summary>
+    private const string SessionEndedCloseReason = "session_ended";
+
     private readonly ModelCatalog _catalog;
     private readonly string _defaultDeployment;
     private readonly string _upstreamEndpoint;
@@ -233,8 +242,10 @@ public sealed class RealtimeProcessor : IPipelineProcessor
         {
             if (msgType != "extension.set_voice")
             {
-                // extension.resume/end_session/set_verbose_logging/set_log_to_file (#13 scope
-                // cuts, see class doc) -- consumed silently, never forwarded upstream.
+                // extension.resume/set_verbose_logging/set_log_to_file (#13 scope cuts, see class
+                // doc) -- consumed silently, never forwarded upstream. extension.end_session is
+                // handled by the caller (RelayBrowserToUpstreamAsync), not here, since it needs to
+                // break the relay loop rather than just fall through to the next frame.
                 return;
             }
             var candidate = GetString(message, "voice");
@@ -353,6 +364,19 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                 {
                     _logger?.LogWarning("Dropped client→server frame with a missing/non-string type (session={SessionId})", sessionId);
                     continue;
+                }
+
+                if (msgType == "extension.end_session")
+                {
+                    // Port of rtmt.py's _forward_messages: a guest-initiated end_session closes
+                    // the browser socket with the fixed 1000/"session_ended" shape immediately --
+                    // this needs no session registry/resume state (unlike the resume-triggered
+                    // 4002 supersede or the idle-timeout 4000, both #15) since it is purely "the
+                    // guest asked to leave right now".
+                    _logger?.LogInformation("Guest ended session (session={SessionId})", sessionId);
+                    await CloseIfOpenAsync(browserSocket, WebSocketCloseStatus.NormalClosure, SessionEndedCloseReason)
+                        .ConfigureAwait(false);
+                    break;
                 }
 
                 if (msgType.StartsWith("extension.", StringComparison.Ordinal))

@@ -19,6 +19,7 @@ public sealed class CloseCodeTests(ConformanceFixture fixture)
     private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Guest_initiated_end_session_closes_with_1000_session_ended() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
