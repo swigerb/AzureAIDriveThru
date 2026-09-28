@@ -23,15 +23,21 @@ services:
   # and gives it the 'backend-dotnet' azd-service-name tag main.bicep's acaBackendDotnet module
   # already sets (Rick's #17 review comment).
   backend-dotnet:
-    project: ./app/backend-dotnet
+    # azd's csharp language handler requires `project` to resolve to the folder containing the
+    # single .csproj (it locates the project file during service init even with
+    # docker.remoteBuild: true) -- pointing at app/backend-dotnet itself ("could not locate a
+    # dotnet project file") fails, so this points at src/Backend where Backend.csproj lives.
+    project: ./app/backend-dotnet/src/Backend
     language: csharp
     host: containerapp
     docker:
       remoteBuild: true
-      # Same repo-root-context convention as the Python service above (#129, #131): two levels
-      # up from ./app/backend-dotnet reaches the repo root, matching
-      # app/backend-dotnet/Dockerfile's COPY paths and .dockerignore's allowlist.
-      context: ../..
+      # docker.path/context are resolved relative to the service dir above (src/Backend), not
+      # app/backend-dotnet -- path walks back up two levels to the real Dockerfile, and context
+      # walks back up four levels total to reach the repo root (#129, #131's convention),
+      # matching app/backend-dotnet/Dockerfile's COPY paths and .dockerignore's allowlist.
+      path: ../../Dockerfile
+      context: ../../../..
 hooks:
     postprovision:
       windows:
