@@ -1,10 +1,26 @@
 import path from "path";
 import react from "@vitejs/plugin-react";
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
+import { renderAuthModeMetaTag } from "./scripts/auth-mode-meta.mjs";
+
+/**
+ * Injects the immutable `drivethru-auth-mode` marker into `index.html` (design §18.6/§18.9,
+ * issue #145). `scripts/Verify-ProductionAuth.ps1` (#146) reads this static, build-baked tag to
+ * confirm the deployed bundle is the enforcing Entra build, independent of runtime env pins.
+ */
+function authModeMetaPlugin(): Plugin {
+    return {
+        name: "drivethru-auth-mode-meta",
+        transformIndexHtml(html) {
+            const tag = renderAuthModeMetaTag(process.env.VITE_AUTH_MODE);
+            return html.replace("</head>", `    ${tag}\n  </head>`);
+        }
+    };
+}
 
 // https://vitejs.dev/config/
 export default defineConfig({
-    plugins: [react()],
+    plugins: [react(), authModeMetaPlugin()],
     build: {
         outDir: "../backend/static",
         emptyOutDir: true,
