@@ -4,9 +4,12 @@ namespace Backend.Realtime;
 /// Port of app/backend/audio_pipeline.py's <c>EchoSuppressor</c> (issue #13's echo-suppression /
 /// barge-in acceptance target). Per-connection echo suppression state machine: tracks whether the
 /// assistant is currently speaking, manages the post-speech cooldown, and handles greeting-specific
-/// echo blocking. Not thread-safe by design -- callers must serialize access, exactly like Python's
-/// single-threaded-asyncio assumption (rtmt.py's <c>_forward_messages</c> owns one instance per
-/// connection and calls into it from its own sequential loops only).
+/// echo blocking. Internally synchronized: unlike Python's single-threaded-asyncio assumption
+/// (rtmt.py's <c>_forward_messages</c> owns one instance per connection and calls into it from its
+/// own sequential loop only), the C# browser and upstream relay loops run truly in parallel on the
+/// thread pool, and the flush timer's continuation fires on its own thread as well. Every public
+/// member takes an internal lock around its state mutation/read, so callers do not need to
+/// serialize access themselves.
 ///
 /// Uses a monotonic "loop time" in seconds (caller-supplied, e.g. <c>Environment.TickCount64 /
 /// 1000.0</c> or a test-controlled clock) instead of wall-clock time, mirroring Python's
@@ -14,10 +17,14 @@ namespace Backend.Realtime;
 /// </summary>
 public sealed class EchoSuppressor : IDisposable
 {
+    private readonly object _sync = new();
     private readonly double _cooldownSeconds;
     private readonly Func<CancellationToken, Task> _flushSendAsync;
     private CancellationTokenSource? _flushCts;
     private bool _closed;
+    private bool _aiSpeaking;
+    private double _cooldownEnd;
+    private bool _greetingInProgress;
 
     public EchoSuppressor(double cooldownSeconds, Func<CancellationToken, Task> flushSendAsync)
     {
@@ -25,9 +32,9 @@ public sealed class EchoSuppressor : IDisposable
         _flushSendAsync = flushSendAsync;
     }
 
-    public bool AiSpeaking { get; private set; }
-    public double CooldownEnd { get; private set; }
-    public bool GreetingInProgress { get; private set; }
+    public bool AiSpeaking { get { lock (_sync) { return _aiSpeaking; } } }
+    public double CooldownEnd { get { lock (_sync) { return _cooldownEnd; } } }
+    public bool GreetingInProgress { get { lock (_sync) { return _greetingInProgress; } } }
 
     /// <summary>PR #58 re-review "M1": set when a greeting's response.done arrives with no audio
     /// ever rendered -- the rate-limit recovery ladder may retry that same greeting with a bare
@@ -43,69 +50,87 @@ public sealed class EchoSuppressor : IDisposable
 
     /// <summary>Returns true if user audio should be dropped (AI speaking or cooldown still active
     /// at <paramref name="loopTimeSeconds"/>).</summary>
-    public bool ShouldSuppressAudio(double loopTimeSeconds) => AiSpeaking || loopTimeSeconds < CooldownEnd;
+    public bool ShouldSuppressAudio(double loopTimeSeconds)
+    {
+        lock (_sync)
+        {
+            return _aiSpeaking || loopTimeSeconds < _cooldownEnd;
+        }
+    }
 
     /// <summary>AI started sending audio -- begin suppression.</summary>
     public void OnAudioDelta()
     {
-        if (_greetingAwaitingRetry)
+        lock (_sync)
         {
-            _greetingAwaitingRetry = false;
-            GreetingInProgress = true;
+            if (_greetingAwaitingRetry)
+            {
+                _greetingAwaitingRetry = false;
+                _greetingInProgress = true;
+            }
+            if (_greetingInProgress)
+            {
+                _greetingAudioSeen = true;
+            }
+            _aiSpeaking = true;
         }
-        if (GreetingInProgress)
-        {
-            _greetingAudioSeen = true;
-        }
-        AiSpeaking = true;
     }
 
     /// <summary>AI finished sending audio -- start cooldown and flush any echoed audio that leaked
     /// into the upstream buffer, both immediately and again once the cooldown expires.</summary>
     public void OnAudioDone(double loopTimeSeconds)
     {
-        if (_closed)
+        CancellationTokenSource? previousCts;
+        lock (_sync)
         {
-            // PR #58 re-review "F1": close() is terminal -- a later on_audio_done() call (e.g. a
-            // leftover response.done racing the connection's own teardown) must not re-arm the
-            // flush.
-            return;
+            if (_closed)
+            {
+                // PR #58 re-review "F1": close() is terminal -- a later on_audio_done() call (e.g. a
+                // leftover response.done racing the connection's own teardown) must not re-arm the
+                // flush.
+                return;
+            }
+            _aiSpeaking = false;
+            double cooldown;
+            if (_greetingInProgress)
+            {
+                cooldown = _cooldownSeconds * 2;
+                _greetingInProgress = false;
+                _greetingAwaitingRetry = false;
+                _greetingAudioSeen = false;
+            }
+            else
+            {
+                cooldown = _cooldownSeconds;
+            }
+            _cooldownEnd = loopTimeSeconds + cooldown;
+
+            // Cancel/dispose any flush still pending from an earlier OnAudioDone() call, then arm a
+            // fresh one -- both the cancellation and the replacement happen under the lock so a
+            // concurrent Close() cannot observe (or race to dispose) a half-replaced _flushCts.
+            previousCts = _flushCts;
+            var cts = new CancellationTokenSource();
+            _flushCts = cts;
+            _ = Task.Delay(TimeSpan.FromSeconds(cooldown), cts.Token).ContinueWith(
+                t =>
+                {
+                    if (!t.IsCanceled)
+                    {
+                        _ = BestEffortSend();
+                    }
+                },
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
         }
-        AiSpeaking = false;
-        double cooldown;
-        if (GreetingInProgress)
-        {
-            cooldown = _cooldownSeconds * 2;
-            GreetingInProgress = false;
-            _greetingAwaitingRetry = false;
-            _greetingAudioSeen = false;
-        }
-        else
-        {
-            cooldown = _cooldownSeconds;
-        }
-        CooldownEnd = loopTimeSeconds + cooldown;
+
+        previousCts?.Cancel();
+        previousCts?.Dispose();
 
         // Flush any echoed audio that leaked into OpenAI's buffer, best-effort (fire-and-forget).
+        // Invoked outside the lock: the send may await, and nothing here needs to hold _sync while
+        // that happens.
         _ = BestEffortSend();
-
-        // Schedule a second flush after cooldown expires, cancelling any flush still pending from
-        // an earlier OnAudioDone() call first.
-        _flushCts?.Cancel();
-        _flushCts?.Dispose();
-        var cts = new CancellationTokenSource();
-        _flushCts = cts;
-        _ = Task.Delay(TimeSpan.FromSeconds(cooldown), cts.Token).ContinueWith(
-            t =>
-            {
-                if (!t.IsCanceled)
-                {
-                    _ = BestEffortSend();
-                }
-            },
-            CancellationToken.None,
-            TaskContinuationOptions.ExecuteSynchronously,
-            TaskScheduler.Default);
     }
 
     /// <summary>Cancels any delayed echo flush still pending, and becomes terminal -- called from
@@ -113,10 +138,16 @@ public sealed class EchoSuppressor : IDisposable
     /// connection has already gone away. Idempotent.</summary>
     public void Close()
     {
-        _closed = true;
-        _flushCts?.Cancel();
-        _flushCts?.Dispose();
-        _flushCts = null;
+        CancellationTokenSource? cts;
+        lock (_sync)
+        {
+            _closed = true;
+            cts = _flushCts;
+            _flushCts = null;
+        }
+
+        cts?.Cancel();
+        cts?.Dispose();
     }
 
     public void Dispose() => Close();
@@ -124,14 +155,17 @@ public sealed class EchoSuppressor : IDisposable
     /// <summary>Server VAD detected speech. Returns true if it should be ignored (greeting echo).</summary>
     public bool OnSpeechStarted()
     {
-        if (GreetingInProgress)
+        lock (_sync)
         {
-            return true;
+            if (_greetingInProgress)
+            {
+                return true;
+            }
+            _aiSpeaking = false;
+            _cooldownEnd = 0.0;
+            _greetingAwaitingRetry = false;
+            return false;
         }
-        AiSpeaking = false;
-        CooldownEnd = 0.0;
-        _greetingAwaitingRetry = false;
-        return false;
     }
 
     /// <summary>Client sent response.cancel -- the guest wants to speak. This is the mechanism
@@ -139,23 +173,35 @@ public sealed class EchoSuppressor : IDisposable
     /// completion event.</summary>
     public void OnBargeIn()
     {
-        AiSpeaking = false;
-        CooldownEnd = 0.0;
-        _greetingAwaitingRetry = false;
+        lock (_sync)
+        {
+            _aiSpeaking = false;
+            _cooldownEnd = 0.0;
+            _greetingAwaitingRetry = false;
+        }
     }
 
     /// <summary>Someone other than the rate-limit ladder itself asked for a fresh response (e.g.
     /// the browser's own response.create). A pending greeting-retry re-arm speculates that the
     /// ladder's own retry is what produces the next audio delta; if a genuinely new, unrelated
     /// response is created first, its audio must not be mistaken for the greeting's continuation.</summary>
-    public void OnExternalResponseCreate() => _greetingAwaitingRetry = false;
+    public void OnExternalResponseCreate()
+    {
+        lock (_sync)
+        {
+            _greetingAwaitingRetry = false;
+        }
+    }
 
     /// <summary>Pre-set suppression before the greeting fires.</summary>
     public void StartGreetingSuppression()
     {
-        AiSpeaking = true;
-        GreetingInProgress = true;
-        _greetingAudioSeen = false;
+        lock (_sync)
+        {
+            _aiSpeaking = true;
+            _greetingInProgress = true;
+            _greetingAudioSeen = false;
+        }
     }
 
     /// <summary>A response finished (any status) -- the safety net for a greeting that never
@@ -164,35 +210,38 @@ public sealed class EchoSuppressor : IDisposable
     /// drop the guest's mic forever until they physically interrupt.</summary>
     public void OnResponseDone(double loopTimeSeconds)
     {
-        if (!GreetingInProgress)
+        lock (_sync)
         {
-            return;
+            if (!_greetingInProgress)
+            {
+                return;
+            }
+            _greetingInProgress = false;
+            if (!_aiSpeaking)
+            {
+                // Something else (OnBargeIn(), a genuine mid-greeting interrupt) already cleared
+                // AiSpeaking before this response.done arrived -- nothing left to re-arm.
+                return;
+            }
+            if (_greetingAudioSeen)
+            {
+                // Audio started but never completed with audio.done -- treat this exactly like a
+                // normal OnAudioDone() completion: extended cooldown, no instant unmute, no retry
+                // re-arm.
+                _aiSpeaking = false;
+                _greetingAudioSeen = false;
+                _cooldownEnd = loopTimeSeconds + (_cooldownSeconds * 2);
+                return;
+            }
+            // Nothing was ever actually rendered to the guest -- unmute immediately, same as an
+            // explicit browser barge-in, instead of imposing an artificial multi-second mute after a
+            // greeting the guest never heard. This failed/empty attempt may still be retried by the
+            // rate-limit ladder with a bare response.create -- if it is, the retry's own first audio
+            // delta must re-enter greeting suppression (OnAudioDelta()).
+            _aiSpeaking = false;
+            _cooldownEnd = 0.0;
+            _greetingAwaitingRetry = true;
         }
-        GreetingInProgress = false;
-        if (!AiSpeaking)
-        {
-            // Something else (OnBargeIn(), a genuine mid-greeting interrupt) already cleared
-            // AiSpeaking before this response.done arrived -- nothing left to re-arm.
-            return;
-        }
-        if (_greetingAudioSeen)
-        {
-            // Audio started but never completed with audio.done -- treat this exactly like a
-            // normal OnAudioDone() completion: extended cooldown, no instant unmute, no retry
-            // re-arm.
-            AiSpeaking = false;
-            _greetingAudioSeen = false;
-            CooldownEnd = loopTimeSeconds + (_cooldownSeconds * 2);
-            return;
-        }
-        // Nothing was ever actually rendered to the guest -- unmute immediately, same as an
-        // explicit browser barge-in, instead of imposing an artificial multi-second mute after a
-        // greeting the guest never heard. This failed/empty attempt may still be retried by the
-        // rate-limit ladder with a bare response.create -- if it is, the retry's own first audio
-        // delta must re-enter greeting suppression (OnAudioDelta()).
-        AiSpeaking = false;
-        CooldownEnd = 0.0;
-        _greetingAwaitingRetry = true;
     }
 
     private async Task BestEffortSend()

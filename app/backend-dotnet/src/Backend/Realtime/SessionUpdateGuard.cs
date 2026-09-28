@@ -12,10 +12,18 @@ namespace Backend.Realtime;
 /// rejecting `reasoning` returns no event_id and no param), so an uncorrelated
 /// invalid_request_error that arrives while one of our updates is still unacknowledged is
 /// attributed to the oldest one -- the service processes client events in order.
+///
+/// Internally synchronized: `Stamp`/`Track` are called from the browser relay loop (client
+/// session.update, set_voice) while `Correlate`, `OnSessionUpdated`, `OriginalOf`, `PayloadOf` and
+/// `ClaimFallback` are called from the upstream relay loop, and both loops run truly in parallel on
+/// the thread pool. Every public member takes an internal lock around the shared
+/// Dictionary/List/Queue/HashSet state.
 /// </summary>
 public sealed class SessionUpdateGuard
 {
     private const int MaxTracked = 64;
+
+    private readonly object _sync = new();
 
     // Insertion-ordered event_id -> event_id of the original if this is a fallback, else null.
     // A plain Dictionary<> plus a separate ordering list stands in for Python's OrderedDict here.
@@ -42,21 +50,24 @@ public sealed class SessionUpdateGuard
             : EventIds.NewEventId(fallbackOf is not null ? "sonic_fallback" : "sonic_su");
         message["event_id"] = eventId;
 
-        if (_sent.ContainsKey(eventId))
+        lock (_sync)
         {
-            _sentOrder.Remove(eventId);
-        }
-        _sent[eventId] = fallbackOf;
-        _sentOrder.Add(eventId);
-        _payloads[eventId] = message["session"] as JsonObject ?? [];
-        _inFlight.Enqueue(eventId);
+            if (_sent.ContainsKey(eventId))
+            {
+                _sentOrder.Remove(eventId);
+            }
+            _sent[eventId] = fallbackOf;
+            _sentOrder.Add(eventId);
+            _payloads[eventId] = message["session"] as JsonObject ?? [];
+            _inFlight.Enqueue(eventId);
 
-        while (_sentOrder.Count > MaxTracked)
-        {
-            var oldest = _sentOrder[0];
-            _sentOrder.RemoveAt(0);
-            _sent.Remove(oldest);
-            _payloads.Remove(oldest);
+            while (_sentOrder.Count > MaxTracked)
+            {
+                var oldest = _sentOrder[0];
+                _sentOrder.RemoveAt(0);
+                _sent.Remove(oldest);
+                _payloads.Remove(oldest);
+            }
         }
 
         return message;
@@ -74,9 +85,12 @@ public sealed class SessionUpdateGuard
 
     public void OnSessionUpdated()
     {
-        if (_inFlight.Count > 0)
+        lock (_sync)
         {
-            _inFlight.Dequeue();
+            if (_inFlight.Count > 0)
+            {
+                _inFlight.Dequeue();
+            }
         }
     }
 
@@ -85,42 +99,64 @@ public sealed class SessionUpdateGuard
     {
         var err = errorEvent["error"] as JsonObject;
         var eventId = err?["event_id"] is JsonValue idValue && idValue.TryGetValue<string>(out var id) ? id : null;
-        if (!string.IsNullOrEmpty(eventId))
-        {
-            if (!_sent.ContainsKey(eventId))
-            {
-                return null;
-            }
-            // Queue<T> has no direct "remove this specific element" -- rebuild, same net effect
-            // as Python's `deque.remove(event_id)` (a no-op if it isn't present).
-            if (_inFlight.Contains(eventId))
-            {
-                var rest = _inFlight.Where(inFlightId => inFlightId != eventId).ToArray();
-                _inFlight.Clear();
-                foreach (var inFlightId in rest)
-                {
-                    _inFlight.Enqueue(inFlightId);
-                }
-            }
-            return eventId;
-        }
 
-        var param = err?["param"]?.GetValue<string>() ?? "";
-        var errorType = err?["type"]?.GetValue<string>();
-        // A rate limit is never a session.update rejection; only an echoed event_id (above) ties
-        // one to an update.
-        if (_inFlight.Count > 0 && errorType == "invalid_request_error" && !RateLimitDetection.IsRateLimitError(err)
-            && (string.IsNullOrEmpty(param) || param.StartsWith("session", StringComparison.Ordinal)))
+        lock (_sync)
         {
-            return _inFlight.Dequeue();
+            if (!string.IsNullOrEmpty(eventId))
+            {
+                if (!_sent.ContainsKey(eventId))
+                {
+                    return null;
+                }
+                // Queue<T> has no direct "remove this specific element" -- rebuild, same net effect
+                // as Python's `deque.remove(event_id)` (a no-op if it isn't present).
+                if (_inFlight.Contains(eventId))
+                {
+                    var rest = _inFlight.Where(inFlightId => inFlightId != eventId).ToArray();
+                    _inFlight.Clear();
+                    foreach (var inFlightId in rest)
+                    {
+                        _inFlight.Enqueue(inFlightId);
+                    }
+                }
+                return eventId;
+            }
+
+            var param = err?["param"]?.GetValue<string>() ?? "";
+            var errorType = err?["type"]?.GetValue<string>();
+            // A rate limit is never a session.update rejection; only an echoed event_id (above) ties
+            // one to an update.
+            if (_inFlight.Count > 0 && errorType == "invalid_request_error" && !RateLimitDetection.IsRateLimitError(err)
+                && (string.IsNullOrEmpty(param) || param.StartsWith("session", StringComparison.Ordinal)))
+            {
+                return _inFlight.Dequeue();
+            }
+            return null;
         }
-        return null;
     }
 
-    public string? OriginalOf(string eventId) => _sent.GetValueOrDefault(eventId);
+    public string? OriginalOf(string eventId)
+    {
+        lock (_sync)
+        {
+            return _sent.GetValueOrDefault(eventId);
+        }
+    }
 
-    public JsonObject PayloadOf(string eventId) => _payloads.GetValueOrDefault(eventId) ?? [];
+    public JsonObject PayloadOf(string eventId)
+    {
+        lock (_sync)
+        {
+            return _payloads.GetValueOrDefault(eventId) ?? [];
+        }
+    }
 
     /// <summary>True exactly once per original session.update.</summary>
-    public bool ClaimFallback(string eventId) => _fallbackSentFor.Add(eventId);
+    public bool ClaimFallback(string eventId)
+    {
+        lock (_sync)
+        {
+            return _fallbackSentFor.Add(eventId);
+        }
+    }
 }
