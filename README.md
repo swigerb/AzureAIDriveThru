@@ -264,24 +264,24 @@ This repository includes infrastructure as code and a `Dockerfile` to deploy the
 ## Getting Started
 
 > [!IMPORTANT]
-> **A default deployment is publicly reachable.** `azd up` provisions the app
-> with authentication disabled, so anyone who learns the Container App URL can
-> open the demo — and, more importantly, connect to the `/realtime` websocket,
-> which consumes metered Azure OpenAI realtime tokens on your subscription.
+> **The app requires Microsoft Entra ID sign-in (ADR-002).** Every request must
+> carry a bearer token issued for this app's own Entra app registration, with
+> the `access_as_user` scope and `DriveThru.User` app role — including the
+> `/realtime` websocket, which consumes metered Azure OpenAI realtime tokens on
+> your subscription. There is no way to opt out of authentication in Azure.
 >
-> Authentication is opt-in. To require a Microsoft Entra ID sign-in, follow the
-> Entra ID authentication section in [DEPLOY.md](DEPLOY.md), then set:
+> Before the first `azd up`/`azd provision`, create (or point at) the Entra app
+> registration and pin its identifiers into the azd environment — see the
+> "Setup and Verify" section in [DEPLOY.md](DEPLOY.md) for the full command and
+> its output:
 >
-> ```bash
-> azd env set AZURE_AUTH_ENABLED true
-> azd env set AZURE_AUTH_CLIENT_ID "<your-app-id>"
-> azd env set AZURE_AUTH_TENANT_ID "<your-tenant-id>"
-> azd env set AZURE_AUTH_CLIENT_SECRET "<your-client-secret>"
+> ```powershell
+> ./scripts/Setup-EntraAuth.ps1 -TenantId <tenant-id> -FromAzdEnv
+> ./scripts/Setup-EntraAuth.ps1 -TenantId <tenant-id> -FromAzdEnv -Apply
+> azd env set ENTRA_TENANT_ID "<tenant-id>"
+> azd env set ENTRA_CLIENT_ID "<client-id>"
 > azd up
 > ```
->
-> Leaving it off is fine for a throwaway sandbox. Do not leave a long-lived
-> demo unauthenticated.
 You have a few options for getting started with this template. The quickest way to get started is [GitHub Codespaces](#github-codespaces), since it will setup all the tools for you, but you can also [set it up locally](#local-environment). You can also use a [VS Code dev container](#vs-code-dev-containers)
 
 ### GitHub Codespaces
