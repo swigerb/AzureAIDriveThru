@@ -542,6 +542,32 @@
   (origin/dev). PR #133, "Refs #127" (nothing closed -- #112/McDonald's still open, so the
   disabled-pack code path is correct but unexercised by a real pack until it lands). Did not
   merge.
+- **#135 MSBuild file-lock flake, fixed structurally (2026-09-28):** Parallel xUnit collections
+  each calling `DotnetBackendLauncher.StartAsync` used to each shell out to `dotnet run`, which
+  rebuilds unconditionally -- concurrent fixtures racing to rebuild the same
+  `app/backend-dotnet/**/obj` outputs at the same time produced the MSB4018
+  `GenerateDepsFile` file-lock flake. Fix is structural, not a retry: `EnsureBuiltAsync` now
+  gates every caller behind a single `SemaphoreSlim(1,1)` (`BuildGate`) -- the first caller to
+  find no built `Backend.dll` on disk runs the (single) `dotnet build "<csproj>" --no-restore`;
+  every other caller, whether it arrives before/during/after that build, either takes the fast
+  path (dll already exists, no lock needed) or blocks on the same gate and re-checks, so it can
+  never trigger a second racing build. The actual launch (`BuildStartInfo`) now runs `dotnet
+  "<dll>"` directly against the already-built output -- never `run`/`build`/`restore` again.
+  Added `DotnetBackendLauncherStartInfoTests` (6 pure, process-free tests asserting the exact
+  launch command/args and the DLL path resolution -- no SDK/process needed to run them).
+  Evidence: with `app/backend-dotnet/src/Backend/bin` deleted before each iteration (forcing a
+  real cold build through `EnsureBuiltAsync` every time, `obj/project.assets.json` left intact
+  so `--no-restore` still resolves) and 20 CPU-stress busy-loop jobs saturating all 24 cores in
+  the background, ran the full dotnet conformance leg (`dotnet test Conformance.slnx --filter
+  Dotnet=ready`, `CONFORMANCE_BACKEND=dotnet`) 10 times back-to-back: 360/360 tests passed, 0
+  failures, 0 non-zero exits. (First evidence attempt was a false failure from my own harness
+  script deleting `obj/` -- once restore's `project.assets.json` was regenerated and only `bin/`
+  was cleared per iteration, all 10 runs were clean.) Also: found and reverted an accidental,
+  unrelated `app/frontend/package-lock.json` diff (a stray `"peer": true` removal) that had
+  snuck into the previous session's uncommitted working tree -- not part of this fix, reverted
+  with `git checkout --`. Full validation: pytest 1370 passed/2 skipped/222 subtests; ruff
+  clean; new unit tests 6/6; full dotnet conformance leg 36/36 (and 360/360 across the 10x
+  stress run). PR #135, "Harness: build the C# backend once per run (#135)", Refs #135.
 - **#105 brand-guard ratchet hardening (2026-09-28):** `check_rebrand_baseline_against_base.py`
   (from #101) rewritten to close all four gaps plus the blind spot from #105's issue body:
   (1) a raise/new entry's `increase_reason` must be new relative to the base entry's own
