@@ -17,6 +17,15 @@ services:
       # root. docker.path is left at its default (./Dockerfile, also service-relative), which
       # already points at app/Dockerfile correctly.
       context: ..
+      # ADR-002 18.8: the frontend's Entra config is baked in at build time (app/Dockerfile's
+      # build-stage ARGs), read from the same azd env names Setup-EntraAuth.ps1 prints. A remote
+      # build (remoteBuild: true above) must pass these through to ACR -- verify this on the first
+      # real Entra deploy; if it doesn't, fall back to remoteBuild: false for this service.
+      buildArgs:
+        - VITE_AUTH_MODE=Entra
+        - VITE_ENTRA_TENANT_ID=${ENTRA_TENANT_ID}
+        - VITE_ENTRA_CLIENT_ID=${ENTRA_CLIENT_ID}
+        - VITE_ENTRA_API_SCOPE=${ENTRA_API_SCOPE}
   # S7 (#17) prep: app/backend-dotnet builds a real image (this PR), but the azure.yaml service
   # entry itself is deliberately NOT added yet. `language: csharp` here would make azd resolve a
   # dotnet project (editing Backend.csproj's UserSecretsId, writing outputs into dotnet
@@ -33,12 +42,12 @@ hooks:
     postprovision:
       windows:
         shell: pwsh
-        run: ./scripts/write_env.ps1; ./scripts/setup_search_index.ps1
+        run: ./scripts/postprovision_auth.ps1; ./scripts/write_env.ps1; ./scripts/setup_search_index.ps1
         interactive: true
         continueOnError: false
       posix:
         shell: sh
-        run: ./scripts/write_env.sh; ./scripts/setup_search_index.sh
+        run: ./scripts/postprovision_auth.sh; ./scripts/write_env.sh; ./scripts/setup_search_index.sh
         interactive: true
         continueOnError: false
     # Non-fatal: checks the live realtime deployment accepts the carhop's exact
@@ -94,6 +103,7 @@ pipeline:
     - DEPLOY_DOTNET_APP
     - AZURE_CONTAINER_APP_DOTNET_NAME
     - BACKEND_DOTNET_INGRESS_ENABLED
+    - BACKEND_INGRESS_ENABLED
     - ENTRA_TENANT_ID
     - ENTRA_CLIENT_ID
     - ENTRA_API_SCOPE
