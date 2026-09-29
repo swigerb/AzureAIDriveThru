@@ -371,7 +371,12 @@ Beth was locked out for this round; applied by Unity. All seven items from Rick'
   synchronization. Both now take a private `lock (_sync)` around every public member (state
   mutation under the lock, the flush send itself outside it in `EchoSuppressor`); doc comments
   updated from "not thread-safe by design" to describe the synchronization. New Barrier-released,
-  10k-iteration stress tests for both; mutation-verified (removing the locks fails them).
+  10k-iteration stress tests for both. Mutation: removing the locks and running the tests 8 times
+  fails `SessionUpdateGuard`'s `Stamp_And_Track_Are_Threadsafe_Against_Correlate_And_OnSessionUpdated`
+  (6 of 8 runs), so only `SessionUpdateGuard`'s lock is mutation-pinned. `EchoSuppressor`'s stress
+  tests are no-throw smoke tests: with the lock removed they still pass 8 of 8, because its shared
+  state is compound bool/double updates where nothing throws, and `Close()` runs only after both
+  loops drain. `EchoSuppressor`'s lock is accepted by inspection, not by mutation.
 - **R3**: a duplicate key nested inside `session` (not just a top-level duplicate) parsed
   "successfully" as far as `JsonNode.Parse` was concerned -- `JsonObject`'s backing dictionary is
   lazy, so the failure surfaced later, outside the try/catch guarding the parse, killing the loop
@@ -379,7 +384,10 @@ Beth was locked out for this round; applied by Unity. All seven items from Rick'
   `JsonDocumentOptions.AllowDuplicateProperties = false` (throws immediately, any depth) and wrap
   the rest of the per-frame body in its own try/catch that logs a warning with the session id
   (never the payload); `SwallowAsync` now logs non-cancellation exceptions at Error instead of
-  discarding them. New nested-duplicate-key conformance case in `AllowListBypassHardeningTests`.
+  discarding them. New nested-duplicate-key conformance case in `AllowListBypassHardeningTests`;
+  round 2's N2 (below) extracts the shared strict-parse helper and adds the unit test that is the
+  actual mutation pin for the strict option, since the conformance case alone cannot tell whether
+  strict parsing is on.
 - **R4**: `WebSocketFrameReader` grew its `ArrayBufferWriter` without bound. Added a
   `maxMessageBytes` parameter (default 4 MiB, matching aiohttp's `WebSocketResponse` default
   `max_msg_size`); overflow closes with `WebSocketCloseStatus.MessageTooBig` (1009) via
@@ -396,8 +404,11 @@ Beth was locked out for this round; applied by Unity. All seven items from Rick'
   upgrade; this is the **outbound** credential for the upstream Azure OpenAI connection itself, and
   applies regardless of #147's status. New `UpstreamAuthHeaderTests` with a fake token provider;
   mutation-verified.
-- **R6**: `DotnetTraitCoverageTests`'s floor raised from 11 to 78 (77 at PR #140's original head,
-  +1 from R3's new conformance case -- `--filter "Dotnet=ready&Category!=Browser"` is 78/78).
+- **R6**: `DotnetTraitCoverageTests`'s floor raised from 11 to 75 (distinct methods; 78 result rows).
+  The test counts tagged test *methods*: one `[Theory]`,
+  `PersonaAssetRouteConformanceTests.Persona_asset_route_rejects_path_traversal_attempts`, has 4
+  `[InlineData]` rows, so `dotnet test`'s own pass count for
+  `--filter "Dotnet=ready&Category!=Browser"` is 78 result rows against the same 75 tagged methods.
 - **R7**: PR body changed to `Refs #13` (was implicitly closing) and marked ready for review; a
   checklist of everything still cut or deferred posted on #13 (audio-append fast path and
   `TimeProvider` -- both explicit #13 acceptance items; the `RateLimit` ladder and the tool-failure

@@ -6,10 +6,15 @@ namespace Backend.Tests.Realtime;
 /// cref="EchoSuppressor"/> instance truly in parallel on the thread pool (no single-threaded
 /// asyncio loop to serialize them). These tests hammer the class from two real OS threads,
 /// released together by a <see cref="Barrier"/> (no sleeps, so the two threads' iterations
-/// actually interleave instead of running back-to-back), and assert nothing throws. Removing the
-/// locks in <c>EchoSuppressor</c> makes this fail (an <c>ObjectDisposedException</c> from a
-/// concurrently cancelled/disposed <c>_flushCts</c>, or a torn read) within a handful of local
-/// runs.</summary>
+/// actually interleave instead of running back-to-back), and assert nothing throws.
+///
+/// Round 2 (Rick's re-review, N3): these are no-throw smoke tests, not a mutation pin. With
+/// <c>lock (_sync)</c> stripped from <see cref="EchoSuppressor"/>, both tests still pass 8 of 8
+/// local runs, because its shared state is a compound bool/double update where nothing throws on
+/// a torn read, and <see cref="EchoSuppressor.Close"/> only runs after both relay loops have
+/// drained. The lock is accepted by inspection, not by mutation; only
+/// <c>SessionUpdateGuardTests</c>' threading test is mutation-pinned (removing its lock fails 6 of
+/// 8 runs).</summary>
 public sealed class EchoSuppressorThreadSafetyTests
 {
     [Fact]
