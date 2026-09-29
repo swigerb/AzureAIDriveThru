@@ -352,20 +352,14 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                 string msgType;
                 try
                 {
-                    // Parse strictly: AllowDuplicateProperties = false makes JsonNode.Parse throw
-                    // JsonException immediately for a duplicate key at ANY depth (top-level "type"
-                    // as well as a nested duplicate inside "session"), instead of the old lazy
-                    // JsonObject dictionary deferring the throw (an ArgumentException) until
-                    // something later indexes into the offending object -- which, for a nested
-                    // duplicate, happened outside this try (inside ProcessClientMessage), faulting
-                    // the loop outright. The ArgumentException catch stays as a defense-in-depth
-                    // belt-and-suspenders for any other lazy-dictionary access this doesn't cover.
-                    message = JsonNode.Parse(
-                            Encoding.UTF8.GetString(frame.Payload),
-                            nodeOptions: null,
-                            documentOptions: new JsonDocumentOptions { AllowDuplicateProperties = false })
-                        as JsonObject
-                        ?? throw new JsonException("Client frame was not a JSON object.");
+                    // Strict parse: see RelayJson.ParseRelayFrame's doc for why
+                    // AllowDuplicateProperties = false matters (a duplicate key at any depth
+                    // throws JsonException immediately here instead of a deferred ArgumentException
+                    // from indexing into the object later, which for a nested duplicate happened
+                    // outside this try -- inside ProcessClientMessage -- faulting the loop outright).
+                    // The ArgumentException catch stays as defense-in-depth for any other
+                    // lazy-dictionary access this doesn't cover.
+                    message = RelayJson.ParseRelayFrame(frame.Payload);
                     msgType = GetString(message, "type") ?? "";
                 }
                 catch (Exception ex) when (ex is JsonException or ArgumentException)
@@ -777,17 +771,11 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                 string msgType;
                 try
                 {
-                    // See the client→server side's comment: strict parsing (AllowDuplicateProperties
-                    // = false) turns a duplicate key at any depth into an immediate JsonException
-                    // here, instead of a deferred ArgumentException from indexing into the object
-                    // later. Kept even though the fake upstream in practice never sends a
-                    // duplicate-key frame, so a future real-upstream one can't crash the relay.
-                    message = JsonNode.Parse(
-                            Encoding.UTF8.GetString(frame.Payload),
-                            nodeOptions: null,
-                            documentOptions: new JsonDocumentOptions { AllowDuplicateProperties = false })
-                        as JsonObject
-                        ?? throw new JsonException("Upstream frame was not a JSON object.");
+                    // Strict parse: see RelayJson.ParseRelayFrame's doc and the client→server
+                    // side's comment above. Kept even though the fake upstream in practice never
+                    // sends a duplicate-key frame, so a future real-upstream one can't crash the
+                    // relay.
+                    message = RelayJson.ParseRelayFrame(frame.Payload);
                     msgType = GetString(message, "type") ?? "";
                 }
                 catch (Exception ex) when (ex is JsonException or ArgumentException)
