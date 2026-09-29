@@ -144,11 +144,11 @@ public sealed class RealtimeProcessor : IPipelineProcessor
         // upgrade in Program.cs) -- this picks the OUTBOUND credential for the Azure OpenAI
         // realtime endpoint itself, api-key when one is configured, else a managed-identity
         // bearer token, matching rtmt.py's DefaultAzureCredential fallback.
-        var (headerName, headerValue) = await ResolveUpstreamAuthHeaderAsync(cancellationToken).ConfigureAwait(false);
-        upstream.Options.SetRequestHeader(headerName, headerValue);
-
         try
         {
+            var (headerName, headerValue) = await ResolveUpstreamAuthHeaderAsync(cancellationToken).ConfigureAwait(false);
+            upstream.Options.SetRequestHeader(headerName, headerValue);
+
             await upstream.ConnectAsync(BuildUpstreamUri(_upstreamEndpoint, deployment), cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -270,7 +270,7 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                 // GA would reject this outright (cannot_update_voice) and take tools/instructions
                 // down with it -- defer to the next unlocked session.update, same as Python.
                 _logger?.LogInformation(
-                    "Assistant audio already present — voice {Voice} applies from the next conversation (session={SessionId})",
+                    "Assistant audio already present -- voice {Voice} applies from the next conversation (session={SessionId})",
                     newVoice, sessionId);
                 return;
             }
@@ -514,7 +514,7 @@ public sealed class RealtimeProcessor : IPipelineProcessor
             if (GetString(err, "code") == "response_cancel_not_active")
             {
                 _logger?.LogInformation(
-                    "OpenAI Realtime API error (benign — response already finished): {Error}", message.ToJsonString());
+                    "OpenAI Realtime API error (benign -- response already finished): {Error}", message.ToJsonString());
                 return message;
             }
 
@@ -675,7 +675,7 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                     if (!state.SessionConfigured.Task.IsCompleted)
                     {
                         _logger?.LogInformation(
-                            "session.updated received — tools are configured (session={SessionId})", sessionId);
+                            "session.updated received -- tools are configured (session={SessionId})", sessionId);
                         state.SessionConfigured.TrySetResult(true);
                     }
                     return message["session"] is JsonObject ? BuildClientSessionEcho(message) : message;

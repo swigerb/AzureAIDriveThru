@@ -1,3 +1,4 @@
+using System.Net.WebSockets;
 using Backend.Configuration;
 using Backend.Models;
 using Backend.Personas;
@@ -20,6 +21,14 @@ internal sealed class FakeBearerTokenProvider(string token) : IUpstreamBearerTok
         CallCount++;
         return Task.FromResult(token);
     }
+}
+
+/// <summary>PR #140 round-2 review (N1): simulates <c>DefaultAzureCredential</c> throwing when the
+/// managed identity is not ready (MI not attached yet, RBAC not propagated, IMDS timeout).</summary>
+internal sealed class ThrowingBearerTokenProvider : IUpstreamBearerTokenProvider
+{
+    public Task<string> GetTokenAsync(CancellationToken cancellationToken) =>
+        throw new InvalidOperationException("fake: credential unavailable");
 }
 
 /// <summary>PR #140 R5 (Rick's round-2 review): the upstream connect must keep using `api-key`
@@ -77,5 +86,28 @@ public sealed class UpstreamAuthHeaderTests
         await processor.ResolveUpstreamAuthHeaderAsync(CancellationToken.None);
 
         Assert.Equal(2, provider.CallCount);
+    }
+
+    /// <summary>PR #140 round-2 review (N1): a credential failure must be caught by the existing
+    /// <c>try</c> around <c>upstream.ConnectAsync</c> so the guest gets an established 1011
+    /// "Upstream connection failed", not an unhandled exception (1006). Mutation check: moving
+    /// the <c>ResolveUpstreamAuthHeaderAsync</c>/<c>SetRequestHeader</c> lines back above the
+    /// <c>try</c> makes this fail.</summary>
+    [Fact]
+    public async Task TokenProviderThrows_ClosesWith1011InsteadOfEscaping()
+    {
+        var processor = CreateProcessor(string.Empty, new ThrowingBearerTokenProvider());
+        var socket = new FakeWebSocket(Array.Empty<(byte[], bool, WebSocketMessageType)>());
+
+        await processor.RunSessionAsync(
+            socket,
+            PersonaCatalog.Load().Default,
+            new ResolvedModel("gpt-realtime-2.1", "realtime", "gpt-realtime-2.1", false),
+            "s1",
+            CancellationToken.None);
+
+        Assert.True(socket.CloseCalled);
+        Assert.Equal(WebSocketCloseStatus.InternalServerError, socket.ClosedWithStatus);
+        Assert.Equal("Upstream connection failed", socket.ClosedWithDescription);
     }
 }
