@@ -32,6 +32,7 @@ public sealed class GreetingWithoutAudioUnmutesTests(ConformanceFixture fixture)
     private const string MicAfterSilentGreeting = "bWljLWFmdGVyLXNpbGVudC1ncmVldGluZw==";
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Mic_audio_is_forwarded_after_an_audio_free_greeting_with_no_barge_in() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;

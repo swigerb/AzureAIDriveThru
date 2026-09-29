@@ -8,6 +8,13 @@
   <ItemGroup>
     <PackageReference Include="YamlDotNet" />
     <PackageReference Include="JsonSchema.Net" />
+    <PackageReference Include="Azure.Identity" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- PR #140 R5: lets Backend.Tests exercise RealtimeProcessor.ResolveUpstreamAuthHeaderAsync
+         (internal) directly instead of needing a real ClientWebSocket or Azure credential. -->
+    <InternalsVisibleTo Include="Backend.Tests" />
   </ItemGroup>
 
 </Project>

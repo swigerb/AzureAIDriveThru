@@ -28,6 +28,7 @@ public sealed class SessionUpdateFallbackTests(Gpt15ForcedReasoningConformanceFi
     private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Rejected_reasoning_bootstrap_recovers_via_exactly_one_minimal_fallback_with_no_error_reaching_the_browser() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -132,6 +133,7 @@ public sealed class UnrelatedErrorsDoNotTriggerFallbackTests(ConformanceFixture 
     private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Unrelated_response_cancel_error_never_triggers_a_session_update_fallback() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -208,6 +210,7 @@ public sealed class SecondSessionUpdateRejectionLoopGuardTests(Gpt15ConformanceF
     private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Rejecting_the_fallback_itself_sends_no_second_fallback_and_the_error_reaches_the_browser() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;

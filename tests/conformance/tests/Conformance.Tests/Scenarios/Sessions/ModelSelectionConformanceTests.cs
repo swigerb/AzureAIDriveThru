@@ -12,11 +12,12 @@ namespace Conformance.Tests;
 /// surface and the pre-upgrade `?model=` dispatch/resolution on `/realtime`
 /// (Models/ModelDispatch.cs), so <see cref="ModelSelectionRejectionConformanceTests"/>'s four
 /// pre-upgrade 404 rows (below) and one HTTP-only positive row in
-/// <see cref="ModelSelectionConformanceTests"/> are now tagged. The rest of
-/// <see cref="ModelSelectionConformanceTests"/> stays UNTAGGED: those rows need the actual
-/// upstream relay to reach `session.created`/forward audio (rtmt.py's `ConnectionForwarder`) --
-/// this wave's <see cref="RealtimeProcessor"/> is a deliberate stub (issue #13 lands the real
-/// relay), so they still only run against the Python backend. See
+/// <see cref="ModelSelectionConformanceTests"/> were tagged first. Issue #13 lands the real
+/// <see cref="RealtimeProcessor"/> relay (session.created/forward audio,
+/// rtmt.py's `ConnectionForwarder`), so three more rows below -- explicit `?model=` reaching its
+/// own mapped deployment, the omitted-model session-metadata echo, and reasoning-sent-only-for-a-
+/// catalog-reasoning-model -- are now tagged too. The two resume-direction rows stay UNTAGGED:
+/// they need issue #15's session resume/rehydration, still Python-only. See
 /// <see cref="ModelSelectionConformanceFixture"/>/<see cref="ModelDeploymentMapConformanceFixture"/>
 /// for why this row set needs two dedicated backend processes.
 /// </summary>
@@ -213,6 +214,7 @@ public sealed class ModelSelectionConformanceTests(ModelDeploymentMapConformance
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Explicit_model_reaches_the_fake_upstream_as_its_own_mapped_deployment() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -229,6 +231,7 @@ public sealed class ModelSelectionConformanceTests(ModelDeploymentMapConformance
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Omitted_model_binds_to_the_persona_default_visible_alongside_persona_and_pipeline_in_session_metadata() =>
         fixture.RunAsync(async () =>
     {
@@ -245,6 +248,7 @@ public sealed class ModelSelectionConformanceTests(ModelDeploymentMapConformance
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Reasoning_is_sent_only_for_a_catalog_reasoning_model_not_the_other_selectable_one() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;

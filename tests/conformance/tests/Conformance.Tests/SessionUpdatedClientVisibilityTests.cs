@@ -27,6 +27,7 @@ public sealed class SessionUpdatedClientVisibilityTests(ConformanceFixture fixtu
     private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Browser_never_receives_instructions_or_tools_in_session_updated() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;

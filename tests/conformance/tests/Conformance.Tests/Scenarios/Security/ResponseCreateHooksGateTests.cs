@@ -35,6 +35,7 @@ namespace Conformance.Tests.Scenarios.Security;
 /// -- this is the ONLY place that mutation is caught.
 /// </summary>
 [Collection(HooksOffConformanceCollection.Name)]
+[Trait("Dotnet", "ready")]
 public sealed class ResponseCreateHooksGateTests(HooksOffConformanceFixture fixture)
 {
     private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
