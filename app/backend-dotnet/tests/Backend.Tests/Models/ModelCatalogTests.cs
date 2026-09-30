@@ -147,6 +147,28 @@ public sealed class ModelCatalogTests
     }
 
     [Fact]
+    public void CatalogEntry_RuntimeField_IsRejectedAsUnknown()
+    {
+        // `runtime` existed only for `runtime: onnx` on the local pipeline's `phi-4-mini-local`
+        // entry, dropped by issue #155 (local mode removal, 2026-09-28); a catalog row that still
+        // has it is now an unknown field, the same as any other stray key (mirrors
+        // model_catalog.py's test_runtime_field_is_now_rejected_as_unknown).
+        var path = WriteTempConfig("""
+            model: {}
+            business_rules: {}
+            cache: {}
+            audio: {}
+            connection: {}
+            models:
+              catalog:
+                - { id: some-model, pipeline: cascade, label: "Some Model", runtime: onnx }
+            """);
+
+        var exc = Assert.Throws<ModelValidationException>(() => ModelCatalog.FromConfig(AppConfig.Load(path)));
+        Assert.Contains("unknown field", exc.Message);
+    }
+
+    [Fact]
     public void DeploymentMap_MapsIdsToDeploymentNames()
     {
         var config = AppConfig.Load();

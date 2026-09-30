@@ -6,7 +6,8 @@ Covers:
     `.ids`/`.get()`/`__contains__`/`deployment_for()`/`is_deployed()`/`is_catalogued_for()`/
     `is_selectable()` all behave.
   - `ModelValidationError` on: non-list catalog, non-mapping entry, missing required field, unknown
-    field, unknown pipeline value, wrong-typed `reasoning`/`toolCalling`/`runtime`, duplicate id,
+    field, unknown pipeline value, wrong-typed `reasoning`/`toolCalling`, a stray `runtime` field
+    (rejected as unknown since issue #155 removed local mode), duplicate id,
     malformed `AZURE_AI_MODEL_DEPLOYMENTS` JSON, non-object `AZURE_AI_MODEL_DEPLOYMENTS`,
     non-string map entries.
   - An absent `models`/`models.catalog` section, or an unset/empty `AZURE_AI_MODEL_DEPLOYMENTS`,
@@ -161,10 +162,13 @@ class TestCatalogValidationErrors:
                 environ={},
             )
 
-    def test_non_string_runtime_raises(self):
-        with pytest.raises(ModelValidationError, match="'runtime' must be a string"):
+    def test_runtime_field_is_now_rejected_as_unknown(self):
+        """`runtime` existed only for `runtime: onnx` on the local pipeline's `phi-4-mini-local`
+        entry, dropped by issue #155 (local mode removal, 2026-09-28); a catalog row that still
+        has it is now an unknown field, the same as any other stray key."""
+        with pytest.raises(ModelValidationError, match="unknown field"):
             ModelCatalog.load(
-                config={"models": {"catalog": [{"id": "x", "pipeline": "cascade", "label": "X", "runtime": 5}]}},
+                config={"models": {"catalog": [{"id": "x", "pipeline": "cascade", "label": "X", "runtime": "onnx"}]}},
                 environ={},
             )
 

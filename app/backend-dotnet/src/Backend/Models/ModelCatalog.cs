@@ -36,7 +36,7 @@ public sealed class ModelCatalog
     private static readonly HashSet<string> Pipelines = ["realtime", "cascade"];
     private static readonly HashSet<string> RequiredEntryFields = ["id", "pipeline", "label"];
     private static readonly HashSet<string> KnownEntryFields =
-        ["id", "pipeline", "label", "reasoning", "toolCalling", "runtime"];
+        ["id", "pipeline", "label", "reasoning", "toolCalling"];
 
     private const string DeploymentsEnvVar = "AZURE_AI_MODEL_DEPLOYMENTS";
 
@@ -244,17 +244,7 @@ public sealed class ModelCatalog
             toolCalling = toolCallingBool;
         }
 
-        string? runtime = null;
-        if (dict.TryGetValue("runtime", out var runtimeRaw) && runtimeRaw is not null)
-        {
-            if (runtimeRaw is not string runtimeStr)
-            {
-                throw new ModelValidationException($"config.yaml models.catalog[{index}] ('{id}')'s 'runtime' must be a string.");
-            }
-            runtime = runtimeStr;
-        }
-
-        return new ModelEntry(id, pipeline, label, reasoning, toolCalling, runtime);
+        return new ModelEntry(id, pipeline, label, reasoning, toolCalling);
     }
 
     /// <summary>

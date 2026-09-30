@@ -24,7 +24,7 @@ the first two terms of that intersection; `processors.py` combines all three.
 Rick's PR #106 review item 1: there is NO default-path special case. Every model a persona can
 bind to -- including its own pipeline default -- resolves through the catalog exactly like any
 other requested id: it must be catalogued for the right pipeline (`is_catalogued_for`), and its
-`reasoning`/`toolCalling`/`runtime` capabilities always come from that catalog entry, never from
+`reasoning`/`toolCalling` capabilities always come from that catalog entry, never from
 a deployment-name heuristic. The ONLY back-compat carve-out is on the *deployment* term, and only
 for the realtime pipeline's default: if `AZURE_AI_MODEL_DEPLOYMENTS` doesn't map it yet, it falls
 back to `AZURE_OPENAI_REALTIME_DEPLOYMENT` (today's single, pre-#75 deployment env var) so that
@@ -57,7 +57,7 @@ logger = logging.getLogger(__name__)
 
 _PIPELINES = frozenset({"realtime", "cascade"})
 _REQUIRED_ENTRY_FIELDS = frozenset({"id", "pipeline", "label"})
-_KNOWN_ENTRY_FIELDS = _REQUIRED_ENTRY_FIELDS | frozenset({"reasoning", "toolCalling", "runtime"})
+_KNOWN_ENTRY_FIELDS = _REQUIRED_ENTRY_FIELDS | frozenset({"reasoning", "toolCalling"})
 
 _DEPLOYMENTS_ENV_VAR = "AZURE_AI_MODEL_DEPLOYMENTS"
 
@@ -112,18 +112,15 @@ class ModelEntry:
     label: str
     reasoning: bool = False
     tool_calling: bool | None = None
-    runtime: str | None = None
 
     @property
     def capabilities(self) -> dict[str, Any]:
         """A generic capabilities view, mirroring the design doc's per-pipeline capability
-        flags: `reasoning` always present (defaults False), `toolCalling`/`runtime` only when
-        this entry actually declared them."""
+        flags: `reasoning` always present (defaults False), `toolCalling` only when this entry
+        actually declared it."""
         caps: dict[str, Any] = {"reasoning": self.reasoning}
         if self.tool_calling is not None:
             caps["toolCalling"] = self.tool_calling
-        if self.runtime is not None:
-            caps["runtime"] = self.runtime
         return caps
 
 
@@ -160,10 +157,7 @@ def _parse_entry(raw: Any, index: int) -> ModelEntry:
     tool_calling = raw.get("toolCalling")
     if tool_calling is not None and not isinstance(tool_calling, bool):
         raise ModelValidationError(f"config.yaml models.catalog[{index}] ({model_id!r})'s 'toolCalling' must be a bool")
-    runtime = raw.get("runtime")
-    if runtime is not None and not isinstance(runtime, str):
-        raise ModelValidationError(f"config.yaml models.catalog[{index}] ({model_id!r})'s 'runtime' must be a string")
-    return ModelEntry(id=model_id, pipeline=pipeline, label=label, reasoning=reasoning, tool_calling=tool_calling, runtime=runtime)
+    return ModelEntry(id=model_id, pipeline=pipeline, label=label, reasoning=reasoning, tool_calling=tool_calling)
 
 
 def _parse_deployment_map(raw: str | None) -> dict[str, str]:
