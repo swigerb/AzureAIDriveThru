@@ -970,6 +970,38 @@ class DeployMdDarkStateSetupSequenceTests(unittest.TestCase):
         # the value were hardcoded or malformed. Pin the actual interpolated form.
         self.assertIn('-FrontendOrigin "https://$app.$domain"', self.text)
 
+    def test_redirect_uri_paragraph_says_omitting_flags_registers_localhost_defaults_not_untouched(self):
+        # Rick's round-2 review of #160, non-gating item 2: the paragraph above the Setup
+        # description previously claimed a run supplying none of -FrontendOrigin/-RedirectUri/
+        # -FromAzdEnv "leaves any existing SPA URIs untouched". That is false: -RedirectUri
+        # defaults to the two localhost origins (never empty), so the section-7 full-SET
+        # reconcile DOES fire on such a run and replaces the existing SPA redirect URIs with the
+        # localhost defaults only -- confirmed against the real script by
+        # SetupEntraAuthRedirectUriDefaultBehaviorMockedGraphTests. Only an explicit
+        # -RedirectUri @() (with no -FrontendOrigin/-FromAzdEnv) leaves the existing URIs
+        # untouched. Pin the corrected wording so it can't silently drift back.
+        self.assertNotRegex(
+            self.text,
+            r"leaves any existing SPA URIs untouched rather than wiping",
+            "must not claim that omitting -FrontendOrigin/-RedirectUri/-FromAzdEnv leaves "
+            "existing SPA URIs untouched -- the localhost -RedirectUri default makes the "
+            "section-7 reconcile fire and replace them",
+        )
+        self.assertIn(
+            "a run that omits `-FrontendOrigin`/`-RedirectUri`/`-FromAzdEnv`\n"
+            "registers the localhost defaults only, replacing any already-registered frontend origin.",
+            self.text,
+            "expected the corrected wording: omitting the three flags registers the localhost "
+            "defaults only (replacing any existing origin)",
+        )
+        self.assertIn(
+            "Only a run whose\ncombined total is empty (`-RedirectUri @()` explicitly, with no "
+            "`-FrontendOrigin`/`-FromAzdEnv`) leaves the\nexisting SPA URIs untouched.",
+            self.text,
+            "expected the corrected wording: only an explicit -RedirectUri @() (with no "
+            "-FrontendOrigin/-FromAzdEnv) leaves existing SPA URIs untouched",
+        )
+
     def test_every_setup_line_in_the_dark_state_block_carries_the_frontend_origin(self):
         # Review round 3, item 3: the previous pin above used `assertIn` against the WHOLE file,
         # so it was satisfied as long as ONE of the two Setup-EntraAuth.ps1 lines (preview,
@@ -1048,12 +1080,32 @@ class DeployMdTroubleshootingFallbackTests(unittest.TestCase):
         # -ClientId, idempotent) since it also covers the "role not found on service principal
         # yet" partial failure, keeping the two-pass -PreAuthorizedClientAppId @() sequence as
         # the second step for the "API configuration" failure specifically.
+        #
+        # Round 2 review, N1: the original assertion (position of the first
+        # "-PreAuthorizedClientAppId" token vs. the position of the first
+        # "./scripts/Setup-EntraAuth.ps1" token) could never fail: the two-pass line ALSO starts
+        # with "./scripts/Setup-EntraAuth.ps1", so even if it were moved to lead the block, that
+        # occurrence itself would become "first_setup_pos" and would still sit before its own
+        # "-PreAuthorizedClientAppId" flag. Assert on the Setup lines themselves instead: the
+        # FIRST Setup line in the block must be the plain re-run (no -PreAuthorizedClientAppId),
+        # and a LATER Setup line must be the two-pass one (carrying it).
         block = self._fallback_block()
-        preauth_pos = block.find("-PreAuthorizedClientAppId")
-        first_setup_pos = block.find("./scripts/Setup-EntraAuth.ps1")
-        self.assertGreater(first_setup_pos, -1)
-        self.assertGreater(preauth_pos, -1)
-        self.assertGreater(preauth_pos, first_setup_pos, "expected the plain -ClientId re-run before the two-pass -PreAuthorizedClientAppId @() sequence")
+        setup_lines = [
+            line for line in block.splitlines()
+            if "./scripts/Setup-EntraAuth.ps1" in line
+        ]
+        self.assertGreaterEqual(len(setup_lines), 3, "expected at least three Setup-EntraAuth.ps1 lines in the Troubleshooting fallback block")
+        self.assertNotIn(
+            "-PreAuthorizedClientAppId", setup_lines[0],
+            "expected the FIRST Setup-EntraAuth.ps1 line in the fallback block to be the plain "
+            f"-ClientId re-run (no -PreAuthorizedClientAppId), got: {setup_lines[0]!r}",
+        )
+        later_two_pass_lines = [line for line in setup_lines[1:] if "-PreAuthorizedClientAppId" in line]
+        self.assertGreaterEqual(
+            len(later_two_pass_lines), 1,
+            f"expected a later Setup-EntraAuth.ps1 line carrying -PreAuthorizedClientAppId (the "
+            f"two-pass sequence) after the plain re-run: {setup_lines}",
+        )
 
     def test_fallback_notes_running_in_the_same_session_as_case_a(self):
         block = self._fallback_block()
