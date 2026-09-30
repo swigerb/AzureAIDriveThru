@@ -10,7 +10,7 @@ namespace Conformance.Tests.Scenarios.Browser;
 /// own <c>VITE_AUTH_MODE=Development</c> build (scope item 4, persona-architecture.md 18.11).
 /// Reads <see cref="BrowserConformanceFixture.BrowserTimersBackendFixture"/>'s protected
 /// <c>Profile</c>/<c>UseEntraMode</c> overrides by reflection rather than instantiating it (which
-/// would start a real Python process and both fakes) — this only needs the static shape those
+/// would start a real Python process and both fakes), this only needs the static shape those
 /// overrides produce, never a running backend.
 /// </summary>
 public sealed class BrowserFixtureEnvironmentTests
@@ -64,7 +64,7 @@ public sealed class BrowserFixtureEnvironmentTests
     public void Browser_fixture_profile_still_carries_browser_timer_budgets()
     {
         // Not Production shouldn't come at the cost of the real-browser timer headroom
-        // BackendProfiles.BrowserTimers exists for — every one of its keys/values must still be
+        // BackendProfiles.BrowserTimers exists for, every one of its keys/values must still be
         // present unchanged.
         var profile = GetProtectedProperty<BackendProfile>(CreateFixture(), "Profile");
 
