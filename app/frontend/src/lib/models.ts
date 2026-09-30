@@ -19,9 +19,10 @@ const PIPELINE_LABELS: Record<SelectablePipeline, string> = {
  * `types/persona.ts`'s `PersonaModels`) into the groups the F10 model picker renders as
  * `<optgroup>`s, grouped by pipeline (Realtime / Cascade).
  *
- * Deliberately `realtime`/`cascade` only -- `local` is issue #81/F12's on-device pipeline, which
- * depends on work not yet done (#81) and is out of this task's scope, so it's left out of the
- * picker entirely rather than shown and then rejected by the server.
+ * Deliberately `realtime`/`cascade` only -- the on-device `local` pipeline was removed entirely
+ * by issue 155 (reversing design doc section 16 decision 7, recorded under ADR-001 decision 6,
+ * 2026-09-28): the demo runs on Microsoft Foundry exclusively now, so there is no third pipeline
+ * to ever show in this picker.
  *
  * Rick's PR 134 review, item 1: a pipeline whose `models` list is empty or missing renders NO
  * group at all -- both backends always send this list now (Python's `_selectable_models`, C#'s

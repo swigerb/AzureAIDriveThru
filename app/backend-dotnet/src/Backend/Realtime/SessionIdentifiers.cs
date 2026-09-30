@@ -22,11 +22,11 @@ public sealed class SessionIdentifiers
     public string ModelId { get; }
 
     /// <summary>Which pipeline <see cref="ModelId"/> belongs to (Rick's PR #106 review item 3:
-    /// order_state.py's <c>model_pipeline</c>, "realtime" | "cascade" | "local"). This processor
-    /// only ever handles the "realtime" pipeline -- order_state.py's own
-    /// <c>create_session(model_pipeline=None)</c> default -- so it is fixed here rather than
-    /// threaded through as a constructor parameter; a future cascade/local C# processor would
-    /// pass its own pipeline value instead.</summary>
+    /// order_state.py's <c>model_pipeline</c>, "realtime" | "cascade"; "local" existed here until
+    /// #155 dropped it entirely, 2026-09-28). This processor only ever handles the "realtime"
+    /// pipeline -- order_state.py's own <c>create_session(model_pipeline=None)</c> default -- so
+    /// it is fixed here rather than threaded through as a constructor parameter; a future cascade
+    /// C# processor would pass its own pipeline value instead.</summary>
     public string Pipeline => "realtime";
 
     public SessionIdentifiers(string personaId, string modelId, string? sessionToken = null)

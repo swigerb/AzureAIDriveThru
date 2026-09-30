@@ -10,7 +10,7 @@ namespace Conformance.Harness;
 /// explicit values always win over anything merely inherited.
 ///
 /// This exists because <c>new ProcessStartInfo(...).Environment</c> starts out pre-populated
-/// with a *copy of the current process's entire environment* (not a blank slate) — so without
+/// with a *copy of the current process's entire environment* (not a blank slate) -- so without
 /// this step, anything ambient in the coordinator's or CI runner's shell (a leftover
 /// CONFORMANCE_TEST_HOOKS=1 from a prior manual run, an AZURE_SUBSCRIPTION_ID from an unrelated
 /// `az account set`, or the corporate HTTP(S)_PROXY the NuGet/npm/pip proxy setup relies on)
@@ -22,13 +22,12 @@ public static class InheritedEnvironmentFilter
     /// <summary>Every backend under test only ever needs to reach the fakes and itself, both on loopback.</summary>
     public const string NoProxyValue = "127.0.0.1,localhost";
 
-    private static readonly string[] StripPrefixes = ["CONFORMANCE_", "AZURE_", "VERBOSE_", "PERSONAS", "DEFAULT_PERSONA", "LOCAL_RUNTIME"];
+    private static readonly string[] StripPrefixes = ["CONFORMANCE_", "AZURE_", "VERBOSE_", "PERSONAS", "DEFAULT_PERSONA"];
 
     /// <summary>
     /// Removes any inherited env var matching CONFORMANCE_*, AZURE_*, VERBOSE_*, PERSONAS*
-    /// (catches both PERSONAS and PERSONAS_DIR), DEFAULT_PERSONA*, LOCAL_RUNTIME* (issue #81: an ambient
-    /// LOCAL_RUNTIME_ENDPOINT would silently turn local mode on) (prefixes) or *_PROXY (suffix) —
-    /// case-insensitively, since Windows env var names are — then pins
+    /// (catches both PERSONAS and PERSONAS_DIR), DEFAULT_PERSONA* (prefixes) or *_PROXY (suffix) --
+    /// case-insensitively, since Windows env var names are -- then pins
     /// NO_PROXY/no_proxy to <see cref="NoProxyValue"/> so the child process's own outbound HTTP
     /// calls (to the fakes, always loopback) can never get routed through an inherited corporate
     /// forward proxy.

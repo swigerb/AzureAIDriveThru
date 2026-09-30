@@ -9,8 +9,7 @@ public sealed record ModelEntry(
     string Pipeline,
     string Label,
     bool Reasoning = false,
-    bool? ToolCalling = null,
-    string? Runtime = null);
+    bool? ToolCalling = null);
 
 /// <summary>Raised when config.yaml's models.catalog or the AZURE_AI_MODEL_DEPLOYMENTS env var is
 /// malformed, or an enabled persona's own pipeline default isn't catalogued for that pipeline

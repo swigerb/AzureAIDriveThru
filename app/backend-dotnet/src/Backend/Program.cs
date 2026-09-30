@@ -226,7 +226,8 @@ var echoCooldownSeconds = ReadDouble(audioSection, "echo_cooldown_seconds") ?? 1
 // ResolveRealtimeModel). Issue #13 lands the real upstream relay (RunSessionAsync, called
 // directly from the /realtime handler below); ProcessAsync stays a deliberate stub since the
 // realtime pipeline never posts to a session's generic mailbox. A model catalogued for
-// "cascade"/"local" 404s at dispatch time until their own processors land. ──────────────────────
+// "cascade" 404s at dispatch time until its own processor lands (#155 dropped "local" entirely,
+// so it is no longer a pipeline at all). ──────────────────────────────────────────────────────
 var processorRegistry = new ProcessorRegistry();
 var realtimeProcessor = new RealtimeProcessor(
     modelCatalog,
@@ -391,7 +392,7 @@ app.MapGet("/realtime", async (HttpContext context) =>
             // single-ReceiveAsync-into-a-4096-byte-buffer loop, which silently truncated/misdelivered
             // any message spanning multiple WebSocket frames or exceeding 4096 bytes. See
             // Realtime/WebSocketFrameReader.cs. Only reachable once a non-realtime pipeline (e.g.
-            // "cascade"/"local") registers its own processor -- none does yet.
+            // "cascade") registers its own processor -- none does yet.
             while (socket.State == WebSocketState.Open)
             {
                 var frame = await WebSocketFrameReader.ReadMessageAsync(socket, context.RequestAborted).ConfigureAwait(false);

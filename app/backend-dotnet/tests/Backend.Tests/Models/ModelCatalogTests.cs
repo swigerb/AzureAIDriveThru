@@ -6,21 +6,21 @@ using Backend.Tests.TestSupport;
 namespace Backend.Tests.Models;
 
 /// <summary>ModelCatalog.FromConfig/ValidatePersonaDefaults tests (issue #75, design doc section
-/// 7.2). config.yaml's real, shared `models.catalog` (5 entries) settled the shape as a top-level
+/// 7.2). config.yaml's real, shared `models.catalog` (4 entries) settled the shape as a top-level
 /// list of mappings under `models:` -- these tests assert against that real content directly
 /// rather than only synthetic fixtures, so a future edit to config.yaml's catalog is caught here
 /// too.</summary>
 public sealed class ModelCatalogTests
 {
     [Fact]
-    public void RealSharedConfig_HasFiveCatalogueEntries()
+    public void RealSharedConfig_HasFourCatalogueEntries()
     {
         var config = AppConfig.Load();
 
         var catalog = ModelCatalog.FromConfig(config);
 
         Assert.Equal(
-            new[] { "gpt-5-mini", "gpt-realtime-2.1", "gpt-realtime-mini", "phi-4", "phi-4-mini-local" },
+            new[] { "gpt-5-mini", "gpt-realtime-2.1", "gpt-realtime-mini", "phi-4" },
             catalog.Ids);
 
         var realtime = catalog.Get("gpt-realtime-2.1");
@@ -34,10 +34,6 @@ public sealed class ModelCatalogTests
         var cascade = catalog.Get("gpt-5-mini");
         Assert.Equal("cascade", cascade.Pipeline);
         Assert.True(cascade.ToolCalling);
-
-        var local = catalog.Get("phi-4-mini-local");
-        Assert.Equal("local", local.Pipeline);
-        Assert.Equal("onnx", local.Runtime);
     }
 
     [Fact]
@@ -148,6 +144,28 @@ public sealed class ModelCatalogTests
 
         var exc = Assert.Throws<ModelValidationException>(() => ModelCatalog.FromConfig(AppConfig.Load(path)));
         Assert.Contains("duplicate", exc.Message);
+    }
+
+    [Fact]
+    public void CatalogEntry_RuntimeField_IsRejectedAsUnknown()
+    {
+        // `runtime` existed only for `runtime: onnx` on the local pipeline's `phi-4-mini-local`
+        // entry, dropped by issue #155 (local mode removal, 2026-09-28); a catalog row that still
+        // has it is now an unknown field, the same as any other stray key (mirrors
+        // model_catalog.py's test_runtime_field_is_now_rejected_as_unknown).
+        var path = WriteTempConfig("""
+            model: {}
+            business_rules: {}
+            cache: {}
+            audio: {}
+            connection: {}
+            models:
+              catalog:
+                - { id: some-model, pipeline: cascade, label: "Some Model", runtime: onnx }
+            """);
+
+        var exc = Assert.Throws<ModelValidationException>(() => ModelCatalog.FromConfig(AppConfig.Load(path)));
+        Assert.Contains("unknown field", exc.Message);
     }
 
     [Fact]
