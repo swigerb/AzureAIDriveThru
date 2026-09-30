@@ -117,10 +117,13 @@
     # fail (see the error below). Derive the Python container app's stable FQDN read-only instead
     # (<app-name>.<environment-defaultDomain> never changes when ingress is toggled) and pass it
     # as -FrontendOrigin.
+    azd env select <env-name>
+    az account set --subscription (azd env get-value AZURE_SUBSCRIPTION_ID)
     $rg = azd env get-value AZURE_RESOURCE_GROUP
     $app = (az containerapp list -g $rg -o json | ConvertFrom-Json | Where-Object { $_.tags.'azd-service-name' -eq 'backend' } | Select-Object -First 1).name
     $envId = az containerapp show -n $app -g $rg --query properties.managedEnvironmentId -o tsv
     $domain = az containerapp env show --ids $envId --query properties.defaultDomain -o tsv
+    if (-not $app -or -not $domain) { throw 'backend container app or environment domain not found' }
     ./scripts/Setup-EntraAuth.ps1 -TenantId <guid> -FrontendOrigin "https://$app.$domain"
     # Preview only, changes nothing. Re-run the identical command with -Apply to provision:
     ./scripts/Setup-EntraAuth.ps1 -TenantId <guid> -FrontendOrigin "https://$app.$domain" -Apply
@@ -405,7 +408,11 @@ Write-Section "Application registration '$DisplayName'"
 $app = Resolve-TargetApplication
 
 if (-not $app) {
-    Write-Plan "Create single-tenant application '$DisplayName' (signInAudience=AzureADMyOrg, SPA public client, no secret, tag=$($script:ManagedTag))"
+    # Review round 3, item 5: the preview for a brand-new app previously named every setting it
+    # would create EXCEPT the SPA redirect URIs themselves, so a preview run gave no way to
+    # confirm what would be registered without re-deriving $redirects by hand.
+    $redirectsPreview = if ($redirects.Count -gt 0) { $redirects -join ', ' } else { '<none>' }
+    Write-Plan "Create single-tenant application '$DisplayName' (signInAudience=AzureADMyOrg, SPA public client, no secret, tag=$($script:ManagedTag), SPA redirect URIs: $redirectsPreview)"
     if ($Apply) {
         # SPA-ONLY (design 18.1: tighter than Retail Pulse -- no Web platform redirect URIs).
         $body = @{
@@ -513,15 +520,50 @@ else { Write-Skip "preAuthorizedApplications already reconciled: $preview" }
 if ($tokenVersionChanged) { Write-Plan "Set requestedAccessTokenVersion = $($script:RequestedAccessTokenVersion) (currently '$existingTokenVersion')" }
 else { Write-Skip "requestedAccessTokenVersion already $($script:RequestedAccessTokenVersion)" }
 
+# Review round 3, item 2: a NEW scope's id is generated locally ([guid]::NewGuid(), above) and
+# does not exist on Graph's side until a PATCH commits it. Sending that same brand-new id inside
+# a `preAuthorizedApplications` entry in the SAME PATCH that creates the scope risks Graph
+# rejecting the request (a pre-authorized client must reference an already-existing scope id).
+# When the scope is new AND a pre-authorized entry would reference it, split into two PATCHes:
+# the first commits the scope (with preAuthorizedApplications left at its EXISTING value, never
+# $desiredPreAuth, so this PATCH cannot itself reference the not-yet-committed id and cannot wipe
+# any pre-authorization the app already had); the second then reconciles preAuthorizedApplications
+# once the scope is guaranteed to exist. Both PATCHes always resend all three api sub-fields
+# (oauth2PermissionScopes/preAuthorizedApplications/requestedAccessTokenVersion) so neither write
+# can leave a sibling field reset to its default. When the scope already existed, or no
+# pre-authorized client is requested, a single PATCH remains correct and sufficient.
+$needsSplitPatch = $scopeChanged -and $desiredPreAuth.Count -gt 0
+
 if (($scopeChanged -or $preAuthChanged -or $tokenVersionChanged) -and $Apply -and $app) {
-    Invoke-Graph -Method PATCH -Url "$graph/applications/$($app.id)" -Body @{
-        api = @{
-            oauth2PermissionScopes     = $desiredScopes
-            preAuthorizedApplications  = $desiredPreAuth
-            requestedAccessTokenVersion = $script:RequestedAccessTokenVersion
-        }
-    } | Out-Null
-    Write-Done 'API configuration reconciled'
+    if ($needsSplitPatch) {
+        Invoke-Graph -Method PATCH -Url "$graph/applications/$($app.id)" -Body @{
+            api = @{
+                oauth2PermissionScopes     = $desiredScopes
+                preAuthorizedApplications  = $existingPreAuth
+                requestedAccessTokenVersion = $script:RequestedAccessTokenVersion
+            }
+        } | Out-Null
+        Write-Done "Delegated scope '$ApiScopeName' added"
+
+        Invoke-Graph -Method PATCH -Url "$graph/applications/$($app.id)" -Body @{
+            api = @{
+                oauth2PermissionScopes     = $desiredScopes
+                preAuthorizedApplications  = $desiredPreAuth
+                requestedAccessTokenVersion = $script:RequestedAccessTokenVersion
+            }
+        } | Out-Null
+        Write-Done 'preAuthorizedApplications reconciled'
+    }
+    else {
+        Invoke-Graph -Method PATCH -Url "$graph/applications/$($app.id)" -Body @{
+            api = @{
+                oauth2PermissionScopes     = $desiredScopes
+                preAuthorizedApplications  = $desiredPreAuth
+                requestedAccessTokenVersion = $script:RequestedAccessTokenVersion
+            }
+        } | Out-Null
+        Write-Done 'API configuration reconciled'
+    }
 }
 
 # --- 6. App role (DriveThru.User) ---------------------------------------------
