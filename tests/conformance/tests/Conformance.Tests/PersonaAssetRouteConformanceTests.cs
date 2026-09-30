@@ -31,7 +31,7 @@ public sealed class PersonaAssetRouteConformanceTests(ConformanceFixture fixture
     public Task Persona_asset_route_serves_a_real_file_with_200_and_immutable_caching_when_v_matches() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
-        using var http = new HttpClient();
+        using var http = ConformanceHttpClient.Create();
 
         // logoUrl is only in the /api/personas summary list, not the /api/personas/{id} detail
         // body (see app.py's `_persona_summary_body` vs `_persona_detail_body`).
@@ -55,7 +55,7 @@ public sealed class PersonaAssetRouteConformanceTests(ConformanceFixture fixture
     public Task Persona_asset_route_serves_short_cache_header_without_a_v() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
-        using var http = new HttpClient();
+        using var http = ConformanceHttpClient.Create();
         using var response = await http.GetAsync(new Uri(fixture.Backend!.BaseUri, "/personas/sonic/assets/logo.svg"), ct);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -68,7 +68,7 @@ public sealed class PersonaAssetRouteConformanceTests(ConformanceFixture fixture
     public Task Persona_menu_route_serves_json_with_200_and_immutable_caching_when_v_matches() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
-        using var http = new HttpClient();
+        using var http = ConformanceHttpClient.Create();
 
         using var detailResponse = await http.GetAsync(new Uri(fixture.Backend!.BaseUri, "/api/personas/sonic"), ct);
         using var detailDocument = JsonDocument.Parse(await detailResponse.Content.ReadAsStreamAsync(ct));
@@ -90,7 +90,7 @@ public sealed class PersonaAssetRouteConformanceTests(ConformanceFixture fixture
     public Task Persona_menu_route_serves_short_cache_header_without_a_v() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
-        using var http = new HttpClient();
+        using var http = ConformanceHttpClient.Create();
         using var response = await http.GetAsync(new Uri(fixture.Backend!.BaseUri, "/personas/sonic/menu.json"), ct);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -103,7 +103,7 @@ public sealed class PersonaAssetRouteConformanceTests(ConformanceFixture fixture
     public Task Persona_asset_route_returns_404_for_an_unknown_persona() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
-        using var http = new HttpClient();
+        using var http = ConformanceHttpClient.Create();
         using var response = await http.GetAsync(new Uri(fixture.Backend!.BaseUri, "/personas/nope/assets/logo.svg"), ct);
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
@@ -113,7 +113,7 @@ public sealed class PersonaAssetRouteConformanceTests(ConformanceFixture fixture
     public Task Persona_menu_route_returns_404_for_an_unknown_persona() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
-        using var http = new HttpClient();
+        using var http = ConformanceHttpClient.Create();
         using var response = await http.GetAsync(new Uri(fixture.Backend!.BaseUri, "/personas/nope/menu.json"), ct);
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
@@ -172,7 +172,7 @@ public sealed class PersonaAssetRouteConformanceTests(ConformanceFixture fixture
     public Task Persona_asset_route_rejects_path_traversal_attempts(string requestPath) => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
-        using var http = new HttpClient();
+        using var http = ConformanceHttpClient.Create();
         using var response = await http.GetAsync(new Uri(fixture.Backend!.BaseUri, requestPath), ct);
 
         Assert.True(

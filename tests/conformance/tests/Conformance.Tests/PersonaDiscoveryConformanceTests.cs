@@ -33,7 +33,7 @@ public sealed class PersonaDiscoveryConformanceTests(ConformanceFixture fixture)
     public Task Api_personas_returns_the_designed_shape() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
-        using var http = new HttpClient();
+        using var http = ConformanceHttpClient.Create();
         using var response = await http.GetAsync(new Uri(fixture.Backend!.BaseUri, "/api/personas"), ct);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -66,7 +66,7 @@ public sealed class PersonaDiscoveryConformanceTests(ConformanceFixture fixture)
     public Task Api_persona_detail_returns_200_for_the_default_persona() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
-        using var http = new HttpClient();
+        using var http = ConformanceHttpClient.Create();
         using var response = await http.GetAsync(new Uri(fixture.Backend!.BaseUri, "/api/personas/sonic"), ct);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -88,7 +88,7 @@ public sealed class PersonaDiscoveryConformanceTests(ConformanceFixture fixture)
     public Task Api_persona_detail_returns_404_for_an_unknown_id() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
-        using var http = new HttpClient();
+        using var http = ConformanceHttpClient.Create();
         using var response = await http.GetAsync(new Uri(fixture.Backend!.BaseUri, "/api/personas/nope"), ct);
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
@@ -107,7 +107,7 @@ public sealed class PersonaDiscoveryConformanceTests(ConformanceFixture fixture)
         // for asserting a pre-upgrade HTTP rejection.
         using var socket = new ClientWebSocket();
         socket.Options.CollectHttpResponseDetails = true;
-        var wsUri = new Uri($"ws://{backend.Host}:{backend.Port}/realtime?persona=nope");
+        var wsUri = await RealtimeUris.WithDefaultCredentialsAsync(backend, "persona=nope", ct);
 
         var ex = await Assert.ThrowsAsync<WebSocketException>(() => socket.ConnectAsync(wsUri, ct));
         Assert.Equal(HttpStatusCode.NotFound, socket.HttpStatusCode);

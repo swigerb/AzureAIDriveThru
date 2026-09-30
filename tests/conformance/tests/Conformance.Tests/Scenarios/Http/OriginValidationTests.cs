@@ -1,6 +1,5 @@
 using System.Net;
 using System.Net.WebSockets;
-using System.Text.Json;
 using Conformance.Harness;
 using Xunit;
 
@@ -26,23 +25,13 @@ namespace Conformance.Tests;
 [Trait("Dotnet", "ready")]
 public sealed class OriginValidationTests(ConformanceFixture fixture)
 {
-    private static async Task<string> FetchTokenAsync(Uri backendBaseUri, CancellationToken ct)
-    {
-        using var http = new HttpClient();
-        using var response = await http.GetAsync(new Uri(backendBaseUri, "/api/auth/session"), ct);
-        response.EnsureSuccessStatusCode();
-        using var document = JsonDocument.Parse(await response.Content.ReadAsStreamAsync(ct));
-        return document.RootElement.GetProperty("token").GetString() ?? "";
-    }
-
     private static async Task<(bool Connected, HttpStatusCode? StatusCode)> TryConnectWithOriginAsync(
         Uri backendBaseUri, string origin, CancellationToken ct)
     {
-        var token = await FetchTokenAsync(backendBaseUri, ct);
         using var socket = new ClientWebSocket();
         socket.Options.CollectHttpResponseDetails = true;
         socket.Options.SetRequestHeader("Origin", origin);
-        var wsUri = new Uri($"ws://{backendBaseUri.Host}:{backendBaseUri.Port}/realtime?token={Uri.EscapeDataString(token)}");
+        var wsUri = await RealtimeUris.WithDefaultCredentialsAsync(backendBaseUri, cancellationToken: ct);
         try
         {
             await socket.ConnectAsync(wsUri, ct);

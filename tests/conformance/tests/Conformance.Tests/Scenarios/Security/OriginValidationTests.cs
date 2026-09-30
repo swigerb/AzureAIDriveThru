@@ -54,7 +54,7 @@ public sealed class OriginValidationTests(ConformanceFixture fixture)
         using var socket = new ClientWebSocket();
         socket.Options.CollectHttpResponseDetails = true;
         socket.Options.SetRequestHeader("Origin", lookalikeOrigin);
-        var wsUri = new Uri($"ws://{backend.Host}:{backend.Port}/realtime");
+        var wsUri = await RealtimeUris.WithDefaultCredentialsAsync(backend, cancellationToken: ct);
 
         var ex = await Assert.ThrowsAsync<WebSocketException>(() => socket.ConnectAsync(wsUri, ct));
         Assert.Equal(HttpStatusCode.Forbidden, socket.HttpStatusCode);
@@ -75,7 +75,7 @@ public sealed class OriginValidationTests(ConformanceFixture fixture)
         using var socket = new ClientWebSocket();
         socket.Options.CollectHttpResponseDetails = true;
         // Deliberately no Origin header set.
-        var wsUri = new Uri($"ws://{backend.Host}:{backend.Port}/realtime");
+        var wsUri = await RealtimeUris.WithDefaultCredentialsAsync(backend, cancellationToken: ct);
 
         await socket.ConnectAsync(wsUri, ct);
         Assert.Equal(WebSocketState.Open, socket.State);

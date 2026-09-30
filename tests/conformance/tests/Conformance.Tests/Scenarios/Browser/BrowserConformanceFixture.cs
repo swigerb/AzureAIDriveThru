@@ -7,9 +7,11 @@ namespace Conformance.Tests.Scenarios.Browser;
 
 /// <summary>
 /// Issue #26: backs the Category=Browser suite. Wraps (rather than inherits — see below) a
-/// BrowserTimers-profile <see cref="ConformanceFixture"/> (see
-/// <see cref="BackendProfiles.BrowserTimers"/> for why this isn't ShortTimers) so idle/nudge
-/// scenarios still finish in seconds without racing real page-load/click/mic-warm-up latency,
+/// <see cref="BackendProfiles.BrowserTimersDevelopment"/>-profile <see cref="ConformanceFixture"/>
+/// (see <see cref="BackendProfiles.BrowserTimers"/> for why the timer budgets aren't ShortTimers,
+/// and R9 below for why the profile is the Development variant, not BrowserTimers itself) so
+/// idle/nudge scenarios still finish in seconds without racing real page-load/click/mic-warm-up
+/// latency,
 /// plus one shared headless <see cref="IBrowser"/> launched against whichever supported
 /// channel (msedge, then chrome) is actually installed on this machine — never downloaded, per
 /// <see cref="BrowserChannelPolicy"/>. A genuinely browser-less developer machine gets a clean
@@ -28,9 +30,19 @@ namespace Conformance.Tests.Scenarios.Browser;
 /// </summary>
 public sealed class BrowserConformanceFixture : IAsyncLifetime
 {
-    private sealed class BrowserTimersBackendFixture : ConformanceFixture
+    /// <summary>
+    /// Issue #143/ADR-002 (R9): the Browser collection's frontend bundle is built with
+    /// <c>VITE_AUTH_MODE=Development</c> (no MSAL, no bearer) -- scope item 4 and
+    /// persona-architecture.md 18.11 put the Playwright UX runs on the Development pass-through
+    /// fixture, so this must match with its own <c>UseEntraMode =&gt; false</c> plus
+    /// <see cref="BackendProfiles.BrowserTimersDevelopment"/> rather than the default Entra-mode,
+    /// Production shape every other fixture uses. Internal (not private) so
+    /// <c>BrowserFixtureEnvironmentTests</c> can pin its effective environment by reflection.
+    /// </summary>
+    internal sealed class BrowserTimersBackendFixture : ConformanceFixture
     {
-        protected override BackendProfile Profile => BackendProfiles.BrowserTimers;
+        protected override BackendProfile Profile => BackendProfiles.BrowserTimersDevelopment;
+        protected override bool UseEntraMode => false;
     }
 
     private readonly ConformanceFixture _inner = new BrowserTimersBackendFixture();

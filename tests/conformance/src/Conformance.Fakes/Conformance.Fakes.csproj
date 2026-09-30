@@ -8,4 +8,9 @@
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- Issue #143 (ADR-002): FakeEntraIssuer.Mint signs tokens directly with this library. -->
+    <PackageReference Include="System.IdentityModel.Tokens.Jwt" />
+  </ItemGroup>
+
 </Project>
