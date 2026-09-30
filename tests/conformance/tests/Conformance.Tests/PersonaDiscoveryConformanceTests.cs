@@ -107,7 +107,7 @@ public sealed class PersonaDiscoveryConformanceTests(ConformanceFixture fixture)
         // for asserting a pre-upgrade HTTP rejection.
         using var socket = new ClientWebSocket();
         socket.Options.CollectHttpResponseDetails = true;
-        var wsUri = new Uri($"ws://{backend.Host}:{backend.Port}/realtime?persona=nope");
+        var wsUri = await RealtimeUris.WithDefaultCredentialsAsync(backend, "persona=nope", ct);
 
         var ex = await Assert.ThrowsAsync<WebSocketException>(() => socket.ConnectAsync(wsUri, ct));
         Assert.Equal(HttpStatusCode.NotFound, socket.HttpStatusCode);

@@ -36,7 +36,7 @@ public static class ModelSelectionConformanceTestHelpers
     {
         using var socket = new ClientWebSocket();
         socket.Options.CollectHttpResponseDetails = true;
-        var wsUri = new Uri($"ws://{backendBaseUri.Host}:{backendBaseUri.Port}/realtime?{query}");
+        var wsUri = await RealtimeUris.WithDefaultCredentialsAsync(backendBaseUri, query, ct);
 
         var ex = await Assert.ThrowsAsync<WebSocketException>(() => socket.ConnectAsync(wsUri, ct));
         Assert.Equal(HttpStatusCode.NotFound, socket.HttpStatusCode);
@@ -61,7 +61,8 @@ public static class ModelSelectionConformanceTestHelpers
         Uri backendBaseUri, string query, HttpStatusCode expectedStatus, CancellationToken ct)
     {
         using var http = ConformanceHttpClient.Create();
-        using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(backendBaseUri, $"/realtime?{query}"));
+        var fullQuery = await RealtimeUris.BuildQueryAsync(backendBaseUri, query, ct);
+        using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(backendBaseUri, $"/realtime?{fullQuery}"));
         request.Headers.TryAddWithoutValidation("Connection", "Upgrade");
         request.Headers.TryAddWithoutValidation("Upgrade", "websocket");
         request.Headers.TryAddWithoutValidation("Sec-WebSocket-Version", "13");

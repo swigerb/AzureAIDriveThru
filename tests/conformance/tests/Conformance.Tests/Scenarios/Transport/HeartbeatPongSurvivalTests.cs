@@ -41,12 +41,7 @@ public sealed class HeartbeatPongSurvivalTests(ConformanceFixture fixture)
             $"{fixture.Realtime.OpenConnectionCount} are still open — a previous test leaked a connection.");
 
         var backendUri = fixture.Backend!.BaseUri;
-
-        using var http = ConformanceHttpClient.Create();
-        using var tokenResponse = await http.GetAsync(new Uri(backendUri, "/api/auth/session"), ct);
-        tokenResponse.EnsureSuccessStatusCode();
-        using var tokenDoc = JsonDocument.Parse(await tokenResponse.Content.ReadAsStreamAsync(ct));
-        var token = tokenDoc.RootElement.GetProperty("token").GetString();
+        var query = await RealtimeUris.BuildQueryAsync(backendUri, cancellationToken: ct);
 
         using var tcp = new TcpClient();
         await tcp.ConnectAsync(backendUri.Host, backendUri.Port, ct);
@@ -57,7 +52,7 @@ public sealed class HeartbeatPongSurvivalTests(ConformanceFixture fixture)
         var secWebSocketKey = Convert.ToBase64String(keyBytes);
         var origin = $"{backendUri.Scheme}://{backendUri.Authority}";
         var request =
-            $"GET /realtime?token={Uri.EscapeDataString(token ?? "")} HTTP/1.1\r\n" +
+            $"GET /realtime?{query} HTTP/1.1\r\n" +
             $"Host: {backendUri.Host}:{backendUri.Port}\r\n" +
             "Upgrade: websocket\r\n" +
             "Connection: Upgrade\r\n" +
