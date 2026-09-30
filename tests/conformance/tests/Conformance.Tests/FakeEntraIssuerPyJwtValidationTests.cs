@@ -18,12 +18,15 @@ namespace Conformance.Tests;
 /// tests/conformance/requirements-harness.txt), not the full app/backend runtime dependency set
 /// PythonBackendLauncher's own .venv carries.
 ///
-/// Skips gracefully (rather than failing) when no interpreter with PyJWT importable can be found,
-/// with the exact command to fix that in the skip message -- CI's python leg installs
-/// requirements-harness.txt into its own .venv (see .github/workflows/conformance.yml), so this
-/// actually runs for real there; the dotnet leg's CI job never sets up a Python interpreter at
-/// all (a completely separate, pre-existing scoping decision, not one #143 makes), so it skips
-/// there, same as a local run against CONFORMANCE_BACKEND=dotnet would.
+/// Skips gracefully only on a genuine local developer machine with no interpreter with PyJWT
+/// importable found -- CI's python leg installs requirements-harness.txt into its own .venv (see
+/// .github/workflows/conformance.yml), so this actually runs for real there, and R11 (Rick's PR
+/// #158 round 1 review) makes CI fail loudly instead of skipping if that install step ever
+/// regresses (via <see cref="PyJwtInteropPolicy"/>, the same "must never silently disappear in
+/// CI" shape as <see cref="BrowserChannelPolicy"/>/<see cref="DotnetPlaceholderPolicy"/>). The
+/// dotnet leg's CI job never sets up a Python interpreter at all (a completely separate,
+/// pre-existing scoping decision, not one #143 makes) and is not CI for this suite's own purposes
+/// either, so it still skips there, same as a local run against CONFORMANCE_BACKEND=dotnet would.
 /// </summary>
 public sealed class FakeEntraIssuerPyJwtValidationTests
 {
@@ -54,6 +57,34 @@ public sealed class FakeEntraIssuerPyJwtValidationTests
             }
         }
         return null;
+    }
+
+    /// <summary>
+    /// R11 (Rick's PR #158 round 1 review): resolves an interpreter or ends the test via
+    /// <see cref="PyJwtInteropPolicy"/> -- a clean local skip with the install command, or a hard
+    /// CI failure so this proof can never silently disappear on a green leg. Shared by all three
+    /// [Fact]s below so the CI-fail-closed decision lives in exactly one place.
+    /// </summary>
+    private static async Task<string> RequireInterpreterWithPyJwtAsync(CancellationToken cancellationToken)
+    {
+        var interpreter = await FindInterpreterWithPyJwtAsync(cancellationToken).ConfigureAwait(false);
+        if (interpreter is not null)
+        {
+            return interpreter;
+        }
+
+        var isCi = CiEnvironment.IsCi;
+        var message = PyJwtInteropPolicy.BuildMessage(interpreterFound: false, isCi);
+        if (PyJwtInteropPolicy.ShouldSkip(interpreterFound: false, isCi))
+        {
+            Assert.Skip(message);
+        }
+        else
+        {
+            Assert.Fail(message);
+        }
+
+        throw new InvalidOperationException("Unreachable: Assert.Skip/Assert.Fail always end the test.");
     }
 
     private static async Task<bool> CanImportPyJwtAsync(string interpreter, CancellationToken cancellationToken)
@@ -105,16 +136,7 @@ public sealed class FakeEntraIssuerPyJwtValidationTests
     public async Task Valid_minted_token_validates_with_stock_PyJWT()
     {
         var ct = TestContext.Current.CancellationToken;
-        var interpreter = await FindInterpreterWithPyJwtAsync(ct);
-        if (interpreter is null)
-        {
-            Assert.Skip(
-                "No Python interpreter with PyJWT importable was found (checked the repo-root " +
-                ".venv and bare python/python3 on PATH). Install it with: " +
-                "python -m pip install -r tests/conformance/requirements-harness.txt " +
-                "(into the repo-root .venv if you have one, matching PythonBackendLauncher's own convention).");
-            return;
-        }
+        var interpreter = await RequireInterpreterWithPyJwtAsync(ct);
 
         await using var issuer = new FakeEntraIssuer();
         await issuer.StartAsync(ct);
@@ -138,14 +160,7 @@ public sealed class FakeEntraIssuerPyJwtValidationTests
     public async Task Token_signed_by_the_unpublished_key_is_rejected_by_PyJWT()
     {
         var ct = TestContext.Current.CancellationToken;
-        var interpreter = await FindInterpreterWithPyJwtAsync(ct);
-        if (interpreter is null)
-        {
-            Assert.Skip(
-                "No Python interpreter with PyJWT importable was found -- see " +
-                "Valid_minted_token_validates_with_stock_PyJWT for how to install it.");
-            return;
-        }
+        var interpreter = await RequireInterpreterWithPyJwtAsync(ct);
 
         await using var issuer = new FakeEntraIssuer();
         await issuer.StartAsync(ct);
@@ -169,14 +184,7 @@ public sealed class FakeEntraIssuerPyJwtValidationTests
     public async Task Expired_token_is_rejected_by_PyJWT()
     {
         var ct = TestContext.Current.CancellationToken;
-        var interpreter = await FindInterpreterWithPyJwtAsync(ct);
-        if (interpreter is null)
-        {
-            Assert.Skip(
-                "No Python interpreter with PyJWT importable was found -- see " +
-                "Valid_minted_token_validates_with_stock_PyJWT for how to install it.");
-            return;
-        }
+        var interpreter = await RequireInterpreterWithPyJwtAsync(ct);
 
         await using var issuer = new FakeEntraIssuer();
         await issuer.StartAsync(ct);
