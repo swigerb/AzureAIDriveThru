@@ -560,7 +560,10 @@ class VerifyProductionAuthScriptContractTests(unittest.TestCase):
         self.assertIn("healthState", self.text)
         self.assertIn("runningState", self.text)
         self.assertRegex(self.text, r"healthState\s*-eq\s*['\"]Healthy['\"]")
-        self.assertRegex(self.text, r"runningState\s*-eq\s*['\"]Running['\"]")
+        self.assertRegex(
+            self.text,
+            r"runningState\s*-in\s*@\(\s*['\"]Running['\"]\s*,\s*['\"]RunningAtMaxScale['\"]\s*\)",
+        )
 
     def test_app_discovery_is_strictmode_safe_and_covers_the_dotnet_app(self):
         # Review item 5: the dotnet app's bicep resource has no `azd-service-name` tag, so a raw

@@ -370,7 +370,7 @@ foreach ($capp in $targetApps) {
         Add-Result "$svcName/$revName`: healthState=Healthy" ($healthState -eq 'Healthy') "healthState=$healthState"
 
         $runningState = Get-Prop $rev.properties 'runningState' $null
-        Add-Result "$svcName/$revName`: runningState=Running" ($runningState -eq 'Running') "runningState=$runningState"
+        Add-Result "$svcName/$revName`: runningState=Running" ($runningState -in @('Running', 'RunningAtMaxScale')) "runningState=$runningState"
 
         $envList = if ($container -and $container.env) { @($container.env) } else { @() }
         function Get-EnvVal([string]$name) {
