@@ -142,7 +142,7 @@ function Get-Prop {
         if ($Object.ContainsKey($Name)) { return $Object[$Name] }
         return $Default
     }
-    if ($Object.PSObject.Properties.Name -contains $Name) { return $Object.$Name }
+    if ($null -ne $Object.PSObject.Properties[$Name]) { return $Object.$Name }
     return $Default
 }
 
@@ -185,20 +185,20 @@ function Test-AnonymousProbes {
     $root = Invoke-ProbeRequest -Url $BaseUrl
     $rootOk = $root.StatusCode -eq 200
     $markerOk = $rootOk -and ($root.Content -match 'drivethru-auth-mode["'']?\s*content=["'']Entra')
-    Add-Result "$ServiceName: GET / is 200" $rootOk "status=$($root.StatusCode)"
-    Add-Result "$ServiceName: GET / carries the Entra auth-mode marker" $markerOk 'meta[name=drivethru-auth-mode][content=Entra] present'
+    Add-Result "${ServiceName}: GET / is 200" $rootOk "status=$($root.StatusCode)"
+    Add-Result "${ServiceName}: GET / carries the Entra auth-mode marker" $markerOk 'meta[name=drivethru-auth-mode][content=Entra] present'
 
     $health = Invoke-ProbeRequest -Url "$BaseUrl/health"
-    Add-Result "$ServiceName: GET /health is 200 (anonymous)" ($health.StatusCode -eq 200) "status=$($health.StatusCode)"
+    Add-Result "${ServiceName}: GET /health is 200 (anonymous)" ($health.StatusCode -eq 200) "status=$($health.StatusCode)"
 
     if (-not $ProbePersona) {
-        Add-Result "$ServiceName: GET branding asset (logo.svg) is 200 (anonymous)" $false 'no persona resolved (azd env DEFAULT_PERSONA/PERSONAS empty); pass -ProbePersona'
+        Add-Result "${ServiceName}: GET branding asset (logo.svg) is 200 (anonymous)" $false 'no persona resolved (azd env DEFAULT_PERSONA/PERSONAS empty); pass -ProbePersona'
     }
     else {
         # A public branding asset (18.2): image/audio types stay anonymous so <img>/<audio>/favicon
         # never need a bearer. Any enabled persona's logo is a stable, always-present fixture.
         $branding = Invoke-ProbeRequest -Url "$BaseUrl/personas/$ProbePersona/assets/logo.svg"
-        Add-Result "$ServiceName: GET branding asset (logo.svg) is 200 (anonymous)" ($branding.StatusCode -eq 200) "status=$($branding.StatusCode)"
+        Add-Result "${ServiceName}: GET branding asset (logo.svg) is 200 (anonymous)" ($branding.StatusCode -eq 200) "status=$($branding.StatusCode)"
     }
 
     $protectedGets = @(
@@ -210,26 +210,26 @@ function Test-AnonymousProbes {
         $protectedGets += @{ Path = "/personas/$ProbePersona/assets/demo/dummyOrder.json"; Label = 'GET asset JSON (non-branding)' }
     }
     else {
-        Add-Result "$ServiceName: GET menu.json is 401 (no token)" $false 'no persona resolved; pass -ProbePersona'
-        Add-Result "$ServiceName: GET asset JSON (non-branding) is 401 (no token)" $false 'no persona resolved; pass -ProbePersona'
+        Add-Result "${ServiceName}: GET menu.json is 401 (no token)" $false 'no persona resolved; pass -ProbePersona'
+        Add-Result "${ServiceName}: GET asset JSON (non-branding) is 401 (no token)" $false 'no persona resolved; pass -ProbePersona'
     }
     foreach ($p in $protectedGets) {
         $r = Invoke-ProbeRequest -Url "$BaseUrl$($p.Path)"
-        Add-Result "$ServiceName: $($p.Label) is 401 (no token)" ($r.StatusCode -eq 401) "status=$($r.StatusCode)"
+        Add-Result "${ServiceName}: $($p.Label) is 401 (no token)" ($r.StatusCode -eq 401) "status=$($r.StatusCode)"
     }
 
     # Query-string tokens are honored on /realtime only (design 18.3): the same synthetic token as
     # a REST query parameter must still be rejected.
     $queryToken = Invoke-ProbeRequest -Url "$BaseUrl/api/personas?access_token=$($script:SyntheticToken)"
-    Add-Result "$ServiceName: GET /api/personas?access_token=<synthetic> is 401 (query token ignored on REST)" ($queryToken.StatusCode -eq 401) "status=$($queryToken.StatusCode)"
+    Add-Result "${ServiceName}: GET /api/personas?access_token=<synthetic> is 401 (query token ignored on REST)" ($queryToken.StatusCode -eq 401) "status=$($queryToken.StatusCode)"
 
     # /realtime is a WebSocket upgrade; a plain HTTP GET without the Upgrade handshake still
     # reaches the same auth middleware and must be rejected with 401 before any upgrade occurs.
     $wsNoToken = Invoke-ProbeRequest -Url "$BaseUrl/realtime" -Headers @{ Connection = 'Upgrade'; Upgrade = 'websocket' }
-    Add-Result "$ServiceName: /realtime upgrade with no token is 401" ($wsNoToken.StatusCode -eq 401) "status=$($wsNoToken.StatusCode)"
+    Add-Result "${ServiceName}: /realtime upgrade with no token is 401" ($wsNoToken.StatusCode -eq 401) "status=$($wsNoToken.StatusCode)"
 
     $wsSynthetic = Invoke-ProbeRequest -Url "$BaseUrl/realtime?access_token=$($script:SyntheticToken)" -Headers @{ Connection = 'Upgrade'; Upgrade = 'websocket' }
-    Add-Result "$ServiceName: /realtime upgrade with a synthetic token is 401" ($wsSynthetic.StatusCode -eq 401) "status=$($wsSynthetic.StatusCode)"
+    Add-Result "${ServiceName}: /realtime upgrade with a synthetic token is 401" ($wsSynthetic.StatusCode -eq 401) "status=$($wsSynthetic.StatusCode)"
 }
 
 # -Authenticated: acquire a REAL delegated user token (the caller must already hold the app role)
@@ -246,17 +246,17 @@ function Test-AuthenticatedProbe {
     $scope = "api://$ClientId/$ApiScopeName"
     $tokenJson = az account get-access-token --scope $scope --tenant $TenantId --output json 2>&1
     if ($LASTEXITCODE -ne 0) {
-        Add-Result "$ServiceName: acquire delegated token for -Authenticated" $false "az account get-access-token failed (see stderr; token never logged): exit $LASTEXITCODE"
+        Add-Result "${ServiceName}: acquire delegated token for -Authenticated" $false "az account get-access-token failed (see stderr; token never logged): exit $LASTEXITCODE"
         return
     }
     $token = ($tokenJson | ConvertFrom-Json).accessToken
     if ([string]::IsNullOrWhiteSpace($token)) {
-        Add-Result "$ServiceName: acquire delegated token for -Authenticated" $false 'no accessToken in response'
+        Add-Result "${ServiceName}: acquire delegated token for -Authenticated" $false 'no accessToken in response'
         return
     }
     try {
         $resp = Invoke-ProbeRequest -Url "$BaseUrl/api/personas" -BearerToken $token
-        Add-Result "$ServiceName: GET /api/personas with a valid delegated token is 200 (-Authenticated)" ($resp.StatusCode -eq 200) "status=$($resp.StatusCode)"
+        Add-Result "${ServiceName}: GET /api/personas with a valid delegated token is 200 (-Authenticated)" ($resp.StatusCode -eq 200) "status=$($resp.StatusCode)"
     }
     finally {
         # Best-effort scrub of the local reference; PowerShell strings are immutable so this does
@@ -277,19 +277,28 @@ if ([string]::IsNullOrWhiteSpace($TenantId)) { throw 'Unable to resolve -TenantI
 if ([string]::IsNullOrWhiteSpace($ClientId)) { throw 'Unable to resolve -ClientId (azd env ENTRA_CLIENT_ID is empty). Pass -ClientId explicitly, or run Setup-EntraAuth.ps1 first.' }
 if ([string]::IsNullOrWhiteSpace($ResourceGroup)) { throw 'Unable to resolve -ResourceGroup (azd env AZURE_RESOURCE_GROUP is empty). Pass -ResourceGroup explicitly.' }
 
-# Generic persona resolution (review item 8): never hardcode a brand id in this script.
-if (-not $ProbePersona) {
-    $ProbePersona = Get-AzdEnvValue 'DEFAULT_PERSONA'
-    if ([string]::IsNullOrWhiteSpace($ProbePersona)) {
+# Generic persona resolution (review item 8): never hardcode a brand id in this script. Resolved
+# into a separate local, $probePersonaId, instead of reassigning the validated -ProbePersona
+# parameter (round 2 blocker 3): a [ValidatePattern(...)] parameter re-validates on every
+# assignment, so reassigning it to an empty/unresolved value (or $null) throws "The variable
+# cannot be validated" instead of failing closed with a normal FAIL result.
+$probePersonaId = $ProbePersona
+if (-not $probePersonaId) {
+    $probePersonaId = Get-AzdEnvValue 'DEFAULT_PERSONA'
+    if ([string]::IsNullOrWhiteSpace($probePersonaId)) {
         $personasEnv = Get-AzdEnvValue 'PERSONAS'
         if (-not [string]::IsNullOrWhiteSpace($personasEnv)) {
-            $ProbePersona = ($personasEnv -split ',')[0].Trim()
+            $probePersonaId = ($personasEnv -split ',')[0].Trim()
         }
     }
 }
-if ([string]::IsNullOrWhiteSpace($ProbePersona)) {
+if ($probePersonaId -and $probePersonaId -cnotmatch '^[a-z0-9-]+$') {
+    Add-Result 'ProbePersona resolves to a valid persona id' $false "resolved '$probePersonaId' does not match ^[a-z0-9-]+$ (pass -ProbePersona explicitly)"
+    $probePersonaId = $null
+}
+if ([string]::IsNullOrWhiteSpace($probePersonaId)) {
     Write-Host 'Warning: no persona resolved (azd env DEFAULT_PERSONA/PERSONAS empty); pass -ProbePersona. Branding/menu/asset probes will FAIL.' -ForegroundColor Yellow
-    $ProbePersona = $null
+    $probePersonaId = $null
 }
 
 # The dotnet app is discovered by name (not tag) because its bicep resource has no
@@ -330,17 +339,20 @@ foreach ($capp in $targetApps) {
     $appName = $capp.name
     Write-Host "--- $svcName ($appName) ---" -ForegroundColor Cyan
 
-    # Expected image: explicit override, else azd env SERVICE_<NAME>_IMAGE_NAME.
-    $expectedImage = if ($ExpectedImage.ContainsKey($svcName)) { $ExpectedImage[$svcName] } else { Get-AzdEnvValue $svcSpec.ImageEnvVar }
-    if ([string]::IsNullOrWhiteSpace($expectedImage)) {
-        Add-Result "$svcName: expected image resolvable" $false "azd env $($svcSpec.ImageEnvVar) is empty and no -ExpectedImage override was given"
+    # Expected image: explicit override, else azd env SERVICE_<NAME>_IMAGE_NAME. Named $wantImage,
+    # not $expectedImage: PowerShell variable names are case-insensitive, so $expectedImage would
+    # be the same variable as the [hashtable]$ExpectedImage parameter (review round 2 blocker 2)
+    # and assigning a string to it here would throw "Cannot convert ... to Hashtable".
+    $wantImage = if ($ExpectedImage.ContainsKey($svcName)) { $ExpectedImage[$svcName] } else { Get-AzdEnvValue $svcSpec.ImageEnvVar }
+    if ([string]::IsNullOrWhiteSpace($wantImage)) {
+        Add-Result "${svcName}: expected image resolvable" $false "azd env $($svcSpec.ImageEnvVar) is empty and no -ExpectedImage override was given"
         continue
     }
 
     # --- Ingress state (used both to report and, under -RevisionsOnly, to fail-if-public) ------
     $ingressEnabled = [bool](Get-Prop $capp.properties.configuration 'ingress' $null)
     if ($RevisionsOnly) {
-        Add-Result "$svcName: ingress disabled (dark-provision gate)" (-not $ingressEnabled) "ingress present=$ingressEnabled"
+        Add-Result "${svcName}: ingress disabled (dark-provision gate)" (-not $ingressEnabled) "ingress present=$ingressEnabled"
     }
     else {
         Write-Host "  ingress enabled: $ingressEnabled"
@@ -356,15 +368,15 @@ foreach ($capp in $targetApps) {
     # revision means a stuck/blue-green rollout the operator must resolve before trusting any
     # other check below, and zero is the pre-existing failure this replaces.
     $activeNames = ($activeRevisions | ForEach-Object { $_.name }) -join ', '
-    Add-Result "$svcName: exactly one active revision" ($activeRevisions.Count -eq 1) "active=$($activeRevisions.Count) ($activeNames)"
+    Add-Result "${svcName}: exactly one active revision" ($activeRevisions.Count -eq 1) "active=$($activeRevisions.Count) ($activeNames)"
 
     foreach ($rev in $activeRevisions) {
         $revName = $rev.name
         $template = $rev.properties.template
         $container = @($template.containers) | Select-Object -First 1
         $image = if ($container) { $container.image } else { $null }
-        $imageOk = $image -and ($image -eq $expectedImage)
-        Add-Result "$svcName/$revName`: runs expected image" $imageOk "image=$image expected=$expectedImage"
+        $imageOk = $image -and ($image -eq $wantImage)
+        Add-Result "$svcName/$revName`: runs expected image" $imageOk "image=$image expected=$wantImage"
 
         $healthState = Get-Prop $rev.properties 'healthState' $null
         Add-Result "$svcName/$revName`: healthState=Healthy" ($healthState -eq 'Healthy') "healthState=$healthState"
@@ -410,30 +422,30 @@ foreach ($capp in $targetApps) {
         # "ResourceNotFound"/"could not be found" as an implicit pass, which is unsafe because the
         # same text can appear for auth transiently unreachable, not just "nothing configured".
         # Every failure to read EasyAuth state must fail closed.
-        Add-Result "$svcName: EasyAuth disabled (platform.enabled=false)" $false "az containerapp auth show failed (unknown state, treated as failure): $authShow"
+        Add-Result "${svcName}: EasyAuth disabled (platform.enabled=false)" $false "az containerapp auth show failed (unknown state, treated as failure): $authShow"
     }
     else {
         $authCfg = $authShow | ConvertFrom-Json
         $platformEnabled = Get-Prop (Get-Prop $authCfg 'platform' @{}) 'enabled' $null
         $easyAuthOff = $platformEnabled -eq $false
-        Add-Result "$svcName: EasyAuth disabled (platform.enabled=false)" $easyAuthOff "platform.enabled=$platformEnabled"
+        Add-Result "${svcName}: EasyAuth disabled (platform.enabled=false)" $easyAuthOff "platform.enabled=$platformEnabled"
     }
 
     $secretsJson = az containerapp secret list -n $appName -g $ResourceGroup --output json 2>&1
     if ($LASTEXITCODE -ne 0) { throw "az containerapp secret list failed for $appName $secretsJson" }
     $secrets = @($secretsJson | ConvertFrom-Json)
     $leftoverSecret = $secrets | Where-Object { $_.name -eq 'aad-client-secret' }
-    Add-Result "$svcName: no leftover 'aad-client-secret'" (-not $leftoverSecret) $(if ($leftoverSecret) { 'secret still present' } else { 'not present' })
+    Add-Result "${svcName}: no leftover 'aad-client-secret'" (-not $leftoverSecret) $(if ($leftoverSecret) { 'secret still present' } else { 'not present' })
 
     # --- Anonymous HTTP probes (skipped under -RevisionsOnly) ----------------------------------
     if (-not $RevisionsOnly) {
         $fqdn = Get-Prop (Get-Prop $capp.properties.configuration 'ingress' @{}) 'fqdn' $null
         if (-not $fqdn) {
-            Add-Result "$svcName: HTTP probes (ingress has an fqdn)" $false 'ingress is disabled or has no fqdn -- run with -RevisionsOnly while dark'
+            Add-Result "${svcName}: HTTP probes (ingress has an fqdn)" $false 'ingress is disabled or has no fqdn -- run with -RevisionsOnly while dark'
         }
         else {
             $base = "https://$fqdn"
-            Test-AnonymousProbes -BaseUrl $base -ServiceName $svcName -ProbePersona $ProbePersona
+            Test-AnonymousProbes -BaseUrl $base -ServiceName $svcName -ProbePersona $probePersonaId
             if ($Authenticated) {
                 Test-AuthenticatedProbe -BaseUrl $base -ServiceName $svcName -TenantId $TenantId -ClientId $ClientId -ApiScopeName $ApiScopeName
             }

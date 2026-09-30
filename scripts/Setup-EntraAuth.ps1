@@ -78,7 +78,11 @@
     redirect-URI reconcile (section 7) is a full SET, not a merge: a later run that omits
     -RedirectUri, -FrontendOrigin and -FromAzdEnv would otherwise silently delete these local
     origins too, which is why they are the default here rather than only documented. Pass an empty
-    array (-RedirectUri @()) to clear them explicitly.
+    array (-RedirectUri @()) together with omitting -FrontendOrigin/-FromAzdEnv to get an empty
+    combined total; that does NOT clear the app's existing SPA redirect URIs -- section 7 treats an
+    empty combined total as "nothing supplied" and leaves the existing SPA URIs untouched (only the
+    separate, always-cleared Web platform list is affected), specifically to avoid an empty run
+    silently breaking sign-in for every already-registered origin.
 
 .PARAMETER FromAzdEnv
     Read the deployed backend origins from the selected azd environment: `BACKEND_URI` and
@@ -630,7 +634,12 @@ else {
 
 # --- 9. Assign the operator (or -AssignUserUpn) the app role ------------------
 Write-Section "App-role assignment for $AssignUserUpn"
-if ($sp -and $Apply) {
+if ($sp) {
+    # The lookups below are all GET (always allowed, even in preview) so a preview run can report
+    # "already assigned" accurately instead of always printing a generic "[plan] Assign ..." --
+    # cosmetic, but avoids the misleading suggestion of a pending write when Apply would in fact
+    # no-op.
+    #
     # URL-encode the UPN before placing it in the Graph path segment so guest UPNs (which contain
     # '#', e.g. alice_contoso.com#EXT#@tenant.onmicrosoft.com) and any other reserved characters
     # resolve correctly instead of being truncated at '#' or altering the request path.
@@ -638,25 +647,33 @@ if ($sp -and $Apply) {
     # Resolve the role id from the SP's published appRoles (post-apply it exists).
     $spRoles = Invoke-Graph -Method GET -Url "$graph/servicePrincipals/$($sp.id)?`$select=appRoles"
     $targetRole = @($spRoles.appRoles) | Where-Object { $_.value -eq $AppRoleValue } | Select-Object -First 1
-    if (-not $targetRole) { throw "App role '$AppRoleValue' not found on service principal yet." }
-    # Query from the user's relationship. Some tenants reject filtered reads of
-    # servicePrincipals/{id}/appRoleAssignedTo even though assignment writes are permitted. The
-    # user relationship is broadly supported and we filter the bounded assignment list locally by
-    # resource and role.
-    $existingAssignments = Invoke-Graph -Method GET -Url "$graph/users/$($user.id)/appRoleAssignments?`$select=id,resourceId,appRoleId"
-    $already = @($existingAssignments.value) | Where-Object {
-        $_.resourceId -eq $sp.id -and $_.appRoleId -eq $targetRole.id
-    }
-    if ($already) {
-        Write-Skip "$AssignUserUpn already assigned to '$AppRoleValue'"
+    if (-not $targetRole) {
+        if ($Apply) { throw "App role '$AppRoleValue' not found on service principal yet." }
+        Write-Plan "Assign $AssignUserUpn to app role '$AppRoleValue' on the service principal (role not published yet; will exist post-Apply)"
     }
     else {
-        Invoke-Graph -Method POST -Url "$graph/users/$($user.id)/appRoleAssignments" -Body @{
-            principalId = $user.id
-            resourceId  = $sp.id
-            appRoleId   = $targetRole.id
-        } | Out-Null
-        Write-Done "Assigned $AssignUserUpn to '$AppRoleValue'"
+        # Query from the user's relationship. Some tenants reject filtered reads of
+        # servicePrincipals/{id}/appRoleAssignedTo even though assignment writes are permitted. The
+        # user relationship is broadly supported and we filter the bounded assignment list locally
+        # by resource and role.
+        $existingAssignments = Invoke-Graph -Method GET -Url "$graph/users/$($user.id)/appRoleAssignments?`$select=id,resourceId,appRoleId"
+        $already = @($existingAssignments.value) | Where-Object {
+            $_.resourceId -eq $sp.id -and $_.appRoleId -eq $targetRole.id
+        }
+        if ($already) {
+            Write-Skip "$AssignUserUpn already assigned to '$AppRoleValue'"
+        }
+        elseif ($Apply) {
+            Invoke-Graph -Method POST -Url "$graph/users/$($user.id)/appRoleAssignments" -Body @{
+                principalId = $user.id
+                resourceId  = $sp.id
+                appRoleId   = $targetRole.id
+            } | Out-Null
+            Write-Done "Assigned $AssignUserUpn to '$AppRoleValue'"
+        }
+        else {
+            Write-Plan "Assign $AssignUserUpn to app role '$AppRoleValue' on the service principal"
+        }
     }
 }
 else {
