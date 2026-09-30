@@ -41,7 +41,6 @@ Beyond the ordering experience, this sample demonstrates how Microsoft’s Respo
   - [Running the App Locally](#running-the-app-locally)
     - [Option 1: Direct Local Execution (Recommended for Development)](#option-1-direct-local-execution-recommended-for-development)
     - [Option 2: Docker-based Local Execution](#option-2-docker-based-local-execution)
-    - [Option 3: On-device local mode](#option-3-on-device-local-mode)
   - [Deploying to Azure](#deploying-to-azure)
   - [Contributing](#contributing)
   - [Resources](#resources)
@@ -133,12 +132,13 @@ This repo is becoming the one unified drive-thru demo for every brand persona (A
 
 **Carried over from the sibling brand demos**
 
-- **Local mode** (on-device speech recognition, language model and text to speech) from the McDonald's demo, as a persona-agnostic pipeline. It is off by default; cloud is the default (#81).
+_(none currently -- local mode, the only carried-over feature, was dropped; see below)_
 
 **Not carried over** (Brian's decision 7, 2026-09-26; recorded in #86)
 
 | Feature | Where it lived | Why it is dropped |
 | --- | --- | --- |
+| Local mode (on-device speech recognition, language model and text to speech), as a persona-agnostic pipeline | The McDonald's demo, carried over here as the `local` pipeline (#81) | **Dropped 2026-09-28 (decision 7 reversed, #155):** Brian decided the demo runs on Microsoft Foundry exclusively (realtime and cascade only). There is no local runtime, no ONNX, no `phi-4-mini-local` |
 | Crew dashboard and order simulator (`/crew/` SPA, `/dashboard` WebSocket, `/simulator/demo`) | The coffee-brand sibling demo | A brand-only feature; the unified demo keeps features identical across personas |
 | CRM simulator (`crm/`, `crm_seed.json`, `seed_crm.py`) | The coffee-brand sibling demo | Only the simulator's fake guests used it; the voice agent never called it |
 | Azure Local edge stack (`Dockerfile.edge`, `requirements-edge.txt`, `rtmt_local.py`, `k8s/`, `flux/`, `deploy-edge.*`) | The coffee-brand sibling demo | The unified demo targets Microsoft Foundry in one Azure environment. The stack was never deployed to Azure, so its removal is code only, with nothing to tear down |
@@ -405,48 +405,6 @@ docker build -t sonic-drive-in-app \
 # Run the container with your environment variables
 docker run -p 8000:8000 --env-file ./app/backend/.env sonic-drive-in-app:latest
 ```
-
-### Option 3: On-device local mode
-
-Issue #81 adds a third, persona-agnostic pipeline -- `local` -- for running STT/LLM/TTS entirely
-on-device via a small companion HTTP process, instead of any Azure endpoint. It's OFF by default
-for every persona (cloud stays the default everywhere); it only becomes selectable once BOTH of
-these are true:
-
-1. A persona's `models.local` config allows a `pipeline: local` catalog model (e.g.
-   `phi-4-mini-local` -- see the `models.local.allowed` list in a persona's own `persona.json`,
-   and the shared catalog entry in `app/backend/config.yaml`).
-2. `LOCAL_RUNTIME_ENDPOINT` is set to the base URL of a running companion process.
-
-To try it locally:
-
-1. Stand up ANY HTTP server that implements the companion-process contract below, listening on
-   (for example) `http://localhost:8100`. There's no bundled reference server in this repo (out
-   of this issue's scope) -- the sibling drive-thru project's own local-mode runtimes
-   (Whisper-style STT / a small local LLM / Piper-style TTS) are one example of software that
-   could sit behind this HTTP boundary; any implementation satisfying the same three endpoints
-   works.
-2. Add `LOCAL_RUNTIME_ENDPOINT=http://localhost:8100` (and, optionally,
-   `LOCAL_RUNTIME_VOICE_CHOICE=<a voice name your companion process understands>`) to
-   `app/backend/.env` and start the app as in Option 1 or 2 above.
-3. `GET /api/personas` will now list the local model as `deployed: true` for any persona whose
-   allow-list includes it; the frontend (or a raw WebSocket client) selects it the same way it
-   selects any other model id.
-
-**Companion-process HTTP contract** (see `app/backend/local_runtime.py` for the exact
-request/response shapes, and `docs/persona-architecture.md`'s local-mode design section for the
-full rationale):
-
-| Endpoint              | Request                                                     | Response                                        |
-| ---------------------- | ------------------------------------------------------------ | -------------------------------------------------- |
-| `POST /v1/transcribe` | raw 16kHz mono PCM16 bytes, `Content-Type: application/octet-stream` | `{"text": "..."}`                     |
-| `POST /v1/chat`       | `{"messages": [...], "tools": [<flat tool schema>, ...]}`    | `{"content": str \| null, "tool_calls": [...]}` |
-| `POST /v1/speak`      | `{"text": "...", "voice": "..."}`                             | raw 24kHz mono PCM16 bytes                          |
-
-Tool schemas and results are the SAME flat, Realtime-API-style shapes the cloud pipelines use --
-the local pipeline calls the exact same shared `tools` dict, so a tool call from an on-device
-model produces identical structured results, session metadata, and wire-protocol frames
-(`extension.middle_tier_tool_response`, etc.) as the realtime/cascade pipelines.
 
 ## Deploying to Azure
 

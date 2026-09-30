@@ -2,6 +2,8 @@
 
 - **Status:** **Accepted**, 2026-09-26T22:29:32-04:00, with Brian's decisions (design doc section 16),
   including the environment details of 22:52 (decision 11). Proposed 2026-09-25.
+  **Amended 2026-09-28** (issue #155): decision 7 (local mode) is reversed -- see the note under decision 6
+  below.
 - **Issues:** #19 (P1 spike), including the design for #51. Part of epic #6. Implemented by #69 to #88 (P2),
   then #12 to #18 and #21 (C#).
 - **Deciders:** Brian Swiger (owner), Rick (lead)
@@ -49,6 +51,13 @@ one behavior (McDonald's meal-number lookup) needs a named strategy.
 
    A shared catalog lists the models, Bicep maps each to the deployment that exists, the persona allows a subset,
    and the session picks one.
+
+   **Amended 2026-09-28 (decision 7 reversed, issue #155): local mode is dropped entirely.** Brian decided the
+   demo runs on Microsoft Foundry exclusively -- there is no local runtime, no ONNX, and no `phi-4-mini-local`.
+   Only two pipelines remain, `realtime` and `cascade`. The `local` pipeline, its catalog/persona/schema entries,
+   its processor and companion-runtime client, its conformance fakes and rows, and every `LOCAL_RUNTIME_*`
+   setting were removed. See `docs/persona-architecture.md` section 7.6 for the as-built design this reversal
+   removed, and #155 for the full removal.
 7. **One new, independent Azure environment, two backends.** Subscription `BrianSwiger-Microsoft-External-2026`,
    eastus2 (every resource except AI Search, which is in eastus because eastus2 had no Basic-SKU Search capacity
    at provision time, #87), azd env `azureaidrivethru-prod`, resource group `rg-azureaidrivethru-prod`. It has
