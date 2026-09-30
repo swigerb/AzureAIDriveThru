@@ -336,19 +336,8 @@ class TokenValidator:
         if claims.get("tid") != self._settings.tenant_id:
             raise EntraUnauthorized("Token tid does not match ENTRA_TENANT_ID.")
 
-        # Real Entra ID tokens (and this project's own FakeEntraIssuer, matching
-        # System.IdentityModel.Tokens.Jwt's own JwtPayload behavior) encode a single-valued
-        # `roles`/`scp`-shaped claim as a bare scalar string, only using a JSON array once
-        # the principal has 2+ values for that claim -- so "one assigned app role" must be
-        # accepted whether it arrives as "DriveThru.User" or ["DriveThru.User"].
-        roles_claim = claims.get("roles")
-        if isinstance(roles_claim, list):
-            roles = roles_claim
-        elif isinstance(roles_claim, str):
-            roles = [roles_claim]
-        else:
-            roles = []
-        if self._settings.app_role not in roles:
+        roles = claims.get("roles") or []
+        if not isinstance(roles, list) or self._settings.app_role not in roles:
             raise EntraForbidden("Token is missing the required app role.")
 
         scopes = (claims.get("scp") or "").split()
