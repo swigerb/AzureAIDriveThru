@@ -137,7 +137,7 @@ entries:
     for conformance or unit-test coverage across all three packs -- expected, the
     same class as the #78 Python test baseline entries; remove only if the pack roster
     or its test coverage changes.'
-  increase_reason: ''
+  increase_reason: '#105'
 - file: app/backend-dotnet/tests/Backend.Tests/TestSupport/PersonaPackFixture.cs
   brand: dunkin
   max: 1

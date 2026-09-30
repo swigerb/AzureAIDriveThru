@@ -20,8 +20,9 @@ const PIPELINE_LABELS: Record<SelectablePipeline, string> = {
  * `<optgroup>`s, grouped by pipeline (Realtime / Cascade).
  *
  * Deliberately `realtime`/`cascade` only -- the on-device `local` pipeline was removed entirely
- * by issue 155 (reversing ADR-001 decision 7, 2026-09-28): the demo runs on Microsoft Foundry
- * exclusively now, so there is no third pipeline to ever show in this picker.
+ * by issue 155 (reversing design doc section 16 decision 7, recorded under ADR-001 decision 6,
+ * 2026-09-28): the demo runs on Microsoft Foundry exclusively now, so there is no third pipeline
+ * to ever show in this picker.
  *
  * Rick's PR 134 review, item 1: a pipeline whose `models` list is empty or missing renders NO
  * group at all -- both backends always send this list now (Python's `_selectable_models`, C#'s

@@ -133,7 +133,8 @@ public sealed class ModelSelectionRejectionConformanceTests(ModelSelectionConfor
         // Python, so this row stays stable either way. Was
         // Model_catalogued_for_a_different_pipeline_is_rejected_with_404 using
         // phi-4-mini-local/the local pipeline before issue #155 removed local mode
-        // (2026-09-28, reversing ADR-001 decision 7); re-pointed here rather than dropped per
+        // (2026-09-28, reversing design doc section 16 decision 7, recorded under ADR-001
+        // decision 6); re-pointed here rather than dropped per
         // Rick's #157 round-1 review, since a still-valid model can exercise the same
         // wrong-pipeline 404 shape.
         await ModelSelectionConformanceTestHelpers.AssertRealtimeConnectIs404Async(
