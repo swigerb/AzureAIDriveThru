@@ -38,24 +38,46 @@ public sealed class AuthModeLaunchTests
         }
 
         var port = NetworkUtils.GetFreeTcpPort();
-        var ex = await Assert.ThrowsAnyAsync<Exception>(() => BackendLauncherFactory.StartAsync(
+        // R7 (Rick's PR #158 round 1 review): InvalidOperationException specifically -- both
+        // launchers' own "exited early"/"exited immediately" message, never a TimeoutException (a
+        // hang, not a fail-fast exit), a PortBindRaceException, or a build/launch error. Any of
+        // those would also have satisfied the old Assert.ThrowsAnyAsync<Exception>, which is
+        // exactly why every row here passed today with "No exception was thrown" as the ONLY
+        // real failure signal once #144/#147 actually implement the mode gate this row is meant
+        // to pin.
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => BackendLauncherFactory.StartAsync(
             NeverDialedRealtime, NeverDialedSearch, port, extraEnvironment: extraEnvironment,
             cancellationToken: TestContext.Current.CancellationToken));
 
-        Assert.False(
-            ex is TimeoutException,
-            $"{caseLabel}: expected the process to exit non-zero before the port opened, but it hung until the " +
-            $"health-check timeout instead ({ex.GetType().Name}: {ex.Message}). A hang is a bug, not \"fails fast\".");
+        var exitCode = BackendExitCodeParser.TryParse(ex.Message);
+        Assert.True(
+            exitCode.HasValue,
+            $"{caseLabel}: expected an \"exited early/immediately (code N)\" message proving the " +
+            $"process actually exited before the port opened, got: {ex.Message}");
+        Assert.NotEqual(0, exitCode!.Value);
     }
 
     [Fact]
     public Task Production_and_unconfigured_fails_fast() =>
-        AssertFailsFastAsync(new Dictionary<string, string> { ["RUNNING_IN_PRODUCTION"] = "true" }, "Production, unconfigured");
+        AssertFailsFastAsync(
+            new Dictionary<string, string>
+            {
+                ["RUNNING_IN_PRODUCTION"] = "true",
+                ["ASPNETCORE_ENVIRONMENT"] = "Production",
+                ["DOTNET_ENVIRONMENT"] = "Production",
+            },
+            "Production, unconfigured");
 
     [Fact]
     public Task Production_with_explicit_development_mode_fails_fast() =>
         AssertFailsFastAsync(
-            new Dictionary<string, string> { ["RUNNING_IN_PRODUCTION"] = "true", ["AUTH_MODE"] = "Development" },
+            new Dictionary<string, string>
+            {
+                ["RUNNING_IN_PRODUCTION"] = "true",
+                ["AUTH_MODE"] = "Development",
+                ["ASPNETCORE_ENVIRONMENT"] = "Production",
+                ["DOTNET_ENVIRONMENT"] = "Production",
+            },
             "Production, AUTH_MODE=Development");
 
     [Fact]
@@ -67,6 +89,8 @@ public sealed class AuthModeLaunchTests
                 ["AUTH_MODE"] = "Development",
                 ["ENTRA_TENANT_ID"] = FakeEntraIssuer.DefaultTenantId,
                 ["ENTRA_CLIENT_ID"] = FakeEntraIssuer.DefaultClientId,
+                ["ASPNETCORE_ENVIRONMENT"] = "Development",
+                ["DOTNET_ENVIRONMENT"] = "Development",
             },
             "AUTH_MODE=Development, both ids set, not Production");
 
@@ -78,13 +102,21 @@ public sealed class AuthModeLaunchTests
                 ["RUNNING_IN_PRODUCTION"] = "false",
                 ["AUTH_MODE"] = "Development",
                 ["ENTRA_TENANT_ID"] = FakeEntraIssuer.DefaultTenantId,
+                ["ASPNETCORE_ENVIRONMENT"] = "Development",
+                ["DOTNET_ENVIRONMENT"] = "Development",
             },
             "AUTH_MODE=Development, only one id set, not Production");
 
     [Fact]
     public Task Unknown_auth_mode_fails_fast() =>
         AssertFailsFastAsync(
-            new Dictionary<string, string> { ["RUNNING_IN_PRODUCTION"] = "false", ["AUTH_MODE"] = "Bogus" },
+            new Dictionary<string, string>
+            {
+                ["RUNNING_IN_PRODUCTION"] = "false",
+                ["AUTH_MODE"] = "Bogus",
+                ["ASPNETCORE_ENVIRONMENT"] = "Development",
+                ["DOTNET_ENVIRONMENT"] = "Development",
+            },
             "unknown AUTH_MODE");
 
     [Fact]
@@ -97,6 +129,8 @@ public sealed class AuthModeLaunchTests
                 ["ENTRA_TENANT_ID"] = FakeEntraIssuer.DefaultTenantId,
                 ["ENTRA_CLIENT_ID"] = FakeEntraIssuer.DefaultClientId,
                 ["ENTRA_INSTANCE"] = "http://example.com/",
+                ["ASPNETCORE_ENVIRONMENT"] = "Development",
+                ["DOTNET_ENVIRONMENT"] = "Development",
             },
             "ENTRA_INSTANCE=http:// to a non-loopback host");
 
@@ -118,6 +152,8 @@ public sealed class AuthModeLaunchTests
                 ["AUTH_MODE"] = "Entra",
                 ["ENTRA_TENANT_ID"] = FakeEntraIssuer.DefaultTenantId,
                 ["ENTRA_CLIENT_ID"] = "00000000-0000-0000-0000-000000000000",
+                ["ASPNETCORE_ENVIRONMENT"] = "Development",
+                ["DOTNET_ENVIRONMENT"] = "Development",
             },
             "Entra mode, placeholder client id");
 }
