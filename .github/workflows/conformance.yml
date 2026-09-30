@@ -660,14 +660,21 @@ jobs:
         # canary query string on both a plain route (/health) and the one route with a
         # documented history of leaking query strings (/realtime), and asserting the canary
         # never reaches the logs. The four `_REQUIRED_ENV_VARS` placeholders are still needed
-        # -- without them `create_app()` exits before there's anything to probe.
+        # -- without them `create_app()` exits before there's anything to probe. The
+        # `..._API_KEY` placeholders are ALSO required: without an API key, app.py falls back
+        # to `DefaultAzureCredential`, and `RTMiddleTier.__init__` eagerly warms up that
+        # credential during startup -- which has no identity to use on a CI runner and crashes
+        # the boot before `/health` ever comes up. This is unrelated to Entra auth; it's just
+        # what it takes to get a real, healthy Development pass-through boot to probe.
         run: |
           set -euo pipefail
           container_id="$(docker run -d \
             -e AZURE_OPENAI_EASTUS2_ENDPOINT=https://ci-placeholder.openai.azure.com/ \
             -e AZURE_OPENAI_REALTIME_DEPLOYMENT=ci-placeholder \
+            -e AZURE_OPENAI_EASTUS2_API_KEY=ci-placeholder-key \
             -e AZURE_SEARCH_ENDPOINT=https://ci-placeholder.search.windows.net \
             -e AZURE_SEARCH_INDEX=ci-placeholder \
+            -e AZURE_SEARCH_API_KEY=ci-placeholder-key \
             -p 8001:8000 \
             azureaidrivethru-backend:ci)"
           trap 'docker logs "$container_id" || true; docker rm -f "$container_id" >/dev/null 2>&1 || true' EXIT
