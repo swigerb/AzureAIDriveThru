@@ -5,6 +5,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from aiohttp.test_utils import TestClient, TestServer
+
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app import _get_bool_env
@@ -60,6 +62,14 @@ class CreateAppConfigTests(unittest.IsolatedAsyncioTestCase):
                  "AZURE_SEARCH_ENDPOINT": "https://fake.search.windows.net",
                  "AZURE_SEARCH_INDEX": "test-index",
                  "AZURE_OPENAI_REALTIME_VOICE_CHOICE": "",
+                 # Issue #144: Production now requires an explicit, valid Entra auth
+                 # configuration (design doc section 18.5) -- without these three, the
+                 # new fail-fast in create_app() would sys.exit(1) before ever reaching
+                 # the RTMiddleTier construction this suite is actually testing.
+                 "AUTH_MODE": "Entra",
+                 "ENTRA_TENANT_ID": "11111111-1111-1111-1111-111111111111",
+                 "ENTRA_CLIENT_ID": "22222222-2222-2222-2222-222222222222",
+                 "APP_SESSION_SECRET": "test-session-secret-0123456789abcdef",
              }):
             mock_instance = MagicMock()
             mock_cls.return_value = mock_instance
@@ -150,6 +160,128 @@ class ProductionGuardTests(unittest.IsolatedAsyncioTestCase):
         production deployment -- this must keep succeeding."""
         mock_cls, mock_instance = await CreateAppConfigTests()._run_create_app()
         self.assertIsNotNone(mock_instance)
+
+
+class RouteCoverageTests(unittest.IsolatedAsyncioTestCase):
+    """Issue #144 acceptance criteria: walk the app's REAL registered routes (not a
+    mocked `RTMiddleTier` -- see `_build_real_app`'s docstring) and assert (a) the
+    exact expected route-name set, (b) every non-anonymous route 401s without a
+    token, and (c) the anonymous allow-list (by route name) and the persona-asset
+    extension split are NOT 401.
+
+    Requires `static/index.html` to exist (the frontend build's output) -- like
+    several pre-existing tests (e.g. `test_performance.py`'s
+    `test_root_serves_index_html`), this only genuinely passes where the frontend
+    has been built first (CI's Docker/test job), a pre-existing, unrelated gap in
+    a bare backend-only worktree.
+    """
+
+    async def _build_real_app(self):
+        """Unlike `CreateAppConfigTests._run_create_app`, this does NOT mock
+        `app.RTMiddleTier` -- constructing a REAL instance does no network I/O
+        (it only stores config and builds lazy `SearchClient`/credential objects),
+        and only a real instance's `attach_to_app()` registers the real, named
+        `'realtime'` route this test needs to see. Only `attach_tools_rtmt` and
+        `_check_service_connectivity` (both genuinely do outbound I/O) are mocked."""
+        with patch("app.attach_tools_rtmt"), \
+             patch("app._check_service_connectivity", new_callable=AsyncMock), \
+             patch.dict(os.environ, {
+                 "RUNNING_IN_PRODUCTION": "1",
+                 "CONFORMANCE_TEST_HOOKS": "",
+                 "AZURE_OPENAI_EASTUS2_ENDPOINT": "https://fake.openai.azure.com",
+                 "AZURE_OPENAI_REALTIME_DEPLOYMENT": "gpt-realtime-2.1",
+                 "AZURE_OPENAI_EASTUS2_API_KEY": "fake-key",
+                 "AZURE_SEARCH_API_KEY": "fake-search-key",
+                 "AZURE_SEARCH_ENDPOINT": "https://fake.search.windows.net",
+                 "AZURE_SEARCH_INDEX": "test-index",
+                 "AZURE_OPENAI_REALTIME_VOICE_CHOICE": "",
+                 "AUTH_MODE": "Entra",
+                 "ENTRA_TENANT_ID": "11111111-1111-1111-1111-111111111111",
+                 "ENTRA_CLIENT_ID": "22222222-2222-2222-2222-222222222222",
+                 "APP_SESSION_SECRET": "test-session-secret-0123456789abcdef",
+             }):
+            from app import create_app
+            return await create_app()
+
+    async def test_exact_route_name_set(self):
+        """A route added later gets counted here too -- silently forgetting to
+        classify it as anonymous or protected in entra_auth.py must fail this
+        test, not slip through as an unnoticed extra 401 or 200."""
+        app = await self._build_real_app()
+        names = {route.name for route in app.router.routes() if route.name}
+        expected = {
+            "index", "health", "session-token", "personas-index",
+            "persona-detail", "persona-menu", "persona-asset", "static", "realtime",
+        }
+        self.assertEqual(names, expected)
+
+    async def test_every_protected_route_401s_without_a_token(self):
+        app = await self._build_real_app()
+        async with TestClient(TestServer(app)) as client:
+            protected_paths = [
+                "/api/personas",
+                "/api/personas/sonic",
+                "/personas/sonic/menu.json",
+                "/personas/sonic/assets/demo/dummyOrder.json",
+                "/api/auth/session",
+                "/realtime",
+            ]
+            for path in protected_paths:
+                with self.subTest(path=path):
+                    resp = await client.get(path)
+                    self.assertEqual(resp.status, 401, f"{path} should require a token")
+                    self.assertEqual(resp.headers.get("WWW-Authenticate"), "Bearer")
+
+    async def test_anonymous_routes_are_not_401(self):
+        app = await self._build_real_app()
+        async with TestClient(TestServer(app)) as client:
+            for path in ("/", "/health", "/personas/sonic/assets/logo.svg"):
+                with self.subTest(path=path):
+                    resp = await client.get(path)
+                    self.assertNotEqual(resp.status, 401, f"{path} should be anonymous")
+
+    async def test_persona_asset_protected_extension_still_401s(self):
+        """The persona-asset route itself is registered once, but is anonymous or
+        protected PER REQUEST depending on the requested file's extension --
+        covered separately from the anonymous-svg case above."""
+        app = await self._build_real_app()
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.get("/personas/sonic/assets/demo/dummyOrder.json")
+            self.assertEqual(resp.status, 401)
+
+
+class CreateRunnerTests(unittest.IsolatedAsyncioTestCase):
+    """create_runner() (issue #144, design doc section 18.4): a `SystemExit` from
+    `create_app()` (every existing startup fail-fast) must become a plain
+    `RuntimeError`, since gunicorn's arbiter only treats an `Exception` -- never a
+    `SystemExit` -- raised before boot as a genuine boot failure; left unwrapped,
+    the worker would respawn in a tight loop instead of failing fast. On success,
+    the runner must carry the 65s/28.5s timeouts and `access_log_kwargs()`."""
+
+    async def test_system_exit_becomes_runtime_error(self):
+        from app import create_runner
+        original_exc = SystemExit(1)
+        with patch("app.create_app", new_callable=AsyncMock, side_effect=original_exc):
+            with self.assertRaises(RuntimeError) as ctx:
+                await create_runner()
+            self.assertEqual(str(ctx.exception), "startup failed")
+            self.assertIs(ctx.exception.__cause__, original_exc)
+
+    async def test_successful_path_passes_the_required_runner_kwargs(self):
+        from access_log import PathOnlyAccessLogger
+        from app import create_runner
+        fake_app = MagicMock()
+        fake_runner = MagicMock()
+        with patch("app.create_app", new_callable=AsyncMock, return_value=fake_app), \
+             patch("app.web.AppRunner", return_value=fake_runner) as mock_runner_cls:
+            runner = await create_runner()
+
+        self.assertIs(runner, fake_runner)
+        args, kwargs = mock_runner_cls.call_args
+        self.assertIs(args[0], fake_app)
+        self.assertEqual(kwargs["keepalive_timeout"], 65)
+        self.assertEqual(kwargs["shutdown_timeout"], 28.5)
+        self.assertIs(kwargs["access_log_class"], PathOnlyAccessLogger)
 
 
 class HealthEndpointTests(unittest.IsolatedAsyncioTestCase):

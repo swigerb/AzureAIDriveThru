@@ -65,6 +65,7 @@ from rtmt import (
     _truncate_for_log,
     _truncate_key_list_for_log,
     create_hmac_token,
+    decode_hmac_token,
     validate_hmac_token,
 )
 
@@ -1143,6 +1144,60 @@ class HMACTokenTests(unittest.TestCase):
         parts[0] = parts[0][:-1] + "X"
         tampered = ".".join(parts)
         self.assertFalse(validate_hmac_token(tampered, self.secret))
+
+
+class DecodeHmacTokenOidTests(unittest.TestCase):
+    """Issue #144/18.3: `create_hmac_token`'s optional `oid` param and the new
+    payload-returning `decode_hmac_token`, layered onto the pre-existing
+    HMAC token shape without changing it for callers that never pass `oid`."""
+
+    def setUp(self):
+        self.secret = b"test-secret-key-1234"
+
+    def test_no_oid_preserves_original_shape(self):
+        """`oid=None` (the default) must not add an `oid` key to the payload at
+        all -- callers that never touch Entra see byte-identical behavior to
+        before #144."""
+        token = create_hmac_token(self.secret, expiry_seconds=60)
+        payload = decode_hmac_token(token, self.secret)
+        self.assertIsNotNone(payload)
+        self.assertNotIn("oid", payload)
+        self.assertIn("exp", payload)
+
+    def test_oid_round_trips_through_payload(self):
+        token = create_hmac_token(self.secret, expiry_seconds=60, oid="abc-123")
+        payload = decode_hmac_token(token, self.secret)
+        self.assertIsNotNone(payload)
+        self.assertEqual(payload["oid"], "abc-123")
+
+    def test_decode_returns_none_for_expired_token(self):
+        token = create_hmac_token(self.secret, expiry_seconds=-1, oid="abc-123")
+        self.assertIsNone(decode_hmac_token(token, self.secret))
+
+    def test_decode_returns_none_for_wrong_secret(self):
+        token = create_hmac_token(self.secret, expiry_seconds=60, oid="abc-123")
+        self.assertIsNone(decode_hmac_token(token, b"wrong-secret"))
+
+    def test_decode_returns_none_for_empty_token(self):
+        self.assertIsNone(decode_hmac_token("", self.secret))
+
+    def test_decode_returns_none_for_malformed_token(self):
+        self.assertIsNone(decode_hmac_token("not-a-valid-token", self.secret))
+
+    def test_decode_returns_none_for_tampered_signature(self):
+        token = create_hmac_token(self.secret, oid="abc-123")
+        payload_b64, sig = token.rsplit(".", 1)
+        tampered = f"{payload_b64}.{'0' * len(sig)}"
+        self.assertIsNone(decode_hmac_token(tampered, self.secret))
+
+    def test_validate_hmac_token_is_a_thin_wrapper_over_decode(self):
+        """`validate_hmac_token` must keep its exact original bool-returning
+        signature/behavior for its own pre-existing callers -- it's just
+        `decode_hmac_token(...) is not None` now, not reimplemented."""
+        token = create_hmac_token(self.secret, expiry_seconds=60, oid="abc-123")
+        self.assertTrue(validate_hmac_token(token, self.secret))
+        expired = create_hmac_token(self.secret, expiry_seconds=-1, oid="abc-123")
+        self.assertFalse(validate_hmac_token(expired, self.secret))
 
 
 class ClientLogControlAllowedTests(unittest.TestCase):

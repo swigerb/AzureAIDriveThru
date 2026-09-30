@@ -441,6 +441,12 @@ class AppStartupTests(unittest.IsolatedAsyncioTestCase):
                  "AZURE_SEARCH_API_KEY": "fake-search-key",
                  "AZURE_SEARCH_ENDPOINT": "https://fake.search.windows.net",
                  "AZURE_SEARCH_INDEX": "menu-index",
+                 # Issue #144: Production now requires an explicit, valid Entra auth
+                 # configuration (design doc section 18.5).
+                 "AUTH_MODE": "Entra",
+                 "ENTRA_TENANT_ID": "11111111-1111-1111-1111-111111111111",
+                 "ENTRA_CLIENT_ID": "22222222-2222-2222-2222-222222222222",
+                 "APP_SESSION_SECRET": "test-session-secret-0123456789abcdef",
              }):
             mock_instance = MagicMock()
             mock_rt.return_value = mock_instance
@@ -488,6 +494,13 @@ class HealthEndpointTests(unittest.IsolatedAsyncioTestCase):
                  "AZURE_SEARCH_API_KEY": "fake-search-key",
                  "AZURE_SEARCH_ENDPOINT": "https://fake.search.windows.net",
                  "AZURE_SEARCH_INDEX": "menu-index",
+                 # Issue #144: Production now requires an explicit, valid Entra auth
+                 # configuration (design doc section 18.5). `/` stays anonymous either
+                 # way (18.2), so this doesn't change what the test itself asserts.
+                 "AUTH_MODE": "Entra",
+                 "ENTRA_TENANT_ID": "11111111-1111-1111-1111-111111111111",
+                 "ENTRA_CLIENT_ID": "22222222-2222-2222-2222-222222222222",
+                 "APP_SESSION_SECRET": "test-session-secret-0123456789abcdef",
              }):
             mock_rt.return_value = MagicMock()
             from aiohttp.test_utils import TestClient, TestServer
@@ -520,6 +533,13 @@ class CorsConfigTests(unittest.IsolatedAsyncioTestCase):
                  "AZURE_SEARCH_API_KEY": "fake-search-key",
                  "AZURE_SEARCH_ENDPOINT": "https://fake.search.windows.net",
                  "AZURE_SEARCH_INDEX": "menu-index",
+                 # Issue #144: Production now requires an explicit, valid Entra auth
+                 # configuration (design doc section 18.5). `/` stays anonymous either
+                 # way (18.2), so this doesn't change what the test itself asserts.
+                 "AUTH_MODE": "Entra",
+                 "ENTRA_TENANT_ID": "11111111-1111-1111-1111-111111111111",
+                 "ENTRA_CLIENT_ID": "22222222-2222-2222-2222-222222222222",
+                 "APP_SESSION_SECRET": "test-session-secret-0123456789abcdef",
              }):
             mock_rt.return_value = MagicMock()
             from aiohttp.test_utils import TestClient, TestServer
