@@ -19,7 +19,7 @@ public sealed class PromptLoadException(string message) : Exception(message);
 /// (RenderError/RenderTemplate/GetDeltaTemplate/GetUpsellHint) needed once real order/tool
 /// processing exists -- a lightweight single-pass "{{var}}" substitution rather than embedding a
 /// full Jinja2-equivalent engine, since every real persona pack's templates (verified against
-/// personas/sonic) only ever use plain variable interpolation, never control flow.
+/// the default pack) only ever use plain variable interpolation, never control flow.
 /// </summary>
 public sealed class PromptLoader
 {
