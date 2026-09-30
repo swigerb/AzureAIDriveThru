@@ -139,10 +139,14 @@ az login --tenant <tenant-id>
 defaultDomain>`, which does not change when ingress is toggled.
 
 ```powershell
+azd env select <env-name>
+az account set --subscription (azd env get-value AZURE_SUBSCRIPTION_ID)
+
 $rg = azd env get-value AZURE_RESOURCE_GROUP
 $app = (az containerapp list -g $rg -o json | ConvertFrom-Json | Where-Object { $_.tags.'azd-service-name' -eq 'backend' } | Select-Object -First 1).name
 $envId = az containerapp show -n $app -g $rg --query properties.managedEnvironmentId -o tsv
 $domain = az containerapp env show --ids $envId --query properties.defaultDomain -o tsv
+if (-not $app -or -not $domain) { throw 'backend container app or environment domain not found' }
 
 # Preview: prints what would change, writes nothing
 ./scripts/Setup-EntraAuth.ps1 -TenantId <tenant-id> -FrontendOrigin "https://$app.$domain"

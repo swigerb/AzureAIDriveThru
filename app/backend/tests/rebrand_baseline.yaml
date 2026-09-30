@@ -278,33 +278,6 @@ entries:
     it''s the only persona pack that exists yet -- #78/#79 land the other packs, at
     which point these tests get parameterized per-persona instead of hardcoding Sonic.'
   increase_reason: ''
-- file: app/backend/tests/test_entra_scripts_contract.py
-  brand: dunkin
-  max: 1
-  issue: '#146'
-  reason: 'Literal brand word inside the _HARDCODED_PERSONA_BRAND regex/comment used to pin
-    that none of the three Entra scripts hardcode a persona brand path (review item 8) --
-    tooling about the guard, not a real product reference, same rationale as excluding
-    rebrand_scan.py itself.'
-  increase_reason: '#146'
-- file: app/backend/tests/test_entra_scripts_contract.py
-  brand: mcdonalds
-  max: 1
-  issue: '#146'
-  reason: 'Literal brand word inside the _HARDCODED_PERSONA_BRAND regex/comment used to pin
-    that none of the three Entra scripts hardcode a persona brand path (review item 8) --
-    tooling about the guard, not a real product reference, same rationale as excluding
-    rebrand_scan.py itself.'
-  increase_reason: '#146'
-- file: app/backend/tests/test_entra_scripts_contract.py
-  brand: sonic
-  max: 2
-  issue: '#146'
-  reason: 'Literal brand word inside the _HARDCODED_PERSONA_BRAND regex/comment used to pin
-    that none of the three Entra scripts hardcode a persona brand path (review item 8) --
-    tooling about the guard, not a real product reference, same rationale as excluding
-    rebrand_scan.py itself.'
-  increase_reason: '#146'
 - file: app/backend/tests/test_extras_rules.py
   brand: sonic
   max: 1

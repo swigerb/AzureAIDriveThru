@@ -19,17 +19,23 @@ the script *source text* the same way Retail Pulse's `SetupEntraAuthScriptContra
 """
 
 import re
+import sys
 import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
 SCRIPTS = REPO / "scripts"
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from rebrand_scan import BRAND_PATTERNS  # noqa: E402
+
 SETUP = SCRIPTS / "Setup-EntraAuth.ps1"
 VERIFY_ENTRA = SCRIPTS / "Verify-EntraAuth.ps1"
 VERIFY_PROD = SCRIPTS / "Verify-ProductionAuth.ps1"
 
 ALL_SCRIPTS = {"Setup-EntraAuth.ps1": SETUP, "Verify-EntraAuth.ps1": VERIFY_ENTRA, "Verify-ProductionAuth.ps1": VERIFY_PROD}
+
+DEPLOY_MD = REPO / "DEPLOY.md"
 
 # Matches `az rest --method post|patch|delete ...` (case-insensitive, across the flexible arg
 # ordering PowerShell allows) so a raw `az rest` write call outside the Invoke-Graph gate would
@@ -88,8 +94,49 @@ _ENV_FILE_READ = re.compile(
 )
 
 # A hardcoded persona/brand path segment (review item 8/11): the brand ratchet must not go up, and
-# a script that hardcodes one persona would silently mis-probe/mis-verify any other.
-_HARDCODED_PERSONA_BRAND = re.compile(r"\b(sonic|mcdonald|dunkin)\w*", re.IGNORECASE)
+# a script that hardcodes one persona would silently mis-probe/mis-verify any other. Built from
+# the same BRAND_PATTERNS the rebrand scanner itself uses (round 2 required fix), rather than
+# spelling brand words directly in this file -- which is exactly what forced three
+# rebrand_baseline.yaml entries citing #146 in round 1/round 2.
+_HARDCODED_PERSONA_BRAND = re.compile("|".join(p.pattern for p in BRAND_PATTERNS.values()), re.IGNORECASE)
+
+# Round 2 required fix (item 9 variants): rather than a fixed list of known-bad prints, this is an
+# ALLOW-list. Any non-comment line in Verify-ProductionAuth.ps1 that references the actual
+# token-value variables ($token, $tokenJson, $BearerToken) must match one of these known-safe
+# forms, or the test fails. This catches both mutations Rick's round 2 review found surviving the
+# old `_TOKEN_PRINT`/`_lines_printing_a_secret_value` checks: `Write-Host "debug: $tokenJson"` (a
+# brand-new line referencing $tokenJson via an output cmdlet, which the old checks DID catch) and
+# `$dbg = "t=$token"; Write-Host $dbg` (a line that references $token via string interpolation
+# into an unrelated variable, then prints that variable on a SEPARATE line the old checks never
+# connected back to $token). An allow-list closes both, and any future new reference to these
+# variables, by construction: the only way to add a line touching $token/$tokenJson/$BearerToken
+# is to make it match one of the forms already proven safe.
+_TOKEN_VALUE_REFERENCE = re.compile(r"\$(?:tokenJson|token|BearerToken)\b")
+_TOKEN_REFERENCE_ALLOWLIST = (
+    re.compile(r"\[string\]\$BearerToken\b"),  # Invoke-ProbeRequest's -BearerToken parameter declaration
+    re.compile(r"if\s*\(\$BearerToken\)"),  # presence check before building the header
+    re.compile(r"\$reqHeaders\['Authorization'\]\s*=\s*\"Bearer \$BearerToken\""),  # header build, never printed
+    re.compile(r"\$tokenJson\s*=\s*az account get-access-token\b"),  # the acquisition itself
+    re.compile(r"\$token\s*=\s*\(\$tokenJson\s*\|\s*ConvertFrom-Json\)\.accessToken"),  # decode, in-memory only
+    re.compile(r"IsNullOrWhiteSpace\(\$token\)"),  # empty check, never a print
+    re.compile(r"-BearerToken\s+\$token\b"),  # the one call site that forwards the acquired token
+    re.compile(r"\$token\s*=\s*\$null\b"),  # best-effort scrub
+)
+
+
+def _lines_referencing_token_value(text: str):
+    """Every non-comment line referencing $token/$tokenJson/$BearerToken that does NOT match one
+    of the pre-approved safe forms above."""
+    offending = []
+    for i, line in enumerate(text.splitlines(), start=1):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if not _TOKEN_VALUE_REFERENCE.search(stripped):
+            continue
+        if not any(p.search(stripped) for p in _TOKEN_REFERENCE_ALLOWLIST):
+            offending.append((i, stripped))
+    return offending
 
 
 def _read(path: Path) -> str:
@@ -257,6 +304,42 @@ class SetupEntraAuthScriptContractTests(unittest.TestCase):
         self.assertNotRegex(
             outside, _RAW_WRITE_METHOD,
             "found a raw `az rest --method POST/PATCH/DELETE` call outside Invoke-Graph's body",
+        )
+
+    def test_az_rest_only_called_inside_invoke_graph(self):
+        # Round 2 required fix: the prior pin (`_RAW_WRITE_METHOD`, above) only caught the
+        # `--method`/`-m` spelling it knew about. Any `az rest` call at all, with any flag
+        # spelling, must live only inside Invoke-Graph's body: that is the single place the
+        # -Apply gate is enforced, so any other `az rest` call site (write or, for that matter,
+        # a stray read) bypasses the central chokepoint this test suite is meant to guarantee.
+        # Block comments (`<# ... #>`, e.g. the top-of-file help, which mentions `az rest` in
+        # prose) and `#`-line comments are both stripped before scanning.
+        text = self.text
+        func_match = re.search(r"function\s+Invoke-Graph\s*\{.*?\n\}\n", text, re.DOTALL)
+        self.assertIsNotNone(func_match, "expected an Invoke-Graph function")
+        outside = text[:func_match.start()] + text[func_match.end():]
+        outside = re.sub(r"<#.*?#>", "", outside, flags=re.DOTALL)
+        offending = []
+        for i, line in enumerate(outside.splitlines(), start=1):
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if re.search(r"\baz\s+rest\b", stripped, re.IGNORECASE):
+                offending.append((i, stripped))
+        self.assertEqual(
+            offending, [],
+            f"found `az rest` call(s) outside Invoke-Graph's body: {offending}",
+        )
+
+    def test_no_invoke_webrequest_or_invoke_restmethod(self):
+        # Round 2 required fix: round 1 already listed Invoke-WebRequest as forbidden in Setup
+        # (Setup has no legitimate HTTP-probe use for it, unlike Verify-ProductionAuth.ps1), but
+        # no pin ever asserted it. Invoke-RestMethod is already covered by
+        # `_ALT_GRAPH_OR_ARM_CMDLET` (test_no_alternate_graph_or_arm_write_cmdlets, above); this
+        # closes the Invoke-WebRequest gap specifically.
+        self.assertNotIn(
+            "Invoke-WebRequest", self.text,
+            "Setup-EntraAuth.ps1 must never call Invoke-WebRequest; all Graph access goes through Invoke-Graph",
         )
 
     def test_no_raw_az_ad_write(self):
@@ -465,6 +548,19 @@ class VerifyProductionAuthScriptContractTests(unittest.TestCase):
         self.assertEqual(_lines_printing_a_secret_value(self.text), [])
         self.assertIn("never print", self.text)
 
+    def test_every_token_value_reference_is_an_allowed_form(self):
+        # Round 2 required fix: the checks above are a fixed list of known-bad shapes and two
+        # variants survived (`Write-Host "debug: $tokenJson"`, and `$dbg = "t=$token"; Write-Host
+        # $dbg`, which interpolates $token into an unrelated variable on one line and prints that
+        # variable on the next). This is an allow-list instead: every non-comment line touching
+        # $token/$tokenJson/$BearerToken must match one of the forms already proven safe.
+        offending = _lines_referencing_token_value(self.text)
+        self.assertEqual(
+            offending, [],
+            f"found line(s) referencing $token/$tokenJson/$BearerToken that are not one of the "
+            f"pre-approved safe forms: {offending}",
+        )
+
     def test_no_dotenv_reads(self):
         self.assertNotRegex(self.text, _ENV_FILE_READ)
 
@@ -498,14 +594,47 @@ class VerifyProductionAuthScriptContractTests(unittest.TestCase):
     def test_revisions_only_makes_no_http_calls(self):
         # Review item 6 pin: every call site of Test-AnonymousProbes, Test-AuthenticatedProbe and
         # `& $verifyScript` must be lexically nested (brace-depth matched) in a block whose header
-        # contains -RevisionsOnly, and Invoke-WebRequest may appear only inside the
-        # Invoke-ProbeRequest function (never directly at a -RevisionsOnly-reachable call site).
+        # contains the literal guard `-not $RevisionsOnly` (round 2: matching the bare substring
+        # `$RevisionsOnly` survived a mutation that moved the call inside `if ($RevisionsOnly) {`,
+        # i.e. inverted, since that header also contains the substring "$RevisionsOnly"). Invoke-
+        # WebRequest may appear only inside the Invoke-ProbeRequest function (never directly at a
+        # -RevisionsOnly-reachable call site).
         text = self.text
         call_pattern = re.compile(r"\bTest-AnonymousProbes\s+-|\bTest-AuthenticatedProbe\s+-|&\s*\$verifyScript\b")
-        offending = _unguarded_call_sites(text, call_pattern, "$RevisionsOnly")
+        offending = _unguarded_call_sites(text, call_pattern, "-not $RevisionsOnly")
         self.assertEqual(
             offending, [],
-            f"found HTTP/registration call site(s) not nested in a -RevisionsOnly-guarded if-block: {offending}",
+            f"found HTTP/registration call site(s) not nested in a '-not $RevisionsOnly'-guarded if-block: {offending}",
+        )
+
+    def test_invoke_probe_request_only_called_from_the_two_probe_functions(self):
+        # Round 2 required fix: a direct call to Invoke-ProbeRequest added outside
+        # Test-AnonymousProbes/Test-AuthenticatedProbe would bypass the -RevisionsOnly guard
+        # above entirely (that pin only watches the two Test-* function call sites and
+        # `& $verifyScript`, not Invoke-ProbeRequest itself). Pin it directly: every call site of
+        # Invoke-ProbeRequest (excluding its own function definition) must be lexically inside
+        # the body of Test-AnonymousProbes or Test-AuthenticatedProbe.
+        text = self.text
+        probe_def = re.search(r"function\s+Invoke-ProbeRequest\s*\{.*?\n\}\n", text, re.DOTALL)
+        self.assertIsNotNone(probe_def, "expected an Invoke-ProbeRequest function")
+        anon_body = re.search(r"function\s+Test-AnonymousProbes\s*\{.*?\n\}\n", text, re.DOTALL)
+        auth_body = re.search(r"function\s+Test-AuthenticatedProbe\s*\{.*?\n\}\n", text, re.DOTALL)
+        self.assertIsNotNone(anon_body, "expected a Test-AnonymousProbes function")
+        self.assertIsNotNone(auth_body, "expected a Test-AuthenticatedProbe function")
+        allowed_spans = [
+            (probe_def.start(), probe_def.end()),
+            (anon_body.start(), anon_body.end()),
+            (auth_body.start(), auth_body.end()),
+        ]
+        offending = []
+        for m in re.finditer(r"\bInvoke-ProbeRequest\b", text):
+            pos = m.start()
+            if not any(start <= pos < end for start, end in allowed_spans):
+                line_no = text.count("\n", 0, pos) + 1
+                offending.append(line_no)
+        self.assertEqual(
+            offending, [],
+            f"found Invoke-ProbeRequest call site(s) outside Test-AnonymousProbes/Test-AuthenticatedProbe: {offending}",
         )
 
     def test_invoke_webrequest_only_used_inside_invoke_probe_request(self):
@@ -579,7 +708,7 @@ class VerifyProductionAuthScriptContractTests(unittest.TestCase):
         self.assertIn("Get-Prop", resolve_fn.group("body"))
 
     def test_no_hardcoded_persona_brand_path(self):
-        # Review item 8: the hardcoded `sonic` persona path must be gone; the brand ratchet must
+        # Review item 8: the hardcoded persona path must be gone; the brand ratchet must
         # not go up, and a hardcoded brand would mis-probe any environment running a different
         # PERSONAS set.
         self.assertNotRegex(self.text, _HARDCODED_PERSONA_BRAND)
@@ -642,6 +771,65 @@ class AllScriptsSharedSafetyInvariantTests(unittest.TestCase):
         for name, path in ALL_SCRIPTS.items():
             text = _read(path)
             self.assertIn("#Requires -Version 7.0", text, f"{name} should pin PowerShell 7+")
+
+
+class DeployMdDarkStateSetupSequenceTests(unittest.TestCase):
+    """Round 2 required fix: tighten and pin DEPLOY.md's dark-state (case (a)) Setup sequence.
+
+    An empty `$app`/`$domain` from the discovery commands previously flowed silently into
+    `-FrontendOrigin "https://$app.$domain"`, producing the bogus origin `https://.` -- and the
+    prior `-FrontendOrigin` pin (test_help_documents_all_three_setup_scenarios, above) only
+    checked the Setup-EntraAuth.ps1 script's OWN help text for the parameter name, never DEPLOY.md
+    itself, so a DEPLOY.md-only regression (wrong env selected, wrong subscription, or a dropped
+    guard) had no pin at all.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.text = _read(DEPLOY_MD)
+
+    def _dark_state_block(self):
+        # The dark-state (a) walkthrough is the fenced ```powershell block immediately following
+        # the "**(a) Today's staging env" heading.
+        match = re.search(
+            r"\*\*\(a\) Today's staging env.*?```powershell\n(?P<body>.*?)\n```",
+            self.text, re.DOTALL,
+        )
+        self.assertIsNotNone(match, "expected a dark-state (case (a)) fenced powershell block in DEPLOY.md")
+        return match.group("body")
+
+    def test_selects_the_azd_env_and_matching_subscription_before_discovery(self):
+        block = self._dark_state_block()
+        self.assertIn("azd env select", block)
+        self.assertIn("az account set --subscription (azd env get-value AZURE_SUBSCRIPTION_ID)", block)
+        select_pos = block.find("azd env select")
+        account_pos = block.find("az account set --subscription")
+        rg_pos = block.find("azd env get-value AZURE_RESOURCE_GROUP")
+        self.assertGreater(account_pos, select_pos, "expected 'az account set' after 'azd env select'")
+        self.assertGreater(rg_pos, account_pos, "expected the env/subscription selection before app discovery")
+
+    def test_guards_against_an_empty_app_or_domain_before_running_setup(self):
+        block = self._dark_state_block()
+        guard = re.search(
+            r"if\s*\(\s*-not\s*\$app\s*-or\s*-not\s*\$domain\s*\)\s*\{\s*throw\b",
+            block,
+        )
+        self.assertIsNotNone(
+            guard,
+            "expected `if (-not $app -or -not $domain) { throw ... }` before Setup runs in the "
+            "dark-state block, so an unresolved app/domain fails loudly instead of silently "
+            "producing the origin 'https://.'",
+        )
+        domain_pos = block.find("$domain =")
+        guard_pos = guard.start()
+        setup_pos = block.find("./scripts/Setup-EntraAuth.ps1")
+        self.assertGreater(guard_pos, domain_pos, "expected the guard after $domain is resolved")
+        self.assertGreater(setup_pos, guard_pos, "expected the guard before Setup-EntraAuth.ps1 runs")
+
+    def test_pins_the_interpolated_frontend_origin_form_not_just_the_parameter_name(self):
+        # Review item 1 pin: asserting "-FrontendOrigin" alone (elsewhere) is satisfied even if
+        # the value were hardcoded or malformed. Pin the actual interpolated form.
+        self.assertIn('-FrontendOrigin "https://$app.$domain"', self.text)
 
 
 if __name__ == "__main__":
