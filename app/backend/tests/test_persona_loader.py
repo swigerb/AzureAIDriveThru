@@ -313,6 +313,17 @@ class TestMutationSchemaViolations:
         with pytest.raises(PersonaValidationError, match="sonic"):
             PersonaCatalog.load(personas_dir=personas_copy)
 
+    def test_models_local_pipeline_refuses_to_start(self, personas_copy):
+        """Issue #155 dropped the `local` pipeline entirely: `_Models` only declares `realtime` and
+        `cascade`, extra="forbid", so a pack that still lists a `models.local` entry (a stale copy
+        from before the removal, or a hand-authored mistake) must be rejected the same way any other
+        unknown field is, not silently ignored."""
+        def mutator(d):
+            d["models"]["local"] = {"default": "phi-4-mini-local", "allowed": ["phi-4-mini-local"]}
+        _mutate_persona_json(personas_copy, "sonic", mutator)
+        with pytest.raises(PersonaValidationError, match="sonic"):
+            PersonaCatalog.load(personas_dir=personas_copy)
+
     def test_id_folder_mismatch_refuses_to_start(self, personas_copy):
         _mutate_persona_json(personas_copy, "sonic", lambda d: d.update(id="not-sonic"))
         with pytest.raises(PersonaValidationError, match="does not match its folder name"):

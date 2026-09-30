@@ -108,6 +108,27 @@ public sealed class PersonaCatalogTests
     }
 
     [Fact]
+    public void ModelsLocalPipeline_Throws()
+    {
+        // Issue #155 dropped the `local` pipeline entirely: PersonaModels only declares `Realtime` and
+        // `Cascade`, so a pack that still lists a `models.local` entry (a stale copy from before the
+        // removal, or a hand-authored mistake) must be rejected the same way any other unknown field is.
+        using var fixture = new PersonaPackFixture();
+        fixture.MutatePersonaJson("sonic", obj =>
+        {
+            var local = new JsonObject
+            {
+                ["default"] = "phi-4-mini-local",
+                ["allowed"] = new JsonArray("phi-4-mini-local"),
+            };
+            obj["models"]!["local"] = local;
+        });
+
+        var exc = Assert.Throws<PersonaValidationException>(() => PersonaCatalog.Load(personasDir: fixture.PersonasDir));
+        Assert.Contains("sonic", exc.Message);
+    }
+
+    [Fact]
     public void IdFolderMismatch_Throws()
     {
         using var fixture = new PersonaPackFixture();

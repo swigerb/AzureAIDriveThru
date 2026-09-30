@@ -26,7 +26,7 @@ public static class InheritedEnvironmentFilter
 
     /// <summary>
     /// Removes any inherited env var matching CONFORMANCE_*, AZURE_*, VERBOSE_*, PERSONAS*
-    /// (catches both PERSONAS and PERSONAS_DIR), DEFAULT_PERSONA* (prefixes) or *_PROXY (suffix) —
+    /// (catches both PERSONAS and PERSONAS_DIR), DEFAULT_PERSONA* (prefixes) or *_PROXY (suffix) --
     /// case-insensitively, since Windows env var names are — then pins
     /// NO_PROXY/no_proxy to <see cref="NoProxyValue"/> so the child process's own outbound HTTP
     /// calls (to the fakes, always loopback) can never get routed through an inherited corporate
