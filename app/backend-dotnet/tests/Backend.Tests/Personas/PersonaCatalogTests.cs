@@ -129,6 +129,7 @@ public sealed class PersonaCatalogTests
         var exc = Assert.Throws<PersonaValidationException>(
             () => PersonaCatalog.Load(personasDir: fixture.PersonasDir, personasEnv: "test-alpha", defaultPersonaEnv: "test-alpha"));
         Assert.Contains("test-alpha", exc.Message);
+        Assert.Contains("local", exc.Message);
     }
 
     [Fact]
