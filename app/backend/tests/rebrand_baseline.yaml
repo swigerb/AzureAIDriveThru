@@ -26,10 +26,12 @@ entries:
   increase_reason: ''
 - file: DEPLOY.md
   brand: sonic
-  max: 5
+  max: 3
   issue: '#86'
   reason: 'Deployment walkthrough uses the Sonic app name/image tag as its running
-    example; same top-level-docs naming work as #86.'
+    example; same top-level-docs naming work as #86. Lowered from 5 to 3 when the
+    EasyAuth section was replaced with the Entra Setup/Verify/rollout walkthrough
+    (#146), which removed several Sonic-named auth example strings.'
   increase_reason: ''
 - file: README.md
   brand: mcdonalds
