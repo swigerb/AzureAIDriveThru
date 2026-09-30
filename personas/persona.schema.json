@@ -129,8 +129,7 @@
       "required": ["realtime"],
       "properties": {
         "realtime": { "$ref": "#/$defs/modelPipeline" },
-        "cascade": { "$ref": "#/$defs/modelPipeline" },
-        "local": { "$ref": "#/$defs/modelPipeline" }
+        "cascade": { "$ref": "#/$defs/modelPipeline" }
       }
     },
     "strategies": {

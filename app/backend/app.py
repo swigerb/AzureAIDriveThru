@@ -17,7 +17,6 @@ import conformance_hooks
 import default_persona
 from cascade_processor import CascadeProcessor
 from config_loader import get_config
-from local_processor import LocalProcessor
 from model_catalog import ModelCatalog, ModelValidationError
 from persona_loader import Persona, PersonaCatalog, PersonaValidationError
 from processors import ProcessorRegistry
@@ -154,7 +153,7 @@ def _selectable_models(pipeline_cfg, pipeline_name: str, model_catalog: ModelCat
 def _model_pipelines_body(models, model_catalog: ModelCatalog) -> dict:
     """The selectable `models` per pipeline (design doc section 5.2/7; Rick's PR #106 review item
     3: ALWAYS only selectable models, `{id, label, reasoning}` shaped); only the pipelines a
-    persona actually declares (`cascade`/`local` are optional). *model_catalog* is mandatory --
+    persona actually declares (`cascade` is optional). *model_catalog* is mandatory --
     there is no unfiltered fallback shape any more.
 
     PR #106 review round 3 (Rick's nit, issue #75): each pipeline's list is keyed `models`, not
@@ -172,11 +171,6 @@ def _model_pipelines_body(models, model_catalog: ModelCatalog) -> dict:
         body["cascade"] = {
             "default": models.cascade.default,
             "models": _selectable_models(models.cascade, "cascade", model_catalog),
-        }
-    if models.local is not None:
-        body["local"] = {
-            "default": models.local.default,
-            "models": _selectable_models(models.local, "local", model_catalog),
         }
     return body
 
@@ -529,7 +523,7 @@ async def create_app() -> web.Application:
         sys.exit(1)
     _startup_checks["personas_loaded"] = True
 
-    # 2b. Load and validate the shared realtime/cascade/local model catalog (issue #75,
+    # 2b. Load and validate the shared realtime/cascade model catalog (issue #75,
     # design doc section 7): config.yaml's `models.catalog` (layer 1) plus the
     # AZURE_AI_MODEL_DEPLOYMENTS deployment-name map (layer 2, populated by #93's Bicep
     # outputs). Fails fast on a malformed catalog entry, same pattern as persona/prompt
@@ -717,24 +711,7 @@ async def create_app() -> web.Application:
         credential=cascade_credential,
         default_voice=os.environ.get("AZURE_OPENAI_REALTIME_VOICE_CHOICE") or model_cfg.get("default_voice", "marin"),
     )
-    # Issue #81: the local (on-device) pipeline processor -- STT/chat/TTS against a companion
-    # process instead of any Azure endpoint (local_runtime.py's HTTP/JSON contract), reached
-    # through the SAME dispatch seam as cascade above. Off by default everywhere (ADR-001
-    # decision 7): `resolve_local_model`/`model_catalog.is_deployed` only make a `pipeline:
-    # local` catalog entry selectable once `LOCAL_RUNTIME_ENDPOINT` is set, so constructing this
-    # processor unconditionally here is safe -- with no env var configured, its catalog entries
-    # simply never show up as deployed/selectable in `/api/personas` or `?model=`. No
-    # credential/endpoint wiring is needed the way cascade's Foundry/audio clients need: the
-    # companion process is a same-box (or LAN) plain HTTP service, not an Azure resource.
-    local_processor = LocalProcessor(
-        tools=rtmt.tools,
-        sessions=rtmt._sessions,
-        persona_catalog=_persona_catalog,
-        persona_prompt_loaders=prompt_loaders,
-        model_catalog=model_catalog,
-        default_voice=os.environ.get("LOCAL_RUNTIME_VOICE_CHOICE") or model_cfg.get("local_default_voice", "en_US-amy-medium"),
-    )
-    rtmt.processor_registry = ProcessorRegistry([rtmt, cascade_processor, local_processor])
+    rtmt.processor_registry = ProcessorRegistry([rtmt, cascade_processor])
 
     rtmt.attach_to_app(app, "/realtime")
 

@@ -5,8 +5,8 @@ import type { PersonaModels } from "@/types/persona";
 
 // Issue #80 F10's pure helpers (design doc §7's `/api/personas/{id}` `models` block). Covered
 // separately from `model-picker.test.tsx` because the grouping/default/persistence rules here
-// (local pipeline exclusion, stale-default fallback, per-persona storage keys) are worth guarding
-// independent of any particular rendering.
+// (stale-default fallback, per-persona storage keys) are worth guarding independent of any
+// particular rendering.
 
 const MODELS: PersonaModels = {
     realtime: {
@@ -22,15 +22,11 @@ const MODELS: PersonaModels = {
             { id: "gpt-5-mini", label: "GPT-5 Mini", reasoning: false },
             { id: "phi-4", label: "Phi-4", reasoning: true }
         ]
-    },
-    local: {
-        default: "phi-4-mini-local",
-        models: [{ id: "phi-4-mini-local", label: "Phi-4 Mini (local)", reasoning: false }]
     }
 };
 
 describe("selectableModelGroups", () => {
-    it("groups realtime and cascade models, excluding local (issue #81/F12, out of scope)", () => {
+    it("groups realtime and cascade models (the only two pipelines Microsoft Foundry supports)", () => {
         const groups = selectableModelGroups(MODELS);
         expect(groups.map(g => g.pipeline)).toEqual(["realtime", "cascade"]);
         expect(groups[0].label).toBe("Realtime");
