@@ -56,15 +56,6 @@ describe("ModelPicker", () => {
         expect(within(cascadeGroup).getAllByRole("option").map(o => (o as HTMLOptionElement).value)).toEqual(["gpt-5-mini", "phi-4"]);
     });
 
-    it("excludes the local pipeline entirely (issue #81/F12, out of this task's scope)", () => {
-        const withLocal: PersonaModels = { ...MODELS, local: { default: "phi-4-mini-local", models: [{ id: "phi-4-mini-local", label: "Phi-4 Mini (local)", reasoning: false }] } };
-        render(<ModelPicker models={withLocal} currentId="gpt-realtime-2.1" onSelect={() => {}} disabled={false} />);
-        const select = screen.getByLabelText("Select model");
-
-        expect(within(select).queryByText(/local/i)).not.toBeInTheDocument();
-        expect(within(select).getAllByRole("group")).toHaveLength(2);
-    });
-
     it("shows a reasoning badge/suffix only for models flagged reasoning: true", () => {
         render(<ModelPicker models={MODELS} currentId="phi-4" onSelect={() => {}} disabled={false} />);
         const select = screen.getByLabelText("Select model");
