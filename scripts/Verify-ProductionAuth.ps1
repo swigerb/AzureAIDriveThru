@@ -74,6 +74,13 @@
     Skip delegating to Verify-EntraAuth.ps1 (useful if it was already run separately in the same
     session).
 
+.PARAMETER ProbePersona
+    Persona id used to build the branding-asset, menu.json and non-branding-asset-JSON probe paths
+    under the anonymous checks (design 18.2). Resolved, when not passed explicitly, from the azd
+    env `DEFAULT_PERSONA`, then the first id in the azd env `PERSONAS`. Generic (never hardcodes a
+    brand), so this script gives an accurate branding-probe FAIL, not a false one, on any
+    environment whose `PERSONAS` excludes a particular pack.
+
 .EXAMPLE
     ./scripts/Verify-ProductionAuth.ps1 -RevisionsOnly
     # Dark-provision check (18.10 step 4a): reads everything from the azd env.
@@ -96,7 +103,12 @@ param(
     [hashtable]$ExpectedImage = @{},
     [switch]$RevisionsOnly,
     [switch]$Authenticated,
-    [switch]$SkipRegistrationCheck
+    [switch]$SkipRegistrationCheck,
+
+    # Generic persona id for the branding/menu/asset probes (review item 8): never hardcode a
+    # brand word in this script. Resolved from the azd env when not supplied (below).
+    [ValidatePattern('^[a-z0-9-]+$')]
+    [string]$ProbePersona
 )
 
 Set-StrictMode -Version Latest
@@ -161,7 +173,14 @@ function Invoke-ProbeRequest {
 # Anonymous-access probes (design 18.2 route matrix, 18.9 Verify-ProductionAuth spec). Skipped
 # entirely under -RevisionsOnly (no HTTP while ingress may be off).
 function Test-AnonymousProbes {
-    param([Parameter(Mandatory)][string]$BaseUrl, [Parameter(Mandatory)][string]$ServiceName)
+    param(
+        [Parameter(Mandatory)][string]$BaseUrl,
+        [Parameter(Mandatory)][string]$ServiceName,
+        # Generic persona id (review item 8): this script never hardcodes a brand word. When
+        # unresolved, the persona-scoped probes below record an explicit FAIL asking for
+        # -ProbePersona instead of guessing a brand id.
+        [string]$ProbePersona
+    )
 
     $root = Invoke-ProbeRequest -Url $BaseUrl
     $rootOk = $root.StatusCode -eq 200
@@ -172,17 +191,28 @@ function Test-AnonymousProbes {
     $health = Invoke-ProbeRequest -Url "$BaseUrl/health"
     Add-Result "$ServiceName: GET /health is 200 (anonymous)" ($health.StatusCode -eq 200) "status=$($health.StatusCode)"
 
-    # A public branding asset (18.2): image/audio types stay anonymous so <img>/<audio>/favicon
-    # never need a bearer. The demo persona's logo is a stable, always-present fixture.
-    $branding = Invoke-ProbeRequest -Url "$BaseUrl/personas/sonic/assets/logo.svg"
-    Add-Result "$ServiceName: GET branding asset (logo.svg) is 200 (anonymous)" ($branding.StatusCode -eq 200) "status=$($branding.StatusCode)"
+    if (-not $ProbePersona) {
+        Add-Result "$ServiceName: GET branding asset (logo.svg) is 200 (anonymous)" $false 'no persona resolved (azd env DEFAULT_PERSONA/PERSONAS empty); pass -ProbePersona'
+    }
+    else {
+        # A public branding asset (18.2): image/audio types stay anonymous so <img>/<audio>/favicon
+        # never need a bearer. Any enabled persona's logo is a stable, always-present fixture.
+        $branding = Invoke-ProbeRequest -Url "$BaseUrl/personas/$ProbePersona/assets/logo.svg"
+        Add-Result "$ServiceName: GET branding asset (logo.svg) is 200 (anonymous)" ($branding.StatusCode -eq 200) "status=$($branding.StatusCode)"
+    }
 
     $protectedGets = @(
         @{ Path = '/api/personas'; Label = 'GET /api/personas' }
         @{ Path = '/api/auth/session'; Label = 'GET /api/auth/session' }
-        @{ Path = '/personas/sonic/menu.json'; Label = 'GET menu.json' }
-        @{ Path = '/personas/sonic/assets/demo/dummyOrder.json'; Label = 'GET asset JSON (non-branding)' }
     )
+    if ($ProbePersona) {
+        $protectedGets += @{ Path = "/personas/$ProbePersona/menu.json"; Label = 'GET menu.json' }
+        $protectedGets += @{ Path = "/personas/$ProbePersona/assets/demo/dummyOrder.json"; Label = 'GET asset JSON (non-branding)' }
+    }
+    else {
+        Add-Result "$ServiceName: GET menu.json is 401 (no token)" $false 'no persona resolved; pass -ProbePersona'
+        Add-Result "$ServiceName: GET asset JSON (non-branding) is 401 (no token)" $false 'no persona resolved; pass -ProbePersona'
+    }
     foreach ($p in $protectedGets) {
         $r = Invoke-ProbeRequest -Url "$BaseUrl$($p.Path)"
         Add-Result "$ServiceName: $($p.Label) is 401 (no token)" ($r.StatusCode -eq 401) "status=$($r.StatusCode)"
@@ -247,6 +277,35 @@ if ([string]::IsNullOrWhiteSpace($TenantId)) { throw 'Unable to resolve -TenantI
 if ([string]::IsNullOrWhiteSpace($ClientId)) { throw 'Unable to resolve -ClientId (azd env ENTRA_CLIENT_ID is empty). Pass -ClientId explicitly, or run Setup-EntraAuth.ps1 first.' }
 if ([string]::IsNullOrWhiteSpace($ResourceGroup)) { throw 'Unable to resolve -ResourceGroup (azd env AZURE_RESOURCE_GROUP is empty). Pass -ResourceGroup explicitly.' }
 
+# Generic persona resolution (review item 8): never hardcode a brand id in this script.
+if (-not $ProbePersona) {
+    $ProbePersona = Get-AzdEnvValue 'DEFAULT_PERSONA'
+    if ([string]::IsNullOrWhiteSpace($ProbePersona)) {
+        $personasEnv = Get-AzdEnvValue 'PERSONAS'
+        if (-not [string]::IsNullOrWhiteSpace($personasEnv)) {
+            $ProbePersona = ($personasEnv -split ',')[0].Trim()
+        }
+    }
+}
+if ([string]::IsNullOrWhiteSpace($ProbePersona)) {
+    Write-Host 'Warning: no persona resolved (azd env DEFAULT_PERSONA/PERSONAS empty); pass -ProbePersona. Branding/menu/asset probes will FAIL.' -ForegroundColor Yellow
+    $ProbePersona = $null
+}
+
+# The dotnet app is discovered by name (not tag) because its bicep resource has no
+# `azd-service-name` tag (review item 5); it is mapped to the 'backend-dotnet' KnownServices entry.
+$script:DotnetAppName = Get-AzdEnvValue 'AZURE_CONTAINER_APP_DOTNET_NAME'
+
+# Resolves a container app's KnownServices key, safely under StrictMode: an app's `tags` may be
+# absent entirely, or present without an `azd-service-name` key (the dotnet app today).
+function Resolve-ServiceName {
+    param([Parameter(Mandatory)]$ContainerApp)
+    $svc = Get-Prop (Get-Prop $ContainerApp 'tags' $null) 'azd-service-name' $null
+    if ($svc) { return $svc }
+    if ($script:DotnetAppName -and $ContainerApp.name -eq $script:DotnetAppName) { return 'backend-dotnet' }
+    return $null
+}
+
 Write-Host "Verify-ProductionAuth: tenant=$(Format-Redacted $TenantId) client=$(Format-Redacted $ClientId) rg=$ResourceGroup" -ForegroundColor Cyan
 if ($RevisionsOnly) { Write-Host 'Mode: -RevisionsOnly (dark-provision check, no HTTP probes)' -ForegroundColor Cyan }
 if ($Authenticated) { Write-Host 'Mode: -Authenticated (acquiring a delegated token; never printed)' -ForegroundColor Cyan }
@@ -256,17 +315,17 @@ $appsJson = az containerapp list -g $ResourceGroup --output json 2>&1
 if ($LASTEXITCODE -ne 0) { throw "az containerapp list failed: $appsJson" }
 $allApps = @($appsJson | ConvertFrom-Json)
 $targetApps = @($allApps | Where-Object {
-        $svc = $_.tags.'azd-service-name'
+        $svc = Resolve-ServiceName $_
         $svc -and $script:KnownServices.ContainsKey($svc)
     })
 
 if ($targetApps.Count -eq 0) {
     throw "No container apps tagged 'azd-service-name' in {$($script:KnownServices.Keys -join ', ')} found in resource group '$ResourceGroup'."
 }
-Write-Host "Discovered $($targetApps.Count) app(s): $(($targetApps | ForEach-Object { $_.tags.'azd-service-name' }) -join ', ')`n"
+Write-Host "Discovered $($targetApps.Count) app(s): $(($targetApps | ForEach-Object { Resolve-ServiceName $_ }) -join ', ')`n"
 
 foreach ($capp in $targetApps) {
-    $svcName = $capp.tags.'azd-service-name'
+    $svcName = Resolve-ServiceName $capp
     $svcSpec = $script:KnownServices[$svcName]
     $appName = $capp.name
     Write-Host "--- $svcName ($appName) ---" -ForegroundColor Cyan
@@ -293,12 +352,11 @@ foreach ($capp in $targetApps) {
     $revisions = @($revJson | ConvertFrom-Json)
     $activeRevisions = @($revisions | Where-Object { $_.properties.active -eq $true })
 
-    if ($activeRevisions.Count -eq 0) {
-        Add-Result "$svcName: at least one active revision" $false 'zero active revisions'
-    }
-    else {
-        Add-Result "$svcName: at least one active revision" $true "$($activeRevisions.Count) active"
-    }
+    # Exactly one active revision, healthy and running (review item 4): more than one active
+    # revision means a stuck/blue-green rollout the operator must resolve before trusting any
+    # other check below, and zero is the pre-existing failure this replaces.
+    $activeNames = ($activeRevisions | ForEach-Object { $_.name }) -join ', '
+    Add-Result "$svcName: exactly one active revision" ($activeRevisions.Count -eq 1) "active=$($activeRevisions.Count) ($activeNames)"
 
     foreach ($rev in $activeRevisions) {
         $revName = $rev.name
@@ -307,6 +365,12 @@ foreach ($capp in $targetApps) {
         $image = if ($container) { $container.image } else { $null }
         $imageOk = $image -and ($image -eq $expectedImage)
         Add-Result "$svcName/$revName`: runs expected image" $imageOk "image=$image expected=$expectedImage"
+
+        $healthState = Get-Prop $rev.properties 'healthState' $null
+        Add-Result "$svcName/$revName`: healthState=Healthy" ($healthState -eq 'Healthy') "healthState=$healthState"
+
+        $runningState = Get-Prop $rev.properties 'runningState' $null
+        Add-Result "$svcName/$revName`: runningState=Running" ($runningState -eq 'Running') "runningState=$runningState"
 
         $envList = if ($container -and $container.env) { @($container.env) } else { @() }
         function Get-EnvVal([string]$name) {
@@ -342,14 +406,11 @@ foreach ($capp in $targetApps) {
     # --- EasyAuth off -------------------------------------------------------------------------
     $authShow = az containerapp auth show -n $appName -g $ResourceGroup --output json 2>&1
     if ($LASTEXITCODE -ne 0) {
-        # A 404/"not configured" response from `auth show` is itself a pass (nothing configured
-        # means EasyAuth is off); any other failure is unknown state, which must fail closed.
-        if ($authShow -match 'ResourceNotFound|could not be found|NotFound') {
-            Add-Result "$svcName: EasyAuth disabled (platform.enabled=false)" $true 'no auth configuration present'
-        }
-        else {
-            Add-Result "$svcName: EasyAuth disabled (platform.enabled=false)" $false "az containerapp auth show failed (unknown state, treated as failure): $authShow"
-        }
+        # Any error is an unknown state (review item 3/9): a prior version treated
+        # "ResourceNotFound"/"could not be found" as an implicit pass, which is unsafe because the
+        # same text can appear for auth transiently unreachable, not just "nothing configured".
+        # Every failure to read EasyAuth state must fail closed.
+        Add-Result "$svcName: EasyAuth disabled (platform.enabled=false)" $false "az containerapp auth show failed (unknown state, treated as failure): $authShow"
     }
     else {
         $authCfg = $authShow | ConvertFrom-Json
@@ -372,7 +433,7 @@ foreach ($capp in $targetApps) {
         }
         else {
             $base = "https://$fqdn"
-            Test-AnonymousProbes -BaseUrl $base -ServiceName $svcName
+            Test-AnonymousProbes -BaseUrl $base -ServiceName $svcName -ProbePersona $ProbePersona
             if ($Authenticated) {
                 Test-AuthenticatedProbe -BaseUrl $base -ServiceName $svcName -TenantId $TenantId -ClientId $ClientId -ApiScopeName $ApiScopeName
             }
@@ -382,7 +443,9 @@ foreach ($capp in $targetApps) {
 }
 
 # --- Delegate registration checks to Verify-EntraAuth.ps1 -------------------------------------
-if (-not $SkipRegistrationCheck) {
+# -RevisionsOnly runs only the env-pin/active-revision/EasyAuth az checks (18.9 spec, item 6): the
+# registration delegation below makes Graph HTTP calls and must be skipped in that mode too.
+if (-not $SkipRegistrationCheck -and -not $RevisionsOnly) {
     Write-Host '--- Registration (delegated to Verify-EntraAuth.ps1) ---' -ForegroundColor Cyan
     $verifyScript = Join-Path $PSScriptRoot 'Verify-EntraAuth.ps1'
     & $verifyScript -TenantId $TenantId -ClientId $ClientId -ApiScopeName $ApiScopeName -AppRoleValue $AppRoleValue
