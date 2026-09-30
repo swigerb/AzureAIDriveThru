@@ -334,11 +334,20 @@ jobs:
         # expects a .venv at the repo root with the backend's runtime deps
         # installed -- exactly what a developer's local checkout has. Only the
         # python leg launches a Python process at all.
+        #
+        # Also installs tests/conformance/requirements-harness.txt (issue #143/ADR-002):
+        # PyJWT[crypto], used only by FakeEntraIssuerPyJwtValidationTests to prove the fake
+        # issuer's discovery/JWKS/minted tokens validate with a stock third-party JWT library --
+        # never a runtime dependency of app/backend itself. That test resolves this same
+        # RepoPaths.PythonExecutable() venv and skips gracefully if PyJWT isn't importable, so
+        # it only actually runs (and proves anything) on this python leg, not the dotnet leg
+        # (which never sets up a Python interpreter at all).
         if: matrix.backend == 'python'
         run: |
           python -m venv .venv
           .venv/bin/python -m pip install --upgrade pip
           .venv/bin/python -m pip install -r app/backend/requirements.txt
+          .venv/bin/python -m pip install -r tests/conformance/requirements-harness.txt
 
       - name: Set up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0

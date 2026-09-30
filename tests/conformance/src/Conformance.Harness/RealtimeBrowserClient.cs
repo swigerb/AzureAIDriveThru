@@ -97,14 +97,38 @@ public sealed class RealtimeBrowserClient : IAsyncDisposable
     /// </summary>
     public WebSocketState SocketState => _socket.State;
 
+    /// <summary>
+    /// Issue #143 (ADR-002 conformance harness): "the harness ... RealtimeBrowserClient attach[es]
+    /// a valid token by default" -- <paramref name="attachAccessToken"/>/<paramref name="attachSessionToken"/>
+    /// default to true and, with <paramref name="accessToken"/>/<paramref name="sessionToken"/>
+    /// left null, mint/fetch a fresh valid pair with zero changes needed at any of this method's
+    /// ~100 existing call sites: <paramref name="accessToken"/> defaults to
+    /// <see cref="EntraDefaultCredentials.TryGetAccessToken"/> for <paramref name="backendBaseUri"/>
+    /// (null on a <see cref="DevelopmentPassThroughFixture"/>'s backend, which has nothing
+    /// registered -- so no `?access_token` is sent there either way), and
+    /// <paramref name="sessionToken"/> defaults to a real <c>GET /api/auth/session</c> fetch using
+    /// that same access token as its Bearer header. Set either <c>attach*</c> flag to false to
+    /// omit that query param entirely (18.11 row 1's "no token", row 10's "no session token"), or
+    /// pass an explicit override to send something else instead (a wrong-tenant/expired/etc. mint,
+    /// or -- row 10's "session token minted for another oid" -- a real session token fetched via
+    /// <see cref="FetchSessionTokenAsync"/> for a *different* access token than the one actually
+    /// used to connect).
+    /// </summary>
     public static async Task<RealtimeBrowserClient> ConnectAsync(
         Uri backendBaseUri, bool offerDeflate = false, string? origin = null, string? persona = null,
-        string? model = null, CancellationToken cancellationToken = default)
+        string? model = null, bool attachAccessToken = true, string? accessToken = null,
+        bool attachSessionToken = true, string? sessionToken = null, CancellationToken cancellationToken = default)
     {
-        using var http = new HttpClient();
-        var tokenResponse = await http.GetFromJsonAsyncSafe(new Uri(backendBaseUri, "/api/auth/session"), cancellationToken)
-            .ConfigureAwait(false);
-        var token = tokenResponse.GetProperty("token").GetString();
+        var resolvedAccessToken = attachAccessToken
+            ? accessToken ?? EntraDefaultCredentials.TryGetAccessToken(backendBaseUri)
+            : null;
+
+        string? token = null;
+        if (attachSessionToken)
+        {
+            token = sessionToken ?? await FetchSessionTokenAsync(backendBaseUri, resolvedAccessToken, cancellationToken)
+                .ConfigureAwait(false);
+        }
 
         var clientSocket = new ClientWebSocket();
         // Without this, ClientWebSocket.HttpResponseHeaders is always null regardless of what the
@@ -123,22 +147,36 @@ public sealed class RealtimeBrowserClient : IAsyncDisposable
         // Built manually rather than via UriBuilder: UriBuilder.Scheme silently resets Port to
         // the new scheme's default port when the current port matches the old scheme's default,
         // which would corrupt the dynamically-allocated backend port used throughout the suite.
+        // Issue #143 (ADR-002): `access_token` (the Entra bearer) and `token` (the HMAC session
+        // token) are each included only when their own attach* flag is true -- omitted entirely
+        // (not merely empty) when false, matching 18.11 row 1's "no token" and row 10's "no
+        // session token" cases exactly, and matching today's real frontend/useRealtime.tsx
+        // behaviour exactly when both default to true (every existing call site).
+        var queryParams = new List<string>();
+        if (resolvedAccessToken is not null)
+        {
+            queryParams.Add($"access_token={Uri.EscapeDataString(resolvedAccessToken)}");
+        }
+        if (attachSessionToken)
+        {
+            queryParams.Add($"token={Uri.EscapeDataString(token ?? "")}");
+        }
         // Rick's PR #102 review item 1: an explicit `persona` query param binds the session to
         // that persona id (mirrors the frontend's own /realtime?persona=<id> usage) -- omitted
         // (the default null) matches today's behaviour exactly, binding to DEFAULT_PERSONA.
-        var query = $"token={Uri.EscapeDataString(token ?? "")}";
         if (persona is not null)
         {
-            query += $"&persona={Uri.EscapeDataString(persona)}";
+            queryParams.Add($"persona={Uri.EscapeDataString(persona)}");
         }
         // Rick's PR #106 review item 2: an explicit `model` query param binds the session to
         // that realtime model id (mirrors `persona` immediately above) -- omitted (the default
         // null) matches today's behaviour exactly, binding to the persona's own realtime default.
         if (model is not null)
         {
-            query += $"&model={Uri.EscapeDataString(model)}";
+            queryParams.Add($"model={Uri.EscapeDataString(model)}");
         }
-        var wsUri = new Uri($"ws://{backendBaseUri.Host}:{backendBaseUri.Port}/realtime?{query}");
+        var query = queryParams.Count > 0 ? $"?{string.Join('&', queryParams)}" : "";
+        var wsUri = new Uri($"ws://{backendBaseUri.Host}:{backendBaseUri.Port}/realtime{query}");
         await clientSocket.ConnectAsync(wsUri, cancellationToken).ConfigureAwait(false);
 
 
@@ -150,6 +188,30 @@ public sealed class RealtimeBrowserClient : IAsyncDisposable
         };
         client._readerTask = client.PumpReceivedFramesAsync(client._readerCts.Token);
         return client;
+    }
+
+    /// <summary>
+    /// Issue #143 (ADR-002): fetches a fresh HMAC session token from
+    /// <c>GET {backendBaseUri}/api/auth/session</c>, attaching <paramref name="accessToken"/> as
+    /// an <c>Authorization: Bearer</c> header when non-null (today's backend ignores it since
+    /// neither ADR-002 auth implementation has landed yet; once one has, this is what actually
+    /// authorizes the mint and binds the returned token to that access token's own `oid`). Exposed
+    /// publicly (not just used internally by <see cref="ConnectAsync"/>) so an 18.11 row test can
+    /// fetch a *second* session token for a different minted access token -- row 10's "session
+    /// token minted for another oid" needs exactly that, paired with the original access token on
+    /// the actual connect.
+    /// </summary>
+    public static async Task<string?> FetchSessionTokenAsync(
+        Uri backendBaseUri, string? accessToken, CancellationToken cancellationToken = default)
+    {
+        using var http = new HttpClient();
+        if (accessToken is not null)
+        {
+            http.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
+        }
+        var tokenResponse = await http.GetFromJsonAsyncSafe(new Uri(backendBaseUri, "/api/auth/session"), cancellationToken)
+            .ConfigureAwait(false);
+        return tokenResponse.GetProperty("token").GetString();
     }
 
     /// <summary>

@@ -18,5 +18,15 @@
          to restore through packagefeedproxy.microsoft.io and run against net11.0 in this
          environment before being pinned here. -->
     <PackageVersion Include="Microsoft.Playwright" Version="1.63.0" />
+    <!-- Issue #143 (ADR-002): FakeEntraIssuer signs minted JWTs directly with this library
+         (Conformance.Fakes). Version verified to restore through packagefeedproxy.microsoft.io
+         and run against net11.0 in this environment before being pinned here. -->
+    <PackageVersion Include="System.IdentityModel.Tokens.Jwt" Version="8.23.0" />
+    <!-- Issue #143 (ADR-002): the harness unit test proving FakeEntraIssuer's discovery/JWKS/
+         minted tokens validate with stock JwtBearer (not Microsoft.Identity.Web, per ADR-002's
+         parity contract). Exact prerelease version matching the installed net11.0 RC1 SDK,
+         found with a prerelease-inclusive `dotnet package search` against the azure-default
+         feed (no other net11.0-targeted version exists there). -->
+    <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="11.0.0-rc.1.26425.128" />
   </ItemGroup>
 </Project>

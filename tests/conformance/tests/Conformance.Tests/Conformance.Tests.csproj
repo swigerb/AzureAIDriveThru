@@ -13,6 +13,15 @@
     <PackageReference Include="xunit.v3.mtp-off" />
     <!-- Real-browser scenarios only (Category=Browser); see Scenarios/Browser/. -->
     <PackageReference Include="Microsoft.Playwright" />
+    <!-- Issue #143 (ADR-002): FakeEntraIssuerJwtBearerValidationTests hosts a real, minimal
+         ASP.NET Core JwtBearer pipeline (stock middleware, not Microsoft.Identity.Web) against
+         FakeEntraIssuer, needing the ASP.NET Core shared framework even though this project uses
+         the plain (non-Web) SDK everywhere else. -->
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 
   <ItemGroup>

@@ -29,7 +29,7 @@ public sealed class PersonaDisabledPackConformanceTests(DisabledPersonaConforman
     public Task Enabled_persona_asset_route_still_serves_200() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
-        using var http = new HttpClient();
+        using var http = ConformanceHttpClient.Create();
         using var response = await http.GetAsync(
             new Uri(fixture.Backend!.BaseUri, $"/personas/{TwoPersonaConformanceFixture.PersonaA}/assets/logo.svg"), ct);
 
@@ -40,7 +40,7 @@ public sealed class PersonaDisabledPackConformanceTests(DisabledPersonaConforman
     public Task Disabled_persona_asset_route_returns_404_even_though_the_pack_exists_on_disk() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
-        using var http = new HttpClient();
+        using var http = ConformanceHttpClient.Create();
         using var response = await http.GetAsync(
             new Uri(fixture.Backend!.BaseUri, $"/personas/{DisabledPersonaId}/assets/logo.svg"), ct);
 
@@ -51,7 +51,7 @@ public sealed class PersonaDisabledPackConformanceTests(DisabledPersonaConforman
     public Task Disabled_persona_menu_route_returns_404_even_though_the_pack_exists_on_disk() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
-        using var http = new HttpClient();
+        using var http = ConformanceHttpClient.Create();
         using var response = await http.GetAsync(
             new Uri(fixture.Backend!.BaseUri, $"/personas/{DisabledPersonaId}/menu.json"), ct);
 
@@ -62,7 +62,7 @@ public sealed class PersonaDisabledPackConformanceTests(DisabledPersonaConforman
     public Task Disabled_persona_detail_route_returns_404() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
-        using var http = new HttpClient();
+        using var http = ConformanceHttpClient.Create();
         using var response = await http.GetAsync(
             new Uri(fixture.Backend!.BaseUri, $"/api/personas/{DisabledPersonaId}"), ct);
 

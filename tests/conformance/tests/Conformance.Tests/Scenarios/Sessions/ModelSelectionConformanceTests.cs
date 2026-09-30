@@ -36,7 +36,7 @@ public static class ModelSelectionConformanceTestHelpers
     {
         using var socket = new ClientWebSocket();
         socket.Options.CollectHttpResponseDetails = true;
-        var wsUri = new Uri($"ws://{backendBaseUri.Host}:{backendBaseUri.Port}/realtime?{query}");
+        var wsUri = await RealtimeUris.WithDefaultCredentialsAsync(backendBaseUri, query, ct);
 
         var ex = await Assert.ThrowsAsync<WebSocketException>(() => socket.ConnectAsync(wsUri, ct));
         Assert.Equal(HttpStatusCode.NotFound, socket.HttpStatusCode);
@@ -60,8 +60,9 @@ public static class ModelSelectionConformanceTestHelpers
     public static async Task<string> RealtimeConnectBodyAsync(
         Uri backendBaseUri, string query, HttpStatusCode expectedStatus, CancellationToken ct)
     {
-        using var http = new HttpClient();
-        using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(backendBaseUri, $"/realtime?{query}"));
+        using var http = ConformanceHttpClient.Create();
+        var fullQuery = await RealtimeUris.BuildQueryAsync(backendBaseUri, query, ct);
+        using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(backendBaseUri, $"/realtime?{fullQuery}"));
         request.Headers.TryAddWithoutValidation("Connection", "Upgrade");
         request.Headers.TryAddWithoutValidation("Upgrade", "websocket");
         request.Headers.TryAddWithoutValidation("Sec-WebSocket-Version", "13");
@@ -200,7 +201,7 @@ public sealed class ModelSelectionConformanceTests(ModelDeploymentMapConformance
     public Task Api_persona_detail_lists_only_the_selectable_models_shaped_for_the_picker() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
-        using var http = new HttpClient();
+        using var http = ConformanceHttpClient.Create();
         using var response = await http.GetAsync(new Uri(fixture.Backend!.BaseUri, "/api/personas/sonic"), ct);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 

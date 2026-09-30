@@ -140,6 +140,21 @@ is a real relay feature, not an order-engine or search-tool one, and stays #13 s
 the next thing #13's owner (or a follow-up issue) should pick up before this class's remaining 3
 methods can be tagged.
 
+**PR #158 (issue #143/ADR-002, R10 + dev-merge floor recount):** tagged all nine
+`Scenarios/Auth` auth-row test classes `Dotnet=ready` (196 raw tagged methods across the merged
+tree), but the floor itself only counts 178: `DotnetTraitCoverageTests` now excludes the 18
+methods in the five classes (`AuthModeLaunchTests`, `AuthRowLoggingTests`,
+`AuthRowRealtimeTokenTests`, `AuthRowRestTokenTests`, `AuthRowSpecialCaseTests`) that route every
+test through `RunAuthRowAsync`/`AssertFailsFastAsync`, which unconditionally skip on the dotnet
+leg (via `AuthRowCapability.ShouldSkipCurrentBackend`) until issue #147 flips
+`DotnetEnforcesAuth`. Skip-only methods can't fail the leg, but counting them toward the floor
+would let a real coverage regression elsewhere hide behind them staying tagged, so the floor
+convention going forward is: a tagged method only counts once it can actually fail, not merely
+once it is tagged. The other four Auth classes (`AuthRowCasesTests`,
+`AuthRowRealtimeAssertionsTests`, `DevelopmentPassThroughUnsetModeTests`,
+`DevelopmentPassThroughExplicitModeTests`) are real, ungated, already-passing-today tests and do
+count. See `DotnetTraitCoverageTests`'s own doc comment for the exact arithmetic.
+
 
 
 - **DEV_MODE hot-reload** (`prompt_loader.py`'s file-watching reload behaviour) is explicitly

@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using Conformance.Harness;
 using Xunit;
 
 namespace Conformance.Tests;
@@ -11,7 +12,7 @@ public sealed class AuthSessionTests(ConformanceFixture fixture)
     [Fact]
     public Task Auth_session_endpoint_returns_a_token() => fixture.RunAsync(async () =>
     {
-        using var http = new HttpClient();
+        using var http = ConformanceHttpClient.Create();
         using var response = await http.GetAsync(new Uri(fixture.Backend!.BaseUri, "/api/auth/session"), TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);

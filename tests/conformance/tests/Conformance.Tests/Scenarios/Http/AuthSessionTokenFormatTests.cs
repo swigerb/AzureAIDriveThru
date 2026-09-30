@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Conformance.Harness;
 using Xunit;
 
 namespace Conformance.Tests;
@@ -25,7 +26,7 @@ public sealed class AuthSessionTokenFormatTests(ConformanceFixture fixture)
     [Fact]
     public Task Token_is_a_base64url_json_payload_and_a_sha256_hex_signature_joined_by_a_dot() => fixture.RunAsync(async () =>
     {
-        using var http = new HttpClient();
+        using var http = ConformanceHttpClient.Create();
         using var response = await http.GetAsync(new Uri(fixture.Backend!.BaseUri, "/api/auth/session"), TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         using var document = JsonDocument.Parse(
@@ -57,7 +58,7 @@ public sealed class AuthSessionTokenFormatTests(ConformanceFixture fixture)
     [Fact]
     public Task A_token_requested_a_second_later_carries_a_later_expiry_and_differs() => fixture.RunAsync(async () =>
     {
-        using var http = new HttpClient();
+        using var http = ConformanceHttpClient.Create();
         var uri = new Uri(fixture.Backend!.BaseUri, "/api/auth/session");
         var ct = TestContext.Current.CancellationToken;
 
