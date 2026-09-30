@@ -268,7 +268,7 @@ entries:
     paths for the same reason as test_persona_loader.py above -- it''s the only
     persona pack that exists yet -- #78/#79 land the other packs, at which point
     these tests get parameterized per-persona instead of hardcoding Sonic.'
-  increase_reason: '#144'
+  increase_reason: '#76'
 - file: app/backend/tests/test_combo_orders.py
   brand: sonic
   max: 31
@@ -294,7 +294,7 @@ entries:
     a real, shipped persona pack -- it''s the only persona pack that exists yet -- #78/#79
     land the other packs, at which point this gets parameterized per-persona instead
     of hardcoding Sonic.'
-  increase_reason: '#144'
+  increase_reason: '#76'
 - file: app/backend/tests/test_extras_rules.py
   brand: sonic
   max: 1
@@ -342,7 +342,7 @@ entries:
   reason: 'Backend test fixtures/paths reference personas/sonic/** directly because
     it''s the only persona pack that exists yet -- #78/#79 land the other packs, at
     which point these tests get parameterized per-persona instead of hardcoding Sonic.'
-  increase_reason: '#144'
+  increase_reason: '#76'
 - file: app/backend/tests/test_prompt_extras_pin.py
   brand: sonic
   max: 4
