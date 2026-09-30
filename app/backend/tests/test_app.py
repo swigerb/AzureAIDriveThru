@@ -1,5 +1,7 @@
 import json
 import os
+import re
+import runpy
 import sys
 import unittest
 from pathlib import Path
@@ -9,7 +11,29 @@ from aiohttp.test_utils import TestClient, TestServer
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
+import default_persona
+import entra_auth
+from access_log import PathOnlyAccessLogger
 from app import _get_bool_env
+
+# The default persona's own id -- used instead of a hardcoded brand name in the route
+# walk and its fixed anonymous-route probes below, so these tests don't add fresh
+# brand-literal occurrences to the rebrand-word-count ratchet (#76). Rick's #159
+# round-1 review, required item 1.
+_DEFAULT_PERSONA_ID = default_persona.get_default_persona().id
+
+# Sample values for named path params discovered while walking app.router.routes()
+# (issue #144 acceptance: route-coverage test, Rick's #159 round-1 review, required
+# item 6). Any param not listed here (there are none today besides persona_id and
+# persona-asset's asset_path, which is excluded entirely -- see
+# RouteCoverageTests._protected_routes) gets the generic sample "x".
+_PARAM_SAMPLE_VALUES = {"persona_id": _DEFAULT_PERSONA_ID}
+
+
+def _fill_path_params(canonical: str) -> str:
+    """Replaces every `{name}` in a route's canonical template with a sample value,
+    so a real request can be sent to it."""
+    return re.sub(r"\{([^{}]+)\}", lambda m: _PARAM_SAMPLE_VALUES.get(m.group(1), "x"), canonical)
 
 
 class GetBoolEnvTests(unittest.TestCase):
@@ -206,9 +230,13 @@ class RouteCoverageTests(unittest.IsolatedAsyncioTestCase):
     async def test_exact_route_name_set(self):
         """A route added later gets counted here too -- silently forgetting to
         classify it as anonymous or protected in entra_auth.py must fail this
-        test, not slip through as an unnoticed extra 401 or 200."""
+        test, not slip through as an unnoticed extra 401 or 200. Keeps EVERY
+        route, including any with `route.name is None` -- a future unnamed route
+        would show up as a `None` in `names` and fail the equality below, rather
+        than silently being dropped from coverage (Rick's #159 round-1 review,
+        required item 6)."""
         app = await self._build_real_app()
-        names = {route.name for route in app.router.routes() if route.name}
+        names = {route.name for route in app.router.routes()}
         expected = {
             "index", "health", "session-token", "personas-index",
             "persona-detail", "persona-menu", "persona-asset", "static", "realtime",
@@ -216,26 +244,36 @@ class RouteCoverageTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(names, expected)
 
     async def test_every_protected_route_401s_without_a_token(self):
+        """Built from the REAL route walk (`app.router.routes()`), not a
+        hand-written path list, so a newly added protected route is automatically
+        covered -- a route left unclassified in `entra_auth.ANONYMOUS_ROUTE_NAMES`
+        fails this test instead of silently passing (Rick's #159 round-1 review,
+        required item 6). `persona-asset` is walked and pinned separately
+        (`test_persona_asset_protected_extension_still_401s` below) since it is
+        anonymous or protected PER REQUEST depending on the requested file's
+        extension, not per route."""
         app = await self._build_real_app()
         async with TestClient(TestServer(app)) as client:
-            protected_paths = [
-                "/api/personas",
-                "/api/personas/sonic",
-                "/personas/sonic/menu.json",
-                "/personas/sonic/assets/demo/dummyOrder.json",
-                "/api/auth/session",
-                "/realtime",
-            ]
-            for path in protected_paths:
-                with self.subTest(path=path):
-                    resp = await client.get(path)
-                    self.assertEqual(resp.status, 401, f"{path} should require a token")
+            seen_any = False
+            for route in app.router.routes():
+                name = route.name
+                if name in entra_auth.ANONYMOUS_ROUTE_NAMES or name == entra_auth.PERSONA_ASSET_ROUTE_NAME:
+                    continue
+                canonical = route.resource.canonical
+                path = _fill_path_params(canonical)
+                seen_any = True
+                with self.subTest(method=route.method, path=path):
+                    resp = await client.request(route.method, path)
+                    self.assertEqual(
+                        resp.status, 401, f"{route.method} {path} ({name}) should require a token"
+                    )
                     self.assertEqual(resp.headers.get("WWW-Authenticate"), "Bearer")
+            self.assertTrue(seen_any, "the route walk found nothing to protect -- fixture is broken")
 
     async def test_anonymous_routes_are_not_401(self):
         app = await self._build_real_app()
         async with TestClient(TestServer(app)) as client:
-            for path in ("/", "/health", "/personas/sonic/assets/logo.svg"):
+            for path in ("/", "/health", f"/personas/{_DEFAULT_PERSONA_ID}/assets/logo.svg"):
                 with self.subTest(path=path):
                     resp = await client.get(path)
                     self.assertNotEqual(resp.status, 401, f"{path} should be anonymous")
@@ -246,7 +284,7 @@ class RouteCoverageTests(unittest.IsolatedAsyncioTestCase):
         covered separately from the anonymous-svg case above."""
         app = await self._build_real_app()
         async with TestClient(TestServer(app)) as client:
-            resp = await client.get("/personas/sonic/assets/demo/dummyOrder.json")
+            resp = await client.get(f"/personas/{_DEFAULT_PERSONA_ID}/assets/demo/dummyOrder.json")
             self.assertEqual(resp.status, 401)
 
 
@@ -282,6 +320,29 @@ class CreateRunnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kwargs["keepalive_timeout"], 65)
         self.assertEqual(kwargs["shutdown_timeout"], 28.5)
         self.assertIs(kwargs["access_log_class"], PathOnlyAccessLogger)
+
+
+class MainEntrypointTests(unittest.TestCase):
+    """`python app.py`'s `if __name__ == "__main__":` path is the OTHER runner --
+    gunicorn's `GunicornWebWorker` never executes it, so it must independently
+    pass `access_log_kwargs()` to `web.run_app()` itself, not rely on
+    `create_runner()`'s coverage above (Rick's #159 round-1 review, required
+    item 5). Runs the real module body via `runpy.run_path(..., run_name="__main__")`
+    with `aiohttp.web.run_app` replaced so the coroutine it's given is closed
+    immediately instead of actually starting a server."""
+
+    def test_python_app_py_passes_access_log_kwargs_to_run_app(self):
+        app_module_path = str(Path(__file__).resolve().parents[1] / "app.py")
+        captured_kwargs = {}
+
+        def _fake_run_app(app_coro, **kwargs):
+            captured_kwargs.update(kwargs)
+            app_coro.close()  # never actually run -- just inspect how it was called
+
+        with patch("aiohttp.web.run_app", side_effect=_fake_run_app):
+            runpy.run_path(app_module_path, run_name="__main__")
+
+        self.assertIs(captured_kwargs.get("access_log_class"), PathOnlyAccessLogger)
 
 
 class HealthEndpointTests(unittest.IsolatedAsyncioTestCase):
