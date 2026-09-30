@@ -153,20 +153,6 @@ param azureContainerAppsWorkloadProfile string
 param acaIdentityName string = '${environmentName}-aca-identity'
 param containerRegistryName string = '${replace(environmentName, '-', '')}acr'
 
-// --- EasyAuth (Entra ID) parameters ---
-@description('Enable Entra ID authentication on the Container App. Requires authClientId and a pre-provisioned aad-client-secret.')
-param enableAuth bool = false
-
-@description('Entra ID application (client) ID for EasyAuth. Leave empty to skip auth configuration.')
-param authClientId string = ''
-
-@description('Entra ID tenant ID used to build the OpenID issuer URL. Defaults to the deployment subscription tenant.')
-param authTenantId string = tenant().tenantId
-
-@secure()
-@description('Entra ID client secret. Stored as Container App secret "aad-client-secret". Provision via azd env or out-of-band — never commit to source.')
-param authClientSecret string = ''
-
 // --- HMAC session-token secret (/api/auth/session) ---
 // Every replica/restart must validate tokens minted by any other, so the secret
 // is shared via a Container App secret instead of os.urandom per process.
@@ -181,14 +167,14 @@ param appSessionSecretFallback string = '${newGuid()}${newGuid()}'
 var effectiveAppSessionSecret = !empty(appSessionSecret) ? appSessionSecret : appSessionSecretFallback
 
 // --- Entra ID token validation (ADR-002, docs/persona-architecture.md section 18) ---
-// EasyAuth (enableAuth/authClientId/authClientSecret above) is superseded by in-app bearer
-// validation on both backends: one Entra app registration, AUTH_MODE=Entra pinned in Azure, no
-// client secret. These four values are the shared contract (section 18.8) both container apps'
-// env blocks read; AUTH_MODE itself is not a param -- it's hardcoded 'Entra' on each app below,
-// same as RUNNING_IN_PRODUCTION, so this environment can never accidentally provision a
-// pass-through backend. This wave (#17) only wires the C# app's env with the same names Python
-// will read once #146 (EasyAuth removal, tracked separately -- section 18.12) lands; it does not
-// modify the Python app's existing EasyAuth wiring above, to avoid conflicting with that PR.
+// EasyAuth (the previously-removed enable-auth/client-id/client-secret params and the container
+// app auth module -- see git history for #146) is superseded by in-app bearer validation on both
+// backends: one Entra app registration, AUTH_MODE=Entra pinned in Azure, no client secret. These
+// four values are the shared contract (section 18.8) both container apps' env blocks read;
+// AUTH_MODE itself is not a param -- it's hardcoded 'Entra' on each app below, same as
+// RUNNING_IN_PRODUCTION/ASPNETCORE_ENVIRONMENT, so this environment can never accidentally
+// provision a pass-through backend. #17 wired the C# app first; #146 completes the contract by
+// wiring the Python app the same way and deleting EasyAuth.
 @description('Entra ID tenant id for AUTH_MODE=Entra token validation (ADR-002 18.1/18.4). Empty falls back to the deployment subscription tenant (effectiveEntraTenantId below); override only if the app registration lives in a different tenant. Left empty rather than defaulted to tenant().tenantId because azd sends the literal empty string from main.parameters.json\'s ENTRA_TENANT_ID default-value syntax when the env var is unset, which would override a non-empty Bicep default with an empty string.')
 param entraTenantId string = ''
 
@@ -206,10 +192,13 @@ param entraApiScope string = 'access_as_user'
 @description('App role required on an Entra access token (ADR-002 18.1/18.4).')
 param entraAppRole string = 'DriveThru.User'
 
-// Ingress switch (ADR-002 18.8/18.10): lets the .NET app be provisioned and warmed up without
-// being publicly reachable. Independent of the Python app's own (not yet added -- #146) switch,
-// because the C# app must not go public before its Entra parity work lands (#147, design 18.12);
-// deployDotnetApp alone only controls whether the container app resource exists at all.
+// Ingress switches (ADR-002 18.8/18.10): let each app be provisioned and warmed up without being
+// publicly reachable, so a dark-provision (ingress off) can validate the Entra pins via
+// Verify-ProductionAuth.ps1 -RevisionsOnly before flipping ingress on. Independent per app because
+// the C# app must not go public before its own Entra parity work lands (#147, design 18.12).
+@description('Ingress switch for the Python container app. Defaults true (its historical behavior); set false for the dark-provision step of the rollout (ADR-002 18.10). Maps to the azd env BACKEND_INGRESS_ENABLED.')
+param backendIngressEnabled bool = true
+
 @description('Ingress switch for the .NET container app. Defaults false: the C# app gets no ingress (not even environment-internal) even when deployDotnetApp is true, until #147 lands its own Entra token validation. Maps to the azd env BACKEND_DOTNET_INGRESS_ENABLED.')
 param backendDotnetIngressEnabled bool = false
 
@@ -306,12 +295,13 @@ module acaBackend 'core/host/container-app-upsert.bicep' = {
     // The Envoy affinity cookie is set on the page load and sent on the
     // websocket upgrade. Needs single revision mode (container-app.bicep default).
     stickySessionsAffinity: 'sticky'
-    secrets: union(enableAuth && !empty(authClientSecret) ? { 'aad-client-secret': authClientSecret } : {}, {
+    // Ingress last (ADR-002 18.8/18.10): defaults true (this app's historical behavior), but the
+    // rollout's dark-provision step sets BACKEND_INGRESS_ENABLED=false so Entra pins can be
+    // validated before the app is publicly reachable.
+    ingressEnabled: backendIngressEnabled
+    secrets: {
       'app-session-secret': effectiveAppSessionSecret
-    })
-    // Sending a secrets list replaces the app's secrets, so keep an
-    // out-of-band aad-client-secret alive when it isn't supplied here.
-    preserveExistingSecretNames: enableAuth && empty(authClientSecret) ? [ 'aad-client-secret' ] : []
+    }
     secretEnv: {
       APP_SESSION_SECRET: 'app-session-secret'
     }
@@ -341,6 +331,13 @@ module acaBackend 'core/host/container-app-upsert.bicep' = {
       APP_SESSION_SECRET_FINGERPRINT: uniqueString(effectiveAppSessionSecret)
       // For using managed identity to access Azure resources. See https://github.com/microsoft/azure-container-apps/issues/442
       AZURE_CLIENT_ID: acaIdentity.outputs.clientId
+      // ADR-002 18.8: NO EasyAuth -- superseded tenant-wide by in-app bearer validation. Same
+      // env-var names and Entra app registration the .NET app reads (see acaBackendDotnet below).
+      AUTH_MODE: 'Entra'
+      ENTRA_TENANT_ID: effectiveEntraTenantId
+      ENTRA_CLIENT_ID: entraClientId
+      ENTRA_API_SCOPE: entraApiScope
+      ENTRA_APP_ROLE: entraAppRole
     },
     // Persona allow-list (4.2, 10.2): omit PERSONAS entirely when empty (the
     // tracked default) so app/backend/persona_loader.py's own "no PERSONAS ->
@@ -404,11 +401,10 @@ module acaBackendDotnet 'core/host/container-app-upsert.bicep' = if (deployDotne
       APP_SESSION_SECRET: 'app-session-secret'
     }
     // Same Foundry account, Search service and persona/model config as the Python app (10.2).
-    // AUTH_MODE=Entra + ENTRA_* (ADR-002 18.8): NO EasyAuth for this app -- EasyAuth is superseded
-    // tenant-wide by in-app bearer validation (ADR-002), so the C# app never gets the EasyAuth
-    // wiring the Python app currently has above; it goes straight to the ADR-002 shape instead.
-    // The env names below match what #147 will read (persona-architecture.md 18.8); the
-    // validation logic itself is #147's scope, not this prep task's.
+    // AUTH_MODE=Entra + ENTRA_* (ADR-002 18.8): the same contract acaBackend's env carries above --
+    // one Entra app registration, no client secret, no EasyAuth anywhere in this file. The env
+    // names below match what #147 will read (persona-architecture.md 18.8); the validation logic
+    // itself is #147's scope, not this prep task's.
     env: union({
       AZURE_SEARCH_ENDPOINT: resolvedSearchEndpoint
       AZURE_SEARCH_INDEX: searchIndexName
@@ -687,24 +683,6 @@ module openAiRoleSearchService 'core/security/role.bicep' = if (!reuseExistingSe
     principalId: !reuseExistingSearch ? searchService.outputs.systemAssignedMIPrincipalId : ''
     roleDefinitionId: '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd'
     principalType: 'ServicePrincipal'
-  }
-}
-
-// --- EasyAuth: Entra ID authentication on the Container App ---
-// Only deployed when enableAuth is true and a client ID is provided.
-// The Container App secret 'aad-client-secret' must be provisioned before or
-// alongside this resource (handled above via the secrets param when authClientSecret is supplied,
-// or provisioned out-of-band via `az containerapp secret set`).
-module containerAppAuth 'core/security/container-app-auth.bicep' = if (enableAuth && !empty(authClientId)) {
-  name: 'container-app-auth'
-  scope: resourceGroup
-  dependsOn: [
-    acaBackend
-  ]
-  params: {
-    containerAppName: acaBackend.outputs.name
-    clientId: authClientId
-    tenantId: authTenantId
   }
 }
 
