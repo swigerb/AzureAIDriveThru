@@ -210,6 +210,28 @@ against the live app. It delegates the registration check to `Verify-EntraAuth.p
 ./scripts/Verify-ProductionAuth.ps1 -Authenticated
 ```
 
+### Troubleshooting
+
+**Setup fails at "API configuration" (a `preAuthorizedApplications` or permission-id error) on a brand-new app, or
+any `-Apply` failure after `Created application appId=...`.** Setup adds the delegated scope and reconciles
+`preAuthorizedApplications` in two separate Graph requests specifically so a pre-authorized client entry is never
+sent referencing a scope id Graph hasn't committed yet, but if a run still fails partway through (for example, a
+partial write from an interrupted prior run left the app in an unexpected state), the fallback is idempotent. Run it
+in the same session as case (a) above so `$app` and `$domain` are still set:
+
+```powershell
+# 1. Re-run the same Apply line with -ClientId (idempotent): only the steps that did not finish run again.
+./scripts/Setup-EntraAuth.ps1 -TenantId <tenant-id> -ClientId <appId it printed> -FrontendOrigin "https://$app.$domain" -Apply
+
+# 2. If it still fails at "API configuration", reconcile in two passes:
+./scripts/Setup-EntraAuth.ps1 -TenantId <tenant-id> -ClientId <appId> -FrontendOrigin "https://$app.$domain" -PreAuthorizedClientAppId @() -Apply
+./scripts/Setup-EntraAuth.ps1 -TenantId <tenant-id> -ClientId <appId> -FrontendOrigin "https://$app.$domain" -Apply
+```
+
+Always include `-FrontendOrigin` on every line above: `-Apply` reconciles the whole SPA redirect-URI set, so a
+fallback re-run without it replaces the live URL with only the two localhost defaults, and sign-in on the live URL
+then fails at step 6 with AADSTS50011 (redirect URI mismatch).
+
 ### Rollout (ingress last)
 
 `azd provision` re-enables external ingress and sets min replicas to 1, and the apps run in `Single` revision mode:
@@ -229,10 +251,17 @@ possible without touching every other environment's default behavior.
    - **4a. Check while dark:** `./scripts/Verify-ProductionAuth.ps1 -RevisionsOnly` must show exactly one active
      revision, on the new image, with `AUTH_MODE=Entra`, healthy and running, before proceeding. If an old revision
      is still active, the new one isn't ready: read its logs and fix it while dark. Don't touch the revision mode.
-5. **Public provision:** `azd env set BACKEND_INGRESS_ENABLED true`, then `azd provision`. Ingress is app
-   configuration, not revision template, so this creates no new revision. Run `./scripts/Verify-ProductionAuth.ps1`
-   (and `-Authenticated`) immediately after. On any failure, run `az containerapp ingress disable` (or set the
-   variable back to `false` and provision), then fix it.
+5. **Public provision:** `azd env set BACKEND_INGRESS_ENABLED true`, then `azd provision`. Enabling ingress DOES
+   create a new revision: `infra/core/host/container-app.bicep` puts the HTTP scale rule in the revision template
+   (`scale.rules` depends on `ingressEnabled`), so this is a new revision on the same (dark-verified) image and env.
+   Run `./scripts/Verify-ProductionAuth.ps1` (and `-Authenticated`) immediately after.
+   - **If it reports two active revisions right after this step:** that is expected and transient, not a failure to
+     "fix." The dark-verified revision from step 4a keeps serving (both revisions run `AUTH_MODE=Entra`, so there is
+     no unauthenticated window) until the new one is ready. Wait a short while for the old revision to retire, then
+     re-run `./scripts/Verify-ProductionAuth.ps1`. Do **not** run `az containerapp ingress disable` or flip
+     `BACKEND_INGRESS_ENABLED` back to `false` just because two revisions are briefly active.
+   - On any OTHER failure (wrong image, `AUTH_MODE` missing, EasyAuth re-enabled, a probe 401/failing where it should
+     pass), run `az containerapp ingress disable` (or set the variable back to `false` and provision), then fix it.
 6. Brian signs in on the live URL, and posts the result on #85.
 
 **The rule:** never run `azd provision` or `azd up` against `azureaidrivethru-prod` with `BACKEND_INGRESS_ENABLED`

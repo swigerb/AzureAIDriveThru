@@ -146,6 +146,32 @@ function Get-Prop {
     return $Default
 }
 
+# Round 3 review, item 6 (hardening): `az ... --output json 2>&1 | ConvertFrom-Json` breaks if
+# `az` ever prints a stderr warning on an otherwise-successful call (for example a containerapp
+# extension update notice) -- the warning text becomes an extra non-JSON line in the merged
+# stream and ConvertFrom-Json throws. Native-command stderr merged via 2>&1 arrives as
+# ErrorRecord objects, not strings, so partitioning the merged stream by type cleanly separates
+# stdout (parsed as JSON) from stderr (surfaced only in the thrown error, never silently dropped)
+# without a temp file. Scoped to the `az containerapp list/revision list/secret list` calls,
+# which return a JSON array Verify-ProductionAuth immediately parses; `az account get-access-token`
+# (Test-AuthenticatedProbe) is left as-is; it is already covered by a separate, more specific
+# review pin (`_TOKEN_REFERENCE_ALLOWLIST`) that this refactor would otherwise have to widen.
+function Invoke-AzJsonList {
+    param([Parameter(Mandatory)][string]$Description, [Parameter(Mandatory)][string[]]$Arguments)
+    $raw = @(& az @Arguments --output json 2>&1)
+    $stdout = @($raw | Where-Object { $_ -is [string] })
+    $stderr = @($raw | Where-Object { $_ -isnot [string] } | ForEach-Object { $_.ToString() })
+    if ($LASTEXITCODE -ne 0) {
+        throw "$Description failed: $($stderr -join ' | ')"
+    }
+    if ($stderr.Count -gt 0) {
+        Write-Host "Warning: $Description printed to stderr (ignored, command exit 0): $($stderr -join ' | ')" -ForegroundColor Yellow
+    }
+    $joined = ($stdout -join [Environment]::NewLine)
+    if ([string]::IsNullOrWhiteSpace($joined)) { return @() }
+    return @($joined | ConvertFrom-Json)
+}
+
 $results = New-Object System.Collections.Generic.List[pscustomobject]
 function Add-Result([string]$Check, [bool]$Pass, [string]$Detail) {
     $results.Add([pscustomobject]@{ Check = $Check; Pass = $Pass; Detail = $Detail })
@@ -320,9 +346,7 @@ if ($RevisionsOnly) { Write-Host 'Mode: -RevisionsOnly (dark-provision check, no
 if ($Authenticated) { Write-Host 'Mode: -Authenticated (acquiring a delegated token; never printed)' -ForegroundColor Cyan }
 
 # --- Discover deployed container apps by azd-service-name tag --------------------------------
-$appsJson = az containerapp list -g $ResourceGroup --output json 2>&1
-if ($LASTEXITCODE -ne 0) { throw "az containerapp list failed: $appsJson" }
-$allApps = @($appsJson | ConvertFrom-Json)
+$allApps = Invoke-AzJsonList -Description "az containerapp list (rg=$ResourceGroup)" -Arguments @('containerapp', 'list', '-g', $ResourceGroup)
 $targetApps = @($allApps | Where-Object {
         $svc = Resolve-ServiceName $_
         $svc -and $script:KnownServices.ContainsKey($svc)
@@ -359,16 +383,26 @@ foreach ($capp in $targetApps) {
     }
 
     # --- Active revisions --------------------------------------------------------------------
-    $revJson = az containerapp revision list -n $appName -g $ResourceGroup --output json 2>&1
-    if ($LASTEXITCODE -ne 0) { throw "az containerapp revision list failed for $appName $revJson" }
-    $revisions = @($revJson | ConvertFrom-Json)
+    $revisions = Invoke-AzJsonList -Description "az containerapp revision list for $appName" -Arguments @('containerapp', 'revision', 'list', '-n', $appName, '-g', $ResourceGroup)
     $activeRevisions = @($revisions | Where-Object { $_.properties.active -eq $true })
 
     # Exactly one active revision, healthy and running (review item 4): more than one active
     # revision means a stuck/blue-green rollout the operator must resolve before trusting any
     # other check below, and zero is the pre-existing failure this replaces.
+    #
+    # Round 3 review, item 1: enabling ingress (18.10 step 5) DOES create a new revision (the
+    # HTTP scale rule lives in the revision template), so a transient two-active-revisions result
+    # right after that step is EXPECTED, not a rollout problem -- the dark-verified revision keeps
+    # serving (both revisions run AUTH_MODE=Entra) until the new one is ready. That guidance only
+    # applies in full mode, once ingress may legitimately be enabled; -RevisionsOnly stays the
+    # strict dark-provision gate (18.10 step 4a) with no such caveat, since two actives there means
+    # the new dark revision genuinely is not ready yet.
     $activeNames = ($activeRevisions | ForEach-Object { $_.name }) -join ', '
-    Add-Result "${svcName}: exactly one active revision" ($activeRevisions.Count -eq 1) "active=$($activeRevisions.Count) ($activeNames)"
+    $activeDetail = "active=$($activeRevisions.Count) ($activeNames)"
+    if (-not $RevisionsOnly -and $activeRevisions.Count -gt 1) {
+        $activeDetail += '; if this immediately follows enabling ingress (18.10 step 5), this is transient and expected: enabling ingress creates a new revision, and both the old and new revisions run AUTH_MODE=Entra, so wait for the old one to retire and re-run Verify-ProductionAuth.ps1 rather than disabling ingress.'
+    }
+    Add-Result "${svcName}: exactly one active revision" ($activeRevisions.Count -eq 1) $activeDetail
 
     foreach ($rev in $activeRevisions) {
         $revName = $rev.name
@@ -417,23 +451,26 @@ foreach ($capp in $targetApps) {
 
     # --- EasyAuth off -------------------------------------------------------------------------
     $authShow = az containerapp auth show -n $appName -g $ResourceGroup --output json 2>&1
+    # Round 3 review, item 6 (hardening): partition the merged stream by type before parsing, so
+    # a stderr warning on an otherwise-successful call can never corrupt the JSON parse (native
+    # stderr merged via 2>&1 arrives as ErrorRecord objects, not strings).
+    $authStdout = @($authShow | Where-Object { $_ -is [string] })
+    $authStderr = @($authShow | Where-Object { $_ -isnot [string] } | ForEach-Object { $_.ToString() })
     if ($LASTEXITCODE -ne 0) {
         # Any error is an unknown state (review item 3/9): a prior version treated
         # "ResourceNotFound"/"could not be found" as an implicit pass, which is unsafe because the
         # same text can appear for auth transiently unreachable, not just "nothing configured".
         # Every failure to read EasyAuth state must fail closed.
-        Add-Result "${svcName}: EasyAuth disabled (platform.enabled=false)" $false "az containerapp auth show failed (unknown state, treated as failure): $authShow"
+        Add-Result "${svcName}: EasyAuth disabled (platform.enabled=false)" $false "az containerapp auth show failed (unknown state, treated as failure): $($authStderr -join ' | ')"
     }
     else {
-        $authCfg = $authShow | ConvertFrom-Json
+        $authCfg = ($authStdout -join [Environment]::NewLine) | ConvertFrom-Json
         $platformEnabled = Get-Prop (Get-Prop $authCfg 'platform' @{}) 'enabled' $null
         $easyAuthOff = $platformEnabled -eq $false
         Add-Result "${svcName}: EasyAuth disabled (platform.enabled=false)" $easyAuthOff "platform.enabled=$platformEnabled"
     }
 
-    $secretsJson = az containerapp secret list -n $appName -g $ResourceGroup --output json 2>&1
-    if ($LASTEXITCODE -ne 0) { throw "az containerapp secret list failed for $appName $secretsJson" }
-    $secrets = @($secretsJson | ConvertFrom-Json)
+    $secrets = Invoke-AzJsonList -Description "az containerapp secret list for $appName" -Arguments @('containerapp', 'secret', 'list', '-n', $appName, '-g', $ResourceGroup)
     $leftoverSecret = $secrets | Where-Object { $_.name -eq 'aad-client-secret' }
     Add-Result "${svcName}: no leftover 'aad-client-secret'" (-not $leftoverSecret) $(if ($leftoverSecret) { 'secret still present' } else { 'not present' })
 
