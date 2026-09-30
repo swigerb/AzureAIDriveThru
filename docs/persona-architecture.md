@@ -1284,10 +1284,13 @@ to `true`** so no other environment changes (18.8). The revision mode never chan
    - There's no manual deactivation and no `set-mode` step. Listing revisions by hand
      (`az containerapp revision list -n <app> -g rg-azureaidrivethru-prod --query "[?properties.active]"`) is an
      optional cross-check, never a gate.
-5. **Public provision:** `azd env set BACKEND_INGRESS_ENABLED true`, then `azd provision`. Ingress is app
-   configuration, not revision template, so this creates no new revision. Run `Verify-ProductionAuth.ps1` (and
-   `-Authenticated`) at once. It repeats the active-revision check. On any failure, run
-   `az containerapp ingress disable` (or set the variable back to `false` and provision), then fix it.
+5. **Public provision:** `azd env set BACKEND_INGRESS_ENABLED true`, then `azd provision`. Enabling ingress DOES
+   create a new revision: `infra/core/host/container-app.bicep` puts the HTTP scale rule in the revision template
+   (conditioned on `ingressEnabled`), so a transient "two active revisions" result from
+   `Verify-ProductionAuth.ps1` right after this step is expected, not a failure -- both revisions run
+   `AUTH_MODE=Entra`, so wait for the old one to retire and re-run Verify rather than disabling ingress. Run
+   `Verify-ProductionAuth.ps1` (and `-Authenticated`) at once. It repeats the active-revision check. On any OTHER
+   failure, run `az containerapp ingress disable` (or set the variable back to `false` and provision), then fix it.
 6. Brian signs in on the live URL, and the lock note on #85 is closed out.
 
 **The rule:** never run `azd provision` or `azd up` against `azureaidrivethru-prod` with `BACKEND_INGRESS_ENABLED`
