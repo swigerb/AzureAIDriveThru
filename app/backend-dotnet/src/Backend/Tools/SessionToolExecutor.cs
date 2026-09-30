@@ -23,7 +23,7 @@ public sealed class SessionToolExecutor : IToolExecutor
         ToolNames = ["search", .. orderTools.ToolNames];
     }
 
-    public IReadOnlyCollection<string> ToolNames { get; }
+    public IReadOnlyList<string> ToolNames { get; }
 
     public Task<ToolResult> ExecuteAsync(string toolName, JsonElement arguments, CancellationToken cancellationToken = default) =>
         toolName == "search"

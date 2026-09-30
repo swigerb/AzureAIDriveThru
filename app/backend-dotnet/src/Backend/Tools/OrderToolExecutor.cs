@@ -35,7 +35,7 @@ public sealed class OrderToolExecutor : IToolExecutor
         _maxOrderItems = maxOrderItems;
     }
 
-    public IReadOnlyCollection<string> ToolNames { get; } = ["update_order", "get_order", "reset_order"];
+    public IReadOnlyList<string> ToolNames { get; } = ["update_order", "get_order", "reset_order"];
 
     public Task<ToolResult> ExecuteAsync(string toolName, JsonElement arguments, CancellationToken cancellationToken = default) =>
         Task.FromResult(toolName switch

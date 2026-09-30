@@ -17,8 +17,10 @@ namespace Backend.Sessions;
 /// session: upstream connect, bootstrap session.update, greeting gate, the two per-direction
 /// relay loops (session.update translation/voice-lock/echo-suppression/barge-in on the way up,
 /// tool-call dispatch/session echo/round-trip-token/rate-limit notice on the way down), and tool
-/// execution through <see cref="IToolExecutor"/> (the #13/#14 coordination seam -- #14 lands the
-/// real order/search tools; <see cref="StubToolExecutor"/> proves the wire plumbing until then).
+/// execution through <see cref="IToolExecutor"/> (the #13/#14 coordination seam). Program.cs's
+/// <c>toolExecutorFactory</c> builds one session-bound <c>SessionToolExecutor</c> per connection
+/// once persona binding resolves (#14/PR #149); <see cref="StubToolExecutor"/> remains available
+/// as a plumbing-only fallback (e.g. tests that don't care about tool behaviour).
 ///
 /// <see cref="RunSessionAsync"/> is called directly by Program.cs's `/realtime` handler after
 /// <c>AcceptWebSocketAsync</c>, bypassing <see cref="SessionActor"/>'s generic mailbox entirely --
@@ -57,6 +59,7 @@ public sealed class RealtimeProcessor : IPipelineProcessor
     private readonly RealtimeSessionConfig _sessionConfig;
     private readonly IReadOnlyDictionary<string, PromptLoader> _promptLoaders;
     private readonly IToolExecutor _toolExecutor;
+    private readonly Func<Persona, PromptLoader?, IToolExecutor>? _toolExecutorFactory;
     private readonly IReadOnlySet<string> _allowedVoices;
     private readonly double _echoCooldownSeconds;
     private readonly double _greetingTimeoutSeconds;
@@ -74,7 +77,8 @@ public sealed class RealtimeProcessor : IPipelineProcessor
         double echoCooldownSeconds = 1.5,
         double greetingTimeoutSeconds = 5.0,
         ILogger? logger = null,
-        IUpstreamBearerTokenProvider? bearerTokenProvider = null)
+        IUpstreamBearerTokenProvider? bearerTokenProvider = null,
+        Func<Persona, PromptLoader?, IToolExecutor>? toolExecutorFactory = null)
     {
         _catalog = catalog;
         _defaultDeployment = defaultDeployment;
@@ -84,6 +88,7 @@ public sealed class RealtimeProcessor : IPipelineProcessor
         _sessionConfig = sessionConfig;
         _promptLoaders = promptLoaders;
         _toolExecutor = toolExecutor;
+        _toolExecutorFactory = toolExecutorFactory;
         _allowedVoices = allowedVoices ?? ClientServerFilter.DefaultAllowedVoices;
         _echoCooldownSeconds = echoCooldownSeconds;
         _greetingTimeoutSeconds = greetingTimeoutSeconds;
@@ -136,6 +141,7 @@ public sealed class RealtimeProcessor : IPipelineProcessor
         var voice = ClientServerFilter.SanitizeVoice(persona.Voice.Default, _allowedVoices)
             ?? _sessionConfig.VoiceChoice ?? "marin";
         var toolSchemas = BuildToolSchemas(promptLoader);
+        var toolExecutor = _toolExecutorFactory?.Invoke(persona, promptLoader) ?? _toolExecutor;
         var reasoningOverride = Overridable<bool?>.Of(resolvedModel.Reasoning);
         var deployment = string.IsNullOrEmpty(resolvedModel.Deployment) ? _defaultDeployment : resolvedModel.Deployment;
 
@@ -525,7 +531,7 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                 return;
             }
             var toolName = GetString(item, "name") ?? "";
-            if (!_toolExecutor.ToolNames.Contains(toolName))
+            if (!toolExecutor.ToolNames.Contains(toolName))
             {
                 _logger?.LogError("Unknown tool requested: {ToolName} (session={SessionId})", toolName, sessionId);
                 return;
@@ -539,7 +545,7 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                 var argumentsJson = GetString(item, "arguments") ?? "{}";
                 using var argumentsDoc = JsonDocument.Parse(argumentsJson);
                 _logger?.LogInformation("Executing tool '{ToolName}' (session={SessionId})", toolName, sessionId);
-                var result = await _toolExecutor.ExecuteAsync(toolName, argumentsDoc.RootElement.Clone(), ct)
+                var result = await toolExecutor.ExecuteAsync(toolName, argumentsDoc.RootElement.Clone(), ct)
                     .ConfigureAwait(false);
                 _logger?.LogInformation("Tool '{ToolName}' result direction={Direction} (session={SessionId})",
                     toolName, result.Destination, sessionId);
@@ -552,8 +558,10 @@ public sealed class RealtimeProcessor : IPipelineProcessor
             {
                 _logger?.LogError(ex, "Tool '{ToolName}' raised an unhandled exception (session={SessionId})", toolName, sessionId);
                 // #14's order-ticket-refresh-on-failure (order_state_singleton.get_order_summary_json)
-                // is out of scope for #13's stub tool executor -- no order state exists yet to
-                // refresh a ticket from.
+                // stays a deliberate scope cut here: SessionToolExecutor/OrderToolExecutor/SearchTool
+                // are designed to never throw for a well-formed call (a rejection is a ToolResult, not
+                // an exception), so this catch-all only fires for a genuinely unexpected fault -- there
+                // is no fresher order summary to refresh a ticket from in that case either.
                 outputText = "Something went wrong with that action and it did not complete. Don't retry it yet -- " +
                     "call get_order to confirm the order's current state, then ask the guest to repeat what they'd like.";
                 sendToClient = false;
