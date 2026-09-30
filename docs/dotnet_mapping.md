@@ -110,18 +110,35 @@ tool's api-key auth path is exercised (the conformance harness always sets
 `AZURE_SEARCH_API_KEY`); the new `DefaultAzureCredential` bearer-token fallback is unit-tested only
 (`SearchAuthHeaderTests.cs`), since the harness has no fake credential to script.
 
-**Not tagged: `ToolFailureCapAndTicketRefreshTests.cs` (all 4 methods).** This class scripts a
-genuine tool-handler exception (a non-numeric `quantity` string, e.g. `"two"`) to probe `rtmt.py`'s
-consecutive-tool-failure cap and its refresh-the-guest's-ticket-on-failure behaviour. `rtmt.py`
-tracks a per-connection failure streak, suppresses the model's own auto-continue once the cap is
-reached, resets the streak on guest speech, and replays a fresh `get_order` summary into the
-failure's `function_call_output` so the ticket the guest sees never goes stale. `RealtimeProcessor`'s
-tool-dispatch catch-all is explicitly commented as a scope cut ("Scope cut (#13): the
-tool-failure-cap ladder (`_ToolFailureTracker`) is skipped"): it always sends a fixed apology string
-and a bare `response.create`, with no failure-streak tracking and no ticket refresh. Porting the
-cap/ticket-refresh ladder is a real relay feature, not an order-engine one, and out of #14's own
-scope -- tracked as the next thing #13's owner (or a follow-up issue) should pick up before this
-class can be tagged.
+**Round 2 (Rick's PR #149 R3/R4 review):** 9 more previously-untagged test methods now pass and are
+tagged `Dotnet=ready` -- `HappyHourPricingTests` (2), `PersonaBusinessRuleConformanceTests` (2),
+`PersonaSearchIsolationConformanceTests` (2), `RealPackPersonaSmokeTests`/`FixturePackPersonaSmokeTests`
+(1 `[Theory]` method each), and `ToolFailureCapAndTicketRefreshTests.A_genuine_tool_exception_refreshes_the_guests_ticket`
+(R4 below) -- raising the floor from 158 to 167 distinct methods (445 to 457 result rows; confirmed
+by a local `dotnet test Conformance.slnx --filter "Dotnet=ready&Category!=Browser"` run).
+
+**R4: the guest's ticket now refreshes after a genuine tool exception.** `RealtimeProcessor`'s
+tool-dispatch catch-all previously only sent a fixed apology `function_call_output`, with an
+inaccurate comment claiming tools "never throw for a well-formed call" and that there was "no
+fresher order summary to refresh a ticket from" -- both wrong: a malformed argument (e.g. a
+non-numeric `quantity`) does throw, and the session's own current order state (not a stale cache)
+is always readable. `RealtimeProcessor` now pattern-matches the session's `IToolExecutor` against a
+new opt-in `Backend.Tools.IOrderTicketSource` interface (implemented by `SessionToolExecutor`,
+delegating to a new `OrderToolExecutor.CurrentOrderSummaryJson` accessor) and, best-effort, sends a
+`get_order`-tagged `extension.middle_tier_tool_response` to the browser with the refreshed ticket --
+mirroring `rtmt.py`'s post-exception `order_state_singleton.get_order_summary_json(session_id)` read
+(the read is wrapped in its own try/catch; a session with no readable order state yet just skips the
+refresh, and still gets the `function_call_output` below it either way).
+
+**Still not tagged: the other 3 `ToolFailureCapAndTicketRefreshTests.cs` methods (failure cap).**
+These probe `rtmt.py`'s consecutive-tool-failure cap: a per-connection failure streak that suppresses
+the model's own auto-continue once the cap is reached and resets on guest speech.
+`RealtimeProcessor`'s tool-dispatch catch-all is still explicitly commented as a scope cut ("Scope
+cut (#13): the tool-failure-cap ladder (`_ToolFailureTracker`) is skipped"): it always sends a fixed
+apology string and a bare `response.create`, with no failure-streak tracking. Porting the cap ladder
+is a real relay feature, not an order-engine or search-tool one, and stays #13 scope -- tracked as
+the next thing #13's owner (or a follow-up issue) should pick up before this class's remaining 3
+methods can be tagged.
 
 
 
@@ -329,7 +346,7 @@ See the comments left on those issues directly for this wave's position. Summary
   per-session `SessionToolExecutor` (via `Program.cs`'s `toolExecutorFactory`), so every
   `tests/conformance/.../Scenarios/Ordering/*` scenario now runs against the real order engine. See
   "Conformance `[Trait("Dotnet", "ready")]` tagging -- unblocked by #13/#140, landed in PR #149"
-  above for the full reasoning and the one scenario class still not tagged.
+  above for the full reasoning and the 3 remaining untagged failure-cap methods.
 
 ## Issue #13 (S3): `RealtimeProcessor` browser&lt;-&gt;Azure OpenAI Realtime GA relay
 

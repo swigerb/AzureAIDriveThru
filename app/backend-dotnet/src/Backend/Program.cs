@@ -213,7 +213,7 @@ IToolExecutor BuildSessionToolExecutor(Persona sessionPersona, PromptLoader? ses
         orderState, menu, sessionPromptLoader, businessRulesConfig.MaxItemQuantity, businessRulesConfig.MaxOrderItems);
     var searchTool = new SearchTool(
         searchHttpClient, searchEndpointConfig, searchConfig, menu, sessionPromptLoader,
-        sessionPersona.Search.IndexName, sessionPersona.Id);
+        sessionPersona.Search.IndexName, sessionPersona.Id, bearerTokenProvider: null, logger: logger);
     return new SessionToolExecutor(orderTools, searchTool);
 }
 
