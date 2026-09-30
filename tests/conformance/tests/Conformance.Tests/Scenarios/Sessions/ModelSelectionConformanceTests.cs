@@ -121,18 +121,29 @@ public sealed class ModelSelectionRejectionConformanceTests(ModelSelectionConfor
             $"persona={ModelSelectionConformanceFixture.PersonaAlpha}&model=gpt-realtime-mini", ct);
     });
 
-    // Model_catalogued_for_a_different_pipeline_is_rejected_with_404 (a [Trait("Dotnet", "ready")]
-    // row needing identical 404 behavior on BOTH backends, using phi-4-mini-local/the local
-    // pipeline as its example) was removed by issue #155 (local mode removal, reversing ADR-001
-    // decision 7, 2026-09-28): phi-4-mini-local/the local pipeline no longer exists in config.yaml
-    // or either backend's catalog, and it was the last model whose pipeline was unregistered
-    // identically on both backends. `gpt-5-mini` (cascade) can't fill in for it here either: since
-    // #82 registered CascadeProcessor on the Python backend only (the C# backend still has no
-    // CascadeProcessor -- see Program.cs), a cascade model now dispatches successfully on Python
-    // but still 404s on C#, so the two backends no longer agree on it the way this row requires.
-    // There is no longer any catalogued pipeline this dual-backend "unregistered everywhere" case
-    // can exercise. `gpt-5-mini`'s Python-side dispatch-success path is separately covered by
-    // CascadeConformanceTests.Cascade_dispatch_binds_session_metadata_to_the_requested_persona_model_and_pipeline.
+    [Fact]
+    public Task Model_catalogued_for_a_different_pipeline_is_rejected_with_404() => fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+        // test-alpha (this fixture's default persona) declares only `models.realtime`; gpt-5-mini
+        // is catalogued for `cascade`. On Python, `dispatch_processor` picks CascadeProcessor, then
+        // `resolve_cascade_model` raises because test-alpha has no `models.cascade` (gpt-5-mini is
+        // also undeployed in this fixture). On C#, dispatch itself 404s because no CascadeProcessor
+        // is registered yet; when C# cascade lands, it will 404 in resolve instead, just like
+        // Python, so this row stays stable either way. Was
+        // Model_catalogued_for_a_different_pipeline_is_rejected_with_404 using
+        // phi-4-mini-local/the local pipeline before issue #155 removed local mode
+        // (2026-09-28, reversing ADR-001 decision 7); re-pointed here rather than dropped per
+        // Rick's #157 round-1 review, since a still-valid model can exercise the same
+        // wrong-pipeline 404 shape.
+        await ModelSelectionConformanceTestHelpers.AssertRealtimeConnectIs404Async(
+            fixture.Backend!.BaseUri, $"persona={ModelSelectionConformanceFixture.PersonaAlpha}&model=gpt-5-mini", ct);
+        var body = await ModelSelectionConformanceTestHelpers.RealtimeConnectBodyAsync(
+            fixture.Backend!.BaseUri,
+            $"persona={ModelSelectionConformanceFixture.PersonaAlpha}&model=gpt-5-mini",
+            HttpStatusCode.NotFound, ct);
+        Assert.Equal("Unknown or disallowed model: 'gpt-5-mini'", body);
+    });
 
     [Fact]
     public Task Unknown_persona_404_body_is_exactly_the_python_shape() => fixture.RunAsync(async () =>

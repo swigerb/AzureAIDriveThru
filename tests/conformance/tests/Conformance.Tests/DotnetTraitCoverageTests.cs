@@ -9,27 +9,19 @@ namespace Conformance.Tests;
 /// <c>FullyQualifiedName~ClassNamePart</c> substring match, which any future test class whose
 /// name happens to contain one of those substrings would silently join) with an explicit
 /// <c>[Trait("Dotnet", "ready")]</c> on exactly the scenarios docs/dotnet_mapping.md documents as
-/// green against the C# skeleton (75 distinct tagged test *methods* as of PR #140 round 2, then 74
-/// after #155: <c>ModelSelectionRejectionConformanceTests.Model_catalogued_for_a_different_pipeline_is_rejected_with_404</c>
-/// needed a catalogued-but-unregistered-everywhere pipeline as its example (`phi-4-mini-local`),
-/// and #155 removed the only pipeline that fit that description -- see that test class's own
-/// comment for why no replacement row exists (`cascade` is registered on Python only, so it no
-/// longer 404s identically on both backends). One <c>[Theory]</c>,
-/// <c>PersonaAssetRouteConformanceTests.Persona_asset_route_rejects_path_traversal_attempts</c>,
+/// green against the C# skeleton (75 distinct tagged test *methods* as of PR #140 round 2 -- one
+/// <c>[Theory]</c>, <c>PersonaAssetRouteConformanceTests.Persona_asset_route_rejects_path_traversal_attempts</c>,
 /// has 4 <c>[InlineData]</c> rows, so <c>dotnet test</c>'s own pass count for the same filter is
-/// 3 more than this method count (77, down from 78 before #155); this test counts methods,
-/// matching the <c>FullyQualifiedName</c> filter it replaced). The dotnet CI leg now runs
-/// <c>--filter "Dotnet=ready&amp;Category!=Browser"</c> instead.
+/// 78 result rows; this test counts methods, matching the <c>FullyQualifiedName</c> filter it
+/// replaced). The dotnet CI leg now runs <c>--filter "Dotnet=ready&amp;Category!=Browser"</c>
+/// instead.
 ///
 /// This test is the guard that the tagged count can't silently shrink: a PR that removes or
 /// renames a tagged scenario without adding a replacement fails here, instead of just quietly
-/// running fewer scenarios in a CI log nobody reads. A genuinely unreplaceable removal (like
-/// #155's, above) lowers the floor here, with the reason recorded in this comment, the same way
-/// the brand-baseline ratchet requires a cited reason for any raise. C# PRs #13-#16 are expected
-/// to *grow* this count as more of the skeleton gets a real pipeline wired in
-/// (docs/dotnet_mapping.md) -- they do that by adding the trait directly in their own test files,
-/// with no workflow/CI edit required (the dotnet leg's filter already covers any newly tagged
-/// scenario for free).
+/// running fewer scenarios in a CI log nobody reads. C# PRs #13-#16 are expected to *grow* this
+/// count as more of the skeleton gets a real pipeline wired in (docs/dotnet_mapping.md) -- they do
+/// that by adding the trait directly in their own test files, with no workflow/CI edit required
+/// (the dotnet leg's filter already covers any newly tagged scenario for free).
 /// </summary>
 public sealed class DotnetTraitCoverageTests
 {
@@ -37,16 +29,15 @@ public sealed class DotnetTraitCoverageTests
     private const string TraitValue = "ready";
 
     [Fact]
-    public void At_least_74_scenarios_are_tagged_dotnet_ready()
+    public void At_least_75_scenarios_are_tagged_dotnet_ready()
     {
         var count = CountDotnetReadyTestMethods();
 
-        Assert.True(count >= 74,
-            $"Expected at least 74 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
+        Assert.True(count >= 75,
+            $"Expected at least 75 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
             $"(the dotnet leg's `--filter \"{TraitName}={TraitValue}&Category!=Browser\"` baseline, " +
-            $"docs/dotnet_mapping.md; lowered from 75 to 74 by #155, see this class's doc comment), " +
-            $"but found {count}. If a tagged scenario was removed or renamed without a replacement, " +
-            "the dotnet CI leg silently lost coverage.");
+            $"docs/dotnet_mapping.md), but found {count}. If a tagged scenario was removed or renamed " +
+            "without a replacement, the dotnet CI leg silently lost coverage.");
     }
 
     /// <summary>
