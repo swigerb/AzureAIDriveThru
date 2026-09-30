@@ -103,77 +103,6 @@ class TestValidLoad:
         assert catalog.is_catalogued_for("nope", "realtime") is False
 
 
-_LOCAL_CATALOG_CFG = {
-    "models": {
-        "catalog": [
-            {"id": "gpt-realtime-2.1", "pipeline": "realtime", "label": "GPT Realtime 2.1", "reasoning": True},
-            {"id": "phi-4-mini-local", "pipeline": "local", "label": "Phi-4 mini (on device)", "runtime": "onnx"},
-        ]
-    }
-}
-
-
-class TestLocalRuntimeGating:
-    """Issue #81: a `local` catalog entry is "deployed" iff `LOCAL_RUNTIME_ENDPOINT` is set --
-    NOT via `AZURE_AI_MODEL_DEPLOYMENTS`, which local models must never need an entry in."""
-
-    def test_local_runtime_endpoint_unset_by_default(self):
-        catalog = ModelCatalog.load(config=_LOCAL_CATALOG_CFG, environ={})
-        assert catalog.local_runtime_endpoint is None
-        assert catalog.local_runtime_configured is False
-
-    def test_local_model_not_deployed_without_runtime_endpoint(self):
-        catalog = ModelCatalog.load(config=_LOCAL_CATALOG_CFG, environ={})
-        assert catalog.is_deployed("phi-4-mini-local") is False
-        assert catalog.is_selectable("phi-4-mini-local", "local") is False
-
-    def test_local_model_deployed_when_runtime_endpoint_configured(self):
-        catalog = ModelCatalog.load(
-            config=_LOCAL_CATALOG_CFG,
-            environ={"LOCAL_RUNTIME_ENDPOINT": "http://localhost:9001"},
-        )
-        assert catalog.local_runtime_endpoint == "http://localhost:9001"
-        assert catalog.local_runtime_configured is True
-        assert catalog.is_deployed("phi-4-mini-local") is True
-        assert catalog.is_selectable("phi-4-mini-local", "local") is True
-
-    def test_local_deployment_status_ignores_azure_deployment_map(self):
-        """A local model has no Foundry deployment -- `AZURE_AI_MODEL_DEPLOYMENTS` mapping it
-        (which should never happen in a real config, but must not be load-bearing if it does)
-        must NOT make it deployed on its own, and must not be required when the runtime IS
-        configured either."""
-        catalog = ModelCatalog.load(
-            config=_LOCAL_CATALOG_CFG,
-            environ={"AZURE_AI_MODEL_DEPLOYMENTS": '{"phi-4-mini-local": "should-be-ignored"}'},
-        )
-        assert catalog.is_deployed("phi-4-mini-local") is False
-
-        catalog = ModelCatalog.load(
-            config=_LOCAL_CATALOG_CFG,
-            environ={"LOCAL_RUNTIME_ENDPOINT": "http://localhost:9001"},
-        )
-        assert catalog.deployment_for("phi-4-mini-local") is None
-        assert catalog.is_deployed("phi-4-mini-local") is True
-
-    def test_realtime_deployment_status_ignores_local_runtime_endpoint(self):
-        """The reverse guard: a realtime/cascade model's deployed-ness still comes ONLY from
-        `AZURE_AI_MODEL_DEPLOYMENTS` -- configuring the local runtime must not make unrelated
-        pipelines' models spuriously selectable."""
-        catalog = ModelCatalog.load(
-            config=_LOCAL_CATALOG_CFG,
-            environ={"LOCAL_RUNTIME_ENDPOINT": "http://localhost:9001"},
-        )
-        assert catalog.is_deployed("gpt-realtime-2.1") is False
-        assert catalog.is_selectable("gpt-realtime-2.1", "realtime") is False
-
-    @pytest.mark.parametrize("raw", ["", "   "])
-    def test_blank_local_runtime_endpoint_treated_as_unset(self, raw):
-        catalog = ModelCatalog.load(config=_LOCAL_CATALOG_CFG, environ={"LOCAL_RUNTIME_ENDPOINT": raw})
-        assert catalog.local_runtime_endpoint is None
-        assert catalog.local_runtime_configured is False
-        assert catalog.is_deployed("phi-4-mini-local") is False
-
-
 class TestOptionalSections:
     def test_missing_models_section_loads_empty_catalog(self):
         catalog = ModelCatalog.load(config={}, environ={})
@@ -235,7 +164,7 @@ class TestCatalogValidationErrors:
     def test_non_string_runtime_raises(self):
         with pytest.raises(ModelValidationError, match="'runtime' must be a string"):
             ModelCatalog.load(
-                config={"models": {"catalog": [{"id": "x", "pipeline": "local", "label": "X", "runtime": 5}]}},
+                config={"models": {"catalog": [{"id": "x", "pipeline": "cascade", "label": "X", "runtime": 5}]}},
                 environ={},
             )
 
@@ -369,7 +298,6 @@ class _FakePipelineCfg:
 class _FakeModels:
     realtime: _FakePipelineCfg | None = None
     cascade: _FakePipelineCfg | None = None
-    local: _FakePipelineCfg | None = None
 
 
 @dataclass
@@ -446,14 +374,13 @@ class TestValidatePersonaDefaults:
         assert any("not-catalogued-at-all" in record.getMessage() for record in caplog.records)
 
     def test_skips_pipelines_the_persona_does_not_use(self):
-        """A persona with only a `realtime` block (no `cascade`/`local`) must not be penalized
+        """A persona with only a `realtime` block (no `cascade`) must not be penalized
         for pipelines it never declares."""
         catalog = ModelCatalog.load(config=_VALID_CATALOG_CFG, environ={})
         personas = _FakePersonaCatalog([
             _FakePersona(id="alpha", manifest=_FakeManifest(models=_FakeModels(
                 realtime=_FakePipelineCfg(default="gpt-realtime-2.1", allowed=["gpt-realtime-2.1"]),
                 cascade=None,
-                local=None,
             ))),
         ])
         catalog.validate_persona_defaults(personas)  # must not raise

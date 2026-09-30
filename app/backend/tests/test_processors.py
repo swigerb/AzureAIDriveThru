@@ -37,7 +37,6 @@ from processors import (
     ProcessorRegistry,
     dispatch_processor,
     resolve_cascade_model,
-    resolve_local_model,
     resolve_realtime_model,
 )
 
@@ -52,7 +51,6 @@ class _FakePipelineCfg:
 class _FakeModels:
     realtime: _FakePipelineCfg
     cascade: _FakePipelineCfg | None = None
-    local: _FakePipelineCfg | None = None
 
 
 @dataclass
@@ -71,22 +69,19 @@ def _persona(
     allowed: list,
     cascade_default: str | None = None,
     cascade_allowed: list | None = None,
-    local_default: str | None = None,
-    local_allowed: list | None = None,
 ) -> _FakePersona:
     cascade_cfg = _FakePipelineCfg(default=cascade_default, allowed=cascade_allowed or []) if cascade_default is not None else None
-    local_cfg = _FakePipelineCfg(default=local_default, allowed=local_allowed or []) if local_default is not None else None
     return _FakePersona(
         id="test-persona",
         manifest=_FakeManifest(
-            models=_FakeModels(realtime=_FakePipelineCfg(default=default, allowed=allowed), cascade=cascade_cfg, local=local_cfg)
+            models=_FakeModels(realtime=_FakePipelineCfg(default=default, allowed=allowed), cascade=cascade_cfg)
         ),
     )
 
 
 class _FakeProcessor:
     """A minimal `PipelineProcessor` for a pipeline that doesn't have a real implementation yet
-    (mirrors what a future #82 `CascadeProcessor`/#81 `LocalProcessor` would look like from the
+    (mirrors what a future #82 `CascadeProcessor` would look like from the
     dispatch seam's point of view). Records every call so a test can assert it was (or, more
     importantly, was NOT) reached."""
 
@@ -306,98 +301,6 @@ class TestResolveCascadeModel:
         catalog = _cascade_catalog('{"gpt-5-mini": "a"}')  # phi-4 not mapped
         with pytest.raises(ModelSelectionError, match="no deployment mapped"):
             resolve_cascade_model(persona, "phi-4", catalog)
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# resolve_local_model (issue #81) -- same catalog/persona algorithm as cascade, but
-# "deployed" means the LOCAL_RUNTIME_ENDPOINT companion runtime is configured, not
-# AZURE_AI_MODEL_DEPLOYMENTS.
-# ═══════════════════════════════════════════════════════════════════════════════
-
-_LOCAL_CATALOG_CFG = {
-    "models": {
-        "catalog": [
-            {"id": "gpt-realtime-2.1", "pipeline": "realtime", "label": "GPT Realtime 2.1", "reasoning": True},
-            {"id": "phi-4-mini-local", "pipeline": "local", "label": "Phi-4 mini (on device)", "runtime": "onnx"},
-            {"id": "other-local-model", "pipeline": "local", "label": "Other local model", "runtime": "onnx"},
-        ]
-    }
-}
-
-
-def _local_catalog(runtime_endpoint: str | None = None) -> ModelCatalog:
-    env = {"LOCAL_RUNTIME_ENDPOINT": runtime_endpoint} if runtime_endpoint else {}
-    return ModelCatalog.load(config=_LOCAL_CATALOG_CFG, environ=env)
-
-
-class TestResolveLocalModel:
-    def test_omitted_model_resolves_to_persona_local_default(self):
-        persona = _persona("gpt-realtime-2.1", ["gpt-realtime-2.1"], local_default="phi-4-mini-local", local_allowed=["phi-4-mini-local"])
-        catalog = _local_catalog("http://localhost:9001")
-        resolved = resolve_local_model(persona, None, catalog)
-        assert resolved.id == "phi-4-mini-local"
-        assert resolved.pipeline == "local"
-        # The local runtime's base URL, not a Foundry deployment name.
-        assert resolved.deployment == "http://localhost:9001"
-
-    def test_explicit_non_default_allowed_model_resolves(self):
-        persona = _persona(
-            "gpt-realtime-2.1", ["gpt-realtime-2.1"],
-            local_default="phi-4-mini-local", local_allowed=["phi-4-mini-local", "other-local-model"],
-        )
-        catalog = _local_catalog("http://localhost:9001")
-        resolved = resolve_local_model(persona, "other-local-model", catalog)
-        assert resolved.id == "other-local-model"
-        assert resolved.deployment == "http://localhost:9001"
-
-    def test_persona_with_no_local_block_raises(self):
-        """Local mode isn't enabled for every persona -- unlike realtime, which every persona has."""
-        persona = _persona("gpt-realtime-2.1", ["gpt-realtime-2.1"])  # no local_default given
-        with pytest.raises(ModelSelectionError, match="no models.local configured"):
-            resolve_local_model(persona, "phi-4-mini-local", _local_catalog("http://localhost:9001"))
-
-    def test_not_in_persona_allowed_list_raises(self):
-        persona = _persona("gpt-realtime-2.1", ["gpt-realtime-2.1"], local_default="phi-4-mini-local", local_allowed=["phi-4-mini-local"])
-        catalog = _local_catalog("http://localhost:9001")
-        with pytest.raises(ModelSelectionError, match="not allowed"):
-            resolve_local_model(persona, "other-local-model", catalog)
-
-    def test_wrong_pipeline_raises(self):
-        persona = _persona(
-            "gpt-realtime-2.1", ["gpt-realtime-2.1"],
-            local_default="phi-4-mini-local", local_allowed=["phi-4-mini-local", "gpt-realtime-2.1"],
-        )
-        catalog = _local_catalog("http://localhost:9001")
-        with pytest.raises(ModelSelectionError, match="not in .*models.catalog for the local pipeline"):
-            resolve_local_model(persona, "gpt-realtime-2.1", catalog)
-
-    def test_default_selectable_without_runtime_configured_is_rejected_not_fallen_back(self):
-        """#81's whole point, and the mutation-test guard: local mode "only activates when the
-        local runtime endpoint is configured" -- there is NO back-compat fallback for the
-        default, unlike realtime's legacy AZURE_OPENAI_REALTIME_DEPLOYMENT carve-out. An
-        undeployed (runtime-unconfigured) default 404s exactly like any other undeployed id."""
-        persona = _persona("gpt-realtime-2.1", ["gpt-realtime-2.1"], local_default="phi-4-mini-local", local_allowed=["phi-4-mini-local"])
-        with pytest.raises(ModelSelectionError, match="runtime endpoint is not configured"):
-            resolve_local_model(persona, None, _local_catalog())  # no LOCAL_RUNTIME_ENDPOINT set
-
-    def test_non_default_model_without_runtime_configured_raises(self):
-        persona = _persona(
-            "gpt-realtime-2.1", ["gpt-realtime-2.1"],
-            local_default="phi-4-mini-local", local_allowed=["phi-4-mini-local", "other-local-model"],
-        )
-        with pytest.raises(ModelSelectionError, match="runtime endpoint is not configured"):
-            resolve_local_model(persona, "other-local-model", _local_catalog())
-
-    def test_azure_ai_model_deployments_does_not_substitute_for_the_runtime_endpoint(self):
-        """A local model must never become selectable merely because someone (mistakenly)
-        added it to AZURE_AI_MODEL_DEPLOYMENTS -- only LOCAL_RUNTIME_ENDPOINT counts."""
-        persona = _persona("gpt-realtime-2.1", ["gpt-realtime-2.1"], local_default="phi-4-mini-local", local_allowed=["phi-4-mini-local"])
-        catalog = ModelCatalog.load(
-            config=_LOCAL_CATALOG_CFG,
-            environ={"AZURE_AI_MODEL_DEPLOYMENTS": '{"phi-4-mini-local": "should-be-ignored"}'},
-        )
-        with pytest.raises(ModelSelectionError, match="runtime endpoint is not configured"):
-            resolve_local_model(persona, None, catalog)
 
 
 class TestProcessorRegistryAndProtocol:
