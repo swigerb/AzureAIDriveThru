@@ -126,9 +126,11 @@ pre-authorized) and assigns the caller (or `-AssignUserUpn`) the app role. It is
 nothing to Entra unless you pass `-Apply`, and it never adopts an existing app by display name. Reconciling an
 existing registration (every run after the first) requires `-ClientId`/`-AppObjectId` plus caller ownership and the
 `AzureAIDriveThruManaged` tag. `-RedirectUri` defaults to the two local-dev origins from design 18.1
-(`http://localhost:8000`, `http://localhost:5173`); the redirect-URI reconcile is a full SET, so a run that supplies
-none of `-FrontendOrigin`/`-RedirectUri`/`-FromAzdEnv` now leaves any existing SPA URIs untouched rather than wiping
-them.
+(`http://localhost:8000`, `http://localhost:5173`), so those two count as "supplied" even when you pass nothing:
+the redirect-URI reconcile is a full SET, so a run that omits `-FrontendOrigin`/`-RedirectUri`/`-FromAzdEnv`
+registers the localhost defaults only, replacing any already-registered frontend origin. Only a run whose
+combined total is empty (`-RedirectUri @()` explicitly, with no `-FrontendOrigin`/`-FromAzdEnv`) leaves the
+existing SPA URIs untouched.
 
 ```powershell
 az login --tenant <tenant-id>
