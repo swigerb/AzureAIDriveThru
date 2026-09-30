@@ -472,10 +472,33 @@ class TokenValidatorTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(EntraForbidden):
             await self.validator.validate(token)
 
-    async def test_roles_claim_not_a_list_rejected_as_forbidden(self):
+    async def test_single_role_as_bare_string_accepted(self):
+        """Real Entra ID (and this project's own conformance FakeEntraIssuer, matching
+        System.IdentityModel.Tokens.Jwt's JwtPayload behavior) encodes `roles` as a bare
+        scalar string -- not a one-item array -- when the principal has exactly one
+        assigned app role. Rejecting that shape would 403 every legitimate single-role
+        token, including the conformance harness's own default "valid" token (18.11 row 8)."""
         token = self._sign(_claims(self.settings, roles="DriveThru.User"))
+        principal = await self.validator.validate(token)
+        self.assertEqual(principal["oid"], "oid-abc-123")
+
+    async def test_wrong_role_as_bare_string_rejected_as_forbidden(self):
+        token = self._sign(_claims(self.settings, roles="Some.Other.Role"))
         with self.assertRaises(EntraForbidden):
             await self.validator.validate(token)
+
+    async def test_roles_claim_wrong_type_rejected_as_forbidden(self):
+        """Neither a list nor a string (e.g. a number) -- must fail closed, not raise."""
+        token = self._sign(_claims(self.settings, roles=123))
+        with self.assertRaises(EntraForbidden):
+            await self.validator.validate(token)
+
+    async def test_required_role_among_several_in_array_accepted(self):
+        token = self._sign(
+            _claims(self.settings, roles=["Some.Other.Role", self.settings.app_role])
+        )
+        principal = await self.validator.validate(token)
+        self.assertEqual(principal["oid"], "oid-abc-123")
 
     async def test_app_only_token_no_scp_at_all_rejected_as_forbidden(self):
         """Client-credentials/app-only tokens carry no `scp` claim whatsoever --
