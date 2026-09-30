@@ -70,6 +70,7 @@ file static class HappyHourBoundaryTestSupport
 public sealed class HappyHourJustBeforeOpenTests(HappyHourJustBeforeOpenFixture fixture)
 {
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task At_13_59_59_happy_hour_is_not_yet_active() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -82,6 +83,7 @@ public sealed class HappyHourJustBeforeOpenTests(HappyHourJustBeforeOpenFixture 
     // price". Paired with HappyHourAtOpenTests's banner fact below -- same drink, same tool --
     // one instant either side of 14:00:00.
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task At_13_59_59_the_banner_is_absent() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -98,6 +100,7 @@ public sealed class HappyHourJustBeforeOpenTests(HappyHourJustBeforeOpenFixture 
 public sealed class HappyHourAtOpenTests(HappyHourAtOpenFixture fixture)
 {
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task At_14_00_00_happy_hour_is_active() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -111,6 +114,7 @@ public sealed class HappyHourAtOpenTests(HappyHourAtOpenFixture fixture)
     // discount must be applied, in the SAME assertion -- proving the banner and the discount are
     // both driven by the same is_happy_hour_for_session() truth, not independently coincidental.
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task At_14_00_00_an_eligible_drink_announces_Sonics_own_banner_and_is_discounted() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -123,6 +127,7 @@ public sealed class HappyHourAtOpenTests(HappyHourAtOpenFixture fixture)
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task A_non_drink_item_is_unaffected_by_happy_hour_pricing_logic() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -144,6 +149,7 @@ public sealed class HappyHourAtOpenTests(HappyHourAtOpenFixture fixture)
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Ched_R_Peppers_is_full_price_during_happy_hour_despite_the_keyword_pepper() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -169,6 +175,7 @@ public sealed class HappyHourAtOpenTests(HappyHourAtOpenFixture fixture)
 public sealed class HappyHourJustBeforeCloseTests(HappyHourJustBeforeCloseFixture fixture)
 {
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task At_15_59_59_happy_hour_is_still_active() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -182,6 +189,7 @@ public sealed class HappyHourJustBeforeCloseTests(HappyHourJustBeforeCloseFixtur
 public sealed class HappyHourAtCloseTests(HappyHourAtCloseFixture fixture)
 {
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task At_16_00_00_happy_hour_has_ended() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -198,6 +206,7 @@ public sealed class HappyHourAtCloseTests(HappyHourAtCloseFixture fixture)
 public sealed class HappyHourJustBeforeOpenWinterTests(HappyHourJustBeforeOpenWinterFixture fixture)
 {
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task At_13_59_59_CST_happy_hour_is_not_yet_active() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -213,6 +222,7 @@ public sealed class HappyHourJustBeforeOpenWinterTests(HappyHourJustBeforeOpenWi
 public sealed class HappyHourAtOpenWinterTests(HappyHourAtOpenWinterFixture fixture)
 {
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task At_14_00_00_CST_happy_hour_is_active() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -240,6 +250,7 @@ public sealed class TaxToTheCentOffHappyHourTests(HappyHourJustBeforeOpenFixture
     }
 
     [Theory]
+    [Trait("Dotnet", "ready")]
     [MemberData(nameof(OffHappyHourTaxCaseIndexes))]
     public Task Tax_and_totals_match_to_the_cent(int caseIndex) => fixture.RunAsync(async () =>
     {
@@ -275,6 +286,7 @@ public sealed class TaxToTheCentDuringHappyHourTests(HappyHourAtOpenFixture fixt
     }
 
     [Theory]
+    [Trait("Dotnet", "ready")]
     [MemberData(nameof(OnHappyHourTaxCaseIndexes))]
     public Task Tax_and_totals_match_to_the_cent_during_happy_hour(int caseIndex) => fixture.RunAsync(async () =>
     {

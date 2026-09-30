@@ -52,6 +52,7 @@ public sealed class PersonaBusinessRuleConformanceTests(TwoPersonaConformanceFix
     }
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Extras_gate_blocks_test_alpha_own_extra_on_its_own_blocked_mains_category() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -76,6 +77,7 @@ public sealed class PersonaBusinessRuleConformanceTests(TwoPersonaConformanceFix
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Extras_gate_accepts_test_beta_own_extra_on_the_same_category_name_test_alpha_blocks() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;

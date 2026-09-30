@@ -20,6 +20,7 @@ namespace Conformance.Tests.Scenarios.Ordering;
 public sealed class RealPackMealNumberCoverageTests
 {
     [Fact]
+    [Trait("Dotnet", "ready")]
     public void Every_real_pack_discovered_on_disk_has_a_meal_number_theory_row()
     {
         var discovered = ConformancePersonas.DiscoverFromDisk();
