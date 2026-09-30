@@ -557,15 +557,44 @@ public sealed class RealtimeProcessor : IPipelineProcessor
             catch (Exception ex)
             {
                 _logger?.LogError(ex, "Tool '{ToolName}' raised an unhandled exception (session={SessionId})", toolName, sessionId);
-                // #14's order-ticket-refresh-on-failure (order_state_singleton.get_order_summary_json)
-                // stays a deliberate scope cut here: SessionToolExecutor/OrderToolExecutor/SearchTool
-                // are designed to never throw for a well-formed call (a rejection is a ToolResult, not
-                // an exception), so this catch-all only fires for a genuinely unexpected fault -- there
-                // is no fresher order summary to refresh a ticket from in that case either.
                 outputText = "Something went wrong with that action and it did not complete. Don't retry it yet -- " +
                     "call get_order to confirm the order's current state, then ask the guest to repeat what they'd like.";
                 sendToClient = false;
                 clientText = null;
+
+                // Issue #14, Rick's PR #149 R4 review (Python parity: rtmt.py's post-exception
+                // order_state_singleton.get_order_summary_json read): refresh the guest-visible
+                // order ticket from the session's own current order state -- not from the failed
+                // tool's own result, since it never produced one. Best-effort: only executors that
+                // opt into IOrderTicketSource support this (StubToolExecutor does not), and the
+                // read itself is wrapped separately from the send so a session with no readable
+                // order state yet just skips the refresh instead of losing the function_call_output
+                // below too.
+                if (toolExecutor is IOrderTicketSource ticketSource)
+                {
+                    string? ticketJson = null;
+                    try
+                    {
+                        ticketJson = ticketSource.CurrentOrderSummaryJson;
+                    }
+                    catch (Exception ticketEx)
+                    {
+                        _logger?.LogWarning(ticketEx,
+                            "Could not read order state to refresh the ticket after a tool failure (session={SessionId})",
+                            sessionId);
+                    }
+
+                    if (ticketJson is not null)
+                    {
+                        await SendTextAsync(browserSocket, new JsonObject
+                        {
+                            ["type"] = "extension.middle_tier_tool_response",
+                            ["previous_item_id"] = previousItemId,
+                            ["tool_name"] = "get_order",
+                            ["tool_result"] = ticketJson,
+                        }.ToJsonString(), ct).ConfigureAwait(false);
+                    }
+                }
             }
 
             await SendTextAsync(upstream, new JsonObject

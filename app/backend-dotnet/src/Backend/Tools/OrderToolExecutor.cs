@@ -37,6 +37,13 @@ public sealed class OrderToolExecutor : IToolExecutor
 
     public IReadOnlyList<string> ToolNames { get; } = ["update_order", "get_order", "reset_order"];
 
+    /// <summary>Issue #14, Rick's PR #149 R4 review: the current order summary, serialized the
+    /// same way <c>get_order</c>/<c>reset_order</c> already do (<see cref="OrderSummaryJson"/>),
+    /// so <see cref="Sessions.RealtimeProcessor"/> can push a fresh ticket to the browser after a
+    /// genuine tool exception -- mirrors app/backend/rtmt.py's post-exception
+    /// <c>order_state_singleton.get_order_summary_json(session_id)</c> best-effort read.</summary>
+    public string CurrentOrderSummaryJson => OrderSummaryJson.Serialize(_order.Summary);
+
     public Task<ToolResult> ExecuteAsync(string toolName, JsonElement arguments, CancellationToken cancellationToken = default) =>
         Task.FromResult(toolName switch
         {
