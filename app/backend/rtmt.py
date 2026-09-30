@@ -2736,12 +2736,18 @@ class RTMiddleTier:
             payload = decode_hmac_token(token, self.app_secret)
             if payload is None:
                 logger.warning("Rejected WebSocket with invalid/expired session token")
-                return web.Response(status=401, text="Invalid or expired token")
+                return web.Response(
+                    status=401, text="Invalid or expired token",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
             if self.entra_mode:
                 principal = request.get("principal") or {}
                 if not payload.get("oid") or payload.get("oid") != principal.get("oid"):
                     logger.warning("Rejected WebSocket — session token oid does not match Entra principal")
-                    return web.Response(status=401, text="Invalid or expired token")
+                    return web.Response(
+                        status=401, text="Invalid or expired token",
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
 
         # ── Concurrency limit (Task 2) ──
         if not self._sessions.can_accept_session():

@@ -3199,6 +3199,30 @@ class WebSocketHandlerTests(unittest.IsolatedAsyncioTestCase):
         with patch.dict("rtmt._security_cfg", {"require_session_token": True, "allowed_origins": []}):
             result = await rtmt._websocket_handler(request)
         self.assertEqual(result.status, 401)
+        # Row 10a (persona-architecture.md 18.11): a bogus/missing session
+        # token is an auth-challenge rejection like any other 401 on
+        # /realtime, so it must carry WWW-Authenticate: Bearer too -- not
+        # just the Entra-layer's own 401s.
+        self.assertEqual(result.headers.get("WWW-Authenticate"), "Bearer")
+
+    async def test_entra_mode_session_token_oid_mismatch_is_rejected_with_www_authenticate(self):
+        """Row 10b (persona-architecture.md 18.11): a genuinely valid HMAC
+        session token that is nonetheless bound to a *different* oid than
+        the Entra principal middleware already validated on this request
+        must still be rejected with 401 + WWW-Authenticate: Bearer -- the
+        oid-binding check is a second, independent gate, not merely "is this
+        HMAC valid"."""
+        rtmt = self._make_rtmt()
+        rtmt.app_secret = b"test-secret"
+        rtmt.entra_mode = True
+        good_token = create_hmac_token(rtmt.app_secret, expiry_seconds=60, oid="some-other-oid")
+        request = MagicMock(spec=web.Request)
+        request.headers = {"Origin": "", "Host": "localhost:8080"}
+        request.query = {"token": good_token}
+        request.get = MagicMock(return_value={"oid": "the-real-caller-oid"})
+        result = await rtmt._websocket_handler(request)
+        self.assertEqual(result.status, 401)
+        self.assertEqual(result.headers.get("WWW-Authenticate"), "Bearer")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
