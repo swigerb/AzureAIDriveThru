@@ -17,6 +17,7 @@ public sealed class VoicePickerTests(VoicePickerConformanceFixture fixture)
     private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Voice_picker_defers_the_update_entirely_once_assistant_audio_has_been_sent() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -145,6 +146,7 @@ public sealed class VoicePickerTests(VoicePickerConformanceFixture fixture)
     /// extension.set_voice handler that the other tests in this class never reach.
     /// </summary>
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Voice_picker_updates_immediately_before_any_assistant_audio_has_been_sent() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -185,6 +187,7 @@ public sealed class VoicePickerTests(VoicePickerConformanceFixture fixture)
     /// the same shape, which asserted the (now fixed) opposite behaviour.
     /// </summary>
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Voice_picked_after_lock_does_not_carry_to_a_brand_new_unrelated_connection() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -338,6 +341,7 @@ public sealed class VoicePickerTests(VoicePickerConformanceFixture fixture)
     /// it must not become the new default for a later, unrelated guest's bootstrap either.
     /// </summary>
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Unknown_voice_is_rejected_and_never_reaches_upstream_or_a_new_guests_bootstrap() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -402,6 +406,7 @@ public sealed class VoicePickerTests(VoicePickerConformanceFixture fixture)
     /// <see cref="Voice_picked_after_lock_does_not_carry_to_a_brand_new_unrelated_connection"/>).
     /// </summary>
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Two_concurrent_guests_voice_choices_do_not_leak_into_each_other() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -444,6 +449,7 @@ public sealed class VoicePickerTests(VoicePickerConformanceFixture fixture)
     /// sender's own connection, and never leaks into a later, unrelated guest's bootstrap either.
     /// </summary>
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Object_voice_is_rejected_and_never_reaches_upstream_or_a_new_guests_bootstrap() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;

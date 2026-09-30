@@ -59,7 +59,7 @@ class SessionIdentifiers:
     # via `?model=`), so this is never None either.
     model_id: str
     # #75/Rick's PR #106 review item 3: which pipeline `model_id` belongs to (`"realtime"` |
-    # `"cascade"` | `"local"`) -- Morty's model picker (F10) and `/api/personas`/session
+    # `"cascade"`) -- Morty's model picker (F10) and `/api/personas`/session
     # metadata group models by pipeline, so this travels alongside `model_id` everywhere the
     # latter does. Never None: every session's model was resolved through exactly one
     # pipeline's processor (`processors.dispatch_processor`) before the session was created.
@@ -754,7 +754,7 @@ class OrderState:
         return self.sessions[session_id]["_model_reasoning"]
 
     def get_model_pipeline(self, session_id: str) -> str:
-        """The pipeline (``"realtime"`` | ``"cascade"`` | ``"local"``) this session's bound
+        """The pipeline (``"realtime"`` | ``"cascade"``) this session's bound
         model belongs to (#75, Rick's PR #106 review item 3) -- every live session has one
         (``dispatch_processor`` resolves it before the session is ever created). Falls back to
         ``"realtime"`` for a *session_id* that isn't a live session at all -- same defensive

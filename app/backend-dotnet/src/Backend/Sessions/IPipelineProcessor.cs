@@ -2,7 +2,7 @@ namespace Backend.Sessions;
 
 /// <summary>
 /// Seam for wave 7 (#74/#75, ADR-001 decision on per-session persona/model binding): the
-/// persona+model-specific pipeline (one of "realtime", "cascade", "local" -- design doc section 7)
+/// persona+model-specific pipeline (one of "realtime", "cascade" -- design doc section 7)
 /// that actually turns a session's inbound events into outbound browser frames. This wave defines
 /// only the shape; SessionActor accepts an optional processor and runs correctly with none bound
 /// (events are drained but not acted on) so the one-event-loop-per-session mechanics can be built
@@ -10,7 +10,7 @@ namespace Backend.Sessions;
 /// </summary>
 public interface IPipelineProcessor
 {
-    /// <summary>"realtime" | "cascade" | "local" -- must match one of persona.json's models keys.</summary>
+    /// <summary>"realtime" | "cascade" -- must match one of persona.json's models keys.</summary>
     string PipelineName { get; }
 
     /// <summary>

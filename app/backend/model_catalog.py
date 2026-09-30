@@ -6,20 +6,13 @@ config and (per the squad's split) a different owner:
 
 1. **Catalog** (this module; `config.yaml`'s `models: catalog:` list): the facts about a model
    that are the same on every deployment -- its id, which pipeline it belongs to
-   (`realtime` | `cascade` | `local`), a display label, and its capabilities (`reasoning` for
-   realtime/cascade, `toolCalling` for cascade, `runtime` for local). Append-only: a new model is
+   (`realtime` | `cascade`), a display label, and its capabilities (`reasoning` for
+   realtime/cascade, `toolCalling` for cascade). Append-only: a new model is
    a new list entry, never a schema change.
 2. **Deployment** (this module; `AZURE_AI_MODEL_DEPLOYMENTS` env var, a JSON map of catalog id ->
    Foundry deployment name): which of the catalogued models actually exist on THIS deployment.
    Bicep emits this (issue #93; the deployment list lives in infra/model-deployments.json there).
-   A catalog entry with no deployment mapped for it is not selectable (section 7.3). For the
-   `local` pipeline this concept doesn't apply -- there is no Foundry deployment, only a
-   companion on-device runtime process (issue #81, design doc section 7.3: "Local mode is
-   selectable only when the runtime reports it is available"). This module represents that as
-   a SEPARATE env var, `LOCAL_RUNTIME_ENDPOINT` (a URL, or unset): `is_deployed`/`is_selectable`
-   special-case any `pipeline: local` catalog entry to mean "the runtime endpoint is
-   configured" instead of consulting `AZURE_AI_MODEL_DEPLOYMENTS`, so `local` catalog entries
-   never need (and must never gain) a deployment-map entry of their own.
+   A catalog entry with no deployment mapped for it is not selectable (section 7.3).
 3. **Persona** (`persona_loader.py`'s `_Models`/`_ModelPipeline`, issue #74, already built): which
    catalogued models a persona pack allows per pipeline, and its own default. Unaffected by this
    module -- a persona's `models.realtime.allowed` id doesn't have to be catalogued/deployed
@@ -31,7 +24,7 @@ the first two terms of that intersection; `processors.py` combines all three.
 Rick's PR #106 review item 1: there is NO default-path special case. Every model a persona can
 bind to -- including its own pipeline default -- resolves through the catalog exactly like any
 other requested id: it must be catalogued for the right pipeline (`is_catalogued_for`), and its
-`reasoning`/`toolCalling`/`runtime` capabilities always come from that catalog entry, never from
+`reasoning`/`toolCalling` capabilities always come from that catalog entry, never from
 a deployment-name heuristic. The ONLY back-compat carve-out is on the *deployment* term, and only
 for the realtime pipeline's default: if `AZURE_AI_MODEL_DEPLOYMENTS` doesn't map it yet, it falls
 back to `AZURE_OPENAI_REALTIME_DEPLOYMENT` (today's single, pre-#75 deployment env var) so that
@@ -62,12 +55,11 @@ __all__ = ["CascadeAudioConfig", "ModelCatalog", "ModelEntry", "ModelValidationE
 
 logger = logging.getLogger(__name__)
 
-_PIPELINES = frozenset({"realtime", "cascade", "local"})
+_PIPELINES = frozenset({"realtime", "cascade"})
 _REQUIRED_ENTRY_FIELDS = frozenset({"id", "pipeline", "label"})
-_KNOWN_ENTRY_FIELDS = _REQUIRED_ENTRY_FIELDS | frozenset({"reasoning", "toolCalling", "runtime"})
+_KNOWN_ENTRY_FIELDS = _REQUIRED_ENTRY_FIELDS | frozenset({"reasoning", "toolCalling"})
 
 _DEPLOYMENTS_ENV_VAR = "AZURE_AI_MODEL_DEPLOYMENTS"
-_LOCAL_RUNTIME_ENDPOINT_ENV_VAR = "LOCAL_RUNTIME_ENDPOINT"
 
 
 @dataclass(frozen=True)
@@ -116,22 +108,19 @@ class ModelEntry:
     """One `models.catalog` row (design doc section 7.2)."""
 
     id: str
-    pipeline: str  # "realtime" | "cascade" | "local"
+    pipeline: str  # "realtime" | "cascade"
     label: str
     reasoning: bool = False
     tool_calling: bool | None = None
-    runtime: str | None = None
 
     @property
     def capabilities(self) -> dict[str, Any]:
         """A generic capabilities view, mirroring the design doc's per-pipeline capability
-        flags: `reasoning` always present (defaults False), `toolCalling`/`runtime` only when
-        this entry actually declared them."""
+        flags: `reasoning` always present (defaults False), `toolCalling` only when this entry
+        actually declared it."""
         caps: dict[str, Any] = {"reasoning": self.reasoning}
         if self.tool_calling is not None:
             caps["toolCalling"] = self.tool_calling
-        if self.runtime is not None:
-            caps["runtime"] = self.runtime
         return caps
 
 
@@ -168,10 +157,7 @@ def _parse_entry(raw: Any, index: int) -> ModelEntry:
     tool_calling = raw.get("toolCalling")
     if tool_calling is not None and not isinstance(tool_calling, bool):
         raise ModelValidationError(f"config.yaml models.catalog[{index}] ({model_id!r})'s 'toolCalling' must be a bool")
-    runtime = raw.get("runtime")
-    if runtime is not None and not isinstance(runtime, str):
-        raise ModelValidationError(f"config.yaml models.catalog[{index}] ({model_id!r})'s 'runtime' must be a string")
-    return ModelEntry(id=model_id, pipeline=pipeline, label=label, reasoning=reasoning, tool_calling=tool_calling, runtime=runtime)
+    return ModelEntry(id=model_id, pipeline=pipeline, label=label, reasoning=reasoning, tool_calling=tool_calling)
 
 
 def _parse_deployment_map(raw: str | None) -> dict[str, str]:
@@ -191,16 +177,6 @@ def _parse_deployment_map(raw: str | None) -> dict[str, str]:
     return dict(parsed)
 
 
-def _parse_local_runtime_endpoint(raw: str | None) -> str | None:
-    """`LOCAL_RUNTIME_ENDPOINT` (issue #81): the base URL of the companion local-runtime
-    process (Whisper STT / Phi-4 chat / Piper TTS, see `local_runtime.py`), or `None` when
-    unset/blank -- meaning local mode is off (design doc section 7.3: not deployed)."""
-    if raw is None:
-        return None
-    stripped = raw.strip()
-    return stripped or None
-
-
 class ModelCatalog:
     """The validated, in-memory `models.catalog` (layer 1) plus the deployment map (layer 2).
 
@@ -209,27 +185,10 @@ class ModelCatalog:
     """
 
     def __init__(self, entries: dict[str, ModelEntry], deployments: dict[str, str],
-                 cascade_audio: CascadeAudioConfig | None = None,
-                 local_runtime_endpoint: str | None = None):
+                 cascade_audio: CascadeAudioConfig | None = None):
         self._entries = dict(entries)
         self._deployments = dict(deployments)
         self._cascade_audio = cascade_audio
-        self._local_runtime_endpoint = local_runtime_endpoint or None
-
-    @property
-    def local_runtime_endpoint(self) -> str | None:
-        """The `LOCAL_RUNTIME_ENDPOINT` base URL (issue #81), or `None` if unset -- the local
-        pipeline's equivalent of `deployment_for` for a Foundry model. `LocalProcessor` builds
-        its `HttpLocalRuntimeClient` from this value; nothing else should read the env var
-        directly."""
-        return self._local_runtime_endpoint
-
-    @property
-    def local_runtime_configured(self) -> bool:
-        """True iff a local runtime endpoint is configured. This is the whole of "deployed" for
-        the `local` pipeline (see `is_deployed`) -- there is no per-model deployment map entry
-        for local models, only this one process-wide endpoint."""
-        return self._local_runtime_endpoint is not None
 
     @property
     def cascade_audio(self) -> CascadeAudioConfig | None:
@@ -262,14 +221,8 @@ class ModelCatalog:
         return self._deployments.get(model_id)
 
     def is_deployed(self, model_id: str) -> bool:
-        """True iff *model_id* is available to select right now. For `realtime`/`cascade`
-        entries this means `AZURE_AI_MODEL_DEPLOYMENTS` maps it (`deployment_for`). For a
-        `local` entry it instead means the companion runtime endpoint is configured
-        (`local_runtime_configured`) -- a local model is never in the deployment map, and
-        must not be required to be. Unknown model ids are simply not deployed."""
-        entry = self._entries.get(model_id)
-        if entry is not None and entry.pipeline == "local":
-            return self.local_runtime_configured
+        """True iff *model_id* is available to select right now -- `AZURE_AI_MODEL_DEPLOYMENTS`
+        maps it (`deployment_for`). Unknown model ids are simply not deployed."""
         return self.deployment_for(model_id) is not None
 
     def is_catalogued_for(self, model_id: str, pipeline: str) -> bool:
@@ -303,7 +256,7 @@ class ModelCatalog:
         so this keeps both directions import-free)."""
         for persona_id in persona_catalog.ids:
             persona = persona_catalog.get(persona_id)
-            for pipeline_name in ("realtime", "cascade", "local"):
+            for pipeline_name in ("realtime", "cascade"):
                 pipeline_cfg = getattr(persona.manifest.models, pipeline_name, None)
                 if pipeline_cfg is None:
                     continue
@@ -342,10 +295,8 @@ class ModelCatalog:
             entries[entry.id] = entry
         deployments = _parse_deployment_map(env.get(_DEPLOYMENTS_ENV_VAR))
         cascade_audio = _parse_cascade_audio_config(models_cfg.get("cascade"))
-        local_runtime_endpoint = _parse_local_runtime_endpoint(env.get(_LOCAL_RUNTIME_ENDPOINT_ENV_VAR))
         return cls(
             entries=entries,
             deployments=deployments,
             cascade_audio=cascade_audio,
-            local_runtime_endpoint=local_runtime_endpoint,
         )

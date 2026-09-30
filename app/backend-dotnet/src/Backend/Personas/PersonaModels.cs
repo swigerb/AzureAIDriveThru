@@ -123,7 +123,6 @@ public sealed record PersonaModelsBlock
 {
     [JsonPropertyName("realtime")] public required PersonaModelPipeline Realtime { get; init; }
     [JsonPropertyName("cascade")] public PersonaModelPipeline? Cascade { get; init; }
-    [JsonPropertyName("local")] public PersonaModelPipeline? Local { get; init; }
 }
 
 public sealed record PersonaModelPipeline

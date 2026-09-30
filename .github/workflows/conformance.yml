@@ -334,11 +334,20 @@ jobs:
         # expects a .venv at the repo root with the backend's runtime deps
         # installed -- exactly what a developer's local checkout has. Only the
         # python leg launches a Python process at all.
+        #
+        # Also installs tests/conformance/requirements-harness.txt (issue #143/ADR-002):
+        # PyJWT[crypto], used only by FakeEntraIssuerPyJwtValidationTests to prove the fake
+        # issuer's discovery/JWKS/minted tokens validate with a stock third-party JWT library --
+        # never a runtime dependency of app/backend itself. That test resolves this same
+        # RepoPaths.PythonExecutable() venv and skips gracefully if PyJWT isn't importable, so
+        # it only actually runs (and proves anything) on this python leg, not the dotnet leg
+        # (which never sets up a Python interpreter at all).
         if: matrix.backend == 'python'
         run: |
           python -m venv .venv
           .venv/bin/python -m pip install --upgrade pip
           .venv/bin/python -m pip install -r app/backend/requirements.txt
+          .venv/bin/python -m pip install -r tests/conformance/requirements-harness.txt
 
       - name: Set up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -640,30 +649,25 @@ jobs:
             python -c "import app; print(\"import app OK with PERSONAS_DIR unset\")"
           '
 
-      - name: Verify the image boots in Production Entra mode and enforces auth (positive)
-        # Issue #144, design doc section 18.5/18.4: this is the real gunicorn CMD
-        # (app:create_runner), not a `python -c` import trick -- it proves the whole
-        # boot path (create_runner -> create_app -> gunicorn's GunicornWebWorker)
-        # actually listens with a valid, GUID-shaped (but fake) Entra configuration,
-        # and that the deny-by-default middleware is really wired in (a protected
-        # route 401s with no token). Do NOT flip this to real Entra ids/secrets --
-        # this never calls out to Entra (health/() stay anonymous; lazy discovery
-        # means the JWKS endpoint is only ever hit from a real bearer token, which
-        # this check never sends).
+      - name: Verify the image boots in Development pass-through and never logs query strings (positive)
+        # Issue #144, design doc section 18.11: today's Docker job only ever ran the image
+        # via `sh -c` overrides (the two verify steps above), so gunicorn's default CMD --
+        # the actual deployed boot path (create_runner -> create_app -> aiohttp's
+        # GunicornWebWorker) had never been exercised in CI. This runs the built image with
+        # its DEFAULT CMD, unconfigured (no AUTH_MODE, no Entra ids, not Production), which
+        # is Development pass-through per the 18.5 mode table -- then proves
+        # PathOnlyAccessLogger really applies under that real deployed CMD by requesting a
+        # canary query string on both a plain route (/health) and the one route with a
+        # documented history of leaking query strings (/realtime), and asserting the canary
+        # never reaches the logs. The four `_REQUIRED_ENV_VARS` placeholders are still needed
+        # -- without them `create_app()` exits before there's anything to probe.
         run: |
           set -euo pipefail
           container_id="$(docker run -d \
-            -e RUNNING_IN_PRODUCTION=1 \
-            -e AUTH_MODE=Entra \
-            -e ENTRA_TENANT_ID=11111111-1111-1111-1111-111111111111 \
-            -e ENTRA_CLIENT_ID=22222222-2222-2222-2222-222222222222 \
-            -e APP_SESSION_SECRET=ci-placeholder-session-secret-0123456789 \
             -e AZURE_OPENAI_EASTUS2_ENDPOINT=https://ci-placeholder.openai.azure.com/ \
             -e AZURE_OPENAI_REALTIME_DEPLOYMENT=ci-placeholder \
-            -e AZURE_OPENAI_EASTUS2_API_KEY=ci-placeholder-key \
             -e AZURE_SEARCH_ENDPOINT=https://ci-placeholder.search.windows.net \
             -e AZURE_SEARCH_INDEX=ci-placeholder \
-            -e AZURE_SEARCH_API_KEY=ci-placeholder-key \
             -p 8001:8000 \
             azureaidrivethru-backend:ci)"
           trap 'docker logs "$container_id" || true; docker rm -f "$container_id" >/dev/null 2>&1 || true' EXIT
@@ -672,26 +676,34 @@ jobs:
           # sleep, since gunicorn/aiohttp has no single well-known "ready" log line the
           # way Kestrel's "Now listening on" is for the C# job below.
           curl --retry 30 --retry-all-errors --retry-delay 1 --max-time 60 \
-            -fsS http://localhost:8001/health -o "$RUNNER_TEMP/health-entra.json"
-          status="$(jq -r '.status' "$RUNNER_TEMP/health-entra.json")"
-          test "$status" = "healthy" || { echo "status was '$status', not 'healthy'" >&2; exit 1; }
+            -fsS -o /dev/null http://localhost:8001/health
 
-          # A protected route must 401 with no token -- proves the Entra middleware is
-          # actually enforcing (18.2's deny-by-default), not just that the process booted.
-          code="$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8001/api/personas)"
-          test "$code" = "401" || { echo "expected 401 from /api/personas without a token, got $code" >&2; exit 1; }
-          echo "Python backend booted in Production Entra mode and enforces auth."
+          # Fire the canary requests -- the response status doesn't matter (placeholder
+          # OpenAI/Search config means /realtime can never fully connect upstream), only
+          # that neither the query string nor the token value ever reaches the access log.
+          curl -s -o /dev/null "http://localhost:8001/realtime?access_token=CANARY&token=CANARY" || true
+          curl -s -o /dev/null "http://localhost:8001/health?token=CANARY" || true
+
+          logs="$(docker logs "$container_id" 2>&1)"
+          echo "$logs" | grep -q '/health' || { echo "expected a /health access-log line, found none" >&2; exit 1; }
+          if echo "$logs" | grep -qi 'CANARY'; then
+            echo "CANARY leaked into the access log" >&2; exit 1
+          fi
+          echo "Python backend booted in Development pass-through and never logged the canary query string."
 
       - name: Verify the image fails fast without Entra config in Production (negative)
-        # The mirror image of the positive check above: Production with no Entra
-        # configuration at all must never silently fall back to the Development
+        # The mirror image of the positive check above: Production with no `AUTH_MODE`
+        # (and no Entra ids) at all must never silently fall back to the Development
         # pass-through (design doc 18.5) -- create_app()'s sys.exit(1) must become
-        # create_runner()'s RuntimeError, which gunicorn's arbiter treats as a real
-        # boot failure (master exit code 3), not an infinite respawn loop.
+        # create_runner()'s RuntimeError (18.4), which gunicorn's arbiter treats as a
+        # real boot failure (master exit code 3), not an infinite respawn loop. Asserting
+        # on the exit code alone can't tell "halted after one attempt" apart from
+        # "crash-looped and happened to still be non-zero when we looked", so this also
+        # counts gunicorn's own "Booting worker with pid: N" arbiter log line -- logged
+        # once per spawn attempt -- and requires exactly one.
         run: |
           set -euo pipefail
-          set +e
-          docker run --rm \
+          container_id="$(docker run -d \
             -e RUNNING_IN_PRODUCTION=1 \
             -e AZURE_OPENAI_EASTUS2_ENDPOINT=https://ci-placeholder.openai.azure.com/ \
             -e AZURE_OPENAI_REALTIME_DEPLOYMENT=ci-placeholder \
@@ -699,13 +711,28 @@ jobs:
             -e AZURE_SEARCH_ENDPOINT=https://ci-placeholder.search.windows.net \
             -e AZURE_SEARCH_INDEX=ci-placeholder \
             -e AZURE_SEARCH_API_KEY=ci-placeholder-key \
-            azureaidrivethru-backend:ci > "$RUNNER_TEMP/negative-boot.log" 2>&1
-          exit_code=$?
-          set -e
-          cat "$RUNNER_TEMP/negative-boot.log"
+            azureaidrivethru-backend:ci)"
+
+          stopped=false
+          for _ in $(seq 1 30); do
+            if [ "$(docker inspect -f '{{.State.Running}}' "$container_id")" = "false" ]; then
+              stopped=true
+              break
+            fi
+            sleep 1
+          done
+
+          logs="$(docker logs "$container_id" 2>&1)"
+          exit_code="$(docker inspect -f '{{.State.ExitCode}}' "$container_id")"
+          docker rm -f "$container_id" >/dev/null 2>&1 || true
+
+          echo "$logs"
+          [ "$stopped" = true ] || { echo "container was still running 30s after start, without Entra config in Production" >&2; exit 1; }
           test "$exit_code" -ne 0 || { echo "expected a non-zero exit without Entra config in Production, got 0" >&2; exit 1; }
-          grep -qi 'entra' "$RUNNER_TEMP/negative-boot.log" || { echo "expected the failure log to mention Entra" >&2; exit 1; }
-          echo "Python backend correctly refused to start without Entra config in Production (exit ${exit_code})."
+          grep -qi 'entra' <<<"$logs" || { echo "expected the failure log to mention Entra" >&2; exit 1; }
+          boot_lines="$(grep -c 'Booting worker' <<<"$logs" || true)"
+          test "$boot_lines" -eq 1 || { echo "expected exactly one 'Booting worker' line, found ${boot_lines}" >&2; exit 1; }
+          echo "Python backend correctly refused to start without Entra config in Production (exit ${exit_code}, ${boot_lines} boot attempt) within 30s."
 
   # S7 (#17) prep: mirrors docker-build above for app/Dockerfile.dotnet (renamed from
   # app/backend-dotnet/Dockerfile, Rick's #152 review, R7). deployDotnetApp is still false by

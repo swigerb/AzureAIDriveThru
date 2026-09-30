@@ -26,10 +26,12 @@ entries:
   increase_reason: ''
 - file: DEPLOY.md
   brand: sonic
-  max: 5
+  max: 3
   issue: '#86'
   reason: 'Deployment walkthrough uses the Sonic app name/image tag as its running
-    example; same top-level-docs naming work as #86.'
+    example; same top-level-docs naming work as #86. Lowered from 5 to 3 when the
+    EasyAuth section was replaced with the Entra Setup/Verify/rollout walkthrough
+    (#146), which removed several Sonic-named auth example strings.'
   increase_reason: ''
 - file: README.md
   brand: mcdonalds
@@ -265,9 +267,9 @@ entries:
   max: 5
   issue: '#144'
   reason: 'The new RouteCoverageTests (issue #144, Entra auth) hardcode personas/sonic/**
-    paths for the same reason as test_persona_loader.py above -- it''s the only
-    persona pack that exists yet -- #78/#79 land the other packs, at which point
-    these tests get parameterized per-persona instead of hardcoding Sonic.'
+    paths for the same reason as test_persona_loader.py above -- it''s the only persona
+    pack that exists yet -- #78/#79 land the other packs, at which point these tests
+    get parameterized per-persona instead of hardcoding Sonic.'
   increase_reason: '#76'
 - file: app/backend/tests/test_combo_orders.py
   brand: sonic
@@ -291,9 +293,9 @@ entries:
   issue: '#144'
   reason: 'Middleware tests (issue #144, Entra auth) reference a persona-asset path
     (personas/sonic/assets/**) to prove the anonymous-asset-extension split against
-    a real, shipped persona pack -- it''s the only persona pack that exists yet -- #78/#79
-    land the other packs, at which point this gets parameterized per-persona instead
-    of hardcoding Sonic.'
+    a real, shipped persona pack -- it''s the only persona pack that exists yet --
+    #78/#79 land the other packs, at which point this gets parameterized per-persona
+    instead of hardcoding Sonic.'
   increase_reason: '#76'
 - file: app/backend/tests/test_extras_rules.py
   brand: sonic

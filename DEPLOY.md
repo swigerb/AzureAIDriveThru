@@ -110,140 +110,163 @@ This only changes which persona a session gets when it doesn't name one
 -- every enabled persona pack still gets its own index and is still
 reachable by a session that requests it explicitly.
 
-## Enable Entra ID Authentication (EasyAuth)
+## Entra ID Authentication (ADR-002)
 
-> **Superseded by [ADR-002](docs/adr/ADR-002-entra-authentication.md).** Do not enable EasyAuth. The app moves
-> to in-app Entra ID validation following Retail Pulse (design doc section 18), and this section is replaced
-> by the new Setup and Verify scripts when that work lands.
+The app requires Microsoft Entra ID sign-in on every request, including the `/realtime` WebSocket, which
+consumes metered Azure OpenAI realtime tokens on your subscription. There is no unauthenticated mode in Azure;
+`AUTH_MODE=Entra` is pinned by `infra/main.bicep`. See [ADR-002](docs/adr/ADR-002-entra-authentication.md) and
+[docs/persona-architecture.md](docs/persona-architecture.md) section 18 for the full design. EasyAuth (the old
+`az containerapp auth` / `authConfigs` approach) is removed; the app validates bearer tokens itself.
 
-Authentication is **opt-in** — a plain `azd up` deploys without auth. To protect
-the app with Entra ID (single-tenant), follow these one-time steps.
+### Setup
 
-### 1. Create the App Registration
+`scripts/Setup-EntraAuth.ps1` creates or reconciles the single Entra app registration (single tenant, `api://{clientId}`,
+v2 tokens, the `access_as_user` scope, the `DriveThru.User` app role, SPA-only redirect URIs, the Azure CLI client
+pre-authorized) and assigns the caller (or `-AssignUserUpn`) the app role. It is **preview by default**: it writes
+nothing to Entra unless you pass `-Apply`, and it never adopts an existing app by display name. Reconciling an
+existing registration (every run after the first) requires `-ClientId`/`-AppObjectId` plus caller ownership and the
+`AzureAIDriveThruManaged` tag. `-RedirectUri` defaults to the two local-dev origins from design 18.1
+(`http://localhost:8000`, `http://localhost:5173`); the redirect-URI reconcile is a full SET, so a run that supplies
+none of `-FrontendOrigin`/`-RedirectUri`/`-FromAzdEnv` now leaves any existing SPA URIs untouched rather than wiping
+them.
 
-```bash
-# Set your tenant ID (the Azure AD tenant that owns the app)
-TENANT_ID="<your-tenant-id>"
-
-# Create the app registration (single tenant)
-az ad app create \
-  --display-name "Sonic AI Drive-Thru Demo" \
-  --sign-in-audience AzureADMyOrg \
-  --enable-id-token-issuance true \
-  --web-redirect-uris "https://<YOUR-CONTAINER-APP-FQDN>/.auth/login/aad/callback" \
-  --query appId -o tsv
+```powershell
+az login --tenant <tenant-id>
 ```
 
-Save the returned `appId` (e.g., `<your-app-id>`).
+**(a) Today's staging env (ingress off, `BACKEND_URI` blank).** `-FromAzdEnv` fails hard on an empty `BACKEND_URI`
+(see below), so derive the Python container app's stable FQDN read-only instead: it is `<app-name>.<environment
+defaultDomain>`, which does not change when ingress is toggled.
 
-> **Note:** Replace `<YOUR-CONTAINER-APP-FQDN>` with the actual FQDN from the
-> `BACKEND_URI` output of your deployment (minus the `https://` prefix).
+```powershell
+azd env select <env-name>
+az account set --subscription (azd env get-value AZURE_SUBSCRIPTION_ID)
 
-### 2. Create a Service Principal and Restrict Access
+$rg = azd env get-value AZURE_RESOURCE_GROUP
+$app = (az containerapp list -g $rg -o json | ConvertFrom-Json | Where-Object { $_.tags.'azd-service-name' -eq 'backend' } | Select-Object -First 1).name
+$envId = az containerapp show -n $app -g $rg --query properties.managedEnvironmentId -o tsv
+$domain = az containerapp env show --ids $envId --query properties.defaultDomain -o tsv
+if (-not $app -or -not $domain) { throw 'backend container app or environment domain not found' }
 
-```bash
-APP_ID="<your-app-id>"
+# Preview: prints what would change, writes nothing
+./scripts/Setup-EntraAuth.ps1 -TenantId <tenant-id> -FrontendOrigin "https://$app.$domain"
 
-# Create the service principal
-az ad sp create --id $APP_ID
-
-# OPTIONAL — restrict sign-in to explicitly assigned users/groups only.
-# Read the warning below before enabling this.
-az ad sp update --id $APP_ID --set appRoleAssignmentRequired=true
+# Apply: creates/reconciles the registration and assigns the caller DriveThru.User
+./scripts/Setup-EntraAuth.ps1 -TenantId <tenant-id> -FrontendOrigin "https://$app.$domain" -Apply
 ```
 
-> ⚠️ **`appRoleAssignmentRequired=true` requires an administrator to grant
-> consent, and will lock you out if you are not one.**
->
-> When an enterprise application requires assignment, Entra ID disables
-> *user* self-consent for that app. The first sign-in then fails with
-> "Need admin approval — <app> needs permission to access resources in your
-> organization that only an admin can grant", even for a user who has been
-> assigned. Someone holding Application Administrator, Cloud Application
-> Administrator or Global Administrator must run
-> `az ad app permission admin-consent --id $APP_ID` first. Global *Reader*
-> is not sufficient — it is read-only.
->
-> If you do not have an admin account to hand, leave this setting off. The
-> app is registered single-tenant (`AzureADMyOrg`), so sign-in is still
-> limited to members of your own tenant; you simply cannot narrow it
-> further to named individuals.
+**(b) A fresh env, before the first deployment.** Only the `-RedirectUri` localhost defaults are available yet:
 
-> With `appRoleAssignmentRequired=true`, only users explicitly assigned to
-> this enterprise application can sign in. Without it, *any* member of the
-> tenant can authenticate. Assign users in the Azure Portal under
-> Enterprise Applications → Sonic AI Drive-Thru Demo → Users and groups,
-> or via CLI:
->
-> ```bash
-> # Get the service principal object ID
-> SP_OBJECT_ID=$(az ad sp show --id $APP_ID --query id -o tsv)
->
-> # Get the user's object ID
-> USER_OBJECT_ID=$(az ad user show --id "<user-principal-name>" --query id -o tsv)
->
-> # Assign the user (default app role — empty GUID)
-> az rest --method POST \
->   --uri "https://graph.microsoft.com/v1.0/servicePrincipals/$SP_OBJECT_ID/appRoleAssignments" \
->   --body "{\"principalId\": \"$USER_OBJECT_ID\", \"resourceId\": \"$SP_OBJECT_ID\", \"appRoleId\": \"00000000-0000-0000-0000-000000000000\"}"
-> ```
-
-### 3. Create a Client Secret
-
-```bash
-az ad app credential reset --id $APP_ID --display-name "azd-easyauth" --query password -o tsv
-```
-
-Save the secret value — it is shown only once.
-
-### 4. Configure the azd Environment
-
-```bash
-azd env set AZURE_AUTH_ENABLED true
-azd env set AZURE_AUTH_CLIENT_ID "<your-app-id>"
-azd env set AZURE_AUTH_TENANT_ID "<your-tenant-id>"
-azd env set AZURE_AUTH_CLIENT_SECRET "<secret-value-from-step-3>"
-```
-
-Then deploy normally:
-
-```bash
+```powershell
+./scripts/Setup-EntraAuth.ps1 -TenantId <tenant-id> -Apply
+azd env set ENTRA_TENANT_ID "<tenant-id>"
+azd env set ENTRA_CLIENT_ID "<client-id>"
 azd up
 ```
 
-The Bicep template will:
-- Store `AZURE_AUTH_CLIENT_SECRET` as a Container App secret named `aad-client-secret`
-- Deploy an `authConfigs/current` child resource with EasyAuth enabled
-- Redirect unauthenticated requests to Entra ID login
-- Protect all endpoints including WebSocket routes (`/realtime`)
+**(c) Reconcile, once `BACKEND_URI` is populated (after the public provision, step 5 below).**
 
-### 5. Verify
-
-```bash
-# Anonymous GET should 302 redirect to Entra login
-curl -s -o /dev/null -w "%{http_code}" https://<YOUR-CONTAINER-APP-FQDN>/
-
-# Anonymous WebSocket handshake should return 401
-curl -s -o /dev/null -w "%{http_code}" \
-  -H "Upgrade: websocket" -H "Connection: Upgrade" \
-  https://<YOUR-CONTAINER-APP-FQDN>/realtime
+```powershell
+./scripts/Setup-EntraAuth.ps1 -TenantId <tenant-id> -ClientId <client-id> -FromAzdEnv
+./scripts/Setup-EntraAuth.ps1 -TenantId <tenant-id> -ClientId <client-id> -FromAzdEnv -Apply
 ```
 
-### Secret Management
+`-FromAzdEnv` reads `BACKEND_URI` (and `BACKEND_DOTNET_URI` once the dotnet app is live) from the azd environment to
+derive the SPA redirect URIs; it fails hard on an empty `BACKEND_URI` rather than silently skipping a redirect URI
+(this is expected while ingress is dark, case (a) above). Alternatively, pass `-FrontendOrigin`/`-RedirectUri`
+explicitly.
 
-The client secret **never** appears in source control or parameter files.
-It flows through `azd env` (stored locally in `.azure/<env>/.env`, which is
-gitignored) and is passed as a `@secure()` Bicep parameter at deployment time.
+The script prints only ids and two `azd env set` lines, never a secret or a token:
 
-If you prefer to manage the secret entirely out-of-band (without putting it in
-`azd env`), you can set it directly on the Container App after deployment:
-
-```bash
-az containerapp secret set \
-  --name <container-app-name> \
-  --resource-group <rg-name> \
-  --secrets aad-client-secret=<secret-value>
+```powershell
+azd env set ENTRA_TENANT_ID "<tenant-id>"
+azd env set ENTRA_CLIENT_ID "<client-id>"
 ```
 
-In that case, leave `AZURE_AUTH_CLIENT_SECRET` empty — the Bicep template will
-still deploy the auth config referencing the secret by name.
+Run those, then provision/deploy per the rollout order below.
+
+### Verify
+
+`scripts/Verify-EntraAuth.ps1` is a read-only check of the app registration itself (single tenant, `api://{clientId}`,
+v2 tokens, the scope and role enabled, SPA-only redirect URIs, `appRoleAssignmentRequired`). Non-zero exit on any gap:
+
+```powershell
+./scripts/Verify-EntraAuth.ps1 -TenantId <tenant-id> -ClientId <client-id>
+```
+
+`scripts/Verify-ProductionAuth.ps1` is a read-only live posture check for every deployed container app: the expected
+image on every active revision, the `AUTH_MODE=Entra`/production-flag/`ENTRA_*` env pins, no `ENTRA_INSTANCE`, EasyAuth
+observed disabled with no leftover `aad-client-secret` secret, and (unless `-RevisionsOnly`) anonymous HTTP probes
+against the live app. It delegates the registration check to `Verify-EntraAuth.ps1`.
+
+```powershell
+# Dark check (ingress still off): az-only, no HTTP, fails if ingress is enabled
+./scripts/Verify-ProductionAuth.ps1 -RevisionsOnly
+
+# Full check once ingress is public
+./scripts/Verify-ProductionAuth.ps1
+
+# Also confirm an authenticated request succeeds (never prints the token)
+./scripts/Verify-ProductionAuth.ps1 -Authenticated
+```
+
+### Troubleshooting
+
+**Setup fails at "API configuration" (a `preAuthorizedApplications` or permission-id error) on a brand-new app, or
+any `-Apply` failure after `Created application appId=...`.** Setup adds the delegated scope and reconciles
+`preAuthorizedApplications` in two separate Graph requests specifically so a pre-authorized client entry is never
+sent referencing a scope id Graph hasn't committed yet, but if a run still fails partway through (for example, a
+partial write from an interrupted prior run left the app in an unexpected state), the fallback is idempotent. Run it
+in the same session as case (a) above so `$app` and `$domain` are still set:
+
+```powershell
+# 1. Re-run the same Apply line with -ClientId (idempotent): only the steps that did not finish run again.
+./scripts/Setup-EntraAuth.ps1 -TenantId <tenant-id> -ClientId <appId it printed> -FrontendOrigin "https://$app.$domain" -Apply
+
+# 2. If it still fails at "API configuration", reconcile in two passes:
+./scripts/Setup-EntraAuth.ps1 -TenantId <tenant-id> -ClientId <appId> -FrontendOrigin "https://$app.$domain" -PreAuthorizedClientAppId @() -Apply
+./scripts/Setup-EntraAuth.ps1 -TenantId <tenant-id> -ClientId <appId> -FrontendOrigin "https://$app.$domain" -Apply
+```
+
+Always include `-FrontendOrigin` on every line above: `-Apply` reconciles the whole SPA redirect-URI set, so a
+fallback re-run without it replaces the live URL with only the two localhost defaults, and sign-in on the live URL
+then fails at step 6 with AADSTS50011 (redirect URI mismatch).
+
+### Rollout (ingress last)
+
+`azd provision` re-enables external ingress and sets min replicas to 1, and the apps run in `Single` revision mode:
+ACA keeps the previous (unauthenticated) revision active until the new one is ready, so a naive `azd provision` can
+leave an unauthenticated revision reachable if the new one fails to boot. **So enabling ingress is the last, separate
+step.** `backendIngressEnabled` (from the azd env `BACKEND_INGRESS_ENABLED`, default `true`) makes this dark rollout
+possible without touching every other environment's default behavior.
+
+1. The infra, scripts and backend/frontend Entra changes merge to `dev`, including #144 (Python Entra auth) and
+   #145 (CI build-arg wiring), which this rollout depends on.
+2. Brian runs Setup (above), then the two `azd env set` lines it prints.
+3. `azd deploy` while ingress is still disabled. The new image in Production without `AUTH_MODE` fails fast (a clean
+   gunicorn exit). **That is expected:** `azd deploy` may report the revision as failed or unhealthy. Don't "fix"
+   it by provisioning with ingress on.
+4. **Dark provision:** `azd env set BACKEND_INGRESS_ENABLED false`, then `azd provision`. This pins `AUTH_MODE=Entra`
+   and the ids with ingress still off; postprovision disables EasyAuth on every app.
+   - **4a. Check while dark:** `./scripts/Verify-ProductionAuth.ps1 -RevisionsOnly` must show exactly one active
+     revision, on the new image, with `AUTH_MODE=Entra`, healthy and running, before proceeding. If an old revision
+     is still active, the new one isn't ready: read its logs and fix it while dark. Don't touch the revision mode.
+5. **Public provision:** `azd env set BACKEND_INGRESS_ENABLED true`, then `azd provision`. Enabling ingress DOES
+   create a new revision: `infra/core/host/container-app.bicep` puts the HTTP scale rule in the revision template
+   (`scale.rules` depends on `ingressEnabled`), so this is a new revision on the same (dark-verified) image and env.
+   Run `./scripts/Verify-ProductionAuth.ps1` (and `-Authenticated`) immediately after.
+   - **If it reports two active revisions right after this step:** that is expected and transient, not a failure to
+     "fix." The dark-verified revision from step 4a keeps serving (both revisions run `AUTH_MODE=Entra`, so there is
+     no unauthenticated window) until the new one is ready. Wait a short while for the old revision to retire, then
+     re-run `./scripts/Verify-ProductionAuth.ps1`. Do **not** run `az containerapp ingress disable` or flip
+     `BACKEND_INGRESS_ENABLED` back to `false` just because two revisions are briefly active.
+   - On any OTHER failure (wrong image, `AUTH_MODE` missing, EasyAuth re-enabled, a probe 401/failing where it should
+     pass), run `az containerapp ingress disable` (or set the variable back to `false` and provision), then fix it.
+6. Brian signs in on the live URL, and posts the result on #85.
+
+**The rule:** never run `azd provision` or `azd up` against `azureaidrivethru-prod` with `BACKEND_INGRESS_ENABLED`
+true (or unset) until step 4a has passed with ingress off. This also covers the manual `Deploy to Azure with azd`
+workflow (`.github/workflows/azure-dev.yaml`, `workflow_dispatch` only): it runs `azd provision` without setting
+`BACKEND_INGRESS_ENABLED` or the `ENTRA_*` values, so dispatching it against `azureaidrivethru-prod` before 4a has
+passed would publish the old, unauthenticated image with ingress on.
+

@@ -1216,8 +1216,8 @@ class RTMiddleTier:
     key: str | None = None
 
     # #75/design doc section 7.4: RTMiddleTier IS the "realtime" pipeline processor -- see
-    # `processors.PipelineProcessor`. A future cascade (#82) / local (#81) processor would
-    # declare its own `pipeline_name` and register alongside this one.
+    # `processors.PipelineProcessor`. Another pipeline processor (for example `CascadeProcessor`,
+    # #82) declares its own `pipeline_name` and is registered by app.py.
     pipeline_name: str = "realtime"
     
     # Tools are server-side only for now, though the case could be made for client-side tools
@@ -1297,8 +1297,9 @@ class RTMiddleTier:
         # "safe default here, app.py installs/extends the real one" pattern as
         # `persona_catalog`/`model_catalog` above) -- defaulted to a registry containing only
         # `self` (the realtime pipeline processor) so a deployment with no other pipelines
-        # registered yet keeps working exactly as before. A future cascade (#82) / local (#81)
-        # processor is added here by app.py, never by editing this class.
+        # registered yet keeps working exactly as before. Another pipeline processor (for
+        # example `CascadeProcessor`, #82) declares its own `pipeline_name` and is registered by
+        # app.py, never by editing this class.
         self.processor_registry = ProcessorRegistry([self])
         # Flipped if the deployment rejects `reasoning` at runtime despite the
         # name check, so later sessions stop sending it.

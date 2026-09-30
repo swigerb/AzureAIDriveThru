@@ -2,7 +2,7 @@ namespace Backend.Sessions;
 
 /// <summary>
 /// Port of processors.py's ProcessorRegistry (issue #75, design doc section 7.4): maps a pipeline
-/// name ("realtime" | "cascade" | "local") to the single <see cref="IPipelineProcessor"/> that
+/// name ("realtime" | "cascade") to the single <see cref="IPipelineProcessor"/> that
 /// owns every session bound to it. Registration happens once at startup (Program.cs); lookup
 /// happens once per `/realtime` connection, in Models/ModelDispatch.cs's `DispatchProcessor`,
 /// before the WebSocket upgrade.

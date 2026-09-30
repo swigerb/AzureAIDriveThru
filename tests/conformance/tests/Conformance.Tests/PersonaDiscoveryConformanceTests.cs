@@ -8,8 +8,9 @@ namespace Conformance.Tests;
 
 /// <summary>
 /// persona-binding contract -- design doc section 5.2. S2 part 2 (#12) ports the persona
-/// discovery/detail HTTP routes and the pre-upgrade ?persona= validation on /realtime, so four of
-/// the five rows below are tagged <c>[Trait("Dotnet", "ready")]</c>.
+/// discovery/detail HTTP routes and the pre-upgrade ?persona= validation on /realtime; issue #13
+/// lands the real relay's session.created echo, so all five rows below are now tagged
+/// <c>[Trait("Dotnet", "ready")]</c>.
 /// <see cref="Omitted_persona_binds_to_the_default_persona_visible_in_session_metadata"/> stays
 /// UNTAGGED: it needs the real upstream relay to actually reach `session.created` and echo
 /// `extension.session_metadata` (rtmt.py's `_websocket_handler`/`ConnectionForwarder`) --
@@ -32,7 +33,7 @@ public sealed class PersonaDiscoveryConformanceTests(ConformanceFixture fixture)
     public Task Api_personas_returns_the_designed_shape() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
-        using var http = new HttpClient();
+        using var http = ConformanceHttpClient.Create();
         using var response = await http.GetAsync(new Uri(fixture.Backend!.BaseUri, "/api/personas"), ct);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -65,7 +66,7 @@ public sealed class PersonaDiscoveryConformanceTests(ConformanceFixture fixture)
     public Task Api_persona_detail_returns_200_for_the_default_persona() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
-        using var http = new HttpClient();
+        using var http = ConformanceHttpClient.Create();
         using var response = await http.GetAsync(new Uri(fixture.Backend!.BaseUri, "/api/personas/sonic"), ct);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -87,7 +88,7 @@ public sealed class PersonaDiscoveryConformanceTests(ConformanceFixture fixture)
     public Task Api_persona_detail_returns_404_for_an_unknown_id() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
-        using var http = new HttpClient();
+        using var http = ConformanceHttpClient.Create();
         using var response = await http.GetAsync(new Uri(fixture.Backend!.BaseUri, "/api/personas/nope"), ct);
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
@@ -106,7 +107,7 @@ public sealed class PersonaDiscoveryConformanceTests(ConformanceFixture fixture)
         // for asserting a pre-upgrade HTTP rejection.
         using var socket = new ClientWebSocket();
         socket.Options.CollectHttpResponseDetails = true;
-        var wsUri = new Uri($"ws://{backend.Host}:{backend.Port}/realtime?persona=nope");
+        var wsUri = await RealtimeUris.WithDefaultCredentialsAsync(backend, "persona=nope", ct);
 
         var ex = await Assert.ThrowsAsync<WebSocketException>(() => socket.ConnectAsync(wsUri, ct));
         Assert.Equal(HttpStatusCode.NotFound, socket.HttpStatusCode);
@@ -115,6 +116,7 @@ public sealed class PersonaDiscoveryConformanceTests(ConformanceFixture fixture)
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Omitted_persona_binds_to_the_default_persona_visible_in_session_metadata() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;

@@ -76,6 +76,21 @@ public class ConformanceFixture : IAsyncLifetime
     public FakeSearchServer Search { get; private set; } = null!;
 
     /// <summary>
+    /// Issue #143/ADR-002: whether this fixture launches its backend in Entra mode against a
+    /// fresh <see cref="EntraIssuer"/> (the default -- persona-architecture.md 18.11: "the default
+    /// fixture runs in Entra mode against the fake issuer") or leaves Entra entirely unconfigured
+    /// (<see cref="DevelopmentPassThroughFixture"/> overrides this to false for the mode rows and
+    /// the Playwright UX runs, which need a non-Production, unconfigured backend instead).
+    /// </summary>
+    protected virtual bool UseEntraMode => true;
+
+    /// <summary>Non-null only when <see cref="UseEntraMode"/> is true (every fixture except
+    /// <see cref="DevelopmentPassThroughFixture"/>). Row tests mint arbitrary tokens against this
+    /// directly (e.g. <c>fixture.EntraIssuer!.Mint(new() { ... })</c>) -- the fixture itself only
+    /// ever mints the one "valid token" default via <see cref="EntraDefaultCredentials"/>.</summary>
+    public FakeEntraIssuer? EntraIssuer { get; private set; }
+
+    /// <summary>
     /// Issue #82: a derived fixture overrides this to start any additional fake servers the
     /// cascade pipeline needs beyond <see cref="Realtime"/>/<see cref="Search"/> (namely a
     /// <see cref="FakeChatCompletionsServer"/> for the Foundry chat endpoint -- STT/TTS reuse
@@ -159,10 +174,21 @@ public class ConformanceFixture : IAsyncLifetime
         Search = new FakeSearchServer(indexPaths);
         await Search.StartAsync(fixedPort: searchPort).ConfigureAwait(false);
 
+        // Issue #143/ADR-002: started before StartExtraFakesAsync (and independent of it, so a
+        // derived fixture that overrides that extension point -- CascadeConformanceFixtures,
+        // LocalConformanceFixtures -- still gets Entra mode for free instead of silently losing it)
+        // so ENTRA_INSTANCE is ready in time for the backend's own env below.
+        IReadOnlyDictionary<string, string> entraEnvironment = new Dictionary<string, string>();
+        if (UseEntraMode)
+        {
+            EntraIssuer = new FakeEntraIssuer();
+            await EntraIssuer.StartAsync().ConfigureAwait(false);
+            entraEnvironment = EntraModeEnvironment.Build(EntraIssuer);
+        }
+
         var extraFakeEnvironment = await StartExtraFakesAsync().ConfigureAwait(false);
-        var extraEnvironment = extraFakeEnvironment.Count == 0
-            ? Profile.ExtraEnvironment
-            : MergeEnvironment(Profile.ExtraEnvironment, extraFakeEnvironment);
+        var extraEnvironment = MergeEnvironment(
+            MergeEnvironment(Profile.ExtraEnvironment, entraEnvironment), extraFakeEnvironment);
 
         var port = NetworkUtils.GetFreeTcpPort();
         try
@@ -171,6 +197,16 @@ public class ConformanceFixture : IAsyncLifetime
                 Realtime.BaseUri, Search.BaseUri, port, extraEnvironment: extraEnvironment, deployment: Deployment,
                 personas: Personas, persona: Persona, personasDir: PersonasDir)
                 .ConfigureAwait(false);
+
+            // Issue #143: "the harness HTTP client and RealtimeBrowserClient attach a valid token
+            // by default" -- registers a fresh-mint-per-call delegate keyed by this backend's own
+            // BaseUri (unique per fixture instance/port), so ConformanceHttpClient/
+            // RealtimeBrowserClient's ambient lookups resolve to a real, currently-valid Entra
+            // token for every existing call site with zero changes needed at any of them.
+            if (EntraIssuer is { } issuer)
+            {
+                EntraDefaultCredentials.Register(Backend.BaseUri, () => issuer.Mint());
+            }
 
             // #66 re-review, R1(c): seed the attribution's watermark from the count observed the
             // moment the backend finishes starting, labelled as a pseudo-scenario distinct from
@@ -194,6 +230,7 @@ public class ConformanceFixture : IAsyncLifetime
     {
         if (Backend is not null)
         {
+            EntraDefaultCredentials.Unregister(Backend.BaseUri);
             await Backend.DisposeAsync().ConfigureAwait(false);
         }
         await StopExtraFakesAsync().ConfigureAwait(false);
@@ -202,6 +239,10 @@ public class ConformanceFixture : IAsyncLifetime
             await Search.DisposeAsync().ConfigureAwait(false);
         }
         await Realtime.DisposeAsync().ConfigureAwait(false);
+        if (EntraIssuer is not null)
+        {
+            await EntraIssuer.DisposeAsync().ConfigureAwait(false);
+        }
     }
 
     /// <summary>Layers <paramref name="overrides"/> over <paramref name="baseEnvironment"/>,
@@ -253,6 +294,30 @@ public class ConformanceFixture : IAsyncLifetime
     /// <c>RunAsync(body, allowedNewBackendErrors: 0)</c>.
     /// </summary>
     public Task RunAsync(Func<Task> body) => RunAsync(body, allowedNewBackendErrors: 0);
+
+    /// <summary>
+    /// Issue #143/ADR-002: wraps <see cref="RunAsync(Func{Task})"/> for an auth-row test (18.11)
+    /// with the per-backend <see cref="AuthRowCapability"/> gate. The dynamic
+    /// <see cref="Assert.Skip"/> call deliberately runs BEFORE <see cref="RunAsync(Func{Task})"/>
+    /// is ever entered (mirroring how that method's own <see cref="SkipReason"/> check runs before
+    /// its try/catch, above) -- RunAsync's catch-and-rethrow-with-diagnostics block would
+    /// otherwise wrap xUnit's own dynamic-skip exception into an ordinary
+    /// <see cref="InvalidOperationException"/>, turning a skip into a hard failure. Both
+    /// PythonEnforcesAuth (issue #144) and DotnetEnforcesAuth (issue #147) start false, so every
+    /// row using this helper skips cleanly on both backends today, satisfying this issue's own
+    /// "whole suite stays green on both legs" acceptance criterion.
+    /// </summary>
+    public Task RunAuthRowAsync(Func<Task> body)
+    {
+        var skipReason = AuthRowCapability.ShouldSkipCurrentBackend();
+        if (skipReason is not null)
+        {
+            Assert.Skip(skipReason);
+            return Task.CompletedTask;
+        }
+
+        return RunAsync(body);
+    }
 
     /// <summary>
     /// Same as <see cref="RunAsync(Func{Task})"/>, but for scenarios whose entire subject matter

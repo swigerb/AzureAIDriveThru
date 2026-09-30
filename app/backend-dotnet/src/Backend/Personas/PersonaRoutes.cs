@@ -202,8 +202,8 @@ public static class PersonaRoutes
 
     /// <summary>
     /// Port of app.py's `_model_pipelines_body`/`_selectable_models` (issue #75, Rick's PR #106
-    /// review item 3): only the pipelines a persona actually declares (cascade/local are
-    /// optional), each narrowed to `{id, label, reasoning}` shaped models that are ACTUALLY
+    /// review item 3): only the pipelines a persona actually declares (cascade is optional),
+    /// each narrowed to `{id, label, reasoning}` shaped models that are ACTUALLY
     /// selectable right now (catalog ∩ deployment ∩ persona-allowed) -- deliberately no
     /// carve-out for the pipeline's own `default`; an unselectable default is left out of this
     /// list on purpose (see ModelCatalog.IsSelectable's own doc comment).
@@ -217,10 +217,6 @@ public static class PersonaRoutes
         if (models.Cascade is not null)
         {
             body["cascade"] = BuildPipelineBody(models.Cascade, "cascade", modelCatalog);
-        }
-        if (models.Local is not null)
-        {
-            body["local"] = BuildPipelineBody(models.Local, "local", modelCatalog);
         }
         return body;
     }

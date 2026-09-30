@@ -153,5 +153,3 @@ rules follow from that:
 - A changed secret changes `APP_SESSION_SECRET_FINGERPRINT` in the template. That rolls a new revision, so all replicas
   restart on the new value together.
 - Locally, when `APP_SESSION_SECRET` is unset, the app falls back to a random per-process secret.
-- Because sending a secrets list replaces the app's secrets, an `aad-client-secret` that was set out-of-band (EasyAuth
-  with `AZURE_AUTH_CLIENT_SECRET` empty) is read back and re-sent on each provision.

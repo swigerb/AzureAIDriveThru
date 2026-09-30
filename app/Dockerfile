@@ -5,25 +5,28 @@ FROM node:22-slim AS build-stage
 
 WORKDIR /frontend
 
-# Auth-mode build selector (design 18.6, issue GH-145 / PR GH-148 review round 2, item B1).
-# Defaults to Entra for a real production image; override with
-# `--build-arg VITE_AUTH_MODE=Development` for a smoke-test build that doesn't need real Entra
-# ids (see the CI docker-build job in .github/workflows/conformance.yml). Wiring the SPA's
-# VITE_ENTRA_TENANT_ID/VITE_ENTRA_CLIENT_ID build args for an actual Entra image build is
-# tracked separately under issue GH-146 -- intentionally not added here to keep this edit minimal.
+# Auth-mode build selector (design 18.6, ADR-002 18.8). Defaults to Entra for a real production
+# image; override with `--build-arg VITE_AUTH_MODE=Development` for a smoke-test build that
+# doesn't need real Entra ids (see the CI docker-build job in .github/workflows/conformance.yml).
+# The three VITE_ENTRA_* values are public identifiers (a tenant id, an app id, and a scope name --
+# none is a secret), so they are safe to bake into the built bundle via ARG/ENV like VITE_AUTH_MODE
+# itself; azd (azure.yaml docker.buildArgs), CI and scripts/docker-build.sh all pass them the same
+# way. A build that loses these args (e.g. a remote build dropping buildArgs) still defaults
+# VITE_AUTH_MODE to Entra, so it fails the frontend's Vite guard (missing/placeholder ids) instead
+# of silently shipping an unauthenticated Development bundle.
 ARG VITE_AUTH_MODE=Entra
+ARG VITE_ENTRA_TENANT_ID
+ARG VITE_ENTRA_CLIENT_ID
+ARG VITE_ENTRA_API_SCOPE
 ENV VITE_AUTH_MODE=${VITE_AUTH_MODE}
+ENV VITE_ENTRA_TENANT_ID=${VITE_ENTRA_TENANT_ID}
+ENV VITE_ENTRA_CLIENT_ID=${VITE_ENTRA_CLIENT_ID}
+ENV VITE_ENTRA_API_SCOPE=${VITE_ENTRA_API_SCOPE}
 
 # Copy dependency manifests first for optimal layer caching
 # Issue #129: paths are repo-root relative -- the build context is the repo root
 # (azure.yaml's docker.context), not this app/ directory.
 COPY app/frontend/package.json app/frontend/package-lock.json ./
-
-# Create a safe default .env if one is not present.
-# Note: Avoid ARG/ENV for these values to prevent accidental secret leakage.
-RUN if [ ! -f .env ]; then \
-      printf "VITE_AUTH_URL=\nVITE_AUTH_ENABLED=false\n" > .env; \
-    fi
 
 RUN npm ci --no-audit --no-fund && npm cache clean --force
 

@@ -37,6 +37,7 @@ public sealed class ToolFailureCapAndTicketRefreshTests(ConformanceFixture fixtu
         """{"action":"add","item_name":"Tots","size":"medium","quantity":"two","price":2.79}""";
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task A_genuine_tool_exception_refreshes_the_guests_ticket() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;

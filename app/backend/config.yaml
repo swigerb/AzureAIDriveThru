@@ -49,9 +49,9 @@ model:
 # The realtime pipeline's OWN default model (a persona's `models.realtime.default`) is the one
 # exception: it always resolves to AZURE_OPENAI_REALTIME_DEPLOYMENT (today's back-compat
 # deployment), whether or not AZURE_AI_MODEL_DEPLOYMENTS maps it, so omitting `?model=` on
-# `/realtime` is byte-for-byte unchanged (#75 acceptance). `cascade`/`local` entries below are not
-# yet selectable through any endpoint -- #82 and #81 wire those pipelines up -- they're catalogued
-# now so a persona's own cascade/local allow-lists (already supported since #74) name real,
+# `/realtime` is byte-for-byte unchanged (#75 acceptance). `cascade` entries below are not
+# yet selectable through any endpoint -- #82 wires that pipeline up -- they're catalogued
+# now so a persona's own cascade allow-lists (already supported since #74) name real,
 # recognized models.
 models:
   catalog:
@@ -59,7 +59,6 @@ models:
     - { id: gpt-realtime-mini, pipeline: realtime, label: "GPT Realtime mini", reasoning: false }
     - { id: gpt-5-mini, pipeline: cascade, label: "GPT-5 mini", toolCalling: true }
     - { id: phi-4, pipeline: cascade, label: "Phi-4 (Foundry)", toolCalling: true }
-    - { id: phi-4-mini-local, pipeline: local, label: "Phi-4 mini (on device)", runtime: onnx }
   # #82, design doc section 7.2/7.4: the cascade pipeline's own fixed transcription/TTS
   # deployments -- not user-selectable chat models (no `pipeline`/`toolCalling` row above),
   # just the two Azure OpenAI audio models every cascade session uses regardless of which

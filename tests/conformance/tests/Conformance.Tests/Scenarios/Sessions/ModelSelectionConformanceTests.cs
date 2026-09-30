@@ -12,11 +12,12 @@ namespace Conformance.Tests;
 /// surface and the pre-upgrade `?model=` dispatch/resolution on `/realtime`
 /// (Models/ModelDispatch.cs), so <see cref="ModelSelectionRejectionConformanceTests"/>'s four
 /// pre-upgrade 404 rows (below) and one HTTP-only positive row in
-/// <see cref="ModelSelectionConformanceTests"/> are now tagged. The rest of
-/// <see cref="ModelSelectionConformanceTests"/> stays UNTAGGED: those rows need the actual
-/// upstream relay to reach `session.created`/forward audio (rtmt.py's `ConnectionForwarder`) --
-/// this wave's <see cref="RealtimeProcessor"/> is a deliberate stub (issue #13 lands the real
-/// relay), so they still only run against the Python backend. See
+/// <see cref="ModelSelectionConformanceTests"/> were tagged first. Issue #13 lands the real
+/// <see cref="RealtimeProcessor"/> relay (session.created/forward audio,
+/// rtmt.py's `ConnectionForwarder`), so three more rows below -- explicit `?model=` reaching its
+/// own mapped deployment, the omitted-model session-metadata echo, and reasoning-sent-only-for-a-
+/// catalog-reasoning-model -- are now tagged too. The two resume-direction rows stay UNTAGGED:
+/// they need issue #15's session resume/rehydration, still Python-only. See
 /// <see cref="ModelSelectionConformanceFixture"/>/<see cref="ModelDeploymentMapConformanceFixture"/>
 /// for why this row set needs two dedicated backend processes.
 /// </summary>
@@ -35,7 +36,7 @@ public static class ModelSelectionConformanceTestHelpers
     {
         using var socket = new ClientWebSocket();
         socket.Options.CollectHttpResponseDetails = true;
-        var wsUri = new Uri($"ws://{backendBaseUri.Host}:{backendBaseUri.Port}/realtime?{query}");
+        var wsUri = await RealtimeUris.WithDefaultCredentialsAsync(backendBaseUri, query, ct);
 
         var ex = await Assert.ThrowsAsync<WebSocketException>(() => socket.ConnectAsync(wsUri, ct));
         Assert.Equal(HttpStatusCode.NotFound, socket.HttpStatusCode);
@@ -59,8 +60,9 @@ public static class ModelSelectionConformanceTestHelpers
     public static async Task<string> RealtimeConnectBodyAsync(
         Uri backendBaseUri, string query, HttpStatusCode expectedStatus, CancellationToken ct)
     {
-        using var http = new HttpClient();
-        using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(backendBaseUri, $"/realtime?{query}"));
+        using var http = ConformanceHttpClient.Create();
+        var fullQuery = await RealtimeUris.BuildQueryAsync(backendBaseUri, query, ct);
+        using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(backendBaseUri, $"/realtime?{fullQuery}"));
         request.Headers.TryAddWithoutValidation("Connection", "Upgrade");
         request.Headers.TryAddWithoutValidation("Upgrade", "websocket");
         request.Headers.TryAddWithoutValidation("Sec-WebSocket-Version", "13");
@@ -124,20 +126,25 @@ public sealed class ModelSelectionRejectionConformanceTests(ModelSelectionConfor
     public Task Model_catalogued_for_a_different_pipeline_is_rejected_with_404() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
-        // phi-4-mini-local is catalogued for the LOCAL pipeline (config.yaml). On the C# backend no
-        // processor is registered for "local" yet, so dispatch 404s before any realtime allow-list
-        // check runs. On the Python backend issue #81 registered LocalProcessor, so there is no
-        // unregistered pipeline left to target: this request now 404s in resolve_local_model
-        // instead (test-alpha declares no models.local block, and this fixture configures no
-        // LOCAL_RUNTIME_ENDPOINT). Local's own 404/positive rows live in Scenarios/Local.
-        //
-        // gpt-5-mini used to be this row's example (catalogued for cascade, which had no
-        // processor registered yet) -- issue #82 registered CascadeProcessor for real, so
-        // gpt-5-mini now dispatches and connects successfully; see
-        // CascadeConformanceTests.Cascade_dispatch_binds_session_metadata_to_the_requested_persona_model_and_pipeline
-        // for that positive-path proof instead.
+        // test-alpha (this fixture's default persona) declares only `models.realtime`; gpt-5-mini
+        // is catalogued for `cascade`. On Python, `dispatch_processor` picks CascadeProcessor, then
+        // `resolve_cascade_model` raises because test-alpha has no `models.cascade` (gpt-5-mini is
+        // also undeployed in this fixture). On C#, dispatch itself 404s because no CascadeProcessor
+        // is registered yet; when C# cascade lands, it will 404 in resolve instead, just like
+        // Python, so this row stays stable either way. Was
+        // Model_catalogued_for_a_different_pipeline_is_rejected_with_404 using
+        // phi-4-mini-local/the local pipeline before issue #155 removed local mode
+        // (2026-09-28, reversing design doc section 16 decision 7, recorded under ADR-001
+        // decision 6); re-pointed here rather than dropped per
+        // Rick's #157 round-1 review, since a still-valid model can exercise the same
+        // wrong-pipeline 404 shape.
         await ModelSelectionConformanceTestHelpers.AssertRealtimeConnectIs404Async(
-            fixture.Backend!.BaseUri, "model=phi-4-mini-local", ct);
+            fixture.Backend!.BaseUri, $"persona={ModelSelectionConformanceFixture.PersonaAlpha}&model=gpt-5-mini", ct);
+        var body = await ModelSelectionConformanceTestHelpers.RealtimeConnectBodyAsync(
+            fixture.Backend!.BaseUri,
+            $"persona={ModelSelectionConformanceFixture.PersonaAlpha}&model=gpt-5-mini",
+            HttpStatusCode.NotFound, ct);
+        Assert.Equal("Unknown or disallowed model: 'gpt-5-mini'", body);
     });
 
     [Fact]
@@ -194,7 +201,7 @@ public sealed class ModelSelectionConformanceTests(ModelDeploymentMapConformance
     public Task Api_persona_detail_lists_only_the_selectable_models_shaped_for_the_picker() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
-        using var http = new HttpClient();
+        using var http = ConformanceHttpClient.Create();
         using var response = await http.GetAsync(new Uri(fixture.Backend!.BaseUri, "/api/personas/sonic"), ct);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
@@ -213,6 +220,7 @@ public sealed class ModelSelectionConformanceTests(ModelDeploymentMapConformance
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Explicit_model_reaches_the_fake_upstream_as_its_own_mapped_deployment() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -229,6 +237,7 @@ public sealed class ModelSelectionConformanceTests(ModelDeploymentMapConformance
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Omitted_model_binds_to_the_persona_default_visible_alongside_persona_and_pipeline_in_session_metadata() =>
         fixture.RunAsync(async () =>
     {
@@ -245,6 +254,7 @@ public sealed class ModelSelectionConformanceTests(ModelDeploymentMapConformance
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Reasoning_is_sent_only_for_a_catalog_reasoning_model_not_the_other_selectable_one() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;

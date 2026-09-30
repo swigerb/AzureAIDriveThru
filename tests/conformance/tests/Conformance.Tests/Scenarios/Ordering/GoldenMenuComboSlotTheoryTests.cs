@@ -62,6 +62,7 @@ public sealed class GoldenMenuComboSlotTheoryTests(HappyHourJustBeforeOpenFixtur
         row.RequiresMachine is { } machine && currentlyDownMachines.Contains(machine);
 
     [Theory]
+    [Trait("Dotnet", "ready")]
     [MemberData(nameof(GoldenRowIndexes))]
     public Task Golden_combo_slot_determines_whether_the_item_is_absorbed_or_charged_in_full(int rowIndex) =>
         fixture.RunAsync(async () =>
