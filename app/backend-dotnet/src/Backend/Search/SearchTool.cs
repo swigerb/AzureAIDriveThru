@@ -4,6 +4,7 @@ using Backend.Configuration;
 using Backend.Personas;
 using Backend.Prompts;
 using Backend.Tools;
+using Microsoft.Extensions.Logging;
 
 namespace Backend.Search;
 
@@ -38,6 +39,7 @@ public sealed class SearchTool
     private readonly string _indexName;
     private readonly string? _personaId;
     private readonly ISearchBearerTokenProvider? _bearerTokenProvider;
+    private readonly ILogger? _logger;
 
     public SearchTool(
         HttpClient http,
@@ -47,7 +49,8 @@ public sealed class SearchTool
         PromptLoader? promptLoader,
         string indexName,
         string? personaId,
-        ISearchBearerTokenProvider? bearerTokenProvider = null)
+        ISearchBearerTokenProvider? bearerTokenProvider = null,
+        ILogger? logger = null)
     {
         _http = http;
         _config = config;
@@ -57,6 +60,7 @@ public sealed class SearchTool
         _indexName = indexName;
         _personaId = personaId;
         _bearerTokenProvider = bearerTokenProvider;
+        _logger = logger;
     }
 
     /// <summary>Executes one <c>search</c> tool call. Always <see
@@ -86,8 +90,11 @@ public sealed class SearchTool
             records = await FetchRecordsAsync(query, selectFields, includeVector: true, semantic: semanticEnabled, cancellationToken)
                 .ConfigureAwait(false);
         }
-        catch (TimeoutException)
+        catch (TimeoutException exc)
         {
+            _logger?.LogError(exc,
+                "Search timed out for persona {PersonaId} index {IndexName}: {ExceptionType}: {ExceptionMessage}",
+                _personaId, _indexName, exc.GetType().Name, exc.Message);
             return ServerError("search_service_unavailable",
                 "I'm having trouble reaching our menu right now — could you try that again?");
         }
@@ -95,6 +102,9 @@ public sealed class SearchTool
         {
             // #37/PR #50 review: gracefully retry with a minimal projection on a field-name
             // mismatch (e.g. an out-of-date `select` list against the real index's schema).
+            _logger?.LogWarning(exc,
+                "Search field-name mismatch for persona {PersonaId} index {IndexName}; retrying with a minimal projection: {ExceptionType}: {ExceptionMessage}",
+                _personaId, _indexName, exc.GetType().Name, exc.Message);
             try
             {
                 string?[] fallbackCandidates = [_config.IdentifierField, _config.ContentField];
@@ -102,8 +112,11 @@ public sealed class SearchTool
                 records = await FetchRecordsAsync(query, fallbackSelect, includeVector: true, semantic: semanticEnabled, cancellationToken)
                     .ConfigureAwait(false);
             }
-            catch (Exception)
+            catch (Exception retryExc)
             {
+                _logger?.LogError(retryExc,
+                    "Search field-name-mismatch retry also failed for persona {PersonaId} index {IndexName}: {ExceptionType}: {ExceptionMessage}",
+                    _personaId, _indexName, retryExc.GetType().Name, retryExc.Message);
                 return ServerError("search_service_unavailable", "I'm sorry, I can't reach our menu data right now.");
             }
         }
@@ -112,22 +125,34 @@ public sealed class SearchTool
             // Belt and braces: the service rejected the semantic query even though configuration
             // said it was available (e.g. the SKU changed after deployment). Retry without the
             // ranker rather than failing the lookup outright.
+            _logger?.LogWarning(exc,
+                "Semantic ranker rejected by the service for persona {PersonaId} index {IndexName}; retrying without it: {ExceptionType}: {ExceptionMessage}",
+                _personaId, _indexName, exc.GetType().Name, exc.Message);
             try
             {
                 records = await FetchRecordsAsync(query, selectFields, includeVector: true, semantic: false, cancellationToken)
                     .ConfigureAwait(false);
             }
-            catch (Exception)
+            catch (Exception retryExc)
             {
+                _logger?.LogError(retryExc,
+                    "Semantic-ranker retry also failed for persona {PersonaId} index {IndexName}: {ExceptionType}: {ExceptionMessage}",
+                    _personaId, _indexName, retryExc.GetType().Name, retryExc.Message);
                 return ServerError("search_service_unavailable", "I'm sorry, I can't reach our menu data right now.");
             }
         }
-        catch (SearchApiException)
+        catch (SearchApiException exc)
         {
+            _logger?.LogError(exc,
+                "Search failed for persona {PersonaId} index {IndexName}: {ExceptionType}: {ExceptionMessage}",
+                _personaId, _indexName, exc.GetType().Name, exc.Message);
             return ServerError("search_service_unavailable", "I'm sorry, I can't reach our menu data right now.");
         }
-        catch (Exception)
+        catch (Exception exc)
         {
+            _logger?.LogError(exc,
+                "Search failed unexpectedly for persona {PersonaId} index {IndexName}: {ExceptionType}: {ExceptionMessage}",
+                _personaId, _indexName, exc.GetType().Name, exc.Message);
             return ServerError("search_service_unavailable", "I had a little glitch looking that up — could you say that again?");
         }
 
@@ -257,7 +282,7 @@ public sealed class SearchTool
         if (semantic)
         {
             body["queryType"] = "semantic";
-            body["semanticConfigurationName"] = _config.SemanticConfiguration;
+            body["semanticConfiguration"] = _config.SemanticConfiguration;
         }
         if (includeVector && _config.UseVectorQuery && !string.IsNullOrEmpty(_config.EmbeddingField))
         {

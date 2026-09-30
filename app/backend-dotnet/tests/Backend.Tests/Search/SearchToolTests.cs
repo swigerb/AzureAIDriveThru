@@ -48,7 +48,8 @@ internal sealed class QueuedHttpHandler : HttpMessageHandler
 /// </summary>
 public sealed class SearchToolTests
 {
-    private static SearchTool NewTool(QueuedHttpHandler handler, string personaId = "search-tool-tests")
+    private static SearchTool NewTool(
+        QueuedHttpHandler handler, string personaId = "search-tool-tests", bool useSemanticRanker = false)
     {
         var persona = DeltaFixture.Load();
         var menu = PersonaOrderFactory.GetMenuCatalog(persona);
@@ -61,8 +62,9 @@ public sealed class SearchToolTests
             contentField: "description",
             embeddingField: "embedding",
             useVectorQuery: true,
-            useSemanticRanker: false); // keep the happy-path/cache/no-results tests simple; the
-                                       // retry-cascade test below opts semantic back in directly.
+            useSemanticRanker: useSemanticRanker); // false keeps the happy-path/cache/no-results
+                                                    // tests simple; the semantic-ranker tests below
+                                                    // (Rick's PR #149 R2 review) opt it back in.
         var httpClient = new HttpClient(handler);
         return new SearchTool(httpClient, endpointConfig, searchConfig, menu, promptLoader: null, "test-delta-menu-items", personaId);
     }
@@ -157,5 +159,53 @@ public sealed class SearchToolTests
         var result = await tool.ExecuteAsync(QueryArgs("anything"), TestContext.Current.CancellationToken);
 
         Assert.Equal("I'm sorry, I can't reach our menu data right now.", result.ToText());
+    }
+
+    /// <summary>Rick's PR #149 R2 review: the Search Documents REST request body property is
+    /// <c>semanticConfiguration</c> (docs/search.post.search), not the Python SDK's own
+    /// <c>semantic_configuration_name</c> keyword argument name -- pins the fixed request body
+    /// so the wrong key (which the real service either ignores or 400s on, silently absorbed by
+    /// the semantic-retry branch below) can't regress unnoticed. Mutation check: reverting
+    /// <see cref="SearchTool"/>'s key back to <c>semanticConfigurationName</c> fails this test.</summary>
+    [Fact]
+    public async Task ExecuteAsync_SemanticRankerEnabled_SendsQueryTypeSemanticAndSemanticConfiguration()
+    {
+        var handler = new QueuedHttpHandler().Enqueue(HttpStatusCode.OK, """{"value": []}""");
+        var tool = NewTool(handler, personaId: Guid.NewGuid().ToString("n"), useSemanticRanker: true);
+
+        await tool.ExecuteAsync(QueryArgs("shake"), TestContext.Current.CancellationToken);
+
+        Assert.Single(handler.RequestBodies);
+        using var body = JsonDocument.Parse(handler.RequestBodies[0]);
+        Assert.Equal("semantic", body.RootElement.GetProperty("queryType").GetString());
+        Assert.Equal("menuSemanticConfig", body.RootElement.GetProperty("semanticConfiguration").GetString());
+        Assert.False(body.RootElement.TryGetProperty("semanticConfigurationName", out _),
+            "The request body must never carry the Python-SDK-only 'semanticConfigurationName' key.");
+    }
+
+    /// <summary>The retry-cascade test <see cref="SearchToolTests.NewTool"/>'s own doc comment
+    /// promises (previously unimplemented -- Rick's PR #149 R2 review): the service rejects the
+    /// semantic query even though configuration says it's available, so the tool retries once
+    /// without the ranker rather than failing the lookup outright.</summary>
+    [Fact]
+    public async Task ExecuteAsync_SemanticRankerRejectedByService_RetriesWithoutSemanticAndSucceeds()
+    {
+        var handler = new QueuedHttpHandler()
+            .Enqueue(HttpStatusCode.BadRequest, """
+                {"error":{"code":"InvalidRequestParameter","message":"semantic ranker is not available for this service"}}
+                """)
+            .Enqueue(HttpStatusCode.OK, """
+                {"value": [{"id": "delta-latte", "name": "Delta Latte", "category": "drinks", "sizes": "[]"}]}
+                """);
+        var tool = NewTool(handler, personaId: Guid.NewGuid().ToString("n"), useSemanticRanker: true);
+
+        var result = await tool.ExecuteAsync(QueryArgs("latte"), TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, handler.RequestBodies.Count);
+        using var retryBody = JsonDocument.Parse(handler.RequestBodies[1]);
+        Assert.False(retryBody.RootElement.TryGetProperty("queryType", out _),
+            "The semantic-ranker retry must drop queryType entirely, not just the configuration key.");
+        Assert.False(retryBody.RootElement.TryGetProperty("semanticConfiguration", out _));
+        Assert.Contains("[delta-latte]", result.ToText());
     }
 }
