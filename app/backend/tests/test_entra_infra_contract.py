@@ -6,7 +6,6 @@ See docs/adr/ADR-002-entra-authentication.md and docs/persona-architecture.md se
 """
 
 import json
-import re
 import unittest
 from pathlib import Path
 
