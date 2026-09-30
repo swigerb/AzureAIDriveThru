@@ -542,3 +542,120 @@
   (origin/dev). PR #133, "Refs #127" (nothing closed -- #112/McDonald's still open, so the
   disabled-pack code path is correct but unexercised by a real pack until it lands). Did not
   merge.
+- **#135 MSBuild file-lock flake, fixed structurally (2026-09-28):** Parallel xUnit collections
+  each calling `DotnetBackendLauncher.StartAsync` used to each shell out to `dotnet run`, which
+  rebuilds unconditionally -- concurrent fixtures racing to rebuild the same
+  `app/backend-dotnet/**/obj` outputs at the same time produced the MSB4018
+  `GenerateDepsFile` file-lock flake. Fix is structural, not a retry: `EnsureBuiltAsync` now
+  gates every caller behind a single `SemaphoreSlim(1,1)` (`BuildGate`) -- the first caller to
+  find no built `Backend.dll` on disk runs the (single) `dotnet build "<csproj>" --no-restore`;
+  every other caller, whether it arrives before/during/after that build, either takes the fast
+  path (dll already exists, no lock needed) or blocks on the same gate and re-checks, so it can
+  never trigger a second racing build. The actual launch (`BuildStartInfo`) now runs `dotnet
+  "<dll>"` directly against the already-built output -- never `run`/`build`/`restore` again.
+  Added `DotnetBackendLauncherStartInfoTests` (6 pure, process-free tests asserting the exact
+  launch command/args and the DLL path resolution -- no SDK/process needed to run them).
+  Evidence: with `app/backend-dotnet/src/Backend/bin` deleted before each iteration (forcing a
+  real cold build through `EnsureBuiltAsync` every time, `obj/project.assets.json` left intact
+  so `--no-restore` still resolves) and 20 CPU-stress busy-loop jobs saturating all 24 cores in
+  the background, ran the full dotnet conformance leg (`dotnet test Conformance.slnx --filter
+  Dotnet=ready`, `CONFORMANCE_BACKEND=dotnet`) 10 times back-to-back: 360/360 tests passed, 0
+  failures, 0 non-zero exits. (First evidence attempt was a false failure from my own harness
+  script deleting `obj/` -- once restore's `project.assets.json` was regenerated and only `bin/`
+  was cleared per iteration, all 10 runs were clean.) Also: found and reverted an accidental,
+  unrelated `app/frontend/package-lock.json` diff (a stray `"peer": true` removal) that had
+  snuck into the previous session's uncommitted working tree -- not part of this fix, reverted
+  with `git checkout --`. Full validation: pytest 1370 passed/2 skipped/222 subtests; ruff
+  clean; new unit tests 6/6; full dotnet conformance leg 36/36 (and 360/360 across the 10x
+  stress run). PR #135, "Harness: build the C# backend once per run (#135)", Refs #135.
+- **#105 brand-guard ratchet hardening (2026-09-28):** `check_rebrand_baseline_against_base.py`
+  (from #101) rewritten to close all four gaps plus the blind spot from #105's issue body:
+  (1) a raise/new entry's `increase_reason` must be new relative to the base entry's own
+  reason -- a sticky reused reason on an already-raised entry now fails; (2) every raise/new
+  entry's `increase_reason` is checked via `check_issue_is_open()` against the real GitHub API
+  (`GITHUB_TOKEN`/`GITHUB_REPOSITORY`, gated mandatory-in-CI by
+  `REBRAND_REQUIRE_ISSUE_API_CHECK=1`, fail-closed if the check can't run) -- must exist, be
+  open, and not be a PR; (3) every allowed raise/new entry now emits a
+  `::warning file=...::RAISE/NEW <file> [<brand>] ... (<reason>)` annotation so reviewers see it
+  on the PR checks page (the missing-base-baseline skip case is also now `::warning::`, not a
+  plain print); (4) `push` events to `dev` are now checked too (workflow step reads
+  `github.event.before`, skipping the all-zero SHA case), not just `pull_request`.
+  **#109's exact bug** (a brand-new entry for a brand the file never tracked, baselined via
+  `--allow-increase` using the PR's own issue) is now refused unconditionally regardless of
+  `increase_reason`, whenever the file already carries a baseline entry for a *different*
+  brand -- `_existing_brands_for_file()` checks the base branch's own entries for that file.
+  Files with zero prior entries are unaffected. Additionally rejects any RAISE whose
+  `increase_reason` equals the PR's own linked issue (`REBRAND_PR_ISSUE`, extracted from the PR
+  body via a new workflow step, passed through `env:` rather than interpolated into the run
+  script to avoid injection) -- deliberately scoped to raises only, not brand-new entries.
+  **Design conflict found and resolved during CI simulation:** the issue itself requires the
+  new `.cs` `SCAN_EXTENSIONS` entry's seeded baseline entries to be "attributed to this issue"
+  (#105) -- but naively applying the self-citation rule to *all* new entries (not just raises)
+  meant this PR's own 55 seeded `.cs` entries would fail its own new rule, since
+  `REBRAND_PR_ISSUE=#105` in CI for this very PR. Resolved by re-reading Rick's original #109
+  example closely: it combined self-citation *with* a foreign brand slipped into an
+  already-tracked file (bug (4), already closed unconditionally above) -- by the time (4) has
+  run, every surviving "new" (not "raise") case is necessarily a wholly-new-file case with zero
+  prior entries, since if the file already tracked that exact (file, brand) key the entry
+  wouldn't be "new" at all. There is no separate "already-settled decision" a brand-new
+  scan-coverage PR could cite instead of its own issue -- the PR adding the coverage IS that
+  decision. Scoped the self-citation check to `label == "RAISE"` only; added
+  `test_new_entry_on_a_brand_new_file_may_cite_the_prs_own_issue` (green) and converted the old
+  new-entry self-citation test into a RAISE-shaped one
+  (`test_raise_citing_the_prs_own_issue_fails`). Also added `.cs`/`.csproj`-adjacent scanning:
+  `.cs` added to `rebrand_scan.py`'s `SCAN_EXTENSIONS`, `bin`/`obj` added to
+  `BASE_EXCLUDED_DIRS` (confirmed this constant is NOT shared with
+  `test_rebrand_verification.py`'s own same-named terminology-scan constant -- only affects
+  brand scanning), and seeded 55 new `(file, brand)` baseline entries across
+  `app/backend-dotnet/**` and `tests/conformance/**/*.cs` (all `issue`/`increase_reason` =
+  `#105`), none from `bin`/`obj`. Added `test_brand_scan_finds_every_scan_extension_type` and
+  `test_brand_scan_excludes_dotnet_build_output` to `test_rebrand_verification.py`.
+  **Mutation-tested every new rule** (fresh-reason-on-raise, foreign-brand refusal, RAISE-only
+  self-citation rejection, API-check-required fail-closed, warning-surfacing): for each,
+  temporarily disabled the guard (`if False and <condition>:  # MUTATION`), ran the targeted
+  test file, confirmed exactly the expected test(s) failed (never more, never fewer), then
+  restored the original line and verified via `Compare-Object` against a `.orig` backup that
+  the restored file was byte-identical before deleting the backup. All 6 mutations (5 original
+  + the RAISE-scoping fix) confirmed correctly caught.
+  **CI-simulated the real ratchet check** by fetching `origin/dev`'s actual
+  `rebrand_baseline.yaml` and running the checker against it locally with
+  `GITHUB_REPOSITORY=swigerb/AzureAIDriveThru` and `REBRAND_PR_ISSUE=#105` (matching exactly
+  what the real workflow step would set for this PR): after the RAISE-scoping fix, exits 0,
+  correctly emitting all 55 `NEW ... (#105)` warnings and nothing else; separately confirmed
+  the `REBRAND_REQUIRE_ISSUE_API_CHECK=1`-without-token path still fails closed (exit 1,
+  reports all 55 entries as unverifiable) as it must in CI if secrets are ever missing.
+  Final validation: ruff clean; full pytest 1385 passed/2 skipped/222 subtests (up from 1384 --
+  1 new test); `test_check_rebrand_baseline_against_base.py` 18/18; `test_rebrand_verification`
+  61 passed/8 subtests; `git status --short` shows exactly the 6 intended modified files.
+- **Cleanup: dead Sonic-copy fallback + unused error key removed (branch `squad/cleanup-dead-copy`):**
+  Two independent dead-code deletions. (1) `personas/dunkin/prompts/error_messages.yaml`'s
+  `price_validation_failed` key: confirmed via `git grep` it's the only reference anywhere in the
+  repo (no code reads it), confirmed via `gh issue view 125`'s required-error-key list
+  (`item_not_on_menu`, `size_not_available`, `item_not_in_order`, `machine_unavailable`,
+  `extras_blocked_category`, `extras_no_base_item`, `generic_error`) that it isn't required, and
+  confirmed no fixture pack (test-alpha/beta/gamma/delta) or other persona defines/uses it. Removed
+  the key and its comment header. (2) `app/backend/tools.py`'s upsell-hint code path had an
+  `if pl: ... else: <hardcoded literal upsell strings>` pattern where the `else` branch was a
+  word-for-word copy of `personas/sonic/prompts/hints.yaml`'s real `upsell_hints` content.
+  Call-site analysis of `attach_tools_rtmt` confirmed `app.py` (production) always passes a real
+  `prompt_loader`, so the `else` branch is unreachable in production. Removed it, leaving
+  `if pl: delta_text += pl.get_upsell_hint(category)`.
+  **Regression caught and fixed:** the pre-existing `UpsellHintTests` in `test_tool_calling.py`
+  accidentally exercised the now-deleted DEAD fallback (nothing in the test module patched
+  `tools._prompt_loader`, so it defaulted to `None`). Added a `setUp()` patching
+  `tools._prompt_loader` with a real `PromptLoader()` (relying on its default `brand="sonic"` param
+  rather than a literal string, to avoid inflating the brand-word baseline) so the tests now
+  exercise the real production code path. All 4 pre-existing assertions still pass unmodified
+  against the real `hints.yaml` text.
+  **Brand baseline:** regenerated via `regenerate_rebrand_baseline.py` with no `--allow-increase`
+  needed (first attempt did self-inflict a raise via new literal "sonic" mentions in prose/test
+  code, `test_tool_calling.py [sonic] 11 -> 14` -- caught by the ratchet, fixed by generic-izing the
+  wording and relying on `PromptLoader()`'s default brand arg; re-verified count back to 11). Final
+  regen produced a **byte-identical, zero-line diff** against the base baseline: neither deleted
+  block contains a literal brand-word ("sonic"/"dunkin"/"mcdonalds") occurrence -- the upsell-hint
+  fallback text is generic combo-shop language (confirmed via `git grep -i sonic app/backend/tools.py`
+  returning nothing, before and after), and the removed `price_validation_failed` line/key itself
+  never contained a brand word either. So the ratchet's real guarantee here is "no unjustified
+  raise", not a numeric decrease -- reverted the no-op baseline file rather than commit a spurious
+  line-ending diff. Full validation: `ruff check .` clean; `python -m pytest -q` 1370 passed / 2
+  skipped / 222 subtests.

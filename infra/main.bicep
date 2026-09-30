@@ -180,6 +180,39 @@ param appSessionSecretFallback string = '${newGuid()}${newGuid()}'
 
 var effectiveAppSessionSecret = !empty(appSessionSecret) ? appSessionSecret : appSessionSecretFallback
 
+// --- Entra ID token validation (ADR-002, docs/persona-architecture.md section 18) ---
+// EasyAuth (enableAuth/authClientId/authClientSecret above) is superseded by in-app bearer
+// validation on both backends: one Entra app registration, AUTH_MODE=Entra pinned in Azure, no
+// client secret. These four values are the shared contract (section 18.8) both container apps'
+// env blocks read; AUTH_MODE itself is not a param -- it's hardcoded 'Entra' on each app below,
+// same as RUNNING_IN_PRODUCTION, so this environment can never accidentally provision a
+// pass-through backend. This wave (#17) only wires the C# app's env with the same names Python
+// will read once #146 (EasyAuth removal, tracked separately -- section 18.12) lands; it does not
+// modify the Python app's existing EasyAuth wiring above, to avoid conflicting with that PR.
+@description('Entra ID tenant id for AUTH_MODE=Entra token validation (ADR-002 18.1/18.4). Empty falls back to the deployment subscription tenant (effectiveEntraTenantId below); override only if the app registration lives in a different tenant. Left empty rather than defaulted to tenant().tenantId because azd sends the literal empty string from main.parameters.json\'s ENTRA_TENANT_ID default-value syntax when the env var is unset, which would override a non-empty Bicep default with an empty string.')
+param entraTenantId string = ''
+
+@description('Entra ID application (client) id for AUTH_MODE=Entra token validation (ADR-002 18.1/18.4). Empty until Setup-EntraAuth.ps1 (#146) creates the registration -- both backends fail fast in Production without a valid id, so an empty value here just means this environment is not provisioned in Production mode yet.')
+param entraClientId string = ''
+
+// Same pattern as effectiveAppSessionSecret above: an empty entraTenantId (the value azd actually
+// sends when ENTRA_TENANT_ID is unset -- see the param description) falls back to the
+// subscription's own tenant here instead of relying on the param default, which azd bypasses.
+var effectiveEntraTenantId = !empty(entraTenantId) ? entraTenantId : tenant().tenantId
+
+@description('Delegated scope required on an Entra access token (ADR-002 18.1/18.4).')
+param entraApiScope string = 'access_as_user'
+
+@description('App role required on an Entra access token (ADR-002 18.1/18.4).')
+param entraAppRole string = 'DriveThru.User'
+
+// Ingress switch (ADR-002 18.8/18.10): lets the .NET app be provisioned and warmed up without
+// being publicly reachable. Independent of the Python app's own (not yet added -- #146) switch,
+// because the C# app must not go public before its Entra parity work lands (#147, design 18.12);
+// deployDotnetApp alone only controls whether the container app resource exists at all.
+@description('Ingress switch for the .NET container app. Defaults false: the C# app gets no ingress (not even environment-internal) even when deployDotnetApp is true, until #147 lands its own Entra token validation. Maps to the azd env BACKEND_DOTNET_INGRESS_ENABLED.')
+param backendDotnetIngressEnabled bool = false
+
 // Figure out if we're running as a user or service principal
 var principalType = empty(runningOnGh) && empty(runningOnAdo) ? 'User' : 'ServicePrincipal'
 
@@ -338,17 +371,17 @@ module acaBackendDotnet 'core/host/container-app-upsert.bicep' = if (deployDotne
     name: !empty(dotnetServiceName) ? dotnetServiceName : '${abbrs.webSitesContainerApps}backend-dotnet-${resourceToken}'
     location: location
     identityName: acaIdentityName
-    // No azure.yaml service exists for this app yet (#17), so azd never
-    // reports an existing resource for it.
+    // No azure.yaml service exists for this app yet (added by the #17 go-live PR), so azd
+    // never reports an existing resource for it.
     exists: false
     workloadProfile: azureContainerAppsWorkloadProfile
     containerRegistryName: containerApps.outputs.registryName
     containerAppsEnvironmentName: containerApps.outputs.environmentName
     identityType: 'UserAssigned'
-    // No 'azd-service-name' tag yet: azure.yaml has no matching service
-    // entry until #17 adds app/backend-dotnet, and
-    // test_azd_service_wiring.py's test_bicep_service_tags_match_azure_yaml
-    // guard requires every tag here to have one. Add both together in #17.
+    // No 'azd-service-name' tag yet: azure.yaml has no matching service entry until the #17
+    // go-live PR adds app/backend-dotnet, and test_azd_service_wiring.py's
+    // test_bicep_service_tags_match_azure_yaml guard requires every tag here to have one. Add
+    // both together in that PR.
     tags: tags
     targetPort: 8000
     containerCpuCoreCount: '1.0'
@@ -358,8 +391,24 @@ module acaBackendDotnet 'core/host/container-app-upsert.bicep' = if (deployDotne
     healthProbePath: '/health'
     enableWebSocket: true
     stickySessionsAffinity: 'sticky'
-    // Same Foundry account, Search service and persona/model config as the
-    // Python app (10.2). EasyAuth for this app arrives with #17.
+    // Ingress last (ADR-002 18.8/18.10): defaults false, independent of the Python app's own
+    // ingress, until #147's parity work lands.
+    ingressEnabled: backendDotnetIngressEnabled
+    // Same shared HMAC session secret as the Python app (#44) -- byte-identical because both
+    // read the same effectiveAppSessionSecret variable into a Container App secret of the same
+    // name, not because Container App secrets are shared by identity.
+    secrets: {
+      'app-session-secret': effectiveAppSessionSecret
+    }
+    secretEnv: {
+      APP_SESSION_SECRET: 'app-session-secret'
+    }
+    // Same Foundry account, Search service and persona/model config as the Python app (10.2).
+    // AUTH_MODE=Entra + ENTRA_* (ADR-002 18.8): NO EasyAuth for this app -- EasyAuth is superseded
+    // tenant-wide by in-app bearer validation (ADR-002), so the C# app never gets the EasyAuth
+    // wiring the Python app currently has above; it goes straight to the ADR-002 shape instead.
+    // The env names below match what #147 will read (persona-architecture.md 18.8); the
+    // validation logic itself is #147's scope, not this prep task's.
     env: union({
       AZURE_SEARCH_ENDPOINT: resolvedSearchEndpoint
       AZURE_SEARCH_INDEX: searchIndexName
@@ -379,6 +428,17 @@ module acaBackendDotnet 'core/host/container-app-upsert.bicep' = if (deployDotne
       AZURE_AI_MODEL_DEPLOYMENTS: string(modelDeploymentsMap)
       RUNNING_IN_PRODUCTION: 'true'
       AZURE_CLIENT_ID: acaIdentity.outputs.clientId
+      // Same fingerprint trick as the Python app: a changed secret changes the template, so
+      // every replica restarts together instead of old and new replicas disagreeing.
+      APP_SESSION_SECRET_FINGERPRINT: uniqueString(effectiveAppSessionSecret)
+      // Design 18.8: pinned alongside RUNNING_IN_PRODUCTION so the C# app never runs its
+      // Development-environment behaviors (e.g. developer exception pages) in Azure.
+      ASPNETCORE_ENVIRONMENT: 'Production'
+      AUTH_MODE: 'Entra'
+      ENTRA_TENANT_ID: effectiveEntraTenantId
+      ENTRA_CLIENT_ID: entraClientId
+      ENTRA_API_SCOPE: entraApiScope
+      ENTRA_APP_ROLE: entraAppRole
     },
     // Same "omit when empty" persona behavior as the Python app's env, above.
     empty(personas) ? {} : { PERSONAS: personas },

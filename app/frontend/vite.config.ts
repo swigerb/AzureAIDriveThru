@@ -1,10 +1,65 @@
 import path from "path";
 import react from "@vitejs/plugin-react";
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv, type Plugin } from "vite";
+import { renderAuthModeMetaTag } from "./scripts/auth-mode-meta.mjs";
+import { resolveAuthMode } from "./src/auth/authMode";
+
+/**
+ * Build-time auth-mode guard + immutable marker plugin (PR #148 review round 2, item B1).
+ *
+ * Runs the SAME `authMode.ts` resolver the runtime uses (`index.tsx`'s bootstrap, `AuthGate.tsx`),
+ * fed from Vite's own `loadEnv(mode, envDir, 'VITE_')` -- which honours `.env`/`.env.production`/
+ * `.env.development` files, not just the inherited shell env -- so a value set only in a `.env`
+ * file (as `scripts/docker-build.sh`/`deploy.sh` write one) is seen by the guard exactly like the
+ * runtime bundle sees it via `import.meta.env`.
+ *
+ * `buildStart` fails the build via `this.error(...)` on an invalid configuration -- this is a REAL
+ * Vite build guard, not just the npm `prebuild` script (`validate-auth-config.mjs`), so `vite
+ * build` invoked directly (bypassing `npm run build`'s `prebuild` hook) cannot skip it.
+ *
+ * The resolved mode also drives the immutable `drivethru-auth-mode` marker tag baked into
+ * `index.html`, so the marker can never disagree with what was actually enforced -- previously the
+ * marker read the raw `VITE_AUTH_MODE` value directly (via `process.env`, not `loadEnv`), so it
+ * could read `Development` even for an unset-mode build that this guard now refuses to allow.
+ */
+function authModePlugin(isDevServer: boolean): Plugin {
+    let resolvedMode: "entra" | "development" = "development";
+
+    return {
+        name: "drivethru-auth-mode",
+        config(config, { mode }) {
+            // Skip under Vitest: this shared vite.config.ts also configures the test runner (no
+            // separate vitest.config.ts), and the guard is for `vite build`/`vite dev` -- unit
+            // tests exercise `resolveAuthMode` directly (`authMode.test.ts`) with their own
+            // explicit env fixtures, and a stray single Entra env var in a dev machine's shell
+            // should not fail an unrelated `npm test` run.
+            if (process.env.VITEST) return;
+
+            const env = loadEnv(mode, config.envDir ?? process.cwd(), "VITE_");
+            try {
+                resolvedMode = resolveAuthMode({
+                    VITE_AUTH_MODE: env.VITE_AUTH_MODE,
+                    VITE_ENTRA_TENANT_ID: env.VITE_ENTRA_TENANT_ID,
+                    VITE_ENTRA_CLIENT_ID: env.VITE_ENTRA_CLIENT_ID,
+                    DEV: isDevServer,
+                }).mode;
+            } catch (error) {
+                // Vite's `config` hook runs before `buildStart`'s plugin context (with `this.error`)
+                // is available -- throwing here still fails `vite build`/`vite dev` immediately, with
+                // the same message, before any module is transformed.
+                throw error instanceof Error ? error : new Error(String(error));
+            }
+        },
+        transformIndexHtml(html) {
+            const tag = renderAuthModeMetaTag(resolvedMode);
+            return html.replace("</head>", `    ${tag}\n  </head>`);
+        }
+    };
+}
 
 // https://vitejs.dev/config/
-export default defineConfig({
-    plugins: [react()],
+export default defineConfig(({ command }) => ({
+    plugins: [react(), authModePlugin(command === "serve")],
     build: {
         outDir: "../backend/static",
         emptyOutDir: true,
@@ -69,4 +124,4 @@ export default defineConfig({
             include: ["src/components/ui/order-summary.tsx", "src/components/ui/status-message.tsx"]
         }
     }
-});
+}));

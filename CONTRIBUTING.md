@@ -20,7 +20,8 @@ Thank you for helping improve Azure AI Drive-Thru! These steps keep the reposito
 Before submitting a pull request:
 
 1. `cd app/frontend && npm run test`
-2. `cd app/frontend && npm run build` (updates the static assets served by the backend)
+2. `cd app/frontend && VITE_AUTH_MODE=Development npm run build` (updates the static assets served
+   by the backend); on PowerShell: `cd app/frontend; $env:VITE_AUTH_MODE='Development'; npm run build`
 3. `cd app/backend && python -m unittest discover -s tests`
 4. Run `ruff check app/backend` if you modify Python files.
 

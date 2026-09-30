@@ -60,7 +60,9 @@ public static class PythonBackendLauncher
             throw new InvalidOperationException(
                 $"'{staticIndexHtml}' does not exist. app/backend/static is gitignored and only " +
                 "populated by building the frontend (vite's outDir points there) -- run " +
-                "`npm ci && npm run build` in app/frontend before running this suite. Without it, " +
+                "`npm ci && VITE_AUTH_MODE=Development npm run build` in app/frontend before " +
+                "running this suite (the auth-mode build guard fails an unset mode with no Entra " +
+                "ids configured, which this suite's frontend build always is). Without it, " +
                 "the Python backend's aiohttp app.router.add_static(...) raises at startup and the " +
                 "process exits immediately, which otherwise surfaces here only as an opaque " +
                 "\"backend exited early\" failure.");

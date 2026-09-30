@@ -90,8 +90,10 @@ internal static class DotnetBackendEnvironment
 }
 
 /// <summary>
-/// Starts the C# backend (app/backend-dotnet/src/Backend) via `dotnet run`, on a free port,
-/// pointed at the fakes -- the S2 (issue #12) counterpart to <see cref="PythonBackendLauncher"/>.
+/// Starts the C# backend (app/backend-dotnet/src/Backend) on a free port, pointed at the fakes --
+/// the S2 (issue #12) counterpart to <see cref="PythonBackendLauncher"/>. Builds Backend.csproj at
+/// most once per test process (issue #135) and launches the resulting Backend.dll directly
+/// (`dotnet "&lt;dll&gt;"`) -- never `dotnet run`, which rebuilds on every call.
 ///
 /// Scope note: this wave's C# backend is a skeleton (host, config, persona-pack loading, health,
 /// auth token, static files, one event loop per session) -- it does not yet implement the
@@ -109,6 +111,30 @@ public static class DotnetBackendLauncher
     private static readonly TimeSpan HealthTimeout = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan HealthPollInterval = TimeSpan.FromMilliseconds(250);
 
+    // Issue #135: `dotnet run` rebuilds every time it's invoked. Several fixtures in parallel
+    // xunit collections used to each call StartAsync (and therefore `dotnet run`) at the same
+    // time, so concurrent MSBuild invocations raced on the same app/backend-dotnet/**/obj outputs
+    // -- MSB4018 GenerateDepsFile file-lock flake. CI's own dotnet leg already runs
+    // `dotnet build Backend.slnx --no-restore` before the suite starts (.github/workflows/
+    // conformance.yml), so the rebuild here was pure waste even outside the race. Fixed
+    // structurally, not with retries: this gate makes sure EXACTLY ONE build runs per test
+    // process, however many fixtures call StartAsync (serially or in parallel), and every launch
+    // afterwards starts the already-built Backend.dll directly (`dotnet "<dll>"`, never
+    // `run`/`build`/`restore` -- see BuildStartInfo/DotnetBackendLauncherStartInfoTests).
+    //
+    // R1 fix (Rick's #151 review, round 1): the rule is "build exactly once per test process",
+    // not "build if the dll is missing". A dll on disk proves nothing about whether it reflects
+    // the source that's about to run against it -- neither Conformance.Harness.csproj nor
+    // Conformance.Tests.csproj has a ProjectReference to Backend.csproj, so a plain `dotnet test`
+    // never rebuilds it, and a stale dll from an earlier run would otherwise be launched silently.
+    //
+    // R1 fix (Rick's #151 review, round 2): the gate is now an INSTANCE, <see
+    // cref="DotnetBackendBuildGate"/> -- see that type's own doc comment for why. This field is
+    // the one and only shared instance real fixtures use; unit tests construct their own private
+    // instances instead of touching anything here, so nothing a test does can ever be observed by
+    // a real fixture calling StartAsync concurrently in another xunit collection.
+    private static readonly DotnetBackendBuildGate Builder = new(RunBuildAsync);
+
     public static async Task<IBackendUnderTest> StartAsync(
         BackendContract contract, DotnetBackendOptions options, CancellationToken cancellationToken = default)
     {
@@ -121,15 +147,10 @@ public static class DotnetBackendLauncher
                 csprojPath);
         }
 
+        var dllPath = await Builder.EnsureBuiltAsync(csprojPath, cancellationToken).ConfigureAwait(false);
+
         var env = DotnetBackendEnvironment.Build(contract, options);
-        var startInfo = new ProcessStartInfo("dotnet", $"run --no-launch-profile --project \"{csprojPath}\"")
-        {
-            WorkingDirectory = Path.GetDirectoryName(csprojPath),
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
+        var startInfo = BuildStartInfo(dllPath);
 
         // Same rationale as PythonBackendLauncher: strip ambient CONFORMANCE_*/AZURE_*/*_PROXY
         // vars from this test process's own environment before layering the explicit, known-good
@@ -146,7 +167,7 @@ public static class DotnetBackendLauncher
 
         if (!process.Start())
         {
-            throw new InvalidOperationException($"Failed to start C# backend process 'dotnet run --project {csprojPath}'.");
+            throw new InvalidOperationException($"Failed to start C# backend process 'dotnet \"{dllPath}\"'.");
         }
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
@@ -205,7 +226,7 @@ public static class DotnetBackendLauncher
             }
             catch (HttpRequestException)
             {
-                // Not listening yet (or still building via `dotnet run`) -- keep polling.
+                // Not listening yet -- keep polling.
             }
             catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
@@ -232,6 +253,84 @@ public static class DotnetBackendLauncher
         catch (InvalidOperationException)
         {
             // Already exited between the check and the kill -- fine.
+        }
+    }
+
+    /// <summary>
+    /// Pure, testable construction of the launch <see cref="ProcessStartInfo"/> -- `dotnet
+    /// "&lt;dll&gt;"` directly against an already-built output, never `dotnet run`/`build`/
+    /// `restore` (issue #135). Kept separate from StartAsync so a unit test can assert on the
+    /// exact command/arguments without starting a real process or needing the SDK installed.
+    /// </summary>
+    internal static ProcessStartInfo BuildStartInfo(string dllPath) =>
+        new("dotnet", $"\"{dllPath}\"")
+        {
+            WorkingDirectory = Path.GetDirectoryName(dllPath),
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+
+    /// <summary>
+    /// Resolves Backend.csproj's build output path without invoking MSBuild -- the default SDK
+    /// layout (no custom OutputPath/BaseOutputPath in Backend.csproj or its Directory.Build.props)
+    /// is bin/&lt;Configuration&gt;/&lt;TargetFramework&gt;/Backend.dll relative to the project
+    /// directory. Matches the Configuration/TargetFramework CI's own prebuild step
+    /// (.github/workflows/conformance.yml's "dotnet build Backend.slnx --no-restore", no `-c`) and
+    /// Backend.csproj's own `net11.0` TFM (app/backend-dotnet/Directory.Build.props) both resolve
+    /// to.
+    /// </summary>
+    internal static string ResolveDllPath(string csprojPath) =>
+        Path.Combine(Path.GetDirectoryName(csprojPath)!, "bin", BuildConfiguration, TargetFramework, "Backend.dll");
+
+    private const string BuildConfiguration = "Debug";
+    private const string TargetFramework = "net11.0";
+
+    /// <summary>
+    /// Runs the real MSBuild build (issue #135). Always called by <see cref="Builder"/>'s
+    /// <see cref="DotnetBackendBuildGate.EnsureBuiltAsync"/> with <see cref="CancellationToken.None"/>
+    /// (R2 of Rick's #151 round-2 review) -- the <paramref name="cancellationToken"/> parameter
+    /// exists only to satisfy the <c>Func&lt;string, CancellationToken, Task&gt;</c> seam shape the
+    /// gate expects (and so tests substituting a fake here can still accept a token), not because
+    /// this build is ever meant to be cancelled by an individual caller. A single caller's
+    /// cancellation must stop THAT caller's wait, never the shared build every other caller is
+    /// also waiting on -- see <see cref="DotnetBackendBuildGate"/>'s own doc comment.
+    /// </summary>
+    private static async Task RunBuildAsync(string csprojPath, CancellationToken cancellationToken)
+    {
+        // R2 fix (Rick's #151 review, round 1): no `--no-restore`. A developer whose only
+        // interaction with this repo is `dotnet test tests/conformance` has never restored the
+        // Backend project -- `dotnet run` used to restore implicitly, and this launcher replaced
+        // `dotnet run` (issue #135) without keeping that behaviour. Restore is a no-op when the
+        // assets are already current, so this doesn't cost CI anything (its prebuild step already
+        // restored/built).
+        var buildInfo = new ProcessStartInfo("dotnet", $"build \"{csprojPath}\"")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        InheritedEnvironmentFilter.Apply(buildInfo);
+
+        using var buildProcess = new Process { StartInfo = buildInfo };
+        var buildOutput = new CapturedProcessOutput();
+        buildOutput.Attach(buildProcess);
+
+        if (!buildProcess.Start())
+        {
+            throw new InvalidOperationException($"Failed to start 'dotnet build \"{csprojPath}\"'.");
+        }
+        buildProcess.BeginOutputReadLine();
+        buildProcess.BeginErrorReadLine();
+        await buildProcess.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+
+        if (buildProcess.ExitCode != 0)
+        {
+            throw new InvalidOperationException(
+                $"'dotnet build \"{csprojPath}\"' failed with exit code {buildProcess.ExitCode}.\n" +
+                $"--- build stdout/stderr ---\n{buildOutput.Dump()}");
         }
     }
 }

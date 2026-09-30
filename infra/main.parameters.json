@@ -119,6 +119,9 @@
     "dotnetServiceName": {
       "value": "${AZURE_CONTAINER_APP_DOTNET_NAME}"
     },
+    "backendDotnetIngressEnabled": {
+      "value": "${BACKEND_DOTNET_INGRESS_ENABLED=false}"
+    },
     "logAnalyticsName": {
       "value": "${AZURE_LOG_ANALYTICS}"
     },
@@ -148,6 +151,18 @@
     },
     "appSessionSecret": {
       "value": "${APP_SESSION_SECRET=}"
+    },
+    "entraTenantId": {
+      "value": "${ENTRA_TENANT_ID=}"
+    },
+    "entraClientId": {
+      "value": "${ENTRA_CLIENT_ID=}"
+    },
+    "entraApiScope": {
+      "value": "${ENTRA_API_SCOPE=access_as_user}"
+    },
+    "entraAppRole": {
+      "value": "${ENTRA_APP_ROLE=DriveThru.User}"
     }
   }
 }

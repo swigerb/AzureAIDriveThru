@@ -32,6 +32,7 @@ public sealed class HeartbeatPongSurvivalTests(ConformanceFixture fixture)
     private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Data_frame_sent_immediately_after_a_raw_pong_frame_in_the_same_write_is_still_processed() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;

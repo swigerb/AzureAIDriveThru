@@ -758,19 +758,6 @@ async def update_order(args, session_id: str) -> ToolResult:
         category = menu.infer_category(item_name)
         if pl:
             delta_text += pl.get_upsell_hint(category)
-        else:
-            if category == "combos":
-                delta_text += " (UPSELL HINT: Combos are a great base! Ask if they want to upgrade to a Large size, or add a delicious Shake or Dessert!)"
-            elif category in ("burgers", "burgers & sandwiches"):
-                delta_text += " (UPSELL HINT: Perfect choice! Ask if they want to make it a combo meal with Tots or Fries and a refreshing Drink!)"
-            elif category in ("drinks", "slushes"):
-                delta_text += " (UPSELL HINT: Great drink choice! Ask if they want to add a Flavor Add-In to customize it, or pair it with a tasty side!)"
-            elif category in ("shakes", "desserts", "shakes & ice cream"):
-                delta_text += " (UPSELL HINT: Yum! Shakes are perfect on their own, but ask if they'd like to add Whipped Cream or pair with a snack!)"
-            elif category in ("sides", "hot dogs", "hot dogs & tots"):
-                delta_text += " (UPSELL HINT: Tasty! Ask if they want to add a refreshing Drink or Slush to complete their meal!)"
-            else:
-                delta_text += " (UPSELL HINT: Ask if they'd like to add anything else — maybe a drink, side, or dessert!)"
         logger.debug("Upsell hint for category '%s'", category)
 
     # #113: the banner text (and whether to announce at all) is this session's OWN bound

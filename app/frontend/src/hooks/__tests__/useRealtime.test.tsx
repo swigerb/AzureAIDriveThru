@@ -10,13 +10,13 @@ import useRealTime, { resumeStorageKey, WS_CLOSE_IDLE_TIMEOUT, WS_CLOSE_SUPERSED
 const RESUME_STORAGE_KEY = resumeStorageKey();
 
 const ws = vi.hoisted(() => ({
-    calls: [] as Array<{ url: string | null; options: any; connect: boolean }>,
+    calls: [] as Array<{ url: string | (() => string | Promise<string>) | null; options: any; connect: boolean }>,
     readyState: 1,
     send: vi.fn()
 }));
 
 vi.mock("react-use-websocket", () => ({
-    default: (url: string | null, options: any, connect: boolean) => {
+    default: (url: string | (() => string | Promise<string>) | null, options: any, connect: boolean) => {
         ws.calls.push({ url, options, connect });
         return { sendJsonMessage: ws.send, readyState: ws.readyState };
     },
@@ -24,6 +24,11 @@ vi.mock("react-use-websocket", () => ({
 }));
 
 const last = () => ws.calls[ws.calls.length - 1];
+// PR GH-148 review round 2, item B2: `useRealtime` now hands react-use-websocket an async URL
+// FACTORY, not a plain string -- the real library invokes it fresh on every connect/reconnect
+// attempt. This mock only records the reference (it never calls it itself, unlike the real
+// library), so any test that needs the resolved URL must call this to simulate that invocation.
+const resolveUrl = async (call = last()) => (typeof call.url === "function" ? await call.url() : call.url);
 const closeEvent = (code: number, reason = "") => ({ code, reason, wasClean: true }) as CloseEvent;
 const sent = () => ws.send.mock.calls.map(([msg]) => msg);
 const sentTypes = () => sent().map(msg => msg.type);
@@ -47,17 +52,22 @@ beforeEach(() => {
 async function renderConnected(extra: Record<string, any> = {}) {
     const onConnectionLost = extra.onConnectionLost ?? vi.fn();
     const hook = renderHook(() => useRealTime({ enableInputAudioTranscription: true, ...extra, onConnectionLost }));
-    await waitFor(() => expect(last().url).toBe("/realtime?token=tok1"));
+    await waitFor(async () => expect(await resolveUrl()).toBe("/realtime?token=tok1"));
     return { ...hook, onConnectionLost };
 }
 
 const open = () => act(() => last().options.onOpen(new Event("open")));
 
 describe("useRealTime connection lifecycle", () => {
-    it("does not open a socket until the session token fetch settles", async () => {
+    it("hands react-use-websocket a stable async URL factory (not a string) from the very first render, and every invocation fetches a fresh token", async () => {
         await renderConnected();
-        expect(ws.calls[0].url).toBeNull();
-        expect(ws.calls.filter(c => c.url !== null).every(c => c.url === "/realtime?token=tok1")).toBe(true);
+        expect(typeof ws.calls[0].url).toBe("function");
+
+        // Simulate a second and third connect attempt using the SAME factory reference
+        // react-use-websocket would reuse internally for its own background reconnect: each
+        // invocation must hit the token endpoint again, never caching the first call's result.
+        await expect(resolveUrl(ws.calls[0])).resolves.toBe("/realtime?token=tok2");
+        await expect(resolveUrl(ws.calls[0])).resolves.toBe("/realtime?token=tok3");
     });
 
     it("stays disconnected after the server's idle close instead of auto-reconnecting", async () => {
@@ -80,7 +90,7 @@ describe("useRealTime connection lifecycle", () => {
         });
 
         expect(last().connect).toBe(true);
-        expect(last().url).toBe("/realtime?token=tok2");
+        await expect(resolveUrl()).resolves.toBe("/realtime?token=tok2");
     });
 
     it("treats other closes as connection loss and keeps background reconnect", async () => {
@@ -115,12 +125,16 @@ describe("useRealTime connection lifecycle", () => {
         expect(sentTypes()).toEqual(["session.update"]);
     });
 
-    it("keeps the 4001 / expired token-refresh path", async () => {
+    it("relies on the factory itself for a 401/expired-token background reconnect (item B2: no token state left to go stale)", async () => {
         await renderConnected();
         expect(last().options.shouldReconnect(closeEvent(4001, "token expired"))).toBe(true);
         act(() => last().options.onClose(closeEvent(4001, "token expired")));
-        await waitFor(() => expect(last().url).toBe("/realtime?token=tok2"));
+
+        // No manual token-refresh-into-state happens here any more: react-use-websocket's own
+        // background reconnect (shouldReconnect === true, above) calls this SAME factory fresh on
+        // its next attempt, which fetches a brand new session token and Entra access token itself.
         expect(last().connect).toBe(true);
+        await expect(resolveUrl()).resolves.toBe("/realtime?token=tok2");
     });
 });
 
@@ -257,7 +271,7 @@ describe("useRealTime order resume", () => {
         act(() => last().options.onClose(closeEvent(1000, "session_ended")));
         expect(storedId()).toBeNull();
         expect(onConnectionLost).toHaveBeenCalledWith(expect.objectContaining({ kind: "ended", resuming: false }));
-        await waitFor(() => expect(last().url).toBe("/realtime?token=tok2"));
+        await waitFor(async () => expect(await resolveUrl()).toBe("/realtime?token=tok2"));
         expect(last().connect).toBe(true);
     });
 
@@ -272,7 +286,7 @@ describe("useRealTime order resume", () => {
         expect(sentTypes()).toEqual(["extension.end_session"]);
 
         act(() => last().options.onClose(closeEvent(1000, "session_ended")));
-        await waitFor(() => expect(last().url).toBe("/realtime?token=tok2"));
+        await waitFor(async () => expect(await resolveUrl()).toBe("/realtime?token=tok2"));
         ws.send.mockReset();
         open();
         expect(sentTypes()).toEqual(["session.update"]);
@@ -295,7 +309,9 @@ describe("useRealTime order resume", () => {
         expect(sent()).toEqual([{ type: "extension.end_session" }]);
         expect(storedId()).toBeNull();
 
-        act(() => last().options.onClose(closeEvent(1000, "session_ended")));
+        await act(async () => {
+            last().options.onClose(closeEvent(1000, "session_ended"));
+        });
         ws.send.mockReset();
         open();
         expect(sentTypes()).not.toContain("extension.resume");

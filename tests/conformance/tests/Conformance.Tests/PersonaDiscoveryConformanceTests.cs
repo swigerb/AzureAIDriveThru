@@ -8,8 +8,9 @@ namespace Conformance.Tests;
 
 /// <summary>
 /// persona-binding contract -- design doc section 5.2. S2 part 2 (#12) ports the persona
-/// discovery/detail HTTP routes and the pre-upgrade ?persona= validation on /realtime, so four of
-/// the five rows below are tagged <c>[Trait("Dotnet", "ready")]</c>.
+/// discovery/detail HTTP routes and the pre-upgrade ?persona= validation on /realtime; issue #13
+/// lands the real relay's session.created echo, so all five rows below are now tagged
+/// <c>[Trait("Dotnet", "ready")]</c>.
 /// <see cref="Omitted_persona_binds_to_the_default_persona_visible_in_session_metadata"/> stays
 /// UNTAGGED: it needs the real upstream relay to actually reach `session.created` and echo
 /// `extension.session_metadata` (rtmt.py's `_websocket_handler`/`ConnectionForwarder`) --
@@ -115,6 +116,7 @@ public sealed class PersonaDiscoveryConformanceTests(ConformanceFixture fixture)
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Omitted_persona_binds_to_the_default_persona_visible_in_session_metadata() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;

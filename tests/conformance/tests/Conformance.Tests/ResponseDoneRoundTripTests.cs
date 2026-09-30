@@ -19,6 +19,7 @@ public sealed class ResponseDoneRoundTripTests(ConformanceFixture fixture)
     private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Browser_receives_round_trip_token_after_the_greeting_and_backend_logs_no_traceback() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;

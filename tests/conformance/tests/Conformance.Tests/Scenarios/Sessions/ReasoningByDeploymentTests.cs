@@ -45,6 +45,7 @@ public static class ReasoningByDeploymentTestHelpers
 }
 
 [Collection(ConformanceCollection.Name)]
+[Trait("Dotnet", "ready")]
 public sealed class ReasoningSentForDefaultDeploymentTests(ConformanceFixture fixture)
 {
     [Fact]
@@ -61,6 +62,7 @@ public sealed class ReasoningSentForDefaultDeploymentTests(ConformanceFixture fi
 }
 
 [Collection(Gpt21DzConformanceCollection.Name)]
+[Trait("Dotnet", "ready")]
 public sealed class ReasoningSentForDzDeploymentTests(Gpt21DzConformanceFixture fixture)
 {
     [Fact]
@@ -76,6 +78,7 @@ public sealed class ReasoningSentForDzDeploymentTests(Gpt21DzConformanceFixture 
 }
 
 [Collection(Gpt15ConformanceCollection.Name)]
+[Trait("Dotnet", "ready")]
 public sealed class ReasoningSwitchFalseKeepsReasoningOffA15DeploymentTests(Gpt15ConformanceFixture fixture)
 {
     [Fact]
@@ -103,6 +106,7 @@ public sealed class ReasoningSwitchFalseKeepsReasoningOffA15DeploymentTests(Gpt1
 /// so `reasoning` must be withheld despite the catalog saying the bound model supports it.
 /// </summary>
 [Collection(Gpt21ReasoningSwitchOffConformanceCollection.Name)]
+[Trait("Dotnet", "ready")]
 public sealed class ReasoningSwitchOffOverridesTheBoundModelsCatalogEntryTests(Gpt21ReasoningSwitchOffConformanceFixture fixture)
 {
     [Fact]
