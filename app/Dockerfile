@@ -71,14 +71,18 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
 #   so a reconnect could land where the order doesn't exist. Ingress affinity is
 #   sticky (infra/main.bicep) so the replica is stable too.
 # - 120s timeout for long-lived WebSocket upgrades
-# - 65s keep-alive to outlast Azure LB idle timeout (60s)
-# - Graceful 30s shutdown window
-CMD ["python3", "-m", "gunicorn", "app:create_app", \
+# - `app:create_runner` (issue #144, design doc section 18.4): an async factory
+#   returning a `web.AppRunner`, not a plain `web.Application`. The runner itself
+#   carries the real keep-alive (65s, to outlast the Azure LB's 60s idle timeout)
+#   and graceful-shutdown (28.5s, inside gunicorn's own 30s below) timeouts and the
+#   path-only access logger -- see create_runner()'s docstring for why gunicorn's
+#   own `--keep-alive`/`--access-logformat` flags are dropped rather than set here.
+# - Graceful 30s shutdown window (gunicorn's own arbiter-level SIGTERM->SIGKILL grace)
+CMD ["python3", "-m", "gunicorn", "app:create_runner", \
      "-b", "0.0.0.0:8000", \
      "--worker-class", "aiohttp.GunicornWebWorker", \
      "--workers", "1", \
      "--timeout", "120", \
-     "--keep-alive", "65", \
      "--graceful-timeout", "30", \
      "--access-logfile", "-", \
      "--error-logfile", "-", \

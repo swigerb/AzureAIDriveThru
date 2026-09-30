@@ -9,6 +9,7 @@ jsonschema==4.26.0
 openai==1.109.1
 pydantic>=2,<3
 python-dotenv==1.2.2
+PyJWT[crypto]==2.14.0
 PyYAML>=6.0
 Jinja2>=3.1
 rich==15.0.0

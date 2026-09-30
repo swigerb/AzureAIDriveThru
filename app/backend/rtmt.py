@@ -124,27 +124,44 @@ _WS_CONNECT_TIMEOUT = aiohttp.ClientTimeout(
 
 # ── HMAC Session Token Utilities ──
 
-def create_hmac_token(secret: bytes, expiry_seconds: int = 900) -> str:
-    """Create an HMAC-signed session token with expiry."""
-    payload = {"exp": int(time.time()) + expiry_seconds}
+def create_hmac_token(secret: bytes, expiry_seconds: int = 900, oid: str | None = None) -> str:
+    """Create an HMAC-signed session token with expiry.
+
+    *oid* (issue #144, design doc section 18.3) is the caller's Entra object id --
+    layered onto the existing token, not a replacement for it. `None` (the default)
+    preserves today's shape exactly, for callers that never touch Entra at all.
+    """
+    payload: dict = {"exp": int(time.time()) + expiry_seconds}
+    if oid is not None:
+        payload["oid"] = oid
     payload_b64 = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
     sig = hmac.new(secret, payload_b64.encode(), hashlib.sha256).hexdigest()
     return f"{payload_b64}.{sig}"
 
 
-def validate_hmac_token(token: str, secret: bytes) -> bool:
-    """Validate an HMAC session token (signature + expiry)."""
+def decode_hmac_token(token: str, secret: bytes) -> dict | None:
+    """Verify an HMAC session token's signature and expiry; return its payload
+    (`{"exp", "oid"?}`) on success, `None` otherwise. `validate_hmac_token` below is
+    the pre-existing bool-returning wrapper over this -- kept for its own callers and
+    tests, unchanged in shape."""
     if not token or "." not in token:
-        return False
+        return None
     try:
         payload_b64, sig = token.rsplit(".", 1)
         expected_sig = hmac.new(secret, payload_b64.encode(), hashlib.sha256).hexdigest()
         if not hmac.compare_digest(sig, expected_sig):
-            return False
+            return None
         payload = json.loads(base64.urlsafe_b64decode(payload_b64))
-        return payload.get("exp", 0) > time.time()
+        if payload.get("exp", 0) <= time.time():
+            return None
+        return payload
     except Exception:
-        return False
+        return None
+
+
+def validate_hmac_token(token: str, secret: bytes) -> bool:
+    """Validate an HMAC session token (signature + expiry)."""
+    return decode_hmac_token(token, secret) is not None
 
 
 # ── Origin validation utilities ──
@@ -1250,6 +1267,12 @@ class RTMiddleTier:
         self._prompt_loader = prompt_loader
         self._sessions = SessionManager(prompt_loader=prompt_loader)
         self.app_secret: bytes = b""  # set by app.py at startup
+        # Issue #144/18.3: True iff the resolved auth mode is Entra (set by app.py at
+        # startup from entra_auth.resolve_settings()). Forces `require_session_token`
+        # on and binds the session token to the Entra principal's oid, regardless of
+        # config.yaml's `security.require_session_token` -- which still governs this
+        # in the Development pass-through, unchanged.
+        self.entra_mode: bool = False
         # #74/Rick's PR #102 review item 2: the enabled-persona catalog is MANDATORY --
         # set here to the deployment default catalog so it is never None, then
         # replaced by app.py at startup with its own already-loaded catalog (via
@@ -2702,12 +2725,23 @@ class RTMiddleTier:
             logger.warning("Rejected WebSocket from disallowed origin: host=%s origin=%s", host, origin)
             return web.Response(status=403, text="Origin not allowed")
 
-        # ── HMAC session token validation (Task 4) ──
-        if _security_cfg.get("require_session_token", False):
+        # ── HMAC session token validation (Task 4; issue #144/18.3) ──
+        # In Entra mode, require_session_token is FORCED on -- config.yaml cannot
+        # turn it off -- and the token must carry the SAME oid as the Entra
+        # principal middleware already validated (request["principal"], set before
+        # this handler ever runs). In Development pass-through, config.yaml's
+        # `security.require_session_token` still governs this unchanged.
+        if self.entra_mode or _security_cfg.get("require_session_token", False):
             token = request.query.get("token", "")
-            if not validate_hmac_token(token, self.app_secret):
+            payload = decode_hmac_token(token, self.app_secret)
+            if payload is None:
                 logger.warning("Rejected WebSocket with invalid/expired session token")
                 return web.Response(status=401, text="Invalid or expired token")
+            if self.entra_mode:
+                principal = request.get("principal") or {}
+                if not payload.get("oid") or payload.get("oid") != principal.get("oid"):
+                    logger.warning("Rejected WebSocket — session token oid does not match Entra principal")
+                    return web.Response(status=401, text="Invalid or expired token")
 
         # ── Concurrency limit (Task 2) ──
         if not self._sessions.can_accept_session():
@@ -2801,7 +2835,7 @@ class RTMiddleTier:
         return ws
     
     def attach_to_app(self, app: web.Application, path: str) -> None:
-        app.router.add_get(path, self._websocket_handler)
+        app.router.add_get(path, self._websocket_handler, name='realtime')
 
 
 def configure_realtime_model(rtmt: RTMiddleTier, model_cfg: dict, environ: Any = None) -> RTMiddleTier:

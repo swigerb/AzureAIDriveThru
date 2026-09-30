@@ -15,8 +15,11 @@ from dotenv import load_dotenv
 
 import conformance_hooks
 import default_persona
+import entra_auth
+from access_log import access_log_kwargs
 from cascade_processor import CascadeProcessor
 from config_loader import get_config
+from entra_auth import EntraConfigError
 from local_processor import LocalProcessor
 from model_catalog import ModelCatalog, ModelValidationError
 from persona_loader import Persona, PersonaCatalog, PersonaValidationError
@@ -476,10 +479,13 @@ def register_persona_routes(app: web.Application, catalog: PersonaCatalog, model
         return resp
 
     app.add_routes([
-        web.get('/api/personas', get_personas),
-        web.get('/api/personas/{persona_id}', get_persona_detail),
-        web.get('/personas/{persona_id}/menu.json', get_persona_menu),
-        web.get('/personas/{persona_id}/assets/{asset_path:.*}', get_persona_asset),
+        web.get('/api/personas', get_personas, name='personas-index'),
+        web.get('/api/personas/{persona_id}', get_persona_detail, name='persona-detail'),
+        web.get('/personas/{persona_id}/menu.json', get_persona_menu, name='persona-menu'),
+        # Named 'persona-asset' on purpose (entra_auth.py's PERSONA_ASSET_ROUTE_NAME):
+        # this ONE route is anonymous for public-branding extensions and Entra-
+        # protected for everything else (issue #144, design doc section 18.2).
+        web.get('/personas/{persona_id}/assets/{asset_path:.*}', get_persona_asset, name='persona-asset'),
     ])
 
 
@@ -518,6 +524,17 @@ async def create_app() -> web.Application:
         )
         sys.exit(1)
     _startup_checks["env_vars"] = True
+
+    # 1b. Resolve the Entra auth mode (issue #144, ADR-002, design doc section 18.5).
+    # Fails fast on any invalid or ambiguous configuration -- the process must never
+    # listen with an unclear auth story, same as every other startup check here. Read
+    # AFTER the .env load above so local dev's ENTRA_* values, if any, are already in
+    # os.environ.
+    try:
+        entra_settings = entra_auth.resolve_settings(os.environ)
+    except EntraConfigError as exc:
+        logger.critical("FATAL: Entra auth configuration is invalid — %s", exc)
+        sys.exit(1)
 
     # 2. Load and validate every enabled persona pack (issue #70). Refuses to start on an
     # invalid pack, naming the persona, file and field. Fails fast, same as prompt loading below.
@@ -604,8 +621,12 @@ async def create_app() -> web.Application:
     llm_credential = AzureKeyCredential(llm_key) if llm_key else credential
     search_credential = AzureKeyCredential(search_key) if search_key else credential
 
+    entra_middleware = entra_auth.create_middleware(entra_settings)
     app = web.Application(
-        middlewares=[_compression_middleware],
+        # Entra runs FIRST (18.3's check order: Entra, then Origin, then session
+        # token, then limits/404s) -- middlewares wrap the handler in list order, so
+        # the first entry here is the outermost, and therefore the first to run.
+        middlewares=[entra_middleware, _compression_middleware],
         client_max_size=conn_cfg.get("client_max_size_bytes", 4 * 1024 * 1024),
     )
 
@@ -616,6 +637,10 @@ async def create_app() -> web.Application:
         voice_choice=os.environ.get("AZURE_OPENAI_REALTIME_VOICE_CHOICE") or model_cfg.get("default_voice", "marin"),
         prompt_loader=prompt_loader,
     )
+    # Issue #144/18.3: in Entra mode, require_session_token is FORCED on (config.yaml
+    # can't turn it off) and /realtime's session token is bound to the Entra
+    # principal's oid. In Development pass-through it follows config.yaml, as today.
+    rtmt.entra_mode = entra_settings.mode == entra_auth.Mode.ENTRA
     # Shared HMAC secret for session tokens (APP_SESSION_SECRET; random for local dev)
     app_secret = load_app_secret()
     rtmt.app_secret = app_secret
@@ -739,15 +764,22 @@ async def create_app() -> web.Application:
     rtmt.attach_to_app(app, "/realtime")
 
     # ── HMAC Session Token Endpoint (Task 4) ──
-    async def get_session_token(_request: web.Request) -> web.Response:
-        token = create_hmac_token(app_secret, expiry_seconds=900)
+    async def get_session_token(request: web.Request) -> web.Response:
+        # Issue #144/18.3: the minted token gains an `oid` claim, the caller's Entra
+        # object id, whenever a principal is present (both Entra mode and the
+        # Development pass-through's synthetic principal set it -- see
+        # entra_auth.py's middleware). /realtime later rejects unless that oid
+        # matches the Entra token's own oid.
+        principal = request.get("principal")
+        oid = principal.get("oid") if principal else None
+        token = create_hmac_token(app_secret, expiry_seconds=900, oid=oid)
         return web.json_response({"token": token})
 
     current_directory = Path(__file__).parent
     app.add_routes([
-        web.get('/', _index_handler),
-        web.get('/health', _health_handler),
-        web.get('/api/auth/session', get_session_token),
+        web.get('/', _index_handler, name='index'),
+        web.get('/health', _health_handler, name='health'),
+        web.get('/api/auth/session', get_session_token, name='session-token'),
     ])
     # ── Persona discovery + static asset routes (issue #74, design doc section 5.2) ──
     register_persona_routes(app, _persona_catalog, model_catalog)
@@ -772,6 +804,40 @@ async def create_app() -> web.Application:
     return app
 
 
+async def create_runner() -> web.AppRunner:
+    """Async factory for gunicorn's `aiohttp.GunicornWebWorker` (issue #144, design
+    doc section 18.4). The worker accepts an async factory that returns a
+    `web.AppRunner` and uses that runner as-is, so the runner itself -- not
+    gunicorn's `--keep-alive`/`--graceful-timeout` flags, which the worker then
+    ignores -- carries the real keep-alive and shutdown timeouts (65 s and 28.5 s,
+    the worker's 95% of the 30 s graceful timeout the arbiter still enforces).
+
+    `create_app()` still fails fast with `sys.exit(1)` on a startup error. Under
+    `GunicornWebWorker` a `SystemExit` doesn't stop the process the way an
+    `Exception` does (gunicorn 23 `arbiter.py`): the arbiter's boot-failure path
+    (master exit code 3) only triggers on an `Exception` raised before the worker
+    has booted, not a `SystemExit`. Left unwrapped, the worker would exit 1 and the
+    master would respawn it in a tight loop -- about 100 boots in 8 seconds, TCP
+    accepting connections and HTTP requests hanging the whole time. That still
+    fails closed, but it floods logs and makes "fails fast" untrue in the
+    container. So this wraps `create_app()` and re-raises as a plain `RuntimeError`,
+    which gunicorn's arbiter treats as a genuine boot failure: it logs
+    "Worker failed to boot." once and the master exits 3, never a respawn loop.
+    """
+    try:
+        app = await create_app()
+    except SystemExit as exc:
+        raise RuntimeError("startup failed") from exc
+    return web.AppRunner(
+        app,
+        logger=logging.getLogger("gunicorn.error"),
+        access_log=logging.getLogger("gunicorn.access"),
+        keepalive_timeout=65,
+        shutdown_timeout=28.5,
+        **access_log_kwargs(),
+    )
+
+
 if __name__ == "__main__":
     host = os.environ.get("HOST", "localhost")
     port = int(os.environ.get("PORT", 8000))
@@ -782,4 +848,5 @@ if __name__ == "__main__":
         port=port,
         shutdown_timeout=conn_cfg.get("shutdown_timeout", 10.0),
         keepalive_timeout=conn_cfg.get("keepalive_timeout", 75.0),
+        **access_log_kwargs(),
     )

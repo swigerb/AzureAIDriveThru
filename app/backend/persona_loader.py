@@ -40,6 +40,7 @@ from typing import Any
 import jsonschema
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+import entra_auth
 import menu_utils
 
 __all__ = [
@@ -575,7 +576,43 @@ def _load_one_persona(
             f"Persona '{persona_id}': prompts directory not found at {prompts_dir}."
         )
 
+    _validate_persona_assets(pack_dir, persona_id)
+
     return Persona(persona_id=persona_id, pack_dir=pack_dir, manifest=manifest)
+
+
+def _validate_persona_assets(pack_dir: Path, persona_id: str) -> None:
+    """Fail fast if `assets/` contains a file type that `entra_auth.py`'s
+    `PathOnlyAccessLogger`/persona-asset route can't classify as anonymous-or-
+    protected (issue #144, design doc section 18.2): only the public-branding
+    extensions in `entra_auth.ANONYMOUS_ASSET_EXTENSIONS` (served anonymously), or a
+    `.json` file directly under `assets/demo/` (served Entra-protected, matching the
+    frontend's `authorizedFetch.ts` contract), are allowed. Anything else -- an
+    unexpected extension, or a `.json` outside `demo/` -- has no defined auth
+    classification and must not silently fall on one side or the other.
+    """
+    assets_dir = pack_dir / "assets"
+    if not assets_dir.is_dir():
+        return
+    demo_dir = assets_dir / "demo"
+    for path in assets_dir.rglob("*"):
+        if not path.is_file():
+            continue
+        suffix = path.suffix.lower()
+        if suffix in entra_auth.ANONYMOUS_ASSET_EXTENSIONS:
+            continue
+        try:
+            under_demo = path.parent == demo_dir
+        except OSError:
+            under_demo = False
+        if suffix == ".json" and under_demo:
+            continue
+        raise PersonaValidationError(
+            f"Persona '{persona_id}': asset {path.relative_to(pack_dir)} has an "
+            f"unrecognized file type for {assets_dir} (issue #144) -- allowed are "
+            f"{sorted(entra_auth.ANONYMOUS_ASSET_EXTENSIONS)} anywhere under assets/, "
+            f"or '.json' directly under assets/demo/."
+        )
 
 
 def _load_json_file(path: Path) -> Any:
