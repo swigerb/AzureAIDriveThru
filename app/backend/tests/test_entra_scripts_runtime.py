@@ -487,5 +487,230 @@ exit $LASTEXITCODE
         )
 
 
+class SetupEntraAuthRedirectUriDefaultBehaviorMockedGraphTests(unittest.TestCase):
+    """Rick's round-2 review of #160: DEPLOY.md claimed a run that supplies none of
+    -FrontendOrigin/-RedirectUri/-FromAzdEnv "leaves any existing SPA URIs untouched". That is
+    false: -RedirectUri defaults to the two design-18.1 localhost origins (never empty), so
+    $redirects.Count is never 0 unless the caller explicitly passes -RedirectUri @() with no
+    -FrontendOrigin/-FromAzdEnv. Section 7's full-SET reconcile fires whenever
+    $redirects.Count -gt 0 and REPLACES the existing spa.redirectUris wholesale -- so omitting
+    all three flags actually WIPES an already-registered frontend origin and replaces it with the
+    localhost defaults only. These two mocked-Graph end-to-end runs pin the real behavior
+    (mirroring SetupEntraAuthSplitPatchMockedGraphTests's harness technique) so the doc fix in
+    DEPLOY.md can't silently drift from the code again.
+    """
+
+    MOCK_TENANT = "77777777-7777-7777-7777-777777777777"
+    MOCK_OBJECT_ID = "88888888-8888-8888-8888-888888888888"
+    MOCK_CLIENT_ID = "99999999-9999-9999-9999-999999999999"
+    MOCK_SP_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    MOCK_USER_ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+    MOCK_ROLE_ID = "cccccccc-cccc-cccc-cccc-cccccccccccc"
+    MOCK_SCOPE_ID = "dddddddd-dddd-dddd-dddd-dddddddddddd"
+    MOCK_UPN = "brian@contoso-mock.example"
+    EXISTING_FRONTEND_ORIGIN = "https://myapp.happybush-123abc.eastus.azurecontainerapps.io"
+
+    HARNESS_TEMPLATE = r"""
+param(
+    [Parameter(Mandatory = $true)][string]$SetupScriptPath,
+    [Parameter(Mandatory = $true)][string]$PatchLogPath,
+    [switch]$EmptyRedirectUri
+)
+
+$ErrorActionPreference = 'Stop'
+$tenant = '__TENANT__'
+$objectId = '__OBJECT_ID__'
+$clientId = '__CLIENT_ID__'
+$spId = '__SP_ID__'
+$userId = '__USER_ID__'
+$roleId = '__ROLE_ID__'
+$scopeId = '__SCOPE_ID__'
+$upn = '__UPN__'
+$existingOrigin = '__EXISTING_ORIGIN__'
+
+# API config, app role, and pre-authorized client already fully reconciled so the ONLY PATCH(es)
+# a run can produce are the redirect-URI ones under test here.
+$mockApp = @{
+    id             = $objectId
+    appId          = $clientId
+    displayName    = 'AzureAIDriveThru'
+    signInAudience = 'AzureADMyOrg'
+    identifierUris = @("api://$clientId")
+    tags           = @('AzureAIDriveThruManaged')
+    api            = @{
+        oauth2PermissionScopes     = @(@{ id = $scopeId; adminConsentDisplayName = 'Access AzureAIDriveThru API'; adminConsentDescription = 'Allow the app to access AzureAIDriveThru API on behalf of the signed-in user.'; value = 'access_as_user'; type = 'User'; isEnabled = $true })
+        preAuthorizedApplications  = @(@{ appId = '04b07795-8ddb-461a-bbee-02f9e1bf7b46'; delegatedPermissionIds = @($scopeId) })
+        requestedAccessTokenVersion = 2
+    }
+    spa            = @{ redirectUris = @($existingOrigin) }
+    web            = @{ redirectUris = @() }
+    appRoles       = @(@{ id = $roleId; value = 'DriveThru.User'; displayName = 'AzureAIDriveThru User'; description = 'Users who may access the AzureAIDriveThru demo.'; allowedMemberTypes = @('User'); isEnabled = $true })
+}
+
+function az {
+    $global:LASTEXITCODE = 0
+    $a = $args
+
+    if ($a[0] -eq 'account' -and $a[1] -eq 'show') {
+        return (@{ tenantId = $tenant; user = @{ name = $upn } } | ConvertTo-Json -Depth 5 -Compress)
+    }
+
+    if ($a[0] -ne 'rest') {
+        $global:LASTEXITCODE = 1
+        Write-Error "unmocked az invocation in redirect-default smoke test: $($a -join ' ')"
+        return ''
+    }
+
+    $methodIdx = [array]::IndexOf($a, '--method')
+    $method = $a[$methodIdx + 1]
+    $urlIdx = [array]::IndexOf($a, '--url')
+    $url = $a[$urlIdx + 1]
+    $bodyIdx = [array]::IndexOf($a, '--body')
+    $body = $null
+    if ($bodyIdx -ge 0) {
+        $bodyPath = $a[$bodyIdx + 1].TrimStart('@')
+        $body = Get-Content -Path $bodyPath -Raw
+    }
+
+    if ($method -eq 'patch') {
+        $record = @{ url = $url; body = ($body | ConvertFrom-Json -AsHashtable) } | ConvertTo-Json -Depth 20 -Compress
+        Add-Content -Path $PatchLogPath -Value $record
+        return ''
+    }
+
+    if ($method -eq 'get') {
+        if ($url.Contains('/me?')) { return (@{ id = $userId } | ConvertTo-Json -Compress) }
+        if ($url.Contains("/applications/$objectId/owners")) { return (@{ value = @(@{ id = $userId }) } | ConvertTo-Json -Depth 5 -Compress) }
+        if ($url.Contains('/applications?') -and $url.Contains("appId eq '$clientId'")) { return (@{ value = @($mockApp) } | ConvertTo-Json -Depth 10 -Compress) }
+        if ($url.Contains("/applications/$objectId")) { return ($mockApp | ConvertTo-Json -Depth 10 -Compress) }
+        if ($url.Contains('/servicePrincipals?') -and $url.Contains("appId eq '$clientId'")) {
+            return (@{ value = @(@{ id = $spId; appId = $clientId; appRoleAssignmentRequired = $true }) } | ConvertTo-Json -Depth 5 -Compress)
+        }
+        if ($url.Contains("/servicePrincipals/$spId")) { return (@{ appRoles = @(@{ id = $roleId; value = 'DriveThru.User' }) } | ConvertTo-Json -Depth 5 -Compress) }
+        if ($url.Contains('/users/') -and $url.Contains('appRoleAssignments')) {
+            return (@{ value = @(@{ id = 'assign-1'; resourceId = $spId; appRoleId = $roleId }) } | ConvertTo-Json -Depth 5 -Compress)
+        }
+        if ($url.Contains('/users/')) { return (@{ id = $userId; userPrincipalName = $upn } | ConvertTo-Json -Compress) }
+        $global:LASTEXITCODE = 1
+        Write-Error "unmocked GET url in redirect-default smoke test: $url"
+        return ''
+    }
+
+    $global:LASTEXITCODE = 1
+    Write-Error "unmocked az rest method in redirect-default smoke test: $method $url"
+    return ''
+}
+
+function azd {
+    $global:LASTEXITCODE = 0
+    return ''
+}
+
+if ($EmptyRedirectUri) {
+    & $SetupScriptPath -TenantId $tenant -ClientId $clientId -RedirectUri @() -Apply
+}
+else {
+    & $SetupScriptPath -TenantId $tenant -ClientId $clientId -Apply
+}
+exit $LASTEXITCODE
+"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._tmpdir = tempfile.TemporaryDirectory(prefix="setup-entra-redirect-default-")
+        harness_text = (
+            cls.HARNESS_TEMPLATE
+            .replace("__TENANT__", cls.MOCK_TENANT)
+            .replace("__OBJECT_ID__", cls.MOCK_OBJECT_ID)
+            .replace("__CLIENT_ID__", cls.MOCK_CLIENT_ID)
+            .replace("__SP_ID__", cls.MOCK_SP_ID)
+            .replace("__USER_ID__", cls.MOCK_USER_ID)
+            .replace("__ROLE_ID__", cls.MOCK_ROLE_ID)
+            .replace("__SCOPE_ID__", cls.MOCK_SCOPE_ID)
+            .replace("__UPN__", cls.MOCK_UPN)
+            .replace("__EXISTING_ORIGIN__", cls.EXISTING_FRONTEND_ORIGIN)
+        )
+        cls._harness_path = Path(cls._tmpdir.name) / "harness.ps1"
+        cls._harness_path.write_text(harness_text, encoding="utf-8")
+        cls._patch_log_path = Path(cls._tmpdir.name) / "patches.jsonl"
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmpdir.cleanup()
+
+    def setUp(self):
+        if self._patch_log_path.exists():
+            self._patch_log_path.unlink()
+
+    def _run(self, empty_redirect_uri=False):
+        args = [
+            PWSH, "-NoProfile", "-NonInteractive", "-File", str(self._harness_path),
+            "-SetupScriptPath", str(SETUP_ENTRA),
+            "-PatchLogPath", str(self._patch_log_path),
+        ]
+        if empty_redirect_uri:
+            args.append("-EmptyRedirectUri")
+        return subprocess.run(args, capture_output=True, text=True, timeout=60)
+
+    def _read_patch_log(self):
+        if not self._patch_log_path.exists():
+            return []
+        records = []
+        for line in self._patch_log_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line:
+                records.append(json.loads(line))
+        return records
+
+    def test_omitting_all_three_redirect_flags_replaces_the_existing_origin_with_localhost_only(self):
+        # No -FrontendOrigin / -RedirectUri / -FromAzdEnv: -RedirectUri's default (the two
+        # localhost origins) makes $redirects.Count -eq 2, so the section-7 full-SET reconcile
+        # DOES fire and replaces spa.redirectUris wholesale -- the existing frontend origin is
+        # gone, not "left untouched".
+        result = self._run()
+        self.assertEqual(
+            result.returncode, 0,
+            f"expected exit 0.\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}",
+        )
+        patches = self._read_patch_log()
+        spa_patches = [
+            p for p in patches
+            if isinstance(p.get("body"), dict) and "spa" in p["body"]
+        ]
+        self.assertEqual(
+            len(spa_patches), 1,
+            f"expected exactly one SPA redirect-URI PATCH when the localhost defaults differ "
+            f"from the existing origin, got {len(spa_patches)}: {spa_patches}",
+        )
+        new_uris = set(spa_patches[0]["body"]["spa"].get("redirectUris") or [])
+        self.assertEqual(
+            new_uris, {"http://localhost:8000", "http://localhost:5173"},
+            "expected the PATCH to replace spa.redirectUris with ONLY the two localhost "
+            "defaults -- the pre-existing frontend origin must be gone, proving the run does "
+            "NOT leave existing SPA URIs untouched",
+        )
+        self.assertNotIn(self.EXISTING_FRONTEND_ORIGIN, new_uris)
+
+    def test_explicit_empty_redirect_uri_with_no_origin_flags_leaves_existing_spa_uris_untouched(self):
+        # -RedirectUri @() (explicit override to empty) with no -FrontendOrigin/-FromAzdEnv is
+        # the ONLY way to make $redirects.Count -eq 0, which skips the section-7 SPA reconcile
+        # entirely -- this is the one case where "existing SPA URIs untouched" is actually true.
+        result = self._run(empty_redirect_uri=True)
+        self.assertEqual(
+            result.returncode, 0,
+            f"expected exit 0.\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}",
+        )
+        patches = self._read_patch_log()
+        spa_patches = [
+            p for p in patches
+            if isinstance(p.get("body"), dict) and "spa" in p["body"]
+        ]
+        self.assertEqual(
+            len(spa_patches), 0,
+            f"expected NO SPA redirect-URI PATCH when -RedirectUri @() is explicit and no "
+            f"-FrontendOrigin/-FromAzdEnv is given: {spa_patches}",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
