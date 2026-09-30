@@ -47,13 +47,14 @@ const FIXTURE_PERSONA_DETAIL = {
     theme: FIXTURE_PERSONA_INDEX.personas[0].theme,
     assets: { logo: "assets/logo.svg", favicon: "assets/favicon.ico" },
     strings: { en: {} },
-    hero: { headline: "Test Alpha fixture pack", callouts: [] },
+    hero: { headline: "Test Alpha fixture pack", description: "Fixture description.", callouts: [], spotlight: [] },
     legal: "Fixture-only disclaimer.",
     voice: { default: "marin" },
     locales: { default: "en", supported: ["en", "es", "fr", "ja"] },
     features: { dayparts: false },
     menuUrl: "/personas/test-alpha/menu.json",
-    models: { realtime: { default: "gpt-realtime-2.1", models: [{ id: "gpt-realtime-2.1", label: "GPT Realtime 2.1", reasoning: true }] } }
+    models: { realtime: { default: "gpt-realtime-2.1", models: [{ id: "gpt-realtime-2.1", label: "GPT Realtime 2.1", reasoning: true }] } },
+    taxRate: "0.08"
 };
 
 function mockPersonaFetch() {

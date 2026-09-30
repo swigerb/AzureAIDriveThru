@@ -179,7 +179,11 @@
           "properties": {
             "logo": { "type": "string", "minLength": 1 },
             "favicon": { "type": "string", "minLength": 1 },
-            "apologyClip": { "type": "string" }
+            "apologyClip": { "type": "string" },
+            "logoTile": {
+              "type": "boolean",
+              "description": "Issue #164 B2: when true, the shared hero renders `assets.logo` on a white rounded tile (an original's treatment for its opaque-background PNG logo) instead of a bare `<img>`. Omit/false for a transparent-background SVG logo that needs no tile."
+            }
           }
         },
         "strings": {
@@ -192,13 +196,98 @@
         "hero": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["headline", "callouts"],
+          "required": ["headline", "description", "callouts", "spotlight"],
           "properties": {
             "headline": { "type": "string", "minLength": 1 },
-            "callouts": { "type": "array", "items": { "type": "string" } }
+            "badge": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Issue #164 A5: overrides the shared neutral 'Voice Ordering Demo' hero pill copy (e.g. an original's 'Voice Crew Demo'). Omit to use the shared default."
+            },
+            "description": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Issue #164 A4: the persona's own hero sub-headline sentence (replaces the old app-level generic 'hero.subhead' i18n key)."
+            },
+            "callouts": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "Issue #164 A3: the three compact callout pills under the hero headline, in display order. `tone` selects which of the persona's own brand roles (theme.light.accents.primary/secondary/accent) the pill's gradient is drawn from -- NOT a literal color, so the shared component stays brand-free.",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["title", "detail", "tone"],
+                "properties": {
+                  "title": { "type": "string", "minLength": 1 },
+                  "detail": { "type": "string", "minLength": 1 },
+                  "tone": { "type": "string", "enum": ["primary", "secondary", "accent"] }
+                }
+              }
+            },
+            "spotlight": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "description": "Issue #164 A1/A2: the two spotlight cards beside the hero copy. The first card lists `rows` (label/value pairs, e.g. 'Slush of the Day' / 'Cherry Limeade'); the second instead pairs a `body` sentence with an `accent` pairing suggestion -- matching each original's two distinct card shapes.",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["icon", "kicker", "title"],
+                "properties": {
+                  "icon": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Pack-relative path under assets/ to this card's brand illustration (e.g. 'assets/spotlight-slush.svg')."
+                  },
+                  "kicker": { "type": "string", "minLength": 1 },
+                  "title": { "type": "string", "minLength": 1 },
+                  "rows": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["label", "value"],
+                      "properties": {
+                        "label": { "type": "string", "minLength": 1 },
+                        "value": { "type": "string", "minLength": 1 }
+                      }
+                    }
+                  },
+                  "body": { "type": "string", "minLength": 1 },
+                  "accent": { "type": "string", "minLength": 1 },
+                  "tone": {
+                    "type": "string",
+                    "enum": ["primary", "secondary", "accent"],
+                    "description": "Issue #164 A2: which of the persona's brand roles the second ('body') spotlight card's border/wash/kicker/accent-line draw from. Defaults to 'secondary' when omitted (the first, 'rows' card always uses 'primary' and doesn't need this field)."
+                  },
+                  "tint": {
+                    "type": "string",
+                    "pattern": "^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$",
+                    "description": "Issue #164 A2: optional hex wash applied to this specific spotlight card's background (e.g. an original's pink-tinted cold brew card). Omit for the shared neutral surface."
+                  }
+                }
+              }
+            }
           }
         },
-        "legal": { "type": "string", "minLength": 1 }
+        "legal": { "type": "string", "minLength": 1 },
+        "sessionBar": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "variant": {
+              "type": "string",
+              "enum": ["plain", "chips"],
+              "description": "Issue #164 C3/E4: 'plain' (default if omitted) is the mono session-token bar most originals used, which follows the page's light/dark mode. 'chips' is one original's colored pill-chip bar, which always stays on its light background regardless of page theme."
+            }
+          }
+        },
+        "categoryIcons": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Issue #164 E1: optional menu-category-name -> emoji/icon override, keyed by the category's exact `menuItems.json` name. Exists so a pack whose menu data is shared territory (issue #165's menu-data work) can restore its original category icons WITHOUT editing menuItems.json itself. Other packs instead set `icon` directly per-category in their own menuItems.json (personas/menu.schema.json already supports that) since they have no such collision risk."
+        }
       }
     }
   },

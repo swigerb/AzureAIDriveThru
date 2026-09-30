@@ -65,21 +65,21 @@
   "features": { "dayparts": true },
 
   "ui": {
-    "title": "McDonald's Voice Ordering",
+    "title": "McDonald's AI Drive-Thru",
     "theme": {
       "light": {
-        "primary": "45 100% 51%",
-        "secondary": "0 79% 42%",
+        "primary": "358 100% 43%",
+        "secondary": "44 100% 59%",
         "background": "0 0% 98%",
         "foreground": "0 0% 13%",
         "accents": {
-          "primaryHex": "#FFC72C",
-          "primaryStrong": "#DDA600",
-          "primaryLight": "#FFE199",
-          "primaryTintOnDark": "#FFDD7A",
-          "secondaryHex": "#DA291C",
-          "secondaryStrong": "#B0231A",
-          "secondaryTintOnDark": "#FF6F63",
+          "primaryHex": "#DB0007",
+          "primaryStrong": "#A50005",
+          "primaryLight": "#FF4D4D",
+          "primaryTintOnDark": "#FF6F63",
+          "secondaryHex": "#FFC72C",
+          "secondaryStrong": "#DDA600",
+          "secondaryTintOnDark": "#FFDD7A",
           "accent": "#27251F",
           "accentLight": "#4A473F",
           "ink": "#292420",
@@ -91,27 +91,70 @@
         }
       },
       "dark": {
-        "primary": "45 100% 55%",
+        "primary": "358 100% 50%",
         "accents": {
-          "primaryTintOnDark": "#FFDD7A",
-          "secondaryTintOnDark": "#FF6F63",
+          "primaryTintOnDark": "#FF6F63",
+          "secondaryTintOnDark": "#FFDD7A",
           "surfaceDark": "#1B1B1B",
           "surfaceDarkAlt": "#292420"
         }
       },
       "font": { "family": "Nunito Sans", "importUrl": "https://fonts.googleapis.com/css2?family=Nunito+Sans:wght@400;600;700;800;900&display=swap" }
     },
-    "assets": { "logo": "assets/logo.svg", "favicon": "assets/favicon.ico", "apologyClip": "assets/audio/apology-{lang}.wav" },
+    "assets": { "logo": "assets/mcdonalds-logo.png", "favicon": "assets/favicon.ico", "apologyClip": "assets/audio/apology-{lang}.wav", "logoTile": true },
     "strings": {
       "en": {
-        "app.title": "McDonald's Voice Ordering",
-        "status.notRecordingMessage": "Let's get your order started!",
-        "ticket.kicker": "Order screen",
+        "app.title": "McDonald's AI Drive-Thru",
+        "status.notRecordingMessage": "Welcome to McDonald's Drive-Thru!",
+        "ticket.kicker": "DRIVE-THRU ORDER",
         "ticket.title": "Your McDonald's Order",
-        "menu.button": "View McDonald's Menu"
+        "menu.button": "View McDonald's Menu",
+        "menu.title": "McDonald's Favorites",
+        "ticket.emptyHint": "Add a Big Mac, McNuggets, or McFlurry to get started.",
+        "settings.voiceLabel": "AI Voice",
+        "footer.extra": "I'm Lovin' It™"
       }
     },
-    "hero": { "headline": "McDonald's ordering powered by Microsoft Foundry", "callouts": [] },
-    "legal": "Disclaimer: This project is a non-commercial demo application created for educational and illustrative purposes only. It is not affiliated with, endorsed, or sponsored by McDonald's Corporation. Any references to McDonald's or use of McDonald's-inspired colors or themes are solely for demonstration and do not represent an official product."
+    "hero": {
+      "headline": "McDonald's ordering powered by Microsoft Foundry",
+      "description": "Recreate the McDonald's Drive-Thru experience with Big Macs, McNuggets, and team member favorites styled after I'm Lovin' It™, now voice activated with Microsoft Foundry + Azure AI Search grounding.",
+      "callouts": [
+        { "title": "REWARDS READY", "detail": "Voice orders auto-sync with McDonald's Rewards and deals", "tone": "primary" },
+        { "title": "FOUNDRY INFUSION", "detail": "Microsoft Foundry + Azure OpenAI keep conversations flowing", "tone": "accent" },
+        { "title": "LIVE MENU", "detail": "Azure AI Search keeps McDonald's menu items current", "tone": "secondary" }
+      ],
+      "spotlight": [
+        {
+          "icon": "assets/spotlight-fries.svg",
+          "kicker": "WORLD FAMOUS FRIES",
+          "title": "Golden & crispy",
+          "rows": [
+            { "label": "Featured Item", "value": "Big Mac" },
+            { "label": "Crew Pick", "value": "Quarter Pounder® w/ Cheese" }
+          ]
+        },
+        {
+          "icon": "assets/spotlight-burger.svg",
+          "kicker": "CREW FAVORITE",
+          "title": "Big Mac®",
+          "body": "Two all-beef patties, special sauce, lettuce, cheese",
+          "accent": "Perfect pairing: Large Fries & a McCafé",
+          "tone": "accent"
+        }
+      ]
+    },
+    "categoryIcons": {
+      "Burgers": "🍔",
+      "Chicken & Fish Sandwiches": "🍗",
+      "McNuggets & Tenders": "🍗",
+      "Meals & Combos": "🍟",
+      "Breakfast": "🥞",
+      "Fries & Sides": "🍟",
+      "Happy Meal": "😊",
+      "McCafé Coffees": "☕",
+      "Beverages": "🥤",
+      "Sweets & Treats": "🍦"
+    },
+    "legal": "Disclaimer: This is a demo application built with Microsoft Foundry and Azure AI services. It is not affiliated with, endorsed by, or sponsored by McDonald's Corporation. McDonald's, Big Mac, McNuggets, McFlurry, McCafé, and other brand names are trademarks of McDonald's Corporation."
   }
 }

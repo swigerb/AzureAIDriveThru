@@ -40,6 +40,16 @@ interface SettingsProps {
      * brand's role (issue 119). Falls back to a neutral "Voice" label when empty (the
      * brand-neutral placeholder persona-context.tsx renders before any pack loads). */
     roleName?: string;
+    /** Persona-specific override for the voice picker's visible label (persona.json ui.strings
+     * "settings.voiceLabel", e.g. an original's "AI Voice"), taking priority over
+     * the roleName-derived label below when present (issue 164 B8/C5). The aria-label still
+     * follows roleName either way so it stays a stable, persona-name-free selector for tests. */
+    voiceLabelOverride?: string;
+    /** The persona's default voice id (persona.json `voice.default`, e.g. "marin"), shown as a
+     * "Default: Marin" hint next to the voice picker -- only rendered alongside
+     * `voiceLabelOverride` (issue 164 B8/C5); a pack whose original has neither the override nor
+     * the hint gets neither rendered, since one omits both. */
+    defaultVoiceId?: string;
     /** Current persona's model options (design doc §7), from `/api/personas/{id}` (issue #80 F10,
      * PR 106/#75). Optional purely so `<Settings>` still renders before the persona detail's
      * first fetch resolves -- `App.tsx` always has a real value (`current.models`, even the
@@ -66,6 +76,8 @@ export default function Settings({
     voiceChoice,
     onVoiceChoiceChange,
     roleName,
+    voiceLabelOverride,
+    defaultVoiceId,
     models,
     modelId = "",
     onModelChange = () => {},
@@ -75,8 +87,9 @@ export default function Settings({
         return localStorage.getItem("isDarkMode") === "true";
     });
     const { useDummyData, setUseDummyData } = useDummyDataContext();
-    const voiceLabel = roleName ? `${titleCase(roleName)} Voice` : "Voice";
+    const voiceLabel = voiceLabelOverride ?? (roleName ? `${titleCase(roleName)} Voice` : "Voice");
     const voiceAriaLabel = roleName ? `Select ${roleName} voice` : "Select voice";
+    const voiceDefaultHint = voiceLabelOverride && defaultVoiceId ? `Default: ${capitalize(defaultVoiceId)}` : undefined;
 
     useEffect(() => {
         localStorage.setItem("isDarkMode", isDarkMode.toString());
@@ -128,6 +141,7 @@ export default function Settings({
                         {voiceLabel}
                     </Label>
                     <p className="text-sm text-gray-600 dark:text-gray-400">Choose the drive-thru assistant voice</p>
+                    {voiceDefaultHint && <p className="text-xs text-gray-500 dark:text-gray-400">{voiceDefaultHint}</p>}
                 </div>
                 <div className="flex flex-col">
                     <select

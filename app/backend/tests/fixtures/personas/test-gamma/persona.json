@@ -53,7 +53,19 @@
     },
     "assets": { "logo": "assets/logo.svg", "favicon": "assets/favicon.ico" },
     "strings": { "en": { "app.title": "Test Gamma Voice Ordering" } },
-    "hero": { "headline": "Test Gamma fixture pack", "callouts": [] },
+    "hero": {
+      "headline": "Test Gamma fixture pack",
+      "description": "TEST-ONLY fixture hero description, not a real brand.",
+      "callouts": [
+        { "title": "CALLOUT ONE", "detail": "Fixture callout one detail.", "tone": "primary" },
+        { "title": "CALLOUT TWO", "detail": "Fixture callout two detail.", "tone": "secondary" },
+        { "title": "CALLOUT THREE", "detail": "Fixture callout three detail.", "tone": "accent" }
+      ],
+      "spotlight": [
+        { "icon": "assets/spotlight-1.svg", "kicker": "FIXTURE PICK", "title": "Fixture Card One", "rows": [{ "label": "Fixture Row", "value": "Fixture Value" }] },
+        { "icon": "assets/spotlight-2.svg", "kicker": "FIXTURE PAIR", "title": "Fixture Card Two", "body": "Fixture body sentence.", "accent": "Fixture pairing suggestion." }
+      ]
+    },
     "legal": "TEST-ONLY fixture pack (Rick's PR #106 review item 2) -- not a real brand, used only by the conformance suite to prove a realtime model that IS catalogued (gpt-realtime-2.1) but NOT in this persona's own `models.realtime.allowed` list 404s as disallowed, distinct from an unknown or wrong-pipeline model id."
   }
 }

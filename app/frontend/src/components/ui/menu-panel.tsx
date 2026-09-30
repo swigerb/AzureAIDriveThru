@@ -20,8 +20,8 @@ interface MenuCategory {
     /** Optional per-category icon (persona pack data, `menu.schema.json`) -- issue 119: this
      * used to be a hardcoded lookup table keyed on one pack's literal category names, which
      * silently fell back to a generic icon for every other pack's categories (and even for a
-     * few categories of the pack it was hardcoded for). Packs that don't set one render the same
-     * neutral fallback below. */
+     * few categories of the pack it was hardcoded for). Packs that don't set one fall through to
+     * `current.categoryIcons` (issue 164 E1) and then the shared neutral fallback below. */
     icon?: string;
     items: MenuItem[];
 }
@@ -119,19 +119,26 @@ export default memo(function MenuPanel() {
                         <button
                             type="button"
                             onClick={() => toggle(category.category)}
-                            className="flex w-full cursor-pointer items-center justify-between gap-3 p-4"
+                            className="flex w-full cursor-pointer items-center justify-between gap-2 p-4"
                             aria-expanded={isOpen}
                         >
-                            <div className="flex items-center gap-2 sm:gap-3">
+                            <div className="flex items-center gap-2">
                                 <span className="text-2xl" aria-hidden>
-                                    {category.icon ?? DEFAULT_CATEGORY_ICON}
+                                    {category.icon ?? current.categoryIcons?.[category.category] ?? DEFAULT_CATEGORY_ICON}
                                 </span>
+                                {/* Matches the original apps' own class exactly (`break-keep`, not
+                                    `truncate`): a long category name wraps onto a second line rather than
+                                    getting cut off with an ellipsis. The surrounding gaps/padding are
+                                    trimmed slightly (E3) so a short two-word name like "Signature Lattes"
+                                    still fits the chip+chevron on one row, as it does in that pack's
+                                    original (non-collapsible) layout, while a longer name is still free
+                                    to wrap exactly as it does in the original apps. */}
                                 <h3 className="break-keep text-left font-semibold uppercase tracking-wide text-primary dark:text-primary">
                                     {category.category}
                                 </h3>
                             </div>
-                            <div className="flex items-center gap-2">
-                                <span className="whitespace-nowrap rounded-full bg-brand-secondary/10 px-3 py-1 text-xs font-bold text-brand-secondary dark:bg-brand-surface-dark-alt dark:text-brand-secondary-tint">
+                            <div className="flex items-center gap-1">
+                                <span className="whitespace-nowrap rounded-full bg-brand-secondary/10 px-2 py-1 text-xs font-bold text-brand-secondary dark:bg-brand-surface-dark-alt dark:text-brand-secondary-tint">
                                     {/* Non-blocking item from Rick's PR-110 review: correct singular/plural
                                         ("1 item", not "1 items"). */}
                                     {category.items.length} {category.items.length === 1 ? "item" : "items"}

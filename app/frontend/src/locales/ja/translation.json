@@ -1,7 +1,7 @@
 {
     "app": {
         "title": "音声注文",
-        "footer": "Microsoft Foundry、Azure OpenAI、Azure AI で構築",
+        "footer": "Microsoft Foundry、Azure OpenAI、Azure AI Search で構築",
         "showTranscript": "トランスクリプトを表示",
         "stopRecording": "録音を停止",
         "startRecording": "録音を開始",

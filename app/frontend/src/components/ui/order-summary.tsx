@@ -116,10 +116,16 @@ const OrderItemRow = memo(function OrderItemRow({ item }: { item: OrderItem }) {
     );
 });
 
-export default memo(function OrderSummary({ order }: { order: OrderSummaryProps }) {
+export default memo(function OrderSummary({ order, taxRate }: { order: OrderSummaryProps; taxRate?: string }) {
     const { t } = useTranslation();
     const [isExpanded, setIsExpanded] = useState(true);
     const { items, total, tax, finalTotal, totalDisplay, taxDisplay, finalTotalDisplay } = order;
+    // Issue 164 E2: "Tax (N%)" instead of a bare "Tax" -- N comes from the persona's own
+    // `taxRate` (persona.json's pricing.taxRate, forwarded by both backends), rounded to the
+    // nearest whole percent the same way every original persona's ticket displayed it. A missing
+    // or invalid `taxRate` prop renders the plain "Tax" label rather than "Tax (NaN%)".
+    const taxRatePercent = taxRate !== undefined ? Number.parseFloat(taxRate) : Number.NaN;
+    const taxLabel = Number.isFinite(taxRatePercent) ? `${t("ticket.tax")} (${Math.round(taxRatePercent * 100)}%)` : t("ticket.tax");
 
     return (
         <div className="rounded-3xl border border-brand-secondary/20 bg-linear-to-br from-white via-brand-surface-tint to-brand-accent/5 p-5 shadow-[0_20px_45px_var(--brand-secondary-veil-12)] dark:border-white/15 dark:bg-linear-to-br dark:from-brand-surface-dark dark:via-brand-surface-dark-alt dark:to-brand-surface-dark">
@@ -152,11 +158,7 @@ export default memo(function OrderSummary({ order }: { order: OrderSummaryProps 
                         <span className="font-mono dark:text-white/90">{totalDisplay ?? formatMoney(total)}</span>
                     </div>
                     <div className="flex justify-between text-sm text-gray-900 dark:text-white">
-                        {/* PR-110 review item 1 (issue #80): the tax rate is persona-configurable
-                            (persona.json's pricing.taxRate) but not yet on the wire for the
-                            frontend to render -- showing the rate here is a backend follow-up
-                            tracked on #80, so this reads "Tax" with no rate until then. */}
-                        <span>{t("ticket.tax")}</span>
+                        <span>{taxLabel}</span>
                         <span className="font-mono dark:text-white/90">{taxDisplay ?? formatMoney(tax)}</span>
                     </div>
                 </div>

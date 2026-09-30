@@ -197,6 +197,9 @@ public static class PersonaRoutes
         result["features"] = new JsonObject { ["dayparts"] = persona.Features.Dayparts };
         result["menuUrl"] = BuildMenuUrl(persona);
         result["models"] = BuildModelPipelinesBody(persona.Models, modelCatalog);
+        // Issue #164 E2: mirrors app.py's `_persona_detail_body`, which forwards `pricing.taxRate`
+        // here so the ticket can render "Tax (N%)" instead of a bare "Tax".
+        result["taxRate"] = persona.Pricing.TaxRate;
         return result;
     }
 

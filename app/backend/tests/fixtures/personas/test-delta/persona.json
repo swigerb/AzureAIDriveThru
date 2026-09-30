@@ -53,7 +53,19 @@
     },
     "assets": { "logo": "assets/logo.svg", "favicon": "assets/favicon.ico" },
     "strings": { "en": { "app.title": "Test Delta Voice Ordering" } },
-    "hero": { "headline": "Test Delta fixture pack", "callouts": [] },
+    "hero": {
+      "headline": "Test Delta fixture pack",
+      "description": "TEST-ONLY fixture hero description, not a real brand.",
+      "callouts": [
+        { "title": "CALLOUT ONE", "detail": "Fixture callout one detail.", "tone": "primary" },
+        { "title": "CALLOUT TWO", "detail": "Fixture callout two detail.", "tone": "secondary" },
+        { "title": "CALLOUT THREE", "detail": "Fixture callout three detail.", "tone": "accent" }
+      ],
+      "spotlight": [
+        { "icon": "assets/spotlight-1.svg", "kicker": "FIXTURE PICK", "title": "Fixture Card One", "rows": [{ "label": "Fixture Row", "value": "Fixture Value" }] },
+        { "icon": "assets/spotlight-2.svg", "kicker": "FIXTURE PAIR", "title": "Fixture Card Two", "body": "Fixture body sentence.", "accent": "Fixture pairing suggestion." }
+      ]
+    },
     "legal": "TEST-ONLY fixture pack (#77) -- not a real brand, used only by the Python backend test suite to prove the shared bundle/extras engines' `bundle.autoFill`, `mealNumber`/`searchQueryRewrite: \"meal_numbers\"`, and `extras.splitCombinedNames` behavior work for ANY real pack."
   }
 }

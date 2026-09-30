@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none" role="img" aria-label="McDonald's fries illustration">
+    <path d="M14 16h20l-3 24H17L14 16z" fill="#FFBC0D" stroke="#27251F" stroke-width="2" />
+    <path d="M12 16h24v4H12z" fill="#DB0007" />
+    <rect x="18" y="8" width="2.5" height="14" rx="1" fill="#FFBC0D" stroke="#27251F" stroke-width="0.5" />
+    <rect x="22" y="6" width="2.5" height="16" rx="1" fill="#FFBC0D" stroke="#27251F" stroke-width="0.5" />
+    <rect x="26" y="9" width="2.5" height="13" rx="1" fill="#FFBC0D" stroke="#27251F" stroke-width="0.5" />
+    <rect x="30" y="10" width="2.5" height="12" rx="1" fill="#FFBC0D" stroke="#27251F" stroke-width="0.5" />
+    <rect x="15" y="10" width="2.5" height="12" rx="1" fill="#FFBC0D" stroke="#27251F" stroke-width="0.5" />
+</svg>

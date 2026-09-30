@@ -100,7 +100,7 @@ layer(base);
 
 @layer utilities {
   :root {
-    font-family: 'Nunito Sans', 'Montserrat', 'Segoe UI', sans-serif;
+    font-family: var(--brand-font-family, 'Nunito Sans'), 'Montserrat', 'Segoe UI', sans-serif;
     font-synthesis: none;
     text-rendering: optimizeLegibility;
     -webkit-font-smoothing: antialiased;

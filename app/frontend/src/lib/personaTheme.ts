@@ -166,7 +166,8 @@ export const PERSONA_THEME_CSS_VARS = {
     surfaceDark: "--brand-surface-dark",
     surfaceDarkAlt: "--brand-surface-dark-alt",
     success: "--brand-success",
-    neutral: "--brand-neutral"
+    neutral: "--brand-neutral",
+    fontFamily: "--brand-font-family"
 } as const;
 
 /**
@@ -236,6 +237,36 @@ export function applyTheme(theme: PersonaTheme, root: HTMLElement = document.doc
         set(surfaceVars.border, surface.border);
         set(surfaceVars.chart4, surface.chart4);
         set(surfaceVars.chart5, surface.chart5);
+    }
+
+    const font = theme.font ?? DEFAULT_THEME_FONT;
+    set(vars.fontFamily, font.family ? `"${font.family}"` : undefined);
+    applyThemeFont(font, root.ownerDocument ?? document);
+}
+
+/** `id` of the `<link rel="stylesheet">` `applyThemeFont` injects/updates for the active persona's webfont. */
+const FONT_LINK_ELEMENT_ID = "persona-font-link";
+
+/**
+ * Loads (or swaps) the active persona's webfont stylesheet by injecting/updating a single
+ * `<link rel="stylesheet">` in `<head>` (issue 164 C1: a pack's `ui.theme.font` was already
+ * threaded from `persona.json` all the way to `PersonaTheme.font`, but nothing ever fetched the
+ * font or applied its family to the page, so every persona silently rendered the shared
+ * `DEFAULT_THEME_FONT` (Nunito Sans) instead of its own brand font). Reuses the same tag across
+ * persona switches (rather than appending a new `<link>` each time) and only touches `href` when
+ * the URL actually changed, so re-applying the same persona's theme is a no-op.
+ */
+export function applyThemeFont(font: PersonaThemeFont, doc: Document = document): void {
+    if (!font?.importUrl) return;
+    let link = doc.getElementById(FONT_LINK_ELEMENT_ID) as HTMLLinkElement | null;
+    if (!link) {
+        link = doc.createElement("link");
+        link.id = FONT_LINK_ELEMENT_ID;
+        link.rel = "stylesheet";
+        doc.head.appendChild(link);
+    }
+    if (link.href !== font.importUrl) {
+        link.href = font.importUrl;
     }
 }
 

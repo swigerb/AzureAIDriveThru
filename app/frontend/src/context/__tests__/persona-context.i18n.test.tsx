@@ -44,13 +44,14 @@ function detailFor(id: string, strings: Record<string, string>): PersonaDetail {
         theme: summary.theme,
         assets: { logo: "assets/logo.svg", favicon: "assets/favicon.ico" },
         strings: { en: strings },
-        hero: { headline: `${summary.displayName} fixture pack`, callouts: [] },
+        hero: { headline: `${summary.displayName} fixture pack`, description: "Fixture description.", callouts: [], spotlight: [] },
         legal: "Fixture-only disclaimer.",
         voice: { default: "marin" },
         locales: { default: "en", supported: ["en"] },
         features: { dayparts: false },
         menuUrl: `/personas/${id}/menu.json`,
-        models: { realtime: { default: "gpt-realtime-2.1", models: [{ id: "gpt-realtime-2.1", label: "GPT Realtime 2.1", reasoning: true }] } }
+        models: { realtime: { default: "gpt-realtime-2.1", models: [{ id: "gpt-realtime-2.1", label: "GPT Realtime 2.1", reasoning: true }] } },
+        taxRate: "0.08"
     };
 }
 

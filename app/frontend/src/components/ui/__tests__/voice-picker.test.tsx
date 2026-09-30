@@ -9,7 +9,7 @@ import { DEFAULT_VOICE, VOICE_OPTIONS, resolveVoice } from "@/lib/voices";
 // anything else, probed live 2026-09-22).
 const GA_REALTIME_VOICES = ["alloy", "ash", "ballad", "cedar", "coral", "echo", "marin", "sage", "shimmer", "verse"];
 
-function renderSettings(voiceChoice: string, roleName?: string) {
+function renderSettings(voiceChoice: string, roleName?: string, voiceLabelOverride?: string, defaultVoiceId?: string) {
     return render(
         <AzureSpeechProvider>
             <DummyDataProvider>
@@ -24,6 +24,8 @@ function renderSettings(voiceChoice: string, roleName?: string) {
                     voiceChoice={voiceChoice}
                     onVoiceChoiceChange={() => {}}
                     roleName={roleName}
+                    voiceLabelOverride={voiceLabelOverride}
+                    defaultVoiceId={defaultVoiceId}
                 />
             </DummyDataProvider>
         </AzureSpeechProvider>
@@ -99,5 +101,50 @@ describe("Carhop voice picker", () => {
 
         expect(await screen.findByText("Team Member Voice")).toBeInTheDocument();
         expect(await screen.findByLabelText("Select team member voice")).toBeInTheDocument();
+    });
+});
+
+// Issue 164 B8/C5: two of the three original personas override the roleName-derived
+// label with their own "AI Voice" copy plus a "Default: Marin" hint; the third original has
+// neither, so it keeps the plain roleName-derived label with no hint at all.
+describe("voice label override and default hint (issue 164 B8/C5)", () => {
+    beforeEach(() => localStorage.clear());
+
+    it("prefers voiceLabelOverride over the roleName-derived label when both are present", async () => {
+        renderSettings(DEFAULT_VOICE, "team member", "AI Voice", "marin");
+        await userEvent.click(screen.getByRole("button", { name: /open settings/i }));
+
+        expect(await screen.findByText("AI Voice")).toBeInTheDocument();
+        expect(screen.queryByText("Team Member Voice")).not.toBeInTheDocument();
+    });
+
+    it("still uses roleName for the aria-label even when voiceLabelOverride is set", async () => {
+        renderSettings(DEFAULT_VOICE, "team member", "AI Voice", "marin");
+        await userEvent.click(screen.getByRole("button", { name: /open settings/i }));
+
+        expect(await screen.findByLabelText("Select team member voice")).toBeInTheDocument();
+    });
+
+    it("shows a capitalized 'Default: X' hint alongside an override", async () => {
+        renderSettings(DEFAULT_VOICE, "team member", "AI Voice", "marin");
+        await userEvent.click(screen.getByRole("button", { name: /open settings/i }));
+
+        expect(await screen.findByText("Default: Marin")).toBeInTheDocument();
+    });
+
+    it("omits the default hint when there is no voiceLabelOverride, even with a defaultVoiceId", async () => {
+        renderSettings(DEFAULT_VOICE, "carhop", undefined, "marin");
+        await userEvent.click(screen.getByRole("button", { name: /open settings/i }));
+
+        expect(await screen.findByText("Carhop Voice")).toBeInTheDocument();
+        expect(screen.queryByText(/Default:/)).not.toBeInTheDocument();
+    });
+
+    it("omits the default hint when there is an override but no defaultVoiceId", async () => {
+        renderSettings(DEFAULT_VOICE, "team member", "AI Voice");
+        await userEvent.click(screen.getByRole("button", { name: /open settings/i }));
+
+        expect(await screen.findByText("AI Voice")).toBeInTheDocument();
+        expect(screen.queryByText(/Default:/)).not.toBeInTheDocument();
     });
 });

@@ -8,9 +8,9 @@ import type { PersonaDetail } from "@/types/persona";
 // of reading a bundled `src/data/menuItems.json` copy. `usePersonaContext` is mocked here so each
 // test controls `current.menuUrl` directly without spinning up a full PersonaProvider fetch chain.
 
-const context = vi.hoisted(() => ({ menuUrl: "/personas/test-alpha/menu.json?v=test" }));
+const context = vi.hoisted(() => ({ menuUrl: "/personas/test-alpha/menu.json?v=test", categoryIcons: undefined as Record<string, string> | undefined }));
 vi.mock("@/context/persona-context", () => ({
-    usePersonaContext: () => ({ current: { menuUrl: context.menuUrl } as PersonaDetail })
+    usePersonaContext: () => ({ current: { menuUrl: context.menuUrl, categoryIcons: context.categoryIcons } as PersonaDetail })
 }));
 
 function mockFetchOnce(body: unknown, ok = true, status = 200) {
@@ -27,6 +27,7 @@ function mockFetchOnce(body: unknown, ok = true, status = 200) {
 afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+    context.categoryIcons = undefined;
 });
 
 const SAMPLE_MENU = {
@@ -141,5 +142,64 @@ describe("MenuPanel", () => {
 
         await waitFor(() => expect(screen.getByText("Test Burger")).toBeInTheDocument());
         expect(screen.getByText("🍹")).toBeInTheDocument();
+    });
+
+    // Issue 164 E1: a pack's own `categoryIcons` (persona.json ui config, keyed by category name)
+    // is the second fallback tier -- used when the category's own menu-data `icon` is absent, and
+    // preferred over the shared neutral default. Keeping this keyed by pack data rather than
+    // editing menuItems.json avoids collisions with issue 165's menu-data work on the same file.
+    it("renders the pack's categoryIcons override when the category has no icon of its own", async () => {
+        context.categoryIcons = { "Signature Lattes": "☕" };
+        mockFetchOnce({
+            menuItems: [
+                {
+                    category: "Signature Lattes",
+                    items: [{ name: "Test Latte", sizes: [{ size: "standard", price: 3.49 }], description: "A fixture latte." }]
+                }
+            ]
+        });
+        render(<MenuPanel />);
+
+        await waitFor(() => expect(screen.getByText("Test Latte")).toBeInTheDocument());
+        expect(screen.getByText("☕")).toBeInTheDocument();
+    });
+
+    it("prefers the category's own icon over the pack's categoryIcons override", async () => {
+        context.categoryIcons = { "Iced Coffee": "🧊" };
+        mockFetchOnce({
+            menuItems: [
+                {
+                    category: "Iced Coffee",
+                    icon: "☕",
+                    items: [{ name: "Test Latte", sizes: [{ size: "standard", price: 3.49 }], description: "A fixture latte." }]
+                }
+            ]
+        });
+        render(<MenuPanel />);
+
+        await waitFor(() => expect(screen.getByText("Test Latte")).toBeInTheDocument());
+        expect(screen.getByText("☕")).toBeInTheDocument();
+        expect(screen.queryByText("🧊")).not.toBeInTheDocument();
+    });
+
+    // Issue 164 E3: category header spacing must match the original apps' own markup exactly --
+    // `break-keep` (never `truncate`/ellipsis, which the originals never use) so a short category
+    // name like "Signature Lattes" stays on one line at normal spacing, while a longer name is free
+    // to wrap onto a second line exactly as the original apps themselves do.
+    it("uses the original apps' break-keep heading class, never a truncating ellipsis (E3)", async () => {
+        mockFetchOnce({
+            menuItems: [
+                {
+                    category: "Signature Lattes",
+                    items: [{ name: "Test Latte", sizes: [{ size: "standard", price: 3.49 }], description: "A fixture latte." }]
+                }
+            ]
+        });
+        render(<MenuPanel />);
+
+        const title = await screen.findByText("Signature Lattes");
+        expect(title.tagName).toBe("H3");
+        expect(title.className).toContain("break-keep");
+        expect(title.className).not.toContain("truncate");
     });
 });

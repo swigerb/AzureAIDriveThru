@@ -1,7 +1,7 @@
 {
     "app": {
         "title": "Commande vocale",
-        "footer": "Conçu avec Microsoft Foundry, Azure OpenAI et Azure AI",
+        "footer": "Conçu avec Microsoft Foundry, Azure OpenAI et Azure AI Search",
         "showTranscript": "Afficher la transcription",
         "stopRecording": "Arrêter l'enregistrement",
         "startRecording": "Commencer l'enregistrement",

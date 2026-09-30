@@ -2,6 +2,7 @@
   "menuItems": [
     {
       "category": "Signature Lattes",
+      "icon": "☕",
       "items": [
         {
           "name": "Caramel Craze Latte",
@@ -58,6 +59,7 @@
     },
     {
       "category": "Cold Beverages",
+      "icon": "🧊",
       "items": [
         {
           "name": "Original Cold Brew",
@@ -114,6 +116,7 @@
     },
     {
       "category": "Donuts & Bakery",
+      "icon": "🍩",
       "items": [
         {
           "name": "Glazed Donut",
@@ -171,6 +174,7 @@
     },
     {
       "category": "Breakfast Sandwiches",
+      "icon": "🥪",
       "items": [
         {
           "name": "Bacon Egg & Cheese on Croissant",
@@ -215,6 +219,7 @@
     },
     {
       "category": "Extras",
+      "icon": "✨",
       "items": [
         {
           "name": "Flavor Swirl Add-On",

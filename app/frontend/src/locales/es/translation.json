@@ -1,7 +1,7 @@
 {
     "app": {
         "title": "Pedidos por voz",
-        "footer": "Creado con Microsoft Foundry, Azure OpenAI y Azure AI",
+        "footer": "Creado con Microsoft Foundry, Azure OpenAI y Azure AI Search",
         "showTranscript": "Mostrar transcripción",
         "stopRecording": "Detener grabación",
         "startRecording": "Comenzar grabación",
