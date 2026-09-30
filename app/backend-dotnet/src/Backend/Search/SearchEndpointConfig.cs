@@ -15,11 +15,13 @@ namespace Backend.Search;
 /// -- see that file for the request/response shape, which matches exactly what `FakeSearchServer`
 /// (and the real service) expects.</para>
 ///
-/// <para><b>Auth scope note:</b> only API-key auth (`AZURE_SEARCH_API_KEY`, sent as the REST
-/// `api-key` header -- mirrors Python's `AzureKeyCredential` path) is implemented this wave.
-/// Python's `DefaultAzureCredential` fallback (no key configured) has no C# equivalent yet -- it
-/// would need an `Azure.Identity` token-acquisition flow this wave's scope didn't require solving;
-/// tracked as a follow-up gap in docs/dotnet_mapping.md, not silently dropped.</para>
+/// <para><b>Auth scope note:</b> <c>AZURE_SEARCH_API_KEY</c> (sent as the REST <c>api-key</c>
+/// header -- mirrors Python's <c>AzureKeyCredential</c> path) when configured; else <see
+/// cref="SearchTool"/> falls back to a managed-identity bearer token via
+/// <c>Azure.Identity.DefaultAzureCredential</c> (scope <c>https://search.azure.com/.default</c>,
+/// <see cref="DefaultAzureCredentialSearchTokenProvider"/>), mirroring Python's own
+/// <c>DefaultAzureCredential</c> fallback and PR #140 R5's identical pattern for the realtime
+/// upstream connect.</para>
 /// </summary>
 public sealed class SearchEndpointConfig
 {

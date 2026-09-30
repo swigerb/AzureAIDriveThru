@@ -37,6 +37,7 @@ public sealed class SearchTool
     private readonly PromptLoader? _promptLoader;
     private readonly string _indexName;
     private readonly string? _personaId;
+    private readonly ISearchBearerTokenProvider? _bearerTokenProvider;
 
     public SearchTool(
         HttpClient http,
@@ -45,7 +46,8 @@ public sealed class SearchTool
         MenuCatalog menu,
         PromptLoader? promptLoader,
         string indexName,
-        string? personaId)
+        string? personaId,
+        ISearchBearerTokenProvider? bearerTokenProvider = null)
     {
         _http = http;
         _config = config;
@@ -54,6 +56,7 @@ public sealed class SearchTool
         _promptLoader = promptLoader;
         _indexName = indexName;
         _personaId = personaId;
+        _bearerTokenProvider = bearerTokenProvider;
     }
 
     /// <summary>Executes one <c>search</c> tool call. Always <see
@@ -221,10 +224,8 @@ public sealed class SearchTool
                       $"/docs/search.post.search?api-version={SearchEndpointConfig.ApiVersion}";
 
             using var request = new HttpRequestMessage(HttpMethod.Post, url) { Content = JsonContent.Create(body) };
-            if (!string.IsNullOrEmpty(_config.ApiKey))
-            {
-                request.Headers.Add("api-key", _config.ApiKey);
-            }
+            var (headerName, headerValue) = await ResolveAuthHeaderAsync(timeoutCts.Token).ConfigureAwait(false);
+            request.Headers.Add(headerName, headerValue);
 
             using var response = await _http.SendAsync(request, timeoutCts.Token).ConfigureAwait(false);
             var text = await response.Content.ReadAsStringAsync(timeoutCts.Token).ConfigureAwait(false);
@@ -292,5 +293,28 @@ public sealed class SearchTool
             // failure, just without a specific message to surface.
         }
         return $"Azure AI Search request failed with status {(int)statusCode}.";
+    }
+
+    /// <summary>Chooses the outbound auth header for this Azure AI Search REST call --
+    /// <c>api-key</c> when configured (the only mode before this), else a managed-identity bearer
+    /// token via <see cref="_bearerTokenProvider"/> (falling back to the lazily-constructed real
+    /// <see cref="DefaultAzureCredentialSearchTokenProvider"/> if none was injected), matching
+    /// tools.py's own <c>DefaultAzureCredential</c> fallback and the
+    /// <c>https://search.azure.com/.default</c> scope -- mirrors PR #140 R5's
+    /// <c>RealtimeProcessor.ResolveUpstreamAuthHeaderAsync</c> one for one. A credential failure
+    /// here throws out of this method and is caught by <see cref="ExecuteAsync"/>'s own catch-all,
+    /// which reports a server-error <see cref="ToolResult"/> instead of tearing down the session --
+    /// no token is ever logged. Internal (not private) purely so a unit test can exercise the
+    /// selection without a real HTTP call or Azure credential.</summary>
+    internal async Task<(string HeaderName, string HeaderValue)> ResolveAuthHeaderAsync(CancellationToken cancellationToken)
+    {
+        if (!string.IsNullOrEmpty(_config.ApiKey))
+        {
+            return ("api-key", _config.ApiKey);
+        }
+
+        var provider = _bearerTokenProvider ?? DefaultAzureCredentialSearchTokenProvider.Instance.Value;
+        var token = await provider.GetTokenAsync(cancellationToken).ConfigureAwait(false);
+        return ("Authorization", $"Bearer {token}");
     }
 }
