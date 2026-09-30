@@ -44,9 +44,11 @@ public abstract class DevelopmentPassThroughTestsBase(ConformanceFixture fixture
 }
 
 [Collection(DevelopmentPassThroughCollection.Name)]
+[Trait("Dotnet", "ready")]
 public sealed class DevelopmentPassThroughUnsetModeTests(DevelopmentPassThroughFixture fixture)
     : DevelopmentPassThroughTestsBase(fixture);
 
 [Collection(DevelopmentPassThroughExplicitModeCollection.Name)]
+[Trait("Dotnet", "ready")]
 public sealed class DevelopmentPassThroughExplicitModeTests(DevelopmentPassThroughExplicitModeFixture fixture)
     : DevelopmentPassThroughTestsBase(fixture);

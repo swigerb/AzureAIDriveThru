@@ -22,6 +22,15 @@ namespace Conformance.Tests;
 /// count as more of the skeleton gets a real pipeline wired in (docs/dotnet_mapping.md) -- they do
 /// that by adding the trait directly in their own test files, with no workflow/CI edit required
 /// (the dotnet leg's filter already covers any newly tagged scenario for free).
+///
+/// Issue #143/ADR-002 (R10, Rick's PR #158 round 1 review): raised 75 to 104 by tagging all nine
+/// <c>Scenarios/Auth</c> auth-row test classes -- <c>RunAuthRowAsync</c>/<c>AssertFailsFastAsync</c>
+/// both call <c>Assert.Skip</c> (via <see cref="Conformance.Harness.AuthRowCapability.ShouldSkipCurrentBackend"/>)
+/// before any backend interaction, so tagging them cannot break the dotnet leg today: they show up
+/// as skipped, not run, until issue #147 flips <c>DotnetEnforcesAuth</c>. The two exceptions are
+/// row 16's classes (<c>DevelopmentPassThroughUnsetModeTests</c>/<c>DevelopmentPassThroughExplicitModeTests</c>),
+/// which assert real, ungated, already-passing-today pass-through behaviour and were confirmed
+/// green against <c>CONFORMANCE_BACKEND=dotnet</c> before tagging.
 /// </summary>
 public sealed class DotnetTraitCoverageTests
 {
@@ -29,12 +38,12 @@ public sealed class DotnetTraitCoverageTests
     private const string TraitValue = "ready";
 
     [Fact]
-    public void At_least_75_scenarios_are_tagged_dotnet_ready()
+    public void At_least_104_scenarios_are_tagged_dotnet_ready()
     {
         var count = CountDotnetReadyTestMethods();
 
-        Assert.True(count >= 75,
-            $"Expected at least 75 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
+        Assert.True(count >= 104,
+            $"Expected at least 104 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
             $"(the dotnet leg's `--filter \"{TraitName}={TraitValue}&Category!=Browser\"` baseline, " +
             $"docs/dotnet_mapping.md), but found {count}. If a tagged scenario was removed or renamed " +
             "without a replacement, the dotnet CI leg silently lost coverage.");
@@ -47,6 +56,16 @@ public sealed class DotnetTraitCoverageTests
     /// distinct data rows) whose effective Dotnet trait is "ready", combining method-level and
     /// class-level <c>[Trait]</c> attributes the same way xunit's own trait-based filtering does:
     /// a class-level trait applies to every test method declared in that class.
+    ///
+    /// Issue #143/ADR-002 (R10): abstract types are skipped outright -- xunit never discovers an
+    /// abstract class as a runnable test class in its own right, only its concrete subclasses --
+    /// and each concrete subclass's own (non-<c>DeclaredOnly</c>) methods are walked so a
+    /// <c>[Fact]</c> declared once on a shared abstract base (see
+    /// <c>Scenarios.Auth.DevelopmentPassThroughTestsBase</c>, run twice over via its two sealed,
+    /// separately-<c>[Trait]</c>-tagged, separately-fixtured subclasses) is credited once per
+    /// concrete subclass that actually runs it -- matching how many real xunit test cases the
+    /// dotnet leg's own <c>--filter</c> actually selects, not how many methods happen to be typed
+    /// out once in source.
     /// </summary>
     private static int CountDotnetReadyTestMethods()
     {
@@ -55,10 +74,15 @@ public sealed class DotnetTraitCoverageTests
 
         foreach (var type in assembly.GetTypes())
         {
+            if (type.IsAbstract)
+            {
+                continue;
+            }
+
             var classHasTrait = HasDotnetReadyTrait(type.GetCustomAttributes<TraitAttribute>(inherit: true));
 
             foreach (var method in type.GetMethods(
-                BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly))
+                BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static))
             {
                 if (!method.IsDefined(typeof(FactAttribute), inherit: true))
                 {

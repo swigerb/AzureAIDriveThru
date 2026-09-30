@@ -21,6 +21,7 @@ namespace Conformance.Tests.Scenarios.Auth;
 /// before ever launching a process, rather than waiting out a health-check timeout for a launch
 /// that, today, is known to actually succeed.
 /// </summary>
+[Trait("Dotnet", "ready")]
 public sealed class AuthModeLaunchTests
 {
     // Never-dialled: a genuinely fail-fast backend must exit before attempting to reach either of

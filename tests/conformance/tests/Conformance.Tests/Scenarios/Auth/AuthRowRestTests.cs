@@ -16,6 +16,7 @@ namespace Conformance.Tests.Scenarios.Auth;
 /// one of these skips cleanly today -- see <see cref="ConformanceFixture.RunAuthRowAsync"/>).
 /// </summary>
 [Collection(ConformanceCollection.Name)]
+[Trait("Dotnet", "ready")]
 public sealed class AuthRowRestTokenTests(ConformanceFixture fixture)
 {
     /// <summary>18.11's own three named REST routes -- deliberately not the anonymous allow-list

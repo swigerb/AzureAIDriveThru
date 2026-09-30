@@ -10,6 +10,7 @@ namespace Conformance.Tests.Scenarios.Auth;
 /// need only a started <see cref="FakeEntraIssuer"/> -- no backend -- so they pin the minting
 /// layer itself, independent of what either backend does with the result.
 /// </summary>
+[Trait("Dotnet", "ready")]
 public sealed class AuthRowCasesTests : IAsyncLifetime
 {
     private readonly FakeEntraIssuer _issuer = new();

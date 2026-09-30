@@ -9,6 +9,7 @@ namespace Conformance.Tests.Scenarios.Auth;
 /// expected outcome can never drift between the two routes.
 /// </summary>
 [Collection(ConformanceCollection.Name)]
+[Trait("Dotnet", "ready")]
 public sealed class AuthRowRealtimeTokenTests(ConformanceFixture fixture)
 {
     public static TheoryData<int> CaseIndexes()

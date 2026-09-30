@@ -8,6 +8,7 @@ namespace Conformance.Tests.Scenarios.Auth;
 /// backend, no socket. These pin the fix itself: the session-token fetch on a rejection row must
 /// always use a known-valid default access token, never the row's own (possibly bad) one.
 /// </summary>
+[Trait("Dotnet", "ready")]
 public sealed class AuthRowRealtimeAssertionsTests
 {
     /// <summary>R3 pin (Rick's PR #158 round 1 review): <see cref="AuthRowRealtimeAssertions.ResolveSessionTokenFetchToken"/>

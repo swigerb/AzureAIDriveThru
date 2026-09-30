@@ -15,6 +15,7 @@ namespace Conformance.Tests.Scenarios.Auth;
 /// #144's own unit/Dockerfile tests) contains neither token string anywhere.
 /// </summary>
 [Collection(ConformanceCollection.Name)]
+[Trait("Dotnet", "ready")]
 public sealed class AuthRowLoggingTests(ConformanceFixture fixture)
 {
     /// <summary>R6 (Rick's PR #158 round 1 review): before this fix, row 14 read
