@@ -14,8 +14,8 @@
       * App role -AppRoleValue exists and is enabled.
       * SPA-only redirect platform: at least one SPA redirect URI is registered, and NO Web
         platform redirect URIs exist (design 18.1: tighter than Retail Pulse).
-      * No password credentials (client secrets) on the application -- it must remain a public
-        client authenticated only via PKCE.
+      * No password credentials (client secrets) or key credentials on the application -- it must
+        remain a public client authenticated only via PKCE.
       * Service principal exists with appRoleAssignmentRequired = true.
 
     This script makes ONLY GET calls to Microsoft Graph via `az rest` (the caller's delegated
@@ -44,9 +44,11 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
+    [ValidatePattern('^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')]
     [string]$TenantId,
 
     [Parameter(Mandatory = $true)]
+    [ValidatePattern('^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')]
     [string]$ClientId,
 
     [string]$ApiScopeName = 'access_as_user',
@@ -86,7 +88,7 @@ if ($account.tenantId -ne $TenantId) {
 }
 
 # --- Resolve application by appId (read-only; ambiguity is a hard failure) ----
-$select = 'id,appId,displayName,signInAudience,identifierUris,api,appRoles,spa,web,passwordCredentials,tags'
+$select = 'id,appId,displayName,signInAudience,identifierUris,api,appRoles,spa,web,passwordCredentials,keyCredentials,tags'
 $resp = Invoke-GraphGet -Url "$graph/applications?`$filter=appId eq '$ClientId'&`$select=$select"
 $apps = @()
 if ($resp -and $resp.value) { $apps = @($resp.value) }
@@ -133,9 +135,11 @@ if ($webObj -and (Get-Prop $webObj 'redirectUris' $null)) { $webUris = @($webObj
 $spaOk = ($spaUris.Count -gt 0) -and ($webUris.Count -eq 0)
 Add-Result -Check 'SPA-only redirect platform (>=1 SPA URI, 0 Web URIs)' -Pass $spaOk -Detail "spa=[$($spaUris -join ', ')] web=[$($webUris -join ', ')]"
 
-# --- Check 7: no client secret (public client / PKCE only) ------------------------
+# --- Check 7: no client secret or key credential (public client / PKCE only) -----
 $pwdCreds = @(Get-Prop $app 'passwordCredentials' @())
-Add-Result -Check 'No client secret (public client, PKCE only)' -Pass ($pwdCreds.Count -eq 0) -Detail "passwordCredentials count=$($pwdCreds.Count)"
+$keyCreds = @(Get-Prop $app 'keyCredentials' @())
+$noCredsOk = ($pwdCreds.Count -eq 0) -and ($keyCreds.Count -eq 0)
+Add-Result -Check 'No client secret or key credential (public client, PKCE only)' -Pass $noCredsOk -Detail "passwordCredentials count=$($pwdCreds.Count) keyCredentials count=$($keyCreds.Count)"
 
 # --- Check 8: service principal + appRoleAssignmentRequired -----------------------
 $spResp = Invoke-GraphGet -Url "$graph/servicePrincipals?`$filter=appId eq '$ClientId'&`$select=id,appRoleAssignmentRequired"
