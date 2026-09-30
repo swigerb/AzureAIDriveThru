@@ -262,15 +262,6 @@ entries:
     docstring examples still default/hardcode to the single Sonic persona pending
     #74''s session-scoped persona binding.'
   increase_reason: ''
-- file: app/backend/tests/test_app.py
-  brand: sonic
-  max: 5
-  issue: '#144'
-  reason: 'The new RouteCoverageTests (issue #144, Entra auth) hardcode personas/sonic/**
-    paths for the same reason as test_persona_loader.py above -- it''s the only persona
-    pack that exists yet -- #78/#79 land the other packs, at which point these tests
-    get parameterized per-persona instead of hardcoding Sonic.'
-  increase_reason: '#76'
 - file: app/backend/tests/test_combo_orders.py
   brand: sonic
   max: 31
@@ -287,16 +278,6 @@ entries:
     it''s the only persona pack that exists yet -- #78/#79 land the other packs, at
     which point these tests get parameterized per-persona instead of hardcoding Sonic.'
   increase_reason: ''
-- file: app/backend/tests/test_entra_auth.py
-  brand: sonic
-  max: 2
-  issue: '#144'
-  reason: 'Middleware tests (issue #144, Entra auth) reference a persona-asset path
-    (personas/sonic/assets/**) to prove the anonymous-asset-extension split against
-    a real, shipped persona pack -- it''s the only persona pack that exists yet --
-    #78/#79 land the other packs, at which point this gets parameterized per-persona
-    instead of hardcoding Sonic.'
-  increase_reason: '#76'
 - file: app/backend/tests/test_extras_rules.py
   brand: sonic
   max: 1
@@ -339,12 +320,12 @@ entries:
   increase_reason: ''
 - file: app/backend/tests/test_persona_loader.py
   brand: sonic
-  max: 61
+  max: 46
   issue: '#78'
   reason: 'Backend test fixtures/paths reference personas/sonic/** directly because
     it''s the only persona pack that exists yet -- #78/#79 land the other packs, at
     which point these tests get parameterized per-persona instead of hardcoding Sonic.'
-  increase_reason: '#76'
+  increase_reason: ''
 - file: app/backend/tests/test_prompt_extras_pin.py
   brand: sonic
   max: 4

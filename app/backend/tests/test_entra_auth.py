@@ -34,7 +34,9 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from cryptography.hazmat.primitives.asymmetric import rsa
 
+import default_persona
 from entra_auth import (
+    ANONYMOUS_ASSET_EXTENSIONS,
     PERSONA_ASSET_ROUTE_NAME,
     REALTIME_PATH,
     SYNTHETIC_PRINCIPAL,
@@ -52,6 +54,26 @@ from entra_auth import (
 _TENANT = "11111111-1111-1111-1111-111111111111"
 _CLIENT = "22222222-2222-2222-2222-222222222222"
 _OTHER_TENANT = "99999999-9999-9999-9999-999999999999"
+
+# The default persona's own id -- used instead of a hardcoded brand name so these
+# middleware tests don't add fresh brand-literal occurrences to the rebrand-word-count
+# ratchet (#76). It resolves to a real, on-disk persona pack, so the persona-asset route
+# below still serves a real asset directory; only the literal spelling in this test's own
+# source is avoided (Rick's #159 round-1 review, required item 1).
+_DEFAULT_PERSONA_ID = default_persona.get_default_persona().id
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# The anonymous asset extension contract (18.2): exactly these seven, no more
+# (Rick's #159 round-1 review, required item 2 -- `.jpeg` was removed).
+# ═══════════════════════════════════════════════════════════════════════════
+
+class AnonymousAssetExtensionsTests(unittest.TestCase):
+    def test_exact_extension_set(self):
+        self.assertEqual(
+            ANONYMOUS_ASSET_EXTENSIONS,
+            frozenset({".svg", ".png", ".jpg", ".webp", ".ico", ".wav", ".mp3"}),
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -550,6 +572,86 @@ class TokenValidatorTests(unittest.IsolatedAsyncioTestCase):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# The JWKS cache contract (18.4): 24h lifespan, at most one forced refetch per
+# 5 minutes on an unknown `kid`, and validation running off the event loop via
+# `asyncio.to_thread` -- pinned against the REAL `jwt.PyJWKClient`, not the
+# `_StubJWKSClient` used above (Rick's #159 round-1 review, required item 3;
+# surviving mutations M8 -- cache 300s/cooldown 0 -- and M9 -- no to_thread).
+# ═══════════════════════════════════════════════════════════════════════════
+
+class JwksCachingAndThreadingTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.private_key, self.public_key = _rsa_keypair()
+        self.settings = _settings()
+        self.validator = TokenValidator(self.settings)
+        self.validator._fetch_discovery_document = mock.MagicMock(  # noqa: SLF001
+            return_value={"issuer": self.settings.issuer, "jwks_uri": "https://fake.example/jwks"}
+        )
+
+    def _sign(self, claims: dict, *, kid: str | None = None) -> str:
+        headers = {"kid": kid} if kid else None
+        return jwt.encode(claims, self.private_key, algorithm="RS256", headers=headers)
+
+    def test_lifespan_is_24_hours_and_cooldown_is_5_minutes(self):
+        """Pins the two `jwt.PyJWKClient` constructor arguments directly against
+        the real client object -- a regression back to PyJWT's own 300s/30s
+        defaults must fail this test."""
+        client = self.validator._get_jwks_client()  # noqa: SLF001
+        self.assertEqual(client.jwk_set_cache.lifespan, 86400)
+        self.assertEqual(client.cooldown_duration, 300)
+
+    def test_get_jwks_client_is_memoized_discovery_fetched_once(self):
+        first = self.validator._get_jwks_client()  # noqa: SLF001
+        second = self.validator._get_jwks_client()  # noqa: SLF001
+        self.assertIs(first, second)
+        self.validator._fetch_discovery_document.assert_called_once()  # noqa: SLF001
+
+    async def test_unknown_kid_refetches_at_most_once_within_cooldown(self):
+        """Two back-to-back tokens with an unrecognized `kid` must trigger the
+        JWKS endpoint's underlying network fetch at most once in total -- the
+        first cache-miss legitimately fetches, but the cooldown started by that
+        fetch must block a second one moments later, even though the `kid` is
+        still unmatched both times. Patches only the network primitive
+        (`OpenerDirector.open`) so `fetch_data`'s real cache-write and
+        cooldown-timestamp bookkeeping still run for real."""
+        kid = "the-real-signing-key"
+        jwk_dict = jwt.algorithms.RSAAlgorithm.to_jwk(self.public_key, as_dict=True)
+        jwk_dict.update({"kid": kid, "use": "sig"})
+        jwks_payload = json.dumps({"keys": [jwk_dict]}).encode()
+
+        class _FakeJwksResponse:
+            def read(self_inner):
+                return jwks_payload
+
+            def __enter__(self_inner):
+                return self_inner
+
+            def __exit__(self_inner, *exc):
+                return False
+
+        with mock.patch(
+            "urllib.request.OpenerDirector.open", return_value=_FakeJwksResponse()
+        ) as opener_open:
+            token_1 = self._sign(_claims(self.settings), kid="unknown-kid-one")
+            token_2 = self._sign(_claims(self.settings), kid="unknown-kid-two")
+            with self.assertRaises(EntraUnauthorized):
+                await self.validator.validate(token_1)
+            with self.assertRaises(EntraUnauthorized):
+                await self.validator.validate(token_2)
+            self.assertEqual(opener_open.call_count, 1)
+
+    async def test_validate_runs_the_synchronous_work_through_to_thread(self):
+        """`validate()` must hand its synchronous PyJWT work to `asyncio.to_thread`
+        rather than running it inline on the event loop -- pinned by replacing
+        `to_thread` itself and checking it was awaited with `_validate_sync`."""
+        sentinel = {"oid": "sentinel-oid", "tid": self.settings.tenant_id, "name": "Sentinel"}
+        with mock.patch("entra_auth.asyncio.to_thread", new=mock.AsyncMock(return_value=sentinel)) as to_thread:
+            result = await self.validator.validate("irrelevant-token-value")
+        self.assertEqual(result, sentinel)
+        to_thread.assert_awaited_once_with(self.validator._validate_sync, "irrelevant-token-value")  # noqa: SLF001
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # create_middleware -- the deny-by-default route matrix (18.2), the anonymous
 # allow-list, the persona-asset extension split, /realtime's ?access_token,
 # 401 vs 403 response shapes, and request["principal"].
@@ -619,7 +721,7 @@ class MiddlewareEntraModeTests(unittest.IsolatedAsyncioTestCase):
         validator = _StubValidator({})
         app = _build_app(self.settings, validator)
         async with TestClient(TestServer(app)) as client:
-            resp = await client.get("/personas/sonic/assets/logo.svg")
+            resp = await client.get(f"/personas/{_DEFAULT_PERSONA_ID}/assets/logo.svg")
             self.assertEqual(resp.status, 200)
             self.assertEqual(validator.calls, [])
 
@@ -627,8 +729,20 @@ class MiddlewareEntraModeTests(unittest.IsolatedAsyncioTestCase):
         validator = _StubValidator({})
         app = _build_app(self.settings, validator)
         async with TestClient(TestServer(app)) as client:
-            resp = await client.get("/personas/sonic/assets/demo/dummyOrder.json")
+            resp = await client.get(f"/personas/{_DEFAULT_PERSONA_ID}/assets/demo/dummyOrder.json")
             self.assertEqual(resp.status, 401)
+
+    async def test_persona_asset_jpeg_extension_requires_token(self):
+        """`.jpeg` was removed from `ANONYMOUS_ASSET_EXTENSIONS` (Rick's #159
+        round-1 review, required item 2): the contract is exactly `.svg .png .jpg
+        .webp .ico .wav .mp3`, and `.jpeg` widened it. A `.jpeg` asset must now
+        require a token like any other non-anonymous extension."""
+        validator = _StubValidator({})
+        app = _build_app(self.settings, validator)
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.get(f"/personas/{_DEFAULT_PERSONA_ID}/assets/x.jpeg")
+            self.assertEqual(resp.status, 401)
+            self.assertEqual(validator.calls, [])
 
     async def test_protected_route_no_authorization_header_401(self):
         validator = _StubValidator({})
