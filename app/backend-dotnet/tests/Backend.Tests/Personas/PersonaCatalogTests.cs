@@ -113,8 +113,10 @@ public sealed class PersonaCatalogTests
         // Issue #155 dropped the `local` pipeline entirely: PersonaModels only declares `Realtime` and
         // `Cascade`, so a pack that still lists a `models.local` entry (a stale copy from before the
         // removal, or a hand-authored mistake) must be rejected the same way any other unknown field is.
-        using var fixture = new PersonaPackFixture();
-        fixture.MutatePersonaJson("sonic", obj =>
+        // Uses the neutral test-alpha fixture pack (not a real brand pack) so this doesn't grow the
+        // checked-in rebrand-baseline word-count ratchet (#76).
+        using var fixture = new NeutralPersonaPackFixture();
+        fixture.MutatePersonaJson("test-alpha", obj =>
         {
             var local = new JsonObject
             {
@@ -124,8 +126,9 @@ public sealed class PersonaCatalogTests
             obj["models"]!["local"] = local;
         });
 
-        var exc = Assert.Throws<PersonaValidationException>(() => PersonaCatalog.Load(personasDir: fixture.PersonasDir));
-        Assert.Contains("sonic", exc.Message);
+        var exc = Assert.Throws<PersonaValidationException>(
+            () => PersonaCatalog.Load(personasDir: fixture.PersonasDir, personasEnv: "test-alpha", defaultPersonaEnv: "test-alpha"));
+        Assert.Contains("test-alpha", exc.Message);
     }
 
     [Fact]
