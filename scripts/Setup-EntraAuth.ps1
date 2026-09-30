@@ -21,9 +21,13 @@
         cleared under -Apply.
       * An app-role assignment for the operator (or -AssignUserUpn) so they can sign in.
 
-    The script is IDEMPOTENT: re-running with the SAME explicit -ClientId / -AppObjectId (or in
-    create-only mode, the same -DisplayName against the same existing app) reconciles that exact
-    app in place and never creates duplicates, extra scopes, extra roles, or secrets.
+    The script is IDEMPOTENT: re-running with the SAME explicit -ClientId / -AppObjectId reconciles
+    that exact app in place and never creates duplicates, extra scopes, extra roles, or secrets.
+    EVERY run after the first must pass -ClientId (or -AppObjectId): with neither, the script is
+    CREATE-ONLY and a same-DisplayName collision (including the app this same script created on a
+    prior run) is a hard failure, not a reconcile. If -Apply fails partway through creating a NEW
+    app, re-run with -ClientId set to the appId printed on the "Created application" line to finish
+    reconciling it (a bare retry with no -ClientId hits the same-name collision).
 
     SAFE RECONCILIATION (no app hijack): the script NEVER adopts an app located by display name.
     To modify an existing registration you must pass -ClientId (its appId) or -AppObjectId (its
@@ -69,8 +73,12 @@
     Redirect URIs are the bare origin. May be passed multiple times.
 
 .PARAMETER RedirectUri
-    Extra explicit redirect URIs to register (e.g. http://localhost:5173, http://localhost:8000
-    for local dev). Combined with the -FrontendOrigin values.
+    Extra explicit redirect URIs to register. Combined with the -FrontendOrigin values. Defaults to
+    the two local-dev origins from design 18.1 (http://localhost:8000, http://localhost:5173). The
+    redirect-URI reconcile (section 7) is a full SET, not a merge: a later run that omits
+    -RedirectUri, -FrontendOrigin and -FromAzdEnv would otherwise silently delete these local
+    origins too, which is why they are the default here rather than only documented. Pass an empty
+    array (-RedirectUri @()) to clear them explicitly.
 
 .PARAMETER FromAzdEnv
     Read the deployed backend origins from the selected azd environment: `BACKEND_URI` and
@@ -101,12 +109,35 @@
     Perform the writes. Omit for a read-only preview (the default).
 
 .EXAMPLE
-    ./scripts/Setup-EntraAuth.ps1 -TenantId <guid> -FromAzdEnv
-    # Preview only -- shows the plan, changes nothing.
+    # (a) Today's DARK env: ingress off, so the azd env BACKEND_URI is blank and -FromAzdEnv would
+    # fail (see the error below). Derive the Python container app's stable FQDN read-only instead
+    # (<app-name>.<environment-defaultDomain> never changes when ingress is toggled) and pass it
+    # as -FrontendOrigin.
+    $rg = azd env get-value AZURE_RESOURCE_GROUP
+    $app = (az containerapp list -g $rg -o json | ConvertFrom-Json | Where-Object { $_.tags.'azd-service-name' -eq 'backend' } | Select-Object -First 1).name
+    $envId = az containerapp show -n $app -g $rg --query properties.managedEnvironmentId -o tsv
+    $domain = az containerapp env show --ids $envId --query properties.defaultDomain -o tsv
+    ./scripts/Setup-EntraAuth.ps1 -TenantId <guid> -FrontendOrigin "https://$app.$domain"
+    # Preview only, changes nothing. Re-run the identical command with -Apply to provision:
+    ./scripts/Setup-EntraAuth.ps1 -TenantId <guid> -FrontendOrigin "https://$app.$domain" -Apply
 
 .EXAMPLE
-    ./scripts/Setup-EntraAuth.ps1 -TenantId <guid> -FromAzdEnv -Apply
-    # Provisions / reconciles the registration and grants the caller the app role.
+    # (b) A FRESH env, before the first deployment: no -FrontendOrigin/-FromAzdEnv is available yet,
+    # so only the -RedirectUri localhost defaults are registered.
+    ./scripts/Setup-EntraAuth.ps1 -TenantId <guid> -Apply
+    azd env set ENTRA_TENANT_ID "<tenant-id>"
+    azd env set ENTRA_CLIENT_ID "<client-id>"
+    azd up
+    # Then run (c) below once the app is deployed (design 18.10 step 5, the public provision) to
+    # reconcile the deployed origin into the redirect URIs.
+
+.EXAMPLE
+    # (c) RECONCILE, every run after the first: pass -ClientId (the appId Setup printed) so the
+    # script edits the existing app in place instead of hitting the create-only name collision.
+    # After the public provision (step 5) its preview should report "SPA redirect URIs already
+    # reconciled" as a cross-check that nothing drifted.
+    ./scripts/Setup-EntraAuth.ps1 -TenantId <guid> -ClientId <appId> -FromAzdEnv
+    ./scripts/Setup-EntraAuth.ps1 -TenantId <guid> -ClientId <appId> -FromAzdEnv -Apply
 
 .NOTES
     Requires: Azure CLI (az) logged in as a user who can create app registrations and app-role
@@ -122,7 +153,9 @@ param(
 
     [string[]]$FrontendOrigin = @(),
 
-    [string[]]$RedirectUri = @(),
+    # Design 18.1: the two local-dev origins, defaulted so a run that forgets -FrontendOrigin /
+    # -FromAzdEnv never wipes them out via the section-7 full-SET reconcile (review item 1/2).
+    [string[]]$RedirectUri = @('http://localhost:8000', 'http://localhost:5173'),
 
     [switch]$FromAzdEnv,
 
@@ -336,7 +369,7 @@ if ($FromAzdEnv) {
     Write-Section 'Reading backend origins from the azd environment'
     $backendUri = (azd env get-value BACKEND_URI 2>$null | Out-String).Trim()
     if ([string]::IsNullOrWhiteSpace($backendUri)) {
-        throw "-FromAzdEnv: azd env value BACKEND_URI is empty. This is expected while BACKEND_INGRESS_ENABLED=false (design 18.10 step 4, the dark provision) -- do not reconcile redirect URIs without it. Pass -FrontendOrigin explicitly instead, or re-run once the public provision (step 5) has set BACKEND_URI."
+        throw "-FromAzdEnv: azd env value BACKEND_URI is empty. This is expected while BACKEND_INGRESS_ENABLED=false (design 18.10 step 4, the dark provision) -- do not reconcile redirect URIs without it. Derive the FQDN with the commands in .EXAMPLE (a) and pass -FrontendOrigin, or re-run once the public provision (step 5) has set BACKEND_URI."
     }
     $azdOrigins += $backendUri
     Write-Done "BACKEND_URI = $backendUri"
@@ -519,7 +552,11 @@ else {
 # --- 7. Redirect URIs: SPA-only, full reconcile; clear any Web URIs ------------
 # Design 18.1: tighter than Retail Pulse -- SPA platform only, no Web platform redirect URIs.
 # A full SET (not merge) so a stale origin (e.g. a re-provisioned environment's old FQDN) is
-# actually removed, not just supplemented.
+# actually removed, not just supplemented. Review item 2: a full SET with an EMPTY list would
+# silently wipe every existing SPA redirect URI on a run that supplied none (e.g. -RedirectUri
+# @() with no -FrontendOrigin/-FromAzdEnv), breaking sign-in for every already-registered origin.
+# So the SPA reconcile below only ever runs when $redirects.Count -gt 0; with zero redirects the
+# existing SPA URIs are left untouched and only the (always SPA-only) Web platform is cleared.
 Write-Section 'Redirect URIs (SPA-only)'
 if ($app) {
     $current = Invoke-Graph -Method GET -Url "$graph/applications/$($app.id)?`$select=spa,web"
@@ -528,22 +565,34 @@ if ($app) {
     $curWeb = @()
     if ($current.web -and $current.web.redirectUris) { $curWeb = @($current.web.redirectUris) }
 
-    $spaKey = ($curSpa | Sort-Object) -join ';'
-    $desiredKey = ($redirects | Sort-Object) -join ';'
-    $spaChanged = $spaKey -ne $desiredKey
     $webChanged = $curWeb.Count -gt 0
-
-    if ($spaChanged) { Write-Plan "Set SPA redirect URIs: $($redirects -join ', ')" }
-    else { Write-Skip "SPA redirect URIs already reconciled: $($redirects -join ', ')" }
     if ($webChanged) { Write-Plan "Clear Web platform redirect URIs (found: $($curWeb -join ', '))" }
     else { Write-Skip 'No Web platform redirect URIs present' }
 
-    if (($spaChanged -or $webChanged) -and $Apply) {
-        Invoke-Graph -Method PATCH -Url "$graph/applications/$($app.id)" -Body @{
-            spa = @{ redirectUris = @($redirects) }
-            web = @{ redirectUris = @() }
-        } | Out-Null
-        Write-Done 'Redirect URIs reconciled (SPA-only)'
+    if ($redirects.Count -eq 0) {
+        Write-Skip 'no redirect URIs supplied, SPA URIs left unchanged'
+        if ($webChanged -and $Apply) {
+            Invoke-Graph -Method PATCH -Url "$graph/applications/$($app.id)" -Body @{
+                web = @{ redirectUris = @() }
+            } | Out-Null
+            Write-Done 'Web platform redirect URIs cleared'
+        }
+    }
+    elseif ($redirects.Count -gt 0) {
+        $spaKey = ($curSpa | Sort-Object) -join ';'
+        $desiredKey = ($redirects | Sort-Object) -join ';'
+        $spaChanged = $spaKey -ne $desiredKey
+
+        if ($spaChanged) { Write-Plan "Set SPA redirect URIs: $($redirects -join ', ')" }
+        else { Write-Skip "SPA redirect URIs already reconciled: $($redirects -join ', ')" }
+
+        if (($spaChanged -or $webChanged) -and $Apply) {
+            Invoke-Graph -Method PATCH -Url "$graph/applications/$($app.id)" -Body @{
+                spa = @{ redirectUris = @($redirects) }
+                web = @{ redirectUris = @() }
+            } | Out-Null
+            Write-Done 'Redirect URIs reconciled (SPA-only)'
+        }
     }
 }
 else {
