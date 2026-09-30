@@ -111,7 +111,7 @@ catch (ModelValidationException exc)
 // ── 6. Processor registry (issue #75, design doc section 7.4): only "realtime" is registered
 // this wave -- its own model resolution is fully ported (Models/ModelDispatch.cs's
 // ResolveRealtimeModel), but ProcessAsync is a deliberate stub; the real upstream relay is #13. A
-// model catalogued for "cascade"/"local" 404s at dispatch time until their own processors land. ──
+// model catalogued for "cascade" 404s at dispatch time until its own processor lands. ──
 var processorRegistry = new ProcessorRegistry();
 processorRegistry.Register(new RealtimeProcessor(
     modelCatalog,

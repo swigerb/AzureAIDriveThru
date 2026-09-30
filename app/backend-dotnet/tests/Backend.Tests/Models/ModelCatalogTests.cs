@@ -6,21 +6,21 @@ using Backend.Tests.TestSupport;
 namespace Backend.Tests.Models;
 
 /// <summary>ModelCatalog.FromConfig/ValidatePersonaDefaults tests (issue #75, design doc section
-/// 7.2). config.yaml's real, shared `models.catalog` (5 entries) settled the shape as a top-level
+/// 7.2). config.yaml's real, shared `models.catalog` (4 entries) settled the shape as a top-level
 /// list of mappings under `models:` -- these tests assert against that real content directly
 /// rather than only synthetic fixtures, so a future edit to config.yaml's catalog is caught here
 /// too.</summary>
 public sealed class ModelCatalogTests
 {
     [Fact]
-    public void RealSharedConfig_HasFiveCatalogueEntries()
+    public void RealSharedConfig_HasFourCatalogueEntries()
     {
         var config = AppConfig.Load();
 
         var catalog = ModelCatalog.FromConfig(config);
 
         Assert.Equal(
-            new[] { "gpt-5-mini", "gpt-realtime-2.1", "gpt-realtime-mini", "phi-4", "phi-4-mini-local" },
+            new[] { "gpt-5-mini", "gpt-realtime-2.1", "gpt-realtime-mini", "phi-4" },
             catalog.Ids);
 
         var realtime = catalog.Get("gpt-realtime-2.1");
@@ -34,10 +34,6 @@ public sealed class ModelCatalogTests
         var cascade = catalog.Get("gpt-5-mini");
         Assert.Equal("cascade", cascade.Pipeline);
         Assert.True(cascade.ToolCalling);
-
-        var local = catalog.Get("phi-4-mini-local");
-        Assert.Equal("local", local.Pipeline);
-        Assert.Equal("onnx", local.Runtime);
     }
 
     [Fact]

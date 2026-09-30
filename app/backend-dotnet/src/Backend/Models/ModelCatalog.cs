@@ -12,8 +12,8 @@ namespace Backend.Models;
 ///
 /// 1. **Catalog** (this class; config.yaml's top-level <c>models: catalog:</c> list): the facts
 ///    about a model that are the same on every deployment -- its id, which pipeline it belongs to
-///    (realtime | cascade | local), a display label, and its capabilities (reasoning for
-///    realtime/cascade, toolCalling for cascade, runtime for local).
+///    (realtime | cascade), a display label, and its capabilities (reasoning for
+///    realtime/cascade, toolCalling for cascade).
 /// 2. **Deployment** (this class; the AZURE_AI_MODEL_DEPLOYMENTS env var, a JSON map of catalog id
 ///    -&gt; Foundry deployment name): which of the catalogued models actually exist on THIS
 ///    deployment. A catalog entry with no deployment mapped for it is not selectable (section
@@ -33,7 +33,7 @@ namespace Backend.Models;
 /// </summary>
 public sealed class ModelCatalog
 {
-    private static readonly HashSet<string> Pipelines = ["realtime", "cascade", "local"];
+    private static readonly HashSet<string> Pipelines = ["realtime", "cascade"];
     private static readonly HashSet<string> RequiredEntryFields = ["id", "pipeline", "label"];
     private static readonly HashSet<string> KnownEntryFields =
         ["id", "pipeline", "label", "reasoning", "toolCalling", "runtime"];
@@ -132,7 +132,6 @@ public sealed class ModelCatalog
     {
         yield return ("realtime", persona.Models.Realtime);
         yield return ("cascade", persona.Models.Cascade);
-        yield return ("local", persona.Models.Local);
     }
 
     private string DescribeIds() => Ids.Count > 0 ? string.Join(", ", Ids) : "(none)";

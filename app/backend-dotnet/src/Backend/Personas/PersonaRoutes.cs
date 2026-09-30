@@ -218,10 +218,6 @@ public static class PersonaRoutes
         {
             body["cascade"] = BuildPipelineBody(models.Cascade, "cascade", modelCatalog);
         }
-        if (models.Local is not null)
-        {
-            body["local"] = BuildPipelineBody(models.Local, "local", modelCatalog);
-        }
         return body;
     }
 
