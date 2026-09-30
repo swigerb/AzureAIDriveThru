@@ -430,6 +430,49 @@ class SetupEntraAuthScriptContractTests(unittest.TestCase):
         self.assertRegex(self.text, r"-ClientId\b.{0,400}-FromAzdEnv|-FromAzdEnv\b.{0,400}-ClientId", "expected an example combining -ClientId with a reconcile run")
         self.assertRegex(self.text, r"defaultDomain|properties\.configuration", "expected the FQDN-derivation commands (defaultDomain / properties.configuration) in the docs")
 
+    def test_example_a_help_matches_the_deploy_md_dark_state_sequence(self):
+        # Round 3 review, item 7: the `.EXAMPLE (a)` comment-based help had drifted from
+        # DEPLOY.md's dark-state sequence -- it lacked `azd env select`, the `az account set
+        # --subscription` pin, and the `if (-not $app -or -not $domain)` guard, so a reader who
+        # only ran `Get-Help ./scripts/Setup-EntraAuth.ps1 -Examples` (rather than DEPLOY.md)
+        # would target the wrong azd env/subscription and could derive an origin from a
+        # not-found app/domain. Assert the example block carries all three, in order.
+        match = re.search(r"\.EXAMPLE\s*\n(?P<block>.*?)(?=\n\.EXAMPLE|\n#>)", self.text, re.DOTALL)
+        self.assertIsNotNone(match, "expected an .EXAMPLE (a) help block")
+        block = match.group("block")
+        self.assertIn("azd env select", block)
+        self.assertIn("az account set --subscription (azd env get-value AZURE_SUBSCRIPTION_ID)", block)
+        self.assertIn("if (-not $app -or -not $domain)", block)
+        select_pos = block.find("azd env select")
+        account_pos = block.find("az account set --subscription")
+        guard_pos = block.find("if (-not $app -or -not $domain)")
+        run_pos = block.find("./scripts/Setup-EntraAuth.ps1 -TenantId <guid> -FrontendOrigin")
+        self.assertTrue(
+            select_pos < account_pos < guard_pos < run_pos,
+            "expected 'azd env select' -> 'az account set' -> the not-found guard -> the Setup-EntraAuth.ps1 call, in that order",
+        )
+
+    def test_create_plan_prints_the_spa_redirect_uris_it_will_register(self):
+        # Round 3 review, item 5: the preview for a brand-new app named every setting it would
+        # create EXCEPT the SPA redirect URIs themselves, so a dry run gave no way to confirm
+        # what would be registered without re-deriving $redirects by hand. The create-plan
+        # Write-Plan line must include the joined $redirects (or an explicit "<none>" fallback).
+        idx = self.text.index("$app = Resolve-TargetApplication")
+        match = re.search(r"if \(-not \$app\) \{(?P<body>.*?)\n\}\n", self.text[idx:], re.DOTALL)
+        self.assertIsNotNone(match, "expected the `if (-not $app) { ... }` create-new-app block")
+        body = match.group("body")
+        self.assertIn("$redirectsPreview", body, "expected a $redirectsPreview variable used in the create-plan preview")
+        self.assertRegex(
+            body,
+            r"Write-Plan\s+\"[^\"]*SPA redirect URIs:\s*\$redirectsPreview",
+            "expected the create-plan Write-Plan line to include the SPA redirect URIs preview",
+        )
+        self.assertRegex(
+            body,
+            r"\$redirectsPreview\s*=\s*if\s*\(\$redirects\.Count\s*-gt\s*0\)\s*\{\s*\$redirects\s*-join\s*',\s*'\s*\}\s*else\s*\{\s*'<none>'\s*\}",
+            "expected $redirectsPreview to join $redirects when non-empty and fall back to '<none>'",
+        )
+
     def test_spa_redirect_patch_only_fires_when_redirects_are_non_empty(self):
         # Review item 2: Setup must never wipe existing SPA redirect URIs when a run supplies
         # none -- the `spa = @{ redirectUris = @($redirects) }` PATCH must be lexically nested in
@@ -665,9 +708,12 @@ class VerifyProductionAuthScriptContractTests(unittest.TestCase):
         self.assertNotIn("no auth configuration present", self.text)
         self.assertNotRegex(self.text, r"ResourceNotFound\|could not be found\|NotFound")
         idx = self.text.index("$authShow = az containerapp auth show")
-        window = self.text[idx: idx + 700]
+        # Window widened from 700: round 3 item 6 added stdout/stderr-partitioning lines (and
+        # their explanatory comments) between the `az` call and the `if ($LASTEXITCODE...)` guard.
+        window = self.text[idx: idx + 1200]
         self.assertRegex(
-            window, r"if\s*\(\$LASTEXITCODE\s*-ne\s*0\)\s*\{\s*(?:#[^\n]*\n\s*)*Add-Result[^\n]*\$false",
+            window,
+            r"if\s*\(\$LASTEXITCODE\s*-ne\s*0\)\s*\{\s*(?:#[^\n]*\n\s*)*Add-Result[^\n]*\$false",
             "every `az containerapp auth show` failure must directly Add-Result a FAIL, with no "
             "intermediate branch that could turn a specific error text into a PASS",
         )
@@ -723,6 +769,99 @@ class VerifyProductionAuthScriptContractTests(unittest.TestCase):
     def test_exits_non_zero_on_failure(self):
         self.assertIn("exit 1", self.text)
         self.assertIn("exit 0", self.text)
+
+    def test_expected_image_variable_is_never_shadowed(self):
+        # Round 2 review, blocker 2: PowerShell variable names are case-insensitive, so a local
+        # named `$expectedImage` (any casing) would be the SAME variable as the
+        # `[hashtable]$ExpectedImage` parameter, and assigning a string to it throws "Cannot
+        # convert ... to Hashtable" at runtime. The script must use `$wantImage` instead; this was
+        # a smoke-test-only pin (round 3 review, item 4) until now.
+        self.assertNotRegex(
+            self.text, r"\$expectedImage\s*=(?!=)",
+            "must never assign to $expectedImage; it shadows the [hashtable]$ExpectedImage "
+            "parameter (case-insensitive) -- use $wantImage",
+        )
+
+    def test_probe_persona_parameter_is_never_reassigned_outside_the_param_block(self):
+        # Round 2 review, blocker 3: [ValidatePattern(...)] re-validates on every assignment to
+        # -ProbePersona, so reassigning it (e.g. to an unresolved/empty value) throws instead of
+        # failing closed with a normal FAIL result. The script must resolve into the separate
+        # local $probePersonaId and never write back to $ProbePersona itself.
+        param_block = re.search(r"^param\s*\(.*?\n\)\n", self.text, re.DOTALL | re.MULTILINE)
+        self.assertIsNotNone(param_block, "expected a param() block")
+        outside_param_block = self.text[:param_block.start()] + self.text[param_block.end():]
+        self.assertNotRegex(
+            outside_param_block, r"\$ProbePersona\s*=(?!=)",
+            "must never reassign $ProbePersona outside the param() block -- resolve into "
+            "$probePersonaId instead",
+        )
+
+    def test_get_prop_uses_the_properties_indexer_not_contains(self):
+        # Round 2 review, blocker 1: `.PSObject.Properties.Name -contains $Name` allocates and
+        # scans a full name list on every call and is a subtly different (looser under certain
+        # PSCustomObject shapes) check than the direct indexer. Get-Prop must use
+        # `.PSObject.Properties[$Name]`, pinned directly this time (round 3 review, item 4) rather
+        # than relying only on the mocked smoke test to catch a regression back to `-contains`.
+        self.assertNotRegex(self.text, r"\.Properties\.Name\s+-contains\b")
+        self.assertIn(".PSObject.Properties[$Name]", self.text)
+
+    def test_json_list_calls_go_through_the_stderr_partitioning_helper(self):
+        # Round 3 review, item 6: `az ... --output json 2>&1 | ConvertFrom-Json` breaks if `az`
+        # ever prints a stderr warning (e.g. a containerapp extension update notice) on an
+        # otherwise-successful call -- the warning becomes an extra non-JSON line in the merged
+        # stream and ConvertFrom-Json throws. `containerapp list`/`revision list`/`secret list`
+        # must all go through Invoke-AzJsonList, which partitions stdout from stderr by object
+        # type before parsing, rather than reintroducing the raw merged-pipe idiom.
+        self.assertIn("function Invoke-AzJsonList", self.text)
+        for needle in (
+            "Invoke-AzJsonList -Description \"az containerapp list",
+            "Invoke-AzJsonList -Description \"az containerapp revision list",
+            "Invoke-AzJsonList -Description \"az containerapp secret list",
+        ):
+            self.assertIn(needle, self.text, f"expected {needle!r} to route through Invoke-AzJsonList")
+        # The old raw idiom must not reappear for these three subcommands.
+        self.assertNotRegex(self.text, r"az containerapp list[^\n]*2>&1")
+        self.assertNotRegex(self.text, r"az containerapp revision list[^\n]*2>&1")
+        self.assertNotRegex(self.text, r"az containerapp secret list[^\n]*2>&1")
+
+    def test_easyauth_auth_show_partitions_stderr_before_parsing(self):
+        # The EasyAuth check (item 3/9: must fail closed on ANY error) is not routed through
+        # Invoke-AzJsonList (a non-zero exit there must Add-Result a FAIL, not throw), so it needs
+        # its own stdout/stderr partition. Pin that it has one, so a stray stderr line on an
+        # otherwise-successful `auth show` can't corrupt the JSON parse either.
+        idx = self.text.index("$authShow = az containerapp auth show")
+        window = self.text[idx: idx + 800]
+        self.assertRegex(window, r"-is\s+\[string\]")
+        self.assertRegex(window, r"-isnot\s+\[string\]")
+
+    def test_two_active_revisions_guidance_is_scoped_to_full_mode_only(self):
+        # Round 3 review, item 1: enabling ingress (18.10 step 5) creates a new revision, so a
+        # transient two-active-revisions result right after that step is expected in full mode.
+        # The added guidance text must only ever be reachable when NOT -RevisionsOnly -- the dark
+        # -provision gate (18.10 step 4a) must stay strict, with no wait/retry carve-out, since two
+        # actives there means the dark revision genuinely never finished rolling out.
+        self.assertIn("wait for the old one to retire", self.text)
+        idx = self.text.index("wait for the old one to retire")
+        # Walk backwards from the guidance text to the nearest enclosing `if` header and confirm
+        # it is gated on `-not $RevisionsOnly` (in either operand order).
+        preceding = self.text[:idx]
+        last_if = preceding.rfind("if (")
+        self.assertGreater(last_if, 0, "expected an enclosing if-guard before the guidance text")
+        guard = preceding[last_if: idx]
+        self.assertRegex(
+            guard, r"-not\s+\$RevisionsOnly|\$RevisionsOnly\s*-eq\s*\$false",
+            "the step-5 wait/retry guidance must be gated on full mode (-not $RevisionsOnly), "
+            f"got guard text: {guard!r}",
+        )
+        # The "exactly one active revision" Add-Result call itself must be a bare, unconditional
+        # statement (only the extra sentence appended to its Detail is mode-gated) -- it should
+        # appear AFTER the guidance if-block closes, not be nested inside it.
+        addresult_idx = self.text.index('Add-Result "${svcName}: exactly one active revision"')
+        self.assertGreater(
+            addresult_idx, idx,
+            "the active-revision Add-Result call must run unconditionally, after the mode-gated "
+            "guidance text is computed -- not be nested inside the -RevisionsOnly guard",
+        )
 
 
 class AllScriptsSharedSafetyInvariantTests(unittest.TestCase):
@@ -830,6 +969,25 @@ class DeployMdDarkStateSetupSequenceTests(unittest.TestCase):
         # Review item 1 pin: asserting "-FrontendOrigin" alone (elsewhere) is satisfied even if
         # the value were hardcoded or malformed. Pin the actual interpolated form.
         self.assertIn('-FrontendOrigin "https://$app.$domain"', self.text)
+
+    def test_every_setup_line_in_the_dark_state_block_carries_the_frontend_origin(self):
+        # Review round 3, item 3: the previous pin above used `assertIn` against the WHOLE file,
+        # so it was satisfied as long as ONE of the two Setup-EntraAuth.ps1 lines (preview,
+        # -Apply) in the dark-state block carried the correct `-FrontendOrigin` form -- a mutation
+        # that dropped `.$domain` from only ONE of the two lines survived it. Assert every
+        # `./scripts/Setup-EntraAuth.ps1` call line within the block individually.
+        block = self._dark_state_block()
+        setup_lines = [
+            line for line in block.splitlines()
+            if "./scripts/Setup-EntraAuth.ps1" in line
+        ]
+        self.assertGreaterEqual(len(setup_lines), 2, "expected at least two Setup-EntraAuth.ps1 lines (preview, -Apply) in the dark-state block")
+        offending = [line for line in setup_lines if '-FrontendOrigin "https://$app.$domain"' not in line]
+        self.assertEqual(
+            offending, [],
+            f"found Setup-EntraAuth.ps1 line(s) in the dark-state block missing the exact "
+            f"-FrontendOrigin \"https://$app.$domain\" form: {offending}",
+        )
 
 
 if __name__ == "__main__":
