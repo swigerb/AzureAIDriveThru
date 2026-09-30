@@ -87,9 +87,13 @@ class SessionSecretWiringTests(unittest.TestCase):
         self.assertEqual(params["appSessionSecret"]["value"], "${APP_SESSION_SECRET=}")
         self.assertNotIn("appSessionSecretFallback", params)
 
-    def test_out_of_band_auth_secret_is_preserved(self):
-        block = _backend_module_block(MAIN_BICEP.read_text(encoding="utf-8"))
-        self.assertIn("preserveExistingSecretNames: enableAuth && empty(authClientSecret) ? [ 'aad-client-secret' ] : []", block)
+    def test_no_leftover_easyauth_secret_plumbing(self):
+        # ADR-002 (#146): EasyAuth is removed entirely -- no aad-client-secret secret, no
+        # preserveExistingSecretNames carve-out for it, anywhere in main.bicep. See
+        # test_entra_infra_contract.py for the full set of EasyAuth-removal pins.
+        text = MAIN_BICEP.read_text(encoding="utf-8")
+        self.assertNotIn("aad-client-secret", text)
+        self.assertNotIn("preserveExistingSecretNames", text)
 
 
 class LoadAppSecretTests(unittest.TestCase):

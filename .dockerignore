@@ -22,11 +22,10 @@
 **/*.pyc
 **/.pytest_cache
 
-# Env files can hold secrets. The one exception is app/frontend/.env: scripts/docker-build.sh
-# generates it from VITE_* variables only, Vite reads it at build time, and VITE_* values are
-# embedded in the public bundle anyway. The Dockerfile writes a safe default when it's absent.
+# Env files can hold secrets. Frontend config (VITE_AUTH_MODE, VITE_ENTRA_*) travels as Docker
+# build args instead (ARG/ENV in app/Dockerfile and Dockerfile.dotnet), so no .env exception is
+# needed here -- every .env file is excluded from the build context.
 **/.env*
-!app/frontend/.env
 
 # Built inside the image by the multistage build (vite outDir ../backend/static).
 app/backend/static

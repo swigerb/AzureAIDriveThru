@@ -19,6 +19,7 @@ public sealed class HappyHourPricingTests(FixedClockConformanceFixture fixture)
     private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Happy_hour_discount_applies_at_the_frozen_clock_instant() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -108,6 +109,7 @@ public sealed class HappyHourPricingTests(FixedClockConformanceFixture fixture)
     /// test_pre_applied_discount_tool_price_is_not_double_discounted.
     /// </summary>
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Pre_discounted_tool_call_price_is_not_double_discounted_at_the_frozen_clock_instant() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;

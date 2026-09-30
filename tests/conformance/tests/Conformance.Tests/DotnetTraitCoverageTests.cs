@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using Xunit;
@@ -9,12 +11,11 @@ namespace Conformance.Tests;
 /// <c>FullyQualifiedName~ClassNamePart</c> substring match, which any future test class whose
 /// name happens to contain one of those substrings would silently join) with an explicit
 /// <c>[Trait("Dotnet", "ready")]</c> on exactly the scenarios docs/dotnet_mapping.md documents as
-/// green against the C# skeleton (75 distinct tagged test *methods* as of PR #140 round 2 -- one
-/// <c>[Theory]</c>, <c>PersonaAssetRouteConformanceTests.Persona_asset_route_rejects_path_traversal_attempts</c>,
-/// has 4 <c>[InlineData]</c> rows, so <c>dotnet test</c>'s own pass count for the same filter is
-/// 78 result rows; this test counts methods, matching the <c>FullyQualifiedName</c> filter it
-/// replaced). The dotnet CI leg now runs <c>--filter "Dotnet=ready&amp;Category!=Browser"</c>
-/// instead.
+/// green against the C# skeleton (167 distinct tagged test *methods* as of PR #149 round 2 -- several
+/// <c>[Theory]</c> methods have multiple <c>[InlineData]</c>/<c>[MemberData]</c> rows each, so
+/// <c>dotnet test</c>'s own pass count for the same filter is higher than 167 result rows; this test
+/// counts methods, matching the <c>FullyQualifiedName</c> filter it replaced). The dotnet CI leg now runs
+/// <c>--filter "Dotnet=ready&amp;Category!=Browser"</c> instead.
 ///
 /// This test is the guard that the tagged count can't silently shrink: a PR that removes or
 /// renames a tagged scenario without adding a replacement fails here, instead of just quietly
@@ -23,30 +24,59 @@ namespace Conformance.Tests;
 /// that by adding the trait directly in their own test files, with no workflow/CI edit required
 /// (the dotnet leg's filter already covers any newly tagged scenario for free).
 ///
-/// Issue #143/ADR-002 (R10, Rick's PR #158 round 1 review): raised 75 to 104 by tagging all nine
-/// <c>Scenarios/Auth</c> auth-row test classes -- <c>RunAuthRowAsync</c>/<c>AssertFailsFastAsync</c>
-/// both call <c>Assert.Skip</c> (via <see cref="Conformance.Harness.AuthRowCapability.ShouldSkipCurrentBackend"/>)
-/// before any backend interaction, so tagging them cannot break the dotnet leg today: they show up
-/// as skipped, not run, until issue #147 flips <c>DotnetEnforcesAuth</c>. The two exceptions are
-/// row 16's classes (<c>DevelopmentPassThroughUnsetModeTests</c>/<c>DevelopmentPassThroughExplicitModeTests</c>),
-/// which assert real, ungated, already-passing-today pass-through behaviour and were confirmed
-/// green against <c>CONFORMANCE_BACKEND=dotnet</c> before tagging.
+/// Issue #143/ADR-002 (R10, Rick's PR #158 round 1 review): tagged nine <c>Scenarios/Auth</c>
+/// auth-row test classes. Five of them (<c>AuthModeLaunchTests</c>, <c>AuthRowLoggingTests</c>,
+/// <c>AuthRowRealtimeTokenTests</c>, <c>AuthRowRestTokenTests</c>, <c>AuthRowSpecialCaseTests</c> --
+/// 18 methods) route every test method through <c>RunAuthRowAsync</c>/<c>AssertFailsFastAsync</c>,
+/// which call <c>Assert.Skip</c> (via <see cref="Conformance.Harness.AuthRowCapability.ShouldSkipCurrentBackend"/>)
+/// before any backend interaction: they show up as skipped, not run, on the dotnet leg until issue
+/// #147 flips <c>DotnetEnforcesAuth</c>. Tagging them was safe (skipped tests can't fail the dotnet
+/// leg), but <see cref="AuthRowGatedTypeNames"/> excludes them from THIS floor: counting a
+/// skip-only method here would let a real regression (removing genuinely-passing coverage
+/// elsewhere) hide behind these always-skipped rows staying tagged, which defeats the point of a
+/// coverage floor. The other four Auth classes -- <c>AuthRowCasesTests</c>/
+/// <c>AuthRowRealtimeAssertionsTests</c> (pure token-minting/assertion-helper unit tests, no
+/// backend, never gated) and row 16's <c>DevelopmentPassThroughUnsetModeTests</c>/
+/// <c>DevelopmentPassThroughExplicitModeTests</c> (real, ungated, already-passing-today
+/// pass-through behaviour) -- count normally, since they run and assert something real against the
+/// dotnet leg today.
+///
+/// PR #158 CI-trigger fix (dev merge, bringing in #149's floor of 167 and #156): the merged tree's
+/// raw tagged-method count (before excluding the skip-gated set below) is 196 (167 real + 29 from
+/// R10's tagging); subtracting the 18 skip-gated methods above gives the 178 floor below.
 /// </summary>
 public sealed class DotnetTraitCoverageTests
 {
     private const string TraitName = "Dotnet";
     private const string TraitValue = "ready";
 
-    [Fact]
-    public void At_least_104_scenarios_are_tagged_dotnet_ready()
+    /// <summary>
+    /// Full names of the <c>Scenarios/Auth</c> test classes whose methods are unconditionally
+    /// skip-gated (see the class doc above) -- excluded from <see cref="CountFloorEligibleDotnetReadyTestMethods"/>
+    /// so this floor only ever counts methods that produce a real pass/fail signal on the dotnet
+    /// leg today.
+    /// </summary>
+    private static readonly HashSet<string> AuthRowGatedTypeNames = new(StringComparer.Ordinal)
     {
-        var count = CountDotnetReadyTestMethods();
+        "Conformance.Tests.Scenarios.Auth.AuthModeLaunchTests",
+        "Conformance.Tests.Scenarios.Auth.AuthRowLoggingTests",
+        "Conformance.Tests.Scenarios.Auth.AuthRowRealtimeTokenTests",
+        "Conformance.Tests.Scenarios.Auth.AuthRowRestTokenTests",
+        "Conformance.Tests.Scenarios.Auth.AuthRowSpecialCaseTests",
+    };
 
-        Assert.True(count >= 104,
-            $"Expected at least 104 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
-            $"(the dotnet leg's `--filter \"{TraitName}={TraitValue}&Category!=Browser\"` baseline, " +
-            $"docs/dotnet_mapping.md), but found {count}. If a tagged scenario was removed or renamed " +
-            "without a replacement, the dotnet CI leg silently lost coverage.");
+    [Fact]
+    public void At_least_178_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
+    {
+        var count = CountFloorEligibleDotnetReadyTestMethods();
+
+        Assert.True(count >= 178,
+            $"Expected at least 178 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
+            $"and not unconditionally skip-gated by AuthRowCapability (the dotnet leg's " +
+            $"`--filter \"{TraitName}={TraitValue}&Category!=Browser\"` baseline, minus the five " +
+            "skip-only Scenarios/Auth classes -- see this class's own doc comment; " +
+            $"docs/dotnet_mapping.md), but found {count}. If a tagged scenario was removed or " +
+            "renamed without a replacement, the dotnet CI leg silently lost coverage.");
     }
 
     /// <summary>
@@ -55,7 +85,10 @@ public sealed class DotnetTraitCoverageTests
     /// <c>FullyQualifiedName</c>-based filter this replaces -- both count distinct methods, not
     /// distinct data rows) whose effective Dotnet trait is "ready", combining method-level and
     /// class-level <c>[Trait]</c> attributes the same way xunit's own trait-based filtering does:
-    /// a class-level trait applies to every test method declared in that class.
+    /// a class-level trait applies to every test method declared in that class. Excludes any type
+    /// listed in <see cref="AuthRowGatedTypeNames"/>: those methods are unconditionally
+    /// <c>Assert.Skip</c>'d on the dotnet leg today (see this class's own doc comment), so they
+    /// never contribute a real pass/fail signal and must not count toward the coverage floor.
     ///
     /// Issue #143/ADR-002 (R10): abstract types are skipped outright -- xunit never discovers an
     /// abstract class as a runnable test class in its own right, only its concrete subclasses --
@@ -67,14 +100,14 @@ public sealed class DotnetTraitCoverageTests
     /// dotnet leg's own <c>--filter</c> actually selects, not how many methods happen to be typed
     /// out once in source.
     /// </summary>
-    private static int CountDotnetReadyTestMethods()
+    private static int CountFloorEligibleDotnetReadyTestMethods()
     {
         var assembly = typeof(DotnetTraitCoverageTests).Assembly;
         var count = 0;
 
         foreach (var type in assembly.GetTypes())
         {
-            if (type.IsAbstract)
+            if (type.IsAbstract || (type.FullName is not null && AuthRowGatedTypeNames.Contains(type.FullName)))
             {
                 continue;
             }

@@ -265,6 +265,7 @@ public sealed class RealPackHappyHourConformanceTests
     }
 
     [Theory]
+    [Trait("Dotnet", "ready")]
     [MemberData(nameof(DiscoveredPersonaIds))]
     public async Task Discovered_pack_honors_its_own_happy_hour_configuration(string personaId)
     {

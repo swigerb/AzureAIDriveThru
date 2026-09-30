@@ -18,6 +18,7 @@ namespace Conformance.Tests.Scenarios.Ordering;
 public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
 {
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Add_single_item_creates_one_line_with_correct_total() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -36,6 +37,7 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Adding_the_same_item_and_size_twice_merges_into_one_line_with_summed_quantity() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -62,6 +64,7 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Removing_part_of_a_quantity_decrements_the_line_instead_of_deleting_it() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -83,6 +86,7 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Removing_the_full_quantity_clears_the_line_entirely() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -103,6 +107,7 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Removing_an_item_that_was_never_added_is_a_safe_no_op() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -127,6 +132,7 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
     /// "Changed". A mutation that removes the check in tools.py fails this row.
     /// </summary>
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Modifying_an_item_that_is_not_in_the_order_is_rejected_and_changes_nothing() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -182,6 +188,7 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
     /// crashing on the `null` case, or charging the wrong amount.
     /// </summary>
     [Theory]
+    [Trait("Dotnet", "ready")]
     [InlineData("0.0")]
     [InlineData("-5.00")]
     [InlineData("999.99")]
@@ -215,6 +222,7 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
     /// every other tool-call price and the real menu price charged.
     /// </summary>
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Adding_an_item_with_an_omitted_tool_call_price_is_charged_the_menu_price() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -247,6 +255,7 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
     /// Adding_the_same_item_and_size_twice_merges_into_one_line_with_summed_quantity above).
     /// </summary>
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Adding_the_wrong_size_with_a_stale_price_carried_over_is_charged_the_new_size_menu_price() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -275,6 +284,7 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
     });
 
     [Theory]
+    [Trait("Dotnet", "ready")]
     [MemberData(nameof(Route44AliasCases))]
     public Task Route_44_size_aliases_all_display_as_Route_44(string sizeAlias) => fixture.RunAsync(async () =>
     {
@@ -313,6 +323,7 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
     }
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Adding_the_same_drink_with_two_different_Route_44_aliases_merges_into_one_line() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -350,6 +361,7 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
     /// equivalence itself remains covered directly against the pure function via
     /// canonical_size_key's own doctest in app/backend/menu_utils.py.</summary>
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Adding_the_same_drink_with_L_and_large_merges_into_one_line() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -372,6 +384,7 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Removing_a_Route_44_drink_with_a_different_alias_than_it_was_added_with_removes_it() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -407,6 +420,7 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
     }
 
     [Theory]
+    [Trait("Dotnet", "ready")]
     [MemberData(nameof(SizeDisplayCaseIndexes))]
     public Task Size_aliases_and_hidden_sizes_display_correctly(int caseIndex) => fixture.RunAsync(async () =>
     {
@@ -448,6 +462,7 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
     }
 
     [Theory]
+    [Trait("Dotnet", "ready")]
     [MemberData(nameof(SizeNotAvailableCaseIndexes))]
     public Task Unavailable_size_is_rejected_with_the_items_real_available_sizes(int caseIndex) => fixture.RunAsync(async () =>
     {
@@ -482,6 +497,7 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Adding_up_to_the_per_item_quantity_limit_succeeds_but_one_more_is_rejected() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -514,6 +530,7 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Exceeding_the_whole_order_item_limit_is_rejected_while_staying_at_the_cap() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;

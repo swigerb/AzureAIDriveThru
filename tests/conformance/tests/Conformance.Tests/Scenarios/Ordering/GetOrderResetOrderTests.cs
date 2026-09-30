@@ -11,6 +11,7 @@ namespace Conformance.Tests.Scenarios.Ordering;
 public sealed class GetOrderResetOrderTests(ConformanceFixture fixture)
 {
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Get_order_on_a_fresh_session_returns_an_empty_order() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -28,6 +29,7 @@ public sealed class GetOrderResetOrderTests(ConformanceFixture fixture)
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Get_order_after_adding_items_reflects_the_current_order_without_mutating_it() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -61,6 +63,7 @@ public sealed class GetOrderResetOrderTests(ConformanceFixture fixture)
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Reset_order_clears_all_items_and_zeroes_the_totals() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -87,6 +90,7 @@ public sealed class GetOrderResetOrderTests(ConformanceFixture fixture)
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Reset_order_on_an_already_empty_order_is_a_safe_no_op() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;

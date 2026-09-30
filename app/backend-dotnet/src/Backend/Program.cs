@@ -4,9 +4,11 @@ using Backend.Auth;
 using Backend.Configuration;
 using Backend.Health;
 using Backend.Models;
+using Backend.Ordering;
 using Backend.Personas;
 using Backend.Prompts;
 using Backend.Realtime;
+using Backend.Search;
 using Backend.Sessions;
 using Backend.Tools;
 using Microsoft.Extensions.FileProviders;
@@ -167,9 +169,12 @@ if (sessionConfig.ReasoningEffort is not null && !sessionConfig.IsReasoningModel
         realtimeDeployment, reasoningModel is null ? "auto" : reasoningModel.Value.ToString(), sessionConfig.ReasoningEffort);
 }
 
-// ── 5c. Per-persona prompts + a stub tool executor (issue #13/#14 coordination seam): #14 lands
-// the real IToolExecutor backed by the order/tools domain logic Summer is porting in parallel;
-// until then every catalogued tool name resolves through StubToolExecutor's fixed stub replies. ──
+// ── 5c. Per-persona prompts + this session's own SessionToolExecutor (issue #13/#14 coordination
+// seam, now landed): `toolExecutorFactory` below builds one `SessionToolExecutor` per session,
+// once persona binding resolves, composing that session's own `OrderToolExecutor` (its own fresh
+// `OrderState`, never shared) and `SearchTool`. `toolExecutor` (the shared `StubToolExecutor`)
+// stays wired as the fallback the factory is layered over -- see RealtimeProcessor's constructor
+// doc -- so a persona with no catalogued tool schemas still gets a harmless default. ─────────────
 var promptLoaders = new Dictionary<string, PromptLoader>(StringComparer.Ordinal)
 {
     [personaCatalog.DefaultPersonaId] = promptLoader,
@@ -192,6 +197,26 @@ foreach (var personaId in personaCatalog.Ids)
 }
 var toolExecutor = new StubToolExecutor(allToolNames);
 
+// #14: order/search domain wiring -- one shared HttpClient (thread-safe for concurrent use,
+// reused across every session's own SearchTool instance, mirroring the realtime relay's own
+// single upstream endpoint config being shared while OrderState/MenuCatalog stay session-bound).
+var businessRulesConfig = BusinessRulesConfig.FromAppConfig(appConfig);
+var searchConfig = SearchConfig.FromAppConfig(appConfig);
+var searchEndpointConfig = SearchEndpointConfig.FromEnvironment();
+var searchHttpClient = new HttpClient();
+
+IToolExecutor BuildSessionToolExecutor(Persona sessionPersona, PromptLoader? sessionPromptLoader)
+{
+    var menu = PersonaOrderFactory.GetMenuCatalog(sessionPersona);
+    var orderState = PersonaOrderFactory.CreateOrderState(sessionPersona);
+    var orderTools = new OrderToolExecutor(
+        orderState, menu, sessionPromptLoader, businessRulesConfig.MaxItemQuantity, businessRulesConfig.MaxOrderItems);
+    var searchTool = new SearchTool(
+        searchHttpClient, searchEndpointConfig, searchConfig, menu, sessionPromptLoader,
+        sessionPersona.Search.IndexName, sessionPersona.Id, bearerTokenProvider: null, logger: logger);
+    return new SessionToolExecutor(orderTools, searchTool);
+}
+
 var upstreamEndpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_EASTUS2_ENDPOINT")!;
 var upstreamApiKey = Environment.GetEnvironmentVariable("AZURE_OPENAI_EASTUS2_API_KEY") ?? string.Empty;
 var echoCooldownSeconds = ReadDouble(audioSection, "echo_cooldown_seconds") ?? 1.5;
@@ -213,12 +238,15 @@ var realtimeProcessor = new RealtimeProcessor(
     toolExecutor,
     allowedVoices,
     echoCooldownSeconds,
-    logger: logger);
+    logger: logger,
+    toolExecutorFactory: BuildSessionToolExecutor);
 // PR #140 R5: bearerTokenProvider is left at its default (null) here deliberately --
 // RealtimeProcessor.ResolveUpstreamAuthHeaderAsync falls back to the lazily-constructed real
 // DefaultAzureCredentialTokenProvider itself, so a DefaultAzureCredential (which probes several
 // credential sources) is only ever actually constructed for a connection that has no api-key
-// configured and genuinely needs a managed-identity token.
+// configured and genuinely needs a managed-identity token. SearchTool's own bearer fallback
+// (DefaultAzureCredentialSearchTokenProvider) is analogously lazy, constructed inside
+// BuildSessionToolExecutor's SearchTool only if AZURE_SEARCH_API_KEY is unset.
 processorRegistry.Register(realtimeProcessor);
 
 var assetCacheConfig = AssetCacheConfig.FromConfig(appConfig);
