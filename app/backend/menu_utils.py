@@ -658,7 +658,32 @@ class MenuCatalog:
             "category": fields["category"],
             "sizes": fields["sizes"],
             "prices": dict(fields.get("prices", {})),
+            # #165: this item's own declared daypart ("breakfast"/"lunch"/"allDay"), or ``None``
+            # for an item that doesn't carry one (every item on a pack with no
+            # ``features.dayparts`` today). ``item_available_now`` below is the single reader.
+            "menuPeriod": fields.get("menuPeriod"),
         }
+
+    def item_available_now(self, item_name: str, active_mode: str | None) -> bool:
+        """#165: whether *item_name* is orderable in *active_mode* (``"breakfast"``/``"lunch"``),
+        this session's own bound daypart (``order_state.OrderState.get_menu_mode``) -- ``True``
+        for *active_mode* ``None`` (a persona with no ``features.dayparts`` at all, or an
+        unresolved item name -- #73's own on-menu gate, not this one, is the right place to
+        reject an unknown name). An item with no ``menuPeriod`` of its own, or ``"allDay"``, is
+        available in every mode a pack declares -- only an item whose own ``menuPeriod`` names
+        the OTHER daypart is rejected. Mirrors the original app's real daypart split (design doc
+        section on #165): standalone entrees/sandwiches/meals carry their own single daypart,
+        while fries/drinks/desserts/sides carry ``"allDay"`` and are never gated."""
+        if active_mode is None:
+            return True
+        normalized = self._resolve_alias(_menu_key(item_name))
+        fields = self.item_fields.get(normalized)
+        if fields is None:
+            return True
+        period = fields.get("menuPeriod")
+        if not period or period == "allDay":
+            return True
+        return period == active_mode
 
     def price_for(self, item_name: str, size_key: str) -> float | None:
         """Rick's #74 follow-up: the unit price for *item_name* at *size_key*, straight from this

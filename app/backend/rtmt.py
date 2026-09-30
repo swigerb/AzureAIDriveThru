@@ -2318,6 +2318,7 @@ class RTMiddleTier:
                     outcome = self._sessions.resume(
                         ws, presented, requested_persona_id=persona_id,
                         requested_model_id=order_state_singleton.get_model_id(session_id) if session_id else None,
+                        requested_menu_mode=order_state_singleton.get_menu_mode(session_id) if session_id else None,
                     )
                     resume_decided.set()
                     if not outcome.accepted:
@@ -2771,6 +2772,24 @@ class RTMiddleTier:
             return web.Response(status=404, text=f"Unknown or disabled persona: {requested_persona_id!r}")
         persona = self.persona_catalog.get(requested_persona_id)
 
+        # ── Menu mode binding (#165) ──
+        # Only a persona that declares `features.dayparts` has a menu mode at all -- a persona
+        # without that feature never sees a toggle in Settings, so a stray `?mode=` for it is
+        # silently ignored here (normalized below/in `create_session`) rather than rejected, since
+        # there is no reachable client path that would ever legitimately send one. For a
+        # dayparts-declaring persona, an explicit, unrecognized `?mode=` value IS rejected loudly
+        # -- same "no silent fallback" philosophy as persona/model above -- while an OMITTED
+        # `?mode=` defaults to "lunch" (the original reference app's own default, #164 decision
+        # D3) inside `create_session`, not here.
+        requested_menu_mode = request.query.get("mode")
+        if persona.manifest.features.dayparts:
+            if requested_menu_mode not in (None, "breakfast", "lunch"):
+                logger.warning("Rejected WebSocket for invalid menu mode: %s (persona=%s)", requested_menu_mode, persona.id)
+                return web.Response(status=400, text=f"Invalid menu mode: {requested_menu_mode!r} (expected 'breakfast' or 'lunch')")
+        else:
+            requested_menu_mode = None
+
+
         # ── Processor dispatch (#75, Rick's PR #106 review item 5) ──
         # Which PIPELINE the requested (or, when omitted, persona-defaulted) model belongs
         # to -- and which processor handles that pipeline -- is resolved from the shared
@@ -2826,10 +2845,19 @@ class RTMiddleTier:
         )
         await ws.prepare(request)
 
+        # #165: this session's own bound menu mode -- re-derived from `request.query["mode"]`
+        # (already validated, if present, by `_websocket_handler` before the WS upgrade above)
+        # rather than threaded through `PipelineProcessor.handle`'s own signature, so that
+        # Protocol stays untouched for #82/#81's still-unregistered cascade processor. `None` for
+        # a persona that doesn't declare `features.dayparts` -- `create_session` itself applies
+        # the exact same normalization, so this is redundant-but-harmless defense in depth, not
+        # the only enforcement point.
+        requested_menu_mode = request.query.get("mode") if persona.manifest.features.dayparts else None
+
         self._sessions.create_session(
             ws, persona=persona, model_id=resolved_model.id,
             model_deployment=resolved_model.deployment, model_reasoning=resolved_model.reasoning,
-            model_pipeline=resolved_model.pipeline,
+            model_pipeline=resolved_model.pipeline, menu_mode=requested_menu_mode,
         )
 
         try:

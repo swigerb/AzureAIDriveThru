@@ -19,6 +19,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 from default_persona import get_default_persona
 from menu_utils import get_catalog_for_persona
 from order_state import order_state_singleton
+from persona_loader import PersonaCatalog
 from rtmt import ToolResult, ToolResultDirection
 from tools import (
     MAX_QUANTITY_PER_ITEM,
@@ -43,6 +44,11 @@ from tools import (
 # have nothing left to make these tests pass against.
 _SONIC = get_catalog_for_persona(get_default_persona())
 
+# #165: the shared, non-brand-coupled dayparts fixture (see test_bundle_and_extras_engine.py's
+# own docstring) -- reused here only for `search()`'s `menu_mode` → server-side `filter` wiring,
+# since test-delta is the one fixture pack that declares `features.dayparts`.
+FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures" / "personas"
+
 # ── Helpers ──
 
 def _run(coro):
@@ -60,6 +66,27 @@ def _make_mock_search_client(records):
         return _async_iter()
 
     client.search = _fake_search
+    return client
+
+
+def _make_recording_mock_search_client(records):
+    """Same as `_make_mock_search_client`, but also records every `search(**kwargs)` call so a
+    test can assert on the exact kwargs (e.g. the #165 `filter` OData string) sent -- mirrors the
+    C# `SearchToolTests`/`ReceivedRequests` precedent, since Azure Search's real behavior for a
+    `filter`-field mismatch is never actually exercised by a fake that ignores `filter` entirely."""
+    calls: list[dict] = []
+    client = AsyncMock()
+
+    async def _fake_search(**kwargs):
+        calls.append(kwargs)
+
+        async def _async_iter():
+            for r in records:
+                yield r
+        return _async_iter()
+
+    client.search = _fake_search
+    client.calls = calls
     return client
 
 
@@ -1211,6 +1238,49 @@ class HappyHourBannerWordingTests(unittest.TestCase):
             }, sid))
             self.assertNotIn("HAPPY HOUR", result.text)
         self._hh_patcher.start()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Issue 165: search()'s menu_mode -> server-side `filter` wiring
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class SearchModeFilterTests(unittest.TestCase):
+    """`search()`'s #165 `menu_mode` kwarg builds an OData `filter` string restricting results
+    to the bound daypart (or `"allDay"`) -- proven by asserting the exact `filter=` kwarg sent to
+    `SearchClient.search`, since the module-level fake (like Azure Search's own free SKU in this
+    deployment) does no server-side filtering of its own; matches setup_search_index.py's own
+    documented filter shape."""
+
+    def setUp(self):
+        _search_cache.clear()
+        delta_catalog = PersonaCatalog.load(
+            personas_dir=FIXTURES_DIR, enabled=["test-delta"], default_persona_id="test-delta",
+        )
+        self.delta = delta_catalog.get("test-delta")
+        self.delta_menu = get_catalog_for_persona(self.delta)
+
+    def test_a_bound_breakfast_mode_sends_the_breakfast_or_allday_filter(self):
+        client = _make_recording_mock_search_client([])
+        _run(search(
+            client, "cfg", "id", "description", "embedding", False, {"query": "breakfast meal"},
+            menu=self.delta_menu, persona_id="test-delta", menu_mode="breakfast",
+        ))
+        self.assertEqual(client.calls[-1]["filter"], "menuPeriod eq 'breakfast' or menuPeriod eq 'allDay'")
+
+    def test_a_bound_lunch_mode_sends_the_lunch_or_allday_filter(self):
+        client = _make_recording_mock_search_client([])
+        _run(search(
+            client, "cfg", "id", "description", "embedding", False, {"query": "lunch meal"},
+            menu=self.delta_menu, persona_id="test-delta", menu_mode="lunch",
+        ))
+        self.assertEqual(client.calls[-1]["filter"], "menuPeriod eq 'lunch' or menuPeriod eq 'allDay'")
+
+    def test_a_persona_with_no_bound_mode_sends_no_filter_at_all(self):
+        """The default (env-driven, non-dayparts) catalog used everywhere else in this file --
+        `menu_mode` omitted, exactly like every pre-#165 direct call to `search()`."""
+        client = _make_recording_mock_search_client([])
+        _run(search(client, "cfg", "id", "description", "embedding", False, {"query": "limeade"}))
+        self.assertIsNone(client.calls[-1]["filter"])
 
 
 if __name__ == "__main__":

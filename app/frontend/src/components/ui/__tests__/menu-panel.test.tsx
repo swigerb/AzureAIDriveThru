@@ -142,4 +142,209 @@ describe("MenuPanel", () => {
         await waitFor(() => expect(screen.getByText("Test Burger")).toBeInTheDocument());
         expect(screen.getByText("🍹")).toBeInTheDocument();
     });
+
+    // issue 165: a single-size item from a pack that also supplies `calories` (the existing
+    // menu-fidelity signal) never shows a size label, regardless of the size name's
+    // capitalization -- matching the target reference card design.
+    it("shows no size label for a single-size item with calories, even when the size name is capitalized", async () => {
+        mockFetchOnce({
+            menuItems: [
+                {
+                    category: "Burgers & Sandwiches",
+                    items: [
+                        { name: "Test Burger", sizes: [{ size: "Standard", price: 4.99 }], description: "A fixture burger.", calories: 540 }
+                    ]
+                }
+            ]
+        });
+        render(<MenuPanel />);
+
+        await waitFor(() => expect(screen.getByText("Test Burger")).toBeInTheDocument());
+        expect(screen.getByText("$4.99")).toBeInTheDocument();
+        expect(screen.queryByText(/Standard:/)).not.toBeInTheDocument();
+    });
+
+    // issue 165: some existing packs never supply `calories` on their menu items, so a
+    // single-size item from a pack that doesn't declare calories must keep its "Standard:"
+    // label exactly as it renders today -- this is the regression this issue must not
+    // introduce for those packs.
+    it("keeps the size label for a single-size item from a pack without calories (today's non-calorie packs)", async () => {
+        mockFetchOnce({
+            menuItems: [
+                {
+                    category: "Burgers & Sandwiches",
+                    items: [{ name: "Test Burger", sizes: [{ size: "Standard", price: 4.99 }], description: "A fixture burger." }]
+                }
+            ]
+        });
+        render(<MenuPanel />);
+
+        await waitFor(() => expect(screen.getByText("Test Burger")).toBeInTheDocument());
+        expect(screen.getByText("$4.99")).toBeInTheDocument();
+        expect(screen.getByText("Standard:")).toBeInTheDocument();
+    });
+
+    it("still shows per-size labels for a genuinely multi-size item", async () => {
+        mockFetchOnce({
+            menuItems: [
+                {
+                    category: "Sides & Drinks",
+                    items: [
+                        {
+                            name: "Test Fries",
+                            sizes: [
+                                { size: "Small", price: 2.49 },
+                                { size: "Medium", price: 2.99 },
+                                { size: "Large", price: 3.49 }
+                            ],
+                            description: "A fixture side."
+                        }
+                    ]
+                }
+            ]
+        });
+        render(<MenuPanel />);
+
+        await waitFor(() => expect(screen.getByText("Test Fries")).toBeInTheDocument());
+        expect(screen.getByText("Small:")).toBeInTheDocument();
+        expect(screen.getByText("Medium:")).toBeInTheDocument();
+        expect(screen.getByText("Large:")).toBeInTheDocument();
+    });
+
+    // #165: calorie line, shown only when the pack's item data supplies `calories`.
+    it("renders a calorie line only for an item that has one", async () => {
+        mockFetchOnce({
+            menuItems: [
+                {
+                    category: "Burgers & Sandwiches",
+                    items: [
+                        { name: "Test Burger", sizes: [{ size: "Standard", price: 4.99 }], description: "A fixture burger.", calories: 540 },
+                        { name: "Test Salad", sizes: [{ size: "Standard", price: 3.99 }], description: "A fixture salad." }
+                    ]
+                }
+            ]
+        });
+        render(<MenuPanel />);
+
+        await waitFor(() => expect(screen.getByText("Test Burger")).toBeInTheDocument());
+        expect(screen.getByText("540 Cal")).toBeInTheDocument();
+        expect(screen.getByText("Test Salad")).toBeInTheDocument();
+        expect(screen.queryByText("Cal", { exact: false })).toHaveTextContent("540 Cal"); // only the one item's line exists
+    });
+
+    // #165: `mealNumber` items are pulled into a synthesized "Extra Value Meals" category shown
+    // first, sorted by meal number, and removed from their original data category.
+    it("synthesizes an Extra Value Meals category from mealNumber items, sorted and shown first", async () => {
+        mockFetchOnce({
+            menuItems: [
+                {
+                    category: "Burgers & Sandwiches",
+                    items: [
+                        { name: "Combo Two", sizes: [{ size: "Standard", price: 8.99 }], description: "Second combo.", mealNumber: "2" },
+                        { name: "Plain Burger", sizes: [{ size: "Standard", price: 4.99 }], description: "No meal number." }
+                    ]
+                },
+                {
+                    category: "Chicken",
+                    items: [
+                        { name: "Combo One", sizes: [{ size: "Standard", price: 7.99 }], description: "First combo.", mealNumber: "1" },
+                        { name: "Plain Nuggets", sizes: [{ size: "Standard", price: 3.99 }], description: "No meal number." }
+                    ]
+                }
+            ]
+        });
+        render(<MenuPanel />);
+
+        await waitFor(() => expect(screen.getByText("Extra Value Meals")).toBeInTheDocument());
+        // The virtual category renders first, ahead of every real data category.
+        const headings = screen.getAllByRole("heading", { level: 3 }).map(h => h.textContent);
+        expect(headings).toEqual(["Extra Value Meals", "Burgers & Sandwiches", "Chicken"]);
+        // Sorted by meal number ascending, not by the order items appeared in the source data.
+        expect(screen.getByText("1")).toBeInTheDocument();
+        expect(screen.getByText("2")).toBeInTheDocument();
+        // Plain (non-mealNumber) item stays in its own data category.
+        expect(screen.getByText("Plain Burger")).toBeInTheDocument();
+        expect(screen.getByText("Plain Nuggets")).toBeInTheDocument();
+    });
+
+    // #165: a data category whose every item was pulled into Extra Value Meals is dropped
+    // entirely -- never rendered as an empty shell.
+    it("drops a data category entirely once every one of its items is pulled into Extra Value Meals", async () => {
+        mockFetchOnce({
+            menuItems: [
+                {
+                    category: "Combos Only",
+                    items: [{ name: "Combo One", sizes: [{ size: "Standard", price: 7.99 }], description: "Only combo.", mealNumber: "1" }]
+                }
+            ]
+        });
+        render(<MenuPanel />);
+
+        await waitFor(() => expect(screen.getByText("Extra Value Meals")).toBeInTheDocument());
+        expect(screen.queryByText("Combos Only")).not.toBeInTheDocument();
+    });
+
+    // #165: the red numbered "value meal" circle badge, shown only for an item that has a
+    // `mealNumber`.
+    it("renders the meal-number badge only for an item that has one", async () => {
+        mockFetchOnce({
+            menuItems: [
+                {
+                    category: "Burgers & Sandwiches",
+                    items: [
+                        { name: "Combo One", sizes: [{ size: "Standard", price: 7.99 }], description: "Has a meal number.", mealNumber: "1" },
+                        { name: "Plain Burger", sizes: [{ size: "Standard", price: 4.99 }], description: "No meal number." }
+                    ]
+                }
+            ]
+        });
+        render(<MenuPanel />);
+
+        await waitFor(() => expect(screen.getByText("Combo One")).toBeInTheDocument());
+        expect(screen.getByText("1")).toBeInTheDocument();
+        expect(screen.getByText("Plain Burger")).toBeInTheDocument();
+    });
+
+    // #165: an item with a `menuPeriod` that doesn't match the active `menuMode` is hidden
+    // entirely -- from both its data category and the synthesized Extra Value Meals category.
+    it("filters items by menuMode via menuPeriod, hiding out-of-mode items", async () => {
+        mockFetchOnce({
+            menuItems: [
+                {
+                    category: "Breakfast",
+                    items: [
+                        {
+                            name: "Egg Combo",
+                            sizes: [{ size: "Standard", price: 6.49 }],
+                            description: "Breakfast combo.",
+                            mealNumber: "1",
+                            menuPeriod: "breakfast"
+                        }
+                    ]
+                },
+                {
+                    category: "Burgers & Sandwiches",
+                    items: [
+                        {
+                            name: "Burger Combo",
+                            sizes: [{ size: "Standard", price: 8.99 }],
+                            description: "Lunch combo.",
+                            mealNumber: "1",
+                            menuPeriod: "lunch"
+                        }
+                    ]
+                },
+                {
+                    category: "Sides & Drinks",
+                    items: [{ name: "Fries", sizes: [{ size: "Standard", price: 2.99 }], description: "Always available.", menuPeriod: "allDay" }]
+                }
+            ]
+        });
+        render(<MenuPanel menuMode="lunch" />);
+
+        await waitFor(() => expect(screen.getByText("Burger Combo")).toBeInTheDocument());
+        expect(screen.queryByText("Egg Combo")).not.toBeInTheDocument();
+        expect(screen.queryByText("Breakfast")).not.toBeInTheDocument(); // the category itself is dropped, empty after filtering
+        expect(screen.getByText("Fries")).toBeInTheDocument(); // allDay item stays visible regardless of mode
+    });
 });

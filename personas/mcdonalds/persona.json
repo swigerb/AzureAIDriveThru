@@ -40,17 +40,15 @@
   },
 
   "extras": {
-    "allowedBaseCategories": ["burgers", "chicken & fish sandwiches", "mcnuggets & tenders", "meals & combos", "breakfast"],
-    "blockedBaseCategories": ["beverages", "mccafé coffees", "fries & sides", "sweets & treats", "happy meal"],
+    "allowedBaseCategories": ["burgers & sandwiches", "chicken & mcnuggets®", "breakfast"],
+    "blockedBaseCategories": ["fries, sides & drinks", "sweets & treats"],
     "splitCombinedNames": false
   },
 
   "invalidModifiers": {
-    "beverages": ["cheese", "bacon", "patty", "lettuce", "tomato", "onion", "mustard", "ketchup", "pickle"],
-    "mccafé coffees": ["cheese", "bacon", "patty", "lettuce", "tomato", "onion", "mustard", "ketchup", "pickle"],
+    "fries, sides & drinks": ["cheese", "bacon", "patty", "lettuce", "tomato", "onion", "mustard", "ketchup", "pickle", "whipped cream", "chocolate", "vanilla", "strawberry"],
     "sweets & treats": ["mustard", "ketchup", "mayo", "pickles", "onions", "lettuce", "cheese", "bacon", "patty"],
-    "fries & sides": ["whipped cream", "chocolate", "vanilla", "strawberry"],
-    "burgers": ["whipped cream", "cherry", "strawberry fruit"]
+    "burgers & sandwiches": ["whipped cream", "cherry", "strawberry fruit"]
   },
   "machines": {
     "ice_cream_machine": { "status": "down", "label": "Ice cream machine is down for cleaning" }

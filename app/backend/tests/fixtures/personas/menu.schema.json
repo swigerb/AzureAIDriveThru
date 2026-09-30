@@ -68,7 +68,8 @@
         "requiresMachine": { "type": "string" },
         "isExtra": { "type": "boolean", "default": false },
         "menuPeriod": { "type": "string" },
-        "mealNumber": { "type": "string" }
+        "mealNumber": { "type": "string" },
+        "calories": { "type": "integer", "minimum": 0 }
       }
     }
   }

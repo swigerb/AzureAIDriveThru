@@ -53,6 +53,17 @@ interface SettingsProps {
     /** Locked while a session is active (ADR-001 decision 2), same rule as the persona picker --
      * a model change here only ever takes effect on the next session. */
     modelDisabled?: boolean;
+    /** issue 165: only the current persona knows whether it declares `features.dayparts` at all
+     * (one persona pack declares breakfast+lunch today; others declare none) -- the toggle below
+     * renders nothing unless this is true, exactly like the original's persona-specific build
+     * always having the toggle (it only ever shipped one persona) but this shared component
+     * serving several. Optional/falsy default so callers that never pass it (e.g. this
+     * component's own pre-issue-165 tests) render exactly as before. */
+    menuModeEnabled?: boolean;
+    /** The active menu mode ("breakfast" | "lunch") for the CURRENT session (issue 165's
+     * session-bound contract) -- ignored/hidden entirely if `menuModeEnabled` is falsy. */
+    menuMode?: string;
+    onMenuModeChange?: (mode: string) => void;
 }
 
 export default function Settings({
@@ -69,7 +80,10 @@ export default function Settings({
     models,
     modelId = "",
     onModelChange = () => {},
-    modelDisabled = false
+    modelDisabled = false,
+    menuModeEnabled = false,
+    menuMode = "lunch",
+    onMenuModeChange = () => {}
 }: SettingsProps) {
     const [isDarkMode, setIsDarkMode] = useState(() => {
         return localStorage.getItem("isDarkMode") === "true";
@@ -110,6 +124,52 @@ export default function Settings({
 
     const SettingsContent = () => (
         <div className="space-y-6">
+            {menuModeEnabled && (
+                <div className="flex items-start justify-between">
+                    <div className="flex-1 space-y-0.5">
+                        <Label htmlFor="menu-mode" className="text-gray-900 dark:text-gray-100">
+                            Menu Mode
+                        </Label>
+                        <p className="text-sm text-gray-600 dark:text-gray-400">Switch between breakfast and lunch menus</p>
+                    </div>
+                    <div className="ml-4 flex items-center gap-3 shrink-0">
+                        <div
+                            id="menu-mode"
+                            className="inline-flex rounded-lg border border-gray-300 dark:border-gray-600 overflow-hidden"
+                            role="radiogroup"
+                            aria-label="Menu mode"
+                        >
+                            <button
+                                type="button"
+                                role="radio"
+                                aria-checked={menuMode === "breakfast"}
+                                onClick={() => onMenuModeChange("breakfast")}
+                                className={`px-3 py-1.5 text-sm font-medium transition-colors ${
+                                    menuMode === "breakfast"
+                                        ? "bg-primary text-primary-foreground"
+                                        : "bg-white text-gray-600 hover:bg-gray-50 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700"
+                                }`}
+                            >
+                                ☀️ Breakfast
+                            </button>
+                            <button
+                                type="button"
+                                role="radio"
+                                aria-checked={menuMode === "lunch"}
+                                onClick={() => onMenuModeChange("lunch")}
+                                className={`px-3 py-1.5 text-sm font-medium transition-colors ${
+                                    menuMode === "lunch"
+                                        ? "bg-primary text-primary-foreground"
+                                        : "bg-white text-gray-600 hover:bg-gray-50 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700"
+                                }`}
+                            >
+                                🍔 Lunch
+                            </button>
+                        </div>
+                        <span className="text-xs text-muted-foreground">{menuMode === "breakfast" ? "Breakfast Menu" : "Lunch Menu"}</span>
+                    </div>
+                </div>
+            )}
             <div className="flex items-start justify-between">
                 <div className="flex-1 space-y-0.5">
                     <Label htmlFor="dark-mode" className="text-gray-900 dark:text-gray-100">

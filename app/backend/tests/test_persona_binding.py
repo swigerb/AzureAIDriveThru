@@ -57,6 +57,18 @@ def _load_fixture_catalog(default: str = "test-alpha") -> PersonaCatalog:
     )
 
 
+def _load_fixture_catalog_with_delta(default: str = "test-delta") -> PersonaCatalog:
+    """#165: test-delta (``features.dayparts: true``) alongside test-alpha (no dayparts at
+    all) -- the exact pairing `MenuModeWebSocketHandlerTests` below needs to prove the
+    `?mode=` websocket-handshake validation for a dayparts persona, AND that a persona which
+    never opted in is completely unaffected by the same query param."""
+    return PersonaCatalog.load(
+        personas_dir=FIXTURES_DIR,
+        enabled=["test-alpha", "test-delta"],
+        default_persona_id=default,
+    )
+
+
 def _ws():
     ws = MagicMock()
     ws.close = AsyncMock()
@@ -952,6 +964,62 @@ class PersonaWebSocketHandlerTests(_RealtimeHarness):
         self.assertEqual(persona_ids, {"test-alpha", "test-beta"})
         await browser_a.close()
         await browser_b.close()
+
+
+class MenuModeWebSocketHandlerTests(_RealtimeHarness):
+    """#165: the `?mode=` websocket-handshake validation in `RTMiddleTier`'s realtime
+    handler -- a dayparts persona (test-delta) rejects an unrecognized value with a plain
+    HTTP 400 (same "no silent fallback" philosophy as the unknown-persona 404 above), defaults
+    an omitted value to "lunch" inside `create_session`, and a persona with no
+    `features.dayparts` at all (test-alpha) is completely unaffected by any `?mode=` it's
+    handed -- mirrors `PersonaWebSocketHandlerTests` above, against the delta/alpha pairing."""
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        self.catalog = _load_fixture_catalog_with_delta(default="test-delta")
+        self.rtmt.persona_catalog = self.catalog
+        self.rtmt.persona_prompt_loaders = {}
+        self.rtmt.allowed_voices = frozenset({"alloy", "marin", "cedar", "shimmer"})
+
+    async def test_an_unrecognized_mode_value_is_rejected_with_400_before_the_ws_upgrade(self):
+        resp = await self.client.get("/realtime", params={"persona": "test-delta", "mode": "brunch"})
+        self.assertEqual(resp.status, 400)
+        self.assertEqual(self.rtmt._sessions.active_session_count, 0,
+                          "a rejected mode must never create a session")
+
+    async def test_an_explicit_breakfast_mode_binds_the_session_to_breakfast(self):
+        browser = await self.client.ws_connect("/realtime?persona=test-delta&mode=breakfast")
+        await self._until(lambda: self.rtmt._sessions.active_session_count >= 1)
+        sid = next(iter(self.rtmt._sessions._session_map.values()))
+        self.assertEqual(order_state_singleton.get_menu_mode(sid), "breakfast")
+        await browser.close()
+
+    async def test_an_explicit_lunch_mode_binds_the_session_to_lunch(self):
+        browser = await self.client.ws_connect("/realtime?persona=test-delta&mode=lunch")
+        await self._until(lambda: self.rtmt._sessions.active_session_count >= 1)
+        sid = next(iter(self.rtmt._sessions._session_map.values()))
+        self.assertEqual(order_state_singleton.get_menu_mode(sid), "lunch")
+        await browser.close()
+
+    async def test_an_omitted_mode_defaults_to_lunch_for_a_dayparts_persona(self):
+        browser = await self.client.ws_connect("/realtime?persona=test-delta")
+        await self._until(lambda: self.rtmt._sessions.active_session_count >= 1)
+        sid = next(iter(self.rtmt._sessions._session_map.values()))
+        self.assertEqual(order_state_singleton.get_menu_mode(sid), "lunch")
+        await browser.close()
+
+    async def test_a_persona_with_no_dayparts_feature_is_never_gated_by_a_stray_mode_param(self):
+        """test-alpha declares no `features.dayparts` at all -- a stray `?mode=` (even an
+        otherwise-invalid one) must be silently ignored, never rejected, and the session's
+        own bound mode stays None. (A plain HTTP GET isn't usable here to prove "not
+        rejected" -- even the success path eventually 400s at aiohttp's own WS-upgrade step
+        for a non-WebSocket client, same as any other valid persona/mode combination --
+        so the real `ws_connect` below, which completes the handshake, is the actual proof.)"""
+        browser = await self.client.ws_connect("/realtime?persona=test-alpha&mode=breakfast")
+        await self._until(lambda: self.rtmt._sessions.active_session_count >= 1)
+        sid = next(iter(self.rtmt._sessions._session_map.values()))
+        self.assertIsNone(order_state_singleton.get_menu_mode(sid))
+        await browser.close()
 
 
 if __name__ == "__main__":

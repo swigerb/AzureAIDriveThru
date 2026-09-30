@@ -222,6 +222,7 @@ async def search(
     menu=None,
     prompt_loader=None,
     persona_id: str | None = None,
+    menu_mode: str | None = None,
 ) -> ToolResult:
     """Execute a hybrid Azure AI Search query with caching and safe fallbacks.
 
@@ -230,9 +231,18 @@ async def search(
     catalog, ``_prompt_loader``, and an unnamespaced cache) when omitted, so every existing
     direct call (e.g. in tests) keeps behaving exactly as before; ``_search_dispatch`` (used
     by the registered "search" tool) is the only caller that passes them.
+
+    *menu_mode* (#165): this session's own bound daypart (``order_state.OrderState
+    .get_menu_mode``), or ``None`` for a persona with no ``features.dayparts`` (every existing
+    direct call keeps passing nothing, so this is a pure no-op addition). When set, results are
+    restricted server-side to items whose own ``menuPeriod`` is ``menu_mode`` or ``"allDay"`` --
+    the same OData filter ``setup_search_index.py`` documents. If the search index hasn't been
+    rebuilt with the ``menuPeriod`` field yet, the same "unknown property" fallback below drops
+    the filter (as well as the full ``$select``) rather than failing the lookup outright.
     """
     menu = menu or default_persona.get_default_menu_catalog()
     prompt_loader = prompt_loader if prompt_loader is not None else _prompt_loader
+    mode_filter = f"menuPeriod eq '{menu_mode}' or menuPeriod eq 'allDay'" if menu_mode else None
 
     query = args["query"]
     # #77 (`strategies.searchQueryRewrite: "meal_numbers"`, design doc section 3.3 row 23): this
@@ -246,7 +256,7 @@ async def search(
     # Check cache first — repeated questions about the same menu item are common. Namespaced
     # by persona_id so two personas asking the same question never share a cached result from
     # each other's (potentially different) search index (#74).
-    cache_key = f"{persona_id or ''}::{query.strip().lower()}"
+    cache_key = f"{persona_id or ''}::{menu_mode or ''}::{query.strip().lower()}"
     cached = _search_cache.get(cache_key)
     if cached is not None:
         logger.debug("Search cache hit for '%s'", query)
@@ -307,6 +317,7 @@ async def search(
             top=_top,
             vector_queries=vector_queries or None,
             select=select_fields,
+            filter=mode_filter,
             **_query_kwargs(semantic_enabled),
         )
     except TimeoutError:
@@ -314,7 +325,10 @@ async def search(
         _err = prompt_loader.render_error("search_service_unavailable") if prompt_loader else "I'm having trouble reaching our menu right now — could you try that again?"
         return ToolResult(_err, ToolResultDirection.TO_SERVER)
     except HttpResponseError as exc:
-        # Gracefully handle schema/field mismatches (e.g., invalid $select fields) by retrying with a minimal projection.
+        # Gracefully handle schema/field mismatches (e.g., invalid $select fields, or -- #165 --
+        # a `menuPeriod` filter against an index that hasn't been rebuilt with that field yet) by
+        # retrying with a minimal projection AND no filter. Dropping the mode filter here means a
+        # stale index degrades to "unfiltered search" rather than failing the lookup outright.
         if "Could not find a property named" in str(exc):
             logger.warning("Retrying search with minimal fields after select mismatch: %s", exc)
             fallback_select = [identifier_field or "id", content_field or "description"]
@@ -341,6 +355,7 @@ async def search(
                     top=_top,
                     vector_queries=vector_queries or None,
                     select=select_fields,
+                    filter=mode_filter,
                 )
             except Exception as exc2:
                 logger.error("Search retry without semantic ranker also failed: %s", exc2)
@@ -507,6 +522,38 @@ async def update_order(args, session_id: str) -> ToolResult:
                     item_name, base_name, extra_name, session_id,
                 )
             return ToolResult(_rejection, ToolResultDirection.TO_SERVER)
+
+        # #165: this session's own bound menu mode gate -- an item that's real and on the menu,
+        # but not offered in the active daypart (e.g. a breakfast-only item add while the session
+        # is bound to "lunch"). Runs for "add" only: a "modify" target is already IN the order,
+        # which means it passed this same gate at add time and the mode never changes
+        # mid-session (#165 design: no mid-conversation `?mode=` switching, exactly like
+        # persona/model -- order_state.OrderState.create_session), so gating it again here would
+        # be a no-op at best and a spurious reject at worst. A persona with no
+        # `features.dayparts` always resolves `menu_mode=None`, and `item_available_now` is a
+        # no-op (returns True) for `active_mode=None` -- so this block never rejects anything for
+        # those packs.
+        menu_mode = order_state_singleton.get_menu_mode(session_id)
+        if args["action"] == "add" and not menu.item_available_now(item_name, menu_mode):
+            logger.info(
+                "Rejected out-of-mode item '%s' for session %s (item_out_of_mode; active_mode=%s, item_period=%s)",
+                item_name, session_id, menu_mode, menu_item.get("menuPeriod"),
+            )
+            _message = pl.render_error(
+                "item_out_of_mode", item_name=menu_item["name"], mode_label=menu_item.get("menuPeriod") or ""
+            ) if pl else (
+                f"I'm sorry, {menu_item['name']} isn't on our menu right now. Would you like to try something else instead?"
+            )
+            return ToolResult(
+                {
+                    "status": "rejected",
+                    "item_added": False,
+                    "reason": "item_out_of_mode",
+                    "item_name": menu_item["name"],
+                    "message": _message,
+                },
+                ToolResultDirection.TO_SERVER,
+            )
 
         requested_size = menu.canonical_size_key(size)
         if requested_size not in menu_item["sizes"]:
@@ -825,6 +872,7 @@ async def _search_dispatch(args, session_id: str | None) -> ToolResult:
     cfg = (_persona_registry.get(pid) if pid else None) or _default_search_ctx
     menu = _menu_for(session_id)
     pl = _prompt_loader_for(session_id)
+    menu_mode = order_state_singleton.get_menu_mode(session_id) if session_id else None
     return await search(
         cfg["search_client"],
         cfg["semantic_configuration"],
@@ -837,6 +885,7 @@ async def _search_dispatch(args, session_id: str | None) -> ToolResult:
         menu=menu,
         prompt_loader=pl,
         persona_id=pid,
+        menu_mode=menu_mode,
     )
 
 

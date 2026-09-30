@@ -12,3 +12,5 @@ messages:
     something else instead?
   extras_blocked_category: "Extras can't be added to that category right now."
   extras_no_base_item: "Extras need a base item in the order first."
+  item_out_of_mode: >-
+    Sorry, {{item_name}} isn't on the menu right now. Would you like to try something else instead?

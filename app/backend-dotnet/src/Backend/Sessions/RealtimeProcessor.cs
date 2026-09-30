@@ -59,7 +59,7 @@ public sealed class RealtimeProcessor : IPipelineProcessor
     private readonly RealtimeSessionConfig _sessionConfig;
     private readonly IReadOnlyDictionary<string, PromptLoader> _promptLoaders;
     private readonly IToolExecutor _toolExecutor;
-    private readonly Func<Persona, PromptLoader?, IToolExecutor>? _toolExecutorFactory;
+    private readonly Func<Persona, PromptLoader?, string?, IToolExecutor>? _toolExecutorFactory;
     private readonly IReadOnlySet<string> _allowedVoices;
     private readonly double _echoCooldownSeconds;
     private readonly double _greetingTimeoutSeconds;
@@ -78,7 +78,7 @@ public sealed class RealtimeProcessor : IPipelineProcessor
         double greetingTimeoutSeconds = 5.0,
         ILogger? logger = null,
         IUpstreamBearerTokenProvider? bearerTokenProvider = null,
-        Func<Persona, PromptLoader?, IToolExecutor>? toolExecutorFactory = null)
+        Func<Persona, PromptLoader?, string?, IToolExecutor>? toolExecutorFactory = null)
     {
         _catalog = catalog;
         _defaultDeployment = defaultDeployment;
@@ -128,20 +128,29 @@ public sealed class RealtimeProcessor : IPipelineProcessor
     /// <c>_forward_messages</c> end to end (session bootstrap, greeting gate, tool dispatch,
     /// echo suppression/barge-in, session echoes, round-trip tokens) -- see the class doc for the
     /// scope cuts.
+    ///
+    /// <paramref name="menuMode"/> (issue 165): this session's own bound daypart, already
+    /// validated and defaulted by Program.cs's <c>/realtime</c> handler -- <c>null</c> for a
+    /// persona with no <c>features.dayparts</c>. Threaded straight into
+    /// <see cref="_toolExecutorFactory"/> so <c>OrderToolExecutor</c>/<c>SearchTool</c> get it at
+    /// construction time, matching how <see cref="MenuCatalog"/>/<see cref="PromptLoader"/> are
+    /// already threaded -- there's no mid-session mode switching (in either backend), so a
+    /// one-time constructor injection is enough.
     /// </summary>
     public async Task RunSessionAsync(
         WebSocket browserSocket,
         Persona persona,
         ResolvedModel resolvedModel,
         string sessionId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? menuMode = null)
     {
         _promptLoaders.TryGetValue(persona.Id, out var promptLoader);
         var systemMessage = promptLoader?.SystemPrompt;
         var voice = ClientServerFilter.SanitizeVoice(persona.Voice.Default, _allowedVoices)
             ?? _sessionConfig.VoiceChoice ?? "marin";
         var toolSchemas = BuildToolSchemas(promptLoader);
-        var toolExecutor = _toolExecutorFactory?.Invoke(persona, promptLoader) ?? _toolExecutor;
+        var toolExecutor = _toolExecutorFactory?.Invoke(persona, promptLoader, menuMode) ?? _toolExecutor;
         var reasoningOverride = Overridable<bool?>.Of(resolvedModel.Reasoning);
         var deployment = string.IsNullOrEmpty(resolvedModel.Deployment) ? _defaultDeployment : resolvedModel.Deployment;
 

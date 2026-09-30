@@ -57,3 +57,30 @@ public sealed class DisabledPersonaConformanceCollection : ICollectionFixture<Di
 {
     public const string Name = "ConformanceDisabledPersona";
 }
+
+/// <summary>
+/// Issue 165: the Breakfast/Lunch menu-mode conformance rows need one persona that declares
+/// <c>features.dayparts</c> (real breakfast/lunch items, meal-number-sharing menuPeriod pair) and
+/// one that doesn't, side by side, exactly like <see cref="TwoPersonaConformanceFixture"/>'s own
+/// pairing -- reuses the SAME shared fixture pack directory (test-delta/test-alpha) rather than a
+/// third copy under tests/conformance/testdata/. test-delta's menu/menuItems.json ships a
+/// breakfast-only "Delta Breakfast Meal" and a lunch-only "Delta Lunch Meal" sharing meal number
+/// 2 (app/backend/tests/test_menu_utils.py's own golden-table precedent for meal-number-sharing
+/// items), purpose-built for the mode-switch/out-of-mode-rejection/search-filter rows below.
+/// test-alpha declares no dayparts feature at all -- the "packs without modes unaffected" row.
+/// </summary>
+public sealed class MenuModeConformanceFixture : ConformanceFixture
+{
+    public const string DaypartsPersona = "test-delta";
+    public const string NoDaypartsPersona = TwoPersonaConformanceFixture.PersonaA;
+
+    protected override IReadOnlyList<string>? Personas => [DaypartsPersona, NoDaypartsPersona];
+    protected override string? Persona => DaypartsPersona;
+    protected override string? PersonasDir => RepoPaths.FixturePersonasDirectory(RepoPaths.FindRepoRoot());
+}
+
+[CollectionDefinition(Name)]
+public sealed class MenuModeConformanceCollection : ICollectionFixture<MenuModeConformanceFixture>
+{
+    public const string Name = "ConformanceMenuMode";
+}

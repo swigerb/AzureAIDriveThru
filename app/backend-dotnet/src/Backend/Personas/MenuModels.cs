@@ -36,6 +36,8 @@ public sealed record PersonaMenuItem
     [JsonPropertyName("isExtra")] public bool IsExtra { get; init; }
     [JsonPropertyName("menuPeriod")] public string? MenuPeriod { get; init; }
     [JsonPropertyName("mealNumber")] public string? MealNumber { get; init; }
+    // Optional calorie count (issue 165), shown alongside the price on the shared item card.
+    [JsonPropertyName("calories")] public int? Calories { get; init; }
 }
 
 public sealed record PersonaMenuItemSize

@@ -31,6 +31,7 @@ import { signOutInteractive } from "@/auth/signOut";
 import { PersonaProvider, usePersonaContext } from "@/context/persona-context";
 import { resolveVoice } from "@/lib/voices";
 import { resolveModelId, modelStorageKey } from "@/lib/models";
+import { resolveMenuMode, menuModeStorageKey } from "@/lib/menuMode";
 import { apologyClipUrl, playApologyClip } from "@/lib/apology";
 import { personaAssetUrl } from "@/lib/personaAssets";
 import type { PersonaDetail } from "@/types/persona";
@@ -139,6 +140,14 @@ function SonicApp() {
     const [modelId, setModelId] = useState<string>(() => {
         return resolveModelId(localStorage.getItem(modelStorageKey(current.id)), current.models);
     });
+    // issue 165: only meaningful for a persona that declares `features.dayparts` -- persisted per
+    // persona (same rule as `modelId` above) so switching personas never leaks one persona's
+    // chosen mode onto another's. A persona with no `features.dayparts` never reads/writes this
+    // key at all (see the resolve effect below) and never sends `?mode=` (`useRealTime` only sets
+    // it when truthy), so this is a genuine no-op for every persona but one today.
+    const [menuMode, setMenuMode] = useState<string>(() => {
+        return current.features.dayparts ? resolveMenuMode(localStorage.getItem(menuModeStorageKey(current.id))) : "";
+    });
 
     useEffect(() => {
         localStorage.setItem("showSessionTokens", showSessionTokens.toString());
@@ -187,6 +196,23 @@ function SonicApp() {
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [current.id, current.models]);
+
+    // issue 165: same "re-resolve on persona change" rule as the `modelId` effect above, simplified --
+    // there's no `?mode=` address-bar handoff to consume (no analogous backend-hop path sets one
+    // yet), just this persona's own stored choice (or the shared default) gated on whether this
+    // persona declares `features.dayparts` at all. A persona with no `features.dayparts` always
+    // resolves to `""` (never a stale mode from a PREVIOUS dayparts-capable persona) and never
+    // touches localStorage, exactly mirroring `menu_mode`'s backend-side normalization
+    // (order_state.OrderState.create_session).
+    useEffect(() => {
+        if (!current.features.dayparts) {
+            setMenuMode("");
+            return;
+        }
+        const resolved = resolveMenuMode(localStorage.getItem(menuModeStorageKey(current.id)));
+        setMenuMode(resolved);
+        localStorage.setItem(menuModeStorageKey(current.id), resolved);
+    }, [current.id, current.features.dayparts]);
 
     const handleSessionIdentifiers = useCallback((message: ExtensionSessionMetadata | ExtensionRoundTripToken) => {
         const snapshot: SessionIdentifiersState = {
@@ -238,6 +264,7 @@ function SonicApp() {
     const realtime = useRealTime({
         personaId: current.id,
         modelId,
+        menuMode,
         enableInputAudioTranscription: true,
         onWebSocketOpen: () => console.log("WebSocket connection opened"),
         onWebSocketClose: () => console.log("WebSocket connection closed"),
@@ -636,6 +663,14 @@ function SonicApp() {
         localStorage.setItem(modelStorageKey(current.id), id);
     };
 
+    // issue 165: mirrors `handleModelChange` above -- the toggle's own explicit user choice, the other
+    // persist site being the resolve effect (a persona switch). Unreachable for a persona with no
+    // `features.dayparts` since `<Settings>` never renders the toggle for one (see below).
+    const handleMenuModeChange = (mode: string) => {
+        setMenuMode(mode);
+        localStorage.setItem(menuModeStorageKey(current.id), mode);
+    };
+
     return (
         <div className={`min-h-screen bg-background p-4 text-foreground ${theme}`}>
             <div className="mx-auto max-w-7xl space-y-6">
@@ -696,6 +731,9 @@ function SonicApp() {
                                 modelId={modelId}
                                 onModelChange={handleModelChange}
                                 modelDisabled={isRecording || order.items.length > 0}
+                                menuModeEnabled={current.features.dayparts}
+                                menuMode={menuMode}
+                                onMenuModeChange={handleMenuModeChange}
                             />
                         </Suspense>
                         {authConfig.isConfigured && (
@@ -724,7 +762,7 @@ function SonicApp() {
                                 <SheetTitle>{t("menu.title")}</SheetTitle>
                             </SheetHeader>
                             <div className="h-[calc(100vh-4rem)] overflow-auto pr-4">
-                                <MenuPanel />
+                                <MenuPanel menuMode={menuMode} />
                             </div>
                         </SheetContent>
                     </Sheet>
@@ -733,7 +771,7 @@ function SonicApp() {
                     <Card className="hidden p-6 md:block">
                         <h2 className="mb-4 text-center font-semibold text-primary">{t("menu.title")}</h2>
                         <div className="h-[calc(100vh-13rem)] overflow-auto pr-4">
-                            <MenuPanel />
+                            <MenuPanel menuMode={menuMode} />
                         </div>
                     </Card>
 

@@ -44,6 +44,11 @@ namespace Conformance.Tests;
 /// PR #158 CI-trigger fix (dev merge, bringing in #149's floor of 167 and #156): the merged tree's
 /// raw tagged-method count (before excluding the skip-gated set below) is 196 (167 real + 29 from
 /// R10's tagging); subtracting the 18 skip-gated methods above gives the 178 floor below.
+///
+/// Issue 165: the new Breakfast/Lunch menu-mode conformance scenarios
+/// (<c>Scenarios/Ordering/MenuModeConformanceTests.cs</c>) add five tagged, ungated methods
+/// (mode switch x2, out-of-mode rejection, search filter, packs-without-modes-unaffected),
+/// verified green against both backends -- raising the floor from 178 to 183.
 /// </summary>
 public sealed class DotnetTraitCoverageTests
 {
@@ -66,12 +71,12 @@ public sealed class DotnetTraitCoverageTests
     };
 
     [Fact]
-    public void At_least_178_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
+    public void At_least_183_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
     {
         var count = CountFloorEligibleDotnetReadyTestMethods();
 
-        Assert.True(count >= 178,
-            $"Expected at least 178 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
+        Assert.True(count >= 183,
+            $"Expected at least 183 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
             $"and not unconditionally skip-gated by AuthRowCapability (the dotnet leg's " +
             $"`--filter \"{TraitName}={TraitValue}&Category!=Browser\"` baseline, minus the five " +
             "skip-only Scenarios/Auth classes -- see this class's own doc comment; " +
