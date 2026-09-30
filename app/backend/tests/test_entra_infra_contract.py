@@ -18,6 +18,7 @@ MAIN_BICEP = REPO / "infra" / "main.bicep"
 DOCKERFILE = REPO / "app" / "Dockerfile"
 DOCKERFILE_DOTNET = REPO / "app" / "Dockerfile.dotnet"
 CONTAINER_APP_AUTH_BICEP = REPO / "infra" / "core" / "security" / "container-app-auth.bicep"
+DOCKER_BUILD_SH = REPO / "scripts" / "docker-build.sh"
 
 _VITE_BUILD_ARGS = {
     "VITE_AUTH_MODE",
@@ -162,6 +163,39 @@ class DockerfileArgTests(unittest.TestCase):
     def test_dockerignore_has_no_frontend_env_exception(self):
         dockerignore = (REPO / ".dockerignore").read_text(encoding="utf-8")
         self.assertNotIn("!app/frontend/.env", dockerignore)
+
+
+class DockerBuildShTests(unittest.TestCase):
+    """scripts/docker-build.sh must fail closed (review item 10): a local build must never
+    silently downgrade to VITE_AUTH_MODE=Development just because the Entra ids are unset -- that
+    would ship an image whose baked-in auth config diverges from what azd/CI would have built,
+    without the caller ever asking for Development mode."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.text = DOCKER_BUILD_SH.read_text(encoding="utf-8")
+
+    def test_script_exists(self):
+        self.assertTrue(DOCKER_BUILD_SH.is_file(), f"expected {DOCKER_BUILD_SH} to exist")
+
+    def test_no_silent_development_fallback(self):
+        self.assertNotIn('VITE_AUTH_MODE="Development"', self.text)
+        self.assertNotRegex(
+            self.text,
+            r"VITE_AUTH_MODE\s*=\s*[\"']Development[\"']",
+            "must never reassign VITE_AUTH_MODE to Development after the explicit default; that "
+            "silently downgrades a broken Entra build into a Development one",
+        )
+
+    def test_entra_without_ids_branch_fails_the_build(self):
+        idx = self.text.index('[ "$VITE_AUTH_MODE" = "Entra" ]')
+        window = self.text[idx: idx + 500]
+        self.assertIn("exit 1", window, "the Entra-without-ids branch must exit 1, not fall back")
+
+    def test_explicit_development_mode_still_works(self):
+        # VITE_AUTH_MODE is read from the environment first; only the *implicit* fallback is
+        # removed, so `VITE_AUTH_MODE=Development ./scripts/docker-build.sh` still works.
+        self.assertIn('VITE_AUTH_MODE="${VITE_AUTH_MODE:-Entra}"', self.text)
 
 
 if __name__ == "__main__":

@@ -43,6 +43,32 @@ _CREDENTIAL_CREATION = re.compile(
     re.IGNORECASE,
 )
 
+# `az ad app create` / `az ad sp create` (and update/delete) bypass Invoke-Graph's central
+# -Apply gate entirely -- these must never appear anywhere, in any of the three scripts.
+_RAW_AZ_AD_WRITE = re.compile(r"\baz\s+ad\s+(app|sp)\s+(create|update|delete|credential)\b", re.IGNORECASE)
+
+# Alternate ways to reach Microsoft Graph or ARM that would bypass Invoke-Graph's central
+# -Apply/read-only gate (Invoke-WebRequest is handled separately -- see
+# test_invoke_webrequest_only_used_inside_invoke_probe_request -- because Verify-ProductionAuth.ps1
+# legitimately uses it for read-only HTTP probes against the deployed app, not Graph/ARM).
+_ALT_GRAPH_OR_ARM_CMDLET = re.compile(
+    r"\baz\s+(ad|role)\s|Invoke-RestMethod\b|Invoke-MgGraphRequest\b|New-Mg\w*|Update-Mg\w*",
+    re.IGNORECASE,
+)
+
+# Variable names that, across the three scripts, are the only ones ever bound to an actual
+# secret/bearer-token VALUE -- as opposed to a response object, a version integer, or an
+# existence flag whose *name* happens to contain "token"/"secret" (e.g. $queryToken, $wsNoToken,
+# $tokenVersion, $leftoverSecret). A broad `\$\w*(token|secret)\w*` would flag those legitimate,
+# non-sensitive variables too, so this list is scoped to the exact identifiers used for the value
+# itself.
+_SECRET_VALUE_VAR = re.compile(r"\$(?:token|accessToken|bearerToken|clientSecret)\b", re.IGNORECASE)
+
+# Cmdlets/functions that actually emit to the console/report; a line calling one of these AND
+# referencing a secret-value variable is a token/secret print, including via string interpolation
+# (e.g. "token=$token"), not just a bare `Write-Host $token`.
+_OUTPUT_CMDLET_LINE = re.compile(r"\b(Write-\w+|Out-\w+|Format-\w+|Add-Result)\b")
+
 # Any statement that writes a raw token/secret value to the console/host/output stream. This is
 # intentionally narrow (accessToken/access_token/token/secret variable piped straight to
 # Write-Host/Write-Output/Out-Host) so it does not also flag safe uses like the *word* "token" in
@@ -61,9 +87,66 @@ _ENV_FILE_READ = re.compile(
     re.IGNORECASE,
 )
 
+# A hardcoded persona/brand path segment (review item 8/11): the brand ratchet must not go up, and
+# a script that hardcodes one persona would silently mis-probe/mis-verify any other.
+_HARDCODED_PERSONA_BRAND = re.compile(r"\b(sonic|mcdonald|dunkin)\w*", re.IGNORECASE)
+
 
 def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
+
+
+def _lines_printing_a_secret_value(text: str):
+    """Lines calling an output cmdlet (Write-*/Out-*/Format-*/Add-Result) that also reference an
+    actual secret-value variable (see _SECRET_VALUE_VAR), whether as a bare argument or via string
+    interpolation. Comment-only lines are skipped."""
+    offending = []
+    for i, line in enumerate(text.splitlines(), start=1):
+        if line.strip().startswith("#"):
+            continue
+        if not _OUTPUT_CMDLET_LINE.search(line):
+            continue
+        if _SECRET_VALUE_VAR.search(line):
+            offending.append((i, line.strip()))
+    return offending
+
+
+def _brace_matched_if_blocks(text: str):
+    """Every `if (...) { ... }` block in `text` as (open_brace_pos, close_brace_pos, header),
+    matched by brace depth (not a fixed line window) so a guard several lines above a multi-line
+    body still counts."""
+    if_header = re.compile(r"if\s*\((?:[^()]|\([^()]*\))*\)\s*\{")
+    blocks = []
+    for m in if_header.finditer(text):
+        open_pos = m.end() - 1
+        depth = 0
+        close_pos = None
+        for i in range(open_pos, len(text)):
+            c = text[i]
+            if c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+                if depth == 0:
+                    close_pos = i
+                    break
+        if close_pos is not None:
+            blocks.append((open_pos, close_pos, m.group(0)))
+    return blocks
+
+
+def _unguarded_call_sites(text: str, call_pattern: "re.Pattern[str]", guard_substring: str):
+    """Call sites of `call_pattern` in `text` that are NOT lexically nested (by brace depth) in an
+    `if (...)` block whose header contains `guard_substring`."""
+    blocks = _brace_matched_if_blocks(text)
+    offending = []
+    for m in call_pattern.finditer(text):
+        pos = m.start()
+        guarded = any(open_pos < pos < close_pos and guard_substring in header for open_pos, close_pos, header in blocks)
+        if not guarded:
+            line_no = text.count("\n", 0, pos) + 1
+            offending.append((line_no, m.group(0)))
+    return offending
 
 
 class SetupEntraAuthScriptContractTests(unittest.TestCase):
@@ -158,6 +241,37 @@ class SetupEntraAuthScriptContractTests(unittest.TestCase):
 
     def test_no_token_output(self):
         self.assertNotRegex(self.text, _TOKEN_PRINT, "Setup-EntraAuth.ps1 must never print a token or secret value")
+        self.assertEqual(
+            _lines_printing_a_secret_value(self.text), [],
+            "Setup-EntraAuth.ps1 must never print a token/secret value, including via string interpolation",
+        )
+
+    def test_no_raw_az_rest_write_outside_invoke_graph(self):
+        # Every `az rest --method PATCH/POST/DELETE` call must live inside Invoke-Graph's own
+        # body (the only place the -Apply gate is enforced); a raw `az rest` write anywhere else
+        # in the script would bypass that gate entirely.
+        text = self.text
+        func_match = re.search(r"function\s+Invoke-Graph\s*\{.*?\n\}\n", text, re.DOTALL)
+        self.assertIsNotNone(func_match, "expected an Invoke-Graph function")
+        outside = text[:func_match.start()] + text[func_match.end():]
+        self.assertNotRegex(
+            outside, _RAW_WRITE_METHOD,
+            "found a raw `az rest --method POST/PATCH/DELETE` call outside Invoke-Graph's body",
+        )
+
+    def test_no_raw_az_ad_write(self):
+        self.assertNotRegex(
+            self.text, _RAW_AZ_AD_WRITE,
+            "Setup-EntraAuth.ps1 must never call `az ad app create`/`az ad sp create` (or "
+            "update/delete/credential) -- all writes go through the Graph API via Invoke-Graph",
+        )
+
+    def test_no_alternate_graph_or_arm_write_cmdlets(self):
+        self.assertNotRegex(
+            self.text, _ALT_GRAPH_OR_ARM_CMDLET,
+            "Setup-EntraAuth.ps1 must not reach Graph/ARM through an alternate cmdlet that "
+            "bypasses Invoke-Graph's -Apply gate",
+        )
 
     def test_no_dotenv_reads(self):
         self.assertNotRegex(
@@ -216,6 +330,42 @@ class SetupEntraAuthScriptContractTests(unittest.TestCase):
         self.assertIn("azd env set ENTRA_TENANT_ID", self.text)
         self.assertIn("azd env set ENTRA_CLIENT_ID", self.text)
 
+    def test_redirect_uri_defaults_to_the_two_18_1_localhost_origins(self):
+        # docs/persona-architecture.md 18.1: the two default localhost redirect URIs for local
+        # dev (Python's Vite dev server and the built-in preview/static server).
+        self.assertRegex(
+            self.text,
+            r"\[string\[\]\]\$RedirectUri\s*=\s*@\(\s*['\"]http://localhost:8000['\"]\s*,\s*['\"]http://localhost:5173['\"]\s*\)",
+            "expected -RedirectUri to default to @('http://localhost:8000', 'http://localhost:5173')",
+        )
+
+    def test_help_documents_all_three_setup_scenarios(self):
+        # Review item 1: help/examples must cover (a) today's DARK env (-FrontendOrigin derived
+        # from the Python container app's stable FQDN), (b) a fresh env, and (c) a later re-run
+        # with -ClientId.
+        self.assertIn("-FrontendOrigin", self.text)
+        self.assertRegex(self.text, r"-ClientId\b.{0,400}-FromAzdEnv|-FromAzdEnv\b.{0,400}-ClientId", "expected an example combining -ClientId with a reconcile run")
+        self.assertRegex(self.text, r"defaultDomain|properties\.configuration", "expected the FQDN-derivation commands (defaultDomain / properties.configuration) in the docs")
+
+    def test_spa_redirect_patch_only_fires_when_redirects_are_non_empty(self):
+        # Review item 2: Setup must never wipe existing SPA redirect URIs when a run supplies
+        # none -- the `spa = @{ redirectUris = @($redirects) }` PATCH must be lexically nested in
+        # a block gated on `$redirects.Count -gt 0` (brace-depth matched, not a fixed line
+        # window). Scoped to the redirect-URI *reconcile* section (section 7): the CREATE-time
+        # POST body for a brand-new application also sets `spa = @{ redirectUris = @($redirects) }`,
+        # but that can never "wipe" anything (there is no existing app yet), so it is out of scope.
+        start = self.text.index("Write-Section 'Redirect URIs (SPA-only)'")
+        end = self.text.index("# --- 8.", start)
+        section = self.text[start:end]
+        blocks = _brace_matched_if_blocks(section)
+        call_pattern = re.compile(r"spa\s*=\s*@\{\s*redirectUris\s*=\s*@\(\$redirects\)\s*\}")
+        offending = _unguarded_call_sites(section, call_pattern, "$redirects.Count -gt 0")
+        self.assertEqual(
+            offending, [],
+            f"found the SPA redirectUris PATCH payload not nested in a '$redirects.Count -gt 0' guarded block: {offending}",
+        )
+        self.assertTrue(blocks, "expected at least one if/elseif block in the redirect-URI reconcile section")
+
 
 class VerifyEntraAuthScriptContractTests(unittest.TestCase):
     """Pins Verify-EntraAuth.ps1 as strictly read-only."""
@@ -246,6 +396,7 @@ class VerifyEntraAuthScriptContractTests(unittest.TestCase):
 
     def test_no_token_output(self):
         self.assertNotRegex(self.text, _TOKEN_PRINT)
+        self.assertEqual(_lines_printing_a_secret_value(self.text), [])
 
     def test_no_dotenv_reads(self):
         self.assertNotRegex(self.text, _ENV_FILE_READ)
@@ -253,6 +404,28 @@ class VerifyEntraAuthScriptContractTests(unittest.TestCase):
     def test_checks_v2_tokens_and_spa_only_redirects(self):
         self.assertIn("RequiredTokenVersion", self.text)
         self.assertIn("SPA-only redirect platform", self.text)
+
+    def test_rejects_key_credentials_as_well_as_password_credentials(self):
+        # Review item 7: a certificate (keyCredentials) is just as much a "not a public client"
+        # signal as a client secret (passwordCredentials) -- both must fail check 7.
+        self.assertIn("keyCredentials", self.text)
+        select_line = re.search(r"\$select\s*=\s*['\"](?P<cols>[^'\"]+)['\"]", self.text)
+        self.assertIsNotNone(select_line, "expected a $select projection for the /applications GET")
+        self.assertIn("keyCredentials", select_line.group("cols").split(","))
+        check7 = re.search(r"# --- Check 7:.*?\n(?P<body>.*?)\nAdd-Result", self.text, re.DOTALL)
+        self.assertIsNotNone(check7, "expected a check 7 section")
+        body = check7.group("body")
+        self.assertIn("keyCredentials", body)
+        self.assertIn("pwdCreds.Count -eq 0", body)
+        self.assertIn("keyCreds.Count -eq 0", body)
+
+    def test_client_id_and_tenant_id_require_a_guid_shape(self):
+        # Review item 7: reject an obviously-malformed id (e.g. a display name or empty string)
+        # before ever calling Graph, rather than surfacing a confusing 400/404 from `az rest`.
+        for param in ("TenantId", "ClientId"):
+            idx = self.text.index(f"[string]${param}")
+            window = self.text[max(0, idx - 200): idx]
+            self.assertIn("ValidatePattern", window, f"-{param} must have a GUID-shaped ValidatePattern")
 
     def test_exits_non_zero_on_failure(self):
         self.assertIn("exit 1", self.text)
@@ -286,12 +459,20 @@ class VerifyProductionAuthScriptContractTests(unittest.TestCase):
         self.assertNotRegex(self.text, _CREDENTIAL_CREATION)
 
     def test_never_prints_the_acquired_token(self):
-        # The delegated token variable must never be handed to a print/output cmdlet.
+        # The delegated token variable must never be handed to a print/output cmdlet, including
+        # via string interpolation (review item 9 / mutation M4).
         self.assertNotRegex(self.text, _TOKEN_PRINT)
+        self.assertEqual(_lines_printing_a_secret_value(self.text), [])
         self.assertIn("never print", self.text)
 
     def test_no_dotenv_reads(self):
         self.assertNotRegex(self.text, _ENV_FILE_READ)
+
+    def test_no_raw_az_ad_write(self):
+        self.assertNotRegex(self.text, _RAW_AZ_AD_WRITE)
+
+    def test_no_alternate_graph_or_arm_write_cmdlets(self):
+        self.assertNotRegex(self.text, _ALT_GRAPH_OR_ARM_CMDLET)
 
     def test_has_revisions_only_switch_and_gates_http_probes(self):
         self.assertIn("[switch]$RevisionsOnly", self.text)
@@ -303,6 +484,38 @@ class VerifyProductionAuthScriptContractTests(unittest.TestCase):
         self.assertIn("RevisionsOnly", window)
         self.assertIn("-not $ingressEnabled", window)
 
+    def test_revisions_only_skips_the_registration_check_delegation(self):
+        # Review item 6: -RevisionsOnly must run only the env-pin/active-revision/EasyAuth `az`
+        # checks (18.9), with no HTTP calls at all -- including the Verify-EntraAuth.ps1
+        # delegation, which itself makes Graph HTTP calls.
+        idx = self.text.index("Delegate registration checks to Verify-EntraAuth.ps1")
+        window = self.text[idx: idx + 400]
+        self.assertRegex(
+            window, r"if\s*\(-not \$SkipRegistrationCheck\s+-and\s+-not \$RevisionsOnly\)",
+            "the Verify-EntraAuth.ps1 delegation must also be skipped under -RevisionsOnly",
+        )
+
+    def test_revisions_only_makes_no_http_calls(self):
+        # Review item 6 pin: every call site of Test-AnonymousProbes, Test-AuthenticatedProbe and
+        # `& $verifyScript` must be lexically nested (brace-depth matched) in a block whose header
+        # contains -RevisionsOnly, and Invoke-WebRequest may appear only inside the
+        # Invoke-ProbeRequest function (never directly at a -RevisionsOnly-reachable call site).
+        text = self.text
+        call_pattern = re.compile(r"\bTest-AnonymousProbes\s+-|\bTest-AuthenticatedProbe\s+-|&\s*\$verifyScript\b")
+        offending = _unguarded_call_sites(text, call_pattern, "$RevisionsOnly")
+        self.assertEqual(
+            offending, [],
+            f"found HTTP/registration call site(s) not nested in a -RevisionsOnly-guarded if-block: {offending}",
+        )
+
+    def test_invoke_webrequest_only_used_inside_invoke_probe_request(self):
+        text = self.text
+        func_match = re.search(r"function\s+Invoke-ProbeRequest\s*\{.*?\n\}\n", text, re.DOTALL)
+        self.assertIsNotNone(func_match, "expected an Invoke-ProbeRequest function")
+        self.assertIn("Invoke-WebRequest", func_match.group(0))
+        outside = text[:func_match.start()] + text[func_match.end():]
+        self.assertNotIn("Invoke-WebRequest", outside)
+
     def test_has_authenticated_switch(self):
         self.assertIn("[switch]$Authenticated", self.text)
         self.assertIn("get-access-token", self.text)
@@ -313,6 +526,64 @@ class VerifyProductionAuthScriptContractTests(unittest.TestCase):
     def test_easyauth_unknown_state_fails_closed(self):
         idx = self.text.index("unknown state, treated as failure")
         self.assertGreater(idx, 0)
+
+    def test_easyauth_never_treats_a_lookup_error_as_a_pass(self):
+        # Review item 3/9: a prior version treated "ResourceNotFound"/"could not be found" text
+        # in `az containerapp auth show`'s stderr as an implicit PASS ("nothing configured means
+        # EasyAuth is off"). That is unsafe -- the same text can appear for a transient/auth
+        # failure, not just "nothing configured" -- so *every* non-zero exit from `auth show` must
+        # now be a FAIL, with no carve-out.
+        self.assertNotIn("no auth configuration present", self.text)
+        self.assertNotRegex(self.text, r"ResourceNotFound\|could not be found\|NotFound")
+        idx = self.text.index("$authShow = az containerapp auth show")
+        window = self.text[idx: idx + 700]
+        self.assertRegex(
+            window, r"if\s*\(\$LASTEXITCODE\s*-ne\s*0\)\s*\{\s*(?:#[^\n]*\n\s*)*Add-Result[^\n]*\$false",
+            "every `az containerapp auth show` failure must directly Add-Result a FAIL, with no "
+            "intermediate branch that could turn a specific error text into a PASS",
+        )
+
+    def test_easyauth_pass_requires_platform_enabled_exactly_false(self):
+        # Mutation M5 replaced `-eq $false` with `-ne $true`, which looks equivalent but is not:
+        # if platform.enabled is $null/unknown, `-eq $false` correctly fails, but `-ne $true`
+        # incorrectly passes. The literal `-eq $false` spelling is the pin.
+        idx = self.text.index("$easyAuthOff = ")
+        line = self.text[idx: idx + 80]
+        self.assertIn("-eq $false", line)
+        self.assertNotIn("-ne $true", line)
+
+    def test_revision_check_requires_exactly_one_active_healthy_running(self):
+        # Review item 4: "at least one active revision" is not enough -- a stuck rollout with two
+        # active revisions, or an active-but-unhealthy/non-running one, must also fail.
+        self.assertIn("activeRevisions.Count -eq 1", self.text)
+        self.assertIn("exactly one active revision", self.text)
+        self.assertIn("healthState", self.text)
+        self.assertIn("runningState", self.text)
+        self.assertRegex(self.text, r"healthState\s*-eq\s*['\"]Healthy['\"]")
+        self.assertRegex(self.text, r"runningState\s*-eq\s*['\"]Running['\"]")
+
+    def test_app_discovery_is_strictmode_safe_and_covers_the_dotnet_app(self):
+        # Review item 5: the dotnet app's bicep resource has no `azd-service-name` tag, so a raw
+        # `$_.tags.'azd-service-name'` access throws under Set-StrictMode when `tags` lacks that
+        # key. Discovery must read it safely (via Get-Prop) and must still resolve the dotnet
+        # app's service name, by container app name, from the azd env.
+        self.assertNotIn(".tags.'azd-service-name'", self.text)
+        self.assertIn("function Resolve-ServiceName", self.text)
+        self.assertIn("AZURE_CONTAINER_APP_DOTNET_NAME", self.text)
+        self.assertIn("'backend-dotnet'", self.text)
+        resolve_fn = re.search(r"function\s+Resolve-ServiceName\s*\{(?P<body>.*?)\n\}", self.text, re.DOTALL)
+        self.assertIsNotNone(resolve_fn)
+        self.assertIn("Get-Prop", resolve_fn.group("body"))
+
+    def test_no_hardcoded_persona_brand_path(self):
+        # Review item 8: the hardcoded `sonic` persona path must be gone; the brand ratchet must
+        # not go up, and a hardcoded brand would mis-probe any environment running a different
+        # PERSONAS set.
+        self.assertNotRegex(self.text, _HARDCODED_PERSONA_BRAND)
+        self.assertIn("[string]$ProbePersona", self.text)
+        self.assertIn("DEFAULT_PERSONA", self.text)
+        self.assertIn("PERSONAS", self.text)
+        self.assertRegex(self.text, r"ValidatePattern\('\^\[a-z0-9-\]\+\$'\)")
 
     def test_redacts_guids_in_output(self):
         self.assertIn("function Format-Redacted", self.text)
@@ -343,6 +614,26 @@ class AllScriptsSharedSafetyInvariantTests(unittest.TestCase):
         for name, path in ALL_SCRIPTS.items():
             text = _read(path)
             self.assertNotRegex(text, _TOKEN_PRINT, f"{name} must never print a token/secret value")
+            self.assertEqual(
+                _lines_printing_a_secret_value(text), [],
+                f"{name} must never print a token/secret value, including via string interpolation",
+            )
+
+    def test_none_call_raw_az_ad_write(self):
+        for name, path in ALL_SCRIPTS.items():
+            text = _read(path)
+            self.assertNotRegex(
+                text, _RAW_AZ_AD_WRITE,
+                f"{name} must never call `az ad app create`/`az ad sp create` (or update/delete/credential)",
+            )
+
+    def test_none_hardcode_a_persona_brand(self):
+        # Review item 8/11: the brand ratchet must not go up. A hardcoded persona/brand id in any
+        # of the three scripts would mis-probe/mis-verify any environment running a different
+        # PERSONAS set, and is exactly the kind of drift this pin exists to catch.
+        for name, path in ALL_SCRIPTS.items():
+            text = _read(path)
+            self.assertNotRegex(text, _HARDCODED_PERSONA_BRAND, f"{name} must not hardcode a persona brand word")
 
     def test_all_require_powershell_7(self):
         for name, path in ALL_SCRIPTS.items():
