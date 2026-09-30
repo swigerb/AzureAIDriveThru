@@ -42,7 +42,7 @@ public sealed class HeartbeatPongSurvivalTests(ConformanceFixture fixture)
 
         var backendUri = fixture.Backend!.BaseUri;
 
-        using var http = new HttpClient();
+        using var http = ConformanceHttpClient.Create();
         using var tokenResponse = await http.GetAsync(new Uri(backendUri, "/api/auth/session"), ct);
         tokenResponse.EnsureSuccessStatusCode();
         using var tokenDoc = JsonDocument.Parse(await tokenResponse.Content.ReadAsStreamAsync(ct));

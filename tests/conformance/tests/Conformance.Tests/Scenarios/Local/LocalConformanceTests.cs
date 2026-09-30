@@ -21,7 +21,7 @@ public static class LocalScenarioHelpers
     /// <summary>The backend's own default persona id, from <c>GET /api/personas</c>.</summary>
     public static async Task<string> DefaultPersonaIdAsync(IBackendUnderTest backend, CancellationToken ct)
     {
-        using var http = new HttpClient();
+        using var http = ConformanceHttpClient.Create();
         using var document = JsonDocument.Parse(await http.GetStringAsync(new Uri(backend.BaseUri, "/api/personas"), ct));
         return document.RootElement.GetProperty("default").GetString()!;
     }
@@ -31,7 +31,7 @@ public static class LocalScenarioHelpers
     public static async Task<IReadOnlyList<string>> SelectableLocalModelsAsync(
         IBackendUnderTest backend, string personaId, CancellationToken ct)
     {
-        using var http = new HttpClient();
+        using var http = ConformanceHttpClient.Create();
         using var response = await http.GetAsync(new Uri(backend.BaseUri, $"/api/personas/{personaId}"), ct);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));

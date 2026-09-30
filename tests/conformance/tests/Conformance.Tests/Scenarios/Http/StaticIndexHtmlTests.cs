@@ -1,4 +1,5 @@
 using System.Net;
+using Conformance.Harness;
 using Xunit;
 
 namespace Conformance.Tests;
@@ -19,7 +20,7 @@ public sealed class StaticIndexHtmlTests(ConformanceFixture fixture)
     [Fact]
     public Task Root_route_serves_index_html_with_cache_control_no_cache() => fixture.RunAsync(async () =>
     {
-        using var http = new HttpClient();
+        using var http = ConformanceHttpClient.Create();
         using var response = await http.GetAsync(fixture.Backend!.BaseUri, TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);

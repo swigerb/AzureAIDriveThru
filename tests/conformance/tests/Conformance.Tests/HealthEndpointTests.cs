@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using Conformance.Harness;
 using Xunit;
 
 namespace Conformance.Tests;
@@ -11,7 +12,7 @@ public sealed class HealthEndpointTests(ConformanceFixture fixture)
     [Fact]
     public Task Health_endpoint_returns_200() => fixture.RunAsync(async () =>
     {
-        using var http = new HttpClient();
+        using var http = ConformanceHttpClient.Create();
         using var response = await http.GetAsync(new Uri(fixture.Backend!.BaseUri, "/health"), TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);

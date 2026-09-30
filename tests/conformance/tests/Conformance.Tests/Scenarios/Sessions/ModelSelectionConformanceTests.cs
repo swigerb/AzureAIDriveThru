@@ -60,7 +60,7 @@ public static class ModelSelectionConformanceTestHelpers
     public static async Task<string> RealtimeConnectBodyAsync(
         Uri backendBaseUri, string query, HttpStatusCode expectedStatus, CancellationToken ct)
     {
-        using var http = new HttpClient();
+        using var http = ConformanceHttpClient.Create();
         using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(backendBaseUri, $"/realtime?{query}"));
         request.Headers.TryAddWithoutValidation("Connection", "Upgrade");
         request.Headers.TryAddWithoutValidation("Upgrade", "websocket");
@@ -195,7 +195,7 @@ public sealed class ModelSelectionConformanceTests(ModelDeploymentMapConformance
     public Task Api_persona_detail_lists_only_the_selectable_models_shaped_for_the_picker() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
-        using var http = new HttpClient();
+        using var http = ConformanceHttpClient.Create();
         using var response = await http.GetAsync(new Uri(fixture.Backend!.BaseUri, "/api/personas/sonic"), ct);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 

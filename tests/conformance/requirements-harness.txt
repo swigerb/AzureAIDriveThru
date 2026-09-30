@@ -1,0 +1,7 @@
+# Issue #143/ADR-002: PyJWT is used only here, by the harness's own
+# FakeEntraIssuerPyJwtValidationTests.cs xUnit test, to prove FakeEntraIssuer's discovery
+# document, JWKS, and minted tokens validate with a stock third-party JWT library from the
+# Python ecosystem -- NOT a runtime dependency of app/backend itself. This file is deliberately
+# separate from app/backend/requirements.txt: #144 adds PyJWT (or whichever library it ends up
+# choosing) there separately, if/when app/backend itself needs it to enforce ADR-002 auth.
+PyJWT[crypto]>=2.9,<3

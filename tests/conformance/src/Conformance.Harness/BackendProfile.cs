@@ -293,4 +293,39 @@ public static class BackendProfiles
     /// the same as a genuine production deployment.
     /// </summary>
     public static BackendProfile HooksOff { get; } = new("HooksOff", new Dictionary<string, string>());
+
+    /// <summary>
+    /// Issue #143/ADR-002: for <see cref="Conformance.Tests.DevelopmentPassThroughFixture"/> and
+    /// its explicit-mode sibling -- persona-architecture.md 18.5's "Development pass-through" row
+    /// needs a "Not Production" environment on BOTH backends, not just Python's own
+    /// CONFORMANCE_TEST_HOOKS=1-driven RUNNING_IN_PRODUCTION downgrade (<see
+    /// cref="BackendEnvironment.Build"/>), which the C# launcher has no equivalent of (it pins
+    /// ASPNETCORE_ENVIRONMENT/DOTNET_ENVIRONMENT to "Production" unconditionally). Sets
+    /// RUNNING_IN_PRODUCTION=false explicitly too (redundant with the hooks downgrade for Python
+    /// today, but self-documenting and future-proof if that downgrade rule ever changes).
+    /// CONFORMANCE_TEST_HOOKS stays on, same as <see cref="Default"/>, so 18.11 row 16's own
+    /// assertions aren't the first thing to lose test-hook coverage other scenarios rely on.
+    /// </summary>
+    public static BackendProfile DevelopmentPassThrough { get; } = new(
+        "DevelopmentPassThrough", new Dictionary<string, string>
+        {
+            ["CONFORMANCE_TEST_HOOKS"] = "1",
+            ["RUNNING_IN_PRODUCTION"] = "false",
+            ["ASPNETCORE_ENVIRONMENT"] = "Development",
+            ["DOTNET_ENVIRONMENT"] = "Development",
+        });
+
+    /// <summary>Row 16's second variant: same "Not Production, unconfigured" shape as <see
+    /// cref="DevelopmentPassThrough"/>, but with AUTH_MODE explicitly set to "Development" instead
+    /// of left unset -- persona-architecture.md 18.5's "Development pass-through, the same as the
+    /// row above" for an explicit mode with no ids configured.</summary>
+    public static BackendProfile DevelopmentPassThroughExplicitMode { get; } = new(
+        "DevelopmentPassThroughExplicitMode", new Dictionary<string, string>
+        {
+            ["CONFORMANCE_TEST_HOOKS"] = "1",
+            ["RUNNING_IN_PRODUCTION"] = "false",
+            ["ASPNETCORE_ENVIRONMENT"] = "Development",
+            ["DOTNET_ENVIRONMENT"] = "Development",
+            ["AUTH_MODE"] = "Development",
+        });
 }

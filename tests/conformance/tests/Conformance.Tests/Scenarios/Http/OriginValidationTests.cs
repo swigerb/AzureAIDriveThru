@@ -28,7 +28,7 @@ public sealed class OriginValidationTests(ConformanceFixture fixture)
 {
     private static async Task<string> FetchTokenAsync(Uri backendBaseUri, CancellationToken ct)
     {
-        using var http = new HttpClient();
+        using var http = ConformanceHttpClient.Create();
         using var response = await http.GetAsync(new Uri(backendBaseUri, "/api/auth/session"), ct);
         response.EnsureSuccessStatusCode();
         using var document = JsonDocument.Parse(await response.Content.ReadAsStreamAsync(ct));
