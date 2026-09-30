@@ -30,6 +30,7 @@ namespace Conformance.Tests;
 public sealed class PersonaSearchIsolationConformanceTests(TwoPersonaConformanceFixture fixture)
 {
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Test_alpha_session_search_returns_only_test_alpha_items_never_test_beta() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -48,6 +49,7 @@ public sealed class PersonaSearchIsolationConformanceTests(TwoPersonaConformance
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Test_beta_session_search_returns_only_test_beta_items_never_test_alpha() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;

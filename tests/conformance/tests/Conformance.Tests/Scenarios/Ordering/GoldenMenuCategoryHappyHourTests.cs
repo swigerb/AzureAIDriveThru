@@ -43,6 +43,7 @@ public sealed class GoldenMenuCategoryHappyHourTests(HappyHourAtOpenFixture fixt
         row.RequiresMachine is { } machine && currentlyDownMachines.Contains(machine);
 
     [Theory]
+    [Trait("Dotnet", "ready")]
     [MemberData(nameof(RepresentativeItems))]
     public Task Golden_happy_hour_discounted_flag_determines_the_happy_hour_discount(string item, string size, decimal unitPrice) =>
         fixture.RunAsync(async () =>

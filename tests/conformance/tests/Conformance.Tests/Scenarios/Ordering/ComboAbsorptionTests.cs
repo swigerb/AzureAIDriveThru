@@ -42,6 +42,7 @@ public sealed class ComboAbsorptionTests(HappyHourJustBeforeOpenFixture fixture)
     }
 
     [Theory]
+    [Trait("Dotnet", "ready")]
     [MemberData(nameof(AbsorptionScenarioIndexes))]
     public Task Combo_absorption_scenarios_match_the_golden_line_item_count_and_total(int scenarioIndex) => fixture.RunAsync(async () =>
     {
@@ -89,6 +90,7 @@ public sealed class ComboAbsorptionTests(HappyHourJustBeforeOpenFixture fixture)
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Combo_conversion_carries_parenthesized_mods_from_the_standalone_item() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -111,6 +113,7 @@ public sealed class ComboAbsorptionTests(HappyHourJustBeforeOpenFixture fixture)
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Reset_order_clears_the_previous_orders_absorbed_component_display() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -159,6 +162,7 @@ public sealed class ComboAbsorptionTests(HappyHourJustBeforeOpenFixture fixture)
     }
 
     [Theory]
+    [Trait("Dotnet", "ready")]
     [MemberData(nameof(ComboItemIndexes))]
     public Task All_ten_real_combo_menu_items_price_correctly_to_the_cent(int comboIndex) => fixture.RunAsync(async () =>
     {
@@ -197,6 +201,7 @@ public sealed class ComboAbsorptionTests(HappyHourJustBeforeOpenFixture fixture)
 public sealed class ComboAbsorptionHappyHourTests(HappyHourAtOpenFixture fixture)
 {
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Combo_plus_extra_standalone_drink_is_discounted_during_happy_hour() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -226,6 +231,7 @@ public sealed class ComboAbsorptionHappyHourTests(HappyHourAtOpenFixture fixture
     }
 
     [Theory]
+    [Trait("Dotnet", "ready")]
     [MemberData(nameof(ComboItemIndexes))]
     public Task All_ten_real_combo_menu_items_price_correctly_to_the_cent_during_happy_hour(int comboIndex) => fixture.RunAsync(async () =>
     {

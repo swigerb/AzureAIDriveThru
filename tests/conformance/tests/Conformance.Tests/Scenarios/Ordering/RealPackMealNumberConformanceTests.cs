@@ -229,6 +229,7 @@ public sealed class RealPackMealNumberConformanceTests
     }
 
     [Theory]
+    [Trait("Dotnet", "ready")]
     [MemberData(nameof(DiscoveredPersonaIds))]
     public async Task Discovered_pack_honors_its_own_search_query_rewrite_strategy(string personaId)
     {
