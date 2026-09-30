@@ -365,7 +365,7 @@ ANONYMOUS_ROUTE_NAMES = frozenset({"index", "health", "static"})
 # depending on the requested file's extension (18.2: public branding assets vs.
 # `demo/*.json`, fetched with `fetch()` and therefore able to carry a bearer).
 PERSONA_ASSET_ROUTE_NAME = "persona-asset"
-ANONYMOUS_ASSET_EXTENSIONS = frozenset({".svg", ".png", ".jpg", ".jpeg", ".webp", ".ico", ".wav", ".mp3"})
+ANONYMOUS_ASSET_EXTENSIONS = frozenset({".svg", ".png", ".jpg", ".webp", ".ico", ".wav", ".mp3"})
 
 # The one route where the Entra access token may be read from a query parameter
 # instead of the Authorization header (18.3) -- browsers can't set headers on a

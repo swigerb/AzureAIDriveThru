@@ -527,7 +527,7 @@ async def create_app() -> web.Application:
     try:
         entra_settings = entra_auth.resolve_settings(os.environ)
     except EntraConfigError as exc:
-        logger.critical("FATAL: Entra auth configuration is invalid — %s", exc)
+        logger.critical("FATAL: Entra auth configuration is invalid: %s", exc)
         sys.exit(1)
 
     # 2. Load and validate every enabled persona pack (issue #70). Refuses to start on an

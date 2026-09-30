@@ -2744,7 +2744,7 @@ class RTMiddleTier:
             if self.entra_mode:
                 principal = request.get("principal") or {}
                 if not payload.get("oid") or payload.get("oid") != principal.get("oid"):
-                    logger.warning("Rejected WebSocket — session token oid does not match Entra principal")
+                    logger.warning("Rejected WebSocket: session token oid does not match Entra principal")
                     return web.Response(
                         status=401, text="Invalid or expired token",
                         headers={"WWW-Authenticate": "Bearer"},
