@@ -1,4 +1,5 @@
 using System.IdentityModel.Tokens.Jwt;
+using System.Linq;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
@@ -115,7 +116,11 @@ public sealed class FakeEntraIssuer : IAsyncDisposable
     /// <summary>Matches persona-architecture.md 18.5's ENTRA_API_SCOPE default.</summary>
     public const string DefaultScope = "access_as_user";
 
-    private const string PublishedKid = "conformance-fake-entra-published-key";
+    /// <summary>The `kid` header claim of the one key this issuer's JWKS actually serves -- public
+    /// so tests (18.11 row 7's published-kid bad-signature/none/HS256 variants) can mint a token
+    /// that carries this real, resolvable kid while still failing on signature or alg, proving a
+    /// validator's alg/signature check runs rather than short-circuiting on a key-lookup miss.</summary>
+    public const string PublishedKid = "conformance-fake-entra-published-key";
     private const string UnpublishedKid = "conformance-fake-entra-unpublished-key";
 
     // Deliberately fixed, not random: row 7's HS256 sub-case only needs "some algorithm the
@@ -280,6 +285,29 @@ public sealed class FakeEntraIssuer : IAsyncDisposable
             notBefore: nbf.UtcDateTime,
             expires: exp.UtcDateTime,
             signingCredentials: signingCredentials);
+
+        // R4 (Rick's PR #158 round 1 review): JwtPayload's own claim-aggregation collapses a
+        // SINGLE claim of a given Type to a bare JSON string, not a 1-element array -- but real
+        // Entra always emits `roles` as a JSON array, even for one role. Force array
+        // serialization explicitly; roles.Count == 0 already leaves the key absent entirely (the
+        // foreach above never added a "roles" claim in that case), matching real Entra's own
+        // "omit the claim when no app roles are assigned" behaviour.
+        if (roles.Count > 0)
+        {
+            token.Payload["roles"] = roles.ToArray();
+        }
+
+        // R5 (Rick's PR #158 round 1 review): only the RS256 path ever wrote a `kid` header claim
+        // (BuildRsaSigningCredentials always sets one); "none" and HS256 wrote no `kid` at all, so
+        // a validator that looks the signing key up by `kid` (PyJWKClient, JwtBearer) never even
+        // reaches the alg/signature check for those two shapes. Apply FakeEntraTokenOverrides.Kid
+        // uniformly across all three algs -- 18.11 row 7's published-kid variants need a
+        // none/HS256 token that carries the real published kid, so the alg/signature check is
+        // what actually rejects it, not a key-lookup miss.
+        if (alg != "RS256" && overrides.Kid is not null)
+        {
+            token.Header["kid"] = overrides.Kid;
+        }
 
         return new JwtSecurityTokenHandler().WriteToken(token);
     }

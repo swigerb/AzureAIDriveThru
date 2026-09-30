@@ -1,6 +1,8 @@
 using System.Net;
 using System.Net.Http.Headers;
+using System.Linq;
 using Conformance.Fakes;
+using Conformance.Tests.Scenarios.Auth;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Builder;
@@ -35,7 +37,7 @@ namespace Conformance.Tests;
 public sealed class FakeEntraIssuerJwtBearerValidationTests
 {
     private static async Task<(FakeEntraIssuer Issuer, WebApplication App, HttpClient Client)> StartAsync(
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, TimeSpan? clockSkew = null)
     {
         var issuer = new FakeEntraIssuer();
         await issuer.StartAsync(cancellationToken).ConfigureAwait(false);
@@ -53,6 +55,15 @@ public sealed class FakeEntraIssuerJwtBearerValidationTests
                 options.Authority = issuer.Issuer;
                 options.Audience = FakeEntraIssuer.DefaultClientId;
                 options.RequireHttpsMetadata = false; // loopback fake, never a real Entra host
+                // R2 (Rick's PR #158 round 1 review): JwtBearer's own default ClockSkew is
+                // already 5 minutes, matching persona-architecture.md 18.4 -- explicit only so a
+                // caller can also host with a DIFFERENT skew (2 minutes below) to prove the
+                // 6b-inside/6b-outside/6c-inside/6c-outside rows actually pin the 5-minute value,
+                // rather than merely testing "some skew exists".
+                if (clockSkew is not null)
+                {
+                    options.TokenValidationParameters.ClockSkew = clockSkew.Value;
+                }
             });
         builder.Services.AddAuthorization();
 
@@ -166,6 +177,90 @@ public sealed class FakeEntraIssuerJwtBearerValidationTests
         var (issuer, app, client) = await StartAsync(ct);
         try
         {
+            using var response = await client.GetAsync("/secure", ct);
+
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        }
+        finally
+        {
+            await StopAsync(issuer, app, client);
+        }
+    }
+
+    /// <summary>R2 pin (Rick's PR #158 round 1 review): 18.4 sets the clock skew at 5 minutes for
+    /// both `exp` and `nbf`. Hosted with that default skew, the boundary pair on each side must
+    /// land exactly where 18.11 rows 6b/6c say: 4m30s inside is accepted, 5m30s outside is
+    /// rejected.</summary>
+    [Theory]
+    [InlineData("6b-inside", HttpStatusCode.OK)]
+    [InlineData("6b-outside", HttpStatusCode.Unauthorized)]
+    [InlineData("6c-inside", HttpStatusCode.OK)]
+    [InlineData("6c-outside", HttpStatusCode.Unauthorized)]
+    public async Task Clock_skew_boundary_row_at_the_five_minute_skew(string rowName, HttpStatusCode expected)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var (issuer, app, client) = await StartAsync(ct, clockSkew: TimeSpan.FromMinutes(5));
+        try
+        {
+            var row = AuthRowTokenCase.All.Single(r => r.Row == rowName);
+            var token = row.MintToken(issuer);
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+            using var response = await client.GetAsync("/secure", ct);
+
+            Assert.Equal(expected, response.StatusCode);
+        }
+        finally
+        {
+            await StopAsync(issuer, app, client);
+        }
+    }
+
+    /// <summary>R2 pin (Rick's PR #158 round 1 review): the same "inside" token that the 5-minute
+    /// skew accepts above must be rejected against a backend configured with a DIFFERENT (2
+    /// minute) skew -- proving 6b-inside genuinely pins the 5-minute value from 18.4, rather than
+    /// merely proving some skew, of any size, exists.</summary>
+    [Fact]
+    public async Task Six_b_inside_is_rejected_with_a_two_minute_skew()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var (issuer, app, client) = await StartAsync(ct, clockSkew: TimeSpan.FromMinutes(2));
+        try
+        {
+            var row = AuthRowTokenCase.All.Single(r => r.Row == "6b-inside");
+            var token = row.MintToken(issuer);
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+            using var response = await client.GetAsync("/secure", ct);
+
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        }
+        finally
+        {
+            await StopAsync(issuer, app, client);
+        }
+    }
+
+    /// <summary>R5 pin (Rick's PR #158 round 1 review): a token that carries the real, resolvable
+    /// published kid but is either badly signed, unsigned (`alg: none`), or signed with the wrong
+    /// algorithm family (HS256) must still be rejected by stock JwtBearer -- proving the
+    /// alg/signature check actually runs, rather than the token merely failing at key lookup
+    /// (which the pre-existing unknown-kid case above already covers, and which R5's own header-
+    /// decode pin in AuthRowCasesTests separately confirms these three shapes do NOT hit).</summary>
+    [Theory]
+    [InlineData("7 (bad signature, published kid)")]
+    [InlineData("7 (alg: none, published kid)")]
+    [InlineData("7 (HS256, published kid)")]
+    public async Task Published_kid_row_7_variant_is_rejected_by_stock_JwtBearer(string rowName)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var (issuer, app, client) = await StartAsync(ct);
+        try
+        {
+            var row = AuthRowTokenCase.All.Single(r => r.Row == rowName);
+            var token = row.MintToken(issuer);
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
             using var response = await client.GetAsync("/secure", ct);
 
             Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);

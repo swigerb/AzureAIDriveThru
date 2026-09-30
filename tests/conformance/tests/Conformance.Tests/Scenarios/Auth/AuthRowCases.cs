@@ -70,17 +70,53 @@ public sealed record AuthRowTokenCase(
             issuer => issuer.Mint(new FakeEntraTokenOverrides { Roles = [] }),
             AuthRowExpectedOutcome.Reject403),
 
+        new("4b", "Wrong role (present, but not the required one)",
+            issuer => issuer.Mint(new FakeEntraTokenOverrides { Roles = ["Some.Other.Role"] }),
+            AuthRowExpectedOutcome.Reject403),
+
+        new("4c", "Substring-guard role (a role that merely starts with the required one)",
+            issuer => issuer.Mint(new FakeEntraTokenOverrides { Roles = ["DriveThru.UserX"] }),
+            AuthRowExpectedOutcome.Reject403),
+
         new("5", "Missing scope; app-only token (roles, no scp)",
             issuer => issuer.Mint(new FakeEntraTokenOverrides { OmitScope = true }),
             AuthRowExpectedOutcome.Reject403),
 
+        new("5b", "Wrong scope (present, but not the required one)",
+            issuer => issuer.Mint(new FakeEntraTokenOverrides { Scope = "User.Read" }),
+            AuthRowExpectedOutcome.Reject403),
+
+        new("5c", "Substring-guard scope (a scope that merely starts with the required one)",
+            issuer => issuer.Mint(new FakeEntraTokenOverrides { Scope = "access_as_user_admin" }),
+            AuthRowExpectedOutcome.Reject403),
+
         new("6", "Expired past the skew (exp = now minus 10 min)",
-            issuer => issuer.Mint(new FakeEntraTokenOverrides { Exp = DateTimeOffset.UtcNow.AddMinutes(-10) }),
+            issuer => issuer.Mint(new FakeEntraTokenOverrides
+            {
+                Exp = DateTimeOffset.UtcNow.AddMinutes(-10),
+                Nbf = DateTimeOffset.UtcNow.AddMinutes(-20),
+            }),
             AuthRowExpectedOutcome.Reject401),
 
-        new("6b", "Expired inside the skew (exp = now minus 1 min) -- pins the 5-minute skew on both backends",
-            issuer => issuer.Mint(new FakeEntraTokenOverrides { Exp = DateTimeOffset.UtcNow.AddMinutes(-1) }),
+        new("6b-inside", "Expired inside the 5-minute skew (exp = now minus 4m30s) -- pins the skew's inside edge",
+            issuer => issuer.Mint(new FakeEntraTokenOverrides { Exp = DateTimeOffset.UtcNow.AddMinutes(-4).AddSeconds(-30) }),
             AuthRowExpectedOutcome.Accept),
+
+        new("6b-outside", "Expired past the 5-minute skew (exp = now minus 5m30s) -- pins the skew's outside edge",
+            issuer => issuer.Mint(new FakeEntraTokenOverrides
+            {
+                Exp = DateTimeOffset.UtcNow.AddMinutes(-5).AddSeconds(-30),
+                Nbf = DateTimeOffset.UtcNow.AddMinutes(-20),
+            }),
+            AuthRowExpectedOutcome.Reject401),
+
+        new("6c-inside", "Not yet valid inside the 5-minute skew (nbf = now plus 4m30s) -- pins the skew's inside edge on nbf",
+            issuer => issuer.Mint(new FakeEntraTokenOverrides { Nbf = DateTimeOffset.UtcNow.AddMinutes(4).AddSeconds(30) }),
+            AuthRowExpectedOutcome.Accept),
+
+        new("6c-outside", "Not yet valid past the 5-minute skew (nbf = now plus 5m30s) -- pins the skew's outside edge on nbf",
+            issuer => issuer.Mint(new FakeEntraTokenOverrides { Nbf = DateTimeOffset.UtcNow.AddMinutes(5).AddSeconds(30) }),
+            AuthRowExpectedOutcome.Reject401),
 
         new("7 (bad signature)", "Bad signature (unpublished key)",
             issuer => issuer.Mint(new FakeEntraTokenOverrides { Key = FakeEntraSigningKey.Unpublished }),
@@ -92,6 +128,18 @@ public sealed record AuthRowTokenCase(
 
         new("7 (HS256)", "HS256",
             issuer => issuer.Mint(new FakeEntraTokenOverrides { Alg = "HS256" }),
+            AuthRowExpectedOutcome.Reject401),
+
+        new("7 (bad signature, published kid)", "Bad signature (unpublished key, but the header claims the published kid)",
+            issuer => issuer.Mint(new FakeEntraTokenOverrides { Key = FakeEntraSigningKey.Unpublished, Kid = FakeEntraIssuer.PublishedKid }),
+            AuthRowExpectedOutcome.Reject401),
+
+        new("7 (alg: none, published kid)", "alg: none, but the header claims the published kid",
+            issuer => issuer.Mint(new FakeEntraTokenOverrides { Alg = "none", Kid = FakeEntraIssuer.PublishedKid }),
+            AuthRowExpectedOutcome.Reject401),
+
+        new("7 (HS256, published kid)", "HS256, but the header claims the published kid",
+            issuer => issuer.Mint(new FakeEntraTokenOverrides { Alg = "HS256", Kid = FakeEntraIssuer.PublishedKid }),
             AuthRowExpectedOutcome.Reject401),
 
         new("8", "Valid", issuer => issuer.Mint(), AuthRowExpectedOutcome.Accept),
