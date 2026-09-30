@@ -223,7 +223,6 @@ class _Models(BaseModel):
     model_config = ConfigDict(extra="forbid")
     realtime: _ModelPipeline
     cascade: _ModelPipeline | None = None
-    local: _ModelPipeline | None = None
 
 
 class _Strategies(BaseModel):

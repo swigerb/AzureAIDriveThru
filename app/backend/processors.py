@@ -1,8 +1,8 @@
 """Processor interface for the drive-thru voice ordering backend (issue #75 / #82, design doc
 section 7.4).
 
-A "processor" is one pipeline (`realtime` | `cascade` | `local`, design doc section 7.1) behind
-one shared interface, so #82's cascade pipeline and #81's local pipeline can plug in beside the
+A "processor" is one pipeline (`realtime` | `cascade`, design doc section 7.1) behind
+one shared interface, so #82's cascade pipeline can plug in beside the
 realtime path (`RTMiddleTier`) without `app.py`/`rtmt.py`'s session-handling code caring which one
 is actually live for a given persona/model. This mirrors the C# skeleton's
 `Backend/Sessions/IPipelineProcessor.cs`, which is intentionally the same shape and (per its own
@@ -10,11 +10,11 @@ docstring) still unbound to more than one implementation as of this wave -- this
 Python side of that same seam, and settles the `models.catalog` shape `ModelCatalog.cs` was
 waiting on (see `docs/dotnet_mapping.md`'s "Known ambiguity" note).
 
-`RTMiddleTier` (rtmt.py) is the first (and, until #82/#81 land, only) implementation:
+`RTMiddleTier` (rtmt.py) is the first (and, until #82 landed, only) implementation:
 `pipeline_name = "realtime"`. Nothing outside this module hardcodes that string when deciding
 whether a model is usable for realtime -- `resolve_realtime_model` below always checks a model's
 catalog `pipeline` field against the *caller's own* `pipeline_name`, not a literal. A future
-`CascadeProcessor`/`LocalProcessor` (#82/#81) would implement the same `PipelineProcessor` shape
+`CascadeProcessor` (#82) would implement the same `PipelineProcessor` shape
 and register alongside `RTMiddleTier` in a `ProcessorRegistry`.
 
 Rick's PR #106 review item 5: `dispatch_processor` below is the REAL processor seam. Once a
@@ -48,7 +48,6 @@ __all__ = [
     "ResolvedModel",
     "dispatch_processor",
     "resolve_cascade_model",
-    "resolve_local_model",
     "resolve_realtime_model",
 ]
 
@@ -83,14 +82,14 @@ class ResolvedModel:
 
 @runtime_checkable
 class PipelineProcessor(Protocol):
-    """The seam #82's cascade pipeline (and #81's local pipeline) plug into. Deliberately
+    """The seam #82's cascade pipeline plugs into. Deliberately
     minimal -- this wave defines only the shape (same note as the C# skeleton's
     `IPipelineProcessor`): a pipeline identifies itself and can resolve a persona's requested
     model against its own allow-list/catalog/deployment data. Owning a connection's full
     lifetime (the realtime relay loop, resume handling, teardown, ...) is each processor's own
     business beyond this shape, exactly as `RTMiddleTier` already does today."""
 
-    #: "realtime" | "cascade" | "local" -- must match a persona.json `models` key and a
+    #: "realtime" | "cascade" -- must match a persona.json `models` key and a
     #: `ModelCatalog` entry's `pipeline`.
     pipeline_name: str
 
@@ -116,7 +115,7 @@ class ProcessorRegistry:
     """Looks up the `PipelineProcessor` for a pipeline name. With only `RTMiddleTier` registered
     today this looks like unnecessary indirection -- that's deliberate: it is the concrete seam a
     mutation test can bypass (dispatch straight to the realtime processor regardless of which
-    pipeline a resolved model actually belongs to) to prove it's load-bearing once #82/#81 add a
+    pipeline a resolved model actually belongs to) to prove it's load-bearing once #82 adds a
     second entry."""
 
     def __init__(self, processors: list[PipelineProcessor] | tuple[PipelineProcessor, ...]):
@@ -249,66 +248,6 @@ def resolve_cascade_model(
     return ResolvedModel(id=model_id, pipeline=pipeline_name, deployment=deployment, reasoning=entry.reasoning)
 
 
-def resolve_local_model(
-    persona: Persona,
-    requested_model_id: str | None,
-    model_catalog: ModelCatalog,
-    *,
-    pipeline_name: str = "local",
-) -> ResolvedModel:
-    """Resolve a local-pipeline session's requested model (issue #81, design doc section 7.3).
-
-    Same catalog ∩ deployment ∩ persona-allowed algorithm as `resolve_cascade_model`, with one
-    difference in what "deployed" means: the local pipeline has no Foundry deployment at all --
-    there is no per-model entry to look up, only one process-wide companion runtime. So instead
-    of `AZURE_AI_MODEL_DEPLOYMENTS`/`deployment_for`, this checks
-    `model_catalog.local_runtime_endpoint`, which is non-`None` iff the `LOCAL_RUNTIME_ENDPOINT`
-    env var is configured (`model_catalog.py`). An unconfigured runtime is rejected exactly like
-    an undeployed cascade model, including for the persona's own default -- there is no
-    back-compat fallback for local, same as cascade: issue #81's whole point is that local mode
-    "only activates when the local runtime endpoint is configured", with no exception for the
-    default model. This is also the mutation-test guard for "local selectable without a
-    configured runtime" -- remove this check (or the `model_catalog.py` gating it composes
-    with) and `test_processors.py`/`test_local_processor.py`'s runtime-not-configured row fails.
-
-    `ResolvedModel.deployment` carries the local runtime's base URL
-    (`model_catalog.local_runtime_endpoint`) rather than a Foundry deployment name --
-    `LocalProcessor` builds its `HttpLocalRuntimeClient` directly from it, mirroring how
-    cascade/realtime use `.deployment` as "the place this model actually lives."
-
-    Raises `ModelSelectionError` if *persona* has no `models.local` block at all (local mode
-    isn't enabled for this persona), if the runtime endpoint isn't configured, or any of the
-    usual unknown/disallowed/cross-wired checks fail.
-    """
-    pipeline_cfg = persona.manifest.models.local
-    if pipeline_cfg is None:
-        raise ModelSelectionError(f"Persona {persona.id!r} has no models.local configured -- local mode is not enabled for it")
-
-    model_id = requested_model_id if requested_model_id is not None else pipeline_cfg.default
-    is_default = model_id == pipeline_cfg.default
-
-    if model_id not in pipeline_cfg.allowed and not is_default:
-        raise ModelSelectionError(
-            f"Model {model_id!r} is not allowed for persona {persona.id!r}'s {pipeline_name} pipeline "
-            f"(allowed: {pipeline_cfg.allowed})"
-        )
-
-    if not model_catalog.is_catalogued_for(model_id, pipeline_name):
-        raise ModelSelectionError(
-            f"Model {model_id!r} is not in config.yaml's models.catalog for the {pipeline_name} pipeline"
-        )
-    entry = model_catalog.get(model_id)
-
-    endpoint = model_catalog.local_runtime_endpoint
-    if endpoint is None:
-        raise ModelSelectionError(
-            f"Model {model_id!r} is catalogued for the {pipeline_name} pipeline but the local "
-            f"runtime endpoint is not configured (set LOCAL_RUNTIME_ENDPOINT to activate local mode)"
-        )
-
-    return ResolvedModel(id=model_id, pipeline=pipeline_name, deployment=endpoint, reasoning=entry.reasoning)
-
-
 def dispatch_processor(
     persona: Persona,
     requested_model_id: str | None,
@@ -328,9 +267,9 @@ def dispatch_processor(
     Raises `ModelSelectionError` (turned into the same plain 404 as any other unknown/disallowed
     model by the caller) when:
       * the id isn't catalogued at all (unknown model), or
-      * its pipeline has no processor registered yet (e.g. `local` before #81 lands -- this is
-        how an unimplemented pipeline still correctly 404s today instead of crashing; `cascade`
-        left this list once #82 registered `CascadeProcessor`).
+      * its pipeline has no processor registered yet -- this is how an unimplemented pipeline
+        still correctly 404s today instead of crashing; `cascade` left this list once #82
+        registered `CascadeProcessor`.
     """
     model_id = requested_model_id if requested_model_id is not None else persona.manifest.models.realtime.default
     try:

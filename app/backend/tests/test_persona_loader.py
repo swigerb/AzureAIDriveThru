@@ -29,6 +29,7 @@ from persona_loader import (
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _REAL_PERSONAS_DIR = _REPO_ROOT / "personas"
+_FIXTURES_PERSONAS_DIR = Path(__file__).resolve().parent / "fixtures" / "personas"
 
 
 @pytest.fixture
@@ -36,6 +37,18 @@ def personas_copy(tmp_path):
     """A throwaway copy of the real personas/ tree so mutation tests never touch the real pack."""
     dest = tmp_path / "personas"
     shutil.copytree(_REAL_PERSONAS_DIR, dest)
+    return dest
+
+
+@pytest.fixture
+def fixture_personas_copy(tmp_path):
+    """A throwaway copy of the neutral, non-branded fixture pack (test-alpha/test-beta/etc, the
+    same family app/backend/tests/fixtures/personas/ provides for other suites), for schema-
+    violation tests that must not name a real brand pack in their own source: naming a real
+    brand in a new test line grows the checked-in rebrand-baseline word-count ratchet (#76)
+    every time, whereas this fixture never mentions a real brand."""
+    dest = tmp_path / "personas"
+    shutil.copytree(_FIXTURES_PERSONAS_DIR, dest)
     return dest
 
 
@@ -313,6 +326,18 @@ class TestMutationSchemaViolations:
         with pytest.raises(PersonaValidationError, match="sonic"):
             PersonaCatalog.load(personas_dir=personas_copy)
 
+    def test_models_local_pipeline_refuses_to_start(self, fixture_personas_copy):
+        """Issue #155 dropped the `local` pipeline entirely: `_Models` only declares `realtime` and
+        `cascade`, extra="forbid", so a pack that still lists a `models.local` entry (a stale copy
+        from before the removal, or a hand-authored mistake) must be rejected the same way any other
+        unknown field is, not silently ignored. Uses the neutral test-alpha fixture pack (not a real
+        brand pack) so this doesn't grow the checked-in rebrand-baseline word-count ratchet (#76)."""
+        def mutator(d):
+            d["models"]["local"] = {"default": "phi-4-mini-local", "allowed": ["phi-4-mini-local"]}
+        _mutate_persona_json(fixture_personas_copy, "test-alpha", mutator)
+        with pytest.raises(PersonaValidationError, match="test-alpha"):
+            PersonaCatalog.load(personas_dir=fixture_personas_copy, enabled=["test-alpha"], default_persona_id="test-alpha")
+
     def test_id_folder_mismatch_refuses_to_start(self, personas_copy):
         _mutate_persona_json(personas_copy, "sonic", lambda d: d.update(id="not-sonic"))
         with pytest.raises(PersonaValidationError, match="does not match its folder name"):
@@ -431,8 +456,6 @@ class TestMutationSchemaViolations:
 # ===========================================================================
 # Fixture schema copies stay in sync with the real schemas (Rick's PR #102 review item 3)
 # ===========================================================================
-
-_FIXTURES_PERSONAS_DIR = Path(__file__).resolve().parent / "fixtures" / "personas"
 
 
 class TestFixtureSchemasMatchRealSchemas:

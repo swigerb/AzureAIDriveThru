@@ -50,7 +50,6 @@ export interface PersonaModelPipeline {
 export interface PersonaModels {
     realtime: PersonaModelPipeline;
     cascade?: PersonaModelPipeline;
-    local?: PersonaModelPipeline;
 }
 
 /** `GET /api/personas/{id}` response body: the pack's raw `ui` block (theme/assets/strings/hero/
