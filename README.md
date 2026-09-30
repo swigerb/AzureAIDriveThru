@@ -266,18 +266,17 @@ This repository includes infrastructure as code and a `Dockerfile` to deploy the
 > [!IMPORTANT]
 > **The app requires Microsoft Entra ID sign-in (ADR-002).** Every request must
 > carry a bearer token issued for this app's own Entra app registration, with
-> the `access_as_user` scope and `DriveThru.User` app role — including the
+> the `access_as_user` scope and `DriveThru.User` app role, including the
 > `/realtime` websocket, which consumes metered Azure OpenAI realtime tokens on
 > your subscription. There is no way to opt out of authentication in Azure.
 >
 > Before the first `azd up`/`azd provision`, create (or point at) the Entra app
-> registration and pin its identifiers into the azd environment — see the
-> "Setup and Verify" section in [DEPLOY.md](DEPLOY.md) for the full command and
-> its output:
+> registration and pin its identifiers into the azd environment: see the
+> "Setup" section under "Entra ID Authentication" in [DEPLOY.md](DEPLOY.md#setup)
+> for the full command and its output, case (b) for a fresh environment:
 >
 > ```powershell
-> ./scripts/Setup-EntraAuth.ps1 -TenantId <tenant-id> -FromAzdEnv
-> ./scripts/Setup-EntraAuth.ps1 -TenantId <tenant-id> -FromAzdEnv -Apply
+> ./scripts/Setup-EntraAuth.ps1 -TenantId <tenant-id> -Apply
 > azd env set ENTRA_TENANT_ID "<tenant-id>"
 > azd env set ENTRA_CLIENT_ID "<client-id>"
 > azd up
