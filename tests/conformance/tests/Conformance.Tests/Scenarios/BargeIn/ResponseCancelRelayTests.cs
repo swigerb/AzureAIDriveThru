@@ -20,6 +20,7 @@ public sealed class ResponseCancelRelayTests(ConformanceFixture fixture)
     private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Browser_response_cancel_mid_stream_is_relayed_and_cancelled_status_is_handled_cleanly() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -113,6 +114,7 @@ public sealed class ResponseCancelRelayTests(ConformanceFixture fixture)
     /// OrderResumeBrowserTests' strict-autoplay scenario (PR #94, run 36294099810).
     /// </summary>
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Browser_response_cancel_after_the_response_already_finished_is_not_a_backend_error() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;

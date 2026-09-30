@@ -19,6 +19,7 @@ public sealed class SessionBootstrapGaShapeTests(ConformanceFixture fixture)
     private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Bootstrap_session_update_carries_the_full_ga_shape() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;

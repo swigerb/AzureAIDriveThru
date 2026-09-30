@@ -26,6 +26,7 @@ public sealed class VoiceLockTests(ConformanceFixture fixture)
     private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Voice_is_omitted_from_session_update_once_assistant_audio_has_been_sent() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
