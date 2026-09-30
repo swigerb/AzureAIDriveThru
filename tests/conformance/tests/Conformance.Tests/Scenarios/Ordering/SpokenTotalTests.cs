@@ -24,6 +24,7 @@ namespace Conformance.Tests.Scenarios.Ordering;
 public sealed class SpokenTotalTests(HappyHourJustBeforeOpenFixture fixture)
 {
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Spoken_total_text_matches_the_exact_final_total_non_half_cent() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -57,6 +58,7 @@ public sealed class SpokenTotalTests(HappyHourJustBeforeOpenFixture fixture)
     /// <summary>Rick's N21 (#46): a whole-cent total whose cents happen to be a multiple of ten
     /// (e.g. $10.80) must still render both trailing decimal places, not truncate to "$10.8".</summary>
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Spoken_total_with_trailing_zero_shows_two_decimal_places() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -80,6 +82,7 @@ public sealed class SpokenTotalTests(HappyHourJustBeforeOpenFixture fixture)
     /// (9.0396 -> $9.04), distinct from the exact-half-cent case above -- proves the fix isn't
     /// merely a ceiling that rounds every fractional cent up.</summary>
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Spoken_total_rounds_up_a_non_midpoint_value() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -108,6 +111,7 @@ public sealed class SpokenTotalTests(HappyHourJustBeforeOpenFixture fixture)
 public sealed class SpokenTotalHalfCentTests(HappyHourAtOpenFixture fixture)
 {
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Spoken_total_text_matches_the_exact_final_total_half_cent() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;

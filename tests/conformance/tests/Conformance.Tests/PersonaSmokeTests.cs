@@ -208,6 +208,7 @@ public sealed class RealPackPersonaSmokeTests(ConformanceFixture fixture)
     }
 
     [Theory]
+    [Trait("Dotnet", "ready")]
     [MemberData(nameof(DiscoveredPersonaIds))]
     public Task Discovered_pack_passes_the_smoke_scenario(string personaId) => fixture.RunAsync(
         () => PersonaSmokeScenario.RunAsync(fixture, personaId, TestContext.Current.CancellationToken));
@@ -250,6 +251,7 @@ public sealed class FixturePackPersonaSmokeTests(TwoPersonaConformanceFixture fi
         };
 
     [Theory]
+    [Trait("Dotnet", "ready")]
     [MemberData(nameof(FixturePersonaIds))]
     public Task Discovered_pack_passes_the_smoke_scenario(string personaId) => fixture.RunAsync(
         () => PersonaSmokeScenario.RunAsync(fixture, personaId, TestContext.Current.CancellationToken));

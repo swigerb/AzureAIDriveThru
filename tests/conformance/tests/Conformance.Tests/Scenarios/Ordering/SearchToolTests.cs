@@ -27,6 +27,7 @@ public sealed class SearchToolTests(ConformanceFixture fixture)
     private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Search_returns_a_result_upstream_and_never_notifies_the_browser() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -72,6 +73,7 @@ public sealed class SearchToolTests(ConformanceFixture fixture)
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Search_retries_with_a_minimal_select_after_the_field_name_fallback_400() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -107,6 +109,7 @@ public sealed class SearchToolTests(ConformanceFixture fixture)
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Session_survives_the_search_fallback_and_a_later_update_order_call_still_works() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;

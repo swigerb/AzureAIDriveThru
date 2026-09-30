@@ -41,8 +41,106 @@ realtime relay is issue #13.
 | (module-level `_startup_checks` dict + `/health` handler) | `Health/StartupChecks.cs`, `Health/HealthEndpoint.cs` | Same JSON shape: `{status, version, checks, personas}`, 200 if every check passed else 503. |
 | (aiohttp route table's WebSocket handler + per-session state) | `Sessions/SessionActor.cs`, `Sessions/SessionRegistry.cs`, `Sessions/IPipelineProcessor.cs` | One `Channel<SessionEvent>`-backed sequential event loop per session (issue #12's "one event loop per session"), held in a shared `SessionRegistry`. `IPipelineProcessor` is the persona/model-specific pipeline seam; `ProcessorRegistry` now binds `"realtime"` to `RealtimeProcessor` (a deliberate no-op stub, #13 lands the real relay) -- the actor/registry mechanics are proven end to end (persona+model resolve to a processor instance) without any relay logic yet. |
 | (repo-relative path resolution, implicit via `os.path` calls) | `RepoRootLocator.cs` | Walks up from the running assembly looking for a directory containing both `personas/` and `azure.yaml`. A dev/CI convenience only -- production containers are expected to set `PERSONAS_DIR`, `CONFIG_PATH`, and `STATIC_FILES_DIR` explicitly. |
+| `money_utils.py` | `Ordering/Money.cs` | Same `decimal`-based rounding (`ROUND_HALF_UP` equivalent) and `$X.XX` formatting; ports `format_money` 1:1 (see `Ordering/MoneyTests.cs`). |
+| `menu_utils.py`'s `MenuCatalog` (`_menu_key`/`strip_modifiers`, size/alias/category maps, machine status, happy-hour eligibility, combo-slot inference) | `Personas/MenuCatalog.cs` | One instance built once per persona and cached (`PersonaOrderFactory.GetMenuCatalog`), same data-driven-only classification contract as #73/#74 (no keyword fallback). `MenuKeyValidator.MenuKey`/`StripModifiers` (issue #128/#137) is the exact `_menu_key`/`strip_modifiers` port; both backends now assert against the SAME shared golden vector file -- see "Shared menu-key golden vectors (#137)" below. |
+| `order_state.py`'s `OrderState`/`OrderSummary` (add/remove/modify, bundle autoFill/absorption, extras engine, happy-hour pricing, tax, totals) | `Ordering/OrderState.cs`, `Ordering/OrderModels.cs`, `Ordering/OrderSummaryJson.cs` | One instance per session (confined to that session's own actor, never shared), built via `PersonaOrderFactory.CreateOrderState`. Happy-hour discount is applied multiplicatively at `UpdateSummary()` time, never baked into `item.Price` -- matches Python's own "raw menu price stays the record of truth" design. `IsHappyHour()` only reads the freezable `ConformanceHooks` clock when the bound persona actually has a `happyHour` window configured, so personas without one (most fixture packs) never touch it. |
+| `tools.py`'s `update_order`/`get_order`/`reset_order` (structured rejections: `not_on_menu`+`suggested_calls`, `size_not_available`, `not_in_order`, `machine_unavailable`, `extras_blocked_category`, `extras_no_base_item`) | `Tools/OrderToolExecutor.cs`, `Tools/IToolExecutor.cs`, `Tools/ToolResult.cs` | `IToolExecutor.ExecuteAsync(toolName, args, ct) -> ToolResult` is the seam #13's realtime relay dispatches every `function_call` through -- see "The `IToolExecutor` contract (for #13/#140)" below. `ToolResult.Destination` (`ToServer`/`ToClient`/`ToBoth`) mirrors `ToolResultDirection`'s three cases exactly (`tools.py`'s `TO_SERVER`/`TO_CLIENT`/`TO_BOTH`). |
+| `tools.py`'s `search` (issue #23/#37) | `Search/SearchTool.cs`, `Search/SearchEndpointConfig.cs`, `Search/SearchResultCache.cs`, `Search/SearchApiException.cs`, `Search/SearchAuth.cs` | REST, not the SDK -- see "Spikes #44 and #23" above; #23's recommendation is now implemented, not just noted. Same three-tier error/retry cascade as Python (timeout -> apology; field-mismatch 400 -> minimal-select retry -> apology; semantic-rejected -> no-ranker retry -> apology), same process-wide TTL+max-size cache namespaced per persona id, same double-encoded `sizes` JSON-string parsing and machine-OOS result suffix. `api-key` when configured, else a managed-identity bearer token via `DefaultAzureCredential` (scope `https://search.azure.com/.default`) -- mirrors PR #140 R5's identical fallback for the realtime upstream connect; see `SearchEndpointConfig`'s own doc comment. |
+| (composition root for one session's full tool surface) | `Tools/SessionToolExecutor.cs` | Composes `OrderToolExecutor` + `SearchTool` into the one `IToolExecutor` a session actually binds -- dispatches `"search"` to `SearchTool`, everything else to `OrderToolExecutor`. `RealtimeProcessor` now builds one of these per session (via its `toolExecutorFactory` constructor parameter, wired in `Program.cs`) once persona binding resolves, in place of the earlier no-op `StubToolExecutor`. |
 
-## Deliberate scope reductions (this wave)
+## Wave 4 (issue #14): order engine, tools, search
+
+Ports `order_state.py`, `menu_utils.py`'s `MenuCatalog`, and `tools.py` (`update_order`/`get_order`/
+`reset_order`/`search`) -- design doc section 6's structured rejections, menu-sourced pricing
+(#104: a tool call's own `price` argument is never trusted), bundle autoFill/absorption, the
+extras engine, `machine_unavailable`, per-pack happy hour (#113), tax, and Route 44 via pack-driven
+size aliases. See the Module mapping table above for the file-by-file breakdown.
+
+### The `IToolExecutor` contract (for #13/#140)
+
+```csharp
+public interface IToolExecutor
+{
+    IReadOnlyList<string> ToolNames { get; }
+    Task<ToolResult> ExecuteAsync(string toolName, JsonElement args, CancellationToken ct = default);
+}
+```
+
+One `IToolExecutor` instance (`SessionToolExecutor`) is owned by exactly one session's actor --
+same confinement contract as `OrderState`/`SessionActor` generally, so there is no shared/locking
+concern across sessions. `#13`'s relay is expected to: (1) construct one `SessionToolExecutor` per
+session once persona binding resolves (closing over that session's own `OrderState`, `MenuCatalog`,
+`PromptLoader`, and `SearchTool`); (2) on every upstream `function_call` frame, call
+`ExecuteAsync(toolName, argsElement, ct)`; (3) branch on the returned `ToolResult.Destination`
+exactly like `rtmt.py` branches on `ToolResultDirection` today -- `ToServer` sends the
+`function_call_output` text back upstream only, `ToClient`/`ToBoth` additionally emits
+`extension.middle_tier_tool_response` with `ToolResult.ToClientText()`'s JSON to the browser.
+Posted to issue #14 for Beth/#140 to confirm against the relay's own needs.
+
+### Test fixture reuse strategy (`Backend.Tests`'s new `Ordering`/`Tools`/`Search` tests)
+
+Rather than hand-building synthetic `Persona`/`PersonaMenu` C# records (heavy, given the full
+required-field schema) or duplicating fixture JSON into `backend-dotnet`, the new
+`OrderToolExecutorBundleAndExtrasTests`/`HappyHourPricingTests` load Python's own non-brand-coupled
+fixture packs directly from `app/backend/tests/fixtures/personas/{test-alpha,test-beta,test-delta}`
+(`TestSupport/DeltaFixture.cs`, via `PersonaCatalog.Load`). Both backends' tests therefore prove
+behavior against byte-for-byte identical persona/menu JSON -- a difference can never be explained
+away by "the fixture data quietly drifted between two copies."
+
+### Shared menu-key golden vectors (#137)
+
+Rick's PR #137 review note: `app/backend/tests/fixtures/menu_key_vectors.json` (20 `{input, key}`
+examples covering trademark/registered-trademark symbols, curly apostrophes, nested/multiple
+modifier-suffix groups, NBSP, and hyphen-preservation) is asserted identically by Python's new
+`MenuKeyVectorTests` (`test_menu_utils.py`) and C#'s new `MenuKey_MatchesTheSharedGoldenVectorFile`
+theory (`MenuKeyValidatorTests.cs`) -- one shared file, both backends, so `_menu_key`/
+`MenuKeyValidator.MenuKey` can never quietly drift apart.
+
+### Conformance `[Trait("Dotnet", "ready")]` tagging -- unblocked by #13/#140, landed in PR #149
+
+With #13/#140 merged, `Program.cs` now builds a real per-session `SessionToolExecutor` (an
+`OrderToolExecutor` + `SearchTool` pair, via a `toolExecutorFactory` passed into
+`RealtimeProcessor`) instead of the shared `StubToolExecutor` alone, so `function_call` frames on
+the actual `/realtime` WebSocket now reach the real order engine. Every `Scenarios/Ordering/*`
+scenario (`OrderScenarioHelpers.RunOrderStepsAsync`/`CallToolAsync`) was re-run individually against
+`CONFORMANCE_BACKEND=dotnet` and 83 previously-untagged test methods (445 - 78 = 367 result rows,
+since several are `[Theory]` methods with multiple data rows) now pass and are tagged `Dotnet=ready`
+this wave, raising the floor from 75 to 158 distinct methods (78 to 445 result rows). The Search
+tool's api-key auth path is exercised (the conformance harness always sets
+`AZURE_SEARCH_API_KEY`); the new `DefaultAzureCredential` bearer-token fallback is unit-tested only
+(`SearchAuthHeaderTests.cs`), since the harness has no fake credential to script.
+
+**Round 2 (Rick's PR #149 R3/R4 review):** 9 more previously-untagged test methods now pass and are
+tagged `Dotnet=ready` -- `HappyHourPricingTests` (2), `PersonaBusinessRuleConformanceTests` (2),
+`PersonaSearchIsolationConformanceTests` (2), `RealPackPersonaSmokeTests`/`FixturePackPersonaSmokeTests`
+(1 `[Theory]` method each), and `ToolFailureCapAndTicketRefreshTests.A_genuine_tool_exception_refreshes_the_guests_ticket`
+(R4 below) -- raising the floor from 158 to 167 distinct methods (445 to 457 result rows; confirmed
+by a local `dotnet test Conformance.slnx --filter "Dotnet=ready&Category!=Browser"` run).
+
+**R4: the guest's ticket now refreshes after a genuine tool exception.** `RealtimeProcessor`'s
+tool-dispatch catch-all previously only sent a fixed apology `function_call_output`, with an
+inaccurate comment claiming tools "never throw for a well-formed call" and that there was "no
+fresher order summary to refresh a ticket from" -- both wrong: a malformed argument (e.g. a
+non-numeric `quantity`) does throw, and the session's own current order state (not a stale cache)
+is always readable. `RealtimeProcessor` now pattern-matches the session's `IToolExecutor` against a
+new opt-in `Backend.Tools.IOrderTicketSource` interface (implemented by `SessionToolExecutor`,
+delegating to a new `OrderToolExecutor.CurrentOrderSummaryJson` accessor) and, best-effort, sends a
+`get_order`-tagged `extension.middle_tier_tool_response` to the browser with the refreshed ticket --
+mirroring `rtmt.py`'s post-exception `order_state_singleton.get_order_summary_json(session_id)` read
+(the read is wrapped in its own try/catch; a session with no readable order state yet just skips the
+refresh, and still gets the `function_call_output` below it either way).
+
+**Still not tagged: the other 3 `ToolFailureCapAndTicketRefreshTests.cs` methods (failure cap).**
+These probe `rtmt.py`'s consecutive-tool-failure cap: a per-connection failure streak that suppresses
+the model's own auto-continue once the cap is reached and resets on guest speech.
+`RealtimeProcessor`'s tool-dispatch catch-all is still explicitly commented as a scope cut ("Scope
+cut (#13): the tool-failure-cap ladder (`_ToolFailureTracker`) is skipped"): it always sends a fixed
+apology string and a bare `response.create`, with no failure-streak tracking. Porting the cap ladder
+is a real relay feature, not an order-engine or search-tool one, and stays #13 scope -- tracked as
+the next thing #13's owner (or a follow-up issue) should pick up before this class's remaining 3
+methods can be tagged.
+
+
 
 - **DEV_MODE hot-reload** (`prompt_loader.py`'s file-watching reload behaviour) is explicitly
   marked not required in C# by the design doc's per-backend loading table. Not ported.
@@ -243,6 +341,12 @@ See the comments left on those issues directly for this wave's position. Summary
   selection) **landed this revision** (#12 part 2) as far as pre-upgrade resolution/rejection goes.
   Still not covered: actually forwarding the resolved persona/model into a live Azure OpenAI
   realtime session (`RealtimeProcessor.ProcessAsync` is a no-op stub) -- issue #13.
+- Issue #14's order engine/tools/search wave landed the full `IToolExecutor`/`SessionToolExecutor`
+  composition. PR #149 wires `RealtimeProcessor` to construct and dispatch to a real
+  per-session `SessionToolExecutor` (via `Program.cs`'s `toolExecutorFactory`), so every
+  `tests/conformance/.../Scenarios/Ordering/*` scenario now runs against the real order engine. See
+  "Conformance `[Trait("Dotnet", "ready")]` tagging -- unblocked by #13/#140, landed in PR #149"
+  above for the full reasoning and the 3 remaining untagged failure-cap methods.
 
 ## Issue #13 (S3): `RealtimeProcessor` browser&lt;-&gt;Azure OpenAI Realtime GA relay
 
@@ -385,9 +489,9 @@ Beth was locked out for this round; applied by Unity. All seven items from Rick'
   the rest of the per-frame body in its own try/catch that logs a warning with the session id
   (never the payload); `SwallowAsync` now logs non-cancellation exceptions at Error instead of
   discarding them. New nested-duplicate-key conformance case in `AllowListBypassHardeningTests`;
-  round 2's N2 (below) extracts the shared strict-parse helper and adds the unit test that is the
-  actual mutation pin for the strict option, since the conformance case alone cannot tell whether
-  strict parsing is on.
+  round 2's N2 extracts the shared strict-parse helper (`Backend/Realtime/RelayJson.cs`) and adds
+  `Backend.Tests/Realtime/RelayJsonTests.cs`, which is the actual mutation pin for the strict
+  option, since the conformance case alone cannot tell whether strict parsing is on.
 - **R4**: `WebSocketFrameReader` grew its `ArrayBufferWriter` without bound. Added a
   `maxMessageBytes` parameter (default 4 MiB, matching aiohttp's `WebSocketResponse` default
   `max_msg_size`); overflow closes with `WebSocketCloseStatus.MessageTooBig` (1009) via

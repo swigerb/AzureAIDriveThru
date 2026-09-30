@@ -337,6 +337,33 @@ class CustomisedItemMenuLookupTests(unittest.TestCase):
         self.assertEqual(_SONIC.infer_combo_component(off_menu_customised), "")
 
 
+_MENU_KEY_VECTORS_PATH = _REPO_ROOT / "app" / "backend" / "tests" / "fixtures" / "menu_key_vectors.json"
+
+
+def _load_menu_key_vectors() -> list[dict]:
+    with _MENU_KEY_VECTORS_PATH.open("r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+class MenuKeyVectorTests(unittest.TestCase):
+    """Rick's PR #137 review note: a shared ~20-example ``input -> lookup-key`` golden file,
+    asserted identically by BOTH backends' test suites (see
+    app/backend-dotnet/tests/Backend.Tests/Personas/MenuKeyValidatorTests.cs's own
+    ``MenuKey_MatchesTheSharedGoldenVectorFile`` theory against the exact same JSON file) -- a
+    future change to either ``_menu_key`` (here) or ``MenuKeyValidator.MenuKey`` (C#) that quietly
+    drifts the two implementations apart fails in whichever backend didn't change, instead of only
+    surfacing as an unnoticed cross-backend behavior difference."""
+
+    def test_menu_key_matches_every_shared_golden_vector(self):
+        vectors = _load_menu_key_vectors()
+        for vector in vectors:
+            with self.subTest(input=vector["input"]):
+                self.assertEqual(menu_utils._menu_key(vector["input"]), vector["key"])
+
+    def test_shared_vectors_file_has_at_least_twenty_entries(self):
+        self.assertGreaterEqual(len(_load_menu_key_vectors()), 20)
+
+
 class TotsAliasNormalisationTests(unittest.TestCase):
     """Brian's decision (2026-09-25, new issue #60): any spoken name-variant of PLAIN Tots --
     "Tot", "Tots", "Tater Tot", "Tater Tots", the common misspelling "Tator Tot(s)" -- fills the

@@ -23,9 +23,9 @@ public sealed class StubToolExecutor : IToolExecutor
     public Task<ToolResult> ExecuteAsync(string toolName, JsonElement args, CancellationToken ct = default)
     {
         var result = new ToolResult(
+            $"Tool '{toolName}' is not yet implemented in the .NET middle tier (see issue #14).",
             ToolResultDirection.ToBoth,
-            ServerText: $"Tool '{toolName}' is not yet implemented in the .NET middle tier (see issue #14).",
-            ClientText: $"(stub) {toolName} acknowledged.");
+            clientText: $"(stub) {toolName} acknowledged.");
         return Task.FromResult(result);
     }
 }
