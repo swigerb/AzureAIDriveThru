@@ -2,8 +2,8 @@
 
 - **Status:** **Accepted**, 2026-09-26T22:29:32-04:00, with Brian's decisions (design doc section 16),
   including the environment details of 22:52 (decision 11). Proposed 2026-09-25.
-  **Amended 2026-09-28** (issue #155): decision 7 (local mode) is reversed -- see the note under decision 6
-  below.
+  **Amended 2026-09-28** (issue #155): design doc section 16 decision 7 (keep McDonald's local mode) is
+  reversed; recorded here under decision 6.
 - **Issues:** #19 (P1 spike), including the design for #51. Part of epic #6. Implemented by #69 to #88 (P2),
   then #12 to #18 and #21 (C#).
 - **Deciders:** Brian Swiger (owner), Rick (lead)
@@ -47,13 +47,15 @@ one behavior (McDonald's meal-number lookup) needs a named strategy.
 6. **Model flexibility on Microsoft Foundry.** Three pipelines sit behind one browser contract:
    - `realtime`: Foundry realtime models;
    - `cascade`: Foundry transcription, then a Foundry chat model with tools (OpenAI or not), then TTS;
-   - `local`: McDonald's on-device mode, now persona-agnostic and off by default.
+   - `local`: McDonald's on-device mode, now persona-agnostic and off by default (dropped 2026-09-28, #155;
+     see the amendment below).
 
    A shared catalog lists the models, Bicep maps each to the deployment that exists, the persona allows a subset,
    and the session picks one.
 
-   **Amended 2026-09-28 (decision 7 reversed, issue #155): local mode is dropped entirely.** Brian decided the
-   demo runs on Microsoft Foundry exclusively -- there is no local runtime, no ONNX, and no `phi-4-mini-local`.
+   **Amended 2026-09-28: design doc section 16 decision 7 (keep McDonald's local mode) is reversed; recorded
+   here under decision 6.** Brian decided the demo runs on Microsoft Foundry exclusively -- there is no local
+   runtime, no ONNX, and no `phi-4-mini-local`.
    Only two pipelines remain, `realtime` and `cascade`. The `local` pipeline, its catalog/persona/schema entries,
    its processor and companion-runtime client, its conformance fakes and rows, and every `LOCAL_RUNTIME_*`
    setting were removed. See `docs/persona-architecture.md` section 7.6 for the as-built design this reversal

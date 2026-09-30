@@ -23,7 +23,7 @@ Brian's decisions (2026-09-26, section 16):
   combo drink slot.
 - **Happy hour:** only Sonic and Dunkin have one, and both announce it.
 - **Features:** McDonald's local mode was kept as a persona-agnostic pipeline, then dropped entirely (issue #155,
-  2026-09-28, reversing this decision -- see ADR-001 decision 7). Dunkin's crew dashboard, CRM simulator and edge
+  2026-09-28, reversing section 16 decision 7 (ADR-001 decision 6 amendment)). Dunkin's crew dashboard, CRM simulator and edge
   stack are dropped.
 - **Models:** model flexibility is a first-class feature. Realtime and chat models are selectable per deployment,
   persona and session (section 7).
@@ -531,7 +531,7 @@ switching: "enable differing models, e.g. selectable realtime/chat models per de
 
 ### 7.1 Pipelines
 
-A **pipeline** is how a session turns the guest's voice into the carhop's voice. All three pipelines share the
+A **pipeline** is how a session turns the guest's voice into the carhop's voice. Both pipelines share the
 same tools, persona pack, order state, no-off-menu rule and browser wire contract. The frontend doesn't know
 which one is running.
 
@@ -542,7 +542,7 @@ which one is running.
 
 A third pipeline, `local` (Whisper, then Phi-4 mini (ONNX), then Piper, all on-device through a companion
 runtime process -- McDonald's local mode, made persona-agnostic in #81), was kept off by default from P2 through
-2026-09-28. **Issue #155 dropped it entirely** (reversing decision 7, ADR-001): the demo now runs on Microsoft
+2026-09-28. **Issue #155 dropped it entirely** (reversing section 16 decision 7 (ADR-001 decision 6 amendment)): the demo now runs on Microsoft
 Foundry exclusively, so there is no on-device pipeline and no `LOCAL_RUNTIME_*` configuration surface. The
 as-built design that pipeline had (7.6, below) is retained here only as a historical record of what #155 removed.
 
@@ -642,7 +642,7 @@ Selectable = catalog ∩ deployment ∩ persona-allowed. The pipeline follows fr
 
 ### 7.6 Local mode: as-built design (#81, removed by #155)
 
-Section 7.1 sketched local mode as Python loading ONNX Runtime GenAI/Whisper/Piper in-process, mirroring the
+Section 7.1 originally sketched local mode as Python loading ONNX Runtime GenAI/Whisper/Piper in-process, mirroring the
 sibling drive-thru project's own local mode as closely as possible. The as-built #81 design took a different,
 deliberately lighter-weight shape once it came time to implement it as a *persona-agnostic* pipeline behind the
 same `PipelineProcessor` interface as `cascade` (#82): a companion-process boundary (`LocalProcessor` talking to
@@ -652,7 +652,7 @@ importing ONNX Runtime, Whisper or Piper directly), gated on `LOCAL_RUNTIME_ENDP
 and a C# harness fake (`FakeLocalRuntimeServer`) standing in for the companion process in conformance.
 
 **Brian decided on 2026-09-28 that the demo runs on Microsoft Foundry exclusively** (issue #155, reversing
-decision 7 / ADR-001): there is no local runtime, no ONNX, no `phi-4-mini-local`, and no on-device pipeline of
+section 16 decision 7 (ADR-001 decision 6 amendment)): there is no local runtime, no ONNX, no `phi-4-mini-local`, and no on-device pipeline of
 any kind. Every piece of the as-built design above -- `LocalProcessor`, `LocalRuntimeClient`,
 `FakeLocalRuntimeServer`, the `local` catalog/persona/schema entries, and the `LOCAL_RUNTIME_*` environment
 surface -- was deleted. This section is kept only as a historical record of what #81 built and #155 removed; it
