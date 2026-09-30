@@ -47,19 +47,28 @@ public sealed class AuthRowCapabilityTests
     }
 
     /// <summary>
-    /// Issue #143's own critical acceptance criterion, pinned as a unit test: with both switches
-    /// still off (today), every row must skip on both backend legs. This test itself will start
-    /// failing the moment either #144 or #147 flips its switch to true -- at which point it
-    /// should be updated to assert only the still-off backend still skips, not deleted outright.
+    /// Issue #143's own critical acceptance criterion, pinned as a unit test: while
+    /// <see cref="AuthRowCapability.DotnetEnforcesAuth"/> is still off, every dotnet-leg row must
+    /// skip. This test itself will start failing the moment #147 flips that switch to true -- at
+    /// which point it should be updated (or removed) to match.
     /// </summary>
-    [Theory]
-    [InlineData("python")]
-    [InlineData("dotnet")]
-    public void Enforces_is_false_for_both_backends_while_neither_switch_is_on(string backendName)
+    [Fact]
+    public void Enforces_is_false_for_dotnet_while_its_switch_is_still_off()
     {
-        Assert.False(AuthRowCapability.PythonEnforcesAuth);
         Assert.False(AuthRowCapability.DotnetEnforcesAuth);
-        Assert.False(AuthRowCapability.Enforces(backendName));
+        Assert.False(AuthRowCapability.Enforces("dotnet"));
+    }
+
+    /// <summary>
+    /// Issue #144's own critical acceptance criterion, pinned as a unit test: once
+    /// <see cref="AuthRowCapability.PythonEnforcesAuth"/> flips to true, every python-leg row must
+    /// run (not skip).
+    /// </summary>
+    [Fact]
+    public void Enforces_is_true_for_python_now_that_its_switch_is_on()
+    {
+        Assert.True(AuthRowCapability.PythonEnforcesAuth);
+        Assert.True(AuthRowCapability.Enforces("python"));
     }
 
     [Fact]
