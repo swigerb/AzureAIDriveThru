@@ -137,7 +137,7 @@ entries:
     for conformance or unit-test coverage across all three packs -- expected, the
     same class as the #78 Python test baseline entries; remove only if the pack roster
     or its test coverage changes.'
-  increase_reason: '#155'
+  increase_reason: '#76'
 - file: app/backend-dotnet/tests/Backend.Tests/TestSupport/PersonaPackFixture.cs
   brand: dunkin
   max: 1
@@ -323,7 +323,7 @@ entries:
   reason: 'Backend test fixtures/paths reference personas/sonic/** directly because
     it''s the only persona pack that exists yet -- #78/#79 land the other packs, at
     which point these tests get parameterized per-persona instead of hardcoding Sonic.'
-  increase_reason: '#155'
+  increase_reason: '#76'
 - file: app/backend/tests/test_prompt_extras_pin.py
   brand: sonic
   max: 4
