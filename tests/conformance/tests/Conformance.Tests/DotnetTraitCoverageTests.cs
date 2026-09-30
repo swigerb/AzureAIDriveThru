@@ -9,12 +9,11 @@ namespace Conformance.Tests;
 /// <c>FullyQualifiedName~ClassNamePart</c> substring match, which any future test class whose
 /// name happens to contain one of those substrings would silently join) with an explicit
 /// <c>[Trait("Dotnet", "ready")]</c> on exactly the scenarios docs/dotnet_mapping.md documents as
-/// green against the C# skeleton (75 distinct tagged test *methods* as of PR #140 round 2 -- one
-/// <c>[Theory]</c>, <c>PersonaAssetRouteConformanceTests.Persona_asset_route_rejects_path_traversal_attempts</c>,
-/// has 4 <c>[InlineData]</c> rows, so <c>dotnet test</c>'s own pass count for the same filter is
-/// 78 result rows; this test counts methods, matching the <c>FullyQualifiedName</c> filter it
-/// replaced). The dotnet CI leg now runs <c>--filter "Dotnet=ready&amp;Category!=Browser"</c>
-/// instead.
+/// green against the C# skeleton (158 distinct tagged test *methods* as of PR #149 -- several
+/// <c>[Theory]</c> methods have multiple <c>[InlineData]</c>/<c>[MemberData]</c> rows each, so
+/// <c>dotnet test</c>'s own pass count for the same filter is 445 result rows; this test counts
+/// methods, matching the <c>FullyQualifiedName</c> filter it replaced). The dotnet CI leg now runs
+/// <c>--filter "Dotnet=ready&amp;Category!=Browser"</c> instead.
 ///
 /// This test is the guard that the tagged count can't silently shrink: a PR that removes or
 /// renames a tagged scenario without adding a replacement fails here, instead of just quietly
@@ -29,12 +28,12 @@ public sealed class DotnetTraitCoverageTests
     private const string TraitValue = "ready";
 
     [Fact]
-    public void At_least_75_scenarios_are_tagged_dotnet_ready()
+    public void At_least_158_scenarios_are_tagged_dotnet_ready()
     {
         var count = CountDotnetReadyTestMethods();
 
-        Assert.True(count >= 75,
-            $"Expected at least 75 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
+        Assert.True(count >= 158,
+            $"Expected at least 158 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
             $"(the dotnet leg's `--filter \"{TraitName}={TraitValue}&Category!=Browser\"` baseline, " +
             $"docs/dotnet_mapping.md), but found {count}. If a tagged scenario was removed or renamed " +
             "without a replacement, the dotnet CI leg silently lost coverage.");

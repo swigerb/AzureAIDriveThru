@@ -28,6 +28,7 @@ public sealed class ToolMalformedArgumentsTests(ConformanceFixture fixture)
     private const string MalformedArgsJson = "{not json";
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Malformed_tool_arguments_produce_a_graceful_error_and_the_session_survives() =>
         fixture.RunAsync(async () =>
     {

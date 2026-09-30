@@ -55,6 +55,7 @@ public sealed class ToolErrorSessionSurvivesTests(ConformanceFixture fixture)
     private static readonly TimeSpan ShortFrameTimeout = TimeSpan.FromSeconds(10);
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Session_survives_a_graceful_application_level_tool_error() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -85,6 +86,7 @@ public sealed class ToolErrorSessionSurvivesTests(ConformanceFixture fixture)
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Session_survives_an_unhandled_tool_exception() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;

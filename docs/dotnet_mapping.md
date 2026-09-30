@@ -96,18 +96,32 @@ modifier-suffix groups, NBSP, and hyphen-preservation) is asserted identically b
 theory (`MenuKeyValidatorTests.cs`) -- one shared file, both backends, so `_menu_key`/
 `MenuKeyValidator.MenuKey` can never quietly drift apart.
 
-### Conformance `[Trait("Dotnet", "ready")]` tagging -- blocked on #13 this wave
+### Conformance `[Trait("Dotnet", "ready")]` tagging -- unblocked by #13/#140, landed in PR #149
 
-None of `tests/conformance`'s `Scenarios/Ordering/*` (update_order/get_order/happy-hour/golden
-pricing/search-tool) scenarios could be tagged `Dotnet=ready` this wave: every one of them scripts
-a real scripted-function-call turn over the actual `/realtime` WebSocket (`OrderScenarioHelpers.
-RunOrderStepsAsync`/`CallToolAsync`), which requires the realtime relay (#13) to actually dispatch
-`function_call` frames into a bound `IToolExecutor` -- and `Program.cs`/`RealtimeProcessor` still
-do not wire that up (`RealtimeProcessor.ProcessAsync` remains the no-op stub from wave 2). The
-engine itself is proven instead by `Backend.Tests`'s new unit-level suite (`OrderToolExecutor`
-called directly, no relay involved) -- see "Test fixture reuse strategy" above. Once #13 lands and
-wires a `SessionToolExecutor` into `RealtimeProcessor`, the existing `Scenarios/Ordering/*` classes
-should start passing largely as-is against the dotnet leg and can be tagged then.
+With #13/#140 merged, `Program.cs` now builds a real per-session `SessionToolExecutor` (an
+`OrderToolExecutor` + `SearchTool` pair, via a `toolExecutorFactory` passed into
+`RealtimeProcessor`) instead of the shared `StubToolExecutor` alone, so `function_call` frames on
+the actual `/realtime` WebSocket now reach the real order engine. Every `Scenarios/Ordering/*`
+scenario (`OrderScenarioHelpers.RunOrderStepsAsync`/`CallToolAsync`) was re-run individually against
+`CONFORMANCE_BACKEND=dotnet` and 83 previously-untagged test methods (445 - 78 = 367 result rows,
+since several are `[Theory]` methods with multiple data rows) now pass and are tagged `Dotnet=ready`
+this wave, raising the floor from 75 to 158 distinct methods (78 to 445 result rows). The Search
+tool's api-key auth path is exercised (the conformance harness always sets
+`AZURE_SEARCH_API_KEY`); the new `DefaultAzureCredential` bearer-token fallback is unit-tested only
+(`SearchAuthHeaderTests.cs`), since the harness has no fake credential to script.
+
+**Not tagged: `ToolFailureCapAndTicketRefreshTests.cs` (all 4 methods).** This class scripts a
+genuine tool-handler exception (a non-numeric `quantity` string, e.g. `"two"`) to probe `rtmt.py`'s
+consecutive-tool-failure cap and its refresh-the-guest's-ticket-on-failure behaviour. `rtmt.py`
+tracks a per-connection failure streak, suppresses the model's own auto-continue once the cap is
+reached, resets the streak on guest speech, and replays a fresh `get_order` summary into the
+failure's `function_call_output` so the ticket the guest sees never goes stale. `RealtimeProcessor`'s
+tool-dispatch catch-all is explicitly commented as a scope cut ("Scope cut (#13): the
+tool-failure-cap ladder (`_ToolFailureTracker`) is skipped"): it always sends a fixed apology string
+and a bare `response.create`, with no failure-streak tracking and no ticket refresh. Porting the
+cap/ticket-refresh ladder is a real relay feature, not an order-engine one, and out of #14's own
+scope -- tracked as the next thing #13's owner (or a follow-up issue) should pick up before this
+class can be tagged.
 
 
 
@@ -311,10 +325,11 @@ See the comments left on those issues directly for this wave's position. Summary
   Still not covered: actually forwarding the resolved persona/model into a live Azure OpenAI
   realtime session (`RealtimeProcessor.ProcessAsync` is a no-op stub) -- issue #13.
 - Issue #14's order engine/tools/search wave landed the full `IToolExecutor`/`SessionToolExecutor`
-  composition, but `RealtimeProcessor` still doesn't construct or dispatch to one -- that wiring,
-  and therefore every `tests/conformance/.../Scenarios/Ordering/*` scenario, is blocked on #13. See
-  "Conformance `[Trait("Dotnet", "ready")]` tagging -- blocked on #13 this wave" above for the full
-  reasoning and what unblocks it.
+  composition. PR #149 wires `RealtimeProcessor` to construct and dispatch to a real
+  per-session `SessionToolExecutor` (via `Program.cs`'s `toolExecutorFactory`), so every
+  `tests/conformance/.../Scenarios/Ordering/*` scenario now runs against the real order engine. See
+  "Conformance `[Trait("Dotnet", "ready")]` tagging -- unblocked by #13/#140, landed in PR #149"
+  above for the full reasoning and the one scenario class still not tagged.
 
 ## Issue #13 (S3): `RealtimeProcessor` browser&lt;-&gt;Azure OpenAI Realtime GA relay
 

@@ -63,6 +63,7 @@ public sealed class PersonaHappyHourConformanceTests(
     : IClassFixture<TwoPersonaHappyHourOutsideWindowFixture>
 {
     [Fact]
+    [Trait("Dotnet", "ready")]
     public async Task Test_alpha_item_without_its_own_happy_hour_opt_in_is_not_discounted_even_though_the_persona_flag_is_enabled()
     {
         var ct = TestContext.Current.CancellationToken;
@@ -103,6 +104,7 @@ public sealed class PersonaHappyHourConformanceTests(
     // ("un-skip the test-alpha banner row that PR #108 adds as skipped") and #115's own
     // coordination note on this PR.
     [Fact]
+    [Trait("Dotnet", "ready")]
     public async Task Test_alpha_item_with_its_own_happy_hour_opt_in_gets_test_alphas_own_multiplier_and_banner()
     {
         var ct = TestContext.Current.CancellationToken;
@@ -139,6 +141,7 @@ public sealed class PersonaHappyHourConformanceTests(
     }
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public async Task Test_beta_persona_with_no_happy_hour_config_is_never_discounted_regardless_of_clock()
     {
         var ct = TestContext.Current.CancellationToken;

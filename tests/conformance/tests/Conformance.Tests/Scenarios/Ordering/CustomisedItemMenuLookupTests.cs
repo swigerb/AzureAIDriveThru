@@ -90,6 +90,7 @@ public sealed class CustomisedItemMenuLookupTests
     public sealed class ComboSlotTests(HappyHourJustBeforeOpenFixture fixture)
     {
         [Fact]
+        [Trait("Dotnet", "ready")]
         public Task Customised_chili_cheese_tots_is_charged_in_full_alongside_a_combo_not_absorbed() =>
             fixture.RunAsync(async () =>
             {
@@ -113,6 +114,7 @@ public sealed class CustomisedItemMenuLookupTests
             });
 
         [Fact]
+        [Trait("Dotnet", "ready")]
         public Task Customised_chili_cheese_groovy_fries_is_charged_in_full_alongside_a_combo_not_absorbed() =>
             fixture.RunAsync(async () =>
             {
@@ -136,6 +138,7 @@ public sealed class CustomisedItemMenuLookupTests
             });
 
         [Fact]
+        [Trait("Dotnet", "ready")]
         public Task Customised_plain_tots_still_absorbs_into_the_combo_side_slot() =>
             fixture.RunAsync(async () =>
             {
@@ -166,6 +169,7 @@ public sealed class CustomisedItemMenuLookupTests
         /// <see cref="Off_menu_side_like_item_is_charged_in_full_alongside_a_combo_not_absorbed"/>)
         /// and is untouched by this alias.</summary>
         [Theory]
+        [Trait("Dotnet", "ready")]
         [InlineData("Tot")]
         [InlineData("Tots")]
         [InlineData("Tater Tot")]
@@ -204,6 +208,7 @@ public sealed class CustomisedItemMenuLookupTests
         /// own explicit keys in <c>_TOTS_ALIASES</c>; they weren't already covered by the
         /// space-separated forms above.</summary>
         [Theory]
+        [Trait("Dotnet", "ready")]
         [InlineData("tatertot")]
         [InlineData("tatertots")]
         [InlineData("tatortot")]
@@ -246,6 +251,7 @@ public sealed class CustomisedItemMenuLookupTests
         /// menu item (ADR-001 decision 4 -- "if it's not on the menu ... you cannot order it"), so
         /// they must now be rejected outright rather than charged in full as a separate line.</summary>
         [Theory]
+        [Trait("Dotnet", "ready")]
         [InlineData("Totts")]
         [InlineData("Tater Tot's")]
         public Task Near_miss_tots_spellings_are_rejected_as_not_on_menu(string item) =>
@@ -269,6 +275,7 @@ public sealed class CustomisedItemMenuLookupTests
         /// into the combo side slot -- the modifier is stripped before the alias lookup runs,
         /// exactly like any other modifier.</summary>
         [Fact]
+        [Trait("Dotnet", "ready")]
         public Task Size_word_in_the_name_is_rejected_as_not_on_menu() =>
             fixture.RunAsync(async () =>
             {
@@ -283,6 +290,7 @@ public sealed class CustomisedItemMenuLookupTests
             });
 
         [Fact]
+        [Trait("Dotnet", "ready")]
         public Task Size_word_as_a_bracketed_modifier_still_absorbs() =>
             fixture.RunAsync(async () =>
             {
@@ -313,6 +321,7 @@ public sealed class CustomisedItemMenuLookupTests
         /// substrings that the old, deleted keyword fallback would have matched. They must now be
         /// rejected outright rather than charged in full as a separate line.</summary>
         [Theory]
+        [Trait("Dotnet", "ready")]
         [InlineData("Loaded Tots Supreme")]
         [InlineData("Crispy Fries Basket")]
         [InlineData("chilli cheese tots")] // misspelling of "Chili Cheese Tots" -- still off-menu verbatim
@@ -333,6 +342,7 @@ public sealed class CustomisedItemMenuLookupTests
         /// (`_keyword_fallback_combo_drink`) is removed entirely -- this off-menu fountain drink
         /// must now be rejected outright, never silently fill a combo's drink slot for free.</summary>
         [Fact]
+        [Trait("Dotnet", "ready")]
         public Task Off_menu_fountain_drink_is_rejected_as_not_on_menu() =>
             fixture.RunAsync(async () =>
             {
@@ -350,6 +360,7 @@ public sealed class CustomisedItemMenuLookupTests
         /// menuItems.json items are "... Classic Shake" and "... Slush", singular) are no longer
         /// rescued by any keyword fallback -- they must be rejected outright.</summary>
         [Theory]
+        [Trait("Dotnet", "ready")]
         [InlineData("Chocolate Milkshake")]
         [InlineData("Cherry Slushes")]
         [InlineData("Blue Raspberry Slushie")]
@@ -372,6 +383,7 @@ public sealed class CustomisedItemMenuLookupTests
         /// names must simply be rejected as not_on_menu. See the sibling Theory in
         /// <see cref="HappyHourDiscountTests"/> for the same names re-pinned during happy hour.</summary>
         [Theory]
+        [Trait("Dotnet", "ready")]
         [InlineData("Cherry Limeade Shake")]
         [InlineData("Strawberry Lemonade Shake")]
         [InlineData("Dr Pepper Shake")]
@@ -394,6 +406,7 @@ public sealed class CustomisedItemMenuLookupTests
         /// word-boundary fix (PR #50 round 4) is now moot -- the fallback itself is gone, so this
         /// must simply be rejected as not_on_menu, with no keyword classification of any kind.</summary>
         [Fact]
+        [Trait("Dotnet", "ready")]
         public Task Off_menu_steak_item_is_rejected_as_not_on_menu() =>
             fixture.RunAsync(async () =>
             {
@@ -423,6 +436,7 @@ public sealed class CustomisedItemMenuLookupTests
         /// test now instead pins that a CUSTOMIZED item's machine-gate check still fires
         /// correctly (i.e., that the "(Extra Fudge)" suffix doesn't somehow evade the gate).</summary>
         [Fact]
+        [Trait("Dotnet", "ready")]
         public Task Customised_sundae_is_charged_in_full_alongside_a_combo_not_absorbed_into_the_drink_slot() =>
             fixture.RunAsync(async () =>
             {
@@ -459,6 +473,7 @@ public sealed class CustomisedItemMenuLookupTests
     public sealed class HappyHourDiscountTests(HappyHourAtOpenFixture fixture)
     {
         [Fact]
+        [Trait("Dotnet", "ready")]
         public Task Customised_cherry_limeade_still_gets_the_happy_hour_discount() =>
             fixture.RunAsync(async () =>
             {
@@ -482,6 +497,7 @@ public sealed class CustomisedItemMenuLookupTests
             });
 
         [Fact]
+        [Trait("Dotnet", "ready")]
         public Task Customised_shake_obeys_the_single_shakes_and_blasts_flag_exactly_like_its_plain_form() =>
             fixture.RunAsync(async () =>
             {
@@ -528,6 +544,7 @@ public sealed class CustomisedItemMenuLookupTests
         /// directly, with no machine gate in the way, by the golden dataset
         /// (GoldenMenuCategoryHappyHourTests) and app/backend/tests/test_menu_utils.py.</summary>
         [Fact]
+        [Trait("Dotnet", "ready")]
         public Task Customised_sundae_is_not_happy_hour_discounted() =>
             fixture.RunAsync(async () =>
             {
@@ -551,6 +568,7 @@ public sealed class CustomisedItemMenuLookupTests
         /// same name's <see cref="ComboSlotTests.Off_menu_fountain_drink_is_rejected_as_not_on_menu"/>
         /// (fixture is just before open) to prove the rejection doesn't depend on time of day.</summary>
         [Fact]
+        [Trait("Dotnet", "ready")]
         public Task Off_menu_fountain_drink_is_rejected_as_not_on_menu_regardless_of_happy_hour() =>
             fixture.RunAsync(async () =>
             {
@@ -568,6 +586,7 @@ public sealed class CustomisedItemMenuLookupTests
         /// any keyword fallback (happy-hour-discount question or otherwise) -- rejected outright,
         /// during happy hour exactly like any other time.</summary>
         [Theory]
+        [Trait("Dotnet", "ready")]
         [InlineData("Cherry Slushes")]
         [InlineData("Blue Raspberry Slushie")]
         public Task Off_menu_spoken_shake_and_slush_variants_are_rejected_as_not_on_menu_during_happy_hour(string item) =>
@@ -582,6 +601,7 @@ public sealed class CustomisedItemMenuLookupTests
         /// (Brian's 2026-09-25 decision that Shakes &amp; Blasts are full price) no longer applies
         /// to an off-menu name, since it's never added to the order at all.</summary>
         [Fact]
+        [Trait("Dotnet", "ready")]
         public Task Off_menu_spoken_shake_variant_is_rejected_as_not_on_menu_during_happy_hour() =>
             fixture.RunAsync(async () =>
             {
@@ -601,6 +621,7 @@ public sealed class CustomisedItemMenuLookupTests
         /// simply be rejected as not_on_menu. See the sibling Theory in
         /// <see cref="ComboSlotTests"/> for the same names outside happy hour.</summary>
         [Theory]
+        [Trait("Dotnet", "ready")]
         [InlineData("Cherry Limeade Shake")]
         [InlineData("Strawberry Lemonade Shake")]
         [InlineData("Dr Pepper Shake")]
@@ -622,6 +643,7 @@ public sealed class CustomisedItemMenuLookupTests
     public sealed class ParenGroupNormalisationTests(HappyHourJustBeforeOpenFixture fixture)
     {
         [Fact]
+        [Trait("Dotnet", "ready")]
         public Task Two_parenthesized_modifier_groups_both_strip_and_the_item_still_absorbs_as_a_side() =>
             fixture.RunAsync(async () =>
             {
@@ -650,6 +672,7 @@ public sealed class CustomisedItemMenuLookupTests
             });
 
         [Fact]
+        [Trait("Dotnet", "ready")]
         public Task Mid_string_parenthesized_group_strips_to_a_different_real_menu_item_and_charges_in_full() =>
             fixture.RunAsync(async () =>
             {
@@ -680,6 +703,7 @@ public sealed class CustomisedItemMenuLookupTests
             });
 
         [Fact]
+        [Trait("Dotnet", "ready")]
         public Task Nested_unbalanced_parenthesized_group_fails_safe_and_is_rejected_as_not_on_menu() =>
             fixture.RunAsync(async () =>
             {
@@ -720,6 +744,7 @@ public sealed class CustomisedItemMenuLookupTests
     public sealed class TrademarkAndCurlyApostropheNormalisationTests(HappyHourJustBeforeOpenFixture fixture)
     {
         [Fact]
+        [Trait("Dotnet", "ready")]
         public Task Smasher_spoken_without_its_trademark_symbol_still_resolves_and_allows_an_extra() =>
             fixture.RunAsync(async () =>
             {
