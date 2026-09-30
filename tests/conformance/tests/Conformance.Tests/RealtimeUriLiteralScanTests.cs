@@ -1,6 +1,5 @@
 using System.IO;
 using System.Linq;
-using System.Text.RegularExpressions;
 using Conformance.Harness;
 using Xunit;
 
@@ -23,17 +22,13 @@ namespace Conformance.Tests;
 ///
 /// Style mirrors <see cref="DotnetTraitCoverageTests"/>: a source-scan guard against silent
 /// regression, not a runtime behaviour test -- no fixture, no backend, sub-millisecond.
+///
+/// The actual per-file scan logic lives in <see cref="RealtimeUriLiteralScanner"/> (PR #158 round
+/// 2 review, N2), so it can be unit tested directly against synthetic samples -- see
+/// <c>RealtimeUriLiteralScannerTests</c> -- instead of only ever running against the real tree.
 /// </summary>
 public sealed class RealtimeUriLiteralScanTests
 {
-    // Matches a `/realtime` path segment ending a request URI (or the start of one, in an
-    // interpolated string) -- immediately followed by `?` (a query string), a closing `"` (the
-    // bare path with nothing after it), or `{` (an interpolation hole appended right after it) --
-    // but NOT the fake upstream server's own `/openai/v1/realtime` path (a completely different
-    // endpoint, on a completely different fake process, that never needs the backend's auth).
-    private static readonly Regex RealtimePathLiteral =
-        new(@"(?<!openai/v1)/realtime(?=[?""{]|$)", RegexOptions.Compiled);
-
     [Fact]
     public void No_scenario_outside_the_helper_RealtimeBrowserClient_or_Scenarios_Auth_builds_a_realtime_uri_by_hand()
     {
@@ -52,46 +47,16 @@ public sealed class RealtimeUriLiteralScanTests
             {
                 continue;
             }
-            if (Path.GetFileName(file) == nameof(RealtimeUriLiteralScanTests) + ".cs")
+            if (Path.GetFileName(file) is
+                nameof(RealtimeUriLiteralScanTests) + ".cs" or
+                nameof(RealtimeUriLiteralScanner) + ".cs" or
+                nameof(RealtimeUriLiteralScannerTests) + ".cs")
             {
                 continue;
             }
 
-            var lines = File.ReadAllLines(file);
-            for (var i = 0; i < lines.Length; i++)
-            {
-                var line = lines[i];
-                if (!RealtimePathLiteral.IsMatch(line))
-                {
-                    continue;
-                }
-                if (line.TrimStart().StartsWith("//", StringComparison.Ordinal))
-                {
-                    continue;
-                }
-                if (line.Contains("Assert.Contains", StringComparison.Ordinal) ||
-                    line.Contains("Assert.DoesNotContain", StringComparison.Ordinal))
-                {
-                    continue;
-                }
-                // Server-side inspection of an already-received request's path (a fake backend's
-                // own HttpListener routing), not a client building an outgoing request URI.
-                if (line.Contains("AbsolutePath", StringComparison.Ordinal))
-                {
-                    continue;
-                }
-                // The HttpClient/raw-socket call sites (Scenarios/Sessions/ModelSelectionConformanceTests.cs,
-                // Scenarios/Transport/HeartbeatPongSurvivalTests.cs) splice the literal together
-                // locally from a query RealtimeUris.BuildQueryAsync already built (with the
-                // default credentials attached) earlier in the same method.
-                var precedingLines = string.Join('\n', lines[..i]);
-                if (precedingLines.Contains("RealtimeUris.", StringComparison.Ordinal))
-                {
-                    continue;
-                }
-
-                violations.Add($"{Path.GetRelativePath(repoRoot, file)}:{i + 1}: {line.Trim()}");
-            }
+            var relativePath = Path.GetRelativePath(repoRoot, file);
+            violations.AddRange(RealtimeUriLiteralScanner.Scan(relativePath, File.ReadAllLines(file)));
         }
 
         Assert.True(violations.Count == 0,

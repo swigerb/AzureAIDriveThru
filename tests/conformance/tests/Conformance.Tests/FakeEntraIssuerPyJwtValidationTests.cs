@@ -25,8 +25,12 @@ namespace Conformance.Tests;
 /// regresses (via <see cref="PyJwtInteropPolicy"/>, the same "must never silently disappear in
 /// CI" shape as <see cref="BrowserChannelPolicy"/>/<see cref="DotnetPlaceholderPolicy"/>). The
 /// dotnet leg's CI job never sets up a Python interpreter at all (a completely separate,
-/// pre-existing scoping decision, not one #143 makes) and is not CI for this suite's own purposes
-/// either, so it still skips there, same as a local run against CONFORMANCE_BACKEND=dotnet would.
+/// pre-existing scoping decision, not one #143 makes). This test carries no <c>Dotnet=ready</c>
+/// trait, so the dotnet leg's <c>Dotnet=ready&amp;Category!=Browser</c> CI filter never selects it
+/// in the first place -- it isn't "skipped" there, it simply never runs. A developer running the
+/// whole untagged suite locally with <c>CONFORMANCE_BACKEND=dotnet</c> and no PyJWT interpreter
+/// would see it skip for real; CI, with no interpreter and <c>GITHUB_ACTIONS=true</c>, would fail
+/// loudly instead (R11, Rick's PR #158 round 2 review).
 /// </summary>
 public sealed class FakeEntraIssuerPyJwtValidationTests
 {
