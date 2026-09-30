@@ -65,6 +65,7 @@ from rtmt import (
     _truncate_for_log,
     _truncate_key_list_for_log,
     create_hmac_token,
+    decode_hmac_token,
     validate_hmac_token,
 )
 
@@ -1143,6 +1144,60 @@ class HMACTokenTests(unittest.TestCase):
         parts[0] = parts[0][:-1] + "X"
         tampered = ".".join(parts)
         self.assertFalse(validate_hmac_token(tampered, self.secret))
+
+
+class DecodeHmacTokenOidTests(unittest.TestCase):
+    """Issue #144/18.3: `create_hmac_token`'s optional `oid` param and the new
+    payload-returning `decode_hmac_token`, layered onto the pre-existing
+    HMAC token shape without changing it for callers that never pass `oid`."""
+
+    def setUp(self):
+        self.secret = b"test-secret-key-1234"
+
+    def test_no_oid_preserves_original_shape(self):
+        """`oid=None` (the default) must not add an `oid` key to the payload at
+        all -- callers that never touch Entra see byte-identical behavior to
+        before #144."""
+        token = create_hmac_token(self.secret, expiry_seconds=60)
+        payload = decode_hmac_token(token, self.secret)
+        self.assertIsNotNone(payload)
+        self.assertNotIn("oid", payload)
+        self.assertIn("exp", payload)
+
+    def test_oid_round_trips_through_payload(self):
+        token = create_hmac_token(self.secret, expiry_seconds=60, oid="abc-123")
+        payload = decode_hmac_token(token, self.secret)
+        self.assertIsNotNone(payload)
+        self.assertEqual(payload["oid"], "abc-123")
+
+    def test_decode_returns_none_for_expired_token(self):
+        token = create_hmac_token(self.secret, expiry_seconds=-1, oid="abc-123")
+        self.assertIsNone(decode_hmac_token(token, self.secret))
+
+    def test_decode_returns_none_for_wrong_secret(self):
+        token = create_hmac_token(self.secret, expiry_seconds=60, oid="abc-123")
+        self.assertIsNone(decode_hmac_token(token, b"wrong-secret"))
+
+    def test_decode_returns_none_for_empty_token(self):
+        self.assertIsNone(decode_hmac_token("", self.secret))
+
+    def test_decode_returns_none_for_malformed_token(self):
+        self.assertIsNone(decode_hmac_token("not-a-valid-token", self.secret))
+
+    def test_decode_returns_none_for_tampered_signature(self):
+        token = create_hmac_token(self.secret, oid="abc-123")
+        payload_b64, sig = token.rsplit(".", 1)
+        tampered = f"{payload_b64}.{'0' * len(sig)}"
+        self.assertIsNone(decode_hmac_token(tampered, self.secret))
+
+    def test_validate_hmac_token_is_a_thin_wrapper_over_decode(self):
+        """`validate_hmac_token` must keep its exact original bool-returning
+        signature/behavior for its own pre-existing callers -- it's just
+        `decode_hmac_token(...) is not None` now, not reimplemented."""
+        token = create_hmac_token(self.secret, expiry_seconds=60, oid="abc-123")
+        self.assertTrue(validate_hmac_token(token, self.secret))
+        expired = create_hmac_token(self.secret, expiry_seconds=-1, oid="abc-123")
+        self.assertFalse(validate_hmac_token(expired, self.secret))
 
 
 class ClientLogControlAllowedTests(unittest.TestCase):
@@ -3144,6 +3199,30 @@ class WebSocketHandlerTests(unittest.IsolatedAsyncioTestCase):
         with patch.dict("rtmt._security_cfg", {"require_session_token": True, "allowed_origins": []}):
             result = await rtmt._websocket_handler(request)
         self.assertEqual(result.status, 401)
+        # Row 10a (persona-architecture.md 18.11): a bogus/missing session
+        # token is an auth-challenge rejection like any other 401 on
+        # /realtime, so it must carry WWW-Authenticate: Bearer too -- not
+        # just the Entra-layer's own 401s.
+        self.assertEqual(result.headers.get("WWW-Authenticate"), "Bearer")
+
+    async def test_entra_mode_session_token_oid_mismatch_is_rejected_with_www_authenticate(self):
+        """Row 10b (persona-architecture.md 18.11): a genuinely valid HMAC
+        session token that is nonetheless bound to a *different* oid than
+        the Entra principal middleware already validated on this request
+        must still be rejected with 401 + WWW-Authenticate: Bearer -- the
+        oid-binding check is a second, independent gate, not merely "is this
+        HMAC valid"."""
+        rtmt = self._make_rtmt()
+        rtmt.app_secret = b"test-secret"
+        rtmt.entra_mode = True
+        good_token = create_hmac_token(rtmt.app_secret, expiry_seconds=60, oid="some-other-oid")
+        request = MagicMock(spec=web.Request)
+        request.headers = {"Origin": "", "Host": "localhost:8080"}
+        request.query = {"token": good_token}
+        request.get = MagicMock(return_value={"oid": "the-real-caller-oid"})
+        result = await rtmt._websocket_handler(request)
+        self.assertEqual(result.status, 401)
+        self.assertEqual(result.headers.get("WWW-Authenticate"), "Bearer")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

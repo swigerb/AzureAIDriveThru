@@ -20,7 +20,7 @@ namespace Conformance.Harness;
 public static class AuthRowCapability
 {
     /// <summary>Flip to true in issue #144 once app/backend enforces ADR-002 auth end to end.</summary>
-    public const bool PythonEnforcesAuth = false;
+    public const bool PythonEnforcesAuth = true;
 
     /// <summary>Flip to true in issue #147 once app/backend-dotnet enforces ADR-002 auth end to end.</summary>
     public const bool DotnetEnforcesAuth = false;

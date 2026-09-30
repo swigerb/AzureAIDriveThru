@@ -140,8 +140,19 @@ rules follow from that:
   falls back to a fresh order, when that replica is gone (scale-in, restart, redeploy).
 
 `/api/auth/session` signs its HMAC tokens with `APP_SESSION_SECRET`. The value is a Container App secret
-(`app-session-secret`), so every replica and restart validates every other's tokens. That is required before
-`security.require_session_token` can be turned on.
+(`app-session-secret`), so every replica and restart validates every other's tokens.
+
+In Entra mode (`AUTH_MODE=Entra`, design doc section 18), the session token is **forced on** --
+`security.require_session_token` in config.yaml can no longer turn it off -- and `/realtime` binds the
+token to the caller's Entra object id (`oid`): a session token minted for one signed-in user can't be
+replayed on another user's WebSocket upgrade, even with an otherwise-valid Entra access token. In
+Development pass-through mode (no Entra ids configured), `security.require_session_token` still governs
+this exactly as before.
+
+**`APP_SESSION_SECRET` is required in Production Entra mode** (`RUNNING_IN_PRODUCTION=true` together with
+`AUTH_MODE=Entra`): startup's `resolve_settings()` fails fast with a clear error if it's unset, rather than
+silently falling back to a random per-process secret. That fail-fast is required before
+`security.require_session_token` could otherwise be turned on:
 
 - By default each `azd provision` generates a random value (`newGuid()` twice).
 - To keep one value across provisions, pin it in the azd environment:
@@ -152,4 +163,6 @@ rules follow from that:
 
 - A changed secret changes `APP_SESSION_SECRET_FINGERPRINT` in the template. That rolls a new revision, so all replicas
   restart on the new value together.
-- Locally, when `APP_SESSION_SECRET` is unset, the app falls back to a random per-process secret.
+- Locally, or in Development pass-through mode, when `APP_SESSION_SECRET` is unset, the app falls back to a random
+  per-process secret -- only safe with a single process, and refused outright at startup in Production Entra mode
+  (see above).

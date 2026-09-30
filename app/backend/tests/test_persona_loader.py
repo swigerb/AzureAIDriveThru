@@ -19,6 +19,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import default_persona
 from persona_loader import (
     Persona,
     PersonaCatalog,
@@ -451,6 +452,113 @@ class TestMutationSchemaViolations:
         (personas_copy / "persona.schema.json").unlink()
         with pytest.raises(PersonaValidationError, match="schema file not found"):
             PersonaCatalog.load(personas_dir=personas_copy)
+
+
+# ===========================================================================
+# Issue #144 (design doc section 18.2): every file under assets/ must be
+# classifiable as anonymous-or-protected, or startup must refuse to load the pack.
+# ===========================================================================
+
+
+class TestPersonaAssetTypeValidation:
+    """`_validate_persona_assets` (called from `_load_one_persona`) mirrors the
+    frontend's `authorizedFetch.ts` public/protected asset split: any extension in
+    `entra_auth.ANONYMOUS_ASSET_EXTENSIONS` is fine anywhere under `assets/`; a
+    `.json` file is fine ONLY directly under `assets/demo/`; anything else refuses
+    to start.
+
+    Uses the default persona's own id (``default_persona.get_default_persona().id``)
+    rather than a hardcoded brand name, so these tests don't add fresh brand-literal
+    occurrences to the rebrand-word-count ratchet (#76) -- `personas_copy` is a
+    throwaway copy of the REAL personas/ tree, so the default persona's id is still
+    a real, on-disk pack directory name; only the literal spelling in this test's own
+    source is avoided.
+    """
+
+    _PID = default_persona.get_default_persona().id
+
+    def test_real_sonic_pack_assets_all_classify(self):
+        """The real, shipped default pack (svg/ico/wav under assets/, .json under
+        assets/demo/) must already pass -- this is a regression guard, not just a
+        happy-path check on synthetic fixtures."""
+        catalog = PersonaCatalog.load(personas_dir=_REAL_PERSONAS_DIR)
+        assert self._PID in catalog.ids
+
+    def test_every_anonymous_extension_passes(self, personas_copy, tmp_path):
+        import entra_auth
+
+        for suffix in sorted(entra_auth.ANONYMOUS_ASSET_EXTENSIONS):
+            assets_dir = personas_copy / self._PID / "assets"
+            (assets_dir / f"extra-asset{suffix}").write_bytes(b"x")
+        # Must not raise for any of them.
+        catalog = PersonaCatalog.load(personas_dir=personas_copy)
+        assert self._PID in catalog.ids
+
+    def test_jpeg_is_not_an_anonymous_extension_and_refuses_to_start(self, personas_copy):
+        """`.jpeg` was removed from `ANONYMOUS_ASSET_EXTENSIONS` (Rick's #159 round-1
+        review, required item 2) -- the contract is exactly `.svg .png .jpg .webp
+        .ico .wav .mp3`. A `.jpeg` asset has no defined classification, so it must
+        refuse to start, the same as any other unrecognized extension."""
+        assets_dir = personas_copy / self._PID / "assets"
+        (assets_dir / "extra-asset.jpeg").write_bytes(b"x")
+        with pytest.raises(PersonaValidationError, match="unrecognized file type"):
+            PersonaCatalog.load(personas_dir=personas_copy)
+
+    def test_json_directly_under_assets_demo_passes(self, personas_copy):
+        demo_dir = personas_copy / self._PID / "assets" / "demo"
+        demo_dir.mkdir(parents=True, exist_ok=True)
+        (demo_dir / "extraDemoFile.json").write_text("{}", encoding="utf-8")
+        catalog = PersonaCatalog.load(personas_dir=personas_copy)
+        assert self._PID in catalog.ids
+
+    def test_json_outside_demo_dir_refuses_to_start(self, personas_copy):
+        """A `.json` file directly under `assets/` (NOT `assets/demo/`) has no
+        defined classification -- must fail loudly, not silently default to
+        anonymous or protected."""
+        assets_dir = personas_copy / self._PID / "assets"
+        (assets_dir / "stray.json").write_text("{}", encoding="utf-8")
+        with pytest.raises(PersonaValidationError, match="unrecognized file type"):
+            PersonaCatalog.load(personas_dir=personas_copy)
+
+    def test_json_in_demo_subdirectory_refuses_to_start(self, personas_copy):
+        """Must be DIRECTLY under assets/demo/, not a nested subdirectory of it --
+        `path.parent == demo_dir` is an exact-parent check, not a prefix check."""
+        nested = personas_copy / self._PID / "assets" / "demo" / "nested"
+        nested.mkdir(parents=True, exist_ok=True)
+        (nested / "buried.json").write_text("{}", encoding="utf-8")
+        with pytest.raises(PersonaValidationError, match="unrecognized file type"):
+            PersonaCatalog.load(personas_dir=personas_copy)
+
+    def test_unrecognized_extension_refuses_to_start(self, personas_copy):
+        assets_dir = personas_copy / self._PID / "assets"
+        (assets_dir / "malicious.exe").write_bytes(b"MZ")
+        with pytest.raises(PersonaValidationError, match="unrecognized file type"):
+            PersonaCatalog.load(personas_dir=personas_copy)
+
+    def test_error_names_persona_and_offending_file(self, personas_copy):
+        assets_dir = personas_copy / self._PID / "assets"
+        (assets_dir / "unknown.bin").write_bytes(b"\x00")
+        with pytest.raises(PersonaValidationError) as exc_info:
+            PersonaCatalog.load(personas_dir=personas_copy)
+        message = str(exc_info.value)
+        assert self._PID in message
+        assert "unknown.bin" in message
+
+    def test_missing_assets_dir_is_not_an_error(self, personas_copy):
+        """A persona pack with no assets/ directory at all has nothing to
+        classify -- `_validate_persona_assets` must return early, not raise."""
+        shutil.rmtree(personas_copy / self._PID / "assets")
+        catalog = PersonaCatalog.load(personas_dir=personas_copy)
+        assert self._PID in catalog.ids
+
+    def test_nested_subdirectory_with_anonymous_extension_passes(self, personas_copy):
+        """Anonymous extensions are allowed anywhere under assets/, not just at the
+        top level (mirrors the real pack's assets/audio/*.wav layout)."""
+        nested = personas_copy / self._PID / "assets" / "some" / "nested" / "dir"
+        nested.mkdir(parents=True, exist_ok=True)
+        (nested / "deep.svg").write_text("<svg/>", encoding="utf-8")
+        catalog = PersonaCatalog.load(personas_dir=personas_copy)
+        assert self._PID in catalog.ids
 
 
 # ===========================================================================
