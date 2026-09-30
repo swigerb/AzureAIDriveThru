@@ -990,5 +990,80 @@ class DeployMdDarkStateSetupSequenceTests(unittest.TestCase):
         )
 
 
+class DeployMdTroubleshootingFallbackTests(unittest.TestCase):
+    """Rick's round-1 review of PR #160 (R1): the Troubleshooting fallback for a failed Setup
+    `-Apply` at the "API configuration" step dropped `-FrontendOrigin`. Since `-Apply` reconciles
+    the whole SPA redirect-URI set, following the fallback as written would replace the live
+    origin with only the two localhost defaults, and sign-in on the live URL fails at step 6
+    (AADSTS50011). Pin every `Setup-EntraAuth.ps1` line in this block to carry both `-ClientId`
+    and the exact `-FrontendOrigin "https://$app.$domain"` form, the same way
+    test_every_setup_line_in_the_dark_state_block_carries_the_frontend_origin pins case (a).
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.text = _read(DEPLOY_MD)
+
+    def _fallback_block(self):
+        # The Troubleshooting fallback is the fenced ```powershell block immediately following
+        # the "**Setup fails at "API configuration""" heading.
+        match = re.search(
+            r'\*\*Setup fails at "API configuration".*?```powershell\n(?P<body>.*?)\n```',
+            self.text, re.DOTALL,
+        )
+        self.assertIsNotNone(match, 'expected a Troubleshooting fenced powershell block in DEPLOY.md')
+        return match.group("body")
+
+    def test_every_setup_line_in_the_fallback_block_carries_the_frontend_origin(self):
+        block = self._fallback_block()
+        setup_lines = [
+            line for line in block.splitlines()
+            if "./scripts/Setup-EntraAuth.ps1" in line
+        ]
+        self.assertGreaterEqual(len(setup_lines), 3, "expected at least three Setup-EntraAuth.ps1 lines in the Troubleshooting fallback block")
+        offending = [line for line in setup_lines if '-FrontendOrigin "https://$app.$domain"' not in line]
+        self.assertEqual(
+            offending, [],
+            f"found Setup-EntraAuth.ps1 line(s) in the Troubleshooting fallback block missing the "
+            f"exact -FrontendOrigin \"https://$app.$domain\" form: {offending}",
+        )
+
+    def test_every_setup_line_in_the_fallback_block_carries_client_id(self):
+        # A fallback line without -ClientId would attempt to CREATE a new app instead of
+        # reconciling the existing one Setup already created.
+        block = self._fallback_block()
+        setup_lines = [
+            line for line in block.splitlines()
+            if "./scripts/Setup-EntraAuth.ps1" in line
+        ]
+        offending = [line for line in setup_lines if "-ClientId" not in line]
+        self.assertEqual(
+            offending, [],
+            f"found Setup-EntraAuth.ps1 line(s) in the Troubleshooting fallback block missing "
+            f"-ClientId: {offending}",
+        )
+
+    def test_fallback_leads_with_the_plain_client_id_reapply_before_the_two_pass_sequence(self):
+        # Rick's fix starts with the simpler recovery (re-run the case (a) -Apply line with
+        # -ClientId, idempotent) since it also covers the "role not found on service principal
+        # yet" partial failure, keeping the two-pass -PreAuthorizedClientAppId @() sequence as
+        # the second step for the "API configuration" failure specifically.
+        block = self._fallback_block()
+        preauth_pos = block.find("-PreAuthorizedClientAppId")
+        first_setup_pos = block.find("./scripts/Setup-EntraAuth.ps1")
+        self.assertGreater(first_setup_pos, -1)
+        self.assertGreater(preauth_pos, -1)
+        self.assertGreater(preauth_pos, first_setup_pos, "expected the plain -ClientId re-run before the two-pass -PreAuthorizedClientAppId @() sequence")
+
+    def test_fallback_notes_running_in_the_same_session_as_case_a(self):
+        block = self._fallback_block()
+        self.assertIn("$app", block)
+        self.assertRegex(
+            self.text[:self.text.find(block)][-400:] + block,
+            r"[Ss]ame session",
+            'expected the fallback to say to run it "in the same session" as case (a) so $app/$domain are still set',
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

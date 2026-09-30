@@ -212,19 +212,25 @@ against the live app. It delegates the registration check to `Verify-EntraAuth.p
 
 ### Troubleshooting
 
-**Setup fails at "API configuration" (a `preAuthorizedApplications` or permission-id error) on a brand-new app.**
-Setup adds the delegated scope and reconciles `preAuthorizedApplications` in two separate Graph requests specifically
-so a pre-authorized client entry is never sent referencing a scope id Graph hasn't committed yet, but if a run still
-fails at this step (for example, a partial write from an interrupted prior run left the app in an unexpected state),
-the no-code fallback is to reconcile in two passes by hand:
+**Setup fails at "API configuration" (a `preAuthorizedApplications` or permission-id error) on a brand-new app, or
+any `-Apply` failure after `Created application appId=...`.** Setup adds the delegated scope and reconciles
+`preAuthorizedApplications` in two separate Graph requests specifically so a pre-authorized client entry is never
+sent referencing a scope id Graph hasn't committed yet, but if a run still fails partway through (for example, a
+partial write from an interrupted prior run left the app in an unexpected state), the fallback is idempotent. Run it
+in the same session as case (a) above so `$app` and `$domain` are still set:
 
 ```powershell
-# 1. Reconcile with no pre-authorized clients, so only the scope itself is set:
-./scripts/Setup-EntraAuth.ps1 -TenantId <tenant-id> -ClientId <appId it printed> -PreAuthorizedClientAppId @() -Apply
+# 1. Re-run the same Apply line with -ClientId (idempotent): only the steps that did not finish run again.
+./scripts/Setup-EntraAuth.ps1 -TenantId <tenant-id> -ClientId <appId it printed> -FrontendOrigin "https://$app.$domain" -Apply
 
-# 2. Re-run normally (defaults to the Azure CLI pre-authorization) now that the scope exists:
-./scripts/Setup-EntraAuth.ps1 -TenantId <tenant-id> -ClientId <appId> -Apply
+# 2. If it still fails at "API configuration", reconcile in two passes:
+./scripts/Setup-EntraAuth.ps1 -TenantId <tenant-id> -ClientId <appId> -FrontendOrigin "https://$app.$domain" -PreAuthorizedClientAppId @() -Apply
+./scripts/Setup-EntraAuth.ps1 -TenantId <tenant-id> -ClientId <appId> -FrontendOrigin "https://$app.$domain" -Apply
 ```
+
+Always include `-FrontendOrigin` on every line above: `-Apply` reconciles the whole SPA redirect-URI set, so a
+fallback re-run without it replaces the live URL with only the two localhost defaults, and sign-in on the live URL
+then fails at step 6 with AADSTS50011 (redirect URI mismatch).
 
 ### Rollout (ingress last)
 
