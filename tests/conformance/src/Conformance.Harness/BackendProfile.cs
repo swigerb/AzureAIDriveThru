@@ -88,6 +88,33 @@ public static class BackendProfiles
     });
 
     /// <summary>
+    /// Issue #143/ADR-002: <see cref="BrowserTimers"/>'s own budgets, but "Not Production" on
+    /// both launchers -- scope item 4 and persona-architecture.md 18.11 put the Playwright UX
+    /// runs on the Development pass-through fixture (no MSAL, no bearer, matching the frontend
+    /// bundle's own <c>VITE_AUTH_MODE=Development</c> build), the same "Not Production" shape
+    /// <see cref="DevelopmentPassThrough"/> already gives the mode rows. Paired with
+    /// <see cref="Conformance.Tests.Scenarios.Browser.BrowserConformanceFixture"/>'s
+    /// <c>UseEntraMode =&gt; false</c> override so no <c>ENTRA_*</c>/<c>AUTH_MODE</c> env is set at
+    /// all for the Browser collection.
+    /// </summary>
+    public static BackendProfile BrowserTimersDevelopment { get; } = new(
+        "BrowserTimersDevelopment", new Dictionary<string, string>
+        {
+            ["CONFORMANCE_TEST_HOOKS"] = "1",
+            ["CONFORMANCE_IDLE_TIMEOUT_SECONDS"] = "10",
+            ["CONFORMANCE_GRACE_SECONDS"] = "10",
+            ["CONFORMANCE_NUDGE_AFTER_SECONDS"] = "2",
+            ["CONFORMANCE_FIRST_FRAME_TIMEOUT_SECONDS"] = "3",
+            ["CONFORMANCE_GREETING_TIMEOUT_SECONDS"] = "5",
+            ["CONFORMANCE_RATE_LIMIT_RETRY_DELAY_SECONDS"] = "0.2",
+            ["CONFORMANCE_RATE_LIMIT_SECOND_RETRY_DELAY_SECONDS"] = "0.4",
+            ["CONFORMANCE_SWEEP_INTERVAL_SECONDS"] = "0.2",
+            ["RUNNING_IN_PRODUCTION"] = "false",
+            ["ASPNETCORE_ENVIRONMENT"] = "Development",
+            ["DOTNET_ENVIRONMENT"] = "Development",
+        });
+
+    /// <summary>
     /// Hooks enabled with generous idle/grace/nudge budgets (like <see cref="BrowserTimers"/>) but
     /// for a specific plain-WebSocket reason: app/backend/audio_pipeline.py's EchoSuppressor
     /// treats every fresh (non-resumed) connection's greeting as real AI speech -- AutoRespond's
