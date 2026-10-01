@@ -429,20 +429,31 @@ function SonicApp() {
             // TEMP DIAGNOSTIC (removed once the real cause is found): isolate whether this handler
             // itself runs/extracts the transcript correctly, versus a later effect clobbering it.
             console.log("DIAG onReceivedResponseDone:", JSON.stringify({ transcript, willReturnEarly: !transcript }));
-            console.trace("DIAG onReceivedResponseDone call stack");
             if (!transcript) return;
-            clearRateLimitNotice();
+            try {
+                clearRateLimitNotice();
+                console.log("DIAG after clearRateLimitNotice, about to call setTranscripts");
+            } catch (error) {
+                console.log("DIAG clearRateLimitNotice THREW:", String(error), (error as Error | undefined)?.stack);
+                throw error;
+            }
 
             const newTranscriptItem = {
                 text: transcript,
                 isUser: false,
                 timestamp: new Date()
             };
-            setTranscripts(prev => {
-                const next = [...prev, newTranscriptItem];
-                console.log("DIAG setTranscripts updater:", JSON.stringify({ prevLength: prev.length, nextLength: next.length }));
-                return next;
-            });
+            try {
+                setTranscripts(prev => {
+                    const next = [...prev, newTranscriptItem];
+                    console.log("DIAG setTranscripts updater:", JSON.stringify({ prevLength: prev.length, nextLength: next.length }));
+                    return next;
+                });
+                console.log("DIAG after setTranscripts call (call itself did not throw)");
+            } catch (error) {
+                console.log("DIAG setTranscripts THREW:", String(error), (error as Error | undefined)?.stack);
+                throw error;
+            }
 
             // AI finished speaking - unmute the microphone
             if (isAiSpeakingRef.current) {
