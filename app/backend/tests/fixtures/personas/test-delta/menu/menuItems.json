@@ -46,7 +46,8 @@
             { "size": "regular", "price": 3.49 },
             { "size": "large", "price": 4.29 }
           ],
-          "description": "Test Delta's house latte -- the base item for the splitCombinedNames test."
+          "description": "Test Delta's house latte -- the base item for the splitCombinedNames test. #179: also the fixture's only multi-size, real (non-autoFill-only) comboSlot drink, used by the combo-component-resize tests -- its own existing standalone add/modify/splitCombinedNames tests never combine it with Delta Meal, so this does not change any of their behavior.",
+          "comboSlot": "drinks"
         },
         {
           "name": "Delta Extra Shot",

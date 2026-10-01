@@ -19,16 +19,17 @@ tools:
 
   - name: "update_order"
     type: "function"
-    description: "Update the current Sonic Drive-In order by adding or removing menu items from the Carhop Ticket."
+    description: "Update the current Sonic Drive-In order by adding, removing, or modifying menu items on the Carhop Ticket."
     parameters:
       type: "object"
       properties:
         action:
           type: "string"
-          description: "Action to perform: 'add' or 'remove'."
+          description: "Action to perform: 'add', 'remove', or 'modify' (resize an existing item in place, e.g. 'make that a large' -- including a combo's own side or drink)."
           enum:
             - "add"
             - "remove"
+            - "modify"
         item_name:
           type: "string"
           description: "Name of the Sonic menu item to update, e.g., 'Cherry Limeade'."

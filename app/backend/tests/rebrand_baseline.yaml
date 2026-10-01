@@ -264,12 +264,12 @@ entries:
   increase_reason: ''
 - file: app/backend/tests/test_combo_orders.py
   brand: sonic
-  max: 31
+  max: 32
   issue: '#78'
   reason: 'Backend test fixtures/paths reference personas/sonic/** directly because
     it''s the only persona pack that exists yet -- #78/#79 land the other packs, at
     which point these tests get parameterized per-persona instead of hardcoding Sonic.'
-  increase_reason: ''
+  increase_reason: '#179'
 - file: app/backend/tests/test_conformance_hooks.py
   brand: sonic
   max: 1

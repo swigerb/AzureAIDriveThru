@@ -594,9 +594,13 @@ async def update_order(args, session_id: str) -> ToolResult:
         # nothing to resize. Reject it with the same structured shape instead of letting the
         # success delta tell the guest it was changed (docs/persona-architecture.md section 6).
         # Same line-matching rule as order_state.handle_order_update's modify branch.
+        # #179: a combo's side/drink filling a slot via absorption is ALSO a real, resizable part
+        # of the order even though it has no raw ``OrderItem`` line of its own -- the guest
+        # saying "make that a large" about the drink that came with their combo.
+        # ``is_absorbed_component`` is the second chance before this rejects it.
         if args["action"] == "modify" and not any(
             order_item.item == item_name for order_item in order_state_singleton.get_order_items(session_id)
-        ):
+        ) and not order_state_singleton.is_absorbed_component(session_id, item_name):
             logger.info("Rejected modify of '%s' for session %s (not_in_order)", item_name, session_id)
             _message = pl.render_error("item_not_in_order", item_name=menu_item["name"]) if pl else (
                 f"{menu_item['name']} isn't in the order, so nothing was changed. "
@@ -784,6 +788,16 @@ async def update_order(args, session_id: str) -> ToolResult:
 
     absorbed = result_info.get("absorbed_into_combo", False) if result_info else False
     converted_from = result_info.get("combo_converted_from") if result_info else None
+    # #179: set by order_state.handle_order_update whenever a combo's side/drink slot was
+    # (re)sized in place -- via an `add` of the same item at a different size while the slot was
+    # already full, or an explicit `modify` targeting an absorbed component. Checked before the
+    # generic action-keyed branches below so both paths confirm the resize, never a duplicate-add
+    # or a rejected-modify message.
+    resized_component = result_info.get("resized_combo_component") if result_info else None
+    # #179: handle_order_update's `remove` branch also sets "vacated_combo_component" when
+    # *item_name* was vacating a combo slot rather than removing a raw order line -- the
+    # existing generic "Removed ..." wording below is already accurate for that case (the item
+    # IS being removed from the guest's perspective), so no separate branch reads it here.
 
     if absorbed:
         delta_text = f"{display_name} included with your combo — your total is {summary.finalTotalDisplay}"
@@ -793,6 +807,8 @@ async def update_order(args, session_id: str) -> ToolResult:
         if mods:
             combo_display = f"{display_name} {mods}"
         delta_text = f"Upgraded to {combo_display} — your total is now {summary.finalTotalDisplay}"
+    elif resized_component:
+        delta_text = f"Changed {display_name} — your total is now {summary.finalTotalDisplay}"
     elif pl:
         tpl = pl.get_delta_template(action)
         delta_text = pl.render_template(tpl, quantity=quantity, display_name=display_name, total=summary.finalTotalDisplay)

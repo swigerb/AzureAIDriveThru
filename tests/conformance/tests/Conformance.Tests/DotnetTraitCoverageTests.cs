@@ -114,6 +114,18 @@ namespace Conformance.Tests;
 /// session's `search` tool description carries that SAME pack's own text and none of the others'.
 /// Both methods are tagged <c>[Trait("Dotnet", "ready")]</c>, ungated, and verified green against
 /// both backends -- raising the floor 194 to 196.
+///
+/// Issue #179: a guest's combo drink was resized by the model calling `remove &lt;item&gt;
+/// &lt;old size&gt;` then `add &lt;item&gt; &lt;new size&gt;`; the `remove` didn't vacate the
+/// combo slot it had been filling, so the following `add` created a standalone duplicate line
+/// instead of resizing the combo's own drink. <c>ComboComponentResizeConformanceTests.cs</c> adds
+/// two tagged, ungated <c>[Theory]</c> methods (<c>Discovered_pack_resizes_the_combo_drink_via_remove_then_add</c>,
+/// reproducing the exact live sequence, and <c>Discovered_pack_resizes_the_combo_drink_via_explicit_modify</c>,
+/// covering the new explicit resize action), each driven by <c>ComboBundleDiscovery</c> dynamically
+/// discovering every real pack with a genuinely-open drinks slot (no brand names in the test file
+/// itself) -- verified green against both backends for every real pack discovered on disk whose
+/// own menu qualifies today (a pack with no bundle at all is naturally excluded) -- raising the floor
+/// 196 to 198.
 /// </summary>
 public sealed class DotnetTraitCoverageTests
 {
@@ -136,12 +148,12 @@ public sealed class DotnetTraitCoverageTests
     };
 
     [Fact]
-    public void At_least_196_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
+    public void At_least_198_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
     {
         var count = CountFloorEligibleDotnetReadyTestMethods();
 
-        Assert.True(count >= 196,
-            $"Expected at least 196 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
+        Assert.True(count >= 198,
+            $"Expected at least 198 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
             $"and not unconditionally skip-gated by AuthRowCapability (the dotnet leg's " +
             $"`--filter \"{TraitName}={TraitValue}&Category!=Browser\"` baseline, minus the five " +
             "skip-only Scenarios/Auth classes -- see this class's own doc comment; " +

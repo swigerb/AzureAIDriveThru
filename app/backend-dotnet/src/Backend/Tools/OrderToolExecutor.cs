@@ -257,7 +257,11 @@ public sealed class OrderToolExecutor : IToolExecutor
         // #77: `modify` resizes an existing line -- an on-menu item that isn't in the order has
         // nothing to resize. Same line-matching rule as OrderState.HandleOrderUpdate's modify
         // branch (any-size match on item name).
-        if (action == "modify" && !_order.Items.Any(item => item.Item == itemName))
+        // #179: a combo's side/drink filling a slot via absorption is ALSO a real, resizable part
+        // of the order even though it has no raw OrderItem line of its own -- the guest saying
+        // "make that a large" about the drink that came with their combo. IsAbsorbedComponent is
+        // the second chance before this rejects it.
+        if (action == "modify" && !_order.Items.Any(item => item.Item == itemName) && !_order.IsAbsorbedComponent(itemName))
         {
             var message = _promptLoader?.RenderError("item_not_in_order", Vars(("item_name", menuItem.Name)))
                 ?? $"{menuItem.Name} isn't in the order, so nothing was changed. " +
@@ -463,6 +467,18 @@ public sealed class OrderToolExecutor : IToolExecutor
                 comboDisplay = $"{displayName} {mods}";
             }
             return $"Upgraded to {comboDisplay} — your total is now {summary.FinalTotalDisplay}";
+        }
+        // #179: set by OrderState.HandleOrderUpdate whenever a combo's side/drink slot was
+        // (re)sized in place -- via an `add` of the same item at a different size while the slot
+        // was already full, or an explicit `modify` targeting an absorbed component. Checked
+        // before the generic promptLoader/action-keyed branches below so both paths confirm the
+        // resize, never a duplicate-add or rejected-modify message. (HandleRemove also sets
+        // VacatedComboComponent when itemName was vacating a combo slot rather than removing a
+        // raw order line -- the existing generic "Removed ..." wording below is already accurate
+        // for that case, so no separate branch reads it here.)
+        if (resultInfo.ResizedComboComponent is not null)
+        {
+            return $"Changed {displayName} — your total is now {summary.FinalTotalDisplay}";
         }
         if (_promptLoader is { } pl)
         {
