@@ -87,10 +87,17 @@ public sealed class SearchTool
             return cached;
         }
 
-        // Issue 165: restrict results server-side to items whose own menuPeriod is _menuMode or
-        // "allDay" -- the same OData filter setup_search_index.py documents. Null for a persona
-        // with no features.dayparts (every existing caller keeps passing nothing, a pure no-op).
-        var modeFilter = _menuMode is { Length: > 0 } ? $"menuPeriod eq '{_menuMode}' or menuPeriod eq 'allDay'" : null;
+        // Issue 165: restrict results server-side to items whose own menuPeriod is _menuMode,
+        // "allDay", or unset ("" -- setup_search_index.py's own sentinel for a period-less item)
+        // -- the same OData filter setup_search_index.py documents. Null for a persona with no
+        // features.dayparts (every existing caller keeps passing nothing, a pure no-op).
+        // Rick's PR 166 round-1 review, required item 6: the third clause keeps
+        // MenuCatalog.ItemAvailableNow's own always-available treatment of a period-less item and
+        // this search filter in sync -- without it, a period-less item could be added to an order
+        // in either mode yet never surface in a mode-filtered search.
+        var modeFilter = _menuMode is { Length: > 0 }
+            ? $"menuPeriod eq '{_menuMode}' or menuPeriod eq 'allDay' or menuPeriod eq ''"
+            : null;
 
         var selectFields = new[] { _config.IdentifierField, "name", "category", "description", "sizes" };
         var semanticEnabled = _config.UseSemanticRanker && !string.IsNullOrEmpty(_config.SemanticConfiguration);

@@ -343,8 +343,15 @@ app.MapGet("/realtime", async (HttpContext context) =>
     {
         if (requestedMenuMode is not (null or "breakfast" or "lunch"))
         {
+            // Rick's PR 166 round-1 review, required item 7: never log the raw, attacker-supplied
+            // ?mode= value verbatim -- it is unbounded length and may carry CR/LF as a
+            // log-injection attempt. Only the persona id and the value's length go to the log;
+            // the 400 response body below still echoes the value via PyRepr, which is fine (same
+            // as the persona/model 404s above), since that goes out over HTTP to the same client
+            // that sent it, not into the shared log stream.
             logger.LogWarning(
-                "Rejected WebSocket for invalid menu mode: {MenuMode} (persona={PersonaId})", requestedMenuMode, persona.Id);
+                "Rejected WebSocket for invalid menu mode (length={MenuModeLength}, persona={PersonaId})",
+                requestedMenuMode?.Length ?? 0, persona.Id);
             return Results.Text(
                 $"Invalid menu mode: {PyRepr(requestedMenuMode)} (expected 'breakfast' or 'lunch')", statusCode: 400);
         }

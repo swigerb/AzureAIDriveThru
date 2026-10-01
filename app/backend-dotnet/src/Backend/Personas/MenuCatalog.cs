@@ -74,6 +74,13 @@ public sealed class MenuCatalog
     /// size_not_available rejection.</summary>
     public IReadOnlyDictionary<string, string> SizeMap => _sizeMap;
 
+    /// <summary>This persona's own normalized-item-key -> lower-cased category map -- mirrors
+    /// menu_utils.py's public <c>category_map</c> attribute (parity gap closed for #165 round 2,
+    /// Rick's review item 4: lets a test enumerate this pack's own real category set, e.g. to
+    /// verify every <c>hints.yaml</c> <c>trigger_categories</c> entry actually resolves to one of
+    /// them, the same way the Python pack-lint test does).</summary>
+    public IReadOnlyDictionary<string, string> CategoryMap => _categoryMap;
+
     private readonly IReadOnlyDictionary<string, IReadOnlyList<string>> _mealNumberIndex;
 
     private MenuCatalog(
