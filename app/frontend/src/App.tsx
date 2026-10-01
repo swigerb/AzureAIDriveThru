@@ -852,18 +852,20 @@ function SonicApp() {
                             <SheetHeader>
                                 <SheetTitle>Guest Conversation</SheetTitle>
                             </SheetHeader>
-                            <div className="h-[calc(100vh-4rem)] overflow-auto pr-4">
-                                <TranscriptPanel transcripts={useDummyData ? dummyTranscripts : transcripts} />
-                            </div>
+                            <TranscriptPanel
+                                transcripts={useDummyData ? dummyTranscripts : transcripts}
+                                className="h-[calc(100vh-4rem)] overflow-auto pr-4"
+                            />
                         </SheetContent>
                     </Sheet>
 
                     {/* Desktop Transcript Panel */}
                     <Card className="hidden p-6 md:block">
                         <h2 className="mb-4 text-center font-semibold text-primary">Guest Conversation</h2>
-                        <div className="h-[calc(100vh-13rem)] overflow-auto pr-4">
-                            <TranscriptPanel transcripts={useDummyData ? dummyTranscripts : transcripts} />
-                        </div>
+                        <TranscriptPanel
+                            transcripts={useDummyData ? dummyTranscripts : transcripts}
+                            className="h-[calc(100vh-13rem)] overflow-auto pr-4"
+                        />
                     </Card>
                 </div>
             </div>
