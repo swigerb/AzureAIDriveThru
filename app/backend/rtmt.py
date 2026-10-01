@@ -2769,7 +2769,7 @@ class RTMiddleTier:
                             # must never nudge or generate a response.
                             if nudge_awaiting_client_live and sent_type == "session.update":
                                 nudge_awaiting_client_live = False
-                                logger.info("Client session.update forwarded — arming resume nudge (session=%s)", session_id)
+                                logger.info("Client session.update forwarded, arming resume nudge (session=%s)", session_id)
                                 nudge_task = _spawn(nudge_after_silence())
                             # PR #49 review round 5, "F1": barge-in used to be
                             # keyed on the raw `_MARKER_RESPONSE_CANCEL in

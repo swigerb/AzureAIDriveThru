@@ -9,13 +9,13 @@ namespace Conformance.Tests.Scenarios.Sessions;
 /// Issue #10: what happens to the *conversation* across a resume, not just the handshake
 /// (covered by <see cref="ResumeHandshakeTests"/>). app/backend/rtmt.py sends every new upstream
 /// connection a bootstrap `session.update` before relaying any client traffic; a successful
-/// mid-conversation resume (`outcome.conversation_started` — the session had already greeted)
+/// mid-conversation resume (`outcome.conversation_started`, the session had already greeted)
 /// then appends exactly one system `conversation.item.create` carrying the order and recent
 /// turns (session_manager.py's `build_rehydration_item`), and deliberately sends no
-/// `response.create` — the carhop must not greet again or speak until the guest does. Issue
+/// `response.create` (the carhop must not greet again or speak until the guest does). Issue
 /// #181: a `nudge_after_silence()` task is only even *scheduled* once the resumed connection
 /// forwards the client's OWN `session.update` (the browser's mic-restart/resumeConversation()
-/// path) — a resume whose client never does that (guest never tapped the mic back on) must
+/// path): a resume whose client never does that (guest never tapped the mic back on) must
 /// never nudge or generate any response at all. Once scheduled, it still fires exactly once,
 /// `nudge_after_seconds` after that, but only once `session.updated` has also confirmed the new
 /// upstream is configured, and only if the guest hasn't spoken (speech/transcript cancels it).

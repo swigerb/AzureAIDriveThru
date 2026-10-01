@@ -525,17 +525,17 @@ function SonicApp() {
     // Mid-conversation drop, resumed: pick the conversation straight back up.
     // Voice/VAD come back via session.update (the server suppresses the greeting),
     // and the mic restarts without a tap when the browser allows it.
+    //
+    // Issue 181, R1: session.update must not go out until the mic is actually running. The
+    // server arms its idle-resume nudge the moment it forwards a validated client session.update,
+    // so sending it before we know the mic restart succeeded leaves a paid conversation generating
+    // on a tab that is about to fall back to "Tap the mic to continue" with nobody listening.
     const resumeConversation = async () => {
         isSessionActiveRef.current = true;
         isAiSpeakingRef.current = false;
         awaitingGreetingDoneRef.current = false;
         greetingAudioSeenRef.current = false;
         setIsRecording(true);
-        realtime.startSession();
-        if (verboseLogging) {
-            realtime.sendVerboseLogging(true);
-            if (logToFile) realtime.sendLogToFile(true);
-        }
         let micStarted = false;
         try {
             micStarted = await startAudioRecording();
@@ -544,10 +544,17 @@ function SonicApp() {
         }
         if (!isSessionActiveRef.current) return;
         if (!micStarted) {
-            // Needs a user gesture (suspended AudioContext / permission prompt).
+            // Needs a user gesture (suspended AudioContext / permission prompt). No session.update
+            // was sent, so the server has nothing armed on this socket; the guest's own tap in
+            // onToggleListening sends it once the conversation is genuinely live.
             await stopConversation();
             setConnectionNotice("tapToResume");
             return;
+        }
+        realtime.startSession();
+        if (verboseLogging) {
+            realtime.sendVerboseLogging(true);
+            if (logToFile) realtime.sendLogToFile(true);
         }
         flashResumedNotice();
     };
