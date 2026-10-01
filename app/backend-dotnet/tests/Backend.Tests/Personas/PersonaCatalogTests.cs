@@ -432,4 +432,56 @@ public sealed class PersonaCatalogTests
             () => PersonaCatalog.Load(personasDir: fixture.PersonasDir, personasEnv: "test-alpha", defaultPersonaEnv: "test-alpha"));
         Assert.Contains("test-alpha", exc.Message);
     }
+
+    [Fact]
+    public void UnknownTextRole_Throws()
+    {
+        // Issue 164 R2 (PR 167 round 1 review): mirrors
+        // test_persona_loader.py's test_unknown_text_role_refuses_to_start -- `ui.textRoles`
+        // values are constrained to the schema's textRole enum
+        // (primary/primaryDeep/secondary/accent/ink). Uses the neutral test-alpha fixture pack,
+        // not a real brand pack, per R6 (keeps the rebrand-baseline word-count ratchet (#76)
+        // from growing).
+        using var fixture = new NeutralPersonaPackFixture();
+        fixture.MutatePersonaJson("test-alpha", obj =>
+            obj["ui"]!["textRoles"] = new JsonObject { ["badge"] = "not-a-real-role" });
+
+        var exc = Assert.Throws<PersonaValidationException>(
+            () => PersonaCatalog.Load(personasDir: fixture.PersonasDir, personasEnv: "test-alpha", defaultPersonaEnv: "test-alpha"));
+        Assert.Contains("test-alpha", exc.Message);
+    }
+
+    [Fact]
+    public void UnknownSpotlightRowTone_Throws()
+    {
+        // Issue 164 R4 (PR 167 round 1 review): mirrors
+        // test_persona_loader.py's test_unknown_spotlight_row_tone_refuses_to_start -- a
+        // spotlight card-one row's `tone` is constrained to primary/secondary/accent/ink, the
+        // same enum as the card-level `tone`/`accentTone` fields already covered by
+        // InvalidHeroSpotlightTone_Throws above, but on the nested row object instead.
+        using var fixture = new NeutralPersonaPackFixture();
+        fixture.MutatePersonaJson("test-alpha", obj =>
+            obj["ui"]!["hero"]!["spotlight"]![0]!["rows"]![0]!["tone"] = "not-a-real-tone");
+
+        var exc = Assert.Throws<PersonaValidationException>(
+            () => PersonaCatalog.Load(personasDir: fixture.PersonasDir, personasEnv: "test-alpha", defaultPersonaEnv: "test-alpha"));
+        Assert.Contains("test-alpha", exc.Message);
+    }
+
+    [Fact]
+    public void UnknownSpotlightAccentTone_Throws()
+    {
+        // Issue 164 R4 (PR 167 round 1 review): mirrors
+        // test_persona_loader.py's test_unknown_spotlight_accent_tone_refuses_to_start -- a
+        // spotlight card-two `accentTone` override is constrained the same way as `tone` (see
+        // InvalidHeroSpotlightTone_Throws above), but is a distinct field that needs its own
+        // mutation -- a pack cannot invent its own role name for either one independently.
+        using var fixture = new NeutralPersonaPackFixture();
+        fixture.MutatePersonaJson("test-alpha", obj =>
+            obj["ui"]!["hero"]!["spotlight"]![1]!["accentTone"] = "not-a-real-tone");
+
+        var exc = Assert.Throws<PersonaValidationException>(
+            () => PersonaCatalog.Load(personasDir: fixture.PersonasDir, personasEnv: "test-alpha", defaultPersonaEnv: "test-alpha"));
+        Assert.Contains("test-alpha", exc.Message);
+    }
 }
