@@ -194,4 +194,40 @@ describe("OrderSummary", () => {
             expect(screen.queryByText(/Medium World Famous Fries \(x/)).not.toBeInTheDocument();
         });
     });
+
+    // Issue 164 E2: "Tax (N%)" instead of a bare "Tax" -- N comes from the `taxRate` prop
+    // (persona.json's pricing.taxRate, forwarded by both backends), not a hardcoded rate.
+    describe("tax rate label (issue 164 E2)", () => {
+        it("appends the rounded whole-percent rate when taxRate is supplied", () => {
+            const summary = calculateOrderSummary(sampleItems);
+            render(<OrderSummary order={summary} taxRate="0.08" />);
+
+            // react-i18next is mocked to echo the key ("ticket.tax"); the rate suffix is appended
+            // by OrderSummary itself, not the i18n layer.
+            expect(screen.getByText("ticket.tax (8%)")).toBeInTheDocument();
+        });
+
+        it("rounds a non-whole-percent rate to the nearest whole percent", () => {
+            const summary = calculateOrderSummary(sampleItems);
+            render(<OrderSummary order={summary} taxRate="0.0825" />);
+
+            expect(screen.getByText("ticket.tax (8%)")).toBeInTheDocument();
+        });
+
+        it("falls back to the bare label when taxRate is omitted", () => {
+            const summary = calculateOrderSummary(sampleItems);
+            render(<OrderSummary order={summary} />);
+
+            expect(screen.getByText("ticket.tax")).toBeInTheDocument();
+            expect(screen.queryByText(/ticket\.tax \(/)).not.toBeInTheDocument();
+        });
+
+        it("falls back to the bare label when taxRate is not a valid number", () => {
+            const summary = calculateOrderSummary(sampleItems);
+            render(<OrderSummary order={summary} taxRate="not-a-number" />);
+
+            expect(screen.getByText("ticket.tax")).toBeInTheDocument();
+            expect(screen.queryByText(/ticket\.tax \(/)).not.toBeInTheDocument();
+        });
+    });
 });

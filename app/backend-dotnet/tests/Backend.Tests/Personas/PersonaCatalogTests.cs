@@ -327,4 +327,161 @@ public sealed class PersonaCatalogTests
         Assert.Contains("sonic", catalog.Ids);
         Assert.Equal("sonic", catalog.DefaultPersonaId);
     }
+
+    // ===========================================================================
+    // Issue #164 UX-parity fields: hero spotlight tone/tint, sessionBar variant,
+    // categoryIcons, and assets.logoTile round-trip through the real personas/ packs.
+    // These assert on pack-agnostic invariants (never naming a specific pack id in source) so
+    // they don't grow the checked-in rebrand-baseline word-count ratchet (#76) on this file,
+    // which is already at its allowance from earlier coverage above.
+    // ===========================================================================
+
+    [Fact]
+    public void RealPersonasDirectory_LoadsHeroSpotlightToneAndTint()
+    {
+        var personasDir = Path.Combine(RepoRootLocator.Find(), "personas");
+        var catalog = PersonaCatalog.Load(personasDir: personasDir);
+
+        // Exactly one original pack washes its second ("body") spotlight card with a hex tint.
+        var tintedCards = catalog.Ids
+            .Select(id => catalog.Get(id).Ui.Hero.Spotlight[1])
+            .Where(card => card.Tint is not null)
+            .ToList();
+        Assert.Single(tintedCards);
+        Assert.Equal("#FFE0EF", tintedCards[0].Tint);
+
+        // Exactly one original pack overrides that same card's tone away from the shared
+        // "secondary" default.
+        var accentedCards = catalog.Ids
+            .Select(id => catalog.Get(id).Ui.Hero.Spotlight[1])
+            .Where(card => card.Tone == "accent")
+            .ToList();
+        Assert.Single(accentedCards);
+    }
+
+    [Fact]
+    public void RealPersonasDirectory_LoadsSessionBarChipsVariant()
+    {
+        var personasDir = Path.Combine(RepoRootLocator.Find(), "personas");
+        var catalog = PersonaCatalog.Load(personasDir: personasDir);
+
+        var variants = catalog.Ids.Select(id => catalog.Get(id).Ui.SessionBar?.Variant).ToList();
+
+        // Exactly one original pack opts into the "chips" session-bar variant; the rest omit
+        // sessionBar entirely ('plain' is the frontend's default when this is null, not a value
+        // PersonaSessionBar itself ever sets).
+        Assert.Contains("chips", variants);
+        Assert.Equal(variants.Count - 1, variants.Count(v => v is null));
+    }
+
+    [Fact]
+    public void RealPersonasDirectory_LoadsCategoryIconsAndLogoTile()
+    {
+        var personasDir = Path.Combine(RepoRootLocator.Find(), "personas");
+        var catalog = PersonaCatalog.Load(personasDir: personasDir);
+
+        // Every original pack ships per-category emoji icons (issue 164 E1/C4), but only one
+        // needs the white logo-tile treatment (its brand mark has no transparent margin).
+        var withIcons = catalog.Ids
+            .Where(id => catalog.Get(id).Ui.CategoryIcons is { Count: > 0 })
+            .ToList();
+        var withTile = catalog.Ids
+            .Where(id => catalog.Get(id).Ui.Assets.LogoTile == true)
+            .ToList();
+        Assert.Equal(catalog.Ids.Count, withIcons.Count);
+        Assert.Single(withTile);
+        Assert.Contains(catalog.Get(withTile[0]).Ui.CategoryIcons!.Values, icon => icon == "🍔");
+    }
+
+    [Fact]
+    public void RealPersonasDirectory_ForwardsTaxRateForEveryPack()
+    {
+        var personasDir = Path.Combine(RepoRootLocator.Find(), "personas");
+        var catalog = PersonaCatalog.Load(personasDir: personasDir);
+
+        foreach (var id in catalog.Ids)
+        {
+            var rate = double.Parse(catalog.Get(id).Pricing.TaxRate);
+            Assert.InRange(rate, 0.0, 1.0);
+        }
+    }
+
+    [Fact]
+    public void InvalidHeroSpotlightTone_Throws()
+    {
+        // The schema's `tone` enum only allows primary/secondary/accent -- any other value must
+        // fail startup the same way any other schema violation does. Uses the neutral fixture
+        // pack so this doesn't grow the checked-in rebrand-baseline word-count ratchet (#76).
+        using var fixture = new NeutralPersonaPackFixture();
+        fixture.MutatePersonaJson("test-alpha", obj =>
+            obj["ui"]!["hero"]!["spotlight"]![1]!["tone"] = "not-a-real-tone");
+
+        var exc = Assert.Throws<PersonaValidationException>(
+            () => PersonaCatalog.Load(personasDir: fixture.PersonasDir, personasEnv: "test-alpha", defaultPersonaEnv: "test-alpha"));
+        Assert.Contains("test-alpha", exc.Message);
+    }
+
+    [Fact]
+    public void InvalidSessionBarVariant_Throws()
+    {
+        using var fixture = new NeutralPersonaPackFixture();
+        fixture.MutatePersonaJson("test-alpha", obj =>
+            obj["ui"]!["sessionBar"] = new JsonObject { ["variant"] = "not-a-real-variant" });
+
+        var exc = Assert.Throws<PersonaValidationException>(
+            () => PersonaCatalog.Load(personasDir: fixture.PersonasDir, personasEnv: "test-alpha", defaultPersonaEnv: "test-alpha"));
+        Assert.Contains("test-alpha", exc.Message);
+    }
+
+    [Fact]
+    public void UnknownTextRole_Throws()
+    {
+        // Issue 164 R2 (PR 167 round 1 review): mirrors
+        // test_persona_loader.py's test_unknown_text_role_refuses_to_start -- `ui.textRoles`
+        // values are constrained to the schema's textRole enum
+        // (primary/primaryDeep/secondary/accent/ink). Uses the neutral test-alpha fixture pack,
+        // not a real brand pack, per R6 (keeps the rebrand-baseline word-count ratchet (#76)
+        // from growing).
+        using var fixture = new NeutralPersonaPackFixture();
+        fixture.MutatePersonaJson("test-alpha", obj =>
+            obj["ui"]!["textRoles"] = new JsonObject { ["badge"] = "not-a-real-role" });
+
+        var exc = Assert.Throws<PersonaValidationException>(
+            () => PersonaCatalog.Load(personasDir: fixture.PersonasDir, personasEnv: "test-alpha", defaultPersonaEnv: "test-alpha"));
+        Assert.Contains("test-alpha", exc.Message);
+    }
+
+    [Fact]
+    public void UnknownSpotlightRowTone_Throws()
+    {
+        // Issue 164 R4 (PR 167 round 1 review): mirrors
+        // test_persona_loader.py's test_unknown_spotlight_row_tone_refuses_to_start -- a
+        // spotlight card-one row's `tone` is constrained to primary/secondary/accent/ink, the
+        // same enum as the card-level `tone`/`accentTone` fields already covered by
+        // InvalidHeroSpotlightTone_Throws above, but on the nested row object instead.
+        using var fixture = new NeutralPersonaPackFixture();
+        fixture.MutatePersonaJson("test-alpha", obj =>
+            obj["ui"]!["hero"]!["spotlight"]![0]!["rows"]![0]!["tone"] = "not-a-real-tone");
+
+        var exc = Assert.Throws<PersonaValidationException>(
+            () => PersonaCatalog.Load(personasDir: fixture.PersonasDir, personasEnv: "test-alpha", defaultPersonaEnv: "test-alpha"));
+        Assert.Contains("test-alpha", exc.Message);
+    }
+
+    [Fact]
+    public void UnknownSpotlightAccentTone_Throws()
+    {
+        // Issue 164 R4 (PR 167 round 1 review): mirrors
+        // test_persona_loader.py's test_unknown_spotlight_accent_tone_refuses_to_start -- a
+        // spotlight card-two `accentTone` override is constrained the same way as `tone` (see
+        // InvalidHeroSpotlightTone_Throws above), but is a distinct field that needs its own
+        // mutation -- a pack cannot invent its own role name for either one independently.
+        using var fixture = new NeutralPersonaPackFixture();
+        fixture.MutatePersonaJson("test-alpha", obj =>
+            obj["ui"]!["hero"]!["spotlight"]![1]!["accentTone"] = "not-a-real-tone");
+
+        var exc = Assert.Throws<PersonaValidationException>(
+            () => PersonaCatalog.Load(personasDir: fixture.PersonasDir, personasEnv: "test-alpha", defaultPersonaEnv: "test-alpha"));
+        Assert.Contains("test-alpha", exc.Message);
+    }
 }

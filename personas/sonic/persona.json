@@ -136,6 +136,7 @@
         "ticket.kicker": "Carhop ticket",
         "ticket.title": "Your Sonic Order",
         "menu.button": "View Sonic Menu",
+        "menu.title": "Sonic Favorites",
         "ticket.emptyHint": "Add a slush, burger, or shake to kick things off."
       },
       "es": {
@@ -144,6 +145,7 @@
         "ticket.kicker": "Boleto del carhop",
         "ticket.title": "Tu pedido de Sonic",
         "menu.button": "Ver el menú de Sonic",
+        "menu.title": "Favoritos de Sonic",
         "ticket.emptyHint": "Agrega un slush, una hamburguesa o un batido para empezar."
       },
       "fr": {
@@ -152,6 +154,7 @@
         "ticket.kicker": "Ticket du carhop",
         "ticket.title": "Votre commande Sonic",
         "menu.button": "Voir le menu Sonic",
+        "menu.title": "Les favoris Sonic",
         "ticket.emptyHint": "Ajoutez un slush, un burger ou un milkshake pour commencer."
       },
       "ja": {
@@ -160,10 +163,46 @@
         "ticket.kicker": "カーホップ伝票",
         "ticket.title": "あなたのSonicのご注文",
         "menu.button": "Sonicのメニューを見る",
+        "menu.title": "Sonicのお気に入り",
         "ticket.emptyHint": "スラッシュ、バーガー、シェイクを追加して始めましょう。"
       }
     },
-    "hero": { "headline": "Sonic ordering powered by Microsoft Foundry", "callouts": [] },
+    "hero": {
+      "headline": "Sonic ordering powered by Microsoft Foundry",
+      "description": "Recreate the Sonic Drive-In experience with slushes, burgers, and carhop favorites styled after America's Drive-In, now voice activated with Microsoft Foundry + Azure AI Search grounding.",
+      "callouts": [
+        { "title": "REWARDS READY", "detail": "Voice orders auto-sync with Sonic rewards and deals", "tone": "primary" },
+        { "title": "FOUNDRY INFUSION", "detail": "Microsoft Foundry + Azure OpenAI keep conversations flowing", "tone": "secondary" },
+        { "title": "LIVE MENU", "detail": "Azure AI Search keeps Sonic menu items current", "tone": "accent" }
+      ],
+      "spotlight": [
+        {
+          "icon": "assets/spotlight-slush.svg",
+          "kicker": "SIGNATURE SLUSHES",
+          "title": "Cherry Limeade & more",
+          "rows": [
+            { "label": "Slush of the Day", "value": "Cherry Limeade", "tone": "primary" },
+            { "label": "Carhop Pick", "value": "SuperSONIC Cheeseburger", "tone": "secondary" }
+          ]
+        },
+        {
+          "icon": "assets/spotlight-burger.svg",
+          "kicker": "CARHOP FAVORITE",
+          "title": "SuperSONIC® Double Cheeseburger",
+          "body": "100% pure beef with melty American cheese",
+          "accent": "Perfect pairing: Large Tots & a Shake"
+        }
+      ]
+    },
+    "categoryIcons": {
+      "Extras & Sides": "🍟",
+      "National Breakfast Entrees": "🍳",
+      "Local Breakfast Favorites": "🥞",
+      "Breakfast Drinks": "☕",
+      "Local Chicken": "🍗",
+      "Wacky Pack® Kids Meals": "🎉",
+      "Other": "🍽️"
+    },
     "legal": "Disclaimer: This project is a non-commercial demo application created for educational and illustrative purposes only. It is not affiliated with, endorsed, or sponsored by Inspire Brands, Inc. or Sonic Corp. Any references to Sonic Drive-In or use of Sonic-inspired colors or themes are solely for demonstration and do not represent an official product."
   }
 }

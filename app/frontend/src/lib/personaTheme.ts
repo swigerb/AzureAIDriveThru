@@ -42,12 +42,22 @@ export interface PersonaAccentPalette {
     primaryStrong: string;
     /** Lighter shade of `primary`, used as a gradient endpoint. */
     primaryLight: string;
+    /** Issue #164 R2 (PR #167 round 1 review): deeper/darker shade of `primary`, distinct from
+     * `primaryStrong`, for text needing more contrast than the plain primary hex. Defaults to this
+     * pack's own merged `primaryHex` (see `resolvePersonaTheme`'s R9 fix, PR #167 round 2 review)
+     * so a pack that doesn't author this key renders unchanged. */
+    primaryDeep: string;
     /** Shade of `primary` legible on dark surfaces (dark-mode text/badges). */
     primaryTintOnDark: string;
     /** Exact hex of `secondary`, for the same byte-identical reason as `primaryHex`. */
     secondaryHex: string;
     /** Brighter shade of `secondary`, used as a gradient endpoint. */
     secondaryStrong: string;
+    /** Issue #164 R3 (PR #167 round 1 review): lighter shade of `secondary`, for pill/gradient
+     * accents brighter than `secondaryStrong`. Defaults to this pack's own merged
+     * `secondaryStrong` (see `resolvePersonaTheme`'s R9 fix, PR #167 round 2 review) so a pack
+     * that doesn't author this key renders unchanged. */
+    secondaryLight: string;
     /** Shade of `secondary` legible on dark surfaces (dark-mode text/badges). */
     secondaryTintOnDark: string;
     /** Accent hue distinct from primary/secondary. */
@@ -155,9 +165,11 @@ export const PERSONA_THEME_CSS_VARS = {
     primaryHex: "--brand-primary-hex",
     primaryStrong: "--brand-primary-strong",
     primaryLight: "--brand-primary-light",
+    primaryDeep: "--brand-primary-deep",
     primaryTintOnDark: "--brand-primary-tint",
     secondaryHex: "--brand-secondary-hex",
     secondaryStrong: "--brand-secondary-strong",
+    secondaryLight: "--brand-secondary-light",
     secondaryTintOnDark: "--brand-secondary-tint",
     accent: "--brand-accent",
     accentLight: "--brand-accent-light",
@@ -166,7 +178,8 @@ export const PERSONA_THEME_CSS_VARS = {
     surfaceDark: "--brand-surface-dark",
     surfaceDarkAlt: "--brand-surface-dark-alt",
     success: "--brand-success",
-    neutral: "--brand-neutral"
+    neutral: "--brand-neutral",
+    fontFamily: "--brand-font-family"
 } as const;
 
 /**
@@ -210,9 +223,11 @@ export function applyTheme(theme: PersonaTheme, root: HTMLElement = document.doc
     set(vars.primaryHex, light.accents.primaryHex);
     set(vars.primaryStrong, light.accents.primaryStrong);
     set(vars.primaryLight, light.accents.primaryLight);
+    set(vars.primaryDeep, light.accents.primaryDeep);
     set(vars.primaryTintOnDark, light.accents.primaryTintOnDark);
     set(vars.secondaryHex, light.accents.secondaryHex);
     set(vars.secondaryStrong, light.accents.secondaryStrong);
+    set(vars.secondaryLight, light.accents.secondaryLight);
     set(vars.secondaryTintOnDark, light.accents.secondaryTintOnDark);
     set(vars.accent, light.accents.accent);
     set(vars.accentLight, light.accents.accentLight);
@@ -236,6 +251,36 @@ export function applyTheme(theme: PersonaTheme, root: HTMLElement = document.doc
         set(surfaceVars.border, surface.border);
         set(surfaceVars.chart4, surface.chart4);
         set(surfaceVars.chart5, surface.chart5);
+    }
+
+    const font = theme.font ?? DEFAULT_THEME_FONT;
+    set(vars.fontFamily, font.family ? `"${font.family}"` : undefined);
+    applyThemeFont(font, root.ownerDocument ?? document);
+}
+
+/** `id` of the `<link rel="stylesheet">` `applyThemeFont` injects/updates for the active persona's webfont. */
+const FONT_LINK_ELEMENT_ID = "persona-font-link";
+
+/**
+ * Loads (or swaps) the active persona's webfont stylesheet by injecting/updating a single
+ * `<link rel="stylesheet">` in `<head>` (issue 164 C1: a pack's `ui.theme.font` was already
+ * threaded from `persona.json` all the way to `PersonaTheme.font`, but nothing ever fetched the
+ * font or applied its family to the page, so every persona silently rendered the shared
+ * `DEFAULT_THEME_FONT` (Nunito Sans) instead of its own brand font). Reuses the same tag across
+ * persona switches (rather than appending a new `<link>` each time) and only touches `href` when
+ * the URL actually changed, so re-applying the same persona's theme is a no-op.
+ */
+export function applyThemeFont(font: PersonaThemeFont, doc: Document = document): void {
+    if (!font?.importUrl) return;
+    let link = doc.getElementById(FONT_LINK_ELEMENT_ID) as HTMLLinkElement | null;
+    if (!link) {
+        link = doc.createElement("link");
+        link.id = FONT_LINK_ELEMENT_ID;
+        link.rel = "stylesheet";
+        doc.head.appendChild(link);
+    }
+    if (link.href !== font.importUrl) {
+        link.href = font.importUrl;
     }
 }
 
@@ -398,9 +443,15 @@ export function deriveAccents(colors: PersonaBaseColors): PersonaAccentPalette {
         primaryHex: hslToHex(primary.h, primary.s, primary.l),
         primaryStrong: hslToHex(primary.h, primary.s, clampNumber(primary.l - 10, 5, 95)),
         primaryLight: hslToHex(primary.h, primary.s, clampNumber(primary.l + 15, 5, 95)),
+        // Issue #164 R2 (PR #167 round 1 review): defaults to the same value as `primaryHex` (not
+        // a new synthesis) so a pack that doesn't author `primaryDeep` renders unchanged.
+        primaryDeep: hslToHex(primary.h, primary.s, primary.l),
         primaryTintOnDark: hslToHex(primary.h, clampNumber(primary.s - 10, 0, 100), clampNumber(primary.l + 25, 5, 95)),
         secondaryHex: hslToHex(secondary.h, secondary.s, secondary.l),
         secondaryStrong: hslToHex(secondary.h, clampNumber(secondary.s + 20, 0, 100), clampNumber(secondary.l + 15, 5, 95)),
+        // Issue #164 R3 (PR #167 round 1 review): defaults to the same value as `secondaryStrong`
+        // (not a new synthesis) so a pack that doesn't author `secondaryLight` renders unchanged.
+        secondaryLight: hslToHex(secondary.h, clampNumber(secondary.s + 20, 0, 100), clampNumber(secondary.l + 15, 5, 95)),
         secondaryTintOnDark: hslToHex(secondary.h, clampNumber(secondary.s - 20, 0, 100), clampNumber(secondary.l + 35, 5, 95)),
         accent: hslToHex(accentHue, 90, 55),
         accentLight: hslToHex(accentHue, 85, 70),
@@ -440,9 +491,25 @@ export function resolvePersonaTheme(personaId: string, wireTheme: PersonaWireThe
     // A pack MAY author its own accents (personas/persona.schema.json's `_ThemeAccents`) --
     // any key it supplies wins; any key it omits falls back to `deriveAccents`'s synthesized
     // value, so a pack can override just e.g. `accent` without having to author all 15 keys.
-    const accents: PersonaAccentPalette = {
+    const authoredAccents = wireTheme.light.accents;
+    const merged: PersonaAccentPalette = {
         ...deriveAccents(wireTheme.light),
-        ...wireTheme.light.accents
+        ...authoredAccents
+    };
+
+    // Issue #164 R9 (PR #167 round 2 review): `primaryDeep`/`secondaryLight` must default to
+    // THIS pack's own merged `primaryHex`/`secondaryStrong` (the value after the spread above,
+    // which already reflects any authored override), not `deriveAccents`'s raw-HSL-synthesized
+    // value from before the merge -- those two can differ from a pack's authored hex (rounding
+    // through the HSL triplet), which silently changed a pack's rendered color even though it
+    // never authored `primaryDeep`/`secondaryLight` at all (one pack's hero pill rendered a
+    // visibly different shade than its own authored secondary color). A pack that DOES author
+    // `primaryDeep`/`secondaryLight` directly
+    // still wins, same as every other accent key.
+    const accents: PersonaAccentPalette = {
+        ...merged,
+        primaryDeep: authoredAccents?.primaryDeep ?? merged.primaryHex,
+        secondaryLight: authoredAccents?.secondaryLight ?? merged.secondaryStrong
     };
 
     return {

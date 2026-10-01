@@ -168,7 +168,12 @@ item is addable in either mode, mirroring the search-filter fix's own admission 
 items), 188 -> 189. All eleven methods are real assertions against both
 backends today (no `AuthRowCapability` skip-gating applies), so all three raises count normally.
 
-
+**Issue #164 (Rick's PR #167 round-3 review, required item 12):** PR #167 adds one scenario,
+`PersonaDiscoveryConformanceTests.Api_persona_detail_pins_tax_rate_and_ui_blocks_against_disk`
+(R7, commit 48edade). It is tagged `Dotnet=ready` and is not skip-gated, so it raises the floor
+189 -> 190. The dotnet leg executes 190 distinct passing methods, none of them in the five gated
+Auth classes (TRX: 485 passed, 61 not executed). A reflection probe agrees (a floor of 191 fails
+with "but found 190").
 
 - **DEV_MODE hot-reload** (`prompt_loader.py`'s file-watching reload behaviour) is explicitly
   marked not required in C# by the design doc's per-backend loading table. Not ported.

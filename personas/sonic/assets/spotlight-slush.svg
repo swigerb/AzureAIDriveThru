@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none" role="img" aria-label="Sonic slush illustration">
+    <path d="M16 8h16l-2 32H18L16 8z" fill="#74D2E7" stroke="#285780" stroke-width="2" />
+    <path d="M14 8h20v4H14z" fill="#285780" />
+    <path d="M20 16c2 3 6 3 8 0" stroke="#FEDD00" stroke-width="2" stroke-linecap="round" />
+    <circle cx="22" cy="24" r="1.5" fill="#E40046" />
+    <circle cx="28" cy="20" r="1.5" fill="#E40046" />
+    <circle cx="24" cy="30" r="1.2" fill="#FEDD00" />
+    <path d="M24 4v4" stroke="#E40046" stroke-width="2" stroke-linecap="round" />
+    <path d="M20 5l1 3" stroke="#285780" stroke-width="1.5" stroke-linecap="round" />
+</svg>

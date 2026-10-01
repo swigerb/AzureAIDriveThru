@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { ChevronDown } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { usePersonaContext } from "@/context/persona-context";
+import { textRoleClasses } from "@/lib/personaTextRoles";
 
 interface Size {
     size: string;
@@ -35,8 +36,8 @@ interface MenuCategory {
     /** Optional per-category icon (persona pack data, `menu.schema.json`) -- issue 119: this
      * used to be a hardcoded lookup table keyed on one pack's literal category names, which
      * silently fell back to a generic icon for every other pack's categories (and even for a
-     * few categories of the pack it was hardcoded for). Packs that don't set one render the same
-     * neutral fallback below. */
+     * few categories of the pack it was hardcoded for). Packs that don't set one fall through to
+     * `current.categoryIcons` (issue 164 E1) and then the shared neutral fallback below. */
     icon?: string;
     /** Rick's PR 166 round-1 review, required item 9: a pack-driven override of this category's
      * display name/icon for one or more menu modes -- e.g. the original reference app renamed
@@ -63,12 +64,22 @@ const DEFAULT_CATEGORY_ICON = "🍹";
  * over its base `category`/`icon` fields. A category with no `modeDisplay`, or no entry for the
  * active mode, or an unbound/falsy `menuMode`, renders its base `category`/`icon` exactly as
  * before -- this function is a pure superset of the pre-round-2 (issue 165) behavior, not a new default.
+ *
+ * Rick's PR 167 round-3 review (merge of PR 166 and issue 164 E1): a category with no `icon` of its own
+ * (and no mode override icon) falls back to the pack-level `current.categoryIcons` map keyed on
+ * the category's data name, passed in as `categoryIcons`, before the shared neutral default --
+ * the SAME resolution order the inline fallback used before this function existed, just folded
+ * into one place so the mode-override path and the pack-level-map path can never drift apart.
  */
-function resolveCategoryDisplay(category: MenuCategory, menuMode?: string): { displayName: string; icon: string } {
+function resolveCategoryDisplay(
+    category: MenuCategory,
+    menuMode?: string,
+    categoryIcons?: Record<string, string>
+): { displayName: string; icon: string } {
     const override = menuMode ? category.modeDisplay?.[menuMode as "breakfast" | "lunch" | "allDay"] : undefined;
     return {
         displayName: override?.displayName ?? category.category,
-        icon: override?.icon ?? category.icon ?? DEFAULT_CATEGORY_ICON
+        icon: override?.icon ?? category.icon ?? categoryIcons?.[category.category] ?? DEFAULT_CATEGORY_ICON
     };
 }
 
@@ -258,7 +269,7 @@ export default memo(function MenuPanel({ menuMode }: MenuPanelProps) {
                 // stable identity for expand/collapse tracking and the React `key` (it never
                 // changes when `menuMode` flips), while only the rendered name/icon below follow
                 // the active mode's pack-declared override, if any.
-                const { displayName, icon } = resolveCategoryDisplay(category, menuMode);
+                const { displayName, icon } = resolveCategoryDisplay(category, menuMode, current.categoryIcons);
                 return (
                     <div
                         key={category.category}
@@ -267,19 +278,26 @@ export default memo(function MenuPanel({ menuMode }: MenuPanelProps) {
                         <button
                             type="button"
                             onClick={() => toggle(category.category)}
-                            className="flex w-full cursor-pointer items-center justify-between gap-3 p-4"
+                            className="flex w-full cursor-pointer items-center justify-between gap-2 p-4"
                             aria-expanded={isOpen}
                         >
-                            <div className="flex items-center gap-2 sm:gap-3">
+                            <div className="flex items-center gap-2">
                                 <span className="text-2xl" aria-hidden>
                                     {icon}
                                 </span>
+                                {/* Matches the original apps' own class exactly (`break-keep`, not
+                                    `truncate`): a long category name wraps onto a second line rather than
+                                    getting cut off with an ellipsis. The surrounding gaps/padding are
+                                    trimmed slightly (E3) so a short two-word name like "Signature Lattes"
+                                    still fits the chip+chevron on one row, as it does in that pack's
+                                    original (non-collapsible) layout, while a longer name is still free
+                                    to wrap exactly as it does in the original apps. */}
                                 <h3 className="break-keep text-left font-semibold uppercase tracking-wide text-primary dark:text-primary">
                                     {displayName}
                                 </h3>
                             </div>
-                            <div className="flex items-center gap-2">
-                                <span className="whitespace-nowrap rounded-full bg-brand-secondary/10 px-3 py-1 text-xs font-bold text-brand-secondary dark:bg-brand-surface-dark-alt dark:text-brand-secondary-tint">
+                            <div className="flex items-center gap-1">
+                                <span className={`whitespace-nowrap rounded-full bg-brand-secondary/10 px-2 py-1 text-xs font-bold dark:bg-brand-surface-dark-alt ${textRoleClasses("countChip", current.textRoles)}`}>
                                     {/* Non-blocking item from Rick's PR-110 review: correct singular/plural
                                         ("1 item", not "1 items"). */}
                                     {category.items.length} {category.items.length === 1 ? "item" : "items"}

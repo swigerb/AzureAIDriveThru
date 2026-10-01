@@ -59,9 +59,11 @@ layer(base);
   --color-brand-primary: var(--brand-primary-hex);
   --color-brand-primary-strong: var(--brand-primary-strong);
   --color-brand-primary-light: var(--brand-primary-light);
+  --color-brand-primary-deep: var(--brand-primary-deep);
   --color-brand-primary-tint: var(--brand-primary-tint);
   --color-brand-secondary: var(--brand-secondary-hex);
   --color-brand-secondary-strong: var(--brand-secondary-strong);
+  --color-brand-secondary-light: var(--brand-secondary-light);
   --color-brand-secondary-tint: var(--brand-secondary-tint);
   --color-brand-accent: var(--brand-accent);
   --color-brand-accent-light: var(--brand-accent-light);
@@ -100,7 +102,7 @@ layer(base);
 
 @layer utilities {
   :root {
-    font-family: 'Nunito Sans', 'Montserrat', 'Segoe UI', sans-serif;
+    font-family: var(--brand-font-family, 'Nunito Sans'), 'Montserrat', 'Segoe UI', sans-serif;
     font-synthesis: none;
     text-rendering: optimizeLegibility;
     -webkit-font-smoothing: antialiased;
@@ -131,9 +133,17 @@ layer(base);
         --brand-primary-hex: #464A53;
         --brand-primary-strong: #2E3138;
         --brand-primary-light: #686F7D;
+        /* Issue #164 R2 (PR #167 round 1 review): defaults to the same literal as
+           --brand-primary-hex above, since `primaryDeep` itself defaults to `primaryHex` when a
+           pack omits it (see personaTheme.ts::deriveAccents). */
+        --brand-primary-deep: #464A53;
         --brand-primary-tint: #8C8C8C;
         --brand-secondary-hex: #6B7280;
         --brand-secondary-strong: #7F92B8;
+        /* Issue #164 R3 (PR #167 round 1 review): defaults to the same literal as
+           --brand-secondary-strong above, since `secondaryLight` itself defaults to
+           `secondaryStrong` when a pack omits it (see personaTheme.ts::deriveAccents). */
+        --brand-secondary-light: #7F92B8;
         --brand-secondary-tint: #CFCFCF;
         --brand-accent: #9CA3AF;
         --brand-accent-light: #C3C8D1;

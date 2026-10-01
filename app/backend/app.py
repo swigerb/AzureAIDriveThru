@@ -219,7 +219,11 @@ def _persona_detail_body(persona: Persona, model_catalog: ModelCatalog) -> dict:
     pack's `ui` block, plus `voice.default`, `locales`, `features.dayparts`, `menuUrl`, and
     the selectable `models` per pipeline. Callers must check the persona is enabled first
     (404 otherwise) -- this function assumes it already is. *model_catalog* is mandatory
-    (Rick's PR #106 review item 3) -- see `_model_pipelines_body`."""
+    (Rick's PR #106 review item 3) -- see `_model_pipelines_body`.
+
+    Issue #164 E2: `taxRate` (the pack's own `pricing.taxRate`, e.g. "0.08") is forwarded here
+    so the ticket can render "Tax (N%)" -- it was previously never exposed on this endpoint at
+    all (only consumed server-side, in `tools.py`'s order math)."""
     manifest = persona.manifest
     return {
         "id": persona.id,
@@ -230,6 +234,7 @@ def _persona_detail_body(persona: Persona, model_catalog: ModelCatalog) -> dict:
         "features": {"dayparts": manifest.features.dayparts},
         "menuUrl": _persona_menu_url(persona),
         "models": _model_pipelines_body(manifest.models, model_catalog),
+        "taxRate": manifest.pricing.taxRate,
     }
 
 

@@ -57,7 +57,7 @@ const detailFor = (id: string, title: string, dayparts: boolean) => ({
     theme,
     assets: { logo: `assets/logo.svg`, favicon: "assets/favicon.ico" },
     strings: { en: {} },
-    hero: { headline: `${title} fixture pack`, callouts: [] },
+    hero: { headline: `${title} fixture pack`, description: "Fixture description.", callouts: [], spotlight: [] },
     legal: "Fixture-only disclaimer.",
     voice: { default: "marin" },
     locales: { default: "en", supported: ["en"] },

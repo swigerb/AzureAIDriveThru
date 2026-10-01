@@ -1,7 +1,7 @@
 {
     "app": {
         "title": "Voice Ordering",
-        "footer": "Built with Microsoft Foundry, Azure OpenAI, and Azure AI",
+        "footer": "Built with Microsoft Foundry, Azure OpenAI, and Azure AI Search",
         "showTranscript": "Show transcript",
         "stopRecording": "Stop recording",
         "startRecording": "Start recording",

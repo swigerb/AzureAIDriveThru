@@ -64,6 +64,13 @@ namespace Conformance.Tests;
 /// dayparts-pack item with no `menuPeriod` of its own -- is addable over the wire in either mode,
 /// matching the filter-string fix's own admission of period-less items -- raising the floor from
 /// 188 to 189.
+///
+/// Issue #164 (Rick's PR #167 round-3 review, required item 12): PR #167 adds one scenario,
+/// <c>PersonaDiscoveryConformanceTests.Api_persona_detail_pins_tax_rate_and_ui_blocks_against_disk</c>
+/// (R7, commit 48edade). It is tagged <c>[Trait("Dotnet", "ready")]</c> and is not skip-gated,
+/// so it raises the floor 189 to 190. The dotnet leg executes 190 distinct passing methods, none
+/// of them in the five gated Auth classes (TRX: 485 passed, 61 not executed). A reflection probe
+/// agrees (a floor of 191 fails with "but found 190").
 /// </summary>
 public sealed class DotnetTraitCoverageTests
 {
@@ -86,12 +93,12 @@ public sealed class DotnetTraitCoverageTests
     };
 
     [Fact]
-    public void At_least_189_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
+    public void At_least_190_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
     {
         var count = CountFloorEligibleDotnetReadyTestMethods();
 
-        Assert.True(count >= 189,
-            $"Expected at least 189 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
+        Assert.True(count >= 190,
+            $"Expected at least 190 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
             $"and not unconditionally skip-gated by AuthRowCapability (the dotnet leg's " +
             $"`--filter \"{TraitName}={TraitValue}&Category!=Browser\"` baseline, minus the five " +
             "skip-only Scenarios/Auth classes -- see this class's own doc comment; " +

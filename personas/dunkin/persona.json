@@ -52,7 +52,7 @@
   "features": { "dayparts": false },
 
   "ui": {
-    "title": "Dunkin' Voice Ordering",
+    "title": "Dunkin' Voice Crew",
     "theme": {
       "light": { "primary": "28 100% 58%", "secondary": "329 100% 45%", "background": "32 77% 96%", "foreground": "17 40% 25%",
         "accents": {
@@ -60,8 +60,10 @@
           "primaryStrong": "#d9551a",
           "primaryLight": "#FF9F45",
           "primaryTintOnDark": "#FFB38F",
+          "primaryDeep": "#C14200",
           "secondaryHex": "#E3007F",
           "secondaryStrong": "#c2006c",
+          "secondaryLight": "#FF9FC5",
           "secondaryTintOnDark": "#FF9FC5",
           "accent": "#FFD400",
           "accentLight": "#FFE784",
@@ -74,6 +76,7 @@
       "dark": { "primary": "28 100% 62%" },
       "font": { "family": "Fredoka", "importUrl": "https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Montserrat:wght@400;600&display=swap" }
     },
+    "textRoles": { "badge": "primaryDeep", "countChip": "primaryDeep", "footerTagline": "primaryDeep" },
     "assets": { "logo": "assets/logo.svg", "favicon": "assets/favicon.ico", "apologyClip": "assets/audio/apology-{lang}.wav" },
     "strings": {
       "en": {
@@ -81,10 +84,50 @@
         "status.notRecordingMessage": "Let's order some coffee!",
         "ticket.kicker": "Crew ticket",
         "ticket.title": "Your Dunkin Order",
-        "menu.button": "View Dunkin Menu"
+        "menu.button": "View Dunkin Menu",
+        "menu.title": "Dunkin Favorites",
+        "ticket.emptyHint": "Add a donut, latte, or sandwich to kick things off.",
+        "settings.voiceLabel": "AI Voice"
       }
     },
-    "hero": { "headline": "Dunkin ordering powered by Microsoft Foundry", "callouts": [] },
+    "hero": {
+      "headline": "Dunkin ordering powered by Microsoft Foundry",
+      "badge": "VOICE CREW DEMO",
+      "description": "Recreate the Dunkin drive-thru vibe with donuts, cold brew, and breakfast essentials styled after the current dunkindonuts.com experience, now voice activated with Microsoft Foundry + Azure AI Search grounding.",
+      "callouts": [
+        { "title": "REWARDS READY", "detail": "Voice orders auto-sync with Dunkin' Rewards boosts", "tone": "primary" },
+        { "title": "FOUNDRY INFUSION", "detail": "Microsoft Foundry + Azure OpenAI keep conversations flowing", "tone": "secondary" },
+        { "title": "LIVE MENU", "detail": "Azure AI Search keeps Dunkin' items current", "tone": "accent" }
+      ],
+      "spotlight": [
+        {
+          "icon": "assets/spotlight-donut.svg",
+          "kicker": "FRESH DONUTS",
+          "title": "MUNCHKINS assortment",
+          "rows": [
+            { "label": "Donut of the Day", "value": "Boston Kreme", "tone": "secondary" },
+            { "label": "Crew Pick", "value": "Caramel Craze Latte", "tone": "primary" }
+          ]
+        },
+        {
+          "icon": "assets/spotlight-coffee.svg",
+          "kicker": "CREW FAVORITE",
+          "title": "Brown Sugar Cream Cold Brew",
+          "body": "Layered with cinnamon-sugar cold foam",
+          "accent": "Perfect pairing: Bacon Egg & Cheese",
+          "accentTone": "secondary",
+          "tint": "#FFE0EF"
+        }
+      ]
+    },
+    "sessionBar": { "variant": "chips" },
+    "categoryIcons": {
+      "Signature Lattes": "☕",
+      "Cold Beverages": "🧊",
+      "Donuts & Bakery": "🍩",
+      "Breakfast Sandwiches": "🥪",
+      "Extras": "✨"
+    },
     "legal": "Disclaimer: This project is a non-commercial demo application created for educational and illustrative purposes only. It is not affiliated with, endorsed, or sponsored by Inspire Brands, Inc. Any references to Dunkin' or use of Dunkin-inspired colors or themes are solely for demonstration and do not represent an official product."
   }
 }

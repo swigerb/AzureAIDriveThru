@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 
 import StatusMessage, { ConnectionNotice } from "@/components/ui/status-message";
+import { resolveTextRole, textRoleClass } from "@/lib/personaTextRoles";
 import MenuPanel from "@/components/ui/menu-panel";
 import OrderSummary, { calculateOrderSummary, OrderItem, OrderSummaryProps } from "@/components/ui/order-summary";
 import TranscriptPanel from "@/components/ui/transcript-panel";
@@ -34,11 +35,11 @@ import { resolveModelId, modelStorageKey } from "@/lib/models";
 import { resolveMenuMode, menuModeStorageKey } from "@/lib/menuMode";
 import { apologyClipUrl, playApologyClip } from "@/lib/apology";
 import { personaAssetUrl } from "@/lib/personaAssets";
-import type { PersonaDetail } from "@/types/persona";
+import type { PersonaDetail, PersonaHeroSpotlight, PersonaTextRoles } from "@/types/persona";
 
 import azureLogo from "@/assets/azurelogo.svg";
 
-type SessionIdentifiersState = {
+export type SessionIdentifiersState = {
     sessionToken: string;
     roundTripIndex: number;
     roundTripToken: string;
@@ -727,6 +728,8 @@ function SonicApp() {
                                     realtime.sendVoiceChoice(voice);
                                 }}
                                 roleName={current.roleName}
+                                voiceLabelOverride={t("settings.voiceLabel", { defaultValue: "" }) || undefined}
+                                defaultVoiceId={current.voice.default}
                                 models={current.models}
                                 modelId={modelId}
                                 onModelChange={handleModelChange}
@@ -750,7 +753,14 @@ function SonicApp() {
                     </div>
                 </div>
 
-                {sessionIdentifiers && showSessionTokens && <SessionTokenPanel identifiers={sessionIdentifiers} history={tokenHistory} />}
+                {sessionIdentifiers && showSessionTokens && (
+                    <SessionTokenPanel
+                        identifiers={sessionIdentifiers}
+                        history={tokenHistory}
+                        variant={current.sessionBar?.variant}
+                        textRoles={current.textRoles}
+                    />
+                )}
 
                 <BrandHero logoUrl={logoUrl} persona={current} />
 
@@ -784,7 +794,7 @@ function SonicApp() {
                     {/* Center Panel - Recording Button and Order Summary */}
                     <Card className="p-6 md:overflow-auto">
                         <div className="space-y-8">
-                            <OrderSummary order={useDummyData ? dummyOrder : order} />
+                            <OrderSummary order={useDummyData ? dummyOrder : order} taxRate={current.taxRate} />
                             <div className="mb-4 flex flex-col items-center justify-center">
                                 <Button
                                     onClick={onToggleListening}
@@ -842,27 +852,33 @@ function SonicApp() {
                 </div>
             </div>
             <footer className="mx-auto mt-8 max-w-4xl space-y-2 text-center text-xs text-muted-foreground">
-                <p className="font-semibold uppercase tracking-[0.35em] text-brand-secondary/80">{t("app.footer")}</p>
+                {/* Issue 164 A7: only one pack currently defines "footer.extra" (one original's
+                    italic brand tagline); `defaultValue: ""` keeps every other pack's footer from
+                    showing the literal key string when the override is absent. */}
+                {t("footer.extra", { defaultValue: "" }) && (
+                    <p className={`text-base font-bold italic ${textRoleClass(resolveTextRole("footerExtra", current.textRoles))}`}>
+                        {t("footer.extra")}
+                    </p>
+                )}
+                {/* Issue 164 R2(d) (PR 167 round 1 review): full opacity, not /80 -- one pack's
+                    footer tagline color at /80 only reached 3.51:1 in the original. */}
+                <p className={`font-semibold uppercase tracking-[0.35em] ${textRoleClass(resolveTextRole("footerTagline", current.textRoles))}`}>
+                    {t("app.footer")}
+                </p>
                 <p className="text-[11px] leading-relaxed text-brand-ink/80 dark:text-white/80">{current.legal}</p>
             </footer>
         </div>
     );
 }
 
-// Issue #80 F3: every persona-flavored piece of hero copy below now comes from the pack
-// (`logoUrl`/`persona.hero.headline`/`persona.hero.callouts`) rather than a brand-specific literal
-// baked into this component. The three highlight cards and the "powered by" strip are genuinely
-// app-level (not persona) chrome, so they stay i18n keys under `hero.*` -- decision 8 (docs/
-// persona-architecture.md, ADR-001) says neutral app strings lead with Microsoft Foundry, so
-// that's where "Azure Speech" was dropped from (the persona's own `hero.headline` is pack content
-// this component doesn't otherwise touch).
-const HERO_HIGHLIGHT_KEYS = [
-    { key: "fastOrders", tone: "red" as const },
-    { key: "foundryPowered", tone: "blue" as const },
-    { key: "liveMenu", tone: "yellow" as const }
-];
-
-const BrandHero = memo(function BrandHero({ logoUrl, persona }: { logoUrl: string; persona: PersonaDetail }) {
+// Issue 164 A1/A2/A3/A4/A5/A8/D2: this two-column hero (headline + description + callout pills
+// + spotlight cards) and every one of its colors/copy/icons is now driven entirely by the pack's
+// `persona.hero` (types/persona.ts::PersonaHero) -- nothing brand-specific is hard-coded here.
+// The hero card itself intentionally carries NO `dark:` variant anywhere (A8/D2): all three
+// original apps render this card as a uniformly light frosted surface regardless of the page's
+// light/dark theme, and the pre-issue 164 unified app's `dark:border-white/10 dark:bg-brand-ink/80`
+// override (plus matching dark: text overrides throughout) was itself the discrepancy to fix.
+export const BrandHero = memo(function BrandHero({ logoUrl, persona }: { logoUrl: string; persona: PersonaDetail }) {
     const { t } = useTranslation();
     // Issue #80 F3, Rick's PR-110 review item 2: a pack with no logo (`logoUrl` empty) or one whose
     // image fails to load (a bad/missing asset path) must never show a broken-image icon -- fall
@@ -879,59 +895,56 @@ const BrandHero = memo(function BrandHero({ logoUrl, persona }: { logoUrl: strin
         setLogoFailed(false);
     }, [logoUrl]);
 
+    const logoImg = (
+        <img
+            src={logoUrl}
+            alt={`${persona.title} logo`}
+            className="h-20 w-auto max-w-[14rem] object-contain drop-shadow-xs"
+            loading="lazy"
+            onError={() => setLogoFailed(true)}
+        />
+    );
+
     return (
-        <section className="hero-card rounded-[32px] border border-white/40 bg-white/80 p-6 shadow-[0_25px_70px_var(--brand-secondary-veil-18)] backdrop-blur-lg dark:border-white/10 dark:bg-brand-ink/80">
+        <section className="hero-card rounded-[32px] border border-white/40 bg-white/80 p-6 shadow-[0_25px_70px_var(--brand-secondary-veil-18)] backdrop-blur-lg">
             <div className="flex flex-col gap-8 lg:flex-row lg:items-center">
                 <div className="flex-1 space-y-5">
                     <div className="flex flex-wrap items-center gap-3">
                         {showLogo ? (
-                            <img
-                                src={logoUrl}
-                                alt={`${persona.title} logo`}
-                                className="h-20 w-auto max-w-[14rem] object-contain drop-shadow-xs"
-                                loading="lazy"
-                                onError={() => setLogoFailed(true)}
-                            />
+                            // Issue 164 B2: some packs' original PNG logo has an opaque white
+                            // background and was shown on a white rounded tile against the app's
+                            // colored hero card -- render that tile only when the pack asks for it.
+                            persona.assets.logoTile ? <span className="rounded-2xl bg-white p-3 shadow-xs">{logoImg}</span> : logoImg
                         ) : (
-                            <span className="text-2xl font-black text-brand-primary dark:text-brand-primary-tint" role="img" aria-label={`${persona.title} logo`}>
+                            <span className="text-2xl font-black text-brand-primary" role="img" aria-label={`${persona.title} logo`}>
                                 {persona.title}
                             </span>
                         )}
-                        <span className="rounded-full bg-brand-primary/10 px-3 py-1 text-xs font-black uppercase tracking-[0.3em] text-brand-primary dark:bg-white/10 dark:text-brand-primary-tint">
-                            {t("hero.badge")}
+                        <span className={`rounded-full bg-brand-primary/10 px-3 py-1 text-xs font-black uppercase tracking-[0.3em] ${textRoleClass(resolveTextRole("badge", persona.textRoles))}`}>
+                            {/* Issue 164 A5: pack-specific badge copy overrides the shared neutral default. */}
+                            {persona.hero.badge ?? t("hero.badge")}
                         </span>
                     </div>
-                    <h1 className="text-4xl font-black leading-tight text-brand-primary sm:text-5xl dark:text-brand-primary-tint">{persona.hero.headline}</h1>
-                    <p className="max-w-2xl text-base text-muted-foreground">{t("hero.subhead")}</p>
+                    <h1 className="text-4xl font-black leading-tight text-brand-primary sm:text-5xl">{persona.hero.headline}</h1>
+                    {/* Issue 164 A4: the persona's own hero sentence, replacing the shared i18n subhead. */}
+                    <p className={`max-w-2xl text-base ${HERO_BODY_TEXT_CLASS}`}>{persona.hero.description}</p>
                     <div className="grid gap-3 sm:grid-cols-3">
-                        {HERO_HIGHLIGHT_KEYS.map(({ key, tone }) => (
-                            <HeroHighlightCard key={key} title={t(`hero.highlights.${key}.title`)} detail={t(`hero.highlights.${key}.detail`)} tone={tone} />
+                        {persona.hero.callouts.map(callout => (
+                            <CalloutPill key={callout.title} title={callout.title} detail={callout.detail} tone={callout.tone} />
                         ))}
                     </div>
-                    <div className="flex flex-wrap items-center gap-2 text-xs font-semibold uppercase tracking-[0.3em] text-muted-foreground">
+                    <div className={`flex flex-wrap items-center gap-2 text-xs font-semibold uppercase tracking-[0.3em] ${HERO_BODY_TEXT_CLASS}`}>
                         <img src={azureLogo} alt="Microsoft Azure" className="h-6 w-auto" loading="lazy" />
                         <span>{t("hero.poweredBy")}</span>
                     </div>
                 </div>
-                {persona.hero.callouts.length > 0 && (
+                {persona.hero.spotlight.length > 0 && (
                     <div className="relative flex flex-1 items-center justify-center">
-                        <div className="absolute inset-0 -z-10 rounded-[32px] bg-linear-to-br from-brand-primary/10 via-brand-surface-tint to-brand-accent/15 opacity-80 blur-3xl dark:from-brand-primary/20 dark:via-brand-surface-dark-alt dark:to-brand-accent/20"></div>
-                        <div className="w-full rounded-3xl border border-brand-primary/20 bg-white/90 p-4 shadow-[0_25px_45px_var(--brand-primary-veil-12)] dark:border-white/10 dark:bg-brand-ink/90">
-                            <div className="mb-3 flex items-center gap-3">
-                                <div className="rounded-2xl bg-brand-primary/10 p-3 dark:bg-white/10">
-                                    <VoiceArt />
-                                </div>
-                                <p className="text-xs font-bold uppercase tracking-wide text-brand-primary dark:text-brand-primary-tint">
-                                    {t("hero.calloutsTitle")}
-                                </p>
-                            </div>
-                            <ul className="space-y-1 text-xs font-medium text-brand-ink/80 dark:text-white/80">
-                                {persona.hero.callouts.map(callout => (
-                                    <li key={callout} className="rounded-full bg-white/80 px-3 py-1 dark:bg-white/10">
-                                        {callout}
-                                    </li>
-                                ))}
-                            </ul>
+                        <div className="absolute inset-0 -z-10 rounded-[32px] bg-linear-to-br from-brand-primary/10 via-brand-surface-tint to-brand-accent/15 opacity-80 blur-3xl"></div>
+                        <div className="grid w-full gap-4 sm:grid-cols-2">
+                            {persona.hero.spotlight.map((card, index) => (
+                                <SpotlightCard key={card.title} card={card} personaId={persona.id} isSecond={index === 1} />
+                            ))}
                         </div>
                     </div>
                 )}
@@ -940,13 +953,22 @@ const BrandHero = memo(function BrandHero({ logoUrl, persona }: { logoUrl: strin
     );
 });
 
-type HighlightTone = "red" | "blue" | "yellow";
+type BrandTone = "primary" | "secondary" | "accent";
 
-function HeroHighlightCard({ title, detail, tone }: { title: string; detail: string; tone: HighlightTone }) {
-    const gradientMap: Record<HighlightTone, string> = {
-        red: "from-brand-primary to-brand-primary-light",
-        blue: "from-brand-secondary to-brand-secondary-strong",
-        yellow: "from-brand-accent to-brand-accent-light"
+// Issue 164 R1 (PR 167 round 1 review): `/90` ink alpha over the hero's frosted white/80 card,
+// meeting >= 4.5:1 contrast for every pack in both light and dark page themes (the worst
+// case computes to about 5.0:1 on the dark frosted card). Exported so heroContrast.test.ts can
+// read the exact alpha back out rather than re-stating it as a magic literal in the test.
+export const HERO_BODY_TEXT_CLASS = "text-brand-ink/90";
+
+export function CalloutPill({ title, detail, tone }: { title: string; detail: string; tone: BrandTone }) {
+    const gradientMap: Record<BrandTone, string> = {
+        primary: "from-brand-primary to-brand-primary-light",
+        // Issue 164 R3 (PR 167 round 1 review): "-light" (brighter), not "-strong" (darker) --
+        // the original gradients end brighter than they start for the two packs that override
+        // secondaryLight; "-strong" rendered both packs' pills as a solid dark wash.
+        secondary: "from-brand-secondary to-brand-secondary-light",
+        accent: "from-brand-accent to-brand-accent-light"
     };
 
     return (
@@ -957,14 +979,139 @@ function HeroHighlightCard({ title, detail, tone }: { title: string; detail: str
     );
 }
 
-const SessionTokenPanel = memo(function SessionTokenPanel({
+// Issue 164 A2: the second ("body") spotlight card's border/wash/kicker/accent-line all draw
+// from ONE of the persona's brand roles (`card.tone`, default "secondary") so the shared
+// component stays brand-free while still matching each original's own card-2 color choice
+// (most packs use their secondary role; one pack overrides to "accent" in persona.json).
+const SPOTLIGHT_BODY_STYLES: Record<BrandTone, { border: string; gradient: string; kicker: string; accent: string; shadow: string }> = {
+    primary: {
+        border: "border-brand-primary/25",
+        gradient: "bg-linear-to-br from-brand-primary/10 to-brand-accent/10",
+        kicker: "text-brand-primary",
+        accent: "text-brand-secondary",
+        shadow: "shadow-[0_25px_45px_var(--brand-primary-veil-12)]"
+    },
+    secondary: {
+        border: "border-brand-secondary/25",
+        gradient: "bg-linear-to-br from-brand-secondary/10 to-brand-accent/10",
+        kicker: "text-brand-secondary",
+        accent: "text-brand-primary",
+        shadow: "shadow-[0_25px_45px_var(--brand-secondary-veil-15)]"
+    },
+    accent: {
+        border: "border-brand-accent/25",
+        gradient: "bg-linear-to-br from-brand-accent/10 to-brand-secondary/10",
+        kicker: "text-brand-accent",
+        accent: "text-brand-primary",
+        shadow: "shadow-[0_25px_45px_var(--brand-accent-veil-15)]"
+    }
+};
+
+// Issue 164 A1/A2: card 1 (`rows`) always draws its border/icon-wash/kicker from "primary" --
+// every original's card 1 does this identically, so it isn't parameterized. Card 2 (`body`) reads
+// `card.tone`/`card.tint` instead. Each card's icon is the pack's own SVG illustration
+// (`personas/<id>/assets/spotlight-*.svg`), replacing the old brand-neutral sound-wave mark.
+export function SpotlightCard({ card, personaId, isSecond }: { card: PersonaHeroSpotlight; personaId: string; isSecond: boolean }) {
+    const iconUrl = personaAssetUrl(personaId, card.icon);
+
+    if (!isSecond) {
+        return (
+            <div className="rounded-3xl border border-brand-primary/20 bg-white/90 p-4 shadow-[0_25px_45px_var(--brand-primary-veil-12)]">
+                <div className="mb-3 flex items-center gap-3">
+                    <div className="rounded-2xl bg-brand-primary/10 p-3">
+                        <img src={iconUrl} alt={card.kicker} className="h-12 w-12" loading="lazy" />
+                    </div>
+                    <div>
+                        <p className="text-xs font-bold uppercase tracking-wide text-brand-primary">{card.kicker}</p>
+                        <p className="text-sm font-semibold text-brand-ink">{card.title}</p>
+                    </div>
+                </div>
+                {card.rows && (
+                    <ul className="space-y-1 text-xs font-medium text-brand-ink/80">
+                        {card.rows.map(row => (
+                            <li key={row.label} className="flex items-center justify-between rounded-full bg-white/80 px-3 py-1">
+                                <span>{row.label}</span>
+                                <span className={textRoleClass(row.tone ?? "primary")}>{row.value}</span>
+                            </li>
+                        ))}
+                    </ul>
+                )}
+            </div>
+        );
+    }
+
+    const tone = card.tone ?? "secondary";
+    const style = SPOTLIGHT_BODY_STYLES[tone];
+    // Issue 164 A2: an explicit `tint` (e.g. one original's tinted beverage card) replaces the
+    // shared two-role gradient with a flat wash of the pack's own hex -- this is pack DATA, not a
+    // literal baked into the component, so it doesn't trip the no-hex-literal guard (brandColorTokens.test.ts).
+    const tintStyle = card.tint ? { backgroundColor: `${card.tint}26` } : undefined;
+    // Issue 164 R4 (PR 167 round 1 review): `accentTone`, when a pack sets it, overrides the
+    // pairing-line color independently of `tone` (`style.accent` above). One pack needs this: its
+    // card-2 `tone` stays "secondary" for the border/wash/kicker, but the pairing line itself must
+    // render `secondary` too (not `style.accent`'s tone-derived "primary"), matching that
+    // original's pairing line rather than the pre-fix mistinted one.
+    const accentClass = card.accentTone ? textRoleClass(card.accentTone) : style.accent;
+
+    return (
+        <div className={`rounded-3xl border p-4 ${style.border} ${style.shadow} ${card.tint ? "" : style.gradient}`} style={tintStyle}>
+            <div className="mb-3 flex items-center gap-3">
+                <div className="rounded-2xl bg-white/60 p-3">
+                    <img src={iconUrl} alt={card.kicker} className="h-12 w-12" loading="lazy" />
+                </div>
+                <div>
+                    <p className={`text-xs font-bold uppercase tracking-wide ${style.kicker}`}>{card.kicker}</p>
+                    <p className="text-sm font-semibold text-brand-ink">{card.title}</p>
+                </div>
+            </div>
+            {card.body && (
+                <div className="rounded-2xl bg-white/80 p-3 text-sm font-semibold text-brand-ink">
+                    <p>{card.body}</p>
+                    {card.accent && <p className={`text-xs ${accentClass}`}>{card.accent}</p>}
+                </div>
+            )}
+        </div>
+    );
+}
+
+export const SessionTokenPanel = memo(function SessionTokenPanel({
     identifiers,
-    history
+    history,
+    variant = "plain",
+    textRoles
 }: {
     identifiers: SessionIdentifiersState;
     history: SessionIdentifiersState[];
+    variant?: "plain" | "chips";
+    textRoles?: PersonaTextRoles;
 }) {
     const [expanded, setExpanded] = useState(false);
+
+    if (variant === "chips") {
+        // Issue 164 C3/E4: this original renders as a fixed, always-light pill-chip strip (two
+        // truncated-id chips, one per brand role) -- no expand/collapse chevron, no history
+        // dropdown, and critically no `dark:` override, matching the original exactly (the
+        // pre-164 unified app's solid-color dark bar was itself part of the discrepancy).
+        return (
+            <div className="flex flex-wrap gap-2 rounded-3xl border border-white/40 bg-white/90 p-3 font-mono text-xs text-brand-primary shadow-xs">
+                <div className="flex items-center gap-2" title={identifiers.sessionToken}>
+                    {/* Issue 164 R2 (PR 167 round 1 review): the "Session Token" chip uses the
+                        pack's badge role (one pack overrides it to primaryDeep, matching the original's
+                        readable pairing on its tinted background) instead of a hardcoded primary. */}
+                    <span className={`rounded-full bg-brand-primary/15 px-2 py-1 font-semibold uppercase tracking-widest ${textRoleClass(resolveTextRole("badge", textRoles))}`}>
+                        Session Token
+                    </span>
+                    <span className="text-sm text-brand-ink">{formatSessionToken(identifiers.sessionToken)}</span>
+                </div>
+                <div className="flex items-center gap-2" title={identifiers.roundTripToken}>
+                    <span className="rounded-full bg-brand-secondary/15 px-2 py-1 font-semibold uppercase tracking-widest text-brand-secondary">
+                        Round {identifiers.roundTripIndex}
+                    </span>
+                    <span className="text-sm text-brand-ink">{formatSessionToken(identifiers.roundTripToken, 6)}</span>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="rounded-xl border border-white/30 bg-white/90 font-mono text-xs shadow-xs dark:border-white/10 dark:bg-brand-ink/90">
@@ -1027,18 +1174,16 @@ const SessionTokenPanel = memo(function SessionTokenPanel({
     );
 });
 
-// Issue #80 F3: one persona-neutral decorative mark (a stylized sound wave) replaces the two
-// brand-specific illustrations (a slush cup, a burger) that used to sit beside the hero callouts.
-function VoiceArt() {
-    return (
-        <svg width="48" height="48" viewBox="0 0 48 48" fill="none" role="img" aria-label="Voice ordering illustration">
-            <rect x="6" y="20" width="4" height="8" rx="2" fill="var(--brand-secondary-hex)" />
-            <rect x="14" y="14" width="4" height="20" rx="2" fill="var(--brand-primary-hex)" />
-            <rect x="22" y="8" width="4" height="32" rx="2" fill="var(--brand-accent)" />
-            <rect x="30" y="14" width="4" height="20" rx="2" fill="var(--brand-primary-hex)" />
-            <rect x="38" y="20" width="4" height="8" rx="2" fill="var(--brand-secondary-hex)" />
-        </svg>
-    );
+// Issue 164 C3: truncates a long identifier to `prefix…suffix` (the "chips" variant's original
+// treatment), leaving short tokens untouched.
+export function formatSessionToken(token: string, prefix: number = 8, suffix: number = 4): string {
+    if (!token) {
+        return "";
+    }
+    if (token.length <= prefix + suffix + 3) {
+        return token;
+    }
+    return `${token.slice(0, prefix)}…${token.slice(-suffix)}`;
 }
 
 // Main app component

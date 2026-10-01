@@ -247,9 +247,17 @@ class _ThemeAccents(BaseModel):
     primaryHex: str | None = None
     primaryStrong: str | None = None
     primaryLight: str | None = None
+    # Issue #164 R2 (PR #167 round 1 review): an optional deeper/darker shade of the primary
+    # role, distinct from primaryStrong, for text that needs more contrast than the plain
+    # primary hex. Defaults to primaryHex when omitted (see personaTheme.ts::deriveAccents).
+    primaryDeep: str | None = None
     primaryTintOnDark: str | None = None
     secondaryHex: str | None = None
     secondaryStrong: str | None = None
+    # Issue #164 R3 (PR #167 round 1 review): an optional lighter shade of the secondary role,
+    # for pill/gradient accents brighter than secondaryStrong. Defaults to secondaryStrong when
+    # omitted (see personaTheme.ts::deriveAccents).
+    secondaryLight: str | None = None
     secondaryTintOnDark: str | None = None
     accent: str | None = None
     accentLight: str | None = None
@@ -313,12 +321,92 @@ class _UiAssets(BaseModel):
     logo: str
     favicon: str
     apologyClip: str | None = None
+    # Issue #164 B2: true for a pack whose original PNG logo has an opaque white
+    # background and was shown on a white rounded tile -- the frontend renders that tile only
+    # when this is set, so a transparent-background SVG logo isn't given one.
+    logoTile: bool | None = None
+
+
+class _HeroCallout(BaseModel):
+    """Issue #164 A3: one of the hero's three compact callout pills. `tone` names which of the
+    persona's own theme roles (primary/secondary/accent) the pill's gradient is drawn from --
+    the shared component stays brand-free by never hard-coding a color itself."""
+
+    model_config = ConfigDict(extra="forbid")
+    title: str
+    detail: str
+    tone: str
+
+
+class _HeroSpotlightRow(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    label: str
+    value: str
+    # Issue #164 R4 (PR #167 round 1 review): which brand role this row's value text draws from.
+    # Defaults to "primary" in the frontend when omitted, matching each original's own per-row
+    # value coloring. Enum validated by the JSON Schema (personas/persona.schema.json), same
+    # pattern as `_HeroSpotlight.tone` below.
+    tone: str | None = None
+
+
+class _HeroSpotlight(BaseModel):
+    """Issue #164 A1/A2: one of the hero's two spotlight cards. The first card shape uses
+    `rows` (label/value pairs); the second instead pairs a `body` sentence with an `accent`
+    pairing suggestion -- matching each original's two distinct card layouts."""
+
+    model_config = ConfigDict(extra="forbid")
+    icon: str
+    kicker: str
+    title: str
+    rows: list[_HeroSpotlightRow] | None = None
+    body: str | None = None
+    accent: str | None = None
+    # Issue #164 A2: which brand role the second ("body") card's border/wash/kicker draw from.
+    # Defaults to "secondary" in the frontend when omitted.
+    tone: str | None = None
+    # Issue #164 R4 (PR #167 round 1 review): which brand role the second ("body") card's
+    # accent pairing-line text draws from, independent of `tone` above. Defaults to the
+    # tone-derived mapping already used before this field existed, so a pack that omits it
+    # renders unchanged.
+    accentTone: str | None = None
+    # Issue #164 A2: optional hex wash for this card's background (e.g. a pack's tinted
+    # beverage card). Omit for the shared neutral surface.
+    tint: str | None = None
 
 
 class _Hero(BaseModel):
     model_config = ConfigDict(extra="forbid")
     headline: str
-    callouts: list[str] = Field(default_factory=list)
+    # Issue #164 A5: optional override of the shared neutral "Voice Ordering Demo" hero pill
+    # copy (e.g. a pack's own demo-branded badge text). Omit to use the shared default.
+    badge: str | None = None
+    # Issue #164 A4: the persona's own hero sub-headline sentence.
+    description: str
+    callouts: list[_HeroCallout] = Field(default_factory=list)
+    spotlight: list[_HeroSpotlight] = Field(default_factory=list)
+
+
+class _SessionBar(BaseModel):
+    """Issue #164 C3/E4: 'plain' (default) is the mono session-token bar most originals used,
+    which follows the page's light/dark mode. 'chips' is one original's colored
+    pill-chip bar, which always stays on its light background regardless of page theme."""
+
+    model_config = ConfigDict(extra="forbid")
+    variant: str | None = None
+
+
+class _TextRoles(BaseModel):
+    """Issue #164 R2 (PR #167 round 1 review): optional per-slot override of which brand role a
+    handful of shared text elements draw their color from. Every key is optional; an omitted key
+    falls back to the shared default (badge=primary, countChip=secondary, footerTagline=secondary,
+    footerExtra=secondary), enforced in app/frontend/src/lib/personaTextRoles.ts so a pack that
+    omits the block entirely renders unchanged. Enum validated by the JSON Schema."""
+
+    model_config = ConfigDict(extra="forbid")
+    badge: str | None = None
+    countChip: str | None = None
+    footerTagline: str | None = None
+    footerExtra: str | None = None
 
 
 class _Ui(BaseModel):
@@ -329,6 +417,13 @@ class _Ui(BaseModel):
     strings: dict[str, dict[str, str]]
     hero: _Hero
     legal: str
+    sessionBar: _SessionBar | None = None
+    # Issue #164 E1: optional menu-category-name -> emoji/icon override, keyed by the
+    # category's exact menuItems.json name. Lets a pack whose menu data is shared territory
+    # (issue #165's menu-data work) restore its original category icons WITHOUT editing
+    # menuItems.json itself.
+    categoryIcons: dict[str, str] | None = None
+    textRoles: _TextRoles | None = None
 
 
 class PersonaManifest(BaseModel):

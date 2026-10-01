@@ -52,13 +52,14 @@ const NEUTRAL_DETAIL: PersonaDetail = {
     theme: NEUTRAL_THEME,
     assets: { logo: "", favicon: "" },
     strings: {},
-    hero: { headline: "", callouts: [] },
+    hero: { headline: "", description: "", callouts: [], spotlight: [] },
     legal: "",
     voice: { default: DEFAULT_VOICE },
     locales: { default: "en", supported: ["en", "es", "fr", "ja"] },
     features: { dayparts: false },
     menuUrl: "",
-    models: { realtime: { default: "gpt-realtime-2.1", models: [{ id: "gpt-realtime-2.1", label: "GPT Realtime 2.1", reasoning: true }] } }
+    models: { realtime: { default: "gpt-realtime-2.1", models: [{ id: "gpt-realtime-2.1", label: "GPT Realtime 2.1", reasoning: true }] } },
+    taxRate: "0"
 };
 
 interface PersonaContextValue {
