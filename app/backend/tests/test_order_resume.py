@@ -825,6 +825,10 @@ class RehydrationAndNudgeTests(_ResumeHarness):
         self.sm.nudge_after_seconds = 0.3
         browser, upstream = await self._resume_ok(meta["resumeId"])
         await browser.send_json(BROWSER_SESSION_UPDATE)          # mic started -> nudge arms
+        # Wait for the server to actually forward (and arm on) this session.update
+        # before firing the cancelling action -- otherwise on a slow/loaded runner
+        # the "cancel" can race ahead of the nudge even being spawned yet.
+        await self._until(lambda: sum(e["type"] == "session.update" for e in upstream) >= 2)
         await guest_action(browser)
         await asyncio.sleep(0.7)
         self.assertEqual(self._nudges(upstream), [], "nudge fired although the guest spoke")

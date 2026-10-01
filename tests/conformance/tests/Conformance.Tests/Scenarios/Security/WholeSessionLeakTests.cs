@@ -245,6 +245,12 @@ public sealed class WholeSessionLeakTests(ResumeMarginConformanceFixture fixture
         var resumed = await second.ReceivedFrames.WaitForAsync(f => f.Type == "extension.session_resumed", FrameTimeout, ct);
         Assert.True(resumed is not null, "Expected extension.session_resumed on the resumed connection.");
 
+        // #181: the post-resume silence nudge only arms once THIS socket's own client proves
+        // the conversation is live by sending its own session.update -- a resume alone is no
+        // longer enough. Send it here so this scenario still exercises the nudge path (and its
+        // leaked-secret risk) it's actually testing.
+        await second.SendStartSessionAsync(cancellationToken: ct);
+
         var rehydrationItem = await secondConnection!.ReceivedFrames.WaitForAsync(
             f => f.Type == "conversation.item.create" &&
                  f.Json.TryGetProperty("item", out var item) &&
