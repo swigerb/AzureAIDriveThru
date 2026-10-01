@@ -93,6 +93,23 @@ export interface PersonaDetail {
      * category's exact menuItems.json name. Lets a pack whose menu data is shared territory
      * (issue 165's menu-data work) restore its original category icons WITHOUT editing menuItems.json. */
     categoryIcons?: Record<string, string>;
+    /** Issue 164 R2 (PR 167 round 1 review): optional per-slot override of which brand role a
+     * handful of shared text elements draw their color from. Any key a pack omits falls back to
+     * the shared default (badge=primary, countChip=secondary, footerTagline=secondary,
+     * footerExtra=secondary) -- see `lib/personaTextRoles.ts`. */
+    textRoles?: PersonaTextRoles;
+}
+
+/** Issue 164 R2 (PR 167 round 1 review): which brand role a shared text element's color is
+ * drawn from. `primaryDeep` is a deeper/darker shade of `primary`, distinct from the hover/pressed
+ * `primaryStrong` state. */
+export type PersonaTextRole = "primary" | "primaryDeep" | "secondary" | "accent" | "ink";
+
+export interface PersonaTextRoles {
+    badge?: PersonaTextRole;
+    countChip?: PersonaTextRole;
+    footerTagline?: PersonaTextRole;
+    footerExtra?: PersonaTextRole;
 }
 
 /** Issue 164 A3: one of the hero's three compact callout pills. `tone` names which of the
@@ -107,6 +124,9 @@ export interface PersonaHeroCallout {
 export interface PersonaHeroSpotlightRow {
     label: string;
     value: string;
+    /** Issue 164 R4 (PR 167 round 1 review): which brand role this row's value text is drawn
+     * from. Defaults to "primary" when omitted, matching each original's own per-row coloring. */
+    tone?: "primary" | "secondary" | "accent" | "ink";
 }
 
 /** Issue 164 A1/A2: one of the hero's two spotlight cards. The first card shape uses `rows`
@@ -120,11 +140,15 @@ export interface PersonaHeroSpotlight {
     rows?: PersonaHeroSpotlightRow[];
     body?: string;
     accent?: string;
-    /** Issue 164 A2: which brand role the second ("body") card's border/wash/kicker/accent-line
+    /** Issue 164 A2: which brand role the second ("body") card's border/wash/kicker
      * draw from. Defaults to "secondary" when omitted. */
     tone?: "primary" | "secondary" | "accent";
-    /** Issue 164 A2: optional hex wash for this card's background (e.g. a pack's pink-tinted
-     * cold brew card). Omit for the shared neutral surface. */
+    /** Issue 164 R4 (PR 167 round 1 review): which brand role the second ("body") card's accent
+     * pairing-line text is drawn from, independent of `tone` above. Defaults to the tone-derived
+     * mapping already used before this field existed, so a pack that omits it renders unchanged. */
+    accentTone?: "primary" | "secondary" | "accent" | "ink";
+    /** Issue 164 A2: optional hex wash for this card's background (e.g. a pack's tinted
+     * beverage card). Omit for the shared neutral surface. */
     tint?: string;
 }
 

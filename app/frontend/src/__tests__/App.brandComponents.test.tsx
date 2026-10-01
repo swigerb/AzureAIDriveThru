@@ -1,8 +1,9 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
-import { BrandHero, CalloutPill, SpotlightCard, SessionTokenPanel, formatSessionToken } from "../App";
+import { BrandHero, CalloutPill, SpotlightCard, SessionTokenPanel, formatSessionToken, HERO_BODY_TEXT_CLASS } from "../App";
 import type { PersonaDetail, PersonaHeroSpotlight } from "@/types/persona";
+import { resolveTextRole, textRoleClass, textRoleDarkClass, DEFAULT_TEXT_ROLES } from "@/lib/personaTextRoles";
 
 // Issue 164 A1-A5/A8/B2/D2: covers the rewritten two-column `BrandHero` (logo/badge/headline/
 // description/callouts/spotlight) and its child components directly, complementing the existing
@@ -10,22 +11,25 @@ import type { PersonaDetail, PersonaHeroSpotlight } from "@/types/persona";
 
 const theme = { light: { primary: "200 80% 50%", secondary: "40 60% 40%", background: "0 0% 98%", foreground: "0 0% 10%" } };
 
+// Issue #164 R6 (PR #167 round 1 review): neutral, non-brand fixture copy in the style of the
+// `test-alpha`/`test-beta`/`test-gamma` personas used throughout this file -- no real product
+// names from any pack's menu.
 const spotlightCard1: PersonaHeroSpotlight = {
     icon: "assets/spotlight-1.svg",
-    kicker: "SIGNATURE SLUSHES",
-    title: "Cherry Limeade & more",
+    kicker: "SIGNATURE PICKS",
+    title: "Fixture Favorites & more",
     rows: [
-        { label: "Slush of the Day", value: "Cherry Limeade" },
-        { label: "Carhop Pick", value: "SuperSONIC Cheeseburger" }
+        { label: "Pick of the Day", value: "Fixture Special" },
+        { label: "Staff Pick", value: "Fixture Cheeseburger" }
     ]
 };
 
 const spotlightCard2: PersonaHeroSpotlight = {
     icon: "assets/spotlight-2.svg",
-    kicker: "CARHOP FAVORITE",
-    title: "SuperSONIC® Double Cheeseburger",
+    kicker: "STAFF FAVORITE",
+    title: "Fixture Double Cheeseburger",
     body: "100% pure beef with melty American cheese",
-    accent: "Perfect pairing: Large Tots & a Shake"
+    accent: "Perfect pairing: Fixture Fries & a Shake"
 };
 
 function detailFor(overrides: Partial<PersonaDetail> = {}): PersonaDetail {
@@ -72,16 +76,16 @@ describe("BrandHero (issue 164 A1-A5/A8/B2)", () => {
     it("renders both spotlight cards' kickers and titles (A1/A2)", () => {
         render(<BrandHero logoUrl="/personas/test-alpha/assets/logo.svg" persona={detailFor()} />);
 
-        expect(screen.getByText("SIGNATURE SLUSHES")).toBeInTheDocument();
-        expect(screen.getByText("Cherry Limeade & more")).toBeInTheDocument();
-        expect(screen.getByText("CARHOP FAVORITE")).toBeInTheDocument();
-        expect(screen.getByText("SuperSONIC® Double Cheeseburger")).toBeInTheDocument();
+        expect(screen.getByText("SIGNATURE PICKS")).toBeInTheDocument();
+        expect(screen.getByText("Fixture Favorites & more")).toBeInTheDocument();
+        expect(screen.getByText("STAFF FAVORITE")).toBeInTheDocument();
+        expect(screen.getByText("Fixture Double Cheeseburger")).toBeInTheDocument();
     });
 
     it("omits the spotlight column entirely when the pack has no spotlight cards", () => {
         render(<BrandHero logoUrl="/personas/test-alpha/assets/logo.svg" persona={detailFor({ hero: { ...detailFor().hero, spotlight: [] } })} />);
 
-        expect(screen.queryByText("SIGNATURE SLUSHES")).not.toBeInTheDocument();
+        expect(screen.queryByText("SIGNATURE PICKS")).not.toBeInTheDocument();
     });
 
     it("uses the shared neutral hero.badge default when the pack doesn't override it", () => {
@@ -91,9 +95,9 @@ describe("BrandHero (issue 164 A1-A5/A8/B2)", () => {
     });
 
     it("renders a persona-specific hero.badge override instead of the shared default (A5)", () => {
-        render(<BrandHero logoUrl="/personas/test-alpha/assets/logo.svg" persona={detailFor({ hero: { ...detailFor().hero, badge: "VOICE CREW DEMO" } })} />);
+        render(<BrandHero logoUrl="/personas/test-alpha/assets/logo.svg" persona={detailFor({ hero: { ...detailFor().hero, badge: "CUSTOM HERO BADGE" } })} />);
 
-        expect(screen.getByText("VOICE CREW DEMO")).toBeInTheDocument();
+        expect(screen.getByText("CUSTOM HERO BADGE")).toBeInTheDocument();
         expect(screen.queryByText("hero.badge")).not.toBeInTheDocument();
     });
 
@@ -126,16 +130,44 @@ describe("BrandHero (issue 164 A1-A5/A8/B2)", () => {
         expect(section).not.toBeNull();
         expect(section?.innerHTML).not.toMatch(/dark:/);
     });
+
+    // Issue #164 R1 (PR #167 round 1 review): the description and the "Powered by" tech line both
+    // use the exported HERO_BODY_TEXT_CLASS constant (text-brand-ink/90), not a lower, inadequate
+    // alpha -- see heroContrast.test.ts for the actual WCAG contrast assertion.
+    it("renders the description and powered-by line at HERO_BODY_TEXT_CLASS contrast (R1)", () => {
+        render(<BrandHero logoUrl="/personas/test-alpha/assets/logo.svg" persona={detailFor()} />);
+
+        expect(screen.getByText("Fixture hero description sentence.").className).toContain(HERO_BODY_TEXT_CLASS);
+        expect(screen.getByText("hero.poweredBy").parentElement?.className).toContain(HERO_BODY_TEXT_CLASS);
+    });
+
+    // Issue #164 R2(b) (PR #167 round 1 review): the hero badge pill's text color is pack-driven
+    // via ui.textRoles.badge (default "primary"), not a hardcoded text-brand-primary.
+    it("colors the hero badge from the default 'primary' role when the pack sets no textRoles override", () => {
+        render(<BrandHero logoUrl="/personas/test-alpha/assets/logo.svg" persona={detailFor()} />);
+        expect(screen.getByText("hero.badge").className).toContain("text-brand-primary");
+    });
+
+    it("colors the hero badge from an explicit ui.textRoles.badge override", () => {
+        render(<BrandHero logoUrl="/personas/test-alpha/assets/logo.svg" persona={detailFor({ textRoles: { badge: "primaryDeep" } })} />);
+        expect(screen.getByText("hero.badge").className).toContain("text-brand-primary-deep");
+    });
 });
 
 describe("CalloutPill (issue 164 A3)", () => {
     it.each([
-        ["primary", "from-brand-primary"],
-        ["secondary", "from-brand-secondary"],
-        ["accent", "from-brand-accent"]
-    ] as const)("draws its gradient from the %s brand role", (tone, expectedClass) => {
+        ["primary", "from-brand-primary to-brand-primary-light"],
+        // Issue #164 R3 (PR #167 round 1 review): "secondary" ends at "-light" (brighter), not
+        // "-strong" (darker) -- the original gradients brighten toward their end for the two
+        // packs that override secondaryLight; "-strong" rendered both packs'
+        // pills as a solid dark wash instead of a gradient.
+        ["secondary", "from-brand-secondary to-brand-secondary-light"],
+        ["accent", "from-brand-accent to-brand-accent-light"]
+    ] as const)("draws its gradient from the %s brand role", (tone, expectedClasses) => {
         const { container } = render(<CalloutPill title="REWARDS READY" detail="Some detail copy" tone={tone} />);
-        expect(container.firstElementChild?.className).toContain(expectedClass);
+        for (const expectedClass of expectedClasses.split(" ")) {
+            expect(container.firstElementChild?.className).toContain(expectedClass);
+        }
     });
 
     it("renders the title and detail text passed in", () => {
@@ -149,16 +181,16 @@ describe("SpotlightCard (issue 164 A1/A2)", () => {
     it("renders card 1's rows as label/value pairs", () => {
         render(<SpotlightCard card={spotlightCard1} personaId="test-alpha" isSecond={false} />);
 
-        expect(screen.getByText("Slush of the Day")).toBeInTheDocument();
-        expect(screen.getByText("Cherry Limeade")).toBeInTheDocument();
-        expect(screen.getByText("Carhop Pick")).toBeInTheDocument();
+        expect(screen.getByText("Pick of the Day")).toBeInTheDocument();
+        expect(screen.getByText("Fixture Special")).toBeInTheDocument();
+        expect(screen.getByText("Staff Pick")).toBeInTheDocument();
     });
 
     it("renders card 2's body sentence and accent pairing line", () => {
         render(<SpotlightCard card={spotlightCard2} personaId="test-alpha" isSecond={true} />);
 
         expect(screen.getByText("100% pure beef with melty American cheese")).toBeInTheDocument();
-        expect(screen.getByText("Perfect pairing: Large Tots & a Shake")).toBeInTheDocument();
+        expect(screen.getByText("Perfect pairing: Fixture Fries & a Shake")).toBeInTheDocument();
     });
 
     it("defaults card 2's tone to secondary when the pack omits it", () => {
@@ -180,8 +212,41 @@ describe("SpotlightCard (issue 164 A1/A2)", () => {
 
     it("builds the icon src from the pack's own personaId and pack-relative path", () => {
         render(<SpotlightCard card={spotlightCard1} personaId="test-alpha" isSecond={false} />);
-        const icon = screen.getByAltText("SIGNATURE SLUSHES");
+        const icon = screen.getByAltText("SIGNATURE PICKS");
         expect(icon).toHaveAttribute("src", "/personas/test-alpha/assets/spotlight-1.svg");
+    });
+
+    // Issue #164 R4 (PR #167 round 1 review): each card-1 row value colors independently via
+    // `row.tone`, not a single hardcoded brand-primary for every row.
+    it("defaults a card-1 row's value color to primary when the row omits tone", () => {
+        render(<SpotlightCard card={spotlightCard1} personaId="test-alpha" isSecond={false} />);
+        expect(screen.getByText("Fixture Special").className).toContain("text-brand-primary");
+    });
+
+    it("honors an explicit row.tone override on a card-1 row", () => {
+        const card: PersonaHeroSpotlight = {
+            ...spotlightCard1,
+            rows: [{ label: "Staff Pick", value: "Fixture Cheeseburger", tone: "secondary" }]
+        };
+        render(<SpotlightCard card={card} personaId="test-alpha" isSecond={false} />);
+        expect(screen.getByText("Fixture Cheeseburger").className).toContain("text-brand-secondary");
+    });
+
+    // Issue #164 R4: card 2's pairing-line color is `accentTone` when the pack sets it,
+    // independent of `tone` (which still only drives the border/wash/kicker).
+    it("derives card 2's pairing-line color from tone when accentTone is absent", () => {
+        render(<SpotlightCard card={spotlightCard2} personaId="test-alpha" isSecond={true} />);
+        // spotlightCard2 has no explicit `tone`, so it defaults to "secondary", whose
+        // SPOTLIGHT_BODY_STYLES.accent is "text-brand-primary" -- the pre-R4 mapping, preserved.
+        expect(screen.getByText("Perfect pairing: Fixture Fries & a Shake").className).toContain("text-brand-primary");
+    });
+
+    it("honors an explicit accentTone override on card 2, independent of tone", () => {
+        const card = { ...spotlightCard2, tone: "secondary" as const, accentTone: "secondary" as const };
+        render(<SpotlightCard card={card} personaId="test-alpha" isSecond={true} />);
+        // Without the accentTone override this would render text-brand-primary (tone="secondary"'s
+        // SPOTLIGHT_BODY_STYLES mapping) -- this is one pack's R4 fix (the previously-mistinted pairing line).
+        expect(screen.getByText("Perfect pairing: Fixture Fries & a Shake").className).toContain("text-brand-secondary");
     });
 });
 
@@ -210,6 +275,58 @@ describe("SessionTokenPanel chips variant (issue 164 C3/E4)", () => {
     it("keeps the collapsible plain variant's expand/collapse button when variant is omitted", () => {
         render(<SessionTokenPanel identifiers={identifiers} history={[]} />);
         expect(screen.getByRole("button", { name: /toggle session token history/i })).toBeInTheDocument();
+    });
+
+    // Issue #164 R2 (PR #167 round 1 review): the "Session Token" chip's text color uses the
+    // badge role, so a pack that overrides it to primaryDeep renders readable text on its chip wash.
+    it("colors the 'Session Token' chip from the default badge role when textRoles is absent", () => {
+        render(<SessionTokenPanel identifiers={identifiers} history={[]} variant="chips" />);
+        expect(screen.getByText("Session Token").className).toContain("text-brand-primary");
+    });
+
+    it("colors the 'Session Token' chip from an explicit badge role override", () => {
+        render(<SessionTokenPanel identifiers={identifiers} history={[]} variant="chips" textRoles={{ badge: "primaryDeep" }} />);
+        expect(screen.getByText("Session Token").className).toContain("text-brand-primary-deep");
+    });
+});
+
+describe("personaTextRoles (issue 164 R2)", () => {
+    it("resolves every slot's shared default when the pack sets no override", () => {
+        expect(resolveTextRole("badge", undefined)).toBe(DEFAULT_TEXT_ROLES.badge);
+        expect(resolveTextRole("countChip", undefined)).toBe(DEFAULT_TEXT_ROLES.countChip);
+        expect(resolveTextRole("footerTagline", undefined)).toBe(DEFAULT_TEXT_ROLES.footerTagline);
+        expect(resolveTextRole("footerExtra", undefined)).toBe(DEFAULT_TEXT_ROLES.footerExtra);
+        expect(DEFAULT_TEXT_ROLES).toEqual({ badge: "primary", countChip: "secondary", footerTagline: "secondary", footerExtra: "secondary" });
+    });
+
+    it("lets a pack override any single slot without affecting the others", () => {
+        const roles = { countChip: "accent" as const, footerTagline: "accent" as const };
+        expect(resolveTextRole("badge", roles)).toBe("primary");
+        expect(resolveTextRole("countChip", roles)).toBe("accent");
+        expect(resolveTextRole("footerTagline", roles)).toBe("accent");
+        expect(resolveTextRole("footerExtra", roles)).toBe("secondary");
+    });
+
+    it.each([
+        ["primary", "text-brand-primary"],
+        ["primaryDeep", "text-brand-primary-deep"],
+        ["secondary", "text-brand-secondary"],
+        ["accent", "text-brand-accent"],
+        ["ink", "text-brand-ink"]
+    ] as const)("maps the %s role to its light-mode Tailwind class", (role, expectedClass) => {
+        expect(textRoleClass(role)).toBe(expectedClass);
+    });
+
+    // Issue #164 R2(c): the item-count chip's dark-mode variant reuses the primary tint for
+    // primaryDeep, and the secondary tint for accent (fixes one pack's unreadable dark count chip).
+    it.each([
+        ["primary", "dark:text-brand-primary-tint"],
+        ["primaryDeep", "dark:text-brand-primary-tint"],
+        ["secondary", "dark:text-brand-secondary-tint"],
+        ["accent", "dark:text-brand-secondary-tint"],
+        ["ink", "dark:text-white/80"]
+    ] as const)("maps the %s role to its dark-mode Tailwind class", (role, expectedClass) => {
+        expect(textRoleDarkClass(role)).toBe(expectedClass);
     });
 });
 

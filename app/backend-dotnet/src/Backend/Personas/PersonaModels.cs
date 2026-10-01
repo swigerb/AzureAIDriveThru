@@ -154,6 +154,23 @@ public sealed record PersonaUi
     /// category's exact menuItems.json name. Lets a pack whose menu data is shared territory
     /// (issue #165's menu-data work) restore its original category icons WITHOUT editing menuItems.json.</summary>
     [JsonPropertyName("categoryIcons")] public Dictionary<string, string>? CategoryIcons { get; init; }
+    /// <summary>Issue #164 R2 (PR #167 round 1 review): optional per-slot override of which
+    /// brand role a handful of shared text elements draw their color from. Any key a pack omits
+    /// falls back to the shared default (badge=primary, countChip=secondary,
+    /// footerTagline=secondary, footerExtra=secondary) -- see the frontend's
+    /// `lib/personaTextRoles.ts`.</summary>
+    [JsonPropertyName("textRoles")] public PersonaTextRoles? TextRoles { get; init; }
+}
+
+/// <summary>Issue #164 R2 (PR #167 round 1 review): which brand role a shared text element's
+/// color is drawn from. Each field is one of "primary" | "primaryDeep" | "secondary" | "accent" |
+/// "ink" (enforced by the JSON Schema `enum`, not re-validated here -- see the file banner).</summary>
+public sealed record PersonaTextRoles
+{
+    [JsonPropertyName("badge")] public string? Badge { get; init; }
+    [JsonPropertyName("countChip")] public string? CountChip { get; init; }
+    [JsonPropertyName("footerTagline")] public string? FooterTagline { get; init; }
+    [JsonPropertyName("footerExtra")] public string? FooterExtra { get; init; }
 }
 
 /// <summary>Issue #164 C3/E4: 'plain' (default) is the mono session-token bar most originals
@@ -194,9 +211,19 @@ public sealed record PersonaThemeAccents
     [JsonPropertyName("primaryHex")] public string? PrimaryHex { get; init; }
     [JsonPropertyName("primaryStrong")] public string? PrimaryStrong { get; init; }
     [JsonPropertyName("primaryLight")] public string? PrimaryLight { get; init; }
+    /// <summary>Issue #164 R2 (PR #167 round 1 review): deeper/darker shade of `primary`,
+    /// distinct from `primaryStrong`, for text needing more contrast than the plain primary hex.
+    /// Defaults to `primaryHex` (see the frontend's `personaTheme.ts::deriveAccents`) so a pack
+    /// that doesn't author this key renders unchanged.</summary>
+    [JsonPropertyName("primaryDeep")] public string? PrimaryDeep { get; init; }
     [JsonPropertyName("primaryTintOnDark")] public string? PrimaryTintOnDark { get; init; }
     [JsonPropertyName("secondaryHex")] public string? SecondaryHex { get; init; }
     [JsonPropertyName("secondaryStrong")] public string? SecondaryStrong { get; init; }
+    /// <summary>Issue #164 R3 (PR #167 round 1 review): lighter shade of `secondary`, for
+    /// pill/gradient accents brighter than `secondaryStrong`. Defaults to `secondaryStrong` (see
+    /// the frontend's `personaTheme.ts::deriveAccents`) so a pack that doesn't author this key
+    /// renders unchanged.</summary>
+    [JsonPropertyName("secondaryLight")] public string? SecondaryLight { get; init; }
     [JsonPropertyName("secondaryTintOnDark")] public string? SecondaryTintOnDark { get; init; }
     [JsonPropertyName("accent")] public string? Accent { get; init; }
     [JsonPropertyName("accentLight")] public string? AccentLight { get; init; }
@@ -271,11 +298,15 @@ public sealed record PersonaHeroSpotlight
     [JsonPropertyName("rows")] public List<PersonaHeroSpotlightRow>? Rows { get; init; }
     [JsonPropertyName("body")] public string? Body { get; init; }
     [JsonPropertyName("accent")] public string? Accent { get; init; }
-    // Issue #164 A2: which brand role the second ("body") card's border/wash/kicker/accent-line
-    // draw from. Defaults to "secondary" in the frontend when omitted.
+    // Issue #164 A2: which brand role the second ("body") card's border/wash/kicker draw from.
+    // Defaults to "secondary" in the frontend when omitted.
     [JsonPropertyName("tone")] public string? Tone { get; init; }
-    // Issue #164 A2: optional hex wash for this card's background (e.g. one original's
-    // pink-tinted cold brew card). Omit for the shared neutral surface.
+    // Issue #164 R4 (PR #167 round 1 review): which brand role the second ("body") card's accent
+    // pairing-line text is drawn from, independent of `Tone` above. Defaults to the tone-derived
+    // mapping already used before this field existed, so a pack that omits it renders unchanged.
+    [JsonPropertyName("accentTone")] public string? AccentTone { get; init; }
+    // Issue #164 A2: optional hex wash for this card's background (e.g. one original's tinted
+    // beverage card). Omit for the shared neutral surface.
     [JsonPropertyName("tint")] public string? Tint { get; init; }
 }
 
@@ -283,4 +314,8 @@ public sealed record PersonaHeroSpotlightRow
 {
     [JsonPropertyName("label")] public required string Label { get; init; }
     [JsonPropertyName("value")] public required string Value { get; init; }
+    // Issue #164 R4 (PR #167 round 1 review): which brand role this row's value text is drawn
+    // from. Defaults to "primary" in the frontend when omitted, matching each original's own
+    // per-row coloring.
+    [JsonPropertyName("tone")] public string? Tone { get; init; }
 }

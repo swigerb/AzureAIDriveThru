@@ -8,9 +8,13 @@ import type { PersonaDetail } from "@/types/persona";
 // of reading a bundled `src/data/menuItems.json` copy. `usePersonaContext` is mocked here so each
 // test controls `current.menuUrl` directly without spinning up a full PersonaProvider fetch chain.
 
-const context = vi.hoisted(() => ({ menuUrl: "/personas/test-alpha/menu.json?v=test", categoryIcons: undefined as Record<string, string> | undefined }));
+const context = vi.hoisted(() => ({
+    menuUrl: "/personas/test-alpha/menu.json?v=test",
+    categoryIcons: undefined as Record<string, string> | undefined,
+    textRoles: undefined as PersonaDetail["textRoles"]
+}));
 vi.mock("@/context/persona-context", () => ({
-    usePersonaContext: () => ({ current: { menuUrl: context.menuUrl, categoryIcons: context.categoryIcons } as PersonaDetail })
+    usePersonaContext: () => ({ current: { menuUrl: context.menuUrl, categoryIcons: context.categoryIcons, textRoles: context.textRoles } as PersonaDetail })
 }));
 
 function mockFetchOnce(body: unknown, ok = true, status = 200) {
@@ -28,6 +32,7 @@ afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
     context.categoryIcons = undefined;
+    context.textRoles = undefined;
 });
 
 const SAMPLE_MENU = {
@@ -201,5 +206,40 @@ describe("MenuPanel", () => {
         expect(title.tagName).toBe("H3");
         expect(title.className).toContain("break-keep");
         expect(title.className).not.toContain("truncate");
+    });
+
+    // Issue #164 R2(c) (PR #167 round 1 review): the item-count chip's text color uses the
+    // countChip role (default "secondary") instead of a hardcoded text-brand-secondary, so a pack
+    // that overrides it (e.g. to "accent") gets a readable chip on its own surface in both modes.
+    it("colors the item-count chip from the default countChip role when textRoles is absent", async () => {
+        mockFetchOnce(SAMPLE_MENU);
+        render(<MenuPanel />);
+
+        const chip = await screen.findByText("1 item");
+        expect(chip.className).toContain("text-brand-secondary");
+        expect(chip.className).toContain("dark:text-brand-secondary-tint");
+    });
+
+    it("colors the item-count chip from an explicit countChip role override, light and dark", async () => {
+        context.textRoles = { countChip: "accent" };
+        mockFetchOnce(SAMPLE_MENU);
+        render(<MenuPanel />);
+
+        const chip = await screen.findByText("1 item");
+        expect(chip.className).toContain("text-brand-accent");
+        // Issue #164 R2(c): the dark-mode chip reuses the secondary tint for the accent role,
+        // since there is no separate accent-tint token -- this is the fix for a pack whose accent
+        // role renders unreadably dark on the dark-mode chip surface.
+        expect(chip.className).toContain("dark:text-brand-secondary-tint");
+    });
+
+    it("colors the item-count chip from a primaryDeep countChip role override, light and dark", async () => {
+        context.textRoles = { countChip: "primaryDeep" };
+        mockFetchOnce(SAMPLE_MENU);
+        render(<MenuPanel />);
+
+        const chip = await screen.findByText("1 item");
+        expect(chip.className).toContain("text-brand-primary-deep");
+        expect(chip.className).toContain("dark:text-brand-primary-tint");
     });
 });

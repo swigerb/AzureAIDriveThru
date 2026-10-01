@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { ChevronDown } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { usePersonaContext } from "@/context/persona-context";
+import { textRoleClasses } from "@/lib/personaTextRoles";
 
 interface Size {
     size: string;
@@ -138,7 +139,7 @@ export default memo(function MenuPanel() {
                                 </h3>
                             </div>
                             <div className="flex items-center gap-1">
-                                <span className="whitespace-nowrap rounded-full bg-brand-secondary/10 px-2 py-1 text-xs font-bold text-brand-secondary dark:bg-brand-surface-dark-alt dark:text-brand-secondary-tint">
+                                <span className={`whitespace-nowrap rounded-full bg-brand-secondary/10 px-2 py-1 text-xs font-bold dark:bg-brand-surface-dark-alt ${textRoleClasses("countChip", current.textRoles)}`}>
                                     {/* Non-blocking item from Rick's PR-110 review: correct singular/plural
                                         ("1 item", not "1 items"). */}
                                     {category.items.length} {category.items.length === 1 ? "item" : "items"}

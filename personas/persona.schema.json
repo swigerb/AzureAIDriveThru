@@ -202,7 +202,7 @@
             "badge": {
               "type": "string",
               "minLength": 1,
-              "description": "Issue #164 A5: overrides the shared neutral 'Voice Ordering Demo' hero pill copy (e.g. an original's 'Voice Crew Demo'). Omit to use the shared default."
+              "description": "Issue #164 A5: overrides the shared neutral 'Voice Ordering Demo' hero pill copy (e.g. a pack's own demo-crew phrasing). Omit to use the shared default."
             },
             "description": {
               "type": "string",
@@ -229,7 +229,7 @@
               "type": "array",
               "minItems": 2,
               "maxItems": 2,
-              "description": "Issue #164 A1/A2: the two spotlight cards beside the hero copy. The first card lists `rows` (label/value pairs, e.g. 'Slush of the Day' / 'Cherry Limeade'); the second instead pairs a `body` sentence with an `accent` pairing suggestion -- matching each original's two distinct card shapes.",
+              "description": "Issue #164 A1/A2: the two spotlight cards beside the hero copy. The first card lists `rows` (label/value pairs, e.g. a featured-item name and a crew pick); the second instead pairs a `body` sentence with an `accent` pairing suggestion -- matching each original's two distinct card shapes.",
               "items": {
                 "type": "object",
                 "additionalProperties": false,
@@ -238,7 +238,7 @@
                   "icon": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "Pack-relative path under assets/ to this card's brand illustration (e.g. 'assets/spotlight-slush.svg')."
+                    "description": "Pack-relative path under assets/ to this card's brand illustration (e.g. 'assets/spotlight-sample.svg')."
                   },
                   "kicker": { "type": "string", "minLength": 1 },
                   "title": { "type": "string", "minLength": 1 },
@@ -250,7 +250,12 @@
                       "required": ["label", "value"],
                       "properties": {
                         "label": { "type": "string", "minLength": 1 },
-                        "value": { "type": "string", "minLength": 1 }
+                        "value": { "type": "string", "minLength": 1 },
+                        "tone": {
+                          "type": "string",
+                          "enum": ["primary", "secondary", "accent", "ink"],
+                          "description": "Issue #164 R4 (PR #167 round 1 review): which of the persona's brand roles this row's value text is drawn from. Defaults to 'primary' when omitted, matching each original's per-row value coloring."
+                        }
                       }
                     }
                   },
@@ -259,12 +264,17 @@
                   "tone": {
                     "type": "string",
                     "enum": ["primary", "secondary", "accent"],
-                    "description": "Issue #164 A2: which of the persona's brand roles the second ('body') spotlight card's border/wash/kicker/accent-line draw from. Defaults to 'secondary' when omitted (the first, 'rows' card always uses 'primary' and doesn't need this field)."
+                    "description": "Issue #164 A2: which of the persona's brand roles the second ('body') spotlight card's border/wash/kicker draw from. Defaults to 'secondary' when omitted (the first, 'rows' card always uses 'primary' and doesn't need this field)."
+                  },
+                  "accentTone": {
+                    "type": "string",
+                    "enum": ["primary", "secondary", "accent", "ink"],
+                    "description": "Issue #164 R4 (PR #167 round 1 review): which of the persona's brand roles the second ('body') spotlight card's accent pairing-line text is drawn from, independent of `tone` (which only drives the card's border/wash/kicker). Defaults to the tone-derived mapping already used before this field existed, so a pack that omits it renders unchanged."
                   },
                   "tint": {
                     "type": "string",
                     "pattern": "^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$",
-                    "description": "Issue #164 A2: optional hex wash applied to this specific spotlight card's background (e.g. an original's pink-tinted cold brew card). Omit for the shared neutral surface."
+                    "description": "Issue #164 A2: optional hex wash applied to this specific spotlight card's background (e.g. a pack's tinted beverage card). Omit for the shared neutral surface."
                   }
                 }
               }
@@ -287,11 +297,26 @@
           "type": "object",
           "additionalProperties": { "type": "string" },
           "description": "Issue #164 E1: optional menu-category-name -> emoji/icon override, keyed by the category's exact `menuItems.json` name. Exists so a pack whose menu data is shared territory (issue #165's menu-data work) can restore its original category icons WITHOUT editing menuItems.json itself. Other packs instead set `icon` directly per-category in their own menuItems.json (personas/menu.schema.json already supports that) since they have no such collision risk."
+        },
+        "textRoles": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Issue #164 R2 (PR #167 round 1 review): optional per-slot override of which brand role a handful of shared text elements draw their color from. Every key is optional; an omitted key falls back to the shared default (badge=primary, countChip=secondary, footerTagline=secondary, footerExtra=secondary) so a pack that omits the block entirely renders unchanged.",
+          "properties": {
+            "badge": { "$ref": "#/$defs/textRole" },
+            "countChip": { "$ref": "#/$defs/textRole" },
+            "footerTagline": { "$ref": "#/$defs/textRole" },
+            "footerExtra": { "$ref": "#/$defs/textRole" }
+          }
         }
       }
     }
   },
   "$defs": {
+    "textRole": {
+      "type": "string",
+      "enum": ["primary", "primaryDeep", "secondary", "accent", "ink"]
+    },
     "modelPipeline": {
       "type": "object",
       "additionalProperties": false,
@@ -341,9 +366,17 @@
         "primaryHex": { "type": "string" },
         "primaryStrong": { "type": "string" },
         "primaryLight": { "type": "string" },
+        "primaryDeep": {
+          "type": "string",
+          "description": "Issue #164 R2 (PR #167 round 1 review): an optional deeper/darker shade of the primary role, distinct from `primaryStrong`, for text that needs more contrast than the plain primary hex but isn't the hover/pressed `primaryStrong` state. Defaults to `primaryHex` when omitted."
+        },
         "primaryTintOnDark": { "type": "string" },
         "secondaryHex": { "type": "string" },
         "secondaryStrong": { "type": "string" },
+        "secondaryLight": {
+          "type": "string",
+          "description": "Issue #164 R3 (PR #167 round 1 review): an optional lighter shade of the secondary role, used for pill/gradient accents that need a brighter tone than `secondaryStrong`. Defaults to `secondaryStrong` when omitted."
+        },
         "secondaryTintOnDark": { "type": "string" },
         "accent": { "type": "string" },
         "accentLight": { "type": "string" },

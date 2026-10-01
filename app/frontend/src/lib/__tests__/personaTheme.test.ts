@@ -37,8 +37,10 @@ const SAMPLE_THEME: PersonaTheme = {
             primaryStrong: "#C31B24",
             primaryLight: "#FF4D7A",
             primaryTintOnDark: "#FF6B8A",
+            primaryDeep: "#8C1A1F",
             secondaryHex: "#285780",
             secondaryStrong: "#137AC9",
+            secondaryLight: "#74D2E7",
             secondaryTintOnDark: "#74D2E7",
             accent: "#FEDD00",
             accentLight: "#FFE84D",
@@ -107,6 +109,15 @@ describe("applyTheme", () => {
         expect(root.style.getPropertyValue(PERSONA_THEME_CSS_VARS.neutral)).toBe("#C9CFD4");
     });
 
+    // Issue #164 R2(a)/R3 (PR #167 round 1 review).
+    it("writes the new primaryDeep/secondaryLight accent colors onto the given root element", () => {
+        const root = freshRoot();
+        applyTheme(SAMPLE_THEME, root);
+
+        expect(root.style.getPropertyValue(PERSONA_THEME_CSS_VARS.primaryDeep)).toBe("#8C1A1F");
+        expect(root.style.getPropertyValue(PERSONA_THEME_CSS_VARS.secondaryLight)).toBe("#74D2E7");
+    });
+
     it("writes every surface (shadcn slot) color onto the given root element when the theme declares one (issue #117)", () => {
         const root = freshRoot();
         applyTheme(SAMPLE_THEME, root);
@@ -147,8 +158,10 @@ describe("applyTheme", () => {
                     primaryStrong: "#C05010",
                     primaryLight: "#F89050",
                     primaryTintOnDark: "#F8A070",
+                    primaryDeep: "#903008",
                     secondaryHex: "#503020",
                     secondaryStrong: "#704030",
+                    secondaryLight: "#A08070",
                     secondaryTintOnDark: "#A08070",
                     accent: "#FFC030",
                     accentLight: "#FFD060",
@@ -315,6 +328,21 @@ describe("deriveAccents", () => {
         const accents = deriveAccents(colors);
         expect(accents.success).toBe("#16A34A");
         expect(accents.neutral).toBe("#9CA3AF");
+    });
+
+    // Issue #164 R2(a)/R3 (PR #167 round 1 review): `primaryDeep`/`secondaryLight` are new roles
+    // added so a pack can declare a darker badge/text accent and a brighter gradient-end accent
+    // without authoring its whole accent palette by hand. A pack that omits them (every pack did,
+    // before this review) must fall back to the existing `primaryHex`/`secondaryStrong` computed
+    // values -- not a hardcoded literal -- so no pack's derived palette changes by default.
+    it("defaults primaryDeep to the same value as primaryHex when the pack supplies neither", () => {
+        const accents = deriveAccents(colors);
+        expect(accents.primaryDeep).toBe(accents.primaryHex);
+    });
+
+    it("defaults secondaryLight to the same value as secondaryStrong when the pack supplies neither", () => {
+        const accents = deriveAccents(colors);
+        expect(accents.secondaryLight).toBe(accents.secondaryStrong);
     });
 });
 

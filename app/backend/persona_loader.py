@@ -247,9 +247,17 @@ class _ThemeAccents(BaseModel):
     primaryHex: str | None = None
     primaryStrong: str | None = None
     primaryLight: str | None = None
+    # Issue #164 R2 (PR #167 round 1 review): an optional deeper/darker shade of the primary
+    # role, distinct from primaryStrong, for text that needs more contrast than the plain
+    # primary hex. Defaults to primaryHex when omitted (see personaTheme.ts::deriveAccents).
+    primaryDeep: str | None = None
     primaryTintOnDark: str | None = None
     secondaryHex: str | None = None
     secondaryStrong: str | None = None
+    # Issue #164 R3 (PR #167 round 1 review): an optional lighter shade of the secondary role,
+    # for pill/gradient accents brighter than secondaryStrong. Defaults to secondaryStrong when
+    # omitted (see personaTheme.ts::deriveAccents).
+    secondaryLight: str | None = None
     secondaryTintOnDark: str | None = None
     accent: str | None = None
     accentLight: str | None = None
@@ -334,6 +342,11 @@ class _HeroSpotlightRow(BaseModel):
     model_config = ConfigDict(extra="forbid")
     label: str
     value: str
+    # Issue #164 R4 (PR #167 round 1 review): which brand role this row's value text draws from.
+    # Defaults to "primary" in the frontend when omitted, matching each original's own per-row
+    # value coloring. Enum validated by the JSON Schema (personas/persona.schema.json), same
+    # pattern as `_HeroSpotlight.tone` below.
+    tone: str | None = None
 
 
 class _HeroSpotlight(BaseModel):
@@ -348,11 +361,16 @@ class _HeroSpotlight(BaseModel):
     rows: list[_HeroSpotlightRow] | None = None
     body: str | None = None
     accent: str | None = None
-    # Issue #164 A2: which brand role the second ("body") card's border/wash/kicker/accent-line
-    # draw from. Defaults to "secondary" in the frontend when omitted.
+    # Issue #164 A2: which brand role the second ("body") card's border/wash/kicker draw from.
+    # Defaults to "secondary" in the frontend when omitted.
     tone: str | None = None
-    # Issue #164 A2: optional hex wash for this card's background (e.g. one original's
-    # pink-tinted cold brew card). Omit for the shared neutral surface.
+    # Issue #164 R4 (PR #167 round 1 review): which brand role the second ("body") card's
+    # accent pairing-line text draws from, independent of `tone` above. Defaults to the
+    # tone-derived mapping already used before this field existed, so a pack that omits it
+    # renders unchanged.
+    accentTone: str | None = None
+    # Issue #164 A2: optional hex wash for this card's background (e.g. a pack's tinted
+    # beverage card). Omit for the shared neutral surface.
     tint: str | None = None
 
 
@@ -360,7 +378,7 @@ class _Hero(BaseModel):
     model_config = ConfigDict(extra="forbid")
     headline: str
     # Issue #164 A5: optional override of the shared neutral "Voice Ordering Demo" hero pill
-    # copy (e.g. one original's "Voice Crew Demo"). Omit to use the shared default.
+    # copy (e.g. a pack's own demo-branded badge text). Omit to use the shared default.
     badge: str | None = None
     # Issue #164 A4: the persona's own hero sub-headline sentence.
     description: str
@@ -377,6 +395,20 @@ class _SessionBar(BaseModel):
     variant: str | None = None
 
 
+class _TextRoles(BaseModel):
+    """Issue #164 R2 (PR #167 round 1 review): optional per-slot override of which brand role a
+    handful of shared text elements draw their color from. Every key is optional; an omitted key
+    falls back to the shared default (badge=primary, countChip=secondary, footerTagline=secondary,
+    footerExtra=secondary), enforced in app/frontend/src/lib/personaTextRoles.ts so a pack that
+    omits the block entirely renders unchanged. Enum validated by the JSON Schema."""
+
+    model_config = ConfigDict(extra="forbid")
+    badge: str | None = None
+    countChip: str | None = None
+    footerTagline: str | None = None
+    footerExtra: str | None = None
+
+
 class _Ui(BaseModel):
     model_config = ConfigDict(extra="forbid")
     title: str
@@ -391,6 +423,7 @@ class _Ui(BaseModel):
     # (issue #165's menu-data work) restore its original category icons WITHOUT editing
     # menuItems.json itself.
     categoryIcons: dict[str, str] | None = None
+    textRoles: _TextRoles | None = None
 
 
 class PersonaManifest(BaseModel):

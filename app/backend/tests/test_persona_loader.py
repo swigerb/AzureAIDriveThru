@@ -102,6 +102,43 @@ class TestValidPackLoads:
             assert persona.menu_path.is_file(), f"{persona_id}: menu file missing"
             assert persona.assets_dir.is_dir(), f"{persona_id}: assets_dir missing"
 
+    def test_every_real_pack_keeps_d1_hero_invariants(self):
+        """Issue 164 R5 (PR 167 round 1 review): every original's hero keeps the same
+        Foundry-branding sentence shape (D1), across however many real packs exist -- only
+        each original's own subject/product words differ."""
+        import re
+
+        callout_pattern = re.compile(r"^.+ ordering powered by Microsoft Foundry$")
+        description_suffix = ", now voice activated with Microsoft Foundry + Azure AI Search grounding."
+
+        catalog = PersonaCatalog.load(personas_dir=_REAL_PERSONAS_DIR)
+        for persona_id in catalog.ids:
+            hero = catalog.get(persona_id).manifest.ui.hero
+            assert callout_pattern.match(hero.headline), (
+                f"{persona_id}: headline {hero.headline!r} does not match the shared D1 shape"
+            )
+            assert hero.description.endswith(description_suffix), (
+                f"{persona_id}: description does not end with the shared D1 suffix"
+            )
+            assert len(hero.callouts) >= 2, f"{persona_id}: expected at least 2 hero callouts"
+            foundry_callout = hero.callouts[1]
+            assert foundry_callout.title == "FOUNDRY INFUSION", (
+                f"{persona_id}: callouts[1].title is {foundry_callout.title!r}"
+            )
+            assert foundry_callout.detail == (
+                "Microsoft Foundry + Azure OpenAI keep conversations flowing"
+            ), f"{persona_id}: callouts[1].detail is {foundry_callout.detail!r}"
+            # hero.poweredBy and app.footer are shared translation.json keys (not persona.json
+            # fields), so D1's "exact in en" invariant holds as long as no pack shadows them
+            # in its own ui.strings override block.
+            for locale_strings in catalog.get(persona_id).manifest.ui.strings.values():
+                assert "hero.poweredBy" not in locale_strings, (
+                    f"{persona_id}: must not override the shared hero.poweredBy translation"
+                )
+                assert "app.footer" not in locale_strings, (
+                    f"{persona_id}: must not override the shared app.footer translation"
+                )
+
     def test_sonic_persona_exposes_expected_paths(self):
         catalog = PersonaCatalog.load(personas_dir=_REAL_PERSONAS_DIR)
         sonic = catalog.get("sonic")
@@ -363,6 +400,35 @@ class TestMutationSchemaViolations:
         _mutate_persona_json(personas_copy, "sonic", mutator)
         with pytest.raises(PersonaValidationError, match="sonic"):
             PersonaCatalog.load(personas_dir=personas_copy)
+
+    def test_unknown_text_role_refuses_to_start(self, fixture_personas_copy):
+        """Issue 164 R2 (PR 167 round 1 review): `ui.textRoles` values are constrained to the
+        schema's textRole enum (primary/primaryDeep/secondary/accent/ink), extra="forbid" on
+        the containing model. Uses the neutral test-alpha fixture pack, not a real brand pack,
+        per R6 (keeps the rebrand-baseline word-count ratchet (#76) from growing)."""
+        def mutator(d):
+            d["ui"]["textRoles"] = {"badge": "not-a-real-role"}
+        _mutate_persona_json(fixture_personas_copy, "test-alpha", mutator)
+        with pytest.raises(PersonaValidationError, match="test-alpha"):
+            PersonaCatalog.load(personas_dir=fixture_personas_copy, enabled=["test-alpha"], default_persona_id="test-alpha")
+
+    def test_unknown_spotlight_row_tone_refuses_to_start(self, fixture_personas_copy):
+        """Issue 164 R4 (PR 167 round 1 review): a spotlight card-one row's `tone` is
+        constrained to primary/secondary/accent/ink -- a pack cannot invent its own role name."""
+        def mutator(d):
+            d["ui"]["hero"]["spotlight"][0]["rows"][0]["tone"] = "not-a-real-tone"
+        _mutate_persona_json(fixture_personas_copy, "test-alpha", mutator)
+        with pytest.raises(PersonaValidationError, match="test-alpha"):
+            PersonaCatalog.load(personas_dir=fixture_personas_copy, enabled=["test-alpha"], default_persona_id="test-alpha")
+
+    def test_unknown_spotlight_accent_tone_refuses_to_start(self, fixture_personas_copy):
+        """Issue 164 R4 (PR 167 round 1 review): a spotlight card-two `accentTone` override is
+        constrained the same way as `tone` -- it cannot be an invented role name either."""
+        def mutator(d):
+            d["ui"]["hero"]["spotlight"][1]["accentTone"] = "not-a-real-tone"
+        _mutate_persona_json(fixture_personas_copy, "test-alpha", mutator)
+        with pytest.raises(PersonaValidationError, match="test-alpha"):
+            PersonaCatalog.load(personas_dir=fixture_personas_copy, enabled=["test-alpha"], default_persona_id="test-alpha")
 
     def test_missing_menu_file_refuses_to_start(self, personas_copy):
         (personas_copy / "sonic" / "menu" / "menuItems.json").unlink()
