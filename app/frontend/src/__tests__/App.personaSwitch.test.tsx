@@ -22,6 +22,7 @@ const rt = vi.hoisted(() => ({
         endSession: vi.fn(),
         reconnect: vi.fn(async () => {}),
         cancelSwitch: vi.fn(),
+        beginSwitch: vi.fn(),
         isConnected: true
     }
 }));
@@ -232,7 +233,7 @@ describe("persona switch confirmation dialog (issue #180)", () => {
         await switchTo("test-beta");
 
         expect(await screen.findByRole("dialog")).toBeInTheDocument();
-        expect(screen.getByText(/Switching to Test Beta will start a new order\. Your current order will be cleared\./)).toBeInTheDocument();
+        expect(screen.getByText("personaSwitch.body")).toBeInTheDocument();
         // Nothing has actually happened yet -- the switch is only pending confirmation.
         expect(rt.api.endSession).not.toHaveBeenCalled();
         expect(screen.getByText("Alpha Combo")).toBeInTheDocument();
@@ -255,7 +256,7 @@ describe("persona switch confirmation dialog (issue #180)", () => {
         await switchTo("test-beta");
         await screen.findByRole("dialog");
 
-        await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+        await userEvent.click(screen.getByRole("button", { name: "personaSwitch.cancel" }));
 
         await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
         expect(rt.api.endSession).not.toHaveBeenCalled();
@@ -274,7 +275,7 @@ describe("persona switch confirmation dialog (issue #180)", () => {
         await switchTo("test-beta");
         await screen.findByRole("dialog");
 
-        await userEvent.click(screen.getByRole("button", { name: "Switch" }));
+        await userEvent.click(screen.getByRole("button", { name: "personaSwitch.confirm" }));
 
         await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
         expect(rt.api.endSession).toHaveBeenCalledWith({ switching: true });
@@ -319,6 +320,227 @@ describe("persona switch confirmation dialog (issue #180)", () => {
         expect(dialog.contains(document.activeElement)).toBe(true);
         await userEvent.tab();
         expect(dialog.contains(document.activeElement)).toBe(true);
+    });
+});
+
+// Issue GH-180 round 2, R3: Radix's own default autofocus-on-close targets a `Dialog.Trigger`,
+// but this dialog has none (it's opened imperatively from requestPersonaSwitch, not by a trigger
+// button) -- without persona-switch-confirm-dialog.tsx's own `onCloseAutoFocus` override, focus
+// was dropped on `<body>` instead of returning anywhere useful.
+describe("focus returns to the persona picker after the dialog closes (issue GH-180 round 2, R3)", () => {
+    it("returns focus to the persona picker after Cancel", async () => {
+        render(<RootApp />);
+        await addOrderItem("Alpha Combo");
+        await screen.findByText("Alpha Combo");
+        await switchTo("test-beta");
+        await screen.findByRole("dialog");
+
+        await userEvent.click(screen.getByRole("button", { name: "personaSwitch.cancel" }));
+
+        await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+        await waitFor(() => expect(document.activeElement?.id).toBe("persona-picker"));
+    });
+
+    it("returns focus to the persona picker after Escape", async () => {
+        render(<RootApp />);
+        await addOrderItem("Alpha Combo");
+        await screen.findByText("Alpha Combo");
+        await switchTo("test-beta");
+        await screen.findByRole("dialog");
+
+        await userEvent.keyboard("{Escape}");
+
+        await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+        await waitFor(() => expect(document.activeElement?.id).toBe("persona-picker"));
+    });
+});
+
+// Issue GH-180 round 2, R1: the picker and the whole guest-facing UI used to tear down the old
+// persona's order/transcript/resume id the INSTANT the guest clicked Switch, before the new
+// persona's own detail fetch had even started -- a failed fetch then left the guest staring at a
+// blank menu under neither persona's identity, with the old order gone for good. These cases pin
+// down the fixed contract: fetch the target FIRST, only clear anything on success, and leave a
+// failed switch exactly as if it had never been attempted (plus a visible, localized error).
+describe("a failed persona switch leaves the current order, transcript and persona bound intact (issue GH-180 round 2, R1)", () => {
+    it("keeps the old order/transcript, shows a localized error, and never calls endSession when the target persona's fetch fails", async () => {
+        render(<RootApp />);
+        await addOrderItem("Alpha Combo");
+        await screen.findByText("Alpha Combo");
+        act(() => rt.params.onReceivedResponseDone(answer("Alpha greeting text")));
+        await screen.findByText("Alpha greeting text");
+
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async (url: string) => {
+                if (url === "/api/personas") return { ok: true, status: 200, json: async () => FIXTURE_PERSONA_INDEX };
+                if (url === "/api/personas/test-alpha") return { ok: true, status: 200, json: async () => DETAIL_ALPHA };
+                // The switched-to persona's own detail fetch fails: selectPersona() resolves false.
+                if (url === "/api/personas/test-beta") return { ok: false, status: 500, json: async () => ({}) };
+                return { ok: false, status: 404, json: async () => ({}) };
+            })
+        );
+
+        await switchTo("test-beta");
+        await screen.findByRole("dialog");
+        await userEvent.click(screen.getByRole("button", { name: "personaSwitch.confirm" }));
+
+        await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+        await waitFor(() => expect(rt.api.cancelSwitch).toHaveBeenCalledTimes(1));
+        // The old order and transcript must survive untouched -- this is the whole point of
+        // fetching the target before clearing anything.
+        expect(screen.getByText("Alpha Combo")).toBeInTheDocument();
+        expect(screen.getByText("Alpha greeting text")).toBeInTheDocument();
+        expect(rt.api.endSession).not.toHaveBeenCalled();
+        expect((screen.getByLabelText("Select persona") as HTMLSelectElement).value).toBe("test-alpha");
+        // R1: a visible, localized error -- not a silent failure.
+        expect(await screen.findByText("personaSwitch.loadError")).toBeInTheDocument();
+    });
+
+    it("allows retry: picking the same persona again once its fetch recovers switches cleanly", async () => {
+        render(<RootApp />);
+        await addOrderItem("Alpha Combo");
+        await screen.findByText("Alpha Combo");
+
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async (url: string) => {
+                if (url === "/api/personas") return { ok: true, status: 200, json: async () => FIXTURE_PERSONA_INDEX };
+                if (url === "/api/personas/test-alpha") return { ok: true, status: 200, json: async () => DETAIL_ALPHA };
+                if (url === "/api/personas/test-beta") return { ok: false, status: 500, json: async () => ({}) };
+                return { ok: false, status: 404, json: async () => ({}) };
+            })
+        );
+        await switchTo("test-beta");
+        await screen.findByRole("dialog");
+        await userEvent.click(screen.getByRole("button", { name: "personaSwitch.confirm" }));
+        await waitFor(() => expect(rt.api.cancelSwitch).toHaveBeenCalledTimes(1));
+        expect(screen.getByText("Alpha Combo")).toBeInTheDocument();
+
+        // The fetch recovers -- retrying the exact same pick must now succeed cleanly, with the
+        // same picker value, logo and localStorage all landing in agreement.
+        mockPersonaFetch();
+        await switchTo("test-beta");
+        await screen.findByRole("dialog");
+        await userEvent.click(screen.getByRole("button", { name: "personaSwitch.confirm" }));
+
+        await waitFor(() => expect(rt.api.endSession).toHaveBeenCalledWith({ switching: true }));
+        await waitFor(() => expect(screen.queryByText("Alpha Combo")).not.toBeInTheDocument());
+        await waitFor(() => expect((screen.getByLabelText("Select persona") as HTMLSelectElement).value).toBe("test-beta"));
+        expect(localStorage.getItem("personaId")).toBe("test-beta");
+    });
+});
+
+// Issue GH-180 round 2, R4: a second pick landing while the first switch's target-persona fetch
+// is still resolving used to re-enter handleSelectPersona a second time. Against an unchanged
+// `current.id`, persona-context's own selectPersona() resolves `false` for that second call (no
+// real change to apply), which then called `realtime.cancelSwitch()` against a switch that was
+// still genuinely in flight -- reopening a socket for the persona being switched AWAY from.
+describe("a second pick while a switch is still resolving is ignored until it settles (issue GH-180 round 2, R4)", () => {
+    it("ignores a second pick made while the first switch's persona fetch is still pending, and does not reopen the old persona's socket", async () => {
+        let resolveBetaFetch: () => void = () => {};
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async (url: string) => {
+                if (url === "/api/personas") return { ok: true, status: 200, json: async () => FIXTURE_PERSONA_INDEX };
+                if (url === "/api/personas/test-alpha") return { ok: true, status: 200, json: async () => DETAIL_ALPHA };
+                if (url === "/api/personas/test-beta") {
+                    await new Promise<void>(resolve => {
+                        resolveBetaFetch = resolve;
+                    });
+                    return { ok: true, status: 200, json: async () => DETAIL_BETA };
+                }
+                return { ok: false, status: 404, json: async () => ({}) };
+            })
+        );
+        render(<RootApp />);
+
+        // Empty order, no active conversation -- switches immediately, with the target's fetch
+        // left deliberately hanging.
+        await switchTo("test-beta");
+        // The picker reflects the pending target while the switch resolves.
+        await waitFor(() => expect((screen.getByLabelText("Select persona") as HTMLSelectElement).value).toBe("test-beta"));
+
+        // A second pick lands while the first switch is still in flight.
+        await switchTo("test-alpha");
+
+        resolveBetaFetch();
+        await waitFor(() => expect((screen.getByLabelText("Select persona") as HTMLSelectElement).value).toBe("test-beta"));
+
+        expect(rt.api.endSession).toHaveBeenCalledTimes(1);
+        expect(rt.api.cancelSwitch).not.toHaveBeenCalled();
+    });
+
+    // Rick round 2, R4: the test above's "second pick" targets test-alpha -- current.id itself,
+    // which requestPersonaSwitch's OWN, unrelated `personaId === current.id` guard already
+    // short-circuits regardless of switchInFlightRef. That made it possible to delete the
+    // switchInFlightRef gate entirely and still pass every test in this file (mutation survived).
+    // This case picks the SAME in-flight target instead (test-beta again, which is neither
+    // current.id nor blocked by anything else) so only switchInFlightRef can prevent a second,
+    // concurrent handleSelectPersona()/fetch/endSession() for it.
+    it("ignores a second pick of the SAME in-flight target: exactly one fetch and one endSession (kills removing switchInFlightRef)", async () => {
+        let betaFetchCount = 0;
+        const betaResolvers: Array<() => void> = [];
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async (url: string) => {
+                if (url === "/api/personas") return { ok: true, status: 200, json: async () => FIXTURE_PERSONA_INDEX };
+                if (url === "/api/personas/test-alpha") return { ok: true, status: 200, json: async () => DETAIL_ALPHA };
+                if (url === "/api/personas/test-beta") {
+                    betaFetchCount += 1;
+                    await new Promise<void>(resolve => {
+                        betaResolvers.push(resolve);
+                    });
+                    return { ok: true, status: 200, json: async () => DETAIL_BETA };
+                }
+                return { ok: false, status: 404, json: async () => ({}) };
+            })
+        );
+        render(<RootApp />);
+
+        await switchTo("test-beta");
+        await waitFor(() => expect((screen.getByLabelText("Select persona") as HTMLSelectElement).value).toBe("test-beta"));
+        expect(betaFetchCount).toBe(1);
+
+        // A second pick for the exact same target, still in flight.
+        await switchTo("test-beta");
+        expect(betaFetchCount).toBe(1);
+
+        betaResolvers.forEach(resolve => resolve());
+        await waitFor(() => expect(rt.api.endSession).toHaveBeenCalledTimes(1));
+        expect(betaFetchCount).toBe(1);
+    });
+});
+
+// Issue GH-180 round 2, R6: `void stopConversation()` let the recorder keep streaming mic audio
+// for at least one more tick after `end_session` had already gone out, and nothing in the
+// pre-round-2 suite ever asserted the recorder had actually stopped by the time the switch
+// continued -- a mutation that deleted the whole `if (isSessionActiveRef.current) ...
+// stopConversation();` line entirely survived undetected.
+describe("Switch stops an active conversation before continuing (issue GH-180 round 2, R6)", () => {
+    it("awaits stopConversation() so the recorder is fully stopped before endSession() runs", async () => {
+        let resolveStop: () => void = () => {};
+        rec.stop.mockImplementation(
+            () =>
+                new Promise<void>(resolve => {
+                    resolveStop = resolve;
+                })
+        );
+        render(<RootApp />);
+        await tapMic(); // start recording -- isSessionActiveRef becomes true, order still empty
+
+        await switchTo("test-beta"); // mid-conversation -- prompts for confirmation
+        await screen.findByRole("dialog");
+        await userEvent.click(screen.getByRole("button", { name: "personaSwitch.confirm" }));
+
+        // stopConversation() is still in flight (rec.stop() hasn't resolved) -- a `void
+        // stopConversation()` mutation would let endSession() through right away regardless.
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(rec.stop).toHaveBeenCalled();
+        expect(rt.api.endSession).not.toHaveBeenCalled();
+
+        resolveStop();
+        await waitFor(() => expect(rt.api.endSession).toHaveBeenCalledWith({ switching: true }));
     });
 });
 

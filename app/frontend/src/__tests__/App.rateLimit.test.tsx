@@ -31,6 +31,7 @@ const rt = vi.hoisted(() => ({
         endSession: vi.fn(),
         reconnect: vi.fn(async () => {}),
         cancelSwitch: vi.fn(),
+        beginSwitch: vi.fn(),
         isConnected: true
     }
 }));

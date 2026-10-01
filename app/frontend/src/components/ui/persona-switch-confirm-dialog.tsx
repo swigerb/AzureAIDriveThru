@@ -1,3 +1,5 @@
+import { useTranslation } from "react-i18next";
+
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 
@@ -19,25 +21,41 @@ export interface PersonaSwitchConfirmDialogProps {
  * silent block or a silent reset.
  *
  * Accessibility (focus trap, Escape-to-cancel) comes from Radix's `Dialog` primitive for free:
- * `DialogPrimitive.Content` traps focus while open and restores it to the triggering element on
- * close, and its default `onEscapeKeyDown` calls `onOpenChange(false)` unless prevented. Mapping
- * `onOpenChange(false)` to Cancel covers Escape, an overlay click, and the built-in "X" close
- * button uniformly -- none of those confirm the switch, so all three must cancel it.
+ * `DialogPrimitive.Content` traps focus while open, and its default `onEscapeKeyDown` calls
+ * `onOpenChange(false)` unless prevented. Mapping `onOpenChange(false)` to Cancel covers Escape, an
+ * overlay click, and the built-in "X" close button uniformly -- none of those confirm the switch,
+ * so all three must cancel it.
+ *
+ * Issue GH-180 round 2, R3: Radix's own `onCloseAutoFocus` default (`preventDefault()` + focus
+ * `context.triggerRef`) does nothing useful here -- this dialog has no `Dialog.Trigger` (it's
+ * opened programmatically by `requestPersonaSwitch`, not by clicking a trigger element wired to
+ * it), so there is no `triggerRef` for Radix to fall back to, and focus was silently dropping to
+ * `<body>` after Cancel or Escape in both jsdom and a real Chromium run -- the PR body's claim
+ * that focus is restored to the triggering element was false. `onCloseAutoFocus` below prevents
+ * Radix's own (useless) default and explicitly returns focus to the persona picker's native
+ * `<select>` (`#persona-picker`, see `persona-picker.tsx`) -- the control every one of these
+ * dialogs is opened from -- regardless of which of the three cancel paths closed it.
  */
 export default function PersonaSwitchConfirmDialog({ open, personaName, onConfirm, onCancel }: PersonaSwitchConfirmDialogProps) {
+    const { t } = useTranslation();
     return (
         <Dialog open={open} onOpenChange={next => !next && onCancel()}>
-            <DialogContent>
+            <DialogContent
+                onCloseAutoFocus={event => {
+                    event.preventDefault();
+                    document.getElementById("persona-picker")?.focus();
+                }}
+            >
                 <DialogHeader>
-                    <DialogTitle>Switch persona?</DialogTitle>
+                    <DialogTitle>{t("personaSwitch.title")}</DialogTitle>
                 </DialogHeader>
-                <DialogDescription>Switching to {personaName} will start a new order. Your current order will be cleared.</DialogDescription>
+                <DialogDescription>{t("personaSwitch.body", { persona: personaName })}</DialogDescription>
                 <div className="mt-6 flex justify-end gap-2">
                     <Button type="button" variant="outline" onClick={onCancel}>
-                        Cancel
+                        {t("personaSwitch.cancel")}
                     </Button>
                     <Button type="button" onClick={onConfirm}>
-                        Switch
+                        {t("personaSwitch.confirm")}
                     </Button>
                 </div>
             </DialogContent>

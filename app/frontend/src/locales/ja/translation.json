@@ -44,6 +44,13 @@
         "included": "含む",
         "componentsLabel": "この商品に含まれるもの"
     },
+    "personaSwitch": {
+        "title": "キャラクターを切り替えますか?",
+        "body": "{{persona}}に切り替えると新しい注文が始まります。現在の注文は消去されます。",
+        "confirm": "切り替える",
+        "cancel": "キャンセル",
+        "loadError": "{{persona}}への切り替えに失敗しました。現在の注文は変更されていません。もう一度お試しください。"
+    },
     "picker": {
         "backendLabel": "バックエンド",
         "modelLabel": "モデル",

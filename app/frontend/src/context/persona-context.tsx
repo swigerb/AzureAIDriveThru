@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, ReactNode } from "react";
 import i18next from "i18next";
+import { useTranslation } from "react-i18next";
 
 import { baseTranslationResources } from "@/i18n/baseResources";
 
@@ -138,6 +139,7 @@ function initialPersonaId(defaultId: string): string {
  * state actually live.
  */
 export function PersonaProvider({ children }: { children: ReactNode }) {
+    const { t } = useTranslation();
     const [personas, setPersonas] = useState<PersonaSummary[]>([NEUTRAL_SUMMARY]);
     const [backends, setBackends] = useState<PersonaBackendEntry[]>([]);
     const [current, setCurrent] = useState<PersonaDetail>(NEUTRAL_DETAIL);
@@ -212,10 +214,12 @@ export function PersonaProvider({ children }: { children: ReactNode }) {
                 setError(null);
                 return true;
             }
-            setError(`Could not load persona "${id}"; staying on the previous selection.`);
+            // Issue GH-180 round 2, R1: visible, localized -- replaces a hard-coded English
+            // sentence nothing ever rendered. `App.tsx` surfaces this next to the persona picker.
+            setError(t("personaSwitch.loadError", { persona: summary?.displayName ?? id }));
             return false;
         },
-        [applyDetail]
+        [applyDetail, t]
     );
 
     useEffect(() => {
@@ -252,9 +256,20 @@ export function PersonaProvider({ children }: { children: ReactNode }) {
     const selectPersona = useCallback(
         async (id: string) => {
             if (id === personaId) return false;
-            setPersonaId(id);
-            window.localStorage.setItem(STORAGE_KEY, id);
-            return loadPersona(id);
+            // Issue GH-180 round 2, R1: apply the new id (and persist it to localStorage) only once
+            // `loadPersona` has actually succeeded. The previous order set both of these BEFORE the
+            // fetch resolved, so a failed load against a guest's real production traffic left
+            // `personaId`/localStorage pointing at a persona `current` never actually became: the
+            // header logo flipped to the failed persona while `current` (and the order/transcript
+            // App.tsx hadn't cleared yet) stayed on the old one, a reload would land on a persona
+            // that was never reached, and retrying the SAME id was a silent no-op (this function's
+            // own `id === personaId` guard above now matched on the first, failed attempt).
+            const switched = await loadPersona(id);
+            if (switched) {
+                setPersonaId(id);
+                window.localStorage.setItem(STORAGE_KEY, id);
+            }
+            return switched;
         },
         [personaId, loadPersona]
     );
