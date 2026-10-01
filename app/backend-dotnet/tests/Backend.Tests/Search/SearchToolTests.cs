@@ -49,7 +49,8 @@ internal sealed class QueuedHttpHandler : HttpMessageHandler
 public sealed class SearchToolTests
 {
     private static SearchTool NewTool(
-        QueuedHttpHandler handler, string personaId = "search-tool-tests", bool useSemanticRanker = false)
+        QueuedHttpHandler handler, string personaId = "search-tool-tests", bool useSemanticRanker = false,
+        string? menuMode = null)
     {
         var persona = DeltaFixture.Load();
         var menu = PersonaOrderFactory.GetMenuCatalog(persona);
@@ -66,7 +67,9 @@ public sealed class SearchToolTests
                                                     // tests simple; the semantic-ranker tests below
                                                     // (Rick's PR #149 R2 review) opt it back in.
         var httpClient = new HttpClient(handler);
-        return new SearchTool(httpClient, endpointConfig, searchConfig, menu, promptLoader: null, "test-delta-menu-items", personaId);
+        return new SearchTool(
+            httpClient, endpointConfig, searchConfig, menu, promptLoader: null, "test-delta-menu-items", personaId,
+            menuMode: menuMode);
     }
 
     private static JsonElement QueryArgs(string query) =>
@@ -207,5 +210,65 @@ public sealed class SearchToolTests
             "The semantic-ranker retry must drop queryType entirely, not just the configuration key.");
         Assert.False(retryBody.RootElement.TryGetProperty("semanticConfiguration", out _));
         Assert.Contains("[delta-latte]", result.ToText());
+    }
+
+    /// <summary>
+    /// Rick's PR 166 round-1 review, required item 6: the OData filter <see cref="SearchTool"/>
+    /// builds for a bound menu mode must include a trailing <c>menuPeriod eq ''</c> clause, so a
+    /// period-less item (one with no <c>menuPeriod</c> of its own -- indexed by
+    /// setup_search_index.py with the empty-string sentinel) is never excluded by a mode-filtered
+    /// search, matching <c>MenuCatalog.ItemAvailableNow</c>'s own always-available treatment of
+    /// the same item. C# port of app/backend/tests/test_tool_calling.py's
+    /// <c>SearchModeFilterTests</c>.
+    /// </summary>
+    [Theory]
+    [InlineData("breakfast")]
+    [InlineData("lunch")]
+    public async Task ExecuteAsync_BoundMenuMode_SendsFilterAdmittingAllDayAndPeriodlessItems(string mode)
+    {
+        var handler = new QueuedHttpHandler().Enqueue(HttpStatusCode.OK, """{"value": []}""");
+        var tool = NewTool(handler, personaId: Guid.NewGuid().ToString("n"), menuMode: mode);
+
+        await tool.ExecuteAsync(QueryArgs("anything"), TestContext.Current.CancellationToken);
+
+        Assert.Single(handler.RequestBodies);
+        using var body = JsonDocument.Parse(handler.RequestBodies[0]);
+        Assert.Equal(
+            $"menuPeriod eq '{mode}' or menuPeriod eq 'allDay' or menuPeriod eq ''",
+            body.RootElement.GetProperty("filter").GetString());
+    }
+
+    /// <summary>
+    /// Cross-checks <c>MenuCatalog.ItemAvailableNow</c> (the add-time gate) against the REAL
+    /// filter <see cref="SearchTool"/> sends, for the exact same period-less items test-delta
+    /// ships (<c>Delta Meal</c>, <c>Delta Burger</c>, <c>Delta Fries</c>, <c>Delta Latte</c>,
+    /// <c>Delta Extra Shot</c>, <c>Delta Shake</c>): both must agree a period-less item is never
+    /// excluded by mode, in either direction -- the actual parity R6 asks for.
+    /// </summary>
+    [Theory]
+    [InlineData("Delta Meal", "breakfast")]
+    [InlineData("Delta Meal", "lunch")]
+    [InlineData("Delta Burger", "breakfast")]
+    [InlineData("Delta Burger", "lunch")]
+    [InlineData("Delta Fries", "breakfast")]
+    [InlineData("Delta Fries", "lunch")]
+    [InlineData("Delta Latte", "breakfast")]
+    [InlineData("Delta Latte", "lunch")]
+    [InlineData("Delta Extra Shot", "breakfast")]
+    [InlineData("Delta Extra Shot", "lunch")]
+    [InlineData("Delta Shake", "breakfast")]
+    [InlineData("Delta Shake", "lunch")]
+    public async Task ExecuteAsync_PeriodlessItemIsAdmittedByBothTheAddGateAndTheSearchFilter(string itemName, string mode)
+    {
+        var persona = DeltaFixture.Load();
+        var menu = PersonaOrderFactory.GetMenuCatalog(persona);
+        Assert.True(menu.ItemAvailableNow(itemName, mode));
+
+        var handler = new QueuedHttpHandler().Enqueue(HttpStatusCode.OK, """{"value": []}""");
+        var tool = NewTool(handler, personaId: Guid.NewGuid().ToString("n"), menuMode: mode);
+        await tool.ExecuteAsync(QueryArgs(itemName), TestContext.Current.CancellationToken);
+
+        using var body = JsonDocument.Parse(handler.RequestBodies[0]);
+        Assert.Contains("menuPeriod eq ''", body.RootElement.GetProperty("filter").GetString());
     }
 }

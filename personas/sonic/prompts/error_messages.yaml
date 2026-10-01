@@ -60,6 +60,15 @@ messages:
     {{item_name}} isn't in the order, so nothing was changed. Call get_order to check what's in
     the order, then ask the guest whether they'd like to add it.
 
+  # #165: add-time rejection when a real, on-menu item's own `menuPeriod` doesn't match this
+  # session's bound menu mode. Dormant for this persona: Sonic's `persona.json` doesn't declare
+  # `features.dayparts`, so every session has `menu_mode=None` and this path never fires -- kept
+  # populated anyway for parity with the full required-key set every persona pack documents (see
+  # prompt_loader.py's REQUIRED_ERROR_MESSAGE_KEYS).
+  item_out_of_mode: >-
+    I'm sorry, {{item_name}} isn't on our menu right now. Would you like to try
+    something else instead?
+
   # Quantity limit messages
   per_item_limit_maxed: >-
     That's a lot of {{item_name}}! Our drive-thru can handle up to

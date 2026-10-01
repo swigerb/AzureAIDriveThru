@@ -32,14 +32,25 @@ public static class ModelSelectionConformanceTestHelpers
     /// own raw-<see cref="ClientWebSocket"/> technique, generalised to an arbitrary query string
     /// (persona and/or model) rather than persona alone.
     /// </summary>
-    public static async Task AssertRealtimeConnectIs404Async(Uri backendBaseUri, string query, CancellationToken ct)
+    public static Task AssertRealtimeConnectIs404Async(Uri backendBaseUri, string query, CancellationToken ct) =>
+        AssertRealtimeConnectIsRejectedAsync(backendBaseUri, query, HttpStatusCode.NotFound, ct);
+
+    /// <summary>
+    /// Rick's PR 166 round-1 review, required item 5: the same pre-upgrade-rejection technique as
+    /// <see cref="AssertRealtimeConnectIs404Async"/>, generalised to an arbitrary expected status
+    /// -- used by the menu-mode 400 rows (<see cref="MenuModeRejectionConformanceTests"/>) so a
+    /// single shared helper proves BOTH "no WebSocket ever opened" and "the exact status code"
+    /// for every pre-upgrade `/realtime` rejection, 404 or 400 alike.
+    /// </summary>
+    public static async Task AssertRealtimeConnectIsRejectedAsync(
+        Uri backendBaseUri, string query, HttpStatusCode expectedStatus, CancellationToken ct)
     {
         using var socket = new ClientWebSocket();
         socket.Options.CollectHttpResponseDetails = true;
         var wsUri = await RealtimeUris.WithDefaultCredentialsAsync(backendBaseUri, query, ct);
 
         var ex = await Assert.ThrowsAsync<WebSocketException>(() => socket.ConnectAsync(wsUri, ct));
-        Assert.Equal(HttpStatusCode.NotFound, socket.HttpStatusCode);
+        Assert.Equal(expectedStatus, socket.HttpStatusCode);
         Assert.NotEqual(WebSocketState.Open, socket.State);
         Assert.NotNull(ex);
     }

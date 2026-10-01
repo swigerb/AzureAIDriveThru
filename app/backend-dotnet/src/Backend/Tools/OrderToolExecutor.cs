@@ -20,19 +20,25 @@ public sealed class OrderToolExecutor : IToolExecutor
     private readonly PromptLoader? _promptLoader;
     private readonly int _maxItemQuantity;
     private readonly int _maxOrderItems;
+    // Issue 165: this session's own bound daypart ("breakfast"/"lunch"), resolved once at
+    // connect time (Program.cs's /realtime handler) -- null for a persona with no
+    // features.dayparts. See CheckAddOrModifyGates's item_out_of_mode gate, the only reader.
+    private readonly string? _menuMode;
 
     public OrderToolExecutor(
         Ordering.OrderState order,
         MenuCatalog menu,
         PromptLoader? promptLoader,
         int maxItemQuantity,
-        int maxOrderItems)
+        int maxOrderItems,
+        string? menuMode = null)
     {
         _order = order;
         _menu = menu;
         _promptLoader = promptLoader;
         _maxItemQuantity = maxItemQuantity;
         _maxOrderItems = maxOrderItems;
+        _menuMode = menuMode;
     }
 
     public IReadOnlyList<string> ToolNames { get; } = ["update_order", "get_order", "reset_order"];
@@ -166,9 +172,9 @@ public sealed class OrderToolExecutor : IToolExecutor
     // ── Gate helpers (each mirrors one tools.py rejection block, in the same order) ──────────
 
     /// <summary>#73 (ADR-001 decision 4, "No off-menu"): the on-menu gate, first thing in the
-    /// add/modify path. Also covers size_not_available and (modify-only) not_in_order -- same
-    /// TO_SERVER structured-JSON shape for all three (Rick's PR #100 review, required item
-    /// 1).</summary>
+    /// add/modify path. Also covers item_out_of_mode (issue 165, add-only), size_not_available
+    /// and (modify-only) not_in_order -- same TO_SERVER structured-JSON shape for all four
+    /// (Rick's PR #100 review, required item 1).</summary>
     private ToolResult? CheckAddOrModifyGates(string action, string itemName, string size)
     {
         var menuItem = _menu.ResolveMenuItem(itemName);
@@ -197,6 +203,32 @@ public sealed class OrderToolExecutor : IToolExecutor
                 };
             }
             return new ToolResult(rejection, ToolResultDirection.ToServer);
+        }
+
+        // Issue 165: this session's own bound menu-mode gate -- an item that's real and on the
+        // menu, but not offered in the active daypart (e.g. a breakfast-only item add while the
+        // session is bound to "lunch"). Runs for "add" only: a "modify" target is already IN the
+        // order, which means it passed this same gate at add time and the mode never changes
+        // mid-session (no mid-conversation ?mode= switching, exactly like persona/model), so
+        // gating it again here would be a no-op at best and a spurious reject at worst. A
+        // persona with no features.dayparts always resolves menuMode to null, and
+        // MenuCatalog.ItemAvailableNow is a no-op (returns true) for a null active mode -- so
+        // this block never rejects anything for those packs.
+        if (action == "add" && !_menu.ItemAvailableNow(itemName, _menuMode))
+        {
+            var message = _promptLoader?.RenderError(
+                "item_out_of_mode", Vars(("item_name", menuItem.Name), ("mode_label", menuItem.MenuPeriod ?? "")))
+                ?? $"I'm sorry, {menuItem.Name} isn't on our menu right now. Would you like to try something else instead?";
+            return new ToolResult(
+                new Dictionary<string, object?>
+                {
+                    ["status"] = "rejected",
+                    ["item_added"] = false,
+                    ["reason"] = "item_out_of_mode",
+                    ["item_name"] = menuItem.Name,
+                    ["message"] = message,
+                },
+                ToolResultDirection.ToServer);
         }
 
         var requestedSize = _menu.CanonicalSizeKey(size);

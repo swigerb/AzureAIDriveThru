@@ -24,10 +24,13 @@ import asyncio
 import os
 import sys
 import unittest
+import urllib.parse
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 from zoneinfo import ZoneInfo
+
+import aiohttp
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 sys.path.append(str(Path(__file__).resolve().parent))
@@ -36,6 +39,7 @@ from test_session_bootstrap import BROWSER_SESSION_UPDATE, _RealtimeHarness
 
 import default_persona
 import menu_utils
+import rtmt
 import tools
 from order_state import order_state_singleton
 from persona_loader import Persona, PersonaCatalog
@@ -53,6 +57,18 @@ def _load_fixture_catalog(default: str = "test-alpha") -> PersonaCatalog:
     return PersonaCatalog.load(
         personas_dir=FIXTURES_DIR,
         enabled=["test-alpha", "test-beta"],
+        default_persona_id=default,
+    )
+
+
+def _load_fixture_catalog_with_delta(default: str = "test-delta") -> PersonaCatalog:
+    """#165: test-delta (``features.dayparts: true``) alongside test-alpha (no dayparts at
+    all) -- the exact pairing `MenuModeWebSocketHandlerTests` below needs to prove the
+    `?mode=` websocket-handshake validation for a dayparts persona, AND that a persona which
+    never opted in is completely unaffected by the same query param."""
+    return PersonaCatalog.load(
+        personas_dir=FIXTURES_DIR,
+        enabled=["test-alpha", "test-delta"],
         default_persona_id=default,
     )
 
@@ -952,6 +968,178 @@ class PersonaWebSocketHandlerTests(_RealtimeHarness):
         self.assertEqual(persona_ids, {"test-alpha", "test-beta"})
         await browser_a.close()
         await browser_b.close()
+
+
+class MenuModeWebSocketHandlerTests(_RealtimeHarness):
+    """#165: the `?mode=` websocket-handshake validation in `RTMiddleTier`'s realtime
+    handler -- a dayparts persona (test-delta) rejects an unrecognized value with a plain
+    HTTP 400 (same "no silent fallback" philosophy as the unknown-persona 404 above), defaults
+    an omitted value to "lunch" inside `create_session`, and a persona with no
+    `features.dayparts` at all (test-alpha) is completely unaffected by any `?mode=` it's
+    handed -- mirrors `PersonaWebSocketHandlerTests` above, against the delta/alpha pairing."""
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        self.catalog = _load_fixture_catalog_with_delta(default="test-delta")
+        self.rtmt.persona_catalog = self.catalog
+        self.rtmt.persona_prompt_loaders = {}
+        self.rtmt.allowed_voices = frozenset({"alloy", "marin", "cedar", "shimmer"})
+
+    async def test_an_unrecognized_mode_value_is_rejected_with_400_before_the_ws_upgrade(self):
+        """Rick's PR 166 round-1 review, required item 5: this used to send a plain GET, which
+        aiohttp's own WS-upgrade machinery refuses for reasons that have nothing to do with the
+        `?mode=` check at all (it's simply not a WebSocket-upgrade request) -- deleting the whole
+        `?mode=` validation block from `rtmt.py` still left this passing. `ws_connect` performs
+        the real WebSocket handshake `MenuModeWebSocketHandlerTests` above uses for the success
+        rows, so a genuine handshake failure (not merely "some non-101 response to a GET") is what
+        proves the check fired."""
+        with self.assertRaises(aiohttp.WSServerHandshakeError) as ctx:
+            await self.client.ws_connect("/realtime?persona=test-delta&mode=brunch")
+        self.assertEqual(ctx.exception.status, 400)
+        self.assertEqual(self.rtmt._sessions.active_session_count, 0,
+                          "a rejected mode must never create a session")
+
+    async def test_an_empty_mode_value_is_rejected_with_400(self):
+        """`?mode=` present but empty is neither omitted (that defaults to lunch) nor one of the
+        two recognized values -- same rejection as an unrecognized one."""
+        with self.assertRaises(aiohttp.WSServerHandshakeError) as ctx:
+            await self.client.ws_connect("/realtime?persona=test-delta&mode=")
+        self.assertEqual(ctx.exception.status, 400)
+        self.assertEqual(self.rtmt._sessions.active_session_count, 0)
+
+    async def test_a_repeated_mode_param_is_rejected_with_400_identically_to_an_unrecognized_one(self):
+        """Rick's PR 166 round-1 review, required item 5: a repeated `?mode=` must be handled
+        identically on both backends. `Program.cs`'s `StringValues.ToString()` comma-joins every
+        value for a repeated key, so `?mode=lunch&mode=breakfast` already 400s on the C# side
+        today (a comma-joined string is never `"breakfast"`/`"lunch"`) -- `_extract_raw_mode_param`
+        mirrors that exact join here instead of aiohttp's own `MultiDictProxy.get()`, which would
+        otherwise silently take only the first of the two conflicting values and let the
+        connection through."""
+        with self.assertRaises(aiohttp.WSServerHandshakeError) as ctx:
+            await self.client.ws_connect("/realtime?persona=test-delta&mode=lunch&mode=breakfast")
+        self.assertEqual(ctx.exception.status, 400)
+        self.assertEqual(self.rtmt._sessions.active_session_count, 0)
+
+    async def test_the_rejected_mode_value_is_never_logged_verbatim(self):
+        """Rick's PR 166 round-1 review, required item 7: the raw, attacker-supplied `?mode=`
+        value must never reach the log stream -- only the persona id (and, here, the value's
+        length)."""
+        needle = "brunch-CRLF-\r\ninjection-attempt"
+        encoded = urllib.parse.quote(needle, safe="")
+        with self.assertLogs(rtmt.logger, level="WARNING") as logs:
+            with self.assertRaises(aiohttp.WSServerHandshakeError):
+                await self.client.ws_connect(f"/realtime?persona=test-delta&mode={encoded}")
+        joined = "\n".join(logs.output)
+        self.assertNotIn(needle, joined)
+        self.assertNotIn("brunch", joined)
+        self.assertIn("test-delta", joined)
+        self.assertIn(str(len(needle)), joined)
+
+    async def test_an_explicit_breakfast_mode_binds_the_session_to_breakfast(self):
+        browser = await self.client.ws_connect("/realtime?persona=test-delta&mode=breakfast")
+        await self._until(lambda: self.rtmt._sessions.active_session_count >= 1)
+        sid = next(iter(self.rtmt._sessions._session_map.values()))
+        self.assertEqual(order_state_singleton.get_menu_mode(sid), "breakfast")
+        await browser.close()
+
+    async def test_an_explicit_lunch_mode_binds_the_session_to_lunch(self):
+        browser = await self.client.ws_connect("/realtime?persona=test-delta&mode=lunch")
+        await self._until(lambda: self.rtmt._sessions.active_session_count >= 1)
+        sid = next(iter(self.rtmt._sessions._session_map.values()))
+        self.assertEqual(order_state_singleton.get_menu_mode(sid), "lunch")
+        await browser.close()
+
+    async def test_an_omitted_mode_defaults_to_lunch_for_a_dayparts_persona(self):
+        browser = await self.client.ws_connect("/realtime?persona=test-delta")
+        await self._until(lambda: self.rtmt._sessions.active_session_count >= 1)
+        sid = next(iter(self.rtmt._sessions._session_map.values()))
+        self.assertEqual(order_state_singleton.get_menu_mode(sid), "lunch")
+        await browser.close()
+
+    async def test_a_persona_with_no_dayparts_feature_is_never_gated_by_a_stray_mode_param(self):
+        """test-alpha declares no `features.dayparts` at all -- a stray `?mode=` (even an
+        otherwise-invalid one) must be silently ignored, never rejected, and the session's
+        own bound mode stays None. (A plain HTTP GET isn't usable here to prove "not
+        rejected" -- even the success path eventually 400s at aiohttp's own WS-upgrade step
+        for a non-WebSocket client, same as any other valid persona/mode combination --
+        so the real `ws_connect` below, which completes the handshake, is the actual proof.)"""
+        browser = await self.client.ws_connect("/realtime?persona=test-alpha&mode=breakfast")
+        await self._until(lambda: self.rtmt._sessions.active_session_count >= 1)
+        sid = next(iter(self.rtmt._sessions._session_map.values()))
+        self.assertIsNone(order_state_singleton.get_menu_mode(sid))
+        await browser.close()
+
+
+class MenuModeResumeMismatchTests(unittest.TestCase):
+    """Rick's PR 166 round-1 review, required item 5: `SessionManager.resume()`'s own menu-mode
+    guard (session_manager.py's `bound_menu_mode != requested_menu_mode` check, reason
+    `"mode_mismatch"`), exercised directly (no WS transport needed -- `resume()` only needs a
+    resume id and a mock socket) -- mirrors `ResumePersonaMismatchTests`/`ModelResumeMismatchTests`
+    exactly, against test-delta (`features.dayparts: true`) instead of test-alpha/test-beta."""
+
+    def setUp(self):
+        self.catalog = _load_fixture_catalog_with_delta()
+        self.sm = SessionManager()
+        self.addCleanup(self._end_all)
+
+    def _end_all(self):
+        for sid in list(order_state_singleton.sessions):
+            self.sm.end_session(sid, "test teardown")
+
+    def test_resume_with_the_same_mode_is_accepted(self):
+        delta = self.catalog.get("test-delta")
+        sid = self.sm.create_session(_ws(), persona=delta, menu_mode="breakfast")
+        resume_id = self.sm.issue_resume_id(sid)
+        outcome = self.sm.resume(_ws(), resume_id, requested_persona_id="test-delta",
+                                  requested_menu_mode="breakfast")
+        self.assertTrue(outcome.accepted)
+        self.assertEqual(outcome.session_id, sid)
+        # Accepted means the presented resume id WAS consumed -- a second attempt with the
+        # same id must now fail for an unrelated reason ("not found"/expired), not repeat
+        # "accepted", proving this test would catch M5 (a dropped/weakened mode_mismatch
+        # check that let a stale id survive to be reused).
+        self.assertFalse(
+            self.sm.resume(_ws(), resume_id, requested_persona_id="test-delta",
+                            requested_menu_mode="breakfast").accepted)
+
+    def test_resume_with_a_different_mode_is_rejected(self):
+        delta = self.catalog.get("test-delta")
+        sid = self.sm.create_session(_ws(), persona=delta, menu_mode="breakfast")
+        resume_id = self.sm.issue_resume_id(sid)
+        outcome = self.sm.resume(_ws(), resume_id, requested_persona_id="test-delta",
+                                  requested_menu_mode="lunch")
+        self.assertFalse(outcome.accepted)
+        self.assertEqual(outcome.reason, "mode_mismatch")
+        # Rejected BEFORE the presented resume id was consumed -- a legitimate retry
+        # against the correct mode still works.
+        self.assertIn(sid, order_state_singleton.sessions)
+        retry = self.sm.resume(_ws(), resume_id, requested_persona_id="test-delta",
+                                requested_menu_mode="breakfast")
+        self.assertTrue(retry.accepted)
+
+    def test_resume_of_a_mode_bound_session_omitting_mode_is_rejected(self):
+        """An omitted `?mode=` on resume is `None`, which is a real, distinct mode value here
+        (never re-defaulted to "lunch" -- that default only ever applies at the ORIGINAL
+        connect, inside `create_session`) -- so it mismatches a session actually bound to
+        "breakfast" or "lunch", exactly like an explicit wrong value would."""
+        delta = self.catalog.get("test-delta")
+        sid = self.sm.create_session(_ws(), persona=delta, menu_mode="lunch")
+        resume_id = self.sm.issue_resume_id(sid)
+        outcome = self.sm.resume(_ws(), resume_id, requested_persona_id="test-delta",
+                                  requested_menu_mode=None)
+        self.assertFalse(outcome.accepted)
+        self.assertEqual(outcome.reason, "mode_mismatch")
+
+    def test_resume_of_a_no_dayparts_session_is_unaffected_by_mode(self):
+        """test-alpha never binds a menu mode at all (`get_menu_mode` stays `None`) -- a
+        resume naming any menu mode is a pure no-op comparison (`None != None` is `False`),
+        never a `mode_mismatch`, exactly like the connect-time handshake leaves it alone."""
+        alpha = self.catalog.get("test-alpha")
+        sid = self.sm.create_session(_ws(), persona=alpha)
+        resume_id = self.sm.issue_resume_id(sid)
+        outcome = self.sm.resume(_ws(), resume_id, requested_persona_id="test-alpha",
+                                  requested_menu_mode=None)
+        self.assertTrue(outcome.accepted)
 
 
 if __name__ == "__main__":

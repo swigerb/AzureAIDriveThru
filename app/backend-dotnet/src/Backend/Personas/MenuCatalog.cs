@@ -8,7 +8,11 @@ public sealed record ResolvedMenuItem(
     string Name,
     string Category,
     IReadOnlyList<string> Sizes,
-    IReadOnlyDictionary<string, decimal> Prices);
+    IReadOnlyDictionary<string, decimal> Prices,
+    // This item's own declared daypart ("breakfast"/"lunch"/"allDay"), or null for an item that
+    // doesn't carry one (every item on a pack with no features.dayparts today). Issue 165 --
+    // MenuCatalog.ItemAvailableNow below is the single reader.
+    string? MenuPeriod = null);
 
 /// <summary>
 /// Port of app/backend/menu_utils.py's <c>MenuCatalog</c> class (docs/dotnet_mapping.md, design
@@ -35,7 +39,8 @@ public sealed class MenuCatalog
         IReadOnlyDictionary<string, decimal> Prices,
         IReadOnlyDictionary<string, string> BundleAutoFill,
         string? BundleDefaultSize,
-        string? MealNumber);
+        string? MealNumber,
+        string? MenuPeriod);
 
     // Punctuation ignored when compacting a size string for alias lookup (PR #50 review
     // follow-up): "Route-44" and "rt. 44" must resolve identically to "route44"/"rt44" --
@@ -68,6 +73,13 @@ public sealed class MenuCatalog
     /// display labels (e.g. <c>"Medium"</c>, not the raw key <c>"medium"</c>) in a
     /// size_not_available rejection.</summary>
     public IReadOnlyDictionary<string, string> SizeMap => _sizeMap;
+
+    /// <summary>This persona's own normalized-item-key -> lower-cased category map -- mirrors
+    /// menu_utils.py's public <c>category_map</c> attribute (parity gap closed for #165 round 2,
+    /// Rick's review item 4: lets a test enumerate this pack's own real category set, e.g. to
+    /// verify every <c>hints.yaml</c> <c>trigger_categories</c> entry actually resolves to one of
+    /// them, the same way the Python pack-lint test does).</summary>
+    public IReadOnlyDictionary<string, string> CategoryMap => _categoryMap;
 
     private readonly IReadOnlyDictionary<string, IReadOnlyList<string>> _mealNumberIndex;
 
@@ -180,7 +192,8 @@ public sealed class MenuCatalog
                     Prices: prices,
                     BundleAutoFill: bundleAutoFill,
                     BundleDefaultSize: item.Bundle?.DefaultSize,
-                    MealNumber: item.MealNumber);
+                    MealNumber: item.MealNumber,
+                    MenuPeriod: item.MenuPeriod);
 
                 foreach (var alias in item.Aliases)
                 {
@@ -424,7 +437,34 @@ public sealed class MenuCatalog
         {
             return null;
         }
-        return new ResolvedMenuItem(fields.Name, fields.Category, fields.Sizes, fields.Prices);
+        return new ResolvedMenuItem(fields.Name, fields.Category, fields.Sizes, fields.Prices, fields.MenuPeriod);
+    }
+
+    /// <summary>Issue 165: whether <paramref name="itemName"/> is orderable in
+    /// <paramref name="activeMode"/> (<c>"breakfast"</c>/<c>"lunch"</c>), this session's own bound
+    /// daypart -- <c>true</c> for <paramref name="activeMode"/> <c>null</c> (a persona with no
+    /// <c>features.dayparts</c> at all, or an unresolved item name -- <see cref="ResolveMenuItem"/>
+    /// is the right place to reject an unknown name, not this one). An item with no own
+    /// <c>menuPeriod</c>, or <c>"allDay"</c>, is available in every mode a pack declares -- only an
+    /// item whose own <c>menuPeriod</c> names the OTHER daypart is rejected. Mirrors
+    /// menu_utils.py's <c>item_available_now</c> byte for byte.</summary>
+    public bool ItemAvailableNow(string itemName, string? activeMode)
+    {
+        if (activeMode is null)
+        {
+            return true;
+        }
+        var normalized = ResolveAlias(MenuKeyValidator.MenuKey(itemName));
+        if (!_itemFields.TryGetValue(normalized, out var fields))
+        {
+            return true;
+        }
+        var period = fields.MenuPeriod;
+        if (string.IsNullOrEmpty(period) || period == "allDay")
+        {
+            return true;
+        }
+        return period == activeMode;
     }
 
     /// <summary>Rick's #74 follow-up: the unit price for <paramref name="itemName"/> at

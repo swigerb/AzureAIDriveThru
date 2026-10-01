@@ -3,6 +3,7 @@ import { SettingsIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
+import { Tooltip } from "@/components/ui/tooltip";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { useDummyDataContext } from "@/context/dummy-data-context";
@@ -23,6 +24,58 @@ function capitalize(word: string): string {
  * character of the whole string. */
 function titleCase(roleName: string): string {
     return roleName.split(/\s+/).map(capitalize).join(" ");
+}
+
+const MENU_MODE_LOCK_HINT_ID = "menu-mode-lock-hint";
+const MENU_MODE_LOCK_HINT_TEXT = "Locked for this order -- start a new order to switch menus";
+
+/** Rick's PR 166 round-1 review, required item 3: same locked-radiogroup shape as
+ * `persona-picker.tsx`/`model-picker.tsx` -- disabled buttons, a visible Tooltip, and an
+ * aria-describedby'd sr-only hint for keyboard/AT users. Pulled out of `SettingsContent` as its
+ * own function purely so the Tooltip-wrapped vs. plain branches above share one render instead
+ * of duplicating the whole `<div role="radiogroup">` markup twice. The selected button uses the
+ * `secondary` token (not `primary`, which becomes this menu pack's own brand red once the palette
+ * swap from the concurrent UX-parity PR lands) -- matches the original reference card's own
+ * selected-state gold, which is what `secondary` resolves to under that same swap. */
+function renderMenuModeRadioGroup(menuMode: string, onMenuModeChange: (mode: string) => void, disabled: boolean) {
+    return (
+        <div
+            id="menu-mode"
+            className="inline-flex rounded-lg border border-gray-300 dark:border-gray-600 overflow-hidden"
+            role="radiogroup"
+            aria-label="Menu mode"
+            aria-describedby={disabled ? MENU_MODE_LOCK_HINT_ID : undefined}
+        >
+            <button
+                type="button"
+                role="radio"
+                aria-checked={menuMode === "breakfast"}
+                disabled={disabled}
+                onClick={() => onMenuModeChange("breakfast")}
+                className={`px-3 py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                    menuMode === "breakfast"
+                        ? "bg-secondary text-secondary-foreground"
+                        : "bg-white text-gray-600 hover:bg-gray-50 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700"
+                }`}
+            >
+                ☀️ Breakfast
+            </button>
+            <button
+                type="button"
+                role="radio"
+                aria-checked={menuMode === "lunch"}
+                disabled={disabled}
+                onClick={() => onMenuModeChange("lunch")}
+                className={`px-3 py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                    menuMode === "lunch"
+                        ? "bg-secondary text-secondary-foreground"
+                        : "bg-white text-gray-600 hover:bg-gray-50 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700"
+                }`}
+            >
+                🍔 Lunch
+            </button>
+        </div>
+    );
 }
 
 interface SettingsProps {
@@ -53,6 +106,26 @@ interface SettingsProps {
     /** Locked while a session is active (ADR-001 decision 2), same rule as the persona picker --
      * a model change here only ever takes effect on the next session. */
     modelDisabled?: boolean;
+    /** issue 165: only the current persona knows whether it declares `features.dayparts` at all
+     * (one persona pack declares breakfast+lunch today; others declare none) -- the toggle below
+     * renders nothing unless this is true, exactly like the original's persona-specific build
+     * always having the toggle (it only ever shipped one persona) but this shared component
+     * serving several. Optional/falsy default so callers that never pass it (e.g. this
+     * component's own pre-issue-165 tests) render exactly as before. */
+    menuModeEnabled?: boolean;
+    /** The active menu mode ("breakfast" | "lunch") for the CURRENT session (issue 165's
+     * session-bound contract) -- ignored/hidden entirely if `menuModeEnabled` is falsy. */
+    menuMode?: string;
+    onMenuModeChange?: (mode: string) => void;
+    /** Rick's PR 166 round-1 review, required item 3: locked while a session is already active
+     * (ADR-001 decision 2, the same rule `modelDisabled`/persona-picker's own `disabled` follow),
+     * because `menuMode` is a dependency of `getSocketUrl` -- toggling it mid-session tears down
+     * and reconnects the live socket (react-use-websocket's connect effect keys on `url`), which
+     * drops the in-progress order (Python rejects the stale resume id as `mode_mismatch`; C# has
+     * no resume at all and silently starts a fresh session). Optional/falsy default so callers
+     * that never pass it (e.g. this component's own pre-round-2 tests) render exactly as
+     * before -- unlocked. */
+    menuModeDisabled?: boolean;
 }
 
 export default function Settings({
@@ -69,7 +142,11 @@ export default function Settings({
     models,
     modelId = "",
     onModelChange = () => {},
-    modelDisabled = false
+    modelDisabled = false,
+    menuModeEnabled = false,
+    menuMode = "lunch",
+    onMenuModeChange = () => {},
+    menuModeDisabled = false
 }: SettingsProps) {
     const [isDarkMode, setIsDarkMode] = useState(() => {
         return localStorage.getItem("isDarkMode") === "true";
@@ -110,6 +187,31 @@ export default function Settings({
 
     const SettingsContent = () => (
         <div className="space-y-6">
+            {menuModeEnabled && (
+                <div className="flex items-start justify-between">
+                    <div className="flex-1 space-y-0.5">
+                        <Label htmlFor="menu-mode" className="text-gray-900 dark:text-gray-100">
+                            Menu Mode
+                        </Label>
+                        <p className="text-sm text-gray-600 dark:text-gray-400">Switch between breakfast and lunch menus</p>
+                    </div>
+                    <div className="ml-4 flex items-center gap-3 shrink-0">
+                        {menuModeDisabled ? (
+                            <Tooltip content={MENU_MODE_LOCK_HINT_TEXT}>
+                                <div>{renderMenuModeRadioGroup(menuMode, onMenuModeChange, menuModeDisabled)}</div>
+                            </Tooltip>
+                        ) : (
+                            renderMenuModeRadioGroup(menuMode, onMenuModeChange, menuModeDisabled)
+                        )}
+                        <span className="text-xs text-muted-foreground">{menuMode === "breakfast" ? "Breakfast Menu" : "Lunch Menu"}</span>
+                    </div>
+                    {menuModeDisabled && (
+                        <span id={MENU_MODE_LOCK_HINT_ID} className="sr-only">
+                            {MENU_MODE_LOCK_HINT_TEXT}
+                        </span>
+                    )}
+                </div>
+            )}
             <div className="flex items-start justify-between">
                 <div className="flex-1 space-y-0.5">
                     <Label htmlFor="dark-mode" className="text-gray-900 dark:text-gray-100">

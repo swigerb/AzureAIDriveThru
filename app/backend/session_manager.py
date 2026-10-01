@@ -319,7 +319,7 @@ class SessionManager:
 
     def create_session(self, ws: web.WebSocketResponse, persona=None, model_id: str | None = None,
                         model_deployment: str | None = None, model_reasoning: bool | None = None,
-                        model_pipeline: str | None = None) -> str:
+                        model_pipeline: str | None = None, menu_mode: str | None = None) -> str:
         """Create a new order session and map it to the WebSocket connection.
 
         *persona* (#74, optional): the persona this session is bound to for its entire
@@ -335,10 +335,17 @@ class SessionManager:
         exactly like *persona* above (no mid-conversation model switching either). Omitted:
         binds to *persona*'s own ``models.realtime.default`` (see
         ``order_state.OrderState.create_session``) -- today's exact, unchanged path.
-        *model_pipeline* (Rick's PR #106 review item 3) omitted defaults to ``"realtime"``."""
+        *model_pipeline* (Rick's PR #106 review item 3) omitted defaults to ``"realtime"``.
+
+        *menu_mode* (#165, optional): this session's own bound daypart (``"breakfast"`` |
+        ``"lunch"``), resolved once by the caller (``rtmt.py::handle``, from ``?mode=``) for a
+        persona that declares ``features.dayparts`` -- threaded straight through to
+        ``order_state_singleton.create_session()``, which itself normalizes an omitted/invalid
+        value to ``"lunch"`` for such a persona, and forces ``None`` for every other persona.
+        No mid-conversation mode switching, exactly like *persona*/*model_id* above."""
         session_id = order_state_singleton.create_session(
             persona=persona, model_id=model_id, model_deployment=model_deployment,
-            model_reasoning=model_reasoning, model_pipeline=model_pipeline,
+            model_reasoning=model_reasoning, model_pipeline=model_pipeline, menu_mode=menu_mode,
         )
         self._session_map[ws] = session_id
         self._attached[session_id] = ws
@@ -523,7 +530,7 @@ class SessionManager:
         return resume_id
 
     def resume(self, ws: web.WebSocketResponse, resume_id: object, requested_persona_id: str | None = None,
-               requested_model_id: str | None = None) -> ResumeOutcome:
+               requested_model_id: str | None = None, requested_menu_mode: str | None = None) -> ResumeOutcome:
         """Re-attach the session identified by ``resume_id`` to ``ws``.
 
         Single use: the presented id is consumed and a rotated one is returned.
@@ -550,7 +557,17 @@ class SessionManager:
         model switching. Omitted entirely (``None``) resolves to the bound persona's
         own ``models.realtime.default`` before comparing. Mismatched -> rejected as
         ``"model_mismatch"`` BEFORE the presented resume id is consumed, same as
-        ``"persona_mismatch"`` above."""
+        ``"persona_mismatch"`` above.
+
+        *requested_menu_mode* (#165, optional): the menu mode this resume request's OWN
+        (provisional) session already resolved to (``order_state.OrderState.get_menu_mode``,
+        read back from whatever ``?mode=`` the provisional connect used) -- mirrors
+        *requested_persona_id*/*requested_model_id* exactly: a session can only ever resume
+        under the SAME mode it was originally bound to, no mid-conversation switching. For a
+        persona with no ``features.dayparts`` this is always ``None`` on both sides (the
+        provisional AND the resumed session), so the comparison is a trivial no-op. Mismatched
+        -> rejected as ``"mode_mismatch"`` BEFORE the presented resume id is consumed, same as
+        ``"persona_mismatch"``/``"model_mismatch"`` above."""
         if not self.resume_enabled:
             return ResumeOutcome(False, reason="disabled")
         if not isinstance(resume_id, str) or not (_RESUME_ID_MIN_LEN <= len(resume_id) <= _RESUME_ID_MAX_LEN):
@@ -600,6 +617,18 @@ class SessionManager:
                 session_id, bound_model_id, effective_requested_model_id,
             )
             return ResumeOutcome(False, reason="model_mismatch")
+
+        # #165: no normalization needed here -- unlike persona_id/model_id, a persona with no
+        # `features.dayparts` always resolves BOTH sides to `None` (order_state.OrderState
+        # .create_session's own normalization), so this comparison is a genuine no-op for a
+        # persona without that feature, not a fallback-to-default one.
+        bound_menu_mode = order_state_singleton.get_menu_mode(session_id)
+        if bound_menu_mode != requested_menu_mode:
+            logger.info(
+                "Resume rejected for session %s: bound menu mode %r != requested menu mode %r (mode_mismatch)",
+                session_id, bound_menu_mode, requested_menu_mode,
+            )
+            return ResumeOutcome(False, reason="mode_mismatch")
 
         # Consume the presented id before anything else can use it.
         self._resume_index.pop(digest, None)

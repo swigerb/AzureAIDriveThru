@@ -17,6 +17,13 @@ in" control.
 Mutation checks (see decision note beth-77.md): disabling meal-number lookup (e.g. hardcoding
 ``meal_number_candidates`` to always return ``[]``), accepting a machine-down item on add, or
 letting a blocked/off-menu name silently pass would each fail a test below.
+
+#165 addendum: test-delta also carries a breakfast/lunch pair sharing meal number 2 (see
+``MealNumberLookupTests`` above), so this same fixture doubles as the dedicated coverage for
+``menu_utils.MenuCatalog.item_available_now``, ``order_state.create_session``'s mode-defaulting
+normalization, and ``tools.update_order``'s add-time ``item_out_of_mode`` gate -- see
+``ItemAvailableNowUnitTests``, ``CreateSessionMenuModeDefaultingTests``, and
+``UpdateOrderItemOutOfModeGateTests`` near the end of this file.
 """
 
 import asyncio
@@ -77,6 +84,13 @@ class DeltaFixtureTestCase(unittest.TestCase):
 
     def _new_session(self) -> str:
         sid = order_state_singleton.create_session(persona=self.delta)
+        self._sessions_created.append(sid)
+        return sid
+
+    def _new_session_with_mode(self, menu_mode: str | None) -> str:
+        """Same as :meth:`_new_session` but binds an explicit ``menu_mode`` -- the #165 session
+        parameter ``rtmt.py``'s websocket handshake would normally resolve from ``?mode=``."""
+        sid = order_state_singleton.create_session(persona=self.delta, menu_mode=menu_mode)
         self._sessions_created.append(sid)
         return sid
 
@@ -379,6 +393,152 @@ class MachineUnavailableRejectionTests(DeltaFixtureTestCase):
             "size": "regular", "quantity": 1,
         }, sid))
         self.assertEqual(result.destination, ToolResultDirection.TO_BOTH)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Issue 165: Breakfast/Lunch menu mode -- menu_utils.MenuCatalog.item_available_now,
+# order_state.create_session's default-to-"lunch" normalization, and tools.update_order's
+# add-time item_out_of_mode gate, all against the SAME test-delta fixture's breakfast/lunch pair
+# (shares meal number 2, see MealNumberLookupTests above) and its period-less "Delta Meal"/
+# "Delta Burger"-equivalent items.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class ItemAvailableNowUnitTests(DeltaFixtureTestCase):
+    """Direct, session-free coverage of menu_utils.MenuCatalog.item_available_now -- the single
+    function both tools.update_order's add-time gate and (indirectly, via order_state's session
+    binding) every other #165 mode-aware behavior reads."""
+
+    def test_a_none_active_mode_is_always_available_regardless_of_the_items_own_period(self):
+        """A persona with no features.dayparts at all (or an unbound session) never gates --
+        this is the permanent no-op branch."""
+        self.assertTrue(self.menu.item_available_now("Delta Breakfast Meal", None))
+        self.assertTrue(self.menu.item_available_now("Delta Lunch Meal", None))
+
+    def test_an_item_with_no_menu_period_is_available_in_every_mode(self):
+        self.assertTrue(self.menu.item_available_now("Delta Meal", "breakfast"))
+        self.assertTrue(self.menu.item_available_now("Delta Meal", "lunch"))
+
+    def test_an_item_matching_the_active_mode_is_available(self):
+        self.assertTrue(self.menu.item_available_now("Delta Breakfast Meal", "breakfast"))
+        self.assertTrue(self.menu.item_available_now("Delta Lunch Meal", "lunch"))
+
+    def test_an_item_from_the_other_daypart_is_not_available(self):
+        self.assertFalse(self.menu.item_available_now("Delta Breakfast Meal", "lunch"))
+        self.assertFalse(self.menu.item_available_now("Delta Lunch Meal", "breakfast"))
+
+    def test_an_unresolved_item_name_is_available_since_the_on_menu_gate_owns_that_rejection(self):
+        self.assertTrue(self.menu.item_available_now("Nonexistent Thing", "lunch"))
+
+
+class CreateSessionMenuModeDefaultingTests(DeltaFixtureTestCase):
+    """order_state.create_session's #165 normalization: a dayparts persona always resolves to a
+    real mode ("lunch" default, #164 decision D3), never a silently-unbound session; a
+    non-dayparts persona is always forced to None regardless of what's passed."""
+
+    def test_an_explicit_breakfast_mode_is_kept(self):
+        sid = self._new_session_with_mode("breakfast")
+        self.assertEqual(order_state_singleton.get_menu_mode(sid), "breakfast")
+
+    def test_an_explicit_lunch_mode_is_kept(self):
+        sid = self._new_session_with_mode("lunch")
+        self.assertEqual(order_state_singleton.get_menu_mode(sid), "lunch")
+
+    def test_an_omitted_mode_defaults_to_lunch(self):
+        sid = self._new_session_with_mode(None)
+        self.assertEqual(order_state_singleton.get_menu_mode(sid), "lunch")
+
+    def test_an_unrecognized_mode_value_also_defaults_to_lunch(self):
+        sid = self._new_session_with_mode("brunch")
+        self.assertEqual(order_state_singleton.get_menu_mode(sid), "lunch")
+
+    def test_a_persona_with_no_dayparts_feature_is_always_none_even_if_a_mode_was_requested(self):
+        alpha = _load_alpha_catalog().get("test-alpha")
+        sid = order_state_singleton.create_session(persona=alpha, menu_mode="breakfast")
+        try:
+            self.assertIsNone(order_state_singleton.get_menu_mode(sid))
+        finally:
+            order_state_singleton.delete_session(sid)
+
+
+class UpdateOrderItemOutOfModeGateTests(DeltaFixtureTestCase):
+    """tools.update_order's add-time item_out_of_mode structured rejection (docs/
+    persona-architecture.md section 6), exercised through the REAL tool call path, exactly like
+    every other add-time gate in this file."""
+
+    def test_add_of_the_breakfast_meal_succeeds_when_the_session_is_bound_to_breakfast(self):
+        sid = self._new_session_with_mode("breakfast")
+        result = _run(tools.update_order({
+            "action": "add", "item_name": "Delta Breakfast Meal",
+            "size": "regular", "quantity": 1, "price": 4.99,
+        }, sid))
+        self.assertEqual(result.destination, ToolResultDirection.TO_BOTH)
+        self.assertEqual(len(order_state_singleton.get_order_items(sid)), 1)
+
+    def test_add_of_the_breakfast_meal_is_rejected_when_the_session_is_bound_to_lunch(self):
+        sid = self._new_session_with_mode("lunch")
+        result = _run(tools.update_order({
+            "action": "add", "item_name": "Delta Breakfast Meal",
+            "size": "regular", "quantity": 1, "price": 4.99,
+        }, sid))
+        self.assertEqual(result.destination, ToolResultDirection.TO_SERVER)
+        self.assertEqual(set(result.text.keys()), {"status", "item_added", "reason", "item_name", "message"})
+        self.assertEqual(result.text["status"], "rejected")
+        self.assertFalse(result.text["item_added"])
+        self.assertEqual(result.text["reason"], "item_out_of_mode")
+        self.assertEqual(result.text["item_name"], "Delta Breakfast Meal")
+        self.assertTrue(result.text["message"])
+        self.assertEqual(order_state_singleton.get_order_items(sid), [])
+
+    def test_add_of_the_lunch_meal_is_rejected_when_the_session_is_bound_to_breakfast(self):
+        sid = self._new_session_with_mode("breakfast")
+        result = _run(tools.update_order({
+            "action": "add", "item_name": "Delta Lunch Meal",
+            "size": "regular", "quantity": 1, "price": 6.49,
+        }, sid))
+        self.assertEqual(result.destination, ToolResultDirection.TO_SERVER)
+        self.assertEqual(result.text["reason"], "item_out_of_mode")
+        self.assertEqual(order_state_singleton.get_order_items(sid), [])
+
+    def test_add_of_a_period_less_item_succeeds_regardless_of_bound_mode(self):
+        sid = self._new_session_with_mode("breakfast")
+        result = _run(tools.update_order({
+            "action": "add", "item_name": "Delta Meal",
+            "size": "regular", "quantity": 1, "price": 5.99,
+        }, sid))
+        self.assertEqual(result.destination, ToolResultDirection.TO_BOTH)
+
+    def test_modify_is_never_gated_by_menu_mode_even_after_the_bound_mode_would_reject_a_fresh_add(self):
+        """The gate only runs for action=="add" -- a modify on an item already in the order
+        (added while the session was still in its own mode) must never be re-gated."""
+        sid = self._new_session_with_mode("breakfast")
+        _run(tools.update_order({
+            "action": "add", "item_name": "Delta Breakfast Meal",
+            "size": "regular", "quantity": 1, "price": 4.99,
+        }, sid))
+        result = _run(tools.update_order({
+            "action": "modify", "item_name": "Delta Breakfast Meal",
+            "size": "regular", "quantity": 2, "price": 4.99,
+        }, sid))
+        self.assertEqual(result.destination, ToolResultDirection.TO_BOTH)
+        items = order_state_singleton.get_order_items(sid)
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0].item, "Delta Breakfast Meal")
+
+    def test_a_persona_with_no_dayparts_feature_never_gates_any_item(self):
+        """Packs without modes unaffected: test-alpha declares no features.dayparts, so its own
+        items (which carry no menuPeriod at all) must add cleanly no matter what menu_mode was
+        requested at session creation."""
+        alpha = _load_alpha_catalog().get("test-alpha")
+        sid = order_state_singleton.create_session(persona=alpha, menu_mode="breakfast")
+        try:
+            result = _run(tools.update_order({
+                "action": "add", "item_name": "Alpha Burger",
+                "size": "small", "quantity": 1, "price": 3.99,
+            }, sid))
+            self.assertEqual(result.destination, ToolResultDirection.TO_BOTH)
+        finally:
+            order_state_singleton.delete_session(sid)
 
 
 if __name__ == "__main__":

@@ -25,6 +25,7 @@ import yaml
 REPO = Path(__file__).resolve().parents[3]
 sys.path.append(str(REPO / "app" / "backend"))
 
+from menu_utils import MenuCatalog  # noqa: E402
 from persona_loader import Persona, PersonaCatalog  # noqa: E402
 from prompt_loader import PromptLoader  # noqa: E402
 from rtmt import _DEFAULT_ALLOWED_VOICES  # noqa: E402
@@ -63,6 +64,21 @@ _NOT_ON_MENU_CLAUSES = (
     "update_order REJECTS anything not on our menu",
     "offer the closest real menu item",
 )
+
+# #165 round 3 (Rick's #166 review round 2): known, pre-existing (hint_key, category) pairs
+# that don't match any persona pack's real category today. Exempted by the exact pair, not by
+# persona id, so any OTHER kind of staleness in ANY pack is still caught by the real check
+# below. All 7 entries predate and are unrelated to #165's menu swap; the follow-up to fix the
+# owning pack's own hints.yaml and drop this exemption is tracked in #168.
+_KNOWN_PRE_EXISTING_UPSELL_HINT_GAPS: frozenset[tuple[str, str]] = frozenset({
+    ("burger", "burgers"),
+    ("drink", "drinks"),
+    ("drink", "slushes"),
+    ("shake", "shakes"),
+    ("shake", "desserts"),
+    ("side", "sides"),
+    ("side", "hot dogs"),
+})
 
 
 def _greeting_text(persona: Persona) -> str:
@@ -176,6 +192,54 @@ def not_on_menu_errors(menu_section: str) -> list[str]:
         f"MENU_AND_PRICING is missing the required not-on-menu clause {clause!r}"
         for clause in _NOT_ON_MENU_CLAUSES
         if clause not in menu_section
+    ]
+
+
+def upsell_hint_stale_pairs(
+    trigger_categories_by_hint: dict[str, list[str]], real_categories: set[str]
+) -> set[tuple[str, str]]:
+    """Pure: every ``(hint_key, category)`` pair across ``trigger_categories_by_hint`` whose
+    category isn't one of ``real_categories``. Empty set == valid."""
+    return {
+        (hint_key, category)
+        for hint_key, categories in trigger_categories_by_hint.items()
+        for category in categories
+        if category not in real_categories
+    }
+
+
+def upsell_hint_category_errors(
+    persona_id: str, trigger_categories_by_hint: dict[str, list[str]], real_categories: set[str]
+) -> list[str]:
+    """Every ``upsell_hints.*.trigger_categories`` entry in
+    a pack's own hints.yaml must name a category that actually exists in that SAME pack's own
+    menu (``menu_utils.MenuCatalog.category_map``'s values, already lower-cased). A menu edit
+    that renames/removes/merges a category used to leave the matching hint silently unreachable
+    -- ``prompt_loader.get_upsell_hint``/``PromptLoader.cs``'s ``GetUpsellHint`` both fall
+    through to the "generic" hint with no error or log of any kind. Empty list == valid."""
+    return [
+        f"{persona_id}'s hints.yaml upsell_hints.{hint_key}.trigger_categories references "
+        f"{category!r}, which is not one of this pack's own menu categories {sorted(real_categories)}"
+        for hint_key, category in sorted(upsell_hint_stale_pairs(trigger_categories_by_hint, real_categories))
+    ]
+
+
+def duplicate_trigger_category_errors(
+    persona_id: str, trigger_categories_by_hint: dict[str, list[str]]
+) -> list[str]:
+    """Every category that appears
+    in more than one hint bucket's ``trigger_categories`` -- ``get_upsell_hint``/
+    ``GetUpsellHint`` both match the FIRST bucket in declaration order, so a category in two
+    buckets makes the second one unreachable for that category. Empty list == valid."""
+    buckets_by_category: dict[str, list[str]] = {}
+    for hint_key, categories in trigger_categories_by_hint.items():
+        for category in categories:
+            buckets_by_category.setdefault(category, []).append(hint_key)
+    return [
+        f"{persona_id}'s hints.yaml category {category!r} appears in more than one "
+        f"upsell_hints bucket's trigger_categories: {buckets}"
+        for category, buckets in sorted(buckets_by_category.items())
+        if len(buckets) > 1
     ]
 
 
@@ -320,6 +384,60 @@ class PromptSectionConformanceTests(unittest.TestCase):
                 self.assertEqual(not_on_menu_errors(menu_section), [])
 
 
+class UpsellHintConformanceTests(unittest.TestCase):
+    """Every pack's own hints.yaml ``upsell_hints.*.
+    trigger_categories`` must reference a category that actually exists in that SAME pack's
+    own menu -- never a stale name left behind by a menu edit (a category renamed, removed, or
+    merged with another). Also: no category may appear in more than
+    one hint bucket (the first bucket wins at lookup time, so a shared category silently
+    strands the others)."""
+
+    def test_every_packs_upsell_hint_trigger_categories_exist_in_that_packs_own_menu(self):
+        catalog = PersonaCatalog.load()
+        exempted_pairs_seen: set[tuple[str, str]] = set()
+        for persona_id in catalog.ids:
+            with self.subTest(persona_id):
+                persona = catalog.get(persona_id)
+                loader = PromptLoader(brand=persona_id, prompts_dir=persona.prompts_dir)
+                upsell_hints = loader.get_hints().get("upsell_hints", {})
+                trigger_categories_by_hint = {
+                    hint_key: list(info.get("trigger_categories") or [])
+                    for hint_key, info in upsell_hints.items()
+                }
+                real_categories = set(MenuCatalog.from_persona(persona).category_map.values())
+                stale_pairs = upsell_hint_stale_pairs(trigger_categories_by_hint, real_categories)
+                exempted_pairs_seen |= stale_pairs & _KNOWN_PRE_EXISTING_UPSELL_HINT_GAPS
+                unexempted = stale_pairs - _KNOWN_PRE_EXISTING_UPSELL_HINT_GAPS
+                self.assertEqual(
+                    sorted(unexempted), [],
+                    f"{persona_id}'s hints.yaml has stale upsell_hints trigger_categories {sorted(unexempted)}",
+                )
+
+        # Every known gap must still show up as stale in at least one pack above -- if a pack's
+        # own menu edit makes one valid again, remove it from
+        # _KNOWN_PRE_EXISTING_UPSELL_HINT_GAPS (see #168) instead of leaving a dead exemption
+        # that would hide future drift silently.
+        stale_but_unlisted = _KNOWN_PRE_EXISTING_UPSELL_HINT_GAPS - exempted_pairs_seen
+        self.assertEqual(
+            stale_but_unlisted, set(),
+            f"known gap(s) {sorted(stale_but_unlisted)} are no longer stale in any pack -- "
+            "remove from _KNOWN_PRE_EXISTING_UPSELL_HINT_GAPS (see #168)",
+        )
+
+    def test_no_category_appears_in_two_packs_upsell_hint_buckets(self):
+        catalog = PersonaCatalog.load()
+        for persona_id in catalog.ids:
+            with self.subTest(persona_id):
+                persona = catalog.get(persona_id)
+                loader = PromptLoader(brand=persona_id, prompts_dir=persona.prompts_dir)
+                upsell_hints = loader.get_hints().get("upsell_hints", {})
+                trigger_categories_by_hint = {
+                    hint_key: list(info.get("trigger_categories") or [])
+                    for hint_key, info in upsell_hints.items()
+                }
+                self.assertEqual(duplicate_trigger_category_errors(persona_id, trigger_categories_by_hint), [])
+
+
 class MutationIsCaughtTests(unittest.TestCase):
     """Each check above must fail closed on a real defect, not just always pass on today's
     clean data. Every assertion here calls the SAME helper the corresponding real test above
@@ -375,6 +493,21 @@ class MutationIsCaughtTests(unittest.TestCase):
         mutated = menu_section.replace("REJECTS anything not on our menu", "politely allows anything")
         errors = not_on_menu_errors(mutated)
         self.assertTrue(errors, "not_on_menu_errors did not flag an altered not-on-menu sentence")
+
+    def test_a_stale_upsell_hint_trigger_category_is_caught(self):
+        errors = upsell_hint_category_errors(
+            "mutant-pack",
+            {"burger": ["burgers & sandwiches", "a category renamed away in the last menu edit"]},
+            {"burgers & sandwiches", "sweets & treats"},
+        )
+        self.assertTrue(errors, "upsell_hint_category_errors did not flag a stale trigger_categories entry")
+
+    def test_a_category_in_two_upsell_hint_buckets_is_caught(self):
+        errors = duplicate_trigger_category_errors(
+            "mutant-pack",
+            {"drink": ["fries, sides & drinks"], "side": ["fries, sides & drinks"]},
+        )
+        self.assertTrue(errors, "duplicate_trigger_category_errors did not flag a category shared by two buckets")
 
 
 if __name__ == "__main__":

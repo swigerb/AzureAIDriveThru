@@ -33,7 +33,8 @@
         "title": "Menú",
         "button": "Ver el menú",
         "loading": "Cargando el menú…",
-        "loadError": "No se pudo cargar el menú. Inténtalo de nuevo más tarde."
+        "loadError": "No se pudo cargar el menú. Inténtalo de nuevo más tarde.",
+        "valueMealsCategory": "Comidas de valor"
     },
     "ticket": {
         "kicker": "Boleto del pedido",

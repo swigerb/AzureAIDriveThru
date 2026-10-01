@@ -1,33 +1,44 @@
 version: "1.0.0"
+# the 134->70 item menu swap collapsed the old, more granular category
+# set (meals & combos / burgers / chicken & fish sandwiches / mcnuggets & tenders / beverages /
+# mccafé coffees / fries & sides) into the 5 categories that ship in menuItems.json today
+# ("Burgers & Sandwiches", "Chicken & McNuggets®", "Breakfast", "Fries, Sides & Drinks",
+# "Sweets & Treats"). trigger_categories below is remapped to those real, lower-cased category
+# strings (menu_utils.py's MenuCatalog.infer_category output) so get_upsell_hint no longer
+# silently falls through to "generic" for burger/meal/drink/side adds. Each category below now
+# sits in exactly one bucket (get_upsell_hint/GetUpsellHint both match only the first bucket whose
+# trigger_categories contains the item's category, so a category in two buckets makes the second
+# unreachable): "Fries, Sides & Drinks" merges what used to be two separate categories, so it has
+# one combined side-or-drink bucket rather than a "drink" and a "side" bucket racing for the same
+# category. "Burgers & Sandwiches" has no meals, so it keeps the original app's "make it a meal"
+# upsell. "Chicken & McNuggets®" holds every lunch meal combo (Big Mac® Meal, etc.), so its bucket
+# offers a dessert instead of a meal or a drink, since plenty of the items it fires for already
+# include one.
 upsell_hints:
   meal:
     trigger_categories:
-      - "meals & combos"
       - "breakfast"
     hint: "Meals are a great base! Ask if they want to upgrade to a Large size, or add a delicious dessert like a Baked Apple Pie!"
 
   burger:
     trigger_categories:
-      - "burgers"
-      - "chicken & fish sandwiches"
-      - "mcnuggets & tenders"
+      - "burgers & sandwiches"
     hint: "Perfect choice! Ask if they want to make it a meal with World Famous Fries and a refreshing Drink!"
 
-  drink:
+  chicken:
     trigger_categories:
-      - "beverages"
-      - "mccafé coffees"
-    hint: "Great drink choice! Ask if they'd like to add some food — maybe a burger, McNuggets, or World Famous Fries!"
+      - "chicken & mcnuggets®"
+    hint: "Great choice! Ask if they'd like to add a dessert, like a McFlurry or a Baked Apple Pie!"
+
+  side_or_drink:
+    trigger_categories:
+      - "fries, sides & drinks"
+    hint: "Nice pick! Ask if they'd like to add a burger, chicken sandwich, or a sweet treat to complete their order!"
 
   sweet:
     trigger_categories:
       - "sweets & treats"
     hint: "Yum! Great pick! Ask if they'd like to add anything else to their order!"
-
-  side:
-    trigger_categories:
-      - "fries & sides"
-    hint: "Tasty! Ask if they want to add a refreshing Drink to complete their meal!"
 
   generic:
     trigger_categories: []
