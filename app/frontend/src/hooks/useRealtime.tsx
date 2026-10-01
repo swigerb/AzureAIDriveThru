@@ -36,6 +36,12 @@ type Parameters = {
      * session is active) and sent as `/realtime?model=<id>` (rtmt.py's `request.query.get("model")`,
      * already merged via PR-106/PR-122, falls back to the persona's pipeline default when omitted). */
     modelId?: string;
+    /** issue 165: the session's bound menu mode ("breakfast"/"lunch"), set once before connecting --
+     * same ADR-001 decision 2 rule as `personaId`/`modelId` (no mid-conversation switching) --
+     * and sent as `/realtime?mode=<mode>` (rtmt.py's `request.query.get("mode")`, only meaningful
+     * for a persona that declares `features.dayparts`; falls back to that persona's own default
+     * -- "lunch" -- when omitted, and is silently ignored for every other persona). */
+    menuMode?: string;
 
     enableInputAudioTranscription?: boolean;
     onWebSocketOpen?: () => void;
@@ -180,6 +186,7 @@ export default function useRealTime({
     aoaiModelOverride,
     personaId,
     modelId,
+    menuMode,
     enableInputAudioTranscription,
     onWebSocketOpen,
     onWebSocketClose,
@@ -251,9 +258,10 @@ export default function useRealTime({
         if (accessToken) params.set("access_token", accessToken);
         if (personaId) params.set("persona", personaId);
         if (modelId) params.set("model", modelId);
+        if (menuMode) params.set("mode", menuMode);
         const query = params.toString();
         return query ? `${base}?${query}` : base;
-    }, [useDirectAoaiApi, aoaiEndpointOverride, aoaiApiKeyOverride, aoaiModelOverride, personaId, modelId]);
+    }, [useDirectAoaiApi, aoaiEndpointOverride, aoaiApiKeyOverride, aoaiModelOverride, personaId, modelId, menuMode]);
 
     // Ref to break circular dependency: callbacks need sendJsonMessage,
     // but sendJsonMessage comes from useWebSocket which takes the callbacks.

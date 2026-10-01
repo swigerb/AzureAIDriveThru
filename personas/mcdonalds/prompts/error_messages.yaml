@@ -56,6 +56,16 @@ messages:
     {{item_name}} isn't in the order, so nothing was changed. Call get_order to check what's in
     the order, then ask the guest whether they'd like to add it.
 
+  # #165: add-time rejection when a real, on-menu item's own `menuPeriod` doesn't match this
+  # session's own bound menu mode (order_state.OrderState.get_menu_mode, set once at the
+  # WebSocket handshake from `?mode=breakfast|lunch`). Fires for, e.g., ordering "Egg McMuffin"
+  # while the session is bound to "lunch", or "Big Mac" while bound to "breakfast" -- the item is
+  # real and on the menu, just not offered right now. Same structured (TO_SERVER) rejection shape
+  # as item_not_on_menu/size_not_available above, reason "item_out_of_mode".
+  item_out_of_mode: >-
+    I'm sorry, {{item_name}} is a {{mode_label}} item and isn't on the menu right now. Would you
+    like to try something else, or switch the menu mode in Settings?
+
   # Quantity limit messages
   per_item_limit_maxed: >-
     That's a lot of {{item_name}}! Our drive-thru can handle up to

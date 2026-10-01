@@ -40,6 +40,10 @@ public sealed class SearchTool
     private readonly string? _personaId;
     private readonly ISearchBearerTokenProvider? _bearerTokenProvider;
     private readonly ILogger? _logger;
+    // Issue 165: this session's own bound daypart ("breakfast"/"lunch"), resolved once at
+    // connect time -- null for a persona with no features.dayparts, or an unbound caller. The
+    // single reader is the OData filter built in ExecuteAsync below.
+    private readonly string? _menuMode;
 
     public SearchTool(
         HttpClient http,
@@ -50,7 +54,8 @@ public sealed class SearchTool
         string indexName,
         string? personaId,
         ISearchBearerTokenProvider? bearerTokenProvider = null,
-        ILogger? logger = null)
+        ILogger? logger = null,
+        string? menuMode = null)
     {
         _http = http;
         _config = config;
@@ -61,6 +66,7 @@ public sealed class SearchTool
         _personaId = personaId;
         _bearerTokenProvider = bearerTokenProvider;
         _logger = logger;
+        _menuMode = menuMode;
     }
 
     /// <summary>Executes one <c>search</c> tool call. Always <see
@@ -75,11 +81,23 @@ public sealed class SearchTool
         // to `query` itself so the cache key and every search request see the same rewritten text.
         var query = _menu.RewriteSearchQuery(rawQuery);
 
-        var cacheKey = $"{_personaId ?? ""}::{query.Trim().ToLowerInvariant()}";
+        var cacheKey = $"{_personaId ?? ""}::{_menuMode ?? ""}::{query.Trim().ToLowerInvariant()}";
         if (Cache.TryGet(cacheKey, out var cached) && cached is not null)
         {
             return cached;
         }
+
+        // Issue 165: restrict results server-side to items whose own menuPeriod is _menuMode,
+        // "allDay", or unset ("" -- setup_search_index.py's own sentinel for a period-less item)
+        // -- the same OData filter setup_search_index.py documents. Null for a persona with no
+        // features.dayparts (every existing caller keeps passing nothing, a pure no-op).
+        // Rick's PR 166 round-1 review, required item 6: the third clause keeps
+        // MenuCatalog.ItemAvailableNow's own always-available treatment of a period-less item and
+        // this search filter in sync -- without it, a period-less item could be added to an order
+        // in either mode yet never surface in a mode-filtered search.
+        var modeFilter = _menuMode is { Length: > 0 }
+            ? $"menuPeriod eq '{_menuMode}' or menuPeriod eq 'allDay' or menuPeriod eq ''"
+            : null;
 
         var selectFields = new[] { _config.IdentifierField, "name", "category", "description", "sizes" };
         var semanticEnabled = _config.UseSemanticRanker && !string.IsNullOrEmpty(_config.SemanticConfiguration);
@@ -87,7 +105,7 @@ public sealed class SearchTool
         List<JsonElement> records;
         try
         {
-            records = await FetchRecordsAsync(query, selectFields, includeVector: true, semantic: semanticEnabled, cancellationToken)
+            records = await FetchRecordsAsync(query, selectFields, includeVector: true, semantic: semanticEnabled, modeFilter, cancellationToken)
                 .ConfigureAwait(false);
         }
         catch (TimeoutException exc)
@@ -101,7 +119,10 @@ public sealed class SearchTool
         catch (SearchApiException exc) when (exc.Message.Contains("Could not find a property named"))
         {
             // #37/PR #50 review: gracefully retry with a minimal projection on a field-name
-            // mismatch (e.g. an out-of-date `select` list against the real index's schema).
+            // mismatch (e.g. an out-of-date `select` list against the real index's schema, or --
+            // issue 165 -- a `menuPeriod` filter against an index that hasn't been rebuilt with
+            // that field yet). Dropping the mode filter here too means a stale index degrades to
+            // unfiltered search rather than failing the lookup outright.
             _logger?.LogWarning(exc,
                 "Search field-name mismatch for persona {PersonaId} index {IndexName}; retrying with a minimal projection: {ExceptionType}: {ExceptionMessage}",
                 _personaId, _indexName, exc.GetType().Name, exc.Message);
@@ -109,7 +130,7 @@ public sealed class SearchTool
             {
                 string?[] fallbackCandidates = [_config.IdentifierField, _config.ContentField];
                 var fallbackSelect = fallbackCandidates.Where(f => !string.IsNullOrEmpty(f)).Select(f => f!).ToArray();
-                records = await FetchRecordsAsync(query, fallbackSelect, includeVector: true, semantic: semanticEnabled, cancellationToken)
+                records = await FetchRecordsAsync(query, fallbackSelect, includeVector: true, semantic: semanticEnabled, filter: null, cancellationToken)
                     .ConfigureAwait(false);
             }
             catch (Exception retryExc)
@@ -130,7 +151,7 @@ public sealed class SearchTool
                 _personaId, _indexName, exc.GetType().Name, exc.Message);
             try
             {
-                records = await FetchRecordsAsync(query, selectFields, includeVector: true, semantic: false, cancellationToken)
+                records = await FetchRecordsAsync(query, selectFields, includeVector: true, semantic: false, modeFilter, cancellationToken)
                     .ConfigureAwait(false);
             }
             catch (Exception retryExc)
@@ -237,14 +258,14 @@ public sealed class SearchTool
     /// <see cref="TimeoutException"/> on expiry and <see cref="SearchApiException"/> on any
     /// non-2xx response.</summary>
     private async Task<List<JsonElement>> FetchRecordsAsync(
-        string query, IReadOnlyList<string> selectFields, bool includeVector, bool semantic, CancellationToken cancellationToken)
+        string query, IReadOnlyList<string> selectFields, bool includeVector, bool semantic, string? filter, CancellationToken cancellationToken)
     {
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(TimeSpan.FromSeconds(_searchConfig.TimeoutSeconds));
 
         try
         {
-            var body = BuildSearchBody(query, selectFields, includeVector, semantic);
+            var body = BuildSearchBody(query, selectFields, includeVector, semantic, filter);
             var url = $"{_config.Endpoint.TrimEnd('/')}/indexes('{Uri.EscapeDataString(_indexName)}')" +
                       $"/docs/search.post.search?api-version={SearchEndpointConfig.ApiVersion}";
 
@@ -271,7 +292,7 @@ public sealed class SearchTool
         }
     }
 
-    private object BuildSearchBody(string query, IReadOnlyList<string> selectFields, bool includeVector, bool semantic)
+    private object BuildSearchBody(string query, IReadOnlyList<string> selectFields, bool includeVector, bool semantic, string? filter)
     {
         var body = new Dictionary<string, object?>
         {
@@ -279,6 +300,13 @@ public sealed class SearchTool
             ["top"] = _searchConfig.TopResults,
             ["select"] = string.Join(",", selectFields),
         };
+        if (!string.IsNullOrEmpty(filter))
+        {
+            // Issue 165: data-plane search.post.search body key is "filter" (no "$"-prefix --
+            // this isn't the OData query-string convention), an OData expression string exactly
+            // like the one setup_search_index.py's own filterable "menuPeriod" field supports.
+            body["filter"] = filter;
+        }
         if (semantic)
         {
             body["queryType"] = "semantic";

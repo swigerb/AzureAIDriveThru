@@ -40,17 +40,15 @@
   },
 
   "extras": {
-    "allowedBaseCategories": ["burgers", "chicken & fish sandwiches", "mcnuggets & tenders", "meals & combos", "breakfast"],
-    "blockedBaseCategories": ["beverages", "mccafé coffees", "fries & sides", "sweets & treats", "happy meal"],
+    "allowedBaseCategories": ["burgers & sandwiches", "chicken & mcnuggets®", "breakfast"],
+    "blockedBaseCategories": ["fries, sides & drinks", "sweets & treats"],
     "splitCombinedNames": false
   },
 
   "invalidModifiers": {
-    "beverages": ["cheese", "bacon", "patty", "lettuce", "tomato", "onion", "mustard", "ketchup", "pickle"],
-    "mccafé coffees": ["cheese", "bacon", "patty", "lettuce", "tomato", "onion", "mustard", "ketchup", "pickle"],
+    "fries, sides & drinks": ["cheese", "bacon", "patty", "lettuce", "tomato", "onion", "mustard", "ketchup", "pickle", "whipped cream", "chocolate", "vanilla", "strawberry"],
     "sweets & treats": ["mustard", "ketchup", "mayo", "pickles", "onions", "lettuce", "cheese", "bacon", "patty"],
-    "fries & sides": ["whipped cream", "chocolate", "vanilla", "strawberry"],
-    "burgers": ["whipped cream", "cherry", "strawberry fruit"]
+    "burgers & sandwiches": ["whipped cream", "cherry", "strawberry fruit"]
   },
   "machines": {
     "ice_cream_machine": { "status": "down", "label": "Ice cream machine is down for cleaning" }
@@ -112,6 +110,7 @@
         "ticket.title": "Your McDonald's Order",
         "menu.button": "View McDonald's Menu",
         "menu.title": "McDonald's Favorites",
+        "menu.valueMealsCategory": "Extra Value Meals",
         "ticket.emptyHint": "Add a Big Mac, McNuggets, or McFlurry to get started.",
         "settings.voiceLabel": "AI Voice",
         "footer.extra": "I'm Lovin' It™"
@@ -146,15 +145,11 @@
       ]
     },
     "categoryIcons": {
-      "Burgers": "🍔",
-      "Chicken & Fish Sandwiches": "🍗",
-      "McNuggets & Tenders": "🍗",
-      "Meals & Combos": "🍟",
+      "Extra Value Meals": "🏷️",
+      "Burgers & Sandwiches": "🍔",
+      "Chicken & McNuggets®": "🍗",
       "Breakfast": "🥞",
-      "Fries & Sides": "🍟",
-      "Happy Meal": "😊",
-      "McCafé Coffees": "☕",
-      "Beverages": "🥤",
+      "Fries, Sides & Drinks": "🍟",
       "Sweets & Treats": "🍦"
     },
     "legal": "This is a demo application built with Microsoft Foundry and Azure AI services. It is not affiliated with, endorsed by, or sponsored by McDonald's Corporation. McDonald's, Big Mac, McNuggets, McFlurry, McCafé, and other brand names are trademarks of McDonald's Corporation."

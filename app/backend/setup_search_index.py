@@ -167,6 +167,20 @@ def create_or_update_index(
                 filterable=True,
                 facetable=True,
             ),
+            # #165: this item's own declared daypart ("breakfast"/"lunch"/"allDay"), or absent
+            # for a pack with no `features.dayparts` (every pack today except one).
+            # `filterable` (not `facetable` -- there's no menu-browsing UI need to facet on it,
+            # only tools.py's server-side `search()` OData filter) so a session bound to a mode
+            # can be restricted to `menuPeriod eq '<mode>' or menuPeriod eq 'allDay' or
+            # menuPeriod eq ''` results -- Rick's PR 166 round-1 review, required item 6: the
+            # trailing `eq ''` clause matches a period-less item within a dayparts pack (indexed
+            # below with the empty-string sentinel), keeping this filter in sync with
+            # `item_available_now`'s own always-available treatment of the same item.
+            SearchField(
+                name="menuPeriod",
+                type=SearchFieldDataType.String,
+                filterable=True,
+            ),
             SearchField(
                 name="sizes",
                 type=SearchFieldDataType.String,
@@ -258,6 +272,10 @@ def prepare_documents(menu_data: dict) -> tuple[list[dict], list[str]]:
                     "caffeineContent": item.get("caffeineContent", ""),
                     "brewingMethod": item.get("brewingMethod", ""),
                     "popularity": item.get("popularity", ""),
+                    # #165: empty string (not omitted) for a pack with no `features.dayparts` --
+                    # the field must always be present so `menuPeriod eq '<mode>'` never 400s
+                    # with "document is missing required field" on an upload/merge.
+                    "menuPeriod": item.get("menuPeriod", ""),
                     "sizes": json.dumps(item["sizes"]),
                 }
             )

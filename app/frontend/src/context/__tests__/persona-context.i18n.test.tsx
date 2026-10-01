@@ -12,6 +12,7 @@ vi.unmock("react-i18next");
 import "../../i18n/config";
 import i18next from "i18next";
 import { PersonaProvider, usePersonaContext } from "../persona-context";
+import MenuPanel from "@/components/ui/menu-panel";
 import OrderSummary from "@/components/ui/order-summary";
 import StatusMessage from "@/components/ui/status-message";
 import type { PersonaDetail, PersonasIndexResponse } from "@/types/persona";
@@ -99,6 +100,29 @@ function renderApp() {
     return render(
         <PersonaProvider>
             <TicketAndStatus />
+        </PersonaProvider>
+    );
+}
+
+/** Rick's PR 166 round-1 review, required item 9: mounts the real `MenuPanel` (not the "echo the
+ * key" `react-i18next` stub every other test file uses) alongside `selectPersona`, so the
+ * value-meals category name's `t("menu.valueMealsCategory")` lookup exercises the REAL i18next
+ * merge -- the shared, brand-neutral base string unless the active persona overrides it. */
+function MenuAndSelect() {
+    const { ready, selectPersona } = usePersonaContext();
+    if (!ready) return null;
+    return (
+        <div>
+            <MenuPanel />
+            <button onClick={() => selectPersona("test-alpha")}>select alpha</button>
+        </div>
+    );
+}
+
+function renderMenuApp() {
+    return render(
+        <PersonaProvider>
+            <MenuAndSelect />
         </PersonaProvider>
     );
 }
@@ -208,5 +232,41 @@ describe("ticket/status copy on persona switch (issue #119 item 1)", () => {
         // never part of `baseTranslationResources` -- would still resolve here even though
         // test-alpha (which never defines it) is now the active persona.
         expect(i18next.exists("ticket.betaOnlyPromo")).toBe(false);
+    });
+});
+
+describe("value-meals category name on persona switch (Rick's PR 166 round-1 review, required item 9)", () => {
+    it("resolves the shared base string, then a persona's own ui.strings override, through the real i18next merge", async () => {
+        // test-beta plays a pack with its own override (shaped like a real pack's: "Extra Value Meals");
+        // test-alpha plays a pack that never touches this key, so it must fall back to the shared,
+        // brand-neutral `translation.json` copy ("Value Meals") -- not silently inherit test-beta's.
+        const BETA_WITH_VALUE_MEALS_OVERRIDE = detailFor("test-beta", {
+            ...(BETA_DETAIL.strings.en as Record<string, string>),
+            "menu.valueMealsCategory": "Extra Value Meals"
+        });
+        const MEAL_ITEM = {
+            name: "Combo One",
+            sizes: [{ size: "Standard", price: 7.99 }],
+            description: "A fixture combo.",
+            mealNumber: "1"
+        };
+        mockFetchSequence(url => {
+            if (url === "/api/personas") return { ok: true, body: TWO_PERSONA_INDEX };
+            if (url === "/api/personas/test-beta") return { ok: true, body: BETA_WITH_VALUE_MEALS_OVERRIDE };
+            if (url === "/api/personas/test-alpha") return { ok: true, body: ALPHA_DETAIL };
+            if (url === "/personas/test-beta/menu.json") return { ok: true, body: { menuItems: [{ category: "Combos", items: [MEAL_ITEM] }] } };
+            if (url === "/personas/test-alpha/menu.json") return { ok: true, body: { menuItems: [{ category: "Combos", items: [MEAL_ITEM] }] } };
+            return { ok: false, body: null };
+        });
+        renderMenuApp();
+
+        await waitFor(() => expect(screen.getByText("Extra Value Meals")).toBeInTheDocument());
+
+        await act(async () => {
+            screen.getByText("select alpha").click();
+        });
+
+        await waitFor(() => expect(screen.getByText("Value Meals")).toBeInTheDocument());
+        expect(screen.queryByText("Extra Value Meals")).not.toBeInTheDocument();
     });
 });

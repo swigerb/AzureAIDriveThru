@@ -222,6 +222,7 @@ public sealed class PromptLoaderTests : IDisposable
               machine_unavailable: "Sorry, that isn't available right now."
               extras_blocked_category: "Extras can't be added to that category right now."
               extras_no_base_item: "Extras need a base item in the order first."
+              item_out_of_mode: "Sorry, that isn't on the menu right now."
             """);
         File.WriteAllText(Path.Combine(promptsDir, "hints.yaml"), """
             hints:

@@ -20,11 +20,11 @@ public sealed class OrderToolExecutorBundleAndExtrasTests
     private const int MaxItemQuantity = 10;
     private const int MaxOrderItems = 25;
 
-    private static OrderToolExecutor NewExecutor(Persona persona)
+    private static OrderToolExecutor NewExecutor(Persona persona, string? menuMode = null)
     {
         var menu = PersonaOrderFactory.GetMenuCatalog(persona);
         var order = PersonaOrderFactory.CreateOrderState(persona);
-        return new OrderToolExecutor(order, menu, promptLoader: null, MaxItemQuantity, MaxOrderItems);
+        return new OrderToolExecutor(order, menu, promptLoader: null, MaxItemQuantity, MaxOrderItems, menuMode: menuMode);
     }
 
     private static JsonElement Args(string action, string itemName, string size, int quantity, decimal? price = null)
@@ -274,5 +274,91 @@ public sealed class OrderToolExecutorBundleAndExtrasTests
         using var payload = JsonDocument.Parse(result.ToText());
         Assert.Equal("not_on_menu", payload.RootElement.GetProperty("reason").GetString());
         Assert.False(payload.RootElement.TryGetProperty("suggested_calls", out _));
+    }
+
+    // ── Issue 165: item_out_of_mode gate (MenuCatalog.ItemAvailableNow, add-only) ───────────
+
+    [Fact]
+    public async Task Add_BreakfastOnlyItem_WhenSessionHasNoBoundMenuMode_Succeeds()
+    {
+        // A persona with no features.dayparts (or a dayparts persona whose session somehow has
+        // no bound mode) must never gate on menuPeriod at all -- MenuCatalog.ItemAvailableNow's
+        // null-active-mode branch is a permanent no-op, mirroring menu_utils.py's
+        // item_available_now(active_mode=None) always returning True.
+        var executor = NewExecutor(DeltaFixture.Load(), menuMode: null);
+        var result = await executor.ExecuteAsync(
+            "update_order", Args("add", "Delta Breakfast Meal", "regular", 1, 4.99m), TestContext.Current.CancellationToken);
+
+        Assert.Equal(ToolResultDirection.ToBoth, result.Destination);
+    }
+
+    [Fact]
+    public async Task Add_BreakfastOnlyItem_WhenSessionBoundToBreakfast_Succeeds()
+    {
+        var executor = NewExecutor(DeltaFixture.Load(), menuMode: "breakfast");
+        var result = await executor.ExecuteAsync(
+            "update_order", Args("add", "Delta Breakfast Meal", "regular", 1, 4.99m), TestContext.Current.CancellationToken);
+
+        Assert.Equal(ToolResultDirection.ToBoth, result.Destination);
+    }
+
+    [Fact]
+    public async Task Add_BreakfastOnlyItem_WhenSessionBoundToLunch_IsRejectedOutOfMode()
+    {
+        var executor = NewExecutor(DeltaFixture.Load(), menuMode: "lunch");
+        var result = await executor.ExecuteAsync(
+            "update_order", Args("add", "Delta Breakfast Meal", "regular", 1, 4.99m), TestContext.Current.CancellationToken);
+
+        Assert.Equal(ToolResultDirection.ToServer, result.Destination);
+        using var payload = JsonDocument.Parse(result.ToText());
+        Assert.Equal("item_out_of_mode", payload.RootElement.GetProperty("reason").GetString());
+        Assert.False(payload.RootElement.GetProperty("item_added").GetBoolean());
+        Assert.Equal("Delta Breakfast Meal", payload.RootElement.GetProperty("item_name").GetString());
+        Assert.False(string.IsNullOrWhiteSpace(payload.RootElement.GetProperty("message").GetString()));
+
+        var summary = await executor.ExecuteAsync("get_order", JsonSerializer.SerializeToElement(new { }), TestContext.Current.CancellationToken);
+        var client = JsonDocument.Parse(summary.ToClientText());
+        Assert.Equal(0, client.RootElement.GetProperty("items").GetArrayLength());
+    }
+
+    [Fact]
+    public async Task Add_ItemWithNoMenuPeriod_IsAlwaysAvailableRegardlessOfBoundMenuMode()
+    {
+        // "Delta Burger" declares no menuPeriod -- an allDay item -- so it must add cleanly
+        // whichever daypart the session happens to be bound to.
+        var executor = NewExecutor(DeltaFixture.Load(), menuMode: "breakfast");
+        var result = await executor.ExecuteAsync(
+            "update_order", Args("add", "Delta Burger", "regular", 1, 3.99m), TestContext.Current.CancellationToken);
+
+        Assert.Equal(ToolResultDirection.ToBoth, result.Destination);
+    }
+
+    [Fact]
+    public async Task Modify_OnAnAlreadyAddedOutOfModeItem_IsNotGatedByMenuMode()
+    {
+        // The item_out_of_mode gate only runs for action=="add" -- a "modify" on an item the
+        // session added earlier (necessarily while it was still in-mode) must never be re-gated
+        // just because two OrderToolExecutor instances over the same OrderState happen to be
+        // constructed with different bound modes. Mirrors tools.py's update_order, which only
+        // checks item_available_now on the add branch.
+        var menu = PersonaOrderFactory.GetMenuCatalog(DeltaFixture.Load());
+        var order = PersonaOrderFactory.CreateOrderState(DeltaFixture.Load());
+        var breakfastExecutor = new OrderToolExecutor(order, menu, promptLoader: null, MaxItemQuantity, MaxOrderItems, menuMode: "breakfast");
+        await breakfastExecutor.ExecuteAsync(
+            "update_order", Args("add", "Delta Breakfast Meal", "regular", 1, 4.99m), TestContext.Current.CancellationToken);
+
+        var lunchExecutor = new OrderToolExecutor(order, menu, promptLoader: null, MaxItemQuantity, MaxOrderItems, menuMode: "lunch");
+        var result = await lunchExecutor.ExecuteAsync(
+            "update_order", Args("modify", "Delta Breakfast Meal", "regular", 1, 4.99m), TestContext.Current.CancellationToken);
+
+        // The point of this test is that the modify reaches OrderState at all (ToBoth, not
+        // ToServer-rejected item_out_of_mode) -- the item_out_of_mode gate must never fire for a
+        // "modify" action, regardless of which mode the executor instance handling it was built
+        // with. The resulting resize/requantify behavior itself is covered by #77's own tests.
+        Assert.Equal(ToolResultDirection.ToBoth, result.Destination);
+        using var client = JsonDocument.Parse(result.ToClientText());
+        var items = client.RootElement.GetProperty("items");
+        Assert.Equal(1, items.GetArrayLength());
+        Assert.Equal("Delta Breakfast Meal", items[0].GetProperty("item").GetString());
     }
 }

@@ -16,6 +16,17 @@ public sealed record PersonaMenuCategory
     [JsonPropertyName("items")] public required List<PersonaMenuItem> Items { get; init; }
     // Optional icon glyph (issue 119); the frontend falls back to a neutral default when absent.
     [JsonPropertyName("icon")] public string? Icon { get; init; }
+    // Rick's PR 166 round-1 review, required item 9: optional per-menu-mode name/icon override,
+    // rendered by the frontend only -- this backend never reads it itself (the raw menuItems.json
+    // bytes are what `/personas/{id}/menu.json` actually serves, see PersonaRoutes.cs), it just
+    // needs to round-trip through model validation at catalog load time without being rejected.
+    [JsonPropertyName("modeDisplay")] public Dictionary<string, PersonaMenuCategoryModeOverride>? ModeDisplay { get; init; }
+}
+
+public sealed record PersonaMenuCategoryModeOverride
+{
+    [JsonPropertyName("displayName")] public string? DisplayName { get; init; }
+    [JsonPropertyName("icon")] public string? Icon { get; init; }
 }
 
 public sealed record PersonaMenuItem
@@ -36,6 +47,8 @@ public sealed record PersonaMenuItem
     [JsonPropertyName("isExtra")] public bool IsExtra { get; init; }
     [JsonPropertyName("menuPeriod")] public string? MenuPeriod { get; init; }
     [JsonPropertyName("mealNumber")] public string? MealNumber { get; init; }
+    // Optional calorie count (issue 165), shown alongside the price on the shared item card.
+    [JsonPropertyName("calories")] public int? Calories { get; init; }
 }
 
 public sealed record PersonaMenuItemSize

@@ -169,7 +169,7 @@ class OrderState:
 
     def create_session(self, persona: "Persona | None" = None, model_id: str | None = None,
                         model_deployment: str | None = None, model_reasoning: bool | None = None,
-                        model_pipeline: str | None = None) -> str:
+                        model_pipeline: str | None = None, menu_mode: str | None = None) -> str:
         """Create a new, empty order-state session.
 
         *persona* (#74, Rick's PR #102 review item 2): the session is bound to *persona*, or to
@@ -187,10 +187,29 @@ class OrderState:
         (``_forward_messages`` falls back to ``self.deployment``/the process-wide reasoning
         heuristic, never a stale/incorrect value). *model_pipeline* (Rick's PR #106 review item
         3) omitted defaults to ``"realtime"`` -- the only pipeline a session can be bound to
-        before #82/#81 land."""
+        before #82/#81 land.
+
+        *menu_mode* (#165): this session's own bound daypart -- ``"breakfast"`` or ``"lunch"`` --
+        for a persona that opts into ``features.dayparts``, resolved once by the caller
+        (``rtmt.py``'s websocket handshake, from an optional ``?mode=`` query param, defaulting
+        to ``"lunch"`` -- the original reference app's own default, #164 decision D3) before the
+        session is ever created -- no mid-conversation mode switching, exactly like *persona* and
+        *model_id* above. Always ``None`` for a persona that does not declare
+        ``features.dayparts`` -- ``get_menu_mode``/``item_available_now`` below never gate
+        anything for those sessions."""
         persona = persona or default_persona.get_default_persona()
         model_id = model_id or persona.manifest.models.realtime.default
         model_pipeline = model_pipeline or "realtime"
+        # #165: a persona that doesn't declare `features.dayparts` is never mode-bound,
+        # regardless of what a caller passed -- there is no daypart to switch between, so
+        # `get_menu_mode`/every mode-aware gate below stays a no-op for it. A persona that DOES
+        # declare it always resolves to a real mode -- "lunch" (the original reference app's own
+        # default, #164 decision D3) for an omitted/unrecognized `?mode=` value, never a
+        # silently-unbound session.
+        if persona.manifest.features.dayparts:
+            menu_mode = menu_mode if menu_mode in ("breakfast", "lunch") else "lunch"
+        else:
+            menu_mode = None
         session_id = str(uuid.uuid4())
         session_token = str(uuid.uuid4())
         empty_summary = OrderSummary(
@@ -225,6 +244,12 @@ class OrderState:
             # not a persona bound via some other catalog, e.g. a test's own fixture catalog).
             "_persona_default_model_id": persona.manifest.models.realtime.default,
             "_menu": get_catalog_for_persona(persona),
+            # #165: this session's own bound daypart (``"breakfast"``/``"lunch"``), or ``None``
+            # for a persona that doesn't declare ``features.dayparts`` -- see this method's own
+            # doc comment above. ``get_menu_mode`` is the single reader; ``tools.py``'s
+            # ``search``/``update_order`` and ``menu_utils.MenuCatalog.item_available_now`` are
+            # the only gates that act on it.
+            "_menu_mode": menu_mode,
             "_tz": ZoneInfo(persona.manifest.store.timezone),
             "_tax_rate": to_decimal(persona.manifest.pricing.taxRate),
             "_happy_hour_discount": (
@@ -791,6 +816,18 @@ class OrderState:
             return default_persona.get_default_menu_catalog()
         self._check_owner(session_id)
         return self._menu_for(self.sessions[session_id])
+
+    def get_menu_mode(self, session_id: str) -> str | None:
+        """This session's own bound daypart (``"breakfast"`` | ``"lunch"``), or ``None`` for a
+        persona that doesn't declare ``features.dayparts`` (#165) -- resolved once at
+        ``create_session`` and fixed for the life of the session, exactly like
+        ``get_persona_id``/``get_model_id`` above. Falls back to ``None`` for a *session_id* that
+        isn't a live session at all (same defensive fallback as every other getter here) -- a
+        caller must treat ``None`` as "no mode gate applies", never as "breakfast or lunch, TBD"."""
+        if session_id not in self.sessions:
+            return None
+        self._check_owner(session_id)
+        return self.sessions[session_id].get("_menu_mode")
 
     def is_happy_hour_for_session(self, session_id: str) -> bool:
         """Public, session-scoped counterpart of ``_is_happy_hour_for`` for callers outside this

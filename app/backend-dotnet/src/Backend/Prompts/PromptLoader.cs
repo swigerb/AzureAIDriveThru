@@ -42,6 +42,7 @@ public sealed class PromptLoader
         "machine_unavailable",
         "extras_blocked_category",
         "extras_no_base_item",
+        "item_out_of_mode",
     ];
 
     public string PersonaId { get; }

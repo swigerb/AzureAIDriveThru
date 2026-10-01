@@ -47,6 +47,7 @@ REQUIRED_ERROR_MESSAGE_KEYS: tuple[str, ...] = (
     "machine_unavailable",  # #116: update_order add -- item's requiresMachine is reported "down"
     "extras_blocked_category",  # #116: update_order add -- an extra with a blocked base category
     "extras_no_base_item",  # #116: update_order add -- an extra with no allowed base item yet
+    "item_out_of_mode",  # #165: update_order add -- item resolves, isn't offered in this session's active menu mode
 )
 
 # personas/ sits at the repo root in a checkout (design doc section 4.1), or right next to this

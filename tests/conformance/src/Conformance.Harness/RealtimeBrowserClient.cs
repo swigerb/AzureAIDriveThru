@@ -116,7 +116,7 @@ public sealed class RealtimeBrowserClient : IAsyncDisposable
     /// </summary>
     public static async Task<RealtimeBrowserClient> ConnectAsync(
         Uri backendBaseUri, bool offerDeflate = false, string? origin = null, string? persona = null,
-        string? model = null, bool attachAccessToken = true, string? accessToken = null,
+        string? model = null, string? mode = null, bool attachAccessToken = true, string? accessToken = null,
         bool attachSessionToken = true, string? sessionToken = null, CancellationToken cancellationToken = default)
     {
         var resolvedAccessToken = attachAccessToken
@@ -174,6 +174,14 @@ public sealed class RealtimeBrowserClient : IAsyncDisposable
         if (model is not null)
         {
             queryParams.Add($"model={Uri.EscapeDataString(model)}");
+        }
+        // Issue 165: an explicit `mode` query param binds the session to that daypart
+        // ("breakfast"/"lunch") for a persona that declares `features.dayparts` -- omitted (the
+        // default null) matches today's behaviour exactly, defaulting to "lunch" for a
+        // dayparts-declaring persona or staying unbound for a persona with no menu-mode feature.
+        if (mode is not null)
+        {
+            queryParams.Add($"mode={Uri.EscapeDataString(mode)}");
         }
         var query = queryParams.Count > 0 ? $"?{string.Join('&', queryParams)}" : "";
         var wsUri = new Uri($"ws://{backendBaseUri.Host}:{backendBaseUri.Port}/realtime{query}");

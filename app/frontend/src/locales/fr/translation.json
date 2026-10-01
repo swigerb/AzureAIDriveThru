@@ -33,7 +33,8 @@
         "title": "Menu",
         "button": "Voir le menu",
         "loading": "Chargement du menu…",
-        "loadError": "Impossible de charger le menu. Veuillez réessayer plus tard."
+        "loadError": "Impossible de charger le menu. Veuillez réessayer plus tard.",
+        "valueMealsCategory": "Menus avantage"
     },
     "ticket": {
         "kicker": "Ticket de commande",

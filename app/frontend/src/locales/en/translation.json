@@ -33,7 +33,8 @@
         "title": "Menu",
         "button": "View Menu",
         "loading": "Loading menu…",
-        "loadError": "Couldn't load the menu. Please try again later."
+        "loadError": "Couldn't load the menu. Please try again later.",
+        "valueMealsCategory": "Value Meals"
     },
     "ticket": {
         "kicker": "Order ticket",

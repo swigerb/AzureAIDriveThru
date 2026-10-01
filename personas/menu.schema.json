@@ -21,11 +21,29 @@
       "properties": {
         "category": { "type": "string", "minLength": 1 },
         "icon": { "type": "string", "minLength": 1 },
+        "modeDisplay": {
+          "type": "object",
+          "description": "Rick's PR 166 round-1 review, required item 9: optional per-menu-mode override of this category's displayName/icon -- e.g. the original reference app renamed 'Fries, Sides & Drinks' to 'Sides & Drinks' (with a different icon) while bound to breakfast. Absent for every category that doesn't change name/icon by mode.",
+          "additionalProperties": false,
+          "properties": {
+            "breakfast": { "$ref": "#/$defs/categoryModeOverride" },
+            "lunch": { "$ref": "#/$defs/categoryModeOverride" },
+            "allDay": { "$ref": "#/$defs/categoryModeOverride" }
+          }
+        },
         "items": {
           "type": "array",
           "minItems": 1,
           "items": { "$ref": "#/$defs/item" }
         }
+      }
+    },
+    "categoryModeOverride": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "displayName": { "type": "string", "minLength": 1 },
+        "icon": { "type": "string", "minLength": 1 }
       }
     },
     "item": {
@@ -67,8 +85,9 @@
         },
         "requiresMachine": { "type": "string" },
         "isExtra": { "type": "boolean", "default": false },
-        "menuPeriod": { "type": "string" },
-        "mealNumber": { "type": "string" }
+        "menuPeriod": { "type": "string", "enum": ["breakfast", "lunch", "allDay"] },
+        "mealNumber": { "type": "string" },
+        "calories": { "type": "integer", "minimum": 0 }
       }
     }
   }

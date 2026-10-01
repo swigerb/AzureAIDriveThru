@@ -62,8 +62,8 @@ def brand_dir(tmp_path):
         ],
     }), encoding="utf-8")
 
-    # Error messages (with Jinja2 template). Includes all seven of prompt_loader.py's
-    # REQUIRED_ERROR_MESSAGE_KEYS (#125) plus two extra keys used only by this file's own
+    # Error messages (with Jinja2 template). Includes all eight of prompt_loader.py's
+    # REQUIRED_ERROR_MESSAGE_KEYS (#125, #165) plus two extra keys used only by this file's own
     # Jinja2-rendering tests, so this fixture pack loads under the new startup validation.
     (brand / "error_messages.yaml").write_text(yaml.dump({
         "version": "1.0.0",
@@ -77,6 +77,7 @@ def brand_dir(tmp_path):
             "machine_unavailable": "Sorry, {{ item_name }} isn't available right now.",
             "extras_blocked_category": "Extras can't be added to that category right now.",
             "extras_no_base_item": "Extras need a base item in the order first.",
+            "item_out_of_mode": "Sorry, {{ item_name }} isn't available in {{ mode_label }} right now.",
         },
     }), encoding="utf-8")
 

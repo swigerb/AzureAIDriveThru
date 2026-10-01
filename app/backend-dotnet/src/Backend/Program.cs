@@ -205,15 +205,17 @@ var searchConfig = SearchConfig.FromAppConfig(appConfig);
 var searchEndpointConfig = SearchEndpointConfig.FromEnvironment();
 var searchHttpClient = new HttpClient();
 
-IToolExecutor BuildSessionToolExecutor(Persona sessionPersona, PromptLoader? sessionPromptLoader)
+IToolExecutor BuildSessionToolExecutor(Persona sessionPersona, PromptLoader? sessionPromptLoader, string? sessionMenuMode)
 {
     var menu = PersonaOrderFactory.GetMenuCatalog(sessionPersona);
     var orderState = PersonaOrderFactory.CreateOrderState(sessionPersona);
     var orderTools = new OrderToolExecutor(
-        orderState, menu, sessionPromptLoader, businessRulesConfig.MaxItemQuantity, businessRulesConfig.MaxOrderItems);
+        orderState, menu, sessionPromptLoader, businessRulesConfig.MaxItemQuantity, businessRulesConfig.MaxOrderItems,
+        sessionMenuMode);
     var searchTool = new SearchTool(
         searchHttpClient, searchEndpointConfig, searchConfig, menu, sessionPromptLoader,
-        sessionPersona.Search.IndexName, sessionPersona.Id, bearerTokenProvider: null, logger: logger);
+        sessionPersona.Search.IndexName, sessionPersona.Id, bearerTokenProvider: null, logger: logger,
+        menuMode: sessionMenuMode);
     return new SessionToolExecutor(orderTools, searchTool);
 }
 
@@ -325,6 +327,45 @@ app.MapGet("/realtime", async (HttpContext context) =>
     }
     var persona = personaCatalog.Get(personaId);
 
+    // Menu mode binding (issue 165): only a persona that declares features.dayparts has a menu
+    // mode at all -- a persona without that feature never shows a toggle in Settings, so a stray
+    // ?mode= for it is silently ignored here (forced to null) rather than rejected, since there
+    // is no reachable client path that would ever legitimately send one. For a
+    // dayparts-declaring persona, an explicit, unrecognized ?mode= value IS rejected loudly --
+    // same "no silent fallback" philosophy as persona/model above -- while an OMITTED ?mode=
+    // defaults to "lunch" (the original reference app's own default, decision D3) further down,
+    // not here. TryGetValue (not Query["mode"].ToString()) preserves the distinct "absent" vs
+    // "present but empty" cases, same as requestedModelId below.
+    var requestedMenuMode = context.Request.Query.TryGetValue("mode", out var modeQueryValues)
+        ? modeQueryValues.ToString()
+        : null;
+    if (persona.Features.Dayparts)
+    {
+        if (requestedMenuMode is not (null or "breakfast" or "lunch"))
+        {
+            // Rick's PR 166 round-1 review, required item 7: never log the raw, attacker-supplied
+            // ?mode= value verbatim -- it is unbounded length and may carry CR/LF as a
+            // log-injection attempt. Only the persona id and the value's length go to the log;
+            // the 400 response body below still echoes the value via PyRepr, which is fine (same
+            // as the persona/model 404s above), since that goes out over HTTP to the same client
+            // that sent it, not into the shared log stream.
+            logger.LogWarning(
+                "Rejected WebSocket for invalid menu mode (length={MenuModeLength}, persona={PersonaId})",
+                requestedMenuMode?.Length ?? 0, persona.Id);
+            return Results.Text(
+                $"Invalid menu mode: {PyRepr(requestedMenuMode)} (expected 'breakfast' or 'lunch')", statusCode: 400);
+        }
+    }
+    else
+    {
+        requestedMenuMode = null;
+    }
+    // Default normalization (decision D3): an omitted/valid ?mode= for a dayparts-declaring
+    // persona defaults to "lunch" here (there's no separate session-creation step to defer this
+    // to, unlike the Python port) -- a persona with no features.dayparts stays null, so
+    // OrderToolExecutor/SearchTool's own menu-mode gates/filters are a pure no-op for it.
+    var menuMode = persona.Features.Dayparts ? (requestedMenuMode ?? "lunch") : null;
+
     // Model dispatch + resolution (issue #75): resolves which pipeline processor owns this
     // session, then validates the requested (or defaulted) model against that persona/pipeline.
     // Both stages 404 as plain text on failure, same as rtmt.py.
@@ -383,7 +424,7 @@ app.MapGet("/realtime", async (HttpContext context) =>
             // bootstrap, voice lock, greeting gate, tool-call dispatch, echo suppression/barge-in,
             // rejected-session-update recovery, rate-limit notice) instead of draining the generic
             // per-session mailbox -- see RealtimeProcessor.RunSessionAsync's own doc comment.
-            await realtimeProc.RunSessionAsync(socket, persona, resolvedModel, sessionId, context.RequestAborted)
+            await realtimeProc.RunSessionAsync(socket, persona, resolvedModel, sessionId, context.RequestAborted, menuMode)
                 .ConfigureAwait(false);
         }
         else

@@ -38,14 +38,14 @@ public static class OrderScenarioHelpers
     /// helper already established for that file alone.
     /// </summary>
     public static async Task<(RealtimeBrowserClient Browser, FakeRealtimeConnection Connection, int RoundTripIndex)> ConnectAndGreetAsync(
-        ConformanceFixture fixture, CancellationToken ct, string? persona = null)
+        ConformanceFixture fixture, CancellationToken ct, string? persona = null, string? mode = null)
     {
         var noneOpen = await fixture.Realtime.WaitForNoOpenConnectionsAsync(FrameTimeout, ct);
         Assert.True(noneOpen, $"Expected no open upstream connections at test start, but " +
             $"{fixture.Realtime.OpenConnectionCount} are still open — a previous test leaked a connection.");
 
         var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, persona: persona, cancellationToken: ct);
+        var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, persona: persona, mode: mode, cancellationToken: ct);
         var connection = await connectionTask;
         Assert.True(connection is not null,
             $"No upstream connection was accepted within {FrameTimeout}" +
