@@ -5,9 +5,14 @@ import TranscriptPanel from "../transcript-panel";
 // GH-176: on a fresh load the page scrolled 725-1010px past the hero with no user input, because
 // transcript-panel.tsx called scrollIntoView() on mount, which scrolls every scrollable ancestor
 // needed to bring the target into view -- including the window itself. These tests pin down the
-// fix: autoscroll must only ever move the panel's own container (via scrollTop), never the
-// window/scrollIntoView, and must never fire on mount (empty or non-empty transcript), only when
-// new entries arrive afterwards.
+// fix: autoscroll must only ever move the panel's own container (via scrollTop), never
+// scrollIntoView/window.scrollTo and never the window itself.
+//
+// Round 2 (Rick's review item 1/2): the panel DOES scroll its own container to the bottom on
+// mount too -- the mobile transcript sheet (a Radix Sheet) only mounts this component when
+// opened mid-conversation, so it must show the newest entries immediately, not the oldest. A
+// round-1 "never scroll on mount" guard broke that case. The one thing that must still never
+// happen, on mount or afterwards, is the window itself scrolling.
 
 const makeTranscript = (count: number) =>
     Array.from({ length: count }, (_, i) => ({
@@ -54,19 +59,28 @@ describe("TranscriptPanel autoscroll (GH-176)", () => {
         vi.restoreAllMocks();
     });
 
-    it("never scrolls (container, scrollIntoView, or window) on mount with an empty transcript", () => {
-        render(<TranscriptPanel transcripts={[]} />);
+    it("on mount with an empty transcript, scrolls only its own container (never scrollIntoView/window.scrollTo, never the window)", () => {
+        const { container } = render(<TranscriptPanel transcripts={[]} />);
+        const scrollContainer = container.firstElementChild as HTMLElement;
         expect(scrollIntoViewSpy).not.toHaveBeenCalled();
         expect(scrollToSpy).not.toHaveBeenCalled();
-        expect(scrollTopWrites).toEqual([]);
+        // The only scroll on mount is a write to the panel's own container, scrolled to the
+        // bottom (scrollTop := scrollHeight) -- never scrollIntoView, never window.scrollTo.
+        expect(scrollTopWrites).toEqual([{ target: scrollContainer, value: scrollContainer.scrollHeight }]);
         expect(window.scrollY).toBe(0);
     });
 
-    it("never scrolls (container, scrollIntoView, or window) on mount with a non-empty transcript", () => {
-        render(<TranscriptPanel transcripts={makeTranscript(5)} />);
+    it("on mount with a non-empty transcript (e.g. the mobile sheet opened mid-conversation), scrolls its own container to the bottom; the window is never touched", () => {
+        // Round 2 (Rick's review item 1/2): this is the case the round-1 "never scroll on mount"
+        // guard got wrong. The mobile transcript sheet only mounts TranscriptPanel when opened
+        // mid-conversation, so on mount it must already show the newest entries, not the oldest.
+        const { container } = render(<TranscriptPanel transcripts={makeTranscript(5)} />);
+        const scrollContainer = container.firstElementChild as HTMLElement;
         expect(scrollIntoViewSpy).not.toHaveBeenCalled();
         expect(scrollToSpy).not.toHaveBeenCalled();
-        expect(scrollTopWrites).toEqual([]);
+        // The only scroll on mount is a write to the panel's own container, scrolled to the
+        // bottom -- never scrollIntoView, never window.scrollTo, never the window itself.
+        expect(scrollTopWrites).toEqual([{ target: scrollContainer, value: scrollContainer.scrollHeight }]);
         expect(window.scrollY).toBe(0);
     });
 
@@ -77,6 +91,10 @@ describe("TranscriptPanel autoscroll (GH-176)", () => {
         // this specific instance so the assertion can distinguish "scrolled to bottom" from "not
         // scrolled" rather than both reading back as 0.
         Object.defineProperty(scrollContainer, "scrollHeight", { value: 999, configurable: true });
+        // The mount render above already wrote a scrollTop once (now that mount scrolls too, per
+        // item 1) -- clear it so this assertion isolates the write caused by THIS rerender's new
+        // entries, which is what this test is actually about.
+        scrollTopWrites.length = 0;
 
         rerender(<TranscriptPanel transcripts={makeTranscript(2)} />);
 

@@ -52,17 +52,14 @@ export default memo(function TranscriptPanel({ transcripts, className }: Transcr
     // window. `scrollIntoView()` scrolls every scrollable ancestor needed to bring the target
     // into view -- on a fresh load, before layout has settled, that could include the window
     // itself, which is exactly what dragged the whole page ~725-1010px past the hero with no
-    // user input.
+    // user input. Writing `container.scrollTop` directly can never do that, so (per round-1
+    // review) there is no need to skip the mount run: the desktop panel and the mobile sheet's
+    // panel both want "at the newest entry" as soon as they have a container to scroll, and the
+    // mobile transcript sheet (a Radix `Sheet`) only mounts this component when opened mid
+    // conversation, so skipping mount left it showing the oldest entries instead of the newest.
     const containerRef = useRef<HTMLDivElement>(null);
-    // Skip the very first run of the transcripts effect (mount, empty or dummy-seeded transcript)
-    // -- autoscroll should only happen once NEW entries arrive, never on mount.
-    const hasMountedRef = useRef(false);
 
     useEffect(() => {
-        if (!hasMountedRef.current) {
-            hasMountedRef.current = true;
-            return;
-        }
         const container = containerRef.current;
         if (container) {
             container.scrollTop = container.scrollHeight;
