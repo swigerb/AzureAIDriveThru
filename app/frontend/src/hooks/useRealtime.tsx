@@ -307,7 +307,18 @@ export default function useRealTime({
     // updates the `personaId` prop later, once the async persona fetch resolves. onClose uses this
     // (together with switchedSinceOpen) to tell "this ended close is the first half of a switch"
     // apart from an ordinary explicit-new-order ended close, in BOTH possible arrival orders.
+    // Issue GH-171 round 3, H4: this now stays `true` for the WHOLE pending-switch window --
+    // onClose's own branch below deliberately no longer clears it once the old socket's close has
+    // been suppressed. It is cleared only by onOpen (the switch succeeded: some socket, new or
+    // recovered, is live again) or by cancelSwitch() (the switch failed). reconnect() reads it to
+    // tell "a switch is pending, the url just hasn't moved yet" apart from a genuinely dead socket.
     const switchingRef = useRef(false);
+    // Issue GH-171 round 3, H4: set by reconnect() when it is called while switchingRef is still
+    // true -- a tap landed before the pending switch resolved one way or the other. Neither onOpen
+    // (success) nor cancelSwitch() (failure) know on their own whether the guest actually asked to
+    // reconnect in the meantime; this is the only record of that. Cleared by whichever of the two
+    // runs first.
+    const reconnectRequestedRef = useRef(false);
 
     // Synchronous render-time reset (issue GH-171 round 2, H1/H1b): a persona/model/menuMode
     // change makes react-use-websocket replace the socket, but the OLD socket's own close event is
@@ -450,7 +461,11 @@ export default function useRealTime({
             // reconnect to the OLD persona after a FAILED one (issue GH-171 round 2, H2) -- ends
             // whatever switch attempt was pending. Left set, a later ordinary endSession() (e.g.
             // "start a new order") would be wrongly suppressed as "still switching" in onClose.
+            // Issue GH-171 round 3, H4: also clears any reconnect() that was recorded (not acted
+            // on) while this switch was pending -- it was for whichever persona is NOW live, so
+            // there is nothing left to do with it.
             switchingRef.current = false;
+            reconnectRequestedRef.current = false;
             // Literal first frame on every open when this tab holds a resume id.
             const resumeId = useDirectAoaiApi ? null : resumeStore.get();
             if (resumeId) {
@@ -498,7 +513,14 @@ export default function useRealTime({
                 // reconnect here, or clearing state the new socket needs, is exactly the double
                 // -connect / dropped-session.update bug this guard exists to prevent.
                 endingRef.current = false;
-                switchingRef.current = false;
+                // Issue GH-171 round 3, H4: deliberately NOT `switchingRef.current = false` here
+                // anymore. This close can land well before the persona fetch it belongs to has
+                // settled either way -- clearing the flag this early is exactly what let a tap's
+                // reconnect() (readyState is genuinely CLOSED here, same-identity url hasn't
+                // moved yet) mistake "a switch is pending" for "the session is just dead", and
+                // reopen a socket for the OLD persona. switchingRef now stays true for the whole
+                // pending-switch window and is cleared only by onOpen (success) or cancelSwitch()
+                // (failure) -- see reconnect() and cancelSwitch() below.
                 return;
             }
             const kind = classifyClose(event);
@@ -556,6 +578,19 @@ export default function useRealTime({
     // Re-open after an idle close or exhausted retries. No token pre-fetch needed here (item B2):
     // `getSocketUrl` fetches a fresh session token and Entra access token itself on this attempt.
     const reconnect = useCallback(() => {
+        // Issue GH-171 round 3, H4: a persona switch is still pending (the old socket's close has
+        // already been suppressed above, but the fetch it's waiting on hasn't settled either way
+        // -- so getSocketUrl's identity, and therefore react-use-websocket's own url-keyed effect,
+        // hasn't moved yet). readyState is genuinely CLOSED right now, same as a real dead
+        // session -- that is exactly what let the old CLOSED-branch toggle below mistake this for
+        // one and reopen a socket for the persona being switched AWAY from, which then received
+        // the queued session.update while the new persona's eventual socket got nothing. Record
+        // the request instead of acting on it: onOpen (switch succeeds) or cancelSwitch() (switch
+        // fails) decide what happens next.
+        if (switchingRef.current) {
+            reconnectRequestedRef.current = true;
+            return;
+        }
         if (shouldConnect) {
             // issue GH-171 round 2, H2: a FAILED persona switch leaves `shouldConnect` already
             // `true` with no socket actually open. endSession({ switching: true }) closed the old
@@ -566,6 +601,8 @@ export default function useRealTime({
             // (that's exactly the orphan-socket bug this file now avoids). Nothing else will ever
             // open a new socket for this identity on its own, so a manual reconnect() (e.g. the
             // guest tapping the mic again) has to force react-use-websocket's effect to re-fire.
+            // (By the time this runs, cancelSwitch() has already cleared switchingRef -- see
+            // above -- so this branch is reached only once the failure is confirmed.)
             if (readyState === ReadyState.CLOSED) {
                 setShouldConnect(false);
                 // Same async-gap trick as the "ended" dance above: a same-tick false->true toggle
@@ -576,6 +613,25 @@ export default function useRealTime({
             return;
         }
         setShouldConnect(true);
+    }, [shouldConnect, readyState]);
+
+    // Issue GH-171 round 3, H4: the explicit failure signal from App.tsx's handleSelectPersona,
+    // called once selectPersona()'s returned promise resolves `false` (the persona detail fetch
+    // failed, or the id hadn't actually changed). Clears switchingRef so reconnect() (and onClose's
+    // branch selection above) stop treating this as a pending switch. If a tap already called
+    // reconnect() while the switch was still in flight (reconnectRequestedRef), or the socket is
+    // simply sitting CLOSED with nothing else ever going to reopen it (the orphan-prevention above
+    // left it that way on purpose), this performs the same false-then-true toggle reconnect()
+    // itself uses -- recovering the OLD persona's session (the switch never actually happened)
+    // rather than leaving the guest stranded on a dead socket.
+    const cancelSwitch = useCallback(() => {
+        switchingRef.current = false;
+        const wasRequested = reconnectRequestedRef.current;
+        reconnectRequestedRef.current = false;
+        if (shouldConnect && (readyState === ReadyState.CLOSED || wasRequested)) {
+            setShouldConnect(false);
+            Promise.resolve().then(() => setShouldConnect(true));
+        }
     }, [shouldConnect, readyState]);
 
     // Keep refs in sync so onMessageReceived can call sendJsonMessage, and so onOpen/onClose can
@@ -673,6 +729,7 @@ export default function useRealTime({
         sendVoiceChoice,
         endSession,
         isConnected,
-        reconnect
+        reconnect,
+        cancelSwitch
     };
 }

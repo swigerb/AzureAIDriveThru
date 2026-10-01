@@ -1,5 +1,5 @@
 import { render, screen, waitFor } from "@testing-library/react";
-import { act } from "react";
+import { act, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { PersonaProvider, usePersonaContext } from "../persona-context";
@@ -43,6 +43,10 @@ const ALPHA_DETAIL: PersonaDetail = {
 
 function Probe() {
     const { personas, backends, current, logoUrl, ready, error, selectPersona } = usePersonaContext();
+    // Issue GH-171 round 3, item 1: selectPersona()'s return value is the only signal App.tsx's
+    // handleSelectPersona has for a FAILED switch (on failure, nothing else -- current/personaId --
+    // ever changes). Captured here so a test can assert on it directly.
+    const [lastResult, setLastResult] = useState<string>("");
     return (
         <div>
             <span data-testid="current-id">{current.id}</span>
@@ -52,8 +56,11 @@ function Probe() {
             <span data-testid="persona-count">{personas.length}</span>
             <span data-testid="backend-count">{backends.length}</span>
             <span data-testid="logo-url">{logoUrl}</span>
+            <span data-testid="select-result">{lastResult}</span>
             <button onClick={() => selectPersona("test-alpha")}>select alpha</button>
             <button onClick={() => selectPersona("test-beta")}>select beta</button>
+            <button onClick={() => void selectPersona("test-alpha").then(ok => setLastResult(String(ok)))}>select alpha (await)</button>
+            <button onClick={() => void selectPersona("test-beta").then(ok => setLastResult(String(ok)))}>select beta (await)</button>
         </div>
     );
 }
@@ -200,6 +207,64 @@ describe("PersonaProvider", () => {
         await waitFor(() => expect(screen.getByTestId("error")).not.toHaveTextContent(""));
         // Stays on the default persona rather than showing a half-applied/blank one.
         expect(screen.getByTestId("current-id")).toHaveTextContent("test-beta");
+    });
+
+    // Issue GH-171 round 3, item 1: App.tsx's handleSelectPersona awaits selectPersona()'s
+    // returned promise and calls useRealtime's cancelSwitch() only when it resolves `false` --
+    // there is no other reliable signal for a failed switch, since on failure nothing else
+    // (current, personaId) ever changes either.
+    it("selectPersona resolves true once the requested persona's detail has actually loaded", async () => {
+        mockFetchSequence(url => {
+            if (url === "/api/personas") return { ok: true, body: TWO_PERSONA_INDEX };
+            if (url === "/api/personas/test-beta") return { ok: true, body: { ...ALPHA_DETAIL, id: "test-beta" } };
+            if (url === "/api/personas/test-alpha") return { ok: true, body: ALPHA_DETAIL };
+            return { ok: false, body: null };
+        });
+        renderProvider();
+        await waitFor(() => expect(screen.getByTestId("ready")).toHaveTextContent("true"));
+
+        await act(async () => {
+            screen.getByText("select alpha (await)").click();
+        });
+
+        await waitFor(() => expect(screen.getByTestId("select-result")).toHaveTextContent("true"));
+        expect(screen.getByTestId("current-id")).toHaveTextContent("test-alpha");
+    });
+
+    it("selectPersona resolves false when the persona detail fetch fails (a 404), and the previous selection stays active", async () => {
+        mockFetchSequence(url => {
+            if (url === "/api/personas") return { ok: true, body: TWO_PERSONA_INDEX };
+            if (url === "/api/personas/test-beta") return { ok: true, body: { ...ALPHA_DETAIL, id: "test-beta" } };
+            return { ok: false, body: null }; // test-alpha's detail fetch 404s
+        });
+        renderProvider();
+        await waitFor(() => expect(screen.getByTestId("ready")).toHaveTextContent("true"));
+
+        await act(async () => {
+            screen.getByText("select alpha (await)").click();
+        });
+
+        await waitFor(() => expect(screen.getByTestId("select-result")).toHaveTextContent("false"));
+        expect(screen.getByTestId("current-id")).toHaveTextContent("test-beta");
+    });
+
+    it("selectPersona resolves false (not true) on the early-return no-op when the id is already selected", async () => {
+        mockFetchSequence(url => {
+            if (url === "/api/personas") return { ok: true, body: TWO_PERSONA_INDEX };
+            if (url === "/api/personas/test-beta") return { ok: true, body: { ...ALPHA_DETAIL, id: "test-beta" } };
+            if (url === "/api/personas/test-alpha") return { ok: true, body: ALPHA_DETAIL };
+            return { ok: false, body: null };
+        });
+        renderProvider();
+        await waitFor(() => expect(screen.getByTestId("ready")).toHaveTextContent("true"));
+        expect(screen.getByTestId("current-id")).toHaveTextContent("test-beta"); // the catalog default
+
+        await act(async () => {
+            // test-beta is already selected: selectPersona's own `id === personaId` guard fires.
+            screen.getByText("select beta (await)").click();
+        });
+
+        await waitFor(() => expect(screen.getByTestId("select-result")).toHaveTextContent("false"));
     });
 
     it("never throws even though the real i18next singleton is uninitialized in tests (addResourceBundle guard)", async () => {

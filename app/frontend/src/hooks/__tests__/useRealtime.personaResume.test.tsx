@@ -103,4 +103,46 @@ describe("useRealTime resume id storage, keyed per persona", () => {
         // test-beta has no stored resume id of its own yet: no extension.resume frame for either persona.
         expect(ws.send).not.toHaveBeenCalledWith({ type: "extension.resume", resume_id: "RID-ALPHA" }, false);
     });
+
+    // Issue GH-171 round 1 review gap, filled in round 3: the server only honours
+    // `extension.resume` as the literal first frame on a socket -- a test for this was called out
+    // as missing in round 1, but never actually written.
+    it("sends extension.resume as the literal first frame, ahead of anything already queued for this open (e.g. startSession()'s session.update)", async () => {
+        sessionStorage.setItem(resumeStorageKey("test-beta"), "RID-BETA");
+        const { result } = await renderForPersona("test-beta");
+
+        // Queued while disconnected -- the same shape as App.tsx's onToggleListening calling
+        // startSession() right after reconnect(): whatever this hook queues ahead of time must
+        // never jump ahead of the resume frame once the socket actually opens.
+        act(() => result.current.startSession());
+        act(() => last().options.onOpen(new Event("open")));
+
+        const sent = ws.send.mock.calls.map(call => (call[0] as { type: string }).type);
+        expect(sent[0]).toBe("extension.resume");
+        expect(sent).toContain("session.update");
+        expect(sent.indexOf("extension.resume")).toBeLessThan(sent.indexOf("session.update"));
+    });
+
+    // Issue GH-171 round 1 review gap, filled in round 3: round 1 only asserted the NEW persona's
+    // key ends up empty (no resume id of its own yet) -- never that the OLD persona's own key,
+    // which DID hold a live resume id, is actually cleared rather than just left stale for a
+    // later switch back to find and (wrongly) try to resume.
+    it("clears the OLD persona's own resume key immediately on endSession({ switching: true }), before the new persona's socket ever opens", async () => {
+        sessionStorage.setItem(resumeStorageKey("test-alpha"), "RID-ALPHA");
+        const { result, rerender } = await renderForPersona("test-alpha");
+        act(() => last().options.onOpen(new Event("open")));
+
+        act(() => result.current.endSession({ switching: true }));
+
+        // Cleared immediately -- not left behind for a later switch back to test-alpha to
+        // (wrongly) resume into, and not copied anywhere under test-beta's own key either.
+        expect(sessionStorage.getItem(resumeStorageKey("test-alpha"))).toBeNull();
+        expect(sessionStorage.getItem(resumeStorageKey("test-beta"))).toBeNull();
+
+        rerender({ id: "test-beta" });
+        await waitFor(async () => expect(await resolveUrl()).toContain("persona=test-beta"));
+        act(() => last().options.onOpen(new Event("open")));
+
+        expect(sessionStorage.getItem(resumeStorageKey("test-alpha"))).toBeNull();
+    });
 });

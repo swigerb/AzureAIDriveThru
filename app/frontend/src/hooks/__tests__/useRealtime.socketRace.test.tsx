@@ -77,6 +77,12 @@ afterEach(() => {
 });
 
 const sentTypes = (socket: FakeWebSocket) => socket.sent.map(raw => JSON.parse(raw).type);
+// Issue GH-171 round 3 (missing round-1 coverage, item 3): `toContain("session.update")` alone
+// never catches a DUPLICATE send -- e.g. a stray queued frame replayed twice onto the same
+// socket, or one copy on each of two sockets. Every call site this guards against is exactly the
+// kind of double-send bug this file exists to catch, so the count has to be exact, not "at least
+// one".
+const sessionUpdateCount = (socket: FakeWebSocket) => sentTypes(socket).filter(type => type === "session.update").length;
 
 describe("useRealTime against the real react-use-websocket (issue #171 repro)", () => {
     it("still flushes session.update onto the new socket when the OLD socket's close arrives after the NEW socket's open", async () => {
@@ -104,7 +110,7 @@ describe("useRealTime against the real react-use-websocket (issue #171 repro)", 
 
         act(() => result.current.startSession());
 
-        expect(sentTypes(socketB)).toContain("session.update");
+        expect(sessionUpdateCount(socketB)).toBe(1);
         expect(socketA.sent).toHaveLength(0);
         // The stale close must not be treated as a real connection-lost event either -- it
         // belongs to a socket this hook no longer owns.
@@ -177,7 +183,7 @@ describe("useRealTime send() identity guard (issue #171 round 2, H1 regression)"
         // straight to react-use-websocket's own sendJsonMessage while socketB was still
         // CONNECTING; the library drops a send that isn't OPEN yet (keep=false) instead of
         // queuing it, and it never appears on socketB even after it opens.
-        expect(sentTypes(socketB)).toContain("session.update");
+        expect(sessionUpdateCount(socketB)).toBe(1);
         expect(socketA.sent).toHaveLength(0);
         expect(onConnectionLost).not.toHaveBeenCalled();
     });
@@ -215,7 +221,7 @@ describe("useRealTime send() identity guard: immediate taps right after a switch
         const socketB = FakeWebSocket.instances[1];
         act(() => socketB.triggerOpen());
 
-        expect(sentTypes(socketB)).toContain("session.update");
+        expect(sessionUpdateCount(socketB)).toBe(1);
         expect(onConnectionLost).not.toHaveBeenCalled();
     });
 });
@@ -289,7 +295,7 @@ describe("useRealTime double-connect fix on a real persona switch (issue #171 ro
         expect(onConnectionLost).not.toHaveBeenCalled();
     });
 
-    it("a FAILED persona load leaves no orphan socket, and reconnect() recovers the old persona's session (sane UI state)", async () => {
+    it("a FAILED persona load: a tap's reconnect() during the still-pending switch is a no-op; cancelSwitch() -- not reconnect() -- is what recovers the old persona's session, and the queued session.update is sent exactly once (issue GH-171 round 3, H4)", async () => {
         const onConnectionLost = vi.fn();
         const { result } = renderHook(
             ({ personaId }) => useRealTime({ enableInputAudioTranscription: true, personaId, onConnectionLost }),
@@ -315,15 +321,128 @@ describe("useRealTime double-connect fix on a real persona switch (issue #171 ro
         expect(onConnectionLost).not.toHaveBeenCalled();
 
         // Sane UI state: the next mic tap (App.tsx's onToggleListening) calls reconnect() when
-        // not connected, which must still recover -- even though `shouldConnect` was never
-        // flipped false by the (correctly suppressed) ended-dance above.
+        // not connected -- but from this hook's own point of view a switch is STILL pending
+        // (nothing has told it the fetch failed yet). Per the H4 fix this is now a no-op: readyState
+        // reads genuinely CLOSED here, exactly the state the pre-fix CLOSED-branch toggle used as
+        // its (wrong) signal to reopen a socket for "jerry" right away.
         act(() => result.current.reconnect());
+        act(() => result.current.startSession());
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        expect(FakeWebSocket.instances).toHaveLength(1); // still no orphan socket
+
+        // Only once App.tsx's handleSelectPersona learns the switch failed (selectPersona()'s
+        // returned promise resolved false) does it call cancelSwitch() -- that is what actually
+        // recovers the old persona's session, not the earlier reconnect() tap.
+        act(() => result.current.cancelSwitch());
         await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(2));
         const socketC = FakeWebSocket.instances[1];
         // Falls back to the SAME (old) persona -- the switch never actually happened.
         expect(socketC.url).toContain("persona=jerry");
         act(() => socketC.triggerOpen());
         expect(result.current.isConnected).toBe(true);
+        // The queued session.update from the earlier tap is flushed exactly once, on this
+        // recovered socket -- the no-op reconnect() call never duplicated or dropped it.
+        expect(sessionUpdateCount(socketC)).toBe(1);
+        expect(sessionUpdateCount(socketA)).toBe(0);
+    });
+});
+
+describe("useRealTime reconnect() during a pending persona switch (issue GH-171 round 3, H4)", () => {
+    it("a tap while the switch is pending never opens a socket for the OLD persona; once the switch completes, session.update reaches only the new persona's socket, exactly once (H4a)", async () => {
+        const onConnectionLost = vi.fn();
+        const { result, rerender } = renderHook(
+            ({ personaId }) => useRealTime({ enableInputAudioTranscription: true, personaId, onConnectionLost }),
+            { initialProps: { personaId: "jerry" } }
+        );
+
+        await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+        const socketA = FakeWebSocket.instances[0];
+        act(() => socketA.triggerOpen());
+
+        // App.tsx's handleSelectPersona: endSession({ switching: true }) runs synchronously; the
+        // server's close for it arrives well before the async persona fetch resolves.
+        act(() => result.current.endSession({ switching: true }));
+        act(() => socketA.triggerClose(1000, "session_ended"));
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        expect(FakeWebSocket.instances).toHaveLength(1); // suppressed cleanly, no orphan yet
+
+        // The guest taps the mic again right here (App.tsx's onToggleListening: `if
+        // (!isConnected) reconnect()`, then startSession()) -- readyState genuinely reads CLOSED,
+        // exactly what the pre-fix reconnect() used as its (wrong) signal to reopen a socket for
+        // "jerry" immediately. It must now be a no-op: switchingRef is still set.
+        act(() => result.current.reconnect());
+        act(() => result.current.startSession());
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        expect(FakeWebSocket.instances).toHaveLength(1);
+
+        // The persona fetch eventually resolves: the real prop change lands, and
+        // react-use-websocket's own url-keyed effect opens the one real replacement.
+        rerender({ personaId: "rick" });
+        await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(2));
+        const socketB = FakeWebSocket.instances[1];
+        expect(socketB.url).toContain("persona=rick");
+        act(() => socketB.triggerOpen());
+
+        expect(FakeWebSocket.instances).toHaveLength(2); // never more than one replacement
+        expect(sessionUpdateCount(socketB)).toBe(1);
+        expect(sessionUpdateCount(socketA)).toBe(0);
+        expect(onConnectionLost).not.toHaveBeenCalled();
+    });
+
+    it("a second, repeated tap (reconnect() called again) while still pending remains a no-op; the eventual switch still delivers session.update exactly once, only to the new persona's socket (H4b)", async () => {
+        const onConnectionLost = vi.fn();
+        const { result, rerender } = renderHook(
+            ({ personaId }) => useRealTime({ enableInputAudioTranscription: true, personaId, onConnectionLost }),
+            { initialProps: { personaId: "jerry" } }
+        );
+
+        await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+        const socketA = FakeWebSocket.instances[0];
+        act(() => socketA.triggerOpen());
+
+        act(() => result.current.endSession({ switching: true }));
+        act(() => socketA.triggerClose(1000, "session_ended"));
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        act(() => result.current.reconnect());
+        act(() => result.current.startSession());
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        expect(FakeWebSocket.instances).toHaveLength(1);
+
+        // A second, independent tap before the fetch has resolved -- still idempotent, still no
+        // socket for "jerry".
+        act(() => result.current.reconnect());
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        expect(FakeWebSocket.instances).toHaveLength(1);
+
+        rerender({ personaId: "rick" });
+        await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(2));
+        const socketB = FakeWebSocket.instances[1];
+        expect(socketB.url).toContain("persona=rick");
+        act(() => socketB.triggerOpen());
+
+        expect(FakeWebSocket.instances).toHaveLength(2);
+        expect(sessionUpdateCount(socketB)).toBe(1);
+        expect(sessionUpdateCount(socketA)).toBe(0);
+        expect(onConnectionLost).not.toHaveBeenCalled();
     });
 });
 
