@@ -131,4 +131,97 @@ public sealed class PersonaDiscoveryConformanceTests(ConformanceFixture fixture)
         Assert.True(metadata is not null, "Expected extension.session_metadata for a fresh session.");
         Assert.Equal("sonic", metadata!.Json.GetProperty("persona").GetString());
     });
+
+    [Fact]
+    [Trait("Dotnet", "ready")]
+    public Task Api_persona_detail_pins_tax_rate_and_ui_blocks_against_disk() => fixture.RunAsync(async () =>
+    {
+        // Issue 164 R7 (PR 167 round 1 review): green CI alone only proves nothing broke, not
+        // that the new wire fields (taxRate, hero, sessionBar, categoryIcons, assets) are
+        // actually being served with the right content. For every pack discovered on disk
+        // (same persona.json-presence convention persona_loader.py/PersonaCatalog use), GET
+        // /api/personas/{id} and deep-compare the response against that SAME pack's own
+        // persona.json, read fresh, with no literal values baked into this test.
+        var ct = TestContext.Current.CancellationToken;
+        using var http = ConformanceHttpClient.Create();
+
+        var personaIds = Directory.GetDirectories(fixture.PersonasDirectory)
+            .Where(dir => File.Exists(Path.Combine(dir, "persona.json")))
+            .Select(Path.GetFileName)
+            .OfType<string>()
+            .OrderBy(id => id, StringComparer.Ordinal)
+            .ToList();
+        Assert.True(personaIds.Count > 0, "Expected at least one persona pack on disk.");
+
+        foreach (var personaId in personaIds)
+        {
+            var personaJsonPath = Path.Combine(fixture.PersonasDirectory, personaId, "persona.json");
+            using var expectedDocument = JsonDocument.Parse(await File.ReadAllTextAsync(personaJsonPath, ct));
+            var expectedRoot = expectedDocument.RootElement;
+            var expectedUi = expectedRoot.GetProperty("ui");
+            var expectedTaxRate = expectedRoot.GetProperty("pricing").GetProperty("taxRate").GetString();
+
+            using var response = await http.GetAsync(new Uri(fixture.Backend!.BaseUri, $"/api/personas/{personaId}"), ct);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            using var actualDocument = JsonDocument.Parse(await response.Content.ReadAsStreamAsync(ct));
+            var actualRoot = actualDocument.RootElement;
+
+            Assert.Equal(expectedTaxRate, actualRoot.GetProperty("taxRate").GetString());
+            AssertJsonDeepEqual(expectedUi.GetProperty("hero"), actualRoot.GetProperty("hero"), $"{personaId}.hero");
+            AssertJsonDeepEqual(expectedUi.GetProperty("assets"), actualRoot.GetProperty("assets"), $"{personaId}.assets");
+
+            // sessionBar and categoryIcons are both optional (omitted entirely by packs that
+            // don't declare them), so only assert presence/shape when the pack's own source
+            // declares the block -- "assets.logoTile" similarly lives inside the assets
+            // comparison above, not as its own separate optional check.
+            if (expectedUi.TryGetProperty("sessionBar", out var expectedSessionBar))
+            {
+                AssertJsonDeepEqual(expectedSessionBar, actualRoot.GetProperty("sessionBar"), $"{personaId}.sessionBar");
+            }
+            if (expectedUi.TryGetProperty("categoryIcons", out var expectedCategoryIcons))
+            {
+                AssertJsonDeepEqual(expectedCategoryIcons, actualRoot.GetProperty("categoryIcons"), $"{personaId}.categoryIcons");
+            }
+        }
+    });
+
+    /// <summary>
+    /// Order-insensitive structural deep-equality for two <see cref="JsonElement"/> trees
+    /// (object key order and array element order from independently-serialized JSON can both
+    /// legitimately differ without the content being wrong), used only by the R7 pinning test
+    /// above so it can compare disk-sourced persona.json against the wire response without
+    /// either side needing to match the other's exact text layout.
+    /// </summary>
+    private static void AssertJsonDeepEqual(JsonElement expected, JsonElement actual, string path)
+    {
+        Assert.True(expected.ValueKind == actual.ValueKind, $"{path}: kind mismatch ({expected.ValueKind} vs {actual.ValueKind})");
+        switch (expected.ValueKind)
+        {
+            case JsonValueKind.Object:
+                var expectedProps = expected.EnumerateObject().ToDictionary(p => p.Name, p => p.Value);
+                var actualProps = actual.EnumerateObject().ToDictionary(p => p.Name, p => p.Value);
+                Assert.True(
+                    expectedProps.Keys.OrderBy(k => k, StringComparer.Ordinal).SequenceEqual(actualProps.Keys.OrderBy(k => k, StringComparer.Ordinal)),
+                    $"{path}: key set mismatch (expected [{string.Join(",", expectedProps.Keys)}], actual [{string.Join(",", actualProps.Keys)}])");
+                foreach (var (key, expectedValue) in expectedProps)
+                {
+                    AssertJsonDeepEqual(expectedValue, actualProps[key], $"{path}.{key}");
+                }
+                break;
+            case JsonValueKind.Array:
+                var expectedItems = expected.EnumerateArray().ToList();
+                var actualItems = actual.EnumerateArray().ToList();
+                Assert.True(expectedItems.Count == actualItems.Count, $"{path}: array length mismatch ({expectedItems.Count} vs {actualItems.Count})");
+                for (var i = 0; i < expectedItems.Count; i++)
+                {
+                    AssertJsonDeepEqual(expectedItems[i], actualItems[i], $"{path}[{i}]");
+                }
+                break;
+            default:
+                Assert.True(
+                    JsonElement.DeepEquals(expected, actual),
+                    $"{path}: value mismatch (expected {expected.GetRawText()}, actual {actual.GetRawText()})");
+                break;
+        }
+    }
 }
