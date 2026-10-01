@@ -115,12 +115,29 @@ TERMINOLOGY_EXCLUDED_FILES = {
     "persona-architecture.md",
 }
 
+# Issue 164 R5 (PR 167 round 1 review): unlike TERMINOLOGY_EXCLUDED_FILES (bare filenames,
+# which would exempt every pack's identically-named persona.json), this is a small set of
+# exact repo-relative paths. personas/mcdonalds/persona.json legitimately quotes its own
+# original app's authentic copy ("crew member favorites"), verified against that original's
+# own source. That is a real persona-brand term, not leftover pre-rebrand generic-app
+# terminology, so only this one pack file is exempted here.
+TERMINOLOGY_EXCLUDED_RELATIVE_PATHS = {
+    "personas/mcdonalds/persona.json",
+}
 
-def _should_scan(path: Path, excluded_dirs: set[str], excluded_files: set[str]) -> bool:
+
+def _should_scan(
+    path: Path,
+    excluded_dirs: set[str],
+    excluded_files: set[str],
+    excluded_relative_paths: frozenset[str] = frozenset(),
+) -> bool:
     """Return True if *path* should be included in a scan using the given exclusion sets."""
     if path.suffix not in SCAN_EXTENSIONS and path.name not in SCAN_FILENAMES:
         return False
     if path.name in excluded_files:
+        return False
+    if _relative_posix(path) in excluded_relative_paths:
         return False
     parts = path.relative_to(PROJECT_ROOT).parts
     if any(part in excluded_dirs for part in parts):
@@ -128,16 +145,24 @@ def _should_scan(path: Path, excluded_dirs: set[str], excluded_files: set[str]) 
     return True
 
 
-def _collect_source_files(excluded_dirs: set[str], excluded_files: set[str]) -> list[Path]:
+def _collect_source_files(
+    excluded_dirs: set[str],
+    excluded_files: set[str],
+    excluded_relative_paths: frozenset[str] = frozenset(),
+) -> list[Path]:
     """Gather every scannable source file under PROJECT_ROOT for the given exclusion sets."""
     return sorted(
         p for p in PROJECT_ROOT.rglob("*")
-        if p.is_file() and _should_scan(p, excluded_dirs, excluded_files)
+        if p.is_file() and _should_scan(p, excluded_dirs, excluded_files, excluded_relative_paths)
     )
 
 
 def _collect_terminology_scan_files() -> list[Path]:
-    return _collect_source_files(TERMINOLOGY_EXCLUDED_DIRS, TERMINOLOGY_EXCLUDED_FILES)
+    return _collect_source_files(
+        TERMINOLOGY_EXCLUDED_DIRS,
+        TERMINOLOGY_EXCLUDED_FILES,
+        frozenset(TERMINOLOGY_EXCLUDED_RELATIVE_PATHS),
+    )
 
 
 def _scan_for_forbidden(files: list[Path]) -> list[tuple[Path, int, str, str]]:
