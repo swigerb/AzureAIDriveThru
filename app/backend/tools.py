@@ -235,14 +235,23 @@ async def search(
     *menu_mode* (#165): this session's own bound daypart (``order_state.OrderState
     .get_menu_mode``), or ``None`` for a persona with no ``features.dayparts`` (every existing
     direct call keeps passing nothing, so this is a pure no-op addition). When set, results are
-    restricted server-side to items whose own ``menuPeriod`` is ``menu_mode`` or ``"allDay"`` --
-    the same OData filter ``setup_search_index.py`` documents. If the search index hasn't been
-    rebuilt with the ``menuPeriod`` field yet, the same "unknown property" fallback below drops
-    the filter (as well as the full ``$select``) rather than failing the lookup outright.
+    restricted server-side to items whose own ``menuPeriod`` is ``menu_mode``, ``"allDay"``, or
+    unset (``""`` -- setup_search_index.py's own sentinel for an item with no declared daypart at
+    all) -- the same OData filter ``setup_search_index.py`` documents. Rick's PR 166 round-1
+    review, required item 6: this third clause is what keeps ``item_available_now``'s own
+    always-available treatment of a period-less item (below) and this search filter in sync --
+    without it, a period-less item in a `features.dayparts` pack could be added to an order in
+    either mode yet never surface in a mode-filtered search, a latent split this repo's only
+    dayparts pack never exercised because every one of its real items happens to carry a
+    ``menuPeriod``. If the search index hasn't been rebuilt with the ``menuPeriod`` field yet, the
+    same "unknown property" fallback below drops the filter (as well as the full ``$select``)
+    rather than failing the lookup outright.
     """
     menu = menu or default_persona.get_default_menu_catalog()
     prompt_loader = prompt_loader if prompt_loader is not None else _prompt_loader
-    mode_filter = f"menuPeriod eq '{menu_mode}' or menuPeriod eq 'allDay'" if menu_mode else None
+    mode_filter = (
+        f"menuPeriod eq '{menu_mode}' or menuPeriod eq 'allDay' or menuPeriod eq ''" if menu_mode else None
+    )
 
     query = args["query"]
     # #77 (`strategies.searchQueryRewrite: "meal_numbers"`, design doc section 3.3 row 23): this

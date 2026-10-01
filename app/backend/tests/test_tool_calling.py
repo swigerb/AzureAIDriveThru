@@ -1246,10 +1246,18 @@ class HappyHourBannerWordingTests(unittest.TestCase):
 
 class SearchModeFilterTests(unittest.TestCase):
     """`search()`'s #165 `menu_mode` kwarg builds an OData `filter` string restricting results
-    to the bound daypart (or `"allDay"`) -- proven by asserting the exact `filter=` kwarg sent to
-    `SearchClient.search`, since the module-level fake (like Azure Search's own free SKU in this
-    deployment) does no server-side filtering of its own; matches setup_search_index.py's own
-    documented filter shape."""
+    to the bound daypart (or `"allDay"`/period-less) -- proven by asserting the exact `filter=`
+    kwarg sent to `SearchClient.search`, since the module-level fake (like Azure Search's own free
+    SKU in this deployment) does no server-side filtering of its own; matches
+    setup_search_index.py's own documented filter shape.
+
+    Rick's PR 166 round-1 review, required item 6: the trailing `menuPeriod eq ''` clause (added
+    here) keeps this filter in sync with `item_available_now`'s own always-available treatment of
+    a period-less item within a dayparts pack -- `test-delta` ships several (`Delta Meal`,
+    `Delta Burger`, `Delta Fries`, `Delta Latte`, `Delta Extra Shot`, `Delta Shake`) precisely to
+    exercise this; without the clause, search would drop `setup_search_index.py`'s own
+    empty-string sentinel for such items in a mode-filtered request, while the add-time gate still
+    allowed them -- the exact "search vs order semantics differ" split the review flagged."""
 
     def setUp(self):
         _search_cache.clear()
@@ -1259,21 +1267,27 @@ class SearchModeFilterTests(unittest.TestCase):
         self.delta = delta_catalog.get("test-delta")
         self.delta_menu = get_catalog_for_persona(self.delta)
 
-    def test_a_bound_breakfast_mode_sends_the_breakfast_or_allday_filter(self):
+    def test_a_bound_breakfast_mode_sends_the_breakfast_or_allday_or_periodless_filter(self):
         client = _make_recording_mock_search_client([])
         _run(search(
             client, "cfg", "id", "description", "embedding", False, {"query": "breakfast meal"},
             menu=self.delta_menu, persona_id="test-delta", menu_mode="breakfast",
         ))
-        self.assertEqual(client.calls[-1]["filter"], "menuPeriod eq 'breakfast' or menuPeriod eq 'allDay'")
+        self.assertEqual(
+            client.calls[-1]["filter"],
+            "menuPeriod eq 'breakfast' or menuPeriod eq 'allDay' or menuPeriod eq ''",
+        )
 
-    def test_a_bound_lunch_mode_sends_the_lunch_or_allday_filter(self):
+    def test_a_bound_lunch_mode_sends_the_lunch_or_allday_or_periodless_filter(self):
         client = _make_recording_mock_search_client([])
         _run(search(
             client, "cfg", "id", "description", "embedding", False, {"query": "lunch meal"},
             menu=self.delta_menu, persona_id="test-delta", menu_mode="lunch",
         ))
-        self.assertEqual(client.calls[-1]["filter"], "menuPeriod eq 'lunch' or menuPeriod eq 'allDay'")
+        self.assertEqual(
+            client.calls[-1]["filter"],
+            "menuPeriod eq 'lunch' or menuPeriod eq 'allDay' or menuPeriod eq ''",
+        )
 
     def test_a_persona_with_no_bound_mode_sends_no_filter_at_all(self):
         """The default (env-driven, non-dayparts) catalog used everywhere else in this file --
@@ -1281,6 +1295,30 @@ class SearchModeFilterTests(unittest.TestCase):
         client = _make_recording_mock_search_client([])
         _run(search(client, "cfg", "id", "description", "embedding", False, {"query": "limeade"}))
         self.assertIsNone(client.calls[-1]["filter"])
+
+    def test_a_periodless_item_is_available_in_every_mode_the_search_filter_would_also_admit_it(self):
+        """Cross-checks `item_available_now` (the add-time gate) against the REAL filter `search()`
+        builds for the exact same period-less items `test-delta` ships: both must agree a
+        period-less item is never excluded by mode, in either direction -- the actual parity R6
+        asks for, not just two independently-passing assertions."""
+        for item_name in (
+            "Delta Meal", "Delta Burger", "Delta Fries", "Delta Latte", "Delta Extra Shot", "Delta Shake",
+        ):
+            for mode in ("breakfast", "lunch"):
+                with self.subTest(item=item_name, mode=mode):
+                    self.assertTrue(self.delta_menu.item_available_now(item_name, mode))
+                    client = _make_recording_mock_search_client([])
+                    _run(search(
+                        client, "cfg", "id", "description", "embedding", False,
+                        {"query": item_name},
+                        menu=self.delta_menu, persona_id="test-delta", menu_mode=mode,
+                    ))
+                    self.assertIn(
+                        "menuPeriod eq ''", client.calls[-1]["filter"],
+                        "The search filter for this same mode must also admit a period-less item "
+                        "(indexed with the empty-string sentinel), matching item_available_now's "
+                        "own always-available treatment of it.",
+                    )
 
 
 if __name__ == "__main__":

@@ -1117,6 +1117,25 @@ def _new_event_id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:20]}"
 
 
+def _extract_raw_mode_param(request: web.Request) -> str | None:
+    """Rick's PR 166 round-1 review, required item 5: a repeated `?mode=` (e.g.
+    `?mode=lunch&mode=breakfast`) must be handled identically on both backends. aiohttp's
+    `MultiDictProxy.get()` silently takes only the FIRST of several values for a repeated key,
+    while ASP.NET Core's `StringValues.ToString()` (what `Program.cs`'s own `/realtime` handler
+    reads) comma-joins every value for a repeated key -- and a comma-joined string never equals
+    "breakfast"/"lunch", so the C# port already 400s on a repeat today. Matching that here (via
+    `getall`, not `get`) instead of loosening C# to "take the first value" keeps the change on
+    the Python side that actually diverges, not the currently-correct one. Returns `None` for an
+    omitted `?mode=` (an empty list), the single value verbatim for exactly one, and a
+    comma-joined string (deliberately never a valid mode) for more than one."""
+    values = request.query.getall("mode", [])
+    if not values:
+        return None
+    if len(values) == 1:
+        return values[0]
+    return ",".join(values)
+
+
 # The fallback carries only what the conversation cannot work without. No voice
 # (cannot_update_voice), no audio config, no reasoning -- the usual suspects when
 # GA rejects an update.
@@ -2781,10 +2800,19 @@ class RTMiddleTier:
         # -- same "no silent fallback" philosophy as persona/model above -- while an OMITTED
         # `?mode=` defaults to "lunch" (the original reference app's own default, #164 decision
         # D3) inside `create_session`, not here.
-        requested_menu_mode = request.query.get("mode")
+        requested_menu_mode = _extract_raw_mode_param(request)
         if persona.manifest.features.dayparts:
             if requested_menu_mode not in (None, "breakfast", "lunch"):
-                logger.warning("Rejected WebSocket for invalid menu mode: %s (persona=%s)", requested_menu_mode, persona.id)
+                # Rick's PR 166 round-1 review, required item 7: never log the raw,
+                # attacker-supplied `?mode=` value verbatim -- it is unbounded length and may
+                # carry CR/LF as a log-injection attempt. Only the persona id and the value's
+                # length go to the log; the 400 response body below still echoes the value via
+                # `!r`, which is fine (same as the persona/model 404s above), since that goes out
+                # over HTTP to the same client that sent it, not into the shared log stream.
+                logger.warning(
+                    "Rejected WebSocket for invalid menu mode (length=%d, persona=%s)",
+                    len(requested_menu_mode), persona.id,
+                )
                 return web.Response(status=400, text=f"Invalid menu mode: {requested_menu_mode!r} (expected 'breakfast' or 'lunch')")
         else:
             requested_menu_mode = None
@@ -2851,8 +2879,11 @@ class RTMiddleTier:
         # Protocol stays untouched for #82/#81's still-unregistered cascade processor. `None` for
         # a persona that doesn't declare `features.dayparts` -- `create_session` itself applies
         # the exact same normalization, so this is redundant-but-harmless defense in depth, not
-        # the only enforcement point.
-        requested_menu_mode = request.query.get("mode") if persona.manifest.features.dayparts else None
+        # the only enforcement point. Uses the same `_extract_raw_mode_param` helper as
+        # `_websocket_handler` above (comma-joins a repeated `?mode=` the same way) purely for
+        # consistency -- by the time `handle` runs, `_websocket_handler` has already rejected any
+        # value this couldn't also accept.
+        requested_menu_mode = _extract_raw_mode_param(request) if persona.manifest.features.dayparts else None
 
         self._sessions.create_session(
             ws, persona=persona, model_id=resolved_model.id,

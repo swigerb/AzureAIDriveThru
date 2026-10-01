@@ -25,6 +25,7 @@ import yaml
 REPO = Path(__file__).resolve().parents[3]
 sys.path.append(str(REPO / "app" / "backend"))
 
+from menu_utils import MenuCatalog  # noqa: E402
 from persona_loader import Persona, PersonaCatalog  # noqa: E402
 from prompt_loader import PromptLoader  # noqa: E402
 from rtmt import _DEFAULT_ALLOWED_VOICES  # noqa: E402
@@ -63,6 +64,15 @@ _NOT_ON_MENU_CLAUSES = (
     "update_order REJECTS anything not on our menu",
     "offer the closest real menu item",
 )
+
+# #165 round 2 (Rick's review item 4): packs with a KNOWN, PRE-EXISTING trigger_categories gap
+# that predates and is unrelated to this PR's McDonald's menu swap -- excluded from
+# UpsellHintConformanceTests below rather than silently weakening the real check for the pack
+# this PR (and Rick's review) is actually about. Sonic's own hints.yaml "drink" bucket
+# (trigger_categories: ["drinks", "slushes"]) references neither of Sonic's real categories
+# ("breakfast drinks", "slushes & drinks") -- a Sonic drink add has always silently fallen
+# through to the generic hint. Tracked as a follow-up for Sonic's own owner, not fixed here.
+_KNOWN_PRE_EXISTING_UPSELL_HINT_GAPS = frozenset({"sonic"})
 
 
 def _greeting_text(persona: Persona) -> str:
@@ -176,6 +186,24 @@ def not_on_menu_errors(menu_section: str) -> list[str]:
         f"MENU_AND_PRICING is missing the required not-on-menu clause {clause!r}"
         for clause in _NOT_ON_MENU_CLAUSES
         if clause not in menu_section
+    ]
+
+
+def upsell_hint_category_errors(
+    persona_id: str, trigger_categories_by_hint: dict[str, list[str]], real_categories: set[str]
+) -> list[str]:
+    """#165 round 2 (Rick's review item 4): every ``upsell_hints.*.trigger_categories`` entry in
+    a pack's own hints.yaml must name a category that actually exists in that SAME pack's own
+    menu (``menu_utils.MenuCatalog.category_map``'s values, already lower-cased). A menu edit
+    that renames/removes/merges a category used to leave the matching hint silently unreachable
+    -- ``prompt_loader.get_upsell_hint``/``PromptLoader.cs``'s ``GetUpsellHint`` both fall
+    through to the "generic" hint with no error or log of any kind. Empty list == valid."""
+    return [
+        f"{persona_id}'s hints.yaml upsell_hints.{hint_key}.trigger_categories references "
+        f"{category!r}, which is not one of this pack's own menu categories {sorted(real_categories)}"
+        for hint_key, categories in trigger_categories_by_hint.items()
+        for category in categories
+        if category not in real_categories
     ]
 
 
@@ -320,6 +348,31 @@ class PromptSectionConformanceTests(unittest.TestCase):
                 self.assertEqual(not_on_menu_errors(menu_section), [])
 
 
+class UpsellHintConformanceTests(unittest.TestCase):
+    """#165 round 2 (Rick's review item 4): every pack's own hints.yaml ``upsell_hints.*.
+    trigger_categories`` must reference a category that actually exists in that SAME pack's
+    own menu -- never a stale name left behind by a menu edit (a category renamed, removed, or
+    merged with another)."""
+
+    def test_every_packs_upsell_hint_trigger_categories_exist_in_that_packs_own_menu(self):
+        catalog = PersonaCatalog.load()
+        for persona_id in catalog.ids:
+            if persona_id in _KNOWN_PRE_EXISTING_UPSELL_HINT_GAPS:
+                continue
+            with self.subTest(persona_id):
+                persona = catalog.get(persona_id)
+                loader = PromptLoader(brand=persona_id, prompts_dir=persona.prompts_dir)
+                upsell_hints = loader.get_hints().get("upsell_hints", {})
+                trigger_categories_by_hint = {
+                    hint_key: list(info.get("trigger_categories") or [])
+                    for hint_key, info in upsell_hints.items()
+                }
+                real_categories = set(MenuCatalog.from_persona(persona).category_map.values())
+                self.assertEqual(
+                    upsell_hint_category_errors(persona_id, trigger_categories_by_hint, real_categories), []
+                )
+
+
 class MutationIsCaughtTests(unittest.TestCase):
     """Each check above must fail closed on a real defect, not just always pass on today's
     clean data. Every assertion here calls the SAME helper the corresponding real test above
@@ -375,6 +428,14 @@ class MutationIsCaughtTests(unittest.TestCase):
         mutated = menu_section.replace("REJECTS anything not on our menu", "politely allows anything")
         errors = not_on_menu_errors(mutated)
         self.assertTrue(errors, "not_on_menu_errors did not flag an altered not-on-menu sentence")
+
+    def test_a_stale_upsell_hint_trigger_category_is_caught(self):
+        errors = upsell_hint_category_errors(
+            "mutant-pack",
+            {"burger": ["burgers & sandwiches", "a category renamed away in the last menu edit"]},
+            {"burgers & sandwiches", "sweets & treats"},
+        )
+        self.assertTrue(errors, "upsell_hint_category_errors did not flag a stale trigger_categories entry")
 
 
 if __name__ == "__main__":
