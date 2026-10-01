@@ -280,7 +280,22 @@ describe("persona switch confirmation dialog (issue #180)", () => {
         await addOrderItem("Alpha Combo");
         await screen.findByText("Alpha Combo");
         act(() => rt.params.onReceivedResponseDone(answer("Alpha greeting text")));
-        await screen.findByText("Alpha greeting text", {}, { timeout: 45000 });
+        // TEMP DIAGNOSTIC (removed once the real cause is found): check right after the
+        // synchronous act() call, before any async poll, so a CI failure shows whether the text
+        // ever lands synchronously at all, not just whether findByText eventually gives up on it.
+        console.log(
+            "DIAG immediately after onReceivedResponseDone:",
+            JSON.stringify({
+                hasGreeting: document.body.innerHTML.includes("Alpha greeting text"),
+                bodyLength: document.body.innerHTML.length,
+                hasAlphaCombo: document.body.innerHTML.includes("Alpha Combo"),
+                transcriptPanelCount: document.querySelectorAll('[class*="transcript"]').length
+            })
+        );
+        await screen.findByText("Alpha greeting text", {}, { timeout: 45000 }).catch(error => {
+            console.log("DIAG findByText gave up. Final body snapshot:", document.body.innerHTML.slice(0, 6000));
+            throw error;
+        });
 
         await switchTo("test-beta");
         await screen.findByRole("dialog");
