@@ -64,28 +64,6 @@ public sealed class OrderState
     private readonly bool _happyHourAnnounce;
     private readonly string _happyHourBanner;
 
-    private int _absorbedSides;
-    private int _absorbedDrinks;
-    private string _absorbedSideDisplay = "";
-    private string _absorbedDrinkDisplay = "";
-
-    // #179: per-slot "what's CURRENTLY filling it" / "what established its free-pricing anchor"
-    // bookkeeping -- see FillBundleComponent's own doc comment for the full stateful "free
-    // reference" pricing design this ports from order_state.py's `absorbed_{side,drink}_*`
-    // session fields. _absorbedSideItem/_absorbedDrinkItem is "" when the slot is vacant;
-    // _absorbedSideFreeItem/_absorbedDrinkFreeItem deliberately SURVIVES a vacate of the same
-    // item so a later refill reprices as a resize instead of granting a second free upsize.
-    private string _absorbedSideItem = "";
-    private string _absorbedSideSize = "";
-    private string _absorbedSideFreeItem = "";
-    private string _absorbedSideFreeSize = "";
-    private decimal _absorbedSideUpcharge;
-    private string _absorbedDrinkItem = "";
-    private string _absorbedDrinkSize = "";
-    private string _absorbedDrinkFreeItem = "";
-    private string _absorbedDrinkFreeSize = "";
-    private decimal _absorbedDrinkUpcharge;
-
     public OrderSummary Summary { get; private set; } = OrderSummary.Empty();
 
     /// <param name="menu">This session's own bound persona's <see cref="MenuCatalog"/> (#74).</param>
@@ -253,127 +231,120 @@ public sealed class OrderState
             }
         }
 
-        // ── Post-bundle absorption: side/drink fills an incomplete bundle's slot ──
+        // ── Post-bundle absorption: side/drink fills an incomplete bundle's slot(s) ──
         if (!isBundle)
         {
             var component = _menu.InferComboComponent(itemName);
             if (component is "sides" or "drinks")
             {
-                var bundleCapacity = _items.Where(it => _menu.BundleSlots(it.Item).Contains(component)).Sum(it => it.Quantity);
-                if (bundleCapacity > 0)
+                // PR #184 round 2 (Rick's review, item 2): repeatedly ask FindBundleSlot for the
+                // next vacant slot (across every instance and every physical unit) and fill it,
+                // until either *quantity* is exhausted or no vacant slot remains -- no
+                // capacity-minus-filled arithmetic left to drift out of sync across two combos
+                // or a quantity-N line.
+                var absorbedCount = 0;
+                var anyResize = false;
+                OrderItem? lastComboItem = null;
+                var remaining = quantity;
+                while (remaining > 0)
                 {
-                    int filled;
-                    if (component == "sides")
+                    var found = FindBundleSlot(component);
+                    if (found is not { } slotFound)
                     {
-                        filled = _items.Where(it => _menu.InferComboComponent(it.Item) == "sides").Sum(it => it.Quantity);
-                        filled += _absorbedSides;
+                        break;
+                    }
+                    var (comboItem, idx) = slotFound;
+                    var isResize = FillBundleComponent(comboItem, idx, component, itemName, size, display);
+                    lastComboItem = comboItem;
+                    anyResize = anyResize || isResize;
+                    absorbedCount++;
+                    remaining--;
+                }
+                if (lastComboItem is not null)
+                {
+                    if (anyResize)
+                    {
+                        result.ResizedComboComponent = component;
+                        result.ComboComponentResizedToSize = size;
+                        result.ComboDisplay = lastComboItem.Display;
                     }
                     else
                     {
-                        filled = _items.Where(it => _menu.InferComboComponent(it.Item) == "drinks").Sum(it => it.Quantity);
-                        filled += _absorbedDrinks;
+                        result.AbsorbedIntoCombo = true;
                     }
-
-                    var slotsAvailable = bundleCapacity - filled;
-                    var currentItem = component == "sides" ? _absorbedSideItem : _absorbedDrinkItem;
-                    var currentSize = component == "sides" ? _absorbedSideSize : _absorbedDrinkSize;
-
-                    if (slotsAvailable > 0)
+                }
+                if (remaining <= 0 && absorbedCount > 0)
+                {
+                    return;
+                }
+                if (absorbedCount == 0)
+                {
+                    // No vacant slot anywhere -- check whether some slot is already full with
+                    // THIS SAME item at a DIFFERENT size (e.g. the combo's drink is a Medium
+                    // cola and the model calls `add` for a Large cola). Resolve this as
+                    // an in-place RESIZE of the slot instead of falling through to "Regular add"
+                    // and creating a silent duplicate standalone line. Only ONE unit of
+                    // *quantity* is ever a resize (there is only one matching slot); any
+                    // remainder still becomes a genuine standalone add.
+                    var found = FindBundleSlot(component, itemName);
+                    if (found is { } slotFound)
                     {
-                        var toAbsorb = Math.Min(quantity, slotsAvailable);
-                        if (component == "sides")
+                        var (comboItem, idx) = slotFound;
+                        var slot = SyncBundleSlotList(comboItem, component)[idx];
+                        var currentSize = slot.Size;
+                        var currentItem = slot.Item;
+                        if (currentSize.Length > 0 && currentSize != size && currentItem.Length > 0 &&
+                            MenuKeyValidator.MenuKey(currentItem) == MenuKeyValidator.MenuKey(itemName))
                         {
-                            _absorbedSides += toAbsorb;
-                        }
-                        else
-                        {
-                            _absorbedDrinks += toAbsorb;
-                        }
-                        var remaining = quantity - toAbsorb;
-
-                        // #179: FillBundleComponent owns the display rebuild AND the
-                        // free-reference/resize pricing bookkeeping. This slot is "available"
-                        // (just vacated by a remove, or never filled), but its free reference may
-                        // still be set from BEFORE that vacate (see VacateBundleComponent) --
-                        // refilling it with that SAME item is really a resize, priced and
-                        // reported exactly like the explicit resize/modify path, never the free
-                        // "included with your combo" wording a genuinely fresh fill gets.
-                        var comboItem = FindBundleItemForComponent(component);
-                        if (comboItem is not null)
-                        {
-                            FillBundleComponent(comboItem, component, itemName, size, price, display);
-                            var upcharge = component == "sides" ? _absorbedSideUpcharge : _absorbedDrinkUpcharge;
-                            if (upcharge != 0m)
-                            {
-                                result.ResizedComboComponent = component;
-                                result.ComboComponentResizedFromSize = currentSize;
-                                result.ComboComponentResizedToSize = size;
-                                result.ComboDisplay = comboItem.Display;
-                            }
-                            else
-                            {
-                                result.AbsorbedIntoCombo = true;
-                            }
-                        }
-                        else
-                        {
-                            result.AbsorbedIntoCombo = true;
-                        }
-
-                        if (remaining <= 0)
-                        {
-                            return;
-                        }
-                        quantity = remaining;
-                    }
-                    else if (currentItem.Length > 0 &&
-                             MenuKeyValidator.MenuKey(currentItem) == MenuKeyValidator.MenuKey(itemName) &&
-                             currentSize != size)
-                    {
-                        // #179: the slot is already full with THIS SAME item at a DIFFERENT
-                        // size -- e.g. the combo's drink is a Medium Diet Coke and the model
-                        // calls `add` for a Large Diet Coke. Resolve this as an in-place RESIZE
-                        // of the slot (identical pricing to the explicit `modify` action below)
-                        // instead of falling through to "Regular add" and creating a silent
-                        // duplicate standalone line -- the exact #179 bug. Only ONE unit of
-                        // quantity is ever a resize (there is only one slot); any remainder
-                        // still becomes a genuine standalone add.
-                        var comboItem = FindBundleItemForComponent(component);
-                        if (comboItem is not null)
-                        {
-                            FillBundleComponent(comboItem, component, itemName, size, price, display);
+                            FillBundleComponent(comboItem, idx, component, itemName, size, display);
                             result.ResizedComboComponent = component;
                             result.ComboComponentResizedFromSize = currentSize;
                             result.ComboComponentResizedToSize = size;
                             result.ComboDisplay = comboItem.Display;
-                            var remaining = quantity - 1;
+                            remaining = quantity - 1;
                             if (remaining <= 0)
                             {
                                 return;
                             }
-                            quantity = remaining;
                         }
                     }
                 }
+                quantity = remaining;
             }
         }
 
-        // ── Regular add/merge ──
+        // ── Regular add / bundle-instance creation ──
         var existingIndex = _items.FindIndex(oi => oi.Item == itemName && oi.Size == size);
         OrderItem bundleItemRef;
+        int newUnits;
         if (existingIndex != -1)
         {
             _items[existingIndex].Quantity += quantity;
             bundleItemRef = _items[existingIndex];
+            newUnits = quantity;
         }
         else
         {
             bundleItemRef = new OrderItem { Item = itemName, Size = size, Quantity = quantity, Price = price, Display = display };
             _items.Add(bundleItemRef);
+            newUnits = quantity;
         }
 
-        // ── Bundle pivot: absorb standalone sides/drinks into a newly added bundle ──
-        if (isBundle)
+        if (!isBundle)
+        {
+            return;
+        }
+
+        // PR #184 round 2 (Rick's review, item 2 -- "quantity-2 combos handled correctly"): grow
+        // each own component's slot list to the new quantity (fresh empty records for the newly
+        // added units) before the pivot/autofill below fills them.
+        foreach (var component in ownBundleSlots)
+        {
+            SyncBundleSlotList(bundleItemRef, component);
+        }
+
+        // ── Bundle pivot: absorb standalone sides/drinks into the NEWLY ADDED unit(s) ──
+        for (var unit = 0; unit < newUnits; unit++)
         {
             var absorbedSide = false;
             var absorbedDrink = false;
@@ -381,80 +352,99 @@ public sealed class OrderState
             for (var i = 0; i < _items.Count; i++)
             {
                 var existing = _items[i];
-                if (existing.Item == itemName)
+                if (ReferenceEquals(existing, bundleItemRef))
                 {
                     continue; // skip the bundle itself
                 }
                 var component = _menu.InferComboComponent(existing.Item);
+                // Only absorb a component this bundle's OWN slots actually include -- e.g. a
+                // drinks-only combo must never free-absorb a pre-existing standalone side.
                 if (component == "sides" && ownBundleSlots.Contains("sides") && !absorbedSide)
                 {
-                    bundleItemRef.Components.Add(existing.Display);
-                    // #179: shared fill/pricing bookkeeping (free-reference + resize pricing, see
-                    // FillBundleComponent) -- unaffected here since this is always a first-time
-                    // absorption into a brand-new bundle line (free, same as before this change)
-                    // unless this session's slot already carries a free reference for this exact
-                    // item from an earlier combo instance.
-                    var existingSidePrice = _menu.PriceFor(existing.Item, existing.Size) ?? existing.Price;
-                    FillBundleComponent(bundleItemRef, "sides", existing.Item, existing.Size, existingSidePrice, existing.Display);
-                    if (existing.Quantity > 1)
+                    var slotIdx = FirstVacantSlotIndex(bundleItemRef, "sides");
+                    if (slotIdx is { } vacantIdx)
                     {
-                        existing.Quantity--;
+                        bundleItemRef.Components.Add(existing.Display);
+                        FillBundleComponent(bundleItemRef, vacantIdx, "sides", existing.Item, existing.Size, existing.Display);
+                        if (existing.Quantity > 1)
+                        {
+                            existing.Quantity--;
+                        }
+                        else
+                        {
+                            itemsToRemove.Add(i);
+                        }
+                        absorbedSide = true;
                     }
-                    else
-                    {
-                        itemsToRemove.Add(i);
-                    }
-                    absorbedSide = true;
                 }
                 else if (component == "drinks" && ownBundleSlots.Contains("drinks") && !absorbedDrink)
                 {
-                    bundleItemRef.Components.Add(existing.Display);
-                    var existingDrinkPrice = _menu.PriceFor(existing.Item, existing.Size) ?? existing.Price;
-                    FillBundleComponent(bundleItemRef, "drinks", existing.Item, existing.Size, existingDrinkPrice, existing.Display);
-                    if (existing.Quantity > 1)
+                    var slotIdx = FirstVacantSlotIndex(bundleItemRef, "drinks");
+                    if (slotIdx is { } vacantIdx)
                     {
-                        existing.Quantity--;
+                        bundleItemRef.Components.Add(existing.Display);
+                        FillBundleComponent(bundleItemRef, vacantIdx, "drinks", existing.Item, existing.Size, existing.Display);
+                        if (existing.Quantity > 1)
+                        {
+                            existing.Quantity--;
+                        }
+                        else
+                        {
+                            itemsToRemove.Add(i);
+                        }
+                        absorbedDrink = true;
                     }
-                    else
-                    {
-                        itemsToRemove.Add(i);
-                    }
-                    absorbedDrink = true;
                 }
             }
             foreach (var idx in itemsToRemove.OrderByDescending(i => i))
             {
                 _items.RemoveAt(idx);
             }
-            if (absorbedSide)
-            {
-                _absorbedSides++;
-            }
-            if (absorbedDrink)
-            {
-                _absorbedDrinks++;
-            }
 
-            // ── #77: bundle-slot auto-fill -- a slot this item's own pack opts into filling by
-            // default that WASN'T just absorbed above gets its default filler the instant the
-            // bundle is added.
+            // ── #77: bundle-slot auto-fill -- a slot this item's OWN pack opts into filling by
+            // default that WASN'T just absorbed above from a pre-existing standalone item gets
+            // its default filler the instant the bundle is added.
             var sizeLabel = _menu.NormalizeSize(size);
             var autofill = _menu.BundleAutoFill(itemName, sizeLabel);
             if (autofill.TryGetValue("sides", out var sideFiller) && !absorbedSide)
             {
-                bundleItemRef.Components.Add(sideFiller);
-                _absorbedSideDisplay = sideFiller;
-                _absorbedSides++;
-                result.Autofilled.Add(sideFiller);
+                var slotIdx = FirstVacantSlotIndex(bundleItemRef, "sides");
+                if (slotIdx is { } vacantIdx)
+                {
+                    bundleItemRef.Components.Add(sideFiller);
+                    FillBundleComponent(bundleItemRef, vacantIdx, "sides", sideFiller, sizeLabel, sideFiller, autofill: true);
+                    result.Autofilled.Add(sideFiller);
+                }
             }
             if (autofill.TryGetValue("drinks", out var drinkFiller) && !absorbedDrink)
             {
-                bundleItemRef.Components.Add(drinkFiller);
-                _absorbedDrinkDisplay = drinkFiller;
-                _absorbedDrinks++;
-                result.Autofilled.Add(drinkFiller);
+                var slotIdx = FirstVacantSlotIndex(bundleItemRef, "drinks");
+                if (slotIdx is { } vacantIdx)
+                {
+                    bundleItemRef.Components.Add(drinkFiller);
+                    FillBundleComponent(bundleItemRef, vacantIdx, "drinks", drinkFiller, sizeLabel, drinkFiller, autofill: true);
+                    result.Autofilled.Add(drinkFiller);
+                }
             }
         }
+    }
+
+    /// <summary>The first (lowest-index) vacant slot within *comboItem*'s OWN *component* slot
+    /// list -- used by the bundle-pivot/autofill loop above, which only ever fills slots on the
+    /// bundle instance it just created/grew, never across other instances (unlike
+    /// <see cref="FindBundleSlot"/>, which searches every instance for a cross-combo
+    /// resize/vacate target).</summary>
+    private int? FirstVacantSlotIndex(OrderItem comboItem, string component)
+    {
+        var slots = SyncBundleSlotList(comboItem, component);
+        for (var i = 0; i < slots.Count; i++)
+        {
+            if (slots[i].Item.Length == 0)
+            {
+                return i;
+            }
+        }
+        return null;
     }
 
     private void HandleModify(string itemName, string size, decimal price, string display, OrderUpdateResult result)
@@ -468,39 +458,66 @@ public sealed class OrderState
         {
             var target = _items[existingIndex];
             var oldSize = target.Size;
+
+            // PR #184 round 2 (Rick's review, item 1 -- e.g. "make it a large meal"): directly
+            // modifying a bundle's OWN line on a "wholeBundleSize" pack resizes the WHOLE bundle
+            // -- its own size/price AND every filled slot's display together -- via
+            // ApplyWholeBundleResize, never a bare size/price/display overwrite (which would
+            // silently drop the already-absorbed "w/ <side> & <drink>" suffix).
+            if (_menu.BundleResizeRule == "wholeBundleSize" && _menu.BundleSlots(target.Item).Count > 0)
+            {
+                if (ApplyWholeBundleResize(target, size))
+                {
+                    result.ModifiedFromSize = oldSize;
+                    result.ModifiedToSize = size;
+                    result.ComboDisplay = target.Display;
+                }
+                return;
+            }
+
             target.Size = size;
             target.Price = price;
             target.Display = display;
+            if (target.BundleSlots.Count > 0)
+            {
+                // Re-derive the "w/ <side> & <drink>" suffix the plain display assignment above
+                // just overwrote -- resizing a non-"wholeBundleSize" bundle's own line doesn't
+                // change what's filling its slots.
+                RebuildBundleDisplay(target);
+            }
             result.ModifiedFromSize = oldSize;
             result.ModifiedToSize = size;
             return;
         }
 
-        // #179: itemName isn't a raw order line, but it may still be a combo's side or drink
-        // filling a slot via absorption -- the guest saying "make that a large" about the drink
-        // that came WITH their combo. Resize that slot in place with the same free-reference
-        // pricing the explicit remove-then-add and resize-via-add paths use, instead of treating
-        // a perfectly resizable, real part of the order as a no-op just because it has no raw
-        // line. (The `not_in_order` structured rejection for an item that is genuinely neither a
-        // raw line nor an absorbed component is checked by the CALLER -- Tools.OrderToolExecutor,
-        // via IsAbsorbedComponent -- BEFORE this method is ever invoked.)
+        // #179/PR #184 round 2: itemName isn't a raw order line, but it may still be a combo's
+        // side or drink filling a slot via absorption -- the guest saying "make that a large"
+        // about the drink that came WITH their combo. Resize that slot in place with the same
+        // pure-function pricing the explicit remove-then-add and resize-via-add paths use,
+        // instead of rejecting a perfectly resizable, real part of the order as `not_in_order`
+        // just because it has no raw line. (The `not_in_order` structured rejection for an item
+        // that is genuinely neither a raw line nor an absorbed component is checked by the
+        // CALLER -- Tools.OrderToolExecutor, via IsAbsorbedComponent -- BEFORE this method is
+        // ever invoked.)
         foreach (var component in new[] { "sides", "drinks" })
         {
-            var currentItem = component == "sides" ? _absorbedSideItem : _absorbedDrinkItem;
-            if (currentItem.Length == 0 || MenuKeyValidator.MenuKey(currentItem) != MenuKeyValidator.MenuKey(itemName))
+            var found = FindBundleSlot(component, itemName);
+            if (found is not { } slotFound)
             {
                 continue;
             }
-            var comboItem = FindBundleItemForComponent(component);
-            if (comboItem is not null)
+            var (comboItem, idx) = slotFound;
+            var slot = SyncBundleSlotList(comboItem, component)[idx];
+            if (slot.Item.Length == 0 || MenuKeyValidator.MenuKey(slot.Item) != MenuKeyValidator.MenuKey(itemName))
             {
-                var oldComponentSize = component == "sides" ? _absorbedSideSize : _absorbedDrinkSize;
-                FillBundleComponent(comboItem, component, itemName, size, price, display);
-                result.ResizedComboComponent = component;
-                result.ComboComponentResizedFromSize = oldComponentSize;
-                result.ComboComponentResizedToSize = size;
-                result.ComboDisplay = comboItem.Display;
+                continue;
             }
+            var oldComponentSize = slot.Size;
+            FillBundleComponent(comboItem, idx, component, itemName, size, display);
+            result.ResizedComboComponent = component;
+            result.ComboComponentResizedFromSize = oldComponentSize;
+            result.ComboComponentResizedToSize = size;
+            result.ComboDisplay = comboItem.Display;
             break;
         }
     }
@@ -521,54 +538,141 @@ public sealed class OrderState
             return;
         }
 
-        // #179: itemName may currently be filling a combo's side/drink slot via absorption --
-        // which has no raw line to match AT ALL regardless of size (the model's own "remove Diet
-        // Coke Medium" call). Vacate that slot instead of silently no-op'ing, so the combo goes
-        // back to incomplete and a follow-up add refills it (reprising as a resize -- see
+        // #179/PR #184 round 2: itemName may be the exact size (the raw-line lookup just failed
+        // above) -- or, like the live bug report, currently filling a combo's side/drink slot via
+        // absorption, which has no raw line to match AT ALL regardless of size (the model's own
+        // "remove cola Medium" call). Vacate that INSTANCE's slot (determinism-aware -- two
+        // combos vacate independently) instead of silently no-op'ing, so that combo goes back to
+        // incomplete and a follow-up add refills it (reprising as a resize -- see
         // FillBundleComponent) rather than creating a duplicate standalone line.
         foreach (var component in new[] { "sides", "drinks" })
         {
-            var currentItem = component == "sides" ? _absorbedSideItem : _absorbedDrinkItem;
-            if (currentItem.Length == 0 || MenuKeyValidator.MenuKey(currentItem) != MenuKeyValidator.MenuKey(itemName))
-            {
-                continue;
-            }
-            var vacateInfo = VacateBundleComponent(component);
+            var vacateInfo = VacateBundleComponent(component, itemName);
             if (vacateInfo is { } info)
             {
                 result.VacatedComboComponent = info.Component;
                 result.VacatedDisplay = info.VacatedDisplay;
                 result.ComboDisplay = info.ComboDisplay;
+                break;
             }
-            break;
         }
     }
 
-    /// <summary>#179: the first order line whose OWN bundle slots (menu.BundleSlots) include
-    /// <paramref name="component"/> ("sides"/"drinks") -- the same "first bundle item that
-    /// actually owns this slot" rule the absorption display-rebuild always used, now shared by
-    /// every slot-resize/vacate helper below too. Mirrors order_state.py's
-    /// <c>_find_bundle_item_for_component</c>.</summary>
-    private OrderItem? FindBundleItemForComponent(string component) =>
-        _items.FirstOrDefault(item => _menu.BundleSlots(item.Item).Contains(component));
+    /// <summary>#77: empty records for a brand-new physical unit's slot -- mirrors
+    /// order_state.py's <c>_empty_bundle_slot</c>.</summary>
+    private static BundleSlot EmptyBundleSlot() => new();
 
-    /// <summary>Rebuilds <paramref name="comboItem"/>'s display string from whichever of
-    /// <see cref="_absorbedSideDisplay"/>/<see cref="_absorbedDrinkDisplay"/> are currently
-    /// non-empty. The single place that " w/ &lt;side&gt; &amp; &lt;drink&gt;" suffix is
-    /// assembled, so every caller that changes what's filling a slot (first absorption, an
-    /// in-place resize, or a #179 vacate) renders identically -- including reverting to the bare
-    /// combo name (no " w/ ..." suffix at all) once every slot is empty again. Mirrors
-    /// order_state.py's <c>_rebuild_bundle_display</c>.</summary>
-    private void RebuildBundleDisplay(OrderItem comboItem)
+    /// <summary>PR #184 round 2 (Rick's review, item 2 -- "quantity-2 combos handled correctly"):
+    /// each bundle INSTANCE's own <c>BundleSlots[component]</c> is a LIST with exactly
+    /// <paramref name="comboItem"/>'s own <see cref="OrderItem.Quantity"/> entries, one per
+    /// physical unit this single order line represents -- a "2 Big Mac Meals" line has 2
+    /// independent side slots and 2 independent drink slots, not one shared slot (the old
+    /// design's bug: a session-wide counter couldn't tell which of several physical units a given
+    /// fill belonged to). Grows with fresh empty slot records when quantity increases; truncates
+    /// from the END when quantity decreases -- called lazily on every read/write so there is
+    /// exactly one place this invariant is enforced. Mirrors order_state.py's
+    /// <c>_sync_bundle_slot_list</c>.</summary>
+    private List<BundleSlot> SyncBundleSlotList(OrderItem comboItem, string component)
+    {
+        if (!comboItem.BundleSlots.TryGetValue(component, out var slots))
+        {
+            slots = [];
+            comboItem.BundleSlots[component] = slots;
+        }
+        while (slots.Count < comboItem.Quantity)
+        {
+            slots.Add(EmptyBundleSlot());
+        }
+        if (slots.Count > comboItem.Quantity)
+        {
+            slots.RemoveRange(comboItem.Quantity, slots.Count - comboItem.Quantity);
+        }
+        return slots;
+    }
+
+    /// <summary>PR #184 round 2 (Rick's review, item 2): which (bundle instance, slot index) a
+    /// slot-fill/resize/vacate targets, now that slot state is tracked per PHYSICAL UNIT of a
+    /// combo INSTANCE rather than per session (the old design's root cause for two combos -- or a
+    /// combo removed without a full <see cref="ResetOrder"/> -- bleeding slot state into each
+    /// other, and for a quantity-2 combo line never telling which unit a fill belonged to).
+    /// Candidates are every (order line, slot index) pair whose line's OWN bundle slots
+    /// (menu.BundleSlots) include <paramref name="component"/>, across every physical unit of
+    /// every such line.
+    ///
+    /// <para>If <paramref name="itemName"/> is given, the MOST RECENT matching instance (last in
+    /// <see cref="Items"/>, i.e. the one added or merged-into most recently) whose slot is
+    /// CURRENTLY filled by that exact item wins -- "resize the drink of whichever combo actually
+    /// has that drink" (two combos; the guest says "make the Coke large" and only one of them
+    /// currently has a Coke). Otherwise (or when no instance's slot holds that item), the MOST
+    /// RECENT instance with a VACANT slot for <paramref name="component"/> wins (lowest vacant
+    /// index within that instance) -- a fresh absorption lands on whichever instance still needs
+    /// filling, preferring the one most recently touched. Returns <c>null</c> when no slot
+    /// matches <paramref name="itemName"/> (if given) and no slot anywhere is vacant -- callers
+    /// must never be handed an already-FULL, non-matching slot to silently overwrite.</para>
+    /// Mirrors order_state.py's <c>_find_bundle_slot</c>.</summary>
+    private (OrderItem Item, int Index)? FindBundleSlot(string component, string? itemName = null)
+    {
+        var candidates = _items.Where(it => _menu.BundleSlots(it.Item).Contains(component)).ToList();
+        if (candidates.Count == 0)
+        {
+            return null;
+        }
+        if (itemName is not null)
+        {
+            var key = MenuKeyValidator.MenuKey(itemName);
+            for (var i = candidates.Count - 1; i >= 0; i--)
+            {
+                var comboItem = candidates[i];
+                var slots = SyncBundleSlotList(comboItem, component);
+                for (var idx = 0; idx < slots.Count; idx++)
+                {
+                    var slot = slots[idx];
+                    if (slot.Item.Length > 0 && MenuKeyValidator.MenuKey(slot.Item) == key)
+                    {
+                        return (comboItem, idx);
+                    }
+                }
+            }
+        }
+        for (var i = candidates.Count - 1; i >= 0; i--)
+        {
+            var comboItem = candidates[i];
+            var slots = SyncBundleSlotList(comboItem, component);
+            for (var idx = 0; idx < slots.Count; idx++)
+            {
+                if (slots[idx].Item.Length == 0)
+                {
+                    return (comboItem, idx);
+                }
+            }
+        }
+        return null;
+    }
+
+    /// <summary>Rebuilds <paramref name="comboItem"/>'s display string from whichever of its OWN
+    /// (per-instance, PR #184 round 2) <see cref="OrderItem.BundleSlots"/> are currently filled,
+    /// across every physical unit this line represents. The single place that " w/ &lt;side&gt;
+    /// &amp; &lt;drink&gt;" suffix is assembled, so every caller that changes what's filling a
+    /// slot (first absorption, an in-place resize, or a vacate) renders identically -- including
+    /// reverting to the bare bundle name (no " w/ ..." suffix at all) once every slot is empty
+    /// again. A multi-quantity line whose units hold different items lists every filled unit's
+    /// display, comma-separated, within its component's slot of the "w/ ... &amp; ..." suffix --
+    /// the common case (quantity 1, or several identical units) collapses to the same single
+    /// label as before. Mirrors order_state.py's <c>_rebuild_bundle_display</c>.</summary>
+    private static void RebuildBundleDisplay(OrderItem comboItem)
     {
         var components = new List<string>();
-        if (_absorbedSideDisplay.Length > 0)
+        foreach (var component in new[] { "sides", "drinks" })
         {
-            components.Add(_absorbedSideDisplay);
-        }
-        if (_absorbedDrinkDisplay.Length > 0)
-        {
-            components.Add(_absorbedDrinkDisplay);
+            if (!comboItem.BundleSlots.TryGetValue(component, out var slots))
+            {
+                continue;
+            }
+            var filled = slots.Where(s => s.Display.Length > 0).Select(s => s.Display).ToList();
+            if (filled.Count > 0)
+            {
+                components.Add(string.Join(", ", filled));
+            }
         }
 
         string baseName;
@@ -591,143 +695,191 @@ public sealed class OrderState
             : $"{baseName}{mods}".Trim();
     }
 
-    /// <summary>#179: the ONE place a bundle's side/drink slot gets (re)filled -- a first-time
-    /// absorption, a refill after a `remove`-vacate, an explicit `modify`/resize of the slot, or
-    /// an `add` of the same item at a different size while the slot is already full all route
-    /// through here, so all four price identically.
+    /// <summary>PR #184 round 2 (Rick's review, item 1 -- "wholeBundleSize" packs): resize the
+    /// ENTIRE bundle instance (every physical unit of this order line) to <paramref
+    /// name="newSize"/> -- its own size/price change TOGETHER, and every slot currently filling
+    /// it is relabeled (never re-priced; a slot item is never separately priced on this persona's
+    /// own rule -- see <see cref="FillBundleComponent"/>) to match, same as the original app this
+    /// pack's pricing was ported from ("the side and drink sizes will automatically update to
+    /// match"). An autofilled slot (<see cref="BundleSlot.Autofill"/>, e.g. the default side no
+    /// explicit `add` ever named) re-derives its filler text fresh from menu.BundleAutoFill at
+    /// the new size, rather than naively re-prefixing its already-size-baked-in template string;
+    /// every other slot holds a real item name and is simply re-prefixed with the new size label.
     ///
-    /// <para>Pricing (derived fresh from each pack's own per-size menu prices -- the original
-    /// pre-persona app never had a resize path at all, so there was no prior behavior to carry
-    /// forward): the FIRST time anything fills a slot in this combo instance is free, no matter
-    /// its size (unchanged, pre-existing, intentional -- the absorbed component's own baseline
-    /// zero-price behavior); that item+size becomes the slot's "free reference". Filling the SAME
-    /// slot again with the SAME item (whether via an explicit resize, a same-item different-size
-    /// `add` while full, or a `remove`-then-`add` of that same item after a vacate --
-    /// _absorbedSideFreeItem/_absorbedDrinkFreeItem deliberately survive a vacate) charges the
-    /// real menu-price delta between the new size and that original free reference -- the
-    /// guest's actual incremental upsize cost, never an invented flat fee -- and is always
-    /// computed fresh from the free reference (not cumulatively), so repeated resizes net out
-    /// correctly. Swapping to a genuinely DIFFERENT item re-establishes a brand-new free
-    /// reference (changing your mind about WHICH drink stays free; only resizing the SAME one
-    /// costs extra).</para> Mirrors order_state.py's <c>_fill_bundle_component</c>.</summary>
-    private void FillBundleComponent(
-        OrderItem comboItem, string component, string itemName, string size, decimal price, string display)
+    /// Returns <c>false</c> (no-op; caller falls back to a plain size/price assignment) if
+    /// <paramref name="newSize"/> is already this bundle's own current size, or if this persona's
+    /// own menu has no price for the bundle's own item at <paramref name="newSize"/>. Mirrors
+    /// order_state.py's <c>_apply_whole_bundle_resize</c>.</summary>
+    private bool ApplyWholeBundleResize(OrderItem comboItem, string newSize)
     {
-        var newKey = MenuKeyValidator.MenuKey(itemName);
-        var freeItem = component == "sides" ? _absorbedSideFreeItem : _absorbedDrinkFreeItem;
-        var freeSize = component == "sides" ? _absorbedSideFreeSize : _absorbedDrinkFreeSize;
-        var oldUpcharge = component == "sides" ? _absorbedSideUpcharge : _absorbedDrinkUpcharge;
-        decimal newUpcharge;
-
-        if (freeItem.Length > 0 && MenuKeyValidator.MenuKey(freeItem) == newKey)
+        if (newSize == comboItem.Size)
         {
-            var freePrice = _menu.PriceFor(freeItem, freeSize) ?? price;
-            newUpcharge = price - freePrice;
+            return false;
         }
-        else
+        var newPrice = _menu.PriceFor(comboItem.Item, newSize);
+        if (newPrice is not { } price)
         {
-            freeItem = itemName;
-            freeSize = size;
-            newUpcharge = 0m;
+            return false;
         }
-
-        if (newUpcharge != oldUpcharge)
+        comboItem.Size = newSize;
+        comboItem.Price = price;
+        var resolved = _menu.NormalizeSize(newSize);
+        var sizePrefix = resolved.Length > 0 ? $"{resolved} " : "";
+        foreach (var (component, slots) in comboItem.BundleSlots)
         {
-            comboItem.Price = comboItem.Price - oldUpcharge + newUpcharge;
+            foreach (var slot in slots)
+            {
+                if (slot.Item.Length == 0)
+                {
+                    continue;
+                }
+                if (slot.Autofill)
+                {
+                    var fresh = _menu.BundleAutoFill(comboItem.Item, resolved);
+                    if (fresh.TryGetValue(component, out var filler) && filler.Length > 0)
+                    {
+                        slot.Item = filler;
+                        slot.Display = filler;
+                        slot.LastItem = filler;
+                        slot.LastSize = newSize;
+                    }
+                }
+                else
+                {
+                    slot.Display = $"{sizePrefix}{slot.Item}".Trim();
+                    slot.LastSize = newSize;
+                }
+                slot.Size = newSize;
+            }
         }
-
-        if (component == "sides")
-        {
-            _absorbedSideFreeItem = freeItem;
-            _absorbedSideFreeSize = freeSize;
-            _absorbedSideUpcharge = newUpcharge;
-            _absorbedSideItem = itemName;
-            _absorbedSideSize = size;
-            _absorbedSideDisplay = display;
-        }
-        else
-        {
-            _absorbedDrinkFreeItem = freeItem;
-            _absorbedDrinkFreeSize = freeSize;
-            _absorbedDrinkUpcharge = newUpcharge;
-            _absorbedDrinkItem = itemName;
-            _absorbedDrinkSize = size;
-            _absorbedDrinkDisplay = display;
-        }
-
+        // Rebuild the bundle's own "w/ <side> & <drink>" display from the relabeled slots above
+        // -- every caller (the direct bundle-line `modify` path, and FillBundleComponent's own
+        // call for a "wholeBundleSize" slot-fill) gets a correctly rendered display with no
+        // separate, easy-to-forget rebuild step of its own.
         RebuildBundleDisplay(comboItem);
+        return true;
     }
 
-    /// <summary>#179: a `remove` targeting the item CURRENTLY filling a bundle's side/drink slot
-    /// must vacate that slot -- there's no raw <see cref="OrderItem"/> for an absorbed component,
-    /// so the ordinary remove-by-line lookup never finds one, which is why this used to be a
-    /// silent no-op. Reverts whatever upcharge a prior resize added to the bundle line's own
-    /// price (the guest isn't paying for a resized size that's no longer filling anything),
-    /// decrements the slot's fill count so <see cref="GetComboRequirements"/> flags the combo
-    /// incomplete again, and clears the slot's CURRENT item/size/display -- but deliberately
-    /// leaves the free-reference fields alone (see <see cref="FillBundleComponent"/>) so a
-    /// follow-up `add` of that SAME item reprices as a resize, exactly like the explicit resize
-    /// action, instead of granting a second free upsize.
+    /// <summary>PR #184 round 2 (Rick's review, item 1): the ONE place a bundle's side/drink slot
+    /// gets (re)filled -- a first-time absorption, a bundle-slot autofill, a refill after a
+    /// `remove`-vacate, an explicit `modify`/resize of the slot, or an `add` of the same item at
+    /// a different size while the slot is already full all route through here. <paramref
+    /// name="slotIndex"/> identifies WHICH physical unit of <paramref name="comboItem"/> (a
+    /// quantity-N bundle line has N independent slots per component) this fill targets -- callers
+    /// resolve it via <see cref="FindBundleSlot"/> (cross-instance resize/vacate targets) or
+    /// directly (filling a specific just-created/just-grown unit during the bundle pivot).
     ///
-    /// Returns <c>null</c> if this slot isn't actually filled by a real bundle item right now
-    /// (should not happen -- callers only invoke this once they've matched itemName against an
-    /// already-set absorbed-component item -- defensive all the same). Mirrors order_state.py's
-    /// <c>_vacate_bundle_component</c>.</summary>
-    private (string Component, string VacatedDisplay, string ComboDisplay)? VacateBundleComponent(string component)
+    /// <para>Pricing is now a PURE function of the bundle instance's OWN current state -- never a
+    /// stateful delta/"free reference" computation (the root cause of the #179-round-1 path
+    /// dependence Rick's PR #184 review flagged). "includedAnySize" packs (default) always reset
+    /// the bundle's own price to its own flat menu price, no matter what size fills a slot -- a
+    /// side or drink is included AT ANY SIZE, so there is never a credit or an upcharge to
+    /// compute, and ordering a size up front vs. resizing into it afterward always totals the
+    /// same. "wholeBundleSize" packs instead resize the WHOLE bundle
+    /// (<see cref="ApplyWholeBundleResize"/>) whenever the requested size differs from the
+    /// bundle's own current size.</para>
+    ///
+    /// Returns whether <paramref name="itemName"/> is the SAME item that last filled (or still
+    /// fills) this slot on this bundle instance -- a genuine RESIZE, not a fresh fill of a
+    /// different item -- so callers can report "resized" vs. "included with your combo" wording,
+    /// same as before, with no dollar amount driving that choice anymore. Mirrors
+    /// order_state.py's <c>_fill_bundle_component</c>.</summary>
+    private bool FillBundleComponent(
+        OrderItem comboItem, int slotIndex, string component, string itemName, string size, string display,
+        bool autofill = false)
     {
-        var comboItem = FindBundleItemForComponent(component);
-        if (comboItem is null)
+        var slots = SyncBundleSlotList(comboItem, component);
+        var slot = slots[slotIndex];
+        var isResize = slot.LastItem.Length > 0 && MenuKeyValidator.MenuKey(slot.LastItem) == MenuKeyValidator.MenuKey(itemName);
+        slot.Item = itemName;
+        slot.Size = size;
+        slot.Display = display;
+        slot.LastItem = itemName;
+        slot.LastSize = size;
+        slot.Autofill = autofill;
+
+        if (_menu.BundleResizeRule == "wholeBundleSize")
+        {
+            ApplyWholeBundleResize(comboItem, size);
+        }
+        else
+        {
+            var ownPrice = _menu.PriceFor(comboItem.Item, comboItem.Size);
+            if (ownPrice is { } price)
+            {
+                comboItem.Price = price;
+            }
+        }
+        RebuildBundleDisplay(comboItem);
+        return isResize;
+    }
+
+    /// <summary>PR #184 round 2: a `remove` targeting the item CURRENTLY filling a bundle's
+    /// side/drink slot must vacate THAT instance's THAT unit's slot (via <paramref
+    /// name="itemName"/>-aware lookup, so two combos -- or two units of one quantity-N combo --
+    /// vacate independently) -- there's no raw <see cref="OrderItem"/> for an absorbed component,
+    /// so the ordinary remove-by-line lookup never finds one. Clears the slot's CURRENT
+    /// item/size/display (so <see cref="GetComboRequirements"/> flags this unit incomplete
+    /// again) but deliberately leaves <see cref="BundleSlot.LastItem"/>/<see
+    /// cref="BundleSlot.LastSize"/> alone (see <see cref="FillBundleComponent"/>) so a follow-up
+    /// `add` of that SAME item reports as a resize, not a second fresh absorption. Never changes
+    /// the bundle's own price/size -- vacating a slot doesn't un-resize a "wholeBundleSize"
+    /// bundle, and an "includedAnySize" bundle's price was never affected by what filled the
+    /// slot.
+    ///
+    /// Returns <c>null</c> if this slot isn't actually filled by <paramref name="itemName"/>
+    /// right now (should not happen -- callers only invoke this once they've matched it against
+    /// an already-filled slot -- defensive all the same). Mirrors order_state.py's
+    /// <c>_vacate_bundle_component</c>.</summary>
+    private (string Component, string VacatedDisplay, string ComboDisplay)? VacateBundleComponent(string component, string itemName)
+    {
+        var found = FindBundleSlot(component, itemName);
+        if (found is not { } slotFound)
         {
             return null;
         }
-
-        var upcharge = component == "sides" ? _absorbedSideUpcharge : _absorbedDrinkUpcharge;
-        if (upcharge != 0m)
+        var (comboItem, idx) = slotFound;
+        var slots = SyncBundleSlotList(comboItem, component);
+        var slot = slots[idx];
+        // Guard against FindBundleSlot's vacant-search branch handing back a slot that does NOT
+        // actually hold itemName right now (e.g. this component is filled elsewhere by a
+        // different item) -- only a genuine holder match may be vacated.
+        if (slot.Item.Length == 0 || MenuKeyValidator.MenuKey(slot.Item) != MenuKeyValidator.MenuKey(itemName))
         {
-            comboItem.Price -= upcharge;
+            return null;
         }
-
-        string vacatedDisplay;
-        if (component == "sides")
-        {
-            vacatedDisplay = _absorbedSideDisplay;
-            _absorbedSides = Math.Max(0, _absorbedSides - 1);
-            _absorbedSideItem = "";
-            _absorbedSideSize = "";
-            _absorbedSideDisplay = "";
-            _absorbedSideUpcharge = 0m;
-        }
-        else
-        {
-            vacatedDisplay = _absorbedDrinkDisplay;
-            _absorbedDrinks = Math.Max(0, _absorbedDrinks - 1);
-            _absorbedDrinkItem = "";
-            _absorbedDrinkSize = "";
-            _absorbedDrinkDisplay = "";
-            _absorbedDrinkUpcharge = 0m;
-        }
-
+        var vacatedDisplay = slot.Display;
+        slot.Item = "";
+        slot.Size = "";
+        slot.Display = "";
+        slot.Autofill = false;
         RebuildBundleDisplay(comboItem);
         return (component, vacatedDisplay, comboItem.Display);
     }
 
-    /// <summary>#179: whether <paramref name="itemName"/> (any size) currently fills a bundle's
-    /// side or drink slot via absorption -- it has no raw <see cref="OrderItem"/> of its own, so
-    /// the ordinary <see cref="Items"/>-based line match (what `remove`/`modify` used to rely on
-    /// exclusively) will never find it, even though it's a real, resizable part of the order.
-    /// <c>Tools.OrderToolExecutor</c>'s `modify` on-menu/in-order gate calls this as a second
-    /// chance before rejecting with `not_in_order`. Mirrors order_state.py's
-    /// <c>is_absorbed_component</c>.</summary>
+    /// <summary>PR #184 round 2: whether <paramref name="itemName"/> (any size) currently fills
+    /// ANY combo instance's side or drink slot via absorption, across the whole order -- it has
+    /// no raw <see cref="OrderItem"/> of its own, so the ordinary <see cref="Items"/>-based line
+    /// match (what `remove`/`modify` used to rely on exclusively) will never find it, even though
+    /// it's a real, resizable part of the order. <c>Tools.OrderToolExecutor</c>'s `modify`
+    /// on-menu/in-order gate calls this as a second chance before rejecting with `not_in_order`.
+    /// Mirrors order_state.py's <c>is_absorbed_component</c>.</summary>
     public bool IsAbsorbedComponent(string itemName)
     {
         var key = MenuKeyValidator.MenuKey(itemName);
-        if (_absorbedSideItem.Length > 0 && MenuKeyValidator.MenuKey(_absorbedSideItem) == key)
+        foreach (var comboItem in _items)
         {
-            return true;
-        }
-        if (_absorbedDrinkItem.Length > 0 && MenuKeyValidator.MenuKey(_absorbedDrinkItem) == key)
-        {
-            return true;
+            foreach (var component in new[] { "sides", "drinks" })
+            {
+                if (!comboItem.BundleSlots.TryGetValue(component, out var slots))
+                {
+                    continue;
+                }
+                if (slots.Any(slot => slot.Item.Length > 0 && MenuKeyValidator.MenuKey(slot.Item) == key))
+                {
+                    return true;
+                }
+            }
         }
         return false;
     }
@@ -756,20 +908,35 @@ public sealed class OrderState
 
     /// <summary>Ports order_state.py's <c>get_combo_requirements</c>: scans the order for bundles
     /// and returns what's still missing to complete them, in this persona's own wording
-    /// (<c>bundle.missingPartText</c>).</summary>
+    /// (<c>bundle.missingPartText</c>).
+    ///
+    /// <para>PR #184 round 2 (Rick's review, item 2): completeness is now determined PER BUNDLE
+    /// INSTANCE and PER PHYSICAL UNIT from its own <see cref="OrderItem.BundleSlots"/> state (a
+    /// quantity-N line has N independent slots per component -- see
+    /// <see cref="SyncBundleSlotList"/>), not a session-wide capacity/fill counter -- two combos
+    /// (one fully built, one still missing its drink), or two units of one quantity-2 line,
+    /// report independently instead of netting out against each other's counts.</para></summary>
     public ComboRequirements GetComboRequirements()
     {
-        var sideCapacity = _items.Where(item => _menu.BundleSlots(item.Item).Contains("sides")).Sum(item => item.Quantity);
-        var drinkCapacity = _items.Where(item => _menu.BundleSlots(item.Item).Contains("drinks")).Sum(item => item.Quantity);
-        var sideCount = _items.Where(item => _menu.InferComboComponent(item.Item) == "sides").Sum(item => item.Quantity) + _absorbedSides;
-        var drinkCount = _items.Where(item => _menu.InferComboComponent(item.Item) == "drinks").Sum(item => item.Quantity) + _absorbedDrinks;
+        var missingComponents = new HashSet<string>();
+        foreach (var item in _items)
+        {
+            foreach (var component in _menu.BundleSlots(item.Item))
+            {
+                var slots = SyncBundleSlotList(item, component);
+                if (slots.Any(slot => slot.Item.Length == 0))
+                {
+                    missingComponents.Add(component);
+                }
+            }
+        }
 
         var missing = new List<string>();
-        if (sideCount < sideCapacity)
+        if (missingComponents.Contains("sides"))
         {
             missing.Add(_menu.BundleMissingPartText.GetValueOrDefault("sides", "a side"));
         }
-        if (drinkCount < drinkCapacity)
+        if (missingComponents.Contains("drinks"))
         {
             missing.Add(_menu.BundleMissingPartText.GetValueOrDefault("drinks", "a drink"));
         }
@@ -813,30 +980,16 @@ public sealed class OrderState
         return $"I have {summaryStr}. Your total is {Summary.FinalTotalDisplay}. ";
     }
 
-    /// <summary>Ports order_state.py's <c>reset_order</c> (#41): clears the order lines AND every
-    /// combo-absorption bookkeeping field (counts and display strings) so a fresh combo after a
-    /// reset never shows a stale absorbed component name from the previous order.</summary>
+    /// <summary>Ports order_state.py's <c>reset_order</c> (#41): clears the order lines. PR #184
+    /// round 2 (Rick's review, item 3 -- "removing the combo clears its slot state"): all
+    /// bundle-slot state now lives ON each <see cref="OrderItem"/> instance itself (see
+    /// <see cref="OrderItem.BundleSlots"/>), not in separate session-level bookkeeping fields, so
+    /// clearing <see cref="_items"/> is the whole reset -- there is no longer any stale
+    /// session-wide absorption state that could leak a previous order's free reference or
+    /// filled-slot display into a fresh combo.</summary>
     public void ResetOrder()
     {
         _items.Clear();
-        _absorbedSides = 0;
-        _absorbedDrinks = 0;
-        _absorbedSideDisplay = "";
-        _absorbedDrinkDisplay = "";
-        // #179: per-slot resize/vacate bookkeeping -- unlike VacateBundleComponent (which
-        // deliberately keeps the free-reference fields alive across a single remove), a genuine
-        // reset must clear everything, including the free-reference anchors, so a fresh combo
-        // after a reset never carries over a stale free reference from the previous order.
-        _absorbedSideItem = "";
-        _absorbedSideSize = "";
-        _absorbedSideFreeItem = "";
-        _absorbedSideFreeSize = "";
-        _absorbedSideUpcharge = 0m;
-        _absorbedDrinkItem = "";
-        _absorbedDrinkSize = "";
-        _absorbedDrinkFreeItem = "";
-        _absorbedDrinkFreeSize = "";
-        _absorbedDrinkUpcharge = 0m;
         UpdateSummary();
     }
 }

@@ -24,20 +24,27 @@ namespace Conformance.Tests.Scenarios.Ordering;
 /// sequence) and via the explicit `modify` action (
 /// <see cref="Discovered_pack_resizes_the_combo_drink_via_explicit_modify"/>, #179's other
 /// required path). Both must land on exactly the SAME observable state: one combo line showing the
-/// LARGER drink, no standalone drink line at all, and a total of this pack's own bundle price plus
-/// only the real per-pack upsize delta (the larger size's own menu price minus the smaller size's
-/// own menu price) -- never a silent duplicate, and never an invented price.
+/// LARGER drink, no standalone drink line at all, and a total of EXACTLY this pack's own bundle
+/// price (#179 round 2, issue #184, Rick's required item 1: every pack's own bundle price already
+/// includes a slot-filling side/drink at ANY size it's filled at -- `includedAnySize`, the default
+/// `bundles.resizeRule` -- so resizing the drink in place never adds or credits anything; "the
+/// bundle price plus the real upsize delta" was round 1's bug, not round 2's fix) -- never a silent
+/// duplicate, and never an invented price.
 ///
-/// A pack with no bundle on its own menu at all, or whose only bundle(s)
-/// auto-fill their own drink slot the instant they're added (leaving no open-slot window at all to
-/// reproduce #179 against), is naturally absent from <see cref="DiscoveredBundleResizeCases"/>'s
-/// Theory rows rather than failing -- see <see cref="ComboBundleDiscovery.Discover"/>.
+/// A pack with no bundle on its own menu at all, whose only bundle(s) auto-fill their own drink
+/// slot the instant they're added (leaving no open-slot window at all to reproduce #179 against),
+/// or whose own `bundles.resizeRule` is `wholeBundleSize` (that pack's component-resize behavior is
+/// fundamentally different -- resizing ANY absorbed slot cascades into resizing the WHOLE bundle,
+/// see <see cref="ComboBundleDiscovery.BundleResizeRule"/> and
+/// <see cref="WholeBundleSizeResizeConformanceTests"/>, the dedicated scenario for that rule) is
+/// naturally absent from <see cref="DiscoveredBundleResizeCases"/>'s Theory rows rather than
+/// failing -- see <see cref="ComboBundleDiscovery.Discover"/>.
 ///
 /// Runs under a FixedClock pinned just before the happy-hour window opens (same fixture shape as
 /// <see cref="ComboAbsorptionTests"/>), one dedicated backend per discovered pack (mirroring <see
 /// cref="RealPackMealNumberConformanceTests"/>'s own per-row fixture, since each pack must bind a
 /// DIFFERENT persona) -- several discovered drinks are happy-hour-discounted on their own pack's
-/// menu, so a real wall-clock run during that window would make the expected upsize delta
+/// menu, so a real wall-clock run during that window would make the expected total
 /// non-deterministic.
 /// </summary>
 public static class ComboBundleDiscovery
@@ -53,10 +60,18 @@ public static class ComboBundleDiscovery
         SizedItem DrinkFromSize,
         SizedItem DrinkToSize)
     {
-        /// <summary>The real per-pack upsize delta this pack's own menu charges for resizing the
-        /// discovered drink from <see cref="DrinkFromSize"/> to <see cref="DrinkToSize"/>.</summary>
-        public decimal UpsizeDelta => DrinkToSize.Price - DrinkFromSize.Price;
+        public override string ToString() => PersonaId;
+    }
 
+    public sealed record WholeBundleResizeCase(
+        string PersonaId,
+        string BundleName,
+        string FromSize,
+        decimal FromPrice,
+        string ToSize,
+        decimal ToPrice,
+        SizedItem? Drink)
+    {
         public override string ToString() => PersonaId;
     }
 
@@ -84,6 +99,27 @@ public static class ComboBundleDiscovery
         }
 
         return down;
+    }
+
+    /// <summary>This pack's own persona.json `bundles.resizeRule` (#184 round 2, Rick's required
+    /// item 1/2): `"includedAnySize"` (the default, when absent) means a bundle's own price always
+    /// includes a filled slot at ANY size for free, so resizing a slot component never changes the
+    /// bundle's own total. `"wholeBundleSize"` means resizing ANY slot component instead cascades
+    /// into resizing the WHOLE bundle's own line (see
+    /// <see cref="DiscoverWholeBundleResize"/>) -- a fundamentally different mechanism this
+    /// generic per-component <see cref="Discover"/> scenario does not apply to.</summary>
+    public static string BundleResizeRule(string personasDir, string personaId)
+    {
+        var personaJsonPath = Path.Combine(personasDir, personaId, "persona.json");
+        using var doc = JsonDocument.Parse(File.ReadAllText(personaJsonPath));
+        if (doc.RootElement.TryGetProperty("bundles", out var bundles) &&
+            bundles.TryGetProperty("resizeRule", out var rule) &&
+            rule.GetString() is { Length: > 0 } ruleValue)
+        {
+            return ruleValue;
+        }
+
+        return "includedAnySize";
     }
 
     private static IReadOnlyList<CandidateItem> ReadMenuItems(string personasDir, string personaId)
@@ -141,12 +177,22 @@ public static class ComboBundleDiscovery
     /// resize has an observable, non-zero, pack-real upsize delta) and, only if this bundle's own
     /// "sides" slot is NOT already auto-filled, a real sides-category item too. Machine-gated items
     /// (this SAME pack's own persona.json `machines` block) are never chosen as the drink or side,
-    /// so a currently-down machine can never make a discovered row flaky. Returns null -- never
-    /// throws -- for a pack with no bundle on its own menu at all, or none that qualifies, so that
-    /// pack is simply absent from the discovered Theory rows.
+    /// so a currently-down machine can never make a discovered row flaky. Skips this pack entirely
+    /// (returns null) when its own `bundles.resizeRule` is `wholeBundleSize` -- resizing a slot
+    /// component on that rule cascades into resizing the WHOLE bundle (see `ApplyWholeBundleResize`
+    /// in OrderState.cs / `_apply_whole_bundle_resize` in order_state.py), a fundamentally
+    /// different mechanism covered by the dedicated <see cref="DiscoverWholeBundleResize"/>
+    /// scenario instead. Returns null -- never throws -- for a pack with no bundle on its own menu
+    /// at all, or none that qualifies, so that pack is simply absent from the discovered Theory
+    /// rows.
     /// </summary>
     public static BundleResizeCase? Discover(string personasDir, string personaId)
     {
+        if (BundleResizeRule(personasDir, personaId) != "includedAnySize")
+        {
+            return null;
+        }
+
         var items = ReadMenuItems(personasDir, personaId);
 
         bool IsMachineGated(CandidateItem item, IReadOnlySet<string> downMachines) =>
@@ -208,6 +254,64 @@ public static class ComboBundleDiscovery
                 side,
                 new SizedItem(drinkItem.Name, fromSize.Size, fromSize.Price),
                 new SizedItem(drinkItem.Name, toSize.Size, toSize.Price));
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Finds, in THIS pack's own menu/menuItems.json, the first real bundle with at least two
+    /// DIFFERENT real prices across its OWN sizes (the whole-bundle "make it a large meal" resize's
+    /// own target/source, not any slot component's size) on a pack whose own `bundles.resizeRule`
+    /// is `wholeBundleSize` (see <see cref="BundleResizeRule"/>). Resolves <paramref
+    /// name="personaId"/>'s own smallest- and largest-priced bundle sizes, and, if the bundle's own
+    /// "drinks" slot is genuinely open (same open-slot test as <see cref="Discover"/>), a real
+    /// drinks-category item to explicitly fill it with (proving the explicit slot gets relabeled to
+    /// the bundle's new size too, not just its autofilled sides) -- machine-gated items are never
+    /// chosen. Returns null -- never throws -- for a pack whose own resizeRule isn't
+    /// `wholeBundleSize`, or that has no bundle with two distinct sizes on its own menu, so that
+    /// pack is simply absent from the discovered Theory rows.
+    /// </summary>
+    public static WholeBundleResizeCase? DiscoverWholeBundleResize(string personasDir, string personaId)
+    {
+        if (BundleResizeRule(personasDir, personaId) != "wholeBundleSize")
+        {
+            return null;
+        }
+
+        var items = ReadMenuItems(personasDir, personaId);
+        var downMachines = CurrentlyDownMachines(personasDir, personaId);
+
+        foreach (var bundleItem in items.Where(i => i.BundleSlots is not null))
+        {
+            var distinctSizes = bundleItem.Sizes
+                .GroupBy(s => s.Price).Select(g => g.First())
+                .OrderBy(s => s.Price)
+                .ToList();
+            if (distinctSizes.Count < 2)
+            {
+                continue;
+            }
+
+            var fromSize = distinctSizes[0];
+            var toSize = distinctSizes[^1];
+
+            SizedItem? drink = null;
+            if (bundleItem.BundleSlots!.Contains("drinks") && !bundleItem.AutoFillKeys.Contains("drinks"))
+            {
+                var drinkItem = items.FirstOrDefault(i =>
+                    i.ComboSlot == "drinks" &&
+                    !(i.RequiresMachine is { } machine && downMachines.Contains(machine)) &&
+                    i.Sizes.Count > 0);
+                if (drinkItem is not null)
+                {
+                    var drinkSize = drinkItem.Sizes[0];
+                    drink = new SizedItem(drinkItem.Name, drinkSize.Size, drinkSize.Price);
+                }
+            }
+
+            return new WholeBundleResizeCase(
+                personaId, bundleItem.Name, fromSize.Size, fromSize.Price, toSize.Size, toSize.Price, drink);
         }
 
         return null;
@@ -288,12 +392,14 @@ public sealed class ComboComponentResizeConformanceTests
         Assert.DoesNotContain(bundleCase.DrinkFromSize.Size, display);
 
         OrderScenarioHelpers.AssertMoneyEqual(
-            bundleCase.BundlePrice + bundleCase.UpsizeDelta,
+            bundleCase.BundlePrice,
             OrderScenarioHelpers.GetOrderTotal(orderSummaryJson),
             $"persona '{bundleCase.PersonaId}': resizing '{bundleCase.DrinkFromSize.Name}' from " +
-            $"{bundleCase.DrinkFromSize.Size} to {bundleCase.DrinkToSize.Size} must charge only " +
-            $"this pack's own real upsize delta ({bundleCase.UpsizeDelta}) on top of the bundle's " +
-            $"own price ({bundleCase.BundlePrice}), never duplicate the drink's full standalone price.");
+            $"{bundleCase.DrinkFromSize.Size} to {bundleCase.DrinkToSize.Size} must charge EXACTLY " +
+            $"this pack's own bundle price ({bundleCase.BundlePrice}) -- `includedAnySize` means a " +
+            "slot-filling drink at ANY size is already included for free, so resizing it in place " +
+            "never adds a per-pack upsize delta on top (that was round 1's bug) and never " +
+            "duplicates the drink's full standalone price.");
     }
 
     [Theory]
@@ -353,6 +459,100 @@ public sealed class ComboComponentResizeConformanceTests
                 seedResult.RoundTripIndex, ct, callIdPrefix: "call_modify");
 
             AssertResizedComboOnlyNoStandaloneDrink(bundleCase, result.ToolResultJson!);
+        });
+    }
+}
+
+/// <summary>
+/// Issue #184 round 2 (Rick's required item 1/2, discovered while fixing
+/// <see cref="ComboComponentResizeConformanceTests"/> above): a pack whose own `bundles.resizeRule`
+/// is `wholeBundleSize` (today, exactly the real pack whose own app resizes "the WHOLE meal", never
+/// just a slot) has a fundamentally different resize mechanism than <see
+/// cref="ComboComponentResizeConformanceTests"/> covers -- filling or resizing ANY slot component
+/// on that rule cascades into resizing the BUNDLE'S OWN line (`ApplyWholeBundleResize` in
+/// OrderState.cs / `_apply_whole_bundle_resize` in order_state.py): the bundle's own size and price
+/// change together, and every filled slot (autofilled or explicit) is relabeled to the new size,
+/// never separately priced. This end-to-end, brand-agnostic Theory discovers, from THIS SAME
+/// pack's own real menu/menuItems.json (never a hardcoded name), one real bundle with at least two
+/// distinct real sizes/prices, seeds it at its smallest size (plus an explicit drink, only if this
+/// bundle's own drink slot is genuinely open), then resizes the BUNDLE ITSELF (never a slot
+/// component) to its largest size via `modify` -- mirroring the real "make it a large meal" UX --
+/// and asserts exactly one order line, charged EXACTLY that largest size's own real menu price (no
+/// separate slot pricing at all), with every filled slot's display relabeled to the new size and
+/// the old size's label gone. A pack whose own `bundles.resizeRule` isn't `wholeBundleSize`, or
+/// that has no bundle with two distinct sizes on its own menu, is naturally absent from
+/// <see cref="DiscoveredWholeBundleResizeCases"/>'s Theory rows rather than failing -- see
+/// <see cref="ComboBundleDiscovery.DiscoverWholeBundleResize"/>.
+/// </summary>
+public sealed class WholeBundleSizeResizeConformanceTests
+{
+    public static TheoryData<ComboBundleDiscovery.WholeBundleResizeCase> DiscoveredWholeBundleResizeCases()
+    {
+        var personasDir = RepoPaths.PersonasDirectory(RepoPaths.FindRepoRoot());
+        var data = new TheoryData<ComboBundleDiscovery.WholeBundleResizeCase>();
+        foreach (var personaId in ConformancePersonas.DiscoverFromDisk())
+        {
+            var discovered = ComboBundleDiscovery.DiscoverWholeBundleResize(personasDir, personaId);
+            if (discovered is not null)
+            {
+                data.Add(discovered);
+            }
+        }
+
+        return data;
+    }
+
+    [Theory]
+    [Trait("Dotnet", "ready")]
+    [MemberData(nameof(DiscoveredWholeBundleResizeCases))]
+    public async Task Discovered_whole_bundle_size_pack_resizes_the_meal_and_relabels_its_slots(
+        ComboBundleDiscovery.WholeBundleResizeCase bundleCase)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var fixture = new ComboBundleResizeFixture(bundleCase.PersonaId);
+        await fixture.InitializeAsync();
+        await fixture.RunAsync(async () =>
+        {
+            var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
+                fixture, ct, persona: bundleCase.PersonaId);
+            await using var _ = browser;
+
+            var steps = new List<(string Action, string Item, string Size, int Quantity, decimal Price)>
+            {
+                ("add", bundleCase.BundleName, bundleCase.FromSize, 1, bundleCase.FromPrice),
+            };
+            if (bundleCase.Drink is { } drink)
+            {
+                steps.Add(("add", drink.Name, drink.Size, 1, drink.Price));
+            }
+
+            var seeded = await OrderScenarioHelpers.RunOrderStepsAsync(
+                connection, browser, steps, roundTripIndex, ct, callIdPrefix: "call_seed_meal");
+
+            // "Make it a large meal" -- modifies the WHOLE bundle's own line, never a slot
+            // component, matching the real app's own whole-meal resize UX.
+            var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+                connection, browser,
+                [("modify", bundleCase.BundleName, bundleCase.ToSize, 1, bundleCase.ToPrice)],
+                seeded.RoundTripIndex, ct, callIdPrefix: "call_resize_meal");
+
+            var order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+            var items = order.GetProperty("items").EnumerateArray().ToList();
+            Assert.Single(items); // the meal resize is one line, never split into a second one
+
+            var meal = items[0];
+            Assert.Equal(bundleCase.BundleName, meal.GetProperty("item").GetString());
+            var display = meal.GetProperty("display").GetString()!;
+            Assert.Contains(bundleCase.ToSize, display);
+            Assert.DoesNotContain(bundleCase.FromSize, display); // old size's label is gone, not just the bundle's own
+
+            OrderScenarioHelpers.AssertMoneyEqual(
+                bundleCase.ToPrice,
+                OrderScenarioHelpers.GetOrderTotal(result.ToolResultJson!),
+                $"persona '{bundleCase.PersonaId}': resizing the WHOLE bundle '{bundleCase.BundleName}' " +
+                $"to {bundleCase.ToSize} must charge EXACTLY that size's own real menu price " +
+                $"({bundleCase.ToPrice}) -- `wholeBundleSize` reprices the bundle's own line, never a " +
+                "slot component separately.");
         });
     }
 }

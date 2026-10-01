@@ -808,7 +808,7 @@ async def update_order(args, session_id: str) -> ToolResult:
             combo_display = f"{display_name} {mods}"
         delta_text = f"Upgraded to {combo_display} — your total is now {summary.finalTotalDisplay}"
     elif resized_component:
-        delta_text = f"Changed {display_name} — your total is now {summary.finalTotalDisplay}"
+        delta_text = f"Changed {display_name}, your total is now {summary.finalTotalDisplay}"
     elif pl:
         tpl = pl.get_delta_template(action)
         delta_text = pl.render_template(tpl, quantity=quantity, display_name=display_name, total=summary.finalTotalDisplay)

@@ -2,6 +2,23 @@ using System.Text.Json.Serialization;
 
 namespace Backend.Ordering;
 
+/// <summary>PR #184 round 2 (Rick's review, item 2/3): one PHYSICAL UNIT's own side/drink slot
+/// state -- mutable fields mutated in place by <see cref="OrderState"/>'s bundle-slot helpers.
+/// Mirrors models.py's <c>_bundle_slots</c> per-slot dict shape
+/// (<c>{"item","size","display","last_item","last_size","autofill"}</c>). <see cref="Item"/> is
+/// "" when the slot is vacant; <see cref="LastItem"/>/<see cref="LastSize"/> deliberately SURVIVE
+/// a vacate (<see cref="OrderState"/>'s VacateBundleComponent) so a later refill of that same item
+/// reports as a resize instead of a fresh free absorption.</summary>
+public sealed class BundleSlot
+{
+    public string Item { get; set; } = "";
+    public string Size { get; set; } = "";
+    public string Display { get; set; } = "";
+    public string LastItem { get; set; } = "";
+    public string LastSize { get; set; } = "";
+    public bool Autofill { get; set; }
+}
+
 /// <summary>
 /// Port of app/backend/models.py's <c>OrderItem</c> (docs/dotnet_mapping.md, issues #46/#77). A
 /// mutable class, not a record -- <see cref="OrderState"/>'s combo/bundle engine mutates
@@ -21,6 +38,17 @@ public sealed class OrderItem
     /// absorbed into (or auto-filled onto) this line, e.g. ["Medium Fries", "Coca-Cola"] for a
     /// meal/combo. Rendered on the wire only when non-empty.</summary>
     [JsonPropertyName("components")] public List<string> Components { get; set; } = [];
+
+    /// <summary>PR #184 round 2 (Rick's review, item 2/3): per-INSTANCE, per-PHYSICAL-UNIT bundle
+    /// slot-fill state -- keyed by component ("sides"/"drinks") -> a LIST of per-unit
+    /// <see cref="BundleSlot"/> records, one entry per unit of <see cref="Quantity"/>, synced
+    /// lazily by <see cref="OrderState"/>'s SyncBundleSlotList (grows/truncates to match
+    /// Quantity). Never serialized on the wire -- JsonIgnore, exactly like models.py's
+    /// PrivateAttr never appears in model_dump_json()/the order-summary wire contract; the wire's
+    /// own "what's in the combo" story is Components above, never this engine-internal state.
+    /// Mutated ONLY by OrderState (this session's sole owner); no other caller should ever read
+    /// or write it directly.</summary>
+    [JsonIgnore] public Dictionary<string, List<BundleSlot>> BundleSlots { get; } = [];
 }
 
 /// <summary>

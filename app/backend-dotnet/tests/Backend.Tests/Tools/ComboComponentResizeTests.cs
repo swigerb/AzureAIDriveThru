@@ -7,17 +7,27 @@ using Backend.Tools;
 namespace Backend.Tests.Tools;
 
 /// <summary>
-/// C# port of app/backend/tests/test_combo_orders.py's TestComboComponentResize (#179): proves
-/// the same live-bug sequence is fixed in this backend too -- `remove` of a combo's drink no
-/// longer no-ops, a follow-up `add` of that same item at a new size resolves to an in-place
-/// resize (never a standalone duplicate line), the explicit `modify` action prices identically,
-/// and genuinely unrelated items/adds are left exactly as before. Against the SAME "test-delta"
-/// fixture pack Python's own tests use (<see cref="DeltaFixture"/>): "Delta Meal" is the bundle
-/// (sides+drinks slots, bundle.autoFill), "Delta Fries" the side (regular only, $1.99), "Delta
-/// Latte" the multi-size comboSlot drink (regular $3.49 / large $4.29 -- the fixture's only
-/// real, non-autoFill-only comboSlot drink, added for this test class, see menuItems.json).
-/// test-delta's own pricing is 7% tax and NO happy hour (persona.json), so assertions compare
-/// against <c>total</c> (pre-tax), never <c>finalTotal</c>, to stay independent of that rate.
+/// C# port of app/backend/tests/test_combo_orders.py's TestComboComponentResize (#179, PR #184
+/// round 2): proves the same live-bug sequence is fixed in this backend too -- `remove` of a
+/// combo's drink no longer no-ops, a follow-up `add` of that same item at a new size resolves to
+/// an in-place resize (never a standalone duplicate line), the explicit `modify` action prices
+/// identically, and genuinely unrelated items/adds are left exactly as before.
+///
+/// <para>PR #184 round 2 (Rick's review, item 1): pricing is now a PURE function of the bundle's
+/// own final state, not a stateful delta/"free reference" computation -- test-delta's own
+/// <c>bundles.resizeRule</c> is the implicit "includedAnySize" default, so a side or drink is
+/// included in the combo AT ANY SIZE: the combo's own price never changes no matter what size
+/// fills its slots, in either direction (upsize or downsize), and ordering a size up front costs
+/// exactly the same as resizing into it afterward -- see
+/// <see cref="SameTotal_RegardlessOfOrderPath"/> for the general property this guarantees.</para>
+///
+/// Against the SAME "test-delta" fixture pack Python's own tests use (<see cref="DeltaFixture"/>):
+/// "Delta Meal" is the bundle (sides+drinks slots, bundle.autoFill), "Delta Fries" the side
+/// (regular only, $1.99), "Delta Latte" the multi-size comboSlot drink (regular $3.49 / large
+/// $4.29 -- the fixture's only real, non-autoFill-only comboSlot drink, added for this test
+/// class, see menuItems.json). test-delta's own pricing is 7% tax and NO happy hour
+/// (persona.json), so assertions compare against <c>total</c> (pre-tax), never
+/// <c>finalTotal</c>, to stay independent of that rate.
 ///
 /// <para>Delta Fries and Delta Latte are always added BEFORE Delta Meal in these scenarios
 /// (mirroring <c>Add_BundleWithPreexistingStandaloneSide_AbsorbsRatherThanAutofillingThatSlot</c>
@@ -41,7 +51,6 @@ public sealed class ComboComponentResizeTests
     private const decimal SidePrice = 1.99m;
     private const decimal LatteRegularPrice = 3.49m;
     private const decimal LatteLargePrice = 4.29m;
-    private const decimal LatteUpsizeDelta = LatteLargePrice - LatteRegularPrice; // $0.80, the fixture's own menu data
 
     private static OrderToolExecutor NewExecutor(out OrderState order)
     {
@@ -107,9 +116,10 @@ public sealed class ComboComponentResizeTests
         Assert.Contains("Large Delta Latte", display);
         Assert.DoesNotContain("Regular Delta Latte", display);
 
-        // Side was absorbed free either way (first-ever fill of that slot); only the drink's
-        // real upsize delta is charged on top of the combo's base price.
-        Assert.Equal(ComboPrice + LatteUpsizeDelta, client.RootElement.GetProperty("total").GetDecimal());
+        // PR #184 round 2: pricing is a pure function of the combo's own final state -- a side
+        // or drink is included at ANY size, so resizing the drink to Large never changes the
+        // combo's own (always-base) price.
+        Assert.Equal(ComboPrice, client.RootElement.GetProperty("total").GetDecimal());
     }
 
     [Fact]
@@ -129,7 +139,7 @@ public sealed class ComboComponentResizeTests
         var display = items[0].GetProperty("display").GetString();
         Assert.Contains("Large Delta Latte", display);
         Assert.DoesNotContain("Regular Delta Latte", display);
-        Assert.Equal(ComboPrice + LatteUpsizeDelta, client.RootElement.GetProperty("total").GetDecimal());
+        Assert.Equal(ComboPrice, client.RootElement.GetProperty("total").GetDecimal());
     }
 
     [Fact]
@@ -149,15 +159,16 @@ public sealed class ComboComponentResizeTests
         using var client = JsonDocument.Parse(result.ToClientText());
         var items = GetItems(client);
         Assert.Single(items);
-        Assert.Equal(ComboPrice + LatteUpsizeDelta, client.RootElement.GetProperty("total").GetDecimal());
+        Assert.Equal(ComboPrice, client.RootElement.GetProperty("total").GetDecimal());
     }
 
     [Fact]
-    public async Task Downsize_CreditsTheRealDifference()
+    public async Task Downsize_IsAlsoFree_NoCreditBelowBasePrice()
     {
-        // Resizing DOWN must credit the real (negative) delta, symmetric with upsizing --
-        // establish the free reference at Large (absorbed via bundle-pivot, pre-existing before
-        // the combo lands), then downsize to Regular.
+        // PR #184 round 2 (Rick's item 1): resizing DOWN must be just as free as resizing up --
+        // NO credit below the combo's own base price in either direction. Establish the slot
+        // filled at Large (absorbed via bundle-pivot, pre-existing before the combo lands), then
+        // downsize to Regular: the total must stay exactly the combo's base price throughout.
         var ct = TestContext.Current.CancellationToken;
         var executor = NewExecutor(out _);
         await executor.ExecuteAsync("update_order", Args("add", "Delta Latte", "large", 1, LatteLargePrice), ct);
@@ -168,7 +179,37 @@ public sealed class ComboComponentResizeTests
         Assert.Equal(ToolResultDirection.ToBoth, result.Destination);
 
         using var client = JsonDocument.Parse(result.ToClientText());
-        Assert.Equal(ComboPrice - LatteUpsizeDelta, client.RootElement.GetProperty("total").GetDecimal());
+        Assert.Equal(ComboPrice, client.RootElement.GetProperty("total").GetDecimal());
+    }
+
+    [Fact]
+    public async Task SameTotal_RegardlessOfOrderPath()
+    {
+        // PR #184 round 2 (Rick's item 1, the headline property): ordering a size up front and
+        // resizing into it afterward must total IDENTICALLY -- the live #179 bug was that these
+        // two paths diverged (resize-in-place double-charged/under-charged relative to ordering
+        // it that size from the start). Path A: order Large up front. Path B: order Regular, then
+        // resize to Large via remove+add. Both must land on the exact same grand total.
+        var ct = TestContext.Current.CancellationToken;
+
+        var executorA = NewExecutor(out _);
+        await executorA.ExecuteAsync("update_order", Args("add", "Delta Fries", "regular", 1, SidePrice), ct);
+        await executorA.ExecuteAsync("update_order", Args("add", "Delta Latte", "large", 1, LatteLargePrice), ct);
+        var resultA = await executorA.ExecuteAsync(
+            "update_order", Args("add", "Delta Meal", "regular", 1, ComboPrice), ct);
+        using var clientA = JsonDocument.Parse(resultA.ToClientText());
+        var totalA = clientA.RootElement.GetProperty("total").GetDecimal();
+
+        var executorB = NewExecutor(out _);
+        await SeedComboWithSideAndRegularDrinkAsync(executorB, ct); // Delta Latte starts Regular
+        await executorB.ExecuteAsync("update_order", Args("remove", "Delta Latte", "regular", 1, 0m), ct);
+        var resultB = await executorB.ExecuteAsync(
+            "update_order", Args("add", "Delta Latte", "large", 1, LatteLargePrice), ct);
+        using var clientB = JsonDocument.Parse(resultB.ToClientText());
+        var totalB = clientB.RootElement.GetProperty("total").GetDecimal();
+
+        Assert.Equal(ComboPrice, totalA);
+        Assert.Equal(totalA, totalB);
     }
 
     [Fact]

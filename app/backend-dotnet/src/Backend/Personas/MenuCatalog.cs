@@ -64,6 +64,10 @@ public sealed class MenuCatalog
     public IReadOnlyList<string> BundleNameMarkers { get; }
     public bool BundleConvertStandalone { get; }
     public IReadOnlyDictionary<string, string> BundleMissingPartText { get; }
+    // PR #184 round 2 (Rick's review, item 1): this persona's own bundle slot-fill/resize
+    // pricing rule ("includedAnySize" default, or "wholeBundleSize") -- see
+    // OrderState.FillBundleComponent/ApplyWholeBundleResize.
+    public string BundleResizeRule { get; }
     public bool SplitCombinedNames { get; }
     public string SearchQueryRewrite { get; }
 
@@ -98,6 +102,7 @@ public sealed class MenuCatalog
         IReadOnlyList<string> bundleNameMarkers,
         bool bundleConvertStandalone,
         IReadOnlyDictionary<string, string> bundleMissingPartText,
+        string bundleResizeRule,
         bool splitCombinedNames,
         string searchQueryRewrite)
     {
@@ -116,6 +121,7 @@ public sealed class MenuCatalog
         BundleNameMarkers = bundleNameMarkers;
         BundleConvertStandalone = bundleConvertStandalone;
         BundleMissingPartText = bundleMissingPartText;
+        BundleResizeRule = bundleResizeRule;
         SplitCombinedNames = splitCombinedNames;
         SearchQueryRewrite = searchQueryRewrite;
 
@@ -228,6 +234,7 @@ public sealed class MenuCatalog
                 .Where(m => m.Length > 0).ToList(),
             bundleConvertStandalone: bundlesCfg.ConvertStandalone,
             bundleMissingPartText: new Dictionary<string, string>(bundlesCfg.MissingPartText),
+            bundleResizeRule: string.IsNullOrEmpty(bundlesCfg.ResizeRule) ? "includedAnySize" : bundlesCfg.ResizeRule,
             splitCombinedNames: extrasCfg.SplitCombinedNames,
             searchQueryRewrite: persona.Strategies.SearchQueryRewrite);
     }

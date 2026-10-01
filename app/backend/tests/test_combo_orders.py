@@ -21,6 +21,7 @@ import pytest
 from default_persona import get_default_persona
 from menu_utils import get_catalog_for_persona
 from order_state import order_state_singleton
+from persona_loader import PersonaCatalog
 
 
 def _default_menu():
@@ -570,16 +571,23 @@ class TestComboComponentResize:
     """Reproduces the exact #179 sequence (SuperSONIC Double Cheeseburger Combo + Large
     Tots + Medium Diet Coke, then the model resizes the drink to Large) and proves every
     way of reaching a resize -- remove-then-add, the explicit `modify` action, and an
-    `add` of the same item at a different size while the slot is already full -- end up at
-    the exact same correct state: one combo line, priced per the real menu upsize delta,
-    no standalone duplicate drink line."""
+    `add` of the same item at a different size while the slot is already full -- end up
+    at the exact same correct state: one combo line, no standalone duplicate drink line.
+
+    PR #184 round 2 (Rick's review, item 1): pricing is now a PURE function of the
+    bundle's own final state, not a stateful delta/"free reference" computation -- a
+    side or drink is included in the combo AT ANY SIZE on an "includedAnySize" pack
+    (Sonic's own `bundles.resizeRule`, the implicit default), so the combo's own price
+    never changes no matter what size fills its slots, in either direction (upsize or
+    downsize), and ordering a size up front costs exactly the same as resizing into it
+    afterward -- see `test_same_total_regardless_of_order_path` below for the general
+    property this guarantees."""
 
     COMBO = "SuperSONIC® Double Cheeseburger Combo"
     COMBO_PRICE = 10.19
     DRINK = "Diet Coke®"
     DRINK_MEDIUM_PRICE = 2.49
     DRINK_LARGE_PRICE = 2.99
-    DRINK_UPSIZE_DELTA = 0.50  # Large ($2.99) - Medium ($2.49), the pack's own menu data
     SIDE_LARGE_PRICE = 3.49
 
     def _seed_combo_with_large_side_and_medium_drink(self, sid):
@@ -590,7 +598,8 @@ class TestComboComponentResize:
     def test_remove_then_add_resizes_drink_in_place(self):
         """The exact #179 sequence: `remove Diet Coke Medium` must vacate the combo's
         drink slot (not no-op), and the following `add Diet Coke Large` must refill that
-        slot as a resize (not a standalone duplicate), charging only the real upsize."""
+        slot as a resize (not a standalone duplicate), with NO price change at all --
+        the combo is included AT ANY SIZE on this ("includedAnySize") pack."""
         sid = order_state_singleton.create_session()
         self._seed_combo_with_large_side_and_medium_drink(sid)
 
@@ -617,15 +626,14 @@ class TestComboComponentResize:
         assert not any(i.item == self.DRINK and i is not combo_item for i in items)
 
         summary = order_state_singleton.get_order_summary(sid)
-        # Side was absorbed free either way (first-ever fill of that slot); only the
-        # drink's real upsize delta is charged on top of the combo's base price.
-        assert math.isclose(summary.total, self.COMBO_PRICE + self.DRINK_UPSIZE_DELTA, rel_tol=1e-9)
+        # Included at any size -- no upcharge for the resize, no matter the direction.
+        assert math.isclose(summary.total, self.COMBO_PRICE, rel_tol=1e-9)
         req = order_state_singleton.get_combo_requirements(sid)
         assert req["is_complete"]
 
     def test_explicit_modify_resizes_drink_in_place_identically(self):
         """The explicit resize/modify path must price identically to remove-then-add --
-        the free reference survives either way."""
+        flat combo pricing either way."""
         sid = order_state_singleton.create_session()
         self._seed_combo_with_large_side_and_medium_drink(sid)
 
@@ -641,7 +649,7 @@ class TestComboComponentResize:
         assert "Medium Diet Coke®" not in combo_item.display
 
         summary = order_state_singleton.get_order_summary(sid)
-        assert math.isclose(summary.total, self.COMBO_PRICE + self.DRINK_UPSIZE_DELTA, rel_tol=1e-9)
+        assert math.isclose(summary.total, self.COMBO_PRICE, rel_tol=1e-9)
 
     def test_add_same_item_different_size_while_slot_full_resizes_not_duplicates(self):
         """An `add` of the SAME item at a DIFFERENT size while the slot is already full
@@ -659,11 +667,13 @@ class TestComboComponentResize:
         items = order_state_singleton.get_order_items(sid)
         assert len(items) == 1
         summary = order_state_singleton.get_order_summary(sid)
-        assert math.isclose(summary.total, self.COMBO_PRICE + self.DRINK_UPSIZE_DELTA, rel_tol=1e-9)
+        assert math.isclose(summary.total, self.COMBO_PRICE, rel_tol=1e-9)
 
-    def test_downsize_credits_the_real_difference(self):
-        """Resizing DOWN must credit the real (negative) delta, symmetric with upsizing --
-        establish the free reference at Large, then downsize to Medium."""
+    def test_downsize_is_also_free_no_credit_below_base_price(self):
+        """Resizing DOWN must NOT credit anything below the combo's own base price --
+        Rick's review, item 1 ("no credit below the base price on downsizing"):
+        establish a Large drink, then downsize to Medium; the combo's own price never
+        moves either way on an "includedAnySize" pack."""
         sid = order_state_singleton.create_session()
         order_state_singleton.handle_order_update(sid, "add", self.COMBO, "standard", 1, self.COMBO_PRICE)
         order_state_singleton.handle_order_update(sid, "add", self.DRINK, "large", 1, self.DRINK_LARGE_PRICE)
@@ -673,7 +683,26 @@ class TestComboComponentResize:
         )
         assert result.get("resized_combo_component") == "drinks"
         summary = order_state_singleton.get_order_summary(sid)
-        assert math.isclose(summary.total, self.COMBO_PRICE - self.DRINK_UPSIZE_DELTA, rel_tol=1e-9)
+        assert math.isclose(summary.total, self.COMBO_PRICE, rel_tol=1e-9)
+
+    def test_same_total_regardless_of_order_path(self):
+        """Rick's review, item 1: ordering a size up front and ordering the base size then
+        resizing to that size must total EXACTLY the same -- no path dependence."""
+        up_front_sid = order_state_singleton.create_session()
+        order_state_singleton.handle_order_update(up_front_sid, "add", self.COMBO, "standard", 1, self.COMBO_PRICE)
+        order_state_singleton.handle_order_update(up_front_sid, "add", "Tots", "large", 1, self.SIDE_LARGE_PRICE)
+        order_state_singleton.handle_order_update(up_front_sid, "add", self.DRINK, "large", 1, self.DRINK_LARGE_PRICE)
+        up_front_total = order_state_singleton.get_order_summary(up_front_sid).total
+
+        resized_sid = order_state_singleton.create_session()
+        self._seed_combo_with_large_side_and_medium_drink(resized_sid)  # drink starts Medium
+        order_state_singleton.handle_order_update(
+            resized_sid, "modify", self.DRINK, "large", 1, self.DRINK_LARGE_PRICE
+        )
+        resized_total = order_state_singleton.get_order_summary(resized_sid).total
+
+        assert math.isclose(up_front_total, resized_total, rel_tol=1e-9)
+        assert math.isclose(up_front_total, self.COMBO_PRICE, rel_tol=1e-9)
 
     @patch("order_state.is_happy_hour", return_value=False)
     def test_different_item_while_slot_full_remains_a_standalone_add(self, _mock_hh):
@@ -716,6 +745,198 @@ class TestComboComponentResize:
         assert len(items) == 1
         summary = order_state_singleton.get_order_summary(sid)
         assert math.isclose(summary.total, self.COMBO_PRICE, rel_tol=1e-9)
+
+
+# ---------------------------------------------------------------------------
+# PR #184 round 2 (Rick's review, items 2 & 3): per-combo-instance slot state --
+# determinism across two SEPARATE combo lines, per-physical-unit independence within
+# one quantity-N line, and removal clearing a combo's slot state with no extra code.
+# ---------------------------------------------------------------------------
+
+class TestComboInstanceDeterminismAndLifecycle:
+    COMBO = "SONIC® Cheeseburger Combo"
+    COMBO_PRICE = 9.19
+
+    def test_two_separate_combos_resize_targets_the_one_that_holds_the_item(self):
+        """Rick's review, item 2: with TWO SEPARATE combo lines (not one quantity-2 line),
+        resizing a drink by name must target whichever instance actually holds that exact
+        drink -- determinism, not an arbitrary/first-match pick."""
+        sid = order_state_singleton.create_session()
+        OTHER_COMBO = "Fish Sandwich Combo"
+        OTHER_COMBO_PRICE = 8.39
+        # Two distinct combo instances (different items) -- each its own OrderItem line.
+        order_state_singleton.handle_order_update(sid, "add", self.COMBO, "standard", 1, self.COMBO_PRICE)
+        order_state_singleton.handle_order_update(sid, "add", OTHER_COMBO, "standard", 1, OTHER_COMBO_PRICE)
+        order_state_singleton.handle_order_update(sid, "add", "Tots", "medium", 1, 2.79)
+        order_state_singleton.handle_order_update(sid, "add", "Groovy Fries", "medium", 1, 2.79)
+        order_state_singleton.handle_order_update(sid, "add", "Cherry Limeade", "medium", 1, 2.89)
+        order_state_singleton.handle_order_update(sid, "add", "Ocean Water®", "medium", 1, 2.89)
+
+        items = order_state_singleton.get_order_items(sid)
+        assert len(items) == 2
+        cheeseburger_combo = next(i for i in items if i.item == self.COMBO)
+        fish_combo = next(i for i in items if i.item == OTHER_COMBO)
+        # The MOST RECENTLY added instance (Fish Sandwich Combo) is scanned first for a vacant
+        # slot (see `_find_bundle_slot`) -- it absorbs Tots/Cherry Limeade, leaving Groovy
+        # Fries/Ocean Water for the cheeseburger combo.
+        assert "Cherry Limeade" in fish_combo.display
+        assert "Ocean Water®" in cheeseburger_combo.display
+
+        # Resize the drink that only the fish combo holds -- must leave the cheeseburger
+        # combo (and its own, different drink) untouched.
+        result = order_state_singleton.handle_order_update(
+            sid, "modify", "Cherry Limeade", "large", 1, 3.39
+        )
+        assert result.get("resized_combo_component") == "drinks"
+        items = order_state_singleton.get_order_items(sid)
+        cheeseburger_combo = next(i for i in items if i.item == self.COMBO)
+        fish_combo = next(i for i in items if i.item == OTHER_COMBO)
+        assert "Large Cherry Limeade" in fish_combo.display
+        assert "Ocean Water®" in cheeseburger_combo.display
+        assert "Cherry Limeade" not in cheeseburger_combo.display
+        summary = order_state_singleton.get_order_summary(sid)
+        assert math.isclose(summary.total, self.COMBO_PRICE + OTHER_COMBO_PRICE, rel_tol=1e-9)
+
+    def test_quantity_two_combo_slots_are_independent_per_physical_unit(self):
+        """Rick's review, item 2: one quantity-2 combo line has TWO independent slots per
+        component -- filling only one unit's side must leave the combo incomplete (the
+        second unit still needs its own side), not silently count as "done" for both."""
+        sid = order_state_singleton.create_session()
+        order_state_singleton.handle_order_update(sid, "add", self.COMBO, "standard", 2, self.COMBO_PRICE)
+        order_state_singleton.handle_order_update(sid, "add", "Tots", "medium", 1, 2.79)
+        order_state_singleton.handle_order_update(sid, "add", "Cherry Limeade", "medium", 1, 2.89)
+
+        items = order_state_singleton.get_order_items(sid)
+        assert len(items) == 1
+        assert items[0].quantity == 2
+        # Only one of the two units' side/drink slots is filled so far.
+        req = order_state_singleton.get_combo_requirements(sid)
+        assert not req["is_complete"]
+
+        order_state_singleton.handle_order_update(sid, "add", "Groovy Fries", "medium", 1, 2.79)
+        order_state_singleton.handle_order_update(sid, "add", "Ocean Water®", "medium", 1, 2.89)
+        req = order_state_singleton.get_combo_requirements(sid)
+        assert req["is_complete"]
+        items = order_state_singleton.get_order_items(sid)
+        assert len(items) == 1
+        summary = order_state_singleton.get_order_summary(sid)
+        assert math.isclose(summary.total, self.COMBO_PRICE * 2, rel_tol=1e-9)
+
+    def test_removing_combo_clears_its_slot_state_new_combo_starts_fresh(self):
+        """Rick's review, item 3: removing a combo line must clear ITS slot state with no
+        extra cleanup code (state lives ON the OrderItem) -- a brand-new combo added
+        afterward (even the identical item/size) must never inherit the old one's filled
+        slots or completeness."""
+        sid = order_state_singleton.create_session()
+        order_state_singleton.handle_order_update(sid, "add", self.COMBO, "standard", 1, self.COMBO_PRICE)
+        order_state_singleton.handle_order_update(sid, "add", "Tots", "medium", 1, 2.79)
+        order_state_singleton.handle_order_update(sid, "add", "Cherry Limeade", "medium", 1, 2.89)
+        req = order_state_singleton.get_combo_requirements(sid)
+        assert req["is_complete"]
+
+        order_state_singleton.handle_order_update(sid, "remove", self.COMBO, "standard", 1, 0.0)
+        items = order_state_singleton.get_order_items(sid)
+        assert len(items) == 0
+
+        # A brand-new combo instance -- same item, same size -- must start incomplete again.
+        order_state_singleton.handle_order_update(sid, "add", self.COMBO, "standard", 1, self.COMBO_PRICE)
+        req = order_state_singleton.get_combo_requirements(sid)
+        assert not req["is_complete"]
+        new_combo = order_state_singleton.get_order_items(sid)[0]
+        assert "Tots" not in new_combo.display
+        assert "Cherry Limeade" not in new_combo.display
+        summary = order_state_singleton.get_order_summary(sid)
+        assert math.isclose(summary.total, self.COMBO_PRICE, rel_tol=1e-9)
+
+    @patch("order_state.is_happy_hour", return_value=True)
+    def test_happy_hour_does_not_discount_a_resized_combo_drink(self, _mock_hh):
+        """Happy hour's 50% drink discount must never apply to a combo's absorbed drink,
+        even immediately after that slot was explicitly resized -- a resize never promotes
+        the slot to a separately priced/discounted order line."""
+        sid = order_state_singleton.create_session()
+        order_state_singleton.handle_order_update(sid, "add", self.COMBO, "standard", 1, self.COMBO_PRICE)
+        order_state_singleton.handle_order_update(sid, "add", "Tots", "medium", 1, 2.79)
+        order_state_singleton.handle_order_update(sid, "add", "Cherry Limeade", "medium", 1, 2.89)
+
+        result = order_state_singleton.handle_order_update(
+            sid, "modify", "Cherry Limeade", "large", 1, 3.39
+        )
+        assert result.get("resized_combo_component") == "drinks"
+        summary = order_state_singleton.get_order_summary(sid)
+        # Still just the flat combo price -- no discount, no upcharge, no standalone line.
+        assert math.isclose(summary.total, self.COMBO_PRICE, rel_tol=1e-9)
+
+
+# ---------------------------------------------------------------------------
+# PR #184 round 2 (Rick's review, item 1 -- "wholeBundleSize" packs): McDonald's "make it a
+# large meal" ports the original McDonald's app's own meal-size pricing/phrasing -- resizing
+# the MEAL (not a single component) changes the meal's own price and relabels fries/drink
+# together, via the real production McDonald's persona pack (no brand names in shared code;
+# this test file is itself allowed to name a real pack to prove its OWN data drives this).
+# ---------------------------------------------------------------------------
+
+def _mcdonalds_persona():
+    catalog = PersonaCatalog.load(enabled=["mcdonalds"], default_persona_id="mcdonalds")
+    return catalog.get("mcdonalds")
+
+
+class TestMcDonaldsWholeMealResize:
+    MEAL = "Big Mac® Meal"
+    MEAL_STANDARD_PRICE = 8.99
+    MEAL_LARGE_PRICE = 10.09
+    DRINK = "Coca-Cola®"
+    DRINK_MEDIUM_PRICE = 1.79
+
+    def _seed_meal(self, sid):
+        order_state_singleton.handle_order_update(sid, "add", self.MEAL, "standard", 1, self.MEAL_STANDARD_PRICE)
+        order_state_singleton.handle_order_update(sid, "add", self.DRINK, "medium", 1, self.DRINK_MEDIUM_PRICE)
+
+    def test_make_it_a_large_meal_resizes_fries_and_drink_together(self):
+        """"Make it a large meal" on a "wholeBundleSize" pack resizes the WHOLE bundle --
+        its own price changes to the meal's Large price, and BOTH the autofilled fries and
+        the guest's chosen drink are relabeled to Large, matching the original McDonald's
+        app's own behavior/phrasing."""
+        sid = order_state_singleton.create_session(persona=_mcdonalds_persona())
+        self._seed_meal(sid)
+
+        items = order_state_singleton.get_order_items(sid)
+        assert len(items) == 1
+        meal = items[0]
+        assert "Medium World Famous Fries®" in meal.display  # bundle.autoFill default
+        assert "Medium Coca-Cola®" in meal.display
+        assert math.isclose(meal.price, self.MEAL_STANDARD_PRICE, rel_tol=1e-9)
+
+        result = order_state_singleton.handle_order_update(
+            sid, "modify", self.MEAL, "large", 1, self.MEAL_LARGE_PRICE
+        )
+        assert result.get("modified_to_size") == "large"
+
+        items = order_state_singleton.get_order_items(sid)
+        assert len(items) == 1
+        meal = items[0]
+        assert meal.size == "large"
+        assert math.isclose(meal.price, self.MEAL_LARGE_PRICE, rel_tol=1e-9)
+        assert "Large World Famous Fries®" in meal.display
+        assert "Large Coca-Cola®" in meal.display
+        assert "Medium" not in meal.display
+
+        summary = order_state_singleton.get_order_summary(sid)
+        assert math.isclose(summary.total, self.MEAL_LARGE_PRICE, rel_tol=1e-9)
+
+    def test_make_it_a_large_meal_is_a_noop_when_already_that_size(self):
+        """Resizing to the meal's own CURRENT size must no-op -- never a double-charge or a
+        redundant relabel."""
+        sid = order_state_singleton.create_session(persona=_mcdonalds_persona())
+        self._seed_meal(sid)
+
+        result = order_state_singleton.handle_order_update(
+            sid, "modify", self.MEAL, "standard", 1, self.MEAL_STANDARD_PRICE
+        )
+        assert not result.get("modified_to_size")
+        meal = order_state_singleton.get_order_items(sid)[0]
+        assert math.isclose(meal.price, self.MEAL_STANDARD_PRICE, rel_tol=1e-9)
+        summary = order_state_singleton.get_order_summary(sid)
+        assert math.isclose(summary.total, self.MEAL_STANDARD_PRICE, rel_tol=1e-9)
 
 
 class TestComboMenuItems:

@@ -478,7 +478,7 @@ public sealed class OrderToolExecutor : IToolExecutor
         // for that case, so no separate branch reads it here.)
         if (resultInfo.ResizedComboComponent is not null)
         {
-            return $"Changed {displayName} — your total is now {summary.FinalTotalDisplay}";
+            return $"Changed {displayName}, your total is now {summary.FinalTotalDisplay}";
         }
         if (_promptLoader is { } pl)
         {
