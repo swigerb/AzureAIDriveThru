@@ -908,14 +908,34 @@ export const BrandHero = memo(function BrandHero({ logoUrl, persona }: { logoUrl
     );
 
     return (
-        <section className="hero-card rounded-[32px] border border-white/40 bg-white/80 p-6 shadow-[0_25px_70px_var(--brand-secondary-veil-18)] backdrop-blur-lg">
-            <div className="flex flex-col gap-8 lg:flex-row lg:items-center">
-                <div className="flex-1 space-y-5">
+        // Issue 172: the hero's height is driven purely by its content (no min/fixed height
+        // anywhere in this tree) and every original element is still present, just regrouped --
+        // see the comments below for what moved and why.
+        <section className="hero-card rounded-[32px] border border-white/40 bg-white/80 p-6 shadow-[0_25px_70px_var(--brand-secondary-veil-18)] backdrop-blur-lg sm:p-8">
+            {/* Issue 172 round 2 (Rick's review): the logo/badge row and the headline/description
+                block live in one left column (`xl:col-span-3 xl:flex xl:flex-col xl:gap-6`), and
+                the spotlight stack is a completely separate right column (`xl:col-span-2`) -- both
+                are plain columns on the shared `xl:items-start` grid, with NO row placement at
+                all. Round 1 placed the spotlight stack with `xl:row-span-2` across both the logo
+                row's and the headline block's rows, which forced the grid to stretch the logo
+                row's row-track tall enough to match the (taller) stack, pushing the headline ~45px
+                below its natural position -- a shared grid row was the wrong tool for a two-column
+                layout. With both columns decoupled, the logo-to-headline gap stays the natural
+                `gap-6` (24px, same as below xl), the spotlight stack's top aligns with the logo
+                row's top, and any leftover height between the two columns simply sits under
+                whichever one is shorter instead of stretching a row. Below xl this is plain
+                stacked block flow in the same DOM order (logo/badge, then headline/description,
+                then spotlight under the text) -- a single narrow column can't support a meaningful
+                column split, so the cards instead go edge-to-edge under the text, side by side,
+                which reads far better than a cramped narrow column (see PR body for the
+                before/after numbers). */}
+            <div className="xl:grid xl:grid-cols-5 xl:items-start xl:gap-x-8">
+                <div className="xl:col-span-3 xl:flex xl:flex-col xl:gap-6">
                     <div className="flex flex-wrap items-center gap-3">
                         {showLogo ? (
-                            // Issue 164 B2: some packs' original PNG logo has an opaque white
-                            // background and was shown on a white rounded tile against the app's
-                            // colored hero card -- render that tile only when the pack asks for it.
+                            // Issue 164 B2: some packs' original PNG logo has an opaque white background
+                            // and was shown on a white rounded tile against the app's colored hero card --
+                            // render that tile only when the pack asks for it.
                             persona.assets.logoTile ? <span className="rounded-2xl bg-white p-3 shadow-xs">{logoImg}</span> : logoImg
                         ) : (
                             <span className="text-2xl font-black text-brand-primary" role="img" aria-label={`${persona.title} logo`}>
@@ -927,29 +947,40 @@ export const BrandHero = memo(function BrandHero({ logoUrl, persona }: { logoUrl
                             {persona.hero.badge ?? t("hero.badge")}
                         </span>
                     </div>
-                    <h1 className="text-4xl font-black leading-tight text-brand-primary sm:text-5xl">{persona.hero.headline}</h1>
-                    {/* Issue 164 A4: the persona's own hero sentence, replacing the shared i18n subhead. */}
-                    <p className={`max-w-2xl text-base ${HERO_BODY_TEXT_CLASS}`}>{persona.hero.description}</p>
-                    <div className="grid gap-3 sm:grid-cols-3">
-                        {persona.hero.callouts.map(callout => (
-                            <CalloutPill key={callout.title} title={callout.title} detail={callout.detail} tone={callout.tone} />
-                        ))}
-                    </div>
-                    <div className={`flex flex-wrap items-center gap-2 text-xs font-semibold uppercase tracking-[0.3em] ${HERO_BODY_TEXT_CLASS}`}>
-                        <img src={azureLogo} alt="Microsoft Azure" className="h-6 w-auto" loading="lazy" />
-                        <span>{t("hero.poweredBy")}</span>
+                    <div className="mt-5 space-y-4 sm:mt-6 xl:mt-0">
+                        <h1 className="text-4xl font-black leading-tight text-brand-primary sm:text-5xl">{persona.hero.headline}</h1>
+                        {/* Issue 164 A4: the persona's own hero sentence, replacing the shared i18n subhead. */}
+                        <p className={`max-w-2xl text-base ${HERO_BODY_TEXT_CLASS}`}>{persona.hero.description}</p>
                     </div>
                 </div>
                 {persona.hero.spotlight.length > 0 && (
-                    <div className="relative flex flex-1 items-center justify-center">
+                    // Issue 172: `grid-cols-1` (stacked) by default and at `xl:` -- each card is the
+                    // full width of this column, so both read comfortably instead of the squeezed
+                    // half-width cards a side-by-side split produced in the narrow xl column. At
+                    // `sm:` (and up, until xl's column split takes over) the cards go side by side
+                    // under the text instead, since there the full hero width is available to them.
+                    <div className="relative mt-6 grid grid-cols-1 items-stretch gap-4 sm:mt-8 sm:grid-cols-2 xl:col-span-2 xl:mt-0 xl:grid-cols-1">
                         <div className="absolute inset-0 -z-10 rounded-[32px] bg-linear-to-br from-brand-primary/10 via-brand-surface-tint to-brand-accent/15 opacity-80 blur-3xl"></div>
-                        <div className="grid w-full gap-4 sm:grid-cols-2">
-                            {persona.hero.spotlight.map((card, index) => (
-                                <SpotlightCard key={card.title} card={card} personaId={persona.id} isSecond={index === 1} />
-                            ))}
-                        </div>
+                        {persona.hero.spotlight.map((card, index) => (
+                            <SpotlightCard key={card.title} card={card} personaId={persona.id} isSecond={index === 1} />
+                        ))}
                     </div>
                 )}
+            </div>
+            {/* Issue 172: the 3 callout pills + tech line stay in one full-width footer row below
+                the grid above -- this is what lets the logo/headline/spotlight grid balance on its
+                own content height alone, instead of the text column also having to carry this
+                row's height. */}
+            <div className="mt-6 border-t border-brand-primary/10 pt-5 sm:mt-8 sm:pt-6">
+                <div className="grid gap-3 sm:grid-cols-3">
+                    {persona.hero.callouts.map(callout => (
+                        <CalloutPill key={callout.title} title={callout.title} detail={callout.detail} tone={callout.tone} />
+                    ))}
+                </div>
+                <div className={`mt-4 flex flex-wrap items-center gap-2 text-xs font-semibold uppercase tracking-[0.3em] ${HERO_BODY_TEXT_CLASS}`}>
+                    <img src={azureLogo} alt="Microsoft Azure" className="h-6 w-auto" loading="lazy" />
+                    <span>{t("hero.poweredBy")}</span>
+                </div>
             </div>
         </section>
     );
@@ -1018,22 +1049,45 @@ export function SpotlightCard({ card, personaId, isSecond }: { card: PersonaHero
 
     if (!isSecond) {
         return (
-            <div className="rounded-3xl border border-brand-primary/20 bg-white/90 p-4 shadow-[0_25px_45px_var(--brand-primary-veil-12)]">
+            // Issue 172: `flex h-full flex-col justify-center` -- when this card's sibling (card
+            // 2) is taller, the shared grid's `items-stretch` (BrandHero) grows this card's box to
+            // match it; centering the content vertically inside that box reads as breathing room
+            // around a compact card rather than a dead gap pinned to one edge.
+            //
+            // Issue 172 round 2 (Rick's review): decoupling BrandHero's two columns (see the
+            // comment there) left up to ~91px of leftover height under the shorter column for some
+            // personas -- too much. `p-4` (was `p-5`), the header row's `mb-3` (was `mb-4`), and
+            // the icon tile's smaller `p-2.5`/`h-10 w-10` (was `p-3`/`h-12 w-12`) below all trim
+            // this card's own natural height back down without stretching or truncating its
+            // content, keeping the leftover at or under 48px for every persona (PR body has the
+            // exact numbers).
+            <div className="flex h-full flex-col justify-center rounded-3xl border border-brand-primary/20 bg-white/90 p-4 shadow-[0_25px_45px_var(--brand-primary-veil-12)]">
                 <div className="mb-3 flex items-center gap-3">
-                    <div className="rounded-2xl bg-brand-primary/10 p-3">
-                        <img src={iconUrl} alt={card.kicker} className="h-12 w-12" loading="lazy" />
+                    {/* Issue 172: `shrink-0` on the icon tile, `min-w-0` on the text column --
+                        without these the narrower 3:2 spotlight column at 1024px let the icon
+                        tile get squeezed down to a sliver instead of the kicker/title text
+                        simply wrapping. */}
+                    <div className="shrink-0 rounded-2xl bg-brand-primary/10 p-2.5">
+                        <img src={iconUrl} alt={card.kicker} className="h-10 w-10" loading="lazy" />
                     </div>
-                    <div>
+                    <div className="min-w-0">
                         <p className="text-xs font-bold uppercase tracking-wide text-brand-primary">{card.kicker}</p>
                         <p className="text-sm font-semibold text-brand-ink">{card.title}</p>
                     </div>
                 </div>
                 {card.rows && (
-                    <ul className="space-y-1 text-xs font-medium text-brand-ink/80">
+                    <ul className="space-y-2 text-xs font-medium text-brand-ink/80">
                         {card.rows.map(row => (
-                            <li key={row.label} className="flex items-center justify-between rounded-full bg-white/80 px-3 py-1">
-                                <span>{row.label}</span>
-                                <span className={textRoleClass(row.tone ?? "primary")}>{row.value}</span>
+                            // Issue 172 round 2 (Rick's review): copy is pack-driven, so a row's
+                            // label/value pair can't assume it will always fit one line -- an
+                            // unconditional `whitespace-nowrap` overflowed its pill at 360/390px
+                            // for more than one real pack. `sm:whitespace-nowrap` keeps today's
+                            // single-line look from `sm:` (640px) up, where every pack's current
+                            // copy fits, while letting the pair wrap naturally below that, with
+                            // `gap-3` keeping a minimum breathing space between them either way.
+                            <li key={row.label} className="flex items-center justify-between gap-3 rounded-full bg-white/80 px-3 py-1.5">
+                                <span className="sm:whitespace-nowrap">{row.label}</span>
+                                <span className={`sm:whitespace-nowrap ${textRoleClass(row.tone ?? "primary")}`}>{row.value}</span>
                             </li>
                         ))}
                     </ul>
@@ -1056,12 +1110,18 @@ export function SpotlightCard({ card, personaId, isSecond }: { card: PersonaHero
     const accentClass = card.accentTone ? textRoleClass(card.accentTone) : style.accent;
 
     return (
-        <div className={`rounded-3xl border p-4 ${style.border} ${style.shadow} ${card.tint ? "" : style.gradient}`} style={tintStyle}>
+        // Issue 172 round 2 (Rick's review): `p-4` (was `p-5`), `mb-3` (was `mb-4`), and the
+        // smaller icon tile below match card 1's same tightening -- see that card's comment for
+        // why (decoupled columns can leave too much leftover height under the shorter one).
+        <div
+            className={`flex h-full flex-col justify-center rounded-3xl border p-4 ${style.border} ${style.shadow} ${card.tint ? "" : style.gradient}`}
+            style={tintStyle}
+        >
             <div className="mb-3 flex items-center gap-3">
-                <div className="rounded-2xl bg-white/60 p-3">
-                    <img src={iconUrl} alt={card.kicker} className="h-12 w-12" loading="lazy" />
+                <div className="shrink-0 rounded-2xl bg-white/60 p-2.5">
+                    <img src={iconUrl} alt={card.kicker} className="h-10 w-10" loading="lazy" />
                 </div>
-                <div>
+                <div className="min-w-0">
                     <p className={`text-xs font-bold uppercase tracking-wide ${style.kicker}`}>{card.kicker}</p>
                     <p className="text-sm font-semibold text-brand-ink">{card.title}</p>
                 </div>
