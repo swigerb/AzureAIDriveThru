@@ -270,7 +270,10 @@ describe("persona switch confirmation dialog (issue #180)", () => {
         await addOrderItem("Alpha Combo");
         await screen.findByText("Alpha Combo");
         act(() => rt.params.onReceivedResponseDone(answer("Alpha greeting text")));
-        await screen.findByText("Alpha greeting text");
+        // A longer timeout than the default 1000ms: this is the heaviest DOM in the suite (a full
+        // app render with a populated order, transcript and menu panel already mounted), and a
+        // loaded CI runner can take noticeably longer to settle than a quiet dev machine.
+        await screen.findByText("Alpha greeting text", {}, { timeout: 5000 });
 
         await switchTo("test-beta");
         await screen.findByRole("dialog");
@@ -367,7 +370,8 @@ describe("a failed persona switch leaves the current order, transcript and perso
         await addOrderItem("Alpha Combo");
         await screen.findByText("Alpha Combo");
         act(() => rt.params.onReceivedResponseDone(answer("Alpha greeting text")));
-        await screen.findByText("Alpha greeting text");
+        // Same CI-runner headroom as the "Switch confirms the switch" case above.
+        await screen.findByText("Alpha greeting text", {}, { timeout: 5000 });
 
         vi.stubGlobal(
             "fetch",
