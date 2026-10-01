@@ -579,7 +579,7 @@ class TestComboComponentResize:
     DRINK = "Diet Coke®"
     DRINK_MEDIUM_PRICE = 2.49
     DRINK_LARGE_PRICE = 2.99
-    DRINK_UPSIZE_DELTA = 0.50  # Large ($2.99) - Medium ($2.49), Sonic's own menu data
+    DRINK_UPSIZE_DELTA = 0.50  # Large ($2.99) - Medium ($2.49), the pack's own menu data
     SIDE_LARGE_PRICE = 3.49
 
     def _seed_combo_with_large_side_and_medium_drink(self, sid):
