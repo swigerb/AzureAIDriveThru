@@ -2300,6 +2300,15 @@ class RTMiddleTier:
                 announced = False
                 # Silent-guest nudge after a resume (once per resume).
                 nudge_task: asyncio.Task | None = None
+                # #181: a mid-conversation resume with nudging enabled sets this
+                # True instead of spawning `nudge_task` right away. The nudge only
+                # actually arms (the task is spawned, starting its own
+                # nudge_after_seconds countdown) once THIS socket's client proves
+                # the conversation is live by sending its own `session.update`
+                # (mic started / resumeConversation) -- never merely because the
+                # resume handshake + upstream bootstrap succeeded. A reloaded tab
+                # that never taps the mic must never nudge or generate a response.
+                nudge_awaiting_client_live = False
 
                 # #43 fix (PR #49 review round 6, "S1"): THIS connection's own
                 # voice is a purely local variable, initialised ONLY from the
@@ -2440,9 +2449,11 @@ class RTMiddleTier:
                         await announce_fresh()
 
                 async def nudge_after_silence():
-                    """If the guest says nothing for nudge_after_seconds after a resume, have
-                    the assistant (in this session's own bound persona) ask once whether they
-                    need anything else. Goes through the same session.updated gate as the
+                    """If the guest says nothing for nudge_after_seconds after the resumed
+                    socket went live (client session.update seen -- see #181), have the
+                    assistant (in this session's own bound persona) ask once whether they
+                    need anything else. Only ever spawned once that client session.update has
+                    been forwarded; also goes through the same session.updated gate as the
                     greeting so voice/tools are confirmed."""
                     await asyncio.sleep(self._sessions.nudge_after_seconds)
                     await session_configured.wait()
@@ -2470,7 +2481,7 @@ class RTMiddleTier:
                     nudge_task = None
 
                 async def handle_resume(data: str):
-                    nonlocal session_id, announced, greeting_sent, nudge_task, voice
+                    nonlocal session_id, announced, greeting_sent, nudge_awaiting_client_live, voice
                     try:
                         presented = json.loads(data).get("resume_id")
                     except (ValueError, AttributeError):
@@ -2540,8 +2551,13 @@ class RTMiddleTier:
                         ctx_monitor.add_content(rehydration)
                     logger.info("Resumed session %s rehydrated (%d recent turns); greeting suppressed",
                                 session_id, len(self._sessions.recent_turns(session_id)))
+                    # #181: do NOT spawn the nudge timer here. A resume with no
+                    # following client session.update (mic never started, e.g. a
+                    # reloaded-but-idle tab) must never nudge or generate a
+                    # response -- so arming is deferred to the client's own
+                    # session.update, below in from_client_to_server().
                     if self._sessions.nudge_after_seconds > 0:
-                        nudge_task = _spawn(nudge_after_silence())
+                        nudge_awaiting_client_live = True
 
                 async def reject_late_resume(data: str):
                     nonlocal announced
@@ -2559,7 +2575,8 @@ class RTMiddleTier:
                         await announce_fresh()
 
                 async def from_client_to_server():
-                    nonlocal verbose, audio_frame_count, session_file_handler, first_frame_pending, voice
+                    nonlocal verbose, audio_frame_count, session_file_handler, first_frame_pending, voice, \
+                        nudge_task, nudge_awaiting_client_live
                     async for msg in ws:
                         if msg.type == aiohttp.WSMsgType.TEXT:
                             # Resume handshake: only the very first client frame may resume.
@@ -2744,6 +2761,16 @@ class RTMiddleTier:
                             if not greeting_sent and sent_type == "session.update":
                                 logger.info("Client session.update forwarded — sending greeting")
                                 await send_greeting_once(trigger="client-session.update")
+                            # #181: a mid-conversation resume's silent-guest nudge only arms
+                            # once THIS socket's client proves the conversation is live by
+                            # sending its own session.update (mic started / resumeConversation)
+                            # -- never merely because the resume + upstream bootstrap
+                            # succeeded. A reloaded-but-idle tab (no session.update ever sent)
+                            # must never nudge or generate a response.
+                            if nudge_awaiting_client_live and sent_type == "session.update":
+                                nudge_awaiting_client_live = False
+                                logger.info("Client session.update forwarded — arming resume nudge (session=%s)", session_id)
+                                nudge_task = _spawn(nudge_after_silence())
                             # PR #49 review round 5, "F1": barge-in used to be
                             # keyed on the raw `_MARKER_RESPONSE_CANCEL in
                             # msg.data` substring check, evaluated on the

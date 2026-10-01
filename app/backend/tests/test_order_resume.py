@@ -773,11 +773,17 @@ class RehydrationAndNudgeTests(_ResumeHarness):
         self.assertEqual(self._system_texts(upstream), [])
         await again.close()
 
-    async def test_nudge_fires_once_after_silence_and_only_after_session_updated(self):
+    async def test_nudge_fires_once_after_client_session_update_and_silence(self):
+        """#181: the resume nudge arms only once THIS socket's client sends its own
+        session.update (mic started / resumeConversation) -- never merely because
+        the resume + upstream bootstrap succeeded. It must also still wait for the
+        upstream's OWN session.updated to confirm voice/tools, same as the greeting."""
         meta, sid = await self._converse_then_drop()
         self.sm.nudge_after_seconds = 0.2
         self.fake.withhold_session_updated = True
         browser, upstream = await self._resume_ok(meta["resumeId"])
+        await browser.send_json(BROWSER_SESSION_UPDATE)          # mic started -> nudge arms
+        await self._until(lambda: sum(e["type"] == "session.update" for e in upstream) >= 2)
         activity = self.sm._last_activity[sid]
         self.clock.advance(5)
 
@@ -798,10 +804,27 @@ class RehydrationAndNudgeTests(_ResumeHarness):
         self.assertEqual(self.sm._last_activity[sid], activity, "the nudge counted as guest activity")
         await browser.close()
 
+    async def test_resume_without_client_session_update_never_nudges(self):
+        """#181 live bug: a page reload resumes the order, but with the mic NOT
+        started the browser never sends its own session.update on the resumed
+        socket. The nudge must never arm (no nudge item, no response.create) no
+        matter how long the guest stays on the reconnected-but-idle tab -- even
+        well past nudge_after_seconds and even after the upstream confirms the
+        bootstrap session.updated."""
+        meta, sid = await self._converse_then_drop()
+        self.sm.nudge_after_seconds = 0.2
+        browser, upstream = await self._resume_ok(meta["resumeId"])
+        await asyncio.sleep(0.6)                 # well past nudge_after_seconds, mic still off
+        self.assertEqual(self._nudges(upstream), [], "resume with no client session.update must never nudge")
+        self.assertNotIn("response.create", [e["type"] for e in upstream],
+                          "resume with no client session.update must never generate a response")
+        await browser.close()
+
     async def _assert_nudge_cancelled_by(self, guest_action):
         meta, sid = await self._converse_then_drop()
         self.sm.nudge_after_seconds = 0.3
         browser, upstream = await self._resume_ok(meta["resumeId"])
+        await browser.send_json(BROWSER_SESSION_UPDATE)          # mic started -> nudge arms
         await guest_action(browser)
         await asyncio.sleep(0.7)
         self.assertEqual(self._nudges(upstream), [], "nudge fired although the guest spoke")

@@ -411,6 +411,9 @@ function SonicApp() {
         onReceivedResponseDone: message => {
             const transcript = message.response.output.map(output => output.content?.map(content => content.transcript).join(" ")).join(" ");
             if (!transcript) return;
+            // Defense in depth (issue 181): a resumed-but-idle socket must never surface assistant
+            // output while the guest hasn't (re)started their session.
+            if (!isSessionActiveRef.current) return;
             clearRateLimitNotice();
 
             const newTranscriptItem = {

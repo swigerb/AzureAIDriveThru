@@ -188,6 +188,24 @@ describe("order resume in the app", () => {
         expect(screen.getByText("status.resumedTapToContinue")).toBeInTheDocument();
     });
 
+    it("a resumed-but-idle session (#181) never surfaces the server's nudge as assistant output", async () => {
+        // Defense in depth: even if the backend ever nudged a resumed socket before the guest
+        // (re)started their mic, the client must not play/append that output while idle.
+        await startConversationWithTots();
+        await tapMic(); // guest stops the conversation -> isSessionActiveRef false
+        await act(async () => rt.params.onConnectionLost(transportDrop));
+        await act(async () => rt.params.onReceivedSessionResumed(resumedMsg()));
+        expect(screen.getByText("status.resumedTapToContinue")).toBeInTheDocument();
+
+        await act(async () =>
+            rt.params.onReceivedResponseDone({
+                response: { output: [{ content: [{ transcript: "Need anything else to go with your order, or are you all set?" }] }] }
+            })
+        );
+
+        expect(screen.queryByText("Need anything else to go with your order, or are you all set?")).not.toBeInTheDocument();
+    });
+
     it("resume_rejected clears the ticket and asks for a fresh start", async () => {
         await startConversationWithTots();
         await act(async () => rt.params.onConnectionLost(transportDrop));
