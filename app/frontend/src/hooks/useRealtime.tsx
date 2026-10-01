@@ -628,11 +628,44 @@ export default function useRealTime({
         switchingRef.current = false;
         const wasRequested = reconnectRequestedRef.current;
         reconnectRequestedRef.current = false;
-        if (shouldConnect && (readyState === ReadyState.CLOSED || wasRequested)) {
+        // Issue GH-171 round 4, H5: the switch started with the socket already intentionally down
+        // (idle 4000, superseded 4002, retries exhausted -- shouldConnect is false, so there is no
+        // url-keyed effect that will ever open anything on its own). There is nothing to recover
+        // TO here (the fetch failed, so personaId never changed): only reopen the old persona if
+        // the guest actually tapped while the switch was pending.
+        if (!shouldConnect) {
+            if (wasRequested) {
+                setShouldConnect(true);
+            }
+            return;
+        }
+        if (readyState === ReadyState.CLOSED || wasRequested) {
             setShouldConnect(false);
             Promise.resolve().then(() => setShouldConnect(true));
         }
     }, [shouldConnect, readyState]);
+
+    // Issue GH-171 round 4, H5: a persona switch started while the socket was already
+    // intentionally down (shouldConnect false: idle 4000, superseded 4002, retries exhausted).
+    // endSession({ switching: true }) sets switchingRef but there is no open socket to close and
+    // no url-keyed effect waiting to fire once personaId/modelId/menuMode land, so nothing would
+    // ever clear switchingRef or open the new persona's socket: the mic stays dead until "New
+    // order". This effect is the hook's own finish line for that case -- it fires once the persona
+    // fetch resolves and the new identity actually lands in props. If a switch is still pending at
+    // that point and the socket is still intentionally down, the switch is done: clear switchingRef
+    // so reconnect() stops deferring, and if the guest already tapped in the meantime
+    // (reconnectRequestedRef), open the new persona's socket now (getSocketUrl reads the identity
+    // props at call time, so by the time this effect runs they already point at the new persona).
+    useEffect(() => {
+        if (switchingRef.current && !shouldConnect) {
+            switchingRef.current = false;
+            if (reconnectRequestedRef.current) {
+                reconnectRequestedRef.current = false;
+                setShouldConnect(true);
+            }
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [personaId, modelId, menuMode]);
 
     // Keep refs in sync so onMessageReceived can call sendJsonMessage, and so onOpen/onClose can
     // tell a stale socket's event apart from the current one (issue GH-171).

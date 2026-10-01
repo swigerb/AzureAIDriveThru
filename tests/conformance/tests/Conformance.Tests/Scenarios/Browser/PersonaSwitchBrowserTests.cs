@@ -17,7 +17,7 @@ namespace Conformance.Tests.Scenarios.Browser;
 /// can prove the fix survives genuine, unscripted network/event-loop timing, which is exactly why
 /// Rick's review calls this leg required rather than optional.
 ///
-/// Four cases, all sharing <see cref="RunSwitchScenarioAsync"/> or
+/// Six cases, all sharing <see cref="RunSwitchScenarioAsync"/> or
 /// <see cref="AssertSwitchDeliveredToNewPersonaAsync"/>'s common setup/assertions:
 ///  - Load <c>?persona=test-alpha</c>; wait for the first upstream connection and the frontend's
 ///    own <c>extension.session_metadata</c> frame on its first socket.
@@ -56,7 +56,18 @@ namespace Conformance.Tests.Scenarios.Browser;
 /// <c>useRealtime.socketRace.test.tsx</c>, which control a synthetic clock precisely enough to
 /// hold it.
 ///
-/// All four cases assert, against the SAME five properties Rick's review lists: the fake upstream
+/// Cases E and E2 (issue #171 round 4, Rick's round-3 review item 3 -- H5) cover a DIFFERENT
+/// precondition than C/D: the socket is already CLOSED on purpose (here, the backend's own
+/// idle-timeout sweep) BEFORE the guest ever touches the picker, so there is no background
+/// reconnect timer of any kind already primed for the switch to piggyback on:
+///  - Case E (<see cref="RunSwitchScenarioEAsync"/> with <c>holdFetch: false</c>): waits for the
+///    first socket's native <c>readyState</c> to reach CLOSED via the idle sweep, then switches
+///    and taps. Passes on dev's unmodified hook, fails at the round-3 head.
+///  - Case E2 (same method, <c>holdFetch: true</c>): Case C's held-fetch gate layered on top of
+///    the same idle-closed precondition, so the tap lands before the persona fetch resolves
+///    either way. Fails on BOTH dev and the round-3 head; must pass once H5 (item 1) lands.
+///
+/// All six cases assert, against the SAME five properties Rick's review lists: the fake upstream
 /// connection for the test-beta session receives the client's <c>session.update</c>
 /// (<c>turn_detection.type=="server_vad"</c>, <c>threshold==0.7</c>); the greeting the server
 /// sends upstream for that connection contains
@@ -466,4 +477,94 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
     [Fact]
     public Task Held_old_close_past_the_new_sockets_open_still_delivers_only_to_the_new_persona() =>
         fixture.RunAsync(RunSwitchScenarioDAsync);
+
+    /// <summary>
+    /// Case E / E2 (issue #171 round 4, Rick's round-3 review item 3 -- REQUIRED, H5): Cases A
+    /// through D above all start a switch while the OLD socket is still live, or at worst mid-way
+    /// through the server's close for our own <c>extension.end_session</c> -- in every one of
+    /// those orderings a background reconnect timer or the url-keyed effect is already primed to
+    /// fire once the right thing changes. H5 is a DIFFERENT precondition entirely: the socket is
+    /// already CLOSED on purpose (here, the backend's own idle-timeout sweep --
+    /// <c>CONFORMANCE_IDLE_TIMEOUT_SECONDS=10</c> on this fixture's
+    /// <c>BackendProfiles.BrowserTimersDevelopment</c> profile, same as
+    /// <see cref="OrderResumeBrowserTests.Idle_close_does_not_reconnect_a_tap_starts_a_fresh_session"/>'s
+    /// own idle wait) BEFORE the guest ever touches the picker, so <c>shouldConnect</c> is already
+    /// false and there is no pending reconnect timer of any kind for the switch to piggyback on.
+    /// Without the fix, nothing -- not even a later mic tap -- ever reopens a socket at all; only
+    /// "New order" recovers. Rick's own scratch runs: Case E passes 3/3 against dev's unmodified
+    /// hook and fails 3/3 at the round-3 head ("No upstream connection for the switched-to persona
+    /// was accepted within 00:00:30"); Case E2 (Case C's held-fetch gate layered on top of the
+    /// same idle-closed precondition, so the tap lands before the persona fetch resolves either
+    /// way) fails 3/3 on BOTH dev and the round-3 head. Both must pass 3/3 once the fix (item 1)
+    /// lands.
+    /// </summary>
+    private async Task RunSwitchScenarioEAsync(bool holdFetch)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var (context, page) = await NewPageAsync(fixture.Browser!, ct).ConfigureAwait(false);
+        await using var _ = context;
+
+        var firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
+        await page.GotoAsync($"{fixture.Backend!.BaseUri}?persona={PersonaSwitchBackendFixture.PersonaA}").ConfigureAwait(false);
+        var firstConnection = await firstConnectionTask;
+        Assert.True(firstConnection is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+
+        await UntilAsync(() => SocketCountAsync(page), n => n >= 1, FrameTimeout, "the frontend's first realtime socket to open", ct);
+        await UntilAsync(
+            () => ReceivedAsync(page, 0),
+            HasSessionMetadata,
+            FrameTimeout, "extension.session_metadata on the test-alpha socket", ct);
+
+        var socketsBeforeSwitch = await SocketCountAsync(page);
+        var alphaSentBeforeSwitch = (await SentAsync(page, 0)).GetArrayLength();
+
+        // Let the first socket run all the way down to the backend's own idle-timeout sweep --
+        // by the time the guest ever touches the picker below, `shouldConnect` is already false
+        // and there is no background reconnect timer pending, unlike every other case above.
+        await UntilAsync(() => ReadyStateAsync(page, 0), state => state == 3 /* CLOSED */,
+            TimeSpan.FromSeconds(40), "the test-alpha socket's own idle-timeout close to land", ct);
+
+        TaskCompletionSource? gate = null;
+        if (holdFetch)
+        {
+            // Case E2: Case C's own held-fetch gate, layered on top of the already-idle-closed
+            // precondition -- the tap must land before the persona fetch (and therefore the prop
+            // change the H5 fix's useEffect keys on) resolves either way.
+            gate = new TaskCompletionSource();
+            var localGate = gate;
+            await page.RouteAsync($"**/api/personas/{PersonaSwitchBackendFixture.PersonaB}", async route =>
+            {
+                await localGate.Task.ConfigureAwait(false);
+                await route.ContinueAsync().ConfigureAwait(false);
+            }).ConfigureAwait(false);
+        }
+
+        var secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
+
+        // The real PersonaPicker <select>, exactly as a guest would operate it -- never the URL
+        // or a hook called directly.
+        await page.GetByLabel("Select persona").SelectOptionAsync(
+            new SelectOptionValue { Value = PersonaSwitchBackendFixture.PersonaB }).ConfigureAwait(false);
+
+        await page.GetByRole(AriaRole.Button, new() { Name = "Start recording", Exact = true }).ClickAsync().ConfigureAwait(false);
+
+        if (holdFetch)
+        {
+            // Long enough for the tap above to land, and -- without the fix -- for an orphaned
+            // switchingRef to prove it never recovers on its own, before letting the fetch resolve.
+            await Task.Delay(1000, ct).ConfigureAwait(false);
+            gate!.SetResult();
+        }
+
+        var secondConnection = await secondConnectionTask;
+        await AssertSwitchDeliveredToNewPersonaAsync(page, socketsBeforeSwitch, alphaSentBeforeSwitch, secondConnection, ct).ConfigureAwait(false);
+    }
+
+    [Fact]
+    public Task Idle_closed_socket_then_persona_switch_then_tap_recovers_the_new_personas_session() =>
+        fixture.RunAsync(() => RunSwitchScenarioEAsync(holdFetch: false));
+
+    [Fact]
+    public Task Idle_closed_socket_then_persona_switch_with_held_fetch_then_tap_recovers_the_new_personas_session() =>
+        fixture.RunAsync(() => RunSwitchScenarioEAsync(holdFetch: true));
 }
