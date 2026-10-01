@@ -25,6 +25,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 sys.path.append(str(Path(__file__).resolve().parent))
 
 from test_order_resume import NUDGE_MARKER, FakeGAPerConnection, _ResumeHarness
+from test_session_bootstrap import BROWSER_SESSION_UPDATE
 
 import session_manager as session_manager_module
 from rate_limit import (
@@ -519,6 +520,7 @@ class ResumeInteractionTests(_RateLimitHarness):
         meta, _ = await self._converse_then_drop()
         self.sm.nudge_after_seconds = 0.3
         browser = await self._resume_ok(meta["resumeId"])
+        await browser.send_json(BROWSER_SESSION_UPDATE)     # mic started -> nudge arms (#181)
         await self._push_failure()
         await self._until(lambda: len(self.sleep.delays) == 1)
         await asyncio.sleep(0.6)                            # the nudge timer runs out meanwhile
@@ -536,6 +538,7 @@ class ResumeInteractionTests(_RateLimitHarness):
         self.sm.nudge_after_seconds = 0.2
         self.fake.hold_responses = True                     # the nudge's response stays in flight
         browser = await self._resume_ok(meta["resumeId"])
+        await browser.send_json(BROWSER_SESSION_UPDATE)     # mic started -> nudge arms (#181)
         await self._until(lambda: self.creates() == 1)
         await self._until(lambda: len(self.nudges()) == 1)
         await asyncio.sleep(0.1)
