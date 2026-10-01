@@ -166,9 +166,11 @@ describe("MenuPanel size labels against real pack data (R1 pin)", () => {
                     },
                     // The largest real pack today has ~180 items across every size; asserting
                     // name/price/label for every one of them against the full rendered DOM is
-                    // slower than vitest's 5s default -- a pack that grows further just needs
-                    // more of this same, generous headroom, not a different test strategy.
-                    20000
+                    // slower than vitest's 5s default -- measured ~6-9s on a dev machine but
+                    // ~23s on CI runners, so this leaves generous headroom above the slower
+                    // environment rather than just the one observed locally. A pack that grows
+                    // further just needs more of this same headroom, not a different strategy.
+                    60000
                 );
             }
         });
