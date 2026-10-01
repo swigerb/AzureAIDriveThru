@@ -106,7 +106,8 @@
         "status.notRecordingMessage": "Let's get your order started!",
         "ticket.kicker": "Order screen",
         "ticket.title": "Your McDonald's Order",
-        "menu.button": "View McDonald's Menu"
+        "menu.button": "View McDonald's Menu",
+        "menu.valueMealsCategory": "Extra Value Meals"
       }
     },
     "hero": { "headline": "McDonald's ordering powered by Microsoft Foundry", "callouts": [] },

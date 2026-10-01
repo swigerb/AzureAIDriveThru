@@ -1,22 +1,33 @@
 version: "1.0.0"
+# #165 round 2 (Rick R4): the 134->70 item menu swap collapsed the old, more granular category
+# set (meals & combos / burgers / chicken & fish sandwiches / mcnuggets & tenders / beverages /
+# mccafé coffees / fries & sides) into the 5 categories that ship in menuItems.json today
+# ("Burgers & Sandwiches", "Chicken & McNuggets®", "Breakfast", "Fries, Sides & Drinks",
+# "Sweets & Treats"). trigger_categories below is remapped to those real, lower-cased category
+# strings (menu_utils.py's MenuCatalog.infer_category output) so get_upsell_hint no longer
+# silently falls through to "generic" for burger/meal/drink/side adds. "meals & combos" has no
+# 1:1 replacement -- lunch meal combos (Big Mac® Meal, etc.) now live in the same data category as
+# their standalone counterparts, not a dedicated category -- so it is dropped rather than mapped to
+# a category that would also wrongly match every standalone item in it; "breakfast" already
+# covers breakfast meal combos. "Fries, Sides & Drinks" similarly merges what used to be two
+# separate categories, so both "drink" and "side" reference it below; category-match iteration
+# order means "drink" (declared first) wins that overlap today -- a known, pre-existing limitation
+# of category-only matching, not a new regression, and out of scope for this round.
 upsell_hints:
   meal:
     trigger_categories:
-      - "meals & combos"
       - "breakfast"
     hint: "Meals are a great base! Ask if they want to upgrade to a Large size, or add a delicious dessert like a Baked Apple Pie!"
 
   burger:
     trigger_categories:
-      - "burgers"
-      - "chicken & fish sandwiches"
-      - "mcnuggets & tenders"
+      - "burgers & sandwiches"
+      - "chicken & mcnuggets®"
     hint: "Perfect choice! Ask if they want to make it a meal with World Famous Fries and a refreshing Drink!"
 
   drink:
     trigger_categories:
-      - "beverages"
-      - "mccafé coffees"
+      - "fries, sides & drinks"
     hint: "Great drink choice! Ask if they'd like to add some food — maybe a burger, McNuggets, or World Famous Fries!"
 
   sweet:
@@ -26,7 +37,7 @@ upsell_hints:
 
   side:
     trigger_categories:
-      - "fries & sides"
+      - "fries, sides & drinks"
     hint: "Tasty! Ask if they want to add a refreshing Drink to complete their meal!"
 
   generic:

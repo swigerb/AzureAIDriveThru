@@ -405,6 +405,9 @@
     },
     {
       "category": "Fries, Sides & Drinks",
+      "modeDisplay": {
+        "breakfast": { "displayName": "Sides & Drinks", "icon": "☕" }
+      },
       "items": [
         {
           "name": "World Famous Fries®",
