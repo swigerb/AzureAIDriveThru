@@ -734,6 +734,12 @@ function SonicApp() {
                                 menuModeEnabled={current.features.dayparts}
                                 menuMode={menuMode}
                                 onMenuModeChange={handleMenuModeChange}
+                                // Rick's PR 166 round-1 review, required item 3: same lock rule as
+                                // persona/model above -- menuMode is a getSocketUrl dependency,
+                                // so toggling it mid-session tears down and reconnects the live
+                                // socket (react-use-websocket keys its connect effect on `url`),
+                                // dropping the in-progress order.
+                                menuModeDisabled={isRecording || order.items.length > 0}
                             />
                         </Suspense>
                         {authConfig.isConfigured && (
