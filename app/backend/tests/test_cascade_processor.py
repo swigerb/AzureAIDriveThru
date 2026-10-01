@@ -167,8 +167,7 @@ class ToolDefinitionsTests(unittest.TestCase):
             "description": "Get the current order",
             "parameters": {"type": "object", "properties": {}, "required": []},
         }
-        tools = {"get_order": Tool(target=AsyncMock(), schema=schema)}
-        definitions = _tool_definitions(tools)
+        definitions = _tool_definitions([schema])
         self.assertEqual(len(definitions), 1)
         as_dict = definitions[0].as_dict()
         self.assertEqual(as_dict["function"]["name"], "get_order")
@@ -180,7 +179,7 @@ class ToolDefinitionsTests(unittest.TestCase):
 # CascadeProcessor._execute_tool_call -- THE tool-calling wire-protocol contract
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _make_processor(tools: dict) -> CascadeProcessor:
+def _make_processor(tools: dict, persona_tool_schemas: dict | None = None) -> CascadeProcessor:
     sessions = MagicMock()
     sessions.get_context_monitor.return_value = None
     sessions.emit_session_identifiers = AsyncMock()
@@ -189,6 +188,7 @@ def _make_processor(tools: dict) -> CascadeProcessor:
         sessions=sessions,
         persona_catalog=MagicMock(),
         persona_prompt_loaders={},
+        persona_tool_schemas=persona_tool_schemas if persona_tool_schemas is not None else {},
         model_catalog=MagicMock(),
         foundry_endpoint="https://fake.services.ai.azure.com",
         audio_endpoint="https://fake.openai.azure.com",
@@ -320,6 +320,69 @@ class RunChatToolLoopTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(fake_client.complete.await_count, CascadeProcessor._MAX_TOOL_ROUNDS)
 
 
+class RunChatToolLoopPersonaToolSchemasTests(unittest.IsolatedAsyncioTestCase):
+    """Issue #170 R4 (Rick's PR #175 round-2 review, required item 3): the cascade
+    pipeline's own tool definitions must come from THIS session's bound persona
+    (`CascadeProcessor.persona_tool_schemas[state.persona_id]`), never unconditionally
+    from `self.tools` (the deployment default's own schemas) -- the same class of bug
+    #170 fixed for the realtime pipeline's `_build_session`, recurring here because
+    `_tool_definitions` used to be called with `self.tools` directly. Mutation-test
+    proof: reverting `_run_chat_tool_loop` to call `_tool_definitions(self.tools)`
+    (ignoring `state.persona_id`) makes `test_passes_the_bound_personas_tool_
+    descriptions_to_the_chat_client` fail (the sent definition would carry the
+    default's description instead of the bound persona's own)."""
+
+    async def test_passes_the_bound_personas_tool_descriptions_to_the_chat_client(self):
+        default_schema = {
+            "type": "function", "name": "search",
+            "description": "Search the DEFAULT PERSONA's menu.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        }
+        bound_schema = {
+            "type": "function", "name": "search",
+            "description": "Search the BOUND PERSONA's own menu.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        }
+        tools = {"search": Tool(target=AsyncMock(), schema=default_schema)}
+        processor = _make_processor(tools, persona_tool_schemas={"bound-persona": [bound_schema]})
+        fake_client = MagicMock()
+        fake_client.complete = AsyncMock(return_value=_completion_with_final_text("All done."))
+        processor._get_chat_client = AsyncMock(return_value=fake_client)
+        ws = _make_mock_ws()
+        state = _CascadeSessionState(session_id="s1", persona_id="bound-persona", deployment="d", voice="marin")
+
+        await processor._run_chat_tool_loop(ws, "s1", state)
+
+        sent_tools = fake_client.complete.call_args.kwargs["tools"]
+        descriptions = [t.as_dict()["function"]["description"] for t in sent_tools]
+        self.assertIn("Search the BOUND PERSONA's own menu.", descriptions)
+        self.assertNotIn("Search the DEFAULT PERSONA's menu.", descriptions)
+
+    async def test_falls_back_to_the_default_schemas_with_no_persona_tool_schemas_entry(self):
+        """A persona id missing from `persona_tool_schemas` (shouldn't happen for a real
+        persona, but must not crash the turn) falls back to `self.tools`' own schemas,
+        same fallback shape as `_forward_messages` (rtmt.py)."""
+        default_schema = {
+            "type": "function", "name": "search",
+            "description": "Search the DEFAULT PERSONA's menu.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        }
+        tools = {"search": Tool(target=AsyncMock(), schema=default_schema)}
+        processor = _make_processor(tools, persona_tool_schemas={})
+        fake_client = MagicMock()
+        fake_client.complete = AsyncMock(return_value=_completion_with_final_text("All done."))
+        processor._get_chat_client = AsyncMock(return_value=fake_client)
+        ws = _make_mock_ws()
+        state = _CascadeSessionState(session_id="s1", persona_id="no-entry-persona", deployment="d", voice="marin")
+
+        with self.assertLogs(level="WARNING"):
+            await processor._run_chat_tool_loop(ws, "s1", state)
+
+        sent_tools = fake_client.complete.call_args.kwargs["tools"]
+        descriptions = [t.as_dict()["function"]["description"] for t in sent_tools]
+        self.assertIn("Search the DEFAULT PERSONA's menu.", descriptions)
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # CascadeProcessor.resolve_model
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -344,6 +407,7 @@ class ResolveModelDelegationTests(unittest.TestCase):
         )
         processor = CascadeProcessor(
             tools={}, sessions=MagicMock(), persona_catalog=MagicMock(), persona_prompt_loaders={},
+            persona_tool_schemas={},
             model_catalog=catalog, foundry_endpoint="https://fake", audio_endpoint="https://fake",
             credential=MagicMock(),
         )

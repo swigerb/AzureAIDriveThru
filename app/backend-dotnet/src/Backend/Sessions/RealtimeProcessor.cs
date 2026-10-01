@@ -145,12 +145,12 @@ public sealed class RealtimeProcessor : IPipelineProcessor
         CancellationToken cancellationToken,
         string? menuMode = null)
     {
-        _promptLoaders.TryGetValue(persona.Id, out var promptLoader);
-        var systemMessage = promptLoader?.SystemPrompt;
-        var voice = ClientServerFilter.SanitizeVoice(persona.Voice.Default, _allowedVoices)
-            ?? _sessionConfig.VoiceChoice ?? "marin";
-        var toolSchemas = BuildToolSchemas(promptLoader);
-        var toolExecutor = _toolExecutorFactory?.Invoke(persona, promptLoader, menuMode) ?? _toolExecutor;
+        var binding = ResolveSessionBinding(persona, menuMode);
+        var promptLoader = binding.PromptLoader;
+        var systemMessage = binding.SystemMessage;
+        var voice = binding.Voice;
+        var toolSchemas = binding.ToolSchemas;
+        var toolExecutor = binding.ToolExecutor;
         var reasoningOverride = Overridable<bool?>.Of(resolvedModel.Reasoning);
         var deployment = string.IsNullOrEmpty(resolvedModel.Deployment) ? _defaultDeployment : resolvedModel.Deployment;
 
@@ -1004,6 +1004,30 @@ public sealed class RealtimeProcessor : IPipelineProcessor
             }
         }
         return list;
+    }
+
+    /// <summary>Per-session binding for this connection's own bound persona: its own
+    /// <see cref="PromptLoader"/> (or null if unregistered), the system prompt and tool schemas
+    /// rendered from THAT SAME loader, the voice, and the <see cref="IToolExecutor"/>
+    /// <see cref="_toolExecutorFactory"/> builds from THAT SAME loader (issue #170 round 3, R5 --
+    /// Rick's PR #175 round-2 review: the tool executor must be built from the connection's own
+    /// bound persona's loader, not the deployment default's or any other persona's, so a
+    /// tool-execution error renders that SAME persona's own text -- mirrors R4's fix for
+    /// `session.tools[].description` above, now proven on the C# side too). Internal (not
+    /// private) purely so <see cref="RealtimeProcessorSessionBindingTests"/> can exercise the
+    /// resolution directly, with two differently-bound loaders and a capturing
+    /// `toolExecutorFactory`, without needing a real WebSocket/upstream connection -- same reason
+    /// <see cref="ResolveUpstreamAuthHeaderAsync"/> below is internal.</summary>
+    internal (PromptLoader? PromptLoader, string? SystemMessage, string Voice, IReadOnlyList<JsonObject> ToolSchemas, IToolExecutor ToolExecutor)
+        ResolveSessionBinding(Persona persona, string? menuMode)
+    {
+        _promptLoaders.TryGetValue(persona.Id, out var promptLoader);
+        var systemMessage = promptLoader?.SystemPrompt;
+        var voice = ClientServerFilter.SanitizeVoice(persona.Voice.Default, _allowedVoices)
+            ?? _sessionConfig.VoiceChoice ?? "marin";
+        var toolSchemas = BuildToolSchemas(promptLoader);
+        var toolExecutor = _toolExecutorFactory?.Invoke(persona, promptLoader, menuMode) ?? _toolExecutor;
+        return (promptLoader, systemMessage, voice, toolSchemas, toolExecutor);
     }
 
     /// <summary>PR #140 R5: chooses the outbound auth header for the upstream Azure OpenAI

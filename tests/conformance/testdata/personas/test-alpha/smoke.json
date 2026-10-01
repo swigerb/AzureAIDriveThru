@@ -2,6 +2,7 @@
   "description": "Persona smoke expectations for 'test-alpha' (Rick's PR #108 second review: moved out of shared C# -- tests/conformance/tests/Conformance.Tests/PersonaSmokeTests.cs -- so no persona-specific literal lives there; a data-only pack PR adds only this file). Loaded by PersonaSmokeExpectations.For(personaId). Every field must be sourced from this SAME persona's own pack files, never invented: greetingSubstring from app/backend/tests/fixtures/personas/test-alpha/prompts/greeting.yaml, and searchableOwnItem/orderableItemName/orderableItemSize/orderableItemPrice from app/backend/tests/fixtures/personas/test-alpha/menu/menuItems.json (the size/price pair must match that file's entry exactly, or the add-to-order smoke step fails). orderableItemName deliberately names 'Alpha Burger', NOT the happyHourDiscounted:true 'Alpha Cola' -- PersonaSmokeTests.cs asserts the charged price equals this exact menu price, and the smoke fixtures run on the real wall clock (not a FixedClock), so a happy-hour-eligible item's price could vary depending on when the suite runs.",
   "greetingSubstring": "Welcome to Test Alpha Drive-In! What can I get started for you?",
   "instructionsSubstring": "You are the Alpha voice ordering assistant for Test Alpha Drive-In",
+  "toolDescriptionSubstring": "Search the Test Alpha fixture menu",
   "searchableOwnItem": "Alpha Burger",
   "orderableItemName": "Alpha Burger",
   "orderableItemSize": "small",

@@ -100,6 +100,20 @@ namespace Conformance.Tests;
 /// that SAME pack's identity text and none of the others'. Both methods are tagged
 /// <c>[Trait("Dotnet", "ready")]</c>, ungated, and verified green against both backends -- raising
 /// the floor 192 to 194.
+///
+/// Issue #170 round 3 (Rick's PR #175 round-2 review, required item R4): the instructions-only
+/// checks above never covered `session.tools[].description` -- every session's tool list (both
+/// the realtime and cascade backends) was built once from the deployment default persona's own
+/// `prompts/tool_schemas.yaml`, so a bound persona's own system prompt and menu were correct but
+/// its tool descriptions still named the default persona's own brand and ticket/order-screen
+/// name. <c>PersonaSessionUpdateToolsConformanceTests.cs</c>'s two Theory methods
+/// (<c>RealPackPersonaSessionUpdateToolsConformanceTests</c> and
+/// <c>FixturePackPersonaSessionUpdateToolsConformanceTests</c>, both
+/// <c>Client_session_update_carries_the_bound_personas_own_tool_descriptions</c>) close that gap
+/// generically, for every discovered persona pack, on both legs: the forwarded client-update
+/// session's `search` tool description carries that SAME pack's own text and none of the others'.
+/// Both methods are tagged <c>[Trait("Dotnet", "ready")]</c>, ungated, and verified green against
+/// both backends -- raising the floor 194 to 196.
 /// </summary>
 public sealed class DotnetTraitCoverageTests
 {
@@ -122,12 +136,12 @@ public sealed class DotnetTraitCoverageTests
     };
 
     [Fact]
-    public void At_least_194_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
+    public void At_least_196_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
     {
         var count = CountFloorEligibleDotnetReadyTestMethods();
 
-        Assert.True(count >= 194,
-            $"Expected at least 194 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
+        Assert.True(count >= 196,
+            $"Expected at least 196 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
             $"and not unconditionally skip-gated by AuthRowCapability (the dotnet leg's " +
             $"`--filter \"{TraitName}={TraitValue}&Category!=Browser\"` baseline, minus the five " +
             "skip-only Scenarios/Auth classes -- see this class's own doc comment; " +
