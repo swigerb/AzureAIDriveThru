@@ -49,6 +49,21 @@ namespace Conformance.Tests;
 /// (<c>Scenarios/Ordering/MenuModeConformanceTests.cs</c>) add five tagged, ungated methods
 /// (mode switch x2, out-of-mode rejection, search filter, packs-without-modes-unaffected),
 /// verified green against both backends -- raising the floor from 178 to 183.
+///
+/// Issue 165 round 2 (Rick's PR #166 round-1 review, required items 5 and 7):
+/// <c>Scenarios/Ordering/MenuModeRejectionConformanceTests.cs</c> adds five more tagged, ungated
+/// methods -- unrecognized/empty/repeated `?mode=` all rejected with a real pre-upgrade HTTP 400
+/// (closing the gap Rick flagged: "the Python 400 test was vacuous... and C# had no test of the
+/// 400 at all"), an omitted `?mode=` defaulting to lunch, and a log-capture pin proving the raw
+/// rejected value never reaches either backend's own logs verbatim -- verified green against both
+/// Issue 165 round 2 (Rick's PR #166 round-1 review, required item 6): search vs. add-time
+/// semantics for a period-less item within a dayparts pack now agree in both directions --
+/// <c>Scenarios/Ordering/MenuModeConformanceTests.cs</c> adds one more tagged, ungated
+/// <c>[Theory]</c> method (`Periodless_item_can_be_added_in_either_mode_a_dayparts_pack_supports`,
+/// two <c>[InlineData]</c> rows: breakfast and lunch) proving "Delta Burger" -- a genuine
+/// dayparts-pack item with no `menuPeriod` of its own -- is addable over the wire in either mode,
+/// matching the filter-string fix's own admission of period-less items -- raising the floor from
+/// 188 to 189.
 /// </summary>
 public sealed class DotnetTraitCoverageTests
 {
@@ -71,12 +86,12 @@ public sealed class DotnetTraitCoverageTests
     };
 
     [Fact]
-    public void At_least_183_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
+    public void At_least_189_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
     {
         var count = CountFloorEligibleDotnetReadyTestMethods();
 
-        Assert.True(count >= 183,
-            $"Expected at least 183 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
+        Assert.True(count >= 189,
+            $"Expected at least 189 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
             $"and not unconditionally skip-gated by AuthRowCapability (the dotnet leg's " +
             $"`--filter \"{TraitName}={TraitValue}&Category!=Browser\"` baseline, minus the five " +
             "skip-only Scenarios/Auth classes -- see this class's own doc comment; " +

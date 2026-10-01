@@ -102,11 +102,14 @@ public sealed class MenuModeConformanceTests(MenuModeConformanceFixture fixture)
 
     /// <summary>
     /// tools.py's `search()` / SearchTool.ExecuteAsync build an OData `filter` string
-    /// (`menuPeriod eq '{mode}' or menuPeriod eq 'allDay'`) off the session's bound menu mode and
-    /// send it on every search request -- proving the wire contract without needing
-    /// FakeSearchServer to actually apply the filter server-side (its document set has no
-    /// mode-restricted rows to filter in the first place; the real Azure AI Search index is what
-    /// applies `filter`, not this fake).
+    /// (`menuPeriod eq '{mode}' or menuPeriod eq 'allDay' or menuPeriod eq ''` -- the trailing
+    /// clause is Rick's PR 166 round-1 review, required item 6: it admits a period-less item,
+    /// indexed with setup_search_index.py's own empty-string sentinel, the same way
+    /// MenuCatalog.ItemAvailableNow/item_available_now already always allow one) off the
+    /// session's bound menu mode and send it on every search request -- proving the wire
+    /// contract without needing FakeSearchServer to actually apply the filter server-side (its
+    /// document set has no mode-restricted rows to filter in the first place; the real Azure AI
+    /// Search index is what applies `filter`, not this fake).
     /// </summary>
     [Fact]
     [Trait("Dotnet", "ready")]
@@ -126,7 +129,38 @@ public sealed class MenuModeConformanceTests(MenuModeConformanceFixture fixture)
         var matchingRequest = fixture.Search.ReceivedRequests.Snapshot()
             .Single(f => f.Json.TryGetProperty("search", out var s) && s.GetString() == query);
         var filter = matchingRequest.Json.GetProperty("filter").GetString();
-        Assert.Equal("menuPeriod eq 'breakfast' or menuPeriod eq 'allDay'", filter);
+        Assert.Equal("menuPeriod eq 'breakfast' or menuPeriod eq 'allDay' or menuPeriod eq ''", filter);
+    });
+
+    /// <summary>
+    /// Rick's PR 166 round-1 review, required item 6: "Delta Burger" declares no `menuPeriod` of
+    /// its own (a genuine dayparts-pack item the review's fix targets, distinct from the
+    /// `allDay`-tagged "Delta Fries"/"Delta Latte" covered by other tests), yet must be addable
+    /// in EITHER mode a dayparts pack supports -- the add-time gate
+    /// (MenuCatalog.ItemAvailableNow/item_available_now) already treated it this way before this
+    /// review; this pins that the wire-level behavior actually matches, in both modes, not just
+    /// one.
+    /// </summary>
+    [Theory]
+    [InlineData("breakfast")]
+    [InlineData("lunch")]
+    [Trait("Dotnet", "ready")]
+    public Task Periodless_item_can_be_added_in_either_mode_a_dayparts_pack_supports(string mode) => fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
+            fixture, ct, persona: MenuModeConformanceFixture.DaypartsPersona, mode: mode);
+        await using var _ = browser;
+
+        var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+            connection, browser,
+            [("add", "Delta Burger", "regular", 1, 3.99m)],
+            roundTripIndex, ct);
+
+        var order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        Assert.Equal(1, order.GetProperty("items").GetArrayLength());
+        OrderScenarioHelpers.AssertMoneyEqual(3.99m, OrderScenarioHelpers.GetOrderTotal(result.ToolResultJson!),
+            $"A period-less item must be addable in {mode} mode exactly like every other mode a dayparts pack supports.");
     });
 
     /// <summary>
