@@ -528,16 +528,21 @@ touch `personas/dunkin/**` or `personas/mcdonalds/**`.
 ### 6.2 Breakfast/Lunch menu mode (#165, decided)
 
 The original McDonald's reference app (`swigerb/McDonalds_AI_DriveThru`, `dev`) implemented
-Breakfast/Lunch entirely on the frontend: a client-side toggle (defaulting to whichever half of
-the day it currently was, in the browser's own local time) filtered the ALREADY-fetched menu JSON
-by each item's own `menuPeriod` field before rendering the menu panel, and the same toggle value
-was sent up as plain conversational context in the system prompt's greeting -- there was no
-server-side enforcement at all: the backend accepted an order for any item in `menuItems.json`
-regardless of what the frontend toggle currently showed. This unified app's #165 port keeps the
-same **per-item `menuPeriod` field** as the single source of truth, but moves the binding, and the
-enforcement, to the backend, and turns it into a **generic, pack-declared feature** rather than a
-McDonald's-only code path -- any current or future persona opts in the same way Sonic/Dunkin opt
-out: a `persona.json` boolean, nothing brand-specific in either backend.
+Breakfast/Lunch entirely on the frontend: a client-side toggle, defaulting to `"lunch"` unless
+`localStorage`'s `menuMode` key already held `"breakfast"` from a previous visit (persisting
+whichever the guest last picked, not reading any clock), filtered the ALREADY-fetched menu JSON by
+each item's own `menuPeriod` field before rendering the menu panel, and could be flipped live, at
+any time, with no reconnect of any kind -- there was nothing to reconnect, because the chosen mode
+was never sent to the backend or the realtime session at all: the system prompt never saw it, and
+the backend accepted an order for any item in `menuItems.json` regardless of what the frontend
+toggle currently showed. This unified app's #165 port keeps the same **per-item `menuPeriod`
+field** as the single source of truth, but moves the binding, and the enforcement, to the backend,
+and turns it into a **generic, pack-declared feature** rather than a McDonald's-only code path --
+any current or future persona opts in the same way Sonic/Dunkin opt out: a `persona.json` boolean,
+nothing brand-specific in either backend. Making the mode a real, server-enforced constraint is
+what forces the one deliberate divergence from the original: a bound mode can no longer be
+flipped live mid-session (see the "API contract" bullet below) the way the original's purely
+client-side toggle could.
 
 - **Declaration (`persona.schema.json`, `persona.json`).** `features.dayparts: boolean` (default
   `false`). McDonald's is the only real pack with `true` today; Sonic and Dunkin both have
@@ -546,17 +551,19 @@ out: a `persona.json` boolean, nothing brand-specific in either backend.
   absent) is meaningful **only** when its pack also declares `features.dayparts: true`; Sonic and
   Dunkin's items carry no `menuPeriod` at all.
 - **API contract: an optional `?mode=` query param on the WebSocket handshake**, resolved and
-  bound to the session exactly once, the same "no mid-conversation switching" design as persona
-  and model (section 5.1) -- there is no `session.update`/mid-session mode-change field in either
-  backend, because the original app never supported one either (a session's toggle in the
-  original was purely a fresh page load's local-time default, never changed live).
+  bound to the session exactly once, for the session's lifetime -- unlike the original's own live,
+  reconnect-free toggle, this app's server-side enforcement (search filter, add-time gate) needs a
+  mode fixed for as long as the session exists, so there is no `session.update`/mid-session
+  mode-change field in either backend: the toggle is locked (disabled, same mechanism as the
+  persona/model lock, section 5.1) once a session is live, and changing it requires a fresh
+  `/realtime` connect.
   - `GET /realtime?persona={id}&mode={breakfast|lunch}`.
   - A persona with `features.dayparts: true`: an omitted `?mode=` **defaults to `"lunch"`** (the
-    original app's own default when it can't read a local clock, decision D3 from issue #164) --
-    never a silently-unbound session. An unrecognized value (anything other than `"breakfast"` or
-    `"lunch"`) is rejected the same way an unknown `?persona=` is: a plain **HTTP 400, before the
-    WebSocket upgrade**, same "no silent fallback" philosophy as every other wire-contract check in
-    section 5.2.
+    original app's own default whenever its `localStorage` didn't already hold `"breakfast"`,
+    decision D3 from issue #164) -- never a silently-unbound session. An unrecognized value
+    (anything other than `"breakfast"` or `"lunch"`) is rejected the same way an unknown
+    `?persona=` is: a plain **HTTP 400, before the WebSocket upgrade**, same "no silent fallback"
+    philosophy as every other wire-contract check in section 5.2.
   - A persona with `features.dayparts` absent/`false`: `?mode=` is accepted but silently ignored
     -- the session's bound mode is always `None`/`null`, and every mode-aware gate below is a
     guaranteed no-op for it. (There is no reachable client path that would ever send `?mode=` for
@@ -567,15 +574,19 @@ out: a `persona.json` boolean, nothing brand-specific in either backend.
     exact same default/validation/force-null rules.
 - **Settings UI.** "Menu Mode" (☀️ Breakfast / 🍔 Lunch) is shown **only** when the active
   persona's `features.dayparts` is `true` -- styled like the original app's own toggle. Selecting
-  it is what supplies `?mode=` on the next `/realtime` connect; there is no live-swap without a
-  reconnect, matching the "no mid-conversation switching" rule above.
+  it is what supplies `?mode=` on the next `/realtime` connect; reconnecting is required to change
+  it (the locked-while-live rule above), a deliberate change from the original's own live-swap
+  toggle, traded for real server-side enforcement.
 - **Enforcement, once bound:**
   - **Menu panel / `menu.json`.** Filtered client-side to the bound mode's own items plus every
     `"allDay"` (or period-less) item -- same `menuPeriod` field the original app's frontend-only
     filter used, now also enforced below, not just displayed.
   - **Search (`tools.py::search` / C# `SearchTool`).** The bound mode adds a server-side OData
-    `filter`: `menuPeriod eq '{mode}' or menuPeriod eq 'allDay'` (`None`/omitted for an unbound
-    session, an exact no-op). `app/backend/setup_search_index.py` indexes `menuPeriod` as a
+    `filter`: `menuPeriod eq '{mode}' or menuPeriod eq 'allDay' or menuPeriod eq ''` (`None`/omitted
+    for an unbound session, an exact no-op; the trailing `eq ''` clause -- required item 6, Rick's
+    PR 166 round-1 review -- admits a period-less item the same way the add-time gate below already
+    did, so the two surfaces agree on every item, not just the tagged ones).
+    `app/backend/setup_search_index.py` indexes `menuPeriod` as a
     filterable field; if an index hasn't been rebuilt with it yet, an `HttpResponseError` naming
     the missing field triggers the SAME graceful-degradation retry `tools.py` already uses for a
     stale `$select` projection -- drops the filter (and the full `$select`) rather than failing
@@ -592,16 +603,21 @@ out: a `persona.json` boolean, nothing brand-specific in either backend.
     "item_name", "message" }` -- `item_name` is the real menu name (the item DID resolve), and the
     rendered `message` names the item's **own** daypart (`menuPeriod`), not the session's active
     one (e.g. rejecting a breakfast item while bound to lunch names "breakfast", not "lunch") --
-    this mirrors the original app's own copy, which always described the item's home daypart. The
-    gate runs **only** for `action == "add"`; `modify` never re-checks it, the same
+    a judgment call for this app, since the original never enforced (or rejected) an out-of-mode
+    add at all and so has no equivalent copy to match. The gate runs **only** for
+    `action == "add"`; `modify` never re-checks it, the same
     "an item already legitimately in the order is never re-gated by something that changed after
     it was added" rationale as the `machine_unavailable` gate (section 6, bullet
     `machine_unavailable`) -- a session's bound mode never changes mid-conversation, so a `modify`
     target that passed this gate at add time can never have become out-of-mode since.
-  - **Prompt/greeting.** Mirrors the original: the system prompt's greeting section reflects the
-    session's bound mode (which half of the menu is being offered), the same "ask breakfast or
-    lunch" framing McDonald's `EXTRA_VALUE_MEALS` prompt copy already had, now driven by the real
-    bound `menu_mode` instead of unconditional text.
+  - **Prompt/greeting.** Neither backend injects the bound mode into the system prompt today --
+    the only #165 change on this surface is the `item_out_of_mode` rejection key above.
+    `system_prompt.yaml`'s BRAND_IDENTITY still tells the model to ask "breakfast or lunch?" on a
+    meal-number overlap (line 119), a question a bound session has already answered; neither
+    backend currently tells the model which mode is bound, so the model can still ask it
+    needlessly. This is a known gap, not a parity claim with the original (which never sent its
+    client-side toggle to the backend or the system prompt at all, so there is nothing from the
+    original to "mirror" here).
 - **Conformance (`tests/conformance`).** `MenuModeConformanceTests` (both backends, via the
   dedicated `test-delta`/`test-alpha` fixture pair, `test-delta` declaring `features.dayparts` with
   a breakfast/lunch meal sharing one meal number) proves: a breakfast-mode connect can add a

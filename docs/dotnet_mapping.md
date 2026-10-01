@@ -155,6 +155,19 @@ once it is tagged. The other four Auth classes (`AuthRowCasesTests`,
 `DevelopmentPassThroughExplicitModeTests`) are real, ungated, already-passing-today tests and do
 count. See `DotnetTraitCoverageTests`'s own doc comment for the exact arithmetic.
 
+**Issue #165 (breakfast/lunch menu fidelity + menu mode):** raised the floor twice.
+Round 1 added `Scenarios/Ordering/MenuModeConformanceTests.cs` (five tagged, ungated methods: mode
+switch x2, out-of-mode rejection, search filter, packs-without-modes-unaffected), 178 -> 183. Round
+2 (Rick's PR #166 round-1 review, required items 5 and 7) added
+`Scenarios/Ordering/MenuModeRejectionConformanceTests.cs` (five more tagged, ungated methods:
+unrecognized/empty/repeated `?mode=` all rejected with a real pre-upgrade HTTP 400, an omitted
+`?mode=` defaulting to lunch, and a log-capture pin proving the rejected value never reaches either
+backend's own logs verbatim), 183 -> 188. Round 2 also added one more tagged
+`[Theory]` method to `MenuModeConformanceTests.cs` (required item 6: a period-less dayparts-pack
+item is addable in either mode, mirroring the search-filter fix's own admission of the same
+items), 188 -> 189. All eleven methods are real assertions against both
+backends today (no `AuthRowCapability` skip-gating applies), so all three raises count normally.
+
 
 
 - **DEV_MODE hot-reload** (`prompt_loader.py`'s file-watching reload behaviour) is explicitly
