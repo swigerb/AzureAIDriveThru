@@ -153,6 +153,31 @@ public sealed class RealtimeSessionBuilderTests
         Assert.Single(session["tools"]!.AsArray());
     }
 
+    /// <summary>Issue #170 (Python equivalent: ProcessMessageToServerTests'
+    /// `test_session_update_uses_the_bound_sessions_system_message_not_the_deployment_default`).
+    /// `BuildSession` is the client-update build path's own session builder (called directly
+    /// from `RealtimeProcessor.ProcessClientMessage`). Unlike the Python side, this parameter was
+    /// never a problem on this backend: `ProcessClientMessage` is a local function closing over
+    /// its enclosing method's own `systemMessage` local (this bound session's own persona prompt,
+    /// resolved once per connection) -- there is no separate caller that could "forget" to pass
+    /// it the way Python's top-level `_process_message_to_server` could. This test pins that an
+    /// explicit `systemMessage` override always wins over `config.SystemMessage` (the deployment
+    /// default), so a future refactor that collapses the closure into a parameterised method
+    /// cannot silently drop this threading and still pass.</summary>
+    [Fact]
+    public void Session_ExplicitSystemMessageOverridesTheDeploymentDefault()
+    {
+        var config = Config();
+        var boundPersonaSystemMessage = "You are a different, non-default persona's crew associate.";
+
+        var session = RealtimeSessionBuilder.BuildSession(
+            config, RealtimeSessionBuilder.BootstrapClientSession(), [UpdateOrderTool],
+            systemMessage: Overridable<string?>.Of(boundPersonaSystemMessage));
+
+        Assert.Equal(boundPersonaSystemMessage, session["instructions"]!.GetValue<string>());
+        Assert.NotEqual(config.SystemMessage, session["instructions"]!.GetValue<string>());
+    }
+
     [Fact]
     public void Fallback_OnlyCarriesTypeInstructionsToolsToolChoice()
     {

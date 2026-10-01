@@ -1480,11 +1480,22 @@ class RTMiddleTier:
                            "session": session})
 
     async def _recover_rejected_session_update(self, message: dict, server_ws, guard: "_SessionUpdateGuard | None",
-                                               session_id: str | None, voice: str | None = _VOICE_UNSET, reasoning_override: bool | None = _REASONING_UNSET) -> bool:
+                                               session_id: str | None, voice: str | None = _VOICE_UNSET,
+                                               system_message: str | None = _SYSTEM_MESSAGE_UNSET,
+                                               reasoning_override: bool | None = _REASONING_UNSET) -> bool:
         """Handle an upstream `error` that rejects one of our session.updates.
 
         Returns True if the error was consumed (a fallback was sent), False if
         it should reach the browser: unrelated errors, and a rejected fallback.
+
+        `system_message` (#170): this session's own bound persona's system
+        prompt, or omit for `self.system_message` (the deployment-wide
+        default) -- see `_SYSTEM_MESSAGE_UNSET`. Threaded through to
+        `build_fallback_session_update` so the minimal fallback
+        session.update resent here still carries THIS session's own bound
+        persona's instructions, never silently falling back to the
+        deployment default's (the same class of bug #170 fixed on the
+        client-update path).
         """
         if guard is None:
             return False
@@ -1511,7 +1522,9 @@ class RTMiddleTier:
             logger.error("Deployment %s rejected reasoning-model options; no longer sending `reasoning` / "
                          "`parallel_tool_calls` from this process. Set model.reasoning_effort to \"\" for this "
                          "deployment.", getattr(self, "deployment", "?"))
-        fallback = guard.track(self.build_fallback_session_update(voice=voice, reasoning_override=reasoning_override), fallback_of=event_id)
+        fallback = guard.track(
+            self.build_fallback_session_update(voice=voice, system_message=system_message, reasoning_override=reasoning_override),
+            fallback_of=event_id)
         await server_ws.send_str(fallback)
         return True
 
@@ -1597,7 +1610,14 @@ class RTMiddleTier:
             },
         }
 
-    async def _process_message_to_client(self, msg: str, client_ws: web.WebSocketResponse, server_ws: web.WebSocketResponse, tools_pending: dict[str, RTToolCall], verbose: bool = False, guard: "_SessionUpdateGuard | None" = None, on_session_created: Callable[[], Awaitable[None]] | None = None, recovery: RateLimitRecovery | None = None, voice: str | None = _VOICE_UNSET, tool_failures: "_ToolFailureTracker | None" = None, reasoning_override: bool | None = _REASONING_UNSET) -> str | None:
+    async def _process_message_to_client(self, msg: str, client_ws: web.WebSocketResponse, server_ws: web.WebSocketResponse, tools_pending: dict[str, RTToolCall], verbose: bool = False, guard: "_SessionUpdateGuard | None" = None, on_session_created: Callable[[], Awaitable[None]] | None = None, recovery: RateLimitRecovery | None = None, voice: str | None = _VOICE_UNSET, tool_failures: "_ToolFailureTracker | None" = None, system_message: str | None = _SYSTEM_MESSAGE_UNSET, reasoning_override: bool | None = _REASONING_UNSET) -> str | None:
+        """#170: `system_message` is this session's own bound persona's system
+        prompt (or omit for `self.system_message`, the deployment default) --
+        threaded straight through to `_recover_rejected_session_update` so a
+        rejected-session.update fallback resent on this path still carries
+        THIS session's own persona's instructions, never the deployment
+        default's.
+        """
         data = msg.data
 
         # FAST PATH: extract type via regex without full JSON parse.
@@ -1642,7 +1662,10 @@ class RTMiddleTier:
                 case "error":
                     # A rejected session.update of ours is recovered here (minimal
                     # fallback) instead of surfacing as a user-facing failure.
-                    if await self._recover_rejected_session_update(message, server_ws, guard, session_id, voice=voice, reasoning_override=reasoning_override):
+                    if await self._recover_rejected_session_update(
+                        message, server_ws, guard, session_id, voice=voice, system_message=system_message,
+                        reasoning_override=reasoning_override,
+                    ):
                         _vlog(verbose, "  ⚠ session.update rejected — fallback sent: %s", json.dumps(message, default=str)[:500])
                         return None
                     # A rate-limited response is retried (see rate_limit.py), not surfaced.
@@ -1981,7 +2004,7 @@ class RTMiddleTier:
 
         return updated_message
 
-    async def _process_message_to_server(self, msg: str, ws: web.WebSocketResponse, verbose: bool = False, voice_locked: bool = False, guard: "_SessionUpdateGuard | None" = None, voice: str | None = _VOICE_UNSET, limiter: "_ClientFrameDropWarningLimiter | None" = None, reasoning_override: bool | None = _REASONING_UNSET) -> "tuple[str | None, str | None]":
+    async def _process_message_to_server(self, msg: str, ws: web.WebSocketResponse, verbose: bool = False, *, system_message: str | None, voice_locked: bool = False, guard: "_SessionUpdateGuard | None" = None, voice: str | None = _VOICE_UNSET, limiter: "_ClientFrameDropWarningLimiter | None" = None, reasoning_override: bool | None = _REASONING_UNSET) -> "tuple[str | None, str | None]":
         """Validate and forward one browser→upstream frame, or drop it.
 
         Returns `(forwarded, sent_type)`: `forwarded` is the exact string to
@@ -2000,6 +2023,20 @@ class RTMiddleTier:
         `limiter`, if given, rate-limits this call's own per-frame drop/strip
         WARNING logs (PR #58 review round 2, "F2") -- see
         `_ClientFrameDropWarningLimiter`.
+
+        `system_message` (#170, required, keyword-only, NO silent default):
+        this session's own bound persona's system prompt -- unlike `voice`/
+        `reasoning_override` above, this one has no `_SYSTEM_MESSAGE_UNSET`
+        fallback to `self.system_message` (the deployment-wide default). The
+        live bug this closes: a bound-persona session's browser session.update
+        used to rebuild via `_build_session` WITHOUT `system_message`, so it
+        silently fell back to the deployment default persona's prompt (a
+        non-default persona's session greeting with the default persona's
+        prompt instead of its own). Making this a required keyword-only
+        parameter means every caller MUST pass this session's own effective
+        system message explicitly -- omitting it is now a `TypeError` at call
+        time, not a silent wrong-persona prompt at runtime -- so this class of
+        bug cannot recur on this path.
         """
         data = msg.data
 
@@ -2064,7 +2101,9 @@ class RTMiddleTier:
                         "to the server's own default (session=%s)", session_id)
                     sanitized_td = copy.deepcopy(_BOOTSTRAP_CLIENT_SESSION["turn_detection"])
                 session_in["turn_detection"] = sanitized_td
-            session = self._build_session(session_in, voice_locked=voice_locked, voice=voice, reasoning_override=reasoning_override)
+            session = self._build_session(
+                session_in, voice_locked=voice_locked, voice=voice, system_message=system_message,
+                reasoning_override=reasoning_override)
             tool_names = [t.get("name", "?") for t in session["tools"]]
             filtered["session"] = session
             # Every session.update carries an event_id so a rejection can
@@ -2562,7 +2601,9 @@ class RTMiddleTier:
                                 if (verbose or _VERBOSE_GLOBAL) and audio_frame_count % 50 == 0:
                                     _vlog(verbose, "─── [Client → Server] Audio frame #%d ───", audio_frame_count)
                             # Forward client message to OpenAI.
-                            new_msg, sent_type = await self._process_message_to_server(msg, ws, verbose, voice_locked=assistant_audio_seen, guard=guard, voice=voice, limiter=drop_limiter, reasoning_override=reasoning_override)
+                            new_msg, sent_type = await self._process_message_to_server(
+                                msg, ws, verbose, system_message=system_message, voice_locked=assistant_audio_seen,
+                                guard=guard, voice=voice, limiter=drop_limiter, reasoning_override=reasoning_override)
                             # PR #49 review round 2, "F1": idle reset, nudge
                             # cancel and the greeting trigger used to be keyed
                             # on raw substring checks against msg.data,
@@ -2702,6 +2743,7 @@ class RTMiddleTier:
                             new_msg = await self._process_message_to_client(msg, ws, target_ws, tools_pending, verbose, guard=guard,
                                                                             on_session_created=on_session_created,
                                                                             recovery=recovery, voice=voice, tool_failures=tool_failures,
+                                                                            system_message=system_message,
                                                                             reasoning_override=reasoning_override)
                             if new_msg is not None:
                                 await ws.send_str(new_msg)

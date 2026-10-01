@@ -71,6 +71,19 @@ namespace Conformance.Tests;
 /// so it raises the floor 189 to 190. The dotnet leg executes 190 distinct passing methods, none
 /// of them in the five gated Auth classes (TRX: 485 passed, 61 not executed). A reflection probe
 /// agrees (a floor of 191 fails with "but found 190").
+///
+/// Issue #170: fixes a live production bug (a bound-persona session's client `session.update`
+/// rebuilt the upstream session without that persona's own system prompt, falling back to the
+/// deployment default). Adds <c>PersonaSessionUpdateInstructionsConformanceTests.cs</c>'s two
+/// Theory methods (<c>RealPackPersonaSessionUpdateConformanceTests</c> and
+/// <c>FixturePackPersonaSessionUpdateConformanceTests</c>, both
+/// <c>Client_session_update_carries_the_bound_personas_own_instructions</c>) -- generic,
+/// brand-agnostic coverage, for every discovered persona pack, that the forwarded client-update
+/// session carries that SAME pack's own instructions and none of the others', closing the exact
+/// gap that let #170 ship (<c>SmokeSessionBootstrapTests</c> already proved the browser's
+/// session.update is forwarded, but never asserted `instructions`). Both methods are tagged
+/// <c>[Trait("Dotnet", "ready")]</c>, ungated, and verified green against both backends -- raising
+/// the floor 190 to 192.
 /// </summary>
 public sealed class DotnetTraitCoverageTests
 {
@@ -93,12 +106,12 @@ public sealed class DotnetTraitCoverageTests
     };
 
     [Fact]
-    public void At_least_190_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
+    public void At_least_192_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
     {
         var count = CountFloorEligibleDotnetReadyTestMethods();
 
-        Assert.True(count >= 190,
-            $"Expected at least 190 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
+        Assert.True(count >= 192,
+            $"Expected at least 192 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
             $"and not unconditionally skip-gated by AuthRowCapability (the dotnet leg's " +
             $"`--filter \"{TraitName}={TraitValue}&Category!=Browser\"` baseline, minus the five " +
             "skip-only Scenarios/Auth classes -- see this class's own doc comment; " +
