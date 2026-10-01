@@ -426,34 +426,18 @@ function SonicApp() {
         },
         onReceivedResponseDone: message => {
             const transcript = message.response.output.map(output => output.content?.map(content => content.transcript).join(" ")).join(" ");
-            // TEMP DIAGNOSTIC (removed once the real cause is found): isolate whether this handler
-            // itself runs/extracts the transcript correctly, versus a later effect clobbering it.
-            console.log("DIAG onReceivedResponseDone:", JSON.stringify({ transcript, willReturnEarly: !transcript }));
             if (!transcript) return;
-            try {
-                clearRateLimitNotice();
-                console.log("DIAG after clearRateLimitNotice, about to call setTranscripts");
-            } catch (error) {
-                console.log("DIAG clearRateLimitNotice THREW:", String(error), (error as Error | undefined)?.stack);
-                throw error;
-            }
+            // Defense in depth (issue 181): a resumed-but-idle socket must never surface assistant
+            // output while the guest hasn't (re)started their session.
+            if (!isSessionActiveRef.current) return;
+            clearRateLimitNotice();
 
             const newTranscriptItem = {
                 text: transcript,
                 isUser: false,
                 timestamp: new Date()
             };
-            try {
-                setTranscripts(prev => {
-                    const next = [...prev, newTranscriptItem];
-                    console.log("DIAG setTranscripts updater:", JSON.stringify({ prevLength: prev.length, nextLength: next.length }));
-                    return next;
-                });
-                console.log("DIAG after setTranscripts call (call itself did not throw)");
-            } catch (error) {
-                console.log("DIAG setTranscripts THREW:", String(error), (error as Error | undefined)?.stack);
-                throw error;
-            }
+            setTranscripts(prev => [...prev, newTranscriptItem]);
 
             // AI finished speaking - unmute the microphone
             if (isAiSpeakingRef.current) {
@@ -557,17 +541,17 @@ function SonicApp() {
     // Mid-conversation drop, resumed: pick the conversation straight back up.
     // Voice/VAD come back via session.update (the server suppresses the greeting),
     // and the mic restarts without a tap when the browser allows it.
+    //
+    // Issue 181, R1: session.update must not go out until the mic is actually running. The
+    // server arms its idle-resume nudge the moment it forwards a validated client session.update,
+    // so sending it before we know the mic restart succeeded leaves a paid conversation generating
+    // on a tab that is about to fall back to "Tap the mic to continue" with nobody listening.
     const resumeConversation = async () => {
         isSessionActiveRef.current = true;
         isAiSpeakingRef.current = false;
         awaitingGreetingDoneRef.current = false;
         greetingAudioSeenRef.current = false;
         setIsRecording(true);
-        realtime.startSession();
-        if (verboseLogging) {
-            realtime.sendVerboseLogging(true);
-            if (logToFile) realtime.sendLogToFile(true);
-        }
         let micStarted = false;
         try {
             micStarted = await startAudioRecording();
@@ -576,10 +560,17 @@ function SonicApp() {
         }
         if (!isSessionActiveRef.current) return;
         if (!micStarted) {
-            // Needs a user gesture (suspended AudioContext / permission prompt).
+            // Needs a user gesture (suspended AudioContext / permission prompt). No session.update
+            // was sent, so the server has nothing armed on this socket; the guest's own tap in
+            // onToggleListening sends it once the conversation is genuinely live.
             await stopConversation();
             setConnectionNotice("tapToResume");
             return;
+        }
+        realtime.startSession();
+        if (verboseLogging) {
+            realtime.sendVerboseLogging(true);
+            if (logToFile) realtime.sendLogToFile(true);
         }
         flashResumedNotice();
     };

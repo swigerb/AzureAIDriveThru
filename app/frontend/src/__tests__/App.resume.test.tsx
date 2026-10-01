@@ -153,18 +153,25 @@ describe("order resume in the app", () => {
         await startConversationWithTots();
         await act(async () => rt.params.onConnectionLost(transportDrop));
         rec.start.mockImplementation(async () => false);
+        rt.api.startSession.mockClear();
 
         await act(async () => rt.params.onReceivedSessionResumed(resumedMsg()));
 
         expect(screen.getByText("status.resumedTapToContinue")).toBeInTheDocument();
         expect(screen.getByLabelText("app.startRecording")).toBeInTheDocument();
         expect(screen.getByText("Medium Cherry Limeade")).toBeInTheDocument();
+        // Issue #181 R1: the mic never came up, so no session.update went out -- the server has
+        // nothing armed on this idle tab (Rick round 2 review: resumeConversation() must not send
+        // startSession() until the mic is confirmed running).
+        expect(rt.api.startSession).not.toHaveBeenCalled();
 
         rec.start.mockImplementation(async () => true);
         rec.start.mockClear();
         await tapMic();
         // Resumed session: no greeting will come, so the mic starts without the 3.5 s wait.
         expect(rec.start).toHaveBeenCalledTimes(1);
+        // The guest's own tap is what finally arms it -- genuinely live now, exactly once.
+        expect(rt.api.startSession).toHaveBeenCalledTimes(1);
         expect(screen.getByText("Medium Cherry Limeade")).toBeInTheDocument();
     });
 
@@ -174,8 +181,11 @@ describe("order resume in the app", () => {
         rec.start.mockImplementation(async () => {
             throw new DOMException("denied", "NotAllowedError");
         });
+        rt.api.startSession.mockClear();
         await act(async () => rt.params.onReceivedSessionResumed(resumedMsg()));
         expect(screen.getByText("status.resumedTapToContinue")).toBeInTheDocument();
+        // Issue #181 R1: a thrown getUserMedia rejection must not have armed the nudge either.
+        expect(rt.api.startSession).not.toHaveBeenCalled();
     });
 
     it("a resume while the guest was not talking restores the ticket without touching the mic", async () => {
@@ -187,6 +197,44 @@ describe("order resume in the app", () => {
         expect(rec.start).not.toHaveBeenCalled();
         expect(screen.getByText("Medium Cherry Limeade")).toBeInTheDocument();
         expect(screen.getByText("status.resumedTapToContinue")).toBeInTheDocument();
+    });
+
+    it("a resumed-but-idle session (#181) never surfaces the server's nudge as assistant output", async () => {
+        // Defense in depth: even if the backend ever nudged a resumed socket before the guest
+        // (re)started their mic, the client must not play/append that output while idle.
+        await startConversationWithTots();
+        await tapMic(); // guest stops the conversation -> isSessionActiveRef false
+        await act(async () => rt.params.onConnectionLost(transportDrop));
+        await act(async () => rt.params.onReceivedSessionResumed(resumedMsg()));
+        expect(screen.getByText("status.resumedTapToContinue")).toBeInTheDocument();
+
+        await act(async () =>
+            rt.params.onReceivedResponseDone({
+                response: { output: [{ content: [{ transcript: "Need anything else to go with your order, or are you all set?" }] }] }
+            })
+        );
+
+        expect(screen.queryByText("Need anything else to go with your order, or are you all set?")).not.toBeInTheDocument();
+    });
+
+    it("a resumed-but-idle session (#181) never plays the server's nudge audio either", async () => {
+        // Defense in depth, audio half (Rick round 2 review, mutation c2): dropping the
+        // `if (!isSessionActiveRef.current) return;` guard in onReceivedResponseAudioDelta must
+        // not survive. An audio delta that arrives while idle must never reach the speaker, but a
+        // genuine greeting right after the guest taps back in must still play normally.
+        await startConversationWithTots();
+        await tapMic(); // guest stops the conversation -> isSessionActiveRef false
+        await act(async () => rt.params.onConnectionLost(transportDrop));
+        await act(async () => rt.params.onReceivedSessionResumed(resumedMsg()));
+        expect(screen.getByText("status.resumedTapToContinue")).toBeInTheDocument();
+
+        await act(async () => rt.params.onReceivedResponseAudioDelta({ type: "response.audio.delta", delta: "NUDGE-AUDIO-BASE64" }));
+        expect(player.play).not.toHaveBeenCalled();
+
+        rec.start.mockImplementation(async () => true);
+        await tapMic(); // guest goes live again
+        await act(async () => rt.params.onReceivedResponseAudioDelta({ type: "response.audio.delta", delta: "GREETING-AUDIO-BASE64" }));
+        expect(player.play).toHaveBeenCalledWith("GREETING-AUDIO-BASE64");
     });
 
     it("resume_rejected clears the ticket and asks for a fresh start", async () => {

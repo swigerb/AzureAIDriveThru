@@ -9,13 +9,17 @@ namespace Conformance.Tests.Scenarios.Sessions;
 /// Issue #10: what happens to the *conversation* across a resume, not just the handshake
 /// (covered by <see cref="ResumeHandshakeTests"/>). app/backend/rtmt.py sends every new upstream
 /// connection a bootstrap `session.update` before relaying any client traffic; a successful
-/// mid-conversation resume (`outcome.conversation_started` — the session had already greeted)
+/// mid-conversation resume (`outcome.conversation_started`, the session had already greeted)
 /// then appends exactly one system `conversation.item.create` carrying the order and recent
 /// turns (session_manager.py's `build_rehydration_item`), and deliberately sends no
-/// `response.create` — the carhop must not greet again or speak until the guest does. A
-/// `nudge_after_silence()` task fires exactly once, `nudge_after_seconds` after the resume, but
-/// only once `session.updated` has confirmed the new upstream is configured, and only if the
-/// guest hasn't spoken (speech/transcript cancels it). `extension.end_session` is the one path
+/// `response.create` (the carhop must not greet again or speak until the guest does). Issue
+/// #181: a `nudge_after_silence()` task is only even *scheduled* once the resumed connection
+/// forwards the client's OWN `session.update` (the browser's mic-restart/resumeConversation()
+/// path): a resume whose client never does that (guest never tapped the mic back on) must
+/// never nudge or generate any response at all. Once scheduled, it still fires exactly once,
+/// `nudge_after_seconds` after that, but only once `session.updated` has also confirmed the new
+/// upstream is configured, and only if the guest hasn't spoken (speech/transcript cancels it).
+/// `extension.end_session` is the one path
 /// that permanently deletes the order and the resume credential — 1000/"session_ended", after
 /// which the same resume id comes back "unknown", not "expired".
 /// </summary>
@@ -146,6 +150,7 @@ public sealed class ResumeRehydrationAndNudgeTests(ResumeTimersConformanceFixtur
 
         var (newBrowser, newConnection) = await DropAndResumeAsync(oldBrowser, resumeId, ct);
         await using var _ = newBrowser;
+        await newBrowser.SendStartSessionAsync(cancellationToken: ct); // mic restarts on resume -> nudge arms (#181)
 
         var resumed = await newBrowser.ReceivedFrames.WaitForAsync(
             f => f.Type == "extension.session_resumed", FrameTimeout, ct);
@@ -226,6 +231,7 @@ public sealed class ResumeRehydrationAndNudgeTests(ResumeTimersConformanceFixtur
 
         var (newBrowser, newConnection) = await AbortAndResumeAsync(oldBrowser, resumeId, ct);
         await using var _ = newBrowser;
+        await newBrowser.SendStartSessionAsync(cancellationToken: ct); // mic restarts on resume -> nudge arms (#181)
 
         var resumed = await newBrowser.ReceivedFrames.WaitForAsync(
             f => f.Type == "extension.session_resumed", FrameTimeout, ct);
@@ -257,6 +263,14 @@ public sealed class ResumeRehydrationAndNudgeTests(ResumeTimersConformanceFixtur
             "No response.create (greeting or otherwise) should fire between the rehydration item and the nudge.");
     });
 
+    /// <summary>
+    /// Issue #181: with the client's own session.update now gating when the nudge timer is even
+    /// scheduled (see <see cref="A_resume_without_a_client_session_update_never_nudges_or_responds"/>
+    /// for the companion "never" case), this covers the bug's flip side -- once the guest's mic
+    /// genuinely restarts on resume (<c>SendStartSessionAsync</c>, matching the browser's real
+    /// <c>resumeConversation()</c>), the nudge must still fire exactly once after silence, same as
+    /// before the fix.
+    /// </summary>
     [Fact]
     public Task A_silent_guest_gets_nudged_exactly_once_after_the_resume() => fixture.RunAsync(async () =>
     {
@@ -264,6 +278,7 @@ public sealed class ResumeRehydrationAndNudgeTests(ResumeTimersConformanceFixtur
         var (oldBrowser, _, resumeId) = await ConnectPastGreetingWithResumeIdAsync(ct);
         var (newBrowser, newConnection) = await DropAndResumeAsync(oldBrowser, resumeId, ct);
         await using var _ = newBrowser;
+        await newBrowser.SendStartSessionAsync(cancellationToken: ct); // mic restarts on resume -> nudge arms (#181)
 
         var resumed = await newBrowser.ReceivedFrames.WaitForAsync(
             f => f.Type == "extension.session_resumed", FrameTimeout, ct);
@@ -294,6 +309,49 @@ public sealed class ResumeRehydrationAndNudgeTests(ResumeTimersConformanceFixtur
         Assert.True(secondNudge is null, "The nudge must fire at most once per resume.");
     });
 
+    /// <summary>
+    /// Issue #181 (live bug): a page reload resumed the order while the guest's mic was NOT
+    /// started -- the UI said "Tap the mic to continue" -- yet the server's post-resume
+    /// nudge_after_silence() still fired 30s later and spoke "Need anything else...". The nudge
+    /// must only ever be scheduled once the resumed connection sees the client's OWN
+    /// session.update (the browser's resumeConversation()/mic-start path, or a guest tapping the
+    /// mic), never merely because the resume handshake itself succeeded and the upstream
+    /// confirmed the bootstrap session.update (that happens automatically, regardless of guest
+    /// action). This resumes and then deliberately never sends a client session.update --
+    /// mirroring the bug report exactly -- and proves no nudge item and no response.create ever
+    /// appear, even generously past nudge_after_seconds.
+    /// </summary>
+    [Fact]
+    public Task A_resume_without_a_client_session_update_never_nudges_or_responds() => fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var (oldBrowser, _, resumeId) = await ConnectPastGreetingWithResumeIdAsync(ct);
+        var (newBrowser, newConnection) = await DropAndResumeAsync(oldBrowser, resumeId, ct);
+        await using var _ = newBrowser;
+        // Deliberately no SendStartSessionAsync here -- the guest never tapped the mic back on.
+
+        var resumed = await newBrowser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.session_resumed", FrameTimeout, ct);
+        Assert.True(resumed is not null);
+
+        var rehydration = await newConnection.ReceivedFrames.WaitForAsync(
+            f => IsSystemMessageItem(f), FrameTimeout, ct);
+        Assert.True(rehydration is not null, "Expected the rehydration item regardless of client activity.");
+
+        // Well past ResumeTimers' nudge_after_seconds=1s: no second system-message item (the
+        // nudge) and no response.create of any kind should ever appear on this idle socket.
+        var nudge = await newConnection.ReceivedFrames.WaitForAsync(
+            f => IsSystemMessageItem(f) && f.Sequence > rehydration!.Sequence,
+            TimeSpan.FromSeconds(5), ct);
+        Assert.True(nudge is null,
+            "The nudge must never fire on a resumed connection the client never followed with its own session.update.");
+
+        var anyResponseCreate = newConnection.ReceivedFrames.Snapshot()
+            .FirstOrDefault(f => f.Type == "response.create");
+        Assert.True(anyResponseCreate is null,
+            "An idle, resumed-but-not-live connection must never generate a response.create.");
+    });
+
     [Fact]
     public Task The_nudge_is_cancelled_by_guest_speech() => fixture.RunAsync(async () =>
     {
@@ -301,7 +359,8 @@ public sealed class ResumeRehydrationAndNudgeTests(ResumeTimersConformanceFixtur
         var (oldBrowser, _, resumeId) = await ConnectPastGreetingWithResumeIdAsync(ct);
         var (newBrowser, newConnection) = await DropAndResumeAsync(oldBrowser, resumeId, ct);
         await using var _ = newBrowser;
-
+        await newBrowser.SendStartSessionAsync(cancellationToken: ct); // mic restarts on resume -> nudge arms (#181),
+                                                                        // otherwise this test would pass vacuously
         var resumed = await newBrowser.ReceivedFrames.WaitForAsync(
             f => f.Type == "extension.session_resumed", FrameTimeout, ct);
         Assert.True(resumed is not null);
@@ -339,12 +398,18 @@ public sealed class ResumeRehydrationAndNudgeTests(ResumeTimersConformanceFixtur
         // forever. The rehydration item itself is NOT gated on session.updated (rtmt.py sends it
         // synchronously right after the resume decision, before nudge_after_silence() is even
         // scheduled), so we still expect exactly one system-message item -- just never a second.
+        //
+        // Issue #181: the nudge now also needs the *client's own* session.update (mic restart)
+        // before it is even scheduled, independent of this session.updated gate -- send one here
+        // so this test still isolates and proves the session_configured gate specifically, rather
+        // than passing vacuously because the nudge was never scheduled at all.
         var ct = TestContext.Current.CancellationToken;
         var (oldBrowser, _, resumeId) = await ConnectPastGreetingWithResumeIdAsync(ct);
 
         fixture.Realtime.SuppressSessionUpdatedOnNextConnection();
         var (newBrowser, newConnection) = await DropAndResumeAsync(oldBrowser, resumeId, ct);
         await using var _ = newBrowser;
+        await newBrowser.SendStartSessionAsync(cancellationToken: ct);
 
         var resumed = await newBrowser.ReceivedFrames.WaitForAsync(
             f => f.Type == "extension.session_resumed", FrameTimeout, ct);
