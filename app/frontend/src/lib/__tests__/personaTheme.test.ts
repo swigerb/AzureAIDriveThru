@@ -376,6 +376,29 @@ describe("resolvePersonaTheme", () => {
         expect(theme.light.accents.primaryHex).toBe(deriveAccents(wireTheme.light).primaryHex);
     });
 
+    // Issue #164 R9 (PR #167 round 2 review): a pack that authors `primaryHex`/`secondaryStrong`
+    // but omits `primaryDeep`/`secondaryLight` must have those two default to the PACK'S OWN
+    // merged `primaryHex`/`secondaryStrong`, not deriveAccents's raw-HSL-synthesized value from
+    // before the merge -- those two values can diverge (HSL round-trip rounding) from a pack's
+    // authored hex even though the pack never touched `primaryDeep`/`secondaryLight` at all. This
+    // regressed one shipped pack's hero pill color because the prior fallback read
+    // deriveAccents's own `primaryDeep`/`secondaryLight` fields, computed from the raw base HSL
+    // colors rather than from the authored hex overrides.
+    it("defaults primaryDeep/secondaryLight to the pack's own authored primaryHex/secondaryStrong when the pack authors those but omits the new keys", () => {
+        const wireTheme: PersonaWireTheme = {
+            light: {
+                primary: "341 100% 45%",
+                secondary: "208 52% 33%",
+                background: "195 44% 96%",
+                foreground: "208 53% 20%",
+                accents: { primaryHex: "#E40046", secondaryStrong: "#137AC9" }
+            }
+        };
+        const theme = resolvePersonaTheme("test-alpha", wireTheme);
+        expect(theme.light.accents.primaryDeep).toBe("#E40046");
+        expect(theme.light.accents.secondaryLight).toBe("#137AC9");
+    });
+
     it("passes a persona's `surface` block through unchanged (no synthesis fallback)", () => {
         const wireTheme: PersonaWireTheme = {
             light: {

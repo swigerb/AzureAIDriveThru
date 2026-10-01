@@ -43,8 +43,9 @@ export interface PersonaAccentPalette {
     /** Lighter shade of `primary`, used as a gradient endpoint. */
     primaryLight: string;
     /** Issue #164 R2 (PR #167 round 1 review): deeper/darker shade of `primary`, distinct from
-     * `primaryStrong`, for text needing more contrast than the plain primary hex. Defaults to
-     * `primaryHex` (see `deriveAccents`) so a pack that doesn't author this key renders unchanged. */
+     * `primaryStrong`, for text needing more contrast than the plain primary hex. Defaults to this
+     * pack's own merged `primaryHex` (see `resolvePersonaTheme`'s R9 fix, PR #167 round 2 review)
+     * so a pack that doesn't author this key renders unchanged. */
     primaryDeep: string;
     /** Shade of `primary` legible on dark surfaces (dark-mode text/badges). */
     primaryTintOnDark: string;
@@ -53,8 +54,9 @@ export interface PersonaAccentPalette {
     /** Brighter shade of `secondary`, used as a gradient endpoint. */
     secondaryStrong: string;
     /** Issue #164 R3 (PR #167 round 1 review): lighter shade of `secondary`, for pill/gradient
-     * accents brighter than `secondaryStrong`. Defaults to `secondaryStrong` (see `deriveAccents`)
-     * so a pack that doesn't author this key renders unchanged. */
+     * accents brighter than `secondaryStrong`. Defaults to this pack's own merged
+     * `secondaryStrong` (see `resolvePersonaTheme`'s R9 fix, PR #167 round 2 review) so a pack
+     * that doesn't author this key renders unchanged. */
     secondaryLight: string;
     /** Shade of `secondary` legible on dark surfaces (dark-mode text/badges). */
     secondaryTintOnDark: string;
@@ -489,9 +491,25 @@ export function resolvePersonaTheme(personaId: string, wireTheme: PersonaWireThe
     // A pack MAY author its own accents (personas/persona.schema.json's `_ThemeAccents`) --
     // any key it supplies wins; any key it omits falls back to `deriveAccents`'s synthesized
     // value, so a pack can override just e.g. `accent` without having to author all 15 keys.
-    const accents: PersonaAccentPalette = {
+    const authoredAccents = wireTheme.light.accents;
+    const merged: PersonaAccentPalette = {
         ...deriveAccents(wireTheme.light),
-        ...wireTheme.light.accents
+        ...authoredAccents
+    };
+
+    // Issue #164 R9 (PR #167 round 2 review): `primaryDeep`/`secondaryLight` must default to
+    // THIS pack's own merged `primaryHex`/`secondaryStrong` (the value after the spread above,
+    // which already reflects any authored override), not `deriveAccents`'s raw-HSL-synthesized
+    // value from before the merge -- those two can differ from a pack's authored hex (rounding
+    // through the HSL triplet), which silently changed a pack's rendered color even though it
+    // never authored `primaryDeep`/`secondaryLight` at all (one pack's hero pill rendered a
+    // visibly different shade than its own authored secondary color). A pack that DOES author
+    // `primaryDeep`/`secondaryLight` directly
+    // still wins, same as every other accent key.
+    const accents: PersonaAccentPalette = {
+        ...merged,
+        primaryDeep: authoredAccents?.primaryDeep ?? merged.primaryHex,
+        secondaryLight: authoredAccents?.secondaryLight ?? merged.secondaryStrong
     };
 
     return {

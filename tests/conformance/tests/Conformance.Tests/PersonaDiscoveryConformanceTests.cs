@@ -142,6 +142,9 @@ public sealed class PersonaDiscoveryConformanceTests(ConformanceFixture fixture)
         // (same persona.json-presence convention persona_loader.py/PersonaCatalog use), GET
         // /api/personas/{id} and deep-compare the response against that SAME pack's own
         // persona.json, read fresh, with no literal values baked into this test.
+        // Issue 164 R11 (PR 167 round 2 review): also pins textRoles and theme.light.accents
+        // (primaryDeep/secondaryLight) for the same reason -- both are served through the same
+        // generic `ui` spread but neither was asserted here yet.
         var ct = TestContext.Current.CancellationToken;
         using var http = ConformanceHttpClient.Create();
 
@@ -181,6 +184,21 @@ public sealed class PersonaDiscoveryConformanceTests(ConformanceFixture fixture)
             if (expectedUi.TryGetProperty("categoryIcons", out var expectedCategoryIcons))
             {
                 AssertJsonDeepEqual(expectedCategoryIcons, actualRoot.GetProperty("categoryIcons"), $"{personaId}.categoryIcons");
+            }
+
+            // Rick's PR #167 round 2 review, required item R11: `textRoles` and the new
+            // `theme.light.accents` keys (primaryDeep/secondaryLight, issue #164 R2/R3) are both
+            // served through the same generic `ui` spread as hero/assets above, but neither was
+            // pinned against disk truth yet. `textRoles` is optional (a pack may declare none);
+            // `theme.light.accents` is asserted whenever the pack declares one.
+            if (expectedUi.TryGetProperty("textRoles", out var expectedTextRoles))
+            {
+                AssertJsonDeepEqual(expectedTextRoles, actualRoot.GetProperty("textRoles"), $"{personaId}.textRoles");
+            }
+            if (expectedUi.GetProperty("theme").GetProperty("light").TryGetProperty("accents", out var expectedAccents))
+            {
+                var actualAccents = actualRoot.GetProperty("theme").GetProperty("light").GetProperty("accents");
+                AssertJsonDeepEqual(expectedAccents, actualAccents, $"{personaId}.theme.light.accents");
             }
         }
     });

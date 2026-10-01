@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import { HERO_BODY_TEXT_CLASS } from "../App";
 import { resolveTextRole } from "@/lib/personaTextRoles";
+import { resolvePersonaTheme } from "@/lib/personaTheme";
 import type { PersonaTextRole, PersonaTextRoles } from "@/types/persona";
 
 // Issue 164 R1 (PR #167 round 1 review, Rick): `BrandHero`'s description and tech line used to
@@ -22,8 +23,14 @@ import type { PersonaTextRole, PersonaTextRoles } from "@/types/persona";
 // R2 (same review, line 34): extends this file to also pin the resolved `footerTagline`/
 // `countChip` text-role color against each pack's light page background (no alpha compositing --
 // these roles render at full opacity; see lib/personaTextRoles.ts's `ROLE_TEXT_CLASS`).
-// `footerExtra` is deliberately exempt: it is brand logotype text (e.g. "I'm Lovin' It"-style),
-// not body copy, per Rick's review.
+// `footerExtra` is deliberately exempt: it is brand logotype text, not body copy, per Rick's
+// review.
+//
+// R9 (PR #167 round 2 review): `primaryDeep`/`secondaryLight` are resolved via the SAME
+// `resolvePersonaTheme` the app calls (PersonaProvider, lib/personaTheme.ts), not a hand-rolled
+// `accents.primaryDeep ?? accents.primaryHex` copy of its fallback logic -- the latter silently
+// drifted from the runtime once already (a shipped pack's hero pill regression this review
+// caught) because nothing forced the two to stay in sync.
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "../../../../");
@@ -59,18 +66,21 @@ interface LoadedPersonaTheme {
 
 function loadPersonaTheme(packId: string): LoadedPersonaTheme {
     const raw = readPersonaJson(packId);
-    const theme = raw.ui.theme;
-    const accents = theme.light.accents;
+    const wireTheme = raw.ui.theme;
+    // Issue #164 R9 (PR #167 round 2 review): resolve through the app's own `resolvePersonaTheme`
+    // rather than reimplementing its primaryDeep/secondaryLight fallback here, so this test can't
+    // silently diverge from the runtime's actual merge logic again.
+    const resolved = resolvePersonaTheme(packId, wireTheme);
+    const accents = resolved.light.accents;
     return {
         packId,
         ink: accents.ink,
         primaryHex: accents.primaryHex,
         secondaryHex: accents.secondaryHex,
-        // Both default to the plain hex per `deriveAccents` (personaTheme.ts) when a pack omits them.
-        primaryDeep: accents.primaryDeep ?? accents.primaryHex,
+        primaryDeep: accents.primaryDeep,
         accent: accents.accent,
-        lightBackground: theme.light.background,
-        darkBackgroundOverride: theme.dark?.background,
+        lightBackground: wireTheme.light.background,
+        darkBackgroundOverride: wireTheme.dark?.background,
         textRoles: raw.ui.textRoles
     };
 }
