@@ -26,6 +26,7 @@ const rt = vi.hoisted(() => ({
         sendVoiceChoice: vi.fn(),
         endSession: vi.fn(),
         reconnect: vi.fn(async () => {}),
+        cancelSwitch: vi.fn(),
         isConnected: true
     }
 }));
