@@ -649,7 +649,10 @@ function SonicApp() {
         // bypasses the picker), stop the live conversation cleanly first rather than letting
         // `endSession()` tear down the socket out from under an in-progress recording/greeting.
         if (isSessionActiveRef.current) void stopConversation();
-        realtime.endSession();
+        // issue GH-171 round 2, H2: tells useRealtime a persona switch is under way, so its own
+        // onClose doesn't force an extra reconnect for the persona being switched AWAY from once
+        // the server's close for this end_session arrives (see useRealtime.tsx's switchingRef).
+        realtime.endSession({ switching: true });
         resumePendingRef.current = null;
         resumedSessionRef.current = false;
         serverSessionLostRef.current = false;

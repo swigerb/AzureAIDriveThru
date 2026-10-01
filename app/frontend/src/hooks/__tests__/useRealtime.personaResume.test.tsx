@@ -66,6 +66,11 @@ describe("resumeStorageKey", () => {
 describe("useRealTime resume id storage, keyed per persona", () => {
     it("stores an announced resume id under that persona's own key, not another persona's", async () => {
         await renderForPersona("test-alpha");
+        // issue GH-171 round 2, H3: onMessage's own identity guard now requires a socket to have
+        // actually opened (socketParamsAtOpenRef) before it will accept a frame for the current
+        // identity -- open the socket first, matching the real sequencing (a server frame can
+        // never arrive before this hook's own onOpen has run for it).
+        act(() => last().options.onOpen(new Event("open")));
 
         act(() => {
             last().options.onMessage({ data: JSON.stringify({ type: "extension.session_metadata", resumeId: "RID-ALPHA" }) } as MessageEvent);
