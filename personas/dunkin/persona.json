@@ -60,8 +60,10 @@
           "primaryStrong": "#d9551a",
           "primaryLight": "#FF9F45",
           "primaryTintOnDark": "#FFB38F",
+          "primaryDeep": "#C14200",
           "secondaryHex": "#E3007F",
           "secondaryStrong": "#c2006c",
+          "secondaryLight": "#FF9FC5",
           "secondaryTintOnDark": "#FF9FC5",
           "accent": "#FFD400",
           "accentLight": "#FFE784",
@@ -74,6 +76,7 @@
       "dark": { "primary": "28 100% 62%" },
       "font": { "family": "Fredoka", "importUrl": "https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Montserrat:wght@400;600&display=swap" }
     },
+    "textRoles": { "badge": "primaryDeep", "countChip": "primaryDeep", "footerTagline": "primaryDeep" },
     "assets": { "logo": "assets/logo.svg", "favicon": "assets/favicon.ico", "apologyClip": "assets/audio/apology-{lang}.wav" },
     "strings": {
       "en": {
@@ -102,8 +105,8 @@
           "kicker": "FRESH DONUTS",
           "title": "MUNCHKINS assortment",
           "rows": [
-            { "label": "Donut of the Day", "value": "Boston Kreme" },
-            { "label": "Crew Pick", "value": "Caramel Craze Latte" }
+            { "label": "Donut of the Day", "value": "Boston Kreme", "tone": "secondary" },
+            { "label": "Crew Pick", "value": "Caramel Craze Latte", "tone": "primary" }
           ]
         },
         {
@@ -112,6 +115,7 @@
           "title": "Brown Sugar Cream Cold Brew",
           "body": "Layered with cinnamon-sugar cold foam",
           "accent": "Perfect pairing: Bacon Egg & Cheese",
+          "accentTone": "secondary",
           "tint": "#FFE0EF"
         }
       ]

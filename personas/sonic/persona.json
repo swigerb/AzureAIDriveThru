@@ -181,8 +181,8 @@
           "kicker": "SIGNATURE SLUSHES",
           "title": "Cherry Limeade & more",
           "rows": [
-            { "label": "Slush of the Day", "value": "Cherry Limeade" },
-            { "label": "Carhop Pick", "value": "SuperSONIC Cheeseburger" }
+            { "label": "Slush of the Day", "value": "Cherry Limeade", "tone": "primary" },
+            { "label": "Carhop Pick", "value": "SuperSONIC Cheeseburger", "tone": "secondary" }
           ]
         },
         {
