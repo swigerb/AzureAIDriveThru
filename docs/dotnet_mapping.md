@@ -168,15 +168,12 @@ item is addable in either mode, mirroring the search-filter fix's own admission 
 items), 188 -> 189. All eleven methods are real assertions against both
 backends today (no `AuthRowCapability` skip-gating applies), so all three raises count normally.
 
-**Issue #164 (Rick's PR #167 round-3 review, required item 12):** raised the floor 189 -> 190.
-The R7 row `PersonaDiscoveryConformanceTests.Api_persona_detail_pins_tax_rate_and_ui_blocks_against_disk`
-is tagged `Dotnet=ready` and not skip-gated, and has existed since 48edade, but the floor was never
-raised for it; #167 then added one more tagged, ungated scenario on top of that without raising the
-floor either, so the floor stayed stuck at 189 while the dotnet leg actually executes 190 distinct
-passing methods (TRX: 485 passed, 61 not executed, none of the 61 outside the five gated Auth
-classes). Recounted via reflection (probe: a floor of 191 fails with "but found 190") and via the
-dotnet leg's own TRX output; both agree at 190.
-
+**Issue #164 (Rick's PR #167 round-3 review, required item 12):** PR #167 adds one scenario,
+`PersonaDiscoveryConformanceTests.Api_persona_detail_pins_tax_rate_and_ui_blocks_against_disk`
+(R7, commit 48edade). It is tagged `Dotnet=ready` and is not skip-gated, so it raises the floor
+189 -> 190. The dotnet leg executes 190 distinct passing methods, none of them in the five gated
+Auth classes (TRX: 485 passed, 61 not executed). A reflection probe agrees (a floor of 191 fails
+with "but found 190").
 
 - **DEV_MODE hot-reload** (`prompt_loader.py`'s file-watching reload behaviour) is explicitly
   marked not required in C# by the design doc's per-backend loading table. Not ported.

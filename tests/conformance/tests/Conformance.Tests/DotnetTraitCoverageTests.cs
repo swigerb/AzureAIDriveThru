@@ -65,13 +65,12 @@ namespace Conformance.Tests;
 /// matching the filter-string fix's own admission of period-less items -- raising the floor from
 /// 188 to 189.
 ///
-/// Issue #164 (Rick's PR #167 round-3 review, required item 12): the R7 row
+/// Issue #164 (Rick's PR #167 round-3 review, required item 12): PR #167 adds one scenario,
 /// <c>PersonaDiscoveryConformanceTests.Api_persona_detail_pins_tax_rate_and_ui_blocks_against_disk</c>
-/// is tagged <c>[Trait("Dotnet", "ready")]</c> and not skip-gated, and has existed since 48edade,
-/// but the floor was never raised for it -- #167 added a new tagged, ungated scenario on top of
-/// that without raising the floor either, so the floor stayed stuck at 189 while the dotnet leg
-/// actually executes 190 distinct passing methods, none of them in the five gated Auth classes
-/// (TRX: 485 passed, 61 not executed). Raising the floor from 189 to 190.
+/// (R7, commit 48edade). It is tagged <c>[Trait("Dotnet", "ready")]</c> and is not skip-gated,
+/// so it raises the floor 189 to 190. The dotnet leg executes 190 distinct passing methods, none
+/// of them in the five gated Auth classes (TRX: 485 passed, 61 not executed). A reflection probe
+/// agrees (a floor of 191 fails with "but found 190").
 /// </summary>
 public sealed class DotnetTraitCoverageTests
 {
