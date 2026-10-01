@@ -643,6 +643,12 @@ function SonicApp() {
     // useRealTime already namespaces the resume id per persona.id, so no separate handling
     // is needed there.
     const handleSelectPersona = (personaId: string) => {
+        // Defensive hardening for issue GH-171: `PersonaPicker` is already `disabled` while a
+        // conversation is active (ADR-001 decision 2), so this path shouldn't normally see
+        // `isSessionActiveRef.current === true` -- but if it ever does (e.g. a future caller that
+        // bypasses the picker), stop the live conversation cleanly first rather than letting
+        // `endSession()` tear down the socket out from under an in-progress recording/greeting.
+        if (isSessionActiveRef.current) void stopConversation();
         realtime.endSession();
         resumePendingRef.current = null;
         resumedSessionRef.current = false;

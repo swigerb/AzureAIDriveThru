@@ -266,6 +266,15 @@ export default function useRealTime({
     // Ref to break circular dependency: callbacks need sendJsonMessage,
     // but sendJsonMessage comes from useWebSocket which takes the callbacks.
     const sendJsonMessageRef = useRef<(msg: object, keep?: boolean) => void>(() => {});
+    // Ref to react-use-websocket's own `getWebSocket` accessor (issue GH-171): lets onOpen/onClose
+    // tell whether the native event they were handed still belongs to the CURRENT socket. A
+    // persona/model/mode switch replaces the socket (getSocketUrl's identity changes), and the
+    // OLD socket's close event can arrive after the NEW one has already opened -- without this
+    // check, that stale close unconditionally flips `openRef` back to false and the queued
+    // session.update is never flushed. `getWebSocket` is undefined in every existing mocked test
+    // (they don't return it from their `react-use-websocket` mock), so the guards below always
+    // short-circuit to "proceed as before" there, preserving all prior behaviour.
+    const getWebSocketRef = useRef<(() => WebSocket | EventSource | null) | undefined>(undefined);
 
     // The hook owns the outgoing queue: react-use-websocket is only ever called
     // with keep=false, so its own queue stays empty and cannot flush anything
@@ -275,6 +284,14 @@ export default function useRealTime({
     // Set by endSession(): the coming 1000 session_ended close is ours, and frames
     // sent after it (e.g. a fast tap) belong to the fresh session that replaces it.
     const endingRef = useRef(false);
+    // Snapshot of the identity props in effect when the current socket opened (issue GH-171). Used
+    // by onClose to tell a persona/model/mode switch (these differ from the current render's
+    // props by the time the close arrives) apart from an ordinary same-identity close (new order,
+    // idle timeout, transport drop): a switch is already being handled by react-use-websocket's
+    // own url-keyed effect, so treating it like a normal close would both duplicate the reconnect
+    // (the reported "two sockets open in quick succession") and surface a spurious ended/idle/
+    // superseded/lost notice for what is really just a clean handover to the next persona.
+    const socketParamsAtOpenRef = useRef<{ personaId?: string; modelId?: string; menuMode?: string }>({});
     const send = useCallback((msg: object, keep = true) => {
         if (openRef.current) {
             sendJsonMessageRef.current(msg, false);
@@ -366,8 +383,13 @@ export default function useRealTime({
         modelId
     ]);
 
-    const { sendJsonMessage, readyState } = useWebSocket(getSocketUrl, {
-        onOpen: () => {
+    const { sendJsonMessage, readyState, getWebSocket } = useWebSocket(getSocketUrl, {
+        onOpen: (event) => {
+            // Stale guard (issue GH-171): if a newer socket already exists, this onOpen belongs to
+            // a socket react-use-websocket has already superseded (shouldn't normally fire, but
+            // costs nothing to check symmetrically with onClose below).
+            if (getWebSocketRef.current && getWebSocketRef.current() !== event.target) return;
+            socketParamsAtOpenRef.current = { personaId, modelId, menuMode };
             openRef.current = true;
             // Literal first frame on every open when this tab holds a resume id.
             const resumeId = useDirectAoaiApi ? null : resumeStore.get();
@@ -380,7 +402,35 @@ export default function useRealTime({
             onWebSocketOpen?.();
         },
         onClose: (event) => {
+            // Stale guard (issue GH-171): react-use-websocket invokes this hook's own onClose
+            // unconditionally, even for a socket it has already torn down and replaced (its
+            // internal readyState/lastMessage setters ARE guarded this way, but onOpen/onClose
+            // are not). If a newer socket already exists, this close is for the one we just
+            // replaced -- openRef, pendingRef and the connection-lost notice all belong to the
+            // new socket now, so there is nothing to do.
+            if (getWebSocketRef.current && getWebSocketRef.current() !== event.target) return;
+
+            // A persona/model/mode switch changes getSocketUrl's identity, which makes
+            // react-use-websocket's own url-keyed effect replace the socket on its own --
+            // independently of whatever close code/reason this one actually closed with. Detect
+            // that by comparing the identity props captured when THIS socket opened to the
+            // current render's props: if they differ, a switch is already in flight and this
+            // close is just the old half of a clean handover, not a real ended/idle/superseded/
+            // transport event.
+            const paramsAtOpen = socketParamsAtOpenRef.current;
+            const switchedSinceOpen =
+                paramsAtOpen.personaId !== personaId || paramsAtOpen.modelId !== modelId || paramsAtOpen.menuMode !== menuMode;
             openRef.current = false;
+            if (switchedSinceOpen) {
+                // Don't touch pendingRef/resumeStore/shouldConnect: react-use-websocket is
+                // already opening (or has already opened) the replacement off this render's new
+                // getSocketUrl, and the outgoing queue may already hold a frame meant for it
+                // (e.g. startSession() called right after the switch). Manufacturing our own
+                // reconnect here, or clearing state the new socket needs, is exactly the double
+                // -connect / dropped-session.update bug this guard exists to prevent.
+                endingRef.current = false;
+                return;
+            }
             const kind = classifyClose(event);
             if (kind === "ended") {
                 // Explicit new order: open a fresh session straight away, as a page load would.
@@ -440,10 +490,12 @@ export default function useRealTime({
         setShouldConnect(true);
     }, [shouldConnect]);
 
-    // Keep ref in sync so onMessageReceived can call sendJsonMessage
+    // Keep refs in sync so onMessageReceived can call sendJsonMessage, and so onOpen/onClose can
+    // tell a stale socket's event apart from the current one (issue GH-171).
     useEffect(() => {
         sendJsonMessageRef.current = sendJsonMessage;
-    }, [sendJsonMessage]);
+        getWebSocketRef.current = getWebSocket;
+    }, [sendJsonMessage, getWebSocket]);
 
     const startSession = () => {
         const command: SessionUpdateCommand = {
