@@ -956,4 +956,30 @@ def attach_tools_rtmt(
     rtmt.tools["get_order"] = Tool(schema=schema_map.get("get_order", get_order_tool_schema), target=lambda args, session_id: get_order(args, session_id))
     rtmt.tools["reset_order"] = Tool(schema=schema_map.get("reset_order", reset_order_tool_schema), target=lambda args, session_id: reset_order(args, session_id))
 
+    # #170 R4 (Rick's PR #175 round-2 review): every registered persona's own tool
+    # schemas -- not just the deployment default's above -- so a bound session's
+    # session.tools[].description names ITS OWN brand's menu/ticket, never the
+    # deployment default persona's (#170, the live bug: every session's tool list used
+    # the default persona's descriptions). `Tool.target` above stays shared (the
+    # lambdas are identical regardless of persona); only the schema TEXT varies, keyed
+    # by persona id here and resolved once per connection by `_forward_messages`
+    # (rtmt.py), next to `persona_prompt_loaders`, the same pattern `system_message`
+    # already uses. Per-tool-name fallback (a persona pack missing an entry for one of
+    # the four tools) is the hardcoded schema, exactly like the deployment default's
+    # own `schema_map.get(name, hardcoded)` above.
+    rtmt.persona_tool_schemas.clear()
+    if personas:
+        for persona_id, ctx in personas.items():
+            persona_loader = ctx.get("prompt_loader")
+            if persona_loader is not None:
+                persona_schema_map = {s["name"]: s for s in persona_loader.get_tool_schemas()}
+            else:
+                persona_schema_map = {}
+            rtmt.persona_tool_schemas[persona_id] = [
+                persona_schema_map.get("search", search_tool_schema),
+                persona_schema_map.get("update_order", update_order_tool_schema),
+                persona_schema_map.get("get_order", get_order_tool_schema),
+                persona_schema_map.get("reset_order", reset_order_tool_schema),
+            ]
+
 

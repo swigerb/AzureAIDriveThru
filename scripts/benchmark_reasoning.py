@@ -238,7 +238,8 @@ async def run_trial(rtmt, url, headers, trial: Trial) -> Trial:
     rtmt.parallel_tool_calls = trial.parallel_tool_calls
     try:
         async with aiohttp.ClientSession() as http, http.ws_connect(url, headers=headers) as ws:
-            await ws.send_str(rtmt.build_bootstrap_session_update())
+            await ws.send_str(rtmt.build_bootstrap_session_update(
+                system_message=rtmt.system_message, tool_schemas=[tool.schema for tool in rtmt.tools.values()]))
             while True:
                 ev = json.loads((await asyncio.wait_for(ws.receive(), 20)).data)
                 if ev["type"] == "session.updated":

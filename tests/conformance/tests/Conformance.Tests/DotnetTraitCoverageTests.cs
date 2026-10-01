@@ -71,6 +71,49 @@ namespace Conformance.Tests;
 /// so it raises the floor 189 to 190. The dotnet leg executes 190 distinct passing methods, none
 /// of them in the five gated Auth classes (TRX: 485 passed, 61 not executed). A reflection probe
 /// agrees (a floor of 191 fails with "but found 190").
+///
+/// Issue #170: fixes a live production bug (a bound-persona session's client `session.update`
+/// rebuilt the upstream session without that persona's own system prompt, falling back to the
+/// deployment default). Adds <c>PersonaSessionUpdateInstructionsConformanceTests.cs</c>'s two
+/// Theory methods (<c>RealPackPersonaSessionUpdateConformanceTests</c> and
+/// <c>FixturePackPersonaSessionUpdateConformanceTests</c>, both
+/// <c>Client_session_update_carries_the_bound_personas_own_instructions</c>) -- generic,
+/// brand-agnostic coverage, for every discovered persona pack, that the forwarded client-update
+/// session carries that SAME pack's own instructions and none of the others', closing the exact
+/// gap that let #170 ship (<c>SmokeSessionBootstrapTests</c> already proved the browser's
+/// session.update is forwarded, but never asserted `instructions`). Both methods are tagged
+/// <c>[Trait("Dotnet", "ready")]</c>, ungated, and verified green against both backends -- raising
+/// the floor 190 to 192.
+///
+/// Issue #170 round 2 (Rick's PR #175 round-2 review, required item R1): the instructions check
+/// above only ever covered the ORDINARY client session.update rebuild, never the REJECTED-update
+/// fallback path (<c>RealtimeProcessor.HandleErrorAsync</c> --&gt;
+/// <c>RealtimeSessionBuilder.BuildFallbackSessionUpdate</c>) -- Rick's own round-1 mutation
+/// forcing the C# fallback onto the deployment default persona's prompt survived every existing
+/// test, since every prior fallback scenario only ever ran on the single default-persona
+/// connection. <c>PersonaSessionUpdateFallbackConformanceTests.cs</c>'s two Theory methods
+/// (<c>RealPackPersonaSessionUpdateFallbackConformanceTests</c> and
+/// <c>FixturePackPersonaSessionUpdateFallbackConformanceTests</c>, both
+/// <c>Rejected_bootstrap_recovers_via_a_fallback_carrying_the_bound_personas_own_instructions</c>)
+/// close that gap generically, for every discovered persona pack, on both legs: a scripted
+/// rejection of the bootstrap session.update, asserting the FALLBACK's own `instructions` carry
+/// that SAME pack's identity text and none of the others'. Both methods are tagged
+/// <c>[Trait("Dotnet", "ready")]</c>, ungated, and verified green against both backends -- raising
+/// the floor 192 to 194.
+///
+/// Issue #170 round 3 (Rick's PR #175 round-2 review, required item R4): the instructions-only
+/// checks above never covered `session.tools[].description` -- every session's tool list (both
+/// the realtime and cascade backends) was built once from the deployment default persona's own
+/// `prompts/tool_schemas.yaml`, so a bound persona's own system prompt and menu were correct but
+/// its tool descriptions still named the default persona's own brand and ticket/order-screen
+/// name. <c>PersonaSessionUpdateToolsConformanceTests.cs</c>'s two Theory methods
+/// (<c>RealPackPersonaSessionUpdateToolsConformanceTests</c> and
+/// <c>FixturePackPersonaSessionUpdateToolsConformanceTests</c>, both
+/// <c>Client_session_update_carries_the_bound_personas_own_tool_descriptions</c>) close that gap
+/// generically, for every discovered persona pack, on both legs: the forwarded client-update
+/// session's `search` tool description carries that SAME pack's own text and none of the others'.
+/// Both methods are tagged <c>[Trait("Dotnet", "ready")]</c>, ungated, and verified green against
+/// both backends -- raising the floor 194 to 196.
 /// </summary>
 public sealed class DotnetTraitCoverageTests
 {
@@ -93,12 +136,12 @@ public sealed class DotnetTraitCoverageTests
     };
 
     [Fact]
-    public void At_least_190_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
+    public void At_least_196_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
     {
         var count = CountFloorEligibleDotnetReadyTestMethods();
 
-        Assert.True(count >= 190,
-            $"Expected at least 190 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
+        Assert.True(count >= 196,
+            $"Expected at least 196 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
             $"and not unconditionally skip-gated by AuthRowCapability (the dotnet leg's " +
             $"`--filter \"{TraitName}={TraitValue}&Category!=Browser\"` baseline, minus the five " +
             "skip-only Scenarios/Auth classes -- see this class's own doc comment; " +

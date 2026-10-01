@@ -646,19 +646,23 @@ def _sanitize_voice(candidate: Any, allowed_voices: frozenset[str]) -> str | Non
 # frozen value, per #43.
 _VOICE_UNSET = object()
 
-# Sentinel default for the `system_message` keyword threaded through
-# `_build_session` and its two callers (#74, mirrors `_VOICE_UNSET` above).
-# `None` already means something for `self.system_message` ("send no
-# `instructions` field at all"), so a distinct sentinel marks "caller didn't
-# pass an override" and falls back to `self.system_message`, the pre-#74
-# single-persona behaviour every existing caller (production and tests)
-# still relies on. `_forward_messages` is the only caller that ever passes
-# an explicit override -- this session's own bound persona's system prompt.
-_SYSTEM_MESSAGE_UNSET = object()
+# #170 (R3, Rick's PR #175 round-2 review): `system_message` USED to have its own
+# sentinel default here too (mirroring `_VOICE_UNSET` below), falling back to
+# `self.system_message` (the deployment-wide default) when a caller omitted it.
+# That silent fallback was exactly the #170 live bug's shape on every path that
+# forgot to pass it -- a bound-persona session quietly speaking as the deployment
+# default instead. `system_message` is now a required, keyword-only parameter on
+# every one of these builders (`_build_session`, `build_bootstrap_session_update`,
+# `build_fallback_session_update`, `_recover_rejected_session_update`,
+# `_process_message_to_client`) with NO default at all -- omitting it is a
+# `TypeError` at call time, not a silent wrong-persona prompt at runtime. `None`
+# remains a legal, explicit value ("send no `instructions` field at all" -- see
+# `_build_session`); only the "caller didn't pass one at all" case is gone.
 
 # Sentinel default for the `reasoning_override` keyword threaded through
-# `_build_session` and its callers (#75, mirrors `_VOICE_UNSET`/
-# `_SYSTEM_MESSAGE_UNSET` above). `None` is itself meaningful for
+# `_build_session` and its callers (#75, mirrors `_VOICE_UNSET` above --
+# `system_message`'s own sentinel was removed by #170 R3, see the comment
+# above). `None` is itself meaningful for
 # `resolve_model`'s `ResolvedModel.reasoning` ("this session's own bound
 # model uses the process-wide name-heuristic/config-driven decision" -- the
 # persona's own default realtime model, today's unchanged path), so a
@@ -1304,6 +1308,14 @@ class RTMiddleTier:
         # alongside `persona_catalog`. Empty (the default) preserves today's single
         # deployment-wide `self.system_message`/greeting behavior for every session.
         self.persona_prompt_loaders: dict[str, Any] = {}
+        # #170 R4 (Rick's PR #175 round-2 review): per-persona tool schema list
+        # (`[tool.schema for tool in self.tools.values()]`, but with each tool's
+        # description resolved from THAT persona's own `tool_schemas.yaml`), keyed by
+        # persona id, built by `tools.attach_tools_rtmt()`. Empty (the default)
+        # preserves today's single deployment-wide tool-schema behavior for every
+        # session -- `_forward_messages` falls back to `self.tools`'s own schemas
+        # (the deployment default) when a bound persona has no entry here.
+        self.persona_tool_schemas: dict[str, list[dict]] = {}
         # #75: the shared model catalog (config.yaml `models.catalog` + `AZURE_AI_MODEL_
         # DEPLOYMENTS`), set here to an empty-but-valid catalog so it is never None, then
         # replaced by app.py at startup with the one it loaded (same "mandatory, safe default,
@@ -1384,7 +1396,7 @@ class RTMiddleTier:
             persona, requested_model_id, self.model_catalog, self.deployment, pipeline_name=self.pipeline_name
         )
 
-    def _build_session(self, session: dict, voice_locked: bool = False, voice: str | None = _VOICE_UNSET, system_message: str | None = _SYSTEM_MESSAGE_UNSET, reasoning_override: bool | None = _REASONING_UNSET) -> dict:
+    def _build_session(self, session: dict, voice_locked: bool = False, voice: str | None = _VOICE_UNSET, *, system_message: str | None, tool_schemas: list[dict], reasoning_override: bool | None = _REASONING_UNSET) -> dict:
         """Overlay the server-owned configuration onto a legacy-shaped session
         and translate it to the GA shape.
 
@@ -1398,21 +1410,35 @@ class RTMiddleTier:
         config-level default) -- see `_VOICE_UNSET`. `_forward_messages`
         always passes this connection's own frozen voice explicitly (#43).
 
-        `system_message` (#74): the instructions to apply, or omit for
-        `self.system_message` (the deployment-wide default) -- see
-        `_SYSTEM_MESSAGE_UNSET`. `_forward_messages` passes this session's own
-        bound persona's system prompt explicitly, the same way it already
-        does for `voice`.
+        `system_message` (#74, required/keyword-only since #170 R3): the
+        instructions to apply -- `None` is a legal explicit value meaning
+        "send no `instructions` field at all", but there is no longer any
+        sentinel/omitted-argument fallback to `self.system_message` (the
+        deployment-wide default). Every caller MUST pass this session's own
+        effective system message explicitly; omitting it is now a `TypeError`
+        at call time, not a silent wrong-persona prompt at runtime (the #170
+        bug class). `_forward_messages` passes this session's own bound
+        persona's system prompt explicitly, the same way it already does for
+        `voice`.
 
         `reasoning_override` (#75): whether this session's own bound model is
         a reasoning model, or omit for the process-wide name-heuristic/config
         decision -- see `_REASONING_UNSET`. `_forward_messages` passes this
         session's own bound (non-default) model's catalog `reasoning` flag
         explicitly, the same way it already does for `voice`/`system_message`.
+
+        `tool_schemas` (#170 R4, required/keyword-only): this session's own
+        bound persona's tool schema list (`[tool.schema for tool in
+        self.tools.values()]`, but with each tool's description resolved from
+        THAT persona's own `tool_schemas.yaml` -- see
+        `tools.attach_tools_rtmt`'s `rtmt.persona_tool_schemas`). There is no
+        sentinel/omitted-argument fallback to `self.tools`' own (deployment
+        default) schemas any more, mirroring `system_message` above --
+        `_forward_messages` resolves this session's own bound persona's list
+        once per connection, next to `system_message`.
         """
-        effective_system_message = self.system_message if system_message is _SYSTEM_MESSAGE_UNSET else system_message
-        if effective_system_message is not None:
-            session["instructions"] = effective_system_message
+        if system_message is not None:
+            session["instructions"] = system_message
         if self.temperature is not None:
             session["temperature"] = self.temperature
         if self.max_tokens is not None:
@@ -1422,8 +1448,8 @@ class RTMiddleTier:
         effective_voice = self.voice_choice if voice is _VOICE_UNSET else voice
         if effective_voice is not None:
             session["voice"] = effective_voice
-        session["tool_choice"] = "auto" if len(self.tools) > 0 else "none"
-        session["tools"] = [tool.schema for tool in self.tools.values()]
+        session["tool_choice"] = "auto" if len(tool_schemas) > 0 else "none"
+        session["tools"] = tool_schemas
         # Server-owned (PR #49 review round 3, sub-key hardening): the model
         # always comes from RTMiddleTier's own configuration, never merged
         # with whatever the browser sent. Previously this only overwrote the
@@ -1454,7 +1480,7 @@ class RTMiddleTier:
             logger.info("session.update: assistant audio already present — omitting voice so the update is not rejected")
         return ga_session
 
-    def build_bootstrap_session_update(self, event_id: str | None = None, voice: str | None = _VOICE_UNSET, system_message: str | None = _SYSTEM_MESSAGE_UNSET, reasoning_override: bool | None = _REASONING_UNSET) -> str:
+    def build_bootstrap_session_update(self, event_id: str | None = None, voice: str | None = _VOICE_UNSET, *, system_message: str | None, tool_schemas: list[dict], reasoning_override: bool | None = _REASONING_UNSET) -> str:
         """Serialise the session.update the middle tier sends as the very first
         frame on every upstream socket, before any browser traffic is relayed.
 
@@ -1463,28 +1489,63 @@ class RTMiddleTier:
         own session.update arrives -- and if the model speaks in that window the
         voice locks and every later session.update carrying our voice is
         rejected, so tools are never registered for that conversation.
+
+        `system_message` (required/keyword-only since #170 R3): see
+        `_build_session`'s own docstring -- there is no sentinel/omitted-
+        argument fallback here either.
+
+        `tool_schemas` (required/keyword-only since #170 R4): see
+        `_build_session`'s own docstring -- there is no sentinel/omitted-
+        argument fallback here either.
         """
-        session = self._build_session(copy.deepcopy(_BOOTSTRAP_CLIENT_SESSION), voice=voice, system_message=system_message, reasoning_override=reasoning_override)
+        session = self._build_session(copy.deepcopy(_BOOTSTRAP_CLIENT_SESSION), voice=voice, system_message=system_message, tool_schemas=tool_schemas, reasoning_override=reasoning_override)
         return json.dumps({"type": "session.update", "event_id": event_id or _new_event_id("sonic_bootstrap"),
                            "session": session})
 
-    def build_fallback_session_update(self, event_id: str | None = None, voice: str | None = _VOICE_UNSET, system_message: str | None = _SYSTEM_MESSAGE_UNSET, reasoning_override: bool | None = _REASONING_UNSET) -> str:
+    def build_fallback_session_update(self, event_id: str | None = None, voice: str | None = _VOICE_UNSET, *, system_message: str | None, tool_schemas: list[dict], reasoning_override: bool | None = _REASONING_UNSET) -> str:
         """Serialise the minimal session.update sent when GA rejects one of ours.
 
         Only `type`, `instructions`, `tools` and `tool_choice` -- whatever field
         got the original rejected, the carhop keeps its tools and persona.
+
+        `system_message` (required/keyword-only since #170 R3): see
+        `_build_session`'s own docstring -- there is no sentinel/omitted-
+        argument fallback here either.
+
+        `tool_schemas` (required/keyword-only since #170 R4): see
+        `_build_session`'s own docstring -- there is no sentinel/omitted-
+        argument fallback here either.
         """
-        full = self._build_session({}, voice_locked=True, voice=voice, system_message=system_message, reasoning_override=reasoning_override)
+        full = self._build_session({}, voice_locked=True, voice=voice, system_message=system_message, tool_schemas=tool_schemas, reasoning_override=reasoning_override)
         session = {key: full[key] for key in _FALLBACK_SESSION_KEYS if key in full}
         return json.dumps({"type": "session.update", "event_id": event_id or _new_event_id("sonic_fallback"),
                            "session": session})
 
     async def _recover_rejected_session_update(self, message: dict, server_ws, guard: "_SessionUpdateGuard | None",
-                                               session_id: str | None, voice: str | None = _VOICE_UNSET, reasoning_override: bool | None = _REASONING_UNSET) -> bool:
+                                               session_id: str | None, voice: str | None = _VOICE_UNSET, *,
+                                               system_message: str | None,
+                                               tool_schemas: list[dict],
+                                               reasoning_override: bool | None = _REASONING_UNSET) -> bool:
         """Handle an upstream `error` that rejects one of our session.updates.
 
         Returns True if the error was consumed (a fallback was sent), False if
         it should reach the browser: unrelated errors, and a rejected fallback.
+
+        `system_message` (#170, required/keyword-only since R3): this
+        session's own bound persona's system prompt -- there is no sentinel/
+        omitted-argument fallback to `self.system_message` (the deployment-
+        wide default) any more; see `_build_session`'s own docstring. Threaded
+        through to `build_fallback_session_update` so the minimal fallback
+        session.update resent here still carries THIS session's own bound
+        persona's instructions, never silently falling back to the
+        deployment default's (the same class of bug #170 fixed on the
+        client-update path).
+
+        `tool_schemas` (#170 R4, required/keyword-only): this session's own
+        bound persona's tool schema list -- threaded through to
+        `build_fallback_session_update` the same way, so the fallback's own
+        `session.tools[].description` still names THIS session's own bound
+        persona's menu/ticket, never the deployment default's.
         """
         if guard is None:
             return False
@@ -1511,7 +1572,9 @@ class RTMiddleTier:
             logger.error("Deployment %s rejected reasoning-model options; no longer sending `reasoning` / "
                          "`parallel_tool_calls` from this process. Set model.reasoning_effort to \"\" for this "
                          "deployment.", getattr(self, "deployment", "?"))
-        fallback = guard.track(self.build_fallback_session_update(voice=voice, reasoning_override=reasoning_override), fallback_of=event_id)
+        fallback = guard.track(
+            self.build_fallback_session_update(voice=voice, system_message=system_message, tool_schemas=tool_schemas, reasoning_override=reasoning_override),
+            fallback_of=event_id)
         await server_ws.send_str(fallback)
         return True
 
@@ -1597,7 +1660,37 @@ class RTMiddleTier:
             },
         }
 
-    async def _process_message_to_client(self, msg: str, client_ws: web.WebSocketResponse, server_ws: web.WebSocketResponse, tools_pending: dict[str, RTToolCall], verbose: bool = False, guard: "_SessionUpdateGuard | None" = None, on_session_created: Callable[[], Awaitable[None]] | None = None, recovery: RateLimitRecovery | None = None, voice: str | None = _VOICE_UNSET, tool_failures: "_ToolFailureTracker | None" = None, reasoning_override: bool | None = _REASONING_UNSET) -> str | None:
+    async def _process_message_to_client(self, msg: str, client_ws: web.WebSocketResponse, server_ws: web.WebSocketResponse, tools_pending: dict[str, RTToolCall], verbose: bool = False, guard: "_SessionUpdateGuard | None" = None, on_session_created: Callable[[], Awaitable[None]] | None = None, recovery: RateLimitRecovery | None = None, voice: str | None = _VOICE_UNSET, tool_failures: "_ToolFailureTracker | None" = None, *, system_message: str | None, persona_prompt_loader: Any, tool_schemas: list[dict], reasoning_override: bool | None = _REASONING_UNSET) -> str | None:
+        """#170 (R3): `system_message` is this session's own bound persona's
+        system prompt -- required/keyword-only, no sentinel/omitted-argument
+        fallback to `self.system_message` (the deployment default); see
+        `_build_session`'s own docstring. Threaded straight through to
+        `_recover_rejected_session_update` so a rejected-session.update
+        fallback resent on this path still carries THIS session's own
+        persona's instructions, never the deployment default's.
+
+        `persona_prompt_loader` (#170 R2, required/keyword-only): this
+        session's own bound persona's `PromptLoader` (or `None` if this
+        session has no bound persona / no loader configured for it) -- used
+        for the tool-failure cap notice and the tool_execution_failed error
+        text below, instead of `self._prompt_loader` (the deployment
+        DEFAULT persona's loader). `_forward_messages` resolves this once
+        per connection, the same way it already does for `system_message`
+        (see the comment above `persona_prompt_loader = None` there) --
+        before #170 R2 both call sites below used `self._prompt_loader`
+        unconditionally, so a bound non-default persona's own
+        tool-failure-cap/tool-exception text never reached the model; it
+        spoke in the deployment default's voice on those two paths even
+        though every OTHER session-instruction path (#170 R1) was already
+        fixed.
+
+        `tool_schemas` (#170 R4, required/keyword-only): this session's own
+        bound persona's tool schema list, threaded straight through to
+        `_recover_rejected_session_update` the same way `system_message` is
+        above, so a rejected-session.update fallback resent on this path
+        still carries THIS session's own bound persona's tool descriptions,
+        never the deployment default's.
+        """
         data = msg.data
 
         # FAST PATH: extract type via regex without full JSON parse.
@@ -1642,7 +1735,10 @@ class RTMiddleTier:
                 case "error":
                     # A rejected session.update of ours is recovered here (minimal
                     # fallback) instead of surfacing as a user-facing failure.
-                    if await self._recover_rejected_session_update(message, server_ws, guard, session_id, voice=voice, reasoning_override=reasoning_override):
+                    if await self._recover_rejected_session_update(
+                        message, server_ws, guard, session_id, voice=voice, system_message=system_message,
+                        tool_schemas=tool_schemas, reasoning_override=reasoning_override,
+                    ):
                         _vlog(verbose, "  ⚠ session.update rejected — fallback sent: %s", json.dumps(message, default=str)[:500])
                         return None
                     # A rate-limited response is retried (see rate_limit.py), not surfaced.
@@ -1821,7 +1917,7 @@ class RTMiddleTier:
                                     # conversation, and the guest's session, survive.
                                     logger.exception("Tool '%s' raised an unhandled exception (session=%s)",
                                                       item["name"], session_id)
-                                    output_text = self._prompt_loader.render_error("tool_execution_failed") if self._prompt_loader else (
+                                    output_text = persona_prompt_loader.render_error("tool_execution_failed") if persona_prompt_loader else (
                                         "Something went wrong with that action and it did not complete. "
                                         "Don't retry it yet -- call get_order to confirm the order's current "
                                         "state, then ask the guest to repeat what they'd like."
@@ -1918,7 +2014,7 @@ class RTMiddleTier:
                                     "after %d consecutive failed tool round(s) (session=%s)",
                                     tool_failures.count, session_id,
                                 )
-                                await server_ws.send_str(_build_tool_failure_cap_notice_msg(self._prompt_loader))
+                                await server_ws.send_str(_build_tool_failure_cap_notice_msg(persona_prompt_loader))
                             else:
                                 logger.warning(
                                     "Suppressing auto response.create -- still at the "
@@ -1981,7 +2077,7 @@ class RTMiddleTier:
 
         return updated_message
 
-    async def _process_message_to_server(self, msg: str, ws: web.WebSocketResponse, verbose: bool = False, voice_locked: bool = False, guard: "_SessionUpdateGuard | None" = None, voice: str | None = _VOICE_UNSET, limiter: "_ClientFrameDropWarningLimiter | None" = None, reasoning_override: bool | None = _REASONING_UNSET) -> "tuple[str | None, str | None]":
+    async def _process_message_to_server(self, msg: str, ws: web.WebSocketResponse, verbose: bool = False, *, system_message: str | None, tool_schemas: list[dict], voice_locked: bool = False, guard: "_SessionUpdateGuard | None" = None, voice: str | None = _VOICE_UNSET, limiter: "_ClientFrameDropWarningLimiter | None" = None, reasoning_override: bool | None = _REASONING_UNSET) -> "tuple[str | None, str | None]":
         """Validate and forward one browser→upstream frame, or drop it.
 
         Returns `(forwarded, sent_type)`: `forwarded` is the exact string to
@@ -2000,6 +2096,29 @@ class RTMiddleTier:
         `limiter`, if given, rate-limits this call's own per-frame drop/strip
         WARNING logs (PR #58 review round 2, "F2") -- see
         `_ClientFrameDropWarningLimiter`.
+
+        `system_message` (#170, required, keyword-only, NO silent default):
+        this session's own bound persona's system prompt -- unlike `voice`/
+        `reasoning_override` above, this one has no `_SYSTEM_MESSAGE_UNSET`
+        fallback to `self.system_message` (the deployment-wide default). The
+        live bug this closes: a bound-persona session's browser session.update
+        used to rebuild via `_build_session` WITHOUT `system_message`, so it
+        silently fell back to the deployment default persona's prompt (a
+        non-default persona's session greeting with the default persona's
+        prompt instead of its own). Making this a required keyword-only
+        parameter means every caller MUST pass this session's own effective
+        system message explicitly -- omitting it is now a `TypeError` at call
+        time, not a silent wrong-persona prompt at runtime -- so this class of
+        bug cannot recur on this path.
+
+        `tool_schemas` (#170 R4, required, keyword-only, NO silent default):
+        this session's own bound persona's tool schema list, threaded through
+        to `_build_session` the same way `system_message` is -- the live bug
+        this closes: the browser's OWN session.update used to rebuild its
+        tools from `self.tools` (the deployment default's descriptions)
+        unconditionally, so a bound non-default persona's session was told by
+        its own tool list that it was searching/updating the deployment
+        default's menu and ticket.
         """
         data = msg.data
 
@@ -2064,7 +2183,9 @@ class RTMiddleTier:
                         "to the server's own default (session=%s)", session_id)
                     sanitized_td = copy.deepcopy(_BOOTSTRAP_CLIENT_SESSION["turn_detection"])
                 session_in["turn_detection"] = sanitized_td
-            session = self._build_session(session_in, voice_locked=voice_locked, voice=voice, reasoning_override=reasoning_override)
+            session = self._build_session(
+                session_in, voice_locked=voice_locked, voice=voice, system_message=system_message,
+                tool_schemas=tool_schemas, reasoning_override=reasoning_override)
             tool_names = [t.get("name", "?") for t in session["tools"]]
             filtered["session"] = session
             # Every session.update carries an event_id so a rejection can
@@ -2211,12 +2332,32 @@ class RTMiddleTier:
                 # text and role name -- instead of the deployment-wide default's, or (before this
                 # fix) a hardcoded brand-specific string/"carhop" label -- for every session, not just the
                 # one whose persona happens to be the deployment default.
+                #
+                # #170 R2 (Rick's PR #175 round-2 review): also threaded through to every
+                # `_process_message_to_client` call below (`persona_prompt_loader=`) so the
+                # tool-failure-cap notice and the tool_execution_failed error text use THIS
+                # session's own bound persona's loader too, instead of `self._prompt_loader`
+                # (the deployment default's) -- the same class of bug #170 fixed for
+                # `system_message` above, recurring on two different trigger paths.
                 persona_prompt_loader = None
                 bound_persona = None
+                # #170 R4 (Rick's PR #175 round-2 review): this session's own bound
+                # persona's tool schema list -- defaults to `self.tools`' own (the
+                # deployment default's) schemas, same fallback shape as `system_message`
+                # above, so a persona with no `persona_tool_schemas` entry still gets a
+                # valid (if generic) tool list instead of an empty one.
+                tool_schemas = [tool.schema for tool in self.tools.values()]
                 if persona_id is not None:
                     persona_prompt_loader = self.persona_prompt_loaders.get(persona_id)
                     if persona_prompt_loader is not None:
                         system_message = persona_prompt_loader.get_system_prompt()
+                    persona_schemas = self.persona_tool_schemas.get(persona_id)
+                    if persona_schemas is not None:
+                        tool_schemas = persona_schemas
+                    else:
+                        logger.warning(
+                            "No persona_tool_schemas entry for persona_id=%s; falling back to the "
+                            "deployment default's tool schemas (session=%s)", persona_id, session_id)
                     if persona_id in self.persona_catalog:
                         bound_persona = self.persona_catalog.get(persona_id)
                         persona_voice = _sanitize_voice(bound_persona.manifest.voice.default, self.allowed_voices)
@@ -2231,7 +2372,7 @@ class RTMiddleTier:
                 # frame. Events are processed in order, so nothing the browser
                 # sends (mic audio included) can reach an unconfigured session.
                 await target_ws.send_str(guard.track(
-                    self.build_bootstrap_session_update(voice=voice, system_message=system_message, reasoning_override=reasoning_override)
+                    self.build_bootstrap_session_update(voice=voice, system_message=system_message, tool_schemas=tool_schemas, reasoning_override=reasoning_override)
                 ))
                 logger.info("Upstream session bootstrapped with %d tools before relaying client traffic "
                             "(reasoning=%s, session=%s)", len(self.tools),
@@ -2562,7 +2703,9 @@ class RTMiddleTier:
                                 if (verbose or _VERBOSE_GLOBAL) and audio_frame_count % 50 == 0:
                                     _vlog(verbose, "─── [Client → Server] Audio frame #%d ───", audio_frame_count)
                             # Forward client message to OpenAI.
-                            new_msg, sent_type = await self._process_message_to_server(msg, ws, verbose, voice_locked=assistant_audio_seen, guard=guard, voice=voice, limiter=drop_limiter, reasoning_override=reasoning_override)
+                            new_msg, sent_type = await self._process_message_to_server(
+                                msg, ws, verbose, system_message=system_message, tool_schemas=tool_schemas, voice_locked=assistant_audio_seen,
+                                guard=guard, voice=voice, limiter=drop_limiter, reasoning_override=reasoning_override)
                             # PR #49 review round 2, "F1": idle reset, nudge
                             # cancel and the greeting trigger used to be keyed
                             # on raw substring checks against msg.data,
@@ -2702,6 +2845,9 @@ class RTMiddleTier:
                             new_msg = await self._process_message_to_client(msg, ws, target_ws, tools_pending, verbose, guard=guard,
                                                                             on_session_created=on_session_created,
                                                                             recovery=recovery, voice=voice, tool_failures=tool_failures,
+                                                                            system_message=system_message,
+                                                                            persona_prompt_loader=persona_prompt_loader,
+                                                                            tool_schemas=tool_schemas,
                                                                             reasoning_override=reasoning_override)
                             if new_msg is not None:
                                 await ws.send_str(new_msg)

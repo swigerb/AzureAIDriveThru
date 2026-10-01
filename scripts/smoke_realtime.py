@@ -283,12 +283,13 @@ def check_session(label: str, sent: dict, echoed: dict | None, error: dict | Non
 
 
 async def check_session_updates(rtmt: RTMiddleTier, url: str, headers: dict, timeout: float) -> tuple[list[str], list[str]]:
+    tool_schemas = [tool.schema for tool in rtmt.tools.values()]
     payloads = [
-        ("bootstrap", rtmt.build_bootstrap_session_update()),
+        ("bootstrap", rtmt.build_bootstrap_session_update(system_message=rtmt.system_message, tool_schemas=tool_schemas)),
         ("relayed browser session.update",
          json.dumps({"type": "session.update", "event_id": "smoke_relayed",
-                     "session": rtmt._build_session(copy.deepcopy(BROWSER_SESSION))})),
-        ("minimal fallback", rtmt.build_fallback_session_update()),
+                     "session": rtmt._build_session(copy.deepcopy(BROWSER_SESSION), system_message=rtmt.system_message, tool_schemas=tool_schemas)})),
+        ("minimal fallback", rtmt.build_fallback_session_update(system_message=rtmt.system_message, tool_schemas=tool_schemas)),
     ]
     expect_reasoning = {"effort": rtmt.reasoning_effort} if rtmt.reasoning_enabled() else None
     failures: list[str] = []
@@ -361,7 +362,8 @@ async def check_transcription(rtmt: RTMiddleTier, url: str, headers: dict, timeo
     pcm = await _synthesize(url, headers, phrase, timeout)
     if not pcm:
         raise SmokeError("could not synthesize test audio (no audio returned)")
-    session = json.loads(rtmt.build_bootstrap_session_update())["session"]
+    session = json.loads(rtmt.build_bootstrap_session_update(
+        system_message=rtmt.system_message, tool_schemas=[tool.schema for tool in rtmt.tools.values()]))["session"]
     # Commit explicitly instead of waiting on server VAD; same transcription field.
     session["audio"]["input"]["turn_detection"] = None
     model = session["audio"]["input"].get("transcription", {}).get("model")

@@ -735,6 +735,7 @@ async def create_app() -> web.Application:
         sessions=rtmt._sessions,
         persona_catalog=_persona_catalog,
         persona_prompt_loaders=prompt_loaders,
+        persona_tool_schemas=rtmt.persona_tool_schemas,
         model_catalog=model_catalog,
         foundry_endpoint=os.environ.get("AZURE_AI_FOUNDRY_ENDPOINT"),
         audio_endpoint=llm_endpoint,

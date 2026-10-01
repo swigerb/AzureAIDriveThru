@@ -95,14 +95,17 @@ _COGNITIVE_SERVICES_SCOPE = "https://cognitiveservices.azure.com/.default"
 __all__ = ["CascadeProcessor"]
 
 
-def _tool_definitions(tools: dict[str, Tool]) -> list[ChatCompletionsToolDefinition]:
+def _tool_definitions(tool_schemas: list[dict]) -> list[ChatCompletionsToolDefinition]:
     """Converts tools.py's flat Realtime-API-style schemas (`{"type": "function", "name": ...,
     "parameters": ...}`) into the nested Chat-Completions-style `ChatCompletionsToolDefinition`
-    the azure-ai-inference SDK expects. Same schemas (`search_tool_schema` et al, unedited --
-    Beth's #77 scope), just wrapped in this SDK's own shape."""
+    the azure-ai-inference SDK expects. #170 R4 (Rick's PR #175 round-2 review): *tool_schemas*
+    is THIS session's own bound persona's tool schema list (`CascadeProcessor.persona_tool_schemas`,
+    resolved per `state.persona_id` by `_run_chat_tool_loop`) -- previously this read
+    `tools.values()` (the module-level `Tool` registry) directly, so every cascade session's tool
+    descriptions named the deployment default persona's menu/ticket regardless of which persona was
+    actually bound."""
     definitions = []
-    for tool in tools.values():
-        schema = tool.schema
+    for schema in tool_schemas:
         definitions.append(
             ChatCompletionsToolDefinition(
                 function=FunctionDefinition(
@@ -288,6 +291,7 @@ class CascadeProcessor:
         sessions: SessionManager,
         persona_catalog,
         persona_prompt_loaders: dict,
+        persona_tool_schemas: dict,
         model_catalog,
         foundry_endpoint: str,
         audio_endpoint: str,
@@ -298,6 +302,12 @@ class CascadeProcessor:
         self._sessions = sessions
         self.persona_catalog = persona_catalog
         self.persona_prompt_loaders = persona_prompt_loaders
+        # #170 R4 (Rick's PR #175 round-2 review): per-persona tool schema list, keyed by
+        # persona id -- the same `rtmt.persona_tool_schemas` dict `tools.attach_tools_rtmt()`
+        # builds for the realtime pipeline (app.py passes it through unchanged here too), so
+        # both pipelines advertise the bound persona's own tool descriptions, never the
+        # deployment default's.
+        self.persona_tool_schemas = persona_tool_schemas
         self.model_catalog = model_catalog
         self.foundry_endpoint = foundry_endpoint
         self.audio_endpoint = audio_endpoint.rstrip("/") if audio_endpoint else audio_endpoint
@@ -579,7 +589,17 @@ class CascadeProcessor:
 
     async def _run_chat_tool_loop(self, ws: web.WebSocketResponse, session_id: str, state: _CascadeSessionState) -> str:
         client = await self._get_chat_client()
-        tool_defs = _tool_definitions(self.tools)
+        # #170 R4: this session's own bound persona's tool schemas, falling back to
+        # `self.tools`' own (the deployment default's) schemas only when the bound
+        # persona has no `persona_tool_schemas` entry -- same fallback shape as the
+        # realtime pipeline's `_forward_messages` (rtmt.py).
+        tool_schemas = self.persona_tool_schemas.get(state.persona_id)
+        if tool_schemas is None:
+            logger.warning(
+                "No persona_tool_schemas entry for persona_id=%s; falling back to the "
+                "deployment default's tool schemas (session=%s)", state.persona_id, session_id)
+            tool_schemas = [tool.schema for tool in self.tools.values()]
+        tool_defs = _tool_definitions(tool_schemas)
         for _round in range(self._MAX_TOOL_ROUNDS):
             completion = await self._with_rate_limit_retry(
                 ws, session_id,
