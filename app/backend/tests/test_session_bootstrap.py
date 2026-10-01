@@ -799,7 +799,7 @@ class ReasoningAndTranscriptionConfigTests(unittest.TestCase):
         return rtmt
 
     def _bootstrap(self, rtmt):
-        return json.loads(rtmt.build_bootstrap_session_update())["session"]
+        return json.loads(rtmt.build_bootstrap_session_update(system_message=rtmt.system_message))["session"]
 
     def test_reasoning_not_sent_when_unconfigured(self):
         session = self._bootstrap(self._rtmt())
@@ -853,7 +853,8 @@ class ReasoningAndTranscriptionConfigTests(unittest.TestCase):
 
     def test_client_cannot_inject_reasoning(self):
         rtmt = self._rtmt("gpt-realtime-1.5")
-        session = rtmt._build_session({"reasoning": {"effort": "high"}, "parallel_tool_calls": True})
+        session = rtmt._build_session({"reasoning": {"effort": "high"}, "parallel_tool_calls": True},
+                                       system_message=rtmt.system_message)
         self.assertNotIn("reasoning", session)
         self.assertNotIn("parallel_tool_calls", session)
 
@@ -904,7 +905,7 @@ class ReasoningAndTranscriptionConfigTests(unittest.TestCase):
 
     def test_fallback_is_minimal(self):
         rtmt = self._rtmt(reasoning_effort="low", parallel_tool_calls=True, transcription_model="whisper-1")
-        payload = json.loads(rtmt.build_fallback_session_update())
+        payload = json.loads(rtmt.build_fallback_session_update(system_message=rtmt.system_message))
         self.assertTrue(payload["event_id"].startswith("sonic_fallback_"))
         self.assertEqual(set(payload["session"]), {"type", "instructions", "tools", "tool_choice"})
         self.assertEqual(payload["session"]["tool_choice"], "auto")
@@ -1030,23 +1031,28 @@ class BuildSessionTests(unittest.TestCase):
         return rtmt
 
     def test_voice_locked_omits_voice_but_keeps_tools(self):
-        session = self._rtmt()._build_session({}, voice_locked=True)
+        rtmt = self._rtmt()
+        session = rtmt._build_session({}, voice_locked=True, system_message=rtmt.system_message)
         self.assertNotIn("audio", session)
         self.assertEqual(session["tool_choice"], "auto")
         self.assertEqual(session["tools"][0]["name"], "update_order")
         self.assertEqual(session["instructions"], SYSTEM_PROMPT)
 
     def test_voice_locked_keeps_input_audio_settings(self):
-        session = self._rtmt()._build_session(dict(BROWSER_SESSION_UPDATE["session"]), voice_locked=True)
+        rtmt = self._rtmt()
+        session = rtmt._build_session(dict(BROWSER_SESSION_UPDATE["session"]), voice_locked=True,
+                                      system_message=rtmt.system_message)
         self.assertNotIn("output", session["audio"])
         self.assertIn("turn_detection", session["audio"]["input"])
 
     def test_unlocked_sets_voice(self):
-        session = self._rtmt()._build_session({})
+        rtmt = self._rtmt()
+        session = rtmt._build_session({}, system_message=rtmt.system_message)
         self.assertEqual(session["audio"]["output"]["voice"], "shimmer")
 
     def test_bootstrap_payload_is_ga_shaped(self):
-        payload = json.loads(self._rtmt().build_bootstrap_session_update())
+        rtmt = self._rtmt()
+        payload = json.loads(rtmt.build_bootstrap_session_update(system_message=rtmt.system_message))
         self.assertEqual(payload["type"], "session.update")
         session = payload["session"]
         self.assertEqual(session["type"], "realtime")

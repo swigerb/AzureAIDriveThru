@@ -84,6 +84,22 @@ namespace Conformance.Tests;
 /// session.update is forwarded, but never asserted `instructions`). Both methods are tagged
 /// <c>[Trait("Dotnet", "ready")]</c>, ungated, and verified green against both backends -- raising
 /// the floor 190 to 192.
+///
+/// Issue #170 round 2 (Rick's PR #175 round-2 review, required item R1): the instructions check
+/// above only ever covered the ORDINARY client session.update rebuild, never the REJECTED-update
+/// fallback path (<c>RealtimeProcessor.HandleErrorAsync</c> --&gt;
+/// <c>RealtimeSessionBuilder.BuildFallbackSessionUpdate</c>) -- Rick's own round-1 mutation
+/// forcing the C# fallback onto the deployment default persona's prompt survived every existing
+/// test, since every prior fallback scenario only ever ran on the single default-persona
+/// connection. <c>PersonaSessionUpdateFallbackConformanceTests.cs</c>'s two Theory methods
+/// (<c>RealPackPersonaSessionUpdateFallbackConformanceTests</c> and
+/// <c>FixturePackPersonaSessionUpdateFallbackConformanceTests</c>, both
+/// <c>Rejected_bootstrap_recovers_via_a_fallback_carrying_the_bound_personas_own_instructions</c>)
+/// close that gap generically, for every discovered persona pack, on both legs: a scripted
+/// rejection of the bootstrap session.update, asserting the FALLBACK's own `instructions` carry
+/// that SAME pack's identity text and none of the others'. Both methods are tagged
+/// <c>[Trait("Dotnet", "ready")]</c>, ungated, and verified green against both backends -- raising
+/// the floor 192 to 194.
 /// </summary>
 public sealed class DotnetTraitCoverageTests
 {
@@ -106,12 +122,12 @@ public sealed class DotnetTraitCoverageTests
     };
 
     [Fact]
-    public void At_least_192_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
+    public void At_least_194_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
     {
         var count = CountFloorEligibleDotnetReadyTestMethods();
 
-        Assert.True(count >= 192,
-            $"Expected at least 192 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
+        Assert.True(count >= 194,
+            $"Expected at least 194 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
             $"and not unconditionally skip-gated by AuthRowCapability (the dotnet leg's " +
             $"`--filter \"{TraitName}={TraitValue}&Category!=Browser\"` baseline, minus the five " +
             "skip-only Scenarios/Auth classes -- see this class's own doc comment; " +

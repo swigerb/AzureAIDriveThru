@@ -1950,6 +1950,83 @@ class ProcessMessageToServerTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIs(stamped, message, "stamp mutates and returns the same dict")
 
 
+class SystemMessageRequiredKeywordOnlyTests(unittest.IsolatedAsyncioTestCase):
+    """Issue #170 R3 (Rick's PR #175 round-2 review, required item 3): every
+    internal session builder that can rebuild/resend a session.update used to
+    accept `system_message` as an optional parameter defaulted to a sentinel
+    (`_SYSTEM_MESSAGE_UNSET`) meaning "fall back to `self.system_message`,
+    the deployment-wide default". Omitting the argument at any of these five
+    call sites silently reintroduced the exact #170 bug class (a bound
+    non-default persona's prompt getting replaced by the deployment
+    default's) with no error at call time -- only a runtime persona mix-up
+    discovered by a guest. `_process_message_to_server`'s own
+    required/keyword-only treatment (round 1) is the precedent; this makes
+    the remaining five builders -- `_build_session`,
+    `build_bootstrap_session_update`, `build_fallback_session_update`,
+    `_recover_rejected_session_update`, `_process_message_to_client` --
+    match it: `system_message` is required and keyword-only (no sentinel, no
+    default), so a future edit that drops it anywhere is a `TypeError` at
+    call time, not a silently-wrong persona in production. If any of these
+    five ever regains a default, the matching assertion below starts
+    failing."""
+
+    def _make_rtmt(self):
+        from azure.core.credentials import AzureKeyCredential
+        cred = AzureKeyCredential("test-key")
+        rtmt = RTMiddleTier("https://fake.openai.azure.com", "gpt-4o-realtime", cred)
+        rtmt.system_message = "You are a carhop."
+        return rtmt
+
+    def test_build_session_requires_system_message_explicitly(self):
+        rtmt = self._make_rtmt()
+        with self.assertRaises(TypeError):
+            rtmt._build_session({})  # no system_message=...
+
+    def test_build_bootstrap_session_update_requires_system_message_explicitly(self):
+        rtmt = self._make_rtmt()
+        with self.assertRaises(TypeError):
+            rtmt.build_bootstrap_session_update()  # no system_message=...
+
+    def test_build_fallback_session_update_requires_system_message_explicitly(self):
+        rtmt = self._make_rtmt()
+        with self.assertRaises(TypeError):
+            rtmt.build_fallback_session_update()  # no system_message=...
+
+    async def test_recover_rejected_session_update_requires_system_message_explicitly(self):
+        rtmt = self._make_rtmt()
+        server_ws = _make_mock_ws()
+        guard = _SessionUpdateGuard()
+        with self.assertRaises(TypeError):
+            # no system_message=...
+            await rtmt._recover_rejected_session_update({"type": "error"}, server_ws, guard, "sess-1")
+
+    async def test_process_message_to_client_requires_system_message_explicitly(self):
+        rtmt = self._make_rtmt()
+        client_ws = _make_mock_ws()
+        server_ws = _make_mock_ws()
+        tools_pending = {}
+        msg = MagicMock()
+        msg.data = json.dumps({"type": "response.cancel"})
+        with self.assertRaises(TypeError):
+            # no system_message=..., no persona_prompt_loader=...
+            await rtmt._process_message_to_client(msg, client_ws, server_ws, tools_pending)
+
+    async def test_process_message_to_client_requires_persona_prompt_loader_explicitly(self):
+        """Issue #170 R2: `persona_prompt_loader` is required/keyword-only
+        alongside `system_message` -- same rationale, a different trigger
+        (the tool-failure cap notice and `tool_execution_failed` paths)."""
+        rtmt = self._make_rtmt()
+        client_ws = _make_mock_ws()
+        server_ws = _make_mock_ws()
+        tools_pending = {}
+        msg = MagicMock()
+        msg.data = json.dumps({"type": "response.cancel"})
+        with self.assertRaises(TypeError):
+            # system_message= supplied, persona_prompt_loader= omitted
+            await rtmt._process_message_to_client(msg, client_ws, server_ws, tools_pending,
+                                                  system_message=rtmt.system_message)
+
+
 class ClientToServerAllowListTests(unittest.TestCase):
     """Direct unit tests of `_filter_client_to_server` and
     `_CLIENT_ALLOWED_TYPES` (swigerb/SonicAIDriveThru#31, hardened per PR #49
@@ -2206,7 +2283,7 @@ class ProcessMessageToClientTests(unittest.IsolatedAsyncioTestCase):
         tools_pending = {}
         msg = MagicMock()
         msg.data = json.dumps({"type": "response.audio.delta", "delta": "base64audio"})
-        result = await rtmt._process_message_to_client(msg, client_ws, server_ws, tools_pending)
+        result = await rtmt._process_message_to_client(msg, client_ws, server_ws, tools_pending, system_message=rtmt.system_message, persona_prompt_loader=None)
         self.assertEqual(result, msg.data)
 
     async def test_ga_audio_delta_translated_to_legacy(self):
@@ -2217,7 +2294,7 @@ class ProcessMessageToClientTests(unittest.IsolatedAsyncioTestCase):
         tools_pending = {}
         msg = MagicMock()
         msg.data = json.dumps({"type": "response.output_audio.delta", "delta": "base64audio"})
-        result = await rtmt._process_message_to_client(msg, client_ws, server_ws, tools_pending)
+        result = await rtmt._process_message_to_client(msg, client_ws, server_ws, tools_pending, system_message=rtmt.system_message, persona_prompt_loader=None)
         parsed = json.loads(result)
         self.assertEqual(parsed["type"], "response.audio.delta")
 
@@ -2229,7 +2306,7 @@ class ProcessMessageToClientTests(unittest.IsolatedAsyncioTestCase):
         tools_pending = {}
         msg = MagicMock()
         msg.data = json.dumps({"type": "response.output_audio_transcript.delta", "delta": "hello"})
-        result = await rtmt._process_message_to_client(msg, client_ws, server_ws, tools_pending)
+        result = await rtmt._process_message_to_client(msg, client_ws, server_ws, tools_pending, system_message=rtmt.system_message, persona_prompt_loader=None)
         parsed = json.loads(result)
         self.assertEqual(parsed["type"], "response.audio_transcript.delta")
 
@@ -2252,7 +2329,7 @@ class ProcessMessageToClientTests(unittest.IsolatedAsyncioTestCase):
                 "arguments": "{}"
             }
         })
-        result = await rtmt._process_message_to_client(msg, client_ws, server_ws, tools_pending)
+        result = await rtmt._process_message_to_client(msg, client_ws, server_ws, tools_pending, system_message=rtmt.system_message, persona_prompt_loader=None)
         self.assertIsNone(result)
         self.assertIn("call-ga-1", tools_pending)
 
@@ -2283,7 +2360,7 @@ class ProcessMessageToClientTests(unittest.IsolatedAsyncioTestCase):
                 "max_response_output_tokens": 500,
             }
         })
-        result = await rtmt._process_message_to_client(msg, client_ws, server_ws, tools_pending)
+        result = await rtmt._process_message_to_client(msg, client_ws, server_ws, tools_pending, system_message=rtmt.system_message, persona_prompt_loader=None)
         parsed = json.loads(result)
         self.assertEqual(parsed, {
             "type": "session.created",
@@ -2321,7 +2398,7 @@ class ProcessMessageToClientTests(unittest.IsolatedAsyncioTestCase):
                 "max_response_output_tokens": 500,
             }
         })
-        result = await rtmt._process_message_to_client(msg, client_ws, server_ws, tools_pending)
+        result = await rtmt._process_message_to_client(msg, client_ws, server_ws, tools_pending, system_message=rtmt.system_message, persona_prompt_loader=None)
         parsed = json.loads(result)
         self.assertEqual(parsed, {
             "type": "session.updated",
@@ -2342,7 +2419,7 @@ class ProcessMessageToClientTests(unittest.IsolatedAsyncioTestCase):
         tools_pending = {}
         msg = MagicMock()
         msg.data = json.dumps({"type": "session.updated"})
-        result = await rtmt._process_message_to_client(msg, client_ws, server_ws, tools_pending)
+        result = await rtmt._process_message_to_client(msg, client_ws, server_ws, tools_pending, system_message=rtmt.system_message, persona_prompt_loader=None)
         self.assertEqual(result, msg.data)
 
     async def test_session_created_and_updated_never_relay_any_ga_top_level_secret_key(self):
@@ -2386,7 +2463,7 @@ class ProcessMessageToClientTests(unittest.IsolatedAsyncioTestCase):
         for event_type in ("session.created", "session.updated"):
             msg = MagicMock()
             msg.data = json.dumps({"type": event_type, "session": dict(raw_session)})
-            result = await rtmt._process_message_to_client(msg, client_ws, server_ws, tools_pending)
+            result = await rtmt._process_message_to_client(msg, client_ws, server_ws, tools_pending, system_message=rtmt.system_message, persona_prompt_loader=None)
             session = json.loads(result)["session"]
             self.assertEqual(set(session), {"id", "object", "audio"},
                               f"{event_type} relayed a key outside the allow-list: {sorted(session)}")
@@ -2417,7 +2494,7 @@ class ProcessMessageToClientTests(unittest.IsolatedAsyncioTestCase):
                     "content": [{"type": "input_text", "text": "Current order (JSON): {...}"}],
                 },
             })
-            result = await rtmt._process_message_to_client(msg, client_ws, server_ws, tools_pending)
+            result = await rtmt._process_message_to_client(msg, client_ws, server_ws, tools_pending, system_message=rtmt.system_message, persona_prompt_loader=None)
             self.assertIsNone(result, f"{event_type} with role=system must be dropped from the client relay")
 
     async def test_conversation_item_created_still_forwards_user_and_assistant_items(self):
@@ -2435,7 +2512,7 @@ class ProcessMessageToClientTests(unittest.IsolatedAsyncioTestCase):
                 "type": "conversation.item.created",
                 "item": {"type": "message", "role": role, "content": [{"type": "input_text", "text": "hi"}]},
             })
-            result = await rtmt._process_message_to_client(msg, client_ws, server_ws, tools_pending)
+            result = await rtmt._process_message_to_client(msg, client_ws, server_ws, tools_pending, system_message=rtmt.system_message, persona_prompt_loader=None)
             self.assertEqual(result, msg.data, f"role={role} conversation item must still be forwarded")
 
     async def test_conversation_item_created_drops_middle_tier_item_by_id_not_role(self):
@@ -2459,7 +2536,7 @@ class ProcessMessageToClientTests(unittest.IsolatedAsyncioTestCase):
                     "content": [{"type": "input_text", "text": "Say EXACTLY this greeting and NOTHING else: ..."}],
                 },
             })
-            result = await rtmt._process_message_to_client(msg, client_ws, server_ws, tools_pending)
+            result = await rtmt._process_message_to_client(msg, client_ws, server_ws, tools_pending, system_message=rtmt.system_message, persona_prompt_loader=None)
             self.assertIsNone(result, f"{event_type} with a middle-tier item id must be dropped regardless of role")
 
     async def test_conversation_item_done_and_retrieved_drop_server_authored_items(self):
@@ -2485,7 +2562,7 @@ class ProcessMessageToClientTests(unittest.IsolatedAsyncioTestCase):
             for item in items:
                 msg = MagicMock()
                 msg.data = json.dumps({"type": event_type, "item": item})
-                result = await rtmt._process_message_to_client(msg, client_ws, server_ws, tools_pending)
+                result = await rtmt._process_message_to_client(msg, client_ws, server_ws, tools_pending, system_message=rtmt.system_message, persona_prompt_loader=None)
                 self.assertIsNone(result, f"{event_type} leaked item={item!r}")
 
     async def test_conversation_item_done_still_forwards_user_and_assistant_items(self):
@@ -2503,7 +2580,7 @@ class ProcessMessageToClientTests(unittest.IsolatedAsyncioTestCase):
                 "type": "conversation.item.done",
                 "item": {"type": "message", "role": role, "content": [{"type": "input_text", "text": "finalized turn"}]},
             })
-            result = await rtmt._process_message_to_client(msg, client_ws, server_ws, tools_pending)
+            result = await rtmt._process_message_to_client(msg, client_ws, server_ws, tools_pending, system_message=rtmt.system_message, persona_prompt_loader=None)
             self.assertEqual(result, msg.data, f"role={role} conversation item must still be forwarded on .done")
 
     async def test_unknown_message_type_returned_as_data(self):
@@ -2514,7 +2591,7 @@ class ProcessMessageToClientTests(unittest.IsolatedAsyncioTestCase):
         tools_pending = {}
         msg = MagicMock()
         msg.data = json.dumps({"type": "unknown.custom.type", "payload": "test"})
-        result = await rtmt._process_message_to_client(msg, client_ws, server_ws, tools_pending)
+        result = await rtmt._process_message_to_client(msg, client_ws, server_ws, tools_pending, system_message=rtmt.system_message, persona_prompt_loader=None)
         # Unknown types should be returned (not None, not crash)
         self.assertIsNotNone(result)
 
@@ -2543,7 +2620,7 @@ class ProcessMessageToClientTests(unittest.IsolatedAsyncioTestCase):
                 "arguments": '{"query": "test"}'
             }
         })
-        result = await rtmt._process_message_to_client(msg, client_ws, server_ws, tools_pending)
+        result = await rtmt._process_message_to_client(msg, client_ws, server_ws, tools_pending, system_message=rtmt.system_message, persona_prompt_loader=None)
         self.assertIsNone(result)  # tool responses are not forwarded as-is
         mock_tool_target.assert_called_once()
         server_ws.send_json.assert_called_once()
@@ -2572,7 +2649,7 @@ class ProcessMessageToClientTests(unittest.IsolatedAsyncioTestCase):
                 "arguments": '{"action":"add","item_name":"Burger","size":"standard","quantity":1,"price":5.99}'
             }
         })
-        result = await rtmt._process_message_to_client(msg, client_ws, server_ws, tools_pending)
+        result = await rtmt._process_message_to_client(msg, client_ws, server_ws, tools_pending, system_message=rtmt.system_message, persona_prompt_loader=None)
         self.assertIsNone(result)
         # Both server and client should receive messages
         server_ws.send_json.assert_called_once()
@@ -2613,7 +2690,7 @@ class ProcessMessageToClientTests(unittest.IsolatedAsyncioTestCase):
             }
         })
         with self.assertLogs("sonic-drive-in", level="ERROR"):
-            result = await rtmt._process_message_to_client(msg, client_ws, server_ws, tools_pending)
+            result = await rtmt._process_message_to_client(msg, client_ws, server_ws, tools_pending, system_message=rtmt.system_message, persona_prompt_loader=None)
         self.assertIsNone(result)
         mock_tool_target.assert_called_once()
         server_ws.send_json.assert_called_once()
@@ -2656,7 +2733,7 @@ class ProcessMessageToClientTests(unittest.IsolatedAsyncioTestCase):
             }
         })
         with self.assertLogs("sonic-drive-in", level="ERROR"):
-            result = await rtmt._process_message_to_client(msg, client_ws, server_ws, tools_pending)
+            result = await rtmt._process_message_to_client(msg, client_ws, server_ws, tools_pending, system_message=rtmt.system_message, persona_prompt_loader=None)
         self.assertIsNone(result)
         server_ws.send_json.assert_called_once()  # the model still gets its function_call_output
         client_ws.send_json.assert_not_called()
@@ -2685,10 +2762,10 @@ class ProcessMessageToClientTests(unittest.IsolatedAsyncioTestCase):
                 "item": {"type": "function_call", "name": "exploding_tool", "call_id": call_id, "arguments": "{}"},
             })
             with self.assertLogs("sonic-drive-in", level="ERROR"):
-                await rtmt._process_message_to_client(call_msg, client_ws, server_ws, tools_pending, tool_failures=tool_failures)
+                await rtmt._process_message_to_client(call_msg, client_ws, server_ws, tools_pending, tool_failures=tool_failures, system_message=rtmt.system_message, persona_prompt_loader=None)
             done_msg = MagicMock()
             done_msg.data = json.dumps({"type": "response.done", "response": {"output": []}})
-            await rtmt._process_message_to_client(done_msg, client_ws, server_ws, tools_pending, tool_failures=tool_failures)
+            await rtmt._process_message_to_client(done_msg, client_ws, server_ws, tools_pending, tool_failures=tool_failures, system_message=rtmt.system_message, persona_prompt_loader=None)
 
         self.assertEqual(_TOOL_FAILURE_CAP, 2)  # the test below assumes exactly two rounds reaches the cap
 
@@ -2703,6 +2780,97 @@ class ProcessMessageToClientTests(unittest.IsolatedAsyncioTestCase):
         # round 2: at the cap -- one more response.create, but with tool_choice="none".
         self.assertEqual(server_ws.send_str.call_count, 2)
         server_ws.send_str.assert_called_with(_build_tool_failure_cap_notice_msg(None))
+
+    async def test_tool_failure_cap_notice_uses_the_bound_persona_loader_not_the_deployment_default(self):
+        """Issue #170 R2 (Rick's PR #175 round-2 review): before this fix,
+        the tool-failure cap notice (`_build_tool_failure_cap_notice_msg`,
+        called from inside `_process_message_to_client`) was always built
+        from `self._prompt_loader` -- the deployment-wide DEFAULT persona's
+        loader -- even for a session bound to a different, non-default
+        persona. This is the same class of bug #170 fixed for
+        `system_message`, recurring on the tool-failure-cap trigger path.
+        `rtmt._prompt_loader` here stands in for the deployment default
+        (deliberately given DIFFERENT cap-instructions text than the bound
+        persona's own loader passed as `persona_prompt_loader=`); the sent
+        cap notice must carry the BOUND persona's text, never the
+        deployment default's."""
+        rtmt = self._make_rtmt()
+        rtmt._prompt_loader = _FakePromptLoaderForCapNotice({
+            "tool_failure_cap_instructions": "Deployment-default apology text.",
+            "tool_execution_failed": "Deployment-default failure text.",
+        })
+        bound_persona_loader = _FakePromptLoaderForCapNotice({
+            "tool_failure_cap_instructions": "Bound persona's own apology text.",
+            "tool_execution_failed": "Bound persona's own failure text.",
+        })
+        client_ws = _make_mock_ws()
+        server_ws = _make_mock_ws()
+        order_state_singleton.sessions = {}
+        rtmt._sessions.create_session(client_ws)
+        tool_failures = _ToolFailureTracker()
+
+        mock_tool_target = AsyncMock(side_effect=KeyError("item_name"))
+        rtmt.tools["exploding_tool"] = Tool(target=mock_tool_target, schema={"name": "exploding_tool"})
+
+        async def _one_failed_round(call_id: str, tools_pending: dict):
+            call_msg = MagicMock()
+            call_msg.data = json.dumps({
+                "type": "response.output_item.done",
+                "item": {"type": "function_call", "name": "exploding_tool", "call_id": call_id, "arguments": "{}"},
+            })
+            with self.assertLogs(level="ERROR"):
+                await rtmt._process_message_to_client(call_msg, client_ws, server_ws, tools_pending,
+                                                      tool_failures=tool_failures, system_message=rtmt.system_message,
+                                                      persona_prompt_loader=bound_persona_loader)
+            done_msg = MagicMock()
+            done_msg.data = json.dumps({"type": "response.done", "response": {"output": []}})
+            await rtmt._process_message_to_client(done_msg, client_ws, server_ws, tools_pending,
+                                                  tool_failures=tool_failures, system_message=rtmt.system_message,
+                                                  persona_prompt_loader=bound_persona_loader)
+
+        self.assertEqual(_TOOL_FAILURE_CAP, 2)
+        await _one_failed_round("call-a", {"call-a": RTToolCall("call-a", "prev-a")})
+        await _one_failed_round("call-b", {"call-b": RTToolCall("call-b", "prev-b")})
+
+        sent = json.loads(server_ws.send_str.call_args[0][0])
+        self.assertEqual(sent["response"]["instructions"], "Bound persona's own apology text.")
+        self.assertNotEqual(sent["response"]["instructions"], "Deployment-default apology text.")
+
+    async def test_tool_execution_failed_text_uses_the_bound_persona_loader_not_the_deployment_default(self):
+        """Issue #170 R2 (Rick's PR #175 round-2 review): the `tool_execution_failed`
+        error text sent to the model as the failed tool's own function_call_output
+        was always rendered from `self._prompt_loader` (the deployment default)
+        too, independent of (and in addition to) the cap-notice defect above --
+        the same bound-persona-loader fix must cover both trigger sites."""
+        rtmt = self._make_rtmt()
+        rtmt._prompt_loader = _FakePromptLoaderForCapNotice({
+            "tool_execution_failed": "Deployment-default failure text.",
+        })
+        bound_persona_loader = _FakePromptLoaderForCapNotice({
+            "tool_execution_failed": "Bound persona's own failure text.",
+        })
+        client_ws = _make_mock_ws()
+        server_ws = _make_mock_ws()
+        order_state_singleton.sessions = {}
+        session_id = rtmt._sessions.create_session(client_ws)
+        del order_state_singleton.sessions[session_id]  # simulate unreadable order state (skip ticket refresh)
+
+        mock_tool_target = AsyncMock(side_effect=KeyError("item_name"))
+        rtmt.tools["exploding_tool"] = Tool(target=mock_tool_target, schema={"name": "exploding_tool"})
+        tools_pending = {"call-9": RTToolCall("call-9", "prev-9")}
+        msg = MagicMock()
+        msg.data = json.dumps({
+            "type": "response.output_item.done",
+            "item": {"type": "function_call", "name": "exploding_tool", "call_id": "call-9", "arguments": "{}"},
+        })
+        with self.assertLogs(level="ERROR"):
+            await rtmt._process_message_to_client(msg, client_ws, server_ws, tools_pending,
+                                                  system_message=rtmt.system_message,
+                                                  persona_prompt_loader=bound_persona_loader)
+        server_ws.send_json.assert_called_once()
+        sent = server_ws.send_json.call_args[0][0]
+        self.assertEqual(sent["item"]["output"], "Bound persona's own failure text.")
+        self.assertNotEqual(sent["item"]["output"], "Deployment-default failure text.")
 
     async def test_tool_success_does_not_reset_the_failure_streak(self):
         """PR #58 re-review "S1": Rick's core repro. A successful tool call between two
@@ -2733,10 +2901,10 @@ class ProcessMessageToClientTests(unittest.IsolatedAsyncioTestCase):
                 "item": {"type": "function_call", "name": "exploding_tool", "call_id": call_id, "arguments": "{}"},
             })
             with self.assertLogs("sonic-drive-in", level="ERROR"):
-                await rtmt._process_message_to_client(call_msg, client_ws, server_ws, tools_pending, tool_failures=tool_failures)
+                await rtmt._process_message_to_client(call_msg, client_ws, server_ws, tools_pending, tool_failures=tool_failures, system_message=rtmt.system_message, persona_prompt_loader=None)
             done_msg = MagicMock()
             done_msg.data = json.dumps({"type": "response.done", "response": {"output": []}})
-            await rtmt._process_message_to_client(done_msg, client_ws, server_ws, tools_pending, tool_failures=tool_failures)
+            await rtmt._process_message_to_client(done_msg, client_ws, server_ws, tools_pending, tool_failures=tool_failures, system_message=rtmt.system_message, persona_prompt_loader=None)
 
         async def _successful_round(call_id: str):
             tools_pending = {call_id: RTToolCall(call_id, f"prev-{call_id}")}
@@ -2745,10 +2913,10 @@ class ProcessMessageToClientTests(unittest.IsolatedAsyncioTestCase):
                 "type": "response.output_item.done",
                 "item": {"type": "function_call", "name": "ok_tool", "call_id": call_id, "arguments": "{}"},
             })
-            await rtmt._process_message_to_client(call_msg, client_ws, server_ws, tools_pending, tool_failures=tool_failures)
+            await rtmt._process_message_to_client(call_msg, client_ws, server_ws, tools_pending, tool_failures=tool_failures, system_message=rtmt.system_message, persona_prompt_loader=None)
             done_msg = MagicMock()
             done_msg.data = json.dumps({"type": "response.done", "response": {"output": []}})
-            await rtmt._process_message_to_client(done_msg, client_ws, server_ws, tools_pending, tool_failures=tool_failures)
+            await rtmt._process_message_to_client(done_msg, client_ws, server_ws, tools_pending, tool_failures=tool_failures, system_message=rtmt.system_message, persona_prompt_loader=None)
 
         await _failed_round("call-1")
         self.assertEqual(tool_failures.count, 1)
@@ -2790,12 +2958,12 @@ class ProcessMessageToClientTests(unittest.IsolatedAsyncioTestCase):
             })
             if name == "exploding_tool":
                 with self.assertLogs("sonic-drive-in", level="ERROR"):
-                    await rtmt._process_message_to_client(call_msg, client_ws, server_ws, tools_pending, tool_failures=tool_failures)
+                    await rtmt._process_message_to_client(call_msg, client_ws, server_ws, tools_pending, tool_failures=tool_failures, system_message=rtmt.system_message, persona_prompt_loader=None)
             else:
-                await rtmt._process_message_to_client(call_msg, client_ws, server_ws, tools_pending, tool_failures=tool_failures)
+                await rtmt._process_message_to_client(call_msg, client_ws, server_ws, tools_pending, tool_failures=tool_failures, system_message=rtmt.system_message, persona_prompt_loader=None)
             done_msg = MagicMock()
             done_msg.data = json.dumps({"type": "response.done", "response": {"output": []}})
-            await rtmt._process_message_to_client(done_msg, client_ws, server_ws, tools_pending, tool_failures=tool_failures)
+            await rtmt._process_message_to_client(done_msg, client_ws, server_ws, tools_pending, tool_failures=tool_failures, system_message=rtmt.system_message, persona_prompt_loader=None)
 
         await _round("exploding_tool", "f1")   # round 1: fail -> count=1, bare response.create
         await _round("ok_tool", "g1")           # round 2: succeed -> count unchanged (1)
@@ -2818,8 +2986,52 @@ class ProcessMessageToClientTests(unittest.IsolatedAsyncioTestCase):
         msg = MagicMock()
         msg.data = json.dumps({"type": "error", "error": {"message": "something went wrong"}})
         with self.assertLogs("sonic-drive-in", level="ERROR"):
-            result = await rtmt._process_message_to_client(msg, client_ws, server_ws, tools_pending)
+            result = await rtmt._process_message_to_client(msg, client_ws, server_ws, tools_pending, system_message=rtmt.system_message, persona_prompt_loader=None)
         self.assertIsNotNone(result)
+
+    async def test_rejected_session_update_fallback_carries_the_bound_persona_system_message(self):
+        """Issue #170 R1 (Rick's PR #175 round-2 review, required item 1): a
+        rejected session.update's fallback (sent from inside
+        `_process_message_to_client`'s `case "error":` branch, via
+        `_recover_rejected_session_update`) must carry THIS session's own
+        bound persona's `system_message` -- never `rtmt.system_message` (the
+        deployment-wide default) -- exactly like the already-fixed client-
+        session-update path (`test_session_update_uses_the_bound_sessions_
+        system_message_not_the_deployment_default` on
+        `ProcessMessageToServerTests`). Simulates the real sequence: our own
+        session.update is tracked by a `_SessionUpdateGuard` (as
+        `_forward_messages` does for every outbound session.update), then an
+        upstream `error` event echoing that event_id arrives, which must
+        trigger the `error` branch to resend a minimal fallback instead of
+        surfacing the error to the browser."""
+        rtmt = self._make_rtmt()
+        self.assertIsNone(rtmt.system_message, "this fixture's deployment default is unset (None)")
+        bound_persona_system_message = "You are a different, non-default persona's crew associate."
+        client_ws = _make_mock_ws()
+        server_ws = _make_mock_ws()
+        tools_pending = {}
+
+        guard = _SessionUpdateGuard()
+        sent_update = guard.stamp({"type": "session.update", "session": {"instructions": "whatever we sent"}})
+        rejected_event_id = sent_update["event_id"]
+
+        msg = MagicMock()
+        msg.data = json.dumps({
+            "type": "error",
+            "error": {"type": "invalid_request_error", "code": "invalid_value",
+                     "event_id": rejected_event_id, "message": "Invalid value"},
+        })
+        with self.assertLogs(level="ERROR"):
+            result = await rtmt._process_message_to_client(
+                msg, client_ws, server_ws, tools_pending, guard=guard,
+                system_message=bound_persona_system_message, persona_prompt_loader=None,
+            )
+        self.assertIsNone(result, "a recovered rejection must not also be relayed to the browser")
+        server_ws.send_str.assert_called_once()
+        fallback = json.loads(server_ws.send_str.call_args[0][0])
+        self.assertEqual(fallback["type"], "session.update")
+        self.assertEqual(fallback["session"]["instructions"], bound_persona_system_message)
+        self.assertNotEqual(fallback["session"]["instructions"], rtmt.system_message)
 
     async def test_response_done_scrubs_function_call_from_output(self):
         """A function_call item in response.done's output array (tool name +
@@ -2843,7 +3055,7 @@ class ProcessMessageToClientTests(unittest.IsolatedAsyncioTestCase):
                 ],
             },
         })
-        result = await rtmt._process_message_to_client(msg, client_ws, server_ws, tools_pending)
+        result = await rtmt._process_message_to_client(msg, client_ws, server_ws, tools_pending, system_message=rtmt.system_message, persona_prompt_loader=None)
         self.assertNotIn("SECRET_ARGS_TOKEN", result)
         output = json.loads(result)["response"]["output"]
         self.assertEqual([o["type"] for o in output], ["message"])
@@ -2870,7 +3082,7 @@ class ProcessMessageToClientTests(unittest.IsolatedAsyncioTestCase):
                 ],
             },
         })
-        result = await rtmt._process_message_to_client(msg, client_ws, server_ws, tools_pending)
+        result = await rtmt._process_message_to_client(msg, client_ws, server_ws, tools_pending, system_message=rtmt.system_message, persona_prompt_loader=None)
         self.assertNotIn("SECRET_RESULT_TOKEN", result)
         output = json.loads(result)["response"]["output"]
         self.assertEqual([o["type"] for o in output], ["message"])
@@ -2893,7 +3105,7 @@ class ProcessMessageToClientTests(unittest.IsolatedAsyncioTestCase):
                 ],
             },
         })
-        result = await rtmt._process_message_to_client(msg, client_ws, server_ws, tools_pending)
+        result = await rtmt._process_message_to_client(msg, client_ws, server_ws, tools_pending, system_message=rtmt.system_message, persona_prompt_loader=None)
         self.assertEqual(result, msg.data)
 
     async def test_malformed_json_does_not_crash(self):
@@ -2906,7 +3118,7 @@ class ProcessMessageToClientTests(unittest.IsolatedAsyncioTestCase):
         # Valid regex match but will fail on JSON parse for non-passthrough type
         msg.data = '{"type": "session.created", INVALID JSON'
         with self.assertRaises(json.JSONDecodeError):
-            await rtmt._process_message_to_client(msg, client_ws, server_ws, tools_pending)
+            await rtmt._process_message_to_client(msg, client_ws, server_ws, tools_pending, system_message=rtmt.system_message, persona_prompt_loader=None)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -3375,8 +3587,8 @@ class GARealtime21SurfaceTests(unittest.TestCase):
         # A session.update the model rejects drops the tools with it, so the
         # default payload must stay valid on non-reasoning models (1.5) too.
         rtmt = self._make_rtmt()
-        payloads = [json.loads(rtmt.build_bootstrap_session_update())["session"],
-                    rtmt._build_session({}),
+        payloads = [json.loads(rtmt.build_bootstrap_session_update(system_message=rtmt.system_message))["session"],
+                    rtmt._build_session({}, system_message=rtmt.system_message),
                     json.loads(rtmt.build_voice_update("marin"))["session"]]
         for session in payloads:
             self.assertNotIn("reasoning", session)
