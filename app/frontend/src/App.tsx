@@ -642,8 +642,17 @@ function SonicApp() {
     // lingering realtime session) so the new persona starts on a genuinely fresh slate.
     // useRealTime already namespaces the resume id per persona.id, so no separate handling
     // is needed there.
-    const handleSelectPersona = (personaId: string) => {
-        realtime.endSession();
+    const handleSelectPersona = async (personaId: string) => {
+        // Defensive hardening for issue GH-171: `PersonaPicker` is already `disabled` while a
+        // conversation is active (ADR-001 decision 2), so this path shouldn't normally see
+        // `isSessionActiveRef.current === true` -- but if it ever does (e.g. a future caller that
+        // bypasses the picker), stop the live conversation cleanly first rather than letting
+        // `endSession()` tear down the socket out from under an in-progress recording/greeting.
+        if (isSessionActiveRef.current) void stopConversation();
+        // issue GH-171 round 2, H2: tells useRealtime a persona switch is under way, so its own
+        // onClose doesn't force an extra reconnect for the persona being switched AWAY from once
+        // the server's close for this end_session arrives (see useRealtime.tsx's switchingRef).
+        realtime.endSession({ switching: true });
         resumePendingRef.current = null;
         resumedSessionRef.current = false;
         serverSessionLostRef.current = false;
@@ -652,7 +661,14 @@ function SonicApp() {
         setSessionIdentifiers(null);
         setTokenHistory([]);
         setConnectionNotice(null);
-        selectPersona(personaId);
+        // Issue GH-171 round 3, H4: selectPersona() now reports whether the switch actually
+        // happened. On failure (the detail fetch rejected, or the id hadn't changed) there is
+        // nothing for react-use-websocket's own url-keyed effect to react to -- cancelSwitch()
+        // is the only thing left that can clear useRealtime's pending-switch state and, if
+        // anything still needs one, recover a socket for the persona that was never actually
+        // left.
+        const switched = await selectPersona(personaId);
+        if (!switched) realtime.cancelSwitch();
     };
 
     // Rick's PR 134 review, item 4: the model picker's own explicit user choice -- the other

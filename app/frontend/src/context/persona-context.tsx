@@ -80,7 +80,13 @@ interface PersonaContextValue {
     ready: boolean;
     /** Non-null if the live fetch failed and the app is running on the neutral placeholder. */
     error: string | null;
-    selectPersona: (id: string) => void;
+    /** Issue GH-171 round 3, H4: resolves `true` once the requested persona's detail has actually
+     * loaded and `current` now reflects it, `false` if the fetch failed (the previous selection
+     * stays active) or the id was already selected (a no-op). App.tsx's handleSelectPersona awaits
+     * this to tell useRealtime's `cancelSwitch()` apart from "nothing to do" -- there is no other
+     * reliable signal for a FAILED switch, since on failure `current`/`personaId` never change at
+     * all. */
+    selectPersona: (id: string) => Promise<boolean>;
 }
 
 const PersonaContext = createContext<PersonaContextValue | undefined>(undefined);
@@ -204,9 +210,10 @@ export function PersonaProvider({ children }: { children: ReactNode }) {
                 setCurrent(detail);
                 applyDetail(id, detail, summary);
                 setError(null);
-            } else {
-                setError(`Could not load persona "${id}"; staying on the previous selection.`);
+                return true;
             }
+            setError(`Could not load persona "${id}"; staying on the previous selection.`);
+            return false;
         },
         [applyDetail]
     );
@@ -243,11 +250,11 @@ export function PersonaProvider({ children }: { children: ReactNode }) {
     }, []);
 
     const selectPersona = useCallback(
-        (id: string) => {
-            if (id === personaId) return;
+        async (id: string) => {
+            if (id === personaId) return false;
             setPersonaId(id);
             window.localStorage.setItem(STORAGE_KEY, id);
-            void loadPersona(id);
+            return loadPersona(id);
         },
         [personaId, loadPersona]
     );

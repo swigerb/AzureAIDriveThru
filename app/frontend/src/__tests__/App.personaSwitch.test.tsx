@@ -21,6 +21,7 @@ const rt = vi.hoisted(() => ({
         sendVoiceChoice: vi.fn(),
         endSession: vi.fn(),
         reconnect: vi.fn(async () => {}),
+        cancelSwitch: vi.fn(),
         isConnected: true
     }
 }));
@@ -139,5 +140,53 @@ describe("persona switch clears state (issue #80 F7)", () => {
         await waitFor(() => expect(screen.queryByText("Alpha demo line")).not.toBeInTheDocument());
         await screen.findByText("Beta Combo");
         await screen.findByText("Beta demo line");
+    });
+});
+
+// Issue GH-171 round 4, item 2: every test above already mocks `cancelSwitch: vi.fn()` without
+// ever asserting on it, and only checks `endSession` with `toHaveBeenCalled()` (no argument
+// check). That let two mutations survive the round-3 suite entirely: M4 (handleSelectPersona
+// never calling `realtime.cancelSwitch()` on a failed switch) and M5 (handleSelectPersona calling
+// `realtime.endSession()` without `{ switching: true }`). These tests exercise
+// useRealtime.tsx's App-facing contract directly through the real <PersonaPicker /> control.
+describe("App.tsx's handleSelectPersona: realtime wiring (issue GH-171 round 4, item 2)", () => {
+    it("tells useRealtime a switch is under way with endSession({ switching: true }) -- not a bare endSession() (kills mutation M5)", async () => {
+        render(<RootApp />);
+        await switchTo("test-beta");
+
+        expect(rt.api.endSession).toHaveBeenCalledWith({ switching: true });
+        // Guard against a mutation that drops the argument object's shape rather than the whole
+        // call -- `switching` must specifically be `true`, not merely truthy/present-by-accident.
+        const calls = rt.api.endSession.mock.calls;
+        const call = calls[calls.length - 1];
+        expect(call?.[0]).toStrictEqual({ switching: true });
+    });
+
+    it("calls realtime.cancelSwitch() exactly once when the persona detail fetch fails (kills mutation M4)", async () => {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async (url: string) => {
+                if (url === "/api/personas") return { ok: true, status: 200, json: async () => FIXTURE_PERSONA_INDEX };
+                if (url === "/api/personas/test-alpha") return { ok: true, status: 200, json: async () => DETAIL_ALPHA };
+                // The switched-to persona's own detail fetch fails: selectPersona() resolves false.
+                if (url === "/api/personas/test-beta") return { ok: false, status: 500, json: async () => ({}) };
+                return { ok: false, status: 404, json: async () => ({}) };
+            })
+        );
+        render(<RootApp />);
+
+        await switchTo("test-beta");
+
+        await waitFor(() => expect(rt.api.cancelSwitch).toHaveBeenCalledTimes(1));
+        // The picker itself falls back to reflecting the persona that is actually still live.
+        expect((screen.getByLabelText("Select persona") as HTMLSelectElement).value).toBe("test-alpha");
+    });
+
+    it("does NOT call realtime.cancelSwitch() when the persona switch succeeds", async () => {
+        render(<RootApp />);
+        await switchTo("test-beta");
+
+        await waitFor(() => expect((screen.getByLabelText("Select persona") as HTMLSelectElement).value).toBe("test-beta"));
+        expect(rt.api.cancelSwitch).not.toHaveBeenCalled();
     });
 });
