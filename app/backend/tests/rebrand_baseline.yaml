@@ -143,19 +143,19 @@ entries:
 - file: app/backend-dotnet/tests/Backend.Tests/Prompts/UpsellHintConformanceTests.cs
   brand: mcdonalds
   max: 1
-  issue: '#165'
+  issue: '#76'
   reason: 'Rick''s PR 166 round-1 review, required item 4: new conformance test asserting
     every hint/prompt item reference (across all three packs, named directly) resolves
     to a real menu item -- remove only if the pack roster changes.'
-  increase_reason: '#165'
+  increase_reason: '#76'
 - file: app/backend-dotnet/tests/Backend.Tests/Prompts/UpsellHintConformanceTests.cs
   brand: sonic
   max: 4
-  issue: '#165'
+  issue: '#76'
   reason: 'Rick''s PR 166 round-1 review, required item 4: new conformance test asserting
     every hint/prompt item reference (across all three packs, named directly) resolves
     to a real menu item -- remove only if the pack roster changes.'
-  increase_reason: '#165'
+  increase_reason: '#76'
 - file: app/backend-dotnet/tests/Backend.Tests/TestSupport/PersonaPackFixture.cs
   brand: dunkin
   max: 1
@@ -337,11 +337,11 @@ entries:
 - file: app/backend/tests/test_persona_binding.py
   brand: sonic
   max: 1
-  issue: '#165'
+  issue: '#76'
   reason: 'Rick''s PR 166 round-1 review, required item 5: the log-capture pin''s
     ''sonic-drive-in'' logger-name literal (the app''s own default logger namespace,
     unrelated to any persona pack) -- remove only if that logger is ever renamed.'
-  increase_reason: '#165'
+  increase_reason: '#76'
 - file: app/backend/tests/test_persona_loader.py
   brand: sonic
   max: 46
@@ -353,21 +353,21 @@ entries:
 - file: app/backend/tests/test_persona_pack_conformance.py
   brand: mcdonalds
   max: 1
-  issue: '#165'
+  issue: '#76'
   reason: 'Rick''s PR 166 round-1 review, required item 4: new pack-consistency
     conformance test asserting every hint/prompt item reference resolves to a real
     menu item, parametrized across all three packs by id -- same class as the
     #78 Python test baseline entries; remove only if the pack roster changes.'
-  increase_reason: '#165'
+  increase_reason: '#76'
 - file: app/backend/tests/test_persona_pack_conformance.py
   brand: sonic
   max: 5
-  issue: '#165'
+  issue: '#76'
   reason: 'Rick''s PR 166 round-1 review, required item 4: new pack-consistency
     conformance test asserting every hint/prompt item reference resolves to a real
     menu item, parametrized across all three packs by id -- same class as the
     #78 Python test baseline entries; remove only if the pack roster changes.'
-  increase_reason: '#165'
+  increase_reason: '#76'
 - file: app/backend/tests/test_prompt_extras_pin.py
   brand: sonic
   max: 4
@@ -462,43 +462,43 @@ entries:
 - file: app/frontend/src/components/ui/__tests__/menu-panel.realPackSizeLabels.test.tsx
   brand: dunkin
   max: 4
-  issue: '#165'
+  issue: '#76'
   reason: 'Rick''s PR 166 round-1 review, required item 1: real-pack regression test
     for the single-size label fix, loaded against all three packs'' own real menu
     JSON (not synthetic fixtures) by id -- remove only if the pack roster changes.'
-  increase_reason: '#165'
+  increase_reason: '#76'
 - file: app/frontend/src/components/ui/__tests__/menu-panel.realPackSizeLabels.test.tsx
   brand: mcdonalds
   max: 5
-  issue: '#165'
+  issue: '#76'
   reason: 'Rick''s PR 166 round-1 review, required item 1: real-pack regression test
     for the single-size label fix, loaded against all three packs'' own real menu
     JSON (not synthetic fixtures) by id -- remove only if the pack roster changes.'
-  increase_reason: '#165'
+  increase_reason: '#76'
 - file: app/frontend/src/components/ui/__tests__/menu-panel.realPackSizeLabels.test.tsx
   brand: sonic
   max: 5
-  issue: '#165'
+  issue: '#76'
   reason: 'Rick''s PR 166 round-1 review, required item 1: real-pack regression test
     for the single-size label fix, loaded against all three packs'' own real menu
     JSON (not synthetic fixtures) by id -- remove only if the pack roster changes.'
-  increase_reason: '#165'
+  increase_reason: '#76'
 - file: app/frontend/src/components/ui/__tests__/menu-panel.test.tsx
   brand: dunkin
   max: 3
-  issue: '#165'
+  issue: '#76'
   reason: 'Rick''s PR 166 round-1 review, required items 1/2: unit tests pinning the
     size-label and card-layout fixes name the affected packs directly by id for
     clarity -- remove only if the pack roster changes.'
-  increase_reason: '#165'
+  increase_reason: '#76'
 - file: app/frontend/src/components/ui/__tests__/menu-panel.test.tsx
   brand: mcdonalds
   max: 1
-  issue: '#165'
+  issue: '#76'
   reason: 'Rick''s PR 166 round-1 review, required items 1/2: unit tests pinning the
     size-label and card-layout fixes name the affected packs directly by id for
     clarity -- remove only if the pack roster changes.'
-  increase_reason: '#165'
+  increase_reason: '#76'
 - file: app/frontend/src/components/ui/__tests__/order-summary.test.tsx
   brand: sonic
   max: 1
@@ -511,11 +511,11 @@ entries:
 - file: app/frontend/src/components/ui/__tests__/settings.menuMode.test.tsx
   brand: mcdonalds
   max: 2
-  issue: '#165'
+  issue: '#76'
   reason: 'Rick''s PR 166 round-1 review, required item 3: unit test pinning the
     menu-mode toggle lock names the persona whose panel this exercises for clarity
     -- remove only if the fixture persona changes.'
-  increase_reason: '#165'
+  increase_reason: '#76'
 - file: app/frontend/src/index.css
   brand: sonic
   max: 2
