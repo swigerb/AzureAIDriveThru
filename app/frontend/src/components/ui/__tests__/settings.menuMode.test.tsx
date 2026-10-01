@@ -10,9 +10,8 @@ import { AzureSpeechProvider } from "@/context/azure-speech-context";
 // the live socket (react-use-websocket's connect effect keys on `url`), which on Python rejects
 // the stale resume id as `mode_mismatch` and on C# silently starts a fresh session, either way
 // dropping the in-progress order. Also pins the selected-button color token: `secondary`, not
-// `primary` (which becomes McDonald's red `#DB0007` once #164/PR #167's palette swap lands,
-// while `secondary` becomes its gold `#FFBC0D`/`#FFC72C`, matching the original card's own
-// selected-state color).
+// `primary` (which becomes one daypart pack's brand red once #164/PR #167's palette swap lands,
+// while `secondary` becomes its gold, matching the original card's own selected-state color).
 
 function renderSettings(props: Partial<React.ComponentProps<typeof Settings>> = {}) {
     return render(
@@ -73,7 +72,7 @@ describe("Settings menu mode toggle", () => {
         expect(radiogroup.getAttribute("aria-describedby")).toBeTruthy();
     });
 
-    it("styles the selected mode with the secondary token, not the primary (McDonald's-red) token", async () => {
+    it("styles the selected mode with the secondary token, not the primary (pack brand-red) token", async () => {
         renderSettings({ menuMode: "lunch" });
         await userEvent.click(screen.getByRole("button", { name: /open settings/i }));
 

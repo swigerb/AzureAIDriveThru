@@ -184,13 +184,13 @@ describe("MenuPanel", () => {
         expect(screen.getByText("Standard:")).toBeInTheDocument();
     });
 
-    // Rick's #166 round-1 review, required item 1 (Dunkin regression pin): a single-size item
-    // with the LOWERCASE size key "standard" and no `calories` (Dunkin's Glazed Donut, Boston
-    // Kreme Donut, Everything Bagel, MUNCHKINS, and 6 more of its own single-size items are all
-    // written exactly this way) must never show a "standard:" label -- dev's original rule hid
-    // it unconditionally for that lowercase value, and this PR's menu-fidelity work must not
-    // re-expose it just because the item happens to lack `calories`.
-    it("keeps dev's exact rule for a lowercase 'standard' size with no calories (Dunkin regression pin)", async () => {
+    // Rick's #166 round-1 review, required item 1 (pre-existing pack regression pin): a
+    // single-size item with the LOWERCASE size key "standard" and no `calories` (several of a
+    // pre-existing pack's own real single-size items are written exactly this way) must never
+    // show a "standard:" label -- dev's original rule hid it unconditionally for that lowercase
+    // value, and this PR's menu-fidelity work must not re-expose it just because the item
+    // happens to lack `calories`.
+    it("keeps dev's exact rule for a lowercase 'standard' size with no calories (pre-existing pack regression pin)", async () => {
         mockFetchOnce({
             menuItems: [
                 {
@@ -314,8 +314,8 @@ describe("MenuPanel", () => {
     });
 
     // Rick's #166 round-1 review, required item 2: the meal circle is bound to the shared
-    // `primary` token (the one #164/PR #167's McDonald's palette swap resolves to #DB0007), not
-    // the generic `destructive` token the PR originally used.
+    // `primary` token (the one #164/PR #167's palette swap for the daypart pack resolves to a
+    // specific brand red), not the generic `destructive` token the PR originally used.
     it("binds the meal circle to the primary color token, not the generic destructive token", async () => {
         mockFetchOnce({
             menuItems: [

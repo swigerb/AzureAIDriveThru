@@ -39,6 +39,7 @@ from test_session_bootstrap import BROWSER_SESSION_UPDATE, _RealtimeHarness
 
 import default_persona
 import menu_utils
+import rtmt
 import tools
 from order_state import order_state_singleton
 from persona_loader import Persona, PersonaCatalog
@@ -1025,7 +1026,7 @@ class MenuModeWebSocketHandlerTests(_RealtimeHarness):
         length)."""
         needle = "brunch-CRLF-\r\ninjection-attempt"
         encoded = urllib.parse.quote(needle, safe="")
-        with self.assertLogs("sonic-drive-in", level="WARNING") as logs:
+        with self.assertLogs(rtmt.logger, level="WARNING") as logs:
             with self.assertRaises(aiohttp.WSServerHandshakeError):
                 await self.client.ws_connect(f"/realtime?persona=test-delta&mode={encoded}")
         joined = "\n".join(logs.output)
