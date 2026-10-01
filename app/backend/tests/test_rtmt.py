@@ -3170,6 +3170,65 @@ class ProcessMessageToClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(fallback["session"]["instructions"], bound_persona_system_message)
         self.assertNotEqual(fallback["session"]["instructions"], rtmt.system_message)
 
+    async def test_rejected_session_update_fallback_carries_the_bound_personas_tool_schemas(self):
+        """Issue #170 round 3, R6 (Rick's PR #175 round-3 review): the sibling
+        of `test_rejected_session_update_fallback_carries_the_bound_persona_
+        system_message` above, for `session.tools[].description` instead of
+        `instructions`. R4 made `tool_schemas` a required/keyword-only
+        parameter threaded through `_process_message_to_client` ->
+        `_recover_rejected_session_update` -> `build_fallback_session_update`,
+        but every existing test on this path (including the sibling above)
+        passed `[tool.schema for tool in rtmt.tools.values()]` -- the SAME
+        list the deployment default would use -- so a mutation that silently
+        substitutes `self.tools.values()` for the bound `tool_schemas`
+        parameter at either hop (`rtmt.py:1576`'s fallback-builder call, or
+        the `_forward_messages` call site into `_process_message_to_client`)
+        still passed every suite; nothing ever passed a BOUND list that
+        actually differs from the default to notice. Registers a distinct
+        "default persona" search schema directly on `rtmt.tools` (standing in
+        for the deployment default's own `prompts/tool_schemas.yaml`) and
+        passes a DIFFERENT "bound persona" schema as this session's own
+        `tool_schemas=`, then asserts the fallback's `session.tools` carries
+        the BOUND description, never the default's."""
+        rtmt = self._make_rtmt()
+        default_search_schema = {
+            "type": "function", "name": "search",
+            "description": "Search the DEFAULT PERSONA's menu.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        }
+        rtmt.tools["search"] = Tool(target=None, schema=default_search_schema)
+        bound_search_schema = {
+            "type": "function", "name": "search",
+            "description": "Search the BOUND PERSONA's own menu.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        }
+        client_ws = _make_mock_ws()
+        server_ws = _make_mock_ws()
+        tools_pending = {}
+
+        guard = _SessionUpdateGuard()
+        sent_update = guard.stamp({"type": "session.update", "session": {"instructions": "whatever we sent"}})
+        rejected_event_id = sent_update["event_id"]
+
+        msg = MagicMock()
+        msg.data = json.dumps({
+            "type": "error",
+            "error": {"type": "invalid_request_error", "code": "invalid_value",
+                     "event_id": rejected_event_id, "message": "Invalid value"},
+        })
+        with self.assertLogs(level="ERROR"):
+            result = await rtmt._process_message_to_client(
+                msg, client_ws, server_ws, tools_pending, guard=guard,
+                system_message=rtmt.system_message, persona_prompt_loader=None,
+                tool_schemas=[bound_search_schema])
+        self.assertIsNone(result, "a recovered rejection must not also be relayed to the browser")
+        server_ws.send_str.assert_called_once()
+        fallback = json.loads(server_ws.send_str.call_args[0][0])
+        self.assertEqual(fallback["type"], "session.update")
+        descriptions = [t["description"] for t in fallback["session"]["tools"]]
+        self.assertIn("Search the BOUND PERSONA's own menu.", descriptions)
+        self.assertNotIn("Search the DEFAULT PERSONA's menu.", descriptions)
+
     async def test_response_done_scrubs_function_call_from_output(self):
         """A function_call item in response.done's output array (tool name +
         JSON arguments) must never reach the browser -- the tool result is

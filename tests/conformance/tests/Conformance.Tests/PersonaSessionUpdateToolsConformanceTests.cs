@@ -63,6 +63,58 @@ internal static class PersonaSessionUpdateToolsExpectations
             $"'{path}' is missing a non-empty \"toolDescriptionSubstring\" field.");
         return expectation;
     }
+
+    /// <summary>
+    /// Issue #170 round 4, R6 (Rick's PR #175 round-3 review): the one shared assertion body
+    /// used by BOTH <see cref="PersonaSessionUpdateToolsScenario"/> (the ordinary client-update
+    /// path below) and <c>PersonaSessionUpdateFallbackScenario</c> in
+    /// PersonaSessionUpdateFallbackConformanceTests.cs (the bootstrap and rejected-update
+    /// fallback frames) -- those two call sites previously only asserted `instructions`, never
+    /// `session.tools[].description`, so a mutation that swapped either frame's tool list for the
+    /// deployment default's own (x-boot, x-recover, x-toclient on the Python backend;
+    /// cs-boot-tools, cs-fallback-tools on the C# backend) survived every suite even though the
+    /// ordinary client-update path's own equivalent mutation (R4) was already caught. Takes the
+    /// already-parsed `session` object and a short, human-readable name for the frame being
+    /// checked (e.g. "bootstrap session.update", "fallback session.update") purely for assertion
+    /// messages -- no persona-specific literal lives here either, same discipline as <see
+    /// cref="For"/> above.
+    /// </summary>
+    public static void AssertSearchToolDescriptionIsBoundTo(
+        JsonElement session, string personaId, IReadOnlyList<string> allPersonaIdsOnThisFixture, string frameName)
+    {
+        var expected = For(personaId);
+
+        Assert.True(session.TryGetProperty("tools", out var toolsProp),
+            $"The {frameName} for persona '{personaId}' carried no 'tools' at all.");
+
+        var searchTool = toolsProp.EnumerateArray()
+            .FirstOrDefault(t => t.TryGetProperty("name", out var n) && n.GetString() == "search");
+        Assert.True(searchTool.ValueKind != JsonValueKind.Undefined,
+            $"The {frameName} for persona '{personaId}' carried no 'search' tool.");
+
+        Assert.True(searchTool.TryGetProperty("description", out var descriptionProp),
+            $"The 'search' tool in the {frameName} for persona '{personaId}' carried no 'description'.");
+        var description = descriptionProp.GetString();
+        Assert.True(!string.IsNullOrEmpty(description),
+            $"The 'search' tool in the {frameName} for persona '{personaId}' carried empty 'description'.");
+
+        // R4/R6's own regression: this pack's own tool description text must be present.
+        Assert.Contains(expected.ToolDescriptionSubstring, description);
+
+        // The live bug's exact symptom: no OTHER enabled persona's tool description text leaked
+        // in -- i.e. the deployment default's (or any other bound persona's) own tool schemas
+        // never silently substituted.
+        foreach (var otherId in allPersonaIdsOnThisFixture)
+        {
+            if (otherId == personaId)
+            {
+                continue;
+            }
+
+            var other = For(otherId);
+            Assert.DoesNotContain(other.ToolDescriptionSubstring, description);
+        }
+    }
 }
 
 /// <summary>Shared R4 scenario body -- run once per persona id by both Theory classes below.
@@ -76,8 +128,6 @@ file static class PersonaSessionUpdateToolsScenario
     public static async Task RunAsync(
         ConformanceFixture fixture, string personaId, IReadOnlyList<string> allPersonaIdsOnThisFixture, CancellationToken ct)
     {
-        var expected = PersonaSessionUpdateToolsExpectations.For(personaId);
-
         var (browser, connection, _) = await OrderScenarioHelpers.ConnectAndGreetAsync(
             fixture, ct, persona: personaId);
         await using var _browser = browser;
@@ -91,36 +141,8 @@ file static class PersonaSessionUpdateToolsScenario
             $"No browser-triggered session.update was forwarded upstream for persona '{personaId}'.");
 
         var session = sessionUpdate!.Json.GetProperty("session");
-        Assert.True(session.TryGetProperty("tools", out var toolsProp),
-            $"The session.update forwarded upstream for persona '{personaId}' carried no 'tools' at all.");
-
-        var searchTool = toolsProp.EnumerateArray()
-            .FirstOrDefault(t => t.TryGetProperty("name", out var n) && n.GetString() == "search");
-        Assert.True(searchTool.ValueKind != JsonValueKind.Undefined,
-            $"The session.update forwarded upstream for persona '{personaId}' carried no 'search' tool.");
-
-        Assert.True(searchTool.TryGetProperty("description", out var descriptionProp),
-            $"The 'search' tool forwarded upstream for persona '{personaId}' carried no 'description'.");
-        var description = descriptionProp.GetString();
-        Assert.True(!string.IsNullOrEmpty(description),
-            $"The 'search' tool forwarded upstream for persona '{personaId}' carried empty 'description'.");
-
-        // R4's own regression: this pack's own tool description text must be present.
-        Assert.Contains(expected.ToolDescriptionSubstring, description);
-
-        // The live bug's exact symptom: no OTHER enabled persona's tool description text leaked
-        // in -- i.e. the deployment default's (or any other bound persona's) own tool schemas
-        // never silently substituted.
-        foreach (var otherId in allPersonaIdsOnThisFixture)
-        {
-            if (otherId == personaId)
-            {
-                continue;
-            }
-
-            var other = PersonaSessionUpdateToolsExpectations.For(otherId);
-            Assert.DoesNotContain(other.ToolDescriptionSubstring, description);
-        }
+        PersonaSessionUpdateToolsExpectations.AssertSearchToolDescriptionIsBoundTo(
+            session, personaId, allPersonaIdsOnThisFixture, "session.update forwarded upstream");
     }
 }
 

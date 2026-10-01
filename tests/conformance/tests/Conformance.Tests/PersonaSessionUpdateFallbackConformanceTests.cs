@@ -30,6 +30,17 @@ namespace Conformance.Tests;
 /// cref="PersonaSessionUpdateInstructionsConformanceTests"/>'s <c>PersonaSessionUpdateExpectations</c>
 /// already reads from each pack's own smoke.json, so this file carries no persona-specific
 /// literal of its own either.
+///
+/// Issue #170 round 4, R6 (Rick's PR #175 round-3 review): the bootstrap (Sequence 0, captured
+/// below as <c>bootstrap</c>) and the fallback itself were already being captured by this
+/// scenario for the `instructions` assertion above, but their own `session.tools[].description`
+/// went unchecked -- so a mutation swapping either frame's tool list for the deployment
+/// default's own (x-boot, x-recover on Python; cs-boot-tools, cs-fallback-tools on C#) survived
+/// every suite. Both frames now also get <see
+/// cref="PersonaSessionUpdateToolsExpectations.AssertSearchToolDescriptionIsBoundTo"/> -- the
+/// SAME shared helper <see cref="PersonaSessionUpdateToolsScenario"/> in
+/// PersonaSessionUpdateToolsConformanceTests.cs uses for the ordinary client-update path, so this
+/// file still carries no persona-specific literal of its own for the tools half either.
 /// </summary>
 file static class PersonaSessionUpdateFallbackScenario
 {
@@ -94,6 +105,17 @@ file static class PersonaSessionUpdateFallbackScenario
             var other = PersonaSessionUpdateExpectations.For(otherId);
             Assert.DoesNotContain(other.InstructionsSubstring, instructions);
         }
+
+        // #170 round 4, R6: the bootstrap's own tool list (Sequence 0, rejected above) and the
+        // fallback's own tool list must EACH carry this pack's own `search` tool description --
+        // the bootstrap is built fresh from this session's own bound tool_schemas just like the
+        // fallback is, and both are exactly the two call sites Rick's round-2 spec named
+        // explicitly but that were never actually checked here before.
+        var bootstrapSession = bootstrap!.Json.GetProperty("session");
+        PersonaSessionUpdateToolsExpectations.AssertSearchToolDescriptionIsBoundTo(
+            bootstrapSession, personaId, allPersonaIdsOnThisFixture, "bootstrap session.update");
+        PersonaSessionUpdateToolsExpectations.AssertSearchToolDescriptionIsBoundTo(
+            fallbackSession, personaId, allPersonaIdsOnThisFixture, "fallback session.update");
 
         // The greeting must still complete and match the SAME pack -- proves the fallback's own
         // recovery doesn't leave the session half-configured or silently bound to a different
