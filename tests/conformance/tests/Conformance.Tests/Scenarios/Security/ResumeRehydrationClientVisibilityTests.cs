@@ -89,6 +89,12 @@ public sealed class ResumeRehydrationClientVisibilityTests(ResumeMarginConforman
         var resumed = await second.ReceivedFrames.WaitForAsync(f => f.Type == "extension.session_resumed", FrameTimeout, ct);
         Assert.True(resumed is not null, "Expected extension.session_resumed on the resumed connection.");
 
+        // #181: the post-resume silence nudge only arms once THIS socket's own client proves
+        // the conversation is live by sending its own session.update -- a resume alone is no
+        // longer enough. Send it here so this scenario still exercises the nudge path it's
+        // actually testing (that the browser never sees a leaked system item around it).
+        await second.SendStartSessionAsync(cancellationToken: ct);
+
         // Precondition: the fake upstream really did get sent (and, via its default script,
         // echo back) a role="system" conversation item -- otherwise this scenario would prove
         // nothing about the drop.
