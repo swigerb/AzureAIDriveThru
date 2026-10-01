@@ -276,10 +276,9 @@ describe("MenuPanel", () => {
         expect(screen.queryByText("0 Cal")).not.toBeInTheDocument();
     });
 
-    // Rick's #166 round-1 review, required item 2: the meal circle + name share one row; the
-    // description and calorie line must be SIBLINGS below that row, not nested inside it (the PR
-    // wrapped name/description/calories together in a column beside the circle -- this pins the
-    // original's own DOM shape instead).
+    // The meal circle + name share one row; the
+    // description and calorie line must be SIBLINGS below that row, not nested inside it (pins
+    // the original's own DOM shape).
     it("renders the description below the circle+name row, not nested inside it", async () => {
         mockFetchOnce({
             menuItems: [
@@ -287,7 +286,7 @@ describe("MenuPanel", () => {
                     category: "Extra Value Meals",
                     items: [
                         {
-                            name: "Big Mac® Meal",
+                            name: "Fixture Combo Meal®",
                             sizes: [{ size: "Standard", price: 8.29 }],
                             description: "Two beef patties, special sauce.",
                             calories: 590,
@@ -299,7 +298,7 @@ describe("MenuPanel", () => {
         });
         render(<MenuPanel />);
 
-        const nameEl = await screen.findByText("Big Mac® Meal");
+        const nameEl = await screen.findByText("Fixture Combo Meal®");
         const circleAndNameRow = nameEl.closest("div");
         expect(circleAndNameRow?.querySelector("p")).toBeNull(); // no description/calories <p> inside this row
 
@@ -517,7 +516,7 @@ describe("MenuPanel", () => {
                     category: "Fries, Sides & Drinks",
                     icon: "🍟",
                     modeDisplay: { breakfast: { displayName: "Sides & Drinks", icon: "☕" } },
-                    items: [{ name: "World Famous Fries", sizes: [{ size: "Standard", price: 2.99 }], description: "Golden fries." }]
+                    items: [{ name: "Fixture Fries", sizes: [{ size: "Standard", price: 2.99 }], description: "Golden fries." }]
                 }
             ]
         });

@@ -3,10 +3,9 @@ using Backend.Prompts;
 
 namespace Backend.Tests.Prompts;
 
-/// <summary>#165 round 2 (Rick's #166 review round 1, required item 4): a pack-lint test that
-/// every REAL persona pack's own <c>hints.yaml</c> <c>upsell_hints.*.trigger_categories</c> entry
-/// actually names a category that exists in that SAME pack's own menu, AND (round 3, required
-/// item 11) that no category appears in more than one hint bucket. Mirrors
+/// <summary>A pack-lint test that every REAL persona pack's own <c>hints.yaml</c>
+/// <c>upsell_hints.*.trigger_categories</c> entry actually names a category that exists in that
+/// SAME pack's own menu, AND that no category appears in more than one hint bucket. Mirrors
 /// app/backend/tests/test_persona_pack_conformance.py's UpsellHintConformanceTests: both
 /// PromptLoader.GetUpsellHint and prompt_loader.py's get_upsell_hint match the FIRST bucket
 /// whose trigger_categories contains the item's category, in declaration order, so a stale
@@ -60,6 +59,23 @@ public sealed class UpsellHintConformanceTests
             staleButUnlisted.Count == 0,
             "known gap(s) are no longer stale in any pack -- remove from KnownPreExistingGaps " +
             "(see #168): " + string.Join(", ", staleButUnlisted.Select(p => $"{p.HintKey}:'{p.Category}'")));
+    }
+
+    [Fact]
+    public void NoCategoryAppearsInTwoOfAPacksUpsellHintBuckets()
+    {
+        var personasDir = Path.Combine(RepoRootLocator.Find(), "personas");
+        var catalog = PersonaCatalog.Load(personasDir: personasDir);
+
+        foreach (var personaId in catalog.Ids)
+        {
+            var loader = new PromptLoader(personasDir, personaId);
+            var triggerCategoriesByHint = TriggerCategoriesByHint(loader.Hints);
+
+            var errors = DuplicateTriggerCategoryErrors(personaId, triggerCategoriesByHint);
+
+            Assert.True(errors.Count == 0, string.Join(", ", errors));
+        }
     }
 
     [Fact]
@@ -146,7 +162,7 @@ public sealed class UpsellHintConformanceTests
             .ToList();
     }
 
-    /// <summary>Pure helper (round 3, required item 11): every category that appears in more
+    /// <summary>Pure helper: every category that appears in more
     /// than one hint bucket's trigger_categories -- GetUpsellHint/get_upsell_hint match the
     /// FIRST bucket in declaration order, so a category in two buckets makes the second one
     /// unreachable for that category. Empty list == valid.</summary>

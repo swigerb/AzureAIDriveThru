@@ -211,7 +211,7 @@ def upsell_hint_stale_pairs(
 def upsell_hint_category_errors(
     persona_id: str, trigger_categories_by_hint: dict[str, list[str]], real_categories: set[str]
 ) -> list[str]:
-    """#165 round 2 (Rick's review item 4): every ``upsell_hints.*.trigger_categories`` entry in
+    """Every ``upsell_hints.*.trigger_categories`` entry in
     a pack's own hints.yaml must name a category that actually exists in that SAME pack's own
     menu (``menu_utils.MenuCatalog.category_map``'s values, already lower-cased). A menu edit
     that renames/removes/merges a category used to leave the matching hint silently unreachable
@@ -227,7 +227,7 @@ def upsell_hint_category_errors(
 def duplicate_trigger_category_errors(
     persona_id: str, trigger_categories_by_hint: dict[str, list[str]]
 ) -> list[str]:
-    """#165 round 3 (Rick's #166 review round 2, required item 11): every category that appears
+    """Every category that appears
     in more than one hint bucket's ``trigger_categories`` -- ``get_upsell_hint``/
     ``GetUpsellHint`` both match the FIRST bucket in declaration order, so a category in two
     buckets makes the second one unreachable for that category. Empty list == valid."""
@@ -385,10 +385,10 @@ class PromptSectionConformanceTests(unittest.TestCase):
 
 
 class UpsellHintConformanceTests(unittest.TestCase):
-    """#165 round 2 (Rick's review item 4): every pack's own hints.yaml ``upsell_hints.*.
+    """Every pack's own hints.yaml ``upsell_hints.*.
     trigger_categories`` must reference a category that actually exists in that SAME pack's
     own menu -- never a stale name left behind by a menu edit (a category renamed, removed, or
-    merged with another). Round 3 (required item 11) adds: no category may appear in more than
+    merged with another). Also: no category may appear in more than
     one hint bucket (the first bucket wins at lookup time, so a shared category silently
     strands the others)."""
 

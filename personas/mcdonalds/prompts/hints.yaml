@@ -1,5 +1,5 @@
 version: "1.0.0"
-# #165 round 3 (Rick R11): the 134->70 item menu swap collapsed the old, more granular category
+# the 134->70 item menu swap collapsed the old, more granular category
 # set (meals & combos / burgers / chicken & fish sandwiches / mcnuggets & tenders / beverages /
 # mccafé coffees / fries & sides) into the 5 categories that ship in menuItems.json today
 # ("Burgers & Sandwiches", "Chicken & McNuggets®", "Breakfast", "Fries, Sides & Drinks",
@@ -10,9 +10,10 @@ version: "1.0.0"
 # trigger_categories contains the item's category, so a category in two buckets makes the second
 # unreachable): "Fries, Sides & Drinks" merges what used to be two separate categories, so it has
 # one combined side-or-drink bucket rather than a "drink" and a "side" bucket racing for the same
-# category. "Chicken & McNuggets®" also holds every lunch meal combo (Big Mac® Meal, etc. -- dev's
-# "meals & combos" has no 1:1 replacement category here), so the burger/chicken hint text below
-# does not offer "make it a meal", since plenty of the items it fires for already are one.
+# category. "Burgers & Sandwiches" has no meals, so it keeps the original app's "make it a meal"
+# upsell. "Chicken & McNuggets®" holds every lunch meal combo (Big Mac® Meal, etc.), so its bucket
+# offers a dessert instead of a meal or a drink, since plenty of the items it fires for already
+# include one.
 upsell_hints:
   meal:
     trigger_categories:
@@ -22,8 +23,12 @@ upsell_hints:
   burger:
     trigger_categories:
       - "burgers & sandwiches"
+    hint: "Perfect choice! Ask if they want to make it a meal with World Famous Fries and a refreshing Drink!"
+
+  chicken:
+    trigger_categories:
       - "chicken & mcnuggets®"
-    hint: "Great choice! Ask if they'd like to add a dessert or a refreshing drink to go with that!"
+    hint: "Great choice! Ask if they'd like to add a dessert, like a McFlurry or a Baked Apple Pie!"
 
   side_or_drink:
     trigger_categories:
