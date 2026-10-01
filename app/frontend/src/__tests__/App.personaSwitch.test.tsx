@@ -265,37 +265,16 @@ describe("persona switch confirmation dialog (issue #180)", () => {
         expect((screen.getByLabelText("Select persona") as HTMLSelectElement).value).toBe("test-alpha");
     });
 
-    // CI's shared runner renders this (the heaviest DOM in the suite -- a full app with a
-    // populated order, transcript and menu panel already mounted) far slower than a quiet dev
-    // machine does: other equally DOM-heavy fixtures in this suite (e.g. the real-pack menu
-    // tests) have been observed taking upward of 15-20s there. A first attempt at a 15000ms
-    // inner wait still measured CI runs finishing at ~15044-15075ms -- it was genuinely the
-    // same timeout firing again, just missed by a hair, not a different failure mode: findByText
-    // rethrows its last "unable to find" error when its own poll gives up, which looks identical
-    // to a real "never rendered" failure but is in fact exactly what a timeout looks like for
-    // findBy*. Both the inner wait and the test's own (otherwise 5000ms default) timeout need
-    // real margin above that observed ~15s floor, not just past it.
     it("Switch confirms the switch: ends the session, clears the old order/transcript, and lands on the new persona", async () => {
         render(<RootApp />);
         await addOrderItem("Alpha Combo");
         await screen.findByText("Alpha Combo");
+        // onReceivedResponseDone is a no-op while isSessionActiveRef is false (issue 181's
+        // defense-in-depth guard) -- a real reply can only ever arrive once the guest has
+        // actually started a session, so the greeting needs a tap first just like production.
+        await tapMic();
         act(() => rt.params.onReceivedResponseDone(answer("Alpha greeting text")));
-        // TEMP DIAGNOSTIC (removed once the real cause is found): check right after the
-        // synchronous act() call, before any async poll, so a CI failure shows whether the text
-        // ever lands synchronously at all, not just whether findByText eventually gives up on it.
-        console.log(
-            "DIAG immediately after onReceivedResponseDone:",
-            JSON.stringify({
-                hasGreeting: document.body.innerHTML.includes("Alpha greeting text"),
-                bodyLength: document.body.innerHTML.length,
-                hasAlphaCombo: document.body.innerHTML.includes("Alpha Combo"),
-                transcriptPanelCount: document.querySelectorAll('[class*="transcript"]').length
-            })
-        );
-        await screen.findByText("Alpha greeting text", {}, { timeout: 45000 }).catch(error => {
-            console.log("DIAG findByText gave up. Final body snapshot:", document.body.innerHTML.slice(0, 6000));
-            throw error;
-        });
+        await screen.findByText("Alpha greeting text");
 
         await switchTo("test-beta");
         await screen.findByRole("dialog");
@@ -311,10 +290,13 @@ describe("persona switch confirmation dialog (issue #180)", () => {
         expect(rt.api.cancelSwitch).not.toHaveBeenCalled();
 
         // The new persona's own greeting path works exactly as it would on a fresh load -- a
-        // transcript delivered after the switch lands under test-beta with no residue.
+        // transcript delivered after the switch lands under test-beta with no residue. A
+        // completed switch stops the old conversation (R6), so the guest needs a fresh tap
+        // before the new persona's session is considered active again, same as any fresh load.
+        await tapMic();
         act(() => rt.params.onReceivedResponseDone(answer("Beta greeting text")));
         expect(screen.getByText("Beta greeting text")).toBeInTheDocument();
-    }, 50000);
+    });
 
     it("is keyboard-accessible: Escape cancels exactly like clicking Cancel", async () => {
         render(<RootApp />);
@@ -387,17 +369,16 @@ describe("focus returns to the persona picker after the dialog closes (issue GH-
 // down the fixed contract: fetch the target FIRST, only clear anything on success, and leave a
 // failed switch exactly as if it had never been attempted (plus a visible, localized error).
 describe("a failed persona switch leaves the current order, transcript and persona bound intact (issue GH-180 round 2, R1)", () => {
-    // Same CI-runner headroom as the "Switch confirms the switch" case above -- a first attempt
-    // at 15000ms still measured CI finishing at ~15044ms, the same timeout firing again (not a
-    // different kind of failure: findByText rethrows its last "not found" error either way).
-    // Both the inner findByText wait and the test's own (otherwise 5000ms default) timeout need
-    // real margin above that observed ~15s floor.
     it("keeps the old order/transcript, shows a localized error, and never calls endSession when the target persona's fetch fails", async () => {
         render(<RootApp />);
         await addOrderItem("Alpha Combo");
         await screen.findByText("Alpha Combo");
+        // onReceivedResponseDone is a no-op while isSessionActiveRef is false (issue 181's
+        // defense-in-depth guard) -- a real reply can only ever arrive once the guest has
+        // actually started a session, so the greeting needs a tap first just like production.
+        await tapMic();
         act(() => rt.params.onReceivedResponseDone(answer("Alpha greeting text")));
-        await screen.findByText("Alpha greeting text", {}, { timeout: 45000 });
+        await screen.findByText("Alpha greeting text");
 
         vi.stubGlobal(
             "fetch",
@@ -424,7 +405,7 @@ describe("a failed persona switch leaves the current order, transcript and perso
         expect((screen.getByLabelText("Select persona") as HTMLSelectElement).value).toBe("test-alpha");
         // R1: a visible, localized error -- not a silent failure.
         expect(await screen.findByText("personaSwitch.loadError")).toBeInTheDocument();
-    }, 50000);
+    });
 
     it("allows retry: picking the same persona again once its fetch recovers switches cleanly", async () => {
         render(<RootApp />);
