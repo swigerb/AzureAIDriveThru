@@ -426,6 +426,10 @@ function SonicApp() {
         },
         onReceivedResponseDone: message => {
             const transcript = message.response.output.map(output => output.content?.map(content => content.transcript).join(" ")).join(" ");
+            // TEMP DIAGNOSTIC (removed once the real cause is found): isolate whether this handler
+            // itself runs/extracts the transcript correctly, versus a later effect clobbering it.
+            console.log("DIAG onReceivedResponseDone:", JSON.stringify({ transcript, willReturnEarly: !transcript }));
+            console.trace("DIAG onReceivedResponseDone call stack");
             if (!transcript) return;
             clearRateLimitNotice();
 
@@ -434,7 +438,11 @@ function SonicApp() {
                 isUser: false,
                 timestamp: new Date()
             };
-            setTranscripts(prev => [...prev, newTranscriptItem]);
+            setTranscripts(prev => {
+                const next = [...prev, newTranscriptItem];
+                console.log("DIAG setTranscripts updater:", JSON.stringify({ prevLength: prev.length, nextLength: next.length }));
+                return next;
+            });
 
             // AI finished speaking - unmute the microphone
             if (isAiSpeakingRef.current) {
