@@ -67,10 +67,20 @@ namespace Conformance.Tests.Scenarios.Browser;
 ///    the same idle-closed precondition, so the tap lands before the persona fetch resolves
 ///    either way. Fails on BOTH dev and the round-3 head; must pass once H5 (item 1) lands.
 ///
-/// All six cases assert, against the SAME five properties Rick's review lists: the fake upstream
-/// connection for the test-beta session receives the client's <c>session.update</c>
-/// (<c>turn_detection.type=="server_vad"</c>, <c>threshold==0.7</c>); the greeting the server
-/// sends upstream for that connection contains
+/// A seventh case (issue #180, <see cref="RunSwitchAfterReloadResumeScenarioAsync"/>) covers a
+/// DIFFERENT dimension than A-E2 entirely: every one of those switches from a FRESH, order-less
+/// test-alpha session, so none of them can prove the picker's own GH-180 bug -- the "Locked for
+/// this order -- start a new order to switch" lock re-engaging specifically once a RELOAD
+/// RESUMES a non-empty order. This case builds a real order (a scripted <c>update_order</c> call
+/// attached to the server-side session), reloads, asserts the picker is still enabled and the
+/// switch now opens <see cref="PersonaSwitchConfirmDialog"/> instead of switching immediately or
+/// silently refusing, confirms the switch, taps, and then reuses the same five-property check
+/// below plus one more: the old persona's order text is gone from the page entirely (no leak).
+///
+/// All seven cases assert, against the SAME five properties Rick's review lists (case 7 adds the
+/// no-leak check above): the fake upstream connection for the test-beta session receives the
+/// client's <c>session.update</c> (<c>turn_detection.type=="server_vad"</c>,
+/// <c>threshold==0.7</c>); the greeting the server sends upstream for that connection contains
 /// <see cref="PersonaSmokeExpectations.For"/>("test-beta").GreetingSubstring; the browser created
 /// EXACTLY ONE socket for test-beta and sent <c>session.update</c> on it EXACTLY ONCE; no
 /// test-alpha socket was created after the switch click; and no frame other than
@@ -567,4 +577,156 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
     [Fact]
     public Task Idle_closed_socket_then_persona_switch_with_held_fetch_then_tap_recovers_the_new_personas_session() =>
         fixture.RunAsync(() => RunSwitchScenarioEAsync(holdFetch: true));
+
+    /// <summary>
+    /// Issue #180 (the brief's own Browser-leg requirement): create an order, reload (resume),
+    /// switch via the confirm dialog, tap -- then prove the server receives
+    /// <c>session.update</c> for test-beta and the test-beta greeting on exactly one test-beta
+    /// socket. Three things this case proves that A-E2 above cannot, since every one of them
+    /// switches from a FRESH, order-less test-alpha session:
+    ///  - The picker is never disabled, even once a reload has RESUMED a non-empty order -- the
+    ///    exact state where, before this fix, the picker showed "Locked for this order -- start
+    ///    a new order to switch" and no further &lt;select&gt; interaction could reach test-beta
+    ///    at all (the issue's own repro).
+    ///  - Selecting test-beta on that non-empty resumed order opens
+    ///    <see cref="PersonaSwitchConfirmDialog"/> instead of switching immediately (cases A-E2's
+    ///    empty-order path never shows this dialog) or silently refusing the switch (the old
+    ///    lock).
+    ///  - The OLD persona's order never leaks into the new one: test-alpha's order item (added
+    ///    via a real scripted <c>update_order</c> call, attached to the SERVER-SIDE session so it
+    ///    genuinely survives the reload like a guest's real order would -- not just pushed as
+    ///    client-side UI state) is gone from the page entirely once the switch to test-beta
+    ///    completes.
+    /// Reuses <see cref="AssertSwitchDeliveredToNewPersonaAsync"/> for the same five properties
+    /// every other case proves. <c>socketsBeforeSwitch</c>/<c>alphaSentBeforeSwitch</c> are
+    /// captured AFTER the reload (not the original page load), since <c>window.__sockets</c>
+    /// resets to a fresh array on every new document (<see cref="NewPageAsync"/>'s
+    /// <c>context.AddInitScriptAsync</c> reruns on each one) -- the post-reload resumed
+    /// connection is socket index 0 again, exactly like every other case's pre-switch test-alpha
+    /// socket, so <see cref="AssertSwitchDeliveredToNewPersonaAsync"/>'s hard-coded "socket 0 is
+    /// the old persona" check needs no change to be reused here.
+    /// </summary>
+    private async Task RunSwitchAfterReloadResumeScenarioAsync()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var (context, page) = await NewPageAsync(fixture.Browser!, ct).ConfigureAwait(false);
+        await using var _ = context;
+
+        var firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
+        await page.GotoAsync($"{fixture.Backend!.BaseUri}?persona={PersonaSwitchBackendFixture.PersonaA}").ConfigureAwait(false);
+        var firstConnection = await firstConnectionTask;
+        Assert.True(firstConnection is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+
+        await UntilAsync(() => SocketCountAsync(page), n => n >= 1, FrameTimeout, "the frontend's first realtime socket to open", ct);
+        await UntilAsync(
+            () => ReceivedAsync(page, 0),
+            HasSessionMetadata,
+            FrameTimeout, "extension.session_metadata on the test-alpha socket", ct);
+
+        // Build a REAL order against test-alpha: a scripted update_order call, which attaches
+        // the item to the SERVER-SIDE session so it genuinely survives the reload below like a
+        // guest's real order would, not just pushed as client-side UI state a hand-crafted frame
+        // would be. Sourced from test-alpha's own smoke.json (PersonaSmokeTests.cs's own
+        // no-persona-literal-in-shared-code convention) rather than a hardcoded item/size/price.
+        var alphaItem = PersonaSmokeExpectations.For(PersonaSwitchBackendFixture.PersonaA);
+        const string callId = "call_switch_after_reload_1";
+        firstConnection!.Script.Enqueue(new ResponseScript([
+            new FunctionCallEvent(
+                Name: "update_order",
+                ArgumentsJson: JsonSerializer.Serialize(new
+                {
+                    action = "add",
+                    item_name = alphaItem.OrderableItemName,
+                    size = alphaItem.OrderableItemSize,
+                    quantity = 1,
+                    price = alphaItem.OrderableItemPrice,
+                }),
+                CallId: callId),
+            new DoneEvent(),
+        ]));
+
+        // rtmt.py never handles a raw client response.create specially -- it passes straight
+        // through to the upstream socket unchanged, exactly like a real VAD-triggered turn would.
+        // useRealtime.tsx itself never sends response.create on its own (only the server does,
+        // for the greeting/nudge -- see RealtimeBrowserClient.SendResponseCreateAsync's own doc
+        // comment), so sending it directly on the live socket here (bypassing React/the mic
+        // entirely, exactly like OrderScenarioHelpers.CallToolAsync does through the raw-socket
+        // RealtimeBrowserClient harness) is the only black-box-safe way to reach a tool call
+        // without simulating real audio/VAD timing -- see OrderResumeBrowserTests' own doc
+        // comment for why that alternative was ruled out for a REAL Playwright page.
+        await page.EvaluateAsync(
+            "window.__sockets[0].ws.send(JSON.stringify({ type: 'response.create' }))").ConfigureAwait(false);
+
+        await UntilAsync(
+            () => ReceivedAsync(page, 0),
+            received => TypesOf(received).Any(t => t == "extension.middle_tier_tool_response"),
+            FrameTimeout, "extension.middle_tier_tool_response for update_order on the test-alpha socket", ct);
+
+        // The REAL frontend actually rendered the item (not a simulated client-side push).
+        await page.GetByText(alphaItem.OrderableItemName).First
+            .WaitForAsync(new() { Timeout = (float)FrameTimeout.TotalMilliseconds }).ConfigureAwait(false);
+
+        // Issue #180: before the fix, a non-empty order here would already show "Locked for this
+        // order -- start a new order to switch" and disable the picker outright.
+        Assert.True(await page.GetByLabel("Select persona").IsEnabledAsync().ConfigureAwait(false),
+            "The persona picker must never be disabled (issue #180), even with a non-empty order.");
+
+        // Reload: window.__sockets resets to a fresh array (the init script reruns on every new
+        // document), so the post-reload connection is socket index 0 again.
+        var reloadConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
+        await page.ReloadAsync().ConfigureAwait(false);
+        var reloadConnection = await reloadConnectionTask;
+        Assert.True(reloadConnection is not null, $"No upstream connection was accepted on reload within {FrameTimeout}.");
+
+        await UntilAsync(() => SocketCountAsync(page), n => n >= 1, FrameTimeout, "the post-reload realtime socket to open", ct);
+        await UntilAsync(
+            () => ReceivedAsync(page, 0),
+            received => TypesOf(received).Any(t => t == "extension.session_resumed"),
+            FrameTimeout, "extension.session_resumed on the post-reload socket", ct);
+
+        // The resumed order survived the reload and rendered again -- and the picker is STILL
+        // never disabled (issue #180's actual repro: the lock re-engaged specifically after a
+        // reload resumed a non-empty order).
+        await page.GetByText(alphaItem.OrderableItemName).First
+            .WaitForAsync(new() { Timeout = (float)FrameTimeout.TotalMilliseconds }).ConfigureAwait(false);
+        var picker = page.GetByLabel("Select persona");
+        Assert.True(await picker.IsEnabledAsync().ConfigureAwait(false),
+            "The persona picker must never be disabled after a reload resumes a non-empty order (issue #180).");
+
+        var socketsBeforeSwitch = await SocketCountAsync(page);
+        var alphaSentBeforeSwitch = (await SentAsync(page, 0)).GetArrayLength();
+
+        var secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
+
+        // The real PersonaPicker <select>, exactly as a guest would operate it -- never the URL
+        // or a hook called directly.
+        await picker.SelectOptionAsync(new SelectOptionValue { Value = PersonaSwitchBackendFixture.PersonaB }).ConfigureAwait(false);
+
+        // Issue #180: a non-empty (here, resumed) order must open the confirm dialog instead of
+        // switching immediately (cases A-E2's empty-order path) or silently refusing to switch at
+        // all (the old lock).
+        var dialog = page.GetByRole(AriaRole.Dialog);
+        await dialog.WaitForAsync(new() { Timeout = (float)FrameTimeout.TotalMilliseconds }).ConfigureAwait(false);
+        var dialogText = await dialog.InnerTextAsync().ConfigureAwait(false);
+        // Generic, pack-driven copy (issue #180: no brand words in this shared-code dialog) --
+        // "Test Beta Burger Co." is test-beta's own persona.json displayName, the only
+        // persona-specific detail the dialog surfaces.
+        Assert.Contains("Switching to Test Beta Burger Co. will start a new order.", dialogText, StringComparison.Ordinal);
+        Assert.Contains("Your current order will be cleared.", dialogText, StringComparison.Ordinal);
+
+        await dialog.GetByRole(AriaRole.Button, new() { Name = "Switch", Exact = true }).ClickAsync().ConfigureAwait(false);
+
+        await page.GetByRole(AriaRole.Button, new() { Name = "Start recording", Exact = true }).ClickAsync().ConfigureAwait(false);
+
+        var secondConnection = await secondConnectionTask;
+        await AssertSwitchDeliveredToNewPersonaAsync(page, socketsBeforeSwitch, alphaSentBeforeSwitch, secondConnection, ct).ConfigureAwait(false);
+
+        // No leak: test-alpha's resumed order never carries over into the test-beta session.
+        var bodyText = await page.Locator("body").InnerTextAsync().ConfigureAwait(false);
+        Assert.DoesNotContain(alphaItem.OrderableItemName, bodyText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public Task Reload_then_resume_then_switch_through_the_confirm_dialog_delivers_only_to_the_new_personas_session() =>
+        fixture.RunAsync(RunSwitchAfterReloadResumeScenarioAsync);
 }

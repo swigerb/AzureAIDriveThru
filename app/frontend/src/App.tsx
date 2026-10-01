@@ -14,6 +14,7 @@ import MenuPanel from "@/components/ui/menu-panel";
 import OrderSummary, { calculateOrderSummary, OrderItem, OrderSummaryProps } from "@/components/ui/order-summary";
 import TranscriptPanel from "@/components/ui/transcript-panel";
 import PersonaPicker from "@/components/ui/persona-picker";
+import PersonaSwitchConfirmDialog from "@/components/ui/persona-switch-confirm-dialog";
 import BackendPicker from "@/components/ui/backend-picker";
 const Settings = lazy(() => import("@/components/ui/settings"));
 import useRealTime from "@/hooks/useRealtime";
@@ -109,6 +110,9 @@ function SonicApp() {
 
     const [transcripts, setTranscripts] = useState<Array<{ text: string; isUser: boolean; timestamp: Date }>>([]);
     const { dummyOrder, dummyTranscripts } = useDemoData(current.id, useDummyData);
+    // Issue GH-180: the persona id a guest picked while a switch still needs confirming (a
+    // non-empty order or an active conversation) -- null means no confirmation dialog is open.
+    const [pendingPersonaSwitchId, setPendingPersonaSwitchId] = useState<string | null>(null);
 
     const initialOrder: OrderSummaryProps = {
         items: [],
@@ -636,18 +640,20 @@ function SonicApp() {
         return () => window.removeEventListener("resize", checkMobile);
     }, []);
 
-    // Rick's PR-110 review item 5 (issue #80 F7): the picker only allows a switch once
-    // recording has stopped and the ticket is empty, but a finished conversation can still
-    // leave transcripts/session identifiers on screen -- clear all of that (and end any
-    // lingering realtime session) so the new persona starts on a genuinely fresh slate.
-    // useRealTime already namespaces the resume id per persona.id, so no separate handling
-    // is needed there.
+    // Rick's PR-110 review item 5 (issue #80 F7): a switch clears the previous persona's ticket,
+    // transcript and session identifiers (and ends any lingering realtime session) so the new
+    // persona starts on a genuinely fresh slate. useRealTime already namespaces the resume id per
+    // persona.id, so no separate handling is needed there.
+    //
+    // Issue GH-180: this is the CONFIRMED switch executor -- it performs the actual switch
+    // unconditionally and is called either immediately (empty order, no active conversation) or
+    // after the guest confirms `PersonaSwitchConfirmDialog` (non-empty order and/or an active
+    // conversation). It must never run without one of those two gates having already decided the
+    // switch should happen; `requestPersonaSwitch` below owns that decision.
     const handleSelectPersona = async (personaId: string) => {
-        // Defensive hardening for issue GH-171: `PersonaPicker` is already `disabled` while a
-        // conversation is active (ADR-001 decision 2), so this path shouldn't normally see
-        // `isSessionActiveRef.current === true` -- but if it ever does (e.g. a future caller that
-        // bypasses the picker), stop the live conversation cleanly first rather than letting
-        // `endSession()` tear down the socket out from under an in-progress recording/greeting.
+        // A conversation can genuinely be active here now that the picker is never disabled
+        // (issue GH-180) -- stop it cleanly first rather than letting `endSession()` tear down the
+        // socket out from under an in-progress recording/greeting.
         if (isSessionActiveRef.current) void stopConversation();
         // issue GH-171 round 2, H2: tells useRealtime a persona switch is under way, so its own
         // onClose doesn't force an extra reconnect for the persona being switched AWAY from once
@@ -670,6 +676,32 @@ function SonicApp() {
         const switched = await selectPersona(personaId);
         if (!switched) realtime.cancelSwitch();
     };
+
+    // Issue GH-180: the picker is now always enabled, so every switch request lands here first.
+    // With an empty order and no active conversation there's nothing to lose -- switch straight
+    // away, matching the picker's pre-GH-180 "idle" behavior exactly. Otherwise, hold the switch
+    // behind `PersonaSwitchConfirmDialog` instead of either silently blocking it (the old bug) or
+    // silently clearing the guest's order.
+    const requestPersonaSwitch = (personaId: string) => {
+        if (personaId === current.id) return;
+        const hasActiveConversation = isSessionActiveRef.current;
+        const hasOrderItems = order.items.length > 0;
+        if (!hasActiveConversation && !hasOrderItems) {
+            void handleSelectPersona(personaId);
+            return;
+        }
+        setPendingPersonaSwitchId(personaId);
+    };
+
+    const confirmPersonaSwitch = () => {
+        const personaId = pendingPersonaSwitchId;
+        setPendingPersonaSwitchId(null);
+        if (personaId) void handleSelectPersona(personaId);
+    };
+
+    // Nothing changes on cancel: the dialog closes and the (controlled) picker already reflects
+    // `current.id` again on its own, with no extra state to unwind.
+    const cancelPersonaSwitch = () => setPendingPersonaSwitchId(null);
 
     // Rick's PR 134 review, item 4: the model picker's own explicit user choice -- the other
     // persist site is the resolve effect above (a persona switch or an initial `?model=` arrival).
@@ -703,15 +735,10 @@ function SonicApp() {
                         <span>Source on GitHub</span>
                     </a>
                     <div className="flex items-center gap-2">
-                        {/* Issue #80 F1: the picker sets the persona for the NEXT session only
-                            (ADR-001 decision 2) -- disabled once a conversation is active or the
-                            guest has items on their ticket, rather than resetting either mid-flight. */}
-                        <PersonaPicker
-                            personas={personas}
-                            currentId={current.id}
-                            onSelect={handleSelectPersona}
-                            disabled={isRecording || order.items.length > 0}
-                        />
+                        {/* Issue GH-180: always enabled -- requestPersonaSwitch decides whether the
+                            switch runs immediately (empty order, no active conversation) or waits
+                            on PersonaSwitchConfirmDialog's confirmation first. */}
+                        <PersonaPicker personas={personas} currentId={current.id} onSelect={requestPersonaSwitch} />
                         {/* Issue #80 F11: hides itself entirely below two `backends[]` entries. */}
                         <BackendPicker
                             backends={backends}
@@ -885,6 +912,12 @@ function SonicApp() {
                 </p>
                 <p className="text-[11px] leading-relaxed text-brand-ink/80 dark:text-white/80">{current.legal}</p>
             </footer>
+            <PersonaSwitchConfirmDialog
+                open={pendingPersonaSwitchId !== null}
+                personaName={personas.find(p => p.id === pendingPersonaSwitchId)?.displayName ?? ""}
+                onConfirm={confirmPersonaSwitch}
+                onCancel={cancelPersonaSwitch}
+            />
         </div>
     );
 }

@@ -98,6 +98,23 @@ const switchTo = async (personaId: string) => {
     await userEvent.selectOptions(select, personaId);
 };
 
+const orderSummaryWith = (label: string) => ({
+    items: [{ item: label, size: "Regular", quantity: 1, price: 1.5, display: label }],
+    total: 1.5,
+    tax: 0.12,
+    finalTotal: 1.62
+});
+
+// Puts a real (non-dummy) item on the ticket via the same realtime callback the backend's
+// update_order tool response drives (see App.tsx's onReceivedExtensionMiddleTierToolResponse).
+// Waits for the app to finish its initial persona-fetch render first, since `rt.params` isn't
+// populated until useRealTime's mock has actually been invoked.
+const addOrderItem = async (label: string) => {
+    await screen.findByLabelText("Select persona");
+    act(() => rt.params.onReceivedExtensionMiddleTierToolResponse({ tool_name: "update_order", tool_result: JSON.stringify(orderSummaryWith(label)) }));
+};
+
+
 beforeEach(() => {
     vi.clearAllMocks();
     Element.prototype.scrollIntoView = vi.fn();
@@ -190,3 +207,118 @@ describe("App.tsx's handleSelectPersona: realtime wiring (issue GH-171 round 4, 
         expect(rt.api.cancelSwitch).not.toHaveBeenCalled();
     });
 });
+
+// Issue #180: the picker used to lock itself outright ("Locked for this order -- start a new
+// order to switch") once the ticket had items or a conversation was active. It's always enabled
+// now -- these cases guard the new gate: immediate switch with nothing to lose, a confirmation
+// dialog otherwise, Cancel changing nothing, Switch performing the exact same clean switch as
+// the idle path, and the dialog's own keyboard/a11y contract (Escape cancels, focus stays
+// trapped inside it while open).
+describe("persona switch confirmation dialog (issue #180)", () => {
+    it("switches immediately, with no dialog, when the order is empty and no conversation is active", async () => {
+        render(<RootApp />);
+        await switchTo("test-beta");
+
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+        await waitFor(() => expect(rt.api.endSession).toHaveBeenCalledWith({ switching: true }));
+        await waitFor(() => expect((screen.getByLabelText("Select persona") as HTMLSelectElement).value).toBe("test-beta"));
+    });
+
+    it("prompts for confirmation instead of switching when the order has items", async () => {
+        render(<RootApp />);
+        await addOrderItem("Alpha Combo");
+        await screen.findByText("Alpha Combo");
+
+        await switchTo("test-beta");
+
+        expect(await screen.findByRole("dialog")).toBeInTheDocument();
+        expect(screen.getByText(/Switching to Test Beta will start a new order\. Your current order will be cleared\./)).toBeInTheDocument();
+        // Nothing has actually happened yet -- the switch is only pending confirmation.
+        expect(rt.api.endSession).not.toHaveBeenCalled();
+        expect(screen.getByText("Alpha Combo")).toBeInTheDocument();
+    });
+
+    it("prompts for confirmation instead of switching mid-conversation, even with an empty order", async () => {
+        render(<RootApp />);
+        await tapMic(); // start recording, order still empty
+
+        await switchTo("test-beta");
+
+        expect(await screen.findByRole("dialog")).toBeInTheDocument();
+        expect(rt.api.endSession).not.toHaveBeenCalled();
+    });
+
+    it("Cancel changes nothing: the switch is abandoned, the ticket survives, and the picker still shows the current persona", async () => {
+        render(<RootApp />);
+        await addOrderItem("Alpha Combo");
+        await screen.findByText("Alpha Combo");
+        await switchTo("test-beta");
+        await screen.findByRole("dialog");
+
+        await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+        await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+        expect(rt.api.endSession).not.toHaveBeenCalled();
+        expect(rt.api.cancelSwitch).not.toHaveBeenCalled();
+        expect(screen.getByText("Alpha Combo")).toBeInTheDocument();
+        expect((screen.getByLabelText("Select persona") as HTMLSelectElement).value).toBe("test-alpha");
+    });
+
+    it("Switch confirms the switch: ends the session, clears the old order/transcript, and lands on the new persona", async () => {
+        render(<RootApp />);
+        await addOrderItem("Alpha Combo");
+        await screen.findByText("Alpha Combo");
+        act(() => rt.params.onReceivedResponseDone(answer("Alpha greeting text")));
+        await screen.findByText("Alpha greeting text");
+
+        await switchTo("test-beta");
+        await screen.findByRole("dialog");
+
+        await userEvent.click(screen.getByRole("button", { name: "Switch" }));
+
+        await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+        expect(rt.api.endSession).toHaveBeenCalledWith({ switching: true });
+        // The old persona's order and transcript must never leak into the new one.
+        await waitFor(() => expect(screen.queryByText("Alpha Combo")).not.toBeInTheDocument());
+        await waitFor(() => expect(screen.queryByText("Alpha greeting text")).not.toBeInTheDocument());
+        await waitFor(() => expect((screen.getByLabelText("Select persona") as HTMLSelectElement).value).toBe("test-beta"));
+        expect(rt.api.cancelSwitch).not.toHaveBeenCalled();
+
+        // The new persona's own greeting path works exactly as it would on a fresh load -- a
+        // transcript delivered after the switch lands under test-beta with no residue.
+        act(() => rt.params.onReceivedResponseDone(answer("Beta greeting text")));
+        expect(screen.getByText("Beta greeting text")).toBeInTheDocument();
+    });
+
+    it("is keyboard-accessible: Escape cancels exactly like clicking Cancel", async () => {
+        render(<RootApp />);
+        await addOrderItem("Alpha Combo");
+        await screen.findByText("Alpha Combo");
+        await switchTo("test-beta");
+        await screen.findByRole("dialog");
+
+        await userEvent.keyboard("{Escape}");
+
+        await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+        expect(rt.api.endSession).not.toHaveBeenCalled();
+        expect((screen.getByLabelText("Select persona") as HTMLSelectElement).value).toBe("test-alpha");
+    });
+
+    it("traps focus inside the dialog while it is open", async () => {
+        render(<RootApp />);
+        await addOrderItem("Alpha Combo");
+        await screen.findByText("Alpha Combo");
+        await switchTo("test-beta");
+        const dialog = await screen.findByRole("dialog");
+
+        await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true));
+
+        // Tabbing forward from the last focusable control must stay inside the dialog, not
+        // escape to the page behind it -- Radix's FocusScope wraps focus rather than releasing it.
+        await userEvent.tab();
+        expect(dialog.contains(document.activeElement)).toBe(true);
+        await userEvent.tab();
+        expect(dialog.contains(document.activeElement)).toBe(true);
+    });
+});
+
