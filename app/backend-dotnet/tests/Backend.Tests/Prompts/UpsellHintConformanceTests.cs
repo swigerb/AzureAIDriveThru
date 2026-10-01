@@ -5,43 +5,61 @@ namespace Backend.Tests.Prompts;
 
 /// <summary>#165 round 2 (Rick's #166 review round 1, required item 4): a pack-lint test that
 /// every REAL persona pack's own <c>hints.yaml</c> <c>upsell_hints.*.trigger_categories</c> entry
-/// actually names a category that exists in that SAME pack's own menu. Mirrors
+/// actually names a category that exists in that SAME pack's own menu, AND (round 3, required
+/// item 11) that no category appears in more than one hint bucket. Mirrors
 /// app/backend/tests/test_persona_pack_conformance.py's UpsellHintConformanceTests: both
-/// PromptLoader.GetUpsellHint (line 165 per Rick's review) and prompt_loader.py's
-/// get_upsell_hint match categories by exact string equality, so a stale reference in either
-/// pack's hints.yaml silently falls through to the "generic" hint with no error -- this test
-/// catches that drift for the shared personas/ tree both backends read.</summary>
+/// PromptLoader.GetUpsellHint and prompt_loader.py's get_upsell_hint match the FIRST bucket
+/// whose trigger_categories contains the item's category, in declaration order, so a stale
+/// reference OR a category shared by two buckets silently makes one hint unreachable -- this
+/// test catches both kinds of drift for the shared personas/ tree both backends read.</summary>
 public sealed class UpsellHintConformanceTests
 {
-    /// <summary>Packs with a KNOWN, PRE-EXISTING trigger_categories gap that predates and is
-    /// unrelated to #165's McDonald's menu swap -- mirrors the Python suite's
-    /// _KNOWN_PRE_EXISTING_UPSELL_HINT_GAPS exactly (same reasoning: Sonic's own "drink" bucket
-    /// trigger_categories -- "drinks"/"slushes" -- match neither of Sonic's real categories,
-    /// "breakfast drinks"/"slushes & drinks" -- tracked as a follow-up for Sonic's own owner, not
-    /// fixed here).</summary>
-    private static readonly HashSet<string> KnownPreExistingGaps = ["sonic"];
+    /// <summary>Known, pre-existing (hintKey, category) pairs that don't match any persona
+    /// pack's real category today. Exempted by the exact pair, not by persona id, so any OTHER
+    /// kind of staleness in ANY pack is still caught by the real check below. All 7 entries
+    /// predate and are unrelated to #165's menu swap; the follow-up to fix the owning pack's own
+    /// hints.yaml and drop this exemption is tracked in #168.</summary>
+    private static readonly HashSet<(string HintKey, string Category)> KnownPreExistingGaps =
+    [
+        ("burger", "burgers"),
+        ("drink", "drinks"),
+        ("drink", "slushes"),
+        ("shake", "shakes"),
+        ("shake", "desserts"),
+        ("side", "sides"),
+        ("side", "hot dogs"),
+    ];
 
     [Fact]
     public void EveryPacksUpsellHintTriggerCategories_ExistInThatPacksOwnMenu()
     {
         var personasDir = Path.Combine(RepoRootLocator.Find(), "personas");
         var catalog = PersonaCatalog.Load(personasDir: personasDir);
+        var exemptedPairsSeen = new HashSet<(string HintKey, string Category)>();
 
         foreach (var personaId in catalog.Ids)
         {
-            if (KnownPreExistingGaps.Contains(personaId))
-            {
-                continue;
-            }
-
             var persona = catalog.Get(personaId);
             var loader = new PromptLoader(personasDir, personaId);
             var menu = MenuCatalog.FromPersona(persona);
             var realCategories = menu.CategoryMap.Values.ToHashSet(StringComparer.Ordinal);
 
-            var errors = UpsellHintTriggerCategoryErrors(personaId, loader.Hints, realCategories);
-            Assert.True(errors.Count == 0, string.Join("\n", errors));
+            var triggerCategoriesByHint = TriggerCategoriesByHint(loader.Hints);
+            var stalePairs = UpsellHintStalePairs(triggerCategoriesByHint, realCategories);
+            exemptedPairsSeen.UnionWith(stalePairs.Intersect(KnownPreExistingGaps));
+            var unexempted = stalePairs.Except(KnownPreExistingGaps).ToList();
+
+            Assert.True(
+                unexempted.Count == 0,
+                $"{personaId}'s hints.yaml has stale upsell_hints trigger_categories " +
+                string.Join(", ", unexempted.Select(p => $"{p.HintKey}:'{p.Category}'")));
         }
+
+        var staleButUnlisted = KnownPreExistingGaps.Except(exemptedPairsSeen).ToList();
+        Assert.True(
+            staleButUnlisted.Count == 0,
+            "known gap(s) are no longer stale in any pack -- remove from KnownPreExistingGaps " +
+            "(see #168): " + string.Join(", ", staleButUnlisted.Select(p => $"{p.HintKey}:'{p.Category}'")));
     }
 
     [Fact]
@@ -58,13 +76,42 @@ public sealed class UpsellHintConformanceTests
         Assert.NotEmpty(errors);
     }
 
-    /// <summary>Pure helper (mirrors the Python suite's upsell_hint_category_errors): every
-    /// trigger_categories entry across every upsell_hints bucket that isn't one of
-    /// <paramref name="realCategories"/>. Empty list == valid. Overload below reads straight off
-    /// a loaded PromptLoader's raw Hints dictionary (the same shape GetUpsellHint itself
-    /// reads).</summary>
-    private static List<string> UpsellHintTriggerCategoryErrors(
-        string personaId, IReadOnlyDictionary<object, object> hints, IReadOnlySet<string> realCategories)
+    [Fact]
+    public void ACategoryInTwoHintBuckets_IsCaught()
+    {
+        var triggerCategoriesByHint = new Dictionary<string, IReadOnlyList<string>>
+        {
+            ["drink"] = ["fries, sides & drinks"],
+            ["side"] = ["fries, sides & drinks"],
+        };
+
+        var errors = DuplicateTriggerCategoryErrors("mutant-pack", triggerCategoriesByHint);
+
+        Assert.NotEmpty(errors);
+    }
+
+    /// <summary>Pure helper: every (hintKey, category) pair across trigger_categories_by_hint
+    /// whose category isn't one of <paramref name="realCategories"/>. Empty set == valid.</summary>
+    private static HashSet<(string HintKey, string Category)> UpsellHintStalePairs(
+        IReadOnlyDictionary<string, IReadOnlyList<string>> triggerCategoriesByHint, IReadOnlySet<string> realCategories)
+    {
+        var stale = new HashSet<(string, string)>();
+        foreach (var (hintKey, categories) in triggerCategoriesByHint)
+        {
+            foreach (var category in categories)
+            {
+                if (!realCategories.Contains(category))
+                {
+                    stale.Add((hintKey, category));
+                }
+            }
+        }
+        return stale;
+    }
+
+    /// <summary>Reads a loaded PromptLoader's raw Hints dictionary (the same shape
+    /// GetUpsellHint itself reads) into a plain hintKey -> trigger_categories map.</summary>
+    private static Dictionary<string, IReadOnlyList<string>> TriggerCategoriesByHint(IReadOnlyDictionary<object, object> hints)
     {
         var byHint = new Dictionary<string, IReadOnlyList<string>>();
         if (hints.TryGetValue("upsell_hints", out var upsellRaw) && upsellRaw is IDictionary<object, object> upsellHints)
@@ -80,27 +127,51 @@ public sealed class UpsellHintConformanceTests
                 byHint[hintKey] = categories;
             }
         }
-        return UpsellHintTriggerCategoryErrors(personaId, byHint, realCategories);
+        return byHint;
     }
 
+    /// <summary>Pure helper (mirrors the Python suite's upsell_hint_category_errors): every
+    /// trigger_categories entry across every upsell_hints bucket that isn't one of
+    /// <paramref name="realCategories"/>. Empty list == valid.</summary>
     private static List<string> UpsellHintTriggerCategoryErrors(
         string personaId, IReadOnlyDictionary<string, IReadOnlyList<string>> triggerCategoriesByHint,
         IReadOnlySet<string> realCategories)
     {
-        var errors = new List<string>();
+        var stale = UpsellHintStalePairs(triggerCategoriesByHint, realCategories);
+        return stale
+            .Select(p =>
+                $"{personaId}'s hints.yaml upsell_hints.{p.HintKey}.trigger_categories references " +
+                $"'{p.Category}', which is not one of this pack's own menu categories " +
+                $"[{string.Join(", ", realCategories.OrderBy(c => c, StringComparer.Ordinal))}]")
+            .ToList();
+    }
+
+    /// <summary>Pure helper (round 3, required item 11): every category that appears in more
+    /// than one hint bucket's trigger_categories -- GetUpsellHint/get_upsell_hint match the
+    /// FIRST bucket in declaration order, so a category in two buckets makes the second one
+    /// unreachable for that category. Empty list == valid.</summary>
+    private static List<string> DuplicateTriggerCategoryErrors(
+        string personaId, IReadOnlyDictionary<string, IReadOnlyList<string>> triggerCategoriesByHint)
+    {
+        var bucketsByCategory = new Dictionary<string, List<string>>(StringComparer.Ordinal);
         foreach (var (hintKey, categories) in triggerCategoriesByHint)
         {
             foreach (var category in categories)
             {
-                if (!realCategories.Contains(category))
+                if (!bucketsByCategory.TryGetValue(category, out var buckets))
                 {
-                    errors.Add(
-                        $"{personaId}'s hints.yaml upsell_hints.{hintKey}.trigger_categories references " +
-                        $"'{category}', which is not one of this pack's own menu categories " +
-                        $"[{string.Join(", ", realCategories.OrderBy(c => c, StringComparer.Ordinal))}]");
+                    buckets = [];
+                    bucketsByCategory[category] = buckets;
                 }
+                buckets.Add(hintKey);
             }
         }
-        return errors;
+
+        return bucketsByCategory
+            .Where(kv => kv.Value.Count > 1)
+            .Select(kv =>
+                $"{personaId}'s hints.yaml category '{kv.Key}' appears in more than one " +
+                $"upsell_hints bucket's trigger_categories: {string.Join(", ", kv.Value)}")
+            .ToList();
     }
 }
