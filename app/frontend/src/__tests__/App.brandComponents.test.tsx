@@ -1,3 +1,7 @@
+import { readdirSync, readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
@@ -8,6 +12,57 @@ import { resolveTextRole, textRoleClass, textRoleDarkClass, DEFAULT_TEXT_ROLES }
 // Issue 164 A1-A5/A8/B2/D2: covers the rewritten two-column `BrandHero` (logo/badge/headline/
 // description/callouts/spotlight) and its child components directly, complementing the existing
 // full-`RootApp` logo-fallback coverage in `App.brandHero.test.tsx`.
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const repoRoot = path.resolve(here, "../../../../");
+const personasDir = path.resolve(repoRoot, "personas");
+
+/** Discovers every real persona pack on disk -- same convention as heroContrast.test.ts/
+ * brandDefaultTokens.test.ts, so a future pack is covered the moment it lands rather than needing
+ * a hardcoded id list here. */
+function discoverPersonaPackIds(): string[] {
+    return readdirSync(personasDir, { withFileTypes: true })
+        .filter(entry => entry.isDirectory())
+        .map(entry => entry.name)
+        .filter(id => {
+            try {
+                readFileSync(path.resolve(personasDir, id, "persona.json"), "utf-8");
+                return true;
+            } catch {
+                return false;
+            }
+        })
+        .sort();
+}
+
+/** Builds a real PersonaDetail straight off a real pack's own persona.json -- the same `ui.*`
+ * spread-flat-plus-voice/locales/features/menuUrl/models/taxRate shape `app/backend/app.py`'s
+ * `/api/personas/{id}` wire response uses (types/persona.ts's own doc comment). Used by the
+ * "BrandHero layout (issue 172)" suite below so its structural/reading-order assertions run
+ * against every real pack's own content instead of synthetic fixture copy. */
+function loadRealPersonaDetail(packId: string): PersonaDetail {
+    const raw = JSON.parse(readFileSync(path.resolve(personasDir, packId, "persona.json"), "utf-8"));
+    const ui = raw.ui;
+    return {
+        id: raw.id,
+        roleName: raw.roleName,
+        title: ui.title,
+        theme: ui.theme,
+        assets: ui.assets,
+        strings: ui.strings,
+        hero: ui.hero,
+        legal: ui.legal,
+        voice: raw.voice,
+        locales: raw.locales,
+        features: raw.features,
+        menuUrl: `/personas/${raw.id}/menu.json`,
+        models: raw.models,
+        taxRate: raw.pricing?.taxRate ?? "0",
+        sessionBar: ui.sessionBar,
+        categoryIcons: ui.categoryIcons,
+        textRoles: ui.textRoles
+    };
+}
 
 const theme = { light: { primary: "200 80% 50%", secondary: "40 60% 40%", background: "0 0% 98%", foreground: "0 0% 10%" } };
 
@@ -154,6 +209,137 @@ describe("BrandHero (issue 164 A1-A5/A8/B2)", () => {
     });
 });
 
+// Issue 172 round 2 (Rick's review of PR #174): round 1's layout tests mostly asserted the
+// `xl:col-start-*`/`xl:row-span-*` class strings that placed the spotlight stack across both of
+// the left column's rows -- exactly the bug round 2 fixes (it stretched the logo row to the
+// stack's height, pushing the headline down). Asserting those classes would make the test suite
+// defend the very bug being fixed. This suite instead asserts BEHAVIOR: every hero element is
+// present exactly once, in reading order (logo, badge, headline, description, spotlight cards,
+// callouts, tech line -- the order a screen reader follows), the logo row and headline/description
+// block live together in one left column while the spotlight stack is a separate sibling column,
+// and none of round 1's row/column placement classes remain. It runs pack-driven over every real
+// persona pack discovered on disk (no brand name appears literally in this file), per Rick's ask.
+describe("BrandHero layout (issue 172)", () => {
+    const realPackIds = discoverPersonaPackIds();
+
+    it("found at least one real persona pack on disk to test against", () => {
+        expect(realPackIds.length).toBeGreaterThan(0);
+    });
+
+    for (const packId of realPackIds) {
+        // packId is a disk-discovered directory name, never a literal brand string in this
+        // file's own source -- see the header comment.
+        describe(`a real pack (${realPackIds.indexOf(packId) + 1} of ${realPackIds.length})`, () => {
+            const persona = loadRealPersonaDetail(packId);
+            const logoUrl = `/personas/${packId}/${persona.assets.logo}`;
+
+            it("renders every hero element exactly once, in reading order: logo, badge, headline, description, spotlight cards, callouts, tech line", () => {
+                render(<BrandHero logoUrl={logoUrl} persona={persona} />);
+
+                const logo = screen.getAllByAltText(`${persona.title} logo`);
+                expect(logo).toHaveLength(1);
+
+                const badgeCopy = persona.hero.badge ?? "hero.badge";
+                const badge = screen.getAllByText(badgeCopy);
+                expect(badge).toHaveLength(1);
+
+                const heading = screen.getByRole("heading", { level: 1 });
+                expect(heading.textContent).toBe(persona.hero.headline);
+
+                const description = screen.getAllByText(persona.hero.description);
+                expect(description).toHaveLength(1);
+
+                const spotlightKickers = persona.hero.spotlight.map(card => {
+                    const matches = screen.getAllByText(card.kicker);
+                    expect(matches).toHaveLength(1);
+                    return matches[0];
+                });
+
+                const calloutTitles = persona.hero.callouts.map(callout => {
+                    const matches = screen.getAllByText(callout.title);
+                    expect(matches).toHaveLength(1);
+                    return matches[0];
+                });
+
+                const azureLogo = screen.getAllByAltText("Microsoft Azure");
+                expect(azureLogo).toHaveLength(1);
+
+                const poweredBy = screen.getAllByText("hero.poweredBy");
+                expect(poweredBy).toHaveLength(1);
+
+                // Reading order: logo, badge, headline, description, each spotlight card (in
+                // pack order), each callout (in pack order), the Azure logo, then the powered-by
+                // line -- compareDocumentPosition's FOLLOWING bit is DOM order, independent of
+                // any CSS (jsdom does no layout, so this is the only reliable order check).
+                const orderedElements = [
+                    logo[0],
+                    badge[0],
+                    heading,
+                    description[0],
+                    ...spotlightKickers,
+                    ...calloutTitles,
+                    azureLogo[0],
+                    poweredBy[0]
+                ];
+                for (let i = 0; i < orderedElements.length - 1; i++) {
+                    const earlier = orderedElements[i];
+                    const later = orderedElements[i + 1];
+                    expect(earlier.compareDocumentPosition(later) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+                }
+            });
+
+            it("keeps the logo row and headline/description in one left column, with the spotlight stack as its separate sibling column and no row-placement classes left over from round 1", () => {
+                const { container } = render(<BrandHero logoUrl={logoUrl} persona={persona} />);
+
+                const section = container.querySelector("section") as HTMLElement;
+                const gridWrapper = section.firstElementChild as HTMLElement;
+                const leftColumn = gridWrapper.firstElementChild as HTMLElement;
+
+                // The left column's only two children are the logo row and the headline/
+                // description block -- the spotlight stack is NOT one of its children.
+                expect(leftColumn.children.length).toBe(2);
+                const logo = screen.getByAltText(`${persona.title} logo`);
+                const heading = screen.getByRole("heading", { level: 1 });
+                expect(leftColumn.contains(logo)).toBe(true);
+                expect(leftColumn.contains(heading)).toBe(true);
+
+                if (persona.hero.spotlight.length > 0) {
+                    const spotlightColumn = gridWrapper.lastElementChild as HTMLElement;
+                    expect(spotlightColumn).not.toBe(leftColumn);
+                    expect(spotlightColumn.contains(leftColumn)).toBe(false);
+                    expect(spotlightColumn.textContent).toContain(persona.hero.spotlight[0].kicker);
+                }
+
+                // Round 1's bug: the spotlight stack carried `xl:row-start-*`/`xl:row-span-2`/
+                // `xl:col-start-*`, spanning both of the left column's rows and stretching the
+                // logo row to match the stack's height. Neither column places itself by row or
+                // column start anymore -- this is a regression guard against that exact bug.
+                expect(gridWrapper.innerHTML).not.toMatch(/row-start|row-span|col-start/);
+            });
+
+            it("keeps the callout pills and the tech line in one full-width footer row as the section's second (and last) top-level child", () => {
+                const { container } = render(<BrandHero logoUrl={logoUrl} persona={persona} />);
+
+                const section = container.querySelector("section") as HTMLElement;
+                const gridWrapper = section.firstElementChild as HTMLElement;
+                const footer = gridWrapper.nextElementSibling as HTMLElement;
+
+                // The footer row is a sibling AFTER the grid wrapper, not nested inside it.
+                expect(footer).not.toBeNull();
+                for (const callout of persona.hero.callouts) {
+                    expect(footer.textContent).toContain(callout.title);
+                    expect(gridWrapper.textContent).not.toContain(callout.title);
+                }
+                expect(footer.textContent).toContain("hero.poweredBy");
+
+                // section has exactly 2 top-level children: the xl grid wrapper, then the footer row.
+                expect(section.children.length).toBe(2);
+                expect(footer.nextElementSibling).toBeNull();
+            });
+        });
+    }
+});
+
 describe("CalloutPill (issue 164 A3)", () => {
     it.each([
         ["primary", "from-brand-primary to-brand-primary-light"],
@@ -178,6 +364,50 @@ describe("CalloutPill (issue 164 A3)", () => {
 });
 
 describe("SpotlightCard (issue 164 A1/A2)", () => {
+    // Issue 172: when BrandHero's `items-stretch` grows one card to match its (taller) sibling,
+    // the extra height must center the card's own content rather than leave a dead gap pinned to
+    // one edge -- both cards opt into that with `h-full flex flex-col justify-center`.
+    it("centers its content vertically so items-stretch height growth reads as breathing room, not dead space (card 1)", () => {
+        const { container } = render(<SpotlightCard card={spotlightCard1} personaId="test-alpha" isSecond={false} />);
+        const card = container.firstElementChild as HTMLElement;
+        expect(card.className).toContain("h-full");
+        expect(card.className).toContain("flex-col");
+        expect(card.className).toContain("justify-center");
+    });
+
+    it("centers its content vertically the same way for card 2", () => {
+        const { container } = render(<SpotlightCard card={spotlightCard2} personaId="test-alpha" isSecond={true} />);
+        const card = container.firstElementChild as HTMLElement;
+        expect(card.className).toContain("h-full");
+        expect(card.className).toContain("flex-col");
+        expect(card.className).toContain("justify-center");
+    });
+
+    // Issue 172: when the card is narrower than its full-width default (e.g. side by side under
+    // the text at sm-lg widths), the icon tile must not shrink down to a sliver when the
+    // kicker/title text is long -- `shrink-0` on the tile keeps it fixed size, `min-w-0` on the
+    // text column lets the text wrap instead of fighting the tile for room.
+    it("keeps the icon tile a fixed size instead of letting it shrink alongside long title text", () => {
+        render(<SpotlightCard card={spotlightCard1} personaId="test-alpha" isSecond={false} />);
+        const icon = screen.getByAltText("SIGNATURE PICKS");
+        const tile = icon.parentElement;
+        expect(tile?.className).toContain("shrink-0");
+    });
+
+    // Issue 172 round 2 (Rick's review): row copy is pack-driven, so it can't assume it will
+    // always fit one line -- an unconditional `whitespace-nowrap` overflowed its pill at 360/390px
+    // for more than one real pack. `sm:whitespace-nowrap` keeps today's single-line look at sm
+    // (640px) and up, while letting the pair wrap below that instead of overflowing.
+    it("keeps each row's label and value on one line at sm and up, but lets them wrap below sm", () => {
+        render(<SpotlightCard card={spotlightCard1} personaId="test-alpha" isSecond={false} />);
+        const label = screen.getByText("Pick of the Day");
+        const value = screen.getByText("Fixture Special");
+        expect(label.className).toContain("sm:whitespace-nowrap");
+        expect(label.className).not.toMatch(/(?<!sm:)whitespace-nowrap/);
+        expect(value.className).toContain("sm:whitespace-nowrap");
+        expect(value.className).not.toMatch(/(?<!sm:)whitespace-nowrap/);
+    });
+
     it("renders card 1's rows as label/value pairs", () => {
         render(<SpotlightCard card={spotlightCard1} personaId="test-alpha" isSecond={false} />);
 
