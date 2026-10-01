@@ -265,15 +265,19 @@ describe("persona switch confirmation dialog (issue #180)", () => {
         expect((screen.getByLabelText("Select persona") as HTMLSelectElement).value).toBe("test-alpha");
     });
 
+    // CI's shared runner renders this (the heaviest DOM in the suite -- a full app with a
+    // populated order, transcript and menu panel already mounted) far slower than a quiet dev
+    // machine does: other equally DOM-heavy fixtures in this suite (e.g. the real-pack menu
+    // tests) have been observed taking upward of 15-20s there. vitest's own default per-test
+    // timeout (5000ms) was the actual ceiling that bit this test, not findByText's inner poll --
+    // raising only findByText's wait left the test still killed at the outer 5000ms. Both the
+    // inner wait and the test's own timeout need the same generous headroom.
     it("Switch confirms the switch: ends the session, clears the old order/transcript, and lands on the new persona", async () => {
         render(<RootApp />);
         await addOrderItem("Alpha Combo");
         await screen.findByText("Alpha Combo");
         act(() => rt.params.onReceivedResponseDone(answer("Alpha greeting text")));
-        // A longer timeout than the default 1000ms: this is the heaviest DOM in the suite (a full
-        // app render with a populated order, transcript and menu panel already mounted), and a
-        // loaded CI runner can take noticeably longer to settle than a quiet dev machine.
-        await screen.findByText("Alpha greeting text", {}, { timeout: 5000 });
+        await screen.findByText("Alpha greeting text", {}, { timeout: 15000 });
 
         await switchTo("test-beta");
         await screen.findByRole("dialog");
@@ -292,7 +296,7 @@ describe("persona switch confirmation dialog (issue #180)", () => {
         // transcript delivered after the switch lands under test-beta with no residue.
         act(() => rt.params.onReceivedResponseDone(answer("Beta greeting text")));
         expect(screen.getByText("Beta greeting text")).toBeInTheDocument();
-    });
+    }, 20000);
 
     it("is keyboard-accessible: Escape cancels exactly like clicking Cancel", async () => {
         render(<RootApp />);
@@ -365,13 +369,14 @@ describe("focus returns to the persona picker after the dialog closes (issue GH-
 // down the fixed contract: fetch the target FIRST, only clear anything on success, and leave a
 // failed switch exactly as if it had never been attempted (plus a visible, localized error).
 describe("a failed persona switch leaves the current order, transcript and persona bound intact (issue GH-180 round 2, R1)", () => {
+    // Same CI-runner headroom as the "Switch confirms the switch" case above: both the inner
+    // findByText wait and the test's own (otherwise 5000ms default) timeout need raising together.
     it("keeps the old order/transcript, shows a localized error, and never calls endSession when the target persona's fetch fails", async () => {
         render(<RootApp />);
         await addOrderItem("Alpha Combo");
         await screen.findByText("Alpha Combo");
         act(() => rt.params.onReceivedResponseDone(answer("Alpha greeting text")));
-        // Same CI-runner headroom as the "Switch confirms the switch" case above.
-        await screen.findByText("Alpha greeting text", {}, { timeout: 5000 });
+        await screen.findByText("Alpha greeting text", {}, { timeout: 15000 });
 
         vi.stubGlobal(
             "fetch",
@@ -398,7 +403,7 @@ describe("a failed persona switch leaves the current order, transcript and perso
         expect((screen.getByLabelText("Select persona") as HTMLSelectElement).value).toBe("test-alpha");
         // R1: a visible, localized error -- not a silent failure.
         expect(await screen.findByText("personaSwitch.loadError")).toBeInTheDocument();
-    });
+    }, 20000);
 
     it("allows retry: picking the same persona again once its fetch recovers switches cleanly", async () => {
         render(<RootApp />);
