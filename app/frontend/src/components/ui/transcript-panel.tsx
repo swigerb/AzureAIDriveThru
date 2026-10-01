@@ -2,6 +2,8 @@ import { useEffect, useRef, memo } from "react";
 
 interface TranscriptPanelProps {
     transcripts: Array<{ text: string; isUser: boolean; timestamp: Date }>;
+    /** Classes for the scrollable container this component owns (height + overflow). */
+    className?: string;
 }
 
 const formatTimestamp = (timestamp: Date) => {
@@ -44,19 +46,34 @@ const TranscriptItem = memo(function TranscriptItem({
     );
 });
 
-export default memo(function TranscriptPanel({ transcripts }: TranscriptPanelProps) {
-    const transcriptEndRef = useRef<HTMLDivElement>(null);
+export default memo(function TranscriptPanel({ transcripts, className }: TranscriptPanelProps) {
+    // GH-176: this component now owns its own scrollable container (rather than relying on a
+    // sentinel `scrollIntoView()`), so autoscroll can only ever move THIS container, never the
+    // window. `scrollIntoView()` scrolls every scrollable ancestor needed to bring the target
+    // into view -- on a fresh load, before layout has settled, that could include the window
+    // itself, which is exactly what dragged the whole page ~725-1010px past the hero with no
+    // user input.
+    const containerRef = useRef<HTMLDivElement>(null);
+    // Skip the very first run of the transcripts effect (mount, empty or dummy-seeded transcript)
+    // -- autoscroll should only happen once NEW entries arrive, never on mount.
+    const hasMountedRef = useRef(false);
 
     useEffect(() => {
-        if (transcriptEndRef.current) {
-            transcriptEndRef.current.scrollIntoView({ behavior: "smooth" });
+        if (!hasMountedRef.current) {
+            hasMountedRef.current = true;
+            return;
+        }
+        const container = containerRef.current;
+        if (container) {
+            container.scrollTop = container.scrollHeight;
         }
     }, [transcripts]);
 
     useEffect(() => {
         const handleResize = () => {
-            if (transcriptEndRef.current) {
-                transcriptEndRef.current.scrollIntoView({ behavior: "smooth" });
+            const container = containerRef.current;
+            if (container) {
+                container.scrollTop = container.scrollHeight;
             }
         };
 
@@ -65,7 +82,7 @@ export default memo(function TranscriptPanel({ transcripts }: TranscriptPanelPro
     }, []);
 
     return (
-        <div>
+        <div ref={containerRef} className={className}>
             <div className="space-y-4">
                 {transcripts.map((transcript, index) => (
                     <TranscriptItem
@@ -74,7 +91,6 @@ export default memo(function TranscriptPanel({ transcripts }: TranscriptPanelPro
                         showTimestamp={shouldShowTimestamp(transcript.timestamp, transcripts[index + 1]?.timestamp)}
                     />
                 ))}
-                <div ref={transcriptEndRef} />
             </div>
         </div>
     );
