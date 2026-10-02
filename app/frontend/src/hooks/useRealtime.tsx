@@ -313,12 +313,42 @@ export default function useRealTime({
     // recovered, is live again) or by cancelSwitch() (the switch failed). reconnect() reads it to
     // tell "a switch is pending, the url just hasn't moved yet" apart from a genuinely dead socket.
     const switchingRef = useRef(false);
+    // Issue GH-180 round 2, R1-fix: beginSwitch() (called synchronously, before the persona fetch)
+    // sets switchingRef true well before endSession({switching:true}) ever runs -- and since
+    // App.tsx's handleSelectPersona now updates the persona context's `current`/`personaId`
+    // (via `await selectPersona(...)`) BEFORE calling endSession(), React commits that prop
+    // change -- and runs the H5 effect below -- during the same `await`'s microtask resumption,
+    // i.e. strictly before endSession() executes. Without this flag the H5 effect would treat
+    // that premature firing as the real thing (switchingRef is already true) and consume its
+    // one-shot identity-change trigger for nothing, permanently losing the only signal that
+    // would otherwise flip `shouldConnect` once a tap actually arrives. Set true only by
+    // endSession({ switching: true }) itself; the H5 effect requires both this AND switchingRef
+    // before it acts.
+    const switchArmedRef = useRef(false);
+    // Issue GH-180 round 2, R1-fix: set by the H5 effect when it fires while switchingRef is true
+    // but switchArmedRef is still false (the race above) -- there will be no second firing for
+    // this identity change, so endSession() checks this the moment it arms the switch and
+    // performs the effect's own catch-up logic right there instead.
+    const missedArmingRef = useRef(false);
     // Issue GH-171 round 3, H4: set by reconnect() when it is called while switchingRef is still
     // true -- a tap landed before the pending switch resolved one way or the other. Neither onOpen
     // (success) nor cancelSwitch() (failure) know on their own whether the guest actually asked to
     // reconnect in the meantime; this is the only record of that. Cleared by whichever of the two
     // runs first.
     const reconnectRequestedRef = useRef(false);
+    // Set by endSession(): the exact WebSocket instance that was open when the session-ending
+    // frame was sent (issue GH-180 round 2, R2). A persona switch calls endSession({ switching:
+    // true }) synchronously, before the new persona's id lands in props -- so for a whole window
+    // afterward, this socket is STILL "current" by every other check here (getWebSocketRef()
+    // still returns it, and socketParamsAtOpenRef still matches the unchanged props), yet it is
+    // the one socket this hook has already told the server it's done with. Anything it still
+    // delivers (e.g. a late extension.session_metadata carrying the OLD persona's resume id, or a
+    // trailing extension.middle_tier_tool_response/response.done from a reply in flight when the
+    // guest confirmed) must never reach onMessageReceived -- not because it's no longer "current"
+    // in the ordinary sense, but because this exact socket was explicitly retired. Overwritten by
+    // the next endSession() call; not cleared otherwise; a brand-new socket is always a distinct
+    // object, so stale comparisons against an old entry here can never false-positive.
+    const endedSocketRef = useRef<WebSocket | EventSource | null>(null);
 
     // Synchronous render-time reset (issue GH-171 round 2, H1/H1b): a persona/model/menuMode
     // change makes react-use-websocket replace the socket, but the OLD socket's own close event is
@@ -443,6 +473,10 @@ export default function useRealTime({
     const onMessageGuarded = useCallback(
         (event: MessageEvent<any>) => {
             if (getWebSocketRef.current && getWebSocketRef.current() !== event.target) return;
+            // Issue GH-180 round 2, R2: this exact socket was retired by endSession() -- drop its
+            // frames even though it may still be "current" by the two checks above/below (the
+            // persona prop hasn't moved on yet, so nothing else here would otherwise catch this).
+            if (endedSocketRef.current && endedSocketRef.current === event.target) return;
             if (!sameIdentity(socketParamsAtOpenRef.current, { personaId, modelId, menuMode })) return;
             onMessageReceived(event);
         },
@@ -465,6 +499,8 @@ export default function useRealTime({
             // on) while this switch was pending -- it was for whichever persona is NOW live, so
             // there is nothing left to do with it.
             switchingRef.current = false;
+            switchArmedRef.current = false;
+            missedArmingRef.current = false;
             reconnectRequestedRef.current = false;
             // Literal first frame on every open when this tab holds a resume id.
             const resumeId = useDirectAoaiApi ? null : resumeStore.get();
@@ -626,6 +662,8 @@ export default function useRealTime({
     // rather than leaving the guest stranded on a dead socket.
     const cancelSwitch = useCallback(() => {
         switchingRef.current = false;
+        switchArmedRef.current = false;
+        missedArmingRef.current = false;
         const wasRequested = reconnectRequestedRef.current;
         reconnectRequestedRef.current = false;
         // Issue GH-171 round 4, H5: the switch started with the socket already intentionally down
@@ -656,9 +694,24 @@ export default function useRealTime({
     // so reconnect() stops deferring, and if the guest already tapped in the meantime
     // (reconnectRequestedRef), open the new persona's socket now (getSocketUrl reads the identity
     // props at call time, so by the time this effect runs they already point at the new persona).
+    //
+    // Issue GH-180 round 2, R1-fix: this effect is keyed on identity (personaId/modelId/menuMode)
+    // and only ever fires again on the NEXT such change -- there is no second chance for THIS
+    // transition. App.tsx's handleSelectPersona now moves `current`/`personaId` (via the awaited
+    // `selectPersona()`) before calling endSession({ switching: true }); React commits that prop
+    // change -- and runs this effect -- while that await is still resuming, strictly BEFORE
+    // endSession() itself runs. If switchingRef is already true here (beginSwitch() ran) but
+    // switchArmedRef isn't yet (endSession() hasn't), this firing is premature: record it via
+    // missedArmingRef and do nothing else, so endSession() can perform this same catch-up itself
+    // the moment it arms the switch, since this effect will not run again for this transition.
     useEffect(() => {
         if (switchingRef.current && !shouldConnect) {
+            if (!switchArmedRef.current) {
+                missedArmingRef.current = true;
+                return;
+            }
             switchingRef.current = false;
+            switchArmedRef.current = false;
             if (reconnectRequestedRef.current) {
                 reconnectRequestedRef.current = false;
                 setShouldConnect(true);
@@ -732,20 +785,66 @@ export default function useRealTime({
         send({ type: "extension.set_voice", voice });
     };
 
+    // Issue GH-180 round 2, R1: handleSelectPersona now awaits the target persona's fetch BEFORE
+    // calling endSession() (so a failed fetch tears nothing down), but reconnect() still needs to
+    // tell "a switch is pending" apart from "ordinary dead socket" the instant the guest confirms
+    // -- well before that fetch resolves. beginSwitch() marks only that: switchingRef flips true
+    // immediately, with no socket close and no endedSocketRef capture (there is nothing to end
+    // yet; the old session stays live until the fetch actually succeeds). A tap landing in this
+    // window is deferred by reconnect() exactly as if endSession() had already run; cancelSwitch()
+    // undoes this the same way whether the switch failed before or after endSession() ran.
+    const beginSwitch = () => {
+        switchingRef.current = true;
+        switchArmedRef.current = false;
+        missedArmingRef.current = false;
+    };
+
     // Explicit new order (switching undefined/false): the server deletes the order and closes 1000
     // session_ended, after which a fresh socket opens for the SAME identity. Persona switch
-    // (switching: true, issue GH-171 round 2, H2): App.tsx's handleSelectPersona calls this
-    // synchronously, before the new persona's id has actually landed in `personaId` -- marking
-    // `switchingRef` here (regardless of whether a frame was actually sent below) is what lets
-    // onClose tell this apart from an ordinary ended close no matter which order the close and the
-    // prop change arrive in, so it doesn't force its own extra reconnect for the OLD identity on
-    // top of whatever socket the persona change opens next. The id is dropped either way so no
-    // later open resumes it; frames sent from here on wait for the new socket.
+    // (switching: true, issue GH-171 round 2, H2): App.tsx's handleSelectPersona calls beginSwitch()
+    // synchronously up front (see above) and this once the fetch succeeds, before the new persona's
+    // id has actually landed in `personaId` -- marking `switchingRef` here (regardless of whether a
+    // frame was actually sent below) is what lets onClose tell this apart from an ordinary ended
+    // close no matter which order the close and the prop change arrive in, so it doesn't force its
+    // own extra reconnect for the OLD identity on top of whatever socket the persona change opens
+    // next. The id is dropped either way so no later open resumes it; frames sent from here on wait
+    // for the new socket.
     const endSession = (options?: { switching?: boolean }) => {
+        // Issue GH-180 round 2, R1: beginSwitch() may already have flipped switchingRef true,
+        // well before this call -- a tap landing in that gap (idle-closed socket, mic tapped
+        // before the fetch resolves) queues its frames via send()'s own not-open-yet queue,
+        // destined for whichever socket opens next, i.e. the NEW persona's. Wiping pendingRef
+        // unconditionally here would silently drop that queued session.update/audio. Only clear
+        // it when this call is genuinely starting something fresh right now: an explicit new
+        // order, or a switch that never had a beginSwitch() precede it.
+        const alreadySwitching = switchingRef.current;
         switchingRef.current = !!options?.switching;
         resumeStore.clear();
-        pendingRef.current = [];
+        if (!alreadySwitching) pendingRef.current = [];
+        if (options?.switching) {
+            switchArmedRef.current = true;
+            // Issue GH-180 round 2, R1-fix: the H5 effect above already fired for this exact
+            // persona-id change while unarmed (personaId lands in props, via `await
+            // selectPersona(...)`, strictly before this call -- see the effect's own comment) and
+            // it will not fire again for this transition. Perform its catch-up here instead: clear
+            // switchingRef now that the switch is fully armed, and if the guest already tapped in
+            // the meantime, open the new persona's socket immediately.
+            if (missedArmingRef.current) {
+                missedArmingRef.current = false;
+                switchingRef.current = false;
+                switchArmedRef.current = false;
+                if (reconnectRequestedRef.current) {
+                    reconnectRequestedRef.current = false;
+                    setShouldConnect(true);
+                }
+            }
+        }
         if (!useDirectAoaiApi && openRef.current) {
+            // Issue GH-180 round 2, R2: record the socket we're telling the server we're done
+            // with, BEFORE sending extension.end_session on it -- onMessageGuarded rejects every
+            // later frame whose event.target is this exact object, independently of whatever the
+            // persona/model/menuMode props do afterward.
+            endedSocketRef.current = getWebSocketRef.current?.() ?? null;
             send({ type: "extension.end_session" }, false);
             endingRef.current = true;
             openRef.current = false;
@@ -763,6 +862,7 @@ export default function useRealTime({
         endSession,
         isConnected,
         reconnect,
-        cancelSwitch
+        cancelSwitch,
+        beginSwitch
     };
 }

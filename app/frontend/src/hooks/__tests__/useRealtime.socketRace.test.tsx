@@ -489,6 +489,55 @@ describe("useRealTime onMessage identity guard (issue #171 round 2, H3)", () => 
     });
 });
 
+// Issue GH-180 round 2, R2: the pre-existing H3 guard above only ever exercised the ordering
+// where the persona PROP has already moved before the stale frame arrives. The persona-switch
+// confirm flow (issue #180/#183) opens a real gap: App.tsx's handleSelectPersona calls
+// endSession({ switching: true }) synchronously, right when the guest confirms, but the
+// `personaId` prop itself only moves once the async persona-detail fetch resolves. Anything the
+// OLD socket still delivers in between -- a reply from the old persona already in flight when the
+// guest confirmed -- passes BOTH of the pre-R2 guards: getWebSocket() still returns this exact
+// socket (react-use-websocket hasn't started connecting a replacement yet) AND
+// socketParamsAtOpenRef still matches the current (unchanged) props. Only comparing against the
+// literal socket object captured by endSession() itself (useRealtime.tsx's endedSocketRef) can
+// catch this.
+describe("useRealTime onMessage identity guard closes the R2 gap: endSession({ switching: true }) runs before the persona prop moves (issue GH-180 round 2, R2)", () => {
+    it("drops a stale socket's extension.session_metadata (with an old resume id) sent after endSession({ switching: true }) but before the persona prop rerender lands", async () => {
+        const onReceivedSessionMetadata = vi.fn();
+        const { result, rerender } = renderHook(
+            ({ personaId }) => useRealTime({ personaId, onReceivedSessionMetadata }),
+            { initialProps: { personaId: "jerry" } }
+        );
+
+        await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+        const socketA = FakeWebSocket.instances[0];
+        act(() => socketA.triggerOpen());
+
+        // App.tsx's handleSelectPersona: endSession({ switching: true }) runs synchronously, well
+        // before the async persona fetch resolves and the `personaId` prop actually moves.
+        act(() => result.current.endSession({ switching: true }));
+        expect(sentTypes(socketA)).toContain("extension.end_session");
+
+        // A reply already in flight when the guest confirmed lands right here, on socketA, with
+        // the persona prop still "jerry" -- the pre-R2 identity guards both still pass this frame.
+        act(() => socketA.triggerMessage(JSON.stringify({ type: "extension.session_metadata", resumeId: "RID-JERRY-STALE" })));
+
+        expect(onReceivedSessionMetadata).not.toHaveBeenCalled();
+        expect(sessionStorage.getItem(resumeStorageKey("jerry"))).toBeNull();
+        expect(sessionStorage.getItem(resumeStorageKey("rick"))).toBeNull();
+
+        // The real prop change eventually lands, and the new socket's own frames are unaffected.
+        rerender({ personaId: "rick" });
+        await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(2));
+        const socketB = FakeWebSocket.instances[1];
+        expect(socketB.url).toContain("persona=rick");
+        act(() => socketB.triggerOpen());
+        act(() => socketB.triggerMessage(JSON.stringify({ type: "extension.session_metadata", resumeId: "RID-RICK-LIVE" })));
+
+        expect(onReceivedSessionMetadata).toHaveBeenCalledTimes(1);
+        expect(sessionStorage.getItem(resumeStorageKey("rick"))).toBe("RID-RICK-LIVE");
+    });
+});
+
 describe("useRealTime: a persona switch started while the socket is already intentionally down (issue GH-171 round 4, H5)", () => {
     // Shared setup for every H5 case: open socketA, close it with the given close code (idle 4000
     // or superseded 4002 -- both leave shouldConnect false with no live socket and no pending
@@ -644,6 +693,97 @@ describe("useRealTime: a persona switch started while the socket is already inte
         act(() => socketC.triggerOpen());
 
         expect(FakeWebSocket.instances).toHaveLength(3); // exactly one fresh socket
+        expect(sessionUpdateCount(socketC)).toBe(1);
+    });
+});
+
+// Issue GH-180 round 2, R1: App.tsx's handleSelectPersona now awaits the target persona's fetch
+// BEFORE calling endSession({ switching: true }) (so a failed fetch tears nothing down) -- but a
+// tap landing in that in-flight window, before the fetch resolves, used to have no signal to key
+// off: switchingRef only ever flipped true once endSession() itself ran, so reconnect() fell
+// through to its ordinary CLOSED-branch recovery and reopened the socket for the OLD persona
+// instead of deferring (Rick's own scratch runs against the round-2 head: the H5 Browser cases
+// -- "Idle_closed_socket_then_persona_switch_then_tap" and its held-fetch sibling -- fail 3/3).
+// beginSwitch() is the fix: it marks switchingRef true the instant the guest confirms, well
+// before the fetch settles, so reconnect() defers exactly as it already does once endSession()
+// itself has run.
+describe("useRealTime: a tap in the gap between confirm and the persona fetch resolving (issue GH-180 round 2, R1 beginSwitch)", () => {
+    it("idle 4000, beginSwitch() alone (fetch not yet resolved), tap: deferred, not reopened for the OLD persona", async () => {
+        const { result, rerender } = renderHook(
+            ({ personaId }) => useRealTime({ enableInputAudioTranscription: true, personaId }),
+            { initialProps: { personaId: "jerry" } }
+        );
+
+        await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+        const socketA = FakeWebSocket.instances[0];
+        act(() => socketA.triggerOpen());
+        act(() => socketA.triggerClose(4000, "idle_timeout"));
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        expect(FakeWebSocket.instances).toHaveLength(1);
+
+        // The guest confirms: App.tsx calls beginSwitch() synchronously, well before its awaited
+        // selectPersona() fetch resolves. endSession() has NOT run yet.
+        act(() => result.current.beginSwitch());
+
+        // A tap lands in that gap -- without the fix this reopens socketA's identity (jerry).
+        act(() => result.current.reconnect());
+        act(() => result.current.startSession());
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        expect(FakeWebSocket.instances).toHaveLength(1); // still deferred, nothing reopened yet
+
+        // The fetch now resolves successfully: App.tsx calls the real endSession(), then the
+        // persona prop lands.
+        act(() => result.current.endSession({ switching: true }));
+        rerender({ personaId: "rick" });
+        await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(2));
+        const socketB = FakeWebSocket.instances[1];
+        expect(socketB.url).toContain("persona=rick");
+        act(() => socketB.triggerOpen());
+
+        expect(FakeWebSocket.instances).toHaveLength(2); // exactly one socket, for the NEW persona
+        expect(sessionUpdateCount(socketB)).toBe(1);
+        expect(sessionUpdateCount(socketA)).toBe(0);
+    });
+
+    it("beginSwitch() alone, then the fetch fails: cancelSwitch() recovers the OLD persona, no endSession ever sent", async () => {
+        const { result } = renderHook(
+            ({ personaId }) => useRealTime({ enableInputAudioTranscription: true, personaId }),
+            { initialProps: { personaId: "jerry" } }
+        );
+
+        await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+        const socketA = FakeWebSocket.instances[0];
+        act(() => socketA.triggerOpen());
+        act(() => socketA.triggerClose(4000, "idle_timeout"));
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        act(() => result.current.beginSwitch());
+        act(() => result.current.reconnect());
+        act(() => result.current.startSession());
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        expect(FakeWebSocket.instances).toHaveLength(1); // still no orphan while the fetch is pending
+
+        // The fetch fails: App.tsx calls cancelSwitch() instead of endSession(). personaId never
+        // changes.
+        act(() => result.current.cancelSwitch());
+        await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(2));
+        const socketC = FakeWebSocket.instances[1];
+        expect(socketC.url).toContain("persona=jerry");
+        act(() => socketC.triggerOpen());
+
+        expect(FakeWebSocket.instances).toHaveLength(2); // exactly one recovery socket, OLD persona
         expect(sessionUpdateCount(socketC)).toBe(1);
     });
 });

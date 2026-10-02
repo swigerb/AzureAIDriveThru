@@ -44,6 +44,13 @@
         "included": "Inclus",
         "componentsLabel": "Inclus avec cet article"
     },
+    "personaSwitch": {
+        "title": "Changer de personnage ?",
+        "body": "Passer à {{persona}} démarrera une nouvelle commande. Votre commande actuelle sera effacée.",
+        "confirm": "Changer",
+        "cancel": "Annuler",
+        "loadError": "Impossible de passer à {{persona}}. Votre commande actuelle est inchangée. Veuillez réessayer."
+    },
     "picker": {
         "backendLabel": "Backend",
         "modelLabel": "Modèle",
