@@ -47,10 +47,12 @@ public sealed class ComboAbsorptionTests(HappyHourJustBeforeOpenFixture fixture)
     public Task Combo_absorption_scenarios_match_the_golden_line_item_count_and_total(int scenarioIndex) => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
-        var golden = GoldenOrderPricingData.Load(RepoPaths.FindRepoRoot());
+        var repoRoot = RepoPaths.FindRepoRoot();
+        var golden = GoldenOrderPricingData.Load(repoRoot);
         var scenario = golden.ComboAbsorptionScenarios[scenarioIndex];
 
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        var mode = OrderScenarioHelpers.MenuModeForItem(repoRoot, scenario.Steps[0].Item);
+        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, mode: mode);
         await using var _ = browser;
 
         var steps = scenario.Steps.Select(s => (s.Action, s.Item, s.Size, s.Quantity, s.Price));
@@ -167,11 +169,13 @@ public sealed class ComboAbsorptionTests(HappyHourJustBeforeOpenFixture fixture)
     public Task All_ten_real_combo_menu_items_price_correctly_to_the_cent(int comboIndex) => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
-        var golden = GoldenOrderPricingData.Load(RepoPaths.FindRepoRoot());
+        var repoRoot = RepoPaths.FindRepoRoot();
+        var golden = GoldenOrderPricingData.Load(repoRoot);
         Assert.Equal(10, golden.Combos.ExpectedCount);
         var combo = golden.Combos.Items[comboIndex];
 
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        var mode = OrderScenarioHelpers.MenuModeForItem(repoRoot, combo.Name);
+        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, mode: mode);
         await using var _ = browser;
 
         var result = await OrderScenarioHelpers.RunOrderStepsAsync(
@@ -236,11 +240,13 @@ public sealed class ComboAbsorptionHappyHourTests(HappyHourAtOpenFixture fixture
     public Task All_ten_real_combo_menu_items_price_correctly_to_the_cent_during_happy_hour(int comboIndex) => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
-        var golden = GoldenOrderPricingData.Load(RepoPaths.FindRepoRoot());
+        var repoRoot = RepoPaths.FindRepoRoot();
+        var golden = GoldenOrderPricingData.Load(repoRoot);
         Assert.Equal(10, golden.Combos.ExpectedCount);
         var combo = golden.Combos.Items[comboIndex];
 
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        var mode = OrderScenarioHelpers.MenuModeForItem(repoRoot, combo.Name);
+        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, mode: mode);
         await using var _ = browser;
 
         var result = await OrderScenarioHelpers.RunOrderStepsAsync(

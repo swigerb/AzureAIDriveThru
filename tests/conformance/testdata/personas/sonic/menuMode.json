@@ -1,0 +1,42 @@
+{
+  "description": "Pack-owned menu-mode vectors for the sonic persona. Product names and prices are data-only here so shared conformance code stays brand-neutral.",
+  "breakfastItem": {
+    "name": "Bacon Breakfast Burrito",
+    "size": "Standard",
+    "price": "3.59"
+  },
+  "lunchItem": {
+    "name": "SuperSONIC® Double Cheeseburger",
+    "size": "Standard",
+    "price": "6.59"
+  },
+  "allDayItem": {
+    "name": "Bottled Water",
+    "size": "Standard",
+    "price": "1.99"
+  },
+  "allDayItems": [
+    {
+      "name": "Bottled Water",
+      "size": "Standard",
+      "price": "1.99"
+    },
+    {
+      "name": "Coca-Cola®",
+      "size": "Mini",
+      "price": "1.19"
+    },
+    {
+      "name": "Blue Raspberry Slush",
+      "size": "Mini",
+      "price": "1.39"
+    }
+  ],
+  "visibleAllDayItems": [
+    {
+      "name": "Vanilla Classic Shake",
+      "size": "Mini",
+      "price": "3.39"
+    }
+  ]
+}

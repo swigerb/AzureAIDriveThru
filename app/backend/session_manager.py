@@ -618,15 +618,17 @@ class SessionManager:
             )
             return ResumeOutcome(False, reason="model_mismatch")
 
-        # #165: no normalization needed here -- unlike persona_id/model_id, a persona with no
-        # `features.dayparts` always resolves BOTH sides to `None` (order_state.OrderState
-        # .create_session's own normalization), so this comparison is a genuine no-op for a
-        # persona without that feature, not a fallback-to-default one.
         bound_menu_mode = order_state_singleton.get_menu_mode(session_id)
-        if bound_menu_mode != requested_menu_mode:
+        # #186: once the deployment default persona can itself declare `features.dayparts`, an
+        # older resume caller that omits ?mode= should mean the same thing as a fresh connect:
+        # lunch for a dayparts-bound session, and None for a session with no menu mode.
+        effective_requested_menu_mode = requested_menu_mode if requested_menu_mode in ("breakfast", "lunch") else (
+            "lunch" if bound_menu_mode is not None else None
+        )
+        if bound_menu_mode != effective_requested_menu_mode:
             logger.info(
                 "Resume rejected for session %s: bound menu mode %r != requested menu mode %r (mode_mismatch)",
-                session_id, bound_menu_mode, requested_menu_mode,
+                session_id, bound_menu_mode, effective_requested_menu_mode,
             )
             return ResumeOutcome(False, reason="mode_mismatch")
 

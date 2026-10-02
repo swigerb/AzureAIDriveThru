@@ -1,0 +1,6 @@
+{
+  "description": "Pack-owned menu-mode vectors for the mcdonalds persona. Product names and prices are data-only here so shared conformance code stays brand-neutral.",
+  "breakfastItem": { "name": "Egg McMuffin®", "size": "Standard", "price": "4.19" },
+  "lunchItem": { "name": "Big Mac®", "size": "Standard", "price": "5.29" },
+  "allDayItem": { "name": "Coca-Cola®", "size": "Medium", "price": "1.79" }
+}

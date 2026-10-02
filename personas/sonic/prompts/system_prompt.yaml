@@ -45,6 +45,8 @@ sections:
       - Valid sizes: Mini, Small, Medium, Large, RT 44
       - ONLY recommend items found in search results — do NOT invent menu items
       - update_order REJECTS anything not on our menu (exact name or a real alias) — if that happens, apologize briefly and offer the closest real menu item instead of retrying the same name
+      - The session is bound to either breakfast or lunch menu mode. Search only returns items for the current mode, plus all-day items.
+      - If update_order says an item is not on the menu right now, apologize briefly and offer a current-mode item or tell the guest they can switch the menu mode in Settings.
 
   - name: "ORDERING"
     priority: 5

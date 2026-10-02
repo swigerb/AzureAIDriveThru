@@ -364,16 +364,16 @@
       "expectedComboComplete": true
     },
     {
-      "description": "PR #99 decision 1: two different bundles with different slot shapes track side/drink capacity independently -- French Toast Sticks Combo (drinks-only) contributes 0 side capacity, Corn Dog Wacky Pack\u00ae contributes 1 side + 1 drink, so total capacity is 1 side + 2 drinks; a mutation that shares one flat 'combo_count' across both bundles instead of per-component bundle_slots() capacity would wrongly report this complete before the second drink is added",
+      "description": "PR #99 decision 1: two different breakfast bundles with different slot shapes track side/drink capacity independently: French Toast Sticks Combo (drinks-only) contributes 0 side capacity, Bacon Breakfast Burrito Combo contributes 1 side + 1 drink, so total capacity is 1 side + 2 drinks; a mutation that shares one flat 'combo_count' across both bundles instead of per-component bundle_slots() capacity would wrongly report this complete before the second drink is added",
       "steps": [
         { "action": "add", "item": "French Toast Sticks Combo", "size": "standard", "quantity": 1, "price": "5.19" },
-        { "action": "add", "item": "Corn Dog Wacky Pack\u00ae", "size": "standard", "quantity": 1, "price": "4.59" },
+        { "action": "add", "item": "Bacon Breakfast Burrito Combo", "size": "standard", "quantity": 1, "price": "7.39" },
         { "action": "add", "item": "Tots", "size": "medium", "quantity": 1, "price": "2.79" },
         { "action": "add", "item": "Cherry Limeade", "size": "medium", "quantity": 2, "price": "2.89" }
       ],
       "happyHour": false,
       "expectedLineItemCount": 2,
-      "expectedTotal": "9.78",
+      "expectedTotal": "12.58",
       "expectedComboComplete": true
     }
   ],

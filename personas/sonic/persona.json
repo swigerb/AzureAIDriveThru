@@ -76,7 +76,7 @@
   },
 
   "strategies": { "searchQueryRewrite": "none" },
-  "features": { "dayparts": false },
+  "features": { "dayparts": true },
 
   "ui": {
     "title": "Sonic Drive-In Voice Ordering",

@@ -255,10 +255,12 @@ public sealed class TaxToTheCentOffHappyHourTests(HappyHourJustBeforeOpenFixture
     public Task Tax_and_totals_match_to_the_cent(int caseIndex) => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
-        var golden = GoldenOrderPricingData.Load(RepoPaths.FindRepoRoot());
+        var repoRoot = RepoPaths.FindRepoRoot();
+        var golden = GoldenOrderPricingData.Load(repoRoot);
         var taxCase = golden.TaxCases[caseIndex];
 
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        var mode = OrderScenarioHelpers.MenuModeForItems(repoRoot, taxCase.Items.Select(i => i.Item));
+        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, mode: mode);
         await using var _ = browser;
 
         var steps = taxCase.Items.Select(i => ("add", i.Item, i.Size, i.Quantity, i.UnitPrice));
@@ -291,10 +293,12 @@ public sealed class TaxToTheCentDuringHappyHourTests(HappyHourAtOpenFixture fixt
     public Task Tax_and_totals_match_to_the_cent_during_happy_hour(int caseIndex) => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
-        var golden = GoldenOrderPricingData.Load(RepoPaths.FindRepoRoot());
+        var repoRoot = RepoPaths.FindRepoRoot();
+        var golden = GoldenOrderPricingData.Load(repoRoot);
         var taxCase = golden.TaxCases[caseIndex];
 
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        var mode = OrderScenarioHelpers.MenuModeForItems(repoRoot, taxCase.Items.Select(i => i.Item));
+        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, mode: mode);
         await using var _ = browser;
 
         var steps = taxCase.Items.Select(i => ("add", i.Item, i.Size, i.Quantity, i.UnitPrice));

@@ -28,11 +28,13 @@ public sealed class SpokenTotalTests(HappyHourJustBeforeOpenFixture fixture)
     public Task Spoken_total_text_matches_the_exact_final_total_non_half_cent() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
-        var golden = GoldenOrderPricingData.Load(RepoPaths.FindRepoRoot());
+        var repoRoot = RepoPaths.FindRepoRoot();
+        var golden = GoldenOrderPricingData.Load(repoRoot);
         var spokenCase = golden.SpokenTotalCases.Single(c => c.Tag == "activeNonHalfCent");
         Assert.False(spokenCase.HappyHour, "This fixture pins the clock outside the happy-hour window.");
 
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        var mode = OrderScenarioHelpers.MenuModeForItems(repoRoot, spokenCase.Steps.Select(s => s.Item));
+        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, mode: mode);
         await using var _ = browser;
 
         var steps = spokenCase.Steps.Select(s => (s.Action, s.Item, s.Size, s.Quantity, s.Price));
@@ -62,11 +64,13 @@ public sealed class SpokenTotalTests(HappyHourJustBeforeOpenFixture fixture)
     public Task Spoken_total_with_trailing_zero_shows_two_decimal_places() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
-        var golden = GoldenOrderPricingData.Load(RepoPaths.FindRepoRoot());
+        var repoRoot = RepoPaths.FindRepoRoot();
+        var golden = GoldenOrderPricingData.Load(repoRoot);
         var spokenCase = golden.SpokenTotalCases.Single(c => c.Tag == "trailingZero");
         Assert.False(spokenCase.HappyHour, "This fixture pins the clock outside the happy-hour window.");
 
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        var mode = OrderScenarioHelpers.MenuModeForItems(repoRoot, spokenCase.Steps.Select(s => s.Item));
+        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, mode: mode);
         await using var _ = browser;
 
         var steps = spokenCase.Steps.Select(s => (s.Action, s.Item, s.Size, s.Quantity, s.Price));
@@ -86,11 +90,13 @@ public sealed class SpokenTotalTests(HappyHourJustBeforeOpenFixture fixture)
     public Task Spoken_total_rounds_up_a_non_midpoint_value() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
-        var golden = GoldenOrderPricingData.Load(RepoPaths.FindRepoRoot());
+        var repoRoot = RepoPaths.FindRepoRoot();
+        var golden = GoldenOrderPricingData.Load(repoRoot);
         var spokenCase = golden.SpokenTotalCases.Single(c => c.Tag == "roundUpNonMidpoint");
         Assert.False(spokenCase.HappyHour, "This fixture pins the clock outside the happy-hour window.");
 
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        var mode = OrderScenarioHelpers.MenuModeForItems(repoRoot, spokenCase.Steps.Select(s => s.Item));
+        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, mode: mode);
         await using var _ = browser;
 
         var steps = spokenCase.Steps.Select(s => (s.Action, s.Item, s.Size, s.Quantity, s.Price));
@@ -115,11 +121,13 @@ public sealed class SpokenTotalHalfCentTests(HappyHourAtOpenFixture fixture)
     public Task Spoken_total_text_matches_the_exact_final_total_half_cent() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
-        var golden = GoldenOrderPricingData.Load(RepoPaths.FindRepoRoot());
+        var repoRoot = RepoPaths.FindRepoRoot();
+        var golden = GoldenOrderPricingData.Load(repoRoot);
         var spokenCase = golden.SpokenTotalCases.Single(c => c.Tag == "halfCent");
         Assert.True(spokenCase.HappyHour, "This fixture pins the clock inside the happy-hour window.");
 
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        var mode = OrderScenarioHelpers.MenuModeForItems(repoRoot, spokenCase.Steps.Select(s => s.Item));
+        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, mode: mode);
         await using var _ = browser;
 
         var steps = spokenCase.Steps.Select(s => (s.Action, s.Item, s.Size, s.Quantity, s.Price));

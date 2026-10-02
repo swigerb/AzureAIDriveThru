@@ -61,6 +61,40 @@ public static class OrderScenarioHelpers
         return (browser, connection!, roundTripIndex);
     }
 
+    public static string MenuModeForItem(string repoRoot, string itemName)
+    {
+        return MenuPeriodForItem(repoRoot, itemName) == "breakfast" ? "breakfast" : "lunch";
+    }
+
+    public static string MenuModeForItems(string repoRoot, IEnumerable<string> itemNames)
+    {
+        return itemNames.Any(itemName => MenuPeriodForItem(repoRoot, itemName) == "breakfast")
+            ? "breakfast"
+            : "lunch";
+    }
+
+    private static string? MenuPeriodForItem(string repoRoot, string itemName)
+    {
+        foreach (var menuPath in Directory.EnumerateFiles(Path.Combine(repoRoot, "personas"), "menuItems.json", SearchOption.AllDirectories))
+        {
+            using var doc = JsonDocument.Parse(File.ReadAllText(menuPath));
+            foreach (var category in doc.RootElement.GetProperty("menuItems").EnumerateArray())
+            {
+                foreach (var item in category.GetProperty("items").EnumerateArray())
+                {
+                    if (item.GetProperty("name").GetString() == itemName)
+                    {
+                        return item.TryGetProperty("menuPeriod", out var period)
+                            ? period.GetString()
+                            : null;
+                    }
+                }
+            }
+        }
+
+        throw new InvalidOperationException($"Menu item not found: {itemName}");
+    }
+
     /// <summary>One scripted `update_order`/`get_order`/`reset_order`/`search` call and everything
     /// the caller needs from its round trip.</summary>
     /// <param name="toClient">True if this tool's <c>ToolResultDirection</c> reaches the browser

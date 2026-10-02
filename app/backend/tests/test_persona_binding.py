@@ -1117,13 +1117,20 @@ class MenuModeResumeMismatchTests(unittest.TestCase):
                                 requested_menu_mode="breakfast")
         self.assertTrue(retry.accepted)
 
-    def test_resume_of_a_mode_bound_session_omitting_mode_is_rejected(self):
-        """An omitted `?mode=` on resume is `None`, which is a real, distinct mode value here
-        (never re-defaulted to "lunch" -- that default only ever applies at the ORIGINAL
-        connect, inside `create_session`) -- so it mismatches a session actually bound to
-        "breakfast" or "lunch", exactly like an explicit wrong value would."""
+    def test_resume_of_a_lunch_bound_session_omitting_mode_uses_connect_default(self):
+        """An omitted `?mode=` on resume resolves the same way a fresh WebSocket connect does:
+        "lunch" for a dayparts persona. That accepts a lunch-bound session while still rejecting
+        a breakfast-bound session in the sibling check below."""
         delta = self.catalog.get("test-delta")
         sid = self.sm.create_session(_ws(), persona=delta, menu_mode="lunch")
+        resume_id = self.sm.issue_resume_id(sid)
+        outcome = self.sm.resume(_ws(), resume_id, requested_persona_id="test-delta",
+                                  requested_menu_mode=None)
+        self.assertTrue(outcome.accepted)
+
+    def test_resume_of_a_breakfast_bound_session_omitting_mode_is_rejected(self):
+        delta = self.catalog.get("test-delta")
+        sid = self.sm.create_session(_ws(), persona=delta, menu_mode="breakfast")
         resume_id = self.sm.issue_resume_id(sid)
         outcome = self.sm.resume(_ws(), resume_id, requested_persona_id="test-delta",
                                   requested_menu_mode=None)

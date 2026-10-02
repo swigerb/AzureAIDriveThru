@@ -174,5 +174,45 @@ describe("MenuPanel size labels against real pack data (R1 pin)", () => {
                 );
             }
         });
+
     }
+});
+
+describe("MenuPanel dayparts real-pack visibility", () => {
+    it("shows all-day drinks, slushes, and shakes in breakfast mode while hiding lunch entrees", async () => {
+        const packDirName = packDirNames.find(name => {
+            const menu = loadMenu(name);
+            const itemNames = new Set(menu.menuItems.flatMap(category => category.items.map(item => item.name)));
+            return (
+                itemNames.has("Coca-Cola®") &&
+                itemNames.has("Blue Raspberry Slush") &&
+                itemNames.has("Vanilla Classic Shake")
+            );
+        });
+        expect(packDirName).toBeDefined();
+        const menu = loadMenu(packDirName!);
+        const lunchOnlyItem = menu.menuItems.flatMap(category => category.items).find(item => item.menuPeriod === "lunch");
+        expect(lunchOnlyItem).toBeDefined();
+
+        mockFetchOnce(menu);
+        render(<MenuPanel menuMode="breakfast" />);
+
+        for (const itemName of ["Coca-Cola®", "Blue Raspberry Slush", "Vanilla Classic Shake"]) {
+            const expectedName = normalizeWhitespace(itemName);
+            expect(
+                await screen.findByText(
+                    (_content, element) =>
+                        element?.tagName === "SPAN" && normalizeWhitespace(element.textContent ?? "") === expectedName
+                )
+            ).toBeInTheDocument();
+        }
+
+        expect(
+            screen.queryByText(
+                (_content, element) =>
+                    element?.tagName === "SPAN" &&
+                    normalizeWhitespace(element.textContent ?? "") === normalizeWhitespace(lunchOnlyItem!.name)
+            )
+        ).not.toBeInTheDocument();
+    });
 });
