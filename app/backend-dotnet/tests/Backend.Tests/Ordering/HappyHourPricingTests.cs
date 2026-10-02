@@ -16,13 +16,19 @@ namespace Backend.Tests.Ordering;
 ///
 /// <para><b>Not parallel-unsafe:</b> <see cref="ConformanceHooks"/>'s two env vars are read fresh
 /// on every call and are process-wide, but only a persona with a configured
-/// <c>pricing.happyHour</c> window (only test-alpha, among this test project's fixtures) ever
-/// calls <see cref="ConformanceHooks.Now"/> at all -- every other test in this project builds an
-/// <c>OrderState</c> for a persona with <c>happyHour: null</c>, so it can never observe this
-/// class's env var mutations. xUnit itself runs the [Fact]s within one class sequentially (only
-/// separate classes/collections run in parallel), so this class's own tests cannot race each
-/// other either.</para>
+/// <c>pricing.happyHour</c> window ever calls <see cref="ConformanceHooks.Now"/> at all -- every
+/// other test in this project builds an <c>OrderState</c> for a persona with <c>happyHour: null</c>,
+/// so it can never observe this class's env var mutations. xUnit itself runs the [Fact]s within
+/// one class sequentially, but a SECOND class elsewhere in this project now also freezes this
+/// SAME process-wide clock against a REAL happy-hour-configured persona (in
+/// <c>ComboInstanceDeterminismAndLifecycleTests.HappyHour_DoesNotDiscountAResizedComboDrink</c>,
+/// PR #184 round 2) -- and xUnit runs DIFFERENT classes in parallel by default, so without
+/// coordination those two classes' freezes could race each other's env var mutations. Both classes
+/// are pinned to the shared <see cref="ClockHookTestCollection"/> xUnit collection (<c>[Collection(
+/// ClockHookTestCollection.Name)]</c>) specifically so xUnit never runs them concurrently with each
+/// other, eliminating that race.</para>
 /// </summary>
+[Collection(ClockHookTestCollection.Name)]
 public sealed class HappyHourPricingTests : IDisposable
 {
     private const string EnabledEnv = "CONFORMANCE_TEST_HOOKS";
@@ -94,4 +100,16 @@ public sealed class HappyHourPricingTests : IDisposable
         Assert.Equal(0.0995m, order.Summary.Tax);
         Assert.Equal(2.0895m, order.Summary.FinalTotal);
     }
+}
+
+/// <summary>PR #184 round 2: defines the shared xUnit collection that forces every test class
+/// freezing the process-wide <c>CONFORMANCE_TEST_HOOKS</c>/<c>CONFORMANCE_FIXED_NOW</c> clock hook
+/// against a REAL happy-hour-configured persona to run sequentially with each other (xUnit never
+/// runs two classes in the SAME collection concurrently, even though it runs different collections
+/// in parallel by default) -- see <see cref="HappyHourPricingTests"/> and
+/// <c>ComboInstanceDeterminismAndLifecycleTests</c>.</summary>
+[CollectionDefinition(Name)]
+public sealed class ClockHookTestCollection
+{
+    public const string Name = "Process-wide clock hook tests";
 }

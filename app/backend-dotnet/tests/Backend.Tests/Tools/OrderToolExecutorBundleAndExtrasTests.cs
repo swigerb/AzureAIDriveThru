@@ -198,6 +198,64 @@ public sealed class OrderToolExecutorBundleAndExtrasTests
         Assert.Equal(ToolResultDirection.ToBoth, result.Destination);
     }
 
+    // ── modify delta-text wording ───────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Modify_ASizeChange_SpeaksTheOriginalAppsUpgradedWording()
+    {
+        // PR #184 round 3 (Rick's review, item C): a genuine size resize via `modify` must
+        // speak the original app's exact wording/verb and from/to form -- "Upgraded {item}
+        // from {Old} to {New}, your total is now $X" -- not the generic "Changed ..."
+        // fallback, and with no em dash.
+        var executor = NewExecutor(DeltaFixture.Load());
+        await executor.ExecuteAsync("update_order", Args("add", "Delta Latte", "regular", 1, 3.49m), TestContext.Current.CancellationToken);
+        var result = await executor.ExecuteAsync("update_order", Args("modify", "Delta Latte", "large", 1, 4.29m), TestContext.Current.CancellationToken);
+
+        var text = result.ToText();
+        Assert.StartsWith("Upgraded Delta Latte from Regular to Large, your total is now", text);
+        Assert.DoesNotContain('\u2014', text);
+    }
+
+    [Fact]
+    public async Task Modify_RejectedWholeBundleComponentResize_ReturnsStructuredRejectionNotSuccessText()
+    {
+        var executor = NewExecutor(DeltaFixture.Load("test-epsilon"));
+        await executor.ExecuteAsync(
+            "update_order", Args("add", "Epsilon Standard Meal", "standard", 1, 3.49m),
+            TestContext.Current.CancellationToken);
+
+        var result = await executor.ExecuteAsync(
+            "update_order", Args("modify", "Epsilon Fries", "large", 1, 0m),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(ToolResultDirection.ToServer, result.Destination);
+        using var payload = JsonDocument.Parse(result.ToText());
+        Assert.Equal("rejected", payload.RootElement.GetProperty("status").GetString());
+        Assert.Equal("combo_component_resize_rejected", payload.RootElement.GetProperty("reason").GetString());
+        Assert.Equal("Epsilon Fries", payload.RootElement.GetProperty("item_name").GetString());
+        Assert.Contains("can't be resized by itself", payload.RootElement.GetProperty("message").GetString());
+        Assert.DoesNotContain("Changed", result.ToText());
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("standard")]
+    public async Task Add_MissingOrStandardBundleSize_DefaultsToBundleDefaultSize(string requestedSize)
+    {
+        var executor = NewExecutor(DeltaFixture.Load("test-epsilon"));
+
+        var result = await executor.ExecuteAsync(
+            "update_order", Args("add", "Epsilon Snack Meal", requestedSize, 1, 0m),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(ToolResultDirection.ToBoth, result.Destination);
+        using var client = JsonDocument.Parse(result.ToClientText());
+        var item = client.RootElement.GetProperty("items")[0];
+        Assert.Equal("medium", item.GetProperty("size").GetString());
+        Assert.Equal(5.99m, item.GetProperty("price").GetDecimal());
+        Assert.Contains("Medium Epsilon Fries", item.GetProperty("display").GetString());
+    }
+
     // ── extras gate: extras_no_base_item / extras_blocked_category ─────────────────────────
     // test-delta's own extras.allowedBaseCategories: ["drinks"], blockedBaseCategories: ["mains"].
 

@@ -421,6 +421,7 @@ class MenuCatalog:
         bundle_name_markers: list[str] | None = None,
         bundle_convert_standalone: bool = False,
         bundle_missing_part_text: dict[str, str] | None = None,
+        bundle_resize_rule: str = "includedAnySize",
         split_combined_names: bool = False,
         search_query_rewrite: str = "",
     ):
@@ -463,6 +464,13 @@ class MenuCatalog:
         )
         self.bundle_convert_standalone: bool = bool(bundle_convert_standalone)
         self.bundle_missing_part_text: dict[str, str] = dict(bundle_missing_part_text or {})
+        # PR #184 round 2 (Rick's review, item 1): "includedAnySize" (default) or
+        # "wholeBundleSize" -- see persona_loader.py's `_Bundles.resizeRule` doc comment. Falls
+        # back to the default for any unrecognized value rather than crashing, matching every
+        # other persona-data field's "never trust the pack blindly" posture.
+        self.bundle_resize_rule: str = (
+            bundle_resize_rule if bundle_resize_rule in ("includedAnySize", "wholeBundleSize") else "includedAnySize"
+        )
         # #77 (shared extras engine): whether a not-on-menu name that's really two known items
         # joined by a connector word ("Latte with Extra Shot") should be split into two
         # ``suggested_calls`` instead of a flat rejection -- only a pack that opts in sets this.
@@ -508,6 +516,7 @@ class MenuCatalog:
             bundle_name_markers=bundles_cfg.nameMarkers,
             bundle_convert_standalone=bundles_cfg.convertStandalone,
             bundle_missing_part_text=bundles_cfg.missingPartText,
+            bundle_resize_rule=bundles_cfg.resizeRule,
             split_combined_names=extras_cfg.splitCombinedNames,
             search_query_rewrite=persona.manifest.strategies.searchQueryRewrite,
         )
@@ -567,6 +576,17 @@ class MenuCatalog:
         fields = self.item_fields.get(normalized)
         return fields["bundleSlots"] if fields else ()
 
+    def bundle_default_size(self, item_name: str) -> str:
+        """PR #184 round 4 (Rick's review, item 4): this bundle item's own ``menu.schema.json``
+        ``bundle.defaultSize`` (e.g. "Medium" on an S/M/L meal), or ``""`` for an item with no
+        bundle data or no configured default size. The single place ``tools.update_order``'s
+        size-validation gate reads to map a guest's missing/"Standard" size onto the pack's real
+        default meal size instead of rejecting it outright -- see ``bundle_autofill``'s own,
+        pre-existing use of this same field for the autofilled component's display label."""
+        normalized = self._resolve_alias(_menu_key(item_name))
+        fields = self.item_fields.get(normalized)
+        return (fields.get("bundleDefaultSize") or "") if fields else ""
+
     def bundle_autofill(self, item_name: str, resolved_size_label: str = "") -> dict[str, str]:
         """This bundle item's own slot -> filler-description map (menu.schema.json
         ``bundle.autoFill``), with a literal ``{size}`` token in a template replaced by
@@ -582,8 +602,26 @@ class MenuCatalog:
         template_map = fields.get("bundleAutoFill") or {}
         if not template_map:
             return {}
-        size_label = resolved_size_label or fields.get("bundleDefaultSize") or ""
+        default_size = fields.get("bundleDefaultSize") or ""
+        size_label = default_size if not resolved_size_label or resolved_size_label.lower() == "standard" else resolved_size_label
         return {slot: template.replace("{size}", size_label).strip() for slot, template in template_map.items()}
+
+    def bundle_autofill_names(self, item_name: str) -> dict[str, str]:
+        """PR #184 round 3 (Rick's review, item E): the same slot -> filler map as
+        ``bundle_autofill``, but with the literal ``{size}`` token (and the trailing space its
+        template builds in) stripped rather than substituted with a real size label -- the BASE,
+        on-menu item name an autofilled slot's ``item`` field should hold (e.g. "World Famous
+        Fries®"), independent of whatever size currently fills it. A template with no ``{size}``
+        token at all (e.g. "Hash Browns", a single-size autofill) is returned unchanged -- it was
+        never size-baked-in to begin with."""
+        normalized = self._resolve_alias(_menu_key(item_name))
+        fields = self.item_fields.get(normalized)
+        if fields is None:
+            return {}
+        template_map = fields.get("bundleAutoFill") or {}
+        if not template_map:
+            return {}
+        return {slot: template.replace("{size}", "").strip() for slot, template in template_map.items()}
 
     def meal_number_candidates(self, number: str) -> list[str]:
         """Every real menu item name that claims numbered-meal id *number* (persona.json

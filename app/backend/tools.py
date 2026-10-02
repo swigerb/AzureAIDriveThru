@@ -565,6 +565,25 @@ async def update_order(args, session_id: str) -> ToolResult:
             )
 
         requested_size = menu.canonical_size_key(size)
+        if requested_size not in menu_item["sizes"] and requested_size in ("", "standard"):
+            # PR #184 round 4 (Rick's review, item 4): a bundle meal ordered with no size at all,
+            # or a bare "standard"/"regular" ask, on a pack whose own `sizes` list is S/M/L ONLY
+            # (no "standard" tier -- e.g. a numbered-meal pack with S/M/L sizing) isn't actually
+            # an invalid size; it's the guest not naming one. Map it onto the bundle's own
+            # configured `bundle.defaultSize` (the original app's `_get_default_side` default)
+            # instead of rejecting a perfectly normal numbered-meal order. An item
+            # with NO bundle data, or no configured default size, falls through unchanged to the
+            # rejection below exactly as before; so does any OTHER explicitly-named size that
+            # the pack doesn't price (e.g. an explicit "large" on a true Standard-only item).
+            default_size = menu.bundle_default_size(item_name)
+            default_key = menu.canonical_size_key(default_size) if default_size else ""
+            if default_key and default_key in menu_item["sizes"]:
+                logger.info(
+                    "Defaulted missing/standard size for bundle '%s' to '%s' in session %s",
+                    item_name, default_key, session_id,
+                )
+                requested_size = default_key
+                size = default_size
         if requested_size not in menu_item["sizes"]:
             size_map = menu.size_map
             available_sizes = [size_map.get(s, s.capitalize()) for s in menu_item["sizes"]]
@@ -594,9 +613,13 @@ async def update_order(args, session_id: str) -> ToolResult:
         # nothing to resize. Reject it with the same structured shape instead of letting the
         # success delta tell the guest it was changed (docs/persona-architecture.md section 6).
         # Same line-matching rule as order_state.handle_order_update's modify branch.
+        # #179: a combo's side/drink filling a slot via absorption is ALSO a real, resizable part
+        # of the order even though it has no raw ``OrderItem`` line of its own -- the guest
+        # saying "make that a large" about the drink that came with their combo.
+        # ``is_absorbed_component`` is the second chance before this rejects it.
         if args["action"] == "modify" and not any(
             order_item.item == item_name for order_item in order_state_singleton.get_order_items(session_id)
-        ):
+        ) and not order_state_singleton.is_absorbed_component(session_id, item_name):
             logger.info("Rejected modify of '%s' for session %s (not_in_order)", item_name, session_id)
             _message = pl.render_error("item_not_in_order", item_name=menu_item["name"]) if pl else (
                 f"{menu_item['name']} isn't in the order, so nothing was changed. "
@@ -773,6 +796,40 @@ async def update_order(args, session_id: str) -> ToolResult:
         args.get("price", 0.0),
     )
 
+    # PR #184 round 4 (Rick's review, item 3): a "wholeBundleSize" pack's `combo_component_
+    # resize_rejected` flag means NOTHING was mutated (order_state.OrderState._fill_bundle_
+    # component rejected the resize outright because this pack has no whole-meal price at the
+    # requested size) -- read it BEFORE any of the success-delta branches below so this returns a
+    # structured (TO_SERVER) rejection, same shape as not_on_menu/size_not_available, instead of
+    # falling through to the generic `modify` branch's "Changed ..., your total is now ..."
+    # wording, which used to tell the guest a change happened when the order was left untouched.
+    rejected_component = result_info.get("combo_component_resize_rejected") if result_info else None
+    if rejected_component:
+        bundle_name = result_info.get("combo_component_resize_rejected_bundle", "") if result_info else ""
+        bundle_size = result_info.get("combo_component_resize_rejected_bundle_size", "") if result_info else ""
+        bundle_size_label = bundle_size.capitalize() if bundle_size and bundle_size.lower() != "standard" else ""
+        logger.info(
+            "Rejected combo %s resize of '%s' for session %s (combo_component_resize_rejected; "
+            "bundle=%s)", rejected_component, item_name, session_id, bundle_name,
+        )
+        _message = pl.render_error(
+            "combo_component_resize_rejected", item_name=item_name, bundle_name=bundle_name,
+            bundle_size_label=bundle_size_label,
+        ) if pl else (
+            f"I'm sorry, {item_name} comes with the {bundle_name} at its own size, so it can't be "
+            "resized by itself. Would you like to make the whole meal that size instead?"
+        )
+        return ToolResult(
+            {
+                "status": "rejected",
+                "item_added": False,
+                "reason": "combo_component_resize_rejected",
+                "item_name": item_name,
+                "message": _message,
+            },
+            ToolResultDirection.TO_SERVER,
+        )
+
     json_order_summary = order_state_singleton.get_order_summary_json(session_id)
     summary = order_state_singleton.get_order_summary(session_id)
     logger.debug("Session %s order summary after update: %s", session_id, json_order_summary)
@@ -784,6 +841,22 @@ async def update_order(args, session_id: str) -> ToolResult:
 
     absorbed = result_info.get("absorbed_into_combo", False) if result_info else False
     converted_from = result_info.get("combo_converted_from") if result_info else None
+    # #179: set by order_state.handle_order_update whenever a combo's side/drink slot was
+    # (re)sized in place -- via an `add` of the same item at a different size while the slot was
+    # already full, or an explicit `modify` targeting an absorbed component. Checked before the
+    # generic action-keyed branches below so both paths confirm the resize, never a duplicate-add
+    # or a rejected-modify message.
+    resized_component = result_info.get("resized_combo_component") if result_info else None
+    # PR #184 round 3 (Rick's review, item C): set by order_state.handle_order_update whenever
+    # `modify` actually changed an existing order line's OWN size (a bare resize, "wholeBundleSize"
+    # or not) -- distinct from resized_component above, which is a combo's SIDE/DRINK slot
+    # resizing in place. Matches the original app's exact wording/verb for this case.
+    modified_from_size = result_info.get("modified_from_size") if result_info else None
+    modified_to_size = result_info.get("modified_to_size") if result_info else None
+    # #179: handle_order_update's `remove` branch also sets "vacated_combo_component" when
+    # *item_name* was vacating a combo slot rather than removing a raw order line -- the
+    # existing generic "Removed ..." wording below is already accurate for that case (the item
+    # IS being removed from the guest's perspective), so no separate branch reads it here.
 
     if absorbed:
         delta_text = f"{display_name} included with your combo — your total is {summary.finalTotalDisplay}"
@@ -793,6 +866,12 @@ async def update_order(args, session_id: str) -> ToolResult:
         if mods:
             combo_display = f"{display_name} {mods}"
         delta_text = f"Upgraded to {combo_display} — your total is now {summary.finalTotalDisplay}"
+    elif resized_component:
+        delta_text = f"Changed {display_name}, your total is now {summary.finalTotalDisplay}"
+    elif modified_from_size and modified_to_size and modified_from_size != modified_to_size:
+        old_label = modified_from_size.capitalize()
+        new_label = modified_to_size.capitalize()
+        delta_text = f"Upgraded {item_name} from {old_label} to {new_label}, your total is now {summary.finalTotalDisplay}"
     elif pl:
         tpl = pl.get_delta_template(action)
         delta_text = pl.render_template(tpl, quantity=quantity, display_name=display_name, total=summary.finalTotalDisplay)

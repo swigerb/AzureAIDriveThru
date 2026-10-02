@@ -114,6 +114,40 @@ namespace Conformance.Tests;
 /// session's `search` tool description carries that SAME pack's own text and none of the others'.
 /// Both methods are tagged <c>[Trait("Dotnet", "ready")]</c>, ungated, and verified green against
 /// both backends -- raising the floor 194 to 196.
+///
+/// Issue #179: a guest's combo drink was resized by the model calling `remove &lt;item&gt;
+/// &lt;old size&gt;` then `add &lt;item&gt; &lt;new size&gt;`; the `remove` didn't vacate the
+/// combo slot it had been filling, so the following `add` created a standalone duplicate line
+/// instead of resizing the combo's own drink. <c>ComboComponentResizeConformanceTests.cs</c> adds
+/// two tagged, ungated <c>[Theory]</c> methods (<c>Discovered_pack_resizes_the_combo_drink_via_remove_then_add</c>,
+/// reproducing the exact live sequence, and <c>Discovered_pack_resizes_the_combo_drink_via_explicit_modify</c>,
+/// covering the new explicit resize action), each driven by <c>ComboBundleDiscovery</c> dynamically
+/// discovering every real pack with a genuinely-open drinks slot (no brand names in the test file
+/// itself) -- verified green against both backends for every real pack discovered on disk whose
+/// own menu qualifies today (a pack with no bundle at all is naturally excluded) -- raising the floor
+/// 196 to 198.
+///
+/// Issue #179 round 2 (#184, Rick's required items 1/2): the pricing model changed from a
+/// stateful delta/upcharge to a pure, path-independent function of the final order, and a pack's
+/// own `bundles.resizeRule` can now be `wholeBundleSize` (resizing ANY slot component cascades
+/// into resizing the WHOLE bundle), which the generic per-component scenario above does not apply
+/// to and now correctly excludes. <c>ComboComponentResizeConformanceTests.cs</c>'s pricing
+/// assertion was fixed to the new flat total, and a new tagged, ungated <c>[Theory]</c> method,
+/// <c>WholeBundleSizeResizeConformanceTests.Discovered_whole_bundle_size_pack_resizes_the_meal_and_relabels_its_slots</c>,
+/// covers the `wholeBundleSize` mechanism generically (dynamically discovering any pack with that
+/// rule from its own persona.json, no brand names) -- verified green against both backends, and
+/// mutation-checked (dotnet leg) by temporarily reverting the bundle's own reprice-on-resize line
+/// in OrderState.cs, confirming the new test fails -- raising the floor 198 to 199.
+///
+/// Issue #184 round 3 (Rick's review, item H): two new tagged, ungated Theory methods in
+/// <c>ComboComponentResizeConformanceTests.cs</c> -- a path-independence check (ordering a size
+/// up front totals identically to resizing into it later) and a two-bundle-instance check (a
+/// resize lands on the instance that actually holds the named item, by identity, never an
+/// arbitrary first match) -- verified green against both backends, raising the floor 199 to 201.
+///
+/// Issue #184 round 4 (Rick's round-3 review, items 2/4/7): two more tagged, ungated methods
+/// cover first-absorption path independence for wholeBundleSize packs and pack-owned
+/// wholeBundleSize golden vectors, raising the floor 201 to 203.
 /// </summary>
 public sealed class DotnetTraitCoverageTests
 {
@@ -136,12 +170,12 @@ public sealed class DotnetTraitCoverageTests
     };
 
     [Fact]
-    public void At_least_196_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
+    public void At_least_203_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
     {
         var count = CountFloorEligibleDotnetReadyTestMethods();
 
-        Assert.True(count >= 196,
-            $"Expected at least 196 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
+        Assert.True(count >= 203,
+            $"Expected at least 203 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
             $"and not unconditionally skip-gated by AuthRowCapability (the dotnet leg's " +
             $"`--filter \"{TraitName}={TraitValue}&Category!=Browser\"` baseline, minus the five " +
             "skip-only Scenarios/Auth classes -- see this class's own doc comment; " +

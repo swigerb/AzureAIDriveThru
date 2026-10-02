@@ -42,7 +42,9 @@ system_hints:
 delta_templates:
   item_added: "Added {{quantity}} {{display_name}} — your total is now {{total}}"
   item_removed: "Removed {{quantity}} {{display_name}} — your total is now {{total}}"
-  # #77: `modify` is engine-supported shared code but dormant for every real persona today (its
-  # own tool_schemas.yaml lists only add/remove) -- present for parity with item_added/removed,
-  # not because Sonic's own prompt ever offers it.
+  # #77/#184: `modify` is engine-supported shared code, present for parity with
+  # item_added/removed. Sonic's own prompt now calls it for an in-place combo component
+  # resize (tool_schemas.yaml lists it alongside add/remove) -- the generic text below is a
+  # fallback only, since a genuine whole-item size change is handled by tools.py's own
+  # "Upgraded ... from ... to ..." branch before this template is ever read.
   item_modified: "Changed {{display_name}} — your total is now {{total}}"

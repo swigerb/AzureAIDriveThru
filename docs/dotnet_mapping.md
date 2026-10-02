@@ -175,6 +175,19 @@ backends today (no `AuthRowCapability` skip-gating applies), so all three raises
 Auth classes (TRX: 485 passed, 61 not executed). A reflection probe agrees (a floor of 191 fails
 with "but found 190").
 
+**Issue #179 (combo drink resize) and round 2 (#184):** `ComboComponentResizeConformanceTests.cs`
+adds two tagged, ungated `[Theory]` methods dynamically discovering every real pack with a
+genuinely-open combo drink slot, raising the floor 196 -> 198. Round 2 (Rick's required items 1/2)
+fixes that pricing assertion to the new pure, path-independent model and adds one more tagged,
+ungated method, `WholeBundleSizeResizeConformanceTests.Discovered_whole_bundle_size_pack_resizes_the_meal_and_relabels_its_slots`,
+covering any pack whose own `bundles.resizeRule` is `wholeBundleSize` (resizing a slot component
+cascades into resizing the whole bundle), raising the floor 198 -> 199. Round 3 (#184, Rick's
+item H) adds two more tagged, ungated methods covering path-independence and a two-bundle-instance
+resize-lands-on-the-holder check, raising the floor 199 -> 201. Round 4 (#184, Rick's round-3
+review) adds two more tagged, ungated methods covering wholeBundleSize first-absorption path
+independence and pack-owned wholeBundleSize golden vectors, raising the floor 201 -> 203. See `DotnetTraitCoverageTests`'s
+own doc comment for the exact arithmetic.
+
 - **DEV_MODE hot-reload** (`prompt_loader.py`'s file-watching reload behaviour) is explicitly
   marked not required in C# by the design doc's per-backend loading table. Not ported.
 - **Jinja2 template rendering** (`prompt_loader.py`'s `render_error`, `get_upsell_hint`,

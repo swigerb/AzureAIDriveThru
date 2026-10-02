@@ -1,0 +1,101 @@
+{
+  "menuItems": [
+    {
+      "category": "meals",
+      "items": [
+        {
+          "name": "Epsilon Snack Meal",
+          "sizes": [
+            { "size": "small", "price": 4.99 },
+            { "size": "medium", "price": 5.99 },
+            { "size": "large", "price": 6.99 }
+          ],
+          "description": "Test Epsilon's multi-size meal with an auto-filled side and an open drink slot.",
+          "mealNumber": "1",
+          "bundle": {
+            "slots": ["sides", "drinks"],
+            "autoFill": { "sides": "{size} Epsilon Fries" },
+            "defaultSize": "Medium"
+          }
+        },
+        {
+          "name": "Epsilon Standard Meal",
+          "sizes": [
+            { "size": "standard", "price": 3.49 }
+          ],
+          "description": "Test Epsilon's Standard-only meal with a Medium default side and an open drink slot.",
+          "mealNumber": "2",
+          "bundle": {
+            "slots": ["sides", "drinks"],
+            "autoFill": { "sides": "{size} Epsilon Fries" },
+            "defaultSize": "Medium"
+          }
+        }
+      ]
+    },
+    {
+      "category": "drinks",
+      "items": [
+        {
+          "name": "Epsilon Cola",
+          "sizes": [
+            { "size": "small", "price": 1.00 },
+            { "size": "medium", "price": 1.50 },
+            { "size": "large", "price": 2.00 }
+          ],
+          "description": "Test Epsilon's happy-hour-eligible fountain drink.",
+          "comboSlot": "drinks",
+          "happyHourDiscounted": true
+        },
+        {
+          "name": "Epsilon Tea",
+          "sizes": [
+            { "size": "small", "price": 1.10 },
+            { "size": "medium", "price": 1.60 },
+            { "size": "large", "price": 2.10 }
+          ],
+          "description": "Test Epsilon's second drink for path-independent slot tests.",
+          "comboSlot": "drinks",
+          "happyHourDiscounted": true
+        }
+      ]
+    },
+    {
+      "category": "sides",
+      "items": [
+        {
+          "name": "Epsilon Fries",
+          "sizes": [
+            { "size": "small", "price": 1.25 },
+            { "size": "medium", "price": 1.75 },
+            { "size": "large", "price": 2.25 }
+          ],
+          "description": "Test Epsilon's fries, deliberately Small/Medium/Large only with no Standard size.",
+          "comboSlot": "sides"
+        },
+        {
+          "name": "Epsilon Rings",
+          "sizes": [
+            { "size": "small", "price": 1.35 },
+            { "size": "medium", "price": 1.85 },
+            { "size": "large", "price": 2.35 }
+          ],
+          "description": "Test Epsilon's second side.",
+          "comboSlot": "sides"
+        }
+      ]
+    },
+    {
+      "category": "mains",
+      "items": [
+        {
+          "name": "Epsilon Burger",
+          "sizes": [
+            { "size": "standard", "price": 2.99 }
+          ],
+          "description": "Test Epsilon's plain main item."
+        }
+      ]
+    }
+  ]
+}

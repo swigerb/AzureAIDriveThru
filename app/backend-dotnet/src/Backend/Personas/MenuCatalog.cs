@@ -64,6 +64,10 @@ public sealed class MenuCatalog
     public IReadOnlyList<string> BundleNameMarkers { get; }
     public bool BundleConvertStandalone { get; }
     public IReadOnlyDictionary<string, string> BundleMissingPartText { get; }
+    // PR #184 round 2 (Rick's review, item 1): this persona's own bundle slot-fill/resize
+    // pricing rule ("includedAnySize" default, or "wholeBundleSize") -- see
+    // OrderState.FillBundleComponent/ApplyWholeBundleResize.
+    public string BundleResizeRule { get; }
     public bool SplitCombinedNames { get; }
     public string SearchQueryRewrite { get; }
 
@@ -98,6 +102,7 @@ public sealed class MenuCatalog
         IReadOnlyList<string> bundleNameMarkers,
         bool bundleConvertStandalone,
         IReadOnlyDictionary<string, string> bundleMissingPartText,
+        string bundleResizeRule,
         bool splitCombinedNames,
         string searchQueryRewrite)
     {
@@ -116,6 +121,7 @@ public sealed class MenuCatalog
         BundleNameMarkers = bundleNameMarkers;
         BundleConvertStandalone = bundleConvertStandalone;
         BundleMissingPartText = bundleMissingPartText;
+        BundleResizeRule = bundleResizeRule;
         SplitCombinedNames = splitCombinedNames;
         SearchQueryRewrite = searchQueryRewrite;
 
@@ -228,6 +234,7 @@ public sealed class MenuCatalog
                 .Where(m => m.Length > 0).ToList(),
             bundleConvertStandalone: bundlesCfg.ConvertStandalone,
             bundleMissingPartText: new Dictionary<string, string>(bundlesCfg.MissingPartText),
+            bundleResizeRule: string.IsNullOrEmpty(bundlesCfg.ResizeRule) ? "includedAnySize" : bundlesCfg.ResizeRule,
             splitCombinedNames: extrasCfg.SplitCombinedNames,
             searchQueryRewrite: persona.Strategies.SearchQueryRewrite);
     }
@@ -327,6 +334,20 @@ public sealed class MenuCatalog
         return _itemFields.TryGetValue(normalized, out var fields) ? fields.BundleSlots : [];
     }
 
+    /// <summary>PR #184 round 4 (Rick's review, item 4): this bundle item's own
+    /// <c>menu.schema.json</c> <c>bundle.defaultSize</c> (e.g. "Medium" on an S/M/L meal), or
+    /// <c>""</c> for an item with no bundle data or no configured default size. The single place
+    /// <c>Tools.OrderToolExecutor</c>'s size-validation gate reads to map a guest's missing/
+    /// "Standard" size onto the pack's real default meal size instead of rejecting it outright --
+    /// see <see cref="BundleAutoFill"/>'s own, pre-existing use of this same field for the
+    /// autofilled component's display label. Mirrors menu_utils.py's
+    /// <c>bundle_default_size</c>.</summary>
+    public string BundleDefaultSize(string itemName)
+    {
+        var normalized = ResolveAlias(MenuKeyValidator.MenuKey(itemName));
+        return _itemFields.TryGetValue(normalized, out var fields) ? fields.BundleDefaultSize ?? "" : "";
+    }
+
     /// <summary>This bundle item's own slot -> filler-description map (menu.schema.json
     /// <c>bundle.autoFill</c>), with a literal <c>{size}</c> token in a template replaced by
     /// <paramref name="resolvedSizeLabel"/> (falling back to the bundle's own
@@ -339,10 +360,33 @@ public sealed class MenuCatalog
         {
             return new Dictionary<string, string>();
         }
-        var sizeLabel = string.IsNullOrEmpty(resolvedSizeLabel) ? fields.BundleDefaultSize ?? "" : resolvedSizeLabel;
+        var defaultSize = fields.BundleDefaultSize ?? "";
+        var sizeLabel = string.IsNullOrEmpty(resolvedSizeLabel) || resolvedSizeLabel.Equals("standard", StringComparison.OrdinalIgnoreCase)
+            ? defaultSize
+            : resolvedSizeLabel;
         return fields.BundleAutoFill.ToDictionary(
             kv => kv.Key,
             kv => kv.Value.Replace("{size}", sizeLabel).Trim());
+    }
+
+    /// <summary>PR #184 round 3 (Rick's review, item E): the same slot -> filler map as
+    /// <see cref="BundleAutoFill"/>, but with the literal <c>{size}</c> token (and the trailing
+    /// space its template builds in) stripped rather than substituted with a real size label --
+    /// the BASE, on-menu item name an autofilled slot's item field should hold (e.g. "World
+    /// Famous Fries®"), independent of whatever size currently fills it. A template with no
+    /// <c>{size}</c> token at all (e.g. "Hash Browns", a single-size autofill) is returned
+    /// unchanged -- it was never size-baked-in to begin with. Mirrors menu_utils.py's
+    /// <c>bundle_autofill_names</c>.</summary>
+    public IReadOnlyDictionary<string, string> BundleAutoFillNames(string itemName)
+    {
+        var normalized = ResolveAlias(MenuKeyValidator.MenuKey(itemName));
+        if (!_itemFields.TryGetValue(normalized, out var fields) || fields.BundleAutoFill.Count == 0)
+        {
+            return new Dictionary<string, string>();
+        }
+        return fields.BundleAutoFill.ToDictionary(
+            kv => kv.Key,
+            kv => kv.Value.Replace("{size}", "").Trim());
     }
 
     /// <summary>Every real menu item name that claims numbered-meal id <paramref name="number"/>

@@ -1,0 +1,16 @@
+messages:
+  generic_error: "Sorry, something went wrong. Please try again."
+  item_not_on_menu: >-
+    Sorry, {{item_name}} isn't on our menu. Would you like to try something else instead?
+  size_not_available: >-
+    Sorry, {{item_name}} isn't available in that size. We have it in {{available_sizes}}; would you like one of those?
+  item_not_in_order: >-
+    {{item_name}} isn't in the order, so nothing was changed.
+  machine_unavailable: >-
+    Sorry, {{item_name}} isn't available right now; {{machine_label}}. Would you like to try something else instead?
+  combo_component_resize_rejected: >-
+    I'm sorry, {{item_name}} comes with the {{bundle_name}} at its own size, so it can't be resized by itself. Would you like to resize the whole meal instead?
+  extras_blocked_category: "Extras can't be added to that category right now."
+  extras_no_base_item: "Extras need a base item in the order first."
+  item_out_of_mode: >-
+    Sorry, {{item_name}} isn't on the menu right now. Would you like to try something else instead?

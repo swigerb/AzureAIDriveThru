@@ -36,7 +36,8 @@
   "bundles": {
     "nameMarkers": ["meal"],
     "convertStandalone": true,
-    "missingPartText": { "sides": "World Famous Fries or another side", "drinks": "a drink" }
+    "missingPartText": { "sides": "World Famous Fries or another side", "drinks": "a drink" },
+    "resizeRule": "wholeBundleSize"
   },
 
   "extras": {
