@@ -14,6 +14,7 @@ import MenuPanel from "@/components/ui/menu-panel";
 import OrderSummary, { calculateOrderSummary, OrderItem, OrderSummaryProps } from "@/components/ui/order-summary";
 import TranscriptPanel from "@/components/ui/transcript-panel";
 import PersonaPicker from "@/components/ui/persona-picker";
+import PersonaSwitchConfirmDialog from "@/components/ui/persona-switch-confirm-dialog";
 import BackendPicker from "@/components/ui/backend-picker";
 const Settings = lazy(() => import("@/components/ui/settings"));
 import useRealTime from "@/hooks/useRealtime";
@@ -105,10 +106,32 @@ function SonicApp() {
     const { useAzureSpeechOn } = useAzureSpeechOnContext();
     const { useDummyData } = useDummyDataContext();
     const { theme } = useTheme();
-    const { personas, backends, current, logoUrl, selectPersona } = usePersonaContext();
+    const { personas, backends, current, logoUrl, error: personaError, fetchPersona, applyPersona } = usePersonaContext();
 
     const [transcripts, setTranscripts] = useState<Array<{ text: string; isUser: boolean; timestamp: Date }>>([]);
     const { dummyOrder, dummyTranscripts } = useDemoData(current.id, useDummyData);
+    // Issue GH-180: the persona id a guest picked while a switch still needs confirming (a
+    // non-empty order or an active conversation) -- null means no confirmation dialog is open.
+    const [pendingPersonaSwitchId, setPendingPersonaSwitchId] = useState<string | null>(null);
+    // Issue GH-180 round 2, R4: the persona a switch is currently resolving TO, from the moment
+    // handleSelectPersona starts running until it settles (success or failure). The ref is read
+    // synchronously by requestPersonaSwitch -- immune to React's batched state updates -- so a
+    // second pick landing during the async persona-fetch window is a plain no-op instead of
+    // re-entering handleSelectPersona (which would call endSession() a second time) or reaching
+    // selectPersona's own "already selected" early return, whose `false` result used to make
+    // handleSelectPersona call realtime.cancelSwitch() against a switch that was still genuinely
+    // pending -- reopening a socket for the persona being switched AWAY from. The state mirror
+    // drives the picker's displayed value (the pending target, not a snap back to the old persona)
+    // while a switch is in flight.
+    const switchInFlightRef = useRef<string | null>(null);
+    const [switchTargetId, setSwitchTargetId] = useState<string | null>(null);
+    // Issue GH-180 round 3, R8: set when the guest taps the mic while `switchInFlightRef` is
+    // already non-null -- the old persona's socket may still be genuinely OPEN at that instant,
+    // but starting a session on it now would greet with the OLD persona and then be silently
+    // abandoned once the switch actually lands. `handleSelectPersona` checks this once it knows
+    // which persona ends up bound (the new one on success, the old one again on failure) and
+    // performs the deferred start then, instead of here.
+    const micStartDeferredRef = useRef(false);
 
     const initialOrder: OrderSummaryProps = {
         items: [],
@@ -572,66 +595,90 @@ function SonicApp() {
         setConnectionNotice(null);
     };
 
+    // Issue GH-180 round 3, R8: the actual "start recording" logic, extracted out of
+    // `onToggleListening` so `handleSelectPersona` can invoke it once a deferred mic tap's switch
+    // has settled (success or failure) -- same body, unconditionally. `realtime.startSession()`
+    // queues its `session.update` via the hook's own `pendingRef` whenever the target socket
+    // isn't OPEN yet (see `useRealtime.tsx`'s `send()`), so calling this right after
+    // `applyPersona()` (new socket still connecting) correctly waits for it instead of dropping
+    // the frame; on a failed switch the OLD socket is untouched and still OPEN, so it sends
+    // immediately, exactly as an ordinary tap would have.
+    const beginRecording = async () => {
+        const continuing = !useAzureSpeechOn && resumedSessionRef.current && !serverSessionLostRef.current;
+        if (!continuing) setSessionIdentifiers(null);
+        setConnectionNotice(null);
+        if (!useAzureSpeechOn) {
+            if (serverSessionLostRef.current) {
+                serverSessionLostRef.current = false;
+                setOrder(initialOrder);
+            }
+            // Idle close / exhausted retries leave the socket down on purpose.
+            // startSession() below is queued and sent once the new socket opens.
+            if (!realtime.isConnected) void realtime.reconnect();
+        }
+
+        // Start session and playback immediately, but delay mic capture until the greeting finishes.
+        isSessionActiveRef.current = true;
+        isAiSpeakingRef.current = false;
+        awaitingGreetingDoneRef.current = !useAzureSpeechOn && !continuing;
+        greetingAudioSeenRef.current = false;
+
+        await resetAudioPlayer();
+
+        if (useAzureSpeechOn) {
+            // AzureSpeech mode doesn't play a synthesized greeting audio stream.
+            azureSpeech.startSession();
+            await startAudioRecording();
+        } else {
+            realtime.startSession();
+            if (verboseLogging) {
+                realtime.sendVerboseLogging(true);
+                if (logToFile) {
+                    realtime.sendLogToFile(true);
+                }
+            }
+
+            if (continuing && !startMicInFlightRef.current) {
+                // Resumed session: no greeting is coming.
+                startMicInFlightRef.current = startAudioRecording()
+                    .then(() => undefined)
+                    .finally(() => {
+                        startMicInFlightRef.current = null;
+                    });
+            }
+
+            // Safety: if we never receive the greeting completion, start the mic after a short timeout.
+            window.setTimeout(() => {
+                if (!isSessionActiveRef.current) return;
+                if (!awaitingGreetingDoneRef.current) return;
+                awaitingGreetingDoneRef.current = false;
+                if (startMicInFlightRef.current) return;
+                startMicInFlightRef.current = startAudioRecording()
+                    .then(() => undefined)
+                    .finally(() => {
+                        startMicInFlightRef.current = null;
+                    });
+            }, 3500);
+        }
+
+        setIsRecording(true);
+    };
+
     const onToggleListening = async () => {
         if (!isRecording) {
-            const continuing = !useAzureSpeechOn && resumedSessionRef.current && !serverSessionLostRef.current;
-            if (!continuing) setSessionIdentifiers(null);
-            setConnectionNotice(null);
-            if (!useAzureSpeechOn) {
-                if (serverSessionLostRef.current) {
-                    serverSessionLostRef.current = false;
-                    setOrder(initialOrder);
-                }
-                // Idle close / exhausted retries leave the socket down on purpose.
-                // startSession() below is queued and sent once the new socket opens.
-                if (!realtime.isConnected) void realtime.reconnect();
+            // Issue GH-180 round 3, R8: a persona switch is still resolving -- the old socket may
+            // still be genuinely OPEN (nothing has torn it down yet; `endSession()` only runs
+            // once the target persona's fetch succeeds), so `realtime.isConnected` below would
+            // read `true` for it and this tap would otherwise start a session with the OLD
+            // persona, moments before the switch replaces its socket out from under it. Defer:
+            // `handleSelectPersona` performs this same start, targeting whichever persona ends up
+            // actually bound, once it knows (success or failure). Never send on the old socket
+            // while a switch is pending.
+            if (switchInFlightRef.current) {
+                micStartDeferredRef.current = true;
+                return;
             }
-
-            // Start session and playback immediately, but delay mic capture until the greeting finishes.
-            isSessionActiveRef.current = true;
-            isAiSpeakingRef.current = false;
-            awaitingGreetingDoneRef.current = !useAzureSpeechOn && !continuing;
-            greetingAudioSeenRef.current = false;
-
-            await resetAudioPlayer();
-
-            if (useAzureSpeechOn) {
-                // AzureSpeech mode doesn't play a synthesized greeting audio stream.
-                azureSpeech.startSession();
-                await startAudioRecording();
-            } else {
-                realtime.startSession();
-                if (verboseLogging) {
-                    realtime.sendVerboseLogging(true);
-                    if (logToFile) {
-                        realtime.sendLogToFile(true);
-                    }
-                }
-
-                if (continuing && !startMicInFlightRef.current) {
-                    // Resumed session: no greeting is coming.
-                    startMicInFlightRef.current = startAudioRecording()
-                        .then(() => undefined)
-                        .finally(() => {
-                            startMicInFlightRef.current = null;
-                        });
-                }
-
-                // Safety: if we never receive the greeting completion, start the mic after a short timeout.
-                window.setTimeout(() => {
-                    if (!isSessionActiveRef.current) return;
-                    if (!awaitingGreetingDoneRef.current) return;
-                    awaitingGreetingDoneRef.current = false;
-                    if (startMicInFlightRef.current) return;
-                    startMicInFlightRef.current = startAudioRecording()
-                        .then(() => undefined)
-                        .finally(() => {
-                            startMicInFlightRef.current = null;
-                        });
-                }, 3500);
-            }
-
-            setIsRecording(true);
+            await beginRecording();
         } else {
             await stopConversation();
         }
@@ -646,40 +693,122 @@ function SonicApp() {
         return () => window.removeEventListener("resize", checkMobile);
     }, []);
 
-    // Rick's PR-110 review item 5 (issue #80 F7): the picker only allows a switch once
-    // recording has stopped and the ticket is empty, but a finished conversation can still
-    // leave transcripts/session identifiers on screen -- clear all of that (and end any
-    // lingering realtime session) so the new persona starts on a genuinely fresh slate.
-    // useRealTime already namespaces the resume id per persona.id, so no separate handling
-    // is needed there.
+    // Rick's PR-110 review item 5 (issue #80 F7): a switch clears the previous persona's ticket,
+    // transcript and session identifiers (and ends any lingering realtime session) so the new
+    // persona starts on a genuinely fresh slate. useRealTime already namespaces the resume id per
+    // persona.id, so no separate handling is needed there.
+    //
+    // Issue GH-180: this is the CONFIRMED switch executor -- it performs the actual switch
+    // unconditionally and is called either immediately (empty order, no active conversation) or
+    // after the guest confirms `PersonaSwitchConfirmDialog` (non-empty order and/or an active
+    // conversation). It must never run without one of those two gates having already decided the
+    // switch should happen; `requestPersonaSwitch` below owns that decision.
     const handleSelectPersona = async (personaId: string) => {
-        // Defensive hardening for issue GH-171: `PersonaPicker` is already `disabled` while a
-        // conversation is active (ADR-001 decision 2), so this path shouldn't normally see
-        // `isSessionActiveRef.current === true` -- but if it ever does (e.g. a future caller that
-        // bypasses the picker), stop the live conversation cleanly first rather than letting
-        // `endSession()` tear down the socket out from under an in-progress recording/greeting.
-        if (isSessionActiveRef.current) void stopConversation();
-        // issue GH-171 round 2, H2: tells useRealtime a persona switch is under way, so its own
-        // onClose doesn't force an extra reconnect for the persona being switched AWAY from once
-        // the server's close for this end_session arrives (see useRealtime.tsx's switchingRef).
-        realtime.endSession({ switching: true });
-        resumePendingRef.current = null;
-        resumedSessionRef.current = false;
-        serverSessionLostRef.current = false;
-        setOrder(initialOrder);
-        setTranscripts([]);
-        setSessionIdentifiers(null);
-        setTokenHistory([]);
-        setConnectionNotice(null);
-        // Issue GH-171 round 3, H4: selectPersona() now reports whether the switch actually
-        // happened. On failure (the detail fetch rejected, or the id hadn't changed) there is
-        // nothing for react-use-websocket's own url-keyed effect to react to -- cancelSwitch()
-        // is the only thing left that can clear useRealtime's pending-switch state and, if
-        // anything still needs one, recover a socket for the persona that was never actually
-        // left.
-        const switched = await selectPersona(personaId);
-        if (!switched) realtime.cancelSwitch();
+        // Issue GH-180 round 2, R4: marks this switch in flight from the very first line, before
+        // any await below -- requestPersonaSwitch reads this synchronously (immune to React's
+        // batched state updates), so a second pick landing anywhere in this window is a plain
+        // no-op instead of re-entering this function.
+        switchInFlightRef.current = personaId;
+        setSwitchTargetId(personaId);
+        // Issue GH-180 round 2, R1: marks the switch as pending in useRealtime the instant the
+        // guest confirms -- well before the fetch below resolves -- so a mic tap landing in that
+        // window is deferred (see useRealtime's reconnect()/beginSwitch()) instead of reconnecting
+        // the OLD persona's dead socket out from under the switch. endSession() itself (the actual
+        // teardown) still waits for a successful fetch; cancelSwitch() on the failure path below
+        // undoes this mark exactly the same way it already undoes endSession()'s.
+        realtime.beginSwitch();
+        try {
+            // A conversation can genuinely be active here now that the picker is never disabled
+            // (issue GH-180) -- stop it cleanly first rather than letting `endSession()` tear down
+            // the socket out from under an in-progress recording/greeting. Issue GH-180 round 2,
+            // R6: now AWAITED (was fire-and-forget `void stopConversation()`) -- the mic recorder
+            // used to keep streaming audio buffers for one more tick after `end_session` had
+            // already gone out, and nothing ever asserted the recorder actually stopped, so a
+            // mutation that deleted this line entirely survived the whole suite.
+            if (isSessionActiveRef.current) await stopConversation();
+            // Issue GH-180 round 3, R7: fetch WITHOUT applying first (the old `selectPersona()`
+            // call fetched AND applied in one step, which is exactly the bug below). On failure,
+            // leave everything exactly as it was -- `fetchPersona` itself already set the visible,
+            // localized error; the picker still reflects the persona actually bound.
+            const detail = await fetchPersona(personaId);
+            if (!detail) {
+                // issue GH-171 round 3, H4: the only signal useRealtime has for a FAILED switch --
+                // nothing else ever changed (current/personaId stayed put), so there is nothing
+                // for react-use-websocket's own url-keyed effect to react to on its own.
+                realtime.cancelSwitch();
+                return;
+            }
+            // issue GH-171 round 2, H2: tells useRealtime a persona switch is under way, so its
+            // own onClose doesn't force an extra reconnect for the persona being switched AWAY
+            // from once the server's close for this end_session arrives (see useRealtime.tsx's
+            // switchingRef). Issue GH-180 round 2, R2: endSession() also records the exact socket
+            // that is open right now, so anything it still delivers afterward (a reply already in
+            // flight when the guest confirmed) can never be mistaken for the new persona's own
+            // frames. Issue GH-180 round 3, R7: this MUST run before `applyPersona` below, while
+            // the old socket is still current by every check useRealtime.tsx makes (`openRef`,
+            // the identity props) -- applying first let React commit the identity change (and the
+            // H1 render-time reset flip `openRef` false) before this ever ran, so no frame went
+            // out and the old session was only grace-held server side, never actually ended.
+            realtime.endSession({ switching: true });
+            resumePendingRef.current = null;
+            resumedSessionRef.current = false;
+            serverSessionLostRef.current = false;
+            setOrder(initialOrder);
+            setTranscripts([]);
+            setSessionIdentifiers(null);
+            setTokenHistory([]);
+            setConnectionNotice(null);
+            // Last: only now does `current`/`personaId` actually move.
+            applyPersona(personaId, detail);
+        } finally {
+            switchInFlightRef.current = null;
+            setSwitchTargetId(null);
+            // Issue GH-180 round 3, R8: a mic tap landed while this switch was pending -- start
+            // the session now that it's settled, targeting whichever persona actually ended up
+            // bound. On success the new persona's socket is still connecting; `startSession()`
+            // queues the `session.update` until it opens (see `useRealtime.tsx`'s `send()`). On
+            // failure the old persona's socket was never touched (`endSession()` above only ever
+            // runs once the fetch succeeds), so it sends immediately, exactly as an ordinary tap
+            // would have.
+            if (micStartDeferredRef.current) {
+                micStartDeferredRef.current = false;
+                void beginRecording();
+            }
+        }
     };
+
+    // Issue GH-180: the picker is now always enabled, so every switch request lands here first.
+    // With an empty order and no active conversation there's nothing to lose -- switch straight
+    // away, matching the picker's pre-GH-180 "idle" behavior exactly. Otherwise, hold the switch
+    // behind `PersonaSwitchConfirmDialog` instead of either silently blocking it (the old bug) or
+    // silently clearing the guest's order.
+    const requestPersonaSwitch = (personaId: string) => {
+        // Issue GH-180 round 2, R4: a switch is already resolving (the target's detail fetch
+        // hasn't settled either way yet) -- ignore any further pick until it does, rather than
+        // re-entering handleSelectPersona (a second endSession() call) or reaching
+        // persona-context's own "already selected" early return, whose `false` result used to
+        // make handleSelectPersona call realtime.cancelSwitch() against a switch that was still
+        // genuinely pending -- reopening a socket for the persona being switched AWAY from.
+        if (switchInFlightRef.current) return;
+        if (personaId === current.id) return;
+        const hasActiveConversation = isSessionActiveRef.current;
+        const hasOrderItems = order.items.length > 0;
+        if (!hasActiveConversation && !hasOrderItems) {
+            void handleSelectPersona(personaId);
+            return;
+        }
+        setPendingPersonaSwitchId(personaId);
+    };
+
+    const confirmPersonaSwitch = () => {
+        const personaId = pendingPersonaSwitchId;
+        setPendingPersonaSwitchId(null);
+        if (personaId) void handleSelectPersona(personaId);
+    };
+
+    // Nothing changes on cancel: the dialog closes and the (controlled) picker already reflects
+    // `current.id` again on its own, with no extra state to unwind.
+    const cancelPersonaSwitch = () => setPendingPersonaSwitchId(null);
 
     // Rick's PR 134 review, item 4: the model picker's own explicit user choice -- the other
     // persist site is the resolve effect above (a persona switch or an initial `?model=` arrival).
@@ -713,15 +842,12 @@ function SonicApp() {
                         <span>Source on GitHub</span>
                     </a>
                     <div className="flex items-center gap-2">
-                        {/* Issue #80 F1: the picker sets the persona for the NEXT session only
-                            (ADR-001 decision 2) -- disabled once a conversation is active or the
-                            guest has items on their ticket, rather than resetting either mid-flight. */}
-                        <PersonaPicker
-                            personas={personas}
-                            currentId={current.id}
-                            onSelect={handleSelectPersona}
-                            disabled={isRecording || order.items.length > 0}
-                        />
+                        {/* Issue GH-180: always enabled -- requestPersonaSwitch decides whether the
+                            switch runs immediately (empty order, no active conversation) or waits
+                            on PersonaSwitchConfirmDialog's confirmation first. Issue GH-180 round
+                            2, R4: shows the pending target while a switch is still resolving,
+                            rather than snapping back to the persona that's merely still bound. */}
+                        <PersonaPicker personas={personas} currentId={switchTargetId ?? current.id} onSelect={requestPersonaSwitch} />
                         {/* Issue #80 F11: hides itself entirely below two `backends[]` entries. */}
                         <BackendPicker
                             backends={backends}
@@ -778,6 +904,12 @@ function SonicApp() {
                         )}
                     </div>
                 </div>
+
+                {personaError && (
+                    <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-sm font-medium text-destructive">
+                        {personaError}
+                    </p>
+                )}
 
                 {sessionIdentifiers && showSessionTokens && (
                     <SessionTokenPanel
@@ -895,6 +1027,12 @@ function SonicApp() {
                 </p>
                 <p className="text-[11px] leading-relaxed text-brand-ink/80 dark:text-white/80">{current.legal}</p>
             </footer>
+            <PersonaSwitchConfirmDialog
+                open={pendingPersonaSwitchId !== null}
+                personaName={personas.find(p => p.id === pendingPersonaSwitchId)?.displayName ?? ""}
+                onConfirm={confirmPersonaSwitch}
+                onCancel={cancelPersonaSwitch}
+            />
         </div>
     );
 }

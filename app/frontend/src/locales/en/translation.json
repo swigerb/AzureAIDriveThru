@@ -44,6 +44,13 @@
         "included": "Included",
         "componentsLabel": "Included with this item"
     },
+    "personaSwitch": {
+        "title": "Switch persona?",
+        "body": "Switching to {{persona}} will start a new order. Your current order will be cleared.",
+        "confirm": "Switch",
+        "cancel": "Cancel",
+        "loadError": "Couldn't switch to {{persona}}. Your current order is unchanged. Please try again."
+    },
     "picker": {
         "backendLabel": "Backend",
         "modelLabel": "Model",
