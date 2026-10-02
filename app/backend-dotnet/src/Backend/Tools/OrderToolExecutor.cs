@@ -81,7 +81,7 @@ public sealed class OrderToolExecutor : IToolExecutor
 
         if (action is "add" or "modify")
         {
-            var rejection = CheckAddOrModifyGates(action, itemName, size);
+            var rejection = CheckAddOrModifyGates(action, itemName, ref size);
             if (rejection is not null)
             {
                 return rejection;
@@ -132,6 +132,37 @@ public sealed class OrderToolExecutor : IToolExecutor
         }
 
         var resultInfo = _order.HandleOrderUpdate(action, itemName, size, quantity, callerPrice);
+
+        // PR #184 round 4 (Rick's review, item 3): a "wholeBundleSize" pack's
+        // ComboComponentResizeRejected flag means NOTHING was mutated (OrderState.
+        // FillBundleComponent rejected the resize outright because this pack has no whole-meal
+        // price at the requested size) -- read it BEFORE BuildDeltaText's success-delta branches
+        // so this returns a structured (ToServer) rejection, same shape as not_on_menu/
+        // size_not_available, instead of a generic "Changed ..., your total is now ..." delta
+        // text, which used to tell the guest a change happened when the order was left untouched.
+        if (resultInfo.ComboComponentResizeRejected is { Length: > 0 })
+        {
+            var bundleName = resultInfo.ComboComponentResizeRejectedBundle ?? "";
+            var bundleSize = resultInfo.ComboComponentResizeRejectedBundleSize ?? "";
+            var bundleSizeLabel = bundleSize.Length > 0 && !string.Equals(bundleSize, "standard", StringComparison.OrdinalIgnoreCase)
+                ? Capitalize(bundleSize) : "";
+            var rejectMessage = _promptLoader?.RenderError(
+                "combo_component_resize_rejected",
+                Vars(("item_name", itemName), ("bundle_name", bundleName), ("bundle_size_label", bundleSizeLabel)))
+                ?? $"I'm sorry, {itemName} comes with the {bundleName} at its own size, so it can't be " +
+                   "resized by itself. Would you like to make the whole meal that size instead?";
+            return new ToolResult(
+                new Dictionary<string, object?>
+                {
+                    ["status"] = "rejected",
+                    ["item_added"] = false,
+                    ["reason"] = "combo_component_resize_rejected",
+                    ["item_name"] = itemName,
+                    ["message"] = rejectMessage,
+                },
+                ToolResultDirection.ToServer);
+        }
+
         var summary = _order.Summary;
         var jsonOrderSummary = OrderSummaryJson.Serialize(summary);
 
@@ -175,7 +206,7 @@ public sealed class OrderToolExecutor : IToolExecutor
     /// add/modify path. Also covers item_out_of_mode (issue 165, add-only), size_not_available
     /// and (modify-only) not_in_order -- same TO_SERVER structured-JSON shape for all four
     /// (Rick's PR #100 review, required item 1).</summary>
-    private ToolResult? CheckAddOrModifyGates(string action, string itemName, string size)
+    private ToolResult? CheckAddOrModifyGates(string action, string itemName, ref string size)
     {
         var menuItem = _menu.ResolveMenuItem(itemName);
         if (menuItem is null)
@@ -232,6 +263,25 @@ public sealed class OrderToolExecutor : IToolExecutor
         }
 
         var requestedSize = _menu.CanonicalSizeKey(size);
+        if (!menuItem.Sizes.Contains(requestedSize) && (requestedSize is "" or "standard"))
+        {
+            // PR #184 round 4 (Rick's review, item 4): a bundle meal ordered with no size at all,
+            // or a bare "standard"/"regular" ask, on a pack whose own Sizes list is S/M/L ONLY
+            // (no "standard" tier -- e.g. a numbered-meal pack with S/M/L sizing) isn't actually
+            // an invalid size; it's the guest not naming one. Map it onto the bundle's own
+            // configured bundle.defaultSize (the original app's _get_default_side default)
+            // instead of rejecting a perfectly normal numbered-meal order. An item with NO
+            // bundle data, or no configured default size, falls through unchanged to the
+            // rejection below exactly as before; so does any OTHER explicitly-named size that
+            // the pack doesn't price (e.g. an explicit "large" on a true Standard-only item).
+            var defaultSize = _menu.BundleDefaultSize(itemName);
+            var defaultKey = string.IsNullOrEmpty(defaultSize) ? "" : _menu.CanonicalSizeKey(defaultSize);
+            if (!string.IsNullOrEmpty(defaultKey) && menuItem.Sizes.Contains(defaultKey))
+            {
+                requestedSize = defaultKey;
+                size = defaultSize;
+            }
+        }
         if (!menuItem.Sizes.Contains(requestedSize))
         {
             var sizeMap = _menu.SizeMap;

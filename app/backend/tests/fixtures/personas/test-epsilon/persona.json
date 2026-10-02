@@ -1,0 +1,78 @@
+{
+  "$schema": "../persona.schema.json",
+  "schemaVersion": 1,
+  "id": "test-epsilon",
+  "displayName": "Test Epsilon Meal Co.",
+  "roleName": "epsilon-runner",
+  "locales": { "default": "en", "supported": ["en"] },
+  "store": { "timezone": "America/Chicago" },
+  "voice": { "default": "alloy" },
+  "search": { "indexName": "test-epsilon-menu-items", "contentFields": ["description"] },
+
+  "pricing": {
+    "taxRate": "0.06",
+    "happyHour": {
+      "startHour": 14,
+      "endHour": 16,
+      "priceMultiplier": "0.5",
+      "announce": true,
+      "banner": "[EPSILON HAPPY HOUR ACTIVE]"
+    }
+  },
+
+  "sizes": {
+    "canonical": { "small": "Small", "medium": "Medium", "large": "Large", "standard": "Standard" },
+    "aliases": { "s": "small", "m": "medium", "l": "large", "reg": "standard", "regular": "standard" },
+    "spokenAs": {},
+    "hidden": ["", "n/a", "none"],
+    "default": null
+  },
+
+  "bundles": {
+    "nameMarkers": ["meal"],
+    "convertStandalone": false,
+    "missingPartText": { "sides": "a side", "drinks": "a drink" },
+    "resizeRule": "wholeBundleSize"
+  },
+
+  "extras": {
+    "allowedBaseCategories": ["drinks"],
+    "blockedBaseCategories": ["mains"],
+    "splitCombinedNames": false
+  },
+
+  "invalidModifiers": {
+    "drink": ["onion"]
+  },
+  "machines": { "epsilon_machine": { "status": "down", "label": "Epsilon machine is down" } },
+
+  "models": {
+    "realtime": { "default": "gpt-realtime-2.1", "allowed": ["gpt-realtime-2.1"] }
+  },
+
+  "strategies": { "searchQueryRewrite": "none" },
+  "features": { "dayparts": false },
+
+  "ui": {
+    "title": "Test Epsilon Voice Ordering",
+    "theme": {
+      "light": { "primary": "260 80% 40%", "secondary": "260 40% 28%", "background": "0 0% 96%", "foreground": "0 0% 10%" }
+    },
+    "assets": { "logo": "assets/logo.svg", "favicon": "assets/favicon.ico" },
+    "strings": { "en": { "app.title": "Test Epsilon Voice Ordering" } },
+    "hero": {
+      "headline": "Test Epsilon fixture pack",
+      "description": "TEST-ONLY fixture hero description, not a real brand.",
+      "callouts": [
+        { "title": "CALLOUT ONE", "detail": "Fixture callout one detail.", "tone": "primary" },
+        { "title": "CALLOUT TWO", "detail": "Fixture callout two detail.", "tone": "secondary" },
+        { "title": "CALLOUT THREE", "detail": "Fixture callout three detail.", "tone": "accent" }
+      ],
+      "spotlight": [
+        { "icon": "assets/spotlight-1.svg", "kicker": "FIXTURE PICK", "title": "Fixture Card One", "rows": [{ "label": "Fixture Row", "value": "Fixture Value" }] },
+        { "icon": "assets/spotlight-2.svg", "kicker": "FIXTURE PAIR", "title": "Fixture Card Two", "body": "Fixture body sentence.", "accent": "Fixture pairing suggestion." }
+      ]
+    },
+    "legal": "TEST-ONLY fixture pack (PR #184 round 4, Rick's review item 7) -- not a real brand, used only by the backend test suites to prove the shared `bundles.resizeRule: \"wholeBundleSize\"` engine (first-fill absorption, path-independent totals, structured component-resize rejection, default-size mapping, and happy-hour's never-discount-a-resized-combo-drink guard) works for ANY real pack, independent of this repo's own neutral-pack baseline entries for the larger shared test files."
+  }
+}

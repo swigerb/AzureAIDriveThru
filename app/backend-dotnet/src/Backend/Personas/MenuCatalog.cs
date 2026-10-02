@@ -334,6 +334,20 @@ public sealed class MenuCatalog
         return _itemFields.TryGetValue(normalized, out var fields) ? fields.BundleSlots : [];
     }
 
+    /// <summary>PR #184 round 4 (Rick's review, item 4): this bundle item's own
+    /// <c>menu.schema.json</c> <c>bundle.defaultSize</c> (e.g. "Medium" on an S/M/L meal), or
+    /// <c>""</c> for an item with no bundle data or no configured default size. The single place
+    /// <c>Tools.OrderToolExecutor</c>'s size-validation gate reads to map a guest's missing/
+    /// "Standard" size onto the pack's real default meal size instead of rejecting it outright --
+    /// see <see cref="BundleAutoFill"/>'s own, pre-existing use of this same field for the
+    /// autofilled component's display label. Mirrors menu_utils.py's
+    /// <c>bundle_default_size</c>.</summary>
+    public string BundleDefaultSize(string itemName)
+    {
+        var normalized = ResolveAlias(MenuKeyValidator.MenuKey(itemName));
+        return _itemFields.TryGetValue(normalized, out var fields) ? fields.BundleDefaultSize ?? "" : "";
+    }
+
     /// <summary>This bundle item's own slot -> filler-description map (menu.schema.json
     /// <c>bundle.autoFill</c>), with a literal <c>{size}</c> token in a template replaced by
     /// <paramref name="resolvedSizeLabel"/> (falling back to the bundle's own
@@ -346,7 +360,10 @@ public sealed class MenuCatalog
         {
             return new Dictionary<string, string>();
         }
-        var sizeLabel = string.IsNullOrEmpty(resolvedSizeLabel) ? fields.BundleDefaultSize ?? "" : resolvedSizeLabel;
+        var defaultSize = fields.BundleDefaultSize ?? "";
+        var sizeLabel = string.IsNullOrEmpty(resolvedSizeLabel) || resolvedSizeLabel.Equals("standard", StringComparison.OrdinalIgnoreCase)
+            ? defaultSize
+            : resolvedSizeLabel;
         return fields.BundleAutoFill.ToDictionary(
             kv => kv.Key,
             kv => kv.Value.Replace("{size}", sizeLabel).Trim());

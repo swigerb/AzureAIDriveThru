@@ -497,7 +497,7 @@ class OrderState:
         ONE unit is affected.
 
         Returns ``(accepted, is_resize, combo_item)``: *accepted* is ``False`` (slot left
-        untouched) when a "wholeBundleSize" resize was requested but this pack has no price for
+        untouched) when a "wholeBundleSize" RESIZE was requested but this pack has no price for
         the bundle's own item at that size -- callers must treat this as a clean rejection (no
         state changed at all), never as a successful fill. When *accepted* is ``True``,
         *is_resize* is whether *item_name* is the SAME item that last filled (or still fills)
@@ -505,22 +505,44 @@ class OrderState:
         item -- so callers can report "resized" vs. "included with your combo" wording.
         *combo_item* is returned because a quantity>1 "wholeBundleSize" resize may have split
         *combo_item* into a new line -- callers must use the returned instance for any further
-        reads (e.g. ``.display``), not the one they passed in."""
-        if menu.bundle_resize_rule == "wholeBundleSize" and size != combo_item.size:
+        reads (e.g. ``.display``), not the one they passed in.
+
+        PR #184 round 4 (Rick's review, items 1 & 2): the "wholeBundleSize" cascade/rejection
+        below now ALSO requires ``is_resize`` -- it only ever fires for a genuine RESIZE of a
+        slot that ALREADY held this same item, never a first-time absorption. This fixes two
+        bugs from one cause: (1) a Standard-only bundle (one priced size, e.g. a McChicken-style
+        meal) could never absorb an S/M/L drink at all, because the cascade fired on that very
+        first fill and found no alternate whole-meal price to move to; (2) absorbing a
+        differently-sized drink/side into an S/M/L meal was path-dependent -- adding the meal
+        then the drink silently resized/repriced the whole meal, while adding the drink then the
+        meal did not, for the identical end state. Per the coordinator's decision on this item,
+        the original app (``swigerb/McDonalds_AI_DriveThru``) was checked first: its own
+        absorption path never cascades, rejects, or relabels a mismatched-size component either
+        -- only an EXPLICIT resize of the meal's own line does that (see
+        ``_apply_whole_bundle_resize``/the direct bundle-line `modify` branch below, and the
+        resize-via-add/explicit-component-modify callers above, all of which already compute
+        ``is_resize=True`` for what they target) -- so first-time absorption is simply accepted
+        at its own size, with no price impact, exactly like an "includedAnySize" pack and exactly
+        like the original app. This is naturally path-independent (neither order ever cascades)
+        and keeps every previously-verified cascade/rejection scenario unchanged, since those are
+        all genuine resizes of an already-filled slot."""
+        slots = self._sync_bundle_slot_list(combo_item, component)
+        slot = slots[slot_index]
+        is_resize = bool(slot.get("last_item")) and _menu_key(slot["last_item"]) == _menu_key(item_name)
+
+        if menu.bundle_resize_rule == "wholeBundleSize" and is_resize and size != combo_item.size:
             if menu.price_for(combo_item.item, size) is None:
                 logger.info(
-                    "Combo %s slot fill for '%s' requested size '%s' but this pack has no "
+                    "Combo %s slot resize for '%s' requested size '%s' but this pack has no "
                     "whole-meal price at that size -- rejecting to avoid a mixed-size bundle",
                     component, item_name, size,
                 )
                 return False, False, combo_item
             if combo_item.quantity > 1:
+                # `slot` is the SAME dict object either way -- `_split_bundle_unit` moves it
+                # (by reference) onto the new split-off line, so no re-fetch is needed below.
                 combo_item = self._split_bundle_unit(order_state, menu, combo_item, slot_index)
-                slot_index = 0
 
-        slots = self._sync_bundle_slot_list(combo_item, component)
-        slot = slots[slot_index]
-        is_resize = bool(slot.get("last_item")) and _menu_key(slot["last_item"]) == _menu_key(item_name)
         slot["item"] = item_name
         slot["size"] = size
         slot["display"] = display
@@ -528,7 +550,7 @@ class OrderState:
         slot["last_size"] = size
         slot["autofill"] = autofill
 
-        if menu.bundle_resize_rule == "wholeBundleSize":
+        if menu.bundle_resize_rule == "wholeBundleSize" and is_resize:
             self._apply_whole_bundle_resize(combo_item, menu, size)
         else:
             own_price = menu.price_for(combo_item.item, combo_item.size)
@@ -1019,8 +1041,12 @@ class OrderState:
                             # PR #184 round 3 (Rick's review, item D/M4): this pack has no
                             # whole-meal price at *size* -- reject cleanly (nothing was mutated)
                             # rather than leave the slot relabeled to a size the bundle itself
-                            # never actually moved to.
+                            # never actually moved to. Round 4 item 3: also carry the bundle's own
+                            # name/current size so tools.py can build an accurate, non-misleading
+                            # rejection message instead of reading only the component name.
                             result_info["combo_component_resize_rejected"] = component
+                            result_info["combo_component_resize_rejected_bundle"] = combo_item.item
+                            result_info["combo_component_resize_rejected_bundle_size"] = combo_item.size
                             logger.info(
                                 "Modify requested for combo %s slot '%s' to size '%s' in session %s -- "
                                 "rejected (no whole-meal price at that size)",

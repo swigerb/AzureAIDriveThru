@@ -94,6 +94,16 @@ public static class ComboBundleDiscovery
         public override string ToString() => PersonaId;
     }
 
+    public sealed record WholeBundleFirstAbsorptionCase(
+        string PersonaId,
+        string BundleName,
+        string BundleSize,
+        decimal BundlePrice,
+        SizedItem Drink)
+    {
+        public override string ToString() => PersonaId;
+    }
+
     private sealed record CandidateItem(
         string Name, string? ComboSlot, IReadOnlyList<(string Size, decimal Price)> Sizes,
         IReadOnlyList<string>? BundleSlots, IReadOnlySet<string> AutoFillKeys, string? RequiresMachine);
@@ -261,7 +271,7 @@ public static class ComboBundleDiscovery
                 }
 
                 // #184 round 3 (Rick's review, item H(c)): the real live sequence always orders
-                // the side at its LARGEST real size (e.g. "Large Tots"), not whatever happens to
+                // the side at its LARGEST real size, not whatever happens to
                 // sort first in this pack's own menuItems.json -- sort by price like the drink
                 // sizes above and take the largest, so a pack whose own JSON lists Small before
                 // Large (or any other order) still reproduces the live sequence's own size.
@@ -416,6 +426,68 @@ public static class ComboBundleDiscovery
 
             return new WholeBundleResizeCase(
                 personaId, bundleItem.Name, fromSize.Size, fromSize.Price, toSize.Size, toSize.Price, drink);
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Finds a wholeBundleSize bundle and a differently-sized drink that can fill its open drink
+    /// slot for the first time. This covers first absorption path independence: adding the bundle
+    /// before the drink and adding the drink before the bundle must land on the same final order.
+    /// </summary>
+    public static WholeBundleFirstAbsorptionCase? DiscoverWholeBundleFirstAbsorption(string personasDir, string personaId)
+    {
+        if (BundleResizeRule(personasDir, personaId) != "wholeBundleSize")
+        {
+            return null;
+        }
+
+        var items = ReadMenuItems(personasDir, personaId);
+        var downMachines = CurrentlyDownMachines(personasDir, personaId);
+
+        foreach (var bundleItem in items.Where(i => i.BundleSlots is not null))
+        {
+            if (!bundleItem.BundleSlots!.Contains("drinks") || bundleItem.AutoFillKeys.Contains("drinks"))
+            {
+                continue;
+            }
+
+            var bundleSizes = bundleItem.Sizes
+                .GroupBy(s => s.Price).Select(g => g.First())
+                .OrderBy(s => s.Price)
+                .ToList();
+            if (bundleSizes.Count < 2)
+            {
+                continue;
+            }
+
+            var bundleSize = bundleSizes.Count >= 3 ? bundleSizes[1] : bundleSizes[0];
+            var drinkItem = items.FirstOrDefault(i =>
+                i.ComboSlot == "drinks" &&
+                !(i.RequiresMachine is { } machine && downMachines.Contains(machine)) &&
+                i.Sizes.Select(s => s.Price).Distinct().Count() >= 2);
+            if (drinkItem is null)
+            {
+                continue;
+            }
+
+            var drinkSize = drinkItem.Sizes
+                .Where(s => !string.Equals(s.Size, bundleSize.Size, StringComparison.OrdinalIgnoreCase))
+                .GroupBy(s => s.Price).Select(g => g.First())
+                .OrderByDescending(s => s.Price)
+                .FirstOrDefault();
+            if (drinkSize.Size is null)
+            {
+                continue;
+            }
+
+            return new WholeBundleFirstAbsorptionCase(
+                personaId,
+                bundleItem.Name,
+                bundleSize.Size,
+                bundleSize.Price,
+                new SizedItem(drinkItem.Name, drinkSize.Size, drinkSize.Price));
         }
 
         return null;
@@ -809,6 +881,79 @@ public sealed class WholeBundleSizeResizeConformanceTests
                 $"to {bundleCase.ToSize} must charge EXACTLY that size's own real menu price " +
                 $"({bundleCase.ToPrice}) -- `wholeBundleSize` reprices the bundle's own line, never a " +
                 "slot component separately.");
+        });
+    }
+
+    public static TheoryData<ComboBundleDiscovery.WholeBundleFirstAbsorptionCase> DiscoveredWholeBundleFirstAbsorptionCases()
+    {
+        var personasDir = RepoPaths.PersonasDirectory(RepoPaths.FindRepoRoot());
+        var data = new TheoryData<ComboBundleDiscovery.WholeBundleFirstAbsorptionCase>();
+        foreach (var personaId in ConformancePersonas.DiscoverFromDisk())
+        {
+            var discovered = ComboBundleDiscovery.DiscoverWholeBundleFirstAbsorption(personasDir, personaId);
+            if (discovered is not null)
+            {
+                data.Add(discovered);
+            }
+        }
+
+        return data;
+    }
+
+    [Theory]
+    [Trait("Dotnet", "ready")]
+    [MemberData(nameof(DiscoveredWholeBundleFirstAbsorptionCases))]
+    public async Task Discovered_whole_bundle_size_pack_first_absorption_is_path_independent(
+        ComboBundleDiscovery.WholeBundleFirstAbsorptionCase bundleCase)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var fixture = new ComboBundleResizeFixture(bundleCase.PersonaId);
+        await fixture.InitializeAsync();
+        await fixture.RunAsync(async () =>
+        {
+            async Task<(string Size, string Display, decimal Total)> RunPathAsync(
+                IReadOnlyList<(string Action, string Item, string Size, int Quantity, decimal Price)> steps,
+                string callPrefix)
+            {
+                var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
+                    fixture, ct, persona: bundleCase.PersonaId);
+                await using var _ = browser;
+
+                var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+                    connection, browser, steps, roundTripIndex, ct, callIdPrefix: callPrefix);
+                using var order = JsonDocument.Parse(result.ToolResultJson!);
+                var items = order.RootElement.GetProperty("items").EnumerateArray().ToList();
+                Assert.Single(items);
+                var meal = items[0];
+                Assert.Equal(bundleCase.BundleName, meal.GetProperty("item").GetString());
+                return (
+                    meal.GetProperty("size").GetString()!,
+                    meal.GetProperty("display").GetString()!,
+                    OrderScenarioHelpers.GetOrderTotal(result.ToolResultJson!));
+            }
+
+            var mealThenDrink = await RunPathAsync(
+                [
+                    ("add", bundleCase.BundleName, bundleCase.BundleSize, 1, bundleCase.BundlePrice),
+                    ("add", bundleCase.Drink.Name, bundleCase.Drink.Size, 1, bundleCase.Drink.Price),
+                ],
+                "call_whole_first_absorb_meal_then_drink");
+            var drinkThenMeal = await RunPathAsync(
+                [
+                    ("add", bundleCase.Drink.Name, bundleCase.Drink.Size, 1, bundleCase.Drink.Price),
+                    ("add", bundleCase.BundleName, bundleCase.BundleSize, 1, bundleCase.BundlePrice),
+                ],
+                "call_whole_first_absorb_drink_then_meal");
+
+            Assert.Equal(mealThenDrink, drinkThenMeal);
+            Assert.Equal(bundleCase.BundleSize, mealThenDrink.Size, ignoreCase: true);
+            Assert.Contains(bundleCase.Drink.Name, mealThenDrink.Display);
+            Assert.Contains(bundleCase.Drink.Size, mealThenDrink.Display);
+            OrderScenarioHelpers.AssertMoneyEqual(
+                bundleCase.BundlePrice,
+                mealThenDrink.Total,
+                $"persona '{bundleCase.PersonaId}': first absorption of a differently-sized drink " +
+                "must not silently reprice the whole bundle.");
         });
     }
 }

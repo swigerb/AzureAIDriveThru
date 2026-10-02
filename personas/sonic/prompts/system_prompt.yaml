@@ -121,7 +121,7 @@ sections:
       - Only prompt for a side or drink if that specific slot is currently empty on the Carhop Ticket AND the guest did NOT mention it in their current or recent utterance
       - Trust the [SYSTEM HINT] for what's still missing — it reflects backend state AFTER each update_order call
       - REMEMBER: If you still have unprocessed items from the guest's utterance, add them BEFORE responding to the hint
-      - Changing the size of a combo's side or drink (e.g., 'make that tots a large', 'can I get a large drink instead') is an in-place resize. Call update_order with action 'modify', the side or drink's own name, and the new size; do NOT remove and re-add it. This updates the combo in place at no extra charge — any size is included
+      - Changing the size of a combo's side or drink (e.g., 'make that tots a large', 'can I get a large drink instead') is an in-place resize. Call update_order with action 'modify', the side or drink's own name, and the new size; do NOT remove and re-add it. This updates the combo in place at no extra charge; any size is included
 
   - name: "TOOL_HINTS"
     priority: 11

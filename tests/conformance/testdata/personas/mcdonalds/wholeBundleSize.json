@@ -1,0 +1,75 @@
+{
+  "description": "Pack-owned wholeBundleSize vectors for the mcdonalds persona. Product names and prices are intentionally data-only here so shared conformance code stays brand-neutral.",
+  "personaId": "mcdonalds",
+  "mealSizeTotals": [
+    {
+      "description": "small meal total",
+      "steps": [
+        { "action": "add", "item": "Big Mac® Meal", "size": "small", "quantity": 1, "price": "0.01" }
+      ],
+      "expectedTotal": "8.99",
+      "expectedItemCount": 1,
+      "expectedComplete": false
+    },
+    {
+      "description": "medium meal total",
+      "steps": [
+        { "action": "add", "item": "Big Mac® Meal", "size": "medium", "quantity": 1, "price": "0.01" }
+      ],
+      "expectedTotal": "10.29",
+      "expectedItemCount": 1,
+      "expectedComplete": false
+    },
+    {
+      "description": "large meal total",
+      "steps": [
+        { "action": "add", "item": "Big Mac® Meal", "size": "large", "quantity": 1, "price": "0.01" }
+      ],
+      "expectedTotal": "11.29",
+      "expectedItemCount": 1,
+      "expectedComplete": false
+    }
+  ],
+  "defaultSizeCases": [
+    {
+      "description": "missing meal size defaults to the bundle default",
+      "steps": [
+        { "action": "add", "item": "Big Mac® Meal", "size": "", "quantity": 1, "price": "0.01" }
+      ],
+      "expectedTotal": "10.29",
+      "expectedItemCount": 1,
+      "expectedComplete": false,
+      "expectedItemSize": "medium"
+    },
+    {
+      "description": "Standard meal size defaults to the bundle default",
+      "steps": [
+        { "action": "add", "item": "Big Mac® Meal", "size": "standard", "quantity": 1, "price": "0.01" }
+      ],
+      "expectedTotal": "10.29",
+      "expectedItemCount": 1,
+      "expectedComplete": false,
+      "expectedItemSize": "medium"
+    }
+  ],
+  "standardOnlyMealPlusDrink": {
+    "description": "standard-only meal absorbs an S/M/L drink",
+    "steps": [
+      { "action": "add", "item": "McChicken® Meal", "size": "standard", "quantity": 1, "price": "0.01" },
+      { "action": "add", "item": "Coca-Cola®", "size": "medium", "quantity": 1, "price": "0.01" }
+    ],
+    "expectedTotal": "5.99",
+    "expectedItemCount": 1,
+    "expectedComplete": true
+  },
+  "quantityTwoSplit": {
+    "description": "quantity two meal split when one physical unit is resized",
+    "steps": [
+      { "action": "add", "item": "Big Mac® Meal", "size": "medium", "quantity": 2, "price": "0.01" },
+      { "action": "modify", "item": "World Famous Fries®", "size": "large", "quantity": 1, "price": "0.01" }
+    ],
+    "expectedTotal": "21.58",
+    "expectedItemCount": 2,
+    "expectedComplete": false
+  }
+}

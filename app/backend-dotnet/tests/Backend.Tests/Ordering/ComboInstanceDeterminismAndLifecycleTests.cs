@@ -30,9 +30,7 @@ namespace Backend.Tests.Ordering;
 /// classes are pinned to the shared <see cref="ClockHookTestCollection"/> xUnit collection
 /// (<c>[Collection(ClockHookTestCollection.Name)]</c>) specifically so xUnit never runs them
 /// concurrently with each other, eliminating that race. Every OTHER test in this class builds an
-/// <c>OrderState</c> for a call that never touches <see cref="ConformanceHooks"/> at all. test-delta
-/// has no happy-hour window configured, so this test forces one on with the same env-var hooks
-/// rather than asserting a real discount.</para>
+/// <c>OrderState</c> for a call that never touches <see cref="ConformanceHooks"/> at all.</para>
 /// </summary>
 [Collection(ClockHookTestCollection.Name)]
 public sealed class ComboInstanceDeterminismAndLifecycleTests : IDisposable
@@ -149,24 +147,18 @@ public sealed class ComboInstanceDeterminismAndLifecycleTests : IDisposable
     [Fact]
     public void HappyHour_DoesNotDiscountAResizedComboDrink()
     {
-        // Happy hour's 50% drink discount must never apply to a combo's absorbed drink, even
-        // immediately after that slot was explicitly resized -- a resize never promotes the slot
-        // to a separately priced/discounted order line. test-delta has no happy-hour window of
-        // its own, so this forces one on via the same process-wide clock hook
-        // HappyHourPricingTests uses, directly against OrderState.IsHappyHour -- the discount
-        // itself only ever applies to an item marked happyHourDiscounted: true, which no
-        // test-delta item is, so this proves the absorbed-slot guard independent of any
-        // particular persona's own happy-hour configuration.
+        // Epsilon has both a happy-hour window and a happyHourDiscounted combo-slot drink. The
+        // discount must never apply to that absorbed drink, even immediately after the slot is
+        // explicitly resized.
         FreezeAt("2026-01-15T21:00:00Z");
-        var order = NewOrder();
-        order.HandleOrderUpdate("add", Combo, "regular", 1, ComboRegularPrice);
-        order.HandleOrderUpdate("add", "Delta Fries", "regular", 1, 1.99m);
-        order.HandleOrderUpdate("add", "Delta Latte", "regular", 1, 3.49m);
+        var order = PersonaOrderFactory.CreateOrderState(DeltaFixture.Load("test-epsilon"));
+        order.HandleOrderUpdate("add", "Epsilon Snack Meal", "medium", 1, 5.99m);
+        order.HandleOrderUpdate("add", "Epsilon Cola", "medium", 1, 1.50m);
 
-        var result = order.HandleOrderUpdate("modify", "Delta Latte", "large", 1, 4.29m);
+        var result = order.HandleOrderUpdate("modify", "Epsilon Cola", "large", 1, 2.00m);
         Assert.Equal("drinks", result.ResizedComboComponent);
 
-        // Still just the flat combo price -- no discount, no upcharge, no standalone line.
-        Assert.Equal(ComboRegularPrice, order.Summary.Total);
+        // Whole-bundle resize reprices the meal to Large, with no separate discounted drink line.
+        Assert.Equal(6.99m, order.Summary.Total);
     }
 }

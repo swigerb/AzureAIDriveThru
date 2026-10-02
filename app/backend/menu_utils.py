@@ -576,6 +576,17 @@ class MenuCatalog:
         fields = self.item_fields.get(normalized)
         return fields["bundleSlots"] if fields else ()
 
+    def bundle_default_size(self, item_name: str) -> str:
+        """PR #184 round 4 (Rick's review, item 4): this bundle item's own ``menu.schema.json``
+        ``bundle.defaultSize`` (e.g. "Medium" on an S/M/L meal), or ``""`` for an item with no
+        bundle data or no configured default size. The single place ``tools.update_order``'s
+        size-validation gate reads to map a guest's missing/"Standard" size onto the pack's real
+        default meal size instead of rejecting it outright -- see ``bundle_autofill``'s own,
+        pre-existing use of this same field for the autofilled component's display label."""
+        normalized = self._resolve_alias(_menu_key(item_name))
+        fields = self.item_fields.get(normalized)
+        return (fields.get("bundleDefaultSize") or "") if fields else ""
+
     def bundle_autofill(self, item_name: str, resolved_size_label: str = "") -> dict[str, str]:
         """This bundle item's own slot -> filler-description map (menu.schema.json
         ``bundle.autoFill``), with a literal ``{size}`` token in a template replaced by
@@ -591,7 +602,8 @@ class MenuCatalog:
         template_map = fields.get("bundleAutoFill") or {}
         if not template_map:
             return {}
-        size_label = resolved_size_label or fields.get("bundleDefaultSize") or ""
+        default_size = fields.get("bundleDefaultSize") or ""
+        size_label = default_size if not resolved_size_label or resolved_size_label.lower() == "standard" else resolved_size_label
         return {slot: template.replace("{size}", size_label).strip() for slot, template in template_map.items()}
 
     def bundle_autofill_names(self, item_name: str) -> dict[str, str]:

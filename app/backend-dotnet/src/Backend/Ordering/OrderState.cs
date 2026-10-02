@@ -29,6 +29,12 @@ public sealed class OrderUpdateResult
     // the slot (and the bundle) are left exactly as they were. Mirrors order_state.py's
     // result_info["combo_component_resize_rejected"].
     public string? ComboComponentResizeRejected { get; set; }
+    // PR #184 round 4 (Rick's review, item 3): the rejected bundle's own item name/current size,
+    // so Tools.OrderToolExecutor can build an accurate rejection message naming the actual meal
+    // instead of only the component that was asked to resize. Mirrors order_state.py's
+    // result_info["combo_component_resize_rejected_bundle"/"_bundle_size"].
+    public string? ComboComponentResizeRejectedBundle { get; set; }
+    public string? ComboComponentResizeRejectedBundleSize { get; set; }
 
     // #179: set by HandleRemove when itemName was vacating a combo slot via absorption rather
     // than removing a raw order line.
@@ -553,7 +559,12 @@ public sealed class OrderState
                 // Item D/M4: this "wholeBundleSize" pack has no whole-meal price at *size* --
                 // leave the slot and the bundle exactly as they were and report a clean
                 // rejection instead of a silent no-op or a mixed-size bundle.
+                // PR #184 round 4 (Rick's review, item 3): also carry the bundle's own
+                // name/current size so Tools.OrderToolExecutor can build an accurate, non-
+                // misleading rejection message instead of reading only the component name.
                 result.ComboComponentResizeRejected = component;
+                result.ComboComponentResizeRejectedBundle = comboItem.Item;
+                result.ComboComponentResizeRejectedBundleSize = comboItem.Size;
                 break;
             }
             result.ResizedComboComponent = component;
@@ -876,16 +887,22 @@ public sealed class OrderState
     /// side or drink is included AT ANY SIZE, so there is never a credit or an upcharge to
     /// compute, and ordering a size up front vs. resizing into it afterward always totals the
     /// same. "wholeBundleSize" packs instead resize the WHOLE bundle
-    /// (<see cref="ApplyWholeBundleResize"/>) whenever the requested size differs from the
-    /// bundle's own current size -- PR #184 round 3 (Rick's review, item D/M4): ONLY when that
-    /// resize can actually happen (this pack prices the bundle's own item at the requested size);
-    /// otherwise the fill is rejected outright, so a slot is never relabeled to a size the bundle
-    /// itself didn't (and won't) move to. Round 3 item F: a feasible resize on a quantity>1 line
-    /// first splits the targeted unit off (<see cref="SplitBundleUnit"/>) so only that ONE unit is
+    /// (<see cref="ApplyWholeBundleResize"/>) whenever a genuine RESIZE (<c>isResize</c>, same
+    /// item already filling this slot) targets a size different from the bundle's own current
+    /// size -- PR #184 round 3 (Rick's review, item D/M4): ONLY when that resize can actually
+    /// happen (this pack prices the bundle's own item at the requested size); otherwise the fill
+    /// is rejected outright, so a slot is never relabeled to a size the bundle itself didn't (and
+    /// won't) move to. PR #184 round 4 (Rick's review, items 1/2): this cascade/rejection gate
+    /// requires <c>isResize</c> precisely so a slot's first-ever fill (an absorption, autofill,
+    /// or bundle-pivot absorption) NEVER cascades or rejects, no matter how many priced sizes the
+    /// bundle has -- fixing both a Standard-only bundle's regression (it couldn't absorb its
+    /// first S/M/L drink) and the path-dependent totals Rick's review flagged (first-fill order
+    /// no longer matters). Round 3 item F: a feasible resize on a quantity>1 line first splits
+    /// the targeted unit off (<see cref="SplitBundleUnit"/>) so only that ONE unit is
     /// affected.</para>
     ///
     /// Returns <c>(accepted, isResize, comboItem)</c>: <c>accepted</c> is <c>false</c> (slot left
-    /// untouched) when a "wholeBundleSize" resize was requested but this pack has no price for the
+    /// untouched) when a "wholeBundleSize" RESIZE was requested but this pack has no price for the
     /// bundle's own item at that size -- callers must treat this as a clean rejection (no state
     /// changed at all), never as a successful fill. When <c>accepted</c> is <c>true</c>,
     /// <c>isResize</c> is whether <paramref name="itemName"/> is the SAME item that last filled
@@ -899,7 +916,35 @@ public sealed class OrderState
         OrderItem comboItem, int slotIndex, string component, string itemName, string size, string display,
         bool autofill = false)
     {
-        if (_menu.BundleResizeRule == "wholeBundleSize" && size != comboItem.Size)
+        var slots = SyncBundleSlotList(comboItem, component);
+        var slot = slots[slotIndex];
+        var isResize = slot.LastItem.Length > 0 && MenuKeyValidator.MenuKey(slot.LastItem) == MenuKeyValidator.MenuKey(itemName);
+
+        // PR #184 round 4 (Rick's review, items 1/2): the "wholeBundleSize" cascade/rejection
+        // below must only ever fire for a genuine RESIZE of an item that's already filling this
+        // slot (isResize) -- NEVER for the slot's first-ever fill (a fresh absorption, autofill,
+        // or bundle-pivot absorption always computes isResize=false here, since LastItem is still
+        // empty or holds a different item). Two round-3 bugs traced to the same root cause, both
+        // fixed by this one gate:
+        //   Item 1 (Standard-only bundle regression): a Standard-only bundle (one priced size,
+        //   e.g. a single-size meal) absorbing its first S/M/L drink used to hit this same
+        //   size-mismatch branch and get rejected outright, even though nothing is being resized
+        //   -- the drink is simply filling an empty slot for the first time.
+        //   Item 2 (path dependence): "add meal, then add a differently-sized drink" vs. "add
+        //   drink, then add the meal" must total the same -- but the old code could cascade/
+        //   reject on ONE of those orderings (whichever call happened to run with isResize
+        //   still true from stale pre-split state) and not the other.
+        // Evidence (Rick's review item 2 -- coordinator decision): the original app
+        // (swigerb/McDonalds_AI_DriveThru)'s absorption path never cascades, rejects, or
+        // relabels a mismatched-size component at all -- only an EXPLICIT modify of the meal's
+        // own line resizes every slot. This gate reproduces that: first-time absorption always
+        // falls through to the "own flat price" branch below (same as includedAnySize), and an
+        // explicit resize (isResize=true, computed from the slot's own prior fill) still cascades
+        // or cleanly rejects exactly as round 3 intended. Rick's own suggested "more than one
+        // priced size" condition was deliberately NOT added here instead: it would also have
+        // broken the still-desired rejection for an EXPLICIT resize of a Standard-only bundle's
+        // component, which must stay a rejection regardless of how many price tiers exist.
+        if (_menu.BundleResizeRule == "wholeBundleSize" && isResize && size != comboItem.Size)
         {
             if (_menu.PriceFor(comboItem.Item, size) is null)
             {
@@ -909,12 +954,12 @@ public sealed class OrderState
             {
                 comboItem = SplitBundleUnit(comboItem, slotIndex);
                 slotIndex = 0;
+                // SplitBundleUnit moves the SAME BundleSlot object (a class, not a struct) onto
+                // the new split-off OrderItem's own slot list -- `slot` still refers to it, no
+                // re-fetch needed.
             }
         }
 
-        var slots = SyncBundleSlotList(comboItem, component);
-        var slot = slots[slotIndex];
-        var isResize = slot.LastItem.Length > 0 && MenuKeyValidator.MenuKey(slot.LastItem) == MenuKeyValidator.MenuKey(itemName);
         slot.Item = itemName;
         slot.Size = size;
         slot.Display = display;
@@ -922,7 +967,7 @@ public sealed class OrderState
         slot.LastSize = size;
         slot.Autofill = autofill;
 
-        if (_menu.BundleResizeRule == "wholeBundleSize")
+        if (_menu.BundleResizeRule == "wholeBundleSize" && isResize)
         {
             ApplyWholeBundleResize(comboItem, size);
         }

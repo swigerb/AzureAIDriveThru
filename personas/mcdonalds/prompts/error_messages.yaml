@@ -56,6 +56,14 @@ messages:
     {{item_name}} isn't in the order, so nothing was changed. Call get_order to check what's in
     the order, then ask the guest whether they'd like to add it.
 
+  # PR #184 round 4 (Rick's review, item 3): a meal's included side/drink can't be resized BY
+  # ITSELF to a size the whole meal doesn't come in -- "wholeBundleSize" means one resize always
+  # moves the whole meal, never just one slot. Nothing was changed; offer the real alternative
+  # (resize the whole meal) instead of a bare apology.
+  combo_component_resize_rejected: >-
+    I'm sorry, {{item_name}} comes with the {{bundle_name}} at its own size, so it can't be
+    resized by itself. Would you like to resize the whole meal instead?
+
   # #165: add-time rejection when a real, on-menu item's own `menuPeriod` doesn't match this
   # session's own bound menu mode (order_state.OrderState.get_menu_mode, set once at the
   # WebSocket handshake from `?mode=breakfast|lunch`). Fires for, e.g., ordering "Egg McMuffin"
