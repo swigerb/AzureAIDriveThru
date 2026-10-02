@@ -242,8 +242,22 @@ class EchoSuppressor:
         self._greeting_audio_seen = False
 
     def should_suppress_audio(self, loop_time: float) -> bool:
-        """Return True if user audio should be dropped (AI speaking or cooldown active)."""
-        return self.ai_speaking or loop_time < self.cooldown_end
+        """Return True if user audio should be dropped while AI audio is still active.
+
+        Once assistant audio has completed, the cooldown only protects a delayed
+        upstream-buffer clear. The first guest mic frame after completion cancels
+        that delayed clear and is forwarded, so short acknowledgements right
+        after the assistant finishes are not swallowed.
+        """
+        if self.ai_speaking:
+            return True
+        if loop_time < self.cooldown_end:
+            self.cooldown_end = 0.0
+            if self._flush_handle is not None:
+                self._flush_handle.cancel()
+                self._flush_handle = None
+            logger.debug("Echo suppression: accepting guest audio during cooldown")
+        return False
 
     def on_audio_delta(self, verbose: bool = False) -> None:
         """AI started sending audio — begin suppression."""

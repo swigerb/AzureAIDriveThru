@@ -18,6 +18,37 @@ namespace Backend.Tests.Realtime;
 public sealed class EchoSuppressorThreadSafetyTests
 {
     [Fact]
+    public void CooldownAcceptsFirstGuestAudio()
+    {
+        using var echo = new EchoSuppressor(cooldownSeconds: 1.5, flushSendAsync: static _ => Task.CompletedTask);
+        echo.OnAudioDelta();
+        echo.OnAudioDone(10.0);
+
+        Assert.False(echo.ShouldSuppressAudio(10.5));
+        Assert.Equal(0.0, echo.CooldownEnd);
+    }
+
+    [Fact]
+    public async Task CooldownGuestAudioCancelsDelayedFlush()
+    {
+        var flushes = 0;
+        using var echo = new EchoSuppressor(
+            cooldownSeconds: 0.05,
+            flushSendAsync: _ =>
+            {
+                Interlocked.Increment(ref flushes);
+                return Task.CompletedTask;
+            });
+
+        echo.OnAudioDelta();
+        echo.OnAudioDone(10.0);
+        Assert.False(echo.ShouldSuppressAudio(10.01));
+
+        await Task.Delay(150, TestContext.Current.CancellationToken);
+        Assert.Equal(1, Volatile.Read(ref flushes));
+    }
+
+    [Fact]
     public void ConcurrentBargeInAndAudioEvents_NeverThrow()
     {
         using var echo = new EchoSuppressor(cooldownSeconds: 0.0, flushSendAsync: static _ => Task.CompletedTask);

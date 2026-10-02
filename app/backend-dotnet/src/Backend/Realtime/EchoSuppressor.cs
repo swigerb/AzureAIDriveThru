@@ -48,14 +48,35 @@ public sealed class EchoSuppressor : IDisposable
     /// completion).</summary>
     private bool _greetingAudioSeen;
 
-    /// <summary>Returns true if user audio should be dropped (AI speaking or cooldown still active
-    /// at <paramref name="loopTimeSeconds"/>).</summary>
+    /// <summary>Returns true if user audio should be dropped while AI audio is still active. Once
+    /// assistant audio has completed, the cooldown only protects a delayed upstream-buffer clear.
+    /// The first guest mic frame after completion cancels that delayed clear and is forwarded, so
+    /// short acknowledgements right after the assistant finishes are not swallowed.</summary>
     public bool ShouldSuppressAudio(double loopTimeSeconds)
     {
+        CancellationTokenSource? ctsToDispose = null;
         lock (_sync)
         {
-            return _aiSpeaking || loopTimeSeconds < _cooldownEnd;
+            if (_aiSpeaking)
+            {
+                return true;
+            }
+
+            if (loopTimeSeconds < _cooldownEnd)
+            {
+                _cooldownEnd = 0.0;
+                ctsToDispose = _flushCts;
+                _flushCts = null;
+            }
         }
+
+        if (ctsToDispose is not null)
+        {
+            ctsToDispose.Cancel();
+            ctsToDispose.Dispose();
+        }
+
+        return false;
     }
 
     /// <summary>AI started sending audio -- begin suppression.</summary>
