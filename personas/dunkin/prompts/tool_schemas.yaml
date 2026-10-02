@@ -4,7 +4,7 @@ tools:
     type: "function"
     description: >-
       Search the Dunkin menu for items, prices, sizes, and availability.
-      The menu data is in English — translate to and from English if needed.
+      The menu data is in English -- translate to and from English if needed.
       Results are formatted as a source name first in square brackets, followed
       by the text content, and a line with '-----' at the end of each result.
     parameters:
@@ -31,7 +31,7 @@ tools:
             - "remove"
         item_name:
           type: "string"
-          description: "Name of ONE Dunkin menu item, e.g., 'Caramel Craze Latte'. Extras (whipped cream, flavor swirl, extra espresso shot) are separate items: add the drink first, then the extra with its own call."
+          description: "Name of ONE Dunkin menu item, e.g., 'Original Blend Coffee (Cream, Sugar)' or 'Glazed MUNCHKINS® Donut Hole Treats'. Paid extras (flavor shot, flavor swirl, whipped cream, extra espresso shot) are separate items: add the drink first, then the extra with its own call."
         size:
           type: "string"
           description: "Size of the item to update, e.g., 'Medium'."

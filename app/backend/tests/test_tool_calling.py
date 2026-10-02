@@ -367,9 +367,10 @@ class UpdateOrderAddTests(unittest.TestCase):
             "size": "large", "quantity": 1, "price": 3.49,
         }, sid))
         summary = order_state_singleton.get_order_summary(sid)
+        delta_text = result.text.split("[HAPPY HOUR ACTIVE", 1)[0].rstrip()
         self.assertEqual(
             f"Upgraded Tots from Medium to Large, your total is now {summary.finalTotalDisplay}",
-            result.text.split("\n\n")[0],
+            delta_text.split("\n\n")[0],
         )
         self.assertNotIn("\u2014", result.text)
 
