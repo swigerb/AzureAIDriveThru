@@ -32,6 +32,16 @@ public sealed class WholeBundleSizeResizeTests
         order.HandleOrderUpdate("add", Drink, "small", 1, DrinkSmallPrice);
     }
 
+    private static void AssertComponentSizes(OrderItem meal, string expectedLabel, params string[] unexpectedLabels)
+    {
+        Assert.NotEmpty(meal.Components);
+        Assert.All(meal.Components, component => Assert.Contains(expectedLabel, component));
+        foreach (var unexpected in unexpectedLabels)
+        {
+            Assert.All(meal.Components, component => Assert.DoesNotContain(unexpected, component));
+        }
+    }
+
     [Fact]
     public void MakeItALargeMeal_ResizesFriesAndDrinkTogether()
     {
@@ -51,6 +61,9 @@ public sealed class WholeBundleSizeResizeTests
         Assert.Equal(MealLargePrice, meal.Price);
         Assert.Contains("Large Epsilon Fries", meal.Display);
         Assert.Contains("Large Epsilon Cola", meal.Display);
+        Assert.Contains("Large Epsilon Fries", meal.Components);
+        Assert.Contains("Large Epsilon Cola", meal.Components);
+        AssertComponentSizes(meal, "Large", "Medium", "Small");
         Assert.DoesNotContain("Medium", meal.Display);
         Assert.DoesNotContain("Small", meal.Display);
         Assert.Equal(MealLargePrice, order.Summary.Total);
@@ -115,6 +128,9 @@ public sealed class WholeBundleSizeResizeTests
         Assert.Equal(MealMediumPrice, meal.Price);
         Assert.Contains("Medium Epsilon Fries", meal.Display);
         Assert.Contains("Medium Epsilon Cola", meal.Display);
+        Assert.Contains("Medium Epsilon Fries", meal.Components);
+        Assert.Contains("Medium Epsilon Cola", meal.Components);
+        AssertComponentSizes(meal, "Medium", "Large", "Small");
         Assert.DoesNotContain("Large", meal.Display);
     }
 
@@ -133,6 +149,9 @@ public sealed class WholeBundleSizeResizeTests
         Assert.Equal(MealSmallPrice, meal.Price);
         Assert.Contains("Small Epsilon Fries", meal.Display);
         Assert.Contains("Small Epsilon Cola", meal.Display);
+        Assert.Contains("Small Epsilon Fries", meal.Components);
+        Assert.Contains("Small Epsilon Cola", meal.Components);
+        AssertComponentSizes(meal, "Small", "Large", "Medium");
         Assert.DoesNotContain("Large", meal.Display);
         Assert.DoesNotContain("Medium", meal.Display);
     }
@@ -218,5 +237,21 @@ public sealed class WholeBundleSizeResizeTests
         Assert.Equal(MealMediumPrice, mealThenDrink.Total);
         Assert.Contains("Medium Epsilon Fries", mealThenDrink.Display);
         Assert.Contains("Large Epsilon Cola", mealThenDrink.Display);
+    }
+
+    [Fact]
+    public void ComponentsList_IsRebuilt_WhenDefaultSizedMealIsResizedBeforeDrink()
+    {
+        var order = NewOrder();
+        order.HandleOrderUpdate("add", Meal, "medium", 1, MealMediumPrice);
+        order.HandleOrderUpdate("modify", Meal, "large", 1, MealLargePrice);
+        order.HandleOrderUpdate("add", Drink, "large", 1, DrinkLargePrice);
+
+        var meal = order.Items[0];
+        Assert.Equal("large", meal.Size);
+        Assert.Contains("Large Epsilon Fries", meal.Display);
+        Assert.Contains("Large Epsilon Cola", meal.Display);
+        Assert.Equal(["Large Epsilon Fries", "Large Epsilon Cola"], meal.Components);
+        Assert.DoesNotContain("Medium Epsilon Fries", meal.Components);
     }
 }

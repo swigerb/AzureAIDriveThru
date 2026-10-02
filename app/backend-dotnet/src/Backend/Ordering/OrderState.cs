@@ -714,7 +714,8 @@ public sealed class OrderState
     /// label as before. Mirrors order_state.py's <c>_rebuild_bundle_display</c>.</summary>
     private static void RebuildBundleDisplay(OrderItem comboItem)
     {
-        var components = new List<string>();
+        var displayComponents = new List<string>();
+        var wireComponents = new List<string>();
         foreach (var component in new[] { "sides", "drinks" })
         {
             if (!comboItem.BundleSlots.TryGetValue(component, out var slots))
@@ -724,9 +725,11 @@ public sealed class OrderState
             var filled = slots.Where(s => s.Display.Length > 0).Select(s => s.Display).ToList();
             if (filled.Count > 0)
             {
-                components.Add(string.Join(", ", filled));
+                displayComponents.Add(string.Join(", ", filled));
+                wireComponents.AddRange(filled);
             }
         }
+        comboItem.Components = wireComponents;
 
         string baseName;
         string mods;
@@ -743,8 +746,8 @@ public sealed class OrderState
             mods = "";
         }
 
-        comboItem.Display = components.Count > 0
-            ? $"{baseName}{mods} w/ {string.Join(" & ", components)}"
+        comboItem.Display = displayComponents.Count > 0
+            ? $"{baseName}{mods} w/ {string.Join(" & ", displayComponents)}"
             : $"{baseName}{mods}".Trim();
     }
 
