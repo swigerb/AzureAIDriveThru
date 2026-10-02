@@ -1,0 +1,30 @@
+{
+  "description": "Pack-owned Dunkin menu expansion vectors for issue 188. Each item name, size, and expected pre-tax total is sourced from personas/dunkin/menu/menuItems.json. The conformance fixture freezes the clock outside Dunkin happy hour so cold beverages price at the listed menu price.",
+  "vectors": [
+    {
+      "name": "large-hot-regular-coffee",
+      "steps": [
+        { "action": "add", "item": "Original Blend Coffee (Cream, Sugar)", "size": "large", "quantity": 1, "price": "0.01" }
+      ],
+      "expectedItemCount": 1,
+      "expectedTotal": "2.99"
+    },
+    {
+      "name": "medium-iced-black-coffee",
+      "steps": [
+        { "action": "add", "item": "Original Blend Iced Coffee (Black)", "size": "medium", "quantity": 1, "price": "0.01" }
+      ],
+      "expectedItemCount": 1,
+      "expectedTotal": "3.59"
+    },
+    {
+      "name": "munchkins-flavors-and-counts",
+      "steps": [
+        { "action": "add", "item": "Glazed MUNCHKINS® Donut Hole Treats", "size": "10 count", "quantity": 2, "price": "0.01" },
+        { "action": "add", "item": "Chocolate Glazed MUNCHKINS® Donut Hole Treats", "size": "25 count", "quantity": 1, "price": "0.01" }
+      ],
+      "expectedItemCount": 2,
+      "expectedTotal": "16.97"
+    }
+  ]
+}
