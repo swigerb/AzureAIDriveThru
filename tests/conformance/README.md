@@ -1,6 +1,6 @@
 # Conformance suite
 
-Black-box, language-neutral conformance harness for the Sonic AI Drive-Thru realtime backend
+Black-box, language-neutral conformance harness for the Azure AI Drive-Thru realtime backend
 (issue [#7](https://github.com/swigerb/SonicAIDriveThru/issues/7),
 CI: [#11](https://github.com/swigerb/SonicAIDriveThru/issues/11)). Talks to a backend only over
 HTTP and WebSocket; never imports backend source.
@@ -98,22 +98,20 @@ under test:
   vars must be set together; there is no auto-detection from the URL or from a live probe of the
   backend.
 - `CONFORMANCE_BACKEND=python` (the default) — launch `app/backend` via `.venv`.
-- `CONFORMANCE_BACKEND=dotnet` — the S2 .NET backend placeholder (issue #7; the backend doesn't
-  exist yet). **This FAILS the suite by default** (PR #22 review item 15) — CI must never silently
-  skip real backend coverage just because the S2 backend isn't built yet. Set
-  `CONFORMANCE_ALLOW_SKIP=1` on your own machine to turn that failure into a skip instead; this
-  opt-in is always ignored when `GITHUB_ACTIONS=true` or `CI=true` is set (see
-  `CiEnvironment.IsCi` / `DotnetPlaceholderPolicy`), so there is no way to make CI skip it.
+- `CONFORMANCE_BACKEND=dotnet`: launch the C# .NET backend under `app/backend-dotnet`.
+  The suite uses the same black-box contract for Python and .NET so parity failures show up in one place.
 
 ## BackendContract — the neutral contract every backend under test must satisfy
 
 `Conformance.Harness.BackendContract` (`src/Conformance.Harness/BackendContract.cs`) is the
 language-agnostic set of facts *any* backend implementation needs to run against the fakes —
-Python today, the future .NET backend once S2 exists (issue #7). Per-launcher classes (today just
+Python and the C# .NET backend. Per-launcher classes (today just
 `PythonBackendOptions` / `PythonBackendLauncher`) layer their own language-specific extras (env
-var names, process-start mechanics) on top of this same contract, so a future .NET launcher can
+var names, process-start mechanics) on top of this same contract, so the .NET launcher can
 reuse the identical `BackendContract` values without duplicating the "what does a conforming
 backend need" knowledge.
+
+The Sonic persona remains the baseline fixture for legacy conformance scenarios.
 
 ### Every environment variable the harness sets on the Python backend process
 
@@ -204,7 +202,7 @@ implementation detail with its own release cadence (PR #42 review item 11).
 
 These orderings are asserted directly by frame sequence number in the scenarios below — they are
 not incidental details of `app/backend/rtmt.py`'s current implementation, and any backend under
-test (Python today, a future .NET backend for issue #7) must reproduce all of them, not just the
+test (Python or .NET) must reproduce all of them, not just the
 shape of each individual frame.
 
 1. **The bootstrap `session.update` is the first upstream frame on the connection**, `Sequence == 0`
@@ -275,7 +273,7 @@ own body may cause, asserted as `actual <= baseline + allowedNewBackendErrors`, 
 equality. This is deliberately a ceiling, not a pinned count: *how many* ERROR-level lines a
 backend logs for a given recovered condition (one line vs. two, or ERROR vs. WARNING) is a
 logging/observability choice specific to this backend's own code, not part of the neutral contract
-a correct backend in another language must reproduce. A future .NET backend that logs one line
+a correct backend in another language must reproduce. A .NET backend that logs one line
 where the Python backend logs two — or logs at a level this harness doesn't count as an "unhandled
 error" at all — must still pass every scenario that uses this overload. Only genuinely *unexpected*
 errors (anything above the declared ceiling) fail a scenario. The zero-arg `RunAsync(body)` overload
@@ -410,7 +408,7 @@ own body may cause, asserted as `actual <= baseline + allowedNewBackendErrors`, 
 equality. This is deliberately a ceiling, not a pinned count: *how many* ERROR-level lines a
 backend logs for a given recovered condition (one line vs. two, or ERROR vs. WARNING) is a
 logging/observability choice specific to this backend's own code, not part of the neutral contract
-a correct backend in another language must reproduce. A future .NET backend that logs one line
+a correct backend in another language must reproduce. A .NET backend that logs one line
 where the Python backend logs two — or logs at a level this harness doesn't count as an "unhandled
 error" at all — must still pass every scenario that uses this overload. Only genuinely *unexpected*
 errors (anything above the declared ceiling) fail a scenario. The zero-arg `RunAsync(body)` overload

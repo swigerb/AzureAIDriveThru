@@ -135,8 +135,15 @@ def _persona_pack_id(rel_posix: str):
 
 
 def _is_cross_brand_doc(rel_posix: str) -> bool:
-    """docs/adr/** and docs/persona-architecture.md compare all three brands by design (ADR-001)."""
-    return rel_posix == "docs/persona-architecture.md" or rel_posix.startswith("docs/adr/")
+    """Docs that compare all persona packs by design may name every brand."""
+    return (
+        rel_posix in {
+            "README.md",
+            "docs/DEMO_SCRIPT.md",
+            "docs/persona-architecture.md",
+        }
+        or rel_posix.startswith("docs/adr/")
+    )
 
 
 _CONFORMANCE_TESTDATA_PERSONAS_PREFIX = "tests/conformance/testdata/personas/"
