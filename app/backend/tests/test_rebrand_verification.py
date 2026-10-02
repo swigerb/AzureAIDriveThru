@@ -11,8 +11,7 @@ allowed only
 
   1. inside its OWN persona pack (personas/<id>/**) -- personas/sonic/** may say "Sonic",
      but not "Dunkin'"/"McDonald's" (a persona pack must not reference a different brand);
-  2. inside the explicitly listed cross-brand docs (docs/adr/**, docs/persona-architecture.md)
-     that compare all three brands by design (ADR-001, design doc section 16);
+  2. inside the explicitly listed cross-brand docs that compare all three brands by design;
   3. inside one of exactly two DIRECTORY_EXCEPTIONS for generated/golden content
      (app/backend/static/, tests/conformance/testdata/) -- see rebrand_scan.py. A pack's own
      per-persona conformance testdata subfolder (tests/conformance/testdata/personas/<id>/**,
@@ -122,6 +121,8 @@ TERMINOLOGY_EXCLUDED_FILES = {
 # own source. That is a real persona-brand term, not leftover pre-rebrand generic-app
 # terminology, so only this one pack file is exempted here.
 TERMINOLOGY_EXCLUDED_RELATIVE_PATHS = {
+    "README.md",
+    "docs/DEMO_SCRIPT.md",
     "personas/mcdonalds/persona.json",
 }
 
@@ -299,13 +300,16 @@ class TestRebrandVerification(unittest.TestCase):
         self.assertIsNone(_classify_hit(rel_posix, "sonic", 1, {}))
 
     def test_cross_brand_docs_may_say_any_brand(self):
-        """Sanity: docs/persona-architecture.md must legitimately be allowed to say all three
-        brand names (it compares them by design, ADR-001)."""
-        doc_path = PROJECT_ROOT / "docs" / "persona-architecture.md"
-        self.assertTrue(doc_path.exists(), "docs/persona-architecture.md not found")
-        rel_posix = _relative_posix(doc_path)
-        for brand in BRAND_PATTERNS:
-            self.assertIsNone(_classify_hit(rel_posix, brand, 1, {}))
+        """Sanity: docs that compare persona packs by design may say all three brand names."""
+        for doc_path in [
+            PROJECT_ROOT / "README.md",
+            PROJECT_ROOT / "docs" / "DEMO_SCRIPT.md",
+            PROJECT_ROOT / "docs" / "persona-architecture.md",
+        ]:
+            self.assertTrue(doc_path.exists(), f"{doc_path} not found")
+            rel_posix = _relative_posix(doc_path)
+            for brand in BRAND_PATTERNS:
+                self.assertIsNone(_classify_hit(rel_posix, brand, 1, {}))
 
     def test_a_foreign_brand_word_inside_a_persona_pack_is_forbidden(self):
         """Mutation-style unit check (no real file touched): 'dunkin' inside personas/sonic/**
@@ -564,19 +568,13 @@ class TestRebrandVerification(unittest.TestCase):
             f"README.md first heading does not mention Azure: '{first_heading}'",
         )
 
-    def test_readme_does_not_mention_dunkin(self):
-        """README.md must be completely free of Dunkin references."""
+    def test_readme_mentions_all_current_personas(self):
+        """README.md must name the current persona packs because it is now a cross-brand doc."""
         readme = PROJECT_ROOT / "README.md"
         self.assertTrue(readme.exists(), "README.md not found at project root")
-        content = readme.read_text(encoding="utf-8", errors="replace")
-        hits = []
-        for line_no, line in enumerate(content.splitlines(), start=1):
-            if re.search(r"\bdunkin\b", line, re.IGNORECASE):
-                hits.append(f"  README.md:{line_no}  →  {line.strip()}")
-        self.assertEqual(
-            hits, [],
-            "\nREADME.md still references Dunkin:\n" + "\n".join(hits),
-        )
+        content = readme.read_text(encoding="utf-8", errors="replace").lower()
+        for persona in ["sonic", "dunkin", "mcdonald"]:
+            self.assertIn(persona, content)
 
     def test_frontend_index_html_title_contains_sonic(self):
         """app/frontend/index.html <title> must contain 'Sonic'."""

@@ -1,11 +1,13 @@
-# Connecting the Sonic AI Drive-Thru to existing services
+# Connecting Azure AI Drive-Thru to existing services
 
-The Sonic AI Drive-Thru can be connected to existing Azure services, such as Azure OpenAI and Azure Search. This guide will show you how to reuse existing services in your Azure subscription.
+Azure AI Drive-Thru can be connected to existing Azure services, such as a Microsoft Foundry account and Azure AI Search. This guide shows how to reuse existing services in your Azure subscription.
+When reusing Search, keep one index per persona. For example, the Sonic persona expects `sonic-menu-items`.
+When reusing a realtime deployment, verify the Sonic persona first because it is the current production default.
 
-* [Reuse existing OpenAI real-time deployment](#reuse-existing-openai-real-time-deployment)
+* [Reuse existing Foundry realtime deployment](#reuse-existing-foundry-realtime-deployment)
 * [Reuse existing index from azure-search-openai-demo](#reuse-existing-index-from-azure-search-openai-demo)
 
-## Reuse existing OpenAI real-time deployment
+## Reuse existing Foundry realtime deployment
 
 Run these commands _before_ running `azd up`:
 
@@ -15,19 +17,19 @@ Run these commands _before_ running `azd up`:
     azd env set AZURE_OPENAI_REUSE_EXISTING true
     ```
 
-2. Run this command to ensure that the [infrastructure](../infra/main.bicep) assigns the proper RBAC roles for accessing the OpenAI resource:
+2. Run this command to ensure that the [infrastructure](../infra/main.bicep) assigns the proper RBAC roles for accessing the Foundry resource:
 
     ```bash
     azd env set AZURE_OPENAI_RESOURCE_GROUP <YOUR_RESOURCE_GROUP>
     ```
 
-3. Run this command to point the app code at your Azure OpenAI endpoint:
+3. Run this command to point the app code at your Azure OpenAI-compatible realtime endpoint:
 
     ```bash
     azd env set AZURE_OPENAI_EASTUS2_ENDPOINT https://<YOUR_OPENAI_SERVICE>.openai.azure.com
     ```
 
-4. Run this command to point the app code at your Azure OpenAI real-time deployment. Note that the deployment name may be different from the model name:
+4. Run this command to point the app code at your realtime deployment. Note that the deployment name may be different from the model name:
 
     ```bash
     azd env set AZURE_OPENAI_REALTIME_DEPLOYMENT <YOUR_REALTIME_DEPLOYMENT_NAME>
@@ -95,4 +97,4 @@ AZURE_SEARCH_TITLE_FIELD=sourcepage
 AZURE_SEARCH_EMBEDDING_FIELD=embedding
 ```
 
-Then follow the steps in the project's [README](../README.md@#development-server) to run the app locally.
+Then follow the steps in the project's [README](../README.md#quick-start) for the current setup flow.

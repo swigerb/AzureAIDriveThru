@@ -1,12 +1,14 @@
-# Customizing the Sonic AI Drive-Thru deployment
+# Customizing the Azure AI Drive-Thru deployment
 
-This guide shows you how to customize the [Sonic AI Drive-Thru](../README.md#deploying-the-app) deployment to specify different options.
+This guide shows you how to customize the [Azure AI Drive-Thru](../README.md#quick-start) deployment to specify different options.
 If your goal is to reuse existing services (OpenAI or Search), see the [existing services guide](./existing_services.md) instead.
 
 ## Customizing the real-time voice choice
 
 The default carhop voice is `marin` (set in `app/backend/config.yaml` `model.default_voice` and in
 `infra/main.parameters.json`). Guests can also switch voices live from the settings dialog.
+The Sonic persona also declares `marin` in its persona pack.
+If you change this default, test Sonic combo and happy-hour turns as part of the smoke pass.
 To change the deployed default, run:
 
 ```bash

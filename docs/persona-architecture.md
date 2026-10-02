@@ -8,6 +8,10 @@
 - **Author:** Rick (lead)
 - **Repo:** this repo is being renamed `AzureAIDriveThru` (#69).
 
+> **Current status, 2026-10-02:** the unified app is deployed with the Python backend in production, the C# .NET 11
+> parity backend exists under `app/backend-dotnet`, local mode has been removed, and Entra in-app auth supersedes
+> EasyAuth. Some sections below preserve historical decisions and rollout notes for traceability.
+
 ## 1. Summary
 
 One app serves Sonic, McDonald's and Dunkin on Microsoft Foundry. It has a Python backend (the reference) and a

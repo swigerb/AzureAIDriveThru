@@ -1,38 +1,34 @@
 # Deployment Instructions
 
-## What The Deployment Script Does
+## What azd deploys
 
-1. Loads environment variables from the specified .env file
-2. Creates or updates Azure resources:
-   - Resource Group
-   - Azure Container Registry
-   - App Service Plan
-   - Web App
-   - Application Insights
-   - Log Analytics Workspace
-3. Builds the Docker image locally using the specified Dockerfile and context
-4. Pushes the image to Azure Container Registry
-5. Configures the Web App with all environment variables
+`azd up` provisions or updates the Azure AI Drive-Thru environment:
+
+1. Resource group, Azure Container Registry, Log Analytics, Storage, and a user-assigned managed identity.
+2. Microsoft Foundry `AIServices` with the model deployments in `infra/model-deployments.json`.
+3. Azure AI Search with one index per persona pack.
+4. Azure Container Apps with one container app that serves the frontend and Python backend.
+5. Entra ID in-app auth settings, managed-identity RBAC, search ingestion, and the non-fatal realtime smoke check through azd hooks.
 
 ## Build and Test Locally with Docker
 
 From the root directory, execute the following commands:
 
 ```bash
-docker build -t sonic-drive-in-app -f ./app/Dockerfile .
-docker run -p 8000:8000 --env-file ./app/backend/.env sonic-drive-in-app:latest
+docker build -t azure-ai-drive-thru -f ./app/Dockerfile .
+docker run -p 8000:8000 --env-file ./app/backend/.env azure-ai-drive-thru:latest
 ```
 
 ## Deploy the Application
 
-After testing locally, deploy the application with:
+Deploy the application with azd:
 
-```bash
-./scripts/deploy.sh \
-    --env-file ./app/backend/.env \
-    --dockerfile ./app/Dockerfile \
-    --context . \
-    sonic-drive-in-assistant
+```powershell
+azd auth login
+azd env new <env-name>
+azd env set AZURE_LOCATION eastus2
+azd env set AZURE_OPENAI_SERVICE_LOCATION eastus2
+azd up
 ```
 
 ## New Environment: Personas, Search Indexes, and Model Deployments
@@ -40,6 +36,10 @@ After testing locally, deploy the application with:
 A brand-new `azd` environment (its own resource group, Foundry/Azure OpenAI
 account, and paid Search service; see `docs/persona-architecture.md` section
 10) is configured with these `infra/main.bicep` parameters:
+
+Production currently sets `DEFAULT_PERSONA=sonic` in the azd environment.
+The Sonic persona pack remains the default landing experience when no query string is supplied.
+Use `?persona=sonic` when you need an explicit deep link to that persona.
 
 | Parameter | env var (in `main.parameters.json`) | Default | Notes |
 |---|---|---|---|
@@ -271,4 +271,3 @@ true (or unset) until step 4a has passed with ingress off. This also covers the 
 workflow (`.github/workflows/azure-dev.yaml`, `workflow_dispatch` only): it runs `azd provision` without setting
 `BACKEND_INGRESS_ENABLED` or the `ENTRA_*` values, so dispatching it against `azureaidrivethru-prod` before 4a has
 passed would publish the old, unauthenticated image with ingress on.
-
