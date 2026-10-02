@@ -32,10 +32,17 @@ namespace Conformance.Tests.Scenarios.Ordering;
 [Collection(HappyHourJustBeforeOpenCollection.Name)]
 public sealed class GoldenMenuComboSlotTheoryTests(HappyHourJustBeforeOpenFixture fixture)
 {
-    private const string BaseComboName = "SONIC® Cheeseburger Combo";
-    private const string BaseComboSize = "standard";
-    // PR #99 review decision 3: corrected to the committed export price (was a stale 8.49).
-    private const decimal BaseComboPrice = 9.19m;
+    private const string LunchBaseComboName = "SONIC® Cheeseburger Combo";
+    private const decimal LunchBaseComboPrice = 9.19m;
+    private const string BreakfastBaseComboName = "French Toast Sticks Combo";
+    private const decimal BreakfastBaseComboPrice = 5.19m;
+
+    private static (string Name, string Size, decimal Price) BaseComboForMode(string? mode)
+    {
+        return mode == "breakfast"
+            ? (BreakfastBaseComboName, "standard", BreakfastBaseComboPrice)
+            : (LunchBaseComboName, "standard", LunchBaseComboPrice);
+    }
 
     public static TheoryData<int> GoldenRowIndexes()
     {
@@ -73,13 +80,15 @@ public sealed class GoldenMenuComboSlotTheoryTests(HappyHourJustBeforeOpenFixtur
             Assert.Equal(180, golden.Items.Count);
             var row = golden.Items[rowIndex];
             var currentlyDownMachines = GoldenMenuCategoryData.LoadCurrentlyDownMachines(repoRoot);
+            var mode = OrderScenarioHelpers.MenuModeForItem(repoRoot, row.Item);
+            var baseCombo = BaseComboForMode(mode);
 
-            var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+            var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, mode: mode);
             await using var _ = browser;
 
             var setup = await OrderScenarioHelpers.RunOrderStepsAsync(
                 connection, browser,
-                [("add", BaseComboName, BaseComboSize, 1, BaseComboPrice)],
+                [("add", baseCombo.Name, baseCombo.Size, 1, baseCombo.Price)],
                 roundTripIndex, ct, callIdPrefix: "call_setup");
             roundTripIndex = setup.RoundTripIndex;
 
@@ -95,7 +104,7 @@ public sealed class GoldenMenuComboSlotTheoryTests(HappyHourJustBeforeOpenFixtur
                 var afterReject = await OrderScenarioHelpers.CallToolAsync(
                     connection, browser, "get_order", "{}", "call_get_after_reject", rejected.RoundTripIndex, ct);
                 OrderScenarioHelpers.AssertMoneyEqual(
-                    BaseComboPrice, OrderScenarioHelpers.GetOrderTotal(afterReject.ToolResultJson!),
+                    baseCombo.Price, OrderScenarioHelpers.GetOrderTotal(afterReject.ToolResultJson!),
                     $"{row.Item}: machine_unavailable must reject outright, leaving only the base combo.");
                 Assert.Equal(1, OrderScenarioHelpers.GetOrderItemCount(afterReject.ToolResultJson!));
                 return;
@@ -107,7 +116,7 @@ public sealed class GoldenMenuComboSlotTheoryTests(HappyHourJustBeforeOpenFixtur
                 roundTripIndex, ct, callIdPrefix: "call_item");
 
             var isAbsorbed = row.ComboSlot is "sides" or "drinks";
-            var expectedTotal = isAbsorbed ? BaseComboPrice : BaseComboPrice + row.UnitPrice;
+            var expectedTotal = isAbsorbed ? baseCombo.Price : baseCombo.Price + row.UnitPrice;
             OrderScenarioHelpers.AssertMoneyEqual(
                 expectedTotal,
                 OrderScenarioHelpers.GetOrderTotal(result.ToolResultJson!),
@@ -116,7 +125,7 @@ public sealed class GoldenMenuComboSlotTheoryTests(HappyHourJustBeforeOpenFixtur
 
             if (!isAbsorbed)
             {
-                var expectedItemCount = row.Item == BaseComboName ? 1 : 2;
+                var expectedItemCount = row.Item == baseCombo.Name ? 1 : 2;
                 Assert.Equal(expectedItemCount, OrderScenarioHelpers.GetOrderItemCount(result.ToolResultJson!));
             }
             else

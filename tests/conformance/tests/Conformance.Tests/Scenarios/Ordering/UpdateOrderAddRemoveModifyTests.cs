@@ -425,10 +425,12 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
     public Task Size_aliases_and_hidden_sizes_display_correctly(int caseIndex) => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
-        var golden = GoldenOrderPricingData.Load(RepoPaths.FindRepoRoot());
+        var repoRoot = RepoPaths.FindRepoRoot();
+        var golden = GoldenOrderPricingData.Load(repoRoot);
         var sizeCase = golden.SizeDisplayCases[caseIndex];
 
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        var mode = OrderScenarioHelpers.MenuModeForItem(repoRoot, sizeCase.Item);
+        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, mode: mode);
         await using var _ = browser;
 
         // update_order's price is caller-supplied and never menu-validated (see

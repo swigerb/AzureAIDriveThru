@@ -31,6 +31,13 @@ upsell_hints:
       - "hot dogs & tots"
     hint: "Tasty! Ask if they want to add a refreshing Drink or Slush to complete their meal!"
 
+  breakfast:
+    trigger_categories:
+      - "national breakfast entrees"
+      - "local breakfast favorites"
+      - "breakfast drinks"
+    hint: "Great breakfast pick! Ask if they'd like coffee, orange juice, or another breakfast item."
+
   generic:
     trigger_categories: []
     hint: "Ask if they'd like to add anything else — maybe a drink, side, or dessert!"

@@ -61,13 +61,12 @@ messages:
     the order, then ask the guest whether they'd like to add it.
 
   # #165: add-time rejection when a real, on-menu item's own `menuPeriod` doesn't match this
-  # session's bound menu mode. Dormant for this persona: Sonic's `persona.json` doesn't declare
-  # `features.dayparts`, so every session has `menu_mode=None` and this path never fires -- kept
-  # populated anyway for parity with the full required-key set every persona pack documents (see
-  # prompt_loader.py's REQUIRED_ERROR_MESSAGE_KEYS).
+  # session's bound menu mode (order_state.OrderState.get_menu_mode, set once at the WebSocket
+  # handshake from `?mode=breakfast|lunch`). Fires when the guest asks for a breakfast item in
+  # lunch mode, or a lunch item in breakfast mode.
   item_out_of_mode: >-
-    I'm sorry, {{item_name}} isn't on our menu right now. Would you like to try
-    something else instead?
+    I'm sorry, {{item_name}} is a {{mode_label}} item and isn't on the menu right now. Would you
+    like to try something else, or switch the menu mode in Settings?
 
   # Quantity limit messages
   per_item_limit_maxed: >-
