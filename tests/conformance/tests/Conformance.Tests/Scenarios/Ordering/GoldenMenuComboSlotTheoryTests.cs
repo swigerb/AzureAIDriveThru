@@ -92,7 +92,7 @@ public sealed class GoldenMenuComboSlotTheoryTests(HappyHourJustBeforeOpenFixtur
                 roundTripIndex, ct, callIdPrefix: "call_setup");
             roundTripIndex = setup.RoundTripIndex;
 
-            if (RequiresACurrentlyDownMachine(row, currentlyDownMachines) && row.Item != BaseComboName)
+            if (RequiresACurrentlyDownMachine(row, currentlyDownMachines) && row.Item != baseCombo.Name)
             {
                 var rejected = await OrderScenarioHelpers.CallToolAsync(
                     connection, browser, "update_order",
