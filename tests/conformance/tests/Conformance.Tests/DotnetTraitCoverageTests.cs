@@ -138,6 +138,12 @@ namespace Conformance.Tests;
 /// rule from its own persona.json, no brand names) -- verified green against both backends, and
 /// mutation-checked (dotnet leg) by temporarily reverting the bundle's own reprice-on-resize line
 /// in OrderState.cs, confirming the new test fails -- raising the floor 198 to 199.
+///
+/// Issue #184 round 3 (Rick's review, item H): two new tagged, ungated Theory methods in
+/// <c>ComboComponentResizeConformanceTests.cs</c> -- a path-independence check (ordering a size
+/// up front totals identically to resizing into it later) and a two-bundle-instance check (a
+/// resize lands on the instance that actually holds the named item, by identity, never an
+/// arbitrary first match) -- verified green against both backends, raising the floor 199 to 201.
 /// </summary>
 public sealed class DotnetTraitCoverageTests
 {
@@ -160,12 +166,12 @@ public sealed class DotnetTraitCoverageTests
     };
 
     [Fact]
-    public void At_least_199_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
+    public void At_least_201_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
     {
         var count = CountFloorEligibleDotnetReadyTestMethods();
 
-        Assert.True(count >= 199,
-            $"Expected at least 199 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
+        Assert.True(count >= 201,
+            $"Expected at least 201 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
             $"and not unconditionally skip-gated by AuthRowCapability (the dotnet leg's " +
             $"`--filter \"{TraitName}={TraitValue}&Category!=Browser\"` baseline, minus the five " +
             "skip-only Scenarios/Auth classes -- see this class's own doc comment; " +

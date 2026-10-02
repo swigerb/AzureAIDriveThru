@@ -198,6 +198,24 @@ public sealed class OrderToolExecutorBundleAndExtrasTests
         Assert.Equal(ToolResultDirection.ToBoth, result.Destination);
     }
 
+    // ── modify delta-text wording ───────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Modify_ASizeChange_SpeaksTheOriginalAppsUpgradedWording()
+    {
+        // PR #184 round 3 (Rick's review, item C): a genuine size resize via `modify` must
+        // speak the original app's exact wording/verb and from/to form -- "Upgraded {item}
+        // from {Old} to {New}, your total is now $X" -- not the generic "Changed ..."
+        // fallback, and with no em dash.
+        var executor = NewExecutor(DeltaFixture.Load());
+        await executor.ExecuteAsync("update_order", Args("add", "Delta Latte", "regular", 1, 3.49m), TestContext.Current.CancellationToken);
+        var result = await executor.ExecuteAsync("update_order", Args("modify", "Delta Latte", "large", 1, 4.29m), TestContext.Current.CancellationToken);
+
+        var text = result.ToText();
+        Assert.StartsWith("Upgraded Delta Latte from Regular to Large, your total is now", text);
+        Assert.DoesNotContain('\u2014', text);
+    }
+
     // ── extras gate: extras_no_base_item / extras_blocked_category ─────────────────────────
     // test-delta's own extras.allowedBaseCategories: ["drinks"], blockedBaseCategories: ["mains"].
 

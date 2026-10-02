@@ -63,6 +63,25 @@ public static class ComboBundleDiscovery
         public override string ToString() => PersonaId;
     }
 
+    /// <summary>#184 round 3 (Rick's review, item H(b)): two SEPARATE, DISTINCTLY-NAMED bundle
+    /// items on the SAME pack, each with its own genuinely open drink slot, so a conformance
+    /// Theory can force two instances onto the order at once and verify a resize lands on
+    /// exactly the instance that holds the targeted drink -- never the other one.</summary>
+    public sealed record TwoInstanceCase(
+        string PersonaId,
+        string FirstBundleName,
+        string FirstBundleSize,
+        decimal FirstBundlePrice,
+        string SecondBundleName,
+        string SecondBundleSize,
+        decimal SecondBundlePrice,
+        SizedItem DrinkFromSize,
+        SizedItem DrinkToSize,
+        SizedItem SecondDrink)
+    {
+        public override string ToString() => PersonaId;
+    }
+
     public sealed record WholeBundleResizeCase(
         string PersonaId,
         string BundleName,
@@ -241,7 +260,15 @@ public static class ComboBundleDiscovery
                     continue;
                 }
 
-                var sideSize = sideItem.Sizes[0];
+                // #184 round 3 (Rick's review, item H(c)): the real live sequence always orders
+                // the side at its LARGEST real size (e.g. "Large Tots"), not whatever happens to
+                // sort first in this pack's own menuItems.json -- sort by price like the drink
+                // sizes above and take the largest, so a pack whose own JSON lists Small before
+                // Large (or any other order) still reproduces the live sequence's own size.
+                var sideSize = sideItem.Sizes
+                    .GroupBy(s => s.Price).Select(g => g.First())
+                    .OrderByDescending(s => s.Price)
+                    .First();
                 side = new SizedItem(sideItem.Name, sideSize.Size, sideSize.Price);
             }
 
@@ -257,6 +284,83 @@ public static class ComboBundleDiscovery
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// #184 round 3 (Rick's review, item H(b)): finds, on THIS SAME pack's own menu, TWO
+    /// separate, distinctly-named `includedAnySize` bundles that each genuinely leave their own
+    /// drink slot open (same open-slot test as <see cref="Discover"/>), plus a real drinks-category
+    /// item with at least two different real prices (for the resize) and a SECOND, distinctly-
+    /// named real drinks-category item (to seed the other instance so the test can tell them
+    /// apart). Deliberately ignores any "sides" slot on either bundle -- only drink-slot
+    /// absorption-order determinism is under test here. Returns null for any pack that doesn't
+    /// have two qualifying bundles or two distinct drinks (most packs, which have only one
+    /// qualifying combo line), so that pack is simply absent from the discovered Theory rows.
+    /// </summary>
+    public static TwoInstanceCase? DiscoverTwoInstance(string personasDir, string personaId)
+    {
+        if (BundleResizeRule(personasDir, personaId) != "includedAnySize")
+        {
+            return null;
+        }
+
+        var items = ReadMenuItems(personasDir, personaId);
+
+        bool IsMachineGated(CandidateItem item, IReadOnlySet<string> downMachines) =>
+            item.RequiresMachine is { } machine && downMachines.Contains(machine);
+
+        var downMachines = CurrentlyDownMachines(personasDir, personaId);
+
+        var openDrinkBundles = items
+            .Where(i => i.BundleSlots is not null
+                && i.BundleSlots!.Contains("drinks") && !i.AutoFillKeys.Contains("drinks")
+                && i.Sizes.Count > 0)
+            .ToList();
+        if (openDrinkBundles.Count < 2)
+        {
+            return null;
+        }
+
+        var first = openDrinkBundles[0];
+        var second = openDrinkBundles[1];
+
+        var drinkItem = items.FirstOrDefault(i =>
+            i.ComboSlot == "drinks" &&
+            !IsMachineGated(i, downMachines) &&
+            i.Sizes.Select(s => s.Price).Distinct().Count() >= 2);
+        if (drinkItem is null)
+        {
+            return null;
+        }
+
+        var sortedDrinkSizes = drinkItem.Sizes
+            .GroupBy(s => s.Price).Select(g => g.First())
+            .OrderBy(s => s.Price)
+            .ToList();
+        var fromSize = sortedDrinkSizes[0];
+        var toSize = sortedDrinkSizes[1];
+
+        var secondDrinkItem = items.FirstOrDefault(i =>
+            i.ComboSlot == "drinks" && i.Name != drinkItem.Name &&
+            !IsMachineGated(i, downMachines) && i.Sizes.Count > 0);
+        if (secondDrinkItem is null)
+        {
+            return null;
+        }
+
+        var firstSize = first.Sizes[0];
+        var secondSize = second.Sizes[0];
+        return new TwoInstanceCase(
+            personaId,
+            first.Name,
+            firstSize.Size,
+            firstSize.Price,
+            second.Name,
+            secondSize.Size,
+            secondSize.Price,
+            new SizedItem(drinkItem.Name, fromSize.Size, fromSize.Price),
+            new SizedItem(drinkItem.Name, toSize.Size, toSize.Price),
+            new SizedItem(secondDrinkItem.Name, secondDrinkItem.Sizes[0].Size, secondDrinkItem.Sizes[0].Price));
     }
 
     /// <summary>
@@ -459,6 +563,158 @@ public sealed class ComboComponentResizeConformanceTests
                 seedResult.RoundTripIndex, ct, callIdPrefix: "call_modify");
 
             AssertResizedComboOnlyNoStandaloneDrink(bundleCase, result.ToolResultJson!);
+        });
+    }
+
+    /// <summary>#184 round 3 (Rick's review, item H(a)): path independence -- this SAME pack's
+    /// own drink added directly at its LARGER real size up front must charge the EXACT SAME
+    /// total as seeding it at the smaller size and resizing to that same larger size later. Both
+    /// paths run on their own fresh connection (xUnit requires exactly one open connection at a
+    /// time), one after the other on the SAME fixture/backend instance.</summary>
+    [Theory]
+    [Trait("Dotnet", "ready")]
+    [MemberData(nameof(DiscoveredBundleResizeCases))]
+    public async Task Discovered_pack_charges_the_same_total_large_up_front_or_resized_later(
+        ComboBundleDiscovery.BundleResizeCase bundleCase)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var fixture = new ComboBundleResizeFixture(bundleCase.PersonaId);
+        await fixture.InitializeAsync();
+        await fixture.RunAsync(async () =>
+        {
+            async Task<decimal> UpFrontTotalAsync()
+            {
+                var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
+                    fixture, ct, persona: bundleCase.PersonaId);
+                await using var _ = browser;
+
+                var steps = new List<(string Action, string Item, string Size, int Quantity, decimal Price)>
+                {
+                    ("add", bundleCase.BundleName, bundleCase.BundleSize, 1, bundleCase.BundlePrice),
+                };
+                if (bundleCase.Side is { } side)
+                {
+                    steps.Add(("add", side.Name, side.Size, 1, side.Price));
+                }
+
+                steps.Add(("add", bundleCase.DrinkToSize.Name, bundleCase.DrinkToSize.Size, 1, bundleCase.DrinkToSize.Price));
+
+                var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+                    connection, browser, steps, roundTripIndex, ct, callIdPrefix: "call_upfront");
+                return OrderScenarioHelpers.GetOrderTotal(result.ToolResultJson!);
+            }
+
+            async Task<decimal> ResizedLaterTotalAsync()
+            {
+                var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
+                    fixture, ct, persona: bundleCase.PersonaId);
+                await using var _ = browser;
+
+                var seeded = await SeedComboThenFillDrinkAsync(connection, browser, bundleCase, roundTripIndex, ct);
+                var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+                    connection, browser,
+                    [("modify", bundleCase.DrinkToSize.Name, bundleCase.DrinkToSize.Size, 1, bundleCase.DrinkToSize.Price)],
+                    seeded.RoundTripIndex, ct, callIdPrefix: "call_resize_later");
+                return OrderScenarioHelpers.GetOrderTotal(result.ToolResultJson!);
+            }
+
+            var upFrontTotal = await UpFrontTotalAsync();
+            var resizedLaterTotal = await ResizedLaterTotalAsync();
+
+            OrderScenarioHelpers.AssertMoneyEqual(
+                upFrontTotal, resizedLaterTotal,
+                $"persona '{bundleCase.PersonaId}': adding '{bundleCase.DrinkToSize.Name}' at " +
+                $"{bundleCase.DrinkToSize.Size} up front must charge the SAME total as adding it " +
+                $"at {bundleCase.DrinkFromSize.Size} and resizing to {bundleCase.DrinkToSize.Size} " +
+                "later -- path independence, #184 round 3 item H(a).");
+        });
+    }
+
+    public static TheoryData<ComboBundleDiscovery.TwoInstanceCase> DiscoveredTwoInstanceResizeCases()
+    {
+        var personasDir = RepoPaths.PersonasDirectory(RepoPaths.FindRepoRoot());
+        var data = new TheoryData<ComboBundleDiscovery.TwoInstanceCase>();
+        foreach (var personaId in ConformancePersonas.DiscoverFromDisk())
+        {
+            if (ComboBundleDiscovery.DiscoverTwoInstance(personasDir, personaId) is { } discovered)
+            {
+                data.Add(discovered);
+            }
+        }
+
+        return data;
+    }
+
+    /// <summary>#184 round 3 (Rick's review, item H(b)): end-to-end mirror of Backend.Tests'
+    /// `TwoSeparateCombos_ResizeTargetsTheOneThatHoldsTheItem` -- two SEPARATE bundle instances
+    /// (distinct names on the same pack), each absorbing its own distinguishable drink. The MOST
+    /// RECENTLY added instance is scanned first for a vacant slot, so the first drink added after
+    /// both instances lands on it; the second, distinct drink then lands on the first-added
+    /// instance instead. Resizing the drink that only the most-recently-added instance holds must
+    /// leave the other instance (and its own, different drink) completely untouched --
+    /// determinism by identity, never an arbitrary/first-match pick.</summary>
+    [Theory]
+    [Trait("Dotnet", "ready")]
+    [MemberData(nameof(DiscoveredTwoInstanceResizeCases))]
+    public async Task Discovered_pack_with_two_bundle_instances_resizes_only_the_holder(
+        ComboBundleDiscovery.TwoInstanceCase twoCase)
+    {
+        var ct = TestContext.Current.CancellationToken;
+
+        await using var fixture = new ComboBundleResizeFixture(twoCase.PersonaId);
+        await fixture.InitializeAsync();
+        await fixture.RunAsync(async () =>
+        {
+            var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
+                fixture, ct, persona: twoCase.PersonaId);
+            await using var _ = browser;
+
+            var seedSteps = new List<(string Action, string Item, string Size, int Quantity, decimal Price)>
+            {
+                ("add", twoCase.FirstBundleName, twoCase.FirstBundleSize, 1, twoCase.FirstBundlePrice),
+                ("add", twoCase.SecondBundleName, twoCase.SecondBundleSize, 1, twoCase.SecondBundlePrice),
+                // The MOST RECENTLY added instance (SecondBundleName) is scanned first for a
+                // vacant drink slot, so this drink absorbs into THAT instance first.
+                ("add", twoCase.DrinkFromSize.Name, twoCase.DrinkFromSize.Size, 1, twoCase.DrinkFromSize.Price),
+                // Its drink slot now filled -- this second, distinct drink absorbs into the
+                // FIRST-added instance instead.
+                ("add", twoCase.SecondDrink.Name, twoCase.SecondDrink.Size, 1, twoCase.SecondDrink.Price),
+            };
+            var seeded = await OrderScenarioHelpers.RunOrderStepsAsync(
+                connection, browser, seedSteps, roundTripIndex, ct, callIdPrefix: "call_seed_two");
+
+            var seededItems = JsonDocument.Parse(seeded.ToolResultJson!).RootElement
+                .GetProperty("items").EnumerateArray().ToList();
+            Assert.Equal(2, seededItems.Count);
+
+            var seededFirstInstance = seededItems.Single(i => i.GetProperty("item").GetString() == twoCase.FirstBundleName);
+            var seededSecondInstance = seededItems.Single(i => i.GetProperty("item").GetString() == twoCase.SecondBundleName);
+            Assert.Contains(twoCase.SecondDrink.Name, seededFirstInstance.GetProperty("display").GetString());
+            Assert.Contains(twoCase.DrinkFromSize.Name, seededSecondInstance.GetProperty("display").GetString());
+
+            // Resize the drink that only the most-recently-added (second) instance holds.
+            var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+                connection, browser,
+                [("modify", twoCase.DrinkToSize.Name, twoCase.DrinkToSize.Size, 1, twoCase.DrinkToSize.Price)],
+                seeded.RoundTripIndex, ct, callIdPrefix: "call_resize_holder");
+
+            var items = JsonDocument.Parse(result.ToolResultJson!).RootElement
+                .GetProperty("items").EnumerateArray().ToList();
+            Assert.Equal(2, items.Count);
+
+            var resizedSecondInstance = items.Single(i => i.GetProperty("item").GetString() == twoCase.SecondBundleName);
+            var untouchedFirstInstance = items.Single(i => i.GetProperty("item").GetString() == twoCase.FirstBundleName);
+
+            Assert.Contains(twoCase.DrinkToSize.Size, resizedSecondInstance.GetProperty("display").GetString());
+            Assert.DoesNotContain(twoCase.DrinkFromSize.Size, resizedSecondInstance.GetProperty("display").GetString());
+            Assert.Contains(twoCase.SecondDrink.Name, untouchedFirstInstance.GetProperty("display").GetString());
+
+            OrderScenarioHelpers.AssertMoneyEqual(
+                twoCase.FirstBundlePrice + twoCase.SecondBundlePrice,
+                OrderScenarioHelpers.GetOrderTotal(result.ToolResultJson!),
+                $"persona '{twoCase.PersonaId}': two separate bundle instances " +
+                $"('{twoCase.FirstBundleName}' and '{twoCase.SecondBundleName}') must each keep " +
+                "their own bundle price after only one is resized -- #184 round 3 item H(b).");
         });
     }
 }

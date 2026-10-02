@@ -352,6 +352,26 @@ public sealed class MenuCatalog
             kv => kv.Value.Replace("{size}", sizeLabel).Trim());
     }
 
+    /// <summary>PR #184 round 3 (Rick's review, item E): the same slot -> filler map as
+    /// <see cref="BundleAutoFill"/>, but with the literal <c>{size}</c> token (and the trailing
+    /// space its template builds in) stripped rather than substituted with a real size label --
+    /// the BASE, on-menu item name an autofilled slot's item field should hold (e.g. "World
+    /// Famous Fries®"), independent of whatever size currently fills it. A template with no
+    /// <c>{size}</c> token at all (e.g. "Hash Browns", a single-size autofill) is returned
+    /// unchanged -- it was never size-baked-in to begin with. Mirrors menu_utils.py's
+    /// <c>bundle_autofill_names</c>.</summary>
+    public IReadOnlyDictionary<string, string> BundleAutoFillNames(string itemName)
+    {
+        var normalized = ResolveAlias(MenuKeyValidator.MenuKey(itemName));
+        if (!_itemFields.TryGetValue(normalized, out var fields) || fields.BundleAutoFill.Count == 0)
+        {
+            return new Dictionary<string, string>();
+        }
+        return fields.BundleAutoFill.ToDictionary(
+            kv => kv.Key,
+            kv => kv.Value.Replace("{size}", "").Trim());
+    }
+
     /// <summary>Every real menu item name that claims numbered-meal id <paramref name="number"/>
     /// (persona.json <c>mealNumber</c>) -- possibly more than one when a breakfast and a lunch
     /// meal share the same number. Empty for a persona with no numbered meals at all.</summary>

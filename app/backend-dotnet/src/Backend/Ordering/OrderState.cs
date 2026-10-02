@@ -24,6 +24,12 @@ public sealed class OrderUpdateResult
     public string? ComboComponentResizedToSize { get; set; }
     public string? ComboDisplay { get; set; }
 
+    // PR #184 round 3 (Rick's review, item D/M4): set whenever a "wholeBundleSize" pack rejected
+    // a component resize outright because it has no whole-meal price at the requested size --
+    // the slot (and the bundle) are left exactly as they were. Mirrors order_state.py's
+    // result_info["combo_component_resize_rejected"].
+    public string? ComboComponentResizeRejected { get; set; }
+
     // #179: set by HandleRemove when itemName was vacating a combo slot via absorption rather
     // than removing a raw order line.
     public string? VacatedComboComponent { get; set; }
@@ -254,7 +260,16 @@ public sealed class OrderState
                         break;
                     }
                     var (comboItem, idx) = slotFound;
-                    var isResize = FillBundleComponent(comboItem, idx, component, itemName, size, display);
+                    var (accepted, isResize, filledComboItem) = FillBundleComponent(comboItem, idx, component, itemName, size, display);
+                    if (!accepted)
+                    {
+                        // Rejected (item D/M4): this pack has no whole-meal price at *size* --
+                        // the slot is still vacant, never silently retry the SAME vacant slot
+                        // forever. Stop absorbing; any remaining quantity falls through to a
+                        // genuine standalone add below.
+                        break;
+                    }
+                    comboItem = filledComboItem;
                     lastComboItem = comboItem;
                     anyResize = anyResize || isResize;
                     absorbedCount++;
@@ -296,15 +311,19 @@ public sealed class OrderState
                         if (currentSize.Length > 0 && currentSize != size && currentItem.Length > 0 &&
                             MenuKeyValidator.MenuKey(currentItem) == MenuKeyValidator.MenuKey(itemName))
                         {
-                            FillBundleComponent(comboItem, idx, component, itemName, size, display);
-                            result.ResizedComboComponent = component;
-                            result.ComboComponentResizedFromSize = currentSize;
-                            result.ComboComponentResizedToSize = size;
-                            result.ComboDisplay = comboItem.Display;
-                            remaining = quantity - 1;
-                            if (remaining <= 0)
+                            var (accepted, _, filledComboItem) = FillBundleComponent(comboItem, idx, component, itemName, size, display);
+                            if (accepted)
                             {
-                                return;
+                                comboItem = filledComboItem;
+                                result.ResizedComboComponent = component;
+                                result.ComboComponentResizedFromSize = currentSize;
+                                result.ComboComponentResizedToSize = size;
+                                result.ComboDisplay = comboItem.Display;
+                                remaining = quantity - 1;
+                                if (remaining <= 0)
+                                {
+                                    return;
+                                }
                             }
                         }
                     }
@@ -406,24 +425,39 @@ public sealed class OrderState
             // its default filler the instant the bundle is added.
             var sizeLabel = _menu.NormalizeSize(size);
             var autofill = _menu.BundleAutoFill(itemName, sizeLabel);
-            if (autofill.TryGetValue("sides", out var sideFiller) && !absorbedSide)
+            // PR #184 round 3 (Rick's review, item E): the slot's Item must be the BASE,
+            // on-menu item name, not the size-baked-in template text autofill itself holds --
+            // see BundleAutoFillNames and ApplyWholeBundleResize's own autofill re-derivation
+            // for the same fix.
+            var autofillBase = _menu.BundleAutoFillNames(itemName);
+            if (autofill.TryGetValue("sides", out var sideFillerDisplay) && !absorbedSide)
             {
                 var slotIdx = FirstVacantSlotIndex(bundleItemRef, "sides");
                 if (slotIdx is { } vacantIdx)
                 {
-                    bundleItemRef.Components.Add(sideFiller);
-                    FillBundleComponent(bundleItemRef, vacantIdx, "sides", sideFiller, sizeLabel, sideFiller, autofill: true);
-                    result.Autofilled.Add(sideFiller);
+                    var sideFillerItem = autofillBase.TryGetValue("sides", out var sb) ? sb : sideFillerDisplay;
+                    bundleItemRef.Components.Add(sideFillerDisplay);
+                    // PR #184 round 3 (Rick's review, item D): pass the RAW size -- the same
+                    // literal value comboItem.Size holds (never the resolved/canonical
+                    // sizeLabel, used only above for computing the filler display text) -- so
+                    // FillBundleComponent's "size != comboItem.Size" feasibility check compares
+                    // like with like, instead of spuriously treating a same-size initial autofill
+                    // as a resize purely due to casing. Mirrors order_state.py's exact choice to
+                    // pass `size`, not `size_label`, here.
+                    FillBundleComponent(bundleItemRef, vacantIdx, "sides", sideFillerItem, size, sideFillerDisplay, autofill: true);
+                    result.Autofilled.Add(sideFillerDisplay);
                 }
             }
-            if (autofill.TryGetValue("drinks", out var drinkFiller) && !absorbedDrink)
+            if (autofill.TryGetValue("drinks", out var drinkFillerDisplay) && !absorbedDrink)
             {
                 var slotIdx = FirstVacantSlotIndex(bundleItemRef, "drinks");
                 if (slotIdx is { } vacantIdx)
                 {
-                    bundleItemRef.Components.Add(drinkFiller);
-                    FillBundleComponent(bundleItemRef, vacantIdx, "drinks", drinkFiller, sizeLabel, drinkFiller, autofill: true);
-                    result.Autofilled.Add(drinkFiller);
+                    var drinkFillerItem = autofillBase.TryGetValue("drinks", out var db) ? db : drinkFillerDisplay;
+                    bundleItemRef.Components.Add(drinkFillerDisplay);
+                    // Same reasoning as the "sides" branch above: raw size, not sizeLabel.
+                    FillBundleComponent(bundleItemRef, vacantIdx, "drinks", drinkFillerItem, size, drinkFillerDisplay, autofill: true);
+                    result.Autofilled.Add(drinkFillerDisplay);
                 }
             }
         }
@@ -513,11 +547,19 @@ public sealed class OrderState
                 continue;
             }
             var oldComponentSize = slot.Size;
-            FillBundleComponent(comboItem, idx, component, itemName, size, display);
+            var (accepted, _, filledComboItem) = FillBundleComponent(comboItem, idx, component, itemName, size, display);
+            if (!accepted)
+            {
+                // Item D/M4: this "wholeBundleSize" pack has no whole-meal price at *size* --
+                // leave the slot and the bundle exactly as they were and report a clean
+                // rejection instead of a silent no-op or a mixed-size bundle.
+                result.ComboComponentResizeRejected = component;
+                break;
+            }
             result.ResizedComboComponent = component;
             result.ComboComponentResizedFromSize = oldComponentSize;
             result.ComboComponentResizedToSize = size;
-            result.ComboDisplay = comboItem.Display;
+            result.ComboDisplay = filledComboItem.Display;
             break;
         }
     }
@@ -736,11 +778,21 @@ public sealed class OrderState
                 if (slot.Autofill)
                 {
                     var fresh = _menu.BundleAutoFill(comboItem.Item, resolved);
-                    if (fresh.TryGetValue(component, out var filler) && filler.Length > 0)
+                    if (fresh.TryGetValue(component, out var fillerDisplay) && fillerDisplay.Length > 0)
                     {
-                        slot.Item = filler;
-                        slot.Display = filler;
-                        slot.LastItem = filler;
+                        // PR #184 round 3 (Rick's review, item E): slot.Item must stay the BASE,
+                        // on-menu item name (e.g. "World Famous Fries®"), never the size-baked-in
+                        // template text -- the same invariant every non-autofill slot already
+                        // holds (Display carries the size prefix; Item never does). Otherwise a
+                        // later `modify`/`remove` naming the real menu item (what the guest
+                        // actually says, and what OrderToolExecutor resolves against the menu)
+                        // can never match this slot via MenuKeyValidator.MenuKey and is wrongly
+                        // rejected as not_in_order.
+                        var freshBase = _menu.BundleAutoFillNames(comboItem.Item);
+                        var fillerItem = freshBase.TryGetValue(component, out var baseName) ? baseName : fillerDisplay;
+                        slot.Item = fillerItem;
+                        slot.Display = fillerDisplay;
+                        slot.LastItem = fillerItem;
                         slot.LastSize = newSize;
                     }
                 }
@@ -760,6 +812,54 @@ public sealed class OrderState
         return true;
     }
 
+    /// <summary>PR #184 round 3 (Rick's review, item F -- quantity-2+ "wholeBundleSize" lines): a
+    /// component resize under "wholeBundleSize" is really a whole-MEAL resize (see
+    /// <see cref="ApplyWholeBundleResize"/>) -- on a quantity>1 line, naively applying that to
+    /// <paramref name="comboItem"/> would silently resize (and reprice) EVERY physical unit
+    /// sharing this one line's single Price/Size fields, even though the guest/model only ever
+    /// named ONE unit's component. Split the physical unit at <paramref name="unitIndex"/> off
+    /// into its own new, independent quantity=1 <see cref="OrderItem"/> -- carrying that unit's
+    /// own current side/drink slot contents with it -- so the resize that follows in
+    /// <see cref="FillBundleComponent"/> applies only to that one unit; the original line shrinks
+    /// by one and keeps its old size/price for its remaining units, untouched.
+    ///
+    /// Returns the new split-off <see cref="OrderItem"/>, inserted directly after <paramref
+    /// name="comboItem"/> so read-back order stays stable. Mirrors order_state.py's
+    /// <c>_split_bundle_unit</c>.</summary>
+    private OrderItem SplitBundleUnit(OrderItem comboItem, int unitIndex)
+    {
+        var splitItem = new OrderItem
+        {
+            Item = comboItem.Item,
+            Size = comboItem.Size,
+            Quantity = 1,
+            Price = comboItem.Price,
+            Display = comboItem.Display,
+            Components = [.. comboItem.Components],
+        };
+        foreach (var component in _menu.BundleSlots(comboItem.Item))
+        {
+            var slots = SyncBundleSlotList(comboItem, component);
+            BundleSlot taken;
+            if (unitIndex < slots.Count)
+            {
+                taken = slots[unitIndex];
+                slots.RemoveAt(unitIndex);
+            }
+            else
+            {
+                taken = new BundleSlot();
+            }
+            splitItem.BundleSlots[component] = [taken];
+        }
+        comboItem.Quantity--;
+        var insertAt = _items.FindIndex(oi => ReferenceEquals(oi, comboItem)) + 1;
+        _items.Insert(insertAt, splitItem);
+        RebuildBundleDisplay(comboItem);
+        RebuildBundleDisplay(splitItem);
+        return splitItem;
+    }
+
     /// <summary>PR #184 round 2 (Rick's review, item 1): the ONE place a bundle's side/drink slot
     /// gets (re)filled -- a first-time absorption, a bundle-slot autofill, a refill after a
     /// `remove`-vacate, an explicit `modify`/resize of the slot, or an `add` of the same item at
@@ -777,17 +877,41 @@ public sealed class OrderState
     /// compute, and ordering a size up front vs. resizing into it afterward always totals the
     /// same. "wholeBundleSize" packs instead resize the WHOLE bundle
     /// (<see cref="ApplyWholeBundleResize"/>) whenever the requested size differs from the
-    /// bundle's own current size.</para>
+    /// bundle's own current size -- PR #184 round 3 (Rick's review, item D/M4): ONLY when that
+    /// resize can actually happen (this pack prices the bundle's own item at the requested size);
+    /// otherwise the fill is rejected outright, so a slot is never relabeled to a size the bundle
+    /// itself didn't (and won't) move to. Round 3 item F: a feasible resize on a quantity>1 line
+    /// first splits the targeted unit off (<see cref="SplitBundleUnit"/>) so only that ONE unit is
+    /// affected.</para>
     ///
-    /// Returns whether <paramref name="itemName"/> is the SAME item that last filled (or still
-    /// fills) this slot on this bundle instance -- a genuine RESIZE, not a fresh fill of a
-    /// different item -- so callers can report "resized" vs. "included with your combo" wording,
-    /// same as before, with no dollar amount driving that choice anymore. Mirrors
+    /// Returns <c>(accepted, isResize, comboItem)</c>: <c>accepted</c> is <c>false</c> (slot left
+    /// untouched) when a "wholeBundleSize" resize was requested but this pack has no price for the
+    /// bundle's own item at that size -- callers must treat this as a clean rejection (no state
+    /// changed at all), never as a successful fill. When <c>accepted</c> is <c>true</c>,
+    /// <c>isResize</c> is whether <paramref name="itemName"/> is the SAME item that last filled
+    /// (or still fills) this slot on this bundle instance -- a genuine RESIZE, not a fresh fill of
+    /// a different item -- so callers can report "resized" vs. "included with your combo" wording.
+    /// The returned <see cref="OrderItem"/> is returned because a quantity>1 "wholeBundleSize"
+    /// resize may have split <paramref name="comboItem"/> into a new line -- callers must use the
+    /// returned instance for any further reads (e.g. Display), not the one they passed in. Mirrors
     /// order_state.py's <c>_fill_bundle_component</c>.</summary>
-    private bool FillBundleComponent(
+    private (bool Accepted, bool IsResize, OrderItem ComboItem) FillBundleComponent(
         OrderItem comboItem, int slotIndex, string component, string itemName, string size, string display,
         bool autofill = false)
     {
+        if (_menu.BundleResizeRule == "wholeBundleSize" && size != comboItem.Size)
+        {
+            if (_menu.PriceFor(comboItem.Item, size) is null)
+            {
+                return (false, false, comboItem);
+            }
+            if (comboItem.Quantity > 1)
+            {
+                comboItem = SplitBundleUnit(comboItem, slotIndex);
+                slotIndex = 0;
+            }
+        }
+
         var slots = SyncBundleSlotList(comboItem, component);
         var slot = slots[slotIndex];
         var isResize = slot.LastItem.Length > 0 && MenuKeyValidator.MenuKey(slot.LastItem) == MenuKeyValidator.MenuKey(itemName);
@@ -811,7 +935,7 @@ public sealed class OrderState
             }
         }
         RebuildBundleDisplay(comboItem);
-        return isResize;
+        return (true, isResize, comboItem);
     }
 
     /// <summary>PR #184 round 2: a `remove` targeting the item CURRENTLY filling a bundle's

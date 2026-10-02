@@ -95,33 +95,6 @@ entries:
     same class as the #78 Python test baseline entries; remove only if the pack roster
     or its test coverage changes.'
   increase_reason: '#105'
-- file: app/backend-dotnet/tests/Backend.Tests/Ordering/ComboInstanceDeterminismAndLifecycleTests.cs
-  brand: sonic
-  max: 7
-  issue: '#76'
-  reason: 'Fixture/test data naming a real persona pack id (sonic/mcdonalds/dunkin)
-    for conformance or unit-test coverage across all three packs -- expected, the
-    same class as the #76 brand-guard conformance work; remove only if the pack roster
-    or its test coverage changes.'
-  increase_reason: '#76'
-- file: app/backend-dotnet/tests/Backend.Tests/Ordering/HappyHourPricingTests.cs
-  brand: sonic
-  max: 1
-  issue: '#76'
-  reason: 'Fixture/test data naming a real persona pack id (sonic/mcdonalds/dunkin)
-    for conformance or unit-test coverage across all three packs -- expected, the
-    same class as the #76 brand-guard conformance work; remove only if the pack roster
-    or its test coverage changes.'
-  increase_reason: '#76'
-- file: app/backend-dotnet/tests/Backend.Tests/Ordering/McDonaldsWholeMealResizeTests.cs
-  brand: mcdonalds
-  max: 9
-  issue: '#76'
-  reason: 'Fixture/test data naming a real persona pack id (sonic/mcdonalds/dunkin)
-    for conformance or unit-test coverage across all three packs -- expected, the
-    same class as the #76 brand-guard conformance work; remove only if the pack roster
-    or its test coverage changes.'
-  increase_reason: '#76'
 - file: app/backend-dotnet/tests/Backend.Tests/Personas/MenuKeyValidatorTests.cs
   brand: sonic
   max: 1
@@ -289,25 +262,14 @@ entries:
     docstring examples still default/hardcode to the single Sonic persona pending
     #74''s session-scoped persona binding.'
   increase_reason: ''
-- file: app/backend/tests/test_mcdonalds_whole_meal_resize.py
-  brand: mcdonalds
-  max: 6
-  issue: '#76'
-  reason: 'Fixture/test data naming a real persona pack id (sonic/mcdonalds/dunkin)
-    to exercise the "wholeBundleSize" per-pack pricing rule end-to-end via the real
-    McDonald''s persona.json/menuItems.json -- not a brand word leaked into shared
-    code, since the behavior under test IS that pack''s own declared pricing rule.
-    Kept in its own file (not test_combo_orders.py, which already carries a
-    Sonic-only baseline entry) per #105''s one-file-one-brand-expansion rule.'
-  increase_reason: '#76'
 - file: app/backend/tests/test_combo_orders.py
   brand: sonic
-  max: 33
+  max: 31
   issue: '#78'
   reason: 'Backend test fixtures/paths reference personas/sonic/** directly because
     it''s the only persona pack that exists yet -- #78/#79 land the other packs, at
     which point these tests get parameterized per-persona instead of hardcoding Sonic.'
-  increase_reason: '#76'
+  increase_reason: ''
 - file: app/backend/tests/test_conformance_hooks.py
   brand: sonic
   max: 1

@@ -152,7 +152,7 @@
           "name": "10 Piece McNuggets® Meal",
           "menuPeriod": "lunch",
           "mealNumber": "6",
-          "sizes": [{ "size": "Standard", "price": 8.89 }, { "size": "Large", "price": 9.99 }],
+          "sizes": [{ "size": "Small", "price": 8.49 }, { "size": "Medium", "price": 9.89 }, { "size": "Large", "price": 10.89 }],
           "description": "10 tender Chicken McNuggets® made with 100% white meat chicken, served with medium World Famous Fries® and your choice of a medium drink.",
           "calories": 1080,
           "bundle": { "slots": ["sides", "drinks"], "autoFill": { "sides": "{size} World Famous Fries®" }, "defaultSize": "Medium" }
@@ -161,7 +161,7 @@
           "name": "Big Mac® Meal",
           "menuPeriod": "lunch",
           "mealNumber": "1",
-          "sizes": [{ "size": "Standard", "price": 8.99 }, { "size": "Large", "price": 10.09 }],
+          "sizes": [{ "size": "Small", "price": 8.99 }, { "size": "Medium", "price": 10.29 }, { "size": "Large", "price": 11.29 }],
           "description": "The iconic Big Mac® paired with medium World Famous Fries® and your choice of a medium drink. The classic combo.",
           "calories": 1100,
           "bundle": { "slots": ["sides", "drinks"], "autoFill": { "sides": "{size} World Famous Fries®" }, "defaultSize": "Medium" }
@@ -170,7 +170,7 @@
           "name": "Quarter Pounder® with Cheese Meal",
           "menuPeriod": "lunch",
           "mealNumber": "2",
-          "sizes": [{ "size": "Standard", "price": 8.59 }, { "size": "Large", "price": 9.69 }],
+          "sizes": [{ "size": "Small", "price": 9.29 }, { "size": "Medium", "price": 10.69 }, { "size": "Large", "price": 11.69 }],
           "description": "A Quarter Pounder® with Cheese made with fresh beef, paired with medium World Famous Fries® and your choice of a medium drink.",
           "calories": 1080,
           "bundle": { "slots": ["sides", "drinks"], "autoFill": { "sides": "{size} World Famous Fries®" }, "defaultSize": "Medium" }
@@ -179,7 +179,7 @@
           "name": "McCrispy® Meal",
           "menuPeriod": "lunch",
           "mealNumber": "7",
-          "sizes": [{ "size": "Standard", "price": 7.99 }, { "size": "Large", "price": 9.09 }],
+          "sizes": [{ "size": "Small", "price": 9.29 }, { "size": "Medium", "price": 10.69 }, { "size": "Large", "price": 11.69 }],
           "description": "The crispy, juicy McCrispy® chicken sandwich paired with medium World Famous Fries® and your choice of a medium drink.",
           "calories": 1030,
           "bundle": { "slots": ["sides", "drinks"], "autoFill": { "sides": "{size} World Famous Fries®" }, "defaultSize": "Medium" }
@@ -188,7 +188,7 @@
           "name": "Quarter Pounder® with Cheese Deluxe Meal",
           "menuPeriod": "lunch",
           "mealNumber": "3",
-          "sizes": [{ "size": "Standard", "price": 8.79 }, { "size": "Large", "price": 9.89 }],
+          "sizes": [{ "size": "Small", "price": 9.79 }, { "size": "Medium", "price": 11.19 }, { "size": "Large", "price": 12.19 }],
           "description": "The Quarter Pounder® with Cheese Deluxe as a meal with Medium Fries and a Medium Drink.",
           "calories": 1100,
           "bundle": { "slots": ["sides", "drinks"], "autoFill": { "sides": "{size} World Famous Fries®" }, "defaultSize": "Medium" }
@@ -197,7 +197,7 @@
           "name": "Bacon Quarter Pounder® with Cheese Meal",
           "menuPeriod": "lunch",
           "mealNumber": "4",
-          "sizes": [{ "size": "Standard", "price": 8.89 }, { "size": "Large", "price": 9.99 }],
+          "sizes": [{ "size": "Small", "price": 10.29 }, { "size": "Medium", "price": 11.69 }, { "size": "Large", "price": 12.69 }],
           "description": "The Bacon Quarter Pounder® with Cheese as a meal with Medium Fries and a Medium Drink.",
           "calories": 1090,
           "bundle": { "slots": ["sides", "drinks"], "autoFill": { "sides": "{size} World Famous Fries®" }, "defaultSize": "Medium" }
@@ -206,7 +206,7 @@
           "name": "Double Quarter Pounder® with Cheese Meal",
           "menuPeriod": "lunch",
           "mealNumber": "5",
-          "sizes": [{ "size": "Standard", "price": 9.49 }, { "size": "Large", "price": 10.59 }],
+          "sizes": [{ "size": "Small", "price": 10.79 }, { "size": "Medium", "price": 12.19 }, { "size": "Large", "price": 13.19 }],
           "description": "Two quarter-pound beef patties with cheese as a meal with Medium Fries and a Medium Drink.",
           "calories": 1210,
           "bundle": { "slots": ["sides", "drinks"], "autoFill": { "sides": "{size} World Famous Fries®" }, "defaultSize": "Medium" }
@@ -215,7 +215,7 @@
           "name": "Filet-O-Fish® Meal",
           "menuPeriod": "lunch",
           "mealNumber": "8",
-          "sizes": [{ "size": "Standard", "price": 8.89 }, { "size": "Large", "price": 9.99 }],
+          "sizes": [{ "size": "Small", "price": 8.79 }, { "size": "Medium", "price": 10.19 }, { "size": "Large", "price": 11.19 }],
           "description": "The Filet-O-Fish® as a meal with Medium Fries and a Medium Drink.",
           "calories": 970,
           "bundle": { "slots": ["sides", "drinks"], "autoFill": { "sides": "{size} World Famous Fries®" }, "defaultSize": "Medium" }
@@ -224,7 +224,7 @@
           "name": "2 Cheeseburger Meal",
           "menuPeriod": "lunch",
           "mealNumber": "9",
-          "sizes": [{ "size": "Standard", "price": 7.39 }, { "size": "Large", "price": 8.49 }],
+          "sizes": [{ "size": "Small", "price": 7.49 }, { "size": "Medium", "price": 8.89 }, { "size": "Large", "price": 9.89 }],
           "description": "Two classic Cheeseburgers as a meal with Medium Fries and a Medium Drink.",
           "calories": 1070,
           "bundle": { "slots": ["sides", "drinks"], "autoFill": { "sides": "{size} World Famous Fries®" }, "defaultSize": "Medium" }
@@ -233,7 +233,7 @@
           "name": "McChicken® Meal",
           "menuPeriod": "lunch",
           "mealNumber": "10",
-          "sizes": [{ "size": "Standard", "price": 5.99 }, { "size": "Large", "price": 7.09 }],
+          "sizes": [{ "size": "Standard", "price": 5.99 }],
           "description": "The McChicken® as a meal with Medium Fries and a Medium Drink.",
           "calories": 920,
           "bundle": { "slots": ["sides", "drinks"], "autoFill": { "sides": "{size} World Famous Fries®" }, "defaultSize": "Medium" }

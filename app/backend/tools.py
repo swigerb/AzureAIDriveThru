@@ -794,6 +794,12 @@ async def update_order(args, session_id: str) -> ToolResult:
     # generic action-keyed branches below so both paths confirm the resize, never a duplicate-add
     # or a rejected-modify message.
     resized_component = result_info.get("resized_combo_component") if result_info else None
+    # PR #184 round 3 (Rick's review, item C): set by order_state.handle_order_update whenever
+    # `modify` actually changed an existing order line's OWN size (a bare resize, "wholeBundleSize"
+    # or not) -- distinct from resized_component above, which is a combo's SIDE/DRINK slot
+    # resizing in place. Matches the original app's exact wording/verb for this case.
+    modified_from_size = result_info.get("modified_from_size") if result_info else None
+    modified_to_size = result_info.get("modified_to_size") if result_info else None
     # #179: handle_order_update's `remove` branch also sets "vacated_combo_component" when
     # *item_name* was vacating a combo slot rather than removing a raw order line -- the
     # existing generic "Removed ..." wording below is already accurate for that case (the item
@@ -809,6 +815,10 @@ async def update_order(args, session_id: str) -> ToolResult:
         delta_text = f"Upgraded to {combo_display} — your total is now {summary.finalTotalDisplay}"
     elif resized_component:
         delta_text = f"Changed {display_name}, your total is now {summary.finalTotalDisplay}"
+    elif modified_from_size and modified_to_size and modified_from_size != modified_to_size:
+        old_label = modified_from_size.capitalize()
+        new_label = modified_to_size.capitalize()
+        delta_text = f"Upgraded {item_name} from {old_label} to {new_label}, your total is now {summary.finalTotalDisplay}"
     elif pl:
         tpl = pl.get_delta_template(action)
         delta_text = pl.render_template(tpl, quantity=quantity, display_name=display_name, total=summary.finalTotalDisplay)

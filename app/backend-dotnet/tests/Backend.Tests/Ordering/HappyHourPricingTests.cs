@@ -20,7 +20,7 @@ namespace Backend.Tests.Ordering;
 /// other test in this project builds an <c>OrderState</c> for a persona with <c>happyHour: null</c>,
 /// so it can never observe this class's env var mutations. xUnit itself runs the [Fact]s within
 /// one class sequentially, but a SECOND class elsewhere in this project now also freezes this
-/// SAME process-wide clock against a REAL happy-hour-configured persona (<c>sonic</c>, in
+/// SAME process-wide clock against a REAL happy-hour-configured persona (in
 /// <c>ComboInstanceDeterminismAndLifecycleTests.HappyHour_DoesNotDiscountAResizedComboDrink</c>,
 /// PR #184 round 2) -- and xUnit runs DIFFERENT classes in parallel by default, so without
 /// coordination those two classes' freezes could race each other's env var mutations. Both classes

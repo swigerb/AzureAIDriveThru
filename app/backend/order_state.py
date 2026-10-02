@@ -404,12 +404,22 @@ class OrderState:
                 if not slot.get("item"):
                     continue
                 if slot.get("autofill"):
-                    fresh = menu.bundle_autofill(combo_item.item, resolved_size_label=resolved)
-                    filler = fresh.get(component)
-                    if filler:
-                        slot["item"] = filler
-                        slot["display"] = filler
-                        slot["last_item"] = filler
+                    fresh_display = menu.bundle_autofill(combo_item.item, resolved_size_label=resolved)
+                    filler_display = fresh_display.get(component)
+                    if filler_display:
+                        # PR #184 round 3 (Rick's review, item E): ``slot["item"]`` must stay the
+                        # BASE, on-menu item name (e.g. "World Famous Fries®"), never the
+                        # size-baked-in template text -- the same invariant every non-autofill
+                        # slot already holds (``display`` carries the size prefix; ``item`` never
+                        # does). Otherwise a later `modify`/`remove` naming the real menu item
+                        # (what the guest actually says, and what `tools.py` resolves against the
+                        # menu) can never match this slot via ``_menu_key`` and is wrongly
+                        # rejected as `not_in_order`.
+                        fresh_base = menu.bundle_autofill_names(combo_item.item)
+                        filler_item = fresh_base.get(component, filler_display)
+                        slot["item"] = filler_item
+                        slot["display"] = filler_display
+                        slot["last_item"] = filler_item
                         slot["last_size"] = new_size
                 else:
                     slot["display"] = f"{size_prefix}{slot['item']}".strip()
@@ -422,10 +432,46 @@ class OrderState:
         self._rebuild_bundle_display(combo_item)
         return True
 
+    def _split_bundle_unit(self, order_state: list, menu, combo_item, unit_index: int):
+        """PR #184 round 3 (Rick's review, item F -- quantity-2+ "wholeBundleSize" lines): a
+        component resize under ``wholeBundleSize`` is really a whole-MEAL resize (see
+        ``_apply_whole_bundle_resize``) -- on a quantity>1 line, naively applying that to
+        *combo_item* would silently resize (and reprice) EVERY physical unit sharing this one
+        line's single ``price``/``size`` fields, even though the guest/model only ever named ONE
+        unit's component. Split the physical unit at *unit_index* off into its own new,
+        independent quantity=1 ``OrderItem`` -- carrying that unit's own current side/drink slot
+        contents with it -- so the resize that follows in ``_fill_bundle_component`` applies only
+        to that one unit; the original line shrinks by one and keeps its old size/price for its
+        remaining units, untouched.
+
+        Returns the new split-off ``OrderItem``, inserted into *order_state* directly after
+        *combo_item* so read-back order stays stable."""
+        split_item = OrderItem(
+            item=combo_item.item,
+            size=combo_item.size,
+            quantity=1,
+            price=combo_item.price,
+            display=combo_item.display,
+            components=list(combo_item.components),
+        )
+        for comp_name in menu.bundle_slots(combo_item.item):
+            slots = self._sync_bundle_slot_list(combo_item, comp_name)
+            taken = slots.pop(unit_index) if unit_index < len(slots) else self._empty_bundle_slot()
+            split_item._bundle_slots[comp_name] = [taken]
+        combo_item.quantity -= 1
+        # Identity (`is`), never `==` -- pydantic's `OrderItem.__eq__` compares field VALUES, so
+        # two distinct lines that happen to hold identical item/size/quantity/price/display would
+        # make `list.index(combo_item)` find the wrong one.
+        insert_at = next(i for i, oi in enumerate(order_state) if oi is combo_item) + 1
+        order_state.insert(insert_at, split_item)
+        self._rebuild_bundle_display(combo_item)
+        self._rebuild_bundle_display(split_item)
+        return split_item
+
     def _fill_bundle_component(
-        self, combo_item, slot_index: int, menu, component: str, item_name: str, size: str, display: str,
-        autofill: bool = False,
-    ) -> bool:
+        self, order_state: list, combo_item, slot_index: int, menu, component: str, item_name: str, size: str,
+        display: str, autofill: bool = False,
+    ) -> tuple[bool, bool, "OrderItem"]:
         """PR #184 round 2 (Rick's review, item 1): the ONE place a bundle's side/drink slot gets
         (re)filled -- a first-time absorption, a bundle-slot autofill, a refill after a
         `remove`-vacate, an explicit `modify`/resize of the slot, or an `add` of the same item at
@@ -443,12 +489,35 @@ class OrderState:
         compute, and ordering a size up front vs. resizing into it afterward always totals the
         same. "wholeBundleSize" packs instead resize the WHOLE bundle
         (``_apply_whole_bundle_resize``) whenever the requested size differs
-        from the bundle's own current size.
+        from the bundle's own current size -- PR #184 round 3 (Rick's review, item D/M4): ONLY
+        when that resize can actually happen (this pack prices the bundle's own item at the
+        requested size); otherwise the fill is rejected outright, so a slot is never relabeled to
+        a size the bundle itself didn't (and won't) move to. Round 3 item F: a feasible resize on
+        a quantity>1 line first splits the targeted unit off (``_split_bundle_unit``) so only that
+        ONE unit is affected.
 
-        Returns whether *item_name* is the SAME item that last filled (or still fills) this slot
-        on this bundle instance -- a genuine RESIZE, not a fresh fill of a different item -- so
-        callers can report "resized" vs. "included with your combo" wording, same as before, with
-        no dollar amount driving that choice anymore."""
+        Returns ``(accepted, is_resize, combo_item)``: *accepted* is ``False`` (slot left
+        untouched) when a "wholeBundleSize" resize was requested but this pack has no price for
+        the bundle's own item at that size -- callers must treat this as a clean rejection (no
+        state changed at all), never as a successful fill. When *accepted* is ``True``,
+        *is_resize* is whether *item_name* is the SAME item that last filled (or still fills)
+        this slot on this bundle instance -- a genuine RESIZE, not a fresh fill of a different
+        item -- so callers can report "resized" vs. "included with your combo" wording.
+        *combo_item* is returned because a quantity>1 "wholeBundleSize" resize may have split
+        *combo_item* into a new line -- callers must use the returned instance for any further
+        reads (e.g. ``.display``), not the one they passed in."""
+        if menu.bundle_resize_rule == "wholeBundleSize" and size != combo_item.size:
+            if menu.price_for(combo_item.item, size) is None:
+                logger.info(
+                    "Combo %s slot fill for '%s' requested size '%s' but this pack has no "
+                    "whole-meal price at that size -- rejecting to avoid a mixed-size bundle",
+                    component, item_name, size,
+                )
+                return False, False, combo_item
+            if combo_item.quantity > 1:
+                combo_item = self._split_bundle_unit(order_state, menu, combo_item, slot_index)
+                slot_index = 0
+
         slots = self._sync_bundle_slot_list(combo_item, component)
         slot = slots[slot_index]
         is_resize = bool(slot.get("last_item")) and _menu_key(slot["last_item"]) == _menu_key(item_name)
@@ -466,7 +535,7 @@ class OrderState:
             if own_price is not None:
                 combo_item.price = own_price
         self._rebuild_bundle_display(combo_item)
-        return is_resize
+        return True, is_resize, combo_item
 
     def _vacate_bundle_component(self, order_state: list, menu, component: str, item_name: str) -> dict | None:
         """PR #184 round 2: a `remove` targeting the item CURRENTLY filling a bundle's side/drink
@@ -678,7 +747,14 @@ class OrderState:
                         # reports as a resize, never the free "included with your combo" wording
                         # a genuinely fresh fill gets (pricing itself is identical either way for
                         # an "includedAnySize" pack -- see `_fill_bundle_component`).
-                        is_resize = self._fill_bundle_component(combo_item, idx, menu, component, item_name, size, display)
+                        accepted, is_resize, filled_combo_item = self._fill_bundle_component(order_state, combo_item, idx, menu, component, item_name, size, display)
+                        if not accepted:
+                            # Rejected (item D/M4): this pack has no whole-meal price at *size*
+                            # -- the slot is still vacant, never silently retry the SAME vacant
+                            # slot forever. Stop absorbing; any remaining quantity falls through
+                            # to a genuine standalone add below.
+                            break
+                        combo_item = filled_combo_item
                         last_combo_item = combo_item
                         any_resize = any_resize or is_resize
                         absorbed_count += 1
@@ -719,19 +795,20 @@ class OrderState:
                                 and current_item
                                 and _menu_key(current_item) == _menu_key(item_name)
                             ):
-                                self._fill_bundle_component(combo_item, idx, menu, component, item_name, size, display)
-                                result_info["resized_combo_component"] = component
-                                result_info["combo_component_resized_from_size"] = current_size
-                                result_info["combo_component_resized_to_size"] = size
-                                result_info["combo_display"] = combo_item.display
-                                logger.info(
-                                    "Resize-via-add: '%s' resized combo %s slot from '%s' to '%s' (session=%s)",
-                                    item_name, component, current_size, size, session_id,
-                                )
-                                remaining = quantity - 1
-                                if remaining <= 0:
-                                    self._update_summary(session_id)
-                                    return result_info
+                                accepted, _, combo_item = self._fill_bundle_component(order_state, combo_item, idx, menu, component, item_name, size, display)
+                                if accepted:
+                                    result_info["resized_combo_component"] = component
+                                    result_info["combo_component_resized_from_size"] = current_size
+                                    result_info["combo_component_resized_to_size"] = size
+                                    result_info["combo_display"] = combo_item.display
+                                    logger.info(
+                                        "Resize-via-add: '%s' resized combo %s slot from '%s' to '%s' (session=%s)",
+                                        item_name, component, current_size, size, session_id,
+                                    )
+                                    remaining = quantity - 1
+                                    if remaining <= 0:
+                                        self._update_summary(session_id)
+                                        return result_info
                     quantity = remaining
 
             # ── Regular add / bundle-instance creation ──
@@ -788,7 +865,7 @@ class OrderState:
                                 # additive, never replaces the existing display-string rebuild
                                 # elsewhere.
                                 bundle_item_ref.components.append(existing.display)
-                                self._fill_bundle_component(bundle_item_ref, slot_idx, menu, "sides", existing.item, existing.size, existing.display)
+                                _, _, bundle_item_ref = self._fill_bundle_component(order_state, bundle_item_ref, slot_idx, menu, "sides", existing.item, existing.size, existing.display)
                                 if existing.quantity > 1:
                                     existing.quantity -= 1
                                 else:
@@ -802,7 +879,7 @@ class OrderState:
                             if slot_idx is not None:
                                 logger.info("Absorbing '%s' into new bundle '%s'", existing.display, item_name)
                                 bundle_item_ref.components.append(existing.display)
-                                self._fill_bundle_component(bundle_item_ref, slot_idx, menu, "drinks", existing.item, existing.size, existing.display)
+                                _, _, bundle_item_ref = self._fill_bundle_component(order_state, bundle_item_ref, slot_idx, menu, "drinks", existing.item, existing.size, existing.display)
                                 if existing.quantity > 1:
                                     existing.quantity -= 1
                                 else:
@@ -819,6 +896,11 @@ class OrderState:
                     # "Medium Fries" with no follow-up add call needed.
                     size_label = menu.normalize_size(size) or ""
                     autofill = menu.bundle_autofill(item_name, resolved_size_label=size_label)
+                    # PR #184 round 3 (Rick's review, item E): `slot["item"]` must be the BASE,
+                    # on-menu item name (e.g. "World Famous Fries®"), not the size-baked-in
+                    # template text `autofill` itself holds -- see `bundle_autofill_names` and
+                    # `_apply_whole_bundle_resize`'s own autofill re-derivation for the same fix.
+                    autofill_base = menu.bundle_autofill_names(item_name)
                     if "sides" in autofill and not absorbed_side:
                         slot_idx = next(
                             (i2 for i2, s in enumerate(bundle_item_ref._bundle_slots["sides"]) if not s.get("item")),
@@ -826,9 +908,10 @@ class OrderState:
                         )
                         if slot_idx is not None:
                             filler_display = autofill["sides"]
+                            filler_item = autofill_base.get("sides", filler_display)
                             bundle_item_ref.components.append(filler_display)
-                            self._fill_bundle_component(
-                                bundle_item_ref, slot_idx, menu, "sides", filler_display, size_label, filler_display, autofill=True,
+                            _, _, bundle_item_ref = self._fill_bundle_component(
+                                order_state, bundle_item_ref, slot_idx, menu, "sides", filler_item, size, filler_display, autofill=True,
                             )
                             result_info["autofilled"] = result_info.get("autofilled", []) + [filler_display]
                     if "drinks" in autofill and not absorbed_drink:
@@ -838,9 +921,10 @@ class OrderState:
                         )
                         if slot_idx is not None:
                             filler_display = autofill["drinks"]
+                            filler_item = autofill_base.get("drinks", filler_display)
                             bundle_item_ref.components.append(filler_display)
-                            self._fill_bundle_component(
-                                bundle_item_ref, slot_idx, menu, "drinks", filler_display, size_label, filler_display, autofill=True,
+                            _, _, bundle_item_ref = self._fill_bundle_component(
+                                order_state, bundle_item_ref, slot_idx, menu, "drinks", filler_item, size, filler_display, autofill=True,
                             )
                             result_info["autofilled"] = result_info.get("autofilled", []) + [filler_display]
             else:
@@ -921,15 +1005,27 @@ class OrderState:
                     slot = slots[idx]
                     if slot.get("item") and _menu_key(slot["item"]) == _menu_key(item_name):
                         old_component_size = slot.get("size", "")
-                        self._fill_bundle_component(combo_item, idx, menu, component, item_name, size, display)
-                        result_info["resized_combo_component"] = component
-                        result_info["combo_component_resized_from_size"] = old_component_size
-                        result_info["combo_component_resized_to_size"] = size
-                        result_info["combo_display"] = combo_item.display
-                        logger.info(
-                            "Modified combo %s slot '%s' from '%s' to '%s' in session %s",
-                            component, item_name, old_component_size, size, session_id,
-                        )
+                        accepted, _, combo_item = self._fill_bundle_component(order_state, combo_item, idx, menu, component, item_name, size, display)
+                        if accepted:
+                            result_info["resized_combo_component"] = component
+                            result_info["combo_component_resized_from_size"] = old_component_size
+                            result_info["combo_component_resized_to_size"] = size
+                            result_info["combo_display"] = combo_item.display
+                            logger.info(
+                                "Modified combo %s slot '%s' from '%s' to '%s' in session %s",
+                                component, item_name, old_component_size, size, session_id,
+                            )
+                        else:
+                            # PR #184 round 3 (Rick's review, item D/M4): this pack has no
+                            # whole-meal price at *size* -- reject cleanly (nothing was mutated)
+                            # rather than leave the slot relabeled to a size the bundle itself
+                            # never actually moved to.
+                            result_info["combo_component_resize_rejected"] = component
+                            logger.info(
+                                "Modify requested for combo %s slot '%s' to size '%s' in session %s -- "
+                                "rejected (no whole-meal price at that size)",
+                                component, item_name, size, session_id,
+                            )
                         resized = True
                         break
                 if not resized:

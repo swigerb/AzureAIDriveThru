@@ -594,6 +594,23 @@ class MenuCatalog:
         size_label = resolved_size_label or fields.get("bundleDefaultSize") or ""
         return {slot: template.replace("{size}", size_label).strip() for slot, template in template_map.items()}
 
+    def bundle_autofill_names(self, item_name: str) -> dict[str, str]:
+        """PR #184 round 3 (Rick's review, item E): the same slot -> filler map as
+        ``bundle_autofill``, but with the literal ``{size}`` token (and the trailing space its
+        template builds in) stripped rather than substituted with a real size label -- the BASE,
+        on-menu item name an autofilled slot's ``item`` field should hold (e.g. "World Famous
+        Fries®"), independent of whatever size currently fills it. A template with no ``{size}``
+        token at all (e.g. "Hash Browns", a single-size autofill) is returned unchanged -- it was
+        never size-baked-in to begin with."""
+        normalized = self._resolve_alias(_menu_key(item_name))
+        fields = self.item_fields.get(normalized)
+        if fields is None:
+            return {}
+        template_map = fields.get("bundleAutoFill") or {}
+        if not template_map:
+            return {}
+        return {slot: template.replace("{size}", "").strip() for slot, template in template_map.items()}
+
     def meal_number_candidates(self, number: str) -> list[str]:
         """Every real menu item name that claims numbered-meal id *number* (persona.json
         ``mealNumber``) -- possibly more than one when a breakfast and a lunch meal share the same

@@ -480,6 +480,17 @@ public sealed class OrderToolExecutor : IToolExecutor
         {
             return $"Changed {displayName}, your total is now {summary.FinalTotalDisplay}";
         }
+        // PR #184 round 3 (Rick's review, item C): set by OrderState.HandleOrderUpdate whenever
+        // `modify` actually changed an existing order line's OWN size (a bare resize,
+        // "wholeBundleSize" or not) -- distinct from ResizedComboComponent above, which is a
+        // combo's SIDE/DRINK slot resizing in place. Matches the original app's exact
+        // wording/verb for this case.
+        if (resultInfo.ModifiedFromSize is { Length: > 0 } fromSize
+            && resultInfo.ModifiedToSize is { Length: > 0 } toSize
+            && fromSize != toSize)
+        {
+            return $"Upgraded {itemName} from {Capitalize(fromSize)} to {Capitalize(toSize)}, your total is now {summary.FinalTotalDisplay}";
+        }
         if (_promptLoader is { } pl)
         {
             var tpl = pl.GetDeltaTemplate(action);

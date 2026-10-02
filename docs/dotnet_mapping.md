@@ -181,8 +181,10 @@ genuinely-open combo drink slot, raising the floor 196 -> 198. Round 2 (Rick's r
 fixes that pricing assertion to the new pure, path-independent model and adds one more tagged,
 ungated method, `WholeBundleSizeResizeConformanceTests.Discovered_whole_bundle_size_pack_resizes_the_meal_and_relabels_its_slots`,
 covering any pack whose own `bundles.resizeRule` is `wholeBundleSize` (resizing a slot component
-cascades into resizing the whole bundle), raising the floor 198 -> 199. See
-`DotnetTraitCoverageTests`'s own doc comment for the exact arithmetic.
+cascades into resizing the whole bundle), raising the floor 198 -> 199. Round 3 (#184, Rick's
+item H) adds two more tagged, ungated methods covering path-independence and a two-bundle-instance
+resize-lands-on-the-holder check, raising the floor 199 -> 201. See `DotnetTraitCoverageTests`'s
+own doc comment for the exact arithmetic.
 
 - **DEV_MODE hot-reload** (`prompt_loader.py`'s file-watching reload behaviour) is explicitly
   marked not required in C# by the design doc's per-backend loading table. Not ported.

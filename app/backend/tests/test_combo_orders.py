@@ -576,7 +576,7 @@ class TestComboComponentResize:
     PR #184 round 2 (Rick's review, item 1): pricing is now a PURE function of the
     bundle's own final state, not a stateful delta/"free reference" computation -- a
     side or drink is included in the combo AT ANY SIZE on an "includedAnySize" pack
-    (Sonic's own `bundles.resizeRule`, the implicit default), so the combo's own price
+    (this persona's own `bundles.resizeRule`, the implicit default), so the combo's own price
     never changes no matter what size fills its slots, in either direction (upsize or
     downsize), and ordering a size up front costs exactly the same as resizing into it
     afterward -- see `test_same_total_regardless_of_order_path` below for the general
@@ -753,8 +753,8 @@ class TestComboComponentResize:
 # ---------------------------------------------------------------------------
 
 class TestComboInstanceDeterminismAndLifecycle:
-    COMBO = "SONIC® Cheeseburger Combo"
-    COMBO_PRICE = 9.19
+    COMBO = "SuperSONIC® Double Cheeseburger Combo"
+    COMBO_PRICE = 10.19
 
     def test_two_separate_combos_resize_targets_the_one_that_holds_the_item(self):
         """Rick's review, item 2: with TWO SEPARATE combo lines (not one quantity-2 line),

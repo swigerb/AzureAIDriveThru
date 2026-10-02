@@ -352,6 +352,27 @@ class UpdateOrderAddTests(unittest.TestCase):
         summary = order_state_singleton.get_order_summary(sid)
         self.assertIn(summary.finalTotalDisplay, result.text)
 
+    def test_modify_size_delta_text_matches_the_original_apps_upgraded_wording(self):
+        """PR #184 round 3 (Rick's review, item C): a genuine size resize via `modify` must
+        speak the original app's exact wording/verb and from/to form -- "Upgraded {item} from
+        {Old} to {New}, your total is now $X" -- not the generic "Changed ..." fallback, and
+        with no em dash."""
+        sid = _make_session()
+        _run(update_order({
+            "action": "add", "item_name": "Tots",
+            "size": "medium", "quantity": 1, "price": 2.79,
+        }, sid))
+        result = _run(update_order({
+            "action": "modify", "item_name": "Tots",
+            "size": "large", "quantity": 1, "price": 3.49,
+        }, sid))
+        summary = order_state_singleton.get_order_summary(sid)
+        self.assertEqual(
+            f"Upgraded Tots from Medium to Large, your total is now {summary.finalTotalDisplay}",
+            result.text.split("\n\n")[0],
+        )
+        self.assertNotIn("\u2014", result.text)
+
     def test_add_multiple_quantity(self):
         sid = _make_session()
         _run(update_order({

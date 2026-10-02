@@ -275,4 +275,83 @@ public sealed class ComboComponentResizeTests
         Assert.Single(GetItems(client));
         Assert.Equal(ComboPrice, client.RootElement.GetProperty("total").GetDecimal());
     }
+
+    // PR #184 round 3 (Rick's review, item H): this class, until now, only ever seeded the
+    // side/drink BEFORE the bundle (the bundle, added last, pivots to absorb them). The real live
+    // sequence orders the combo FIRST, then the side and drink -- "Delta Classic Meal" (unlike
+    // "Delta Meal") has no autoFill at all, so its slots stay genuinely open for that combo-first
+    // ordering to land in.
+    private const decimal ClassicComboPrice = 5.49m;
+
+    private static async Task SeedComboFirstThenSideAndRegularDrinkAsync(OrderToolExecutor executor, CancellationToken ct)
+    {
+        await executor.ExecuteAsync("update_order", Args("add", "Delta Classic Meal", "regular", 1, ClassicComboPrice), ct);
+        await executor.ExecuteAsync("update_order", Args("add", "Delta Fries", "regular", 1, SidePrice), ct);
+        await executor.ExecuteAsync("update_order", Args("add", "Delta Latte", "regular", 1, LatteRegularPrice), ct);
+    }
+
+    [Fact]
+    public async Task ComboFirst_ThenAbsorbsSideAndDrink_ThenExplicitModifyResizesDrinkInPlace()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var executor = NewExecutor(out var order);
+        await SeedComboFirstThenSideAndRegularDrinkAsync(executor, ct);
+
+        // Preconditions: the combo-first ordering absorbed both standalone items into the SAME
+        // combo line -- neither remains a separate order item.
+        var seeded = await executor.ExecuteAsync("get_order", JsonSerializer.SerializeToElement(new { }), ct);
+        using (var seededClient = JsonDocument.Parse(seeded.ToClientText()))
+        {
+            var seededItems = GetItems(seededClient);
+            Assert.Single(seededItems);
+            Assert.Equal("Delta Classic Meal", seededItems[0].GetProperty("item").GetString());
+            var seededDisplay = seededItems[0].GetProperty("display").GetString();
+            Assert.Contains("Regular Delta Fries", seededDisplay);
+            Assert.Contains("Regular Delta Latte", seededDisplay);
+        }
+
+        Assert.True(order.IsAbsorbedComponent("Delta Latte"));
+        var result = await executor.ExecuteAsync(
+            "update_order", Args("modify", "Delta Latte", "large", 1, LatteLargePrice), ct);
+        Assert.Equal(ToolResultDirection.ToBoth, result.Destination);
+
+        using var client = JsonDocument.Parse(result.ToClientText());
+        var items = GetItems(client);
+        Assert.Single(items); // still exactly one combo line, no standalone drink duplicate
+        var display = items[0].GetProperty("display").GetString();
+        Assert.Contains("Large Delta Latte", display);
+        Assert.DoesNotContain("Regular Delta Latte", display);
+        Assert.Contains("Regular Delta Fries", display); // the side is untouched by the drink resize
+
+        // "Delta Classic Meal" is includedAnySize (this fixture's implicit default) same as
+        // "Delta Meal" -- the drink's resize never changes the combo's own base price.
+        Assert.Equal(ClassicComboPrice, client.RootElement.GetProperty("total").GetDecimal());
+    }
+
+    [Fact]
+    public async Task ComboFirst_ThenAbsorbsSideAndDrink_ThenRemoveThenAddResizesDrinkInPlace()
+    {
+        // The combo-first ordering's OTHER resize path (remove then re-add at a new size, not
+        // the explicit `modify` action above) must price identically.
+        var ct = TestContext.Current.CancellationToken;
+        var executor = NewExecutor(out var order);
+        await SeedComboFirstThenSideAndRegularDrinkAsync(executor, ct);
+
+        var removeResult = await executor.ExecuteAsync(
+            "update_order", Args("remove", "Delta Latte", "regular", 1, 0m), ct);
+        Assert.Equal(ToolResultDirection.ToBoth, removeResult.Destination);
+        Assert.False(order.IsAbsorbedComponent("Delta Latte"));
+
+        var addResult = await executor.ExecuteAsync(
+            "update_order", Args("add", "Delta Latte", "large", 1, LatteLargePrice), ct);
+        Assert.Equal(ToolResultDirection.ToBoth, addResult.Destination);
+
+        using var client = JsonDocument.Parse(addResult.ToClientText());
+        var items = GetItems(client);
+        Assert.Single(items);
+        var display = items[0].GetProperty("display").GetString();
+        Assert.Contains("Large Delta Latte", display);
+        Assert.DoesNotContain("Regular Delta Latte", display);
+        Assert.Equal(ClassicComboPrice, client.RootElement.GetProperty("total").GetDecimal());
+    }
 }
