@@ -60,6 +60,12 @@ class TestWholeMealResize:
     STANDARD_ONLY_MEAL = "Epsilon Standard Meal"
     STANDARD_ONLY_MEAL_PRICE = 3.49
 
+    def _assert_component_sizes(self, meal, expected_label, *unexpected_labels):
+        assert meal.components
+        assert all(expected_label in component for component in meal.components)
+        for unexpected in unexpected_labels:
+            assert all(unexpected not in component for component in meal.components)
+
     def _seed_meal(self, sid):
         order_state_singleton.handle_order_update(sid, "add", self.MEAL, "small", 1, self.MEAL_SMALL_PRICE)
         order_state_singleton.handle_order_update(sid, "add", self.DRINK, "small", 1, self.DRINK_SMALL_PRICE)
@@ -83,6 +89,9 @@ class TestWholeMealResize:
         assert math.isclose(meal.price, self.MEAL_LARGE_PRICE, rel_tol=1e-9)
         assert "Large Epsilon Fries" in meal.display
         assert "Large Epsilon Cola" in meal.display
+        assert "Large Epsilon Fries" in meal.components
+        assert "Large Epsilon Cola" in meal.components
+        self._assert_component_sizes(meal, "Large", "Medium", "Small")
         assert "Medium" not in meal.display
         assert "Small" not in meal.display
         assert math.isclose(order_state_singleton.get_order_summary(sid).total, self.MEAL_LARGE_PRICE, rel_tol=1e-9)
@@ -140,6 +149,9 @@ class TestWholeMealResize:
         assert math.isclose(meal.price, self.MEAL_MEDIUM_PRICE, rel_tol=1e-9)
         assert "Medium Epsilon Fries" in meal.display
         assert "Medium Epsilon Cola" in meal.display
+        assert "Medium Epsilon Fries" in meal.components
+        assert "Medium Epsilon Cola" in meal.components
+        self._assert_component_sizes(meal, "Medium", "Large", "Small")
         assert "Large" not in meal.display
 
     def test_resizing_the_meal_back_down_relabels_every_slot_no_stale_size(self):
@@ -155,6 +167,9 @@ class TestWholeMealResize:
         assert math.isclose(meal.price, self.MEAL_SMALL_PRICE, rel_tol=1e-9)
         assert "Small Epsilon Fries" in meal.display
         assert "Small Epsilon Cola" in meal.display
+        assert "Small Epsilon Fries" in meal.components
+        assert "Small Epsilon Cola" in meal.components
+        self._assert_component_sizes(meal, "Small", "Large", "Medium")
         assert "Large" not in meal.display
         assert "Medium" not in meal.display
 
@@ -234,6 +249,19 @@ class TestWholeMealResize:
         assert "Medium Epsilon Fries" in meal_then_drink[3]
         assert "Large Epsilon Cola" in meal_then_drink[3]
 
+    def test_components_list_is_rebuilt_when_default_sized_meal_is_resized_before_drink(self):
+        sid = _new_session()
+        order_state_singleton.handle_order_update(sid, "add", self.MEAL, "medium", 1, self.MEAL_MEDIUM_PRICE)
+        order_state_singleton.handle_order_update(sid, "modify", self.MEAL, "large", 1, self.MEAL_LARGE_PRICE)
+        order_state_singleton.handle_order_update(sid, "add", self.DRINK, "large", 1, self.DRINK_LARGE_PRICE)
+
+        meal = order_state_singleton.get_order_items(sid)[0]
+        assert meal.size == "large"
+        assert "Large Epsilon Fries" in meal.display
+        assert "Large Epsilon Cola" in meal.display
+        assert meal.components == ["Large Epsilon Fries", "Large Epsilon Cola"]
+        assert "Medium Epsilon Fries" not in meal.components
+
 
 class TestWholeBundleSizeToolReplies:
     def test_rejected_component_resize_returns_structured_rejection_not_success_text(self):
@@ -268,3 +296,24 @@ class TestWholeBundleSizeToolReplies:
         assert meal.size == "medium"
         assert math.isclose(meal.price, TestWholeMealResize.MEAL_MEDIUM_PRICE, rel_tol=1e-9)
         assert "Medium Epsilon Fries" in meal.display
+
+    @pytest.mark.parametrize("requested_size", ["", "standard"])
+    def test_default_sized_meal_resize_refreshes_component_sub_lines(self, requested_size):
+        sid = _new_session()
+        _run(update_order({
+            "action": "add", "item_name": TestWholeMealResize.MEAL,
+            "size": requested_size, "quantity": 1, "price": 0,
+        }, sid))
+        _run(update_order({
+            "action": "modify", "item_name": TestWholeMealResize.MEAL,
+            "size": "large", "quantity": 1, "price": 0,
+        }, sid))
+        _run(update_order({
+            "action": "add", "item_name": TestWholeMealResize.DRINK,
+            "size": "large", "quantity": 1, "price": 0,
+        }, sid))
+
+        meal = order_state_singleton.get_order_items(sid)[0]
+        assert meal.size == "large"
+        assert meal.components == ["Large Epsilon Fries", "Large Epsilon Cola"]
+        assert "Medium Epsilon Fries" not in meal.components

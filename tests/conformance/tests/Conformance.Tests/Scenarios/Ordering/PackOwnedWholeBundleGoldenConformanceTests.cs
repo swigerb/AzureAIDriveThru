@@ -13,7 +13,10 @@ public sealed record WholeBundleGoldenVector(
     decimal ExpectedTotal,
     int ExpectedItemCount,
     bool? ExpectedComplete = null,
-    string? ExpectedItemSize = null);
+    string? ExpectedItemSize = null,
+    IReadOnlyList<string>? ExpectedComponents = null,
+    IReadOnlyList<string>? ForbiddenComponents = null,
+    IReadOnlyList<string>? ExpectedDisplayIncludes = null);
 
 public sealed record WholeBundleGoldenData(
     string PersonaId,
@@ -95,6 +98,36 @@ public sealed class PackOwnedWholeBundleGoldenConformanceTests
                 {
                     using var order = JsonDocument.Parse(result.ToolResultJson!);
                     Assert.Equal(expectedSize, order.RootElement.GetProperty("items")[0].GetProperty("size").GetString());
+                }
+                if (vector.ExpectedDisplayIncludes is { Count: > 0 } displayIncludes)
+                {
+                    using var order = JsonDocument.Parse(result.ToolResultJson!);
+                    var display = order.RootElement.GetProperty("items")[0].GetProperty("display").GetString();
+                    foreach (var expected in displayIncludes)
+                    {
+                        Assert.Contains(expected, display);
+                    }
+                }
+                if (vector.ExpectedComponents is { Count: > 0 } expectedComponents)
+                {
+                    using var order = JsonDocument.Parse(result.ToolResultJson!);
+                    var components = order.RootElement.GetProperty("items")[0].GetProperty("components")
+                        .EnumerateArray()
+                        .Select(component => component.GetString() ?? "")
+                        .ToList();
+                    Assert.Equal(expectedComponents, components);
+                }
+                if (vector.ForbiddenComponents is { Count: > 0 } forbiddenComponents)
+                {
+                    using var order = JsonDocument.Parse(result.ToolResultJson!);
+                    var components = order.RootElement.GetProperty("items")[0].GetProperty("components")
+                        .EnumerateArray()
+                        .Select(component => component.GetString() ?? "")
+                        .ToList();
+                    foreach (var forbidden in forbiddenComponents)
+                    {
+                        Assert.DoesNotContain(forbidden, components);
+                    }
                 }
             }
         });
