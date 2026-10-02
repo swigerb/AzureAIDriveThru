@@ -23,7 +23,14 @@ internal static class PersonaMenuModeVectors
         public decimal MenuPrice => decimal.Parse(Price, CultureInfo.InvariantCulture);
     }
 
-    public sealed record Vectors(ItemVector BreakfastItem, ItemVector LunchItem, ItemVector AllDayItem);
+    public sealed record Vectors(
+        ItemVector BreakfastItem,
+        ItemVector LunchItem,
+        ItemVector AllDayItem,
+        IReadOnlyList<ItemVector>? AllDayItems = null)
+    {
+        public IReadOnlyList<ItemVector> AllDayItemVectors => AllDayItems is { Count: > 0 } ? AllDayItems : [AllDayItem];
+    }
 
     private static readonly JsonSerializerOptions Options = new()
     {
@@ -91,9 +98,13 @@ public sealed class RealPackMenuModeConformanceTests
         {
             await AssertItemAcceptedAsync(fixture, personaId, "breakfast", vectors.BreakfastItem, ct);
             await AssertItemAcceptedAsync(fixture, personaId, "lunch", vectors.LunchItem, ct);
-            await AssertItemAcceptedAsync(fixture, personaId, "breakfast", vectors.AllDayItem, ct);
-            await AssertItemAcceptedAsync(fixture, personaId, "lunch", vectors.AllDayItem, ct);
+            foreach (var item in vectors.AllDayItemVectors)
+            {
+                await AssertItemAcceptedAsync(fixture, personaId, "breakfast", item, ct);
+                await AssertItemAcceptedAsync(fixture, personaId, "lunch", item, ct);
+            }
             await AssertItemRejectedAsync(fixture, personaId, "lunch", vectors.BreakfastItem, ct);
+            await AssertItemRejectedAsync(fixture, personaId, "breakfast", vectors.LunchItem, ct);
             await AssertSearchFilterAsync(fixture, personaId, "breakfast", ct);
         });
     }

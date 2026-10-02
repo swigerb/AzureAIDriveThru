@@ -417,7 +417,7 @@
         },
         {
           "name": "Chili Cheese Tots",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Small",
@@ -444,7 +444,7 @@
         },
         {
           "name": "Mozzarella Sticks",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Small",
@@ -471,7 +471,7 @@
         },
         {
           "name": "Onion Rings",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Small",
@@ -498,7 +498,7 @@
         },
         {
           "name": "Ched 'R' Peppers",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Small",
@@ -566,7 +566,7 @@
         },
         {
           "name": "Ocean Water®",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -601,7 +601,7 @@
         },
         {
           "name": "Blue Raspberry Slush",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -637,7 +637,7 @@
         },
         {
           "name": "Strawberry Slush",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -673,7 +673,7 @@
         },
         {
           "name": "Cherry Slush",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -709,7 +709,7 @@
         },
         {
           "name": "All Natural Lemonade",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -744,7 +744,7 @@
         },
         {
           "name": "Grape Slush",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -780,7 +780,7 @@
         },
         {
           "name": "Cranberry Limeade",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -815,7 +815,7 @@
         },
         {
           "name": "Sweet Iced Tea",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -850,7 +850,7 @@
         },
         {
           "name": "Strawberry Limeade",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -885,7 +885,7 @@
         },
         {
           "name": "Coca-Cola®",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -922,7 +922,7 @@
         },
         {
           "name": "Diet Coke®",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -957,7 +957,7 @@
         },
         {
           "name": "Coca-Cola® Zero",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -994,7 +994,7 @@
         },
         {
           "name": "Dr Pepper®",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -1029,7 +1029,7 @@
         },
         {
           "name": "Diet Dr Pepper®",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -1064,7 +1064,7 @@
         },
         {
           "name": "BARQ'S® Root Beer",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -1101,7 +1101,7 @@
         },
         {
           "name": "Sprite®",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -1136,7 +1136,7 @@
         },
         {
           "name": "Sprite Zero®",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -1171,7 +1171,7 @@
         },
         {
           "name": "Blood Orange Recharger with Red Bull®",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Medium",
@@ -1196,7 +1196,7 @@
         },
         {
           "name": "Blue Coconut Slush",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -1230,7 +1230,7 @@
         },
         {
           "name": "Blue Raspberry Lemonade",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -1263,7 +1263,7 @@
         },
         {
           "name": "Canada Dry®",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -1296,7 +1296,7 @@
         },
         {
           "name": "Cherry Limeade Slush",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -1330,7 +1330,7 @@
         },
         {
           "name": "Cocoberry Cream",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -1363,7 +1363,7 @@
         },
         {
           "name": "Cranberry Lemonade",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -1396,7 +1396,7 @@
         },
         {
           "name": "Cranberry Slush",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -1430,7 +1430,7 @@
         },
         {
           "name": "Diet Cherry Limeade",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -1463,7 +1463,7 @@
         },
         {
           "name": "Diet Limeade",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -1496,7 +1496,7 @@
         },
         {
           "name": "Dragon Fruit Lemonade",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -1529,7 +1529,7 @@
         },
         {
           "name": "Dragon Fruit Recharger with Red Bull®",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Medium",
@@ -1554,7 +1554,7 @@
         },
         {
           "name": "Fanta® Orange",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -1587,7 +1587,7 @@
         },
         {
           "name": "Fruited Dragon Slush",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -1621,7 +1621,7 @@
         },
         {
           "name": "Green Apple Slush",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -1655,7 +1655,7 @@
         },
         {
           "name": "Half Sweet Tea / Half Lemonade",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -1688,7 +1688,7 @@
         },
         {
           "name": "Half Sweet Tea / Half Unsweet Tea",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -1724,7 +1724,7 @@
         },
         {
           "name": "Half Unsweet Tea / Half Lemonade",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -1757,7 +1757,7 @@
         },
         {
           "name": "Hi-C® Fruit Punch",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -1790,7 +1790,7 @@
         },
         {
           "name": "Lemonade Slush",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -1824,7 +1824,7 @@
         },
         {
           "name": "Limeade",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -1857,7 +1857,7 @@
         },
         {
           "name": "Limeade Slush",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -1891,7 +1891,7 @@
         },
         {
           "name": "Mango Slush",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -1925,7 +1925,7 @@
         },
         {
           "name": "Medium Cherry Flavor Bubble Slush",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Standard",
@@ -1943,7 +1943,7 @@
         },
         {
           "name": "Medium Green Apple Flavor Bubble Slush",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Standard",
@@ -1961,7 +1961,7 @@
         },
         {
           "name": "POWERADE® Mountain Berry Blast® Drink",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -1994,7 +1994,7 @@
         },
         {
           "name": "POWERADE® Mountain Berry Blast® Slush",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -2028,7 +2028,7 @@
         },
         {
           "name": "Peach Slush",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -2062,7 +2062,7 @@
         },
         {
           "name": "Rainbow Slush",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Standard",
@@ -2080,7 +2080,7 @@
         },
         {
           "name": "Red Bull® Slush",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Medium",
@@ -2106,7 +2106,7 @@
         },
         {
           "name": "Shark Bite",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -2139,7 +2139,7 @@
         },
         {
           "name": "Strawberry Cheesecake Cream Cooler",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -2169,7 +2169,7 @@
         },
         {
           "name": "Strawberry Lemonade",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -2202,7 +2202,7 @@
         },
         {
           "name": "Twisted Flamingo",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -2235,7 +2235,7 @@
         },
         {
           "name": "Twisted Lime Recharger with Red Bull®",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Medium",
@@ -2260,7 +2260,7 @@
         },
         {
           "name": "Unsweet Iced Tea",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -2299,7 +2299,7 @@
       "items": [
         {
           "name": "Vanilla Classic Shake",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -2331,7 +2331,7 @@
         },
         {
           "name": "Chocolate Classic Shake",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -2363,7 +2363,7 @@
         },
         {
           "name": "Strawberry Classic Shake",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -2395,7 +2395,7 @@
         },
         {
           "name": "Peanut Butter Classic Shake",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -2427,7 +2427,7 @@
         },
         {
           "name": "SONIC Blast® made with REESE’S",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -2455,7 +2455,7 @@
         },
         {
           "name": "SONIC Blast® made with OREO® Cookie Pieces",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -2483,7 +2483,7 @@
         },
         {
           "name": "OREO® Cheesecake Master Shake®",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -2515,7 +2515,7 @@
         },
         {
           "name": "Hot Fudge Sundae",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Standard",
@@ -2535,7 +2535,7 @@
         },
         {
           "name": "Banana Classic Shake",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -2567,7 +2567,7 @@
         },
         {
           "name": "Caramel Sundae",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Standard",
@@ -2587,7 +2587,7 @@
         },
         {
           "name": "Root Beer Float",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -2619,7 +2619,7 @@
         },
         {
           "name": "Coke Float",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -2651,7 +2651,7 @@
         },
         {
           "name": "Dr Pepper Float",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -2683,7 +2683,7 @@
         },
         {
           "name": "Caramel Classic Shake",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -2713,7 +2713,7 @@
         },
         {
           "name": "Cheesecake Master Shake®",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -2743,7 +2743,7 @@
         },
         {
           "name": "Chocolate Chip Cookie Dough Blast®",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -2769,7 +2769,7 @@
         },
         {
           "name": "Chocolate Chunk Brownie Blast®",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -2795,7 +2795,7 @@
         },
         {
           "name": "Chocolate Peanut Butter Shake Made With REESE’S",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -2825,7 +2825,7 @@
         },
         {
           "name": "Hot Fudge Classic Shake",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -2855,7 +2855,7 @@
         },
         {
           "name": "OREO® Chocolate Master Shake®",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -2885,7 +2885,7 @@
         },
         {
           "name": "OREO® Peanut Butter Master Shake®",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -2915,7 +2915,7 @@
         },
         {
           "name": "SONIC Blast® made with HEATH®",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -2941,7 +2941,7 @@
         },
         {
           "name": "SONIC Blast® made with M&M’S® Chocolate Candies",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -2967,7 +2967,7 @@
         },
         {
           "name": "Strawberry Cheesecake Master Shake®",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -2997,7 +2997,7 @@
         },
         {
           "name": "Strawberry Sundae",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Standard",
@@ -3015,7 +3015,7 @@
         },
         {
           "name": "Turtle Truffle Nut Blast®",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Mini",
@@ -3041,7 +3041,7 @@
         },
         {
           "name": "Vanilla Cup",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Standard",
@@ -3727,7 +3727,7 @@
       "items": [
         {
           "name": "Cheese Tots",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Small",
@@ -3754,7 +3754,7 @@
         },
         {
           "name": "Cheese Groovy Fries",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Small",
@@ -3781,7 +3781,7 @@
         },
         {
           "name": "Chili Cheese Groovy Fries",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Small",
@@ -3835,7 +3835,7 @@
         },
         {
           "name": "FRITOS® Chili Cheese Wrap",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Standard",
@@ -3854,7 +3854,7 @@
         },
         {
           "name": "Soft Pretzel Twist",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Standard",
@@ -3873,7 +3873,7 @@
         },
         {
           "name": "Fritos Chili Cheese Pie",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Small",
@@ -3938,7 +3938,7 @@
         },
         {
           "name": "FRITOS® Chili Cheese Jr. Wrap",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Standard",
@@ -3957,7 +3957,7 @@
         },
         {
           "name": "Flavor Add-In",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Standard",
@@ -3995,7 +3995,7 @@
         },
         {
           "name": "Whipped Topping",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Standard",
@@ -4052,7 +4052,7 @@
         },
         {
           "name": "Sweet Cream",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Standard",
@@ -4310,7 +4310,7 @@
       "items": [
         {
           "name": "Coffee",
-          "menuPeriod": "breakfast",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Standard",
@@ -4327,7 +4327,7 @@
         },
         {
           "name": "French Vanilla Cold Brew Iced Coffee",
-          "menuPeriod": "breakfast",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Small",
@@ -4356,7 +4356,7 @@
         },
         {
           "name": "Original Cold Brew Iced Coffee",
-          "menuPeriod": "breakfast",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Small",
@@ -4385,7 +4385,7 @@
         },
         {
           "name": "Simply® Orange Juice",
-          "menuPeriod": "breakfast",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Standard",
@@ -4667,7 +4667,7 @@
         },
         {
           "name": "Red Bull Energy Drink",
-          "menuPeriod": "lunch",
+          "menuPeriod": "allDay",
           "sizes": [
             {
               "size": "Standard",

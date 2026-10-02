@@ -43,6 +43,10 @@ def _add_args(item: dict) -> dict:
     }
 
 
+def _all_day_items(vectors: dict) -> list[dict]:
+    return vectors.get("allDayItems") or [vectors["allDayItem"]]
+
+
 def _new_session(persona_id: str, mode: str) -> str:
     persona = PersonaCatalog.load(personas_dir=PERSONAS_DIR, enabled=[persona_id], default_persona_id=persona_id).get(persona_id)
     return order_state_singleton.create_session(persona=persona, menu_mode=mode)
@@ -54,9 +58,8 @@ def test_real_dayparts_pack_accepts_matching_items_and_all_day_items(persona_id:
     cases = [
         ("breakfast", vectors["breakfastItem"]),
         ("lunch", vectors["lunchItem"]),
-        ("breakfast", vectors["allDayItem"]),
-        ("lunch", vectors["allDayItem"]),
     ]
+    cases.extend((mode, item) for item in _all_day_items(vectors) for mode in ("breakfast", "lunch"))
     for mode, item in cases:
         sid = _new_session(persona_id, mode)
         try:
