@@ -555,3 +555,83 @@ describe("Switch stops an active conversation before continuing (issue GH-180 ro
     });
 });
 
+// Issue GH-180 round 3, R8 (REQUIRED): a mic tap while the new persona is still loading must not
+// start the OLD persona's session -- its socket is still genuinely live at this point (endSession()
+// only runs once the fetch succeeds, R7), so a naive tap would greet with the OLD persona moments
+// before the switch replaces it out from under the guest. The tap must instead wait for the switch
+// to settle, then start whichever persona actually ends up bound.
+describe("A mic tap while a persona switch is still pending (issue GH-180 round 3, R8)", () => {
+    it("defers the tap, then starts the NEW persona's session once the switch succeeds", async () => {
+        let resolveBetaFetch: () => void = () => {};
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async (url: string) => {
+                if (url === "/api/personas") return { ok: true, status: 200, json: async () => FIXTURE_PERSONA_INDEX };
+                if (url === "/api/personas/test-alpha") return { ok: true, status: 200, json: async () => DETAIL_ALPHA };
+                if (url === "/api/personas/test-beta") {
+                    await new Promise<void>(resolve => {
+                        resolveBetaFetch = resolve;
+                    });
+                    return { ok: true, status: 200, json: async () => DETAIL_BETA };
+                }
+                return { ok: false, status: 404, json: async () => ({}) };
+            })
+        );
+        render(<RootApp />);
+
+        // Empty order, no active conversation -- switches immediately, fetch deliberately held.
+        await switchTo("test-beta");
+        await waitFor(() => expect((screen.getByLabelText("Select persona") as HTMLSelectElement).value).toBe("test-beta"));
+
+        // The tap lands while the switch's own fetch is still held -- it must defer rather than
+        // start a session on the still-live OLD (test-alpha) socket.
+        await tapMic();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(rt.api.startSession).not.toHaveBeenCalled();
+
+        resolveBetaFetch();
+        await waitFor(() => expect(rt.api.endSession).toHaveBeenCalledWith({ switching: true }));
+        // The deferred tap is honored now that the switch has settled, targeting the NEW persona.
+        await waitFor(() => expect(rt.api.startSession).toHaveBeenCalledTimes(1));
+    });
+
+    it("defers the tap, then starts the OLD persona's session again if the switch fails", async () => {
+        let resolveBetaFetch: () => void = () => {};
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async (url: string) => {
+                if (url === "/api/personas") return { ok: true, status: 200, json: async () => FIXTURE_PERSONA_INDEX };
+                if (url === "/api/personas/test-alpha") return { ok: true, status: 200, json: async () => DETAIL_ALPHA };
+                if (url === "/api/personas/test-beta") {
+                    await new Promise<void>(resolve => {
+                        resolveBetaFetch = resolve;
+                    });
+                    // The switched-to persona's own detail fetch fails once released below.
+                    return { ok: false, status: 500, json: async () => ({}) };
+                }
+                return { ok: false, status: 404, json: async () => ({}) };
+            })
+        );
+        render(<RootApp />);
+
+        await switchTo("test-beta");
+        await waitFor(() => expect((screen.getByLabelText("Select persona") as HTMLSelectElement).value).toBe("test-beta"));
+
+        await tapMic();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(rt.api.startSession).not.toHaveBeenCalled();
+
+        resolveBetaFetch();
+        await waitFor(() => expect(rt.api.cancelSwitch).toHaveBeenCalledTimes(1));
+        // The deferred tap is honored on the OLD persona's still-live socket, exactly as an
+        // ordinary tap would have been -- its socket was never touched (endSession() only ever
+        // runs once a switch's fetch succeeds).
+        await waitFor(() => expect(rt.api.startSession).toHaveBeenCalledTimes(1));
+        expect(rt.api.endSession).not.toHaveBeenCalled();
+        // The picker snaps back to reflecting the persona that is actually still bound.
+        await waitFor(() => expect((screen.getByLabelText("Select persona") as HTMLSelectElement).value).toBe("test-alpha"));
+    });
+});
+

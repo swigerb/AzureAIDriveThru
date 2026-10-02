@@ -39,11 +39,14 @@ namespace Conformance.Tests.Scenarios.Browser;
 /// unreachable-by-chance ordering of the race, and each is confirmed (by Rick's own scratch runs)
 /// to fail against dev's unmodified hook (built from <c>ebb79ec</c>) and pass once H2/H4 are
 /// fixed:
-///  - Case C (<see cref="RunSwitchScenarioCAsync"/>): holds the <c>/api/personas/test-beta</c>
-///    detail fetch so the guest's tap on "Start recording" lands squarely inside the
-///    pending-switch window, after the old socket's close has already landed but before the new
-///    persona's identity has changed -- the exact window a bare <c>reconnect()</c> has nothing
-///    but a genuinely CLOSED <c>readyState</c> to go on (H2/H4).
+///  - Case C (<see cref="RunSwitchScenarioCAsync"/>): REWRITTEN in issue #180 round 3 (Rick's
+///    round-2 review, R9) -- holds the <c>/api/personas/test-beta</c> detail fetch so the guest's
+///    tap on "Start recording" lands squarely inside the pending-switch window, WHILE the OLD
+///    socket is still genuinely OPEN (R7 made <c>endSession()</c> run strictly AFTER a successful
+///    fetch, so the old "wait for the old socket to reach CLOSED first" precondition this case
+///    used to have can no longer be constructed here at all -- see the method's own doc comment).
+///    Now doubles as R8's required scenario: the deferred tap must not start a session on the OLD
+///    socket while the switch is still pending, and must land on the NEW persona once it settles.
 ///  - Case D (<see cref="RunSwitchScenarioDAsync"/>): holds the OLD socket's own
 ///    <c>onclose</c> HANDLER INVOCATION (not its native <c>readyState</c>, which transitions to
 ///    CLOSED as soon as the server's close frame lands regardless) past the point where the NEW
@@ -76,15 +79,22 @@ namespace Conformance.Tests.Scenarios.Browser;
 /// switch now opens <see cref="PersonaSwitchConfirmDialog"/> instead of switching immediately or
 /// silently refusing, confirms the switch, taps, and then reuses the same five-property check
 /// below plus one more: the old persona's order text is gone from the page entirely (no leak).
+/// Issue #180 round 3 (R10) additionally inserts a Cancel round trip before the real switch,
+/// asserting focus actually lands back on <c>#persona-picker</c> in a real browser.
 ///
 /// All seven cases assert, against the SAME five properties Rick's review lists (case 7 adds the
-/// no-leak check above): the fake upstream connection for the test-beta session receives the
-/// client's <c>session.update</c> (<c>turn_detection.type=="server_vad"</c>,
+/// no-leak check above, case C additionally asserts R8's own "nothing lands on the old socket
+/// while the switch is still pending" property): the fake upstream connection for the test-beta
+/// session receives the client's <c>session.update</c> (<c>turn_detection.type=="server_vad"</c>,
 /// <c>threshold==0.7</c>); the greeting the server sends upstream for that connection contains
 /// <see cref="PersonaSmokeExpectations.For"/>("test-beta").GreetingSubstring; the browser created
 /// EXACTLY ONE socket for test-beta and sent <c>session.update</c> on it EXACTLY ONCE; no
-/// test-alpha socket was created after the switch click; and no frame other than
-/// <c>extension.end_session</c> ever landed on the original test-alpha socket after the click.
+/// test-alpha socket was created after the switch click; and the original test-alpha socket's
+/// post-click frames exactly match whether it was still OPEN when the switch's own
+/// <c>endSession()</c> ran (issue #180 round 3, R7/R9 -- see
+/// <see cref="AssertSwitchDeliveredToNewPersonaAsync"/>'s own doc comment for why the previous
+/// "all frames equal end_session" check could not tell "sent exactly one" apart from "sent none
+/// at all", which Cases E/E2 actually exercise).
 ///
 /// Reuses the <c>window.__sockets</c> capture pattern from <see cref="OrderResumeBrowserTests"/>
 /// (kept as its own copy here per that file's own precedent: same shape, different scenario, and
@@ -265,7 +275,8 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
         await page.GetByRole(AriaRole.Button, new() { Name = "Start recording", Exact = true }).ClickAsync().ConfigureAwait(false);
 
         var secondConnection = await secondConnectionTask;
-        await AssertSwitchDeliveredToNewPersonaAsync(page, socketsBeforeSwitch, alphaSentBeforeSwitch, secondConnection, ct).ConfigureAwait(false);
+        await AssertSwitchDeliveredToNewPersonaAsync(
+            page, socketsBeforeSwitch, alphaSentBeforeSwitch, secondConnection, expectEndSessionSent: true, ct).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -274,14 +285,25 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
     /// switched-to persona received the client's <c>session.update</c> and that persona's
     /// greeting; the browser created EXACTLY ONE socket for the new persona and sent
     /// <c>session.update</c> on it EXACTLY ONCE; no socket for the OLD persona was created after
-    /// the switch click; and no frame other than <c>extension.end_session</c> ever landed on the
-    /// original OLD-persona socket after the click.
+    /// the switch click; and the original OLD-persona socket's post-click frames exactly match
+    /// <paramref name="expectEndSessionSent"/> (issue #180 round 3, Rick's round-2 review item
+    /// R7/R9 -- the previous version of this last check, <c>alphaTypesAfter.All(...)</c>, was
+    /// vacuously true on an EMPTY list, which is exactly what Cases E/E2 produce: their OLD
+    /// socket is already closed by the backend's own idle sweep before the switch ever starts,
+    /// so <c>endSession()</c> finds <c>openRef.current</c> already false and sends nothing on it
+    /// at all -- "no frame other than end_session" was true, but so was "no end_session either",
+    /// and the old assertion could not tell those apart. Pass <see langword="true"/> when the OLD
+    /// socket was genuinely OPEN at the moment the switch's own <c>endSession()</c> ran (Cases
+    /// A/B/C/D/7: exactly one <c>extension.end_session</c> frame and nothing else is required);
+    /// pass <see langword="false"/> when it was already closed beforehand (Cases E/E2: nothing at
+    /// all may land on it, since there is nothing left to end).
     /// </summary>
     private async Task AssertSwitchDeliveredToNewPersonaAsync(
         IPage page,
         int socketsBeforeSwitch,
         int alphaSentBeforeSwitch,
         FakeRealtimeConnection? secondConnection,
+        bool expectEndSessionSent,
         CancellationToken ct)
     {
         // ── The fake upstream connection for the test-beta session ──
@@ -335,14 +357,27 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
         }
         Assert.Equal(1, betaSocketCount);
 
-        // ── No stray frame on the OLD (test-alpha) socket after the click, other than the
-        //    extension.end_session the switch itself sends ──
+        // ── The original OLD (test-alpha) socket's post-click frames exactly match
+        //    `expectEndSessionSent` (issue #180 round 3, R7/R9: see this method's own doc
+        //    comment for why "all equal end_session" alone cannot distinguish "sent exactly one"
+        //    from "sent none at all") ──
         var alphaSentAfter = await SentAsync(page, 0);
         var alphaTypesAfter = TypesOf(alphaSentAfter).Skip(alphaSentBeforeSwitch).ToList();
-        Assert.True(
-            alphaTypesAfter.All(t => t == "extension.end_session"),
-            "Expected only extension.end_session on the test-alpha socket after the switch click, " +
-            $"got: [{string.Join(", ", alphaTypesAfter)}].");
+        if (expectEndSessionSent)
+        {
+            Assert.True(
+                alphaTypesAfter.Count == 1 && alphaTypesAfter[0] == "extension.end_session",
+                "Expected EXACTLY ONE extension.end_session frame and nothing else on the " +
+                $"test-alpha socket after the switch click, got: [{string.Join(", ", alphaTypesAfter)}].");
+        }
+        else
+        {
+            Assert.True(
+                alphaTypesAfter.Count == 0,
+                "Expected NO frames at all on the test-alpha socket after the switch click (it " +
+                "was already closed before the switch started, so endSession() had nothing to " +
+                $"end), got: [{string.Join(", ", alphaTypesAfter)}].");
+        }
     }
 
     [Fact]
@@ -354,16 +389,28 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
         fixture.RunAsync(() => RunSwitchScenarioAsync(clickImmediately: true));
 
     /// <summary>
-    /// Case C (issue #171 round 3, Rick's round-2 review item 2): holds the
-    /// <c>/api/personas/test-beta</c> detail fetch so the guest's tap on "Start recording" lands
-    /// squarely inside the pending-switch window -- after the server's close for the outgoing
-    /// <c>extension.end_session</c> has already landed (native <c>readyState === 3</c>, CLOSED)
-    /// but before the persona fetch (and therefore the identity props `useWebSocket` keys its own
-    /// url on) has resolved either way. This is exactly the window a bare <c>reconnect()</c> has
-    /// nothing but a genuinely CLOSED <c>readyState</c> to go on -- the H2/H4 window. Rick's own
-    /// runs: fails 3/3 against dev's unmodified hook (H2 orphan) and fails 3/3 at the pre-H4-fix
-    /// head (the next upstream connection is test-alpha's, greeting substring not found). Must
-    /// pass once the fix (item 1) lands.
+    /// Case C (issue #171 round 3, originally Rick's round-2 review item 2) REWRITTEN and merged
+    /// with R8 (issue #180 round 3, Rick's round-2 review item R8 -- REQUIRED). Originally this
+    /// case held the <c>/api/personas/test-beta</c> detail fetch and then waited for the OLD
+    /// socket's native <c>readyState</c> to reach CLOSED before tapping -- but issue #180 round
+    /// 3, R7 made <c>endSession()</c> run strictly AFTER a successful persona fetch, so with the
+    /// fetch held there is nothing left that could ever close the old socket during this window;
+    /// the only thing that used to satisfy that wait was the backend's unrelated ~10s idle sweep
+    /// racing the held fetch, which just duplicates Case E2 below (Rick's round-2 review, R9).
+    /// Rewritten instead to tap while the OLD socket is still genuinely OPEN during the held
+    /// fetch -- exactly R8's new required scenario (a mic tap while the new persona is still
+    /// loading must not start the OLD persona's greeting) -- so the two are now one test:
+    ///  - R8: captures test-alpha's sent-frame count immediately before the click, taps, waits,
+    ///    and confirms the count is still UNCHANGED before the fetch is ever released -- the tap
+    ///    must still be waiting for the switch to settle, not have started a session on the old
+    ///    socket.
+    ///  - R7 (the five properties, via <see cref="AssertSwitchDeliveredToNewPersonaAsync"/>):
+    ///    once the fetch resolves, the deferred tap is honored on the NEW persona exactly once
+    ///    (<c>realtime.startSession()</c>'s queued <c>session.update</c> flushes the moment the
+    ///    test-beta socket opens -- <c>useRealtime.tsx</c>'s own <c>pendingRef</c>/<c>onOpen</c>
+    ///    mechanism), and the OLD socket -- genuinely OPEN the entire time the switch's own
+    ///    <c>endSession()</c> ran -- received EXACTLY ONE <c>extension.end_session</c> frame and
+    ///    nothing else.
     /// </summary>
     private async Task RunSwitchScenarioCAsync()
     {
@@ -385,10 +432,11 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
         var socketsBeforeSwitch = await SocketCountAsync(page);
         var alphaSentBeforeSwitch = (await SentAsync(page, 0)).GetArrayLength();
 
-        // Hold the persona-detail fetch BEFORE the picker selection: the selection itself (and
-        // the endSession({switching:true})/server-close dance it triggers) still runs, but the
-        // prop change that would make useWebSocket's own url-keyed effect open the replacement
-        // socket never fires until `gate` is released below.
+        // Hold the persona-detail fetch BEFORE the picker selection: the selection itself still
+        // runs (beginSwitch()'s bookkeeping flips immediately), but endSession() -- issue #180
+        // round 3, R7: only called once the fetch actually succeeds -- never fires, and the prop
+        // change that would open the replacement socket never fires either, until `gate` is
+        // released below.
         var gate = new TaskCompletionSource();
         await page.RouteAsync($"**/api/personas/{PersonaSwitchBackendFixture.PersonaB}", async route =>
         {
@@ -402,22 +450,26 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
         await page.GetByLabel("Select persona").SelectOptionAsync(
             new SelectOptionValue { Value = PersonaSwitchBackendFixture.PersonaB }).ConfigureAwait(false);
 
-        // Wait until the server's own close for extension.end_session has actually landed -- the
-        // exact moment onToggleListening's `if (!isConnected) reconnect()` branch would see a
-        // genuinely CLOSED readyState on the OLD socket, with the fetch still held pending.
-        await UntilAsync(() => ReadyStateAsync(page, 0), state => state == 3 /* CLOSED */,
-            FrameTimeout, "the test-alpha socket's close (the server's 1000 session_ended) to land", ct);
+        // Issue #180 round 3, R7: with the fetch held, endSession() has not run yet, so the OLD
+        // socket must still be genuinely OPEN -- confirms this is the intended window (R8) before
+        // tapping, not a race against the old wait-for-CLOSED step this case used to have.
+        Assert.Equal(1 /* OPEN */, await ReadyStateAsync(page, 0).ConfigureAwait(false));
 
+        var alphaSentBeforeTap = (await SentAsync(page, 0)).GetArrayLength();
         await page.GetByRole(AriaRole.Button, new() { Name = "Start recording", Exact = true }).ClickAsync().ConfigureAwait(false);
 
-        // Long enough for a wrong (pre-fix) socket to be created AND to open on loopback, if the
-        // bare-reconnect()-on-CLOSED bug is present -- Rick's own runs confirm this window is
-        // sufficient to expose it.
+        // Issue #180 round 3, R8: long enough for a regression (starting the OLD persona's
+        // session on this tap) to have shown up, before the fetch is ever released -- nothing may
+        // be sent on the OLD socket yet; the tap must still be waiting for the switch to settle.
         await Task.Delay(1000, ct).ConfigureAwait(false);
+        var alphaSentStillPending = (await SentAsync(page, 0)).GetArrayLength();
+        Assert.Equal(alphaSentBeforeTap, alphaSentStillPending);
+
         gate.SetResult();
 
         var secondConnection = await secondConnectionTask;
-        await AssertSwitchDeliveredToNewPersonaAsync(page, socketsBeforeSwitch, alphaSentBeforeSwitch, secondConnection, ct).ConfigureAwait(false);
+        await AssertSwitchDeliveredToNewPersonaAsync(
+            page, socketsBeforeSwitch, alphaSentBeforeSwitch, secondConnection, expectEndSessionSent: true, ct).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -477,11 +529,12 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
         await page.GetByRole(AriaRole.Button, new() { Name = "Start recording", Exact = true }).ClickAsync().ConfigureAwait(false);
 
         var secondConnection = await secondConnectionTask;
-        await AssertSwitchDeliveredToNewPersonaAsync(page, socketsBeforeSwitch, alphaSentBeforeSwitch, secondConnection, ct).ConfigureAwait(false);
+        await AssertSwitchDeliveredToNewPersonaAsync(
+            page, socketsBeforeSwitch, alphaSentBeforeSwitch, secondConnection, expectEndSessionSent: true, ct).ConfigureAwait(false);
     }
 
     [Fact]
-    public Task Held_persona_fetch_during_the_pending_switch_window_still_delivers_only_to_the_new_persona() =>
+    public Task Mic_tap_while_the_switch_fetch_is_still_pending_waits_for_the_switch_then_starts_only_the_new_personas_session() =>
         fixture.RunAsync(RunSwitchScenarioCAsync);
 
     [Fact]
@@ -567,7 +620,8 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
         }
 
         var secondConnection = await secondConnectionTask;
-        await AssertSwitchDeliveredToNewPersonaAsync(page, socketsBeforeSwitch, alphaSentBeforeSwitch, secondConnection, ct).ConfigureAwait(false);
+        await AssertSwitchDeliveredToNewPersonaAsync(
+            page, socketsBeforeSwitch, alphaSentBeforeSwitch, secondConnection, expectEndSessionSent: false, ct).ConfigureAwait(false);
     }
 
     [Fact]
@@ -597,6 +651,9 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
     ///    genuinely survives the reload like a guest's real order would -- not just pushed as
     ///    client-side UI state) is gone from the page entirely once the switch to test-beta
     ///    completes.
+    ///  - Issue #180 round 1, R3 / round-3 review R10 (REQUIRED): before the real switch, Cancel
+    ///    on the confirm dialog restores focus to <c>#persona-picker</c> -- previously only a
+    ///    vitest assertion, never pinned against a real browser's actual focus state.
     /// Reuses <see cref="AssertSwitchDeliveredToNewPersonaAsync"/> for the same five properties
     /// every other case proves. <c>socketsBeforeSwitch</c>/<c>alphaSentBeforeSwitch</c> are
     /// captured AFTER the reload (not the original page load), since <c>window.__sockets</c>
@@ -714,12 +771,38 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
         Assert.Contains("Switching to Test Beta Burger Co. will start a new order.", dialogText, StringComparison.Ordinal);
         Assert.Contains("Your current order will be cleared.", dialogText, StringComparison.Ordinal);
 
+        // Issue #180 round 1, R3 / round-3 review R10: Cancel must restore focus to the persona
+        // picker (`PersonaSwitchConfirmDialog`'s own `onCloseAutoFocus`) -- already pinned by a
+        // vitest unit test (`App.personaSwitch.test.tsx`), but never asserted in a REAL browser
+        // until now. Cancel first, confirm focus actually landed back on `#persona-picker`
+        // (Radix's own `onCloseAutoFocus` default does nothing useful here -- see that
+        // component's doc comment), then re-select test-beta to reopen the dialog and continue
+        // the rest of this scenario exactly as before.
+        await dialog.GetByRole(AriaRole.Button, new() { Name = "Cancel", Exact = true }).ClickAsync().ConfigureAwait(false);
+        await dialog.WaitForAsync(new() { State = WaitForSelectorState.Hidden, Timeout = (float)FrameTimeout.TotalMilliseconds })
+            .ConfigureAwait(false);
+        // Radix's unmount/focus-restore runs one tick after the dialog itself reports hidden --
+        // WaitForFunctionAsync polls instead of taking a single immediate snapshot, which flaked
+        // (observed empty activeElement.id) when asserted synchronously right after Hidden.
+        await page.WaitForFunctionAsync(
+                "() => document.activeElement && document.activeElement.id === 'persona-picker'",
+                null,
+                new() { Timeout = (float)FrameTimeout.TotalMilliseconds })
+            .ConfigureAwait(false);
+        var activeElementId = await page.EvaluateAsync<string?>("document.activeElement ? document.activeElement.id : null")
+            .ConfigureAwait(false);
+        Assert.Equal("persona-picker", activeElementId);
+
+        await picker.SelectOptionAsync(new SelectOptionValue { Value = PersonaSwitchBackendFixture.PersonaB }).ConfigureAwait(false);
+        await dialog.WaitForAsync(new() { Timeout = (float)FrameTimeout.TotalMilliseconds }).ConfigureAwait(false);
+
         await dialog.GetByRole(AriaRole.Button, new() { Name = "Switch", Exact = true }).ClickAsync().ConfigureAwait(false);
 
         await page.GetByRole(AriaRole.Button, new() { Name = "Start recording", Exact = true }).ClickAsync().ConfigureAwait(false);
 
         var secondConnection = await secondConnectionTask;
-        await AssertSwitchDeliveredToNewPersonaAsync(page, socketsBeforeSwitch, alphaSentBeforeSwitch, secondConnection, ct).ConfigureAwait(false);
+        await AssertSwitchDeliveredToNewPersonaAsync(
+            page, socketsBeforeSwitch, alphaSentBeforeSwitch, secondConnection, expectEndSessionSent: true, ct).ConfigureAwait(false);
 
         // No leak: test-alpha's resumed order never carries over into the test-beta session.
         var bodyText = await page.Locator("body").InnerTextAsync().ConfigureAwait(false);

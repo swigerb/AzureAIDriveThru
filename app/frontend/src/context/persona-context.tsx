@@ -88,6 +88,19 @@ interface PersonaContextValue {
      * reliable signal for a FAILED switch, since on failure `current`/`personaId` never change at
      * all. */
     selectPersona: (id: string) => Promise<boolean>;
+    /** Issue GH-180 round 3, R7: fetch-only half of the old `loadPersona` (fetch THEN apply)
+     * split App.tsx's `handleSelectPersona` needs so it can call `realtime.endSession()` on the
+     * OLD socket BEFORE anything here applies the new persona (`setCurrent`/`setPersonaId`), i.e.
+     * before React commits the identity change that would otherwise flip `openRef` false first.
+     * Never touches `current`/`personaId`/localStorage/theme. On failure, sets `error` (same
+     * localized message `loadPersona` always has) and resolves `null`; on success, clears `error`
+     * and resolves the fetched detail for the caller to apply later via `applyPersona`. */
+    fetchPersona: (id: string) => Promise<PersonaDetail | null>;
+    /** Issue GH-180 round 3, R7: apply-only half of the split above -- synchronous, no network.
+     * Sets `current`, the theme/title/favicon/i18n strings (`applyDetail`), `personaId` and
+     * localStorage, in that order. Callers must already hold a successfully fetched `detail`
+     * (from `fetchPersona`) for this exact `id`. */
+    applyPersona: (id: string, detail: PersonaDetail) => void;
 }
 
 const PersonaContext = createContext<PersonaContextValue | undefined>(undefined);
@@ -204,22 +217,54 @@ export function PersonaProvider({ children }: { children: ReactNode }) {
         }
     }, []);
 
-    const loadPersona = useCallback(
-        async (id: string) => {
+    // Issue GH-180 round 3, R7: fetch-only -- no `setCurrent`/`setPersonaId`/localStorage/theme
+    // write of any kind. `loadPersona` (below, startup-only) and `selectPersona`'s own public
+    // contract are both implemented on top of this now, and App.tsx's `handleSelectPersona` calls
+    // it directly so it can run `realtime.endSession()` on the OLD socket before `applyPersona`
+    // (below) ever touches `current`/`personaId` -- see that function's own comment for why the
+    // order matters.
+    const fetchPersona = useCallback(
+        async (id: string): Promise<PersonaDetail | null> => {
             const detail = await safeFetchJson<PersonaDetail>(`/api/personas/${encodeURIComponent(id)}`);
-            const summary = catalogRef.current?.personas.find(entry => entry.id === id);
             if (detail) {
-                setCurrent(detail);
-                applyDetail(id, detail, summary);
                 setError(null);
-                return true;
+                return detail;
             }
             // Issue GH-180 round 2, R1: visible, localized -- replaces a hard-coded English
             // sentence nothing ever rendered. `App.tsx` surfaces this next to the persona picker.
+            const summary = catalogRef.current?.personas.find(entry => entry.id === id);
             setError(t("personaSwitch.loadError", { persona: summary?.displayName ?? id }));
-            return false;
+            return null;
         },
-        [applyDetail, t]
+        [t]
+    );
+
+    // Issue GH-180 round 3, R7: apply-only -- synchronous, no network. Callers must already hold
+    // a successfully fetched `detail` for this exact `id` (from `fetchPersona`).
+    const applyPersona = useCallback(
+        (id: string, detail: PersonaDetail) => {
+            const summary = catalogRef.current?.personas.find(entry => entry.id === id);
+            setCurrent(detail);
+            applyDetail(id, detail, summary);
+            setPersonaId(id);
+            window.localStorage.setItem(STORAGE_KEY, id);
+        },
+        [applyDetail]
+    );
+
+    // Startup-only: fetch then apply `current`/theme (but NOT `personaId`/localStorage -- the
+    // startup effect below sets `personaId` itself, separately, before calling this), preserving
+    // this function's exact pre-R7 behavior.
+    const loadPersona = useCallback(
+        async (id: string) => {
+            const detail = await fetchPersona(id);
+            if (!detail) return false;
+            const summary = catalogRef.current?.personas.find(entry => entry.id === id);
+            setCurrent(detail);
+            applyDetail(id, detail, summary);
+            return true;
+        },
+        [fetchPersona, applyDetail]
     );
 
     useEffect(() => {
@@ -277,8 +322,8 @@ export function PersonaProvider({ children }: { children: ReactNode }) {
     const logoUrl = useMemo(() => personas.find(p => p.id === personaId)?.logoUrl ?? NEUTRAL_SUMMARY.logoUrl, [personas, personaId]);
 
     const value = useMemo<PersonaContextValue>(
-        () => ({ personas, backends, current, logoUrl, ready, error, selectPersona }),
-        [personas, backends, current, logoUrl, ready, error, selectPersona]
+        () => ({ personas, backends, current, logoUrl, ready, error, selectPersona, fetchPersona, applyPersona }),
+        [personas, backends, current, logoUrl, ready, error, selectPersona, fetchPersona, applyPersona]
     );
 
     return <PersonaContext.Provider value={value}>{children}</PersonaContext.Provider>;
