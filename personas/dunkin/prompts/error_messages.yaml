@@ -13,16 +13,16 @@ messages:
   # Customization errors (Dunkin has no invalid-modifier guard today -- persona.json's
   # invalidModifiers is {} -- these keys exist for parity with the shared engine's key set
   # and are never rendered until Dunkin defines invalid mods of its own).
-  invalid_mod: "I can't add {{forbidden_item}} to a {{base_name}} — that's a new one! Want to try something else?"
+  invalid_mod: "I can't add {{forbidden_item}} to a {{base_name}} -- that's a new one! Want to try something else?"
   nonsensical_mod_redirect: "That's a creative idea! How about something else?"
 
   # Extras validation (ported from the sibling's tools.py apology strings)
   extras_no_base_item: >-
-    I can add extras to signature lattes or cold beverages,
-    but not to donuts or breakfast sandwiches.
+    I can add extras to hot drinks, signature lattes, or cold beverages,
+    but not to donuts, bakery, snacks, or breakfast sandwiches.
   extras_blocked_category: >-
-    I can add extras to signature lattes or cold beverages,
-    but I can't add them to donuts or breakfast sandwiches.
+    I can add extras to hot drinks, signature lattes, or cold beverages,
+    but I can't add them to donuts, bakery, snacks, or breakfast sandwiches.
   extras_combined_name: >-
     Extras are separate items: add the drink first, then the extra as its own item.
 
@@ -66,20 +66,20 @@ messages:
   # Quantity limit messages (ported from the sibling's tools.py f-strings)
   per_item_limit_maxed: >-
     That's a lot of {{item_name}}! We can do up to {{max_per_item}}
-    of any one item. You already have {{existing_qty}} —
+    of any one item. You already have {{existing_qty}} --
     would you like to keep it at {{existing_qty}}?
   per_item_limit_partial: >-
     That's a lot of {{item_name}}! We can do up to {{max_per_item}}
-    of any one item. I can add {{allowed}} more —
+    of any one item. I can add {{allowed}} more --
     would you like me to do that?
   total_order_limit_maxed: >-
     Wow, that's a big order! Our drive-thru tops out at
     {{max_total}} items total so we can keep things moving.
-    You're already at the max — would you like to swap anything out?
+    You're already at the max -- would you like to swap anything out?
   total_order_limit_partial: >-
     Wow, that's a big order! Our drive-thru tops out at
     {{max_total}} items total so we can keep things moving.
-    I can add {{remaining}} more — would you like me to do that?
+    I can add {{remaining}} more -- would you like me to do that?
 
   # Order reset
   order_cleared: "Order cleared."

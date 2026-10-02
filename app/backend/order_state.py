@@ -354,12 +354,15 @@ class OrderState:
         different items lists every filled unit's display, comma-separated, within its
         component's slot of the "w/ ... & ..." suffix -- the common case (quantity 1, or several
         identical units) collapses to the same single label as before."""
-        components = []
+        display_components = []
+        wire_components = []
         for component in ("sides", "drinks"):
             slots = combo_item._bundle_slots.get(component, [])
             filled = [s["display"] for s in slots if s.get("display")]
             if filled:
-                components.append(", ".join(filled))
+                display_components.append(", ".join(filled))
+                wire_components.extend(filled)
+        combo_item.components = wire_components
         raw_name = combo_item.item
         if "(" in raw_name:
             base_name = raw_name[:raw_name.find("(")].strip()
@@ -367,8 +370,8 @@ class OrderState:
         else:
             base_name = raw_name
             mods = ""
-        if components:
-            combo_item.display = f"{base_name}{mods} w/ {' & '.join(components)}"
+        if display_components:
+            combo_item.display = f"{base_name}{mods} w/ {' & '.join(display_components)}"
         else:
             combo_item.display = f"{base_name}{mods}".strip()
 
