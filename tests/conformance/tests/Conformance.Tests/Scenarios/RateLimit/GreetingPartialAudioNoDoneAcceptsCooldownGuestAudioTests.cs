@@ -5,30 +5,23 @@ using Xunit;
 namespace Conformance.Tests.Scenarios.RateLimit;
 
 /// <summary>
-/// swigerb/SonicAIDriveThru#48 S1 (PR #58 re-review, "F1"): a greeting whose audio *started*
-/// streaming (at least one delta arrived) but never got a completing `response.output_audio.done`
-/// -- cancelled/errored mid-stream, with no rate-limit ladder retry involved at all -- must still
-/// receive the doubled post-greeting echo cooldown
-/// (<c>audio_pipeline.EchoSuppressor.on_response_done</c>'s <c>_greeting_audio_seen</c> branch),
-/// not <see cref="GreetingWithoutAudioUnmutesTests"/>'s no-audio-at-all case's instant unmute.
-/// Before the S1 fix, `ai_speaking` alone couldn't distinguish "nothing rendered" from "some audio
-/// rendered but never completed" -- both reach `on_response_done()` with `ai_speaking` still True
-/// from `start_greeting_suppression()`/`on_audio_delta()`'s pre-set -- so this partial-audio case
-/// was wrongly given the instant, no-cooldown unmute too, even though real audio already reached
-/// the guest and carries the same residual echo risk a normal `on_audio_done()` completion does.
+/// swigerb/SonicAIDriveThru#48 S1 and #187: a greeting whose audio *started* streaming (at least
+/// one delta arrived) but never got a completing `response.output_audio.done` still records the
+/// post-greeting cooldown bookkeeping, but that cooldown must not drop the first real guest mic
+/// frame once assistant audio is complete. The cooldown now only protects the delayed upstream
+/// buffer clear, so short acknowledgements immediately after the assistant finishes are forwarded.
 ///
 /// The fake's <see cref="DoneEvent.SuppressAudioDone"/> (added for this scenario) lets a scripted
 /// response stream <see cref="AudioDeltaEvent"/>s and then complete without ever sending
 /// `response.output_audio.done` -- exactly this shape. Uses
 /// <see cref="RateLimitTimersConformanceFixture"/>, not the default collection, for the same
 /// reason as <see cref="GreetingRateLimitRetryEchoSuppressionTests"/> (see its own doc comment):
-/// this needs a real, several-second wall-clock wait for the doubled echo cooldown -- during which
-/// a mic `input_audio_buffer.append` does not count as guest activity (rtmt.py's idle clock) --
-/// which ShortTimers' 1-second idle budget cannot survive, and there is no CONFORMANCE_* hook for
+/// this still uses real wall-clock waits around the post-audio cooldown, which ShortTimers'
+/// 1-second idle budget cannot survive, and there is no CONFORMANCE_* hook for
 /// audio.echo_cooldown_seconds itself.
 /// </summary>
 [Collection(RateLimitTimersConformanceCollection.Name)]
-public sealed class GreetingPartialAudioNoDoneStaysSuppressedTests(RateLimitTimersConformanceFixture fixture)
+public sealed class GreetingPartialAudioNoDoneAcceptsCooldownGuestAudioTests(RateLimitTimersConformanceFixture fixture)
 {
     private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
     private const string GreetingDelta = "cGFydGlhbC1ncmVldGluZy1hdWRpbw==";
@@ -36,7 +29,7 @@ public sealed class GreetingPartialAudioNoDoneStaysSuppressedTests(RateLimitTime
     private const string MicAfterFullCooldown = "bWljLWFmdGVyLWZ1bGwtY29vbGRvd24=";
 
     [Fact]
-    public Task Mic_audio_at_1_5x_cooldown_stays_suppressed_after_partial_greeting_audio_with_no_audio_done() => fixture.RunAsync(async () =>
+    public Task Mic_audio_at_1_5x_cooldown_forwards_after_partial_greeting_audio_with_no_audio_done() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
         var noneOpen = await fixture.Realtime.WaitForNoOpenConnectionsAsync(FrameTimeout, ct);
@@ -75,30 +68,23 @@ public sealed class GreetingPartialAudioNoDoneStaysSuppressedTests(RateLimitTime
             f => f.Sequence > deltaForwarded!.Sequence && f.Type == "extension.round_trip_token", FrameTimeout, ct);
         Assert.True(greetingRoundTrip is not null, "Greeting round trip never completed.");
 
-        // No response.cancel anywhere in this test -- unlike EchoSuppressionBargeInTests, this
-        // proves the doubled *cooldown* applying to partial-audio-no-done, not a browser-triggered
-        // barge-in.
-        //
-        // 1.5x the *normal* (undoubled) 1.5s cooldown: past a buggy instant-unmute (which would
-        // have let this through immediately), comfortably short of the correct, doubled 3.0s one.
-        // No CONFORMANCE_* hook exists for audio.echo_cooldown_seconds (see
-        // RateLimitGuestSpeechCancellationTests' doc comment), so this is a real wall-clock wait.
+        // No response.cancel anywhere in this test. Once the partial greeting response is done, the
+        // post-audio cooldown must not drop the first real guest mic frame; it only protects the
+        // delayed upstream-buffer clear.
         await Task.Delay(TimeSpan.FromSeconds(2.25), ct);
         await browser.SendInputAudioAppendAsync(MicAt1_5xCooldown, ct);
-        var tooEarly = await connection.ReceivedFrames.WaitForAsync(
+        var cooldownGuestAudio = await connection.ReceivedFrames.WaitForAsync(
             f => f.Type == "input_audio_buffer.append" && f.Json.GetProperty("audio").GetString() == MicAt1_5xCooldown,
-            TimeSpan.FromSeconds(1), ct);
-        Assert.True(tooEarly is null,
-            "Expected mic audio at 1.5x the normal cooldown to still be suppressed -- a greeting " +
-            "that streamed partial audio with no audio.done must get the doubled post-greeting " +
-            "cooldown (#48 S1), not the no-audio case's instant unmute.");
+            FrameTimeout, ct);
+        Assert.True(cooldownGuestAudio is not null,
+            "Expected mic audio during the post-audio cooldown to be forwarded; the cooldown must not " +
+            "swallow short guest replies after assistant audio is complete (#187).");
 
-        // Past the full doubled cooldown (3.0s from on_response_done(), not from a never-sent
-        // audio.done), suppression must finally lift -- confirms this is a bounded cooldown, not
-        // a permanently latched mute. Bounded retry/poll instead of one fixed-delay send: PR #58
-        // re-review S1 found a single `.Snapshot()`/fixed-delay check can race a busy backend
-        // under the full suite's load, so a positive "eventually true" assertion always resends
-        // and waits again rather than trusting one timed attempt.
+        // A later mic frame still forwards too, proving the suppression latch was not left stuck.
+        // Bounded retry/poll instead of one fixed-delay send: PR #58 re-review S1 found a single
+        // `.Snapshot()`/fixed-delay check can race a busy backend under the full suite's load, so a
+        // positive "eventually true" assertion always resends and waits again rather than trusting
+        // one timed attempt.
         RecordedFrame? forwarded = null;
         var deadline = DateTime.UtcNow + FrameTimeout;
         while (forwarded is null && DateTime.UtcNow < deadline)

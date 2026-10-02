@@ -419,11 +419,29 @@ class EchoSuppressorTests(unittest.TestCase):
             self.assertAlmostEqual(echo.cooldown_end, t + ECHO_COOLDOWN_SEC, delta=0.1)
         asyncio.run(_run())
 
-    def test_cooldown_suppresses_audio(self):
+    def test_cooldown_accepts_first_guest_audio(self):
         echo = EchoSuppressor()
         echo.cooldown_end = 200.0
-        self.assertTrue(echo.should_suppress_audio(199.0))
+        self.assertFalse(echo.should_suppress_audio(199.0))
+        self.assertEqual(echo.cooldown_end, 0.0)
         self.assertFalse(echo.should_suppress_audio(201.0))
+
+    def test_cooldown_guest_audio_cancels_delayed_flush(self):
+        echo = EchoSuppressor()
+        loop = MagicMock()
+        loop.time.return_value = 100.0
+        fake_handle = MagicMock()
+        loop.call_later.return_value = fake_handle
+        target_ws = MagicMock()
+
+        def closing_spawn(coro):
+            coro.close()
+            return MagicMock()
+
+        echo.on_audio_done(loop, target_ws, spawn=closing_spawn)
+        self.assertFalse(echo.should_suppress_audio(100.5))
+        fake_handle.cancel.assert_called_once()
+        self.assertIsNone(echo._flush_handle)
 
     def test_speech_started_resets_suppression(self):
         echo = EchoSuppressor()
@@ -572,10 +590,10 @@ class EchoSuppressorTests(unittest.TestCase):
     # already have reached the guest, so there IS residual echo risk, same as
     # a normal on_audio_done() greeting completion. ───
 
-    def test_response_done_after_partial_audio_applies_doubled_cooldown_not_instant_unmute(self):
+    def test_response_done_after_partial_audio_cooldown_accepts_guest_audio(self):
         """Rick's repro: response.done after at least one greeting audio delta (but no
-        audio.done) must apply the same doubled post-greeting cooldown a normal completion
-        would, not the no-audio case's instant unmute.
+        audio.done) must keep the delayed-clear cooldown while still accepting the first
+        guest mic frame, so a short reply is not swallowed.
         """
         echo = EchoSuppressor()
         echo.start_greeting_suppression()
@@ -584,7 +602,8 @@ class EchoSuppressorTests(unittest.TestCase):
         loop.time.return_value = 42.0
         target_ws = MagicMock()
         echo.on_response_done(loop, target_ws)
-        self.assertTrue(echo.should_suppress_audio(42.0))
+        self.assertFalse(echo.should_suppress_audio(42.0))
+        self.assertEqual(echo.cooldown_end, 0.0)
 
     def test_response_done_after_partial_audio_cooldown_is_the_doubled_amount(self):
         """The extended cooldown must be exactly ECHO_COOLDOWN_SEC * 2, the same as a real

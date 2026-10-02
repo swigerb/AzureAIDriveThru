@@ -16,9 +16,9 @@ namespace Conformance.Tests.Scenarios.RateLimit;
 ///
 /// Uses <see cref="RateLimitTimersConformanceFixture"/>, not the default collection, for the
 /// same reason as <see cref="RateLimitGuestSpeechCancellationTests"/> (see its own doc
-/// comment): this scenario needs a real, several-second wall-clock wait for the doubled echo
-/// cooldown, which ShortTimers' 1-second idle/nudge budget cannot survive, and there is no
-/// CONFORMANCE_* hook for audio.echo_cooldown_seconds itself.
+/// comment): this scenario still uses real wall-clock waits around the post-audio cooldown, which
+/// ShortTimers' 1-second idle/nudge budget cannot survive, and there is no CONFORMANCE_* hook for
+/// audio.echo_cooldown_seconds itself.
 /// </summary>
 [Collection(RateLimitTimersConformanceCollection.Name)]
 public sealed class GreetingRateLimitRetryEchoSuppressionTests(RateLimitTimersConformanceFixture fixture)
@@ -34,7 +34,7 @@ public sealed class GreetingRateLimitRetryEchoSuppressionTests(RateLimitTimersCo
         new([new DoneEvent(Status: "failed", ErrorCode: "rate_limit_exceeded", ErrorMessage: null)]);
 
     [Fact]
-    public Task Speech_started_during_the_greetings_retried_audio_is_ignored_and_gets_the_doubled_cooldown() => fixture.RunAsync(async () =>
+    public Task Speech_started_during_the_greetings_retried_audio_is_ignored_and_cooldown_accepts_guest_audio() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
         var noneOpen = await fixture.Realtime.WaitForNoOpenConnectionsAsync(FrameTimeout, ct);
@@ -105,21 +105,20 @@ public sealed class GreetingRateLimitRetryEchoSuppressionTests(RateLimitTimersCo
             f => f.Type == "extension.round_trip_token", FrameTimeout, ct);
         Assert.True(greetingRoundTrip is not null, "Greeting round trip never completed.");
 
-        // 1.5x the *normal* (undoubled) 1.5s cooldown: past a buggy 1x cooldown, comfortably short
-        // of the correct, doubled 3.0s one. No CONFORMANCE_* hook exists for
-        // audio.echo_cooldown_seconds (see RateLimitGuestSpeechCancellationTests' doc comment), so
-        // this is a real wall-clock wait, not a shortened one.
+        // Once the greeting audio is done, the post-audio cooldown no longer drops guest mic
+        // frames. It only protects the delayed upstream-buffer clear. A short acknowledgement in
+        // this window must still reach upstream, which prevents issue #187's swallowed "that'll work"
+        // turn.
         await Task.Delay(TimeSpan.FromSeconds(2.25), ct);
         await browser.SendInputAudioAppendAsync(MicAt1_5xCooldown, ct);
-        var tooEarly = await connection.ReceivedFrames.WaitForAsync(
+        var cooldownGuestAudio = await connection.ReceivedFrames.WaitForAsync(
             f => f.Type == "input_audio_buffer.append" && f.Json.GetProperty("audio").GetString() == MicAt1_5xCooldown,
-            TimeSpan.FromSeconds(1), ct);
-        Assert.True(tooEarly is null,
-            "Expected mic audio at 1.5x the normal cooldown to still be suppressed -- the greeting's " +
-            "retried audio must get the doubled post-greeting cooldown (#48 M1), not a normal one.");
+            FrameTimeout, ct);
+        Assert.True(cooldownGuestAudio is not null,
+            "Expected mic audio during the post-audio cooldown to be forwarded; the cooldown must not " +
+            "swallow short guest replies after assistant audio is complete (#187).");
 
-        // Past the full doubled cooldown (3.0s from the retry's own audio.done), suppression must
-        // finally lift -- confirms this is a bounded cooldown, not a permanently latched mute.
+        // A later mic frame still forwards too, proving the suppression latch was not left stuck.
         RecordedFrame? forwarded = null;
         var deadline = DateTime.UtcNow + FrameTimeout;
         while (forwarded is null && DateTime.UtcNow < deadline)
