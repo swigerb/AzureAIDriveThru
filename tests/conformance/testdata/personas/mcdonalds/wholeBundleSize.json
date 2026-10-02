@@ -50,6 +50,21 @@
       "expectedItemCount": 1,
       "expectedComplete": false,
       "expectedItemSize": "medium"
+    },
+    {
+      "description": "default-sized meal resized large refreshes component sub-lines",
+      "steps": [
+        { "action": "add", "item": "Quarter Pounder® with Cheese Meal", "size": "", "quantity": 1, "price": "0.01" },
+        { "action": "modify", "item": "Quarter Pounder® with Cheese Meal", "size": "large", "quantity": 1, "price": "0.01" },
+        { "action": "add", "item": "Coca-Cola®", "size": "large", "quantity": 1, "price": "0.01" }
+      ],
+      "expectedTotal": "11.69",
+      "expectedItemCount": 1,
+      "expectedComplete": true,
+      "expectedItemSize": "large",
+      "expectedDisplayIncludes": ["Large World Famous Fries®", "Large Coca-Cola®"],
+      "expectedComponents": ["Large World Famous Fries®", "Large Coca-Cola®"],
+      "forbiddenComponents": ["Medium World Famous Fries®"]
     }
   ],
   "standardOnlyMealPlusDrink": {

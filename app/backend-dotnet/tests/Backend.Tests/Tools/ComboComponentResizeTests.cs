@@ -36,12 +36,9 @@ namespace Backend.Tests.Tools;
 /// first would let autoFill claim any slot that's still open the instant the bundle lands,
 /// leaving no open slot for a later standalone add to land in at all.</para>
 ///
-/// <para>Assertions check the combo line's <c>display</c> string, not its <c>components</c>
-/// array -- mirroring order_state.py's own test assertions (which check <c>combo_item.display</c>
-/// too): <c>components</c> is only ever populated once, at the bundle's first-time pivot/autoFill
-/// absorption (pre-existing, unchanged-by-#179 behavior in both backends), while <c>display</c> is
-/// the field <c>_rebuild_bundle_display</c>/<c>RebuildBundleDisplay</c> actively keeps current on
-/// every subsequent fill, resize, or vacate.</para>
+/// <para>Assertions check the combo line's <c>display</c> string. The wire <c>components</c>
+/// list is rebuilt from the same slot state by <c>_rebuild_bundle_display</c>/
+/// <c>RebuildBundleDisplay</c>, so separate component-focused tests cover that contract.</para>
 /// </summary>
 public sealed class ComboComponentResizeTests
 {
