@@ -15,19 +15,27 @@
 From the root directory, execute the following commands:
 
 ```bash
-docker build -t azure-ai-drive-thru -f ./app/Dockerfile .
+docker build -t azure-ai-drive-thru -f ./app/Dockerfile --build-arg VITE_AUTH_MODE=Development .
 docker run -p 8000:8000 --env-file ./app/backend/.env azure-ai-drive-thru:latest
 ```
 
+`VITE_AUTH_MODE=Development` skips the Entra sign-in build check for a local smoke test. Without it the image defaults to Entra and the frontend build fails unless real `VITE_ENTRA_TENANT_ID` and `VITE_ENTRA_CLIENT_ID` values are passed.
+
 ## Deploy the Application
 
-Deploy the application with azd:
+The deployed app always runs with Entra ID auth, so a fresh environment needs the Entra app registration before the first `azd up`. Otherwise the frontend build and the backend startup both fail on empty Entra ids. See [Setup](#setup), case (b), for details.
 
 ```powershell
 azd auth login
 azd env new <env-name>
 azd env set AZURE_LOCATION eastus2
 azd env set AZURE_OPENAI_SERVICE_LOCATION eastus2
+
+# Create (or reconcile) the Entra app registration, then pin its ids
+./scripts/Setup-EntraAuth.ps1 -TenantId <tenant-id> -Apply
+azd env set ENTRA_TENANT_ID "<tenant-id>"
+azd env set ENTRA_CLIENT_ID "<client-id>"
+
 azd up
 ```
 

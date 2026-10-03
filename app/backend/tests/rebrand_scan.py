@@ -135,7 +135,7 @@ def _persona_pack_id(rel_posix: str):
 
 
 def _is_cross_brand_doc(rel_posix: str) -> bool:
-    """Docs that compare all persona packs by design may name every brand."""
+    """Docs that compare personas by design may name every brand."""
     return (
         rel_posix in {
             "README.md",

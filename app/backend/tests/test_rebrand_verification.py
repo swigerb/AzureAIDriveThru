@@ -11,7 +11,8 @@ allowed only
 
   1. inside its OWN persona pack (personas/<id>/**) -- personas/sonic/** may say "Sonic",
      but not "Dunkin'"/"McDonald's" (a persona pack must not reference a different brand);
-  2. inside the explicitly listed cross-brand docs that compare all three brands by design;
+  2. inside the explicitly listed cross-brand docs that compare personas by design (README.md,
+     docs/DEMO_SCRIPT.md, docs/adr/**, docs/persona-architecture.md);
   3. inside one of exactly two DIRECTORY_EXCEPTIONS for generated/golden content
      (app/backend/static/, tests/conformance/testdata/) -- see rebrand_scan.py. A pack's own
      per-persona conformance testdata subfolder (tests/conformance/testdata/personas/<id>/**,
@@ -121,10 +122,16 @@ TERMINOLOGY_EXCLUDED_FILES = {
 # own source. That is a real persona-brand term, not leftover pre-rebrand generic-app
 # terminology, so only this one pack file is exempted here.
 TERMINOLOGY_EXCLUDED_RELATIVE_PATHS = {
-    "README.md",
-    "docs/DEMO_SCRIPT.md",
     "personas/mcdonalds/persona.json",
 }
+
+# Cross-brand docs (see rebrand_scan._is_cross_brand_doc) may name every persona's brand, so
+# only the "dunkin" pattern is relaxed for them. "crew member" and "coffee-chat" stay enforced.
+CROSS_BRAND_TERMINOLOGY_DOCS = frozenset({
+    "README.md",
+    "docs/DEMO_SCRIPT.md",
+})
+BRAND_ONLY_TERMINOLOGY_LABELS = frozenset({"dunkin"})
 
 
 def _should_scan(
@@ -170,6 +177,7 @@ def _scan_for_forbidden(files: list[Path]) -> list[tuple[Path, int, str, str]]:
     """Return a list of (file, line_number, matched_text, label) hits for FORBIDDEN_PATTERNS."""
     hits: list[tuple[Path, int, str, str]] = []
     for filepath in files:
+        cross_brand_doc = _relative_posix(filepath) in CROSS_BRAND_TERMINOLOGY_DOCS
         try:
             lines = filepath.read_text(encoding="utf-8", errors="replace").splitlines()
         except Exception:
@@ -179,6 +187,8 @@ def _scan_for_forbidden(files: list[Path]) -> list[tuple[Path, int, str, str]]:
             if "github.com/john-carroll-sw/coffee-chat" in line:
                 continue
             for pattern, label in FORBIDDEN_PATTERNS:
+                if cross_brand_doc and label in BRAND_ONLY_TERMINOLOGY_LABELS:
+                    continue
                 if pattern.search(line):
                     hits.append((filepath, line_no, line.strip(), label))
     return hits
@@ -300,7 +310,7 @@ class TestRebrandVerification(unittest.TestCase):
         self.assertIsNone(_classify_hit(rel_posix, "sonic", 1, {}))
 
     def test_cross_brand_docs_may_say_any_brand(self):
-        """Sanity: docs that compare persona packs by design may say all three brand names."""
+        """Sanity: docs that compare personas by design may say every brand name."""
         for doc_path in [
             PROJECT_ROOT / "README.md",
             PROJECT_ROOT / "docs" / "DEMO_SCRIPT.md",
@@ -569,7 +579,7 @@ class TestRebrandVerification(unittest.TestCase):
         )
 
     def test_readme_mentions_all_current_personas(self):
-        """README.md must name the current persona packs because it is now a cross-brand doc."""
+        """README.md must name the current personas because it is a cross-brand doc."""
         readme = PROJECT_ROOT / "README.md"
         self.assertTrue(readme.exists(), "README.md not found at project root")
         content = readme.read_text(encoding="utf-8", errors="replace").lower()

@@ -88,17 +88,25 @@ The cascade pipeline uses the same WebSocket and frontend contract. The backend 
 
 ### Deploy with azd
 
+The deployed app always runs with Entra ID auth, so create the Entra app registration and pin its ids before the first `azd up`. Without them, the frontend build and backend startup both fail.
+
 ```powershell
 azd auth login
 azd env new <env-name>
 azd env set AZURE_LOCATION eastus2
 azd env set AZURE_OPENAI_SERVICE_LOCATION eastus2
+
+# Create (or reconcile) the Entra app registration, then pin its ids
+./scripts/Setup-EntraAuth.ps1 -TenantId <tenant-id> -Apply
+azd env set ENTRA_TENANT_ID "<tenant-id>"
+azd env set ENTRA_CLIENT_ID "<client-id>"
+
 azd up
 ```
 
 The `postprovision` hooks configure auth env files and build persona search indexes with `scripts/setup_search_index.ps1` or `.sh`. The `postdeploy` hook runs `scripts/smoke_realtime.ps1` or `.sh` as a non-fatal realtime smoke check.
 
-For production auth, use `scripts/Setup-EntraAuth.ps1` to create or reconcile the app registration, then verify with:
+Once the app has a public URL, re-run `Setup-EntraAuth.ps1` with `-FromAzdEnv` to add its redirect URI (see [DEPLOY.md](DEPLOY.md#setup), case (c)), then verify with:
 
 ```powershell
 ./scripts/Verify-ProductionAuth.ps1
