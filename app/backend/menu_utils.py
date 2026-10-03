@@ -40,6 +40,15 @@ __all__ = [
     "get_catalog_for_persona",
 ]
 
+_SPOKEN_LEFT_BOUNDARY = r"(?<![A-Za-z0-9])"
+_SPOKEN_TRADEMARK_CHARS = "®™"
+
+
+def _spoken_substitution_pattern(raw: str) -> str:
+    """Literal spokenAs match that will not rewrite the middle of another token."""
+    right_boundary_chars = "A-Za-z0-9" if raw.endswith(tuple(_SPOKEN_TRADEMARK_CHARS)) else f"A-Za-z0-9{_SPOKEN_TRADEMARK_CHARS}"
+    return rf"{_SPOKEN_LEFT_BOUNDARY}{re.escape(raw)}(?![{right_boundary_chars}])"
+
 logger = logging.getLogger(__name__)
 
 
@@ -544,14 +553,19 @@ class MenuCatalog:
         return self.alias_map.get(normalized, normalized)
 
     def spoken(self, text: str) -> str:
-        """Apply this persona's ``sizes.spokenAs`` substitutions to a display string.
+        """Apply this persona's ``sizes.spokenAs`` spoken-readback substitutions.
 
         #74: replaces ``order_state.py``'s old hardcoded ``"RT 44"``/``"RT44"`` -> ``"Route 44"``
         readback substitution -- Sonic's own persona.json ``spokenAs`` block is exactly that same
         mapping, so this is a no-op behavior change for Sonic, but a future persona with its own
-        size vocabulary now drives its own readback text instead of inheriting Sonic's."""
-        for raw, spoken in self.spoken_as.items():
-            text = text.replace(raw, spoken)
+        size vocabulary now drives its own readback text instead of inheriting Sonic's.
+        Longer keys are applied first, and matches require alphanumeric/trademark boundaries so
+        item-name pronunciation hints (e.g. MUNCHKINS® -> Munchkins) cannot rewrite unrelated
+        tokens or leave a registered mark behind."""
+        for raw, spoken in sorted(self.spoken_as.items(), key=lambda item: len(item[0]), reverse=True):
+            if not raw:
+                continue
+            text = re.sub(_spoken_substitution_pattern(raw), spoken, text)
         return text
 
     def infer_category(self, item_name: str) -> str:

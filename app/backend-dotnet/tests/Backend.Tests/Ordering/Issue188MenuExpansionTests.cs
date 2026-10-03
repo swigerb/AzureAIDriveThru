@@ -84,19 +84,44 @@ public sealed class Issue188MenuExpansionTests : IDisposable
     }
 
     [Fact]
-    public void MunchkinsFlavorCounts_AreDistinctOrderableItemsAndSizes()
+    public async Task MunchkinsFlavorCounts_AreDistinctOrderableItemsAndSizes()
     {
         FreezeAt("2026-10-02T21:30:00Z");
-        var order = PersonaOrderFactory.CreateOrderState(Pack());
+        var (executor, order, _) = NewExecutor();
 
-        order.HandleOrderUpdate("add", "Glazed MUNCHKINS® Donut Hole Treats", "10 count", 2, 0.01m);
-        order.HandleOrderUpdate("add", "Chocolate Glazed MUNCHKINS® Donut Hole Treats", "25 count", 1, 0.01m);
+        var glazed = await executor.ExecuteAsync(
+            "update_order", Args("add", "Glazed MUNCHKINS® Donut Hole Treats", "10 count", 2, 0.01m), TestContext.Current.CancellationToken);
+        var chocolate = await executor.ExecuteAsync(
+            "update_order", Args("add", "Chocolate Glazed MUNCHKINS® Donut Hole Treats", "25 count", 1, 0.01m), TestContext.Current.CancellationToken);
 
         Assert.Equal(2, order.Items.Count);
         Assert.Equal("10 count", order.Items[0].Size);
         Assert.Equal(2, order.Items[0].Quantity);
         Assert.Equal("25 count", order.Items[1].Size);
         Assert.Equal((2 * 3.99m) + 8.99m, order.Summary.Total);
+        Assert.Contains("Munchkins Donut Hole Treats", glazed.ToText());
+        Assert.Contains("Munchkins Donut Hole Treats", chocolate.ToText());
+        Assert.Contains("MUNCHKINS®", order.Items[0].Item);
+        using var ticketJson = JsonDocument.Parse(chocolate.ToClientText());
+        var ticketItems = ticketJson.RootElement.GetProperty("items").EnumerateArray()
+            .Select(item => item.GetProperty("item").GetString())
+            .ToArray();
+        Assert.Contains(ticketItems, item => item == "Glazed MUNCHKINS® Donut Hole Treats");
+        Assert.Contains(ticketItems, item => item == "Chocolate Glazed MUNCHKINS® Donut Hole Treats");
+        var readback = order.GetGroupedOrderForReadback();
+        Assert.Contains("Glazed Munchkins Donut Hole Treats", readback);
+        Assert.DoesNotContain("MUNCHKINS", readback);
+        Assert.DoesNotContain("®", readback);
+    }
+
+    [Fact]
+    public void MunchkinsSpokenSubstitution_RespectsBoundariesAndTrademark()
+    {
+        var menu = PersonaOrderFactory.GetMenuCatalog(Pack());
+
+        var spoken = menu.Spoken("MUNCHKINSHIP PREMUNCHKINS MUNCHKINSON MUNCHKINS® MUNCHKINS");
+
+        Assert.Equal("MUNCHKINSHIP PREMUNCHKINS MUNCHKINSON Munchkins Munchkins", spoken);
     }
 
     [Fact]

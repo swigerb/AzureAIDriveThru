@@ -83,10 +83,18 @@ class Issue188MenuExpansionTests(unittest.TestCase):
             self.assertIn("Munchkins Donut Hole Treats", glazed_result.text)
             self.assertIn("Munchkins Donut Hole Treats", chocolate_result.text)
             self.assertIn("MUNCHKINS®", summary.items[0].item)
+            self.assertIn("MUNCHKINS®", chocolate_result.to_client_text())
             readback = order_state_singleton.get_grouped_order_for_readback(session_id)
             self.assertIn("Glazed Munchkins Donut Hole Treats", readback)
             self.assertNotIn("MUNCHKINS", readback)
             self.assertNotIn("®", readback)
+
+    def test_munchkins_spoken_substitution_respects_boundaries_and_trademark(self):
+        text = "MUNCHKINSHIP PREMUNCHKINS MUNCHKINSON MUNCHKINS® MUNCHKINS"
+
+        spoken = self.menu.spoken(text)
+
+        self.assertEqual(spoken, "MUNCHKINSHIP PREMUNCHKINS MUNCHKINSON Munchkins Munchkins")
 
     def test_happy_hour_flags_match_pack_banner(self):
         self.assertFalse(self.menu.is_happy_hour_discounted("Original Blend Coffee"))
