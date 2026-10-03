@@ -13,6 +13,7 @@ https://github.com/user-attachments/assets/d4dc2713-5117-45cd-ba49-9aa2d707432d
 *About 5 minutes, recorded from the running app using its built-in Demo Mode.*
 
 ## Screenshots
+
 | Persona | Desktop view |
 | --- | --- |
 | Sonic Drive-In | ![Sonic desktop order view](docs/images/sonic-desktop.png) |
