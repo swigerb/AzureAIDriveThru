@@ -6,9 +6,17 @@ As guests speak, real-time transcription, translation, and order management prov
 
 Beyond the ordering experience, this sample demonstrates how Microsoft’s Responsible AI guidance plus Azure-first tooling enable inclusive, hands-free interactions for franchise teams and accessibility scenarios across brands.
 
-## Table of Contents
+## See it in action
 
+**Microsoft Foundry AI Drive Thru** brings real-time voice ordering to quick serve restaurants. Every brand persona orders from its own Azure AI Search menu, server-side rules handle combos, up-sells, add-ons, and happy-hour pricing, and the voice model comes from the Microsoft Foundry model catalog.
+
+https://github.com/user-attachments/assets/2f8539bc-cf6b-49b7-8e83-cca01c602fbd
+
+*About 5 minutes, recorded from the running app using its built-in Demo Mode.*
+
+## Table of Contents
 - [Azure AI Drive-Thru](#azure-ai-drive-thru)
+  - [See it in action](#see-it-in-action)
   - [Table of Contents](#table-of-contents)
   - [Acknowledgment](#acknowledgment)
   - [Visual Demonstrations](#visual-demonstrations)
