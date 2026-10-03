@@ -67,7 +67,11 @@
             "description": "台本付きのゲスト音声デモをハンズフリーで実行します。",
             "on": "デモ オン",
             "off": "デモ オフ",
-            "aria": "デモ モードを切り替え"
+            "aria": "デモ モードを切り替え",
+            "stageAria": "デモ ステージ",
+            "guestVoiceLabel": "Ava ゲスト音声",
+            "guestAtSpeaker": "スピーカーのゲスト",
+            "waitingLine": "ゲストのセリフを待機中..."
         }
     },
     "hero": {

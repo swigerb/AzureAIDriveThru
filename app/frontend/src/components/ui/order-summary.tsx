@@ -128,7 +128,10 @@ export default memo(function OrderSummary({ order, taxRate }: { order: OrderSumm
     const taxLabel = Number.isFinite(taxRatePercent) ? `${t("ticket.tax")} (${Math.round(taxRatePercent * 100)}%)` : t("ticket.tax");
 
     return (
-        <div className="rounded-3xl border border-brand-secondary/20 bg-linear-to-br from-white via-brand-surface-tint to-brand-accent/5 p-5 shadow-[0_20px_45px_var(--brand-secondary-veil-12)] dark:border-white/15 dark:bg-linear-to-br dark:from-brand-surface-dark dark:via-brand-surface-dark-alt dark:to-brand-surface-dark">
+        <div
+            className="rounded-3xl border border-brand-secondary/20 bg-linear-to-br from-white via-brand-surface-tint to-brand-accent/5 p-5 shadow-[0_20px_45px_var(--brand-secondary-veil-12)] dark:border-white/15 dark:bg-linear-to-br dark:from-brand-surface-dark dark:via-brand-surface-dark-alt dark:to-brand-surface-dark"
+            data-testid="order-ticket"
+        >
             <div className="mb-4 flex items-center justify-between">
                 <div>
                     <p className="text-xs font-bold uppercase tracking-[0.3em] text-brand-primary dark:text-brand-primary-tint">{t("ticket.kicker")}</p>
