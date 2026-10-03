@@ -65,6 +65,21 @@
       "expectedDisplayIncludes": ["Large World Famous Fries®", "Large Coca-Cola®"],
       "expectedComponents": ["Large World Famous Fries®", "Large Coca-Cola®"],
       "forbiddenComponents": ["Medium World Famous Fries®"]
+    },
+    {
+      "description": "large Quarter Pounder meal with Diet Coke resizes medium together",
+      "steps": [
+        { "action": "add", "item": "Quarter Pounder® with Cheese Meal", "size": "large", "quantity": 1, "price": "0.01" },
+        { "action": "add", "item": "Diet Coke®", "size": "large", "quantity": 1, "price": "0.01" },
+        { "action": "modify", "item": "Quarter Pounder® with Cheese Meal", "size": "medium", "quantity": 1, "price": "0.01" }
+      ],
+      "expectedTotal": "10.69",
+      "expectedItemCount": 1,
+      "expectedComplete": true,
+      "expectedItemSize": "medium",
+      "expectedDisplayIncludes": ["Medium World Famous Fries®", "Medium Diet Coke®"],
+      "expectedComponents": ["Medium World Famous Fries®", "Medium Diet Coke®"],
+      "forbiddenComponents": ["Large World Famous Fries®", "Large Diet Coke®"]
     }
   ],
   "standardOnlyMealPlusDrink": {

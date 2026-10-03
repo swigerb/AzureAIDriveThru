@@ -441,6 +441,18 @@
           "comboSlot": "drinks"
         },
         {
+          "name": "Diet Coke®",
+          "menuPeriod": "allDay",
+          "sizes": [
+            { "size": "Small", "price": 1.29 },
+            { "size": "Medium", "price": 1.79 },
+            { "size": "Large", "price": 2.29 }
+          ],
+          "description": "Ice-cold Diet Coke®, the crisp, refreshing zero-calorie soft drink that pairs perfectly with any McDonald's meal.",
+          "calories": 0,
+          "comboSlot": "drinks"
+        },
+        {
           "name": "Sprite®",
           "menuPeriod": "allDay",
           "sizes": [
