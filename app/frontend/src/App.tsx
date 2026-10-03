@@ -128,18 +128,28 @@ const IDLE_DEMO_UI: DemoUiState = {
     error: null
 };
 
-function DemoStage({ state }: { state: DemoUiState }) {
+function DemoStage({ state, enabled }: { state: DemoUiState; enabled: boolean }) {
     const { t } = useTranslation();
-    if (!state.line && !state.title && !state.kicker && !state.error) return null;
+    const hasCaption = Boolean(state.title || state.kicker);
+    const hasContent = Boolean(hasCaption || state.line || state.error);
+    if (!enabled && !hasContent) return null;
     const bars = Array.from({ length: 30 }, (_, index) => <span key={index} className="demo-wave-bar" />);
     return (
         <section className="demo-stage w-full space-y-3" data-testid="demo-stage" aria-label={t("settings.demoMode.stageAria")}>
-            {(state.title || state.kicker) && (
-                <div className="rounded-2xl border border-white/20 bg-slate-950/90 px-4 py-3 text-white shadow-xl backdrop-blur-md" data-testid="demo-stage-caption">
-                    {state.kicker && <p className="text-[10px] font-black uppercase tracking-[0.28em] text-cyan-200">{state.kicker}</p>}
-                    {state.title && <p className="mt-1 text-lg font-black leading-tight sm:text-xl">{state.title}</p>}
-                </div>
-            )}
+            <div
+                className={`min-h-[5.25rem] rounded-2xl border border-white/20 bg-slate-950/90 px-4 py-3 text-white shadow-xl backdrop-blur-md ${
+                    hasCaption ? "" : "invisible"
+                }`}
+                data-testid="demo-stage-caption"
+                aria-hidden={hasCaption ? undefined : "true"}
+            >
+                {hasCaption && (
+                    <>
+                        {state.kicker && <p className="text-[10px] font-black uppercase tracking-[0.28em] text-cyan-200">{state.kicker}</p>}
+                        {state.title && <p className="mt-1 text-lg font-black leading-tight sm:text-xl">{state.title}</p>}
+                    </>
+                )}
+            </div>
             <div
                 className={`demo-guest-card w-full rounded-[24px] border p-4 text-white sm:p-5 ${
                     state.speaking ? "speaking" : ""
@@ -1347,7 +1357,7 @@ function SonicApp() {
                                 )}
                                 {demoUi.error && <p className="mt-2 text-center text-xs font-medium text-destructive">{demoUi.error}</p>}
                             </div>
-                            <DemoStage state={demoUi} />
+                            <DemoStage state={demoUi} enabled={canRunDemo} />
                         </div>
                     </Card>
 

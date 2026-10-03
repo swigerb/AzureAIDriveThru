@@ -118,6 +118,9 @@ describe("App demo mode", () => {
         expect(localStorage.getItem("demoModeEnabled")).toBe("true");
         await waitFor(() => expect(screen.getByRole("button", { name: /run demo: this brand/i })).toBeInTheDocument());
         expect(screen.getByRole("button", { name: /full tour/i })).toBeInTheDocument();
+        expect(screen.getByTestId("center-panel")).toContainElement(screen.getByTestId("demo-stage"));
+        expect(screen.getByTestId("demo-guest-card")).not.toHaveClass("speaking");
+        expect(screen.getByTestId("demo-stage-caption")).toHaveClass("invisible");
     });
 
     it("renders the active demo stage inside the center panel instead of a fixed overlay", async () => {
