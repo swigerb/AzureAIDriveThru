@@ -91,6 +91,15 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["nameMarkers", "convertStandalone", "missingPartText"],
+      "allOf": [
+        {
+          "if": {
+            "required": ["resizeRule"],
+            "properties": { "resizeRule": { "const": "componentUpcharge" } }
+          },
+          "then": { "required": ["includedSize"] }
+        }
+      ],
       "properties": {
         "nameMarkers": { "type": "array", "items": { "type": "string", "minLength": 1 } },
         "convertStandalone": { "type": "boolean" },

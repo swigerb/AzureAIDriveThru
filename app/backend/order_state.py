@@ -339,6 +339,7 @@ class OrderState:
 
     def _find_bundle_slot(
         self, order_state: list, menu, component: str, item_name: str | None = None,
+        target_size: str | None = None,
     ):
         """PR #184 round 2 (Rick's review, item 2): which (bundle instance, slot index) a
         slot-fill/resize/vacate targets, now that slot state is tracked per PHYSICAL UNIT of a
@@ -351,10 +352,13 @@ class OrderState:
         If *item_name* is given, the MOST RECENT matching instance (last in `order_state`, i.e.
         the one added or merged-into most recently) whose slot is CURRENTLY filled by that exact
         item wins -- "resize the drink of whichever combo actually has that drink" (two combos;
-        the guest says "make the Coke large" and only one of them currently has a Coke). Otherwise
-        (or when no instance's slot holds that item), the MOST RECENT instance with a VACANT slot
-        for *component* wins (lowest vacant index within that instance) -- a fresh absorption
-        lands on whichever instance still needs filling, preferring the one most recently touched.
+        the guest says "make the Coke large" and only one of them currently has a Coke). If
+        *target_size* is also given, a matching slot that is NOT already that size wins first; this
+        lets repeated "make the Cherry Limeade large" calls on a split quantity-2 combo advance to
+        the remaining medium unit instead of no-oping on the already-large unit. Otherwise (or when
+        no instance's slot holds that item), the MOST RECENT instance with a VACANT slot for
+        *component* wins (lowest vacant index within that instance) -- a fresh absorption lands on
+        whichever instance still needs filling, preferring the one most recently touched.
         Returns ``None`` when no slot matches *item_name* (if given) and no slot anywhere is
         vacant -- callers must never be handed an already-FULL, non-matching slot to silently
         overwrite (e.g. a second, different side added while the combo's one side slot is already
@@ -364,6 +368,16 @@ class OrderState:
             return None
         if item_name is not None:
             key = _menu_key(item_name)
+            if target_size is not None:
+                for combo_item in reversed(candidates):
+                    slots = self._sync_bundle_slot_list(combo_item, component)
+                    for idx, slot in enumerate(slots):
+                        if (
+                            slot.get("item")
+                            and _menu_key(slot["item"]) == key
+                            and slot.get("size") != target_size
+                        ):
+                            return (combo_item, idx)
             for combo_item in reversed(candidates):
                 slots = self._sync_bundle_slot_list(combo_item, component)
                 for idx, slot in enumerate(slots):
@@ -872,7 +886,9 @@ class OrderState:
                         # exact #179 bug. Only ONE unit of *quantity* is ever a resize (there is
                         # only one matching slot); any remainder still becomes a genuine
                         # standalone add.
-                        found = self._find_bundle_slot(order_state, menu, component, item_name=item_name)
+                        found = self._find_bundle_slot(
+                            order_state, menu, component, item_name=item_name, target_size=size
+                        )
                         if found is not None:
                             combo_item, idx = found
                             slots = self._sync_bundle_slot_list(combo_item, component)
@@ -1092,7 +1108,9 @@ class OrderState:
                 # real part of the order as `not_in_order` just because it has no raw line.
                 resized = False
                 for component in ("sides", "drinks"):
-                    found = self._find_bundle_slot(order_state, menu, component, item_name=item_name)
+                    found = self._find_bundle_slot(
+                        order_state, menu, component, item_name=item_name, target_size=size
+                    )
                     if found is None:
                         continue
                     combo_item, idx = found
@@ -1238,6 +1256,13 @@ class OrderState:
             # e.g. "Sonic Cheeseburger (No Lettuce)" -> "Sonic Cheeseburger with no lettuce"
             if "(" in clean_name and ")" in clean_name:
                 clean_name = clean_name.replace("(", "with ").replace(")", "")
+            positive_upcharges = [to_decimal(upcharge) for upcharge in oi.componentUpcharges if to_decimal(upcharge) > 0]
+            if positive_upcharges:
+                upcharge_total = sum(positive_upcharges, Decimal("0"))
+                if len(positive_upcharges) == 1:
+                    clean_name = f"{clean_name} with a {format_money(upcharge_total)} upcharge"
+                else:
+                    clean_name = f"{clean_name} with {format_money(upcharge_total)} in component upcharges"
             counts[clean_name] = counts.get(clean_name, 0) + oi.quantity
 
         # Build the natural language string

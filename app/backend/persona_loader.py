@@ -38,7 +38,7 @@ from pathlib import Path
 from typing import Any
 
 import jsonschema
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 import entra_auth
 import menu_utils
@@ -201,6 +201,12 @@ class _Bundles(BaseModel):
     # Optional with defaults so every existing pack's persona.json needs no changes at all.
     resizeRule: str = "includedAnySize"
     includedSize: str | None = None
+
+    @model_validator(mode="after")
+    def _require_component_upcharge_included_size(self) -> _Bundles:
+        if self.resizeRule == "componentUpcharge" and not self.includedSize:
+            raise ValueError("bundles.includedSize is required when bundles.resizeRule is componentUpcharge")
+        return self
 
 
 class _Extras(BaseModel):

@@ -336,6 +336,21 @@ class TestMutationSchemaViolations:
         with pytest.raises(PersonaValidationError, match="sonic"):
             PersonaCatalog.load(personas_dir=personas_copy)
 
+    def test_component_upcharge_without_included_size_refuses_to_start(self, fixture_personas_copy):
+        def mutator(d):
+            d["bundles"]["resizeRule"] = "componentUpcharge"
+            d["bundles"].pop("includedSize", None)
+        _mutate_persona_json(fixture_personas_copy, "test-alpha", mutator)
+        with pytest.raises(PersonaValidationError) as exc_info:
+            PersonaCatalog.load(
+                personas_dir=fixture_personas_copy,
+                enabled=["test-alpha"],
+                default_persona_id="test-alpha",
+            )
+        message = str(exc_info.value)
+        assert "test-alpha" in message
+        assert "includedSize" in message
+
     def test_extra_unknown_field_refuses_to_start(self, personas_copy):
         def mutator(d):
             d["unexpectedTopLevelField"] = "should not be allowed"

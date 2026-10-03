@@ -310,7 +310,7 @@ public sealed class OrderState
                     // and creating a silent duplicate standalone line. Only ONE unit of
                     // *quantity* is ever a resize (there is only one matching slot); any
                     // remainder still becomes a genuine standalone add.
-                    var found = FindBundleSlot(component, itemName);
+                    var found = FindBundleSlot(component, itemName, targetSize: size);
                     if (found is { } slotFound)
                     {
                         var (comboItem, idx) = slotFound;
@@ -546,7 +546,7 @@ public sealed class OrderState
         // ever invoked.)
         foreach (var component in new[] { "sides", "drinks" })
         {
-            var found = FindBundleSlot(component, itemName);
+            var found = FindBundleSlot(component, itemName, targetSize: size);
             if (found is not { } slotFound)
             {
                 continue;
@@ -721,14 +721,17 @@ public sealed class OrderState
     /// <see cref="Items"/>, i.e. the one added or merged-into most recently) whose slot is
     /// CURRENTLY filled by that exact item wins -- "resize the drink of whichever combo actually
     /// has that drink" (two combos; the guest says "make the Coke large" and only one of them
-    /// currently has a Coke). Otherwise (or when no instance's slot holds that item), the MOST
-    /// RECENT instance with a VACANT slot for <paramref name="component"/> wins (lowest vacant
-    /// index within that instance) -- a fresh absorption lands on whichever instance still needs
+    /// currently has a Coke). If <paramref name="targetSize"/> is also given, a matching slot that
+    /// is NOT already that size wins first; repeated "make the Cherry Limeade large" calls on a
+    /// split quantity-2 combo then advance to the remaining medium unit instead of no-oping on the
+    /// already-large unit. Otherwise (or when no instance's slot holds that item), the MOST RECENT
+    /// instance with a VACANT slot for <paramref name="component"/> wins (lowest vacant index
+    /// within that instance) -- a fresh absorption lands on whichever instance still needs
     /// filling, preferring the one most recently touched. Returns <c>null</c> when no slot
     /// matches <paramref name="itemName"/> (if given) and no slot anywhere is vacant -- callers
     /// must never be handed an already-FULL, non-matching slot to silently overwrite.</para>
     /// Mirrors order_state.py's <c>_find_bundle_slot</c>.</summary>
-    private (OrderItem Item, int Index)? FindBundleSlot(string component, string? itemName = null)
+    private (OrderItem Item, int Index)? FindBundleSlot(string component, string? itemName = null, string? targetSize = null)
     {
         var candidates = _items.Where(it => _menu.BundleSlots(it.Item).Contains(component)).ToList();
         if (candidates.Count == 0)
@@ -738,6 +741,22 @@ public sealed class OrderState
         if (itemName is not null)
         {
             var key = MenuKeyValidator.MenuKey(itemName);
+            if (targetSize is not null)
+            {
+                for (var i = candidates.Count - 1; i >= 0; i--)
+                {
+                    var comboItem = candidates[i];
+                    var slots = SyncBundleSlotList(comboItem, component);
+                    for (var idx = 0; idx < slots.Count; idx++)
+                    {
+                        var slot = slots[idx];
+                        if (slot.Item.Length > 0 && MenuKeyValidator.MenuKey(slot.Item) == key && slot.Size != targetSize)
+                        {
+                            return (comboItem, idx);
+                        }
+                    }
+                }
+            }
             for (var i = candidates.Count - 1; i >= 0; i--)
             {
                 var comboItem = candidates[i];
@@ -1230,6 +1249,14 @@ public sealed class OrderState
             if (cleanName.Contains('(') && cleanName.Contains(')'))
             {
                 cleanName = cleanName.Replace("(", "with ").Replace(")", "");
+            }
+            var positiveUpcharges = item.ComponentUpcharges.Where(upcharge => upcharge > 0m).ToList();
+            if (positiveUpcharges.Count > 0)
+            {
+                var upchargeTotal = positiveUpcharges.Sum();
+                cleanName = positiveUpcharges.Count == 1
+                    ? $"{cleanName} with a {Money.Format(upchargeTotal)} upcharge"
+                    : $"{cleanName} with {Money.Format(upchargeTotal)} in component upcharges";
             }
             if (!counts.ContainsKey(cleanName))
             {

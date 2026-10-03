@@ -318,6 +318,75 @@ class TestComponentUpcharge:
         order_state_singleton.handle_order_update(sid_b, "modify", "Cherry Limeade", "medium", 1, 2.89)
         assert math.isclose(order_state_singleton.get_order_summary(sid_b).total, 10.19, rel_tol=1e-9)
 
+    @patch("order_state.is_happy_hour", return_value=False)
+    def test_quantity_two_component_upcharges_split_and_repeated_resize_targets_remaining_unit(self, _mock_hh):
+        sid = order_state_singleton.create_session()
+        order_state_singleton.handle_order_update(sid, "add", "SuperSONIC® Double Cheeseburger Combo", "standard", 2, 10.19)
+        order_state_singleton.handle_order_update(sid, "add", "Tots", "medium", 2, 2.79)
+        order_state_singleton.handle_order_update(sid, "add", "Cherry Limeade", "medium", 2, 2.89)
+
+        result = order_state_singleton.handle_order_update(sid, "modify", "Cherry Limeade", "large", 1, 3.39)
+        assert result["combo_component_upcharge_display"] == "$0.50"
+        items = order_state_singleton.get_order_items(sid)
+        assert len(items) == 2
+        assert sorted((item.quantity, item.price, item.componentUpcharges) for item in items) == [
+            (1, 10.19, [0.0, 0.0]),
+            (1, 10.69, [0.0, 0.5]),
+        ]
+        assert math.isclose(order_state_singleton.get_order_summary(sid).total, 20.88, rel_tol=1e-9)
+
+        result = order_state_singleton.handle_order_update(sid, "modify", "Cherry Limeade", "large", 1, 3.39)
+        assert result["combo_component_resized_from_size"] == "medium"
+        items = order_state_singleton.get_order_items(sid)
+        assert len(items) == 2
+        assert all(item.quantity == 1 for item in items)
+        assert all(math.isclose(item.price, 10.69, rel_tol=1e-9) for item in items)
+        assert all(item.componentUpcharges == [0.0, 0.5] for item in items)
+        assert math.isclose(order_state_singleton.get_order_summary(sid).total, 21.38, rel_tol=1e-9)
+        readback = order_state_singleton.get_grouped_order_for_readback(sid)
+        assert "2 SuperSONIC" in readback
+        assert "$0.50 upcharge" in readback
+
+    @patch("order_state.is_happy_hour", return_value=False)
+    @pytest.mark.parametrize(
+        "steps",
+        [
+            [
+                ("add", "SuperSONIC® Double Cheeseburger Combo", "standard", 1, 10.19),
+                ("add", "Tots", "large", 1, 3.49),
+                ("add", "Cherry Limeade", "large", 1, 3.39),
+            ],
+            [
+                ("add", "Tots", "large", 1, 3.49),
+                ("add", "Cherry Limeade", "large", 1, 3.39),
+                ("add", "SuperSONIC® Double Cheeseburger Combo", "standard", 1, 10.19),
+            ],
+            [
+                ("add", "SuperSONIC® Double Cheeseburger Combo", "standard", 1, 10.19),
+                ("add", "Cherry Limeade", "medium", 1, 2.89),
+                ("add", "Tots", "medium", 1, 2.79),
+                ("modify", "Tots", "large", 1, 3.49),
+                ("modify", "Cherry Limeade", "large", 1, 3.39),
+            ],
+            [
+                ("add", "SuperSONIC® Double Cheeseburger Combo", "standard", 1, 10.19),
+                ("add", "Tots", "medium", 1, 2.79),
+                ("add", "Cherry Limeade", "medium", 1, 2.89),
+                ("modify", "Cherry Limeade", "large", 1, 3.39),
+                ("modify", "Tots", "large", 1, 3.49),
+            ],
+        ],
+    )
+    def test_component_upcharge_total_is_path_independent_across_fill_and_resize_orders(self, _mock_hh, steps):
+        sid = order_state_singleton.create_session()
+        for step in steps:
+            order_state_singleton.handle_order_update(sid, *step)
+
+        summary = order_state_singleton.get_order_summary(sid)
+        item = order_state_singleton.get_order_items(sid)[0]
+        assert math.isclose(summary.total, 11.39, rel_tol=1e-9)
+        assert item.componentUpcharges == [0.70, 0.5]
+
     def test_two_combos_need_two_sides_two_drinks(self):
         """Two combos absorb two sides and two drinks."""
         sid = order_state_singleton.create_session()
