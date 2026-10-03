@@ -38,7 +38,7 @@ import { apologyClipUrl, playApologyClip } from "@/lib/apology";
 import { personaAssetUrl } from "@/lib/personaAssets";
 import { loadDemoGuestScript } from "@/lib/demo/guestScript";
 import { browserDemoClock, runDemoScenes } from "@/lib/demo/demoRunner";
-import type { DemoGuestLine, DemoGuestScript, DemoScene, DemoStatus } from "@/lib/demo/demoRunner";
+import type { AssistantAudioState, DemoGuestLine, DemoGuestScript, DemoScene, DemoStatus, GuestTranscriptState } from "@/lib/demo/demoRunner";
 import { SyntheticGuestAudio } from "@/lib/demo/syntheticGuestAudio";
 import type { PersonaDetail, PersonaHeroSpotlight, PersonaTextRoles } from "@/types/persona";
 
@@ -244,7 +244,20 @@ function SonicApp() {
     const demoAbortRef = useRef<AbortController | null>(null);
     const demoAudioRef = useRef<SyntheticGuestAudio | null>(null);
     const isDemoRunningRef = useRef(false);
-    const assistantAudioRef = useRef({ count: 0, activeUntilMs: 0 });
+    const assistantAudioRef = useRef<AssistantAudioState>({
+        count: 0,
+        activeUntilMs: 0,
+        completedAudioResponses: 0,
+        responseInFlight: false,
+        followUpExpected: false
+    });
+    const assistantResponseRef = useRef({
+        inFlight: false,
+        startAudioCount: 0,
+        sawRoundTripToken: false
+    });
+    const guestTranscriptRef = useRef<GuestTranscriptState>({ count: 0, lastTranscript: "" });
+    const demoGuestSpeakingRef = useRef(false);
     const currentRef = useRef(current);
     const menuModeRef = useRef(menuMode);
     const isRecordingRef = useRef(isRecording);
@@ -427,6 +440,14 @@ function SonicApp() {
         onReceivedError: message => console.error("error", message),
         onReceivedResponseCreated: () => {
             if (!isSessionActiveRef.current) return;
+            assistantResponseRef.current.inFlight = true;
+            assistantResponseRef.current.startAudioCount = assistantAudioRef.current.count;
+            assistantResponseRef.current.sawRoundTripToken = false;
+            assistantAudioRef.current = {
+                ...assistantAudioRef.current,
+                responseInFlight: true,
+                followUpExpected: false
+            };
             // Mute mic at the EARLIEST response signal — before audio deltas arrive.
             // The server also receives input_audio_buffer.clear (sent by useRealTime)
             // to flush any echo already in the pipeline.
@@ -441,20 +462,26 @@ function SonicApp() {
             const durationMs = playAudio(message.delta);
             const now = performance.now();
             assistantAudioRef.current = {
+                ...assistantAudioRef.current,
                 count: assistantAudioRef.current.count + 1,
                 activeUntilMs: Math.max(assistantAudioRef.current.activeUntilMs, now) + durationMs
             };
         },
         onReceivedInputAudioBufferSpeechStarted: () => {
             // User speech detected - stop AI playback (barge-in) and unmute mic
-            stopAudioPlayer();
             clearRateLimitNotice();
+            if (isDemoRunningRef.current && demoGuestSpeakingRef.current) {
+                console.log("Demo guest audio ignored as server barge-in");
+                return;
+            }
+            stopAudioPlayer();
             if (isAiSpeakingRef.current) {
                 isAiSpeakingRef.current = false;
                 unmuteAudioRecording();
             }
         },
         onReceivedExtensionMiddleTierToolResponse: ({ tool_name, tool_result }: ExtensionMiddleTierToolResponse) => {
+            assistantAudioRef.current = { ...assistantAudioRef.current, followUpExpected: true };
             if (tool_name === "update_order" || tool_name === "get_order" || tool_name === "reset_order") {
                 const orderSummary: OrderSummaryProps = JSON.parse(tool_result);
                 setOrder(orderSummary);
@@ -501,7 +528,11 @@ function SonicApp() {
             serverSessionLostRef.current = true;
             if (wasPending || hadItems) setConnectionNotice("resumeRejected");
         },
-        onReceivedRoundTripToken: handleSessionIdentifiers,
+        onReceivedRoundTripToken: message => {
+            assistantResponseRef.current.sawRoundTripToken = true;
+            assistantAudioRef.current = { ...assistantAudioRef.current, followUpExpected: false };
+            handleSessionIdentifiers(message);
+        },
         onReceivedRateLimited: ({ final }: ExtensionRateLimited) => {
             if (!isSessionActiveRef.current) return;
             // The failed response never finished, so nothing unmuted the mic.
@@ -533,6 +564,10 @@ function SonicApp() {
             }
         },
         onReceivedInputAudioTranscriptionCompleted: message => {
+            guestTranscriptRef.current = {
+                count: guestTranscriptRef.current.count + 1,
+                lastTranscript: message.transcript
+            };
             const newTranscriptItem = {
                 text: message.transcript,
                 isUser: true,
@@ -541,11 +576,26 @@ function SonicApp() {
             setTranscripts(prev => [...prev, newTranscriptItem]);
         },
         onReceivedResponseDone: message => {
+            if (!isSessionActiveRef.current) return;
+            const responseTracker = assistantResponseRef.current;
+            const responseHadAudio = assistantAudioRef.current.count > responseTracker.startAudioCount;
+            const completedAudioResponses =
+                (assistantAudioRef.current.completedAudioResponses ?? 0) + (responseHadAudio ? 1 : 0);
+            responseTracker.inFlight = false;
+            const followUpExpected = assistantAudioRef.current.followUpExpected || !responseTracker.sawRoundTripToken;
+            assistantAudioRef.current = {
+                ...assistantAudioRef.current,
+                completedAudioResponses,
+                responseInFlight: responseTracker.inFlight,
+                followUpExpected
+            };
+            responseTracker.startAudioCount = assistantAudioRef.current.count;
+            responseTracker.sawRoundTripToken = false;
+
             const transcript = message.response.output.map(output => output.content?.map(content => content.transcript).join(" ")).join(" ");
             if (!transcript) return;
             // Defense in depth (issue 181): a resumed-but-idle socket must never surface assistant
             // output while the guest hasn't (re)started their session.
-            if (!isSessionActiveRef.current) return;
             clearRateLimitNotice();
 
             const newTranscriptItem = {
@@ -626,10 +676,21 @@ function SonicApp() {
     const handleBargeIn = useCallback(() => {
         if (!isAiSpeakingRef.current) return;
         if (awaitingGreetingDoneRef.current) return;
+        if (isDemoRunningRef.current && demoGuestSpeakingRef.current) {
+            console.log("Demo guest audio ignored as local barge-in");
+            return;
+        }
         console.log("Barge-in detected — interrupting AI");
         isAiSpeakingRef.current = false;
         stopAudioPlayer();
-        assistantAudioRef.current = { count: assistantAudioRef.current.count, activeUntilMs: performance.now() };
+        assistantResponseRef.current.inFlight = false;
+        assistantResponseRef.current.sawRoundTripToken = false;
+        assistantAudioRef.current = {
+            ...assistantAudioRef.current,
+            activeUntilMs: performance.now(),
+            responseInFlight: false,
+            followUpExpected: false
+        };
         // Cancel the AI's in-flight response so the middleware also
         // resets echo suppression and lets our audio through.
         realtime.cancelResponse();
@@ -647,7 +708,14 @@ function SonicApp() {
         stopAudioPlayer();
         isSessionActiveRef.current = false;
         isAiSpeakingRef.current = false;
-        assistantAudioRef.current = { count: assistantAudioRef.current.count, activeUntilMs: performance.now() };
+        assistantResponseRef.current.inFlight = false;
+        assistantResponseRef.current.sawRoundTripToken = false;
+        assistantAudioRef.current = {
+            ...assistantAudioRef.current,
+            activeUntilMs: performance.now(),
+            responseInFlight: false,
+            followUpExpected: false
+        };
         awaitingGreetingDoneRef.current = false;
         clearRateLimitNotice();
         if (useAzureSpeechOn) {
@@ -1003,6 +1071,7 @@ function SonicApp() {
     };
 
     const setDemoStatus = (status: DemoStatus) => {
+        demoGuestSpeakingRef.current = status.state === "guest" && status.speaking;
         if (status.state === "scene") {
             setDemoUi({
                 running: true,
@@ -1060,6 +1129,7 @@ function SonicApp() {
                 stopConversation: stopDemoConversation,
                 playGuestLine: playDemoGuestLine,
                 getAssistantAudioState: () => assistantAudioRef.current,
+                getGuestTranscriptState: () => guestTranscriptRef.current,
                 setStatus: setDemoStatus
             }, { signal: controller.signal });
         } catch (error) {

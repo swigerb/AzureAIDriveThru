@@ -75,6 +75,43 @@ describe("demo runner", () => {
         expect(played).toEqual(["01", "02", "03"]);
     });
 
+    it("retries a guest line once when the received transcript is empty", async () => {
+        const clock = new FakeClock();
+        const assistantState = { count: 0, activeUntilMs: -10_000, completedAudioResponses: 0 };
+        const transcriptState = { count: 0, lastTranscript: "" };
+        const played: string[] = [];
+        const attemptsByLine: Record<string, number> = {};
+        const operations: DemoOperations = {
+            prepareScene: vi.fn(async () => undefined),
+            startConversation: vi.fn(async () => {
+                assistantState.count += 1;
+                assistantState.completedAudioResponses += 1;
+            }),
+            stopConversation: vi.fn(async () => undefined),
+            playGuestLine: vi.fn(async (_scene, line) => {
+                played.push(line.id);
+                attemptsByLine[line.id] = (attemptsByLine[line.id] ?? 0) + 1;
+                transcriptState.count += 1;
+                transcriptState.lastTranscript = line.id === "01" && attemptsByLine[line.id] === 1 ? "" : `Line ${line.id}`;
+                if (transcriptState.lastTranscript) {
+                    assistantState.count += 1;
+                    assistantState.completedAudioResponses += 1;
+                }
+            }),
+            getAssistantAudioState: () => assistantState,
+            getGuestTranscriptState: () => transcriptState,
+            setStatus: vi.fn()
+        };
+
+        await runDemoScenes([{ personaId: "test-alpha", script: script(["01", "02"]) }], operations, {
+            clock,
+            timings: { finalHoldMs: 1, pollMs: 100 },
+            signal: new AbortController().signal
+        });
+
+        expect(played).toEqual(["01", "01", "02"]);
+    });
+
     it("waits until new assistant audio is quiet before continuing", async () => {
         const clock = new FakeClock();
         const state = { count: 1, activeUntilMs: 3_000 };
@@ -83,6 +120,79 @@ describe("demo runner", () => {
         await waitForAssistantIdleAfter(0, () => state, clock, { assistantQuietMs: 2_200, pollMs: 500 }, 10_000, controller.signal);
 
         expect(clock.now()).toBeGreaterThanOrEqual(5_200);
+    });
+
+    it("waits through a tool gap for the answer response before playing the next line", async () => {
+        const clock = new FakeClock();
+        const state = {
+            count: 0,
+            activeUntilMs: -10_000,
+            completedAudioResponses: 0,
+            responseInFlight: false,
+            followUpExpected: false
+        };
+        const playedAt: Record<string, number> = {};
+        const events = [
+            () => {
+                if (clock.time >= 100 && state.count === 1) {
+                    state.count = 2;
+                    state.activeUntilMs = 150;
+                }
+            },
+            () => {
+                if (clock.time >= 250 && state.completedAudioResponses === 1) {
+                    state.completedAudioResponses = 2;
+                    state.responseInFlight = false;
+                    state.followUpExpected = true;
+                }
+            },
+            () => {
+                if (clock.time >= 4_000 && state.followUpExpected) {
+                    state.responseInFlight = true;
+                    state.followUpExpected = false;
+                }
+            },
+            () => {
+                if (clock.time >= 4_100 && state.count === 2) {
+                    state.count = 3;
+                    state.activeUntilMs = 4_500;
+                }
+            },
+            () => {
+                if (clock.time >= 4_600 && state.completedAudioResponses === 2) {
+                    state.completedAudioResponses = 3;
+                    state.responseInFlight = false;
+                }
+            }
+        ];
+        clock.onSleep = () => events.forEach(apply => apply());
+        const operations: DemoOperations = {
+            prepareScene: vi.fn(async () => undefined),
+            startConversation: vi.fn(async () => {
+                state.count = 1;
+                state.completedAudioResponses = 1;
+            }),
+            stopConversation: vi.fn(async () => undefined),
+            playGuestLine: vi.fn(async (_scene, line) => {
+                playedAt[line.id] = clock.now();
+                if (line.id === "01") state.responseInFlight = true;
+                if (line.id === "02") {
+                    state.count += 1;
+                    state.completedAudioResponses += 1;
+                    state.activeUntilMs = -10_000;
+                }
+            }),
+            getAssistantAudioState: () => state,
+            setStatus: vi.fn()
+        };
+
+        await runDemoScenes([{ personaId: "test-alpha", script: script(["01", "02"]) }], operations, {
+            clock,
+            timings: { finalHoldMs: 1, pollMs: 100 },
+            signal: new AbortController().signal
+        });
+
+        expect(playedAt["02"]).toBeGreaterThanOrEqual(6_700);
     });
 
     it("times out when assistant audio never arrives", async () => {
