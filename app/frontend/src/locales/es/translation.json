@@ -61,6 +61,15 @@
         "cascadeGroup": "Cascada",
         "noModelsAvailable": "No hay modelos disponibles"
     },
+    "settings": {
+        "demoMode": {
+            "label": "Modo demo",
+            "description": "Ejecuta una demostración con voz de invitado guiada y manos libres.",
+            "on": "Demo activada",
+            "off": "Demo desactivada",
+            "aria": "Activar o desactivar el modo demo"
+        }
+    },
     "hero": {
         "badge": "Demostración de pedidos por voz",
         "subhead": "Un asistente de pedidos por voz basado en personajes, fundamentado con Microsoft Foundry, Azure OpenAI y Azure AI Search.",

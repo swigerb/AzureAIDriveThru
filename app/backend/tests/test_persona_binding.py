@@ -827,6 +827,12 @@ class PersonaAssetAndMenuRouteTests(unittest.IsolatedAsyncioTestCase):
         resp = await self.client.get("/personas/test-alpha/assets/sub/icon.png")
         self.assertEqual(resp.status, 200)
 
+    async def test_mp3_asset_returns_audio_mpeg_content_type(self):
+        resp = await self.client.get("/personas/test-alpha/assets/sample.mp3")
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(resp.content_type, "audio/mpeg")
+        self.assertEqual(resp.headers["X-Content-Type-Options"], "nosniff")
+
     async def test_menu_json_returns_200_as_application_json_with_immutable_cache_header_when_v_matches(self):
         from app import _STATIC_IMMUTABLE_MAX_AGE, _content_hash
         persona = self.catalog.get("test-alpha")

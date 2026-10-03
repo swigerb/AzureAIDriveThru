@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, lazy, Suspense, memo } from "react";
-import { Mic, MicOff, Menu, MessageSquare, LogOut, ChevronDown } from "lucide-react";
+import { Mic, MicOff, Menu, MessageSquare, LogOut, ChevronDown, Play, Square } from "lucide-react";
 import { FaGithub } from "react-icons/fa";
 import { AnimatePresence, motion } from "framer-motion";
 import { useTranslation } from "react-i18next";
@@ -19,7 +19,7 @@ import BackendPicker from "@/components/ui/backend-picker";
 const Settings = lazy(() => import("@/components/ui/settings"));
 import useRealTime from "@/hooks/useRealtime";
 import useAzureSpeech from "@/hooks/useAzureSpeech";
-import useAudioRecorder from "@/hooks/useAudioRecorder";
+import useAudioRecorder, { AudioStreamProvider } from "@/hooks/useAudioRecorder";
 import useAudioPlayer from "@/hooks/useAudioPlayer";
 
 import { ExtensionMiddleTierToolResponse, ExtensionRateLimited, ExtensionRoundTripToken, ExtensionSessionMetadata, ExtensionSessionResumed } from "./types";
@@ -36,6 +36,10 @@ import { resolveModelId, modelStorageKey } from "@/lib/models";
 import { resolveMenuMode, menuModeStorageKey } from "@/lib/menuMode";
 import { apologyClipUrl, playApologyClip } from "@/lib/apology";
 import { personaAssetUrl } from "@/lib/personaAssets";
+import { loadDemoGuestScript } from "@/lib/demo/guestScript";
+import { browserDemoClock, runDemoScenes } from "@/lib/demo/demoRunner";
+import type { DemoGuestLine, DemoGuestScript, DemoScene, DemoStatus } from "@/lib/demo/demoRunner";
+import { SyntheticGuestAudio } from "@/lib/demo/syntheticGuestAudio";
 import type { PersonaDetail, PersonaHeroSpotlight, PersonaTextRoles } from "@/types/persona";
 
 import azureLogo from "@/assets/azurelogo.svg";
@@ -97,6 +101,66 @@ function useDemoData(personaId: string, enabled: boolean) {
     }, [personaId, enabled]);
 
     return { dummyOrder, dummyTranscripts };
+}
+
+const DEMO_MODE_STORAGE_KEY = "demoModeEnabled";
+const RESUME_STORAGE_KEY_PREFIX = "drivethru.resumeId.";
+
+function demoResumeStorageKey(personaId?: string): string {
+    return `${RESUME_STORAGE_KEY_PREFIX}${personaId ?? "default"}`;
+}
+
+type DemoUiState = {
+    running: boolean;
+    line: DemoGuestLine | null;
+    speaking: boolean;
+    title: string;
+    kicker: string;
+    error: string | null;
+};
+
+const IDLE_DEMO_UI: DemoUiState = {
+    running: false,
+    line: null,
+    speaking: false,
+    title: "",
+    kicker: "",
+    error: null
+};
+
+function DemoGuestOverlay({ state }: { state: DemoUiState }) {
+    if (!state.running && !state.line && !state.title && !state.error) return null;
+    const bars = Array.from({ length: 30 }, (_, index) => <span key={index} className="demo-wave-bar" />);
+    return (
+        <div className="pointer-events-none fixed inset-x-0 bottom-5 z-50 flex flex-col items-center gap-4 px-4 lg:items-end lg:px-8">
+            {(state.title || state.kicker) && (
+                <div className="w-full max-w-2xl rounded-2xl border border-white/20 bg-slate-950/90 px-5 py-3 text-white shadow-2xl backdrop-blur-md lg:mr-[34rem]">
+                    <p className="text-xs font-black uppercase tracking-[0.35em] text-cyan-200">{state.kicker}</p>
+                    <p className="mt-1 text-2xl font-black">{state.title}</p>
+                </div>
+            )}
+            <div
+                className={`demo-guest-card w-full max-w-[520px] rounded-[32px] border p-7 text-white ${
+                    state.speaking ? "speaking" : ""
+                }`}
+                aria-live="polite"
+            >
+                <div className="flex items-center gap-4">
+                    <div className="demo-mic-badge grid h-[70px] w-[70px] place-items-center rounded-full text-4xl">
+                        🎙️
+                    </div>
+                    <div>
+                        <p className="text-xs font-black uppercase tracking-[0.28em] text-cyan-200">Ava guest voice</p>
+                        <p className="mt-1 text-3xl font-black">Guest at the speaker</p>
+                    </div>
+                </div>
+                <p className="mt-6 min-h-[58px] text-[22px] font-bold leading-tight text-slate-50">
+                    {state.error ?? state.line?.text ?? "Waiting for the guest line..."}
+                </p>
+                <div className="mt-5 flex h-12 items-center gap-1.5">{bars}</div>
+            </div>
+        </div>
+    );
 }
 
 function SonicApp() {
@@ -172,10 +236,38 @@ function SonicApp() {
     const [menuMode, setMenuMode] = useState<string>(() => {
         return current.features.dayparts ? resolveMenuMode(localStorage.getItem(menuModeStorageKey(current.id))) : "";
     });
+    const [demoModeEnabled, setDemoModeEnabled] = useState<boolean>(() => {
+        return localStorage.getItem(DEMO_MODE_STORAGE_KEY) === "true";
+    });
+    const [currentDemoScript, setCurrentDemoScript] = useState<DemoGuestScript | null>(null);
+    const [demoUi, setDemoUi] = useState<DemoUiState>(IDLE_DEMO_UI);
+    const demoAbortRef = useRef<AbortController | null>(null);
+    const demoAudioRef = useRef<SyntheticGuestAudio | null>(null);
+    const isDemoRunningRef = useRef(false);
+    const assistantAudioRef = useRef({ count: 0, activeUntilMs: 0 });
+    const currentRef = useRef(current);
+    const menuModeRef = useRef(menuMode);
+    const isRecordingRef = useRef(isRecording);
+
+    useEffect(() => {
+        currentRef.current = current;
+    }, [current]);
+
+    useEffect(() => {
+        menuModeRef.current = menuMode;
+    }, [menuMode]);
+
+    useEffect(() => {
+        isRecordingRef.current = isRecording;
+    }, [isRecording]);
 
     useEffect(() => {
         localStorage.setItem("showSessionTokens", showSessionTokens.toString());
     }, [showSessionTokens]);
+
+    useEffect(() => {
+        localStorage.setItem(DEMO_MODE_STORAGE_KEY, demoModeEnabled.toString());
+    }, [demoModeEnabled]);
 
     useEffect(() => {
         localStorage.setItem("verboseLogging", verboseLogging.toString());
@@ -238,6 +330,16 @@ function SonicApp() {
         localStorage.setItem(menuModeStorageKey(current.id), resolved);
     }, [current.id, current.features.dayparts]);
 
+    useEffect(() => {
+        const controller = new AbortController();
+        setCurrentDemoScript(null);
+        if (!demoModeEnabled || !current.id) return () => controller.abort();
+        void loadDemoGuestScript(current.id, controller.signal).then(script => {
+            if (!controller.signal.aborted) setCurrentDemoScript(script);
+        });
+        return () => controller.abort();
+    }, [current.id, demoModeEnabled]);
+
     const handleSessionIdentifiers = useCallback((message: ExtensionSessionMetadata | ExtensionRoundTripToken) => {
         const snapshot: SessionIdentifiersState = {
             sessionToken: message.sessionToken,
@@ -252,7 +354,9 @@ function SonicApp() {
     const awaitingGreetingDoneRef = useRef(false);
     const greetingAudioSeenRef = useRef(false);
     const startMicInFlightRef = useRef<Promise<void> | null>(null);
+    const audioCaptureReadyRef = useRef(false);
     const isAiSpeakingRef = useRef(false);
+    const audioStreamProviderRef = useRef<AudioStreamProvider | undefined>(undefined);
 
     // A transport drop (1001/1002/1006/1011) is resumable: the hook reconnects
     // and presents the tab's resume id, and the server holds the order for a
@@ -334,7 +438,12 @@ function SonicApp() {
         onReceivedResponseAudioDelta: message => {
             if (!isSessionActiveRef.current) return;
             greetingAudioSeenRef.current = true;
-            playAudio(message.delta);
+            const durationMs = playAudio(message.delta);
+            const now = performance.now();
+            assistantAudioRef.current = {
+                count: assistantAudioRef.current.count + 1,
+                activeUntilMs: Math.max(assistantAudioRef.current.activeUntilMs, now) + durationMs
+            };
         },
         onReceivedInputAudioBufferSpeechStarted: () => {
             // User speech detected - stop AI playback (barge-in) and unmute mic
@@ -463,7 +572,7 @@ function SonicApp() {
                         }
 
                         if (!isSessionActiveRef.current) return;
-                        await startAudioRecording();
+                        audioCaptureReadyRef.current = await startAudioRecording(audioStreamProviderRef.current);
                     })().finally(() => {
                         startMicInFlightRef.current = null;
                     });
@@ -520,6 +629,7 @@ function SonicApp() {
         console.log("Barge-in detected — interrupting AI");
         isAiSpeakingRef.current = false;
         stopAudioPlayer();
+        assistantAudioRef.current = { count: assistantAudioRef.current.count, activeUntilMs: performance.now() };
         // Cancel the AI's in-flight response so the middleware also
         // resets echo suppression and lets our audio through.
         realtime.cancelResponse();
@@ -532,9 +642,12 @@ function SonicApp() {
 
     const stopConversation = async () => {
         await stopAudioRecording();
+        audioCaptureReadyRef.current = false;
+        audioStreamProviderRef.current = undefined;
         stopAudioPlayer();
         isSessionActiveRef.current = false;
         isAiSpeakingRef.current = false;
+        assistantAudioRef.current = { count: assistantAudioRef.current.count, activeUntilMs: performance.now() };
         awaitingGreetingDoneRef.current = false;
         clearRateLimitNotice();
         if (useAzureSpeechOn) {
@@ -562,6 +675,7 @@ function SonicApp() {
         let micStarted = false;
         try {
             micStarted = await startAudioRecording();
+            audioCaptureReadyRef.current = micStarted;
         } catch (error) {
             console.warn("Mic could not restart after reconnect:", error);
         }
@@ -603,7 +717,9 @@ function SonicApp() {
     // `applyPersona()` (new socket still connecting) correctly waits for it instead of dropping
     // the frame; on a failed switch the OLD socket is untouched and still OPEN, so it sends
     // immediately, exactly as an ordinary tap would have.
-    const beginRecording = async () => {
+    const beginRecording = async (audioStreamProvider?: AudioStreamProvider) => {
+        audioStreamProviderRef.current = audioStreamProvider;
+        audioCaptureReadyRef.current = false;
         const continuing = !useAzureSpeechOn && resumedSessionRef.current && !serverSessionLostRef.current;
         if (!continuing) setSessionIdentifiers(null);
         setConnectionNotice(null);
@@ -628,7 +744,7 @@ function SonicApp() {
         if (useAzureSpeechOn) {
             // AzureSpeech mode doesn't play a synthesized greeting audio stream.
             azureSpeech.startSession();
-            await startAudioRecording();
+            audioCaptureReadyRef.current = await startAudioRecording(audioStreamProvider);
         } else {
             realtime.startSession();
             if (verboseLogging) {
@@ -640,8 +756,10 @@ function SonicApp() {
 
             if (continuing && !startMicInFlightRef.current) {
                 // Resumed session: no greeting is coming.
-                startMicInFlightRef.current = startAudioRecording()
-                    .then(() => undefined)
+                startMicInFlightRef.current = startAudioRecording(audioStreamProvider)
+                    .then(started => {
+                        audioCaptureReadyRef.current = started;
+                    })
                     .finally(() => {
                         startMicInFlightRef.current = null;
                     });
@@ -653,8 +771,10 @@ function SonicApp() {
                 if (!awaitingGreetingDoneRef.current) return;
                 awaitingGreetingDoneRef.current = false;
                 if (startMicInFlightRef.current) return;
-                startMicInFlightRef.current = startAudioRecording()
-                    .then(() => undefined)
+                startMicInFlightRef.current = startAudioRecording(audioStreamProvider)
+                    .then(started => {
+                        audioCaptureReadyRef.current = started;
+                    })
                     .finally(() => {
                         startMicInFlightRef.current = null;
                     });
@@ -827,6 +947,147 @@ function SonicApp() {
         localStorage.setItem(menuModeStorageKey(current.id), mode);
     };
 
+    const ensureDemoAudio = () => {
+        if (!demoAudioRef.current) demoAudioRef.current = new SyntheticGuestAudio();
+        return demoAudioRef.current;
+    };
+
+    const waitForCondition = async (predicate: () => boolean, timeoutMs: number, signal: AbortSignal) => {
+        const deadline = performance.now() + timeoutMs;
+        while (performance.now() < deadline) {
+            if (signal.aborted) throw Object.assign(new Error("Demo stopped"), { name: "AbortError" });
+            if (predicate()) return;
+            await browserDemoClock.sleep(50, signal);
+        }
+        throw new Error("Timed out waiting for demo state");
+    };
+
+    const prepareDemoScene = async (scene: DemoScene, signal: AbortSignal) => {
+        if (currentRef.current.id !== scene.personaId) {
+            await handleSelectPersona(scene.personaId);
+            await waitForCondition(() => currentRef.current.id === scene.personaId, 5_000, signal);
+        }
+
+        if (isRecordingRef.current) {
+            await stopConversation();
+        }
+        sessionStorage.removeItem(demoResumeStorageKey(scene.personaId));
+        await startNewOrder();
+
+        if (scene.script.menuMode) {
+            setMenuMode(scene.script.menuMode);
+            localStorage.setItem(menuModeStorageKey(scene.personaId), scene.script.menuMode);
+            await waitForCondition(() => menuModeRef.current === scene.script.menuMode, 2_000, signal);
+        }
+
+        ensureDemoAudio().reset();
+    };
+
+    const startDemoConversation = async (_scene: DemoScene, _signal: AbortSignal) => {
+        const provider: AudioStreamProvider = () => ensureDemoAudio().createStream();
+        await beginRecording(provider);
+    };
+
+    const playDemoGuestLine = async (scene: DemoScene, line: DemoGuestLine, signal: AbortSignal) => {
+        await waitForCondition(
+            () => audioCaptureReadyRef.current && !awaitingGreetingDoneRef.current && !startMicInFlightRef.current,
+            5_000,
+            signal
+        );
+        await ensureDemoAudio().playClip(personaAssetUrl(scene.personaId, `assets/${line.audio}`), signal);
+    };
+
+    const stopDemoConversation = async () => {
+        await stopConversation();
+        demoAudioRef.current?.reset();
+    };
+
+    const setDemoStatus = (status: DemoStatus) => {
+        if (status.state === "scene") {
+            setDemoUi({
+                running: true,
+                line: null,
+                speaking: false,
+                title: status.scene.script.title,
+                kicker: status.scene.script.kicker,
+                error: null
+            });
+        } else if (status.state === "guest") {
+            setDemoUi({
+                running: true,
+                line: status.line,
+                speaking: status.speaking,
+                title: status.scene.script.title,
+                kicker: status.scene.script.kicker,
+                error: null
+            });
+        } else {
+            setDemoUi(IDLE_DEMO_UI);
+        }
+    };
+
+    const runDemo = async (mode: "current" | "tour") => {
+        if (isDemoRunningRef.current) return;
+        const controller = new AbortController();
+        demoAbortRef.current = controller;
+        isDemoRunningRef.current = true;
+        setPendingPersonaSwitchId(null);
+        setDemoUi({ ...IDLE_DEMO_UI, running: true });
+        try {
+            await Promise.all([resetAudioPlayer(), ensureDemoAudio().prime()]);
+            const scenes: DemoScene[] =
+                mode === "current"
+                    ? currentDemoScript
+                        ? [{ personaId: current.id, script: currentDemoScript }]
+                        : []
+                    : (
+                          await Promise.all(
+                              personas.map(async persona => {
+                                  const script = await loadDemoGuestScript(persona.id, controller.signal);
+                                  return script ? { personaId: persona.id, script } : null;
+                              })
+                          )
+                      ).filter((scene): scene is DemoScene => scene !== null);
+
+            if (scenes.length === 0) {
+                setDemoUi({ ...IDLE_DEMO_UI, error: "No demo script is available for this persona." });
+                return;
+            }
+
+            await runDemoScenes(scenes, {
+                prepareScene: prepareDemoScene,
+                startConversation: startDemoConversation,
+                stopConversation: stopDemoConversation,
+                playGuestLine: playDemoGuestLine,
+                getAssistantAudioState: () => assistantAudioRef.current,
+                setStatus: setDemoStatus
+            }, { signal: controller.signal });
+        } catch (error) {
+            if ((error as Error).name !== "AbortError") {
+                setDemoUi(current => ({
+                    ...current,
+                    running: false,
+                    speaking: false,
+                    error: (error as Error).message || "Demo stopped unexpectedly."
+                }));
+            }
+        } finally {
+            isDemoRunningRef.current = false;
+            demoAbortRef.current = null;
+            await stopDemoConversation();
+            demoAudioRef.current?.dispose();
+            demoAudioRef.current = null;
+        }
+    };
+
+    const stopDemo = () => {
+        demoAbortRef.current?.abort();
+        void stopDemoConversation();
+        setDemoUi(IDLE_DEMO_UI);
+    };
+
+    const canRunDemo = demoModeEnabled && Boolean(currentDemoScript) && !useAzureSpeechOn;
+
     return (
         <div className={`min-h-screen bg-background p-4 text-foreground ${theme}`}>
             <div className="mx-auto max-w-7xl space-y-6">
@@ -889,6 +1150,8 @@ function SonicApp() {
                                 menuModeEnabled={current.features.dayparts}
                                 menuMode={menuMode}
                                 onMenuModeChange={handleMenuModeChange}
+                                demoModeEnabled={demoModeEnabled}
+                                onDemoModeChange={setDemoModeEnabled}
                                 // Rick's PR 166 round-1 review, required item 3: same lock rule as
                                 // persona/model above -- menuMode is a getSocketUrl dependency,
                                 // so toggling it mid-session tears down and reconnects the live
@@ -978,6 +1241,37 @@ function SonicApp() {
                                         {t("app.newOrder")}
                                     </Button>
                                 )}
+                                {(canRunDemo || demoUi.running) && (
+                                    <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
+                                        {demoUi.running ? (
+                                            <Button variant="outline" size="sm" onClick={stopDemo} className="text-xs font-semibold">
+                                                <Square className="mr-2 h-3 w-3" />
+                                                Stop demo
+                                            </Button>
+                                        ) : (
+                                            <>
+                                                <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    onClick={() => void runDemo("current")}
+                                                    className="text-xs font-semibold"
+                                                >
+                                                    <Play className="mr-2 h-3 w-3" />
+                                                    Run demo: This brand
+                                                </Button>
+                                                <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    onClick={() => void runDemo("tour")}
+                                                    className="text-xs font-semibold"
+                                                >
+                                                    Full tour
+                                                </Button>
+                                            </>
+                                        )}
+                                    </div>
+                                )}
+                                {demoUi.error && <p className="mt-2 text-center text-xs font-medium text-destructive">{demoUi.error}</p>}
                             </div>
                         </div>
                     </Card>
@@ -1033,6 +1327,7 @@ function SonicApp() {
                 onConfirm={confirmPersonaSwitch}
                 onCancel={cancelPersonaSwitch}
             />
+            <DemoGuestOverlay state={demoUi} />
         </div>
     );
 }

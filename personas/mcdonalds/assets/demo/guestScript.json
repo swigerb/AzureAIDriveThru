@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "voice": "en-US-AvaMultilingualNeural",
+  "menuMode": "lunch",
+  "title": "Meal sizes stay consistent",
+  "kicker": "SERVER-SIDE PRICING AND COMBO RULES",
+  "lines": [
+    {
+      "id": "01",
+      "text": "Can I get a large Quarter Pounder with Cheese meal with a Diet Coke?",
+      "audio": "demo/guest/01.mp3"
+    },
+    {
+      "id": "02",
+      "text": "Actually make that a medium.",
+      "audio": "demo/guest/02.mp3"
+    },
+    {
+      "id": "03",
+      "text": "That's all.",
+      "audio": "demo/guest/03.mp3"
+    }
+  ]
+}

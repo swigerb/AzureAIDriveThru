@@ -65,6 +65,30 @@ public sealed class PersonaAssetRouteConformanceTests(ConformanceFixture fixture
     });
 
     [Fact]
+    public Task Persona_asset_route_serves_mp3_with_audio_mpeg_content_type() => fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var http = ConformanceHttpClient.Create();
+
+        using var indexResponse = await http.GetAsync(new Uri(fixture.Backend!.BaseUri, "/api/personas"), ct);
+        using var indexDocument = JsonDocument.Parse(await indexResponse.Content.ReadAsStreamAsync(ct));
+        var personaIds = indexDocument.RootElement.GetProperty("personas").EnumerateArray()
+            .Select(p => p.GetProperty("id").GetString())
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .ToArray();
+
+        foreach (var personaId in personaIds)
+        {
+            using var response = await http.GetAsync(new Uri(fixture.Backend!.BaseUri, $"/personas/{personaId}/assets/demo/guest/01.mp3"), ct);
+            if (response.StatusCode != HttpStatusCode.OK) continue;
+            Assert.Contains("audio/mpeg", response.Content.Headers.ContentType?.ToString() ?? "", StringComparison.Ordinal);
+            return;
+        }
+
+        Assert.Fail("Expected at least one enabled persona to serve a demo MP3 clip.");
+    });
+
+    [Fact]
     public Task Persona_menu_route_serves_json_with_200_and_immutable_caching_when_v_matches() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;

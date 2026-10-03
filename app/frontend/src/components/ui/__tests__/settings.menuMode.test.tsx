@@ -91,3 +91,25 @@ describe("Settings menu mode toggle", () => {
         expect(screen.queryByRole("radiogroup", { name: /menu mode/i })).not.toBeInTheDocument();
     });
 });
+
+describe("Settings demo mode toggle", () => {
+    it("renders off by default and calls back when enabled", async () => {
+        const onDemoModeChange = vi.fn();
+        renderSettings({ demoModeEnabled: false, onDemoModeChange });
+        await userEvent.click(screen.getByRole("button", { name: /open settings/i }));
+
+        expect(screen.getByText("settings.demoMode.label")).toBeInTheDocument();
+        expect(screen.getByText("settings.demoMode.off")).toBeInTheDocument();
+
+        await userEvent.click(screen.getByRole("checkbox", { name: "settings.demoMode.aria" }));
+        expect(onDemoModeChange).toHaveBeenCalledWith(true);
+    });
+
+    it("renders the persisted on state", async () => {
+        renderSettings({ demoModeEnabled: true });
+        await userEvent.click(screen.getByRole("button", { name: /open settings/i }));
+
+        expect(screen.getByText("settings.demoMode.on")).toBeInTheDocument();
+        expect(screen.getByRole("checkbox", { name: "settings.demoMode.aria" })).toBeChecked();
+    });
+});
