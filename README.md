@@ -20,25 +20,9 @@ https://github.com/user-attachments/assets/d4dc2713-5117-45cd-ba49-9aa2d707432d
 | Dunkin' | ![Dunkin desktop order view](docs/images/dunkin-desktop.png) |
 | McDonald's | ![McDonald's desktop order view](docs/images/mcdonalds-desktop.png) |
 
-![Agentic architecture flow from the McDonald's standalone demo, retained as a historical visual for the shared voice ordering pattern](docs/images/agentic-architecture-flow.png)
-
-The architecture image above came from the standalone McDonald's demo. It is useful for the agentic ordering flow, but the current unified app uses the architecture shown below.
-
 ## Current architecture
 
-```mermaid
-flowchart LR
-    Browser[React frontend\nmic, transcript, live order ticket] -->|/api/personas and assets| Backend[Python aiohttp backend\nproduction container]
-    Browser -->|/realtime WebSocket\npersona, model, menu mode| Backend
-    Backend -->|DefaultAzureCredential| Foundry[Microsoft Foundry AIServices\nregion from AZURE_OPENAI_SERVICE_LOCATION]
-    Backend -->|hybrid menu lookup| Search[Azure AI Search\nBasic by default\none index per persona]
-    Backend --> Order[Server-side order state\npricing, tax, bundles, dayparts]
-    Foundry --> RT[gpt-realtime-2.1\nvoice marin\nwhisper-1 transcription]
-    Foundry --> Cascade[gpt-4o-transcribe\ngpt-5-mini or phi-4\ngpt-4o-mini-tts]
-    Backend --> ACA[Azure Container Apps\nsingle public Python app]
-    ACA --> Logs[Log Analytics]
-    Backend -. parity .-> Dotnet[C# .NET 11 backend\nconformance target]
-```
+![Microsoft Foundry AI Drive Thru architecture: the guest browser signs in with Microsoft Entra ID and connects over HTTPS and a realtime WebSocket to the Python aiohttp backend on Azure Container Apps, which calls Microsoft Foundry models and Azure AI Search with managed identity](docs/images/azure-ai-drive-thru-architecture.png)
 
 ## Features
 
