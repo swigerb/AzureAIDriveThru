@@ -106,7 +106,7 @@ azd up
 
 The `postprovision` hooks configure auth env files and build persona search indexes with `scripts/setup_search_index.ps1` or `.sh`. The `postdeploy` hook runs `scripts/smoke_realtime.ps1` or `.sh` as a non-fatal realtime smoke check.
 
-Once the app has a public URL, re-run `Setup-EntraAuth.ps1` with `-FromAzdEnv` to add its redirect URI (see [DEPLOY.md](DEPLOY.md#setup), case (c)), then verify with:
+Once the app has a public URL, re-run `./scripts/Setup-EntraAuth.ps1 -TenantId <tenant-id> -ClientId <client-id> -FromAzdEnv -Apply` to add its redirect URI (see [DEPLOY.md](DEPLOY.md#setup), case (c)), then verify with:
 
 ```powershell
 ./scripts/Verify-ProductionAuth.ps1
