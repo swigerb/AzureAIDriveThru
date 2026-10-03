@@ -354,6 +354,7 @@ function SonicApp() {
     const awaitingGreetingDoneRef = useRef(false);
     const greetingAudioSeenRef = useRef(false);
     const startMicInFlightRef = useRef<Promise<void> | null>(null);
+    const audioCaptureReadyRef = useRef(false);
     const isAiSpeakingRef = useRef(false);
     const audioStreamProviderRef = useRef<AudioStreamProvider | undefined>(undefined);
 
@@ -571,7 +572,7 @@ function SonicApp() {
                         }
 
                         if (!isSessionActiveRef.current) return;
-                        await startAudioRecording(audioStreamProviderRef.current);
+                        audioCaptureReadyRef.current = await startAudioRecording(audioStreamProviderRef.current);
                     })().finally(() => {
                         startMicInFlightRef.current = null;
                     });
@@ -641,6 +642,7 @@ function SonicApp() {
 
     const stopConversation = async () => {
         await stopAudioRecording();
+        audioCaptureReadyRef.current = false;
         audioStreamProviderRef.current = undefined;
         stopAudioPlayer();
         isSessionActiveRef.current = false;
@@ -673,6 +675,7 @@ function SonicApp() {
         let micStarted = false;
         try {
             micStarted = await startAudioRecording();
+            audioCaptureReadyRef.current = micStarted;
         } catch (error) {
             console.warn("Mic could not restart after reconnect:", error);
         }
@@ -716,6 +719,7 @@ function SonicApp() {
     // immediately, exactly as an ordinary tap would have.
     const beginRecording = async (audioStreamProvider?: AudioStreamProvider) => {
         audioStreamProviderRef.current = audioStreamProvider;
+        audioCaptureReadyRef.current = false;
         const continuing = !useAzureSpeechOn && resumedSessionRef.current && !serverSessionLostRef.current;
         if (!continuing) setSessionIdentifiers(null);
         setConnectionNotice(null);
@@ -740,7 +744,7 @@ function SonicApp() {
         if (useAzureSpeechOn) {
             // AzureSpeech mode doesn't play a synthesized greeting audio stream.
             azureSpeech.startSession();
-            await startAudioRecording(audioStreamProvider);
+            audioCaptureReadyRef.current = await startAudioRecording(audioStreamProvider);
         } else {
             realtime.startSession();
             if (verboseLogging) {
@@ -753,7 +757,9 @@ function SonicApp() {
             if (continuing && !startMicInFlightRef.current) {
                 // Resumed session: no greeting is coming.
                 startMicInFlightRef.current = startAudioRecording(audioStreamProvider)
-                    .then(() => undefined)
+                    .then(started => {
+                        audioCaptureReadyRef.current = started;
+                    })
                     .finally(() => {
                         startMicInFlightRef.current = null;
                     });
@@ -766,7 +772,9 @@ function SonicApp() {
                 awaitingGreetingDoneRef.current = false;
                 if (startMicInFlightRef.current) return;
                 startMicInFlightRef.current = startAudioRecording(audioStreamProvider)
-                    .then(() => undefined)
+                    .then(started => {
+                        audioCaptureReadyRef.current = started;
+                    })
                     .finally(() => {
                         startMicInFlightRef.current = null;
                     });
@@ -972,7 +980,7 @@ function SonicApp() {
             await waitForCondition(() => menuModeRef.current === scene.script.menuMode, 2_000, signal);
         }
 
-        ensureDemoAudio().dispose();
+        ensureDemoAudio().reset();
     };
 
     const startDemoConversation = async (_scene: DemoScene, _signal: AbortSignal) => {
@@ -981,12 +989,17 @@ function SonicApp() {
     };
 
     const playDemoGuestLine = async (scene: DemoScene, line: DemoGuestLine, signal: AbortSignal) => {
+        await waitForCondition(
+            () => audioCaptureReadyRef.current && !awaitingGreetingDoneRef.current && !startMicInFlightRef.current,
+            5_000,
+            signal
+        );
         await ensureDemoAudio().playClip(personaAssetUrl(scene.personaId, `assets/${line.audio}`), signal);
     };
 
     const stopDemoConversation = async () => {
         await stopConversation();
-        demoAudioRef.current?.dispose();
+        demoAudioRef.current?.reset();
     };
 
     const setDemoStatus = (status: DemoStatus) => {
@@ -1021,6 +1034,7 @@ function SonicApp() {
         setPendingPersonaSwitchId(null);
         setDemoUi({ ...IDLE_DEMO_UI, running: true });
         try {
+            await Promise.all([resetAudioPlayer(), ensureDemoAudio().prime()]);
             const scenes: DemoScene[] =
                 mode === "current"
                     ? currentDemoScript
@@ -1061,6 +1075,8 @@ function SonicApp() {
             isDemoRunningRef.current = false;
             demoAbortRef.current = null;
             await stopDemoConversation();
+            demoAudioRef.current?.dispose();
+            demoAudioRef.current = null;
         }
     };
 

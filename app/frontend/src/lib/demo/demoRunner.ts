@@ -159,8 +159,8 @@ export async function runDemoScenes(
         }
     } finally {
         operations.setStatus({ state: "idle" });
-        if (activeScene !== null && !options.signal.aborted) {
-            await operations.stopConversation(activeScene, options.signal);
+        if (activeScene !== null) {
+            await operations.stopConversation(activeScene, new AbortController().signal);
         }
     }
 }

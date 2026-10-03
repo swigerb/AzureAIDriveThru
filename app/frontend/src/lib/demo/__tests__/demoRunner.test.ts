@@ -112,6 +112,7 @@ describe("demo runner", () => {
         ).rejects.toMatchObject({ name: "AbortError" });
 
         expect(played).toEqual(["01"]);
+        expect(operations.stopConversation).toHaveBeenCalledTimes(1);
     });
 
     it("runs full tours by preparing each persona scene fresh", async () => {

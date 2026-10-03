@@ -18,6 +18,10 @@ export class SyntheticGuestAudio {
     private stream: MediaStream | null = null;
     private activeSources = new Set<AudioBufferSourceNode>();
 
+    async prime(): Promise<void> {
+        await this.ensureContext();
+    }
+
     async createStream(): Promise<MediaStream> {
         const context = await this.ensureContext();
         this.disposeStream();
@@ -90,7 +94,7 @@ export class SyntheticGuestAudio {
         });
     }
 
-    dispose(): void {
+    reset(): void {
         for (const source of this.activeSources) {
             try {
                 source.stop();
@@ -100,6 +104,15 @@ export class SyntheticGuestAudio {
         }
         this.activeSources.clear();
         this.disposeStream();
+    }
+
+    dispose(): void {
+        this.reset();
+        const context = this.audioContext;
+        this.audioContext = null;
+        if (context && context.state !== "closed") {
+            void context.close();
+        }
     }
 
     private async ensureContext(): Promise<AudioContext> {

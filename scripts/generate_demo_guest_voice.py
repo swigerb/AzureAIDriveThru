@@ -10,8 +10,6 @@ import os
 from pathlib import Path
 from typing import Any
 
-import edge_tts
-
 DEFAULT_VOICE = "en-US-AvaMultilingualNeural"
 DEFAULT_RATE = "-1%"
 
@@ -33,6 +31,10 @@ def load_scripts(personas_dir: Path, persona_filter: set[str] | None) -> list[tu
 
 
 async def synthesize_edge(text: str, voice: str, rate: str, out_path: Path) -> None:
+    try:
+        import edge_tts
+    except ImportError as exc:
+        raise RuntimeError("edge-tts is required for --engine edge; install it or use --engine azure") from exc
     out_path.parent.mkdir(parents=True, exist_ok=True)
     communicate = edge_tts.Communicate(text=text, voice=voice, rate=rate)
     await communicate.save(str(out_path))
