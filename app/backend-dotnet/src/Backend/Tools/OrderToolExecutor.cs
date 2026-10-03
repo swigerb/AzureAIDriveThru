@@ -508,7 +508,9 @@ public sealed class OrderToolExecutor : IToolExecutor
 
         if (resultInfo.AbsorbedIntoCombo)
         {
-            return $"{spokenDisplayName} included with your combo — your total is {summary.FinalTotalDisplay}";
+            return resultInfo.ComboComponentUpchargeDisplay is { Length: > 0 } upcharge
+                ? $"{spokenDisplayName} included with your combo with a {upcharge} upcharge — your total is {summary.FinalTotalDisplay}"
+                : $"{spokenDisplayName} included with your combo — your total is {summary.FinalTotalDisplay}";
         }
         if (resultInfo.ComboConvertedFrom is not null && action == "add")
         {
@@ -530,7 +532,9 @@ public sealed class OrderToolExecutor : IToolExecutor
         // for that case, so no separate branch reads it here.)
         if (resultInfo.ResizedComboComponent is not null)
         {
-            return $"Changed {spokenDisplayName}, your total is now {summary.FinalTotalDisplay}";
+            return resultInfo.ComboComponentUpchargeDisplay is { Length: > 0 } upcharge
+                ? $"Changed {spokenDisplayName} with a {upcharge} upcharge, your total is now {summary.FinalTotalDisplay}"
+                : $"Changed {spokenDisplayName}, your total is now {summary.FinalTotalDisplay}";
         }
         // PR #184 round 3 (Rick's review, item C): set by OrderState.HandleOrderUpdate whenever
         // `modify` actually changed an existing order line's OWN size (a bare resize,

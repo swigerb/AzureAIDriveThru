@@ -49,7 +49,9 @@
   "bundles": {
     "nameMarkers": ["combo"],
     "convertStandalone": true,
-    "missingPartText": { "sides": "a side (fries or tots)", "drinks": "a drink or slush" }
+    "missingPartText": { "sides": "a side (fries or tots)", "drinks": "a drink or slush" },
+    "resizeRule": "componentUpcharge",
+    "includedSize": "Medium"
   },
 
   "extras": {

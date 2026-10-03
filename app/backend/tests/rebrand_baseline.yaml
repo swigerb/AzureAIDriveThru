@@ -95,6 +95,13 @@ entries:
     same class as the #78 Python test baseline entries; remove only if the pack roster
     or its test coverage changes.'
   increase_reason: '#105'
+- file: app/backend-dotnet/tests/Backend.Tests/Ordering/ComponentUpchargeBundleTests.cs
+  brand: sonic
+  max: 1
+  issue: '#205'
+  reason: 'Issue-specific unit coverage loads the target persona pack to verify its
+    componentUpcharge bundle pricing rule; remove if this coverage becomes pack-neutral.'
+  increase_reason: '#205'
 - file: app/backend-dotnet/tests/Backend.Tests/Personas/MenuKeyValidatorTests.cs
   brand: sonic
   max: 1
@@ -762,6 +769,13 @@ entries:
     same class as the #78 Python test baseline entries; remove only if the pack roster
     or its test coverage changes.'
   increase_reason: '#105'
+- file: tests/conformance/tests/Conformance.Tests/Scenarios/Ordering/ComboComponentResizeConformanceTests.cs
+  brand: sonic
+  max: 1
+  issue: '#205'
+  reason: 'Issue-specific conformance coverage loads the target persona pack to verify
+    cross-backend componentUpcharge behavior; remove if this coverage becomes pack-neutral.'
+  increase_reason: '#205'
 - file: tests/conformance/tests/Conformance.Tests/Scenarios/Ordering/CustomisedItemMenuLookupTests.cs
   brand: sonic
   max: 9

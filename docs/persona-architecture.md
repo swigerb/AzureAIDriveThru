@@ -235,7 +235,9 @@ All money values are quoted decimal strings, so C# reads them as `decimal` witho
   "bundles": {
     "nameMarkers": ["combo"],
     "convertStandalone": true,
-    "missingPartText": { "sides": "a side (fries or tots)", "drinks": "a drink or slush" }
+    "missingPartText": { "sides": "a side (fries or tots)", "drinks": "a drink or slush" },
+    "resizeRule": "componentUpcharge",
+    "includedSize": "Medium"
   },
 
   "extras": {
@@ -281,7 +283,7 @@ Field rules:
 | Block | Rule |
 | --- | --- |
 | `sizes` | The shared normalizer replaces `SIZE_MAP` and `SIZE_ALIASES`. It uses the compact-key matching from `menu_utils.py:64` for every persona. `spokenAs` drives readback. Route 44 appears only in Sonic's pack. |
-| `bundles` | Engine settings. Which items are bundles, and their slots, is per item (4.3). Spoken synonyms such as "combo" for "meal" resolve through item `aliases`. |
+| `bundles` | Engine settings. Which items are bundles, and their slots, is per item (4.3). Spoken synonyms such as "combo" for "meal" resolve through item `aliases`. `resizeRule` defaults to `includedAnySize`; `wholeBundleSize` reprices the whole bundle when a slot is resized; `componentUpcharge` keeps the bundle's own menu price and adds, per filled slot, `max(0, component(size) - component(includedSize))`. `includedSize` is required for `componentUpcharge` packs such as Sonic, where medium side/drink are included and larger sizes add only the positive delta. Quantity>1 component-upcharge fills split any unit whose upcharge differs from its siblings so line prices remain per-unit, never averaged. |
 | `extras` | One guard for all personas. Extras are `isExtra` menu items. The guard checks that the order already has a base in an allowed category. A refusal is always the structured JSON result Dunkin uses today (`status: "rejected"`, `item_added: false`, optional `suggested_calls`), with the text from the pack's `error_messages.yaml`. |
 | `pricing.happyHour` | Optional. `null` means the persona has no happy hour (McDonald's, decision 5). When present, `announce: true` adds the banner to tool results and turns on the `HAPPY_HOUR` prompt section (Sonic and Dunkin, decision 6). |
 | No `offMenu` block | Removed by decision 4. An item that isn't on the menu (after `_menu_key` normalization and aliases) is rejected with `reason: "not_on_menu"`. There is no keyword fallback of any kind (section 6). |

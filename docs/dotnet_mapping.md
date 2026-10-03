@@ -193,8 +193,10 @@ cascades into resizing the whole bundle), raising the floor 198 -> 199. Round 3 
 item H) adds two more tagged, ungated methods covering path-independence and a two-bundle-instance
 resize-lands-on-the-holder check, raising the floor 199 -> 201. Round 4 (#184, Rick's round-3
 review) adds two more tagged, ungated methods covering wholeBundleSize first-absorption path
-independence and pack-owned wholeBundleSize golden vectors, raising the floor 201 -> 203. See `DotnetTraitCoverageTests`'s
-own doc comment for the exact arithmetic.
+independence and pack-owned wholeBundleSize golden vectors, raising the floor 201 -> 203. Issue
+#205 adds one tagged, ungated `componentUpcharge` conformance Fact for the medium-included
+component delta rule and the additive `componentUpcharges` wire field, raising the floor 203 -> 204.
+See `DotnetTraitCoverageTests`'s own doc comment for the exact arithmetic.
 
 - **DEV_MODE hot-reload** (`prompt_loader.py`'s file-watching reload behaviour) is explicitly
   marked not required in C# by the design doc's per-backend loading table. Not ported.

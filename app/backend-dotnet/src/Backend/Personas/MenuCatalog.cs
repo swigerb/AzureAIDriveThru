@@ -67,9 +67,10 @@ public sealed class MenuCatalog
     public bool BundleConvertStandalone { get; }
     public IReadOnlyDictionary<string, string> BundleMissingPartText { get; }
     // PR #184 round 2 (Rick's review, item 1): this persona's own bundle slot-fill/resize
-    // pricing rule ("includedAnySize" default, or "wholeBundleSize") -- see
+    // pricing rule ("includedAnySize" default, "wholeBundleSize", or "componentUpcharge") -- see
     // OrderState.FillBundleComponent/ApplyWholeBundleResize.
     public string BundleResizeRule { get; }
+    public string BundleIncludedSize { get; }
     public bool SplitCombinedNames { get; }
     public string SearchQueryRewrite { get; }
 
@@ -105,6 +106,7 @@ public sealed class MenuCatalog
         bool bundleConvertStandalone,
         IReadOnlyDictionary<string, string> bundleMissingPartText,
         string bundleResizeRule,
+        string? bundleIncludedSize,
         bool splitCombinedNames,
         string searchQueryRewrite)
     {
@@ -123,7 +125,10 @@ public sealed class MenuCatalog
         BundleNameMarkers = bundleNameMarkers;
         BundleConvertStandalone = bundleConvertStandalone;
         BundleMissingPartText = bundleMissingPartText;
-        BundleResizeRule = bundleResizeRule;
+        BundleResizeRule = bundleResizeRule is "includedAnySize" or "wholeBundleSize" or "componentUpcharge"
+            ? bundleResizeRule
+            : "includedAnySize";
+        BundleIncludedSize = CanonicalSizeKey(bundleIncludedSize ?? "");
         SplitCombinedNames = splitCombinedNames;
         SearchQueryRewrite = searchQueryRewrite;
 
@@ -237,6 +242,7 @@ public sealed class MenuCatalog
             bundleConvertStandalone: bundlesCfg.ConvertStandalone,
             bundleMissingPartText: new Dictionary<string, string>(bundlesCfg.MissingPartText),
             bundleResizeRule: string.IsNullOrEmpty(bundlesCfg.ResizeRule) ? "includedAnySize" : bundlesCfg.ResizeRule,
+            bundleIncludedSize: bundlesCfg.IncludedSize,
             splitCombinedNames: extrasCfg.SplitCombinedNames,
             searchQueryRewrite: persona.Strategies.SearchQueryRewrite);
     }

@@ -268,7 +268,7 @@
       "expectedComboComplete": true
     },
     {
-      "description": "Route 44 drink absorbed into a combo slot still completes the combo at combo price only (test_combo_orders.py::TestRoute44WithCombos::test_route_44_drink_absorbed_into_combo)",
+      "description": "Route 44 drink absorbed into a combo slot completes the combo with only its above-included-size upcharge (test_combo_orders.py::TestRoute44WithCombos::test_route_44_drink_absorbed_into_combo)",
       "steps": [
         { "action": "add", "item": "SONIC\u00ae Cheeseburger Combo", "size": "standard", "quantity": 1, "price": "9.19" },
         { "action": "add", "item": "Tots", "size": "medium", "quantity": 1, "price": "2.79" },
@@ -276,7 +276,7 @@
       ],
       "happyHour": false,
       "expectedLineItemCount": 1,
-      "expectedTotal": "9.19",
+      "expectedTotal": "10.09",
       "expectedComboComplete": true
     },
     {

@@ -17,6 +17,9 @@ class OrderItem(BaseModel):
     # a-la-carte item's ``components`` is simply []); the wire ticket renders it only when present
     # (docs/persona-architecture.md section 3.3 row 22, tests/conformance/README.md wire schema).
     components: list[str] = []
+    # Optional, index-aligned with ``components``. A value > 0 means the component is included only
+    # up to the pack's declared included size and this slot adds the listed per-unit upcharge.
+    componentUpcharges: list[float] = []
 
     # PR #184 round 2 (Rick's review, item 2/3): per-INSTANCE, per-PHYSICAL-UNIT bundle slot-fill
     # state -- keyed by component ("sides"/"drinks") -> a LIST of per-unit slot records

@@ -849,6 +849,7 @@ async def update_order(args, session_id: str) -> ToolResult:
     # generic action-keyed branches below so both paths confirm the resize, never a duplicate-add
     # or a rejected-modify message.
     resized_component = result_info.get("resized_combo_component") if result_info else None
+    component_upcharge_display = result_info.get("combo_component_upcharge_display") if result_info else None
     # PR #184 round 3 (Rick's review, item C): set by order_state.handle_order_update whenever
     # `modify` actually changed an existing order line's OWN size (a bare resize, "wholeBundleSize"
     # or not) -- distinct from resized_component above, which is a combo's SIDE/DRINK slot
@@ -861,7 +862,10 @@ async def update_order(args, session_id: str) -> ToolResult:
     # IS being removed from the guest's perspective), so no separate branch reads it here.
 
     if absorbed:
-        delta_text = f"{spoken_display_name} included with your combo — your total is {summary.finalTotalDisplay}"
+        if component_upcharge_display:
+            delta_text = f"{spoken_display_name} included with your combo with a {component_upcharge_display} upcharge — your total is {summary.finalTotalDisplay}"
+        else:
+            delta_text = f"{spoken_display_name} included with your combo — your total is {summary.finalTotalDisplay}"
     elif converted_from and action == "add":
         combo_display = spoken_display_name
         mods = result_info.get("mods_carried", "")
@@ -869,7 +873,10 @@ async def update_order(args, session_id: str) -> ToolResult:
             combo_display = f"{spoken_display_name} {mods}"
         delta_text = f"Upgraded to {combo_display} — your total is now {summary.finalTotalDisplay}"
     elif resized_component:
-        delta_text = f"Changed {spoken_display_name}, your total is now {summary.finalTotalDisplay}"
+        if component_upcharge_display:
+            delta_text = f"Changed {spoken_display_name} with a {component_upcharge_display} upcharge, your total is now {summary.finalTotalDisplay}"
+        else:
+            delta_text = f"Changed {spoken_display_name}, your total is now {summary.finalTotalDisplay}"
     elif modified_from_size and modified_to_size and modified_from_size != modified_to_size:
         old_label = modified_from_size.capitalize()
         new_label = modified_to_size.capitalize()
@@ -1062,4 +1069,3 @@ def attach_tools_rtmt(
                 persona_schema_map.get("get_order", get_order_tool_schema),
                 persona_schema_map.get("reset_order", reset_order_tool_schema),
             ]
-

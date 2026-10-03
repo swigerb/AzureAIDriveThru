@@ -528,6 +528,68 @@ public sealed class ComboComponentResizeConformanceTests
         return data;
     }
 
+    public sealed class ComponentUpchargeBundleConformanceTests
+    {
+        private const string PersonaId = "sonic";
+        private const string Bundle = "SuperSONIC® Double Cheeseburger Combo";
+        private const string Side = "Tots";
+        private const string Drink = "Cherry Limeade";
+
+        [Fact]
+        [Trait("Dotnet", "ready")]
+        public async Task ComponentUpcharge_charges_positive_delta_and_serializes_component_upcharges()
+        {
+            var ct = TestContext.Current.CancellationToken;
+            await using var fixture = new ComboBundleResizeFixture(PersonaId);
+            await fixture.InitializeAsync();
+            await fixture.RunAsync(async () =>
+            {
+                var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
+                    fixture, ct, persona: PersonaId, mode: "lunch");
+                await using var _ = browser;
+
+                var medium = await OrderScenarioHelpers.RunOrderStepsAsync(
+                    connection, browser,
+                    [
+                        ("add", Bundle, "standard", 1, 10.19m),
+                        ("add", Side, "medium", 1, 2.79m),
+                        ("add", Drink, "medium", 1, 2.89m),
+                    ],
+                    roundTripIndex, ct, callIdPrefix: "call_component_upcharge_medium");
+                OrderScenarioHelpers.AssertMoneyEqual(10.19m, OrderScenarioHelpers.GetOrderTotal(medium.ToolResultJson!), "Medium side/drink are included.");
+
+                var largeDrink = await OrderScenarioHelpers.RunOrderStepsAsync(
+                    connection, browser,
+                    [("modify", Drink, "large", 1, 3.39m)],
+                    medium.RoundTripIndex, ct, callIdPrefix: "call_component_upcharge_large_drink");
+                Assert.Contains("$0.50 upcharge", largeDrink.FunctionCallOutputText);
+                OrderScenarioHelpers.AssertMoneyEqual(10.69m, OrderScenarioHelpers.GetOrderTotal(largeDrink.ToolResultJson!), "Large drink adds only its above-medium delta.");
+
+                using var largeDrinkDoc = JsonDocument.Parse(largeDrink.ToolResultJson!);
+                var combo = largeDrinkDoc.RootElement.GetProperty("items")[0];
+                Assert.Equal(new[] { "Medium Tots", "Large Cherry Limeade" },
+                    combo.GetProperty("components").EnumerateArray().Select(e => e.GetString()).ToArray());
+                Assert.Equal(new[] { 0m, 0.50m },
+                    combo.GetProperty("componentUpcharges").EnumerateArray().Select(e => e.GetDecimal()).ToArray());
+
+                var largeBoth = await OrderScenarioHelpers.RunOrderStepsAsync(
+                    connection, browser,
+                    [("modify", Side, "large", 1, 3.49m)],
+                    largeDrink.RoundTripIndex, ct, callIdPrefix: "call_component_upcharge_large_side");
+                OrderScenarioHelpers.AssertMoneyEqual(11.39m, OrderScenarioHelpers.GetOrderTotal(largeBoth.ToolResultJson!), "Large side and drink add both positive deltas.");
+
+                var backToMedium = await OrderScenarioHelpers.RunOrderStepsAsync(
+                    connection, browser,
+                    [
+                        ("modify", Drink, "medium", 1, 2.89m),
+                        ("modify", Side, "medium", 1, 2.79m),
+                    ],
+                    largeBoth.RoundTripIndex, ct, callIdPrefix: "call_component_upcharge_back");
+                OrderScenarioHelpers.AssertMoneyEqual(10.19m, OrderScenarioHelpers.GetOrderTotal(backToMedium.ToolResultJson!), "Resizing back to included size removes upcharges.");
+            });
+        }
+    }
+
     /// <summary>Scripts the live sequence's own setup half -- add the bundle, add the side (only
     /// if this pack's own bundle needs an explicit one), add the drink at its smaller real size --
     /// on the CALLER's already-connected browser/connection, so a resize script can keep scripting
@@ -578,7 +640,7 @@ public sealed class ComboComponentResizeConformanceTests
             "duplicates the drink's full standalone price.");
     }
 
-    [Theory]
+    [Theory(SkipTestWithoutData = true)]
     [Trait("Dotnet", "ready")]
     [MemberData(nameof(DiscoveredBundleResizeCases))]
     public async Task Discovered_pack_resizes_the_combo_drink_via_remove_then_add(
@@ -609,7 +671,7 @@ public sealed class ComboComponentResizeConformanceTests
         });
     }
 
-    [Theory]
+    [Theory(SkipTestWithoutData = true)]
     [Trait("Dotnet", "ready")]
     [MemberData(nameof(DiscoveredBundleResizeCases))]
     public async Task Discovered_pack_resizes_the_combo_drink_via_explicit_modify(
@@ -643,7 +705,7 @@ public sealed class ComboComponentResizeConformanceTests
     /// total as seeding it at the smaller size and resizing to that same larger size later. Both
     /// paths run on their own fresh connection (xUnit requires exactly one open connection at a
     /// time), one after the other on the SAME fixture/backend instance.</summary>
-    [Theory]
+    [Theory(SkipTestWithoutData = true)]
     [Trait("Dotnet", "ready")]
     [MemberData(nameof(DiscoveredBundleResizeCases))]
     public async Task Discovered_pack_charges_the_same_total_large_up_front_or_resized_later(
@@ -725,7 +787,7 @@ public sealed class ComboComponentResizeConformanceTests
     /// instance instead. Resizing the drink that only the most-recently-added instance holds must
     /// leave the other instance (and its own, different drink) completely untouched --
     /// determinism by identity, never an arbitrary/first-match pick.</summary>
-    [Theory]
+    [Theory(SkipTestWithoutData = true)]
     [Trait("Dotnet", "ready")]
     [MemberData(nameof(DiscoveredTwoInstanceResizeCases))]
     public async Task Discovered_pack_with_two_bundle_instances_resizes_only_the_holder(
