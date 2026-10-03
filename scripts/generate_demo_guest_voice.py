@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import argparse
-import asyncio
 import array
+import asyncio
 import html
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 from typing import Any
 
 DEFAULT_VOICE = "en-US-AvaMultilingualNeural"
@@ -77,7 +77,7 @@ async def synthesize_azure(text: str, voice: str, out_path: Path) -> None:
 
 
 def _run_ffmpeg(command: list[str], *, input_bytes: bytes | None = None) -> subprocess.CompletedProcess[bytes]:
-    return subprocess.run(command, input=input_bytes, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+    return subprocess.run(command, input=input_bytes, capture_output=True, check=True)
 
 
 def _probe_audio(path: Path) -> tuple[int, int, int | None]:
