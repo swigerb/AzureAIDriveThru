@@ -75,7 +75,9 @@ A browser that never resumes therefore sees metadata up to 2 s after connecting,
 
 `resumeId` is omitted when `resume.enabled` is false. The fields are camelCase, as before.
 
-**Browser:** store `resumeId` in `sessionStorage` under `sonic.resumeId`. Resume is per tab by design.
+**Browser:** store `resumeId` in `sessionStorage` under `drivethru.resumeId.<personaId>`
+(`drivethru.resumeId.default` before a persona id is known). This replaces the original
+Sonic-only `sonic.resumeId` key. Resume is per tab and per persona by design.
 
 ### 2. Browser → server: `extension.resume` (must be the FIRST frame)
 

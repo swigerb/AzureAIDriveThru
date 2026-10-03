@@ -9,6 +9,12 @@
 - **Reference implementation:** `swigerb/retail-pulse` ADR-005, `docs/authentication-entra.md`,
   `scripts/Setup-EntraAuth.ps1`, `scripts/Verify-*.ps1`, `src/RetailPulse.Api/Security/`, `src/RetailPulse.Web/src/auth/`.
 
+**Status note (2026-10-03):** The implementation narrowed the persona-asset rule to an extension
+contract: `.svg`, `.png`, `.jpg`, `.webp`, `.ico`, `.wav` and `.mp3` under `assets/` are anonymous
+public media; `.json` files directly under `assets/demo/` are protected and fetched with a bearer;
+other asset types fail persona validation. See `app/backend/entra_auth.py`,
+`app/backend/persona_loader.py` and `app/frontend/src/auth/authorizedFetch.ts`.
+
 ## Context
 
 The first staging deploy (#87) was public with no authentication. Anyone with the URL could open realtime

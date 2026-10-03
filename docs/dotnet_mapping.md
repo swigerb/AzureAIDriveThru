@@ -5,20 +5,12 @@ reference implementation, per ADR-001's "one contract, two backends" decision. I
 change to one backend has an obvious place to look for its counterpart in the other, and so scope
 deliberately deferred or reduced in the C# port is written down instead of discovered by surprise.
 
-Wave 2 (issue #12) builds the C# **skeleton**: host, config loading, persona pack loading, health,
-the auth token endpoint, a `/realtime` pre-upgrade auth gate (Origin + optional session-token
-validation), static file serving, and one event loop per session.
-
-Wave 2 part 2 (issue #12 part 2, this revision) adds the **persona and model binding** and the
-**persona HTTP surface**: `GET /api/personas`, `GET /api/personas/{id}`, `GET
-/personas/{id}/menu.json`, `GET /personas/{id}/assets/{*assetPath}` (traversal-safe, `?v=`
-content-hash immutable caching, pinned content types, `X-Content-Type-Options: nosniff`), a C#
-model catalog (`models.catalog` in `config.yaml` + `AZURE_AI_MODEL_DEPLOYMENTS`), and `/realtime`'s
-pre-upgrade `?persona=`/`?model=` resolution (404 before the WebSocket upgrade on an
-unknown/disabled persona or an unselectable/undeployed model). It does **not** wire up the real
-realtime relay, order state machine, or search grounding -- the realtime pipeline processor
-(`Sessions/RealtimeProcessor.cs`) is a deliberate no-op stub this wave; the actual Azure OpenAI
-realtime relay is issue #13.
+The C# backend now has the host/config/persona foundation, persona HTTP surface, model catalog,
+pre-upgrade `/realtime` auth and persona/model/mode binding, the Azure OpenAI realtime relay,
+order engine, search tool, prompt rendering, tool dispatch and the shared conformance dotnet leg.
+The remaining deliberate gaps versus Python are tracked below: session resume/rehydration, the full
+rate-limit retry ladder, the consecutive tool-failure cap, context-window monitoring/turn recording,
+and Entra auth-row execution on the dotnet leg until issue #147 flips that capability.
 
 ## Module mapping
 
@@ -31,7 +23,7 @@ realtime relay is issue #13.
 | `config_loader.py` | `Configuration/AppConfig.cs` | Both backends load the SAME `app/backend/config.yaml` (not duplicated). Exposes the raw parsed sections (`IReadOnlyDictionary<string, object?>`) rather than a fully strongly-typed model of every field -- later waves can bind specific sections (`audio`, `business_rules`, ...) as they need them. |
 | `model_catalog.py`'s `ModelCatalog` (issue #75) | `Models/ModelCatalog.cs`, `Models/ModelEntry.cs`, `Models/ResolvedModel.cs`, `Models/ModelDispatch.cs` | Parses `config.yaml`'s `models.catalog` list (`id`, `pipeline`, `label`, `reasoning`/`toolCalling`/`runtime` flags) plus `AZURE_AI_MODEL_DEPLOYMENTS` (a JSON object mapping model id -> deployment name; a catalogued model with no entry there is "not deployed"). `ModelDispatch.DispatchProcessor`/`ResolveRealtimeModel` port `processors.py`'s free functions of the same name -- see "Known ambiguity" below for the now-resolved `models.catalog` shape question. |
 | `persona_loader.py`/`app.py`'s persona+asset+menu HTTP routes (issue #74, design doc section 5.2) | `Personas/PersonaRoutes.cs`, `Personas/PersonaAssetResolver.cs`, `Personas/PersonaAssetHash.cs`, `Configuration/AssetCacheConfig.cs` | `GET /api/personas`, `GET /api/personas/{id}`, `GET /personas/{id}/menu.json`, `GET /personas/{id}/assets/{*assetPath}`. `PersonaAssetResolver.Resolve` mirrors `_resolve_persona_asset_path`'s structural (not string-matching) traversal defense: segment-reject `.`/`..`/empty/drive-letter, THEN join, THEN re-verify containment after `Path.GetFullPath`. Rick's PR #122 review item 3: containment is walked one path component at a time (`ResolveRealPath`), resolving any symlink encountered at ANY component -- not just the final leaf -- and re-checking it stays under the pack's assets root after each hop, same as Python's `os.path.realpath` on the full joined path; see "Symlink containment mutation-test note" below. `PersonaAssetHash` mirrors `_content_hash` for the `?v=` query param; a matching `?v=` gets a year-long immutable cache header, everything else gets a short one. |
-| `processors.py`'s `ProcessorRegistry` (issue #75, design doc section 7.4) | `Sessions/ProcessorRegistry.cs`, `Sessions/IPipelineProcessor.cs`, `Sessions/RealtimeProcessor.cs` | Maps a pipeline name (`realtime`\|`cascade`) to the single `IPipelineProcessor` that owns every session bound to it. (The `local` pipeline existed here until #155 dropped it entirely, 2026-09-28 -- Microsoft Foundry only from that point on.) `RealtimeProcessor` is registered for `"realtime"` so `/realtime`'s persona+model resolution has a real dispatch target, but its `ProcessAsync` is a deliberate no-op stub -- the actual relay is issue #13. No processor is registered for `cascade` yet, so dispatching to it 404s at `/realtime` today (same observable shape as an unimplemented pipeline in Python). |
+| `processors.py`'s `ProcessorRegistry` (issue #75, design doc section 7.4) | `Sessions/ProcessorRegistry.cs`, `Sessions/IPipelineProcessor.cs`, `Sessions/RealtimeProcessor.cs` | Maps a pipeline name (`realtime`\|`cascade`) to the single `IPipelineProcessor` that owns every session bound to it. (The `local` pipeline existed here until #155 dropped it entirely, 2026-09-28 -- Microsoft Foundry only from that point on.) `RealtimeProcessor` is registered for `"realtime"` and owns the bidirectional Azure OpenAI Realtime GA relay directly through `RunSessionAsync`; its mailbox-shaped `ProcessAsync` remains a no-op because `Program.cs` hands accepted WebSockets straight to the relay. No processor is registered for `cascade` yet, so dispatching to it 404s at `/realtime` today (same observable shape as an unimplemented pipeline in Python). |
 | `prompt_loader.py` | `Prompts/PromptLoader.cs` | Loads/validates `system_prompt.yaml`, `greeting.yaml`, `tool_schemas.yaml`, `error_messages.yaml`, `hints.yaml` for one persona. See "Deliberate scope reductions" below for what's excluded. |
 | `rtmt.py`'s `create_hmac_token` / `validate_hmac_token` | `Auth/SessionTokenService.cs` | Byte-for-byte compatible: same payload JSON spacing (`{"exp": N}`), same URL-safe base64 (padding kept), same HMAC-SHA256-as-lowercase-hex signature, same "split on the last `.`" framing, constant-time signature comparison. See spike #44. PR #96 review nit: an earlier draft lowercased the *presented* signature before comparing, silently accepting uppercase hex that Python's `hmac.compare_digest` rejects -- fixed, covered by `Validate_RejectsUppercaseSignature`. |
 | `app.py`'s `load_app_secret()` | `Auth/AppSecretProvider.cs` | Reads `APP_SESSION_SECRET`; warns if short; generates a random 32-byte secret if unset (warning only when running in production). |
@@ -39,7 +31,7 @@ realtime relay is issue #13.
 | `rtmt.py`'s `_origin_matches_host` | `Realtime/OriginValidator.cs` | Exact, case-insensitive authority match only (never a suffix/substring match) -- mirrors `urllib.parse.urlsplit(origin).netloc` comparison semantics via `Uri.Authority`. |
 | `rtmt.py`'s `_websocket_handler`'s pre-upgrade Origin + token checks ("Task 3"/"Task 4") | `Realtime/RealtimeAuthGate.cs` | PR #96 review, required item 1 -- see "`/realtime` auth enforcement (PR #96)" below for the full decision record. |
 | (module-level `_startup_checks` dict + `/health` handler) | `Health/StartupChecks.cs`, `Health/HealthEndpoint.cs` | Same JSON shape: `{status, version, checks, personas}`, 200 if every check passed else 503. |
-| (aiohttp route table's WebSocket handler + per-session state) | `Sessions/SessionActor.cs`, `Sessions/SessionRegistry.cs`, `Sessions/IPipelineProcessor.cs` | One `Channel<SessionEvent>`-backed sequential event loop per session (issue #12's "one event loop per session"), held in a shared `SessionRegistry`. `IPipelineProcessor` is the persona/model-specific pipeline seam; `ProcessorRegistry` now binds `"realtime"` to `RealtimeProcessor` (a deliberate no-op stub, #13 lands the real relay) -- the actor/registry mechanics are proven end to end (persona+model resolve to a processor instance) without any relay logic yet. |
+| (aiohttp route table's WebSocket handler + per-session state) | `Sessions/RealtimeProcessor.cs`, `Sessions/SessionActor.cs`, `Sessions/SessionRegistry.cs`, `Sessions/IPipelineProcessor.cs` | `RealtimeProcessor.RunSessionAsync` owns the accepted WebSocket and upstream relay for the `realtime` pipeline: bootstrap, greeting gate, bidirectional frame loops, echo suppression/barge-in, session echoes, round-trip tokens and tool calls. `SessionActor`/`SessionRegistry` still exist as the generic session seam, but session resume and 4002 supersede handling remain a documented gap. |
 | (repo-relative path resolution, implicit via `os.path` calls) | `RepoRootLocator.cs` | Walks up from the running assembly looking for a directory containing both `personas/` and `azure.yaml`. A dev/CI convenience only -- production containers are expected to set `PERSONAS_DIR`, `CONFIG_PATH`, and `STATIC_FILES_DIR` explicitly. |
 | `money_utils.py` | `Ordering/Money.cs` | Same `decimal`-based rounding (`ROUND_HALF_UP` equivalent) and `$X.XX` formatting; ports `format_money` 1:1 (see `Ordering/MoneyTests.cs`). |
 | `menu_utils.py`'s `MenuCatalog` (`_menu_key`/`strip_modifiers`, size/alias/category maps, machine status, happy-hour eligibility, combo-slot inference) | `Personas/MenuCatalog.cs` | One instance built once per persona and cached (`PersonaOrderFactory.GetMenuCatalog`), same data-driven-only classification contract as #73/#74 (no keyword fallback). `MenuKeyValidator.MenuKey`/`StripModifiers` (issue #128/#137) is the exact `_menu_key`/`strip_modifiers` port; both backends now assert against the SAME shared golden vector file -- see "Shared menu-key golden vectors (#137)" below. |
@@ -53,7 +45,7 @@ realtime relay is issue #13.
 Ports `order_state.py`, `menu_utils.py`'s `MenuCatalog`, and `tools.py` (`update_order`/`get_order`/
 `reset_order`/`search`) -- design doc section 6's structured rejections, menu-sourced pricing
 (#104: a tool call's own `price` argument is never trusted), bundle autoFill/absorption, the
-extras engine, `machine_unavailable`, per-pack happy hour (#113), tax, and Route 44 via pack-driven
+extras engine, `machine_unavailable`, per-persona happy hour (#113), tax, and Route 44 via persona-driven
 size aliases. See the Module mapping table above for the file-by-file breakdown.
 
 PR #207 keeps spoken readbacks in parity too: Python `MenuCatalog.spoken()` and C#
@@ -76,14 +68,13 @@ public interface IToolExecutor
 
 One `IToolExecutor` instance (`SessionToolExecutor`) is owned by exactly one session's actor --
 same confinement contract as `OrderState`/`SessionActor` generally, so there is no shared/locking
-concern across sessions. `#13`'s relay is expected to: (1) construct one `SessionToolExecutor` per
-session once persona binding resolves (closing over that session's own `OrderState`, `MenuCatalog`,
-`PromptLoader`, and `SearchTool`); (2) on every upstream `function_call` frame, call
-`ExecuteAsync(toolName, argsElement, ct)`; (3) branch on the returned `ToolResult.Destination`
-exactly like `rtmt.py` branches on `ToolResultDirection` today -- `ToServer` sends the
-`function_call_output` text back upstream only, `ToClient`/`ToBoth` additionally emits
-`extension.middle_tier_tool_response` with `ToolResult.ToClientText()`'s JSON to the browser.
-Posted to issue #14 for Beth/#140 to confirm against the relay's own needs.
+concern across sessions. `RealtimeProcessor` constructs one `SessionToolExecutor` per session once
+persona binding resolves (closing over that session's own `OrderState`, `MenuCatalog`,
+`PromptLoader`, and `SearchTool`); on every upstream `function_call` frame it calls
+`ExecuteAsync(toolName, argsElement, ct)` and branches on `ToolResult.Destination` exactly like
+`rtmt.py` branches on `ToolResultDirection`: `ToServer` sends the `function_call_output` text back
+upstream only, while `ToClient`/`ToBoth` also emits `extension.middle_tier_tool_response` with
+`ToolResult.ToClientText()`'s JSON to the browser.
 
 ### Test fixture reuse strategy (`Backend.Tests`'s new `Ordering`/`Tools`/`Search` tests)
 
@@ -200,12 +191,11 @@ See `DotnetTraitCoverageTests`'s own doc comment for the exact arithmetic.
 
 - **DEV_MODE hot-reload** (`prompt_loader.py`'s file-watching reload behaviour) is explicitly
   marked not required in C# by the design doc's per-backend loading table. Not ported.
-- **Jinja2 template rendering** (`prompt_loader.py`'s `render_error`, `get_upsell_hint`,
-  `get_delta_template`, `render_template`) is excluded this wave: nothing in the wave-2 skeleton
-  (no real session/order processing yet) consumes rendered error messages or hints. `PromptLoader`
-  still loads and validates `error_messages.yaml` / `hints.yaml` as raw, unrendered dictionaries so
-  a broken file still fails startup; rendering is deferred to whichever wave first needs it
-  (wave 3+, issue #13).
+- **Jinja2-style template rendering** is implemented for the templates this repo actually ships:
+  `PromptLoader.RenderError`, `RenderTemplate`, `GetDeltaTemplate` and `GetUpsellHint` support
+  plain `{{ variable }}` interpolation and raw-template fallback for missing variables, and
+  `OrderToolExecutor` uses them for structured rejections and delta text. It is not a full Jinja2
+  engine because the current `error_messages.yaml` and `hints.yaml` files do not use control flow.
 - **Non-blocking connectivity check** (`app.py`'s best-effort, log-only ping to the configured
   Azure OpenAI/Search endpoints at startup) is not ported. It does not gate `/health` in Python
   either, so its absence changes no observable behaviour this wave; revisit once real
@@ -335,32 +325,21 @@ See the comments left on those issues directly for this wave's position. Summary
   requires a token minted by one backend to validate on the other. Recommend closing #44 by
   formalizing "keep the algorithm identical, cross-validation is a nice-to-have, not a
   requirement" as the answer, since it costs nothing and keeps the door open.
-- **#23 (FakeSearch HTTPS)**: Not exercised this wave (no Azure Search client exists in
-  `app/backend-dotnet` yet -- search integration is a later wave). Recommend, when that wave
-  starts, reaching for a plain `HttpClient` REST call against the Search data-plane REST API
-  rather than fighting `Azure.Search.Documents`'s HTTPS-only transport assumption against the
-  conformance harness's HTTP-only `FakeSearchServer`; this is a lightweight recommendation, not a
-  blocking decision, since nothing in this wave depends on it.
+- **#23 (FakeSearch HTTPS)**: implemented by `Search/SearchTool.cs` using plain `HttpClient` REST
+  calls against the Search data-plane API. That keeps conformance on the HTTP-only
+  `FakeSearchServer` path and avoids the Azure.Search.Documents HTTPS-only transport issue.
 
-## Not yet covered by this wave (tracked, not forgotten)
+## Conformance coverage history and remaining gaps
 
 - `DotnetBackendLauncher` (`tests/conformance/src/Conformance.Harness/DotnetBackendLauncher.cs`,
-  implementing `IBackendUnderTest`) -- added in PR #96, wired into `BackendLauncherFactory`'s
-  `CONFORMANCE_BACKEND=dotnet` branch. This revision (#12 part 2) additionally fixed it to forward
-  `PERSONAS_DIR` from the launch contract (it already forwarded `PERSONAS`/`DEFAULT_PERSONA`, but
-  was silently dropping fixture-specific persona directory overrides, mirroring the Python
-  launcher's `BackendEnvironment.cs`); without that fix, every `PersonaConformanceFixtures`-derived
-  fixture (test-alpha/test-beta packs) silently fell back to the real repo's default-persona-only
-  `personas/` tree when run against dotnet, and any row asserting on the fixture packs failed for
-  the wrong reason. Run locally with
-  `CONFORMANCE_BACKEND=dotnet dotnet test Conformance.slnx --filter "Dotnet=ready"`
+  implementing `IBackendUnderTest`) -- wired into `BackendLauncherFactory`'s
+  `CONFORMANCE_BACKEND=dotnet` branch. It forwards `PERSONAS_DIR`, `PERSONAS` and
+  `DEFAULT_PERSONA`, builds `app/backend-dotnet` once per test process, then launches the compiled
+  `Backend.dll`. Run locally with
+  `CONFORMANCE_BACKEND=dotnet dotnet test Conformance.slnx --filter "Dotnet=ready&Category!=Browser"`
   (repo root needs a built frontend at `app/backend/static` -- `npm run build` in `app/frontend`
-  -- for the static-file scenario). **33 tagged test methods (36 test cases counting the
-  traversal `[Theory]`'s 4 `InlineData` rows individually), all passing** against the real C#
-  skeleton today (up from 11/11 at PR #96, 31 after the first #122 draft, 33 after Rick's #122
-  review revision; `DotnetTraitCoverageTests` enforces `count >= 11` and grows automatically as
-  more scenarios get tagged). This revision's changes, all confirmed passing and tagged
-  `[Trait("Dotnet", "ready")]`:
+  -- for static-file scenarios). `DotnetTraitCoverageTests` now enforces at least 204 floor-eligible
+  tagged methods; the early tagged set included:
   - `PersonaDiscoveryConformanceTests` -- 4 of 5 methods (persona list/detail shape, 404 for an
     unknown persona id, pre-upgrade 404 for an unknown `?persona=` on `/realtime`). The 5th
     (`Omitted_persona_binds_to_the_default_persona_visible_in_session_metadata`) needs a real
@@ -378,25 +357,17 @@ See the comments left on those issues directly for this wave's position. Summary
     rows added for Rick's PR #122 review item 2 asserting the exact 404 BODY text (not just the
     status) for an unknown persona and an unknown model. See "Model dispatch/rejection body parity
     (PR #122)" below.
-  - `ModelSelectionConformanceTests` -- 1 of 6 methods (`/api/personas/{id}`'s selectable-models
-    list for the picker, a pure HTTP GET). The other 5 need the same real-relay session-metadata
-    echo as `PersonaDiscoveryConformanceTests`'s 5th method above; left untagged pending #13.
+  - `ModelSelectionConformanceTests` -- originally only the pure HTTP selectable-models row. The
+    later realtime rows became taggable once the relay landed.
 
   Carried over from PR #96 (unchanged, still tagged): `HealthEndpointTests`,
   `HealthEndpointExtendedTests`, `StaticIndexHtmlTests`, `AuthSessionTests`,
   `AuthSessionTokenFormatTests` (both cases), all 3 of `Scenarios/Http/OriginValidationTests.cs`,
-  and 2 of 3 in `Scenarios/Security/OriginValidationTests.cs` -- see PR #96's own notes for why
-  `Exact_origin_is_accepted` (which asserts a `session.created` frame) stays untagged. Still not
-  run: the rest of the conformance suite (real-relay session content, order state machine,
-  rate-limiting, browser scenarios) -- all of that needs the real relay/pipeline logic that lands in
-  #13+. This wave does NOT add `dotnet` to the CI `conformance` matrix
-  (`.github/workflows/conformance.yml`) -- that axis's owner is separate (#76); CI's `conformance`
-  job still runs `CONFORMANCE_BACKEND=python` only. The additive `dotnet-tests` job (PR #96) keeps
-  running `app/backend-dotnet`'s own xUnit suite independently.
-- Session-level persona/model binding (`SessionActor`/`/realtime` accepting a `?persona=`/`?model=`
-  selection) **landed this revision** (#12 part 2) as far as pre-upgrade resolution/rejection goes.
-  Still not covered: actually forwarding the resolved persona/model into a live Azure OpenAI
-  realtime session (`RealtimeProcessor.ProcessAsync` is a no-op stub) -- issue #13.
+  and 2 of 3 in `Scenarios/Security/OriginValidationTests.cs`. The conformance workflow now has a
+  `backend: [python, dotnet]` matrix; the dotnet leg runs `Dotnet=ready&Category!=Browser`.
+- Session-level persona/model/mode binding is now forwarded into the live Azure OpenAI realtime
+  session through `RealtimeProcessor.RunSessionAsync`; `ProcessAsync` is intentionally unused for
+  accepted WebSockets.
 - Issue #14's order engine/tools/search wave landed the full `IToolExecutor`/`SessionToolExecutor`
   composition. PR #149 wires `RealtimeProcessor` to construct and dispatch to a real
   per-session `SessionToolExecutor` (via `Program.cs`'s `toolExecutorFactory`), so every

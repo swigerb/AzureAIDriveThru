@@ -1,4 +1,4 @@
-# Persona architecture: one drive-thru app, three brands, two backends
+# Persona architecture: one drive-thru app, shared personas, two backends
 
 - **Issue:** #19 (P1 design spike), including the design for #51. Part of epic #6.
 - **Decision record:** [ADR-001](adr/ADR-001-persona-architecture.md); authentication:
@@ -11,7 +11,7 @@
 ## 1. Summary
 
 One app serves Sonic, McDonald's and Dunkin on Microsoft Foundry. It has a Python backend (the reference) and a
-C# (.NET 11) backend. Each brand is a **persona pack**: a folder of data (`persona.json`, prompts,
+C# (.NET 11) backend. Each brand is a **persona**: a folder of data (`persona.json`, prompts,
 `menuItems.json`, assets) that both backends load through the same contract. Brand rules are data, read by
 shared engines. The one behavior data can't express (McDonald's meal-number lookup) is a named strategy that both
 backends implement.
@@ -92,7 +92,7 @@ Classes:
 
 | # | Item | Sonic | Mc | Dunkin | Class | Unified home |
 | --- | --- | --- | --- | --- | --- | --- |
-| 10 | Menu data | `menuItems.json`: 6 categories, 60 items (10 combos); fields `name, sizes, description, longDescription, origin, popularity, image`; raw export `sonic-menu-items.json` (3.4 MB) | 5 categories, 71 items (20 meals); adds `menuPeriod` (breakfast 20, lunch 32, allDay 19), `mealNumber`, `calories`, `allergens`; sources `mcdonalds-menu-items.json`, `offline_menu.json` | 5 categories, 16 items; adds `caffeineContent`, `brewingMethod`, `calories`, `availability`; `structured_menu_items`; 3 PDFs in `public/` | Persona data | `personas/<id>/menu/menuItems.json`; raw exports in `menu/source/` |
+| 10 | Menu data | `menuItems.json`: 12 categories, 180 items; adds `menuPeriod` (breakfast 19, lunch 52, allDay 109); fields include `name`, `sizes`, descriptions, origin, popularity, image, `comboSlot`, aliases and machine/daypart metadata | 5 categories, 71 items (20 meals); adds `menuPeriod` (breakfast 20, lunch 31, allDay 20), `mealNumber`, `calories`, `allergens`; sources `mcdonalds-menu-items.json`, `offline_menu.json` | 7 categories, 60 items; adds `caffeineContent`, `brewingMethod`, `calories`, `availability`, aliases, extras and `spokenAs` entries for MUNCHKINS®; source `structured_menu_items` | Persona data | `personas/<id>/menu/menuItems.json`; raw exports in `menu/source/` |
 | 11 | Search index name | `sonic-menu-items` | `mcdonalds-menu-items` | Live: `dunkin-menu-items`; stale defaults: `coffee-chat` (`.env-sample`) and `voicerag-intvect` (`main.parameters.json`) | Persona data | `persona.json` `search.indexName` |
 | 12 | Index schema | `id, category, name, description, longDescription, origin, caffeineContent, brewingMethod, popularity, sizes, embedding` | Narrower: `id, category, name, description, sizes, embedding` | Same as Sonic | Shared code | One superset schema. Adding fields is additive for the McD index |
 | 13 | Search content fields | `description` | `description, longDescription, category` | `description, longDescription, category` | Persona data | `persona.json` `search.contentFields` (default `description`) |
@@ -138,8 +138,8 @@ Classes:
 | 38 | Azure Speech mode | Frontend toggle only | `azurespeech.py`, `azure_speech_gpt4o_mini.py`, but nothing imports them, and no backend registers `/azurespeech/*` | Same | Drop | Dead in all three; remove the toggle |
 | 39 | Theme | `--brand-red 341 100% 45%`, `--brand-blue 208 52% 33%`, light/dark; Nunito Sans and Montserrat; **87 hard-coded hex values** in `App.tsx`, `order-summary.tsx`, `menu-panel.tsx` | `--brand-red 357 100% 43%`, dark `40 12% 14%`; 114 hex values in 5 files | `--brand-orange 28 100% 58%`, `--brand-pink 329 100% 45%`, cream, brown; Fredoka; 76 hex values | Persona data plus shared code | `persona.json` `ui.theme` tokens applied by `PersonaProvider` |
 | 40 | Identity, copy, legal | Logo svg/png, title "Sonic Drive-In Voice Ordering", hero ("Carhop Pick"), ticket "Carhop ticket / Your Sonic Order", legal line naming Inspire Brands and Sonic Corp., `app.title` and `status.notRecordingMessage` in 4 locales | Logo, "McDonald's AI Drive-Thru", same keys | Logo, "Dunkin' Voice Crew", extra favicons, same keys | Persona data | `persona.json` `ui` block plus `assets/` |
-| 41 | Menu panel | Imported at build time (`menu-panel.tsx:1`) | Adds a breakfast/lunch toggle filtering on `menuPeriod` | Categories only | Shared code plus persona data | Fetched at runtime; the daypart toggle is shown when the pack declares `dayparts` |
-| 42 | Demo data, resume key | `dummyOrder.json`, `dummyTranscripts.json`; `sonic.resumeId` | Own demo data | Own demo data | Persona data; shared key | `assets/demo/`; key `drivethru.resumeId.<persona>` |
+| 41 | Menu panel | Imported at build time (`menu-panel.tsx:1`) | Adds a breakfast/lunch toggle filtering on `menuPeriod` | Categories only | Shared code plus persona data | Fetched at runtime; the daypart toggle is shown when the persona declares `features.dayparts` |
+| 42 | Demo data, resume key | `dummyOrder.json`, `dummyTranscripts.json`; `sonic.resumeId` | Own demo data | Own demo data | Persona data; shared key | `assets/demo/dummyOrder.json`, `assets/demo/dummyTranscripts.json`, `assets/demo/guestScript.json`, `assets/demo/guest/*.mp3`; key `drivethru.resumeId.<persona>` |
 
 ### 3.6 Config, infra and brand-only features
 
@@ -186,7 +186,7 @@ personas/
     assets/
       logo.svg  logo.png  favicon.ico
       audio/apology-en.wav  apology-es.wav  apology-fr.wav  apology-ja.wav
-      demo/dummyOrder.json  demo/dummyTranscripts.json
+      demo/dummyOrder.json  demo/dummyTranscripts.json  demo/guestScript.json  demo/guest/*.mp3
   mcdonalds/  (same shape)
   dunkin/     (same shape)
 scripts/personas/<id>/         brand raw-export converters (row 15)
@@ -520,19 +520,18 @@ equal:
 (`RequiredErrorMessageKeysMatchDotnetTests` in `test_prompt_loading.py`) parses `PromptLoader.cs`.
 A drift in either direction fails whichever suite runs.
 
-**Both loaders fail fast at startup if a pack is missing any required key.** `PromptLoader`'s
+**Both loaders fail fast when they load a persona if it is missing any required key.** `PromptLoader`'s
 constructor (C#) / `_load_all()` (Python) validates `error_messages.yaml` immediately after
 loading it, before the pack is considered usable, and raises naming both the persona/brand and
 every missing key (not just the first one) -- `PromptLoadException` in C#, `ValueError` in
 Python. This applies to every persona a process constructs a loader for: in Python, `app.py`'s
 `create_app()` builds one `PromptLoader` per enabled persona at startup (so a broken pack fails
 the whole process before it serves traffic), plus `default_persona.py`'s lazily-cached default;
-in C# today, `Program.cs` constructs one `PromptLoader` for the default persona only (multi-persona
-prompt loading is a later wave, `docs/dotnet_mapping.md`).
+in C#, `Program.cs` constructs the default persona's loader at startup and caches additional
+persona loaders on first bind, so a non-default persona's broken prompt fails that bind before a
+realtime session uses it.
 
-Draft persona packs land the required keys themselves as part of their own PR (Dunkin's pack
-already has all seven; a future McDonald's pack must add them too) -- this validation does not
-touch `personas/dunkin/**` or `personas/mcdonalds/**`.
+All current personas define the required eight-key set; extra persona-specific error keys are allowed.
 
 ### 6.2 Breakfast/Lunch menu mode (#165, decided)
 
@@ -554,11 +553,9 @@ flipped live mid-session (see the "API contract" bullet below) the way the origi
 client-side toggle could.
 
 - **Declaration (`persona.schema.json`, `persona.json`).** `features.dayparts: boolean` (default
-  `false`). McDonald's is the only real pack with `true` today; Sonic and Dunkin both have
-  `false` (or omit the key) -- no settings toggle, no `?mode=` handling, no daypart filter, for
-  either of them. A pack's own per-item `menuPeriod` (`"breakfast"` | `"lunch"` | `"allDay"` |
-  absent) is meaningful **only** when its pack also declares `features.dayparts: true`; Sonic and
-  Dunkin's items carry no `menuPeriod` at all.
+  `false`). Sonic and McDonald's declare `true`; Dunkin declares `false`. A persona's own per-item
+  `menuPeriod` (`"breakfast"` | `"lunch"` | `"allDay"` | absent) is meaningful **only** when that
+  persona also declares `features.dayparts: true`.
 - **API contract: an optional `?mode=` query param on the WebSocket handshake**, resolved and
   bound to the session exactly once, for the session's lifetime -- unlike the original's own live,
   reconnect-free toggle, this app's server-side enforcement (search filter, add-time gate) needs a
@@ -644,7 +641,7 @@ client-side toggle could.
 
 ## 7. Model flexibility on Microsoft Foundry
 
-Decision 8 makes model flexibility one of the demo's three themes, alongside Microsoft Foundry and persona
+Decision 8 makes model flexibility one of the demo's main themes, alongside Microsoft Foundry and persona
 switching: "enable differing models, e.g. selectable realtime/chat models per deployment/persona."
 
 ### 7.1 Pipelines
@@ -804,10 +801,10 @@ This is the explicit exception to the "no frontend changes" rule (epic #6). Owne
 | F1 | `PersonaProvider`: read `?persona=`, fetch `/api/personas/<id>`, set CSS variables and `data-persona`, set the title and favicon, and merge the pack's i18n strings over the shared locale files |
 | F2 | Replace every hard-coded brand hex value (87 in Sonic) with theme tokens, light and dark. This can start immediately |
 | F3 | Hero, callouts, legal line and ticket headings come from the manifest; rename `SonicApp` to `App` |
-| F4 | The menu panel fetches `menuUrl` at runtime; show the daypart toggle when `features.dayparts` is set (McDonald's) |
+| F4 | The menu panel fetches `menuUrl` at runtime; show the daypart toggle when `features.dayparts` is set (Sonic and McDonald's today) |
 | F5 | The ticket renders `components` for bundles |
-| F6 | **Persona picker** in the header: all three personas on one URL. Switching starts a new session, and asks first if the ticket has items |
-| F7 | Per-persona resume key (`drivethru.resumeId.<persona>`), apology clip, demo data, and default voice |
+| F6 | **Persona picker** in the header: enabled personas on one URL. Switching starts a new session, and asks first if the ticket has items |
+| F7 | Per-persona resume key (`drivethru.resumeId.<persona>`), apology clip, demo order/transcript data, synthetic guest audio script, and default voice |
 | F8 | The WebSocket URL becomes `/realtime?persona=<id>&model=<id>` |
 | F9 | Remove the dead Azure Speech toggle (row 38) |
 | F10 | **Model picker** in Settings, like the voice picker: grouped by pipeline, limited to `/api/personas/<id>` models, locked for the session |
@@ -1051,21 +1048,21 @@ added to that list on purpose. Each backend has a unit test that walks its route
 | --- | --- | --- |
 | `GET /` (SPA shell) and the SPA bundle (the static route) | Anonymous | The sign-in gate has to load before sign-in. The bundle holds only public ids |
 | `GET /health` | Anonymous | The ACA probe can't send a bearer. Retail Pulse does the same |
-| `GET /personas/{id}/assets/*` for `.svg .png .jpg .webp .ico .wav .mp3` | Anonymous (**public branding**) | Loaded by `<img>`, `<audio>`, the favicon and CSS, which can't carry a bearer. See below |
-| `GET /personas/{id}/assets/*` for any other type (today `demo/*.json`) | Entra | Fetched with `fetch()`, so it can carry the bearer. Deny by default |
+| `GET /personas/{id}/assets/*` for `.svg .png .jpg .webp .ico .wav .mp3` | Anonymous (**public media**) | Loaded by `<img>`, `<audio>`, the favicon and CSS, which can't carry a bearer. See below |
+| `GET /personas/{id}/assets/*` for any other type (today `.json` directly under `assets/demo/`) | Entra | Fetched with `fetch()`, so it can carry the bearer. Deny by default |
 | `GET /personas/{id}/menu.json` | Entra | Fetched with `fetch()` |
 | `GET /api/personas`, `GET /api/personas/{id}` | Entra | `/api/*` has no exceptions. The sign-in screen is neutral product branding, so it needs no persona data |
 | `GET /api/auth/session` | Entra | Mints the layered session token for the caller (18.3) |
 | `GET /realtime` (WebSocket) | Entra via `?access_token`, plus the session token | 18.3 |
 | Anything else | Entra, or 404 | Deny by default |
 
-**Public branding assets, not signed URLs or a cookie.** This is the simplest safe option.
-- The files are logos, favicons and pre-recorded apology clips. The logos are the brands' public marks, and a clip
-  is one generic sentence.
+**Public media assets, not signed URLs or a cookie.** This is the simplest safe option.
+- The files are logos, favicons, pre-recorded apology clips and demo guest audio. The logos are the brands' public
+  marks, and the audio clips are scripted demo media.
 - The existing guard already limits the route to enabled packs and to real files under the pack's `assets/`
   directory (segment checks, symlink-resolved containment).
 - We add an extension allow-list for anonymous access, and a persona-loader check that nothing else lives under
-  `assets/` except `demo/*.json`, which is protected.
+  `assets/` except `.json` files directly under `assets/demo/`, which are protected.
 - Signed URLs would need signing on both backends and change the URL on every mint, which breaks the immutable
   `?v=` caching.
 - A cookie would bring back cookie auth and CSRF handling for public files.
@@ -1388,7 +1385,7 @@ A backend that doesn't enforce auth yet ignores the extra env and tokens, so the
 | 9 | A valid token as `?access_token` on a REST path | 401 (the query token is read on `/realtime` only) |
 | 10 | `/realtime` with a valid Entra token and no session token; with a session token minted for another `oid`; with both matching | 401; 401; opens |
 | 11 | Bad Origin and no token on `/realtime` | 401 (the Entra check runs first on both backends) |
-| 12 | Anonymous allow-list: `/`, `/health`, `/personas/sonic/assets/logo.svg`, an apology clip | 200 with no token. `/personas/sonic/assets/demo/dummyOrder.json` is 401 |
+| 12 | Anonymous allow-list: `/`, `/health`, `/personas/sonic/assets/logo.svg`, an apology clip, a demo guest `.mp3` | 200 with no token. `/personas/sonic/assets/demo/dummyOrder.json` and `/personas/sonic/assets/demo/guestScript.json` are 401 |
 | 13 | Unknown persona on `/realtime` with no token | 401, not 404 |
 | 14 | Logging: after rows 8 and 10, the captured backend output contains neither token | Pass. The harness runs `python app.py`, not gunicorn, so the deployed gunicorn path is pinned by the unit and Dockerfile tests in 18.4 |
 | 15 | Modes (launch-and-exit rows): Production and unconfigured; Production with `AUTH_MODE=Development`; `AUTH_MODE=Development` with `ENTRA_TENANT_ID` and `ENTRA_CLIENT_ID` set, not Production; `AUTH_MODE=Development` with only one id set, not Production; unknown `AUTH_MODE`; `ENTRA_INSTANCE=http://` to a non-loopback host; Entra with a placeholder client id | The process exits non-zero before listening. The harness runs `python app.py`; the gunicorn image is covered by #144's CI boot check (18.4) |
