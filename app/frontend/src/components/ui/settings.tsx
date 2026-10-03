@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useTranslation } from "react-i18next";
 import { SettingsIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -136,6 +137,8 @@ interface SettingsProps {
      * that never pass it (e.g. this component's own pre-round-2 tests) render exactly as
      * before -- unlocked. */
     menuModeDisabled?: boolean;
+    demoModeEnabled?: boolean;
+    onDemoModeChange?: (checked: boolean) => void;
 }
 
 export default function Settings({
@@ -158,8 +161,11 @@ export default function Settings({
     menuModeEnabled = false,
     menuMode = "lunch",
     onMenuModeChange = () => {},
-    menuModeDisabled = false
+    menuModeDisabled = false,
+    demoModeEnabled = false,
+    onDemoModeChange = () => {}
 }: SettingsProps) {
+    const { t } = useTranslation();
     const [isDarkMode, setIsDarkMode] = useState(() => {
         return localStorage.getItem("isDarkMode") === "true";
     });
@@ -198,6 +204,10 @@ export default function Settings({
         onLogToFileChange(checked);
     };
 
+    const handleDemoModeChange = (checked: boolean) => {
+        onDemoModeChange(checked);
+    };
+
     const SettingsContent = () => (
         <div className="space-y-6">
             {menuModeEnabled && (
@@ -225,6 +235,20 @@ export default function Settings({
                     )}
                 </div>
             )}
+            <div className="flex items-start justify-between">
+                <div className="flex-1 space-y-0.5">
+                    <Label htmlFor="demo-mode" className="text-gray-900 dark:text-gray-100">
+                        {t("settings.demoMode.label")}
+                    </Label>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">{t("settings.demoMode.description")}</p>
+                </div>
+                <div className="ml-4 flex items-center gap-3 shrink-0">
+                    <span className="min-w-[5rem] text-right text-xs text-muted-foreground">
+                        {demoModeEnabled ? t("settings.demoMode.on") : t("settings.demoMode.off")}
+                    </span>
+                    <Switch id="demo-mode" checked={demoModeEnabled} onCheckedChange={handleDemoModeChange} aria-label={t("settings.demoMode.aria")} />
+                </div>
+            </div>
             <div className="flex items-start justify-between">
                 <div className="flex-1 space-y-0.5">
                     <Label htmlFor="dark-mode" className="text-gray-900 dark:text-gray-100">

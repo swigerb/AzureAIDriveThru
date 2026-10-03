@@ -287,6 +287,7 @@ def _resolve_persona_asset_path(persona: Persona, requested_path: str) -> Path |
 _ASSET_CONTENT_TYPES = {
     ".svg": "image/svg+xml",
     ".wav": "audio/wav",
+    ".mp3": "audio/mpeg",
     ".ico": "image/x-icon",
     ".json": "application/json",
 }

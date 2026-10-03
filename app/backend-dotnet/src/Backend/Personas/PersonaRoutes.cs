@@ -26,6 +26,7 @@ public static class PersonaRoutes
     {
         [".svg"] = "image/svg+xml",
         [".wav"] = "audio/wav",
+        [".mp3"] = "audio/mpeg",
         [".ico"] = "image/x-icon",
         [".json"] = "application/json",
     };

@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "voice": "en-US-AvaMultilingualNeural",
+  "menuMode": null,
+  "title": "Regular means cream and sugar",
+  "kicker": "GROUNDED IN THE LIVE MENU WITH AZURE AI SEARCH",
+  "lines": [
+    {
+      "id": "01",
+      "text": "Hi, can I get a large hot regular coffee?",
+      "audio": "demo/guest/01.mp3"
+    },
+    {
+      "id": "02",
+      "text": "Yeah, and a twenty five count of chocolate glazed munchkins.",
+      "audio": "demo/guest/02.mp3"
+    },
+    {
+      "id": "03",
+      "text": "Uhh, that'll work.",
+      "audio": "demo/guest/03.mp3"
+    },
+    {
+      "id": "04",
+      "text": "That's it.",
+      "audio": "demo/guest/04.mp3"
+    }
+  ]
+}

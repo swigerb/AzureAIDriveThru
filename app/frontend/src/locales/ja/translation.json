@@ -61,6 +61,15 @@
         "cascadeGroup": "カスケード",
         "noModelsAvailable": "利用可能なモデルがありません"
     },
+    "settings": {
+        "demoMode": {
+            "label": "デモ モード",
+            "description": "台本付きのゲスト音声デモをハンズフリーで実行します。",
+            "on": "デモ オン",
+            "off": "デモ オフ",
+            "aria": "デモ モードを切り替え"
+        }
+    },
     "hero": {
         "badge": "音声注文デモ",
         "subhead": "Microsoft Foundry、Azure OpenAI、Azure AI Search を基盤とした、ペルソナ主導の音声注文アシスタントです。",

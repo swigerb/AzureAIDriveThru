@@ -11,6 +11,8 @@ type Parameters = {
     onBargeIn?: () => void;
 };
 
+export type AudioStreamProvider = () => Promise<MediaStream>;
+
 export default function useAudioRecorder({ onAudioRecorded, onBargeIn }: Parameters) {
     const audioRecorder = useRef<Recorder | null>(null);
     // Use a pre-allocated ring buffer to avoid O(n²) array copies
@@ -59,20 +61,22 @@ export default function useAudioRecorder({ onAudioRecorded, onBargeIn }: Paramet
     };
 
     /** getUserMedia rejections propagate; false means capture could not start (e.g. no user gesture). */
-    const start = async (): Promise<boolean> => {
+    const start = async (streamProvider?: AudioStreamProvider): Promise<boolean> => {
         if (!audioRecorder.current) {
             audioRecorder.current = new Recorder(handleAudioData, onBargeIn);
         }
         bufferLenRef.current = 0;
-        const stream = await navigator.mediaDevices.getUserMedia({
-            audio: {
-                sampleRate: 24000,
-                channelCount: 1,
-                echoCancellation: true,
-                noiseSuppression: true,
-                autoGainControl: false
-            }
-        });
+        const stream = streamProvider
+            ? await streamProvider()
+            : await navigator.mediaDevices.getUserMedia({
+                  audio: {
+                      sampleRate: 24000,
+                      channelCount: 1,
+                      echoCancellation: true,
+                      noiseSuppression: true,
+                      autoGainControl: false
+                  }
+              });
         return audioRecorder.current.start(stream);
     };
 

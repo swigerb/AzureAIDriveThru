@@ -61,6 +61,15 @@
         "cascadeGroup": "Cascade",
         "noModelsAvailable": "No models available"
     },
+    "settings": {
+        "demoMode": {
+            "label": "Demo Mode",
+            "description": "Run a hands-free scripted guest voice demo.",
+            "on": "Demo on",
+            "off": "Demo off",
+            "aria": "Toggle demo mode"
+        }
+    },
     "hero": {
         "badge": "Voice Ordering Demo",
         "subhead": "A persona-driven voice ordering assistant, grounded by Microsoft Foundry, Azure OpenAI, and Azure AI Search.",

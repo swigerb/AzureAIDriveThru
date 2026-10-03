@@ -61,6 +61,15 @@
         "cascadeGroup": "Cascade",
         "noModelsAvailable": "Aucun modèle disponible"
     },
+    "settings": {
+        "demoMode": {
+            "label": "Mode démo",
+            "description": "Lance une démo mains libres avec une voix de cliente scénarisée.",
+            "on": "Démo activée",
+            "off": "Démo désactivée",
+            "aria": "Activer ou désactiver le mode démo"
+        }
+    },
     "hero": {
         "badge": "Démo de commande vocale",
         "subhead": "Un assistant de commande vocale piloté par personnage, ancré par Microsoft Foundry, Azure OpenAI et Azure AI Search.",

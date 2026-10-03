@@ -13,7 +13,7 @@ export default function useAudioPlayer() {
         await audioPlayer.current.init(SAMPLE_RATE);
     }, []);
 
-    const play = useCallback((base64Audio: string) => {
+    const play = useCallback((base64Audio: string): number => {
         const binary = atob(base64Audio);
         const len = binary.length;
         const bytes = new Uint8Array(len);
@@ -28,6 +28,7 @@ export default function useAudioPlayer() {
 
         const pcmData = new Int16Array(bytes.buffer);
         audioPlayer.current.play(pcmData);
+        return (pcmData.length / SAMPLE_RATE) * 1000;
     }, []);
 
     const stop = useCallback(() => {
