@@ -2,11 +2,11 @@
 
 ## What azd deploys
 
-`azd up` provisions or updates the Azure AI Drive-Thru environment:
+`azd up` provisions or updates the Microsoft Foundry AI Drive Thru environment:
 
 1. Resource group, Azure Container Registry, Log Analytics, Storage, and a user-assigned managed identity.
 2. Microsoft Foundry `AIServices` with the model deployments in `infra/model-deployments.json`.
-3. Azure AI Search with one index per persona pack.
+3. Azure AI Search with one index per persona.
 4. Azure Container Apps with one container app that serves the frontend and Python backend.
 5. Entra ID in-app auth settings, managed-identity RBAC, search ingestion, and the non-fatal realtime smoke check through azd hooks.
 
@@ -33,26 +33,22 @@ azd up
 
 ## New Environment: Personas, Search Indexes, and Model Deployments
 
-A brand-new `azd` environment (its own resource group, Foundry/Azure OpenAI
-account, and paid Search service; see `docs/persona-architecture.md` section
-10) is configured with these `infra/main.bicep` parameters:
+A brand-new `azd` environment, with its own resource group, Foundry AIServices account, and paid Search service, is configured with these `infra/main.bicep` parameters:
 
-Production currently sets `DEFAULT_PERSONA=sonic` in the azd environment.
-The Sonic persona pack remains the default landing experience when no query string is supplied.
-Use `?persona=sonic` when you need an explicit deep link to that persona.
+The tracked default leaves `DEFAULT_PERSONA` empty. When no query string is supplied, `app/backend/persona_loader.py` chooses `sonic` when that persona is enabled, else the first enabled id alphabetically. Use `?persona=<id>` for an explicit deep link.
 
 | Parameter | env var (in `main.parameters.json`) | Default | Notes |
 |---|---|---|---|
-| `personas` | `PERSONAS` | *(empty)* | Comma list; the app parses this to its own allow-list. Empty (the tracked default) means "every persona pack found under `PERSONAS_DIR`" (`app/backend/persona_loader.py`), so all brands are served without naming any of them in tracked infra. The container app omits the `PERSONAS` env var entirely when this is empty, so the loader's own default applies. Override with `azd env set PERSONAS=...` only to restrict an environment to a subset of packs. |
-| `defaultPersona` | `DEFAULT_PERSONA` | *(empty)* | Persona selected when a request doesn't specify one. Empty (the tracked default) means the container app omits `DEFAULT_PERSONA` entirely, so `app/backend/persona_loader.py` picks its own default (its first-party pack if enabled, else the first enabled id alphabetically) -- same "don't name a brand in tracked infra" treatment as `personas` above. |
-| `openAiModelDeployments` | *(not wired to an env var)* | `infra/model-deployments.json` (loaded via `loadJsonContent()`): `gpt-realtime-2.1` (GlobalStandard, capacity from `realtimeDeploymentCapacity`, `isDefaultRealtime: true`) and `text-embedding-3-large` (capacity from `embeddingDeploymentCapacity`) | Each entry is `{catalogId, deploymentName, modelName, modelVersion, format, skuName, capacity, isDefaultRealtime}` (`format` is the Foundry model-format id, defaults to `OpenAI` when omitted). `AZURE_AI_MODEL_DEPLOYMENTS` output/env exposes the resulting catalogId to deploymentName map (section 7.2) for the model catalog in `app/backend/config.yaml`. Adding a #82 model is one new entry in `infra/model-deployments.json`, no Bicep edits. |
+| `personas` | `PERSONAS` | *(empty)* | Comma list; the app parses this to its own allow-list. Empty (the tracked default) means "every persona found under `PERSONAS_DIR`" (`app/backend/persona_loader.py`), so all personas are served without naming any of them in tracked infra. The container app omits the `PERSONAS` env var entirely when this is empty, so the loader's own default applies. Override with `azd env set PERSONAS=...` only to restrict an environment to a subset of personas. |
+| `defaultPersona` | `DEFAULT_PERSONA` | *(empty)* | Persona selected when a request doesn't specify one. Empty (the tracked default) means the container app omits `DEFAULT_PERSONA` entirely, so `app/backend/persona_loader.py` picks its own default (its sonic persona if enabled, else the first enabled id alphabetically) -- same "don't name a brand in tracked infra" treatment as `personas` above. |
+| `openAiModelDeployments` | *(not wired to an env var)* | `infra/model-deployments.json` (loaded via `loadJsonContent()`): `gpt-realtime-2.1`, `text-embedding-3-large`, `gpt-5-mini`, `phi-4`, `gpt-4o-transcribe`, and `gpt-4o-mini-tts` | Each entry is `{catalogId, deploymentName, modelName, modelVersion, format, skuName, capacity, isDefaultRealtime}` (`format` is the Foundry model-format id, defaults to `OpenAI` when omitted). `AZURE_AI_MODEL_DEPLOYMENTS` output/env exposes the catalogId-to-deploymentName map for the model catalog in `app/backend/config.yaml`. Adding a model deployment is one new entry in `infra/model-deployments.json`, no Bicep edits. |
 | `realtimeDeploymentCapacity` | `AZURE_OPENAI_REALTIME_DEPLOYMENT_CAPACITY` | `10` | Scale-only override for the `gpt-realtime-2.1` entry above (section 10.3): bump the param, then `azd provision`. |
 | `searchServiceSkuName` | `AZURE_SEARCH_SERVICE_SKU` | `basic` | Paid tier for a clean-clone `azd up` (design section 10.2): Basic removes the free tier's 3-index cap at roughly a third of Standard's cost. |
-| `searchServiceLocation` | `AZURE_SEARCH_SERVICE_LOCATION` | *(empty -- falls back to `location`)* | Independent region override for the Search module only (same pattern as `openAiServiceLocation`/`AZURE_OPENAI_SERVICE_LOCATION`). Set this when the main `location` has no Basic-SKU Search capacity: `azureaidrivethru-prod` (#87) uses `eastus` here while everything else stays in `eastus2` (design section 10.2). |
-| `deployDotnetApp` | `DEPLOY_DOTNET_APP` | `false` | Deploys the `acaBackendDotnet` Container App module (same Foundry account, Search service, and managed identity as the Python app, no extra RBAC needed). Stays `false` until `app/backend-dotnet` exists (#17); `azure.yaml` has no `backend-dotnet` service yet, so `azd` never targets it while disabled. |
+| `searchServiceLocation` | `AZURE_SEARCH_SERVICE_LOCATION` | *(empty -- falls back to `location`)* | Independent region override for the Search module only (same pattern as `openAiServiceLocation`/`AZURE_OPENAI_SERVICE_LOCATION`). Set this when the main `location` has no Basic-SKU Search capacity. |
+| `deployDotnetApp` | `DEPLOY_DOTNET_APP` | `false` | Deploys the optional `acaBackendDotnet` Container App module with the same Foundry account, Search service, and managed identity as the Python app. `azure.yaml` has no `backend-dotnet` service entry yet, so the standard `azd` service target remains the Python backend. |
 | `dotnetServiceName` | `AZURE_CONTAINER_APP_DOTNET_NAME` | *(auto-generated)* | Only used when `deployDotnetApp` is `true`. |
 
-Search index names are not tracked in infra at all: each persona pack's own
+Search index names are not tracked in infra at all: each persona's own
 `persona.json` `search.indexName` (design section 4.2) is the one source of
 truth, read by the #84 ingestion hook and by the app itself. An infra-level
 index-name map would be a second source of truth for the same data.
@@ -103,11 +99,9 @@ azd env set DEFAULT_PERSONA <persona-id>
 azd provision
 ```
 
-The production value is recorded in the deploy checklist on issue #87.
-
 This only changes which persona a session gets when it doesn't name one
 (`app/backend/persona_loader.py`'s fallback); it does not restrict `PERSONAS`
--- every enabled persona pack still gets its own index and is still
+-- every enabled persona still gets its own index and is still
 reachable by a session that requests it explicitly.
 
 ## Entra ID Authentication (ADR-002)
@@ -266,7 +260,7 @@ possible without touching every other environment's default behavior.
      pass), run `az containerapp ingress disable` (or set the variable back to `false` and provision), then fix it.
 6. Brian signs in on the live URL, and posts the result on #85.
 
-**The rule:** never run `azd provision` or `azd up` against `azureaidrivethru-prod` with `BACKEND_INGRESS_ENABLED`
+**The rule:** never run `azd provision` or `azd up` against a production environment with `BACKEND_INGRESS_ENABLED`
 true (or unset) until step 4a has passed with ingress off. This also covers the manual `Deploy to Azure with azd`
 workflow (`.github/workflows/azure-dev.yaml`, `workflow_dispatch` only): it runs `azd provision` without setting
 `BACKEND_INGRESS_ENABLED` or the `ENTRA_*` values, so dispatching it against `azureaidrivethru-prod` before 4a has

@@ -1,100 +1,68 @@
-# Connecting Azure AI Drive-Thru to existing services
+# Connecting Microsoft Foundry AI Drive Thru to existing services
 
-Azure AI Drive-Thru can be connected to existing Azure services, such as a Microsoft Foundry account and Azure AI Search. This guide shows how to reuse existing services in your Azure subscription.
-When reusing Search, keep one index per persona. For example, the Sonic persona expects `sonic-menu-items`.
-When reusing a realtime deployment, verify the Sonic persona first because it is the current production default.
+Microsoft Foundry AI Drive Thru can reuse an existing Foundry AIServices account and an existing Azure AI Search service. Reusing a service does not remove the app's schema requirements: the Foundry resource must expose the deployments the model catalog maps to, and Search must contain one menu index per enabled persona.
 
-* [Reuse existing Foundry realtime deployment](#reuse-existing-foundry-realtime-deployment)
-* [Reuse existing index from azure-search-openai-demo](#reuse-existing-index-from-azure-search-openai-demo)
+## Reuse an existing Foundry AIServices account
 
-## Reuse existing Foundry realtime deployment
+Run these commands before `azd up`:
 
-Run these commands _before_ running `azd up`:
-
-1. Run this command to ensure that the [infrastructure](../infra/main.bicep) does not make a brand new OpenAI service:
-
-    ```bash
-    azd env set AZURE_OPENAI_REUSE_EXISTING true
-    ```
-
-2. Run this command to ensure that the [infrastructure](../infra/main.bicep) assigns the proper RBAC roles for accessing the Foundry resource:
-
-    ```bash
-    azd env set AZURE_OPENAI_RESOURCE_GROUP <YOUR_RESOURCE_GROUP>
-    ```
-
-3. Run this command to point the app code at your Azure OpenAI-compatible realtime endpoint:
-
-    ```bash
-    azd env set AZURE_OPENAI_EASTUS2_ENDPOINT https://<YOUR_OPENAI_SERVICE>.openai.azure.com
-    ```
-
-4. Run this command to point the app code at your realtime deployment. Note that the deployment name may be different from the model name:
-
-    ```bash
-    azd env set AZURE_OPENAI_REALTIME_DEPLOYMENT <YOUR_REALTIME_DEPLOYMENT_NAME>
-    ```
-
-## Reuse existing index from azure-search-openai-demo
-
-If you are using the popular RAG solution [azure-search-openai-demo](https://www.github.com/Azure-samples/azure-search-openai-demo), you can connect the drive-thru to the existing index by setting the following `azd` environment variables.
-Run these commands _before_ running `azd up`.
-
-1. Run this command to ensure that the [infrastructure](../infra/main.bicep) does not make a brand new Azure Search service:
-
-    ```bash
-    azd env set AZURE_SEARCH_REUSE_EXISTING true
-    ```
-
-2. Run this command to ensure that the [infrastructure](../infra/main.bicep) assigns the proper RBAC roles for accessing the Azure Search resource:
-
-    ```bash
-    azd env set AZURE_SEARCH_SERVICE_RESOURCE_GROUP <YOUR_RESOURCE_GROUP>
-    ```
-
-3. Run this command to point the app code at your Azure Search service:
-
-    ```bash
-    azd env set AZURE_SEARCH_ENDPOINT https://<YOUR_SEARCH_SERVICE>.search.windows.net
-    ```
-
-4. Run these commands to point the app code at the existing index and fields:
-
-    ```bash
-    azd env set AZURE_SEARCH_SEMANTIC_CONFIGURATION default
-    azd env set AZURE_SEARCH_IDENTIFIER_FIELD id
-    azd env set AZURE_SEARCH_CONTENT_FIELD content
-    azd env set AZURE_SEARCH_TITLE_FIELD sourcepage
-    azd env set AZURE_SEARCH_EMBEDDING_FIELD embedding
-    azd env set AZURE_SEARCH_REUSE_EXISTING true
-    azd env set AZURE_SEARCH_INDEX gptkbindex
-    ```
-
-5. (Optional) Run this command to disable vector search:
-
-    ```bash
-    azd env set AZURE_SEARCH_USE_VECTOR_QUERY false
-    ```
-
-    This variable is not needed if your search index has a built-in vectorizer,
-    which was added to the `azure-search-openai-demo` index setup in the October 17, 2024 release.
-
-### Development server
-
-Alternatively, you can first test the solution locally with the `azure-search-openai-demo` index by creating a `.env` file in `app/backend` with contents like the following:
-
-```bash
-AZURE_TENANT_ID=<YOUR-TENANT-ID>
-AZURE_OPENAI_EASTUS2_ENDPOINT=https://<YOUR_OPENAI_ENDPOINT>.openai.azure.com
-AZURE_OPENAI_REALTIME_DEPLOYMENT=gpt-realtime-2.1
-AZURE_OPENAI_REALTIME_VOICE_CHOICE=<choose one: marin (default), cedar, alloy, ash, ballad, coral, echo, sage, shimmer, verse>
-AZURE_SEARCH_ENDPOINT=https://<YOUR_SEARCH_SERVICE>.search.windows.net
-AZURE_SEARCH_INDEX=gptkbindex
-AZURE_SEARCH_SEMANTIC_CONFIGURATION=default
-AZURE_SEARCH_IDENTIFIER_FIELD=id
-AZURE_SEARCH_CONTENT_FIELD=content
-AZURE_SEARCH_TITLE_FIELD=sourcepage
-AZURE_SEARCH_EMBEDDING_FIELD=embedding
+```powershell
+azd env set AZURE_OPENAI_REUSE_EXISTING true
+azd env set AZURE_OPENAI_RESOURCE_GROUP <resource-group-containing-foundry>
+azd env set AZURE_OPENAI_EASTUS2_ENDPOINT https://<foundry-subdomain>.openai.azure.com
 ```
 
-Then follow the steps in the project's [README](../README.md#quick-start) for the current setup flow.
+The standard deployment expects the catalog ids in `app/backend/config.yaml` to resolve through `AZURE_AI_MODEL_DEPLOYMENTS`, which Bicep emits from `infra/model-deployments.json`. If you reuse a Foundry resource, create deployments with those deployment names, or update `infra/model-deployments.json` before provisioning.
+
+The current standard deployment names are:
+
+- `gpt-realtime-2.1`
+- `text-embedding-3-large`
+- `gpt-5-mini`
+- `phi-4`
+- `gpt-4o-transcribe`
+- `gpt-4o-mini-tts`
+
+`AZURE_OPENAI_REALTIME_DEPLOYMENT` is still emitted for backward compatibility and local fallback, but the model picker uses `AZURE_AI_MODEL_DEPLOYMENTS` when the map contains the selected catalog id.
+
+## Reuse an existing Azure AI Search service
+
+Run these commands before `azd up`:
+
+```powershell
+azd env set AZURE_SEARCH_REUSE_EXISTING true
+azd env set AZURE_SEARCH_SERVICE_RESOURCE_GROUP <resource-group-containing-search>
+azd env set AZURE_SEARCH_ENDPOINT https://<search-service>.search.windows.net
+```
+
+The app expects the menu index schema created by `app/backend/setup_search_index.py`: `id`, `category`, `name`, `description`, `longDescription`, `origin`, `caffeineContent`, `brewingMethod`, `popularity`, `menuPeriod`, `sizes`, and `embedding`, with semantic configuration `menuSemanticConfig` and vector profile `menuHnswProfile`.
+
+The index names come from each `personas/<id>/persona.json` `search.indexName`. After provisioning RBAC, populate or refresh the indexes with:
+
+```powershell
+./scripts/setup_search_index.ps1
+```
+
+On macOS or Linux, use `./scripts/setup_search_index.sh`.
+
+## Local development with existing services
+
+For local runs, create `app/backend/.env` or run `scripts/write_env.ps1` after selecting an azd environment. A minimal hand-written `.env` looks like this:
+
+```bash
+AZURE_TENANT_ID=<tenant-id>
+AZURE_OPENAI_EASTUS2_ENDPOINT=https://<foundry-subdomain>.openai.azure.com
+AZURE_OPENAI_REALTIME_DEPLOYMENT=gpt-realtime-2.1
+AZURE_AI_FOUNDRY_ENDPOINT=https://<foundry-subdomain>.services.ai.azure.com/models
+AZURE_AI_MODEL_DEPLOYMENTS={"gpt-realtime-2.1":"gpt-realtime-2.1","text-embedding-3-large":"text-embedding-3-large","gpt-5-mini":"gpt-5-mini","phi-4":"phi-4","gpt-4o-transcribe":"gpt-4o-transcribe","gpt-4o-mini-tts":"gpt-4o-mini-tts"}
+AZURE_OPENAI_REALTIME_VOICE_CHOICE=marin
+AZURE_SEARCH_ENDPOINT=https://<search-service>.search.windows.net
+AZURE_SEARCH_SEMANTIC_CONFIGURATION=menuSemanticConfig
+AZURE_SEARCH_IDENTIFIER_FIELD=id
+AZURE_SEARCH_CONTENT_FIELD=description
+AZURE_SEARCH_TITLE_FIELD=name
+AZURE_SEARCH_EMBEDDING_FIELD=embedding
+AZURE_SEARCH_USE_VECTOR_QUERY=true
+```
+
+Then follow the [README quick start](../README.md#quick-start). The legacy `AZURE_SEARCH_INDEX` setting is still accepted for fallback paths, but normal persona sessions use the index name from the active persona manifest.

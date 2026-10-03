@@ -26,28 +26,12 @@ entries:
   increase_reason: ''
 - file: DEPLOY.md
   brand: sonic
-  max: 3
+  max: 2
   issue: '#86'
   reason: 'Deployment walkthrough uses the Sonic app name/image tag as its running
     example; same top-level-docs naming work as #86. Lowered from 5 to 3 when the
     EasyAuth section was replaced with the Entra Setup/Verify/rollout walkthrough
     (#146), which removed several Sonic-named auth example strings.'
-  increase_reason: ''
-- file: README.md
-  brand: mcdonalds
-  max: 1
-  issue: '#86'
-  reason: 'Top-level README currently reads Sonic-only; #86 tracks updating it to
-    name all three brands. Also rescues ''mcdonalds'' for the Local-mode paragraph''s
-    reference to the upstream voice_rag McDonald''s demo this repo was forked from.'
-  increase_reason: ''
-- file: README.md
-  brand: sonic
-  max: 17
-  issue: '#86'
-  reason: 'Top-level README currently reads Sonic-only; #86 tracks updating it to
-    name all three brands. Also rescues ''mcdonalds'' for the Local-mode paragraph''s
-    reference to the upstream voice_rag McDonald''s demo this repo was forked from.'
   increase_reason: ''
 - file: app/backend-dotnet/src/Backend/Personas/MenuKeyValidator.cs
   brand: sonic
@@ -99,8 +83,8 @@ entries:
   brand: sonic
   max: 1
   issue: '#205'
-  reason: 'Issue-specific unit coverage loads the target persona pack to verify its
-    componentUpcharge bundle pricing rule; remove if this coverage becomes pack-neutral.'
+  reason: Issue-specific unit coverage loads the target persona pack to verify its
+    componentUpcharge bundle pricing rule; remove if this coverage becomes pack-neutral.
   increase_reason: '#205'
 - file: app/backend-dotnet/tests/Backend.Tests/Personas/MenuKeyValidatorTests.cs
   brand: sonic
@@ -462,23 +446,9 @@ entries:
     edit). Also rescues ''mcdonalds'' for brandColorTokens.test.ts, which uses McDonald''s
     red as a non-Sonic-brand-hex test fixture, not real branding.'
   increase_reason: ''
-- file: docs/customizing_deploy.md
-  brand: sonic
-  max: 3
-  issue: '#78'
-  reason: Non-ADR docs use the Sonic persona as the illustrative current example pending
-    other persona packs landing.
-  increase_reason: ''
 - file: docs/dotnet_mapping.md
   brand: sonic
   max: 1
-  issue: '#78'
-  reason: Non-ADR docs use the Sonic persona as the illustrative current example pending
-    other persona packs landing.
-  increase_reason: ''
-- file: docs/existing_services.md
-  brand: sonic
-  max: 2
   issue: '#78'
   reason: Non-ADR docs use the Sonic persona as the illustrative current example pending
     other persona packs landing.
@@ -773,8 +743,8 @@ entries:
   brand: sonic
   max: 1
   issue: '#205'
-  reason: 'Issue-specific conformance coverage loads the target persona pack to verify
-    cross-backend componentUpcharge behavior; remove if this coverage becomes pack-neutral.'
+  reason: Issue-specific conformance coverage loads the target persona pack to verify
+    cross-backend componentUpcharge behavior; remove if this coverage becomes pack-neutral.
   increase_reason: '#205'
 - file: tests/conformance/tests/Conformance.Tests/Scenarios/Ordering/CustomisedItemMenuLookupTests.cs
   brand: sonic
