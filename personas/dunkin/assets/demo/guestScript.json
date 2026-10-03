@@ -19,11 +19,6 @@
       "id": "03",
       "text": "Uhh, that'll work.",
       "audio": "demo/guest/03.mp3"
-    },
-    {
-      "id": "04",
-      "text": "That's it.",
-      "audio": "demo/guest/04.mp3"
     }
   ]
 }

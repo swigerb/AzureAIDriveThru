@@ -50,16 +50,16 @@
         "translation": "You got it! Large Strawberry Dragonfruit Refresher with an extra espresso shot added. Anything from the bakery case?"
     },
     {
-        "text": "Ajoutez trois beignets glacés et deux sandwichs bacon, œuf et fromage sur croissant, s'il vous plaît.",
+        "text": "Ajoutez 3 beignets glacés et deux sandwichs bacon, œuf et fromage sur croissant, s'il vous plaît.",
         "isUser": true,
         "timestamp": "2024-07-18T12:01:32Z",
-        "translation": "Add three glazed donuts and two bacon egg and cheese croissant sandwiches, please."
+        "translation": "Add 3 glazed donuts and two bacon egg and cheese croissant sandwiches, please."
     },
     {
-        "text": "Parfait, trois beignets glacés et deux Bacon Egg & Cheese sur croissant ajoutés. Voulez-vous le récapitulatif de la commande ?",
+        "text": "Parfait, 3 beignets glacés et deux Bacon Egg & Cheese sur croissant ajoutés. Voulez-vous le récapitulatif de la commande ?",
         "isUser": false,
         "timestamp": "2024-07-18T12:01:40Z",
-        "translation": "Perfect, three glazed donuts and two Bacon Egg & Cheese on Croissant added. Would you like the order summary?"
+        "translation": "Perfect, 3 glazed donuts and two Bacon Egg & Cheese on Croissant added. Would you like the order summary?"
     },
     { "text": "Yes, give me the totals.", "isUser": true, "timestamp": "2024-07-18T12:02:10Z", "translation": "Yes, give me the totals." },
     {
