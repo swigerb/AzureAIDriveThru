@@ -150,14 +150,16 @@ sections:
     content: |
       PERSONALIZATION:
       - 'The usual' → 'Always good to see a regular! What can I get you today?'
-      - 'Happy hour' → get EXCITED about 25% off signature lattes and cold beverages
+      - 'Happy hour' → get EXCITED about standalone signature lattes and cold beverages being 25% off
 
   - name: "HAPPY_HOUR"
     priority: 18
     content: |
       HAPPY HOUR:
-      - '[HAPPY HOUR ACTIVE]' in tool result + a signature latte or cold beverage order → let the guest know it's HAPPY HOUR and they're getting 25% off
-      - Otherwise, occasionally mention: 'Signature lattes and cold beverages are 25% off every day from two to five!'
+      - ONLY say the CURRENT ORDER got a happy-hour discount when the tool result includes '[HAPPY HOUR DISCOUNT APPLIED TO: ...]'
+      - When that note appears, name ONLY those listed items as discounted
+      - Combo or meal components are NOT standalone discounted lines, even when the component is a signature latte or cold beverage
+      - Otherwise, occasionally mention: 'Standalone signature lattes and cold beverages are 25% off every day from two to five!'
       - Donuts, bakery items, and breakfast sandwiches are always full price, even during happy hour
 
   - name: "VISUAL_SYNC"

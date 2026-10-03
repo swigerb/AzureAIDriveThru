@@ -1218,14 +1218,15 @@ class EdgeCaseTests(unittest.TestCase):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class HappyHourBannerWordingTests(unittest.TestCase):
-    """The [HAPPY HOUR ACTIVE: ...] banner appended to update_order/get_order tool
-    results must say explicitly that slushes and fountain drinks are half-price
-    and that shakes, Blasts and sundaes are full price -- the old wording ("drinks
-    and slushes are half-price!") said nothing about shakes/Blasts/sundaes at all,
-    which is how the carhop kept treating them as discounted (issue #39 / #61).
+    """Happy-hour tool notes are server truth about discounts on the current order.
+
+    They appear only when at least one current raw order line was actually priced at the
+    happy-hour rate, and then name those lines. Combo components are excluded because they
+    are included in the combo line's price rather than discounted as standalone lines (#209).
     """
 
-    NEW_BANNER = "[HAPPY HOUR ACTIVE: slushes and fountain drinks are half-price; shakes, Blasts and sundaes are full price]"
+    NEW_BANNER = "[HAPPY HOUR ACTIVE: standalone slushes and fountain drinks are half-price; shakes, Blasts, sundaes, and combo components are full price]"
+    APPLIED_NOTE = "[HAPPY HOUR DISCOUNT APPLIED TO:"
 
     def setUp(self):
         self._hh_patcher = patch("order_state.is_happy_hour", return_value=True)
@@ -1234,15 +1235,17 @@ class HappyHourBannerWordingTests(unittest.TestCase):
     def tearDown(self):
         self._hh_patcher.stop()
 
-    def test_update_order_banner_states_shakes_blasts_sundaes_are_full_price(self):
+    def test_update_order_banner_names_the_discounted_standalone_line(self):
         sid = _make_session()
         result = _run(update_order({
             "action": "add", "item_name": "Cherry Limeade",
             "size": "medium", "quantity": 1, "price": 2.89,
         }, sid))
         self.assertIn(self.NEW_BANNER, result.text)
+        self.assertIn(self.APPLIED_NOTE, result.text)
+        self.assertIn("Medium Cherry Limeade", result.text)
 
-    def test_get_order_banner_states_shakes_blasts_sundaes_are_full_price(self):
+    def test_get_order_banner_names_the_discounted_standalone_line(self):
         sid = _make_session()
         _run(update_order({
             "action": "add", "item_name": "Cherry Limeade",
@@ -1250,6 +1253,24 @@ class HappyHourBannerWordingTests(unittest.TestCase):
         }, sid))
         result = _run(get_order({}, sid))
         self.assertIn(self.NEW_BANNER, result.text)
+        self.assertIn(self.APPLIED_NOTE, result.text)
+        self.assertIn("Medium Cherry Limeade", result.text)
+
+    def test_combo_component_gets_no_happy_hour_claim_even_when_item_itself_is_discountable(self):
+        sid = _make_session()
+        combo_result = _run(update_order({
+            "action": "add", "item_name": "SuperSONIC® Double Cheeseburger Combo",
+            "size": "standard", "quantity": 1, "price": 10.19,
+        }, sid))
+        self.assertNotIn("HAPPY HOUR", combo_result.text)
+        result = _run(update_order({
+            "action": "add", "item_name": "Cherry Limeade",
+            "size": "medium", "quantity": 1, "price": 2.89,
+        }, sid))
+        self.assertNotIn("HAPPY HOUR", result.text)
+        self.assertNotIn(self.APPLIED_NOTE, result.text)
+        get_result = _run(get_order({}, sid))
+        self.assertNotIn("HAPPY HOUR", get_result.text)
 
     def test_no_banner_outside_happy_hour(self):
         self._hh_patcher.stop()
@@ -1260,6 +1281,7 @@ class HappyHourBannerWordingTests(unittest.TestCase):
                 "size": "medium", "quantity": 1, "price": 2.89,
             }, sid))
             self.assertNotIn("HAPPY HOUR", result.text)
+            self.assertNotIn(self.APPLIED_NOTE, result.text)
         self._hh_patcher.start()
 
 

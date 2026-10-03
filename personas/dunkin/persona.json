@@ -32,7 +32,7 @@
       "endHour": 17,
       "priceMultiplier": "0.75",
       "announce": true,
-      "banner": "[HAPPY HOUR ACTIVE: signature lattes and cold beverages are 25% off; donuts, bakery, and breakfast sandwiches are full price]"
+      "banner": "[HAPPY HOUR ACTIVE: standalone signature lattes and cold beverages are 25% off; donuts, bakery, breakfast sandwiches, and combo components are full price]"
     }
   },
   "sizes": {

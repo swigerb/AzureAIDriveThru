@@ -135,11 +135,50 @@ public sealed class OrderState
         return window.StartHour <= now.Hour && now.Hour < window.EndHour;
     }
 
-    /// <summary>#113: the banner text (<c>" " + banner</c>, matching Python's leading-space
-    /// positioning) tools/get_order should append to their result for this session -- "" unless
-    /// this persona's own <c>announce</c> flag is set AND happy hour is currently active. Mirrors
-    /// order_state.py's <c>get_happy_hour_banner_for_session</c>.</summary>
-    public string HappyHourBanner => _happyHourAnnounce && IsHappyHour() ? $" {_happyHourBanner}" : "";
+    /// <summary>The happy-hour note tools/get_order should append for this session. It is present
+    /// only when this persona announces happy hour, the window is active, and at least one current
+    /// raw order line is actually being multiplied by the happy-hour price. Bundle components are
+    /// not raw order lines, matching <c>UpdateSummary</c>'s pricing rule.</summary>
+    public string HappyHourBanner
+    {
+        get
+        {
+            if (!_happyHourAnnounce)
+            {
+                return "";
+            }
+
+            var discountedLines = HappyHourDiscountedLineDisplays();
+            if (discountedLines.Count == 0)
+            {
+                return "";
+            }
+
+            return $" {_happyHourBanner} [HAPPY HOUR DISCOUNT APPLIED TO: {string.Join(", ", discountedLines)}]";
+        }
+    }
+
+    private List<string> HappyHourDiscountedLineDisplays()
+    {
+        if (!IsHappyHour())
+        {
+            return [];
+        }
+
+        var discounted = new List<string>();
+        foreach (var item in _items)
+        {
+            if (!_menu.IsHappyHourDiscounted(item.Item))
+            {
+                continue;
+            }
+
+            var display = item.Display.Length > 0 ? item.Display : item.Item;
+            discounted.Add(item.Quantity > 1 ? $"{item.Quantity} x {display}" : display);
+        }
+
+        return discounted;
+    }
 
     /// <summary>Ports order_state.py's <c>handle_order_update</c> verbatim (algorithm captured in
     /// full in the class/method comments below) -- the combo-name-marker conversion, post-bundle
