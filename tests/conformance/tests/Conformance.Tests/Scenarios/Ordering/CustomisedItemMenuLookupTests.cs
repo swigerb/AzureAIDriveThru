@@ -309,10 +309,10 @@ public sealed class CustomisedItemMenuLookupTests
                     roundTripIndex, ct);
 
                 OrderScenarioHelpers.AssertMoneyEqual(
-                    BaseComboPrice,
+                    BaseComboPrice + 0.70m,
                     OrderScenarioHelpers.GetOrderTotal(result.ToolResultJson!),
                     "'Tater Tots (Large)' (size word as a bracketed modifier) is stripped before " +
-                    "the alias lookup and absorbs into the combo side slot for free.");
+                    "the alias lookup and absorbs into the combo side slot with the above-included-size upcharge.");
                 Assert.Equal(1, OrderScenarioHelpers.GetOrderItemCount(result.ToolResultJson!));
             });
 

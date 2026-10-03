@@ -148,6 +148,10 @@ namespace Conformance.Tests;
 /// Issue #184 round 4 (Rick's round-3 review, items 2/4/7): two more tagged, ungated methods
 /// cover first-absorption path independence for wholeBundleSize packs and pack-owned
 /// wholeBundleSize golden vectors, raising the floor 201 to 203.
+///
+/// Issue #205: one tagged, ungated Fact covers the `componentUpcharge` bundle rule across both
+/// backends, including the wire `componentUpcharges` field and resize-back-to-included-size path,
+/// raising the floor 203 to 204.
 /// </summary>
 public sealed class DotnetTraitCoverageTests
 {
@@ -170,12 +174,12 @@ public sealed class DotnetTraitCoverageTests
     };
 
     [Fact]
-    public void At_least_203_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
+    public void At_least_204_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
     {
         var count = CountFloorEligibleDotnetReadyTestMethods();
 
-        Assert.True(count >= 203,
-            $"Expected at least 203 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
+        Assert.True(count >= 204,
+            $"Expected at least 204 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
             $"and not unconditionally skip-gated by AuthRowCapability (the dotnet leg's " +
             $"`--filter \"{TraitName}={TraitValue}&Category!=Browser\"` baseline, minus the five " +
             "skip-only Scenarios/Auth classes -- see this class's own doc comment; " +

@@ -118,6 +118,27 @@ describe("OrderSummary", () => {
             expect(screen.getAllByText("ticket.included")).toHaveLength(2);
         });
 
+        it("renders a component upcharge instead of Included when provided", () => {
+            const items: OrderItem[] = [
+                {
+                    item: "SuperSONIC® Double Cheeseburger Combo",
+                    size: "standard",
+                    quantity: 1,
+                    price: 10.69,
+                    display: "SuperSONIC® Double Cheeseburger Combo",
+                    components: ["Medium Tots", "Large Cherry Limeade"],
+                    componentUpcharges: [0, 0.5]
+                }
+            ];
+            const summary: OrderSummaryProps = { items, total: 10.69, tax: 0, finalTotal: 10.69 };
+            render(<OrderSummary order={summary} />);
+
+            expect(screen.getByText("Medium Tots")).toBeInTheDocument();
+            expect(screen.getByText("Large Cherry Limeade")).toBeInTheDocument();
+            expect(screen.getByText("ticket.included")).toBeInTheDocument();
+            expect(screen.getByText("+$0.50")).toBeInTheDocument();
+        });
+
         it("does not render a components list for an a-la-carte item with none", () => {
             const items: OrderItem[] = [{ item: "Large Tots", size: "standard", quantity: 1, price: 3.29, display: "Large Tots" }];
             const summary: OrderSummaryProps = { items, total: 3.29, tax: 0, finalTotal: 3.29 };

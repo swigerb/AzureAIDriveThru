@@ -1308,7 +1308,7 @@ summary:
 ```json
 {
   "items": [
-    { "item": "<name>", "size": "<canonical size key, or empty>", "quantity": <int>, "price": <number>, "display": "<full display string>", "components": ["<absorbed/auto-filled bundle slot display string>", ...] }
+    { "item": "<name>", "size": "<canonical size key, or empty>", "quantity": <int>, "price": <number>, "display": "<full display string>", "components": ["<absorbed/auto-filled bundle slot display string>", ...], "componentUpcharges": [<per-unit upcharge number>, ...] }
   ],
   "total": <number>,
   "tax": <number>,
@@ -1329,7 +1329,11 @@ fill — see `order_state.handle_order_update`), and a `modify` (resize) on a bu
 list forward unchanged, since resizing a meal doesn't re-pick its sides/drinks. A client that renders
 the ticket line-by-line should treat a non-empty `components` as "this line already includes these
 named parts" rather than separate orderable lines of their own — they aren't independently priced or
-removable.
+removable. **`items[].componentUpcharges` (#205, additive) is optional/index-aligned with
+`components`**. Missing or zero entries render as "Included"; positive entries render as a per-unit
+component upcharge (for example `["Large Cherry Limeade"]` + `[0.50]` on the pack's
+`componentUpcharge` rule). Backends still include the upcharge in the parent bundle line's own
+`price`; the component remains a sub-line, not a separate order row.
 
 **`items[].size` is the canonical size key, not the raw spelling or the display string (#40, PR #50
 review follow-up)**: `order_state.handle_order_update` runs every incoming size through
@@ -2138,4 +2142,3 @@ mutation-checked (removing either handler's gate check independently turns the c
 end-to-end test red; see the mutation table in the #53 commit). **A C# backend must implement the
 same gate itself** (off by default, `CONFORMANCE_TEST_HOOKS`-or-explicit-opt-in to enable) — there is
 no conformance scenario to hold it to, only this documented expectation.
-

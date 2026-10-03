@@ -103,11 +103,12 @@ public sealed record PersonaBundles
     [JsonPropertyName("missingPartText")] public required Dictionary<string, string> MissingPartText { get; init; }
     // PR #184 round 2 (Rick's review, item 1): which of this pack's OWN pricing rules a bundle
     // slot-fill/resize follows -- "includedAnySize" (default; a slot filled/resized to ANY size
-    // never changes what the bundle itself costs) or "wholeBundleSize" (a slot resize re-prices
+    // never changes what the bundle itself costs), "wholeBundleSize" (a slot resize re-prices
     // the WHOLE bundle from its own per-size menu data and relabels every other filled slot to
-    // match, e.g. a pack where upsizing one item in a meal upsizes the whole meal). Optional with
-    // a default so every existing pack's persona.json needs no changes at all.
+    // match), or "componentUpcharge" (bundle price plus positive component deltas over
+    // IncludedSize). Optional with defaults so every existing pack's persona.json needs no changes.
     [JsonPropertyName("resizeRule")] public string ResizeRule { get; init; } = "includedAnySize";
+    [JsonPropertyName("includedSize")] public string? IncludedSize { get; init; }
 }
 
 public sealed record PersonaExtras

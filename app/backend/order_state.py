@@ -284,7 +284,7 @@ class OrderState:
 
     @staticmethod
     def _empty_bundle_slot() -> dict:
-        return {"item": "", "size": "", "display": "", "last_item": "", "last_size": "", "autofill": False}
+        return {"item": "", "size": "", "display": "", "last_item": "", "last_size": "", "autofill": False, "upcharge": 0.0}
 
     def _sync_bundle_slot_list(self, combo_item, component: str) -> list:
         """PR #184 round 2 (Rick's review, item 2 -- "quantity-2 combos handled correctly"): each
@@ -305,8 +305,41 @@ class OrderState:
             del slots[combo_item.quantity:]
         return slots
 
+    def _component_upcharge(self, menu, item_name: str, size: str) -> float:
+        if menu.bundle_resize_rule != "componentUpcharge" or not menu.bundle_included_size or not item_name:
+            return 0.0
+        actual_price = menu.price_for(item_name, size)
+        included_price = menu.price_for(item_name, menu.bundle_included_size)
+        if actual_price is None or included_price is None:
+            return 0.0
+        delta = to_decimal(actual_price) - to_decimal(included_price)
+        return float(delta) if delta > 0 else 0.0
+
+    def _bundle_unit_upcharge(self, menu, combo_item, unit_index: int, replacement: tuple[str, str, str] | None = None) -> Decimal:
+        total = Decimal("0")
+        for component in menu.bundle_slots(combo_item.item):
+            slots = self._sync_bundle_slot_list(combo_item, component)
+            slot = slots[unit_index] if unit_index < len(slots) else self._empty_bundle_slot()
+            item = slot.get("item", "")
+            size = slot.get("size", "")
+            if replacement is not None and component == replacement[0]:
+                item = replacement[1]
+                size = replacement[2]
+            total += to_decimal(self._component_upcharge(menu, item, size))
+        return total
+
+    def _reprice_bundle_from_components(self, combo_item, menu) -> None:
+        own_price = menu.price_for(combo_item.item, combo_item.size)
+        if own_price is None:
+            return
+        price = to_decimal(own_price)
+        if menu.bundle_resize_rule == "componentUpcharge" and combo_item.quantity > 0:
+            price += self._bundle_unit_upcharge(menu, combo_item, 0)
+        combo_item.price = float(price)
+
     def _find_bundle_slot(
         self, order_state: list, menu, component: str, item_name: str | None = None,
+        target_size: str | None = None,
     ):
         """PR #184 round 2 (Rick's review, item 2): which (bundle instance, slot index) a
         slot-fill/resize/vacate targets, now that slot state is tracked per PHYSICAL UNIT of a
@@ -319,10 +352,13 @@ class OrderState:
         If *item_name* is given, the MOST RECENT matching instance (last in `order_state`, i.e.
         the one added or merged-into most recently) whose slot is CURRENTLY filled by that exact
         item wins -- "resize the drink of whichever combo actually has that drink" (two combos;
-        the guest says "make the Coke large" and only one of them currently has a Coke). Otherwise
-        (or when no instance's slot holds that item), the MOST RECENT instance with a VACANT slot
-        for *component* wins (lowest vacant index within that instance) -- a fresh absorption
-        lands on whichever instance still needs filling, preferring the one most recently touched.
+        the guest says "make the Coke large" and only one of them currently has a Coke). If
+        *target_size* is also given, a matching slot that is NOT already that size wins first; this
+        lets repeated "make the Cherry Limeade large" calls on a split quantity-2 combo advance to
+        the remaining medium unit instead of no-oping on the already-large unit. Otherwise (or when
+        no instance's slot holds that item), the MOST RECENT instance with a VACANT slot for
+        *component* wins (lowest vacant index within that instance) -- a fresh absorption lands on
+        whichever instance still needs filling, preferring the one most recently touched.
         Returns ``None`` when no slot matches *item_name* (if given) and no slot anywhere is
         vacant -- callers must never be handed an already-FULL, non-matching slot to silently
         overwrite (e.g. a second, different side added while the combo's one side slot is already
@@ -332,6 +368,16 @@ class OrderState:
             return None
         if item_name is not None:
             key = _menu_key(item_name)
+            if target_size is not None:
+                for combo_item in reversed(candidates):
+                    slots = self._sync_bundle_slot_list(combo_item, component)
+                    for idx, slot in enumerate(slots):
+                        if (
+                            slot.get("item")
+                            and _menu_key(slot["item"]) == key
+                            and slot.get("size") != target_size
+                        ):
+                            return (combo_item, idx)
             for combo_item in reversed(candidates):
                 slots = self._sync_bundle_slot_list(combo_item, component)
                 for idx, slot in enumerate(slots):
@@ -344,7 +390,7 @@ class OrderState:
                     return (combo_item, idx)
         return None
 
-    def _rebuild_bundle_display(self, combo_item) -> None:
+    def _rebuild_bundle_display(self, combo_item, menu=None) -> None:
         """Rebuild *combo_item*'s display string from whichever of its OWN (per-instance, PR #184
         round 2) ``_bundle_slots`` are currently filled, across every physical unit this line
         represents. The single place that " w/ <side> & <drink>" suffix is assembled, so every
@@ -356,13 +402,22 @@ class OrderState:
         identical units) collapses to the same single label as before."""
         display_components = []
         wire_components = []
+        wire_upcharges = []
         for component in ("sides", "drinks"):
             slots = combo_item._bundle_slots.get(component, [])
-            filled = [s["display"] for s in slots if s.get("display")]
+            filled = []
+            for slot in slots:
+                if not slot.get("display"):
+                    continue
+                if menu is not None:
+                    slot["upcharge"] = self._component_upcharge(menu, slot.get("item", ""), slot.get("size", ""))
+                filled.append(slot["display"])
+                wire_upcharges.append(float(slot.get("upcharge") or 0.0))
             if filled:
                 display_components.append(", ".join(filled))
                 wire_components.extend(filled)
         combo_item.components = wire_components
+        combo_item.componentUpcharges = wire_upcharges
         raw_name = combo_item.item
         if "(" in raw_name:
             base_name = raw_name[:raw_name.find("(")].strip()
@@ -432,7 +487,7 @@ class OrderState:
         # -- every caller (the direct bundle-line `modify` path, and `_fill_bundle_component`'s
         # own call for a "wholeBundleSize" slot-fill) gets a correctly rendered display with no
         # separate, easy-to-forget rebuild step of its own.
-        self._rebuild_bundle_display(combo_item)
+        self._rebuild_bundle_display(combo_item, menu)
         return True
 
     def _split_bundle_unit(self, order_state: list, menu, combo_item, unit_index: int):
@@ -467,8 +522,10 @@ class OrderState:
         # make `list.index(combo_item)` find the wrong one.
         insert_at = next(i for i, oi in enumerate(order_state) if oi is combo_item) + 1
         order_state.insert(insert_at, split_item)
-        self._rebuild_bundle_display(combo_item)
-        self._rebuild_bundle_display(split_item)
+        self._reprice_bundle_from_components(combo_item, menu)
+        self._reprice_bundle_from_components(split_item, menu)
+        self._rebuild_bundle_display(combo_item, menu)
+        self._rebuild_bundle_display(split_item, menu)
         return split_item
 
     def _fill_bundle_component(
@@ -497,7 +554,11 @@ class OrderState:
         requested size); otherwise the fill is rejected outright, so a slot is never relabeled to
         a size the bundle itself didn't (and won't) move to. Round 3 item F: a feasible resize on
         a quantity>1 line first splits the targeted unit off (``_split_bundle_unit``) so only that
-        ONE unit is affected.
+        ONE unit is affected. "componentUpcharge" packs keep the bundle's own menu price plus
+        the sum of positive per-component deltas over the pack-declared included size. A
+        quantity>1 line also splits the targeted physical unit whenever that unit's repriced
+        component-upcharge total would differ from its siblings, so ``OrderItem.price`` remains a
+        per-unit price rather than an averaged line price.
 
         Returns ``(accepted, is_resize, combo_item)``: *accepted* is ``False`` (slot left
         untouched) when a "wholeBundleSize" RESIZE was requested but this pack has no price for
@@ -506,7 +567,7 @@ class OrderState:
         *is_resize* is whether *item_name* is the SAME item that last filled (or still fills)
         this slot on this bundle instance -- a genuine RESIZE, not a fresh fill of a different
         item -- so callers can report "resized" vs. "included with your combo" wording.
-        *combo_item* is returned because a quantity>1 "wholeBundleSize" resize may have split
+        *combo_item* is returned because a quantity>1 resize/upcharge change may have split
         *combo_item* into a new line -- callers must use the returned instance for any further
         reads (e.g. ``.display``), not the one they passed in.
 
@@ -546,20 +607,32 @@ class OrderState:
                 # (by reference) onto the new split-off line, so no re-fetch is needed below.
                 combo_item = self._split_bundle_unit(order_state, menu, combo_item, slot_index)
 
+        if menu.bundle_resize_rule == "componentUpcharge" and combo_item.quantity > 1:
+            # #205: component upcharges are per physical meal. If this fill/resize would make the
+            # targeted unit's upcharge differ from its siblings, split it first so OrderItem.price
+            # remains a per-unit price, never an averaged line total.
+            prospective = self._bundle_unit_upcharge(menu, combo_item, slot_index, (component, item_name, size))
+            sibling_upcharges = [
+                self._bundle_unit_upcharge(menu, combo_item, i)
+                for i in range(combo_item.quantity)
+                if i != slot_index
+            ]
+            if any(other != prospective for other in sibling_upcharges):
+                combo_item = self._split_bundle_unit(order_state, menu, combo_item, slot_index)
+
         slot["item"] = item_name
         slot["size"] = size
         slot["display"] = display
         slot["last_item"] = item_name
         slot["last_size"] = size
         slot["autofill"] = autofill
+        slot["upcharge"] = self._component_upcharge(menu, item_name, size)
 
         if menu.bundle_resize_rule == "wholeBundleSize" and is_resize:
             self._apply_whole_bundle_resize(combo_item, menu, size)
         else:
-            own_price = menu.price_for(combo_item.item, combo_item.size)
-            if own_price is not None:
-                combo_item.price = own_price
-        self._rebuild_bundle_display(combo_item)
+            self._reprice_bundle_from_components(combo_item, menu)
+        self._rebuild_bundle_display(combo_item, menu)
         return True, is_resize, combo_item
 
     def _vacate_bundle_component(self, order_state: list, menu, component: str, item_name: str) -> dict | None:
@@ -593,7 +666,9 @@ class OrderState:
         slot["size"] = ""
         slot["display"] = ""
         slot["autofill"] = False
-        self._rebuild_bundle_display(combo_item)
+        slot["upcharge"] = 0.0
+        self._reprice_bundle_from_components(combo_item, menu)
+        self._rebuild_bundle_display(combo_item, menu)
         return {
             "vacated_combo_component": component,
             "vacated_display": vacated_display,
@@ -793,6 +868,10 @@ class OrderState:
                             result_info["absorbed_into_combo"] = True
                             result_info["absorbed_component"] = component
                             result_info["absorbed_display"] = display
+                        component_upcharge = self._component_upcharge(menu, item_name, size)
+                        if component_upcharge > 0:
+                            result_info["combo_component_upcharge"] = component_upcharge
+                            result_info["combo_component_upcharge_display"] = format_money(component_upcharge)
                         logger.info("Post-combo absorption: '%s' absorbed as combo %s", display, component)
                     if remaining <= 0 and absorbed_count > 0:
                         self._update_summary(session_id)
@@ -807,7 +886,9 @@ class OrderState:
                         # exact #179 bug. Only ONE unit of *quantity* is ever a resize (there is
                         # only one matching slot); any remainder still becomes a genuine
                         # standalone add.
-                        found = self._find_bundle_slot(order_state, menu, component, item_name=item_name)
+                        found = self._find_bundle_slot(
+                            order_state, menu, component, item_name=item_name, target_size=size
+                        )
                         if found is not None:
                             combo_item, idx = found
                             slots = self._sync_bundle_slot_list(combo_item, component)
@@ -826,6 +907,10 @@ class OrderState:
                                     result_info["combo_component_resized_from_size"] = current_size
                                     result_info["combo_component_resized_to_size"] = size
                                     result_info["combo_display"] = combo_item.display
+                                    component_upcharge = self._component_upcharge(menu, item_name, size)
+                                    if component_upcharge > 0:
+                                        result_info["combo_component_upcharge"] = component_upcharge
+                                        result_info["combo_component_upcharge_display"] = format_money(component_upcharge)
                                     logger.info(
                                         "Resize-via-add: '%s' resized combo %s slot from '%s' to '%s' (session=%s)",
                                         item_name, component, current_size, size, session_id,
@@ -1007,7 +1092,8 @@ class OrderState:
                         # Re-derive the "w/ <side> & <drink>" suffix the plain display assignment
                         # above just overwrote -- resizing a non-"wholeBundleSize" bundle's own
                         # line doesn't change what's filling its slots.
-                        self._rebuild_bundle_display(target)
+                        self._rebuild_bundle_display(target, menu)
+                        self._reprice_bundle_from_components(target, menu)
                     result_info["modified_from_size"] = old_size
                     result_info["modified_to_size"] = size
                     logger.info(
@@ -1022,7 +1108,9 @@ class OrderState:
                 # real part of the order as `not_in_order` just because it has no raw line.
                 resized = False
                 for component in ("sides", "drinks"):
-                    found = self._find_bundle_slot(order_state, menu, component, item_name=item_name)
+                    found = self._find_bundle_slot(
+                        order_state, menu, component, item_name=item_name, target_size=size
+                    )
                     if found is None:
                         continue
                     combo_item, idx = found
@@ -1036,6 +1124,10 @@ class OrderState:
                             result_info["combo_component_resized_from_size"] = old_component_size
                             result_info["combo_component_resized_to_size"] = size
                             result_info["combo_display"] = combo_item.display
+                            component_upcharge = self._component_upcharge(menu, item_name, size)
+                            if component_upcharge > 0:
+                                result_info["combo_component_upcharge"] = component_upcharge
+                                result_info["combo_component_upcharge_display"] = format_money(component_upcharge)
                             logger.info(
                                 "Modified combo %s slot '%s' from '%s' to '%s' in session %s",
                                 component, item_name, old_component_size, size, session_id,
@@ -1164,6 +1256,13 @@ class OrderState:
             # e.g. "Sonic Cheeseburger (No Lettuce)" -> "Sonic Cheeseburger with no lettuce"
             if "(" in clean_name and ")" in clean_name:
                 clean_name = clean_name.replace("(", "with ").replace(")", "")
+            positive_upcharges = [to_decimal(upcharge) for upcharge in oi.componentUpcharges if to_decimal(upcharge) > 0]
+            if positive_upcharges:
+                upcharge_total = sum(positive_upcharges, Decimal("0"))
+                if len(positive_upcharges) == 1:
+                    clean_name = f"{clean_name} with a {format_money(upcharge_total)} upcharge"
+                else:
+                    clean_name = f"{clean_name} with {format_money(upcharge_total)} in component upcharges"
             counts[clean_name] = counts.get(clean_name, 0) + oi.quantity
 
         # Build the natural language string

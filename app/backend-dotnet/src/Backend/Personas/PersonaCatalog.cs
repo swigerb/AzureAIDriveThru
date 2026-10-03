@@ -169,6 +169,13 @@ public sealed class PersonaCatalog
                 $"Persona '{personaId}': {manifestPath} declares id '{manifest.Id}', which does " +
                 $"not match its folder name '{personaId}'.");
         }
+        if (manifest.Bundles.ResizeRule == "componentUpcharge" &&
+            string.IsNullOrWhiteSpace(manifest.Bundles.IncludedSize))
+        {
+            throw new PersonaValidationException(
+                $"Persona '{personaId}': {manifestPath} declares bundles.resizeRule " +
+                "'componentUpcharge' but omits bundles.includedSize.");
+        }
 
         // Validate the pack's menu file too, so a broken menu also fails startup rather than
         // surfacing later as a runtime lookup failure.

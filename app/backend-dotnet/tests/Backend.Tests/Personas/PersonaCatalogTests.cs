@@ -85,6 +85,25 @@ public sealed class PersonaCatalogTests
     }
 
     [Fact]
+    public void ComponentUpchargeWithoutIncludedSize_Throws()
+    {
+        using var fixture = new NeutralPersonaPackFixture();
+        fixture.MutatePersonaJson("test-alpha", obj =>
+        {
+            obj["bundles"]!["resizeRule"] = "componentUpcharge";
+            obj["bundles"]!.AsObject().Remove("includedSize");
+        });
+
+        var exc = Assert.Throws<PersonaValidationException>(
+            () => PersonaCatalog.Load(
+                personasDir: fixture.PersonasDir,
+                personasEnv: "test-alpha",
+                defaultPersonaEnv: "test-alpha"));
+        Assert.Contains("test-alpha", exc.Message);
+        Assert.Contains("includedSize", exc.Message);
+    }
+
+    [Fact]
     public void ExtraUnknownTopLevelField_Throws()
     {
         using var fixture = new PersonaPackFixture();

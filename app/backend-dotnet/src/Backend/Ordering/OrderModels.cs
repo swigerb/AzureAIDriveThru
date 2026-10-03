@@ -17,6 +17,7 @@ public sealed class BundleSlot
     public string LastItem { get; set; } = "";
     public string LastSize { get; set; } = "";
     public bool Autofill { get; set; }
+    public decimal Upcharge { get; set; }
 }
 
 /// <summary>
@@ -38,6 +39,9 @@ public sealed class OrderItem
     /// absorbed into (or auto-filled onto) this line, e.g. ["Medium Fries", "Coca-Cola"] for a
     /// meal/combo. Rendered on the wire only when non-empty.</summary>
     [JsonPropertyName("components")] public List<string> Components { get; set; } = [];
+    /// <summary>Optional, index-aligned with <see cref="Components"/>; values greater than zero
+    /// render as per-unit component upcharges instead of "Included".</summary>
+    [JsonPropertyName("componentUpcharges")] public List<decimal> ComponentUpcharges { get; set; } = [];
 
     /// <summary>PR #184 round 2 (Rick's review, item 2/3): per-INSTANCE, per-PHYSICAL-UNIT bundle
     /// slot-fill state -- keyed by component ("sides"/"drinks") -> a LIST of per-unit

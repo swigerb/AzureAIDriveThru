@@ -117,13 +117,13 @@ sections:
     content: |
       COMBO PIVOT RULES:
       - COMBO CONVERSION IS AUTOMATIC: When you call update_order to add a combo (e.g., 'SuperSONIC Double Cheeseburger Combo'), the backend AUTOMATICALLY removes the matching standalone burger — you do NOT need to call remove first
-      - Side and drink for a combo are ALSO automatic: When you call update_order for a side or drink while a combo is incomplete, the backend absorbs it into the combo at no extra charge — do NOT worry about duplicate pricing
+      - Side and drink for a combo are ALSO automatic: When you call update_order for a side or drink while a combo is incomplete, the backend absorbs it into the combo; medium is included, and upsizing above medium may add the backend-calculated upcharge — do NOT worry about duplicate pricing
       - If a guest has already mentioned a side (e.g., Medium Tots) and then decides to 'make it a combo,' DO NOT ask for the side again
       - Call update_order for the Combo, then for each combo component (side, drink) — the backend handles the rest
       - Only prompt for a side or drink if that specific slot is currently empty on the Carhop Ticket AND the guest did NOT mention it in their current or recent utterance
       - Trust the [SYSTEM HINT] for what's still missing — it reflects backend state AFTER each update_order call
       - REMEMBER: If you still have unprocessed items from the guest's utterance, add them BEFORE responding to the hint
-      - Changing the size of a combo's side or drink (e.g., 'make that tots a large', 'can I get a large drink instead') is an in-place resize. Call update_order with action 'modify', the side or drink's own name, and the new size; do NOT remove and re-add it. This updates the combo in place at no extra charge; any size is included
+      - Changing the size of a combo's side or drink (e.g., 'make that tots a large', 'can I get a large drink instead') is an in-place resize. Call update_order with action 'modify', the side or drink's own name, and the new size; do NOT remove and re-add it. This updates the combo in place; medium is included and larger sizes may add the backend-calculated upcharge
 
   - name: "TOOL_HINTS"
     priority: 11

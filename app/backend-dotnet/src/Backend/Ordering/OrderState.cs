@@ -23,6 +23,8 @@ public sealed class OrderUpdateResult
     public string? ComboComponentResizedFromSize { get; set; }
     public string? ComboComponentResizedToSize { get; set; }
     public string? ComboDisplay { get; set; }
+    public decimal ComboComponentUpcharge { get; set; }
+    public string? ComboComponentUpchargeDisplay { get; set; }
 
     // PR #184 round 3 (Rick's review, item D/M4): set whenever a "wholeBundleSize" pack rejected
     // a component resize outright because it has no whole-meal price at the requested size --
@@ -293,6 +295,7 @@ public sealed class OrderState
                     {
                         result.AbsorbedIntoCombo = true;
                     }
+                    SetComponentUpchargeResult(result, itemName, size);
                 }
                 if (remaining <= 0 && absorbedCount > 0)
                 {
@@ -307,7 +310,7 @@ public sealed class OrderState
                     // and creating a silent duplicate standalone line. Only ONE unit of
                     // *quantity* is ever a resize (there is only one matching slot); any
                     // remainder still becomes a genuine standalone add.
-                    var found = FindBundleSlot(component, itemName);
+                    var found = FindBundleSlot(component, itemName, targetSize: size);
                     if (found is { } slotFound)
                     {
                         var (comboItem, idx) = slotFound;
@@ -325,6 +328,7 @@ public sealed class OrderState
                                 result.ComboComponentResizedFromSize = currentSize;
                                 result.ComboComponentResizedToSize = size;
                                 result.ComboDisplay = comboItem.Display;
+                                SetComponentUpchargeResult(result, itemName, size);
                                 remaining = quantity - 1;
                                 if (remaining <= 0)
                                 {
@@ -524,6 +528,7 @@ public sealed class OrderState
                 // just overwrote -- resizing a non-"wholeBundleSize" bundle's own line doesn't
                 // change what's filling its slots.
                 RebuildBundleDisplay(target);
+                RepriceBundleFromComponents(target);
             }
             result.ModifiedFromSize = oldSize;
             result.ModifiedToSize = size;
@@ -541,7 +546,7 @@ public sealed class OrderState
         // ever invoked.)
         foreach (var component in new[] { "sides", "drinks" })
         {
-            var found = FindBundleSlot(component, itemName);
+            var found = FindBundleSlot(component, itemName, targetSize: size);
             if (found is not { } slotFound)
             {
                 continue;
@@ -571,6 +576,7 @@ public sealed class OrderState
             result.ComboComponentResizedFromSize = oldComponentSize;
             result.ComboComponentResizedToSize = size;
             result.ComboDisplay = filledComboItem.Display;
+            SetComponentUpchargeResult(result, itemName, size);
             break;
         }
     }
@@ -643,6 +649,65 @@ public sealed class OrderState
         return slots;
     }
 
+    private decimal ComponentUpcharge(string itemName, string size)
+    {
+        if (_menu.BundleResizeRule != "componentUpcharge" || _menu.BundleIncludedSize.Length == 0 || itemName.Length == 0)
+        {
+            return 0m;
+        }
+        var actualPrice = _menu.PriceFor(itemName, size);
+        var includedPrice = _menu.PriceFor(itemName, _menu.BundleIncludedSize);
+        if (actualPrice is not { } actual || includedPrice is not { } included)
+        {
+            return 0m;
+        }
+        var delta = actual - included;
+        return delta > 0m ? delta : 0m;
+    }
+
+    private void SetComponentUpchargeResult(OrderUpdateResult result, string itemName, string size)
+    {
+        var upcharge = ComponentUpcharge(itemName, size);
+        if (upcharge > 0m)
+        {
+            result.ComboComponentUpcharge = upcharge;
+            result.ComboComponentUpchargeDisplay = Money.Format(upcharge);
+        }
+    }
+
+    private decimal BundleUnitUpcharge(OrderItem comboItem, int unitIndex, (string Component, string Item, string Size)? replacement = null)
+    {
+        var total = 0m;
+        foreach (var component in _menu.BundleSlots(comboItem.Item))
+        {
+            var slots = SyncBundleSlotList(comboItem, component);
+            var slot = unitIndex < slots.Count ? slots[unitIndex] : EmptyBundleSlot();
+            var item = slot.Item;
+            var size = slot.Size;
+            if (replacement is { } repl && repl.Component == component)
+            {
+                item = repl.Item;
+                size = repl.Size;
+            }
+            total += ComponentUpcharge(item, size);
+        }
+        return total;
+    }
+
+    private void RepriceBundleFromComponents(OrderItem comboItem)
+    {
+        var ownPrice = _menu.PriceFor(comboItem.Item, comboItem.Size);
+        if (ownPrice is not { } price)
+        {
+            return;
+        }
+        if (_menu.BundleResizeRule == "componentUpcharge" && comboItem.Quantity > 0)
+        {
+            price += BundleUnitUpcharge(comboItem, 0);
+        }
+        comboItem.Price = price;
+    }
+
     /// <summary>PR #184 round 2 (Rick's review, item 2): which (bundle instance, slot index) a
     /// slot-fill/resize/vacate targets, now that slot state is tracked per PHYSICAL UNIT of a
     /// combo INSTANCE rather than per session (the old design's root cause for two combos -- or a
@@ -656,14 +721,17 @@ public sealed class OrderState
     /// <see cref="Items"/>, i.e. the one added or merged-into most recently) whose slot is
     /// CURRENTLY filled by that exact item wins -- "resize the drink of whichever combo actually
     /// has that drink" (two combos; the guest says "make the Coke large" and only one of them
-    /// currently has a Coke). Otherwise (or when no instance's slot holds that item), the MOST
-    /// RECENT instance with a VACANT slot for <paramref name="component"/> wins (lowest vacant
-    /// index within that instance) -- a fresh absorption lands on whichever instance still needs
+    /// currently has a Coke). If <paramref name="targetSize"/> is also given, a matching slot that
+    /// is NOT already that size wins first; repeated "make the Cherry Limeade large" calls on a
+    /// split quantity-2 combo then advance to the remaining medium unit instead of no-oping on the
+    /// already-large unit. Otherwise (or when no instance's slot holds that item), the MOST RECENT
+    /// instance with a VACANT slot for <paramref name="component"/> wins (lowest vacant index
+    /// within that instance) -- a fresh absorption lands on whichever instance still needs
     /// filling, preferring the one most recently touched. Returns <c>null</c> when no slot
     /// matches <paramref name="itemName"/> (if given) and no slot anywhere is vacant -- callers
     /// must never be handed an already-FULL, non-matching slot to silently overwrite.</para>
     /// Mirrors order_state.py's <c>_find_bundle_slot</c>.</summary>
-    private (OrderItem Item, int Index)? FindBundleSlot(string component, string? itemName = null)
+    private (OrderItem Item, int Index)? FindBundleSlot(string component, string? itemName = null, string? targetSize = null)
     {
         var candidates = _items.Where(it => _menu.BundleSlots(it.Item).Contains(component)).ToList();
         if (candidates.Count == 0)
@@ -673,6 +741,22 @@ public sealed class OrderState
         if (itemName is not null)
         {
             var key = MenuKeyValidator.MenuKey(itemName);
+            if (targetSize is not null)
+            {
+                for (var i = candidates.Count - 1; i >= 0; i--)
+                {
+                    var comboItem = candidates[i];
+                    var slots = SyncBundleSlotList(comboItem, component);
+                    for (var idx = 0; idx < slots.Count; idx++)
+                    {
+                        var slot = slots[idx];
+                        if (slot.Item.Length > 0 && MenuKeyValidator.MenuKey(slot.Item) == key && slot.Size != targetSize)
+                        {
+                            return (comboItem, idx);
+                        }
+                    }
+                }
+            }
             for (var i = candidates.Count - 1; i >= 0; i--)
             {
                 var comboItem = candidates[i];
@@ -712,17 +796,24 @@ public sealed class OrderState
     /// display, comma-separated, within its component's slot of the "w/ ... &amp; ..." suffix --
     /// the common case (quantity 1, or several identical units) collapses to the same single
     /// label as before. Mirrors order_state.py's <c>_rebuild_bundle_display</c>.</summary>
-    private static void RebuildBundleDisplay(OrderItem comboItem)
+    private void RebuildBundleDisplay(OrderItem comboItem)
     {
         var displayComponents = new List<string>();
         var wireComponents = new List<string>();
+        var wireUpcharges = new List<decimal>();
         foreach (var component in new[] { "sides", "drinks" })
         {
             if (!comboItem.BundleSlots.TryGetValue(component, out var slots))
             {
                 continue;
             }
-            var filled = slots.Where(s => s.Display.Length > 0).Select(s => s.Display).ToList();
+            var filled = new List<string>();
+            foreach (var slot in slots.Where(s => s.Display.Length > 0))
+            {
+                slot.Upcharge = ComponentUpcharge(slot.Item, slot.Size);
+                filled.Add(slot.Display);
+                wireUpcharges.Add(slot.Upcharge);
+            }
             if (filled.Count > 0)
             {
                 displayComponents.Add(string.Join(", ", filled));
@@ -730,6 +821,7 @@ public sealed class OrderState
             }
         }
         comboItem.Components = wireComponents;
+        comboItem.ComponentUpcharges = wireUpcharges;
 
         string baseName;
         string mods;
@@ -850,6 +942,7 @@ public sealed class OrderState
             Price = comboItem.Price,
             Display = comboItem.Display,
             Components = [.. comboItem.Components],
+            ComponentUpcharges = [.. comboItem.ComponentUpcharges],
         };
         foreach (var component in _menu.BundleSlots(comboItem.Item))
         {
@@ -869,6 +962,8 @@ public sealed class OrderState
         comboItem.Quantity--;
         var insertAt = _items.FindIndex(oi => ReferenceEquals(oi, comboItem)) + 1;
         _items.Insert(insertAt, splitItem);
+        RepriceBundleFromComponents(comboItem);
+        RepriceBundleFromComponents(splitItem);
         RebuildBundleDisplay(comboItem);
         RebuildBundleDisplay(splitItem);
         return splitItem;
@@ -902,7 +997,11 @@ public sealed class OrderState
     /// first S/M/L drink) and the path-dependent totals Rick's review flagged (first-fill order
     /// no longer matters). Round 3 item F: a feasible resize on a quantity>1 line first splits
     /// the targeted unit off (<see cref="SplitBundleUnit"/>) so only that ONE unit is
-    /// affected.</para>
+    /// affected. "componentUpcharge" packs keep the bundle's own menu price plus the sum of
+    /// positive per-component deltas over the pack-declared included size. A quantity>1 line also
+    /// splits the targeted physical unit whenever that unit's repriced component-upcharge total
+    /// would differ from its siblings, so <see cref="OrderItem.Price"/> remains a per-unit price
+    /// rather than an averaged line price.</para>
     ///
     /// Returns <c>(accepted, isResize, comboItem)</c>: <c>accepted</c> is <c>false</c> (slot left
     /// untouched) when a "wholeBundleSize" RESIZE was requested but this pack has no price for the
@@ -911,8 +1010,8 @@ public sealed class OrderState
     /// <c>isResize</c> is whether <paramref name="itemName"/> is the SAME item that last filled
     /// (or still fills) this slot on this bundle instance -- a genuine RESIZE, not a fresh fill of
     /// a different item -- so callers can report "resized" vs. "included with your combo" wording.
-    /// The returned <see cref="OrderItem"/> is returned because a quantity>1 "wholeBundleSize"
-    /// resize may have split <paramref name="comboItem"/> into a new line -- callers must use the
+    /// The returned <see cref="OrderItem"/> is returned because a quantity>1 resize/upcharge
+    /// change may have split <paramref name="comboItem"/> into a new line -- callers must use the
     /// returned instance for any further reads (e.g. Display), not the one they passed in. Mirrors
     /// order_state.py's <c>_fill_bundle_component</c>.</summary>
     private (bool Accepted, bool IsResize, OrderItem ComboItem) FillBundleComponent(
@@ -963,12 +1062,28 @@ public sealed class OrderState
             }
         }
 
+        if (_menu.BundleResizeRule == "componentUpcharge" && comboItem.Quantity > 1)
+        {
+            // #205: component upcharges are per physical meal. If this fill/resize would make the
+            // targeted unit's upcharge differ from its siblings, split it first so OrderItem.Price
+            // remains a per-unit price, never an averaged line total.
+            var prospective = BundleUnitUpcharge(comboItem, slotIndex, (component, itemName, size));
+            var differs = Enumerable.Range(0, comboItem.Quantity)
+                .Where(i => i != slotIndex)
+                .Any(i => BundleUnitUpcharge(comboItem, i) != prospective);
+            if (differs)
+            {
+                comboItem = SplitBundleUnit(comboItem, slotIndex);
+            }
+        }
+
         slot.Item = itemName;
         slot.Size = size;
         slot.Display = display;
         slot.LastItem = itemName;
         slot.LastSize = size;
         slot.Autofill = autofill;
+        slot.Upcharge = ComponentUpcharge(itemName, size);
 
         if (_menu.BundleResizeRule == "wholeBundleSize" && isResize)
         {
@@ -976,11 +1091,7 @@ public sealed class OrderState
         }
         else
         {
-            var ownPrice = _menu.PriceFor(comboItem.Item, comboItem.Size);
-            if (ownPrice is { } price)
-            {
-                comboItem.Price = price;
-            }
+            RepriceBundleFromComponents(comboItem);
         }
         RebuildBundleDisplay(comboItem);
         return (true, isResize, comboItem);
@@ -1025,6 +1136,8 @@ public sealed class OrderState
         slot.Size = "";
         slot.Display = "";
         slot.Autofill = false;
+        slot.Upcharge = 0m;
+        RepriceBundleFromComponents(comboItem);
         RebuildBundleDisplay(comboItem);
         return (component, vacatedDisplay, comboItem.Display);
     }
@@ -1136,6 +1249,14 @@ public sealed class OrderState
             if (cleanName.Contains('(') && cleanName.Contains(')'))
             {
                 cleanName = cleanName.Replace("(", "with ").Replace(")", "");
+            }
+            var positiveUpcharges = item.ComponentUpcharges.Where(upcharge => upcharge > 0m).ToList();
+            if (positiveUpcharges.Count > 0)
+            {
+                var upchargeTotal = positiveUpcharges.Sum();
+                cleanName = positiveUpcharges.Count == 1
+                    ? $"{cleanName} with a {Money.Format(upchargeTotal)} upcharge"
+                    : $"{cleanName} with {Money.Format(upchargeTotal)} in component upcharges";
             }
             if (!counts.ContainsKey(cleanName))
             {

@@ -15,6 +15,8 @@ export interface OrderItem {
     // own `price` (they aren't separate, removable, or separately priced order lines), so the
     // ticket shows each as an included, $0 sub-line rather than its own priced row.
     components?: string[];
+    // Optional, index-aligned with components. Values > 0 render as per-unit component upcharges.
+    componentUpcharges?: number[];
 }
 
 export interface OrderSummaryProps {
@@ -83,6 +85,7 @@ export function calculateOrderSummary(items: OrderItem[]): OrderSummaryProps {
 const OrderItemRow = memo(function OrderItemRow({ item }: { item: OrderItem }) {
     const { t } = useTranslation();
     const components = item.components ?? [];
+    const componentUpcharges = item.componentUpcharges ?? [];
 
     return (
         <div className="rounded-2xl bg-white/70 px-3 py-2 text-sm text-gray-700 shadow-xs dark:bg-white/5 dark:text-white">
@@ -107,7 +110,9 @@ const OrderItemRow = memo(function OrderItemRow({ item }: { item: OrderItem }) {
                             <span>
                                 {component} {item.quantity > 1 && `(x${item.quantity})`}
                             </span>
-                            <span className="font-mono italic">{t("ticket.included")}</span>
+                            <span className="font-mono italic">
+                                {(componentUpcharges[index] ?? 0) > 0 ? `+${formatMoney(componentUpcharges[index])}` : t("ticket.included")}
+                            </span>
                         </li>
                     ))}
                 </ul>

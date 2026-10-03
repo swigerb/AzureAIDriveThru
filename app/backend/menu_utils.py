@@ -431,6 +431,7 @@ class MenuCatalog:
         bundle_convert_standalone: bool = False,
         bundle_missing_part_text: dict[str, str] | None = None,
         bundle_resize_rule: str = "includedAnySize",
+        bundle_included_size: str | None = None,
         split_combined_names: bool = False,
         search_query_rewrite: str = "",
     ):
@@ -473,13 +474,16 @@ class MenuCatalog:
         )
         self.bundle_convert_standalone: bool = bool(bundle_convert_standalone)
         self.bundle_missing_part_text: dict[str, str] = dict(bundle_missing_part_text or {})
-        # PR #184 round 2 (Rick's review, item 1): "includedAnySize" (default) or
-        # "wholeBundleSize" -- see persona_loader.py's `_Bundles.resizeRule` doc comment. Falls
+        # PR #184 round 2 plus #205: "includedAnySize" (default), "wholeBundleSize", or
+        # "componentUpcharge" -- see persona_loader.py's `_Bundles.resizeRule` doc comment. Falls
         # back to the default for any unrecognized value rather than crashing, matching every
         # other persona-data field's "never trust the pack blindly" posture.
         self.bundle_resize_rule: str = (
-            bundle_resize_rule if bundle_resize_rule in ("includedAnySize", "wholeBundleSize") else "includedAnySize"
+            bundle_resize_rule
+            if bundle_resize_rule in ("includedAnySize", "wholeBundleSize", "componentUpcharge")
+            else "includedAnySize"
         )
+        self.bundle_included_size: str = self.canonical_size_key(bundle_included_size or "")
         # #77 (shared extras engine): whether a not-on-menu name that's really two known items
         # joined by a connector word ("Latte with Extra Shot") should be split into two
         # ``suggested_calls`` instead of a flat rejection -- only a pack that opts in sets this.
@@ -526,6 +530,7 @@ class MenuCatalog:
             bundle_convert_standalone=bundles_cfg.convertStandalone,
             bundle_missing_part_text=bundles_cfg.missingPartText,
             bundle_resize_rule=bundles_cfg.resizeRule,
+            bundle_included_size=bundles_cfg.includedSize,
             split_combined_names=extras_cfg.splitCombinedNames,
             search_query_rewrite=persona.manifest.strategies.searchQueryRewrite,
         )
