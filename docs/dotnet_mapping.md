@@ -56,6 +56,14 @@ Ports `order_state.py`, `menu_utils.py`'s `MenuCatalog`, and `tools.py` (`update
 extras engine, `machine_unavailable`, per-pack happy hour (#113), tax, and Route 44 via pack-driven
 size aliases. See the Module mapping table above for the file-by-file breakdown.
 
+PR #207 keeps spoken readbacks in parity too: Python `MenuCatalog.spoken()` and C#
+`MenuCatalog.Spoken()` both apply the active persona's `sizes.spokenAs` substitutions only to
+model-facing readback/delta text, never to the order-summary JSON, menu item names, or search keys.
+Substitutions run longest-key-first with alphanumeric/trademark boundaries, so the
+`MUNCHKINS®`/`MUNCHKINS` entries speak as `Munchkins` without leaving the `®` mark or rewriting the
+middle of another token. The Issue #188 shared conformance vector asserts that parity for both
+Python and C# backends.
+
 ### The `IToolExecutor` contract (for #13/#140)
 
 ```csharp

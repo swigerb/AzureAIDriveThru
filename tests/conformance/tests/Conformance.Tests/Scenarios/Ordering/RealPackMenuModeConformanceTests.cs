@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using Conformance.Fakes;
 using Conformance.Harness;
 using Xunit;
 
@@ -61,6 +62,7 @@ internal static class PersonaMenuModeVectors
 
 file sealed class RealPackMenuModeFixture(string personaId) : ConformanceFixture
 {
+    protected override BackendProfile Profile => BackendProfiles.FixedClock(DateTimeOffset.Parse("2026-10-02T21:30:00Z"));
     protected override string? Persona => personaId;
     protected override IReadOnlyList<string>? Personas => [personaId];
 }

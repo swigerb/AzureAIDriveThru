@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 namespace Backend.Personas;
 
 /// <summary>Result of <see cref="MenuCatalog.ResolveMenuItem"/> -- the real, on-menu record for a
@@ -295,13 +297,29 @@ public sealed class MenuCatalog
 
     private string ResolveAlias(string normalized) => _aliasMap.GetValueOrDefault(normalized, normalized);
 
-    /// <summary>Applies this persona's own <c>sizes.spokenAs</c> substitutions to a display
-    /// string (#74; Route 44 readback etc.) -- generic per-persona, never hardcoded.</summary>
+    private static string SpokenSubstitutionPattern(string raw)
+    {
+        var rightBoundaryChars = raw.EndsWith("®", StringComparison.Ordinal) ||
+                                 raw.EndsWith("™", StringComparison.Ordinal)
+            ? "A-Za-z0-9"
+            : "A-Za-z0-9®™";
+        return $@"(?<![A-Za-z0-9]){Regex.Escape(raw)}(?![{rightBoundaryChars}])";
+    }
+
+    /// <summary>Applies this persona's own <c>sizes.spokenAs</c> spoken-readback substitutions to a
+    /// display string (#74; Route 44 readback etc.) -- generic per-persona, never hardcoded. Longer
+    /// keys run first and matches require alphanumeric/trademark boundaries so item-name hints (for
+    /// example MUNCHKINS® -> Munchkins) cannot rewrite the middle of another token.</summary>
     public string Spoken(string text)
     {
-        foreach (var (raw, spoken) in _spokenAs)
+        foreach (var entry in _spokenAs.OrderByDescending(kv => kv.Key.Length))
         {
-            text = text.Replace(raw, spoken);
+            var raw = entry.Key;
+            if (string.IsNullOrEmpty(raw))
+            {
+                continue;
+            }
+            text = Regex.Replace(text, SpokenSubstitutionPattern(raw), entry.Value, RegexOptions.CultureInvariant);
         }
         return text;
     }

@@ -78,5 +78,16 @@ public sealed class Issue188MenuExpansionConformanceTests(Issue188MenuExpansionF
             vector.ExpectedTotal,
             OrderScenarioHelpers.GetOrderTotal(result.ToolResultJson!),
             $"Issue 188 vector '{vector.Name}' must price from personas/" + ("dun" + "kin") + "/menu/menuItems.json.");
+        if (vector.Name == "munchkins-flavors-and-counts")
+        {
+            Assert.Contains("Chocolate Glazed Munchkins Donut Hole Treats", result.FunctionCallOutputText);
+            Assert.DoesNotContain("MUNCHKINS", result.FunctionCallOutputText);
+            Assert.DoesNotContain("®", result.FunctionCallOutputText);
+            using var ticketJson = JsonDocument.Parse(result.ToolResultJson!);
+            var ticketItems = ticketJson.RootElement.GetProperty("items").EnumerateArray()
+                .Select(item => item.GetProperty("item").GetString())
+                .ToArray();
+            Assert.Contains(ticketItems, item => item == "Chocolate Glazed MUNCHKINS® Donut Hole Treats");
+        }
     });
 }
