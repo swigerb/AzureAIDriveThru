@@ -67,7 +67,11 @@
             "description": "Run a hands-free scripted guest voice demo.",
             "on": "Demo on",
             "off": "Demo off",
-            "aria": "Toggle demo mode"
+            "aria": "Toggle demo mode",
+            "stageAria": "Demo stage",
+            "guestVoiceLabel": "Ava guest voice",
+            "guestAtSpeaker": "Guest at the speaker",
+            "waitingLine": "Waiting for the guest line..."
         }
     },
     "hero": {

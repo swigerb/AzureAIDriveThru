@@ -67,7 +67,11 @@
             "description": "Ejecuta una demostración con voz de invitado guiada y manos libres.",
             "on": "Demo activada",
             "off": "Demo desactivada",
-            "aria": "Activar o desactivar el modo demo"
+            "aria": "Activar o desactivar el modo demo",
+            "stageAria": "Escenario de demo",
+            "guestVoiceLabel": "Voz de invitada Ava",
+            "guestAtSpeaker": "Invitada en el altavoz",
+            "waitingLine": "Esperando la frase de la invitada..."
         }
     },
     "hero": {

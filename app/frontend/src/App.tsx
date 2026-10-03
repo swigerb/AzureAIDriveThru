@@ -128,38 +128,42 @@ const IDLE_DEMO_UI: DemoUiState = {
     error: null
 };
 
-function DemoGuestOverlay({ state }: { state: DemoUiState }) {
-    if (!state.running && !state.line && !state.title && !state.error) return null;
+function DemoStage({ state }: { state: DemoUiState }) {
+    const { t } = useTranslation();
+    if (!state.line && !state.title && !state.kicker && !state.error) return null;
     const bars = Array.from({ length: 30 }, (_, index) => <span key={index} className="demo-wave-bar" />);
     return (
-        <div className="pointer-events-none fixed inset-x-0 bottom-5 z-50 flex flex-col items-center gap-4 px-4 lg:items-end lg:px-8">
+        <section className="demo-stage w-full space-y-3" data-testid="demo-stage" aria-label={t("settings.demoMode.stageAria")}>
             {(state.title || state.kicker) && (
-                <div className="w-full max-w-2xl rounded-2xl border border-white/20 bg-slate-950/90 px-5 py-3 text-white shadow-2xl backdrop-blur-md lg:mr-[34rem]">
-                    <p className="text-xs font-black uppercase tracking-[0.35em] text-cyan-200">{state.kicker}</p>
-                    <p className="mt-1 text-2xl font-black">{state.title}</p>
+                <div className="rounded-2xl border border-white/20 bg-slate-950/90 px-4 py-3 text-white shadow-xl backdrop-blur-md" data-testid="demo-stage-caption">
+                    {state.kicker && <p className="text-[10px] font-black uppercase tracking-[0.28em] text-cyan-200">{state.kicker}</p>}
+                    {state.title && <p className="mt-1 text-lg font-black leading-tight sm:text-xl">{state.title}</p>}
                 </div>
             )}
             <div
-                className={`demo-guest-card w-full max-w-[520px] rounded-[32px] border p-7 text-white ${
+                className={`demo-guest-card w-full rounded-[24px] border p-4 text-white sm:p-5 ${
                     state.speaking ? "speaking" : ""
                 }`}
+                data-testid="demo-guest-card"
                 aria-live="polite"
             >
-                <div className="flex items-center gap-4">
-                    <div className="demo-mic-badge grid h-[70px] w-[70px] place-items-center rounded-full text-4xl">
+                <div className="flex items-center gap-3">
+                    <div className="demo-mic-badge grid h-12 w-12 shrink-0 place-items-center rounded-full text-2xl sm:h-14 sm:w-14 sm:text-3xl">
                         🎙️
                     </div>
-                    <div>
-                        <p className="text-xs font-black uppercase tracking-[0.28em] text-cyan-200">Ava guest voice</p>
-                        <p className="mt-1 text-3xl font-black">Guest at the speaker</p>
+                    <div className="min-w-0">
+                        <p className="text-[10px] font-black uppercase tracking-[0.24em] text-cyan-200 sm:text-xs">{t("settings.demoMode.guestVoiceLabel")}</p>
+                        <p className="mt-1 text-lg font-black leading-tight sm:text-xl">{t("settings.demoMode.guestAtSpeaker")}</p>
                     </div>
                 </div>
-                <p className="mt-6 min-h-[58px] text-[22px] font-bold leading-tight text-slate-50">
-                    {state.error ?? state.line?.text ?? "Waiting for the guest line..."}
+                <p className="mt-4 min-h-11 text-base font-bold leading-snug text-slate-50 sm:text-lg">
+                    {state.error ?? state.line?.text ?? t("settings.demoMode.waitingLine")}
                 </p>
-                <div className="mt-5 flex h-12 items-center gap-1.5">{bars}</div>
+                <div className="mt-4 flex h-9 w-full items-center gap-1 overflow-hidden" aria-hidden="true">
+                    {bars}
+                </div>
             </div>
-        </div>
+        </section>
     );
 }
 
@@ -1275,7 +1279,7 @@ function SonicApp() {
                     </Sheet>
 
                     {/* Desktop Menu Panel */}
-                    <Card className="hidden p-6 md:block">
+                    <Card className="hidden p-6 md:block" data-testid="menu-panel-card">
                         <h2 className="mb-4 text-center font-semibold text-primary">{t("menu.title")}</h2>
                         <div className="h-[calc(100vh-13rem)] overflow-auto pr-4">
                             <MenuPanel menuMode={menuMode} />
@@ -1283,10 +1287,10 @@ function SonicApp() {
                     </Card>
 
                     {/* Center Panel - Recording Button and Order Summary */}
-                    <Card className="p-6 md:overflow-auto">
+                    <Card className="p-6 md:overflow-auto" data-testid="center-panel">
                         <div className="space-y-8">
                             <OrderSummary order={useDummyData ? dummyOrder : order} taxRate={current.taxRate} />
-                            <div className="mb-4 flex flex-col items-center justify-center">
+                            <div className="mb-4 flex flex-col items-center justify-center" data-testid="conversation-controls">
                                 <Button
                                     onClick={onToggleListening}
                                     className={`h-12 w-60 border-none font-semibold shadow-lg transition-colors ${
@@ -1343,6 +1347,7 @@ function SonicApp() {
                                 )}
                                 {demoUi.error && <p className="mt-2 text-center text-xs font-medium text-destructive">{demoUi.error}</p>}
                             </div>
+                            <DemoStage state={demoUi} />
                         </div>
                     </Card>
 
@@ -1366,7 +1371,7 @@ function SonicApp() {
                     </Sheet>
 
                     {/* Desktop Transcript Panel */}
-                    <Card className="hidden p-6 md:block">
+                    <Card className="hidden p-6 md:block" data-testid="transcript-panel-card">
                         <h2 className="mb-4 text-center font-semibold text-primary">Guest Conversation</h2>
                         <TranscriptPanel
                             transcripts={useDummyData ? dummyTranscripts : transcripts}
@@ -1397,7 +1402,6 @@ function SonicApp() {
                 onConfirm={confirmPersonaSwitch}
                 onCancel={cancelPersonaSwitch}
             />
-            <DemoGuestOverlay state={demoUi} />
         </div>
     );
 }

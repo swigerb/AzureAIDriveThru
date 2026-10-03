@@ -23,6 +23,21 @@ const rt = vi.hoisted(() => ({
 }));
 const rec = vi.hoisted(() => ({ start: vi.fn(async () => true), stop: vi.fn(async () => {}), mute: vi.fn(), unmute: vi.fn() }));
 const player = vi.hoisted(() => ({ reset: vi.fn(async () => {}), play: vi.fn(() => 0), stop: vi.fn(), waitForDrain: vi.fn(async () => true) }));
+const demoRunner = vi.hoisted(() => ({
+    runDemoScenes: vi.fn(async (scenes: any[], handlers: any) => {
+        const scene = scenes[0];
+        handlers.setStatus({ state: "scene", scene });
+        handlers.setStatus({ state: "guest", scene, line: scene.script.lines[0], speaking: true });
+    }),
+    browserDemoClock: { sleep: vi.fn(async () => {}) }
+}));
+const demoAudio = vi.hoisted(() => ({
+    reset: vi.fn(),
+    prime: vi.fn(async () => {}),
+    createStream: vi.fn(),
+    playClip: vi.fn(async () => {}),
+    dispose: vi.fn()
+}));
 
 vi.mock("@/hooks/useRealtime", () => ({
     default: (params: any) => {
@@ -34,6 +49,8 @@ vi.mock("@/hooks/useRealtime", () => ({
 vi.mock("darkreader", () => ({ enable: vi.fn(), disable: vi.fn(), auto: vi.fn(), setFetchMethod: vi.fn() }));
 vi.mock("@/hooks/useAudioRecorder", () => ({ default: () => rec }));
 vi.mock("@/hooks/useAudioPlayer", () => ({ default: () => player }));
+vi.mock("@/lib/demo/demoRunner", () => demoRunner);
+vi.mock("@/lib/demo/syntheticGuestAudio", () => ({ SyntheticGuestAudio: vi.fn(() => demoAudio) }));
 
 const theme = { light: { primary: "200 80% 50%", secondary: "40 60% 40%", background: "0 0% 98%", foreground: "0 0% 10%" } };
 const INDEX = {
@@ -101,5 +118,21 @@ describe("App demo mode", () => {
         expect(localStorage.getItem("demoModeEnabled")).toBe("true");
         await waitFor(() => expect(screen.getByRole("button", { name: /run demo: this brand/i })).toBeInTheDocument());
         expect(screen.getByRole("button", { name: /full tour/i })).toBeInTheDocument();
+    });
+
+    it("renders the active demo stage inside the center panel instead of a fixed overlay", async () => {
+        render(<RootApp />);
+        await screen.findByLabelText("Select persona");
+        await userEvent.click(await screen.findByRole("button", { name: /open settings/i }));
+        await userEvent.click(await screen.findByRole("checkbox", { name: "settings.demoMode.aria" }));
+        await userEvent.keyboard("{Escape}");
+        await userEvent.click(await screen.findByRole("button", { name: /run demo: this brand/i }));
+
+        const stage = await screen.findByTestId("demo-stage");
+        expect(screen.getByTestId("center-panel")).toContainElement(stage);
+        expect(stage.className).not.toMatch(/\b(fixed|inset-x-0|bottom-|z-50)\b/);
+        expect(stage).toHaveTextContent("Fixture scene");
+        expect(stage).toHaveTextContent("Fixture line");
+        expect(screen.getByTestId("demo-guest-card")).toHaveClass("speaking");
     });
 });

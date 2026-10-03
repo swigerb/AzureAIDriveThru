@@ -67,7 +67,11 @@
             "description": "Lance une démo mains libres avec une voix de cliente scénarisée.",
             "on": "Démo activée",
             "off": "Démo désactivée",
-            "aria": "Activer ou désactiver le mode démo"
+            "aria": "Activer ou désactiver le mode démo",
+            "stageAria": "Scène de démo",
+            "guestVoiceLabel": "Voix cliente Ava",
+            "guestAtSpeaker": "Cliente au haut-parleur",
+            "waitingLine": "En attente de la réplique cliente..."
         }
     },
     "hero": {
