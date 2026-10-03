@@ -252,10 +252,9 @@ function SonicApp() {
         followUpExpected: false
     });
     const assistantResponseRef = useRef({
-        inFlight: 0,
+        inFlight: false,
         startAudioCount: 0,
-        sawRoundTripToken: false,
-        sawMiddleTierSignal: false
+        sawRoundTripToken: false
     });
     const guestTranscriptRef = useRef<GuestTranscriptState>({ count: 0, lastTranscript: "" });
     const demoGuestSpeakingRef = useRef(false);
@@ -441,7 +440,7 @@ function SonicApp() {
         onReceivedError: message => console.error("error", message),
         onReceivedResponseCreated: () => {
             if (!isSessionActiveRef.current) return;
-            assistantResponseRef.current.inFlight += 1;
+            assistantResponseRef.current.inFlight = true;
             assistantResponseRef.current.startAudioCount = assistantAudioRef.current.count;
             assistantResponseRef.current.sawRoundTripToken = false;
             assistantAudioRef.current = {
@@ -470,15 +469,18 @@ function SonicApp() {
         },
         onReceivedInputAudioBufferSpeechStarted: () => {
             // User speech detected - stop AI playback (barge-in) and unmute mic
-            stopAudioPlayer();
             clearRateLimitNotice();
+            if (isDemoRunningRef.current && demoGuestSpeakingRef.current) {
+                console.log("Demo guest audio ignored as server barge-in");
+                return;
+            }
+            stopAudioPlayer();
             if (isAiSpeakingRef.current) {
                 isAiSpeakingRef.current = false;
                 unmuteAudioRecording();
             }
         },
         onReceivedExtensionMiddleTierToolResponse: ({ tool_name, tool_result }: ExtensionMiddleTierToolResponse) => {
-            assistantResponseRef.current.sawMiddleTierSignal = true;
             assistantAudioRef.current = { ...assistantAudioRef.current, followUpExpected: true };
             if (tool_name === "update_order" || tool_name === "get_order" || tool_name === "reset_order") {
                 const orderSummary: OrderSummaryProps = JSON.parse(tool_result);
@@ -490,12 +492,10 @@ function SonicApp() {
             }
         },
         onReceivedSessionMetadata: message => {
-            assistantResponseRef.current.sawMiddleTierSignal = true;
             resumedSessionRef.current = false;
             handleSessionIdentifiers(message);
         },
         onReceivedSessionResumed: (message: ExtensionSessionResumed) => {
-            assistantResponseRef.current.sawMiddleTierSignal = true;
             // Same shape as a tool result: the ticket comes back exactly as it was.
             setOrder(message.order_summary);
             handleSessionIdentifiers({
@@ -529,7 +529,6 @@ function SonicApp() {
             if (wasPending || hadItems) setConnectionNotice("resumeRejected");
         },
         onReceivedRoundTripToken: message => {
-            assistantResponseRef.current.sawMiddleTierSignal = true;
             assistantResponseRef.current.sawRoundTripToken = true;
             assistantAudioRef.current = { ...assistantAudioRef.current, followUpExpected: false };
             handleSessionIdentifiers(message);
@@ -582,14 +581,12 @@ function SonicApp() {
             const responseHadAudio = assistantAudioRef.current.count > responseTracker.startAudioCount;
             const completedAudioResponses =
                 (assistantAudioRef.current.completedAudioResponses ?? 0) + (responseHadAudio ? 1 : 0);
-            responseTracker.inFlight = Math.max(0, responseTracker.inFlight - 1);
-            const followUpExpected =
-                assistantAudioRef.current.followUpExpected ||
-                (responseTracker.sawMiddleTierSignal && !responseTracker.sawRoundTripToken);
+            responseTracker.inFlight = false;
+            const followUpExpected = assistantAudioRef.current.followUpExpected || !responseTracker.sawRoundTripToken;
             assistantAudioRef.current = {
                 ...assistantAudioRef.current,
                 completedAudioResponses,
-                responseInFlight: responseTracker.inFlight > 0,
+                responseInFlight: responseTracker.inFlight,
                 followUpExpected
             };
             responseTracker.startAudioCount = assistantAudioRef.current.count;
@@ -686,7 +683,7 @@ function SonicApp() {
         console.log("Barge-in detected — interrupting AI");
         isAiSpeakingRef.current = false;
         stopAudioPlayer();
-        assistantResponseRef.current.inFlight = 0;
+        assistantResponseRef.current.inFlight = false;
         assistantResponseRef.current.sawRoundTripToken = false;
         assistantAudioRef.current = {
             ...assistantAudioRef.current,
@@ -711,7 +708,7 @@ function SonicApp() {
         stopAudioPlayer();
         isSessionActiveRef.current = false;
         isAiSpeakingRef.current = false;
-        assistantResponseRef.current.inFlight = 0;
+        assistantResponseRef.current.inFlight = false;
         assistantResponseRef.current.sawRoundTripToken = false;
         assistantAudioRef.current = {
             ...assistantAudioRef.current,
