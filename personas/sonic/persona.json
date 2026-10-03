@@ -16,7 +16,7 @@
       "endHour": 16,
       "priceMultiplier": "0.5",
       "announce": true,
-      "banner": "[HAPPY HOUR ACTIVE: slushes and fountain drinks are half-price; shakes, Blasts and sundaes are full price]"
+      "banner": "[HAPPY HOUR ACTIVE: standalone slushes and fountain drinks are half-price; shakes, Blasts, sundaes, and combo components are full price]"
     }
   },
 

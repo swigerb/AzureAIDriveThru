@@ -121,8 +121,35 @@ public sealed class HappyHourAtOpenTests(HappyHourAtOpenFixture fixture)
         var result = await HappyHourBoundaryTestSupport.AddOneDrinkAndReadResultAsync(fixture, ct);
         Assert.Contains(
             HappyHourBoundaryTestSupport.SonicHappyHourBanner(), result.FunctionCallOutputText);
+        Assert.Contains(
+            "[HAPPY HOUR DISCOUNT APPLIED TO: Medium Cherry Limeade]",
+            result.FunctionCallOutputText);
         OrderScenarioHelpers.AssertMoneyEqual(
             HappyHourBoundaryTestSupport.HappyHourFinalTotal(HappyHourBoundaryTestSupport.DrinkPrice),
+            OrderScenarioHelpers.GetOrderFinalTotal(result.ToolResultJson!));
+    });
+
+    [Fact]
+    [Trait("Dotnet", "ready")]
+    public Task A_combo_drink_component_does_not_emit_a_happy_hour_discount_claim() => fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using var _ = browser;
+
+        var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+            connection, browser,
+            [
+                ("add", "SuperSONIC® Double Cheeseburger Combo", "standard", 1, 10.19m),
+                ("add", "Cherry Limeade", "medium", 1, HappyHourBoundaryTestSupport.DrinkPrice),
+            ],
+            roundTripIndex, ct);
+
+        Assert.DoesNotContain(
+            HappyHourBoundaryTestSupport.SonicHappyHourBanner(), result.FunctionCallOutputText);
+        Assert.DoesNotContain("HAPPY HOUR DISCOUNT APPLIED", result.FunctionCallOutputText);
+        OrderScenarioHelpers.AssertMoneyEqual(
+            10.19m * (1 + GoldenOrderPricingData.Load(RepoPaths.FindRepoRoot()).BusinessRules.TaxRate),
             OrderScenarioHelpers.GetOrderFinalTotal(result.ToolResultJson!));
     });
 

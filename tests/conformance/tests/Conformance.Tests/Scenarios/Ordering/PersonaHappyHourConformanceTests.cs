@@ -126,6 +126,9 @@ public sealed class PersonaHappyHourConformanceTests(
         });
 
         Assert.Contains(expectedBanner, insideResult.FunctionCallOutputText);
+        Assert.Contains(
+            "[HAPPY HOUR DISCOUNT APPLIED TO: Small Alpha Cola]",
+            insideResult.FunctionCallOutputText);
         Assert.DoesNotContain(expectedBanner, outsideResult.FunctionCallOutputText);
         Assert.DoesNotContain("HAPPY HOUR", outsideResult.FunctionCallOutputText);
 

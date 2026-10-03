@@ -73,7 +73,7 @@ public sealed class HappyHourPricingTests : IDisposable
 
         Assert.True(order.IsHappyHour());
         Assert.Equal(1.99m, order.Summary.Total); // 2 * 1.99 * 0.5
-        Assert.Equal(" [ALPHA HAPPY HOUR ACTIVE]", order.HappyHourBanner);
+        Assert.Equal(" [ALPHA HAPPY HOUR ACTIVE] [HAPPY HOUR DISCOUNT APPLIED TO: 2 x Small Alpha Cola]", order.HappyHourBanner);
     }
 
     [Fact]
@@ -86,6 +86,7 @@ public sealed class HappyHourPricingTests : IDisposable
 
         Assert.True(order.IsHappyHour());
         Assert.Equal(3.99m, order.Summary.Total);
+        Assert.Equal("", order.HappyHourBanner);
     }
 
     [Fact]

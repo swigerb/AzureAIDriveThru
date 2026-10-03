@@ -169,6 +169,18 @@ class OrderState:
         session["order_summary_json"] = summary.model_dump_json()
         logger.debug("Order summary updated for session %s (items=%d, total=%s)", session_id, len(order_items), finalTotal)
 
+    def _happy_hour_discounted_line_displays(self, session: dict) -> list[str]:
+        if not self._is_happy_hour_for(session):
+            return []
+        menu = self._menu_for(session)
+        discounted = []
+        for item in session["order_state"]:
+            if not menu.is_happy_hour_discounted(item.item):
+                continue
+            display = item.display or item.item
+            discounted.append(f"{item.quantity} x {display}" if item.quantity > 1 else display)
+        return discounted
+
     def create_session(self, persona: "Persona | None" = None, model_id: str | None = None,
                         model_deployment: str | None = None, model_reasoning: bool | None = None,
                         model_pipeline: str | None = None, menu_mode: str | None = None) -> str:
@@ -1430,26 +1442,24 @@ class OrderState:
         return self._is_happy_hour_for(self.sessions[session_id])
 
     def get_happy_hour_banner_for_session(self, session_id: str) -> str:
-        """#113: the happy-hour banner text ``tools.py`` (``update_order``/``get_order``) should
-        append to its result for THIS session, and the ONLY place that decision is made --
-        never a hardcoded brand string in ``tools.py`` again. Returns ``" " + banner`` (the
-        historic leading-space/positioning, so the default pack's output stays byte-identical)
-        when this session's own bound persona's ``pricing.happyHour`` is non-null, its
-        ``announce`` flag is true, AND happy hour is currently active for this session --
-        otherwise ``""``. A pack with `happyHour: null` (decision 5) or `announce: false` can
-        never announce, regardless of the clock. Falls back to the default persona's own
-        happy-hour config for an unknown/expired session id, same fallback pattern as
-        ``is_happy_hour_for_session``/``get_menu_catalog`` above."""
+        """The happy-hour note ``tools.py`` appends for THIS session.
+
+        Returns a note only when happy hour is active, this persona announces it, and at least
+        one current raw order line is actually being multiplied by the happy-hour price. Bundle
+        components do not appear in ``order_state`` as raw lines, so they are naturally excluded
+        from both pricing and this discount claim.
+        """
         if session_id not in self.sessions:
-            persona = default_persona.get_default_persona()
-            happy_hour_cfg = persona.manifest.pricing.happyHour
-            if happy_hour_cfg is not None and happy_hour_cfg.announce and is_happy_hour():
-                return f" {happy_hour_cfg.banner}"
             return ""
         self._check_owner(session_id)
         session = self.sessions[session_id]
-        if session["_happy_hour_announce"] and self._is_happy_hour_for(session):
-            return f" {session['_happy_hour_banner']}"
+        if session["_happy_hour_announce"]:
+            discounted_lines = self._happy_hour_discounted_line_displays(session)
+            if discounted_lines:
+                return (
+                    f" {session['_happy_hour_banner']} "
+                    f"[HAPPY HOUR DISCOUNT APPLIED TO: {', '.join(discounted_lines)}]"
+                )
         return ""
 
 # Create a singleton instance of OrderState

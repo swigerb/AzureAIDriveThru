@@ -406,21 +406,20 @@ class TestProductionPrompts:
 
 
 class HappyHourPromptWordingTests(unittest.TestCase):
-    """PR #61 delta review (should-fix 2): PERSONALIZATION's "happy hour" excitement line and
-    HAPPY_HOUR's every-day mention must say "slushes and fountain drinks", matching both the
-    tool-result banner (tools.py) and HAPPY_HOUR's own trigger-condition line ("+ slush or
-    fountain-drink order") -- not the old, broader "drinks" wording, which reads as covering
-    shakes/Blasts too even though those are full price (Brian's #39 decision)."""
+    """Happy-hour prompt wording must keep standalone promo mentions separate from claims that
+    the current order received a discount (#209)."""
 
     def test_personalization_happy_hour_excitement_mentions_fountain_drinks(self):
         loader = PromptLoader(brand="sonic")
         prompt = loader.get_system_prompt()
-        self.assertIn("half-price slushes and fountain drinks", prompt)
+        self.assertIn("standalone slushes and fountain drinks being half-price", prompt)
 
     def test_happy_hour_every_day_mention_names_slushes_and_fountain_drinks(self):
         loader = PromptLoader(brand="sonic")
         prompt = loader.get_system_prompt()
-        self.assertIn("Slushes and fountain drinks are HALF-PRICE every day", prompt)
+        self.assertIn("Standalone slushes and fountain drinks are HALF-PRICE every day", prompt)
+        self.assertIn("ONLY say the CURRENT ORDER got a happy-hour discount", prompt)
+        self.assertIn("HAPPY HOUR DISCOUNT APPLIED TO", prompt)
 
 
 # ===========================================================================

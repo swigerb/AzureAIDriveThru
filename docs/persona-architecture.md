@@ -84,7 +84,7 @@ Classes:
 | 4 | Tool schemas (descriptions) | `tool_schemas.yaml` | `tool_schemas.yaml` allows only add/remove, and it wins over the inline schema in `tools.py:413` that has `modify` (`tools.py:685`). The prompt (`system_prompt.yaml:155`) still tells the model to call `modify`, so `modify` is dormant: a sibling bug | Inline in `tools.py:296`, telling the model that extras are separate items | Persona data (text); shared code (`modify`) | `prompts/tool_schemas.yaml`; `modify` offered only where the pack's schema lists it (McDonald's, fixed in #78) |
 | 5 | Upsell hints, delta templates | `hints.yaml`, plus in-code fallbacks in `tools.py:533` | `hints.yaml` (McFlurry), plus `tools.py:596` | None | Persona data | `prompts/hints.yaml`; the in-code fallbacks are deleted |
 | 6 | Error and refusal text | `error_messages.yaml` | `error_messages.yaml` | Inline strings in `tools.py:408` | Persona data | `prompts/error_messages.yaml` |
-| 7 | Happy-hour banner in tool results | Hard-coded in `tools.py:547` and `:569` | "drinks and slushes are half-price!" (a Sonic leftover) at `tools.py:609` | None: Dunkin's happy hour is silent | Persona data | `persona.json` `pricing.happyHour.banner` |
+| 7 | Happy-hour banner in tool results | Hard-coded in `tools.py:547` and `:569` | "drinks and slushes are half-price!" (a Sonic leftover) at `tools.py:609` | None: Dunkin's happy hour is silent | Persona data + order state | `persona.json` `pricing.happyHour.banner`, appended only with `[HAPPY HOUR DISCOUNT APPLIED TO: ...]` when current raw order lines were actually discounted |
 | 8 | Missing-combo-part hint | "a side (fries or tots)", "a drink or slush" in `order_state.py:338` | "... to finish their meal" | n/a | Persona data | `persona.json` `bundles.missingPartText` |
 | 9 | Local-model prompt | n/a | `local_system_prompt.yaml` (Phi-4) | n/a | Persona data | Never landed as a per-pack file: the persona-agnostic local pipeline this row fed (row 37, #81) was dropped entirely by #155 before shipping |
 
@@ -218,7 +218,7 @@ All money values are quoted decimal strings, so C# reads them as `decimal` witho
     "taxRate": "0.08",
     "happyHour": {
       "startHour": 14, "endHour": 16, "priceMultiplier": "0.5", "announce": true,
-      "banner": "[HAPPY HOUR ACTIVE: slushes and fountain drinks are half-price; shakes, Blasts and sundaes are full price]"
+      "banner": "[HAPPY HOUR ACTIVE: standalone slushes and fountain drinks are half-price; shakes, Blasts, sundaes, and combo components are full price]"
     }
   },
 
@@ -285,7 +285,7 @@ Field rules:
 | `sizes` | The shared normalizer replaces `SIZE_MAP` and `SIZE_ALIASES`. It uses the compact-key matching from `menu_utils.py:64` for every persona. `spokenAs` drives readback. Route 44 appears only in Sonic's pack. |
 | `bundles` | Engine settings. Which items are bundles, and their slots, is per item (4.3). Spoken synonyms such as "combo" for "meal" resolve through item `aliases`. `resizeRule` defaults to `includedAnySize`; `wholeBundleSize` reprices the whole bundle when a slot is resized; `componentUpcharge` keeps the bundle's own menu price and adds, per filled slot, `max(0, component(size) - component(includedSize))`. `includedSize` is required for `componentUpcharge` packs such as Sonic, where medium side/drink are included and larger sizes add only the positive delta. Quantity>1 component-upcharge fills split any unit whose upcharge differs from its siblings so line prices remain per-unit, never averaged. |
 | `extras` | One guard for all personas. Extras are `isExtra` menu items. The guard checks that the order already has a base in an allowed category. A refusal is always the structured JSON result Dunkin uses today (`status: "rejected"`, `item_added: false`, optional `suggested_calls`), with the text from the pack's `error_messages.yaml`. |
-| `pricing.happyHour` | Optional. `null` means the persona has no happy hour (McDonald's, decision 5). When present, `announce: true` adds the banner to tool results and turns on the `HAPPY_HOUR` prompt section (Sonic and Dunkin, decision 6). |
+| `pricing.happyHour` | Optional. `null` means the persona has no happy hour (McDonald's, decision 5). When present, `announce: true` permits happy-hour notes, but tool results append the banner only when at least one current raw order line is actually discounted; the note also lists those lines. Combo components are excluded because they are included in the bundle line price, not discounted standalone lines. |
 | No `offMenu` block | Removed by decision 4. An item that isn't on the menu (after `_menu_key` normalization and aliases) is rejected with `reason: "not_on_menu"`. There is no keyword fallback of any kind (section 6). |
 | `models` | Which catalog models the persona allows, and its default per pipeline (section 7). The deployment decides which ones exist; the session picks one of the allowed. |
 | `strategies` | A closed set. P2 has one slot, `searchQueryRewrite`, with the values `none` and `meal_numbers`. Adding a value needs both backends and a conformance scenario in the same PR series. |
@@ -467,6 +467,13 @@ starts a new session.
 
 **#64, decided (decision 3).** Floats do not get the happy-hour price, and they can fill the combo drink slot.
 They are real Sonic menu items (4.3, #72), not a keyword rule.
+
+**#209.** Happy-hour tool text is discount evidence, not just clock evidence. The server omits
+happy-hour text when the active order has no discounted raw line (for example, a combo whose Cherry
+Limeade fills the drink slot), because a neutral "happy hour active" note still invited model
+over-claims. When a discount is present, the tool result names the exact discounted lines with
+`[HAPPY HOUR DISCOUNT APPLIED TO: ...]`; prompts may mention the general standalone promotion but
+must not claim the current order received a discount without that note.
 
 - **A pack refuses to start if two menu items collide on their lookup key, or an alias collides
   with another item's own key or another item's own alias (#128, decided).** `_menu_key`'s
