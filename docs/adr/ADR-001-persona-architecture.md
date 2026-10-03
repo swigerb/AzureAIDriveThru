@@ -9,6 +9,15 @@
 - **Deciders:** Brian Swiger (owner), Rick (lead)
 - **Full design:** [`docs/persona-architecture.md`](../persona-architecture.md)
 
+**Status note (2026-10-03):** The accepted data-first decision still holds, but the implementation
+has added more persona data since this ADR: `sizes.spokenAs` for spoken readbacks and
+`bundles.resizeRule: "componentUpcharge"` with `includedSize` for Sonic bundle component deltas.
+Python implements these in `app/backend/menu_utils.py`, `app/backend/persona_loader.py` and
+`app/backend/order_state.py`; C# mirrors them in
+`app/backend-dotnet/src/Backend/Personas/MenuCatalog.cs`,
+`app/backend-dotnet/src/Backend/Personas/PersonaCatalog.cs` and
+`app/backend-dotnet/src/Backend/Ordering/OrderState.cs`.
+
 ## Context
 
 We ran three forks of the same VoiceRAG drive-thru demo: Sonic (this repo), McDonald's and Dunkin. They shared
