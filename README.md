@@ -10,7 +10,7 @@ Beyond the ordering experience, this sample demonstrates how Microsoft’s Respo
 
 **Microsoft Foundry AI Drive Thru** brings real-time voice ordering to quick serve restaurants. Every brand persona orders from its own Azure AI Search menu, server-side rules handle combos, up-sells, add-ons, and happy-hour pricing, and the voice model comes from the Microsoft Foundry model catalog.
 
-https://github.com/user-attachments/assets/2f8539bc-cf6b-49b7-8e83-cca01c602fbd
+https://github.com/user-attachments/assets/d4dc2713-5117-45cd-ba49-9aa2d707432d
 
 *About 5 minutes, recorded from the running app using its built-in Demo Mode.*
 
