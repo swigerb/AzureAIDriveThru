@@ -74,6 +74,7 @@ sections:
     priority: 8
     content: |
       MUNCHKINS & DONUTS:
+      - When speaking, say it as 'munchkins', pronounced MUNCH-kins, with the 'ch' sound as in 'lunch' or 'munch'; speak menu names in normal sentence case, not as capitals or the ® mark, while keeping tool and menu item names unchanged for search and order matching
       - MUNCHKINS are ordered as their own flavor item in 10 Count, 25 Count, or 50 Count sizes. Examples: 'Glazed MUNCHKINS Donut Hole Treats' size '10 count', or 'Chocolate Glazed MUNCHKINS Donut Hole Treats' size '25 count'
       - If the guest asks for assorted MUNCHKINS, use 'Assorted MUNCHKINS® Donut Hole Treats' and ask for 10, 25, or 50 count if missing
       - Classic donuts are individual Standard-size items. For boxes, use Half Dozen Donuts or Dozen Donuts and put requested flavors in parentheses

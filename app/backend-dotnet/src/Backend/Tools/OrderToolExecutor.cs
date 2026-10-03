@@ -503,18 +503,20 @@ public sealed class OrderToolExecutor : IToolExecutor
             ? ""
             : size;
         var displayName = $"{(displaySize.Length > 0 ? Capitalize(displaySize) + " " : "")}{itemName}";
+        var spokenItemName = _menu.Spoken(itemName);
+        var spokenDisplayName = _menu.Spoken(displayName);
 
         if (resultInfo.AbsorbedIntoCombo)
         {
-            return $"{displayName} included with your combo — your total is {summary.FinalTotalDisplay}";
+            return $"{spokenDisplayName} included with your combo — your total is {summary.FinalTotalDisplay}";
         }
         if (resultInfo.ComboConvertedFrom is not null && action == "add")
         {
-            var comboDisplay = displayName;
+            var comboDisplay = spokenDisplayName;
             var mods = resultInfo.ModsCarried ?? "";
             if (mods.Length > 0)
             {
-                comboDisplay = $"{displayName} {mods}";
+                comboDisplay = $"{spokenDisplayName} {mods}";
             }
             return $"Upgraded to {comboDisplay} — your total is now {summary.FinalTotalDisplay}";
         }
@@ -528,7 +530,7 @@ public sealed class OrderToolExecutor : IToolExecutor
         // for that case, so no separate branch reads it here.)
         if (resultInfo.ResizedComboComponent is not null)
         {
-            return $"Changed {displayName}, your total is now {summary.FinalTotalDisplay}";
+            return $"Changed {spokenDisplayName}, your total is now {summary.FinalTotalDisplay}";
         }
         // PR #184 round 3 (Rick's review, item C): set by OrderState.HandleOrderUpdate whenever
         // `modify` actually changed an existing order line's OWN size (a bare resize,
@@ -539,19 +541,19 @@ public sealed class OrderToolExecutor : IToolExecutor
             && resultInfo.ModifiedToSize is { Length: > 0 } toSize
             && fromSize != toSize)
         {
-            return $"Upgraded {itemName} from {Capitalize(fromSize)} to {Capitalize(toSize)}, your total is now {summary.FinalTotalDisplay}";
+            return $"Upgraded {spokenItemName} from {Capitalize(fromSize)} to {Capitalize(toSize)}, your total is now {summary.FinalTotalDisplay}";
         }
         if (_promptLoader is { } pl)
         {
             var tpl = pl.GetDeltaTemplate(action);
             return pl.RenderTemplate(tpl, Vars(
-                ("quantity", quantity), ("display_name", displayName), ("total", summary.FinalTotalDisplay)));
+                ("quantity", quantity), ("display_name", spokenDisplayName), ("total", summary.FinalTotalDisplay)));
         }
         return action switch
         {
-            "add" => $"Added {quantity} {displayName} — your total is now {summary.FinalTotalDisplay}",
-            "modify" => $"Changed {displayName} — your total is now {summary.FinalTotalDisplay}",
-            _ => $"Removed {quantity} {displayName} — your total is now {summary.FinalTotalDisplay}",
+            "add" => $"Added {quantity} {spokenDisplayName} — your total is now {summary.FinalTotalDisplay}",
+            "modify" => $"Changed {spokenDisplayName} — your total is now {summary.FinalTotalDisplay}",
+            _ => $"Removed {quantity} {spokenDisplayName} — your total is now {summary.FinalTotalDisplay}",
         };
     }
 

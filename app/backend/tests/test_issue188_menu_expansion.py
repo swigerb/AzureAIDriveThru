@@ -71,8 +71,8 @@ class Issue188MenuExpansionTests(unittest.TestCase):
         with patch("order_state.is_happy_hour", return_value=False):
             session_id = self._session()
 
-            self._add(session_id, "Glazed MUNCHKINS® Donut Hole Treats", "10 count", 2)
-            self._add(session_id, "Chocolate Glazed MUNCHKINS® Donut Hole Treats", "25 count", 1)
+            glazed_result = self._add(session_id, "Glazed MUNCHKINS® Donut Hole Treats", "10 count", 2)
+            chocolate_result = self._add(session_id, "Chocolate Glazed MUNCHKINS® Donut Hole Treats", "25 count", 1)
 
             summary = order_state_singleton.get_order_summary(session_id)
             self.assertEqual(len(summary.items), 2)
@@ -80,6 +80,13 @@ class Issue188MenuExpansionTests(unittest.TestCase):
             self.assertEqual(summary.items[0].size, "10 count")
             self.assertEqual(summary.items[1].size, "25 count")
             self.assertTrue(math.isclose(summary.total, (2 * 3.99) + 8.99, rel_tol=1e-9))
+            self.assertIn("Munchkins Donut Hole Treats", glazed_result.text)
+            self.assertIn("Munchkins Donut Hole Treats", chocolate_result.text)
+            self.assertIn("MUNCHKINS®", summary.items[0].item)
+            readback = order_state_singleton.get_grouped_order_for_readback(session_id)
+            self.assertIn("Glazed Munchkins Donut Hole Treats", readback)
+            self.assertNotIn("MUNCHKINS", readback)
+            self.assertNotIn("®", readback)
 
     def test_happy_hour_flags_match_pack_banner(self):
         self.assertFalse(self.menu.is_happy_hour_discounted("Original Blend Coffee"))

@@ -838,6 +838,8 @@ async def update_order(args, session_id: str) -> ToolResult:
     action = args["action"]
     display_size = size if size and size.lower() not in {"", "standard", "n/a", "na", "none", "n.a."} else ""
     display_name = f"{display_size.capitalize() + ' ' if display_size else ''}{item_name}"
+    spoken_item_name = menu.spoken(item_name)
+    spoken_display_name = menu.spoken(display_name)
 
     absorbed = result_info.get("absorbed_into_combo", False) if result_info else False
     converted_from = result_info.get("combo_converted_from") if result_info else None
@@ -859,28 +861,28 @@ async def update_order(args, session_id: str) -> ToolResult:
     # IS being removed from the guest's perspective), so no separate branch reads it here.
 
     if absorbed:
-        delta_text = f"{display_name} included with your combo — your total is {summary.finalTotalDisplay}"
+        delta_text = f"{spoken_display_name} included with your combo — your total is {summary.finalTotalDisplay}"
     elif converted_from and action == "add":
-        combo_display = display_name
+        combo_display = spoken_display_name
         mods = result_info.get("mods_carried", "")
         if mods:
-            combo_display = f"{display_name} {mods}"
+            combo_display = f"{spoken_display_name} {mods}"
         delta_text = f"Upgraded to {combo_display} — your total is now {summary.finalTotalDisplay}"
     elif resized_component:
-        delta_text = f"Changed {display_name}, your total is now {summary.finalTotalDisplay}"
+        delta_text = f"Changed {spoken_display_name}, your total is now {summary.finalTotalDisplay}"
     elif modified_from_size and modified_to_size and modified_from_size != modified_to_size:
         old_label = modified_from_size.capitalize()
         new_label = modified_to_size.capitalize()
-        delta_text = f"Upgraded {item_name} from {old_label} to {new_label}, your total is now {summary.finalTotalDisplay}"
+        delta_text = f"Upgraded {spoken_item_name} from {old_label} to {new_label}, your total is now {summary.finalTotalDisplay}"
     elif pl:
         tpl = pl.get_delta_template(action)
-        delta_text = pl.render_template(tpl, quantity=quantity, display_name=display_name, total=summary.finalTotalDisplay)
+        delta_text = pl.render_template(tpl, quantity=quantity, display_name=spoken_display_name, total=summary.finalTotalDisplay)
     elif action == "add":
-        delta_text = f"Added {quantity} {display_name} — your total is now {summary.finalTotalDisplay}"
+        delta_text = f"Added {quantity} {spoken_display_name} — your total is now {summary.finalTotalDisplay}"
     elif action == "modify":
-        delta_text = f"Changed {display_name} — your total is now {summary.finalTotalDisplay}"
+        delta_text = f"Changed {spoken_display_name} — your total is now {summary.finalTotalDisplay}"
     else:
-        delta_text = f"Removed {quantity} {display_name} — your total is now {summary.finalTotalDisplay}"
+        delta_text = f"Removed {quantity} {spoken_display_name} — your total is now {summary.finalTotalDisplay}"
 
     # ── Combo validation: flag missing components ──
     validation = order_state_singleton.get_combo_requirements(session_id)
@@ -1060,5 +1062,4 @@ def attach_tools_rtmt(
                 persona_schema_map.get("get_order", get_order_tool_schema),
                 persona_schema_map.get("reset_order", reset_order_tool_schema),
             ]
-
 
