@@ -673,12 +673,14 @@ public sealed class CascadeProcessorTests
             && e.Exception is TaskCanceledException
             && e.Message.Contains("'turn'", StringComparison.Ordinal));
 
-        // The guest turn itself never reaches RunTurnAndSpeakAsync's own response.done send (the
-        // exception propagates straight out of RunChatToolLoopAsync, before any response.created/
-        // response.done frame for this turn) -- only the greeting's response.done exists.
+        // The guest turn's own response.created IS sent (RunTurnAndSpeakAsync sends it before
+        // starting the chat-tool loop) -- but it never reaches the matching response.done: the
+        // exception propagates straight out of RunChatToolLoopAsync before that send. So only the
+        // greeting's response.done exists, even though the guest turn's response.created is present.
         var frames = socket.SentMessages.Where(m => m.MessageType == WebSocketMessageType.Text).Select(ParseSent).ToList();
         var types = frames.Select(f => f["type"]!.GetValue<string>()).ToList();
-        Assert.Equal(1, types.Count(t => t == "response.done"));
+        Assert.Equal(2, types.Count(t => t == "response.created")); // greeting + guest turn
+        Assert.Equal(1, types.Count(t => t == "response.done")); // greeting only
     }
 
     [Fact]
