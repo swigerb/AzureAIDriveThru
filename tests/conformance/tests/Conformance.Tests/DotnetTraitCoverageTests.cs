@@ -183,6 +183,16 @@ namespace Conformance.Tests;
 /// 204 to 222 against the stale pre-#21 baseline): PR #230/#21 lands first at 222 (including this
 /// round's +3); PR #226 must then rebase onto that base and re-target its own floor to 222 + 18 =
 /// 240 (not 222) to account for both rounds of #21 tagging on top of the original 204.
+///
+/// Issue #13 Wave 4/4b (PR #235 rate-limit ladder + PR #237 tool-failure cap, both merged/landing
+/// on top of the 222 baseline above): rather than project the new count by arithmetic across two
+/// concurrently-rebasing PRs, the real count was measured directly on PR #237's branch (after #235
+/// had already merged to dev) by temporarily asserting on the actual
+/// <see cref="CountFloorEligibleDotnetReadyTestMethods"/> value, then reverting -- **239**. PR #237
+/// raises the floor 222 to 239 here. Any PR still rebasing on top of this (e.g. #226, #244) MUST
+/// re-measure fresh at its own rebase time the same way, not add its own historical delta (e.g.
+/// "+18") to 239 blindly -- those deltas were computed against the stale 222 baseline and may double
+/// count methods (such as this wave's 3 tool-failure-cap rows) already folded into 239.
 /// </summary>
 public sealed class DotnetTraitCoverageTests
 {
@@ -205,12 +215,12 @@ public sealed class DotnetTraitCoverageTests
     };
 
     [Fact]
-    public void At_least_222_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
+    public void At_least_239_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
     {
         var count = CountFloorEligibleDotnetReadyTestMethods();
 
-        Assert.True(count >= 222,
-            $"Expected at least 222 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
+        Assert.True(count >= 239,
+            $"Expected at least 239 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
             $"and not unconditionally skip-gated by AuthRowCapability (the dotnet leg's " +
             $"`--filter \"{TraitName}={TraitValue}&Category!=Browser\"` baseline, minus the five " +
             "skip-only Scenarios/Auth classes -- see this class's own doc comment; " +

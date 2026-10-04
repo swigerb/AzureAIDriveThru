@@ -455,14 +455,37 @@ class TokenValidator:
                 client.jwk_set_cache.get() if client.jwk_set_cache is not None else None
             )
             if cached_jwk_set is not None:
-                # `jwk_set_cache.get()` already returns `None` on an empty or
-                # expired cache (its own `is_expired()` check), so reaching
-                # here means a still-valid cache exists -- `get_signing_keys()`
-                # (no `refresh=True`) re-reads that exact same still-valid
-                # cache entry and therefore cannot itself trigger a network
-                # fetch; it is not a plain re-fetch call.
+                # #246 (Rick's review of #225): `jwk_set_cache.get()` re-checks
+                # expiry on every call (it's not a one-shot snapshot), so the
+                # cache can expire in the microseconds between this read and a
+                # second one. Calling `client.get_signing_keys()` here would
+                # perform exactly that second read via `get_jwk_set(False)`,
+                # and if the 24h lifespan lapsed in between, THAT call falls
+                # through to `fetch_data()` -- a live network fetch inside the
+                # branch that exists specifically to avoid one, with no `try`
+                # around it here, so a body-read failure would escape as a raw
+                # 500 instead of failing closed as a 401.
+                #
+                # Resolve the `kid` directly from the `cached_jwk_set` we
+                # already hold instead of reading the cache again. Note
+                # `jwk_set_cache.get()` returns the *raw* JWKS JSON dict (the
+                # unparsed `fetch_data()` response, not a parsed `PyJWKSet` --
+                # `PyJWKClient.get_jwk_set()` only parses it on the way out),
+                # so it must still be parsed via `PyJWKSet.from_dict` here;
+                # what we're avoiding is the second *cache* read, not the
+                # parse (the real client re-parses on every call too). Apply
+                # the same signing-key filter
+                # `PyJWKClient._get_signing_keys_from_jwk_set` uses, so this
+                # path never re-touches the cache and can never trigger a
+                # fetch.
                 kid = jwt.get_unverified_header(token).get("kid")
-                signing_key = client.match_kid(client.get_signing_keys(), kid)
+                parsed_jwk_set = jwt.PyJWKSet.from_dict(cached_jwk_set)
+                signing_keys = [
+                    key
+                    for key in parsed_jwk_set.keys
+                    if key.public_key_use in ("sig", None) and key.key_id
+                ]
+                signing_key = client.match_kid(signing_keys, kid)
                 if signing_key is not None:
                     return signing_key
             raise EntraUnauthorized(

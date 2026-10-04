@@ -29,6 +29,7 @@ public sealed class GreetingPartialAudioNoDoneAcceptsCooldownGuestAudioTests(Rat
     private const string MicAfterFullCooldown = "bWljLWFmdGVyLWZ1bGwtY29vbGRvd24=";
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Mic_audio_at_1_5x_cooldown_forwards_after_partial_greeting_audio_with_no_audio_done() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;

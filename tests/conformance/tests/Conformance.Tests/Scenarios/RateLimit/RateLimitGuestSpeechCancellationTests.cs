@@ -97,6 +97,7 @@ public sealed class RateLimitGuestSpeechCancellationTests(RateLimitIdleInteracti
     }
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task A_pending_retry_is_cancelled_by_guest_speech() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -184,6 +185,7 @@ public sealed class RateLimitGuestSpeechCancellationTests(RateLimitIdleInteracti
     /// audio alone, without a confirmed `speech_started`, must never cancel a pending retry.
     /// </summary>
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task A_pending_retry_still_fires_while_the_browser_keeps_streaming_audio_without_speech_started() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;

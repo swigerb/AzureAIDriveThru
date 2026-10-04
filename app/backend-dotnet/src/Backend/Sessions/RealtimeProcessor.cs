@@ -31,13 +31,18 @@ namespace Backend.Sessions;
 /// nothing posts to this processor's mailbox for the "realtime" pipeline any more.
 ///
 /// Deliberate scope cuts from rtmt.py, documented in docs/dotnet_mapping.md: the tool
-/// failure-cap ladder (`_ToolFailureTracker`), the full rate-limit retry ladder
-/// (`rate_limit.py`'s `RateLimitRecovery` -- this sends one, final `extension.rate_limited`
-/// notice instead of retrying), session resume/rehydration itself -- `extension.resume`, the 4002
-/// supersede-close, and the 4000 idle-timeout close all need a real session registry and land with
-/// #15 -- context-window monitoring/turn recording, and the fast-path regex/marker-substring
-/// optimisations (every frame is fully JSON-parsed instead). A guest-initiated
-/// `extension.end_session` (1000/"session_ended") needs none of that registry state, so it *is*
+/// failure-cap ladder (`_ToolFailureTracker`), session resume/rehydration itself --
+/// `extension.resume`, the 4002 supersede-close, and the 4000 idle-timeout close all need a real
+/// session registry and land with #15 -- context-window monitoring/turn recording, and the
+/// fast-path regex/marker-substring optimisations (every frame is fully JSON-parsed instead).
+/// Issue #13 Wave 4 closed the rate-limit retry ladder scope cut: `rate_limit.py`'s
+/// `RateLimitRecovery` is now ported verbatim as <see cref="RateLimitRecovery"/>, wired at the
+/// same seams as Python (response.created/response.done/error/guest-speech/external
+/// response.create/teardown) -- see that class's own doc comment for the full algorithm and the
+/// one deliberate behavioural difference from Python (lock-protected scheduling, needed only
+/// because this port runs two genuinely concurrent relay loops where asyncio has one). A
+/// guest-initiated `extension.end_session` (1000/"session_ended") needs none of that registry
+/// state, so it *is*
 /// implemented here (issue #13's carried-over S1.2 transport acceptance). ADR-002's Entra auth to
 /// `/realtime` (#147) is the INBOUND browser-facing check on Program.cs's pre-upgrade gate and is
 /// unrelated to this file: the upstream auth header chosen in <see cref="ResolveUpstreamAuthHeaderAsync"/>
@@ -65,6 +70,7 @@ public sealed class RealtimeProcessor : IPipelineProcessor
     private readonly double _greetingTimeoutSeconds;
     private readonly ILogger? _logger;
     private readonly TimeProvider _timeProvider;
+    private readonly RateLimitSettings _rateLimitSettings;
 
     public RealtimeProcessor(
         ModelCatalog catalog,
@@ -80,7 +86,8 @@ public sealed class RealtimeProcessor : IPipelineProcessor
         ILogger? logger = null,
         IUpstreamBearerTokenProvider? bearerTokenProvider = null,
         Func<Persona, PromptLoader?, string?, IToolExecutor>? toolExecutorFactory = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        RateLimitSettings? rateLimitSettings = null)
     {
         _catalog = catalog;
         _defaultDeployment = defaultDeployment;
@@ -95,6 +102,10 @@ public sealed class RealtimeProcessor : IPipelineProcessor
         _echoCooldownSeconds = echoCooldownSeconds;
         _greetingTimeoutSeconds = greetingTimeoutSeconds;
         _logger = logger;
+        // Issue #13 Wave 4: the rate-limit retry ladder's own config (resilience.rate_limit in
+        // config.yaml) -- defaults to the Python-matching shipped defaults if the caller (normally
+        // Program.cs, via RateLimitSettings.FromAppConfig) doesn't supply one.
+        _rateLimitSettings = rateLimitSettings ?? new RateLimitSettings();
         // Issue #13 Wave 2: every time-dependent piece of the relay (echo-suppression cooldowns,
         // the greeting-gate timeout, the "loop time" ShouldSuppressAudio/OnAudioDone/OnResponseDone
         // read) is driven from this one clock, so a test can swap in a FakeTimeProvider instead of
@@ -119,6 +130,8 @@ public sealed class RealtimeProcessor : IPipelineProcessor
         public required string SessionId { get; init; }
         public required string Voice { get; set; }
         public required EchoSuppressor Echo { get; init; }
+        public required RateLimitRecovery RateLimit { get; init; }
+        public required ToolFailureTracker ToolFailures { get; init; }
         public required SessionUpdateGuard Guard { get; init; }
         public required SessionIdentifiers Identifiers { get; init; }
         public bool AssistantAudioSeen { get; set; }
@@ -191,6 +204,17 @@ public sealed class RealtimeProcessor : IPipelineProcessor
             Echo = new EchoSuppressor(_echoCooldownSeconds,
                 flushCt => SendTextAsync(upstream, """{"type":"input_audio_buffer.clear"}""", flushCt),
                 _timeProvider),
+            RateLimit = new RateLimitRecovery(
+                _rateLimitSettings,
+                sendUpstream: (payload, rlCt) => SendTextAsync(upstream, payload, rlCt),
+                sendClient: (payload, rlCt) => SendTextAsync(browserSocket, payload.ToJsonString(), rlCt),
+                timeProvider: _timeProvider,
+                sessionId: sessionId,
+                logger: _logger),
+            // Issue #13 Wave 4 (swigerb/SonicAIDriveThru#36, PR #58 re-review "S1"/"S2"): one
+            // tracker per connection, same lifetime as RateLimit/Echo above -- mirrors rtmt.py's
+            // per-connection `tool_failures = _ToolFailureTracker()`.
+            ToolFailures = new ToolFailureTracker(),
             Guard = new SessionUpdateGuard(),
             Identifiers = new SessionIdentifiers(persona.Id, resolvedModel.Id, sessionId),
         };
@@ -379,17 +403,7 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                     // the guest is talking). Echo-suppression gating still runs first, exactly as
                     // it does on the slow path below -- the fast path only ever changes HOW a
                     // genuine, unsuppressed append frame gets forwarded, never WHETHER it does.
-                    if (!fastPath.Suppressed)
-                    {
-                        try
-                        {
-                            await SendBytesAsync(upstream, frame.Payload, ct).ConfigureAwait(false);
-                        }
-                        catch (Exception ex) when (ex is not OperationCanceledException)
-                        {
-                            _logger?.LogWarning(ex, "Error forwarding fast-path audio append frame (session={SessionId})", sessionId);
-                        }
-                    }
+                    await ForwardFastPathAudioAsync(fastPath, frame.Payload, upstream, sessionId, ct).ConfigureAwait(false);
                     continue;
                 }
 
@@ -452,16 +466,8 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                         continue;
                     }
 
-                    await SendTextAsync(upstream, forwarded.ToJsonString(), ct).ConfigureAwait(false);
-
-                    if (sentType == "response.cancel")
-                    {
-                        state.Echo.OnBargeIn();
-                    }
-                    else if (sentType == "response.create")
-                    {
-                        state.Echo.OnExternalResponseCreate();
-                    }
+                    await ForwardClientFrameAsync(forwarded, sentType, state.Echo, state.RateLimit, upstream, ct)
+                        .ConfigureAwait(false);
 
                     if (!state.GreetingSent && sentType == "session.update")
                     {
@@ -536,17 +542,8 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                 return null;
             }
 
-            if (RateLimitDetection.IsRateLimitError(err))
+            if (await state.RateLimit.OnErrorAsync(message, ct).ConfigureAwait(false))
             {
-                // Scope cut (#13): the full retry ladder (rate_limit.py's RateLimitRecovery) is
-                // skipped -- one final `extension.rate_limited` notice tells the browser to
-                // apologise instead of silently dropping the guest's turn.
-                await SendTextAsync(browserSocket, new JsonObject
-                {
-                    ["type"] = "extension.rate_limited",
-                    ["attempt"] = 1,
-                    ["final"] = true,
-                }.ToJsonString(), ct).ConfigureAwait(false);
                 return null;
             }
 
@@ -634,6 +631,11 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                         }.ToJsonString(), ct).ConfigureAwait(false);
                     }
                 }
+
+                // Issue #13 Wave 4 (swigerb/SonicAIDriveThru#36, PR #58 re-review "S1"/"S2"):
+                // marks this round failed; HandleResponseDoneAsync's response.done handling below
+                // tallies the round (not the call) exactly once via EndRound().
+                state.ToolFailures.RecordCallFailure();
             }
 
             await SendTextAsync(upstream, new JsonObject
@@ -662,13 +664,54 @@ public sealed class RealtimeProcessor : IPipelineProcessor
 
         async Task<JsonObject?> HandleResponseDoneAsync(JsonObject message)
         {
+            if (await state.RateLimit.OnResponseDoneAsync(message, ct).ConfigureAwait(false))
+            {
+                return null;
+            }
+
             if (state.ToolsPending.Count > 0)
             {
                 state.ToolsPending.Clear();
-                // Scope cut (#13): the tool-failure-cap ladder (_ToolFailureTracker) is skipped --
-                // always send a bare, tool-free response.create so the model can act on the
-                // function_call_output(s) already in the conversation.
-                await SendTextAsync(upstream, """{"type":"response.create"}""", ct).ConfigureAwait(false);
+                // Issue #13 Wave 4 (swigerb/SonicAIDriveThru#36, PR #58 re-review "S1"/"S2"):
+                // port of rtmt.py's _ToolFailureTracker wiring -- tally this round's outcome
+                // once, here, not per call, so several parallel failing tool calls in the same
+                // response only count as a single failed round.
+                state.ToolFailures.EndRound();
+                if (state.ToolFailures.AtCap())
+                {
+                    // Two (or more) consecutive *failed rounds* on this connection with no guest
+                    // turn in between. The FIRST response.done that reaches the cap gets one
+                    // server-authored, tool-free response.create instead of nothing: the model
+                    // already has the function_call_output(s) in context, so it can apologise out
+                    // loud and ask the guest what to do, but tool_choice="none" stops it from
+                    // calling a tool again on this turn. This frame is server-authored (never
+                    // derived from browser input), so the #31 browser->upstream allow-list in
+                    // ClientServerFilter is unaffected. Every response.done AFTER that one, while
+                    // still at the cap with no guest turn in between, goes back to sending
+                    // nothing at all -- otherwise a model (or a deterministic test double) that
+                    // keeps calling tools regardless of tool_choice could ride an unbounded
+                    // ladder of one-more-apology responses with zero guest input.
+                    if (state.ToolFailures.ConsumeCapNotice())
+                    {
+                        _logger?.LogWarning(
+                            "Capping auto response.create with tool_choice=none after {Count} " +
+                            "consecutive failed tool round(s) (session={SessionId})",
+                            state.ToolFailures.Count, sessionId);
+                        await SendTextAsync(upstream, ToolFailureCapNotice.BuildMessage(promptLoader), ct)
+                            .ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        _logger?.LogWarning(
+                            "Suppressing auto response.create -- still at the {Count}-round cap " +
+                            "with no guest turn since the apology (session={SessionId})",
+                            state.ToolFailures.Count, sessionId);
+                    }
+                }
+                else
+                {
+                    await SendTextAsync(upstream, """{"type":"response.create"}""", ct).ConfigureAwait(false);
+                }
             }
 
             var isToolCallResponse = false;
@@ -809,9 +852,11 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                     return await HandleResponseDoneAsync(message).ConfigureAwait(false);
 
                 default:
-                    // response.created (rate-limit recovery hook skipped, #13 scope cut) and
-                    // anything else not otherwise handled falls through unchanged, exactly like
-                    // rtmt.py's `updated_message = data` default.
+                    // response.created's rate-limit-recovery side effect runs in the
+                    // echo-suppression/barge-in switch above (RelayUpstreamToBrowserAsync), same
+                    // as response.done's; everything here (including response.created itself)
+                    // falls through unchanged, exactly like rtmt.py's `updated_message = data`
+                    // default.
                     return message;
             }
         }
@@ -878,6 +923,29 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                             break;
                         case "input_audio_buffer.speech_started":
                             state.Echo.OnSpeechStarted();
+                            // Issue #13 Wave 4: the guest taking the turn drops any pending
+                            // rate-limit retry, same as Python's RateLimitRecovery.on_guest_speech.
+                            state.RateLimit.OnGuestSpeech();
+                            // Issue #13 Wave 4 (swigerb/SonicAIDriveThru#36, PR #58 re-review
+                            // "S1"): genuine guest speech is one of rtmt.py's two
+                            // reset_for_new_turn() triggers -- breaks the tool-failure streak, same
+                            // as the completed-transcription case below.
+                            state.ToolFailures.ResetForNewTurn();
+                            break;
+                        case "conversation.item.input_audio_transcription.completed":
+                            // Issue #13 Wave 4 (swigerb/SonicAIDriveThru#36, PR #58 re-review
+                            // "S1"): the other guest-turn signal (besides speech_started) that
+                            // resets the tool-failure streak -- a completed input transcription is
+                            // still genuine guest activity even if VAD never fired speech_started
+                            // first (e.g. push-to-talk clients).
+                            state.ToolFailures.ResetForNewTurn();
+                            break;
+                        case "response.created":
+                            // Issue #13 Wave 4: tells the ladder a response just started -- our own
+                            // retry's (sets awaiting-retry first, so this is a no-op for it) or
+                            // anyone else's (VAD, a tool follow-up, the greeting) which drops any
+                            // stale retry state the same way Python's on_response_created does.
+                            state.RateLimit.OnResponseCreated();
                             break;
                         case "response.done":
                             // swigerb/SonicAIDriveThru#48: a greeting that produced no audio (text-only
@@ -958,6 +1026,9 @@ public sealed class RealtimeProcessor : IPipelineProcessor
             // swigerb/SonicAIDriveThru#59: cancel any delayed echo flush timer so it can't fire
             // (and attempt a send) after this connection has already gone away.
             state.Echo.Close();
+            // Issue #13 Wave 4: same reasoning -- a pending rate-limit retry must never fire (and
+            // attempt a send) after the socket has already gone away.
+            state.RateLimit.Cancel("socket closed");
             await CloseIfOpenAsync(browserSocket, WebSocketCloseStatus.NormalClosure, null).ConfigureAwait(false);
             await CloseIfOpenAsync(upstream, WebSocketCloseStatus.NormalClosure, null).ConfigureAwait(false);
         }
@@ -1045,6 +1116,71 @@ public sealed class RealtimeProcessor : IPipelineProcessor
             return new AppendFastPathResult(IsMatch: false, Suppressed: false);
         }
         return new AppendFastPathResult(IsMatch: true, Suppressed: echo.ShouldSuppressAudio(NowSeconds()));
+    }
+
+    /// <summary>Rick's #229 review (round 2): the fast path's actual forward decision --
+    /// <c>RelayBrowserToUpstreamAsync</c>'s <c>if (!fastPath.Suppressed)</c> branch -- extracted
+    /// to its own internal method so a test can drive it end to end (real shape match, real
+    /// echo-suppression gate, real forward) through a fake <see cref="WebSocket"/> stand-in for
+    /// <paramref name="upstream"/>, without needing a live upstream connection. A no-op when
+    /// <paramref name="fastPath"/> says the frame must be dropped (assistant still speaking);
+    /// otherwise forwards <paramref name="payload"/>'s bytes completely unchanged, matching
+    /// Python's own fast-path forward (errors are logged and swallowed, same as the slow path,
+    /// since a single dropped audio frame must never tear down the whole session).</summary>
+    internal async Task ForwardFastPathAudioAsync(AppendFastPathResult fastPath, byte[] payload, WebSocket upstream, string sessionId, CancellationToken ct)
+    {
+        if (fastPath.Suppressed)
+        {
+            return;
+        }
+        try
+        {
+            await SendBytesAsync(upstream, payload, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger?.LogWarning(ex, "Error forwarding fast-path audio append frame (session={SessionId})", sessionId);
+        }
+    }
+
+    /// <summary>Issue #252 (Rick's review of #237's CI flake, same root cause independently
+    /// diagnosed in this PR): <c>RelayBrowserToUpstreamAsync</c>'s send-with-bookkeeping step for
+    /// every non-fast-path client→server frame, extracted to its own internal method (same idiom
+    /// as <see cref="ForwardFastPathAudioAsync"/> above) so a test can drive the EXACT production
+    /// ordering end to end through a fake <see cref="WebSocket"/> whose <c>SendAsync</c>
+    /// synchronously simulates "the upstream's reply for this very frame was already fully
+    /// processed before the send returns" -- precisely the interleaving a real race under load
+    /// would produce -- without needing two concurrently-running relay loops racing for real.
+    ///
+    /// Recording "this response.create was browser-initiated" (<paramref name="rateLimit"/>'s
+    /// <c>OnExternalResponseCreate("browser")</c>) and the symmetrical echo-suppression bookkeeping
+    /// MUST happen before <paramref name="forwarded"/> is sent upstream, not after: the old order
+    /// (send, then bookkeeping) left a TOCTOU window where upstream's own
+    /// response.created/response.done for THIS SAME response.create could complete first --
+    /// legitimately scheduling the ladder's first retry -- before this continuation resumed to make
+    /// the bookkeeping call, which would then wrongly cancel the very retry it just caused
+    /// (mistaking it for a stale leftover one). Recording "browser-initiated" before the send closes
+    /// the window by construction: upstream cannot react to a frame it has not received yet.</summary>
+    internal async Task ForwardClientFrameAsync(
+        JsonObject forwarded,
+        string? sentType,
+        EchoSuppressor echo,
+        RateLimitRecovery rateLimit,
+        WebSocket upstream,
+        CancellationToken ct)
+    {
+        if (sentType == "response.create")
+        {
+            echo.OnExternalResponseCreate();
+            rateLimit.OnExternalResponseCreate("browser");
+        }
+
+        await SendTextAsync(upstream, forwarded.ToJsonString(), ct).ConfigureAwait(false);
+
+        if (sentType == "response.cancel")
+        {
+            echo.OnBargeIn();
+        }
     }
 
     /// <summary>Port of app/backend/rtmt.py's <c>_CLIENT_APPEND_FAST_PATH_RE</c> (PR #49 round 2

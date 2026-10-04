@@ -2740,15 +2740,19 @@ class RTMiddleTier:
                             # the type) -- never from the browser's raw
                             # bytes -- so a dropped or malformed frame
                             # triggers nothing.
-                            if new_msg is not None:
-                                await target_ws.send_str(new_msg)
-                            # Guest activity drives the idle clock. Mic frames
-                            # stream constantly (silence included), so they
-                            # don't count; the guest actually speaking does
-                            # (speech_started/transcripts from upstream, or any
-                            # other forwarded client event here).
-                            if session_id and sent_type is not None and sent_type != "input_audio_buffer.append":
-                                self._sessions.touch_activity(session_id)
+                            # Issue #252: the response.create ladder/echo bookkeeping below MUST
+                            # run before the frame reaches upstream, not after. The old order
+                            # (send, then bookkeeping) left a TOCTOU window: under the right
+                            # scheduling, upstream's own response.created/response.done for THIS
+                            # SAME response.create can complete -- scheduling a brand-new,
+                            # legitimate first retry -- before this coroutine resumes from
+                            # `await target_ws.send_str(new_msg)` below. on_external_response_create
+                            # would then cancel that retry, mistaking the one it just caused for a
+                            # stale leftover one (observed as a spurious "Rate-limit retry
+                            # cancelled: browser requested a response" immediately swallowing the
+                            # ladder's first notification). Recording "this response.create was
+                            # browser-initiated" before the send closes the window: upstream cannot
+                            # possibly react to a frame it hasn't received yet.
                             if sent_type == "response.create":
                                 if nudge_task is not None:
                                     cancel_nudge("guest-initiated response")
@@ -2758,6 +2762,15 @@ class RTMiddleTier:
                                 # no audio (#48 M1) -- cancel any pending re-arm so this new
                                 # response's audio isn't mistaken for the greeting's own.
                                 echo.on_external_response_create()
+                            if new_msg is not None:
+                                await target_ws.send_str(new_msg)
+                            # Guest activity drives the idle clock. Mic frames
+                            # stream constantly (silence included), so they
+                            # don't count; the guest actually speaking does
+                            # (speech_started/transcripts from upstream, or any
+                            # other forwarded client event here).
+                            if session_id and sent_type is not None and sent_type != "input_audio_buffer.append":
+                                self._sessions.touch_activity(session_id)
                             # The browser's session.update marks the start of a conversation.
                             if not greeting_sent and sent_type == "session.update":
                                 logger.info("Client session.update forwarded — sending greeting")

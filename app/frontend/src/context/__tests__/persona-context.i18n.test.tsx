@@ -150,9 +150,33 @@ describe("ticket/status copy on persona switch (issue #119 item 1)", () => {
         renderApp();
 
         // Starts on the catalog default (test-beta)'s copy.
-        await waitFor(() => expect(screen.getByText("BETA TICKET")).toBeInTheDocument());
-        expect(screen.getByText("Your Beta Order")).toBeInTheDocument();
-        expect(screen.getByText("Let's order from Beta!")).toBeInTheDocument();
+        await waitFor(() => {
+            expect(screen.getByText("BETA TICKET")).toBeInTheDocument();
+            expect(screen.getByText("Your Beta Order")).toBeInTheDocument();
+            expect(screen.getByText("Let's order from Beta!")).toBeInTheDocument();
+        });
+
+        // Issue #245: `waitFor`'s first poll can resolve as soon as the *initial* render commits
+        // with the right text -- which happens before React has flushed OrderSummary's and
+        // StatusMessage's `useSyncExternalStore` *subscribe* passive effect (this mock's fetch
+        // resolves over microtasks, so there's no macrotask boundary forcing that flush first).
+        // If `selectPersona` fires its `addResourceBundle`/`removeResourceBundle` burst in that
+        // window, a consumer that hasn't subscribed yet never receives any of those store events
+        // at all. react-i18next 17's revision counter is a per-consumer ref, only incremented by
+        // that consumer's own subscribed callback firing -- so a consumer that subscribes late
+        // still holds its initial (stale) revision, `getSnapshot` returns its already-cached
+        // snapshot for that revision, and React's post-subscribe consistency check sees no
+        // change and skips the re-render. There is nothing left to "catch up" on: the events that
+        // would have advanced this consumer's own revision already happened before it was
+        // listening. A `memo`'d component with no other reason to re-render (`StatusMessage`)
+        // then never does, permanently stuck on the pre-switch copy. This isn't a production
+        // hazard: real user interaction can't reach a persona-switch click before the page has
+        // finished its initial mount (including passive effects), and React 19 flushes passive
+        // effects synchronously after every discrete event's commit anyway. Yielding one real
+        // macrotask here -- which a real browser always has many of before a user can click
+        // anything -- lets every consumer's subscribe effect attach before the switch, matching
+        // production ordering.
+        await new Promise(resolve => setTimeout(resolve, 0));
 
         // This is the regression: before `i18n/config.ts` set `react.bindI18nStore`, these same
         // mounted OrderSummary/StatusMessage instances kept showing test-beta's copy forever,
@@ -163,12 +187,14 @@ describe("ticket/status copy on persona switch (issue #119 item 1)", () => {
             screen.getByText("select alpha").click();
         });
 
-        await waitFor(() => expect(screen.getByText("ALPHA TICKET")).toBeInTheDocument());
-        expect(screen.getByText("Your Alpha Order")).toBeInTheDocument();
-        expect(screen.getByText("Let's order from Alpha!")).toBeInTheDocument();
-        expect(screen.queryByText("BETA TICKET")).not.toBeInTheDocument();
-        expect(screen.queryByText("Your Beta Order")).not.toBeInTheDocument();
-        expect(screen.queryByText("Let's order from Beta!")).not.toBeInTheDocument();
+        await waitFor(() => {
+            expect(screen.getByText("ALPHA TICKET")).toBeInTheDocument();
+            expect(screen.getByText("Your Alpha Order")).toBeInTheDocument();
+            expect(screen.getByText("Let's order from Alpha!")).toBeInTheDocument();
+            expect(screen.queryByText("BETA TICKET")).not.toBeInTheDocument();
+            expect(screen.queryByText("Your Beta Order")).not.toBeInTheDocument();
+            expect(screen.queryByText("Let's order from Beta!")).not.toBeInTheDocument();
+        });
     });
 
     it("falls back to the neutral base copy -- not the previous persona's override -- for a key the new persona doesn't define", async () => {

@@ -85,6 +85,7 @@ public sealed class EchoSuppressionBargeInTests(ConformanceFixture fixture)
     private const string MicAfterCancel = "bWljLWFmdGVyLWNhbmNlbA==";
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Mic_audio_is_dropped_while_ai_speaks_and_resumes_after_the_browsers_own_response_cancel() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
