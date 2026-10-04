@@ -13,8 +13,10 @@ Covers:
 import json
 import os
 import shutil
+import stat
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 import pytest
@@ -26,6 +28,7 @@ from persona_loader import (
     Persona,
     PersonaCatalog,
     PersonaValidationError,
+    _is_symlink_or_junction,
     default_personas_dir,
     resolve_personas_dir,
 )
@@ -724,6 +727,10 @@ class TestPersonaAssetTypeValidation:
             with pytest.raises(PersonaValidationError, match="symlink"):
                 PersonaCatalog.load(personas_dir=personas_copy)
 
+    @pytest.mark.skipif(
+        not hasattr(os.path, "isjunction"),
+        reason="mocks os.path.isjunction, which only exists on Python 3.12+",
+    )
     def test_junction_asset_refuses_to_start(self, personas_copy):
         """#223: a Windows directory junction reports `Path.is_symlink() ==
         False` (a junction sets `FILE_ATTRIBUTE_REPARSE_POINT` but not the
@@ -731,7 +738,10 @@ class TestPersonaAssetTypeValidation:
         alone silently let a junction under `assets/` through. Mocks
         `os.path.isjunction` for exactly one target, the same
         no-privileged-junction-creation-in-CI rationale as the symlink
-        mocks above (junction creation needs elevated rights / `mklink /J`)."""
+        mocks above (junction creation needs elevated rights / `mklink /J`).
+        Skipped on Python 3.11, which has no `os.path.isjunction` to mock --
+        the 3.11 fallback path is covered separately by
+        `TestJunctionFallbackOn311` below (#223 round 2, Rick's review)."""
         assets_dir = personas_copy / self._PID / "assets"
         target = assets_dir / "sneaky-junction"
         target.mkdir()
@@ -747,9 +757,14 @@ class TestPersonaAssetTypeValidation:
             with pytest.raises(PersonaValidationError, match="junction"):
                 PersonaCatalog.load(personas_dir=personas_copy)
 
+    @pytest.mark.skipif(
+        not hasattr(os.path, "isjunction"),
+        reason="mocks os.path.isjunction, which only exists on Python 3.12+",
+    )
     def test_junction_persona_dir_refuses_to_start(self, personas_copy):
         """#223: the junction gap applies at the pack-dir root too, not just
-        under assets/."""
+        under assets/. Skipped on Python 3.11 for the same reason as
+        `test_junction_asset_refuses_to_start` above."""
         pack_dir = personas_copy / self._PID
 
         real_isjunction = os.path.isjunction
@@ -762,6 +777,62 @@ class TestPersonaAssetTypeValidation:
         with mock.patch("os.path.isjunction", _fake_isjunction):
             with pytest.raises(PersonaValidationError, match="junction"):
                 PersonaCatalog.load(personas_dir=personas_copy)
+
+
+class TestJunctionFallbackOn311:
+    """#223 round 2 (Rick's review): unit tests for `_is_symlink_or_junction`'s
+    Python 3.11 fallback path directly (rather than through `PersonaCatalog.load`),
+    since that path only runs when `os.path.isjunction` is unavailable (3.11-only)
+    and these tests must still exercise it on the 3.12+ machines this repo's
+    tests actually run on. `os.path.isjunction` is patched to `None` so
+    `getattr(os.path, "isjunction", None)` sees it as absent, exactly matching
+    how the real attribute-lookup behaves on 3.11 -- this does not require
+    `delattr`/simulating a genuinely different Python version."""
+
+    def test_plain_directory_is_not_flagged(self, tmp_path):
+        """A normal, non-reparse-point directory must not be flagged by the
+        3.11 fallback."""
+        plain_dir = tmp_path / "plain"
+        plain_dir.mkdir()
+        with mock.patch.object(os.path, "isjunction", None):
+            assert _is_symlink_or_junction(plain_dir) is False
+
+    def test_mount_point_reparse_tag_is_flagged(self, tmp_path):
+        """A real junction's reparse tag is `IO_REPARSE_TAG_MOUNT_POINT` --
+        the fallback must flag exactly this tag."""
+        junction_dir = tmp_path / "junction"
+        junction_dir.mkdir()
+        fake_stat = SimpleNamespace(st_reparse_tag=stat.IO_REPARSE_TAG_MOUNT_POINT)
+        with mock.patch.object(os.path, "isjunction", None):
+            with mock.patch("os.lstat", return_value=fake_stat):
+                assert _is_symlink_or_junction(junction_dir) is True
+
+    def test_other_reparse_tag_is_not_flagged(self, tmp_path):
+        """#223 round 2: the OLD (pre-review) 3.11 fallback checked only the
+        generic `FILE_ATTRIBUTE_REPARSE_POINT` bit, which is set on EVERY
+        reparse point -- not just mount-point junctions. That would have
+        misflagged e.g. a OneDrive "online-only" cloud-filter placeholder file
+        (directly relevant: this repo lives under a OneDrive-synced folder) as
+        a forbidden junction. The narrowed fallback compares the specific
+        reparse *tag* instead, so a non-mount-point reparse point (symlink
+        tag used here as a stand-in for "some other, non-junction reparse
+        type") must NOT be flagged."""
+        other_dir = tmp_path / "other-reparse-point"
+        other_dir.mkdir()
+        fake_stat = SimpleNamespace(st_reparse_tag=stat.IO_REPARSE_TAG_SYMLINK)
+        with mock.patch.object(os.path, "isjunction", None):
+            with mock.patch("os.lstat", return_value=fake_stat):
+                assert _is_symlink_or_junction(other_dir) is False
+
+    def test_lstat_oserror_is_not_flagged(self, tmp_path):
+        """A path that vanishes between the symlink/isjunction checks and the
+        `os.lstat` fallback call (e.g. a race, or a dangling/unreadable
+        target) must not raise -- it's treated as "not a junction", same as
+        the pre-existing broad-check behavior."""
+        missing = tmp_path / "does-not-exist"
+        with mock.patch.object(os.path, "isjunction", None):
+            with mock.patch("os.lstat", side_effect=OSError("boom")):
+                assert _is_symlink_or_junction(missing) is False
 
 
 # ===========================================================================

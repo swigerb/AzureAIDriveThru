@@ -614,13 +614,23 @@ def _is_symlink_or_junction(path: Path) -> bool:
     #163/PR #222's review).
 
     `os.path.isjunction` (Python 3.12+) is used when available. This repo's
-    stated floor is Python 3.11+ (README.md), so on 3.11 we fall back to a
-    direct `FILE_ATTRIBUTE_REPARSE_POINT` check via
-    `os.lstat().st_file_attributes` -- a Windows-only `os.stat_result` field
-    that is simply absent (and therefore falsy via `getattr(..., 0)`) on
-    POSIX, where `is_symlink()` is already the complete, correct check on its
-    own. Either way this never follows the link/junction itself (`os.lstat`,
-    not `os.stat`), so a broken/dangling one is still correctly flagged.
+    stated floor is Python 3.11+ (README.md), so on 3.11 we fall back to
+    `os.lstat().st_reparse_tag == stat.IO_REPARSE_TAG_MOUNT_POINT` (#223
+    round 2, Rick's review): `st_reparse_tag` and `IO_REPARSE_TAG_MOUNT_POINT`
+    have both existed since Python 3.8 on Windows, and are absent (hence
+    `None`, never equal to the tag constant) on POSIX, where `is_symlink()` is
+    already the complete, correct check on its own. This is deliberately
+    NARROWER than the bare `FILE_ATTRIBUTE_REPARSE_POINT` bit this used to
+    check: that flag is set on EVERY reparse point, not just mount-point
+    junctions -- including OneDrive's own "online-only" cloud-filter
+    placeholder files (directly relevant: this very repo lives under a
+    OneDrive-synced folder), deduplicated files, and other non-junction
+    reparse types. The old, broader check would have flagged a legitimate
+    OneDrive placeholder persona asset as a forbidden junction; comparing the
+    specific reparse *tag* instead of the generic attribute bit avoids that
+    false positive while still catching real junctions. Either way this never
+    follows the link/junction itself (`os.lstat`, not `os.stat`), so a
+    broken/dangling one is still correctly flagged.
     """
     if path.is_symlink():
         return True
@@ -631,7 +641,7 @@ def _is_symlink_or_junction(path: Path) -> bool:
         st = os.lstat(path)
     except OSError:
         return False
-    return bool(getattr(st, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+    return getattr(st, "st_reparse_tag", None) == stat.IO_REPARSE_TAG_MOUNT_POINT
 
 
 def _load_one_persona(
