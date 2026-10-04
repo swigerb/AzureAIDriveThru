@@ -13,23 +13,32 @@ namespace Backend.Realtime;
 ///
 /// Uses a monotonic "loop time" in seconds (caller-supplied, e.g. <c>Environment.TickCount64 /
 /// 1000.0</c> or a test-controlled clock) instead of wall-clock time, mirroring Python's
-/// <c>asyncio.AbstractEventLoop.time()</c> -- immune to system clock adjustments.
+/// <c>asyncio.AbstractEventLoop.time()</c> -- immune to system clock adjustments. The one timer
+/// this class owns itself (the delayed echo flush) is driven by an injected
+/// <see cref="TimeProvider"/> instead (issue #13 Wave 2), so a test can swap in a
+/// <c>FakeTimeProvider</c> and advance it instead of waiting on a real delay.
 /// </summary>
 public sealed class EchoSuppressor : IDisposable
 {
     private readonly object _sync = new();
     private readonly double _cooldownSeconds;
     private readonly Func<CancellationToken, Task> _flushSendAsync;
+    private readonly TimeProvider _timeProvider;
     private CancellationTokenSource? _flushCts;
     private bool _closed;
     private bool _aiSpeaking;
     private double _cooldownEnd;
     private bool _greetingInProgress;
 
-    public EchoSuppressor(double cooldownSeconds, Func<CancellationToken, Task> flushSendAsync)
+    public EchoSuppressor(double cooldownSeconds, Func<CancellationToken, Task> flushSendAsync, TimeProvider? timeProvider = null)
     {
         _cooldownSeconds = cooldownSeconds;
         _flushSendAsync = flushSendAsync;
+        // Issue #13 Wave 2: only used for the delayed-flush timer below -- ShouldSuppressAudio,
+        // OnAudioDone and OnResponseDone keep taking their "loop time" as a caller-supplied double
+        // (RealtimeProcessor.NowSeconds()), so this addition doesn't change this class's public
+        // surface and every existing positional/named call site above keeps compiling unchanged.
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     public bool AiSpeaking { get { lock (_sync) { return _aiSpeaking; } } }
@@ -132,7 +141,7 @@ public sealed class EchoSuppressor : IDisposable
             previousCts = _flushCts;
             var cts = new CancellationTokenSource();
             _flushCts = cts;
-            _ = Task.Delay(TimeSpan.FromSeconds(cooldown), cts.Token).ContinueWith(
+            _ = Task.Delay(TimeSpan.FromSeconds(cooldown), _timeProvider, cts.Token).ContinueWith(
                 t =>
                 {
                     if (!t.IsCanceled)

@@ -147,8 +147,7 @@ this exactly as before.
 
 **`APP_SESSION_SECRET` is required in Production Entra mode** (`RUNNING_IN_PRODUCTION=true` together with
 `AUTH_MODE=Entra`): startup's `resolve_settings()` fails fast with a clear error if it's unset, rather than
-silently falling back to a random per-process secret. That fail-fast is required before
-`security.require_session_token` could otherwise be turned on:
+silently falling back to a random per-process secret. The value is provisioned as follows:
 
 - By default each `azd provision` generates a random value (`newGuid()` twice).
 - To keep one value across provisions, pin it in the azd environment:

@@ -14,6 +14,7 @@ import json
 import shutil
 import sys
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -558,7 +559,7 @@ class TestPersonaAssetTypeValidation:
 
     _PID = default_persona.get_default_persona().id
 
-    def test_real_sonic_pack_assets_all_classify(self):
+    def test_real_default_pack_assets_all_classify(self):
         """The real, shipped default pack (svg/ico/wav under assets/, .json under
         assets/demo/) must already pass -- this is a regression guard, not just a
         happy-path check on synthetic fixtures."""
@@ -575,6 +576,17 @@ class TestPersonaAssetTypeValidation:
         catalog = PersonaCatalog.load(personas_dir=personas_copy)
         assert self._PID in catalog.ids
 
+    def test_uppercase_anonymous_extension_still_passes(self, personas_copy):
+        """F4 (#163 round-1/round-2 review, decided for #147 C# parity): matching
+        is CASE-INSENSITIVE -- an upper-case (or mixed-case) anonymous extension
+        must classify identically to its lower-case form. `.JPG` is the
+        canonical example the review called out by name."""
+        assets_dir = personas_copy / self._PID / "assets"
+        (assets_dir / "extra-asset.JPG").write_bytes(b"x")
+        (assets_dir / "another-asset.Svg").write_bytes(b"<svg/>")
+        catalog = PersonaCatalog.load(personas_dir=personas_copy)
+        assert self._PID in catalog.ids
+
     def test_jpeg_is_not_an_anonymous_extension_and_refuses_to_start(self, personas_copy):
         """`.jpeg` was removed from `ANONYMOUS_ASSET_EXTENSIONS` (Rick's #159 round-1
         review, required item 2) -- the contract is exactly `.svg .png .jpg .webp
@@ -582,6 +594,15 @@ class TestPersonaAssetTypeValidation:
         refuse to start, the same as any other unrecognized extension."""
         assets_dir = personas_copy / self._PID / "assets"
         (assets_dir / "extra-asset.jpeg").write_bytes(b"x")
+        with pytest.raises(PersonaValidationError, match="unrecognized file type"):
+            PersonaCatalog.load(personas_dir=personas_copy)
+
+    def test_uppercase_jpeg_also_refuses_to_start(self, personas_copy):
+        """F4: case-insensitivity only ever ADDS matches to the fixed 7-extension
+        allow-list -- it must never accidentally widen it. `.JPEG` (any case) is
+        not, and must never become, an anonymous extension."""
+        assets_dir = personas_copy / self._PID / "assets"
+        (assets_dir / "extra-asset.JPEG").write_bytes(b"x")
         with pytest.raises(PersonaValidationError, match="unrecognized file type"):
             PersonaCatalog.load(personas_dir=personas_copy)
 
@@ -640,6 +661,30 @@ class TestPersonaAssetTypeValidation:
         (nested / "deep.svg").write_text("<svg/>", encoding="utf-8")
         catalog = PersonaCatalog.load(personas_dir=personas_copy)
         assert self._PID in catalog.ids
+
+    def test_symlinked_asset_refuses_to_start(self, personas_copy):
+        """N5 (#163 round-1 review): a symlink under assets/ -- even one with an
+        otherwise-fine, anonymous-looking extension like `.svg` -- must refuse to
+        start, rather than being silently served (potentially from OUTSIDE the
+        pack's own directory). This project avoids depending on privileged
+        symlink creation in tests (Windows dev machines/CI runners need elevated
+        rights for a real symlink -- see `TestFixtureSchemasMatchRealSchemas`
+        above), so `Path.is_symlink` is mocked for exactly one target path
+        instead of creating a real symlink on disk."""
+        assets_dir = personas_copy / self._PID / "assets"
+        target = assets_dir / "sneaky.svg"
+        target.write_bytes(b"<svg/>")
+
+        real_is_symlink = Path.is_symlink
+
+        def _fake_is_symlink(self):
+            if self == target:
+                return True
+            return real_is_symlink(self)
+
+        with mock.patch.object(Path, "is_symlink", _fake_is_symlink):
+            with pytest.raises(PersonaValidationError, match="symlink"):
+                PersonaCatalog.load(personas_dir=personas_copy)
 
 
 # ===========================================================================
