@@ -466,34 +466,8 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                         continue;
                     }
 
-                    if (sentType == "response.create")
-                    {
-                        state.Echo.OnExternalResponseCreate();
-                        // Issue #13 Wave 4: the browser asking for a response on its own (e.g. a
-                        // manual nudge/retry) drops any pending rate-limit retry the same way a
-                        // tool follow-up or VAD-triggered response.created does.
-                        //
-                        // Issue #252: this bookkeeping MUST run before the frame is sent upstream,
-                        // not after (matches rtmt.py's own #252 fix). The old order (send, then
-                        // bookkeeping) left a TOCTOU window: under the right scheduling pressure,
-                        // upstream's own response.created/response.done for THIS SAME
-                        // response.create can complete -- scheduling a brand-new, legitimate first
-                        // retry -- before this continuation resumes from the SendTextAsync below.
-                        // OnExternalResponseCreate would then cancel that retry, mistaking the one
-                        // it just caused for a stale leftover one (observed as a spurious
-                        // "Rate-limit retry cancelled: browser requested a response" immediately
-                        // swallowing the ladder's first notification under CI load). Recording
-                        // "this response.create was browser-initiated" before the send closes the
-                        // window: upstream cannot possibly react to a frame it hasn't received yet.
-                        state.RateLimit.OnExternalResponseCreate("browser");
-                    }
-
-                    await SendTextAsync(upstream, forwarded.ToJsonString(), ct).ConfigureAwait(false);
-
-                    if (sentType == "response.cancel")
-                    {
-                        state.Echo.OnBargeIn();
-                    }
+                    await ForwardClientFrameAsync(forwarded, sentType, state.Echo, state.RateLimit, upstream, ct)
+                        .ConfigureAwait(false);
 
                     if (!state.GreetingSent && sentType == "session.update")
                     {
@@ -1166,6 +1140,46 @@ public sealed class RealtimeProcessor : IPipelineProcessor
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger?.LogWarning(ex, "Error forwarding fast-path audio append frame (session={SessionId})", sessionId);
+        }
+    }
+
+    /// <summary>Issue #252 (Rick's review of #237's CI flake, same root cause independently
+    /// diagnosed in this PR): <c>RelayBrowserToUpstreamAsync</c>'s send-with-bookkeeping step for
+    /// every non-fast-path client→server frame, extracted to its own internal method (same idiom
+    /// as <see cref="ForwardFastPathAudioAsync"/> above) so a test can drive the EXACT production
+    /// ordering end to end through a fake <see cref="WebSocket"/> whose <c>SendAsync</c>
+    /// synchronously simulates "the upstream's reply for this very frame was already fully
+    /// processed before the send returns" -- precisely the interleaving a real race under load
+    /// would produce -- without needing two concurrently-running relay loops racing for real.
+    ///
+    /// Recording "this response.create was browser-initiated" (<paramref name="rateLimit"/>'s
+    /// <c>OnExternalResponseCreate("browser")</c>) and the symmetrical echo-suppression bookkeeping
+    /// MUST happen before <paramref name="forwarded"/> is sent upstream, not after: the old order
+    /// (send, then bookkeeping) left a TOCTOU window where upstream's own
+    /// response.created/response.done for THIS SAME response.create could complete first --
+    /// legitimately scheduling the ladder's first retry -- before this continuation resumed to make
+    /// the bookkeeping call, which would then wrongly cancel the very retry it just caused
+    /// (mistaking it for a stale leftover one). Recording "browser-initiated" before the send closes
+    /// the window by construction: upstream cannot react to a frame it has not received yet.</summary>
+    internal async Task ForwardClientFrameAsync(
+        JsonObject forwarded,
+        string? sentType,
+        EchoSuppressor echo,
+        RateLimitRecovery rateLimit,
+        WebSocket upstream,
+        CancellationToken ct)
+    {
+        if (sentType == "response.create")
+        {
+            echo.OnExternalResponseCreate();
+            rateLimit.OnExternalResponseCreate("browser");
+        }
+
+        await SendTextAsync(upstream, forwarded.ToJsonString(), ct).ConfigureAwait(false);
+
+        if (sentType == "response.cancel")
+        {
+            echo.OnBargeIn();
         }
     }
 
