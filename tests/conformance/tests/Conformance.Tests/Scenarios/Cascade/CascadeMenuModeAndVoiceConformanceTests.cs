@@ -11,17 +11,19 @@ namespace Conformance.Tests.Scenarios.Cascade;
 /// <see cref="CascadeMenuModeAndVoiceConformanceFixture"/>'s <c>test-delta</c> pack (same pack
 /// <c>MenuModeConformanceTests</c> already proved out for the realtime pipeline).
 ///
-/// Left UNTAGGED (no <c>[Trait("Dotnet", "ready")]</c>): PR #236 (the C# cascade pipeline port,
-/// issue #13 Wave 5) was not merged as of this PR, so `app/backend-dotnet` has no
-/// `CascadeProcessor.cs` to run these rows against yet. Tag these `Dotnet="ready"` once #236
-/// merges AND the dotnet cascade pipeline implements the same per-persona voice/mode binding AND
-/// `extension.set_voice` sanitization this PR ports on the Python side (#236's own PR description
-/// already shows the C# cascade has the first two -- this is a parity port onto the OTHER leg, not
-/// new C# work; Rick flagged in PR #253 review that #236's own `CascadeProcessor.cs` ~565-570 has
-/// the SAME unsanitized `extension.set_voice` gap as the pre-fix Python code here, so #236 needs
-/// its own fix before any of these rows can be tagged ready).
+/// Tagged <c>[Trait("Dotnet", "ready")]</c> (PR #253 review item 3): PR #236 (the C# cascade
+/// pipeline port, issue #13 Wave 5) is merged, and its own <c>CascadeProcessor.cs</c>
+/// `extension.set_voice` handler was fixed (PR #236 review) to go through the same
+/// `ClientServerFilter.SanitizeVoice` allow-list `RealtimeProcessor.cs` uses -- the SAME gap this
+/// class's own set_voice row (<see
+/// cref="Cascade_extension_set_voice_with_an_unknown_voice_is_dropped_not_adopted"/>) exists to
+/// catch, now closed on both legs. All 4 rows here (per-persona voice, breakfast-mode accept,
+/// lunch-mode reject, and the set_voice sanitization row) verified green against the C# backend
+/// (<c>CONFORMANCE_BACKEND=dotnet</c>) across 3 consecutive local runs with no flakiness before
+/// this trait was added.
 /// </summary>
 [Collection(CascadeMenuModeAndVoiceConformanceCollection.Name)]
+[Trait("Dotnet", "ready")]
 public sealed class CascadeMenuModeAndVoiceConformanceTests(CascadeMenuModeAndVoiceConformanceFixture fixture)
 {
     private static readonly TimeSpan FrameTimeout = CascadeScenarioHelpers.FrameTimeout;
