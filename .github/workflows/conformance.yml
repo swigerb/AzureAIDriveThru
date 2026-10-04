@@ -98,12 +98,17 @@ jobs:
       # then fail "issue is not open" on a green merge (#105 R1, round 2, Rick's PR #153
       # review -- the previous single-match, four-keyword regex missed close/closed/fix/
       # fixed/resolve/resolved and any match after the first).
+      # #227 (Rick's review of PR #220): also passes the PR's TITLE -- a bare '#N' there now
+      # counts as a reference too (not a closer; titles have no closing-keyword syntax), and
+      # a keyword followed by a comma-/"and"-separated list of refs ("Refs #76, #63") now
+      # yields every number in the list, not just the first.
       # Written to $GITHUB_ENV (not interpolated into the run script) specifically to avoid
-      # a script-injection risk from untrusted PR-body content.
+      # a script-injection risk from untrusted PR-body/title content.
       - name: Determine this PR's own issue reference
         if: github.event_name == 'pull_request'
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           python - <<'PY' >> "$GITHUB_ENV"
           import os
@@ -113,7 +118,8 @@ jobs:
           from check_rebrand_baseline_against_base import parse_pr_issue_refs
 
           body = os.environ.get("PR_BODY") or ""
-          issues, closes = parse_pr_issue_refs(body)
+          title = os.environ.get("PR_TITLE") or ""
+          issues, closes = parse_pr_issue_refs(body, title)
           if issues:
               print(f"REBRAND_PR_ISSUES={','.join(sorted(issues))}")
           if closes:

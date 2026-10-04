@@ -47,6 +47,13 @@ validly-formatted `increase_reason`?". Issue #105 hardened every corner that lef
      visible to reviewers, not buried in green.
   7. The missing-base-baseline skip (base branch predates rebrand_baseline.yaml) is now a
      `::warning::` annotation too, not a plain, easy-to-miss print.
+  8. #227 (Rick's review of PR #220): `parse_pr_issue_refs()` only matched the first `#N`
+     after a keyword, so "Refs #76, #63" (a real PR #220 body shape) extracted only `#76` --
+     an `increase_reason` citing `#63` would then slip past item 3's self-citation check. The
+     regex now consumes a trailing comma-/"and"-separated list after the first ref, and every
+     `#N` in the whole match is extracted. Bare `#N` mentions in the PR TITLE (no keyword
+     required there) now also count toward item 3's *all_issues* set, but never toward
+     *closing_issues* -- GitHub itself has no closing-keyword syntax for titles.
 
 Usage (see .github/workflows/conformance.yml, python-tests job):
 
@@ -58,8 +65,10 @@ Environment variables (all optional for local/manual runs; CI sets every one of 
     REBRAND_PR_ISSUES               Comma-separated '#N' issue refs this PR's body mentions
                                      via ANY supported keyword (close/closes/closed,
                                      fix/fixes/fixed, resolve/resolves/resolved, ref/refs),
-                                     case-insensitive -- a RAISE's increase_reason may not
-                                     equal any of these (item 3).
+                                     case-insensitive, each optionally followed by a comma-/
+                                     "and"-separated list of further '#N' refs, PLUS every
+                                     bare '#N' mentioned in the PR's TITLE (#227) -- a RAISE's
+                                     increase_reason may not equal any of these (item 3).
     REBRAND_PR_CLOSES               Comma-separated '#N' issue refs this PR's body mentions
                                      via a CLOSING keyword specifically (REBRAND_PR_ISSUES
                                      minus any ref/refs-only matches) -- NO entry, RAISE or
@@ -99,8 +108,18 @@ ISSUE_REF_RE = re.compile(r"#\d+")
 # "resolve(s/d)". "ref(s)" is NOT a closing keyword (it links an issue without closing it),
 # which is exactly why callers need both the full set (REBRAND_PR_ISSUES) and the
 # closing-only subset (REBRAND_PR_CLOSES) separately -- see parse_pr_issue_refs() below.
+#
+# #227 (Rick's review of PR #220): the keyword only had to precede the FIRST '#N' -- "Refs
+# #76, #63" matched just "#76", silently dropping "#63" from both sets. The trailing group
+# below consumes zero or more further ", #N" / "and #N" list items immediately after that
+# first ref, so the whole match spans the entire list (every number is then pulled back out
+# with ISSUE_REF_RE in parse_pr_issue_refs() -- simpler than naming an unbounded number of
+# capture groups). A keyword appearing again later ("Fixes #1 and refs #2") is deliberately
+# NOT absorbed into the list -- "and refs #2" fails the bare "and #N" continuation (there's a
+# second keyword in the way), so it's left for its own, separate match with its own keyword.
 PR_ISSUE_REF_RE = re.compile(
-    r"\b(close[sd]?|fix(?:e[sd])?|resolve[sd]?|refs?)\s*:?\s+#(\d+)",
+    r"\b(close[sd]?|fix(?:e[sd])?|resolve[sd]?|refs?)\s*:?\s+#\d+"
+    r"(?:\s*(?:,|\band\b)\s*#\d+)*",
     re.IGNORECASE,
 )
 
@@ -113,32 +132,44 @@ GITHUB_REPOSITORY_ENV = "GITHUB_REPOSITORY"
 _TRUTHY = {"1", "true", "True", "yes", "on"}
 
 
-def parse_pr_issue_refs(body: str) -> tuple[frozenset[str], frozenset[str]]:
-    """Extract every issue reference this PR body makes via a supported keyword.
+def parse_pr_issue_refs(body: str, title: str = "") -> tuple[frozenset[str], frozenset[str]]:
+    """Extract every issue reference this PR's body (and, optionally, title) makes.
 
     Returns ``(all_issues, closing_issues)``, both as frozensets of ``'#N'`` strings:
 
-    - *all_issues* is every issue referenced by ANY supported keyword -- close(s/d),
+    - *all_issues* is every issue referenced by ANY supported keyword in the body -- close(s/d),
       fix(es/ed), resolve(s/d), ref(s) -- case-insensitive, every match in the body (not just
-      the first).
+      the first), PLUS every bare ``#N`` mentioned in *title* (see below).
     - *closing_issues* is the subset referenced via a keyword GitHub itself treats as
-      CLOSING the issue on merge (i.e. *all_issues* minus any ref/refs-only matches).
+      CLOSING the issue on merge (i.e. *all_issues* minus any ref/refs-only matches, and minus
+      every title mention -- a title has no keyword syntax, so GitHub itself never closes an
+      issue from the title alone).
 
     #105 R1 (round 2, Rick's PR #153 review): the original single-match regex only recognised
     "Refs/Closes/Fixes/Resolves" (missing GitHub's own "close", "closed", "fix", "fixed",
     "resolve", "resolved" forms) and stopped at the first hit in the body -- both let a
-    closing reference slip past the checker uncaught. This helper is imported directly by the
-    "Determine this PR's own issue reference" workflow step so the regex is tested once, here,
-    rather than duplicated in workflow YAML.
+    closing reference slip past the checker uncaught.
+
+    #227 (Rick's review of PR #220): a keyword followed by a comma- or "and"-separated list of
+    refs -- e.g. "Refs #76, #63" -- only extracted the FIRST number; every ``#N`` in the list
+    is now pulled out of the whole match (PR_ISSUE_REF_RE's trailing repeated group). GitHub's
+    own PR title is also scanned for bare ``#N`` mentions (no keyword required there) and
+    folded into *all_issues* only -- Rule 3's self-citation check reads *all_issues*, so a
+    `increase_reason` matching a title-mentioned issue is still caught, without requiring a
+    title keyword GitHub itself doesn't recognise as closing syntax.
+
+    This helper is imported directly by the "Determine this PR's own issue reference"
+    workflow step so the regex is tested once, here, rather than duplicated in workflow YAML.
     """
     all_issues: set[str] = set()
     closing_issues: set[str] = set()
     for match in PR_ISSUE_REF_RE.finditer(body or ""):
         keyword = match.group(1).lower()
-        ref = f"#{match.group(2)}"
-        all_issues.add(ref)
+        refs = ISSUE_REF_RE.findall(match.group(0))
+        all_issues.update(refs)
         if not keyword.startswith("ref"):
-            closing_issues.add(ref)
+            closing_issues.update(refs)
+    all_issues.update(ISSUE_REF_RE.findall(title or ""))
     return frozenset(all_issues), frozenset(closing_issues)
 
 

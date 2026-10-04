@@ -534,6 +534,83 @@ class TestParsePrIssueRefs(unittest.TestCase):
         self.assertEqual(issues, frozenset())
         self.assertEqual(closes, frozenset())
 
+    # -- #227 (Rick's review of PR #220): comma-/"and"-separated lists and title refs ------
+
+    def test_comma_separated_list_after_keyword_extracts_every_number(self):
+        """The original bug report: 'Refs #76, #63' only extracted '#76'. Both numbers must
+        now be caught, and since 'refs' isn't a closing keyword, neither is a closer."""
+        issues, closes = checker.parse_pr_issue_refs("Refs #76, #63")
+        self.assertEqual(issues, frozenset({"#76", "#63"}))
+        self.assertEqual(closes, frozenset())
+
+    def test_comma_separated_list_after_closing_keyword_closes_every_number(self):
+        """'Fixes #1, #2' must close BOTH #1 and #2, not just the first."""
+        issues, closes = checker.parse_pr_issue_refs("Fixes #1, #2")
+        self.assertEqual(issues, frozenset({"#1", "#2"}))
+        self.assertEqual(closes, frozenset({"#1", "#2"}))
+
+    def test_longer_comma_separated_list_extracts_every_number(self):
+        issues, closes = checker.parse_pr_issue_refs("Closes #1, #2, #3")
+        self.assertEqual(issues, frozenset({"#1", "#2", "#3"}))
+        self.assertEqual(closes, frozenset({"#1", "#2", "#3"}))
+
+    def test_and_separated_list_after_keyword_extracts_every_number(self):
+        issues, closes = checker.parse_pr_issue_refs("Refs #10 and #20")
+        self.assertEqual(issues, frozenset({"#10", "#20"}))
+        self.assertEqual(closes, frozenset())
+
+    def test_mixed_comma_and_and_list_extracts_every_number(self):
+        issues, closes = checker.parse_pr_issue_refs("Fixes #1, #2 and #3")
+        self.assertEqual(issues, frozenset({"#1", "#2", "#3"}))
+        self.assertEqual(closes, frozenset({"#1", "#2", "#3"}))
+
+    def test_mixed_closing_then_referencing_keyword_classifies_each_independently(self):
+        """'Fixes #1 and refs #2' is NOT a single list -- 'and' is followed by the keyword
+        'refs', not directly by '#2', so the continuation after '#1' stops there and 'refs #2'
+        is picked up by its own, separate match with its own (non-closing) keyword."""
+        issues, closes = checker.parse_pr_issue_refs("Fixes #1 and refs #2")
+        self.assertEqual(issues, frozenset({"#1", "#2"}))
+        self.assertEqual(closes, frozenset({"#1"}))
+
+    def test_bare_hash_n_in_title_counts_as_reference_but_not_closing(self):
+        issues, closes = checker.parse_pr_issue_refs("", title="Follow-up for #227")
+        self.assertEqual(issues, frozenset({"#227"}))
+        self.assertEqual(closes, frozenset())
+
+    def test_title_refs_are_unioned_with_body_refs(self):
+        issues, closes = checker.parse_pr_issue_refs("Fixes #1", title="See also #2")
+        self.assertEqual(issues, frozenset({"#1", "#2"}))
+        self.assertEqual(closes, frozenset({"#1"}))
+
+    def test_default_title_argument_does_not_change_body_only_behaviour(self):
+        """Every pre-#227 call site (and every pre-#227 test above) calls
+        parse_pr_issue_refs() with a single positional argument -- title must default to not
+        adding anything, not raise TypeError."""
+        issues, closes = checker.parse_pr_issue_refs("Fixes #1")
+        self.assertEqual(issues, frozenset({"#1"}))
+        self.assertEqual(closes, frozenset({"#1"}))
+
+    def test_live_pr_220_body_shape_extracts_both_issues(self):
+        """Regression-pins the exact live shape that surfaced this bug (#227): PR #220's body
+        opens with '## Refs #76, #63' (the "### #76: ..." / "### #63: ..." section headings
+        further down have no keyword before the '#N', so they don't themselves match) and its
+        title is 'Fix #76: ... / Refs #63: ...'. Both #76 and #63 must end up in *issues*
+        (from the body's "Refs #76, #63" list, and independently from the title's bare
+        mentions). *closes* must be EMPTY: the body's only keyword match is "Refs" (not a
+        closer), and a title's bare '#N' mentions never count toward closing_issues regardless
+        of what word precedes them in the title text (see parse_pr_issue_refs()'s docstring)."""
+        body = (
+            "## Refs #76, #63\n\n"
+            "### #76: real-persona extras conformance rows\n\n"
+            "- New conformance coverage for real personas with extras.\n\n"
+            "### #63: harness follow-ups\n\n"
+            "- Follow-up fixes to the conformance harness.\n"
+        )
+        title = "Fix #76: real-persona extras conformance rows / Refs #63: harness follow-ups"
+        issues, closes = checker.parse_pr_issue_refs(body, title)
+        self.assertEqual(issues, frozenset({"#76", "#63"}))
+        self.assertEqual(closes, frozenset())
+
 
 if __name__ == "__main__":
     unittest.main()
