@@ -68,17 +68,11 @@ _NOT_ON_MENU_CLAUSES = (
 # #165 round 3 (Rick's #166 review round 2): known, pre-existing (hint_key, category) pairs
 # that don't match any persona pack's real category today. Exempted by the exact pair, not by
 # persona id, so any OTHER kind of staleness in ANY pack is still caught by the real check
-# below. All 7 entries predate and are unrelated to #165's menu swap; the follow-up to fix the
-# owning pack's own hints.yaml and drop this exemption is tracked in #168.
-_KNOWN_PRE_EXISTING_UPSELL_HINT_GAPS: frozenset[tuple[str, str]] = frozenset({
-    ("burger", "burgers"),
-    ("drink", "drinks"),
-    ("drink", "slushes"),
-    ("shake", "shakes"),
-    ("shake", "desserts"),
-    ("side", "sides"),
-    ("side", "hot dogs"),
-})
+# below. #168 fixed the 7 entries that used to live here by remapping the owning pack's own
+# hints.yaml to its real category names, so no gaps remain -- left as an empty frozenset
+# (rather than deleted) so a future pre-existing gap in another pack has somewhere to go
+# without re-inventing the mechanism.
+_KNOWN_PRE_EXISTING_UPSELL_HINT_GAPS: frozenset[tuple[str, str]] = frozenset()
 
 
 def _greeting_text(persona: Persona) -> str:

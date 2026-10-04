@@ -308,6 +308,21 @@ class _ThemeSurface(BaseModel):
     chart5: str | None = None
 
 
+class _ThemeMenuSurface(BaseModel):
+    """Issue #169 (Rick's PR #167 round 3 review, item N13): optional pack-level menu-card/header
+    surface tokens, layered on top of the shadcn `_ThemeSurface` slots above. Every key is optional
+    and the same shape is reused for both `light.menuSurface` and `dark.menuSurface` (same
+    convention as `_ThemeSurface`) even though a mode only ever sets a subset -- a pack that omits
+    the block entirely still validates and simply renders the shared neutral defaults
+    app/frontend/src/index.css falls back to.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    categoryCardBackground: str | None = None
+    itemCardBackground: str | None = None
+    categoryTitleColor: str | None = None
+
+
 class _ThemeTokens(BaseModel):
     model_config = ConfigDict(extra="forbid")
     primary: str | None = None
@@ -316,6 +331,7 @@ class _ThemeTokens(BaseModel):
     foreground: str | None = None
     accents: _ThemeAccents | None = None
     surface: _ThemeSurface | None = None
+    menuSurface: _ThemeMenuSurface | None = None
 
 
 class _Font(BaseModel):

@@ -10,6 +10,7 @@ namespace Conformance.Tests;
 /// against a scratch temp directory instead of the real repo's personas/ folder, so these tests
 /// never depend on how many persona packs currently exist on disk.
 /// </summary>
+[Trait("Category", "Harness")]
 public sealed class ConformancePersonasTests
 {
     [Fact]

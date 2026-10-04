@@ -11,6 +11,7 @@ namespace Conformance.Tests;
 /// stdout/stderr capture wiring (<see cref="CapturedProcessOutput.Attach"/>,
 /// <c>BeginOutputReadLine</c>/<c>BeginErrorReadLine</c>) rather than a hand-built fixture.
 /// </summary>
+[Trait("Category", "Harness")]
 public sealed class CapturedProcessOutputTests
 {
     [Fact]

@@ -8,6 +8,7 @@ namespace Conformance.Tests;
 /// spawning needed since the heuristic is a pure function of two plain inputs (same pattern as
 /// <see cref="ExternalModePortPolicy"/> and <see cref="DotnetPlaceholderPolicy"/>).
 /// </summary>
+[Trait("Category", "Harness")]
 public sealed class PortRaceDetectionTests
 {
     [Theory]

@@ -88,6 +88,10 @@
           "surfaceDarkAlt": "#292420",
           "success": "#2E7D32",
           "neutral": "#8C8C8C"
+        },
+        "menuSurface": {
+          "categoryCardBackground": "#FFFAF2",
+          "itemCardBackground": "#FFF6E3"
         }
       },
       "dark": {
@@ -97,6 +101,10 @@
           "secondaryTintOnDark": "#FFDD7A",
           "surfaceDark": "#1B1B1B",
           "surfaceDarkAlt": "#292420"
+        },
+        "menuSurface": {
+          "categoryTitleColor": "#FFBC0D",
+          "itemCardBackground": "#2E2610"
         }
       },
       "font": { "family": "Nunito Sans", "importUrl": "https://fonts.googleapis.com/css2?family=Nunito+Sans:wght@400;600;700;800;900&display=swap" }

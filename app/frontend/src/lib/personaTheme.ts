@@ -121,20 +121,54 @@ export interface PersonaSurfaceDarkTokens {
     chart5: string;
 }
 
+/**
+ * Issue #169 (Rick's PR #167 round 3 review, item N13): optional menu-card/header surface tokens,
+ * layered on top of the shadcn `PersonaSurfaceTokens` slots above. Every key is optional: a pack
+ * that doesn't author `menuSurface` simply renders the shared neutral defaults `index.css` falls
+ * back to (the exact same card/title classes `menu-panel.tsx` renders today). This is the
+ * LIGHT-mode shape -- a persona sets its own card backgrounds here; see
+ * `PersonaMenuSurfaceDarkTokens` for the dark-only overrides (category title color, item card).
+ */
+export interface PersonaMenuSurfaceTokens {
+    /** Feeds `--menu-category-card` (the category section's card background). */
+    categoryCardBackground: string;
+    /** Feeds `--menu-item-card` (each menu item's card background). */
+    itemCardBackground: string;
+}
+
+/**
+ * Dark-only menu-card/header surface overrides (issue #169). `categoryCardBackground` is
+ * intentionally absent here -- the originating review only asked for a dark category *title* color
+ * and item *card* background change, not the category card background, so it stays the shared
+ * `dark:bg-brand-surface-dark/95` literal `menu-panel.tsx` already renders.
+ */
+export interface PersonaMenuSurfaceDarkTokens {
+    /** Feeds `--menu-category-title-dark` (the category heading's dark-mode text color). */
+    categoryTitleColor: string;
+    /** Feeds `--menu-item-card-dark` (each menu item's dark-mode card background). */
+    itemCardBackground: string;
+}
+
 export interface PersonaThemeFont {
     family: string;
     importUrl: string;
 }
 
 export interface PersonaTheme {
-    light: PersonaBaseColors & { accents: PersonaAccentPalette; surface?: Partial<PersonaSurfaceTokens> };
+    light: PersonaBaseColors & {
+        accents: PersonaAccentPalette;
+        surface?: Partial<PersonaSurfaceTokens>;
+        menuSurface?: Partial<PersonaMenuSurfaceTokens>;
+    };
     /** Only the keys a persona wants to override in dark mode -- matches persona.json's abridged `dark` block. */
     dark?: Partial<PersonaBaseColors> & {
         accents?: Partial<PersonaAccentPalette>;
         surface?: Partial<PersonaSurfaceDarkTokens>;
+        menuSurface?: Partial<PersonaMenuSurfaceDarkTokens>;
     };
     font: PersonaThemeFont;
 }
+
 
 /**
  * The app-wide default font (used by every persona that doesn't declare its own `ui.theme.font`).
@@ -203,6 +237,17 @@ export const PERSONA_SURFACE_CSS_VARS = {
 } as const;
 
 /**
+ * The `--menu-*` CSS custom properties `index.css` reads for the menu-card/header surface tokens
+ * (issue #169). Applied the same way as `PERSONA_SURFACE_CSS_VARS` above -- via `applyTheme`'s
+ * inline style, light mode only.
+ */
+export const PERSONA_MENU_SURFACE_CSS_VARS = {
+    categoryCardBackground: "--menu-category-card",
+    itemCardBackground: "--menu-item-card"
+} as const;
+
+
+/**
  * Applies a persona theme's light-mode tokens to `root`'s inline style, where they take priority
  * over `index.css`'s static defaults. Dark-mode overrides are left to the existing `.dark` class
  * selector -- see `applyDarkTheme` below.
@@ -210,9 +255,28 @@ export const PERSONA_SURFACE_CSS_VARS = {
 export function applyTheme(theme: PersonaTheme, root: HTMLElement = document.documentElement): void {
     const vars = PERSONA_THEME_CSS_VARS;
     const surfaceVars = PERSONA_SURFACE_CSS_VARS;
+    const menuSurfaceVars = PERSONA_MENU_SURFACE_CSS_VARS;
     const { light } = theme;
     const set = (name: string, value: string | undefined) => {
         if (value) root.style.setProperty(name, value);
+    };
+    // `light.surface`/`light.menuSurface` are OPTIONAL and PARTIAL (unlike every other field
+    // this function writes, which every persona always provides) -- a persona can omit the
+    // object entirely, or provide only some of its keys. `set` above only ever ADDS an inline
+    // style; it never removes one, so switching from a persona that sets e.g.
+    // `--menu-category-card` to one that doesn't left the PREVIOUS persona's value sitting on
+    // `root.style` indefinitely (Rick's #228 review: switching away from the persona that
+    // authors `menuSurface` kept rendering its cream cards in light mode; the identical leak
+    // already existed for the pre-#169 `surface` vars on any switch away from a persona that
+    // authors one). `setOrClear` always clears the property first and only re-sets it when the
+    // new persona actually provides a value, so a persona that omits a key cleanly falls back
+    // to `index.css`'s static default on every switch.
+    const setOrClear = (name: string, value: string | undefined) => {
+        if (value) {
+            root.style.setProperty(name, value);
+        } else {
+            root.style.removeProperty(name);
+        }
     };
 
     set(vars.primary, light.primary);
@@ -239,19 +303,21 @@ export function applyTheme(theme: PersonaTheme, root: HTMLElement = document.doc
     set(vars.neutral, light.accents.neutral);
 
     const surface = light.surface;
-    if (surface) {
-        set(surfaceVars.cardForeground, surface.cardForeground);
-        set(surfaceVars.secondary, surface.secondary);
-        set(surfaceVars.secondaryForeground, surface.secondaryForeground);
-        set(surfaceVars.muted, surface.muted);
-        set(surfaceVars.mutedForeground, surface.mutedForeground);
-        set(surfaceVars.accent, surface.accent);
-        set(surfaceVars.accentForeground, surface.accentForeground);
-        set(surfaceVars.destructive, surface.destructive);
-        set(surfaceVars.border, surface.border);
-        set(surfaceVars.chart4, surface.chart4);
-        set(surfaceVars.chart5, surface.chart5);
-    }
+    setOrClear(surfaceVars.cardForeground, surface?.cardForeground);
+    setOrClear(surfaceVars.secondary, surface?.secondary);
+    setOrClear(surfaceVars.secondaryForeground, surface?.secondaryForeground);
+    setOrClear(surfaceVars.muted, surface?.muted);
+    setOrClear(surfaceVars.mutedForeground, surface?.mutedForeground);
+    setOrClear(surfaceVars.accent, surface?.accent);
+    setOrClear(surfaceVars.accentForeground, surface?.accentForeground);
+    setOrClear(surfaceVars.destructive, surface?.destructive);
+    setOrClear(surfaceVars.border, surface?.border);
+    setOrClear(surfaceVars.chart4, surface?.chart4);
+    setOrClear(surfaceVars.chart5, surface?.chart5);
+
+    const menuSurface = light.menuSurface;
+    setOrClear(menuSurfaceVars.categoryCardBackground, menuSurface?.categoryCardBackground);
+    setOrClear(menuSurfaceVars.itemCardBackground, menuSurface?.itemCardBackground);
 
     const font = theme.font ?? DEFAULT_THEME_FONT;
     set(vars.fontFamily, font.family ? `"${font.family}"` : undefined);
@@ -323,6 +389,16 @@ export const PERSONA_SURFACE_DARK_CSS_VARS = {
     chart5: "--surface-chart5-dark"
 } as const;
 
+/**
+ * The dark-only `--menu-*-dark` CSS custom properties `index.css`'s `.dark` block reads (issue
+ * #169), applied the same way as `PERSONA_SURFACE_DARK_CSS_VARS` above -- only via
+ * `applyDarkTheme`'s injected `<style>`, never inline.
+ */
+export const PERSONA_MENU_SURFACE_DARK_CSS_VARS = {
+    categoryTitleColor: "--menu-category-title-dark",
+    itemCardBackground: "--menu-item-card-dark"
+} as const;
+
 const DARK_THEME_STYLE_ELEMENT_ID = "persona-dark-theme-overrides";
 
 /**
@@ -359,11 +435,13 @@ export const DEFAULT_DARK_FOREGROUND: HslTriplet = "0 0% 98%";
 export function applyDarkTheme(theme: PersonaTheme, doc: Document = document): void {
     const vars = PERSONA_THEME_DARK_CSS_VARS;
     const surfaceVars = PERSONA_SURFACE_DARK_CSS_VARS;
+    const menuSurfaceVars = PERSONA_MENU_SURFACE_DARK_CSS_VARS;
     const dark = theme.dark ?? {};
     const primary = dark.primary ?? theme.light.primary;
     const background = dark.background ?? DEFAULT_DARK_BACKGROUND;
     const foreground = dark.foreground ?? DEFAULT_DARK_FOREGROUND;
     const surface = dark.surface;
+    const menuSurface = dark.menuSurface;
 
     const lines = [
         `  ${vars.primary}: ${primary};`,
@@ -377,6 +455,12 @@ export function applyDarkTheme(theme: PersonaTheme, doc: Document = document): v
     if (surface?.chart2) lines.push(`  ${surfaceVars.chart2}: ${surface.chart2};`);
     if (surface?.chart3) lines.push(`  ${surfaceVars.chart3}: ${surface.chart3};`);
     if (surface?.chart5) lines.push(`  ${surfaceVars.chart5}: ${surface.chart5};`);
+    if (menuSurface?.categoryTitleColor) {
+        lines.push(`  ${menuSurfaceVars.categoryTitleColor}: ${menuSurface.categoryTitleColor};`);
+    }
+    if (menuSurface?.itemCardBackground) {
+        lines.push(`  ${menuSurfaceVars.itemCardBackground}: ${menuSurface.itemCardBackground};`);
+    }
 
     let style = doc.getElementById(DARK_THEME_STYLE_ELEMENT_ID) as HTMLStyleElement | null;
     if (!style) {
@@ -477,10 +561,15 @@ export function deriveAccents(colors: PersonaBaseColors): PersonaAccentPalette {
  * for any persona that doesn't declare its own webfont.
  */
 export interface PersonaWireTheme {
-    light: PersonaBaseColors & { accents?: Partial<PersonaAccentPalette>; surface?: Partial<PersonaSurfaceTokens> };
+    light: PersonaBaseColors & {
+        accents?: Partial<PersonaAccentPalette>;
+        surface?: Partial<PersonaSurfaceTokens>;
+        menuSurface?: Partial<PersonaMenuSurfaceTokens>;
+    };
     dark?: Partial<PersonaBaseColors> & {
         accents?: Partial<PersonaAccentPalette>;
         surface?: Partial<PersonaSurfaceDarkTokens>;
+        menuSurface?: Partial<PersonaMenuSurfaceDarkTokens>;
     };
     font?: PersonaThemeFont;
 }

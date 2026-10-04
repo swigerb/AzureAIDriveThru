@@ -7,6 +7,7 @@ namespace Conformance.Tests;
 /// synthetic <c>(path, lines)</c> samples -- including Rick's proof that the old exemption
 /// ("does <c>RealtimeUris.</c> appear anywhere earlier in the same file") has a hole.
 /// </summary>
+[Trait("Category", "Harness")]
 public sealed class RealtimeUriLiteralScannerTests
 {
     [Fact]

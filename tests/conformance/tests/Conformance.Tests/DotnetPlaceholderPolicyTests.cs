@@ -11,6 +11,7 @@ namespace Conformance.Tests;
 /// exercises every combination directly instead of relying on real (global, parallel-unsafe)
 /// process environment variables.
 /// </summary>
+[Trait("Category", "Harness")]
 public sealed class DotnetPlaceholderPolicyTests
 {
     [Theory]

@@ -11,6 +11,8 @@ import {
     PERSONA_THEME_DARK_CSS_VARS,
     PERSONA_SURFACE_CSS_VARS,
     PERSONA_SURFACE_DARK_CSS_VARS,
+    PERSONA_MENU_SURFACE_CSS_VARS,
+    PERSONA_MENU_SURFACE_DARK_CSS_VARS,
     resolvePersonaTheme,
     type PersonaBaseColors,
     type PersonaTheme,
@@ -63,6 +65,10 @@ const SAMPLE_THEME: PersonaTheme = {
             border: "200 20% 85%",
             chart4: "192 67% 68%",
             chart5: "97 100% 26%"
+        },
+        menuSurface: {
+            categoryCardBackground: "#FFFAF2",
+            itemCardBackground: "#FFF6E3"
         }
     },
     dark: {
@@ -75,6 +81,10 @@ const SAMPLE_THEME: PersonaTheme = {
             chart2: "208 60% 50%",
             chart3: "52 100% 55%",
             chart5: "97 80% 40%"
+        },
+        menuSurface: {
+            categoryTitleColor: "#FFBC0D",
+            itemCardBackground: "#2E2610"
         }
     },
     font: {
@@ -137,6 +147,79 @@ describe("applyTheme", () => {
         const theme: PersonaTheme = { ...SAMPLE_THEME, light: { ...SAMPLE_THEME.light, surface: undefined } };
         applyTheme(theme, root);
 
+        expect(root.style.getPropertyValue(PERSONA_SURFACE_CSS_VARS.cardForeground)).toBe("");
+        expect(root.style.getPropertyValue(PERSONA_SURFACE_CSS_VARS.border)).toBe("");
+    });
+
+    // Issue #169 (Rick's PR #167 round 3 review, item N13): a persona's optional menu-card
+    // background tones, written the same way as the shadcn `surface` block above.
+    it("writes every light-mode menu surface color onto the given root element when the theme declares one (issue #169)", () => {
+        const root = freshRoot();
+        applyTheme(SAMPLE_THEME, root);
+
+        expect(root.style.getPropertyValue(PERSONA_MENU_SURFACE_CSS_VARS.categoryCardBackground)).toBe("#FFFAF2");
+        expect(root.style.getPropertyValue(PERSONA_MENU_SURFACE_CSS_VARS.itemCardBackground)).toBe("#FFF6E3");
+    });
+
+    it("writes no menu surface vars at all when the theme omits `menuSurface` (a persona that does not author it)", () => {
+        const root = freshRoot();
+        const theme: PersonaTheme = { ...SAMPLE_THEME, light: { ...SAMPLE_THEME.light, menuSurface: undefined } };
+        applyTheme(theme, root);
+
+        expect(root.style.getPropertyValue(PERSONA_MENU_SURFACE_CSS_VARS.categoryCardBackground)).toBe("");
+        expect(root.style.getPropertyValue(PERSONA_MENU_SURFACE_CSS_VARS.itemCardBackground)).toBe("");
+    });
+
+    // #228 (Rick's review of PR #228): `applyTheme` only ever ADDED inline styles, so switching
+    // from a persona that authors `menuSurface` to one that doesn't left the FIRST persona's
+    // card colors sitting on `root.style` -- reproduced live as a cream-card leak after an
+    // in-app switch away from the persona that authors `menuSurface`. These tests reuse the
+    // SAME root across consecutive `applyTheme` calls (every test above this point calls it
+    // only once per root, which can't catch a leak between calls).
+    it("clears a previously-applied persona's menu surface vars on a switch to a persona that omits `menuSurface` entirely", () => {
+        const root = freshRoot();
+        const withoutMenuSurface: PersonaTheme = { ...SAMPLE_THEME, light: { ...SAMPLE_THEME.light, menuSurface: undefined } };
+
+        applyTheme(SAMPLE_THEME, root);
+        expect(root.style.getPropertyValue(PERSONA_MENU_SURFACE_CSS_VARS.categoryCardBackground)).toBe("#FFFAF2");
+        expect(root.style.getPropertyValue(PERSONA_MENU_SURFACE_CSS_VARS.itemCardBackground)).toBe("#FFF6E3");
+
+        applyTheme(withoutMenuSurface, root);
+        expect(root.style.getPropertyValue(PERSONA_MENU_SURFACE_CSS_VARS.categoryCardBackground)).toBe("");
+        expect(root.style.getPropertyValue(PERSONA_MENU_SURFACE_CSS_VARS.itemCardBackground)).toBe("");
+
+        // A second consecutive switch to another persona that also omits `menuSurface` must stay
+        // cleared, not somehow resurrect the first persona's values.
+        applyTheme(withoutMenuSurface, root);
+        expect(root.style.getPropertyValue(PERSONA_MENU_SURFACE_CSS_VARS.categoryCardBackground)).toBe("");
+        expect(root.style.getPropertyValue(PERSONA_MENU_SURFACE_CSS_VARS.itemCardBackground)).toBe("");
+    });
+
+    it("clears only the menu surface keys the next persona's partial `menuSurface` omits, not the ones it still provides", () => {
+        const root = freshRoot();
+        applyTheme(SAMPLE_THEME, root);
+
+        const partialMenuSurface: PersonaTheme = {
+            ...SAMPLE_THEME,
+            light: { ...SAMPLE_THEME.light, menuSurface: { categoryCardBackground: "#112233" } }
+        };
+        applyTheme(partialMenuSurface, root);
+
+        expect(root.style.getPropertyValue(PERSONA_MENU_SURFACE_CSS_VARS.categoryCardBackground)).toBe("#112233");
+        expect(root.style.getPropertyValue(PERSONA_MENU_SURFACE_CSS_VARS.itemCardBackground)).toBe("");
+    });
+
+    // Same pre-existing leak, pre-dating #169 (Rick's #228 review: "apply the same clearing to
+    // the existing `surface` vars").
+    it("clears a previously-applied persona's shadcn surface vars on a switch to a persona that omits `surface` entirely", () => {
+        const root = freshRoot();
+        const withoutSurface: PersonaTheme = { ...SAMPLE_THEME, light: { ...SAMPLE_THEME.light, surface: undefined } };
+
+        applyTheme(SAMPLE_THEME, root);
+        expect(root.style.getPropertyValue(PERSONA_SURFACE_CSS_VARS.cardForeground)).toBe("208 40% 18%");
+        expect(root.style.getPropertyValue(PERSONA_SURFACE_CSS_VARS.border)).toBe("200 20% 85%");
+
+        applyTheme(withoutSurface, root);
         expect(root.style.getPropertyValue(PERSONA_SURFACE_CSS_VARS.cardForeground)).toBe("");
         expect(root.style.getPropertyValue(PERSONA_SURFACE_CSS_VARS.border)).toBe("");
     });
@@ -237,6 +320,28 @@ describe("applyDarkTheme", () => {
 
         expect(rule).not.toContain(PERSONA_SURFACE_DARK_CSS_VARS.secondary);
         expect(rule).not.toContain(PERSONA_SURFACE_DARK_CSS_VARS.chart2);
+    });
+
+    // Issue #169 (Rick's PR #167 round 3 review, item N13): a persona's optional dark-mode menu
+    // category title and item card tones, written the same way as the shadcn dark `surface`
+    // overrides above (only via the injected `<style>`, never inline -- see this function's own doc comment).
+    it("writes every dark-only menu surface override the theme declares (issue #169)", () => {
+        const doc = freshDoc();
+        applyDarkTheme(SAMPLE_THEME, doc);
+        const rule = readDarkRule(doc);
+
+        expect(rule).toContain(`${PERSONA_MENU_SURFACE_DARK_CSS_VARS.categoryTitleColor}: #FFBC0D`);
+        expect(rule).toContain(`${PERSONA_MENU_SURFACE_DARK_CSS_VARS.itemCardBackground}: #2E2610`);
+    });
+
+    it("writes no dark menu surface overrides when the theme's dark block omits `menuSurface` (a persona that does not author it)", () => {
+        const doc = freshDoc();
+        const theme: PersonaTheme = { ...SAMPLE_THEME, dark: { primary: "341 100% 55%" } };
+        applyDarkTheme(theme, doc);
+        const rule = readDarkRule(doc);
+
+        expect(rule).not.toContain(PERSONA_MENU_SURFACE_DARK_CSS_VARS.categoryTitleColor);
+        expect(rule).not.toContain(PERSONA_MENU_SURFACE_DARK_CSS_VARS.itemCardBackground);
     });
 
     it("falls back to the persona's own light primary, and the shared DEFAULT dark background/foreground, when a persona has no dark block at all", () => {
@@ -419,6 +524,34 @@ describe("resolvePersonaTheme", () => {
         };
         const theme = resolvePersonaTheme("test-beta", wireTheme);
         expect(theme.light.surface).toBeUndefined();
+    });
+
+    // Issue #169: `menuSurface` follows the exact same no-synthesis contract as `surface` above --
+    // omitted entirely for a persona that doesn't author it, passed through unchanged for one that
+    // does.
+    it("passes a persona's `menuSurface` block through unchanged (no synthesis fallback)", () => {
+        const wireTheme: PersonaWireTheme = {
+            light: {
+                primary: "200 80% 50%",
+                secondary: "40 60% 40%",
+                background: "0 0% 98%",
+                foreground: "0 0% 10%",
+                menuSurface: { categoryCardBackground: "#FFFAF2", itemCardBackground: "#FFF6E3" }
+            },
+            dark: { menuSurface: { categoryTitleColor: "#FFBC0D", itemCardBackground: "#2E2610" } }
+        };
+        const theme = resolvePersonaTheme("test-gamma", wireTheme);
+        expect(theme.light.menuSurface).toEqual({ categoryCardBackground: "#FFFAF2", itemCardBackground: "#FFF6E3" });
+        expect(theme.dark?.menuSurface).toEqual({ categoryTitleColor: "#FFBC0D", itemCardBackground: "#2E2610" });
+    });
+
+    it("leaves `menuSurface` undefined for a persona that declares none, rather than synthesizing one", () => {
+        const wireTheme: PersonaWireTheme = {
+            light: { primary: "200 80% 50%", secondary: "40 60% 40%", background: "0 0% 98%", foreground: "0 0% 10%" }
+        };
+        const theme = resolvePersonaTheme("test-delta", wireTheme);
+        expect(theme.light.menuSurface).toBeUndefined();
+        expect(theme.dark?.menuSurface).toBeUndefined();
     });
 
     it("passes through a persona's own dark overrides (including dark surface) and font untouched", () => {

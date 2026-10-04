@@ -10,6 +10,7 @@ namespace Conformance.Tests;
 /// <see cref="DotnetBackendLauncher.ResolveDllPath"/> are pure, process-free functions, so this
 /// asserts the exact launch command/arguments directly -- no real process, no SDK required.
 /// </summary>
+[Trait("Category", "Harness")]
 public sealed class DotnetBackendLauncherStartInfoTests
 {
     [Fact]

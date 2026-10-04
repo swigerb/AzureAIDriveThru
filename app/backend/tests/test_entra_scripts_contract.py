@@ -975,11 +975,19 @@ class DeployMdDarkStateSetupSequenceTests(unittest.TestCase):
         # description previously claimed a run supplying none of -FrontendOrigin/-RedirectUri/
         # -FromAzdEnv "leaves any existing SPA URIs untouched". That is false: -RedirectUri
         # defaults to the two localhost origins (never empty), so the section-7 full-SET
-        # reconcile DOES fire on such a run and replaces the existing SPA redirect URIs with the
-        # localhost defaults only -- confirmed against the real script by
+        # reconcile DOES fire on such a run and would replace the existing SPA redirect URIs with
+        # the localhost defaults only -- confirmed against the real script by
         # SetupEntraAuthRedirectUriDefaultBehaviorMockedGraphTests. Only an explicit
         # -RedirectUri @() (with no -FrontendOrigin/-FromAzdEnv) leaves the existing URIs
-        # untouched. Pin the corrected wording so it can't silently drift back.
+        # untouched.
+        #
+        # PR #218 review, issue 2 (Rick): the original fix worded this paragraph as something
+        # that actually HAPPENS ("registers the localhost defaults only, replacing..."), which the
+        # very next paragraph then had to contradict ("However, since #162, -Apply never does
+        # that replacement silently"). Reworded to describe the full-SET mechanism's computed
+        # outcome ("would set ... dropping ... from that set") so the #162 paragraph that follows
+        # qualifies it instead of contradicting it. Pin the corrected wording so it can't silently
+        # drift back to either the stale "untouched" claim or the self-contradictory phrasing.
         self.assertNotRegex(
             self.text,
             r"leaves any existing SPA URIs untouched rather than wiping",
@@ -988,18 +996,27 @@ class DeployMdDarkStateSetupSequenceTests(unittest.TestCase):
             "section-7 reconcile fire and replace them",
         )
         self.assertIn(
-            "a run that omits `-FrontendOrigin`/`-RedirectUri`/`-FromAzdEnv`\n"
-            "registers the localhost defaults only, replacing any already-registered frontend origin.",
+            "a run that omits `-FrontendOrigin`/`-RedirectUri`/`-FromAzdEnv` would set\n"
+            "the registered SPA redirect URIs to the localhost defaults only, dropping any "
+            "already-registered frontend origin\nfrom that set.",
             self.text,
-            "expected the corrected wording: omitting the three flags registers the localhost "
-            "defaults only (replacing any existing origin)",
+            "expected the corrected wording: omitting the three flags would set the registered "
+            "SPA redirect URIs to the localhost defaults only (dropping any existing origin from "
+            "that set) -- phrased as the full-SET mechanism's computed outcome, not as something "
+            "that silently happens under -Apply (the #162 paragraph that follows qualifies that)",
         )
         self.assertIn(
-            "Only a run whose\ncombined total is empty (`-RedirectUri @()` explicitly, with no "
-            "`-FrontendOrigin`/`-FromAzdEnv`) leaves the\nexisting SPA URIs untouched.",
+            "Only a run whose combined total is empty (`-RedirectUri @()` explicitly, with no\n"
+            "`-FrontendOrigin`/`-FromAzdEnv`) leaves the existing SPA URIs untouched.",
             self.text,
             "expected the corrected wording: only an explicit -RedirectUri @() (with no "
             "-FrontendOrigin/-FromAzdEnv) leaves existing SPA URIs untouched",
+        )
+        self.assertIn(
+            "However, since #162, `-Apply` never does that replacement silently.",
+            self.text,
+            "expected the #162 paragraph to immediately follow and qualify the full-SET "
+            "description above, rather than contradicting it",
         )
 
     def test_every_setup_line_in_the_dark_state_block_carries_the_frontend_origin(self):

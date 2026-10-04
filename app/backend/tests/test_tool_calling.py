@@ -880,6 +880,38 @@ class UpsellHintTests(unittest.TestCase):
             or "upsell" in result.text.lower()
         )
 
+    def test_extra_after_drink_does_not_trigger_side_hint(self):
+        """#168 follow-up (Rick's PR #217 review): the default persona's own "Extras & Sides"
+        category holds BOTH genuine stand-alone sides (Cheese Tots) AND modifier-only extras (Flavor Add-In,
+        Add Bacon, Whipped Topping, Sweet Cream, Jalapeños) that are added as their own order
+        line to accompany/flavor an existing item, not chosen as a side themselves. Before this
+        fix, adding an extra right after a drink wrongly fired the side bucket's "...a refreshing
+        Drink or Slush to complete their meal!" hint (since "extras & sides" is a real category
+        in the side bucket's own trigger_categories) immediately after the drink hint had already
+        suggested the exact same thing. An extra must fall through to the SAME generic hint it
+        got before #168 ever mapped "extras & sides" to the side bucket (back then that category
+        matched no bucket at all)."""
+        sid = _make_session()
+        order_state_singleton.handle_order_update(sid, "add", "Cherry Limeade", "medium", 1, 2.89)
+        result = _run(update_order({
+            "action": "add", "item_name": "Flavor Add-In",
+            "size": "standard", "quantity": 1, "price": 0.3,
+        }, sid))
+        self.assertNotIn("complete their meal", result.text.lower())
+        self.assertIn("add anything else", result.text.lower())
+
+    def test_real_side_in_shared_extras_category_still_triggers_side_hint(self):
+        """The flip side of the above: a genuine stand-alone side that happens to share the
+        default persona's "Extras & Sides" category with modifier-only extras (Cheese Tots is NOT isExtra) must
+        still get the dedicated side hint -- #168's fix only excludes items is_extra_item flags,
+        not the whole category."""
+        sid = _make_session()
+        result = _run(update_order({
+            "action": "add", "item_name": "Cheese Tots",
+            "size": "medium", "quantity": 1, "price": 3.39,
+        }, sid))
+        self.assertIn("complete their meal", result.text.lower())
+
     def test_combo_triggers_upgrade_upsell(self):
         sid = _make_session()
         # Add side+drink first so combo is complete (no missing items hint)

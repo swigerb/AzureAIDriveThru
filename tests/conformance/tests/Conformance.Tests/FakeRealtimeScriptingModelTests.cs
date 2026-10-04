@@ -12,6 +12,7 @@ namespace Conformance.Tests;
 /// the VAD-like default rule triggers, and that a fresh connection never inherits another
 /// connection's script state.
 /// </summary>
+[Trait("Category", "Harness")]
 public sealed class FakeRealtimeScriptingModelTests
 {
     private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(10);
@@ -725,15 +726,24 @@ public sealed class FakeRealtimeScriptingModelTests
     /// re-verified against the OpenAI Realtime API reference (see that field's doc comment for
     /// the citation) and found to be missing two currently-documented `AudioTranscription` keys,
     /// `delay` and `keywords`, alongside the already-present `languages` (kept, confirmed valid).
-    /// Self-test for the harness behaviour change: a `session.update` that sets all three of
-    /// these keys under `audio.input.transcription` must be accepted (not rejected as
-    /// `unknown_parameter`), proving the validator's allow-list actually includes them rather
-    /// than just not having a test that happens to avoid them. Mutation-check: reverting the
-    /// `AudioInputTranscriptionKeys` set to the pre-F2 four keys turns this red
-    /// (`unknown_parameter` / `session.audio.input.transcription.delay`).
+    /// Self-test for the harness behaviour change: a `session.update` that sets `keywords` and
+    /// `languages` under `audio.input.transcription` for a model that supports both
+    /// (`gpt-transcribe`) must be accepted (not rejected as `unknown_parameter`), proving the
+    /// validator's allow-list actually includes them rather than just not having a test that
+    /// happens to avoid them. Mutation-check: reverting the `AudioInputTranscriptionKeys` set to
+    /// the pre-F2 four keys turns this red (`unknown_parameter` /
+    /// `session.audio.input.transcription.keywords`).
+    ///
+    /// #63 N29 originally split this test from a single all-three-keys-at-once case so `delay`
+    /// (a different row below) could use a different `transcription.model`, back when a
+    /// model-specific gate (`GaSessionValidator.TranscriptionKeyRequiredModels`, since removed per
+    /// Rick's PR #220 review -- see `GaSessionValidator`'s updated doc comment) required each key's
+    /// model to differ. The gate's gone now, but the split stayed: these two rows independently
+    /// cover F2's actual point (the allow-list), one per originally-intended model, without
+    /// collapsing back into a single combined case.
     /// </summary>
     [Fact]
-    public async Task Session_update_with_ga_transcription_delay_and_keywords_keys_is_accepted()
+    public async Task Session_update_with_ga_transcription_keywords_and_languages_keys_is_accepted_for_gpt_transcribe()
     {
         await using var fake = new FakeRealtimeUpstreamServer();
         await fake.StartAsync(TestContext.Current.CancellationToken);
@@ -746,7 +756,7 @@ public sealed class FakeRealtimeScriptingModelTests
         await WebSocketJson.SendAsync(socket, new JsonObject
         {
             ["type"] = "session.update",
-            ["event_id"] = "evt_ga_transcription_delay_keywords",
+            ["event_id"] = "evt_ga_transcription_keywords_languages",
             ["session"] = new JsonObject
             {
                 ["type"] = "realtime",
@@ -757,7 +767,6 @@ public sealed class FakeRealtimeScriptingModelTests
                         ["transcription"] = new JsonObject
                         {
                             ["model"] = "gpt-transcribe",
-                            ["delay"] = "low",
                             ["keywords"] = new JsonArray("drive-thru", "combo"),
                             ["languages"] = new JsonArray("en"),
                         },
@@ -769,6 +778,168 @@ public sealed class FakeRealtimeScriptingModelTests
         var response = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
         Assert.NotNull(response);
         Assert.Equal("session.updated", response!.Value.GetProperty("type").GetString());
+
+        await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None);
+    }
+
+    /// <summary>#63 N29 counterpart to the keywords/languages test above: `delay` is only valid
+    /// with `gpt-realtime-whisper` and must be accepted there.</summary>
+    [Fact]
+    public async Task Session_update_with_transcription_delay_key_is_accepted_for_gpt_realtime_whisper()
+    {
+        await using var fake = new FakeRealtimeUpstreamServer();
+        await fake.StartAsync(TestContext.Current.CancellationToken);
+
+        using var socket = new ClientWebSocket();
+        var wsUri = new Uri($"ws://{fake.BaseUri.Host}:{fake.BaseUri.Port}/openai/v1/realtime?model=gpt-realtime-test");
+        await socket.ConnectAsync(wsUri, TestContext.Current.CancellationToken);
+        Assert.NotNull(await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken)); // session.created
+
+        await WebSocketJson.SendAsync(socket, new JsonObject
+        {
+            ["type"] = "session.update",
+            ["event_id"] = "evt_ga_transcription_delay",
+            ["session"] = new JsonObject
+            {
+                ["type"] = "realtime",
+                ["audio"] = new JsonObject
+                {
+                    ["input"] = new JsonObject
+                    {
+                        ["transcription"] = new JsonObject
+                        {
+                            ["model"] = "gpt-realtime-whisper",
+                            ["delay"] = "low",
+                        },
+                    },
+                },
+            },
+        }, TestContext.Current.CancellationToken);
+
+        var response = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
+        Assert.NotNull(response);
+        Assert.Equal("session.updated", response!.Value.GetProperty("type").GetString());
+
+        await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None);
+    }
+
+    /// <summary>
+    /// Rick's PR #220 review: #63 N29 originally added a model-specific gate rejecting
+    /// `delay`/`keywords`/`languages` when `transcription.model` didn't match a hardcoded OpenAI
+    /// public model name. That gate assumed `transcription.model` would always literally be one
+    /// of those public names, but on Azure it's a customer-chosen DEPLOYMENT name (see
+    /// `GaSessionValidator`'s updated doc comment for the full reasoning and evidence from
+    /// `app/backend/rtmt.py`/`test_session_bootstrap.py`) -- a real, correctly-configured
+    /// deployment named e.g. `"my-transcribe-deployment"` would have every one of these keys
+    /// wrongly rejected by the OLD gate, even though the real service would accept them. The gate
+    /// is now removed (only the key NAME is validated, via
+    /// <see cref="GaSessionValidator.AudioInputTranscriptionKeys"/>), so this row (which used to
+    /// assert `invalid_value` for a deployment-shaped model name) now asserts the corrected
+    /// behaviour: all three keys are accepted regardless of what `transcription.model` names,
+    /// proving the false-rejection bug is fixed. Mutation-check: reintroducing the old
+    /// `TranscriptionKeyRequiredModels`-style gate against this deployment-shaped model name turns
+    /// this red again (`invalid_value` instead of `session.updated`).
+    /// </summary>
+    [Theory]
+    [InlineData("delay")]
+    [InlineData("keywords")]
+    [InlineData("languages")]
+    public async Task Session_update_with_transcription_key_is_accepted_for_a_deployment_shaped_model_name(string key)
+    {
+        await using var fake = new FakeRealtimeUpstreamServer();
+        await fake.StartAsync(TestContext.Current.CancellationToken);
+
+        using var socket = new ClientWebSocket();
+        var wsUri = new Uri($"ws://{fake.BaseUri.Host}:{fake.BaseUri.Port}/openai/v1/realtime?model=gpt-realtime-test");
+        await socket.ConnectAsync(wsUri, TestContext.Current.CancellationToken);
+        Assert.NotNull(await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken)); // session.created
+
+        JsonNode keyValue = key == "delay" ? (JsonNode)"low" : new JsonArray("en");
+        await WebSocketJson.SendAsync(socket, new JsonObject
+        {
+            ["type"] = "session.update",
+            ["event_id"] = $"evt_deployment_named_transcription_{key}",
+            ["session"] = new JsonObject
+            {
+                ["type"] = "realtime",
+                ["audio"] = new JsonObject
+                {
+                    ["input"] = new JsonObject
+                    {
+                        ["transcription"] = new JsonObject
+                        {
+                            ["model"] = "my-transcribe-deployment",
+                            [key] = keyValue,
+                        },
+                    },
+                },
+            },
+        }, TestContext.Current.CancellationToken);
+
+        var response = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
+        Assert.NotNull(response);
+        Assert.Equal("session.updated", response!.Value.GetProperty("type").GetString());
+
+        await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None);
+    }
+
+    /// <summary>Rick's PR #220 review counterpart: a follow-up `session.update` that re-sends only
+    /// `delay` WITHOUT repeating `model` must still be accepted now that the model-specific gate
+    /// (and its "earlier model still applies" fallback) is gone -- there's no model-dependent
+    /// check left to bypass or apply inconsistently. `MergeSessionUpdate`'s wholesale replace of
+    /// `transcription` per update (GA's own documented semantics, unchanged by this fix) no longer
+    /// has any observable effect on this key's acceptance.</summary>
+    [Fact]
+    public async Task Session_update_with_transcription_key_is_accepted_on_a_followup_update_that_omits_model()
+    {
+        await using var fake = new FakeRealtimeUpstreamServer();
+        await fake.StartAsync(TestContext.Current.CancellationToken);
+
+        using var socket = new ClientWebSocket();
+        var wsUri = new Uri($"ws://{fake.BaseUri.Host}:{fake.BaseUri.Port}/openai/v1/realtime?model=gpt-realtime-test");
+        await socket.ConnectAsync(wsUri, TestContext.Current.CancellationToken);
+        Assert.NotNull(await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken)); // session.created
+
+        await WebSocketJson.SendAsync(socket, new JsonObject
+        {
+            ["type"] = "session.update",
+            ["event_id"] = "evt_set_whisper_model",
+            ["session"] = new JsonObject
+            {
+                ["type"] = "realtime",
+                ["audio"] = new JsonObject
+                {
+                    ["input"] = new JsonObject
+                    {
+                        ["transcription"] = new JsonObject { ["model"] = "whisper-1" },
+                    },
+                },
+            },
+        }, TestContext.Current.CancellationToken);
+        var firstResponse = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
+        Assert.NotNull(firstResponse);
+        Assert.Equal("session.updated", firstResponse!.Value.GetProperty("type").GetString());
+
+        await WebSocketJson.SendAsync(socket, new JsonObject
+        {
+            ["type"] = "session.update",
+            ["event_id"] = "evt_followup_delay_only",
+            ["session"] = new JsonObject
+            {
+                ["type"] = "realtime",
+                ["audio"] = new JsonObject
+                {
+                    ["input"] = new JsonObject
+                    {
+                        ["transcription"] = new JsonObject { ["delay"] = "low" },
+                    },
+                },
+            },
+        }, TestContext.Current.CancellationToken);
+
+        var secondResponse = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
+        Assert.NotNull(secondResponse);
+        Assert.Equal("session.updated", secondResponse!.Value.GetProperty("type").GetString());
 
         await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None);
     }
