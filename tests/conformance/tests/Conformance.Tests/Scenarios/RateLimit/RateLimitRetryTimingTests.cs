@@ -57,6 +57,7 @@ public sealed class RateLimitRetryTimingTests(RateLimitTimersConformanceFixture 
     }
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Ladder_runs_silent_then_two_notifications_then_gives_up() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -110,6 +111,7 @@ public sealed class RateLimitRetryTimingTests(RateLimitTimersConformanceFixture 
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task A_service_retry_hint_is_parsed_and_clamped_to_the_production_bounds() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;

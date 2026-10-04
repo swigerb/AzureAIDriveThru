@@ -3,9 +3,10 @@ using System.Text.Json.Nodes;
 namespace Backend.Realtime;
 
 /// <summary>
-/// Port of app/backend/rate_limit.py's `is_rate_limit_error` / `rate_limit_error_of_response_done`
-/// -- the pure predicates <see cref="SessionUpdateGuard"/> and the (later) rate-limit recovery
-/// ladder both need to tell a genuine rate limit apart from any other upstream `error`.
+/// Port of app/backend/rate_limit.py's `is_rate_limit_error` / `rate_limit_error_of_response_done` /
+/// `rate_limit_error_of_error_event` -- the pure predicates <see cref="SessionUpdateGuard"/> and
+/// <see cref="RateLimitRecovery"/> both need to tell a genuine rate limit apart from any other
+/// upstream `error`.
 /// </summary>
 public static class RateLimitDetection
 {
@@ -35,6 +36,13 @@ public static class RateLimitDetection
             return null;
         }
         var error = (response["status_details"] as JsonObject)?["error"] as JsonObject;
+        return IsRateLimitError(error) ? error : null;
+    }
+
+    /// <summary>The rate-limit error of an `error` event, else null.</summary>
+    public static JsonObject? RateLimitErrorOfErrorEvent(JsonObject message)
+    {
+        var error = message["error"] as JsonObject;
         return IsRateLimitError(error) ? error : null;
     }
 }

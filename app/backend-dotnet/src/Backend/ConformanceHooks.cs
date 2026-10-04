@@ -11,13 +11,12 @@ namespace Backend;
 /// values. A no-op (returns the real current time) unless <c>CONFORMANCE_TEST_HOOKS=1</c> is set
 /// in the process environment.
 ///
-/// Deliberately scoped to only the piece #14's order engine needs. Python's module also has a
-/// ``seconds(env_var, default)`` timer-duration override and a ``cascade_credential()``/
-/// ``cascade_chat_kwargs()`` pair -- those affect asyncio timer durations and the cascade Foundry
-/// chat client respectively, neither of which any code in this file touches. They belong to
-/// whichever wave first needs testable timer durations for the C# realtime pipeline (#13) or the
-/// cascade pipeline, and should be added to this same file (not a second, competing one) when that
-/// wave lands, exactly mirroring Python's "one shared, centralised hooks module" design.
+/// Also ports Python's ``seconds(env_var, default)`` timer-duration override (see
+/// <see cref="Seconds"/>) -- first used by issue #13 Wave 4's rate-limit retry ladder. Python's
+/// module additionally has a ``cascade_credential()``/``cascade_chat_kwargs()`` pair for the
+/// cascade Foundry chat client, which no code in this file touches yet; it belongs here too,
+/// exactly mirroring Python's "one shared, centralised hooks module" design, whenever the
+/// cascade pipeline first needs it.
 ///
 /// NEVER set CONFORMANCE_TEST_HOOKS in infra/ (bicep), the Dockerfile, or azure.yaml -- see
 /// conformance_hooks.py's own module docstring for why (a dedicated guard test scans those files
@@ -56,6 +55,39 @@ public static class ConformanceHooks
             }
         }
         return TimeZoneInfo.ConvertTime(DateTimeOffset.Now, tz);
+    }
+
+    /// <summary>Port of conformance_hooks.py's ``seconds(env_var, default)``: overrides a timer
+    /// duration fed into a delayed send (idle timeout, resume grace, resume nudge, the greeting
+    /// timeout, and -- issue #13 Wave 4 -- the two rate-limit retry delays). Returns
+    /// <paramref name="defaultValue"/> unchanged unless test hooks are enabled AND
+    /// <paramref name="envVar"/> is set to a non-empty value, in which case the value must parse as
+    /// a finite, strictly-positive number or this throws immediately -- it does NOT silently fall
+    /// back to <paramref name="defaultValue"/>. Has no effect on <see cref="Now"/> (see this
+    /// class's own doc comment: the two mechanisms are independent).</summary>
+    public static double Seconds(string envVar, double defaultValue)
+    {
+        if (!HooksEnabled)
+        {
+            return defaultValue;
+        }
+        var raw = Environment.GetEnvironmentVariable(envVar);
+        if (string.IsNullOrEmpty(raw))
+        {
+            return defaultValue;
+        }
+        if (!double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
+        {
+            throw new InvalidOperationException(
+                $"{envVar} must be a positive, finite number of seconds (test hooks are enabled), " +
+                $"got unparseable value: '{raw}'");
+        }
+        if (!double.IsFinite(value) || value <= 0)
+        {
+            throw new InvalidOperationException(
+                $"{envVar} must be a positive, finite number of seconds (test hooks are enabled), got: '{raw}'");
+        }
+        return value;
     }
 
     private static DateTimeOffset ParseFixedNow(string raw)

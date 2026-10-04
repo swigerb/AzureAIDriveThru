@@ -227,6 +227,11 @@ var echoCooldownSeconds = ReadDouble(audioSection, "echo_cooldown_seconds") ?? 1
 // RealtimeProcessor below. Tests construct RealtimeProcessor directly with their own
 // FakeTimeProvider instead, so no DI container registration is needed here.
 var timeProvider = TimeProvider.System;
+// Issue #13 Wave 4: the rate-limit retry ladder's own config (resilience.rate_limit in
+// config.yaml, RATE_LIMIT_RECOVERY_ENABLED env override) -- Beth's #147 auth wiring in this same
+// file is unrelated to this, kept as a minimal one-line addition plus the matching constructor arg
+// below.
+var rateLimitSettings = RateLimitSettings.FromAppConfig(appConfig);
 
 // ── 6. Processor registry (issue #75, design doc section 7.4): only "realtime" is registered
 // this wave -- its own model resolution is fully ported (Models/ModelDispatch.cs's
@@ -248,7 +253,8 @@ var realtimeProcessor = new RealtimeProcessor(
     echoCooldownSeconds,
     logger: logger,
     toolExecutorFactory: BuildSessionToolExecutor,
-    timeProvider: timeProvider);
+    timeProvider: timeProvider,
+    rateLimitSettings: rateLimitSettings);
 // PR #140 R5: bearerTokenProvider is left at its default (null) here deliberately --
 // RealtimeProcessor.ResolveUpstreamAuthHeaderAsync falls back to the lazily-constructed real
 // DefaultAzureCredentialTokenProvider itself, so a DefaultAzureCredential (which probes several

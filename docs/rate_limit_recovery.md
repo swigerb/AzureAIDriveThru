@@ -8,9 +8,17 @@ apologises with a pre-recorded clip.
 Python code: `app/backend/rate_limit.py`, which is wired in `app/backend/rtmt.py`. Browser side:
 `app/frontend/src/App.tsx` (`onReceivedRateLimited`) and `app/frontend/src/lib/apology.ts`.
 
-C# status: `app/backend-dotnet/src/Backend/Sessions/RealtimeProcessor.cs` does not implement the
-full retry ladder yet. Its current scope cut sends one final `extension.rate_limited` notice to the
-browser instead of retrying upstream.
+C# status: `app/backend-dotnet/src/Backend/Realtime/RateLimitRecovery.cs` is a verbatim port of this
+page's design, driven by the C# backend's injected `TimeProvider` (Issue #13 Wave 2) and wired into
+`app/backend-dotnet/src/Backend/Sessions/RealtimeProcessor.cs`. It implements the full retry ladder
+below (silent first retry, non-final then final `extension.rate_limited` notices, the
+`response.created`/`response.done` hooks, and cancellation on guest speech, an externally-requested
+response, or socket teardown) byte-for-byte matching Python's wire format and timing. The one
+intentional difference: because the C# relay has two concurrent loops (browser→upstream and
+upstream→browser) where Python's asyncio model has one, `RateLimitRecovery` commits each schedule
+decision inside the same lock as the failure that caused it, closing a race the single-threaded
+Python port never has to consider -- see that class's own doc comment. Not yet ported: the
+#15-tracked idle-timeout interplay (`RateLimitIdleInteractionTests`).
 
 ## Detection
 

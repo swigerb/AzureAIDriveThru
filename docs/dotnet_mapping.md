@@ -7,10 +7,10 @@ deliberately deferred or reduced in the C# port is written down instead of disco
 
 The C# backend now has the host/config/persona foundation, persona HTTP surface, model catalog,
 pre-upgrade `/realtime` auth and persona/model/mode binding, the Azure OpenAI realtime relay,
-order engine, search tool, prompt rendering, tool dispatch and the shared conformance dotnet leg.
-The remaining deliberate gaps versus Python are tracked below: session resume/rehydration, the full
-rate-limit retry ladder, the consecutive tool-failure cap, context-window monitoring/turn recording,
-and Entra auth-row execution on the dotnet leg until issue #147 flips that capability.
+order engine, search tool, prompt rendering, tool dispatch, the full rate-limit retry ladder, and
+the shared conformance dotnet leg. The remaining deliberate gaps versus Python are tracked below:
+session resume/rehydration, the consecutive tool-failure cap, context-window monitoring/turn
+recording, and Entra auth-row execution on the dotnet leg until issue #147 flips that capability.
 
 ## Module mapping
 
@@ -469,14 +469,16 @@ resume): `CloseCodeTests`'s remaining 4002-supersede scenario, `IdleCloseCodeTes
 doc comment requires a disconnect+resume and a silence nudge, i.e. #15's resume/rehydration
 machinery -- not a bug, correctly deferred).
 The `RateLimit` ladder (backoff retries of `response.create`, the `response.created` hook, the
-greeting-retry interplay `EchoSuppressor` already models) is deferred, tracked on #13 (not
-blocked) -- PR #140 round 2, Rick's review: the notice relay (one final `extension.rate_limited`
-on a 429, instead of Python's retry) is already covered by other tagged scenarios, and nothing
-about #13's own S1.2 acceptance is blocked by the ladder itself; it needs timers/`TimeProvider`
-and is a sizable separate port, tracked on #15 (S5: C# sessions and resilience, which already
-ports `rate_limit.py`) and flagged as an **#17 go-live blocker** for the deployed C# app in the
-meantime. So the whole `RateLimit` scenario family remains untagged here. A handful of failures
-(`CapturedProcessOutputTests`, `CapturedProcessOutputWaitTests`,
+greeting-retry interplay `EchoSuppressor` already models) is now implemented: Wave 4 of #13 ported
+`rate_limit.py`'s `RateLimitRecovery` verbatim into
+`app/backend-dotnet/src/Backend/Realtime/RateLimitRecovery.cs`, driven by the Wave-2 `TimeProvider`
+seam, replacing the old one-shot `extension.rate_limited` notice (previously the only behaviour
+here, per PR #140 round 2 / Rick's review) with the full silent-first-retry /
+notify-non-final-then-final / guest-speech-resets-the-ladder behaviour. Scenarios that only exercise
+the ladder itself are now tagged `Dotnet=ready` (see the PR that landed this change for the exact
+list and count); `RateLimitIdleInteractionTests` remains untagged -- it additionally needs #15's
+idle-timeout machinery, not yet ported. The **#17 go-live blocker** tag on the ladder is resolved by
+this change. A handful of failures (`CapturedProcessOutputTests`, `CapturedProcessOutputWaitTests`,
 `WindowsJobObjectTests`) are pre-existing harness self-tests unrelated to `CONFORMANCE_BACKEND` and
 out of scope.
 
