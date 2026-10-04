@@ -1,3 +1,4 @@
+using System.Reflection;
 using Backend.Realtime;
 using Microsoft.Extensions.Time.Testing;
 
@@ -174,8 +175,20 @@ public sealed class EchoSuppressorThreadSafetyTests
     // ── Rick's #235 review: audited EchoSuppressor for RateLimitRecovery's stale-timer-
     // continuation pattern and found the identical shape in OnAudioDone's delayed flush. Fixed
     // the same way (FlushIfStillPendingAsync takes the scheduling CTS as its identity and only
-    // proceeds if it is still the live _flushCts) -- this test proves it with the same
-    // hold-the-lock-while-advancing-the-fake-clock technique RateLimitRecoveryUnitTests uses.
+    // proceeds if it is still the live _flushCts).
+    //
+    // Issue #255: the original version of this test reproduced the race with a genuine
+    // background thread (Task.Run advancing the fake clock) racing a Thread.Sleep(100)
+    // "scheduling bias" against this thread's lock hand-off -- the same pattern
+    // RateLimitRecoveryUnitTests.RunStaleRetryRaceAsync used before it was flagged flaky under
+    // full-suite CI parallelism (a starved background thread could let this thread call Close()
+    // and release the lock before the "stale" continuation had even started). Fixed the same
+    // deterministic way: capture the CURRENT _flushCts (the exact CancellationTokenSource the
+    // real Task.Delay continuation would have closed over) via reflection, run the cancellation
+    // source (Close()) synchronously to completion, then invoke the private
+    // FlushIfStillPendingAsync directly with that now-stale CTS -- precisely what the real timer
+    // continuation would observe if it acquired _sync a moment later, with zero threads, sleeps,
+    // or wall-clock dependence anywhere in the reproduction.
     [Fact]
     public async Task StaleFlushContinuation_LosesRaceToClose_NeverSends()
     {
@@ -194,26 +207,16 @@ public sealed class EchoSuppressorThreadSafetyTests
         echo.OnAudioDone(10.0); // arms the delayed flush; also fires an immediate flush (#1).
         Assert.Equal(1, Volatile.Read(ref flushes));
 
-        var syncRoot = echo.SyncRootForTests;
-        Task advanceTask;
-        Monitor.Enter(syncRoot);
-        try
-        {
-            advanceTask = Task.Run(() => fakeTime.Advance(TimeSpan.FromSeconds(1.5)), TestContext.Current.CancellationToken);
-            // Same scheduling-bias technique as RateLimitRecoveryUnitTests.RunStaleRetryRaceAsync:
-            // give the background thread time to reach (and block on) _sync before this thread
-            // wins the race by calling Close() first.
-            Thread.Sleep(100);
-            echo.Close();
-        }
-        finally
-        {
-            Monitor.Exit(syncRoot);
-        }
+        var flushCtsField = typeof(EchoSuppressor).GetField("_flushCts", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        var flushIfStillPendingMethod = typeof(EchoSuppressor).GetMethod(
+            "FlushIfStillPendingAsync", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        var staleCts = (CancellationTokenSource)flushCtsField.GetValue(echo)!;
 
-        var finished = await Task.WhenAny(advanceTask, Task.Delay(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken)) == advanceTask;
-        Assert.True(finished, "the stale flush continuation deadlocked instead of returning once superseded");
-        await advanceTask; // surface any exception thrown on the background thread.
+        echo.Close(); // the cancellation source wins the race to _sync first, fully committed.
+
+        // Invoke the now-stale continuation directly -- exactly what the real Task.Delay
+        // continuation would run if it acquired _sync a moment after Close() already committed.
+        await (Task)flushIfStillPendingMethod.Invoke(echo, new object[] { staleCts })!;
 
         // Mutation check (manual, see PR description): without the CTS identity check in
         // FlushIfStillPendingAsync, this would be 2 -- the stale continuation (already past its

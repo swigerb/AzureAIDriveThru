@@ -197,14 +197,6 @@ public sealed class RateLimitRecovery
         get { lock (_sync) { return _pendingScheduled || _awaitingRetry; } }
     }
 
-    /// <summary>Test-only: exposes the internal lock object so a test can hold it across a
-    /// FakeTimeProvider.Advance() (run on a background thread) plus a cancellation-source call (on
-    /// the test's own thread, reentrant on the same monitor), deterministically reproducing the
-    /// otherwise-untestable two-thread race between a stale timer continuation and whichever
-    /// cancellation source wins the race to <see cref="_sync"/> first. Not read by any production
-    /// code path.</summary>
-    internal object SyncRootForTests => _sync;
-
     // ── signals from the upstream socket ──
 
     public void OnResponseCreated()
