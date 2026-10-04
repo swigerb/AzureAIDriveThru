@@ -3,6 +3,13 @@ name: Conformance Suite
 "on":
   pull_request:
     branches: [dev, main]
+    # #238 (Rick's follow-up on PR #231): the PR body/title can be edited after the last push
+    # (e.g. retitling to add/remove a closing keyword), which this workflow previously never
+    # re-checked without a new commit. Specifying `types:` at all REPLACES GitHub's implicit
+    # default set, so every default type is listed explicitly alongside `edited` -- omitting
+    # any of them here would silently narrow every job in this workflow to fewer trigger
+    # events, not just add the new one.
+    types: [opened, synchronize, reopened, edited]
   push:
     # Issue #24: catch anything that reached dev without going through this workflow as a
     # PR check (e.g. an administrator merge, or a merge commit built from a stale base).
@@ -39,10 +46,13 @@ jobs:
     timeout-minutes: 15
     # #105: the "PR's own issue" extraction step and the open-issue GitHub API check both
     # need to read issues (the pull_request event/its body is already available without any
-    # extra permission; `issues: read` is what the API lookup itself needs).
+    # extra permission; `issues: read` is what the API lookup itself needs). #238: the same
+    # extraction step now also fetches this PR's own commit list, which needs `pull-requests:
+    # read` (contents: read alone does not cover the GitHub REST API's pulls endpoints).
     permissions:
       contents: read
       issues: read
+      pull-requests: read
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -98,22 +108,90 @@ jobs:
       # then fail "issue is not open" on a green merge (#105 R1, round 2, Rick's PR #153
       # review -- the previous single-match, four-keyword regex missed close/closed/fix/
       # fixed/resolve/resolved and any match after the first).
+      # #227 (Rick's review of PR #220): also passes the PR's TITLE -- a bare '#N' there counts
+      # as a reference too, and a keyword followed by a comma-/"and"-separated list of refs
+      # ("Refs #76, #63") now yields every number in the list, not just the first.
+      # #227 round 2 (Rick's review of PR #231): a keyword-prefixed ref in the TITLE (e.g.
+      # "Fix #N: ...") now counts as a CLOSER too, not just a reference -- dev squash-merges
+      # with squash_merge_commit_title: COMMIT_OR_PR_TITLE, so GitHub's own keyword scan runs
+      # against that title on merge; a bare '#N' with no keyword stays reference-only. The
+      # comma-/"and"-separated list also now handles the Oxford-comma case ("Refs #1, #2, and
+      # #3"), which previously dropped the last number.
+      # #238 (Rick's follow-up on PR #231): also fetches and scans this PR's own COMMIT
+      # MESSAGES -- dev squash-merges with squash_merge_commit_message: COMMIT_MESSAGES, which
+      # concatenates EVERY commit's message into the final squash commit body, not just the
+      # sole commit of a single-commit PR. GITHUB_TOKEN/GITHUB_REPOSITORY/PR_NUMBER are now
+      # also required for this step; the commit fetch fails closed (exits 1) on any API error,
+      # same rationale as the open-issue API check below -- silently skipping it would
+      # under-report REBRAND_PR_CLOSES.
+      # #238 round 2 (Rick's review of PR #239): the GitHub commits endpoint silently caps at
+      # 250 commits total regardless of pagination, so a 251+-commit PR could lose whatever
+      # closing keyword lives in commit 251 onward with no error at all. PR_COMMITS carries
+      # GitHub's own authoritative commit count (github.event.pull_request.commits, an
+      # integer -- safe to pass via env:, no script-injection concern) so the fetch can fail
+      # closed on any mismatch, and also fails closed up front if PR_COMMITS is itself missing
+      # or not parseable as an integer.
       # Written to $GITHUB_ENV (not interpolated into the run script) specifically to avoid
-      # a script-injection risk from untrusted PR-body content.
+      # a script-injection risk from untrusted PR-body/title/commit-message content.
       - name: Determine this PR's own issue reference
         if: github.event_name == 'pull_request'
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_COMMITS: ${{ github.event.pull_request.commits }}
         run: |
           python - <<'PY' >> "$GITHUB_ENV"
           import os
           import sys
 
           sys.path.insert(0, "app/backend/tests")
-          from check_rebrand_baseline_against_base import parse_pr_issue_refs
+          from check_rebrand_baseline_against_base import (
+              fetch_pr_commit_messages,
+              parse_pr_issue_refs,
+          )
 
           body = os.environ.get("PR_BODY") or ""
-          issues, closes = parse_pr_issue_refs(body)
+          title = os.environ.get("PR_TITLE") or ""
+          token = os.environ.get("GITHUB_TOKEN") or ""
+          repo = os.environ.get("GITHUB_REPOSITORY") or ""
+          pr_number = os.environ.get("PR_NUMBER") or ""
+
+          # #238: fail closed -- a commit message carrying a closing keyword is just as able
+          # to close an issue on merge as the PR body/title, so silently treating a failed
+          # fetch as "no commit messages" would under-report REBRAND_PR_CLOSES.
+          if not (token and repo and pr_number):
+              print(
+                  "::error::GITHUB_TOKEN/GITHUB_REPOSITORY/PR_NUMBER are required to fetch "
+                  "this PR's commit messages (#238) -- cannot determine REBRAND_PR_ISSUES/"
+                  "REBRAND_PR_CLOSES safely.",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+          # #238 round 2: fail closed if PR_COMMITS is missing or non-numeric too -- without
+          # a trustworthy expected count, fetch_pr_commit_messages() cannot detect GitHub's
+          # 250-commit pagination cap silently truncating the fetch.
+          try:
+              pr_commits = int(os.environ.get("PR_COMMITS") or "")
+          except ValueError:
+              print(
+                  "::error::PR_COMMITS is missing or non-numeric -- cannot verify every "
+                  "commit message was fetched (the GitHub commits endpoint caps at 250 "
+                  "commits total regardless of pagination; #238 round 2).",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+          try:
+              commit_messages = fetch_pr_commit_messages(
+                  repo, pr_number, token, expected_count=pr_commits
+              )
+          except RuntimeError as exc:
+              print(f"::error::{exc}", file=sys.stderr)
+              sys.exit(1)
+
+          issues, closes = parse_pr_issue_refs(body, title, commit_messages=commit_messages)
           if issues:
               print(f"REBRAND_PR_ISSUES={','.join(sorted(issues))}")
           if closes:

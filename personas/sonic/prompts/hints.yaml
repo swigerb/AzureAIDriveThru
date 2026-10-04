@@ -7,27 +7,22 @@ upsell_hints:
 
   burger:
     trigger_categories:
-      - "burgers"
       - "burgers & sandwiches"
     hint: "Perfect choice! Ask if they want to make it a combo meal with Tots or Fries and a refreshing Drink!"
 
   drink:
     trigger_categories:
-      - "drinks"
-      - "slushes"
+      - "slushes & drinks"
     hint: "Great drink choice! Ask if they want to add a Flavor Add-In to customize it, or pair it with a tasty side!"
 
   shake:
     trigger_categories:
-      - "shakes"
-      - "desserts"
       - "shakes & ice cream"
     hint: "Yum! Shakes are perfect on their own, but ask if they'd like to add Whipped Cream or pair with a snack!"
 
   side:
     trigger_categories:
-      - "sides"
-      - "hot dogs"
+      - "extras & sides"
       - "hot dogs & tots"
     hint: "Tasty! Ask if they want to add a refreshing Drink or Slush to complete their meal!"
 

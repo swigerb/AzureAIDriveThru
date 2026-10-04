@@ -1,0 +1,94 @@
+name: .NET Tooling
+
+# Issue #16 (S6): a narrowly-scoped workflow for tools/dotnet only, separate from
+# conformance.yml's own dotnet-tests job (app/backend-dotnet). tools/dotnet is a fully
+# independent .NET solution (own Directory.Build.props/Directory.Packages.props/Tooling.slnx,
+# no project references into app/backend-dotnet or tests/conformance), so it gets its own
+# workflow rather than a new job bolted onto the shared, frequently-edited conformance.yml.
+"on":
+  pull_request:
+    branches: [dev, main]
+    paths:
+      - "tools/dotnet/**"
+      - ".github/workflows/dotnet-tooling.yml"
+      - "scripts/update_menu_sizes.py"
+      - "personas/*/menu/**"
+  push:
+    branches: [dev]
+    paths:
+      - "tools/dotnet/**"
+      - ".github/workflows/dotnet-tooling.yml"
+      - "scripts/update_menu_sizes.py"
+      - "personas/*/menu/**"
+  workflow_dispatch: {}
+
+concurrency:
+  group: dotnet-tooling-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  # Keep in sync with global.json (repo root) and conformance.yml's identical env var.
+  DOTNET_VERSION: "11.0.100-rc.1.26425.128"
+  DOTNET_NOLOGO: "true"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "true"
+
+jobs:
+  dotnet-tooling-tests:
+    name: tools/dotnet tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up .NET ${{ env.DOTNET_VERSION }}
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Cache NuGet packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-tooling-${{ hashFiles('tools/dotnet/Directory.Packages.props', 'tools/dotnet/**/*.csproj', 'tools/dotnet/**/packages.lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-tooling-
+
+      - name: dotnet restore tools/dotnet (locked mode)
+        working-directory: tools/dotnet
+        # Same rationale as conformance.yml's dotnet-tests job: RestorePackagesWithLockFile=true
+        # (Directory.Build.props) means packages.lock.json fully pins the resolved graph, so
+        # --locked-mode fails loudly instead of silently re-resolving if the committed lock files
+        # and Directory.Packages.props/*.csproj ever disagree.
+        run: dotnet restore Tooling.slnx --locked-mode
+
+      - name: dotnet test tools/dotnet
+        working-directory: tools/dotnet
+        # The PythonParityTests leg needs a Python 3 interpreter (stdlib only, no requirements.txt)
+        # to run scripts/update_menu_sizes.py as a real subprocess; ubuntu-latest ships python3,
+        # and the test fails closed (not skip) when GITHUB_ACTIONS=true and none is found, same
+        # fail-closed-in-CI convention as tests/conformance's PyJWT interop tests.
+        run: |
+          set -o pipefail
+          dotnet test Tooling.slnx \
+            --no-restore \
+            --logger "trx;LogFileName=dotnet-tooling-tests.trx" \
+            --logger "console;verbosity=detailed" \
+            --results-directory TestResults \
+            --blame-hang --blame-hang-timeout 10min --blame-hang-dump-type mini \
+            --blame-crash --blame-crash-dump-type mini \
+            2>&1 | tee dotnet-tooling-tests-output.log
+
+      - name: Upload tools/dotnet test results on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dotnet-tooling-tests-results
+          path: |
+            tools/dotnet/TestResults
+            tools/dotnet/dotnet-tooling-tests-output.log
+          retention-days: 7

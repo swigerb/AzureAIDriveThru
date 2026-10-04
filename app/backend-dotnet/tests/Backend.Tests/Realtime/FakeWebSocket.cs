@@ -2,9 +2,11 @@ using System.Net.WebSockets;
 
 namespace Backend.Tests.Realtime;
 
-/// <summary>Minimal fake <see cref="WebSocket"/> for <see cref="WebSocketFrameReaderTests"/>:
-/// replays a pre-configured sequence of receive chunks (as if fed by <c>ReceiveAsync</c>) and
-/// records any close call so tests can assert on it without a real socket.</summary>
+/// <summary>Minimal fake <see cref="WebSocket"/> for <see cref="WebSocketFrameReaderTests"/> and
+/// (issue #13 Wave 2) <c>AudioAppendFastPathTests</c>: replays a pre-configured sequence of
+/// receive chunks (as if fed by <c>ReceiveAsync</c>), records every <c>SendAsync</c> call so a
+/// test can assert on exactly what bytes were forwarded, and records any close call so tests can
+/// assert on it without a real socket.</summary>
 internal sealed class FakeWebSocket : WebSocket
 {
     private readonly Queue<(byte[] Data, bool EndOfMessage, WebSocketMessageType MessageType)> _chunks;
@@ -60,6 +62,11 @@ internal sealed class FakeWebSocket : WebSocket
         return Task.FromResult(new WebSocketReceiveResult(data.Length, messageType, endOfMessage));
     }
 
-    public override Task SendAsync(ArraySegment<byte> buffer, WebSocketMessageType messageType, bool endOfMessage, CancellationToken cancellationToken) =>
-        Task.CompletedTask;
+    public List<(byte[] Data, WebSocketMessageType MessageType, bool EndOfMessage)> SentMessages { get; } = [];
+
+    public override Task SendAsync(ArraySegment<byte> buffer, WebSocketMessageType messageType, bool endOfMessage, CancellationToken cancellationToken)
+    {
+        SentMessages.Add((buffer.ToArray(), messageType, endOfMessage));
+        return Task.CompletedTask;
+    }
 }

@@ -176,7 +176,18 @@ public sealed class OrderToolExecutor : IToolExecutor
         }
         else if (action == "add" && !resultInfo.AbsorbedIntoCombo)
         {
-            var category = _menu.InferCategory(itemName);
+            // #168 follow-up (Rick's PR #217 review): an "extra" (Flavor Add-In, Add Bacon,
+            // Whipped Topping, Sweet Cream, Jalapeños, etc.) shares its base item's own category
+            // (e.g. this persona's own "Extras & Sides", alongside genuine stand-alone sides like
+            // Cheese Tots) but is its own order line, not a side the guest is choosing instead of/along
+            // with a combo -- a category-specific hint written for that category's REAL items
+            // (e.g. "add a refreshing Drink or Slush to complete their meal!") reads as non-
+            // sequitur stacked right after the item it modifies. Pass "" instead of the real
+            // category so GetUpsellHint/FallbackUpsellHint always miss every bucket and fall
+            // through to generic, matching exactly what an extra got before hints.yaml's
+            // "extras & sides" mapping was added in #168 (back then "extras & sides" didn't
+            // match ANY bucket either).
+            var category = _menu.IsExtraItem(itemName) ? "" : _menu.InferCategory(itemName);
             deltaText += _promptLoader is not null ? _promptLoader.GetUpsellHint(category) : FallbackUpsellHint(category);
         }
 

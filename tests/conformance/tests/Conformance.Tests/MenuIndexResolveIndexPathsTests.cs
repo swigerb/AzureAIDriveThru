@@ -9,6 +9,7 @@ namespace Conformance.Tests;
 /// hand-written persona.json stubs, never the repo's real personas/ folder, so these tests never
 /// depend on how many real packs currently exist on disk.
 /// </summary>
+[Trait("Category", "Harness")]
 public sealed class MenuIndexResolveIndexPathsTests
 {
     private static string CreatePersona(string root, string personaId, string indexName)

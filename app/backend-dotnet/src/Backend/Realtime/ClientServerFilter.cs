@@ -49,8 +49,17 @@ public static class ClientServerFilter
         "type", "threshold", "prefix_padding_ms", "silence_duration_ms",
     };
 
-    private static readonly Regex EventIdRegex = new("^[A-Za-z0-9_-]{1,64}$", RegexOptions.Compiled);
-    private static readonly Regex Base64Regex = new("^[A-Za-z0-9+/]*={0,2}$", RegexOptions.Compiled);
+    // Rick's #230 review item 3: rtmt.py calls these two patterns via `re.fullmatch`, which
+    // requires the ENTIRE string to be consumed -- unlike .NET's default `$` anchor, which (with
+    // no RegexOptions.Multiline/Singleline set) also matches the position immediately before a
+    // single trailing "\n". `Regex.IsMatch("abc\n", "^[A-Za-z]+$")` is therefore `true` in .NET
+    // but `_CLIENT_EVENT_ID_RE.fullmatch("abc\n")` is `false` in Python -- a forged event_id
+    // ending in a newline would wrongly be treated as a valid 64-char id here (then forwarded
+    // byte-for-byte onto the upstream GA socket) while Python strips/drops it. `\z` anchors to
+    // the absolute end of the string with no such exception, matching `fullmatch`'s semantics
+    // exactly.
+    private static readonly Regex EventIdRegex = new("^[A-Za-z0-9_-]{1,64}\\z", RegexOptions.Compiled);
+    private static readonly Regex Base64Regex = new("^[A-Za-z0-9+/]*={0,2}\\z", RegexOptions.Compiled);
 
     /// <summary>Allow-lists and rebuilds a browser→upstream event. Returns null if the whole event
     /// must be dropped. <paramref name="hooksEnabled"/> mirrors Python's live

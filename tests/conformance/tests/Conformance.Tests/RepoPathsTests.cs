@@ -9,6 +9,7 @@ namespace Conformance.Tests;
 /// on completion) to prove the walk-up logic handles both a normal clone (`.git` as a directory)
 /// and a git worktree (`.git` as a plain file containing a `gitdir: ...` pointer).
 /// </summary>
+[Trait("Category", "Harness")]
 public sealed class RepoPathsTests
 {
     [Fact]
