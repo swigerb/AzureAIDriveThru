@@ -130,15 +130,17 @@ existing registration (every run after the first) requires `-ClientId`/`-AppObje
 `AzureAIDriveThruManaged` tag. `-RedirectUri` defaults to the two local-dev origins from design 18.1
 (`http://localhost:8000`, `http://localhost:5173`), so those two count as "supplied" even when you pass nothing:
 the redirect-URI reconcile is a full SET, so a run that omits `-FrontendOrigin`/`-RedirectUri`/`-FromAzdEnv`
-registers only the localhost defaults. Only a run whose combined total is empty (`-RedirectUri @()` explicitly, with
-no `-FrontendOrigin`/`-FromAzdEnv`) leaves the existing SPA URIs untouched.
+registers the localhost defaults only, replacing any already-registered frontend origin. Only a run whose
+combined total is empty (`-RedirectUri @()` explicitly, with no `-FrontendOrigin`/`-FromAzdEnv`) leaves the
+existing SPA URIs untouched.
 
-**Always pass `-FrontendOrigin` (or `-RedirectUri`/`-FromAzdEnv`) on every re-run** to keep a live origin registered.
-Since #162, `-Apply` refuses to drop one: if the reconcile would remove an already-registered, non-localhost SPA
-redirect URI, the script stops with an error naming the URI(s) instead of silently replacing them with the localhost
-defaults. Pass `-AllowRedirectUriRemoval` only if you really mean to drop that origin (for example, retiring an old
-environment); removing localhost-only origins never needs the switch. Preview (no `-Apply`) always prints the
-would-be removals so you can catch a missing `-FrontendOrigin` before applying.
+**However, since #162, `-Apply` never does that replacement silently.** Always pass `-FrontendOrigin` (or
+`-RedirectUri`/`-FromAzdEnv`) on every re-run to keep a live origin registered: if the reconcile above would
+remove an already-registered, non-localhost SPA redirect URI, the script refuses and stops with an error naming
+the URI(s) instead of replacing them with the localhost defaults. Pass `-AllowRedirectUriRemoval` only if you
+really mean to drop that origin (for example, retiring an old environment); removing localhost-only origins
+never needs the switch. Preview (no `-Apply`) always prints the would-be removals so you can catch a missing
+`-FrontendOrigin` before applying.
 
 ```powershell
 az login --tenant <tenant-id>

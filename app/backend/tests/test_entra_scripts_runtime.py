@@ -493,11 +493,16 @@ class SetupEntraAuthRedirectUriDefaultBehaviorMockedGraphTests(unittest.TestCase
     false: -RedirectUri defaults to the two design-18.1 localhost origins (never empty), so
     $redirects.Count is never 0 unless the caller explicitly passes -RedirectUri @() with no
     -FrontendOrigin/-FromAzdEnv. Section 7's full-SET reconcile fires whenever
-    $redirects.Count -gt 0 and REPLACES the existing spa.redirectUris wholesale -- so omitting
-    all three flags actually WIPES an already-registered frontend origin and replaces it with the
-    localhost defaults only. These two mocked-Graph end-to-end runs pin the real behavior
-    (mirroring SetupEntraAuthSplitPatchMockedGraphTests's harness technique) so the doc fix in
-    DEPLOY.md can't silently drift from the code again.
+    $redirects.Count -gt 0 and would otherwise REPLACE the existing spa.redirectUris wholesale --
+    so omitting all three flags would wipe an already-registered live frontend origin.
+
+    #162: that silent wipe is now refused. -Apply throws instead of PATCHing when the reconcile
+    would drop an already-registered, non-localhost SPA redirect URI, unless the caller passes
+    -AllowRedirectUriRemoval. These mocked-Graph end-to-end runs pin the real behavior (mirroring
+    SetupEntraAuthSplitPatchMockedGraphTests's harness technique): the refusal itself, the
+    opt-in removal via -AllowRedirectUriRemoval, preview mode always reporting the would-be
+    removal without ever PATCHing, and the always-empty-redirect-uri case that still leaves
+    existing SPA URIs untouched.
     """
 
     MOCK_TENANT = "77777777-7777-7777-7777-777777777777"
@@ -514,7 +519,9 @@ class SetupEntraAuthRedirectUriDefaultBehaviorMockedGraphTests(unittest.TestCase
 param(
     [Parameter(Mandatory = $true)][string]$SetupScriptPath,
     [Parameter(Mandatory = $true)][string]$PatchLogPath,
-    [switch]$EmptyRedirectUri
+    [switch]$EmptyRedirectUri,
+    [switch]$AllowRemoval,
+    [switch]$PreviewOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -609,6 +616,12 @@ function azd {
 if ($EmptyRedirectUri) {
     & $SetupScriptPath -TenantId $tenant -ClientId $clientId -RedirectUri @() -Apply
 }
+elseif ($PreviewOnly) {
+    & $SetupScriptPath -TenantId $tenant -ClientId $clientId
+}
+elseif ($AllowRemoval) {
+    & $SetupScriptPath -TenantId $tenant -ClientId $clientId -Apply -AllowRedirectUriRemoval
+}
 else {
     & $SetupScriptPath -TenantId $tenant -ClientId $clientId -Apply
 }
@@ -642,7 +655,7 @@ exit $LASTEXITCODE
         if self._patch_log_path.exists():
             self._patch_log_path.unlink()
 
-    def _run(self, empty_redirect_uri=False):
+    def _run(self, empty_redirect_uri=False, allow_removal=False, preview_only=False):
         args = [
             PWSH, "-NoProfile", "-NonInteractive", "-File", str(self._harness_path),
             "-SetupScriptPath", str(SETUP_ENTRA),
@@ -650,6 +663,10 @@ exit $LASTEXITCODE
         ]
         if empty_redirect_uri:
             args.append("-EmptyRedirectUri")
+        if allow_removal:
+            args.append("-AllowRemoval")
+        if preview_only:
+            args.append("-PreviewOnly")
         return subprocess.run(args, capture_output=True, text=True, timeout=60)
 
     def _read_patch_log(self):
@@ -662,15 +679,38 @@ exit $LASTEXITCODE
                 records.append(json.loads(line))
         return records
 
-    def test_omitting_all_three_redirect_flags_replaces_the_existing_origin_with_localhost_only(self):
-        # No -FrontendOrigin / -RedirectUri / -FromAzdEnv: -RedirectUri's default (the two
-        # localhost origins) makes $redirects.Count -eq 2, so the section-7 full-SET reconcile
-        # DOES fire and replaces spa.redirectUris wholesale -- the existing frontend origin is
-        # gone, not "left untouched".
+    def test_omitting_all_three_redirect_flags_refuses_to_drop_the_existing_live_origin(self):
+        # #162: no -FrontendOrigin / -RedirectUri / -FromAzdEnv / -AllowRedirectUriRemoval:
+        # -RedirectUri's default (the two localhost origins) means the section-7 full-SET
+        # reconcile WOULD replace spa.redirectUris wholesale and drop the already-registered
+        # live (non-localhost) origin. -Apply must refuse instead of silently wiping it -- a
+        # non-zero exit, a clear message naming the dropped origin, and NO PATCH at all.
         result = self._run()
+        self.assertNotEqual(
+            result.returncode, 0,
+            f"expected a non-zero exit when -Apply would drop a live SPA redirect URI without "
+            f"-AllowRedirectUriRemoval.\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}",
+        )
+        self.assertIn(self.EXISTING_FRONTEND_ORIGIN, result.stderr)
+        self.assertIn("-AllowRedirectUriRemoval", result.stderr)
+        patches = self._read_patch_log()
+        spa_patches = [
+            p for p in patches
+            if isinstance(p.get("body"), dict) and "spa" in p["body"]
+        ]
+        self.assertEqual(
+            len(spa_patches), 0,
+            f"expected NO SPA redirect-URI PATCH when the removal is refused: {spa_patches}",
+        )
+
+    def test_allow_redirect_uri_removal_lets_the_reconcile_replace_the_existing_origin(self):
+        # #162: the same scenario as above, but with the explicit opt-in switch -- the reconcile
+        # is allowed to proceed and replaces spa.redirectUris with the localhost defaults only.
+        result = self._run(allow_removal=True)
         self.assertEqual(
             result.returncode, 0,
-            f"expected exit 0.\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}",
+            f"expected exit 0 with -AllowRedirectUriRemoval.\nstdout:\n{result.stdout}\n"
+            f"stderr:\n{result.stderr}",
         )
         patches = self._read_patch_log()
         spa_patches = [
@@ -679,17 +719,30 @@ exit $LASTEXITCODE
         ]
         self.assertEqual(
             len(spa_patches), 1,
-            f"expected exactly one SPA redirect-URI PATCH when the localhost defaults differ "
-            f"from the existing origin, got {len(spa_patches)}: {spa_patches}",
+            f"expected exactly one SPA redirect-URI PATCH when removal is explicitly allowed, "
+            f"got {len(spa_patches)}: {spa_patches}",
         )
         new_uris = set(spa_patches[0]["body"]["spa"].get("redirectUris") or [])
         self.assertEqual(
             new_uris, {"http://localhost:8000", "http://localhost:5173"},
             "expected the PATCH to replace spa.redirectUris with ONLY the two localhost "
-            "defaults -- the pre-existing frontend origin must be gone, proving the run does "
-            "NOT leave existing SPA URIs untouched",
+            "defaults once removal is explicitly allowed",
         )
         self.assertNotIn(self.EXISTING_FRONTEND_ORIGIN, new_uris)
+
+    def test_preview_mode_reports_the_would_be_removal_without_patching_or_throwing(self):
+        # #162: preview (no -Apply) must always print the would-be removal so a missing
+        # -FrontendOrigin is caught before applying -- but it must never throw and never PATCH,
+        # regardless of -AllowRedirectUriRemoval.
+        result = self._run(preview_only=True)
+        self.assertEqual(
+            result.returncode, 0,
+            f"preview mode must never fail even when a live origin would be removed.\n"
+            f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}",
+        )
+        self.assertIn(self.EXISTING_FRONTEND_ORIGIN, result.stdout)
+        patches = self._read_patch_log()
+        self.assertEqual(patches, [], f"preview mode must never PATCH anything: {patches}")
 
     def test_explicit_empty_redirect_uri_with_no_origin_flags_leaves_existing_spa_uris_untouched(self):
         # -RedirectUri @() (explicit override to empty) with no -FrontendOrigin/-FromAzdEnv is
