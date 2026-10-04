@@ -2,7 +2,6 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import Settings from "../settings";
 import { DummyDataProvider } from "@/context/dummy-data-context";
-import { AzureSpeechProvider } from "@/context/azure-speech-context";
 import { DEFAULT_VOICE, VOICE_OPTIONS, resolveVoice } from "@/lib/voices";
 
 // Every voice gpt-realtime-2.1 accepts (the service's own list when it rejects
@@ -11,24 +10,22 @@ const GA_REALTIME_VOICES = ["alloy", "ash", "ballad", "cedar", "coral", "echo", 
 
 function renderSettings(voiceChoice: string, roleName?: string, voiceLabelOverride?: string, defaultVoiceId?: string) {
     return render(
-        <AzureSpeechProvider>
-            <DummyDataProvider>
-                <Settings
-                    isMobile={false}
-                    showSessionTokens={false}
-                    onShowSessionTokensChange={() => {}}
-                    verboseLogging={false}
-                    onVerboseLoggingChange={() => {}}
-                    logToFile={false}
-                    onLogToFileChange={() => {}}
-                    voiceChoice={voiceChoice}
-                    onVoiceChoiceChange={() => {}}
-                    roleName={roleName}
-                    voiceLabelOverride={voiceLabelOverride}
-                    defaultVoiceId={defaultVoiceId}
-                />
-            </DummyDataProvider>
-        </AzureSpeechProvider>
+        <DummyDataProvider>
+            <Settings
+                isMobile={false}
+                showSessionTokens={false}
+                onShowSessionTokensChange={() => {}}
+                verboseLogging={false}
+                onVerboseLoggingChange={() => {}}
+                logToFile={false}
+                onLogToFileChange={() => {}}
+                voiceChoice={voiceChoice}
+                onVoiceChoiceChange={() => {}}
+                roleName={roleName}
+                voiceLabelOverride={voiceLabelOverride}
+                defaultVoiceId={defaultVoiceId}
+            />
+        </DummyDataProvider>
     );
 }
 

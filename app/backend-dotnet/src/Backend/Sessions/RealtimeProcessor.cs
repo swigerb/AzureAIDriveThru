@@ -64,6 +64,7 @@ public sealed class RealtimeProcessor : IPipelineProcessor
     private readonly double _echoCooldownSeconds;
     private readonly double _greetingTimeoutSeconds;
     private readonly ILogger? _logger;
+    private readonly TimeProvider _timeProvider;
 
     public RealtimeProcessor(
         ModelCatalog catalog,
@@ -78,7 +79,8 @@ public sealed class RealtimeProcessor : IPipelineProcessor
         double greetingTimeoutSeconds = 5.0,
         ILogger? logger = null,
         IUpstreamBearerTokenProvider? bearerTokenProvider = null,
-        Func<Persona, PromptLoader?, string?, IToolExecutor>? toolExecutorFactory = null)
+        Func<Persona, PromptLoader?, string?, IToolExecutor>? toolExecutorFactory = null,
+        TimeProvider? timeProvider = null)
     {
         _catalog = catalog;
         _defaultDeployment = defaultDeployment;
@@ -93,6 +95,11 @@ public sealed class RealtimeProcessor : IPipelineProcessor
         _echoCooldownSeconds = echoCooldownSeconds;
         _greetingTimeoutSeconds = greetingTimeoutSeconds;
         _logger = logger;
+        // Issue #13 Wave 2: every time-dependent piece of the relay (echo-suppression cooldowns,
+        // the greeting-gate timeout, the "loop time" ShouldSuppressAudio/OnAudioDone/OnResponseDone
+        // read) is driven from this one clock, so a test can swap in a FakeTimeProvider instead of
+        // waiting on real wall-clock delays. Defaults to TimeProvider.System in production.
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     public string PipelineName => "realtime";
@@ -182,7 +189,8 @@ public sealed class RealtimeProcessor : IPipelineProcessor
             SessionId = sessionId,
             Voice = voice,
             Echo = new EchoSuppressor(_echoCooldownSeconds,
-                flushCt => SendTextAsync(upstream, """{"type":"input_audio_buffer.clear"}""", flushCt)),
+                flushCt => SendTextAsync(upstream, """{"type":"input_audio_buffer.clear"}""", flushCt),
+                _timeProvider),
             Guard = new SessionUpdateGuard(),
             Identifiers = new SessionIdentifiers(persona.Id, resolvedModel.Id, sessionId),
         };
@@ -233,7 +241,7 @@ public sealed class RealtimeProcessor : IPipelineProcessor
             var timeoutSeconds = ParseGreetingTimeoutSeconds();
             try
             {
-                await state.SessionConfigured.Task.WaitAsync(TimeSpan.FromSeconds(timeoutSeconds), ct).ConfigureAwait(false);
+                await state.SessionConfigured.Task.WaitAsync(TimeSpan.FromSeconds(timeoutSeconds), _timeProvider, ct).ConfigureAwait(false);
             }
             catch (TimeoutException)
             {
@@ -360,6 +368,28 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                 }
                 if (frame.MessageType != WebSocketMessageType.Text)
                 {
+                    continue;
+                }
+
+                var fastPath = TryAppendFastPath(frame.Payload, state.Echo);
+                if (fastPath.IsMatch)
+                {
+                    // Issue #13 Wave 2: skips the JSON parse, allow-list rebuild and re-serialize
+                    // entirely for the one exact frame shape addUserAudio() sends (~10/sec while
+                    // the guest is talking). Echo-suppression gating still runs first, exactly as
+                    // it does on the slow path below -- the fast path only ever changes HOW a
+                    // genuine, unsuppressed append frame gets forwarded, never WHETHER it does.
+                    if (!fastPath.Suppressed)
+                    {
+                        try
+                        {
+                            await SendBytesAsync(upstream, frame.Payload, ct).ConfigureAwait(false);
+                        }
+                        catch (Exception ex) when (ex is not OperationCanceledException)
+                        {
+                            _logger?.LogWarning(ex, "Error forwarding fast-path audio append frame (session={SessionId})", sessionId);
+                        }
+                    }
                     continue;
                 }
 
@@ -982,12 +1012,108 @@ public sealed class RealtimeProcessor : IPipelineProcessor
         await socket.SendAsync(bytes, WebSocketMessageType.Text, endOfMessage: true, ct).ConfigureAwait(false);
     }
 
+    /// <summary>Issue #13 Wave 2 audio-append fast path: forwards a frame's ORIGINAL bytes
+    /// unchanged, skipping the UTF8-decode + re-encode round trip <see cref="SendTextAsync"/> does
+    /// for a frame built from a <see cref="JsonObject"/>. Only ever called with
+    /// <see cref="WebSocketFrame.Payload"/> itself, so "identical forwarded bytes" is exact, not
+    /// just byte-equal after a round trip. Internal (not private) so
+    /// <c>AudioAppendFastPathTests</c> can assert on exactly what reaches the socket without
+    /// standing up a real upstream connection.</summary>
+    internal static async Task SendBytesAsync(WebSocket socket, byte[] payload, CancellationToken ct)
+    {
+        if (socket.State != WebSocketState.Open)
+        {
+            return;
+        }
+        await socket.SendAsync(payload, WebSocketMessageType.Text, endOfMessage: true, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Result of <see cref="TryAppendFastPath"/>: whether <paramref name="payload"/>
+    /// matched the fast-path shape at all, and if so, whether echo suppression says it must be
+    /// dropped rather than forwarded.</summary>
+    internal readonly record struct AppendFastPathResult(bool IsMatch, bool Suppressed);
+
+    /// <summary>Issue #13 Wave 2: the audio-append fast path's full decision -- shape match plus
+    /// the SAME echo-suppression gate the slow path applies (<c>state.Echo.ShouldSuppressAudio(...)</c>
+    /// at line ~442 below) -- extracted to its own internal method (same idiom as
+    /// <see cref="ResolveSessionBinding"/>/<see cref="ResolveUpstreamAuthHeaderAsync"/>) so a test
+    /// can prove the gating without a live upstream socket.</summary>
+    internal AppendFastPathResult TryAppendFastPath(byte[] payload, EchoSuppressor echo)
+    {
+        if (!TryMatchAppendFastPath(payload))
+        {
+            return new AppendFastPathResult(IsMatch: false, Suppressed: false);
+        }
+        return new AppendFastPathResult(IsMatch: true, Suppressed: echo.ShouldSuppressAudio(NowSeconds()));
+    }
+
+    /// <summary>Port of app/backend/rtmt.py's <c>_CLIENT_APPEND_FAST_PATH_RE</c> (PR #49 round 2
+    /// "M1"): the ONE exact byte shape useRealtime.tsx's <c>addUserAudio()</c> sends --
+    /// <c>{"type":"input_audio_buffer.append","audio":"BASE64"}</c>, no <c>event_id</c>, no extra
+    /// whitespace, no different key order. Deliberately anchored at both ends and over the whole
+    /// payload (not a substring search): PR #49's own review history is why -- an earlier,
+    /// unanchored substring fast path could be spoofed by embedding a fake
+    /// <c>"type":"input_audio_buffer.append"</c> string inside a nested/arbitrary JSON value.
+    /// Anything that doesn't match this exactly (an event_id, extra keys, a byte outside the
+    /// base64 alphabet anywhere in the audio value, a trailing byte) falls through to the full
+    /// parse + allow-list path below, which still accepts a genuine append frame in any other
+    /// shape, just without the fast path's saved JSON-parse/rebuild/re-serialize work.</summary>
+    private static readonly byte[] AppendFastPathPrefix =
+        Encoding.ASCII.GetBytes("{\"type\":\"input_audio_buffer.append\",\"audio\":\"");
+    private static readonly byte[] AppendFastPathSuffix = Encoding.ASCII.GetBytes("\"}");
+
+    internal static bool TryMatchAppendFastPath(byte[] payload)
+    {
+        if (payload.Length < AppendFastPathPrefix.Length + AppendFastPathSuffix.Length)
+        {
+            return false;
+        }
+        if (!payload.AsSpan(0, AppendFastPathPrefix.Length).SequenceEqual(AppendFastPathPrefix))
+        {
+            return false;
+        }
+        var suffixStart = payload.Length - AppendFastPathSuffix.Length;
+        if (!payload.AsSpan(suffixStart).SequenceEqual(AppendFastPathSuffix))
+        {
+            return false;
+        }
+        foreach (var b in payload.AsSpan(AppendFastPathPrefix.Length, suffixStart - AppendFastPathPrefix.Length))
+        {
+            if (!IsFastPathAudioAlphabetByte(b))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /// <summary>Deliberately matches rtmt.py's <c>_CLIENT_APPEND_FAST_PATH_RE</c> character class
+    /// <c>[A-Za-z0-9+/=]</c> exactly, NOT <see cref="ClientServerFilter"/>'s stricter
+    /// <c>^[A-Za-z0-9+/]*={0,2}$</c> slow-path audio regex (nor rtmt.py's own equally stricter
+    /// <c>_CLIENT_BASE64_RE</c>): both languages' fast-path regexes allow a <c>=</c> anywhere in
+    /// the value, any number of times, not just 0-2 trailing padding characters. This is a known,
+    /// pre-existing looseness in the fast path versus the slow path in BOTH implementations (not
+    /// introduced by this port) -- harmless, because the fast path only ever decides whether a
+    /// frame takes the fast lane to the SAME unmodified upstream Azure OpenAI Realtime API, which
+    /// independently validates/rejects malformed base64 itself; it never widens what the browser
+    /// is allowed to do or what gets accepted as well-formed. Kept exactly as loose as Python's own
+    /// fast path so the C# port's forwarding behaviour matches byte-for-byte, per this port's
+    /// "match Python's handling exactly" requirement (issue #13).</summary>
+    private static bool IsFastPathAudioAlphabetByte(byte b) =>
+        (b >= (byte)'A' && b <= (byte)'Z')
+        || (b >= (byte)'a' && b <= (byte)'z')
+        || (b >= (byte)'0' && b <= (byte)'9')
+        || b == (byte)'+' || b == (byte)'/' || b == (byte)'=';
+
     private static string? GetString(JsonObject? obj, string key) =>
         obj?[key] is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
 
     /// <summary>Monotonic "loop time" in seconds, mirroring Python's
-    /// <c>asyncio.AbstractEventLoop.time()</c> -- immune to system clock adjustments.</summary>
-    private static double NowSeconds() => Environment.TickCount64 / 1000.0;
+    /// <c>asyncio.AbstractEventLoop.time()</c> -- immune to system clock adjustments. Issue #13
+    /// Wave 2: sourced from the injected <see cref="_timeProvider"/> (not
+    /// <c>Environment.TickCount64</c>) so a <c>FakeTimeProvider</c>-backed test can advance it
+    /// deterministically.</summary>
+    private double NowSeconds() => _timeProvider.GetTimestamp() / (double)_timeProvider.TimestampFrequency;
 
     private static IReadOnlyList<JsonObject> BuildToolSchemas(PromptLoader? promptLoader)
     {

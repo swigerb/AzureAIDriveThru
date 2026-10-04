@@ -243,6 +243,14 @@ class RouteCoverageTests(unittest.IsolatedAsyncioTestCase):
         }
         self.assertEqual(names, expected)
 
+    def test_anonymous_route_names_pinned(self):
+        """F1 (#163 round-2 review): pins the exact anonymous-by-name set as its
+        own literal, independent of `_build_real_app` (and so independent of the
+        bare-worktree `static/index.html` gap documented on this class) -- a
+        change here is a deliberate, reviewable auth-allow-list change, not an
+        incidental side effect of adding a route elsewhere."""
+        self.assertEqual(entra_auth.ANONYMOUS_ROUTE_NAMES, frozenset({"index", "health", "static"}))
+
     async def test_every_protected_route_401s_without_a_token(self):
         """Built from the REAL route walk (`app.router.routes()`), not a
         hand-written path list, so a newly added protected route is automatically
@@ -343,6 +351,13 @@ class MainEntrypointTests(unittest.TestCase):
             runpy.run_path(app_module_path, run_name="__main__")
 
         self.assertIs(captured_kwargs.get("access_log_class"), PathOnlyAccessLogger)
+        # F2 (#163 round-2 review): this path's timeouts come from config.yaml's
+        # `connection.shutdown_timeout`/`connection.keepalive_timeout` (10.0/75.0
+        # today) -- a DIFFERENT source than `create_runner()`'s own hardcoded
+        # 65/28.5 above, since `python app.py` and the gunicorn worker are two
+        # independent run paths that must each be pinned on their own terms.
+        self.assertEqual(captured_kwargs.get("shutdown_timeout"), 10.0)
+        self.assertEqual(captured_kwargs.get("keepalive_timeout"), 75.0)
 
 
 class HealthEndpointTests(unittest.IsolatedAsyncioTestCase):

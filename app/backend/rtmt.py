@@ -22,6 +22,7 @@ from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 
 import conformance_hooks
 import default_persona
+import entra_auth
 from audio_pipeline import (
     _GA_TO_LEGACY_EVENTS,
     _PASSTHROUGH_SERVER_TYPES,
@@ -2922,9 +2923,10 @@ class RTMiddleTier:
         # ── HMAC session token validation (Task 4; issue #144/18.3) ──
         # In Entra mode, require_session_token is FORCED on -- config.yaml cannot
         # turn it off -- and the token must carry the SAME oid as the Entra
-        # principal middleware already validated (request["principal"], set before
-        # this handler ever runs). In Development pass-through, config.yaml's
-        # `security.require_session_token` still governs this unchanged.
+        # principal middleware already validated (request[entra_auth.PRINCIPAL_KEY],
+        # set before this handler ever runs). In Development pass-through,
+        # config.yaml's `security.require_session_token` still governs this
+        # unchanged.
         if self.entra_mode or _security_cfg.get("require_session_token", False):
             token = request.query.get("token", "")
             payload = decode_hmac_token(token, self.app_secret)
@@ -2935,7 +2937,7 @@ class RTMiddleTier:
                     headers={"WWW-Authenticate": "Bearer"},
                 )
             if self.entra_mode:
-                principal = request.get("principal") or {}
+                principal = request.get(entra_auth.PRINCIPAL_KEY) or {}
                 if not payload.get("oid") or payload.get("oid") != principal.get("oid"):
                     logger.warning("Rejected WebSocket: session token oid does not match Entra principal")
                     return web.Response(

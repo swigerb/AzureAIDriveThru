@@ -754,7 +754,7 @@ async def create_app() -> web.Application:
         # Development pass-through's synthetic principal set it -- see
         # entra_auth.py's middleware). /realtime later rejects unless that oid
         # matches the Entra token's own oid.
-        principal = request.get("principal")
+        principal = request.get(entra_auth.PRINCIPAL_KEY)
         oid = principal.get("oid") if principal else None
         token = create_hmac_token(app_secret, expiry_seconds=900, oid=oid)
         return web.json_response({"token": token})

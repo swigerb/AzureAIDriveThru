@@ -280,20 +280,3 @@ describe("backend switch visibility (issue #80 F11)", () => {
         expect(screen.queryByLabelText("Select backend")).not.toBeInTheDocument();
     });
 });
-
-// Rick's PR 134 review, item 3: a browser that previously had the legacy "Azure Backend" toggle
-// on (localStorage.useAzureSpeechOn === "true") must land on the realtime path -- and the guest's
-// own chosen model -- on its very next load, since there is no UI left anywhere in the app that
-// can turn the toggle back on.
-describe("legacy Azure Backend toggle forced off (issue #80, Rick's PR 134 review item 3)", () => {
-    it("still threads the chosen ?model= into useRealTime even when the legacy flag was stored true", async () => {
-        localStorage.setItem("useAzureSpeechOn", "true");
-        window.history.pushState({}, "", "/?model=gpt-5-mini");
-
-        render(<RootApp />);
-        await screen.findByLabelText("Select persona");
-
-        await waitFor(() => expect(rt.params.modelId).toBe("gpt-5-mini"));
-        expect(localStorage.getItem("useAzureSpeechOn")).toBeNull();
-    });
-});
