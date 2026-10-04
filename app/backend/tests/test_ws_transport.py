@@ -195,6 +195,97 @@ class BargeInFilterTests(unittest.IsolatedAsyncioTestCase):
             await browser.close()
 
 
+class _TrickyTranscriptFakeRealtime(FakeGARealtime):
+    """Server VAD auto-response sends a conversation.item.input_audio_transcription
+    .completed event whose own transcript text happens to equal the exact bytes of
+    the (legacy) audio-delta marker -- reproducing #234's substring-collision bug:
+    `from_server_to_client()` used to decide each frame's handling with raw substring
+    `in` checks and no confirming parse, so a transcript merely *containing* another
+    event's marker text (`"transcript":"response.audio.delta"` contains the exact
+    substring `"response.audio.delta"`) misfired the audio-delta branch and, being an
+    `elif` chain, skipped the transcription-completed branch entirely.
+
+    The first auto-response sends ONLY that transcript frame (no audio), so its
+    dispatch can be asserted in isolation; a later explicit response.create
+    triggers a normal full response (real audio) via the base class, to confirm
+    genuine audio-delta handling is unaffected.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self._respond_calls = 0
+
+    async def _respond(self, ws):
+        self._respond_calls += 1
+        if self._respond_calls == 1:
+            self.response_sessions.append(self._snapshot())
+            await ws.send_json({
+                "type": "conversation.item.input_audio_transcription.completed",
+                "transcript": "response.audio.delta",
+            })
+            return
+        await super()._respond(ws)
+
+
+class ServerToClientDispatchTests(unittest.IsolatedAsyncioTestCase):
+    """#234: a real upstream fake sends the tricky transcript frame through the real
+    middle tier's `from_server_to_client()` loop, over a real WebSocket pair -- the
+    same style as BargeInFilterTests above, which covers the equivalent (already-
+    fixed) browser-to-model direction."""
+
+    async def asyncSetUp(self):
+        self.fake = _TrickyTranscriptFakeRealtime()
+        self.fake_server = TestServer(self.fake.app())
+        await self.fake_server.start_server()
+        self.rtmt = RTMiddleTier(
+            endpoint=str(self.fake_server.make_url("")),
+            deployment="gpt-realtime-test",
+            credentials=AzureKeyCredential("test-key"),
+            voice_choice="shimmer",
+        )
+        self.rtmt.system_message = "sys"
+        from model_catalog import ModelCatalog
+
+        self.rtmt.model_catalog = ModelCatalog.load(environ={})
+        app = web.Application()
+        self.rtmt.attach_to_app(app, "/realtime")
+        self.client = TestClient(TestServer(app))
+        await self.client.start_server()
+
+    async def asyncTearDown(self):
+        await self.client.close()
+        await self.fake_server.close()
+
+    async def _until(self, predicate, timeout=5.0):
+        async def poll():
+            while not predicate():
+                await asyncio.sleep(0.01)
+        await asyncio.wait_for(poll(), timeout)
+
+    async def test_a_transcript_echoing_the_audio_delta_marker_still_fires_transcription_handling_not_echo(self):
+        with patch.object(audio_pipeline.EchoSuppressor, "on_audio_delta") as mock_on_delta, \
+             patch.object(session_manager_module.SessionManager, "record_turn") as mock_record_turn:
+            browser = await self.client.ws_connect("/realtime")
+            await self._until(lambda: self.rtmt._sessions.active_session_count == 1)
+            session_id = next(iter(self.rtmt._sessions._session_map.values()))
+
+            # The fake's first auto-response sends ONLY the tricky transcript frame.
+            await browser.send_json({"type": "input_audio_buffer.append", "audio": "AAAA"})
+            await self._until(lambda: mock_record_turn.called)
+
+            # The old substring dispatch would have matched the *first* `elif`
+            # (audio-delta) for this frame and, being an elif chain, never reached
+            # the transcription-completed branch (record_turn) at all.
+            mock_on_delta.assert_not_called()
+            mock_record_turn.assert_called_once_with(session_id, "guest", "response.audio.delta")
+
+            # Sanity: a genuine audio-delta still triggers echo suppression normally.
+            await browser.send_json({"type": "response.create"})
+            await self._until(lambda: mock_on_delta.called)
+
+            await browser.close()
+
+
 class CompressionConfigTests(unittest.TestCase):
 
     def test_browser_socket_compression_defaults_off(self):
