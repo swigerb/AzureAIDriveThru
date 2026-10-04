@@ -206,10 +206,22 @@ public sealed class CascadeProcessor : IPipelineProcessor
                 {
                     await body(cts.Token).ConfigureAwait(false);
                 }
-                catch (OperationCanceledException)
+                catch (OperationCanceledException) when (cts.Token.IsCancellationRequested)
                 {
                     // Expected when this turn is barged in on -- silent, same as cascade_processor.py's
                     // own background-task wrapper swallowing asyncio.CancelledError.
+                    //
+                    // Follow-up to #236 Rick re-review item 3: the same `when` guard used at each
+                    // inner catch (ExecuteToolCallAsync/TranscribeAsync/SpeakAsync) belongs here too.
+                    // Without it, an OperationCanceledException from something unrelated to a
+                    // barge-in or session shutdown -- e.g. an HttpClient-internal timeout
+                    // (TaskCanceledException) surfacing from the chat-completion call itself, which
+                    // isn't individually try/caught anywhere between here and RunChatToolLoopAsync --
+                    // would be misclassified as "the turn was barged in on" and silently swallowed,
+                    // with nothing logged and no response.done ever reaching the guest. Filtering on
+                    // `cts.Token.IsCancellationRequested` (this Spawn call's own linked token, the
+                    // same one `body` was invoked with) means a genuine non-barge-in timeout instead
+                    // falls through to the `catch (Exception ex)` below, which logs it.
                 }
                 catch (Exception ex)
                 {
