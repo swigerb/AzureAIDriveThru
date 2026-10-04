@@ -149,26 +149,31 @@ describe("ticket/status copy on persona switch (issue #119 item 1)", () => {
         });
         renderApp();
 
-        // Starts on the catalog default (test-beta)'s copy. OrderSummary (the ticket) and
-        // StatusMessage are SIBLING components, each independently subscribed to the real
-        // i18next store via its own `useTranslation()`/`useSyncExternalStore` call. React 18
-        // batches both components' store-triggered re-renders into the same commit whenever the
-        // underlying `addResourceBundle`/`removeResourceBundle` calls all happen synchronously
-        // (the normal case) -- but that's an emergent property of scheduling, not a contract
-        // `useSyncExternalStore` or react-i18next documents or guarantees for two independently
-        // subscribed instances. Issue #245: this flaked under parallel-process load (~1 in 128
-        // isolated runs) because the ticket had already committed "ALPHA TICKET" while
-        // StatusMessage's sibling re-render for "Let's order from Alpha!" had not yet landed in
-        // that same commit -- a plain synchronous `expect` right after the ticket's `waitFor`
-        // resolved could observe that in-between state. Asserting every string that must hold
-        // true *together* at a point in time inside the SAME `waitFor` (instead of splitting them
-        // across one `waitFor` plus immediate `expect`s) fixes that false-synchrony assumption
-        // without changing a single expectation.
+        // Starts on the catalog default (test-beta)'s copy.
         await waitFor(() => {
             expect(screen.getByText("BETA TICKET")).toBeInTheDocument();
             expect(screen.getByText("Your Beta Order")).toBeInTheDocument();
             expect(screen.getByText("Let's order from Beta!")).toBeInTheDocument();
         });
+
+        // Issue #245: `waitFor`'s first poll can resolve as soon as the *initial* render commits
+        // with the right text -- which happens before React has flushed OrderSummary's and
+        // StatusMessage's `useSyncExternalStore` *subscribe* passive effect (this mock's fetch
+        // resolves over microtasks, so there's no macrotask boundary forcing that flush first).
+        // If `selectPersona` fires its `addResourceBundle`/`removeResourceBundle` burst in that
+        // window, a consumer that hasn't subscribed yet never receives any of those store events
+        // at all. react-i18next 17's `getSnapshot` only recomputes a translation when its
+        // revision counter advances past what it last cached; a late subscribe captures whatever
+        // revision the store is *already* on without replaying the events that got it there, so
+        // there is nothing left to "catch up" on once the subscription finally attaches -- and a
+        // `memo`'d component with no other reason to re-render (`StatusMessage`) then never does,
+        // permanently stuck on the pre-switch copy. This isn't a production hazard: real user
+        // interaction can't reach a persona-switch click before the page has finished its initial
+        // mount (including passive effects), and React 19 flushes passive effects synchronously
+        // after every discrete event's commit anyway. Yielding one real macrotask here -- which a
+        // real browser always has many of before a user can click anything -- lets every
+        // consumer's subscribe effect attach before the switch, matching production ordering.
+        await new Promise(resolve => setTimeout(resolve, 0));
 
         // This is the regression: before `i18n/config.ts` set `react.bindI18nStore`, these same
         // mounted OrderSummary/StatusMessage instances kept showing test-beta's copy forever,

@@ -1,5 +1,4 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, ReactNode } from "react";
-import { flushSync } from "react-dom";
 import i18next from "i18next";
 import { useTranslation } from "react-i18next";
 
@@ -208,28 +207,12 @@ export function PersonaProvider({ children }: { children: ReactNode }) {
             // pack-only key the base translation table doesn't define) survived every subsequent
             // persona switch forever. `removeResourceBundle` first empties the whole namespace, so
             // the base re-add below is a true reset, not a partial overlay.
-            //
-            // Issue 245: each call below synchronously fires an `'added'`/`'removed'` event
-            // (`i18n/config.ts`'s `bindI18nStore`) to every mounted `useTranslation()` consumer,
-            // which schedules (but does not immediately flush) a React passive effect that syncs
-            // react-i18next's internal `useSyncExternalStore` bookkeeping for that consumer.
-            // Firing all ~9 of these events back-to-back, synchronously, before React gets a
-            // chance to flush any of the scheduled passive effects in between, was reproduced
-            // (under parallel test load, ~1 in 100 runs) to rarely let a sibling consumer's
-            // bookkeeping fall behind by more than one event and never catch up, permanently
-            // missing that switch's text update -- see
-            // `context/__tests__/persona-context.i18n.test.tsx`. `flushSync` around EACH
-            // individual call forces React to fully render, commit, AND flush passive effects
-            // before the next event fires, so every consumer's bookkeeping is always caught up
-            // before the next mutation -- this is noticeably more granular than wrapping the
-            // whole loop (or the whole switch) in one `flushSync`, which still lets the full
-            // burst of events fire before anything flushes.
             for (const locale of Object.keys(baseTranslationResources)) {
-                flushSync(() => i18next.removeResourceBundle(locale, "translation"));
-                flushSync(() => i18next.addResourceBundle(locale, "translation", structuredClone(baseTranslationResources[locale]), false, true));
+                i18next.removeResourceBundle(locale, "translation");
+                i18next.addResourceBundle(locale, "translation", structuredClone(baseTranslationResources[locale]), false, true);
             }
             for (const [locale, table] of Object.entries(detail.strings)) {
-                flushSync(() => i18next.addResourceBundle(locale, "translation", unflatten(table), true, true));
+                i18next.addResourceBundle(locale, "translation", unflatten(table), true, true);
             }
         }
     }, []);
