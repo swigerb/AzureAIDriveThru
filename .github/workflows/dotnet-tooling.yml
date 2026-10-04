@@ -13,7 +13,11 @@ name: .NET Tooling
       - ".github/workflows/dotnet-tooling.yml"
       - "scripts/update_menu_sizes.py"
       - "scripts/extract_production_items.py"
+      - "app/backend/setup_search_index.py"
+      - "app/backend/persona_loader.py"
+      - "app/backend/requirements.txt"
       - "personas/*/menu/**"
+      - "personas/*/persona.json"
   push:
     branches: [dev]
     paths:
@@ -21,7 +25,11 @@ name: .NET Tooling
       - ".github/workflows/dotnet-tooling.yml"
       - "scripts/update_menu_sizes.py"
       - "scripts/extract_production_items.py"
+      - "app/backend/setup_search_index.py"
+      - "app/backend/persona_loader.py"
+      - "app/backend/requirements.txt"
       - "personas/*/menu/**"
+      - "personas/*/persona.json"
   workflow_dispatch: {}
 
 concurrency:
@@ -34,6 +42,11 @@ permissions:
 env:
   # Keep in sync with global.json (repo root) and conformance.yml's identical env var.
   DOTNET_VERSION: "11.0.100-rc.1.26425.128"
+  # Batch 2 (#16): PythonParityTests for SearchIndexRequestBuilder subprocess-invokes the real
+  # app/backend/setup_search_index.py (via its persona_loader.py import), which needs the backend's
+  # full requirements.txt -- unlike update_menu_sizes.py/extract_production_items.py's parity tests,
+  # which only need stdlib Python. Keep in sync with conformance.yml's identical env var.
+  PYTHON_VERSION: "3.12"
   DOTNET_NOLOGO: "true"
   DOTNET_CLI_TELEMETRY_OPTOUT: "true"
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "true"
@@ -51,6 +64,18 @@ jobs:
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: app/backend/requirements.txt
+
+      - name: Install backend dependencies (needed to import setup_search_index.py's capture harness)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r app/backend/requirements.txt
 
       - name: Cache NuGet packages
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -70,11 +95,13 @@ jobs:
 
       - name: dotnet test tools/dotnet
         working-directory: tools/dotnet
-        # The PythonParityTests legs need a Python 3 interpreter (stdlib only, no requirements.txt)
-        # to run scripts/update_menu_sizes.py and scripts/extract_production_items.py as real
-        # subprocesses; ubuntu-latest ships python3, and each test fails closed (not skip) when
-        # GITHUB_ACTIONS=true and none is found, same fail-closed-in-CI convention as
-        # tests/conformance's PyJWT interop tests.
+        # The PythonParityTests legs need a Python 3 interpreter to run the real Python twins as
+        # subprocesses: scripts/update_menu_sizes.py and scripts/extract_production_items.py need
+        # only stdlib (ubuntu-latest's python3 is enough); SearchIndexRequestBuilder's parity test
+        # additionally needs app/backend/setup_search_index.py's full dependency set, installed by
+        # the "Install backend dependencies" step above. Each test fails closed (not skip) when
+        # GITHUB_ACTIONS=true and no working interpreter is found, same fail-closed-in-CI convention
+        # as tests/conformance's PyJWT interop tests.
         run: |
           set -o pipefail
           dotnet test Tooling.slnx \

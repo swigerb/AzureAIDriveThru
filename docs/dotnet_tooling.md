@@ -9,11 +9,14 @@ record what moved, what didn't, and why, instead of that history living only in 
 Per epic #6 and the issue #16 P1 update (ADR-001), this is a multi-wave effort. The original PR
 (#224) was **wave 1**: the inventory below, a scaffold for C# tooling (`tools/dotnet/`), and ONE
 representative, low-risk port end-to-end (`update_menu_sizes.py`) with an output-parity test against
-its Python twin. **Batch 1** (this update) ports the inventory's own stated next candidate,
-`extract_production_items.py` -- see "Batch 1 port" below. Every other script and notebook in the
-inventory stays Python-only until a later batch/wave explicitly ports it (tracked in the Squad's wave
-plan; see "What's next" for the remaining candidates' design). **The Python versions are not removed
-or modified by this work**, and azd hooks / CI keep running the Python implementations by default.
+its Python twin. **Batch 1** ported the inventory's own stated next no-Azure candidate,
+`extract_production_items.py` -- see "Batch 1 port" below. **Batch 2** (this update), with no
+no-Azure candidates left, instead proves out this doc's own design note for porting an
+Azure-dependent tool without live Azure calls, for `app/backend/setup_search_index.py`'s
+request-building half -- see "Batch 2 port" below. Every other script and notebook in the inventory
+stays Python-only until a later batch/wave explicitly ports it (tracked in the Squad's wave plan; see
+"What's next" for the remaining candidates' design). **The Python versions are not removed or
+modified by this work**, and azd hooks / CI keep running the Python implementations by default.
 
 ## Inventory: Python scripts and notebooks outside `app/backend`
 
@@ -32,13 +35,16 @@ or modified by this work**, and azd hooks / CI keep running the Python implement
 
 Note: `app/backend/setup_search_index.py` itself is inside `app/backend` and is therefore **out of
 this inventory's scope** (the issue is scoped to Python outside `app/backend`); only its `scripts/`
-launcher wrappers are in scope, below.
+launcher wrappers are in scope, below. Batch 2 made one explicit, narrow exception to this rule for
+this one script's request-building half only, at the Squad's own direction -- see "Batch 2 port"
+below for what was (and, just as importantly, was NOT) ported, and why this stays an exception rather
+than a scope change.
 
 ## Inventory: `.ps1`/`.sh` wrappers that shell out to Python
 
 | File(s) | Wraps | azd hook | Proposed C# shape |
 | --- | --- | --- | --- |
-| `scripts/setup_search_index.ps1`, `scripts/setup_search_index.sh` | `app/backend/setup_search_index.py` (builds/refreshes the Azure AI Search index from the production menu export) | **azd `postprovision` hook** (after `postprovision_auth`/`write_env`) | Not ported (wraps an Azure-dependent, in-scope-elsewhere script); stays Python. A C# equivalent is only relevant once/if `app/backend/setup_search_index.py` itself is ported, which is outside this issue's `app/backend`-excluded scope. |
+| `scripts/setup_search_index.ps1`, `scripts/setup_search_index.sh` | `app/backend/setup_search_index.py` (builds/refreshes the Azure AI Search index from the production menu export) | **azd `postprovision` hook** (after `postprovision_auth`/`write_env`) | Not ported (wraps an Azure-dependent script). Still stays Python for the live azd hook: batch 2 ported `setup_search_index.py`'s own request-building logic in C# as a proof of concept (see "Batch 2 port" below), but that port has no CLI/`run()` orchestration and is not wired into this wrapper or the azd hook, which keep running the Python implementation unconditionally. |
 | `scripts/smoke_realtime.ps1`, `scripts/smoke_realtime.sh` | `scripts/smoke_realtime.py` (realtime session smoke check; never fails the deployment, warns only) | **azd `postdeploy` hook** | Not ported (wraps an explicitly-excluded, Azure-dependent script); stays Python. |
 | `scripts/start.ps1`, `scripts/start.sh` | `app/backend/app.py` directly (runs the Python backend itself via gunicorn, the application entry point) | Not an azd hook; local dev convenience only. | Out of scope -- this is the application, not "tooling" (and a C# backend entry point is `app/backend-dotnet`'s own, separately-tracked concern, not this issue's). |
 | `scripts/load_python_env.ps1`, `scripts/load_python_env.sh` | Nothing Python-specific to port -- it bootstraps the Python `.venv` itself (creates it, installs `app/backend/requirements.txt`) so the OTHER scripts above have an interpreter to run. | Sourced by `setup_search_index.ps1`/`.sh` AND `start.ps1`/`.sh` before they invoke Python. | Out of scope -- there is no Python *logic* here to port; it is the venv bootstrap `update_menu_sizes.py` et al. depend on existing at all. |
@@ -490,6 +496,150 @@ the parity test now uses is unaffected by the same layout.
 `pull_request`/`push` path filters alongside `scripts/update_menu_sizes.py` (its real fixture data,
 `personas/*/menu/**`, was already covered by the existing filter).
 
+## Batch 2 port: `app/backend/setup_search_index.py`'s request-building, via client-seam + recorded-fixture (no live Azure calls)
+
+Issue #16's instruction for this batch: since both non-Azure candidates in the inventory
+(`update_menu_sizes.py`, `extract_production_items.py`) are already ported, implement the
+"client-seam + recorded-fixture" design note above for ONE Azure-dependent tool, still with no live
+Azure calls. `app/backend/setup_search_index.py` was the suggested target.
+
+### Scope: narrower than a full port, and an explicit, narrow exception to this doc's own `app/backend`-exclusion rule
+
+Two things make this different from every other entry in this doc:
+
+* **This is a REQUEST-BUILDING port only**, not a full port of `setup_search_index.py`. It
+  reconstructs, independently in C#, the exact Azure AI Search REST request bodies the real script's
+  `create_or_update_index` (the index definition PUT) and `upload_documents` (the 100-document batch
+  POSTs) would send -- and nothing past that. It never builds a real `SearchIndexClient`/
+  `SearchClient` against a real endpoint, never calls `generate_embeddings`'s real Azure OpenAI
+  embedding call (a deterministic fixture stands in -- see below), and implements none of
+  `delete_stale_documents`/`verify_document_count`/the CLI's `--dry-run`/`--persona` argument
+  surface/`run()`'s own orchestration. It is a demonstration that the REQUEST-BUILDING half of an
+  Azure-dependent tool can be ported and proven correct with zero live calls, per the design note
+  above -- not a drop-in replacement for the Python script.
+* **`app/backend/setup_search_index.py` is normally out of this doc's own stated scope** ("this
+  inventory's scope" note above: issue #16 covers Python *outside* `app/backend`). This batch is an
+  explicit, narrow exception authorized by the Squad's own instruction for this specific port (the
+  Squad's message literally named "the search index setup's request builder" as the example target).
+  It remains a narrow exception, not a scope change for the rest of this doc: `app/backend/`'s own
+  Python/C# story (`docs/dotnet_mapping.md`) is untouched, `app/backend/setup_search_index.py` itself
+  is read-only (never modified) throughout this batch, and the new C# code lives entirely under
+  `tools/dotnet/`, never under `app/backend-dotnet`.
+
+### Why HTTP-transport capture instead of the design note's "client-seam interface" shape
+
+The design note above (for `benchmark_reasoning.py`/`smoke_realtime.py`/the audio-generation
+scripts) proposed a thin C# client-seam interface (`ISearchIndexClient` etc.) with a real SDK
+implementation and a recorded-response fake, because those tools' parity bar is "the port's
+*handling* of a fixed response matches the Python twin's" -- the live response content itself is
+non-deterministic model output neither side can reproduce byte-for-byte.
+
+`setup_search_index.py`'s shape is different: nothing about the REQUEST bodies it sends is
+non-deterministic (given the same persona data and the same embedding values) -- unlike a model's
+response, the exact JSON a correctly-implemented port sends IS reproducible and byte/structurally
+comparable on both sides. So instead of a C# client-seam interface wrapping a *response* fake, this
+batch captures the Python twin's own REAL request bodies directly, by monkeypatching
+`azure-search-documents`' HTTP transport layer (`azure.core.pipeline.transport.HttpTransport`) with a
+non-raising `RecordingTransport` that records every outbound request's JSON body and returns a
+fabricated, schema-correct 200 response so the SDK's own response deserialization succeeds and
+`upload_documents`'s 100-document batching loop runs to completion across every batch -- never
+opening a socket. This is a stronger, more direct form of parity proof than the design note's
+response-fake shape (it compares what the REAL, unmodified Python script's REAL code actually
+produces, not a hand-maintained guess at its request shape) and was only possible because this
+specific tool's outputs are deterministic. The design note above still stands as the right shape for
+the tools whose parity bar genuinely depends on response-handling, not request-building.
+
+### What's captured, and how (`tools/dotnet/src/SearchIndexRequestBuilder`, `tools/dotnet/tests/SearchIndexRequestBuilder.Tests`)
+
+* `EnabledPersonaDiscovery.cs` -- discovers every enabled persona (every `personas/*/persona.json`
+  folder, sorted), the same default-enabled-set `persona_loader.PersonaCatalog.load()` resolves with
+  no `PERSONAS` override, deliberately without loading jsonschema/pydantic validation (same
+  "no heavy validation pipeline" convention as `ProductionExportLocator.cs`/`PersonaMenuLocator.cs`).
+  Unlike those two tools, there is no "pick exactly one persona" ambiguity here: `setup_search_index.py`'s
+  own default `run()` targets every enabled persona, and so does this discovery -- a second or third
+  persona pack (the real repo already has three, each discovered purely from its own
+  `personas/*/persona.json`) is never a
+  configuration error, only more personas to build a plan for.
+* `MenuDocumentBuilder.cs` -- a faithful port of `prepare_documents` (field-for-field, same
+  `sanitize_key` regex, same empty-string field defaults, same `combined_text` f-string spacing,
+  same file order with no sorting so later 100-document batch slicing matches exactly).
+* `PythonJsonDumps.cs` -- a byte-for-byte port of Python's `json.dumps(value)` with its DEFAULT
+  arguments (`ensure_ascii=True`, `", "`/`": "` separators) -- the OPPOSITE default from
+  `update_menu_sizes.py`'s own output file (`ensure_ascii=False`; see `PythonJsonEncoder.cs`), used
+  because `prepare_documents` calls `json.dumps(item["sizes"])` with no extra arguments. Whole
+  numbers stay whole (Python int `2` stays `2`, never `2.0`) using the same
+  `PythonFloatRepr`/number-token-detection convention as `MenuSizeUpdater.cs`.
+* `FixtureEmbedding.cs` -- a deterministic, pure-function stand-in for `generate_embeddings`'s real
+  Azure OpenAI call: `sha256(text)`'s first 8 bytes, each mapped from `[0, 255]` to `[-1, 1]` and
+  rounded to 6 decimals via a fixed-point string round-trip (not a raw `Math.Round` call -- see the
+  mutation-check note on this below) so both this C# code and the Python capture harness land on the
+  exact same IEEE-754 value. **Deliberately 8 dimensions, not the real 3072** (`EMBEDDING_DIMENSIONS`
+  in `setup_search_index.py`) -- a documented, intentional divergence: the point of this fixture is
+  to exercise the request-building code path end to end, not emulate real embedding content, which is
+  non-deterministic model output neither side could reproduce anyway. The index definition's own
+  `"dimensions": 3072` field comes from the real constant independently in
+  `SearchIndexDefinitionBuilder.cs` and is completely unaffected by this fixture's length.
+* `SearchIndexDefinitionBuilder.cs`/`DocumentBatchBuilder.cs` -- independently reconstruct the exact
+  REST JSON bodies for the index definition PUT and the document-upload-batch POSTs, with field
+  names/shapes captured empirically from the real `azure-search-documents==12.0.0` SDK (its Python
+  model attribute names, e.g. `vector_search_dimensions`, don't match the REST JSON's camelCase,
+  e.g. `"dimensions"` -- these were captured via the wire body, never guessed from the SDK's model).
+* `tests/SearchIndexRequestBuilder.Tests/Fixtures/capture_search_index_requests.py` -- the capture
+  harness described above: drives the REAL `build_plan`/`create_or_update_index`/`upload_documents`
+  against `RecordingTransport`-backed clients, attaches `FixtureEmbedding`'s formula in place of
+  `generate_embeddings`'s real call, and prints one JSON blob to stdout for every enabled persona. It
+  silences the twin's own `logging.basicConfig(..., handlers=[RichHandler(...)])` (configured at
+  import time) via `logging.disable(logging.CRITICAL)`, since that handler otherwise writes
+  human-readable progress straight to stdout and corrupts the single JSON object this harness prints.
+* `PythonParityTests.cs` -- runs the capture harness as a genuine subprocess, then structurally
+  compares (`JsonStructuralAssert.cs`: same keys/values recursively, array order preserved, JSON
+  string leaves compared character-for-character) its captured request bodies against
+  `SearchIndexRequestPlanner.BuildPlan`'s independent C# reconstruction, for every enabled persona in
+  the real repo. Structural rather than literal-byte comparison was chosen because these are
+  ephemeral HTTP request bodies -- never written to disk or diffed by a human/git, unlike
+  `update_menu_sizes.py`'s output file or `extract_production_items.py`'s stdout report, where
+  literal byte-identity is the point -- except for the "sizes" field specifically, which IS a plain
+  JSON string value and so is still compared character-for-character by the same structural
+  comparison (a JSON string leaf is still just a string).
+
+### Mutation checks (each performed for real, then reverted, while implementing this batch)
+
+* Changing `DocumentBatchBuilder.cs`'s `BatchSize` from 100 to 99 made both the real-data parity test
+  (the largest real persona's 180 documents split `[99, 81]` instead of Azure Search's real
+  `[100, 80]` boundary)
+  and the dedicated synthetic `DocumentBatchBuilderTests.cs` boundary test fail -- confirmed, then
+  restored.
+* Changing `FixtureEmbedding.cs`'s byte-to-`[-1, 1]` divisor from 255.0 to 256.0 made both the
+  real-data parity test (every persona's embedding values differ) and a dedicated cross-language
+  oracle test (`FixtureEmbeddingTests.cs`, comparing directly against the capture harness's own
+  `fixture_embedding()` for sample texts) fail -- confirmed, then restored.
+* Temporarily mismatching `SearchIndexRequestPlanner.FakeOpenAiEndpoint` against the harness's own
+  `FAKE_OPENAI_ENDPOINT` made the real-data parity test fail on the index definition's vectorizer
+  `resourceUri` field -- confirmed, then restored.
+* Removing `PythonJsonDumps.cs`'s `ensure_ascii` `\uXXXX` escaping left the REAL-DATA parity test
+  GREEN -- today's real persona "sizes" data is always plain ASCII size/price pairs, so this guard is
+  never exercised by real fixture data alone -- but made a dedicated synthetic test
+  (`PythonJsonDumpsTests.cs`, a non-ASCII + astral-emoji string, checked directly against a Python
+  `json.dumps` subprocess oracle) fail immediately. This is recorded explicitly because it is the one
+  case where the real-data parity test alone would NOT have caught a real regression.
+* Separately verified, and explicitly NOT claimed as a mutation-check finding: swapping
+  `FixtureEmbedding.cs`'s six-decimal string-round-trip rounding for a raw `Math.Round(x, 6)` call
+  produces bit-identical results for all 256 possible input byte values this specific formula can
+  ever produce -- so that particular implementation choice has no test able to distinguish it from
+  the alternative, and is kept for its closer conceptual match to Python's `f"{x:.6f}"` formatting
+  rather than for a provable behavioural difference.
+
+### CI wiring
+
+`.github/workflows/dotnet-tooling.yml`'s existing job needed a new
+`pip install -r app/backend/requirements.txt` step: unlike every prior ported tool (stdlib-only),
+`capture_search_index_requests.py` imports the real `app/backend/setup_search_index.py`, which
+imports `persona_loader.py`, which pulls in `jsonschema`/`pydantic`/`PyJWT`/`aiohttp` on top of
+`setup_search_index.py`'s own direct `azure-identity`/`azure-search-documents`/`openai`/
+`python-dotenv`/`rich` imports -- essentially the whole of `app/backend/requirements.txt`. Path
+filters already cover `tools/dotnet/**` and `personas/*/menu/**` (this batch's new persona-data reads
+are all `menuItems.json`/`persona.json`, already covered); no new filter entries were needed.
+
 ## `TOOLING_IMPL` (future, not wired in this PR)
 
 Issue #16's body describes a future `TOOLING_IMPL=python|dotnet` environment variable so azd hooks
@@ -501,13 +651,17 @@ inventory above is ported, is the right place to introduce `TOOLING_IMPL` for re
 ## What's next
 
 With both no-Azure candidates in the inventory (`update_menu_sizes.py`, `extract_production_items.py`)
-now ported, every remaining script/notebook in the inventory needs a **live** Azure OpenAI, Azure AI
-Search, or Azure Speech dependency, or (for `e2e_order_resume.py`) a real browser engine -- none of
-them can be ported and tested the way this doc's two batches were (a deterministic, no-network,
-no-subprocess transform/report proven byte- or stdout-identical against real fixture data). Porting
-any of them for real is deferred until there is a concrete reason to run them from C# rather than
-Python; this section instead sketches how each *would* be ported and tested without ever touching a
-live Azure resource, so a future wave has a starting design rather than a blank page.
+now ported, and the design note below's approach now proven once for real (the "Batch 2 port" section
+above, `app/backend/setup_search_index.py`'s request-building half), every remaining script/notebook
+in the inventory still needs a **live** Azure OpenAI realtime/Whisper, Azure Speech dependency, or
+(for `e2e_order_resume.py`) a real browser engine -- none of them has the same "fully deterministic
+request AND response shape" property that made `setup_search_index.py`'s request-building half
+portable with zero live calls (its responses are genuinely non-deterministic model output, not just
+an SDK call this repo hasn't wired a fake for yet). Porting any of them for real is deferred until
+there is a concrete reason to run them from C# rather than Python; this section instead sketches how
+each *would* be ported and tested without ever touching a live Azure resource, so a future wave has a
+starting design rather than a blank page -- updated below to note which parts of this design are now
+proven and which remain a sketch.
 
 ### Design note: porting the Azure-dependent tools without live Azure calls
 
@@ -553,5 +707,13 @@ A future port of any of these tools should follow the same two-layer split that 
   call) and needs its own design once/if a C# browser-automation story (e.g. Playwright for .NET) is
   justified; the recorded-fixture approach above does not directly apply to it.
 
-None of this is implemented in this batch -- it is a design note only, so a later wave has a starting
-point instead of re-deriving this shape from scratch.
+**Status: this client-seam/recorded-fixture shape is still a sketch for every tool listed above**
+(`benchmark_reasoning.py`, `smoke_realtime.py`, `generate_apology_clips.py`,
+`generate_demo_guest_voice.py`, both ingestion notebooks) -- none of them has been ported. The "Batch
+2 port" section above DOES implement this batch's design for `app/backend/setup_search_index.py`'s
+request-building half, but via a variant technique (HTTP-transport capture of the real Python twin's
+actual request bodies, since those are fully deterministic) rather than this note's
+client-seam-plus-recorded-response-fake shape (needed for tools whose *responses*, not just requests,
+are the non-deterministic part being handled). A future port of any of the tools above should follow
+this note's shape, not the request-capture variant, since their Azure calls' response content -- not
+just their request content -- is what the port's logic actually has to handle correctly.
