@@ -27,9 +27,9 @@ namespace SearchIndexIngestor.Tests;
 ///   "return=minimal" -- the header-comparison assertion failed with the expected
 ///   "return=representation" vs "return=minimal" mismatch.
 /// * Changed this test's own upload-batch loop from 100- to 99-document slices (standing in for a
-///   DocumentBatchBuilder.cs/SearchIndexOrchestrator.cs batch-size regression) -- the "sonic"
-///   persona's (180 documents) first batch failed with "array length differs. expected 100,
-///   actual 99."
+///   DocumentBatchBuilder.cs/SearchIndexOrchestrator.cs batch-size regression) -- the one enabled
+///   persona with 180 documents (2 real batches of 100+80) had its first batch fail with
+///   "array length differs. expected 100, actual 99."
 /// * Reverted SearchIndexOrchestrator.cs's embedding-vector loop from
 ///   <c>JsonNode.Parse(PythonFloatRepr(component))</c> back to plain <c>vector.Add(component)</c>
 ///   -- this is how the "1" vs "1.0" int/float-shape divergence documented below was actually

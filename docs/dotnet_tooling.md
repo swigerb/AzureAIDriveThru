@@ -931,9 +931,9 @@ the Python capture harness's own `RecordingTransport` -- never a real endpoint.
    wrong one -- the parity test failed on a URL mismatch (api-version is part of the query string).
 3. Changed the `Prefer` header from `"return=representation"` to `"return=minimal"` -- the parity
    test failed on a header mismatch.
-4. Changed the parity test's own batch-loop slice size from 100 to 99 -- failed on the real "sonic"
-   persona (180 documents, 2 real batches of 100+80), with "array length differs. expected 100,
-   actual 99."
+4. Changed the parity test's own batch-loop slice size from 100 to 99 -- failed on the one real
+   enabled persona with 180 documents (2 real batches of 100+80), with "array length differs.
+   expected 100, actual 99."
 
 All four were restored and the full suite re-verified green afterward.
 
