@@ -153,4 +153,29 @@ public sealed class AzdEnvLoaderTests : IDisposable
         Assert.Equal("dev", values["AZURE_ENV_NAME"]);
         Assert.DoesNotContain('"', values["AZURE_ENV_NAME"]);
     }
+
+    /// <summary>
+    /// Confirmed against real azd 1.34.2 (Rick's re-review): azd backslash-escapes <c>$</c>,
+    /// <c>!</c>, and the backtick in addition to the embedded-quote case above (shell-safety for a
+    /// value that will later be sourced), and this parser's catch-all <c>_ =&gt; inner[i]</c> case
+    /// happens to decode all three back to the plain character -- matching azd's own intent, but
+    /// NOT matching python-dotenv, which only recognizes a small fixed set of escape sequences and
+    /// leaves an unrecognized <c>\$</c>/<c>\!</c>/<c>\`</c> as a literal backslash followed by the
+    /// character. This is a real, documented divergence (see docs/dotnet_tooling.md), but one that
+    /// cannot occur for either of the two keys this tool ever reads: a URL
+    /// (AZURE_OPENAI_EASTUS2_ENDPOINT) and an Azure OpenAI deployment name
+    /// (AZURE_OPENAI_EMBEDDING_DEPLOYMENT) can never legally contain <c>$</c>, <c>!</c>, or a
+    /// backtick in the first place, so this parser's extra-permissive unescaping is never actually
+    /// exercised by real data -- this test exists only to pin the behavior deliberately.
+    /// </summary>
+    [Fact]
+    public void LoadDefaultEnvValues_UnescapesBackslashEscapedDollarBangAndBacktick()
+    {
+        var repoRoot = CreateTempRepoRoot();
+        WriteAzdEnv(repoRoot, "dev", "TEST_WITH_SPECIAL_CHARS=\"a\\$b\\!c\\`d\"\n");
+
+        var values = AzdEnvLoader.LoadDefaultEnvValues(repoRoot);
+
+        Assert.Equal("a$b!c`d", values["TEST_WITH_SPECIAL_CHARS"]);
+    }
 }

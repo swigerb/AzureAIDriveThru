@@ -56,14 +56,21 @@ internal static class OpenAiSettingsResolver
     /// into a non-zero exit, not a stack trace.</exception>
     /// <remarks>
     /// Known, accepted divergence (documented in docs/dotnet_tooling.md): if the azd default
-    /// environment OR the process environment sets <c>AZURE_OPENAI_EMBEDDING_DEPLOYMENT</c> to the
-    /// empty string, Python's <c>os.environ.get(name, default)</c> still returns that empty string
-    /// (the key exists, even though its value is empty) and would send <c>""</c> as the
-    /// deployment id; this port treats an empty string the same as "not set" at every source and
-    /// falls back to the next source / the built-in default instead. This can never happen for the
-    /// endpoint (an empty endpoint is treated as "not configured" and raises, matching Python
-    /// attempting to call a real Azure OpenAI client with an empty base URL, which would also
-    /// fail -- just with a different, less clean, error).
+    /// environment sets either <c>AZURE_OPENAI_EASTUS2_ENDPOINT</c> or
+    /// <c>AZURE_OPENAI_EMBEDDING_DEPLOYMENT</c> to the empty string while a DIFFERENT, real,
+    /// non-empty value for the same name is already present in the process environment, Python's
+    /// <c>load_dotenv(path, override=True)</c> OVERWRITES that real process-env value with the
+    /// empty one (the azd file's empty string wins -- "override" means exactly that), so Python's
+    /// <c>os.environ.get(name, default)</c>/<c>os.environ[name]</c> afterwards sees only the empty
+    /// string and never falls back to the real value that used to be there. This port's
+    /// <see cref="GetNonEmptyOrNull"/> instead treats an empty azd value as if it were absent and
+    /// falls through to the (real, non-empty) process environment variable -- so in this specific
+    /// scenario this port SUCCEEDS with the real, intended value while Python would silently use
+    /// the blanked-out empty string instead. The practical failure shape still differs by which
+    /// setting is empty: an empty deployment id is itself a valid (if wrong) string Python happily
+    /// sends onward, while an empty endpoint fails whenever Python's code actually tries to use it
+    /// as a URL -- but the root-cause divergence (this port recovers the real value; Python's own
+    /// `override=True` logic does not) is the same for both settings, not endpoint-specific.
     /// </remarks>
     public static Settings Resolve(
         string? openAiEndpointFlag,
