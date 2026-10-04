@@ -74,6 +74,15 @@ public sealed class RealtimeProcessor : IPipelineProcessor
     /// forever.</summary>
     internal static readonly TimeSpan SupersededCloseTimeout = TimeSpan.FromSeconds(10);
 
+    /// <summary>Rick's #244 round-2 re-review: the poll interval
+    /// <see cref="CloseSupersededStaleConnectionAsync"/> uses while waiting for the stale socket to
+    /// settle (leave <see cref="WebSocketState.Open"/>/<see cref="WebSocketState.CloseSent"/>)
+    /// before it cancels <c>staleCts</c>. Short enough that a healthy peer's near-instant answering
+    /// close is noticed within a few polls (no perceptible delay added to the common case), long
+    /// enough not to busy-spin the thread pool while waiting out a genuinely stuck peer for the
+    /// rest of <see cref="SupersededCloseTimeout"/>.</summary>
+    private static readonly TimeSpan SupersededSettlePollInterval = TimeSpan.FromMilliseconds(10);
+
     private readonly ModelCatalog _catalog;
     private readonly string _defaultDeployment;
     private readonly string _upstreamEndpoint;
@@ -1740,14 +1749,34 @@ public sealed class RealtimeProcessor : IPipelineProcessor
     /// why awaiting it there was unsafe. Bounded by <paramref name="closeTimeout"/> so a
     /// non-draining stale peer can delay this method's own completion by at most that long, never
     /// indefinitely; a cancelled <see cref="WebSocket.CloseOutputAsync"/> aborts the stuck send,
-    /// which is an acceptable outcome for the connection that's losing anyway. <paramref
-    /// name="staleCts"/> is always cancelled in the <c>finally</c>, independent of whether the
-    /// close itself completed, timed out, or threw -- a stale connection's relay loops must stop
-    /// either way. Marked <c>internal</c> (not <c>private</c>) specifically so Backend.Tests can
-    /// call it directly with a <c>FakeWebSocket</c> rigged to hang on <c>CloseOutputAsync</c> and
-    /// assert it still completes within <paramref name="closeTimeout"/> plus slack -- a
-    /// deterministic, environment-independent proof of the fix that doesn't depend on reproducing
-    /// genuine TCP backpressure.</summary>
+    /// which is an acceptable outcome for the connection that's losing anyway.
+    ///
+    /// Rick's round-2 RE-review (CI run 37210749254): widening <paramref name="closeTimeout"/>
+    /// alone (2s -> 10s) was not the whole fix. <paramref name="staleCts"/> is the SAME token
+    /// source the stale connection's own relay loop passed into its still-pending
+    /// <c>browserSocket.ReceiveAsync</c> (it is reading for a NEXT client frame that will never
+    /// come, since this peer just lost the race). Cancelling a token that's registered with an
+    /// in-flight <see cref="WebSocket"/> receive/send does not just stop that one call -- per
+    /// .NET's documented WebSocket cancellation semantics it ABORTS THE WHOLE SOCKET. Cancelling
+    /// <paramref name="staleCts"/> immediately after the courtesy close frame was sent could abort
+    /// <paramref name="staleWs"/> before the healthy stale peer's own answering close frame (which
+    /// the very same pending <c>ReceiveAsync</c> is waiting to observe) had been processed,
+    /// racing away the clean 4002 the peer would otherwise have seen -- exactly the failure mode
+    /// behind <c>Resuming_a_still_attached_session_supersedes_the_original_socket_with_4002</c>'s
+    /// "Expected 4002, Actual null" under CI load. So: after the close frame is away, wait for
+    /// <paramref name="staleWs"/> to leave <see cref="WebSocketState.Open"/>/<see
+    /// cref="WebSocketState.CloseSent"/> (i.e. for that already-in-flight receive to notice the
+    /// peer's own close reply and complete on its own, harmlessly) before ever touching
+    /// <paramref name="staleCts"/> -- reusing the SAME <paramref name="closeTimeout"/> budget so a
+    /// genuinely stuck peer (never answers) is still bounded exactly as before. <paramref
+    /// name="staleCts"/> is always cancelled in the <c>finally</c> once settled-or-timed-out,
+    /// independent of whether the close itself completed, timed out, or threw -- a stale
+    /// connection's relay loops must stop either way, this just makes sure that stop can never
+    /// itself be the thing that drops the courtesy close frame. Marked <c>internal</c> (not
+    /// <c>private</c>) specifically so Backend.Tests can call it directly with a
+    /// <c>FakeWebSocket</c> rigged to hang on <c>CloseOutputAsync</c> and assert it still completes
+    /// within <paramref name="closeTimeout"/> plus slack -- a deterministic, environment-independent
+    /// proof of the fix that doesn't depend on reproducing genuine TCP backpressure.</summary>
     internal static async Task CloseSupersededStaleConnectionAsync(
         WebSocket staleWs,
         CancellationTokenSource? staleCts,
@@ -1761,17 +1790,49 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                     staleWs, (WebSocketCloseStatus)SessionManager.SupersededCloseCode, SessionManager.SupersededCloseReason,
                     timeoutCts.Token)
                 .ConfigureAwait(false);
+
+            await WaitForStaleSocketToSettleAsync(staleWs, timeoutCts.Token).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            // CloseOutputIfOpenAsync already swallows its own close failures; this guards the
-            // Task.Run itself (e.g. the CancellationTokenSource construction) so a stray exception
-            // here can never prevent the finally below from running.
+            // CloseOutputIfOpenAsync and WaitForStaleSocketToSettleAsync already swallow their own
+            // expected failures/timeouts; this guards the Task.Run itself (e.g. the
+            // CancellationTokenSource construction) so a stray exception here can never prevent the
+            // finally below from running.
             logger?.LogWarning(ex, "Unexpected failure closing a superseded stale connection's output");
         }
         finally
         {
             staleCts?.Cancel();
+        }
+    }
+
+    /// <summary>Waits for <paramref name="staleWs"/> to leave <see cref="WebSocketState.Open"/> or
+    /// <see cref="WebSocketState.CloseSent"/> -- i.e. for the stale connection's own already-pending
+    /// <c>ReceiveAsync</c> to observe the peer's answering close frame (a healthy peer) and
+    /// complete on its own, so the caller's subsequent <c>staleCts.Cancel()</c> never has to abort
+    /// that receive mid-flight. Polls on <see cref="SupersededSettlePollInterval"/> rather than
+    /// reacting to an event because <see cref="WebSocket"/> exposes no "state changed" signal; the
+    /// socket is typically a <c>FakeWebSocket</c> or <c>ManagedWebSocket</c>, neither cheap nor
+    /// meaningful to wrap further for this. Bounded by <paramref name="cancellationToken"/> (the
+    /// SAME budget as the preceding close send) so a genuinely stuck peer that never answers still
+    /// falls through to the unconditional cancel in the same overall bounded time as before this
+    /// fix -- this method only ever makes the HEALTHY-peer path safer, never the stuck-peer path
+    /// slower.</summary>
+    private static async Task WaitForStaleSocketToSettleAsync(WebSocket staleWs, CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (staleWs.State is WebSocketState.Open or WebSocketState.CloseSent)
+            {
+                await Task.Delay(SupersededSettlePollInterval, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Budget exhausted waiting for a peer that never answered -- the caller's finally
+            // cancels staleCts regardless, which is the same "fine for the loser" outcome this
+            // method existed to protect a HEALTHY peer from in the first place.
         }
     }
 

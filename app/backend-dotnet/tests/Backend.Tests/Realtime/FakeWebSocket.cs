@@ -79,6 +79,15 @@ internal sealed class FakeWebSocket : WebSocket
 
     public List<(byte[] Data, WebSocketMessageType MessageType, bool EndOfMessage)> SentMessages { get; } = [];
 
+    /// <summary>#244 round-2 re-review (CloseSupersededStaleConnectionAsync's settle-wait fix):
+    /// simulates the real-world moment a healthy peer's own answering close frame is processed by
+    /// the connection's already-pending <c>ReceiveAsync</c> -- i.e. the socket settling out of
+    /// <see cref="WebSocketState.CloseSent"/> on its own, without anyone cancelling anything. Tests
+    /// call this (typically from a short-lived background <c>Task.Run</c>) to prove the settle-wait
+    /// notices promptly and does not simply wait out its full timeout budget for a peer that was
+    /// never actually stuck.</summary>
+    public void SimulatePeerAnsweredClose() => _state = WebSocketState.Closed;
+
     /// <summary>Issue #252 (Rick's review): an optional async hook invoked -- and fully awaited --
     /// from inside <see cref="SendAsync"/> before it returns, so a test can simulate "the upstream
     /// already processed a reply to THIS exact frame before the send call returned" (the precise

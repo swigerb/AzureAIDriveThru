@@ -64,12 +64,66 @@ public sealed class CloseSupersededStaleConnectionAsyncTests
         var staleWs = new FakeWebSocket([]);
         using var staleCts = new CancellationTokenSource();
 
+        // CI run 37210749254's re-review: a real healthy peer answers the close frame almost
+        // immediately (its own ReceiveAsync auto-completes the handshake), so simulate that here
+        // rather than leaving the fake parked in CloseSent forever -- otherwise this test would
+        // wait out the FULL closeTimeout budget below for no reason (see
+        // Does_not_cancel_the_stale_cts_until_the_socket_settles_or_the_timeout_elapses for the
+        // test that actually pins down the settle-before-cancel ordering).
+        var settleSimulation = Task.Run(async () =>
+        {
+            await Task.Delay(20, TestContext.Current.CancellationToken);
+            staleWs.SimulatePeerAnsweredClose();
+        }, TestContext.Current.CancellationToken);
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         await RealtimeProcessor.CloseSupersededStaleConnectionAsync(
-            staleWs, staleCts, TimeSpan.FromSeconds(2), NullLogger.Instance);
+            staleWs, staleCts, TimeSpan.FromSeconds(5), NullLogger.Instance);
+        sw.Stop();
+        await settleSimulation;
 
         Assert.True(staleWs.CloseOutputCalled);
         Assert.Equal((WebSocketCloseStatus)SessionManager.SupersededCloseCode, staleWs.ClosedWithStatus);
         Assert.Equal(SessionManager.SupersededCloseReason, staleWs.ClosedWithDescription);
+        Assert.True(staleCts.IsCancellationRequested);
+        Assert.True(
+            sw.Elapsed < TimeSpan.FromSeconds(2),
+            $"Expected the settle-wait to finish promptly once the peer answered the close, not " +
+            $"block for anywhere near the full 5s closeTimeout budget; took {sw.Elapsed}.");
+    }
+
+    /// <summary>
+    /// Mutation-check pinning down the actual round-2 re-review fix: <c>staleCts</c> must NOT be
+    /// cancelled the instant the courtesy close frame is sent -- only once the stale socket has
+    /// settled (the peer's own answering close observed) or the close timeout has genuinely
+    /// elapsed. A regression back to "cancel immediately after CloseOutputAsync returns" (the
+    /// shape that raced <c>Resuming_a_still_attached_session_supersedes_the_original_socket_with_4002</c>
+    /// under CI load) would make <c>staleCts.IsCancellationRequested</c> already true well before
+    /// <see cref="FakeWebSocket.SimulatePeerAnsweredClose"/> is ever called below.
+    /// </summary>
+    [Fact]
+    public async Task Does_not_cancel_the_stale_cts_until_the_socket_settles_or_the_timeout_elapses()
+    {
+        var staleWs = new FakeWebSocket([]);
+        using var staleCts = new CancellationTokenSource();
+
+        var closeTask = RealtimeProcessor.CloseSupersededStaleConnectionAsync(
+            staleWs, staleCts, TimeSpan.FromSeconds(5), NullLogger.Instance);
+
+        // FakeWebSocket's non-hanging CloseOutputAsync completes synchronously, so by the time we
+        // get here the close frame is long sent and the socket is parked in CloseSent -- but
+        // nothing has simulated the peer answering yet, so the settle-wait must still be pending
+        // and staleCts must still be un-cancelled.
+        await Task.Delay(100, TestContext.Current.CancellationToken);
+        Assert.Equal(WebSocketState.CloseSent, staleWs.State);
+        Assert.False(
+            staleCts.IsCancellationRequested,
+            "staleCts was cancelled before the stale socket settled or its own timeout elapsed -- " +
+            "this re-introduces the abort race a healthy peer's close-frame delivery can lose " +
+            "under load (CI run 37210749254).");
+
+        staleWs.SimulatePeerAnsweredClose();
+        await closeTask;
         Assert.True(staleCts.IsCancellationRequested);
     }
 
@@ -78,11 +132,18 @@ public sealed class CloseSupersededStaleConnectionAsyncTests
     {
         // outcome.StaleCts is nullable on ResumeOutcome; the caller must not be able to throw
         // (and therefore never reach the finally / never return) just because a resume somehow
-        // produced a stale socket with no CTS attached.
+        // produced a stale socket with no CTS attached. Simulate the peer answering promptly so
+        // this doesn't wait out the full closeTimeout budget in the settle-wait for no reason.
         var staleWs = new FakeWebSocket([]);
+        var settleSimulation = Task.Run(async () =>
+        {
+            await Task.Delay(20, TestContext.Current.CancellationToken);
+            staleWs.SimulatePeerAnsweredClose();
+        }, TestContext.Current.CancellationToken);
 
         await RealtimeProcessor.CloseSupersededStaleConnectionAsync(
             staleWs, staleCts: null, TimeSpan.FromSeconds(2), NullLogger.Instance);
+        await settleSimulation;
 
         Assert.True(staleWs.CloseOutputCalled);
     }

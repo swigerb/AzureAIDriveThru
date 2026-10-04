@@ -247,6 +247,28 @@ namespace Conformance.Tests;
 /// directly the same way (not projected by arithmetic) immediately after the rebase -- **286**.
 /// Raises the floor 276 to 286; this PR adds no new tagged rows of its own in this step, it is
 /// purely absorbing what had already landed on dev.
+///
+/// Issue #15 (PR #244, Rick's round-2 re-review, follow-up): CI run 37210749254 caught the
+/// background supersede-close itself racing a healthy stale peer -- the unconditional
+/// <c>staleCts?.Cancel()</c> in its <c>finally</c> block fired immediately after the 4002 close
+/// frame was sent, and .NET's <see cref="System.Net.WebSockets.WebSocket"/> cancellation semantics
+/// abort the *whole* socket (not just the pending call) when a token tied to an in-flight
+/// <c>ReceiveAsync</c> fires, so under real CPU scheduling pressure the cancel could occasionally
+/// win the race against the stale socket's own <c>ReceiveAsync</c> observing its peer's close
+/// handshake, leaving <c>CloseStatus</c> null instead of 4002. Fixed by waiting for the stale
+/// socket's <see cref="System.Net.WebSockets.WebSocket.State"/> to leave
+/// <c>Open</c>/<c>CloseSent</c> (bounded by the same close-timeout budget already used for the
+/// send) before ever cancelling its CTS -- the winner's own forwarding path is untouched and never
+/// waits on the loser, so widening <c>SupersededCloseTimeout</c> to 10s earlier does not reintroduce
+/// a stall. Reproduced the original race under genuine 24-core CPU saturation with the fix reverted
+/// (confirming the diagnosis), then confirmed 10/10 clean runs under the same load with the fix
+/// restored. This is a Backend.Tests-only unit-level fix (new coverage lives in
+/// <c>CloseSupersededStaleConnectionAsyncTests.Does_not_cancel_the_stale_cts_until_the_socket_settles_or_the_timeout_elapses</c>,
+/// not a Conformance scenario) and adds no new <c>Dotnet=ready</c>-tagged conformance rows of its
+/// own. Rebasing this step onto the latest origin/dev (dd06d562, bringing in #236's CASCADE
+/// processor, #234's frame dispatch, #233's log self-timestamping, and other PRs' own newly-tagged
+/// rows merged ahead of this branch) measured directly, not projected -- **293**. Raises the floor
+/// 286 to 293.
 /// </summary>
 public sealed class DotnetTraitCoverageTests
 {
@@ -269,12 +291,12 @@ public sealed class DotnetTraitCoverageTests
     };
 
     [Fact]
-    public void At_least_286_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
+    public void At_least_293_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
     {
         var count = CountFloorEligibleDotnetReadyTestMethods();
 
-        Assert.True(count >= 286,
-            $"Expected at least 286 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
+        Assert.True(count >= 293,
+            $"Expected at least 293 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
             $"and not unconditionally skip-gated by AuthRowCapability (the dotnet leg's " +
             $"`--filter \"{TraitName}={TraitValue}&Category!=Browser\"` baseline, minus the five " +
             "skip-only Scenarios/Auth classes -- see this class's own doc comment; " +
