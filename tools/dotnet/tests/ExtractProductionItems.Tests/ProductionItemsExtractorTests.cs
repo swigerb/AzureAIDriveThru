@@ -204,6 +204,112 @@ public sealed class ProductionItemsExtractorTests : IDisposable
         Assert.Equal(["p-a"], items.Select(i => i.ProductId));
     }
 
+    // ── Python falsy ({}) handling (PR #243 review R2) ──────────────────
+
+    [Fact]
+    public void ExtractProductionItems_SkipsAProductThatIsPresentButAnEmptyObject()
+    {
+        // `product = products.get(prod_id); if not product: continue` -- Python's falsy check
+        // skips a product present as `{}` the same as a missing one; a naive "does the key exist"
+        // lookup would wrongly keep it (falling back to displayName=productId, price=0.0).
+        const string json = """
+            {
+              "menus": {
+                "menu-1": {
+                  "products": {
+                    "p-empty": {},
+                    "p-real": { "displayName": "Real Thing", "price": 1 }
+                  },
+                  "categories": {
+                    "cat-top": {
+                      "displayName": "Top",
+                      "childRefs": { "products.p-empty": {}, "products.p-real": {} }
+                    }
+                  },
+                  "productGroups": {}
+                }
+              }
+            }
+            """;
+        var path = WriteTempJson("empty-product", json);
+
+        var items = ProductionItemsExtractor.ExtractProductionItems(path);
+
+        Assert.Equal(["p-real"], items.Select(i => i.ProductId));
+    }
+
+    [Fact]
+    public void ExtractProductionItems_SkipsASizeVariantChildProduct_ThatIsPresentButAnEmptyObject()
+    {
+        // `child_product = products.get(child_id); if child_product: sizes.append(...)` -- a
+        // present-but-empty `{}` child product must NOT contribute a bogus
+        // "<id>=$0.00" size entry; it should be silently skipped, same as Python.
+        const string json = """
+            {
+              "menus": {
+                "menu-1": {
+                  "products": {
+                    "p-drink": {
+                      "displayName": "Drink",
+                      "price": 3,
+                      "relatedProducts": { "alternatives": { "productGroups.sizes": {} } }
+                    },
+                    "p-mini": { "displayName": "Mini Drink", "price": 1.5 },
+                    "p-empty-child": {}
+                  },
+                  "categories": {
+                    "cat-top": { "displayName": "Top", "childRefs": { "products.p-drink": {} } }
+                  },
+                  "productGroups": {
+                    "sizes": {
+                      "childRefs": { "products.p-mini": {}, "products.p-empty-child": {} }
+                    }
+                  }
+                }
+              }
+            }
+            """;
+        var path = WriteTempJson("empty-child-product", json);
+
+        var items = ProductionItemsExtractor.ExtractProductionItems(path);
+        var drink = items.Single(i => i.ProductId == "p-drink");
+
+        Assert.Equal([("Mini", 1.5)], drink.Sizes.Select(s => (s.Size, s.Price)));
+    }
+
+    // ── Standard-fallback price ("or 0.0") ───────────────────────────────
+
+    [Fact]
+    public void ExtractProductionItems_NormalizesANegativeZeroStandardFallbackPrice_ToPositiveZero()
+    {
+        // Port of `price = product.get("price", 0.0) or 0.0`: Python's `or` replaces ANY falsy
+        // value -- including a literal "-0.0" JSON price (`bool(-0.0) is False`) -- with the
+        // literal positive 0.0. Left unreplicated, this would format as "-0.00" (via :.2f/F2),
+        // not Python's "0.00".
+        const string json = """
+            {
+              "menus": {
+                "menu-1": {
+                  "products": {
+                    "p-zero": { "displayName": "Zero Priced", "price": -0.0 }
+                  },
+                  "categories": {
+                    "cat-top": { "displayName": "Top", "childRefs": { "products.p-zero": {} } }
+                  },
+                  "productGroups": {}
+                }
+              }
+            }
+            """;
+        var path = WriteTempJson("negative-zero-price", json);
+
+        var items = ProductionItemsExtractor.ExtractProductionItems(path);
+        var price = items.Single(i => i.ProductId == "p-zero").Sizes.Single().Price;
+
+        Assert.False(double.IsNegative(price), "The Standard-fallback price must not be negative zero.");
+        Assert.Equal("0.00", price.ToString("F2", System.Globalization.CultureInfo.InvariantCulture));
+    }
+
     // ── LoadUiItems ──────────────────────────────────────────────────────
 
     [Fact]

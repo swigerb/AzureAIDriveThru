@@ -4,8 +4,9 @@ namespace ExtractProductionItems.Tests;
 /// Unit tests for ProductionItemsExtractor.BuildReport, constructing ProductionItem/UiItem records
 /// directly (no JSON fixtures needed) so each ordering/formatting nuance can be pinned down in
 /// isolation: the "most_common()"-style stable tie-break (first-occurrence order wins among
-/// equal-count categories, NOT alphabetical), the ordinal (not culture-aware) name sort within a
-/// category, and the gap-analysis "(none)"/"(none — UI is clean)" branches.
+/// equal-count categories, NOT alphabetical), the code-point (not culture-aware, and -- for an
+/// astral character -- not the same as StringComparer.Ordinal either) name sort within a category,
+/// and the gap-analysis "(none)"/"(none — UI is clean)" branches.
 /// </summary>
 public sealed class ReportBuilderTests
 {
@@ -55,12 +56,14 @@ public sealed class ReportBuilderTests
     }
 
     [Fact]
-    public void BuildReport_SortsItemsWithinACategory_Ordinally_NotCultureAware()
+    public void BuildReport_SortsItemsWithinACategory_ByCodePoint_NotCultureAware()
     {
-        // Python's sorted(key=lambda x: x["name"]) is ordinal (codepoint) comparison: all
-        // uppercase letters sort before all lowercase letters. "apple" (lowercase 'a' = 0x61)
-        // therefore sorts AFTER "Banana"/"Cherry" (uppercase 'B'/'C' = 0x42/0x43) -- a
-        // culture-aware/case-insensitive comparer would wrongly place "apple" first.
+        // Python's sorted(key=lambda x: x["name"]) compares actual Unicode CODE POINTS, not
+        // culture-aware: all uppercase letters sort before all lowercase letters. "apple"
+        // (lowercase 'a' = 0x61) therefore sorts AFTER "Banana"/"Cherry" (uppercase 'B'/'C' =
+        // 0x42/0x43) -- a culture-aware/case-insensitive comparer would wrongly place "apple"
+        // first. (For plain ASCII like this, codepoint order and StringComparer.Ordinal's UTF-16
+        // code-UNIT order agree -- see the astral-character test below for where they diverge.)
         var production = new List<ProductionItem>
         {
             Item("p-1", "Cherry", "Drinks"),
@@ -72,6 +75,29 @@ public sealed class ReportBuilderTests
 
         var bulletLines = report.Where(l => l.StartsWith("  • ", StringComparison.Ordinal)).ToList();
         Assert.Equal(["  • Banana", "  • Cherry", "  • apple"], bulletLines);
+    }
+
+    [Fact]
+    public void BuildReport_SortsAnAstralCharacter_ByItsActualCodePointValue_NotItsUtf16SurrogateValue()
+    {
+        // PR #243 review R2: U+1F600 '😀' (an astral/supplementary-plane emoji, codepoint 128512)
+        // vs U+FF01 '！' (an ordinary BMP character, codepoint 65281). Python's str comparison (by
+        // actual codepoint) places '！' (65281) before '😀' (128512). .NET's
+        // StringComparer.Ordinal -- which BuildReport used before this fix -- compares UTF-16 code
+        // UNITS instead: '😀' encodes as the surrogate pair U+D83D U+DE00, and the leading
+        // surrogate U+D83D (55357) is numerically LESS than U+FF01 (65281), so plain ordinal
+        // comparison got this backwards (emoji sorting first). BuildReport must reproduce Python's
+        // actual order.
+        var production = new List<ProductionItem>
+        {
+            Item("p-1", "\U0001F600 Combo", "Drinks"),
+            Item("p-2", "\uFF01 Combo", "Drinks"),
+        };
+
+        var report = ProductionItemsExtractor.BuildReport(production, uiItems: []);
+
+        var bulletLines = report.Where(l => l.StartsWith("  • ", StringComparison.Ordinal)).ToList();
+        Assert.Equal(["  • \uFF01 Combo", "  • \U0001F600 Combo"], bulletLines);
     }
 
     [Fact]

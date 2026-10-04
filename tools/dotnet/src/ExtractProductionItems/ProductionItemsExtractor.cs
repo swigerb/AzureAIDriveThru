@@ -111,7 +111,10 @@ public static class ProductionItemsExtractor
         var structured = new List<ProductionItem>();
         foreach (var (productId, categoryName) in productCategoryMap)
         {
-            if (!products.TryGetValue(productId, out var product))
+            // `product = products.get(prod_id); if not product: continue` -- Python's falsy check
+            // skips not just a MISSING product, but also one present as an empty object `{}`
+            // (bool({}) is False), unlike a bare "does the key exist" lookup.
+            if (!products.TryGetValue(productId, out var product) || !IsTruthy(product))
             {
                 continue;
             }
@@ -123,7 +126,7 @@ public static class ProductionItemsExtractor
             var sizeVariants = GetSizeVariants(product, products, productGroups);
             if (sizeVariants.Count == 0)
             {
-                sizeVariants = [new SizeVariant("Standard", GetDoubleOrDefault(product, "price", 0.0))];
+                sizeVariants = [new SizeVariant("Standard", PriceOrZero(product))];
             }
 
             structured.Add(new ProductionItem(
@@ -193,7 +196,11 @@ public static class ProductionItemsExtractor
     /// <summary>
     /// Port of <c>normalize()</c>: lowercase, strip trademark symbols, collapse anything outside
     /// [a-z0-9 ] to whitespace, then collapse/trim whitespace runs -- used only for the UI-vs-
-    /// production gap-analysis name comparison, never for display.
+    /// production gap-analysis name comparison, never for display. Accepted divergence (documented
+    /// in docs/dotnet_tooling.md; no real menu/production name exercises this): Python's
+    /// <c>str.lower()</c> and .NET's <see cref="string.ToLowerInvariant"/> can disagree on a
+    /// handful of special-casing characters (e.g. Turkish dotted capital İ, U+0130) -- not
+    /// special-cased here.
     /// </summary>
     public static string Normalize(string name)
     {
@@ -262,9 +269,11 @@ public static class ProductionItemsExtractor
             Append($"  {category}  ({count} items)");
             Append(new string('─', 60));
 
-            // sorted(..., key=lambda x: x["name"]) -- Python's default string comparison is
-            // ordinal (codepoint) comparison, not culture-aware.
-            foreach (var item in byCategory[category].OrderBy(i => i.Name, StringComparer.Ordinal))
+            // sorted(..., key=lambda x: x["name"]) -- Python's default string comparison compares
+            // actual Unicode CODE POINTS, not culture-aware, and (for an astral character such as
+            // an emoji) not the same as .NET's StringComparer.Ordinal either -- see
+            // CodePointComparer's remarks.
+            foreach (var item in byCategory[category].OrderBy(i => i.Name, CodePointComparer.Instance))
             {
                 var sizesStr = string.Join(", ", item.Sizes.Select(FormatSize));
                 Append($"  • {item.Name}");
@@ -274,8 +283,8 @@ public static class ProductionItemsExtractor
 
         var prodNames = new HashSet<string>(production.Select(i => Normalize(i.Name)), StringComparer.Ordinal);
         var uiNames = new HashSet<string>(uiItems.Select(i => Normalize(i.Name)), StringComparer.Ordinal);
-        var inUiNotProd = uiNames.Except(prodNames).OrderBy(n => n, StringComparer.Ordinal).ToList();
-        var inProdNotUi = prodNames.Except(uiNames).OrderBy(n => n, StringComparer.Ordinal).ToList();
+        var inUiNotProd = uiNames.Except(prodNames).OrderBy(n => n, CodePointComparer.Instance).ToList();
+        var inProdNotUi = prodNames.Except(uiNames).OrderBy(n => n, CodePointComparer.Instance).ToList();
 
         Append("\n" + new string('=', 70));
         Append("  GAP ANALYSIS: UI menuItems.json vs Production Index");
@@ -328,7 +337,9 @@ public static class ProductionItemsExtractor
     private static List<(string ProductId, string LeafCategoryName)> CollectProductsFromCategory(
         string categoryId, Dictionary<string, JsonElement> categories, string? leafName = null)
     {
-        if (!categories.TryGetValue(categoryId, out var category))
+        // `cat = categories.get(cat_id); if not cat: return []` -- Python treats a present-but-
+        // empty `{}` category the same as a missing one.
+        if (!categories.TryGetValue(categoryId, out var category) || !IsTruthy(category))
         {
             return [];
         }
@@ -379,7 +390,8 @@ public static class ProductionItemsExtractor
                 continue;
             }
             var groupId = groupRef["productGroups.".Length..];
-            if (!productGroups.TryGetValue(groupId, out var group))
+            // `group = product_groups.get(group_id); if not group: continue`.
+            if (!productGroups.TryGetValue(groupId, out var group) || !IsTruthy(group))
             {
                 continue;
             }
@@ -390,7 +402,11 @@ public static class ProductionItemsExtractor
                     continue;
                 }
                 var childId = childRef["products.".Length..];
-                if (!products.TryGetValue(childId, out var childProduct))
+                // `child_product = products.get(child_id); if child_product: sizes.append(...)` --
+                // a present-but-empty `{}` child product is falsy and silently contributes NO size
+                // variant, same as a missing one; it must not fall through to a bogus
+                // "<id>=$0.00" entry built from StringOrDefault/GetDoubleOrDefault's fallbacks.
+                if (!products.TryGetValue(childId, out var childProduct) || !IsTruthy(childProduct))
                 {
                     continue;
                 }
@@ -427,14 +443,33 @@ public static class ProductionItemsExtractor
             ? value.GetString()!
             : fallback;
 
-    /// <summary><c>obj.get(propertyName, fallback)</c> for a numeric-valued property (price
-    /// fields may be a JSON int or float in the source data -- both are read as a <see cref="double"/>,
-    /// since the only use of a price in this tool is <c>:.2f</c>-style display formatting, which
-    /// Python applies identically to an int or a float).</summary>
+    /// <summary>
+    /// <c>obj.get(propertyName, fallback)</c> for a numeric-valued property (price fields may be a
+    /// JSON int or float in the source data -- both are read as a <see cref="double"/>, since the
+    /// only use of a price in this tool is <c>:.2f</c>-style display formatting, which Python
+    /// applies identically to an int or a float). Accepted divergence (documented in
+    /// docs/dotnet_tooling.md, real POS/menu exports never do this): a JSON boolean price (e.g.
+    /// <c>"price": true</c>) is treated as absent here, whereas Python's <c>bool</c> is an
+    /// <c>int</c> subtype and would format as <c>1.00</c>/<c>0.00</c>.
+    /// </summary>
     private static double GetDoubleOrDefault(JsonElement obj, string propertyName, double fallback) =>
         obj.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.Number
             ? value.GetDouble()
             : fallback;
+
+    /// <summary>
+    /// Port of <c>product.get("price", 0.0) or 0.0</c> (the "Standard" size-fallback price only --
+    /// <see cref="GetSizeVariants"/>'s own per-child price has no such <c>or</c>). Python's
+    /// <c>or</c> falls through to the literal <c>0.0</c> whenever the left side is falsy, which
+    /// for a float means exactly zero -- INCLUDING negative zero (<c>bool(-0.0) is False</c>).
+    /// Left unreplicated, a <c>"price": -0.0</c> export would format as <c>"-0.00"</c> via
+    /// <c>:.2f</c>/<c>F2</c>, unlike Python's <c>"0.00"</c>.
+    /// </summary>
+    private static double PriceOrZero(JsonElement product)
+    {
+        var raw = GetDoubleOrDefault(product, "price", 0.0);
+        return raw == 0.0 ? 0.0 : raw;
+    }
 
     /// <summary>Python truthiness for a JSON value (used for <c>product.get("isRecipe", False)</c>,
     /// which skips a product on ANY truthy value, not just a literal JSON <c>true</c>).</summary>
@@ -450,10 +485,18 @@ public static class ProductionItemsExtractor
         _ => false,
     };
 
-    /// <summary>Builds an O(1)-by-key lookup for a JSON object, used wherever the Python twin does
-    /// repeated <c>dict.get(id)</c> calls. NEVER enumerated itself for order (a <see cref="Dictionary{TKey,TValue}"/>'s
+    /// <summary>
+    /// Builds an O(1)-by-key lookup for a JSON object, used wherever the Python twin does repeated
+    /// <c>dict.get(id)</c> calls. NEVER enumerated itself for order (a <see cref="Dictionary{TKey,TValue}"/>'s
     /// enumeration order is not a documented guarantee) -- anywhere document order matters, the
-    /// original <see cref="JsonElement"/>'s own <c>EnumerateObject()</c> is used instead.</summary>
+    /// original <see cref="JsonElement"/>'s own <c>EnumerateObject()</c> is used instead. Accepted
+    /// divergence (documented in docs/dotnet_tooling.md, real POS/menu exports never do this): a
+    /// JSON object with a literal duplicate key resolves to this dictionary's own "last write
+    /// wins" indexer semantics, which happens to match Python's <c>json.load</c> (also last-key-
+    /// wins) for THIS lookup, but <see cref="JsonElement.EnumerateObject"/> itself (used elsewhere
+    /// for document-order iteration) does not collapse the duplicate the way Python's parsed
+    /// <c>dict</c> would.
+    /// </summary>
     private static Dictionary<string, JsonElement> BuildLookup(JsonElement obj)
     {
         var lookup = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
@@ -464,3 +507,4 @@ public static class ProductionItemsExtractor
         return lookup;
     }
 }
+

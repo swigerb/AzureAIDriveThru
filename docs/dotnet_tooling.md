@@ -352,11 +352,23 @@ non-obvious Python semantics exactly:
   (also a documented-stable sort) to reproduce the same tie-break -- proven by
   `ReportBuilderTests.BuildReport_PreservesFirstOccurrenceOrder_ForCategoriesTiedOnCount` (see
   mutation check below).
-* **Ordinal, not culture-aware, string sorting**, for both the within-category item-name sort
+* **Codepoint, not culture-aware, string sorting**, for both the within-category item-name sort
   (`sorted(..., key=lambda x: x["name"])`) and the gap-analysis name lists (`sorted(set_difference)`)
-  -- Python's default string comparison is codepoint/ordinal, so e.g. `"apple"` (lowercase) sorts
-  *after* `"Banana"`/`"Cherry"` (uppercase), which a culture-aware or case-insensitive C# comparer
-  would get backwards. Reproduced via `StringComparer.Ordinal` everywhere a name is sorted.
+  -- Python's default string comparison sorts by Unicode **codepoint**, so e.g. `"apple"`
+  (lowercase) sorts *after* `"Banana"`/`"Cherry"` (uppercase), which a culture-aware or
+  case-insensitive C# comparer would get backwards. This was first reproduced via
+  `StringComparer.Ordinal`, which agrees with Python for every name actually seen in real data, but
+  is not exactly the same thing: `StringComparer.Ordinal` compares UTF-16 *code units*, which
+  diverges from a true codepoint comparison for astral characters outside the Basic Multilingual
+  Plane (e.g. emoji) -- an emoji's leading UTF-16 surrogate value can sort *before* a BMP character
+  whose actual codepoint is lower, the opposite of what Python's `sorted()` does. PR #243 review
+  fixed this by replacing `StringComparer.Ordinal` with a small purpose-built
+  `CodePointComparer` (`tools/dotnet/src/ExtractProductionItems/CodePointComparer.cs`, using
+  `System.Text.Rune.DecodeFromUtf16` to decode and compare actual codepoints) at every name-sort
+  call site, proven against both BMP and astral-character cases in `CodePointComparerTests.cs` and
+  `ReportBuilderTests.BuildReport_SortsAnAstralCharacter_ByItsActualCodePointValue_NotItsUtf16SurrogateValue`.
+  (Ordinal *equality* -- used by this port's `HashSet`/`Dictionary` lookups -- was left unchanged:
+  ordinal equality is bijective with codepoint-sequence equality, so only *ordering* was affected.)
 
 `string.Replace(oldValue, newValue)` throws `ArgumentException` for an empty `oldValue` (Python's
 `str.replace("", "")` is a harmless no-op by contrast) -- `NormalizeSizeName` guards this explicitly
@@ -367,26 +379,71 @@ for a product with an empty `displayName`, with its own regression test
 
 Same as `UpdateMenuSizes`: no persona id or brand product name is hardcoded anywhere in this port's
 C# or this doc section -- `ProductionExportLocator.Locate` discovers whichever persona pack(s)
-actually have a production export on disk, and the parity test below uses that same discovery to
-find the real fixtures to compare against, rather than a literal path. (The real, checked-in
-Python twin itself does hardcode one persona id/path, same as `update_menu_sizes.py` -- out of this
-issue's scope to change.)
+actually have a production export on disk, and is exactly what the shipped CLI's
+`--production`/`--menu` defaults use (see `CliRunnerTests.cs`). (The real, checked-in Python twin
+itself does hardcode one persona id/path, same as `update_menu_sizes.py` -- out of this issue's
+scope to change.)
+
+The output-parity test below, however, **does not** use `ProductionExportLocator` to find its
+fixtures (see "Output-parity test" below for why) -- `Locate`'s discovery-and-disambiguate behavior
+is specifically a property of the shipped CLI, proven by `ProductionExportLocatorTests.cs` and
+`CliRunnerTests.cs` alone.
 
 ### Output-parity test (stdout only -- this tool never writes a file)
 
-`tools/dotnet/tests/ExtractProductionItems.Tests/PythonParityTests.cs` follows the same shape as
-`UpdateMenuSizes.Tests/PythonParityTests.cs`: it discovers the real persona fixtures via
-`ProductionExportLocator`, runs the actual `scripts/extract_production_items.py` as a genuine
-subprocess against a throwaway copy, runs `ProductionItemsExtractor`'s equivalent pipeline
-in-process against the same real fixtures, then asserts the two programs' captured stdout is
-**identical byte-for-byte** (not merely each line's parsed content) -- including the box-drawing
-divider characters, the emoji gap-analysis markers, and the verbatim-preserved em dash in
-`"(none — UI is clean)"` (the Python twin's own literal output text, not newly-authored prose, so
-the squad's own no-em-dash style rule does not apply to it) -- plus an independent cross-check that
-both programs' own "Total production items: N" line agrees with each other and with the C# port's
-own data. It resolves a Python interpreter the same way `UpdateMenuSizes.Tests` does (repo-root
-`.venv` first, then a bare `python3`/`python` on PATH), skipping locally if none is found and failing
-(not skipping) in CI.
+`tools/dotnet/tests/ExtractProductionItems.Tests/PythonParityTests.cs` follows the same spirit as
+`UpdateMenuSizes.Tests/PythonParityTests.cs`: it runs the actual, unmodified
+`scripts/extract_production_items.py` as a genuine subprocess at its real repo location, runs
+`ProductionItemsExtractor`'s equivalent pipeline in-process against the same real fixtures, then
+asserts the two programs' captured stdout is **identical byte-for-byte** (not merely each line's
+parsed content) -- including the box-drawing divider characters, the emoji gap-analysis markers,
+and the verbatim-preserved em dash in `"(none — UI is clean)"` (the Python twin's own literal
+output text, not newly-authored prose, so the squad's own no-em-dash style rule does not apply to
+it) -- plus an independent cross-check that both programs' own "Total production items: N" line
+agrees with each other and with the C# port's own data. It resolves a Python interpreter the same
+way `UpdateMenuSizes.Tests` does (repo-root `.venv` first, then a bare `python3`/`python` on PATH),
+skipping locally if none is found and failing (not skipping) in CI.
+
+**PR #243 review R1**: this test originally found its two fixture files via
+`ProductionExportLocator.Locate` -- the same discovery the shipped CLI uses. That was wrong for a
+test (as opposed to the CLI itself): `Locate` is *supposed* to throw the moment a second persona
+pack adds its own `menu/source/*-menu-items.json` (planned per `docs/persona-architecture.md`), so
+the CLI operator can disambiguate explicitly -- but the real Python script never discovers
+anything; it hardcodes `personas/<id>/...` directly in its own `POS_DATA_PATH`/`UI_MENU_PATH`
+module constants (relative to its own `__file__`) and keeps working regardless of how many other
+persona packs exist. A `Locate`-based parity test would therefore start failing the instant a
+second persona pack lands -- for a reason having nothing to do with whether the C# port still
+matches its Python twin. The fix: the test now resolves its own fixtures the same
+(discovery-free) way the Python script resolves its own, by inspecting
+`POS_DATA_PATH`/`UI_MENU_PATH` via `runpy.run_path` -- the same technique
+`UpdateMenuSizes.Tests/PythonParityTests.cs` already uses to read `PRODUCT_SEARCH_MAP` out of
+`update_menu_sizes.py` (`runpy.run_path`'s default `run_name` is `"<run_path>"`, not `"__main__"`,
+so the script's own `if __name__ == "__main__":` guard never fires -- only its module-level
+constants are evaluated). A new regression test,
+`DotnetPort_ParityApproach_IsUnaffectedByASecondPersonaExport`, builds a synthetic two-persona repo
+layout and proves both halves of this: `ProductionExportLocator.Locate` genuinely throws in that
+layout (confirming the regression is real), while the real script run unmodified from that same
+layout, and this test file's own `runpy`-based resolution, are both unaffected by it.
+
+### Known, accepted Python-parity divergences
+
+A handful of edge cases were deliberately left un-reproduced, per PR #243 review: real menu/
+production data never exercises them, and matching them exactly would add meaningfully more
+complexity than the risk justifies. If any of these ever becomes a real concern, fix the
+underlying C# (`ProductionItemsExtractor.cs`, see its XML doc comments at each site) rather than
+just updating this note.
+
+* **`"price": true`/`"price": false` (a JSON boolean, not a number).** Python's
+  `product.get("price", 0.0)` would simply return the C `bool` (Python's `bool` is a subtype of
+  `int`, so it would be printed as `1.0`/`0.0` after `float()`-style formatting). The C# port's
+  `GetDoubleOrDefault` treats a boolean JSON value as absent and falls back to the default instead.
+* **Duplicate keys within the same JSON object** (e.g. two `"a"` entries inside one
+  `relatedProducts.alternatives` or `productGroups` object). Python's `json.load` silently keeps
+  only the *last* occurrence; `System.Text.Json`'s `JsonElement.GetProperty`/enumeration semantics
+  are not guaranteed to match that exact "last wins" rule for every malformed-duplicate shape.
+* **İ (Turkish dotted capital I, U+0130) lower-casing.** Python's `str.lower()` and .NET's
+  `ToLowerInvariant()` disagree on this one specific codepoint's invariant-culture lowercase
+  mapping; `Normalize` uses `ToLowerInvariant()` as everywhere else in this port.
 
 `tools/dotnet/tests/ExtractProductionItems.Tests/ProductionItemsExtractorTests.cs` unit-tests the
 individual pieces against small synthetic fixtures: every `NormalizeSizeName` prefix case plus the
@@ -410,6 +467,22 @@ secondary sort key to `BuildReport`'s category-count ordering (simulating an "al
 tie-break" regression) -- `BuildReport_PreservesFirstOccurrenceOrder_ForCategoriesTiedOnCount` failed
 as expected (`Zeta` and `Alpha` swapped order). Restored the fix and reran; all 89 tests across both
 `tools/dotnet` test projects passed again.
+
+**PR #243 review mutation checks**: each independently reverted and confirmed failing before being
+restored --
+(a) reverting `CodePointComparer.Instance` back to `StringComparer.Ordinal` at the within-category
+sort call site failed `BuildReport_SortsAnAstralCharacter_ByItsActualCodePointValue_NotItsUtf16SurrogateValue`
+(asserted the exact wrong order `StringComparer.Ordinal` would produce);
+(b) reverting the product-level and child-product-level Python-falsy (`{}`-as-falsy) checks each
+failed their own new regression test (`ExtractProductionItems_SkipsAProductThatIsPresentButAnEmptyObject`,
+`ExtractProductionItems_SkipsASizeVariantChildProduct_ThatIsPresentButAnEmptyObject`);
+(c) reverting the Standard-fallback `PriceOrZero` helper back to a plain default-value read failed
+`ExtractProductionItems_NormalizesANegativeZeroStandardFallbackPrice_ToPositiveZero`;
+(d) the new `DotnetPort_ParityApproach_IsUnaffectedByASecondPersonaExport` regression test itself
+directly proves the R1 fix's necessity: in its synthetic two-persona layout,
+`ProductionExportLocator.Locate` genuinely throws (the exact failure mode the old,
+`Locate`-dependent parity test design would have hit), while the `runpy`-based fixture resolution
+the parity test now uses is unaffected by the same layout.
 
 ### CI wiring
 
@@ -460,7 +533,7 @@ A future port of any of these tools should follow the same two-layer split that 
   Azure resource, and checked into the repo next to the tool (same spirit as this repo's existing
   `personas/<id>/menu/**` fixtures, or `tests/conformance`'s own recorded HTTP fixtures where they
   exist) -- never regenerated automatically by CI, and never requiring live credentials to run.
-  `benchmark_reasoning.py`'s own `--tools fake` / `--resume` flags and `smoke_realtime.py`'s existing
+  `benchmark_reasoning.py`'s own `--tools stub` / `--resume` flags and `smoke_realtime.py`'s existing
   "warn, never fail the deployment" design already lean this direction for their Python twins today,
   which is a useful head start.
 * **Parity, in this model, means "the fake client's fixture result flows through the port's
