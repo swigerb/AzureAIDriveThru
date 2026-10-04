@@ -30,18 +30,10 @@ from audio_pipeline import (
     _VERBOSE_RESULT_TRUNCATE,
     INPUT_AUDIO_CLEAR_MSG as _INPUT_AUDIO_CLEAR_MSG,
     MARKER_AUDIO_APPEND as _MARKER_AUDIO_APPEND,
-    MARKER_AUDIO_DELTA as _MARKER_AUDIO_DELTA,
-    MARKER_AUDIO_DELTA_LEGACY as _MARKER_AUDIO_DELTA_LEGACY,
-    MARKER_AUDIO_DONE as _MARKER_AUDIO_DONE,
-    MARKER_AUDIO_DONE_LEGACY as _MARKER_AUDIO_DONE_LEGACY,
     MARKER_END_SESSION as _MARKER_END_SESSION,
     MARKER_LOG_TO_FILE as _MARKER_LOG_TO_FILE,
-    MARKER_RESPONSE_DONE as _MARKER_RESPONSE_DONE,
     MARKER_RESUME as _MARKER_RESUME,
-    MARKER_SESSION_UPDATED as _MARKER_SESSION_UPDATED,
     MARKER_SET_VOICE as _MARKER_SET_VOICE,
-    MARKER_SPEECH_STARTED as _MARKER_SPEECH_STARTED,
-    MARKER_TRANSCRIPTION_COMPLETED as _MARKER_TRANSCRIPTION_COMPLETED,
     MARKER_VERBOSE_LOGGING as _MARKER_VERBOSE_LOGGING,
     RESPONSE_CREATE_MSG as _RESPONSE_CREATE_MSG,
     TYPE_RE as _TYPE_RE,
@@ -1039,6 +1031,49 @@ def _extension_type(data: str, marker: str) -> str | None:
     except ValueError:
         return None
     return message.get("type") if isinstance(message, dict) else None
+
+
+def _server_frame_type(data: str) -> str | None:
+    """The parsed `type` of a server->client realtime frame, via the same `TYPE_RE`
+    regex `_process_message_to_client`'s own fast path already runs on every single
+    server frame today -- i.e. this costs no more than that existing, already-proven-
+    cheap extraction (one regex search that terminates within the first few dozen
+    characters of these envelopes, since the Realtime API always serializes `type` as
+    the first key -- including for multi-KB base64 audio-delta frames), not a second
+    full `json.loads`. Returns None if no `"type":"..."` key is found (malformed data).
+
+    #234: `from_server_to_client()` used to decide each frame's handling with raw
+    substring containment (`_MARKER_X in data`) and no confirming parse, so a frame
+    that merely *contained* a marker's text somewhere -- e.g. a guest transcript whose
+    own words happen to equal "response.audio.delta" -- JSON-encodes to a value
+    indistinguishable from the marker itself (`"transcript":"response.audio.delta"`
+    contains the exact substring `"response.audio.delta"`), misfiring the wrong branch
+    and, being an `elif` chain, skipping the correct one entirely. Keying on this
+    parsed type instead means only the frame's OWN top-level `type` field decides
+    which branch runs, regardless of what any nested/string field happens to contain.
+
+    This deliberately reuses the cheap `TYPE_RE` regex rather than `_extension_type`'s
+    pattern (substring pre-filter + real `json.loads`), unlike `from_client_to_server`.
+    That pattern exists there to close a *forged-frame* hole: an adversarial browser
+    frame with a duplicate/nested "type" key can make a regex's leftmost match disagree
+    with `json.loads`'s last-value-wins parse (see the `_process_message_to_server`
+    fast-path comment above), letting a dangerous op hide under a benign top-level
+    type. Here the frames are the trusted upstream Realtime API's own output, not
+    adversarial browser input -- the same trust boundary `_process_message_to_client`'s
+    existing, production-proven fast path already relies on for this exact frame set --
+    and the frame's actual content/forwarding is still independently governed by that
+    unmodified real-`json.loads` switch/case; this function only gates the outer loop's
+    side-effect triggers (echo-suppression state, nudge cancellation, turn recording)."""
+    m = _TYPE_RE.search(data)
+    return m.group(1) if m else None
+
+
+# GA + legacy spellings for the two audio-streaming event types -- mirrors the pairs
+# in `audio_pipeline._GA_TO_LEGACY_EVENTS` (GA key, legacy value), as plain type
+# strings rather than quoted substring markers, for equality dispatch against
+# `_server_frame_type()`'s parsed result.
+_AUDIO_DELTA_TYPES = frozenset({"response.output_audio.delta", "response.audio.delta"})
+_AUDIO_DONE_TYPES = frozenset({"response.output_audio.done", "response.audio.done"})
 
 
 def _strip_output_voice(ga_session: dict) -> bool:
@@ -2814,17 +2849,21 @@ class RTMiddleTier:
                     async for msg in target_ws:
                         if msg.type == aiohttp.WSMsgType.TEXT:
                             data = msg.data
-                            if _MARKER_AUDIO_DELTA in data or _MARKER_AUDIO_DELTA_LEGACY in data:
+                            # #234: dispatch on the frame's own parsed `type`, not raw
+                            # substring containment -- see _server_frame_type's
+                            # docstring for the transcript-collision this replaces.
+                            event_type = _server_frame_type(data)
+                            if event_type in _AUDIO_DELTA_TYPES:
                                 assistant_audio_seen = True
                                 echo.on_audio_delta(verbose)
-                            elif _MARKER_AUDIO_DONE in data or _MARKER_AUDIO_DONE_LEGACY in data:
+                            elif event_type in _AUDIO_DONE_TYPES:
                                 # swigerb/SonicAIDriveThru#59: route the echo
                                 # flush's fire-and-forget sends through this
                                 # module's own background-task tracking so
                                 # they're held alive until done, same as
                                 # every other spawned task on the connection.
                                 echo.on_audio_done(loop, target_ws, verbose, spawn=_spawn)
-                            elif _MARKER_SPEECH_STARTED in data:
+                            elif event_type == "input_audio_buffer.speech_started":
                                 echo.on_speech_started(verbose)
                                 if session_id:
                                     self._sessions.touch_activity(session_id)
@@ -2838,7 +2877,7 @@ class RTMiddleTier:
                                     # reachable place to reset the tool-failure streak on genuine
                                     # guest speech.
                                     tool_failures.reset_for_new_turn()
-                            elif _MARKER_TRANSCRIPTION_COMPLETED in data and session_id:
+                            elif event_type == "conversation.item.input_audio_transcription.completed" and session_id:
                                 self._sessions.touch_activity(session_id)
                                 cancel_nudge("guest transcript")
                                 try:
@@ -2849,7 +2888,7 @@ class RTMiddleTier:
                                     # #36 S1 (PR #58 re-review): a completed input transcription
                                     # is the other guest-turn signal that breaks the failure streak.
                                     tool_failures.reset_for_new_turn()
-                            elif _MARKER_RESPONSE_DONE in data:
+                            elif event_type == "response.done":
                                 # swigerb/SonicAIDriveThru#48: a greeting that produced no
                                 # audio (text-only fallback, cancelled/failed before any
                                 # audio, a no-output rate-limited retry) never reaches
@@ -2862,7 +2901,7 @@ class RTMiddleTier:
                             # The bootstrap session.updated arrives as soon as the socket
                             # opens, so it must NOT trigger the greeting -- the browser's
                             # session.update (conversation start) does that.
-                            if _MARKER_SESSION_UPDATED in data:
+                            if event_type == "session.updated":
                                 guard.on_session_updated()
                                 if not session_configured.is_set():
                                     logger.info("session.updated received — tools are configured (session=%s)", session_id)
@@ -2871,7 +2910,7 @@ class RTMiddleTier:
 
                             # Verbose: log conversation transcription events
                             if (verbose or _VERBOSE_GLOBAL):
-                                if '"conversation.item.input_audio_transcription.completed"' in data:
+                                if event_type == "conversation.item.input_audio_transcription.completed":
                                     try:
                                         _tr_msg = json.loads(data)
                                         _tr_text = _tr_msg.get("transcript", "")[:200]
