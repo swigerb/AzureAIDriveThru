@@ -503,6 +503,16 @@ class SetupEntraAuthRedirectUriDefaultBehaviorMockedGraphTests(unittest.TestCase
     opt-in removal via -AllowRedirectUriRemoval, preview mode always reporting the would-be
     removal without ever PATCHing, and the always-empty-redirect-uri case that still leaves
     existing SPA URIs untouched.
+
+    PR #218 review, issue 1 (Rick): the guard originally only ran inside section 7, so on an
+    existing app under -Apply, sections 3-6 (signInAudience, identifierUris, api configuration,
+    appRoles) already PATCHed drift before the section-7 refusal threw -- Rick reproduced 5
+    PATCHes landing before "Refusing to remove live ... SPA redirect URI(s)". The guard now runs
+    immediately after Resolve-TargetApplication, before ANY adopt-path PATCH. To actually prove
+    that, $mockApp below is deliberately given drift of its own (wrong signInAudience, an empty
+    identifierUris, and no appRoles) so sections 3/4/6 would each produce a PATCH if the guard
+    didn't block them first -- test_omitting_all_three_redirect_flags_refuses_to_drop_the_existing_live_origin
+    asserts the ENTIRE write/patch log is empty on refusal, not merely that no SPA PATCH occurred.
     """
 
     MOCK_TENANT = "77777777-7777-7777-7777-777777777777"
@@ -535,14 +545,17 @@ $scopeId = '__SCOPE_ID__'
 $upn = '__UPN__'
 $existingOrigin = '__EXISTING_ORIGIN__'
 
-# API config, app role, and pre-authorized client already fully reconciled so the ONLY PATCH(es)
-# a run can produce are the redirect-URI ones under test here.
+# PR #218 review, issue 1: the API scope/pre-authorized client are already fully reconciled (no
+# drift there -- that combination is covered separately by SetupEntraAuthSplitPatchMockedGraphTests),
+# but signInAudience, identifierUris, and appRoles are deliberately DRIFTED here so sections 3, 4,
+# and 6 would each produce their own PATCH if the #162 guard didn't run before them. This lets the
+# refusal test assert the entire write/patch log is empty, not just that no SPA PATCH happened.
 $mockApp = @{
     id             = $objectId
     appId          = $clientId
     displayName    = 'AzureAIDriveThru'
-    signInAudience = 'AzureADMyOrg'
-    identifierUris = @("api://$clientId")
+    signInAudience = 'AzureADandPersonalMicrosoftAccount'
+    identifierUris = @()
     tags           = @('AzureAIDriveThruManaged')
     api            = @{
         oauth2PermissionScopes     = @(@{ id = $scopeId; adminConsentDisplayName = 'Access AzureAIDriveThru API'; adminConsentDescription = 'Allow the app to access AzureAIDriveThru API on behalf of the signed-in user.'; value = 'access_as_user'; type = 'User'; isEnabled = $true })
@@ -551,7 +564,7 @@ $mockApp = @{
     }
     spa            = @{ redirectUris = @($existingOrigin) }
     web            = @{ redirectUris = @() }
-    appRoles       = @(@{ id = $roleId; value = 'DriveThru.User'; displayName = 'AzureAIDriveThru User'; description = 'Users who may access the AzureAIDriveThru demo.'; allowedMemberTypes = @('User'); isEnabled = $true })
+    appRoles       = @()
 }
 
 function az {
@@ -685,6 +698,14 @@ exit $LASTEXITCODE
         # reconcile WOULD replace spa.redirectUris wholesale and drop the already-registered
         # live (non-localhost) origin. -Apply must refuse instead of silently wiping it -- a
         # non-zero exit, a clear message naming the dropped origin, and NO PATCH at all.
+        #
+        # PR #218 review, issue 1 (Rick): the guard used to run only inside section 7, so on an
+        # existing app sections 3-6 already PATCHed drift (signInAudience, identifierUris, api
+        # configuration, appRoles) before the refusal threw -- Rick reproduced 5 PATCHes landing
+        # first. $mockApp is deliberately drifted (see the class docstring) so this assertion
+        # covers the WHOLE write/patch log, not just the absence of a "spa" PATCH: the guard now
+        # runs immediately after Resolve-TargetApplication, before any adopt-path PATCH, so a
+        # refusal must leave the log completely empty.
         result = self._run()
         self.assertNotEqual(
             result.returncode, 0,
@@ -694,13 +715,11 @@ exit $LASTEXITCODE
         self.assertIn(self.EXISTING_FRONTEND_ORIGIN, result.stderr)
         self.assertIn("-AllowRedirectUriRemoval", result.stderr)
         patches = self._read_patch_log()
-        spa_patches = [
-            p for p in patches
-            if isinstance(p.get("body"), dict) and "spa" in p["body"]
-        ]
         self.assertEqual(
-            len(spa_patches), 0,
-            f"expected NO SPA redirect-URI PATCH when the removal is refused: {spa_patches}",
+            patches, [],
+            f"expected a COMPLETELY EMPTY write/PATCH log when the removal is refused -- the "
+            f"guard must run before ANY section's PATCH (signInAudience/identifierUris/api/"
+            f"appRoles), not just block the SPA redirect PATCH: {patches}",
         )
 
     def test_allow_redirect_uri_removal_lets_the_reconcile_replace_the_existing_origin(self):

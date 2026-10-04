@@ -129,10 +129,10 @@ nothing to Entra unless you pass `-Apply`, and it never adopts an existing app b
 existing registration (every run after the first) requires `-ClientId`/`-AppObjectId` plus caller ownership and the
 `AzureAIDriveThruManaged` tag. `-RedirectUri` defaults to the two local-dev origins from design 18.1
 (`http://localhost:8000`, `http://localhost:5173`), so those two count as "supplied" even when you pass nothing:
-the redirect-URI reconcile is a full SET, so a run that omits `-FrontendOrigin`/`-RedirectUri`/`-FromAzdEnv`
-registers the localhost defaults only, replacing any already-registered frontend origin. Only a run whose
-combined total is empty (`-RedirectUri @()` explicitly, with no `-FrontendOrigin`/`-FromAzdEnv`) leaves the
-existing SPA URIs untouched.
+the redirect-URI reconcile is a full SET: a run that omits `-FrontendOrigin`/`-RedirectUri`/`-FromAzdEnv` would set
+the registered SPA redirect URIs to the localhost defaults only, dropping any already-registered frontend origin
+from that set. Only a run whose combined total is empty (`-RedirectUri @()` explicitly, with no
+`-FrontendOrigin`/`-FromAzdEnv`) leaves the existing SPA URIs untouched.
 
 **However, since #162, `-Apply` never does that replacement silently.** Always pass `-FrontendOrigin` (or
 `-RedirectUri`/`-FromAzdEnv`) on every re-run to keep a live origin registered: if the reconcile above would
@@ -240,9 +240,12 @@ in the same session as case (a) above so `$app` and `$domain` are still set:
 ./scripts/Setup-EntraAuth.ps1 -TenantId <tenant-id> -ClientId <appId> -FrontendOrigin "https://$app.$domain" -Apply
 ```
 
-Always include `-FrontendOrigin` on every line above: `-Apply` reconciles the whole SPA redirect-URI set, so a
-fallback re-run without it replaces the live URL with only the two localhost defaults, and sign-in on the live URL
-then fails at step 6 with AADSTS50011 (redirect URI mismatch).
+Always include `-FrontendOrigin` on every line above. `-Apply` reconciles the whole SPA redirect-URI set, and since
+#162 a fallback re-run that omits it -- which would drop the live URL down to only the two localhost defaults --
+now refuses outright: a non-zero exit naming the live URI(s) and pointing at `-AllowRedirectUriRemoval`, instead of
+silently replacing them and leaving sign-in on the live URL to fail at step 6 with AADSTS50011 (redirect URI
+mismatch). Only pass `-AllowRedirectUriRemoval` here if you really mean to drop that live origin (for example,
+retiring the environment it belongs to).
 
 ### Rollout (ingress last)
 

@@ -461,6 +461,23 @@ $redirects = @($redirects | Select-Object -Unique)
 Write-Section "Application registration '$DisplayName'"
 $app = Resolve-TargetApplication
 
+# #162 (Rick's PR #218 review, issue 1): run the live-redirect-removal guard HERE, immediately
+# after resolving the app and before ANY adopt-path PATCH below (signInAudience in this section,
+# identifierUris in section 4, the api sub-object in section 5, appRoles in section 6). Previously
+# the guard only ran inside section 7's own SPA reconcile, so on an existing app under -Apply,
+# sections 3-6 already PATCHed every other drift field before the throw was ever reached --
+# reproduced by Rick as 5 PATCHes landing before "Refusing to remove ... SPA redirect URI(s)".
+# Resolve-TargetApplication's own $select (line ~335) already includes `spa`, so this reuses
+# $app.spa.redirectUris -- no extra Graph call. $redirectPlan computed here is reused as-is by
+# section 7 below (not recomputed) so there is exactly one evaluation of the guard, and section 7
+# only ever reaches its PATCH after this one has already allowed it to proceed.
+$redirectPlan = $null
+if ($app -and $redirects.Count -gt 0) {
+    $earlyCurSpa = @()
+    if ($app.spa -and $app.spa.redirectUris) { $earlyCurSpa = @($app.spa.redirectUris) }
+    $redirectPlan = Resolve-SpaRedirectReconcilePlan -CurrentSpaRedirectUris $earlyCurSpa -DesiredRedirectUris $redirects -Apply:$Apply -AllowRedirectUriRemoval:$AllowRedirectUriRemoval
+}
+
 if ($redirects.Count -eq 0) {
     # #162: the wording depends on whether an app already exists -- on an EXISTING app the section-7
     # reconcile leaves its current SPA URIs untouched (not "unset"); only a brand-new app actually
@@ -701,10 +718,17 @@ if ($app) {
         $desiredKey = ($redirects | Sort-Object) -join ';'
         $spaChanged = $spaKey -ne $desiredKey
 
-        # #162 guard: throws under -Apply if a live (non-localhost) URI would be dropped and
-        # -AllowRedirectUriRemoval was not passed. Never throws in preview.
-        $redirectPlan = Resolve-SpaRedirectReconcilePlan -CurrentSpaRedirectUris $curSpa -DesiredRedirectUris $redirects -Apply:$Apply -AllowRedirectUriRemoval:$AllowRedirectUriRemoval
-
+        # #162 guard: already evaluated right after Resolve-TargetApplication (section 3, before
+        # sections 3-6's own PATCHes), using $app.spa.redirectUris from that same $select -- not
+        # recomputed here for the adopt path, so there remains exactly one evaluation / one
+        # possible throw site for an EXISTING app, and it already happened before any PATCH in
+        # this script ran. $redirectPlan is still $null here only for a brand-new app that was
+        # just CREATED in section 3 (it did not exist yet when section 3's guard ran, so there was
+        # nothing to guard) -- compute it now from $curSpa for that one case; it is always a
+        # no-op (Removed empty) since $curSpa already reflects the just-created redirects.
+        if (-not $redirectPlan) {
+            $redirectPlan = Resolve-SpaRedirectReconcilePlan -CurrentSpaRedirectUris $curSpa -DesiredRedirectUris $redirects -Apply:$Apply -AllowRedirectUriRemoval:$AllowRedirectUriRemoval
+        }
         if ($redirectPlan.Removed.Count -gt 0) {
             if (-not $Apply) {
                 Write-Plan "Would remove SPA redirect URI(s): $($redirectPlan.Removed -join ', ')"
