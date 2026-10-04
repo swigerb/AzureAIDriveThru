@@ -14,11 +14,14 @@ Covers:
     verification is exercised for real; only the network fetch of the JWKS
     itself is stubbed.
   - The deny-by-default middleware: Development pass-through, the anonymous
-    allow-list (by route name), the persona-asset extension split, `/realtime`
+    allow-list (by route name), the persona-asset extension split (including
+    its CASE-INSENSITIVE extension matching, F4/#163), `/realtime`
     `?access_token=` being honored ONLY on that one path, 401
-    (`WWW-Authenticate: Bearer`) vs 403 response shapes, and `request["principal"]`.
+    (`WWW-Authenticate: Bearer`) vs 403 response shapes, and
+    `request[PRINCIPAL_KEY]`.
 """
 
+import asyncio
 import json
 import sys
 import time
@@ -38,6 +41,7 @@ import default_persona
 from entra_auth import (
     ANONYMOUS_ASSET_EXTENSIONS,
     PERSONA_ASSET_ROUTE_NAME,
+    PRINCIPAL_KEY,
     REALTIME_PATH,
     SYNTHETIC_PRINCIPAL,
     EntraConfigError,
@@ -162,6 +166,25 @@ class ResolveSettingsModeTableTests(unittest.TestCase):
                 ENTRA_TENANT_ID=_TENANT, ENTRA_CLIENT_ID=_CLIENT, RUNNING_IN_PRODUCTION="1",
                 APP_SESSION_SECRET="s" * 32,
             ))
+
+    def test_tenant_and_client_ids_normalized_to_lower_case(self):
+        """N4 (#163 round-1 review): a real Entra token's `tid`/`aud` claims are
+        always lower-case GUIDs -- an upper-case (but otherwise valid) id typed
+        into ENTRA_TENANT_ID/ENTRA_CLIENT_ID must still match every token, not
+        fail every request with a confusing mismatch. Uses GUIDs with actual
+        hex LETTERS (unlike `_TENANT`/`_CLIENT`, which are digit-only and so
+        `.upper()`/`.lower()` on them is a silent no-op that would let this
+        test pass even with the lower-casing removed entirely)."""
+        mixed_tenant = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        mixed_client = "ffffffff-aaaa-bbbb-cccc-dddddddddddd"
+        settings = resolve_settings(_env(
+            AUTH_MODE="Entra",
+            ENTRA_TENANT_ID=mixed_tenant.upper(),
+            ENTRA_CLIENT_ID=mixed_client.upper(),
+        ))
+        self.assertEqual(settings.tenant_id, mixed_tenant)
+        self.assertEqual(settings.client_id, mixed_client)
+        self.assertEqual(settings.issuer, f"https://login.microsoftonline.com/{mixed_tenant}/v2.0")
 
     def test_unset_mode_invalid_ids_refused(self):
         with self.assertRaises(EntraConfigError):
@@ -513,6 +536,15 @@ class TokenValidatorTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(EntraForbidden):
             await self.validator.validate(token)
 
+    async def test_scp_claim_not_a_string_rejected_as_forbidden_not_a_crash(self):
+        """N2 (#163 round-1 review): `scp` is attacker/tenant controlled -- a
+        non-string value (e.g. the list shape JSON would give a repeated claim)
+        must be treated as "no scopes" (403), the same as a missing `scp`, never
+        crash `.split()` with `AttributeError` (a 500)."""
+        token = self._sign(_claims(self.settings, scp=["access_as_user"]))
+        with self.assertRaises(EntraForbidden):
+            await self.validator.validate(token)
+
     async def test_scope_matches_one_of_several_space_separated(self):
         token = self._sign(_claims(self.settings, scp=f"some_other_scope {self.settings.api_scope} yet_another"))
         await self.validator.validate(token)  # must not raise
@@ -545,6 +577,21 @@ class TokenValidatorTests(unittest.IsolatedAsyncioTestCase):
         token = self._sign(_claims(self.settings))
         with self.assertRaises(EntraUnauthorized):
             await self.validator.validate(token)
+
+    async def test_jwks_client_error_message_distinguishes_from_malformed_token(self):
+        """N6 (#163 round-1 review): `jwt.PyJWKClientError` is a SUBCLASS of
+        `jwt.PyJWTError`, so the except clauses in `_validate_sync` must catch
+        it FIRST -- the reverse order (as this used to be) made this branch
+        unreachable dead code, and a signing-key-resolution failure was always
+        mislabeled "Malformed token" instead of its own, more specific message."""
+        self.validator._get_jwks_client = mock.MagicMock(  # noqa: SLF001
+            return_value=_RaisingJWKSClient(jwt.PyJWKClientError("no matching kid"))
+        )
+        token = self._sign(_claims(self.settings))
+        with self.assertRaises(EntraUnauthorized) as ctx:
+            await self.validator.validate(token)
+        self.assertIn("signing key", str(ctx.exception).lower())
+        self.assertNotIn("malformed", str(ctx.exception).lower())
 
     async def test_lazy_discovery_not_fetched_at_construction(self):
         """Constructing a `TokenValidator` (and even signing a valid token) must
@@ -600,6 +647,67 @@ class JwksCachingAndThreadingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(client.jwk_set_cache.lifespan, 86400)
         self.assertEqual(client.cooldown_duration, 300)
 
+    def test_jwks_client_uses_validators_own_timeout(self):
+        """N1 (#163 round-1 review): `jwt.PyJWKClient`'s own default timeout is
+        30s -- this pins that the validator's `timeout` (10s by default; also
+        the discovery fetch's own timeout) is passed through to the JWKS
+        client's constructor too, so a hung Entra endpoint can't hold the
+        client's internal lock open for 30s while requests queue behind it."""
+        validator = TokenValidator(self.settings, timeout=7.5)
+        validator._fetch_discovery_document = mock.MagicMock(  # noqa: SLF001
+            return_value={"issuer": self.settings.issuer, "jwks_uri": "https://fake.example/jwks"}
+        )
+        client = validator._get_jwks_client()  # noqa: SLF001
+        self.assertEqual(client.timeout, 7.5)
+
+    async def test_malformed_token_never_triggers_discovery(self):
+        """N1 (#163 round-1 review): a structurally-invalid token must be
+        rejected before `_get_jwks_client`/discovery is ever attempted -- a
+        flood of garbage tokens during a real Entra outage must not each
+        independently retry a hung discovery endpoint."""
+        with self.assertRaises(EntraUnauthorized):
+            await self.validator.validate("not-a-jwt-at-all")
+        self.validator._fetch_discovery_document.assert_not_called()  # noqa: SLF001
+
+    async def test_discovery_failure_is_cached_negatively(self):
+        """N1 (#163 round-1 review): a failed discovery fetch must not be
+        retried on every subsequent request within the cooldown window -- the
+        second call here must short-circuit to an immediate `EntraUnauthorized`
+        WITHOUT calling the (failing) discovery fetch again."""
+        validator = TokenValidator(self.settings, discovery_failure_cooldown=60.0)
+        validator._fetch_discovery_document = mock.MagicMock(  # noqa: SLF001
+            side_effect=EntraUnauthorized("OIDC discovery failed: boom")
+        )
+        token = self._sign(_claims(self.settings))
+        with self.assertRaises(EntraUnauthorized):
+            await validator.validate(token)
+        with self.assertRaises(EntraUnauthorized):
+            await validator.validate(token)
+        validator._fetch_discovery_document.assert_called_once()  # noqa: SLF001
+
+    async def test_discovery_retried_once_cooldown_elapses(self):
+        """N1: the negative cache is time-bounded, not permanent -- once
+        `discovery_failure_cooldown` has elapsed, the NEXT request must retry
+        discovery for real (and here, succeed) rather than staying stuck
+        refusing forever. Uses a real (tiny) cooldown and `asyncio.sleep`
+        rather than mocking `time.monotonic` directly -- that global clock is
+        also read by asyncio's own event loop internals, so patching it would
+        corrupt the loop itself rather than just this validator."""
+        validator = TokenValidator(self.settings, discovery_failure_cooldown=0.05)
+        validator._fetch_discovery_document = mock.MagicMock(  # noqa: SLF001
+            side_effect=[
+                EntraUnauthorized("OIDC discovery failed: boom"),
+                {"issuer": self.settings.issuer, "jwks_uri": "https://fake.example/jwks"},
+            ]
+        )
+        token = self._sign(_claims(self.settings))
+        with self.assertRaises(EntraUnauthorized):
+            await validator.validate(token)
+        await asyncio.sleep(0.1)  # let the 0.05s cooldown window elapse
+        client = validator._get_jwks_client()  # noqa: SLF001
+        self.assertIsNotNone(client)
+        self.assertEqual(validator._fetch_discovery_document.call_count, 2)  # noqa: SLF001
+
     def test_get_jwks_client_is_memoized_discovery_fetched_once(self):
         first = self.validator._get_jwks_client()  # noqa: SLF001
         second = self.validator._get_jwks_client()  # noqa: SLF001
@@ -654,7 +762,7 @@ class JwksCachingAndThreadingTests(unittest.IsolatedAsyncioTestCase):
 # ═══════════════════════════════════════════════════════════════════════════
 # create_middleware -- the deny-by-default route matrix (18.2), the anonymous
 # allow-list, the persona-asset extension split, /realtime's ?access_token,
-# 401 vs 403 response shapes, and request["principal"].
+# 401 vs 403 response shapes, and request[PRINCIPAL_KEY].
 # ═══════════════════════════════════════════════════════════════════════════
 
 class _StubValidator:
@@ -678,7 +786,7 @@ def _build_app(settings: EntraSettings, validator=None) -> web.Application:
     app = web.Application(middlewares=[create_middleware(settings, validator)])
 
     async def ok(request):
-        return web.json_response({"principal": request.get("principal")})
+        return web.json_response({"principal": request.get(PRINCIPAL_KEY)})
 
     app.router.add_get("/", ok, name="index")
     app.router.add_get("/health", ok, name="health")
@@ -690,6 +798,19 @@ def _build_app(settings: EntraSettings, validator=None) -> web.Application:
     )
     app.router.add_get(REALTIME_PATH, ok, name="realtime")
     return app
+
+
+class PrincipalKeyTests(unittest.TestCase):
+    def test_principal_key_is_a_request_key_not_a_plain_string(self):
+        """F6 (#163 round-2 review): `PRINCIPAL_KEY` must be an
+        `aiohttp.web.RequestKey`, not a plain string -- a plain string would
+        let ANY code write `request["principal"] = ...` directly (bypassing
+        this module entirely) and collide with this namespace, and would also
+        raise aiohttp's own `NotAppKeyWarning` on every `request[...] = `
+        write. A regression back to a string here is exactly the bug F6
+        fixed."""
+        self.assertIsInstance(PRINCIPAL_KEY, web.RequestKey)
+        self.assertNotIsInstance(PRINCIPAL_KEY, str)
 
 
 class MiddlewareDevelopmentModeTests(unittest.IsolatedAsyncioTestCase):
@@ -744,6 +865,31 @@ class MiddlewareEntraModeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(resp.status, 401)
             self.assertEqual(validator.calls, [])
 
+    async def test_persona_asset_uppercase_anonymous_extension_passes_without_token(self):
+        """F4 (#163 round-1/round-2 review, decided for #147 C# parity): the
+        extension match is CASE-INSENSITIVE -- `.JPG` (uppercase) is anonymous
+        exactly like `.jpg`. This is the exact extension the review called out
+        by name; `persona_loader.py`'s load-time validation applies the
+        identical rule (see `test_persona_loader.py`)."""
+        validator = _StubValidator({})
+        app = _build_app(self.settings, validator)
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.get(f"/personas/{_DEFAULT_PERSONA_ID}/assets/logo.JPG")
+            self.assertEqual(resp.status, 200)
+            self.assertEqual(validator.calls, [])
+
+    async def test_persona_asset_uppercase_non_anonymous_extension_still_requires_token(self):
+        """F4: case-insensitivity only ever ADDS matches within the fixed 7-member
+        set -- it must never accidentally widen it to extensions that were never
+        anonymous. `.JSON` (any case) is never anonymous; `demo/dummyOrder.JSON`
+        must still require a token exactly like the lower-case form."""
+        validator = _StubValidator({})
+        app = _build_app(self.settings, validator)
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.get(f"/personas/{_DEFAULT_PERSONA_ID}/assets/demo/dummyOrder.JSON")
+            self.assertEqual(resp.status, 401)
+            self.assertEqual(validator.calls, [])
+
     async def test_protected_route_no_authorization_header_401(self):
         validator = _StubValidator({})
         app = _build_app(self.settings, validator)
@@ -772,6 +918,27 @@ class MiddlewareEntraModeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(resp.status, 401)
             self.assertEqual(resp.headers.get("WWW-Authenticate"), "Bearer")
 
+    async def test_invalid_token_log_message_is_repr_escaped(self):
+        """N6 (#163 round-1 review): the log message must `%r` (not `%s`) the
+        exception, so attacker-controlled content folded into it (e.g. a `kid`
+        containing a newline) can't forge additional, fake-looking log lines --
+        pins that an embedded newline comes out of the formatted log record as
+        the two characters backslash+n, never a real line break."""
+        validator = _StubValidator({
+            "evil-token": EntraUnauthorized("boom\nFAKE LOG LINE: admin login succeeded"),
+        })
+        app = _build_app(self.settings, validator)
+        async with TestClient(TestServer(app)) as client:
+            with self.assertLogs("entra_auth", level="WARNING") as ctx:
+                resp = await client.get(
+                    "/api/personas", headers={"Authorization": "Bearer evil-token"}
+                )
+            self.assertEqual(resp.status, 401)
+        self.assertEqual(len(ctx.output), 1)
+        message = ctx.output[0]
+        self.assertNotIn("\nFAKE LOG LINE", message)
+        self.assertIn("\\nFAKE LOG LINE", message)
+
     async def test_protected_route_forbidden_token_403_no_www_authenticate(self):
         validator = _StubValidator({"no-role-token": EntraForbidden("missing role")})
         app = _build_app(self.settings, validator)
@@ -796,6 +963,21 @@ class MiddlewareEntraModeTests(unittest.IsolatedAsyncioTestCase):
         async with TestClient(TestServer(app)) as client:
             resp = await client.get("/api/personas", headers={"Authorization": "Basic dXNlcjpwYXNz"})
             self.assertEqual(resp.status, 401)
+
+    async def test_bearer_scheme_matched_case_insensitively(self):
+        """N3 (#163 round-1 review): `bearer`/`BEARER`/`Bearer` must all be
+        accepted, matching ASP.NET Core's `JwtBearerHandler` so the two backends
+        (this one and #147's C# port) behave identically."""
+        principal = {"oid": "the-oid", "tid": _TENANT, "name": "Someone"}
+        validator = _StubValidator({"good-token": principal})
+        app = _build_app(self.settings, validator)
+        async with TestClient(TestServer(app)) as client:
+            for scheme in ("bearer", "BEARER", "Bearer", "BeArEr"):
+                with self.subTest(scheme=scheme):
+                    resp = await client.get(
+                        "/api/personas", headers={"Authorization": f"{scheme} good-token"}
+                    )
+                    self.assertEqual(resp.status, 200)
 
     async def test_realtime_accepts_access_token_query_param(self):
         principal = {"oid": "the-oid", "tid": _TENANT, "name": "Someone"}

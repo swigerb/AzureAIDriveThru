@@ -1,4 +1,6 @@
 using System.Net;
+using System.Net.Sockets;
+using System.Text;
 using System.Text.Json;
 using Conformance.Harness;
 using Xunit;
@@ -203,4 +205,122 @@ public sealed class PersonaAssetRouteConformanceTests(ConformanceFixture fixture
             response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.BadRequest,
             $"Expected a traversal attempt against {requestPath} to be rejected with 404/400, got {response.StatusCode}.");
     });
+
+    /// <summary>
+    /// #63 harness follow-up (adopted from PR #122 review item "Raw-request helper for the
+    /// path-traversal rows"): the first literal `../persona.json` row above is documented (see
+    /// that test's doc comment) as unable to ever go red on EITHER backend, because
+    /// <see cref="ConformanceHttpClient"/>'s underlying <see cref="HttpClient"/> collapses the
+    /// `..` dot-segment client-side (RFC 3986) before the request line is ever written to the
+    /// wire -- the request each backend actually receives already reads the collapsed, dot-free
+    /// asset path, with no `..` anywhere in it. This row instead opens a bare
+    /// <see cref="TcpClient"/> and writes a hand-built HTTP/1.1 request line containing the raw,
+    /// uncollapsed `..` bytes, so the backend itself -- not a client-side URI normaliser -- is what
+    /// decides what happens to the traversal attempt.
+    ///
+    /// Rick's PR #220 review: a raw request with no <c>Authorization</c> header is meaningless in
+    /// this fixture's default Entra mode -- Python's per-request auth middleware 401s the
+    /// unauthenticated request before `_resolve_persona_asset_path`'s own containment check ever
+    /// runs, and this test previously accepted 401 as a passing outcome, so it could never actually
+    /// exercise (or catch a regression in) either backend's resolver. Fixed by minting a real
+    /// token from this fixture's own <see cref="FakeEntraIssuer"/> (<c>fixture.EntraIssuer!.Mint()</c>,
+    /// the same source <see cref="ConformanceHttpClient"/> uses for every other row in this class)
+    /// and sending it on the raw request line, so both backends now reach their own resolver code
+    /// for this row, same as the `%2f`/`%5c` InlineData rows above. With a valid token attached:
+    /// Kestrel's routing still removes dot segments server-side before a request is ever routed, so
+    /// this row stays structurally 404 on the dotnet leg regardless of
+    /// <c>PersonaAssetResolver</c> (same reasoning as the `%2f`/`%2F` rows above); on the Python
+    /// leg, aiohttp passes the raw `../persona.json` through to `match_info` unmodified, and now
+    /// that auth no longer short-circuits it, `_resolve_persona_asset_path`'s own segment-rejection
+    /// and `relative_to(assets_root)` containment check is what rejects it. Only 404/400 are
+    /// accepted now -- 401 is deliberately no longer in the accepted set, and 200 is asserted
+    /// against explicitly with its own pinpoint message, since that's the one outcome that would
+    /// mean the escaped file actually leaked. The response body is also asserted to never contain
+    /// `persona.json`'s own `"schemaVersion"` key (present verbatim in every real persona.json
+    /// under personas/), so even a 200 that somehow slipped past the status-code assertion (or a
+    /// non-404/400 status this test doesn't otherwise recognise) can't silently pass by returning
+    /// the escaped file's content under an unexpected status line.
+    ///
+    /// Persona id is discovered from disk (<see cref="ConformancePersonas.DiscoverFromDisk()"/>)
+    /// rather than a hardcoded literal, so this row never needs its own rebrand-baseline entry
+    /// (issue #105) for naming a specific real pack -- any pack the fixture happens to be running
+    /// against works identically, since the point here is the traversal rejection, not which pack.
+    ///
+    /// Mutation evidence (performed by hand for this revision, then reverted -- see PR #220 body):
+    ///  - Python: temporarily made `_resolve_persona_asset_path` skip its segment-rejection loop
+    ///    and its `relative_to(assets_root)` containment check -- this row went red (200, serving
+    ///    persona.json's content, `"schemaVersion"` present in the body). Reverting restored it to
+    ///    green.
+    /// </summary>
+    [Fact]
+    public Task Persona_asset_route_rejects_a_raw_uncollapsed_path_traversal_attempt() => fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var backendUri = fixture.Backend!.BaseUri;
+        var personaId = ConformancePersonas.DiscoverFromDisk().First();
+        var token = fixture.EntraIssuer!.Mint();
+
+        using var tcp = new TcpClient();
+        await tcp.ConnectAsync(backendUri.Host, backendUri.Port, ct);
+        await using var stream = tcp.GetStream();
+
+        var request =
+            $"GET /personas/{personaId}/assets/../persona.json HTTP/1.1\r\n" +
+            $"Host: {backendUri.Host}:{backendUri.Port}\r\n" +
+            $"Authorization: Bearer {token}\r\n" +
+            "Connection: close\r\n" +
+            "\r\n";
+        await stream.WriteAsync(Encoding.ASCII.GetBytes(request), ct);
+
+        var (statusLine, body) = await ReadRawHttpResponseAsync(stream, ct);
+
+        Assert.False(
+            statusLine.Contains(" 200 ", StringComparison.Ordinal),
+            $"A raw, uncollapsed '..' traversal attempt with a VALID token must never succeed -- " +
+            $"got status line: {statusLine}, body: {body}");
+        Assert.True(
+            statusLine.Contains(" 404 ", StringComparison.Ordinal)
+                || statusLine.Contains(" 400 ", StringComparison.Ordinal),
+            $"Expected an authenticated, raw, uncollapsed '..' traversal attempt to be rejected with " +
+            $"404/400, got status line: {statusLine}");
+        Assert.DoesNotContain("\"schemaVersion\"", body, StringComparison.Ordinal);
+    });
+
+    /// <summary>Reads the HTTP response status line (first `\r\n`-terminated line) byte by byte --
+    /// mirroring <c>HeartbeatPongSurvivalTests.ReadHttpHeadersAsync</c>'s same one-byte-at-a-time
+    /// approach -- then drains the rest of the response (remaining headers + body) until the
+    /// server closes the connection (the request line above sends <c>Connection: close</c>, so EOF
+    /// reliably marks the end of the response), and returns the status line alongside just the
+    /// body portion (after the blank line separating headers from body).</summary>
+    private static async Task<(string StatusLine, string Body)> ReadRawHttpResponseAsync(NetworkStream stream, CancellationToken cancellationToken)
+    {
+        var sb = new StringBuilder();
+        var single = new byte[1];
+        while (!sb.ToString().EndsWith("\r\n", StringComparison.Ordinal))
+        {
+            var read = await stream.ReadAsync(single.AsMemory(0, 1), cancellationToken);
+            if (read == 0)
+            {
+                throw new IOException("Connection closed before an HTTP status line was received.");
+            }
+
+            sb.Append((char)single[0]);
+        }
+
+        var statusLine = sb.ToString();
+
+        using var restStream = new MemoryStream();
+        var buffer = new byte[4096];
+        int bytesRead;
+        while ((bytesRead = await stream.ReadAsync(buffer, cancellationToken)) > 0)
+        {
+            restStream.Write(buffer, 0, bytesRead);
+        }
+
+        var rest = Encoding.ASCII.GetString(restStream.ToArray());
+        var headerEnd = rest.IndexOf("\r\n\r\n", StringComparison.Ordinal);
+        var body = headerEnd >= 0 ? rest[(headerEnd + 4)..] : rest;
+
+        return (statusLine, body);
+    }
 }

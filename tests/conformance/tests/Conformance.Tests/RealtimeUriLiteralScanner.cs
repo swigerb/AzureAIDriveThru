@@ -27,15 +27,21 @@ public static class RealtimeUriLiteralScanner
         new(@"(?<!openai/v1)/realtime(?=[?""{]|$)", RegexOptions.Compiled);
 
     /// <summary>
-    /// The only two known-legitimate hand-spliced <c>/realtime</c> request lines in the whole
-    /// Conformance.Tests tree, keyed by file name. Both splice the literal together locally from a
+    /// The only known-legitimate hand-spliced <c>/realtime</c> request lines in the whole
+    /// Conformance.Tests tree, keyed by file name. Each splices the literal together locally from a
     /// query <c>RealtimeUris.BuildQueryAsync</c> already built (with the default credentials
     /// attached) earlier in the same method -- see
-    /// <c>Scenarios/Sessions/ModelSelectionConformanceTests.cs</c> and
-    /// <c>Scenarios/Transport/HeartbeatPongSurvivalTests.cs</c>. Anything else that matches
-    /// <see cref="RealtimePathLiteral"/> is a violation, full stop -- adding a new legitimate site
-    /// requires adding it here explicitly, by exact trimmed line text, so a typo'd or
-    /// credential-less near-miss still fails loudly instead of silently matching a loose pattern.
+    /// <c>Scenarios/Sessions/ModelSelectionConformanceTests.cs</c>,
+    /// <c>Scenarios/Transport/HeartbeatPongSurvivalTests.cs</c>, and (PR #230 round 2 review, item
+    /// 3) <c>Scenarios/Security/OriginValidationTests.cs</c>'s
+    /// <c>Origin_with_explicit_default_port_is_rejected_against_a_portless_host</c> -- which needs
+    /// a raw <see cref="System.Net.Sockets.TcpClient"/> handshake (mirroring
+    /// <c>HeartbeatPongSurvivalTests.cs</c>'s own splice exactly) specifically to send a custom,
+    /// deliberately portless <c>Host:</c> header that <see cref="System.Net.WebSockets.ClientWebSocket"/>
+    /// can't be made to forge. Anything else that matches <see cref="RealtimePathLiteral"/> is a
+    /// violation, full stop -- adding a new legitimate site requires adding it here explicitly, by
+    /// exact trimmed line text, so a typo'd or credential-less near-miss still fails loudly instead
+    /// of silently matching a loose pattern.
     /// </summary>
     private static readonly IReadOnlyDictionary<string, string> AllowedSpliceSites =
         new Dictionary<string, string>(StringComparer.Ordinal)
@@ -43,6 +49,8 @@ public static class RealtimeUriLiteralScanner
             ["ModelSelectionConformanceTests.cs"] =
                 "using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(backendBaseUri, $\"/realtime?{fullQuery}\"));",
             ["HeartbeatPongSurvivalTests.cs"] =
+                "$\"GET /realtime?{query} HTTP/1.1\\r\\n\" +",
+            ["OriginValidationTests.cs"] =
                 "$\"GET /realtime?{query} HTTP/1.1\\r\\n\" +",
         };
 

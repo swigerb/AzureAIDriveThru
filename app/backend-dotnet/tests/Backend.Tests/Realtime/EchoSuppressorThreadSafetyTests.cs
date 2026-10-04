@@ -1,4 +1,5 @@
 using Backend.Realtime;
+using Microsoft.Extensions.Time.Testing;
 
 namespace Backend.Tests.Realtime;
 
@@ -29,8 +30,15 @@ public sealed class EchoSuppressorThreadSafetyTests
     }
 
     [Fact]
-    public async Task CooldownGuestAudioCancelsDelayedFlush()
+    public void CooldownGuestAudioCancelsDelayedFlush()
     {
+        // Issue #13 Wave 2: converted from a real 150ms Task.Delay wait to a FakeTimeProvider
+        // advance -- deterministic, no flakiness, and proves the delayed flush is genuinely wired
+        // through the injected TimeProvider (EchoSuppressor's own Task.Delay(..., _timeProvider,
+        // ...) call). flushSendAsync here returns an already-completed Task, so OnAudioDone's
+        // *immediate* best-effort flush runs fully synchronously (no await ever yields) -- no race
+        // between this assertion and that call.
+        var fakeTime = new FakeTimeProvider();
         var flushes = 0;
         using var echo = new EchoSuppressor(
             cooldownSeconds: 0.05,
@@ -38,13 +46,17 @@ public sealed class EchoSuppressorThreadSafetyTests
             {
                 Interlocked.Increment(ref flushes);
                 return Task.CompletedTask;
-            });
+            },
+            timeProvider: fakeTime);
 
         echo.OnAudioDelta();
-        echo.OnAudioDone(10.0);
-        Assert.False(echo.ShouldSuppressAudio(10.01));
+        echo.OnAudioDone(10.0); // immediate flush (#1) fires synchronously; also arms a delayed one.
+        Assert.False(echo.ShouldSuppressAudio(10.01)); // within cooldown -- cancels the delayed flush.
 
-        await Task.Delay(150, TestContext.Current.CancellationToken);
+        fakeTime.Advance(TimeSpan.FromSeconds(1)); // long past the 0.05s cooldown on the fake clock.
+
+        // Mutation check: if ShouldSuppressAudio stopped cancelling _flushCts, this would be 2 --
+        // the cancelled delayed flush would fire once the fake clock crosses its due time.
         Assert.Equal(1, Volatile.Read(ref flushes));
     }
 

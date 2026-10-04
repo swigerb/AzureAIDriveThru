@@ -32,6 +32,7 @@ namespace Conformance.Tests;
 /// would see it skip for real; CI, with no interpreter and <c>GITHUB_ACTIONS=true</c>, would fail
 /// loudly instead (R11, Rick's PR #158 round 2 review).
 /// </summary>
+[Trait("Category", "Harness")]
 public sealed class FakeEntraIssuerPyJwtValidationTests
 {
     private static readonly string ScriptPath = Path.Combine(

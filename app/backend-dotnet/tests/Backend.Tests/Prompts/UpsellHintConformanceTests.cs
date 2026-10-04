@@ -15,19 +15,12 @@ public sealed class UpsellHintConformanceTests
 {
     /// <summary>Known, pre-existing (hintKey, category) pairs that don't match any persona
     /// pack's real category today. Exempted by the exact pair, not by persona id, so any OTHER
-    /// kind of staleness in ANY pack is still caught by the real check below. All 7 entries
-    /// predate and are unrelated to #165's menu swap; the follow-up to fix the owning pack's own
-    /// hints.yaml and drop this exemption is tracked in #168.</summary>
-    private static readonly HashSet<(string HintKey, string Category)> KnownPreExistingGaps =
-    [
-        ("burger", "burgers"),
-        ("drink", "drinks"),
-        ("drink", "slushes"),
-        ("shake", "shakes"),
-        ("shake", "desserts"),
-        ("side", "sides"),
-        ("side", "hot dogs"),
-    ];
+    /// kind of staleness in ANY pack is still caught by the real check below. #168 fixed the 7
+    /// entries that used to live here by remapping the owning pack's own hints.yaml to its real
+    /// category names, so no gaps remain -- left as an empty set (rather than deleted) so a
+    /// future pre-existing gap in another pack has somewhere to go without re-inventing the
+    /// mechanism.</summary>
+    private static readonly HashSet<(string HintKey, string Category)> KnownPreExistingGaps = [];
 
     [Fact]
     public void EveryPacksUpsellHintTriggerCategories_ExistInThatPacksOwnMenu()

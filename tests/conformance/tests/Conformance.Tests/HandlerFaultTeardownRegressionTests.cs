@@ -25,6 +25,7 @@ namespace Conformance.Tests;
 /// nothing but slowness to this regression test.
 /// </summary>
 [Collection(ConformanceCollection.Name)]
+[Trait("Category", "Harness")]
 public sealed class HandlerFaultTeardownRegressionTests(ConformanceFixture fixture)
 {
     private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);

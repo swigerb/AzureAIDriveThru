@@ -94,6 +94,33 @@ public static class GaSessionValidator
         "delay", "keywords", "language", "languages", "model", "prompt",
     };
 
+    // #28/#63 N29 (Rick's PR #52 approval) originally added a model-specific gate here --
+    // rejecting `delay`/`keywords`/`languages` under `session.audio.input.transcription` when
+    // `transcription.model` didn't match the OpenAI public model name each key requires (e.g.
+    // `delay` needs `gpt-realtime-whisper`). Rick's PR #220 review caught the bug that made that
+    // gate itself unsound: on Azure, `audio.input.transcription.model` is a DEPLOYMENT name
+    // (`app/backend/rtmt.py`'s own `transcription_model` is configured from
+    // `AZURE_OPENAI_REALTIME_TRANSCRIPTION_MODEL`/`transcription_model`, an arbitrary
+    // customer-chosen string like `"my-transcribe-deployment"` -- see
+    // `app/backend/tests/test_session_bootstrap.py`), not one of the public model names this
+    // gate compared against. A real, correctly-configured deployment whose name doesn't happen
+    // to equal the underlying public model name would have every one of these keys wrongly
+    // rejected by this fake, even though the real service would accept them. The backend has no
+    // existing deployment-name -> underlying-model-family mapping for transcription deployments
+    // to resolve this properly (unlike the separate, unrelated realtime-model
+    // `AZURE_AI_MODEL_DEPLOYMENTS` catalog in `model_catalog.py`, which `deploymentModel` above
+    // is drawn from for the `reasoning`-on-"1.5" check, and does not cover transcription
+    // deployments), so rather than inventing a fictional, test-only mapping convention, this gate
+    // is removed entirely -- AudioInputTranscriptionKeys above (#28 N11/F2) still validates that
+    // the key NAME itself is known, which is the check this fake can make reliably without
+    // guessing at a deployment's underlying model family. This also removes the "earlier model
+    // still applies" fallback that previously read RealtimeSessionState.EffectiveSession for a
+    // follow-up update which omitted `model` -- that fallback was itself inconsistent, since
+    // `MergeSessionUpdate` replaces `transcription` wholesale per update (GA's own documented
+    // semantics), so a SECOND model-omitting follow-up would silently find no model at all and
+    // skip the check with no visible change in behaviour; removing the model-specific gate
+    // removes that inconsistency along with it rather than patching around it.
+
     /// <summary>
     /// #28 N11: keys accepted under `session.audio.input.turn_detection` -- previously unchecked.
     /// GA's `turn_detection` is a discriminated union on `type` (`ServerVad` vs `SemanticVad`);
@@ -220,6 +247,11 @@ public static class GaSessionValidator
                             message: $"Unknown parameter: 'session.audio.input.transcription.{badTranscriptionKey}'.",
                             echoEventId: true);
                     }
+
+                    // #63 N29's model-specific gate (rejecting delay/keywords/languages for a
+                    // transcription.model that doesn't support them) was removed per Rick's PR
+                    // #220 review -- see the comment above AudioInputTranscriptionKeys for why.
+                    // Only the key NAME is validated now (immediately above).
                 }
 
                 if (input.TryGetProperty("turn_detection", out var turnDetection) &&

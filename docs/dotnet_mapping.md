@@ -28,7 +28,7 @@ and Entra auth-row execution on the dotnet leg until issue #147 flips that capab
 | `rtmt.py`'s `create_hmac_token` / `validate_hmac_token` | `Auth/SessionTokenService.cs` | Byte-for-byte compatible: same payload JSON spacing (`{"exp": N}`), same URL-safe base64 (padding kept), same HMAC-SHA256-as-lowercase-hex signature, same "split on the last `.`" framing, constant-time signature comparison. See spike #44. PR #96 review nit: an earlier draft lowercased the *presented* signature before comparing, silently accepting uppercase hex that Python's `hmac.compare_digest` rejects -- fixed, covered by `Validate_RejectsUppercaseSignature`. |
 | `app.py`'s `load_app_secret()` | `Auth/AppSecretProvider.cs` | Reads `APP_SESSION_SECRET`; warns if short; generates a random 32-byte secret if unset (warning only when running in production). |
 | `config.yaml`'s `security` section (rtmt.py's module-level `_security_cfg`) | `Configuration/SecurityConfig.cs` | Typed, tolerant view of `security.allowed_origins` (list, default `[]`) and `security.require_session_token` (bool, default `false`) -- handles the YamlDotNet string-scalar gotcha below the same way `PromptLoader.ParsePriority` does. |
-| `rtmt.py`'s `_origin_matches_host` | `Realtime/OriginValidator.cs` | Exact, case-insensitive authority match only (never a suffix/substring match) -- mirrors `urllib.parse.urlsplit(origin).netloc` comparison semantics via `Uri.Authority`. |
+| `rtmt.py`'s `_origin_matches_host` | `Realtime/OriginValidator.cs` | Exact, case-insensitive match only (never a suffix/substring match) of the raw `netloc` exactly as `urllib.parse.urlsplit(origin).netloc` would extract it -- preserving any userinfo prefix and an explicit port even when it equals the scheme's own default. PR #230 round-2 review (Rick's item 3): an earlier version compared `Uri.Authority`, which silently drops BOTH of those, over-permissively accepting an Origin Python rejects; fixed by a manual scheme-prefix-then-`//`-prefix netloc extraction (see the class's own doc comment), covered by new unit tests (`OriginValidatorTests`) and new tagged conformance rows (`OriginValidationTests.Origin_with_userinfo_is_rejected_with_403`, `.Origin_with_explicit_default_port_is_rejected_against_a_portless_host`). |
 | `rtmt.py`'s `_websocket_handler`'s pre-upgrade Origin + token checks ("Task 3"/"Task 4") | `Realtime/RealtimeAuthGate.cs` | PR #96 review, required item 1 -- see "`/realtime` auth enforcement (PR #96)" below for the full decision record. |
 | (module-level `_startup_checks` dict + `/health` handler) | `Health/StartupChecks.cs`, `Health/HealthEndpoint.cs` | Same JSON shape: `{status, version, checks, personas}`, 200 if every check passed else 503. |
 | (aiohttp route table's WebSocket handler + per-session state) | `Sessions/RealtimeProcessor.cs`, `Sessions/SessionActor.cs`, `Sessions/SessionRegistry.cs`, `Sessions/IPipelineProcessor.cs` | `RealtimeProcessor.RunSessionAsync` owns the accepted WebSocket and upstream relay for the `realtime` pipeline: bootstrap, greeting gate, bidirectional frame loops, echo suppression/barge-in, session echoes, round-trip tokens and tool calls. `SessionActor`/`SessionRegistry` still exist as the generic session seam, but session resume and 4002 supersede handling remain a documented gap. |
@@ -189,6 +189,23 @@ independence and pack-owned wholeBundleSize golden vectors, raising the floor 20
 component delta rule and the additive `componentUpcharges` wire field, raising the floor 203 -> 204.
 See `DotnetTraitCoverageTests`'s own doc comment for the exact arithmetic.
 
+**Issue #21 "flip candidates to check early":** the real tagged-method count had drifted to 208
+since the floor was last raised. This pass tags 11 more genuinely-passing, already-ported rows --
+all 10 `Scenarios/Security/ClientToServerAllowListTests.cs` methods (browser-to-upstream realtime
+allow-list hardening, fully ported in `Backend/Realtime/ClientServerFilter.cs`/
+`RealtimeProcessor.cs`), plus `OriginValidationTests.Exact_origin_is_accepted` (its two siblings
+were already tagged). All 11 verified green against the C# backend (3 clean runs each, no flakes),
+raising the floor 204 -> 219 (208 + 11).
+
+**Issue #21 round 2 (PR #230 review, Rick's item 3):** `ClientServerFilter.cs`'s event-id/base64
+regexes and `OriginValidator.cs`'s authority comparison are now faithful ports (see the two table
+rows above for the exact gaps fixed), backed by 3 new tagged, ungated conformance rows verified
+green against both backends (3 clean runs each against the C# backend, no flakes), each
+mutation-checked by temporarily reverting its fix and confirming red -- raising the floor
+219 -> 222 (219 + 3). PR #226 (#147, Beth's C# auth work) independently raises this SAME floor
+204 -> 222 against the stale pre-#21 baseline; agreed merge order is PR #230 lands first at 222,
+then PR #226 rebases and re-targets its own floor to 222 + 18 = 240.
+
 - **DEV_MODE hot-reload** (`prompt_loader.py`'s file-watching reload behaviour) is explicitly
   marked not required in C# by the design doc's per-backend loading table. Not ported.
 - **Jinja2-style template rendering** is implemented for the templates this repo actually ships:
@@ -338,7 +355,7 @@ See the comments left on those issues directly for this wave's position. Summary
   `Backend.dll`. Run locally with
   `CONFORMANCE_BACKEND=dotnet dotnet test Conformance.slnx --filter "Dotnet=ready&Category!=Browser"`
   (repo root needs a built frontend at `app/backend/static` -- `npm run build` in `app/frontend`
-  -- for static-file scenarios). `DotnetTraitCoverageTests` now enforces at least 204 floor-eligible
+  -- for static-file scenarios). `DotnetTraitCoverageTests` now enforces at least 222 floor-eligible
   tagged methods; the early tagged set included:
   - `PersonaDiscoveryConformanceTests` -- 4 of 5 methods (persona list/detail shape, 404 for an
     unknown persona id, pre-upgrade 404 for an unknown `?persona=` on `/realtime`). The 5th
@@ -363,8 +380,10 @@ See the comments left on those issues directly for this wave's position. Summary
   Carried over from PR #96 (unchanged, still tagged): `HealthEndpointTests`,
   `HealthEndpointExtendedTests`, `StaticIndexHtmlTests`, `AuthSessionTests`,
   `AuthSessionTokenFormatTests` (both cases), all 3 of `Scenarios/Http/OriginValidationTests.cs`,
-  and 2 of 3 in `Scenarios/Security/OriginValidationTests.cs`. The conformance workflow now has a
-  `backend: [python, dotnet]` matrix; the dotnet leg runs `Dotnet=ready&Category!=Browser`.
+  and (as of issue #21) all 3 of `Scenarios/Security/OriginValidationTests.cs` (the third,
+  `Exact_origin_is_accepted`, was the one genuinely-untagged row left in that class). The
+  conformance workflow now has a `backend: [python, dotnet]` matrix; the dotnet leg runs
+  `Dotnet=ready&Category!=Browser`.
 - Session-level persona/model/mode binding is now forwarded into the live Azure OpenAI realtime
   session through `RealtimeProcessor.RunSessionAsync`; `ProcessAsync` is intentionally unused for
   accepted WebSockets.
