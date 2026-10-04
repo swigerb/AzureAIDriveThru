@@ -219,14 +219,20 @@ then PR #226 rebases and re-targets its own floor to 222 + 18 = 240.
 
 **Issue #13 Wave 4b (tool-failure cap) and floor-constant note:** this wave adds 3 newly-tagged
 `ToolFailureCapAndTicketRefreshTests.cs` methods. `DotnetTraitCoverageTests`'s own `count >= 222`
-constant (already raised by #230, above, by the time this branch rebased onto it) is deliberately
-left untouched here. Rather than project the real count by arithmetic (unreliable once multiple
-in-flight PRs are each independently tagging methods against a moving dev base), it was measured
-directly at rebase time by temporarily asserting on the actual `CountFloorEligibleDotnetReadyTestMethods()`
-value on this branch: **239** floor-eligible tagged methods, comfortably above the 222 floor. Per
-squad coordination the constant itself is raised once, in whichever in-flight PR lands last (so it
-isn't bumped redundantly across #226/#235/#237/#244 and risk a spurious merge conflict), to a fresh
-count taken at that time -- not to this PR's own snapshot, since further PRs may land in between.
+constant (already raised by #230, above, by the time this branch rebased onto it) was deliberately
+left untouched at that point. Rather than project the real count by arithmetic (unreliable once
+multiple in-flight PRs are each independently tagging methods against a moving dev base), it was
+measured directly at rebase time by temporarily asserting on the actual
+`CountFloorEligibleDotnetReadyTestMethods()` value on this branch: **239** floor-eligible tagged
+methods, comfortably above the 222 floor.
+
+**Issue #13 Wave 4/4b floor raise (PR #235 merged to dev, PR #237 rebased onto it):** now that #235
+has landed on `dev`, PR #237 re-measured the count the same way immediately after rebasing onto
+`origin/dev` (still **239** -- confirming no drift since the first measurement) and raised the floor
+constant itself 222 -> 239. Per squad coordination, any PR still rebasing on top of this (`#226`,
+`#244`) must re-measure fresh at its own rebase time rather than add its own historical delta (e.g.
+#226's planned "+18") to 239 -- those deltas were computed against the stale 222 baseline and risk
+double-counting methods (such as this wave's 3 tool-failure-cap rows) already folded into 239.
 
 - **DEV_MODE hot-reload** (`prompt_loader.py`'s file-watching reload behaviour) is explicitly
   marked not required in C# by the design doc's per-backend loading table. Not ported.
