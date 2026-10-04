@@ -18,9 +18,10 @@ namespace SearchIndexRequestBuilder;
 /// <c>azd env list -o json</c>'s own <c>IsDefault</c> flag is itself derived from.</description></item>
 /// <item><description><c>&lt;repoRoot&gt;/.azure/&lt;name&gt;/.env</c> -- the azd-managed dotenv
 /// file itself (Python's <c>DotEnvPath</c>), one <c>KEY="VALUE"</c> (always double-quoted, with
-/// <c>\"</c>-escaped embedded quotes) assignment per line -- confirmed empirically via
-/// <c>azd env new</c>/<c>azd env set</c> against a disposable local environment (never a real
-/// deployment, never a network call).</description></item>
+/// <c>\"</c>-escaped embedded quotes, and also <c>\$</c>/<c>\!</c>/backtick-escaped) assignment per
+/// line -- confirmed empirically via <c>azd env new</c>/<c>azd env set</c> against a disposable
+/// local environment (never a real deployment, never a network call), and re-confirmed by Rick
+/// against real azd 1.34.2.</description></item>
 /// </list>
 /// Unlike Python's <c>load_azd_env()</c>, which RAISES (<c>RuntimeError</c>) if azd or the default
 /// env file isn't found, this port treats a missing/unreadable/malformed azd env as "contributes
@@ -120,9 +121,17 @@ internal static class AzdEnvLoader
 
     /// <summary>
     /// azd always double-quotes every value it writes, with a backslash-escaped <c>\"</c> for any
-    /// embedded quote (confirmed empirically -- see this class's own doc comment). This parser is
-    /// deliberately scoped to exactly that shape, not the full dotenv spec: it exists solely to
-    /// read azd's own output, never a hand-edited .env file.
+    /// embedded quote (confirmed empirically -- see this class's own doc comment). Real azd
+    /// (confirmed against 1.34.2) also backslash-escapes <c>$</c>, <c>!</c>, and the backtick for
+    /// shell-safety; this parser's catch-all case below decodes those back to the plain character
+    /// too, which happens to match azd's own intent but NOT python-dotenv's (it only recognizes a
+    /// small fixed escape set and would leave an unrecognized <c>\$</c>/<c>\!</c>/<c>\`</c> as a
+    /// literal backslash plus character) -- a real, documented divergence
+    /// (docs/dotnet_tooling.md) that can never be exercised by the only two keys this tool reads
+    /// (a URL and an Azure deployment name, neither of which can legally contain <c>$</c>,
+    /// <c>!</c>, or a backtick). This parser is deliberately scoped to exactly azd's own output
+    /// shape, not the full dotenv spec: it exists solely to read azd's own output, never a
+    /// hand-edited .env file.
     /// </summary>
     private static string UnquoteDotEnvValue(string rawValue)
     {
