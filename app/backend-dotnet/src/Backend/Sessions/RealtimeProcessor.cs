@@ -174,13 +174,16 @@ public sealed class RealtimeProcessor : IPipelineProcessor
         public TaskCompletionSource<bool> FirstFrameDecision { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         public ResumeOutcome? ResumeAnnounce { get; set; }
-        /// <summary>Port of rtmt.py's own <c>announced</c> nonlocal: set true only by the "fresh"
-        /// (non-resumed) branch of <c>AnnounceAfterFirstFrameDecisionAsync</c> actually sending
-        /// <c>extension.session_metadata</c>. A resumed connection never sets this (it sends
-        /// <c>extension.session_resumed</c> instead) -- so a late (non-first-frame) resume attempt
-        /// on a RESUMED connection is rejected with no re-announce, exactly mirroring Python: only a
-        /// fresh connection that has already announced gets a rotated re-announce when a stray late
-        /// <c>extension.resume</c> arrives.</summary>
+        /// <summary>Port of rtmt.py's own <c>announced</c> nonlocal: set true once this socket's
+        /// first-frame decision has been made and its own resume-id baton handed to the browser --
+        /// whether that happened via a fresh-connection <c>extension.session_metadata</c>
+        /// (<see cref="AnnounceAfterFirstFrameDecisionAsync"/>'s "fresh" branch) or a successfully
+        /// resumed connection's <c>extension.session_resumed</c> (both mirror rtmt.py's
+        /// <c>announce_fresh()</c> and <c>handle_resume()</c>, which both set the nonlocal). Once
+        /// true, a later stray (non-first-frame) <c>extension.resume</c> attempt on this same
+        /// socket gets a rotated-id re-announce after its rejection -- exactly mirroring Python's
+        /// <c>reject_late_resume()</c>, which re-announces for ANY connection that already holds a
+        /// baton, fresh or resumed alike.</summary>
         public bool MetadataAnnounced { get; set; }
     }
 
@@ -422,9 +425,10 @@ public sealed class RealtimeProcessor : IPipelineProcessor
 
                     // rtmt.py's reject_late_resume: the browser drops its stored id on ANY
                     // rejection, so re-announce this socket's own session (with a rotated id) --
-                    // but only if it already announced fresh metadata once (a resumed connection
-                    // never did, since it sent extension.session_resumed instead, and must not
-                    // start doing so now).
+                    // for any connection that already holds a resume-id baton, fresh or resumed
+                    // alike (MetadataAnnounced is set by both paths; see its doc comment). The only
+                    // connections that never set it are ones torn down before their first-frame
+                    // decision was ever reached.
                     if (state.MetadataAnnounced)
                     {
                         await SendFreshSessionMetadataAsync().ConfigureAwait(false);
@@ -1081,6 +1085,12 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                     ["round_trip_index"] = state.Identifiers.RoundTripIndex,
                     ["resume_id"] = outcome.ResumeId,
                 };
+                // Parity with rtmt.py's handle_resume (sets `announced = True` right before sending
+                // extension.session_resumed): a successfully resumed connection holds a baton (its
+                // own resume id) exactly like a fresh connection does, so if a later stray
+                // extension.resume invalidates it, this socket must get the same rotated-id
+                // re-announce a fresh connection would -- not silence.
+                state.MetadataAnnounced = true;
                 await SendTextAsync(browserSocket, resumedFrame.ToJsonString(), ct).ConfigureAwait(false);
 
                 if (outcome.ConversationStarted)
@@ -1121,10 +1131,11 @@ public sealed class RealtimeProcessor : IPipelineProcessor
 
         // Port of rtmt.py's announce_fresh(): mints a rotated resumeId and (re-)announces
         // extension.session_metadata. Called once from AnnounceAfterFirstFrameDecisionAsync for a
-        // genuinely fresh connection, and again -- only if that already happened
-        // (state.MetadataAnnounced) -- from a late (non-first-frame) extension.resume rejection, so
-        // the browser's dropped stored id is replaced with a fresh one without re-greeting or
-        // otherwise disturbing the still-live session.
+        // genuinely fresh connection, and again -- for ANY connection that already holds a resume-id
+        // baton (state.MetadataAnnounced, set by both the fresh path and a successful resume) -- from
+        // a late (non-first-frame) extension.resume rejection, so the browser's dropped stored id is
+        // replaced with a fresh one without re-greeting or otherwise disturbing the still-live
+        // session.
         async Task SendFreshSessionMetadataAsync()
         {
             var resumeId = _sessionManager!.IssueResumeId(state.EffectiveSessionId);

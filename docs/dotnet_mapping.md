@@ -621,26 +621,39 @@ the dependency called out two paragraphs above). 42 rows newly passing plus one 
 written specifically for this change (see next paragraph), all tagged; `DotnetTraitCoverageTests`'s
 `>= 204` floor reconfirmed passing, untouched.
 
-**Bug found and fixed via the conformance sweep**: `rtmt.py`'s `reject_late_resume()` only
-re-announces fresh `extension.session_metadata` (with a newly rotated resume id) after rejecting a
-late `extension.resume` *if the nonlocal `announced` flag is already true* -- `announced` is set
-only by the fresh-connection `announce_fresh()` path, never by a resumed connection's accept path
-(which sends `extension.session_resumed` instead). The initial C# port always re-announced
-unconditionally on a rejected late resume, which would have caused an already-resumed connection to
-incorrectly start a second fresh-metadata flow if a stray extra `extension.resume` frame ever
-arrived on it. Fixed by adding `RealtimeSessionState.MetadataAnnounced` (mirroring Python's
-`announced` nonlocal, set only on the fresh-connection path) and gating the re-announce on it.
+**Bug found and fixed via the conformance sweep (and self-corrected after an initial wrong fix)**:
+`rtmt.py`'s `reject_late_resume()` re-announces fresh `extension.session_metadata` (with a newly
+rotated resume id) after rejecting a late `extension.resume`, gated on the nonlocal `announced`
+flag. A first reading of `rtmt.py` found only `announce_fresh()` (the fresh-connection path) setting
+`announced = True` and concluded a resumed connection never sets it -- so the first C# fix gated the
+re-announce on `MetadataAnnounced` being set *only* by the fresh-connection branch, and a new
+conformance test was written asserting a resumed connection's stray late resume gets **no**
+re-announce. That test passed against the C# backend but **failed when the same PR's CI ran it
+against the real Python backend** (`CONFORMANCE_BACKEND=python`), because `handle_resume()`'s
+*success* path (sending `extension.session_resumed`) also sets `announced = True`, immediately
+before that send -- a line missed on the first read. So Python's `announced` doesn't distinguish
+fresh vs. resumed; it tracks "has this socket's first-frame decision completed and a resume-id
+baton been handed out," true on either path. `reject_late_resume()` therefore re-announces (with a
+rotated id) for **any** connection already holding a baton, fresh or resumed alike -- it only stays
+silent for a connection torn down before its first-frame decision ever completed. Corrected the C#
+port: `RealtimeSessionState.MetadataAnnounced` is now also set `true` in the resumed branch of
+`AnnounceAfterFirstFrameDecisionAsync`, right before sending `extension.session_resumed`, mirroring
+`handle_resume()` exactly.
 
-**Coverage gap found via mutation testing, closed with a new test**: removing the
-`MetadataAnnounced` guard (always re-announcing) did not fail any of the 42 rows above -- no
-existing scenario exercised a stray late resume *on an already-resumed connection* specifically (the
-existing `A_late_resume_attempt_is_rejected_and_the_session_continues` only covers the fresh-
-connection case). Added
-`ResumeHandshakeTests.A_stray_late_resume_on_an_already_resumed_connection_gets_no_re_announce`,
+**Coverage gap found via mutation testing, closed with a corrected test (validated against both
+backends)**: removing the `MetadataAnnounced` guard entirely (always re-announcing unconditionally)
+did not fail any of the 42 rows above -- no existing scenario exercised a stray late resume *on an
+already-resumed connection* specifically (the existing
+`A_late_resume_attempt_is_rejected_and_the_session_continues` only covers the fresh-connection
+case). Added (then corrected, per the paragraph above)
+`ResumeHandshakeTests.A_stray_late_resume_on_an_already_resumed_connection_still_gets_a_rotated_re_announce`,
 which performs a real resume, sends a second stray `extension.resume` on the resumed socket, asserts
-the rejection still arrives, and asserts no `extension.session_metadata` frame follows within a
-bounded wait (using `FrameLog.WaitForAsync`'s null-on-timeout contract) and that the socket stays
-open. Confirmed this new test fails when the guard is removed and passes with it restored.
+the rejection still arrives, asserts a fresh `extension.session_metadata` frame **does** follow with
+a rotated resume id different from the one issued at resume time, and that the socket stays open.
+Confirmed this test fails when the `MetadataAnnounced` guard is removed entirely (mutation check)
+and passes with it restored, against **both** backends: C# (3 clean full-suite runs of all 44 target
+rows) and the real Python reference (44/44, including this test, run locally with
+`CONFORMANCE_BACKEND=python`) -- closing the loop that the first (wrong) fix attempt had skipped.
 
 ADR-002 (ready, dev 96b6f6f) adds Entra auth in front of `/realtime`; that's issue #147 (after #13)
 and was explicitly out of scope this revision, but the WebSocket upgrade handler in

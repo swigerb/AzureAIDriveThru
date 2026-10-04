@@ -198,7 +198,7 @@ public sealed class ResumeHandshakeTests(ResumeTimersConformanceFixture fixture)
 
     [Fact]
     [Trait("Dotnet", "ready")]
-    public Task A_stray_late_resume_on_an_already_resumed_connection_gets_no_re_announce() => fixture.RunAsync(async () =>
+    public Task A_stray_late_resume_on_an_already_resumed_connection_still_gets_a_rotated_re_announce() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
 
@@ -215,8 +215,7 @@ public sealed class ResumeHandshakeTests(ResumeTimersConformanceFixture fixture)
         await original.WaitForCloseAsync(FrameTimeout, ct);
         await original.DisposeAsync();
 
-        // This connection's own first frame IS the resume -- it succeeds, so this socket never
-        // ran the "fresh" announce_fresh() path (it sent extension.session_resumed instead).
+        // This connection's own first frame IS the resume -- it succeeds.
         var secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
         await using var resumedConnection = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
         Assert.True(await secondConnectionTask is not null, $"No upstream connection was accepted within {FrameTimeout}.");
@@ -224,12 +223,16 @@ public sealed class ResumeHandshakeTests(ResumeTimersConformanceFixture fixture)
         var resumed = await resumedConnection.ReceivedFrames.WaitForAsync(
             f => f.Type == "extension.session_resumed", FrameTimeout, ct);
         Assert.True(resumed is not null, "Expected the resume to succeed.");
+        var resumedResumeId = resumed!.Json.GetProperty("resume_id").GetString();
 
-        // A stray second extension.resume on this already-resumed connection is still rejected as
-        // "not_first_frame" -- but since this socket never announced fresh metadata (it resumed
-        // instead), rtmt.py's own `announced` flag is still false, so reject_late_resume's
-        // `if announced: ... announce_fresh()` never fires. No extension.session_metadata may
-        // follow: a resumed connection must never start sending the fresh-connection announce.
+        // A stray second extension.resume on this already-resumed connection is rejected as
+        // "not_first_frame" -- rtmt.py's handle_resume() sets its `announced` nonlocal true on a
+        // successful resume (same as the fresh-connection path), so reject_late_resume's
+        // `if announced: ... announce_fresh()` DOES fire here: the browser dropped its stored id on
+        // the rejection, so this socket's own session gets a freshly ROTATED resume id, exactly like
+        // a fresh connection would. (Confirmed against the real Python backend -- an earlier draft
+        // of this test incorrectly assumed a resumed connection is exempt from the re-announce;
+        // it is not.)
         await resumedConnection.SendExtensionResumeAsync(RandomResumeLookingId(), ct);
         var rejectedOnResumedSocket = await resumedConnection.ReceivedFrames.WaitForAsync(
             f => f.Type == "extension.resume_rejected" && f.Sequence > resumed.Sequence, FrameTimeout, ct);
@@ -237,13 +240,17 @@ public sealed class ResumeHandshakeTests(ResumeTimersConformanceFixture fixture)
             "Expected extension.resume_rejected for a stray resume attempt on an already-resumed connection.");
         Assert.Equal("not_first_frame", rejectedOnResumedSocket!.Json.GetProperty("reason").GetString());
 
-        var strayMetadata = await resumedConnection.ReceivedFrames.WaitForAsync(
+        var reannounced = await resumedConnection.ReceivedFrames.WaitForAsync(
             f => f.Type == "extension.session_metadata" && f.Sequence > rejectedOnResumedSocket.Sequence,
-            TimeSpan.FromMilliseconds(500), ct);
-        Assert.True(strayMetadata is null,
-            "A resumed connection must never send a fresh extension.session_metadata re-announce " +
-            "after a stray late resume attempt -- it never announced fresh metadata in the first " +
-            "place (it sent extension.session_resumed instead), so there is nothing to re-announce.");
+            FrameTimeout, ct);
+        Assert.True(reannounced is not null,
+            "Expected a rotated extension.session_metadata re-announce after the stray late resume " +
+            "on an already-resumed connection -- Python's handle_resume() sets `announced = true` on " +
+            "a successful resume exactly like the fresh path does, so this connection already holds " +
+            "a resume-id baton that must be rotated once the browser drops its old one.");
+        var rotatedResumeId = reannounced!.Json.GetProperty("resumeId").GetString();
+        Assert.False(string.IsNullOrEmpty(rotatedResumeId));
+        Assert.NotEqual(resumedResumeId, rotatedResumeId);
 
         // The session itself must still be untouched by the stray attempt.
         var closedQuickly = true;
