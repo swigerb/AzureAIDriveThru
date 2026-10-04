@@ -182,6 +182,64 @@ public sealed class FakeChatCompletionsServer : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Rick's PR #253 review item 2: asserts the scripted-response FIFO is empty. A round whose
+    /// HTTP request is aborted WHILE <see cref="HandleCompletionAsync"/> is still awaiting
+    /// <c>JsonDocument.ParseAsync(context.Request.Body, ...)</c> -- e.g. because the cascade
+    /// processor's own call was cancelled mid-flight by <c>_cancel_current_turn</c>'s
+    /// "connection closing"/barge-in path -- never reaches this method's dequeue
+    /// (<c>_scriptedResponses.TryDequeue</c> only runs AFTER that parse completes). The scripted
+    /// response queued for that never-consumed round is left sitting in the FIFO, to be silently
+    /// handed out to whichever UNRELATED request arrives next -- the very next round of the SAME
+    /// scenario, or (worse, since this fake is shared across every scenario in the collection)
+    /// the very first `/chat/completions` call of whichever scenario happens to run next. Rick
+    /// confirmed via the barge-in row's own <see cref="ChatCompletionsRequest.Aborted"/> proof
+    /// that the underlying HTTP connection itself is NOT corrupted by this -- the bug is purely
+    /// this stale FIFO entry, not connection-pooling/keep-alive state.
+    ///
+    /// Tests call this once at the very start of a scenario (mirroring
+    /// <see cref="FakeRealtimeUpstreamServer.AssertNoPendingOneShotSwitches"/>'s own placement in
+    /// <c>ConformanceFixture.RunAsync</c>) so a leaked scripted response from a previous
+    /// scenario's own abandoned round fails LOUDLY, pointing at the scenario that actually left
+    /// it behind, instead of silently misdirecting a later, unrelated scenario's first request.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">A previous scenario left one or more scripted
+    /// responses in the FIFO that were never consumed by a request.</exception>
+    public void AssertNoPendingScriptedResponses()
+    {
+        int pending;
+        lock (_gate)
+        {
+            pending = _scriptedResponses.Count;
+        }
+        if (pending > 0)
+        {
+            throw new InvalidOperationException(
+                $"{pending} scripted /chat/completions response(s) were never consumed by a " +
+                "request -- a previous scenario likely had a round whose request was aborted " +
+                "(e.g. a barge-in/connection-closing cancellation) before this fake server " +
+                "finished parsing its body, which skips the FIFO dequeue entirely and leaves " +
+                "the scripted response behind to be wrongly handed out to an unrelated later " +
+                "request instead. Call Drain() (or otherwise reset the queue) before the " +
+                "scenario that leaves a round deliberately in flight returns.");
+        }
+    }
+
+    /// <summary>
+    /// Rick's PR #253 review item 2: discards any scripted responses left in the FIFO without
+    /// requiring a matching request to consume them -- the reset half of
+    /// <see cref="AssertNoPendingScriptedResponses"/>'s check, for a scenario that deliberately
+    /// leaves its own final round's response unconsumed (e.g. by design, not by accident) and
+    /// wants to explicitly clear the queue afterwards rather than draining to `response.done`.
+    /// </summary>
+    public void Drain()
+    {
+        lock (_gate)
+        {
+            _scriptedResponses.Clear();
+        }
+    }
+
     public async Task StartAsync(CancellationToken cancellationToken = default, int? fixedPort = null)
     {
         var builder = WebApplication.CreateBuilder();

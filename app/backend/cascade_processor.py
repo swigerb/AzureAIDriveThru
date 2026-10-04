@@ -80,6 +80,7 @@ from rtmt import (
     ToolResultDirection,
     _extract_raw_mode_param,
     _sanitize_voice,
+    _truncate_for_log,
 )
 from session_manager import SessionManager, new_middle_tier_item_id
 
@@ -485,10 +486,19 @@ class CascadeProcessor:
         elif msg_type == "input_audio_buffer.clear":
             detector.reset()
         elif msg_type == "extension.set_voice":
-            voice = data.get("voice")
-            if voice:
-                state.voice = voice
-                self._sessions.set_voice(session_id, voice)
+            # Rick's #253 review item 1: mirror realtime's own extension.set_voice handler
+            # (rtmt.py's `_sanitize_voice` call) -- only a value from `self.allowed_voices`
+            # may ever be adopted. Before this fix, any truthy value (an unknown string, a
+            # dict, an int, ...) was accepted straight into `state.voice`/the session store,
+            # silently breaking TTS on the next turn instead of being dropped with a warning.
+            new_voice = _sanitize_voice(data.get("voice"), self.allowed_voices)
+            if new_voice is None:
+                logger.warning(
+                    "Cascade: dropped extension.set_voice with an unknown/invalid voice %s (session=%s)",
+                    _truncate_for_log(data.get("voice")), session_id)
+            else:
+                state.voice = new_voice
+                self._sessions.set_voice(session_id, new_voice)
         # session.update / extension.resume / anything else not listed above: a documented,
         # explicit scope cut for this issue's v1 (see the decision note) -- no-op rather than an
         # error, so an unrecognized/unused message never disrupts the session.

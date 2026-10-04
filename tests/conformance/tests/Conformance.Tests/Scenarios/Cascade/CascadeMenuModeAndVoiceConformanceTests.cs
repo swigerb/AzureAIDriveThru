@@ -6,16 +6,20 @@ namespace Conformance.Tests.Scenarios.Cascade;
 
 /// <summary>
 /// #248: the Python-cascade parity gaps fixed in <c>cascade_processor.py</c> (per-persona default
-/// voice, `?mode=` daypart binding), proven end to end over the real wire protocol against
+/// voice, `?mode=` daypart binding, and -- PR #253 review item 1 -- `extension.set_voice`
+/// sanitization), proven end to end over the real wire protocol against
 /// <see cref="CascadeMenuModeAndVoiceConformanceFixture"/>'s <c>test-delta</c> pack (same pack
 /// <c>MenuModeConformanceTests</c> already proved out for the realtime pipeline).
 ///
 /// Left UNTAGGED (no <c>[Trait("Dotnet", "ready")]</c>): PR #236 (the C# cascade pipeline port,
 /// issue #13 Wave 5) was not merged as of this PR, so `app/backend-dotnet` has no
 /// `CascadeProcessor.cs` to run these rows against yet. Tag these `Dotnet="ready"` once #236
-/// merges AND the dotnet cascade pipeline implements the same per-persona voice/mode binding this
-/// PR ports on the Python side (#236's own PR description already shows the C# cascade has both
-/// -- this is a parity port onto the OTHER leg, not new C# work).
+/// merges AND the dotnet cascade pipeline implements the same per-persona voice/mode binding AND
+/// `extension.set_voice` sanitization this PR ports on the Python side (#236's own PR description
+/// already shows the C# cascade has the first two -- this is a parity port onto the OTHER leg, not
+/// new C# work; Rick flagged in PR #253 review that #236's own `CascadeProcessor.cs` ~565-570 has
+/// the SAME unsanitized `extension.set_voice` gap as the pre-fix Python code here, so #236 needs
+/// its own fix before any of these rows can be tagged ready).
 /// </summary>
 [Collection(CascadeMenuModeAndVoiceConformanceCollection.Name)]
 public sealed class CascadeMenuModeAndVoiceConformanceTests(CascadeMenuModeAndVoiceConformanceFixture fixture)
@@ -48,6 +52,13 @@ public sealed class CascadeMenuModeAndVoiceConformanceTests(CascadeMenuModeAndVo
     [Fact]
     public Task Cascade_greeting_is_spoken_with_the_bound_personas_own_voice() => fixture.RunAsync(async () =>
     {
+        // Rick's PR #253 review item 2: a leaked scripted response from a previous scenario's own
+        // abandoned round (see FakeChatCompletionsServer.AssertNoPendingScriptedResponses's own
+        // doc comment for the exact mechanism) must fail LOUDLY here, pointing at whichever
+        // scenario actually left it behind, instead of being silently handed out to this
+        // scenario's own first /chat/completions call below.
+        fixture.Chat.AssertNoPendingScriptedResponses();
+
         var ct = TestContext.Current.CancellationToken;
         fixture.Chat.EnqueueMessage(new JsonObject { ["role"] = "assistant", ["content"] = "Welcome!" });
         var browser = await CascadeScenarioHelpers.ConnectAsync(fixture, "gpt-5-mini", ct, persona: Persona);
@@ -78,6 +89,10 @@ public sealed class CascadeMenuModeAndVoiceConformanceTests(CascadeMenuModeAndVo
     [Fact]
     public Task Cascade_session_bound_to_breakfast_mode_accepts_the_breakfast_only_meal() => fixture.RunAsync(async () =>
     {
+        // See the greeting test's matching call for why this must run before this scenario
+        // scripts/consumes anything of its own.
+        fixture.Chat.AssertNoPendingScriptedResponses();
+
         var ct = TestContext.Current.CancellationToken;
         var connection = await CascadeScenarioHelpers.ConnectPastGreetingAsync(
             fixture, fixture.Chat, "gpt-5-mini", ct, persona: Persona, mode: "breakfast");
@@ -101,14 +116,20 @@ public sealed class CascadeMenuModeAndVoiceConformanceTests(CascadeMenuModeAndVo
         var order = JsonDocument.Parse(toolResponse!.Json.GetProperty("tool_result").GetString()!).RootElement;
         Assert.Equal(1, order.GetProperty("items").GetArrayLength());
 
-        // Drain to this turn's own response.done (round 2's scripted "Added your breakfast
-        // meal." final message, plus its TTS) before disposing -- see the sibling lunch-mode
-        // rejection test's matching comment for why leaving a round's own trailing
-        // /chat/completions call in flight when the connection is disposed is believed to
-        // corrupt the shared `fixture.Chat` fake's single Kestrel connection for whichever test
-        // in this collection runs next.
-        await browser.ReceivedFrames.WaitForAsync(
+        // Rick's PR #253 review item 2: drain to this turn's OWN response.done (round 2's
+        // scripted "Added your breakfast meal." final message, plus its TTS) before disposing.
+        // The real reason this matters is FakeChatCompletionsServer's scripted-response FIFO, not
+        // connection state: if the WS were disposed while round 2's /chat/completions request is
+        // still in flight, the client-side cancellation can abort that request server-side WHILE
+        // HandleCompletionAsync is still parsing its body -- which happens BEFORE the FIFO dequeue
+        // -- leaving round 2's own scripted message stuck in the queue to be wrongly handed out to
+        // whichever request (this scenario's or an unrelated later one's) arrives next. The
+        // drain's result is asserted non-null below: a timed-out drain (the turn never reaching
+        // its own response.done at all) must fail this test loudly, not silently let the test
+        // finish green while one more scripted response is left behind.
+        var responseDone = await browser.ReceivedFrames.WaitForAsync(
             f => f.Sequence > toolResponse.Sequence && f.Type == "response.done", FrameTimeout, ct);
+        Assert.True(responseDone is not null, $"Expected this turn's own response.done within {FrameTimeout} before disposing the connection.");
     });
 
     /// <summary>
@@ -139,6 +160,10 @@ public sealed class CascadeMenuModeAndVoiceConformanceTests(CascadeMenuModeAndVo
     [Fact]
     public Task Cascade_session_bound_to_lunch_mode_rejects_the_breakfast_only_meal_as_out_of_mode() => fixture.RunAsync(async () =>
     {
+        // See the greeting test's matching call for why this must run before this scenario
+        // scripts/consumes anything of its own.
+        fixture.Chat.AssertNoPendingScriptedResponses();
+
         var ct = TestContext.Current.CancellationToken;
         var connection = await CascadeScenarioHelpers.ConnectPastGreetingAsync(
             fixture, fixture.Chat, "gpt-5-mini", ct, persona: Persona, mode: "lunch");
@@ -163,21 +188,62 @@ public sealed class CascadeMenuModeAndVoiceConformanceTests(CascadeMenuModeAndVo
         var order = JsonDocument.Parse(getOrderResponse!.Json.GetProperty("tool_result").GetString()!).RootElement;
         Assert.Equal(0, order.GetProperty("items").GetArrayLength());
 
-        // Drain the guest turn to its OWN natural response.done (the model's 3rd round, the
-        // scripted "Sorry, that's not available right now." final message, plus its TTS) before
-        // disposing the connection. Without this, the test's own assertions above are already
-        // satisfied by round 2 (get_order), so `await using var browser` disposes the WS while
-        // round 3's /chat/completions call is still in flight -- cancelling it server-side
-        // (`_cancel_current_turn`'s "connection closing" path) with its request already sent but
-        // its response never fully read. That stranded in-flight call on the shared
-        // `fixture.Chat` fake's single Kestrel connection is believed to be the root cause of a
-        // CI-only (Linux) flake in the sibling breakfast-mode test immediately after this one in
-        // the same collection: the next test's own greeting completions call intermittently
-        // raced the still-unwinding cancelled connection and never got its scripted response.
-        // Draining to this turn's own response.done removes that race by construction -- the
-        // shared chat-completions fake never has an in-flight request left behind when a test in
-        // this collection finishes.
-        await browser.ReceivedFrames.WaitForAsync(
+        // Rick's PR #253 review item 2 (correcting this comment's own prior, wrong theory): the
+        // real reason this drain matters is FakeChatCompletionsServer's scripted-response FIFO,
+        // NOT any corruption of the shared Kestrel connection -- Rick confirmed via the barge-in
+        // row's own ChatCompletionsRequest.Aborted proof that the connection itself is fine. The
+        // actual bug: this test's own assertions above are already satisfied by round 2
+        // (get_order), so disposing the WS here would abort round 3's /chat/completions request
+        // while HandleCompletionAsync is still parsing its body -- which runs BEFORE the FIFO
+        // dequeue (FakeChatCompletionsServer.cs ~220-242) -- leaving round 3's scripted "Sorry,
+        // that's not available right now." message stuck in the queue, to be wrongly handed out
+        // to an unrelated later request (e.g. the very next scenario's first /chat/completions
+        // call in this shared fixture) instead of being consumed here. Draining to this turn's
+        // own response.done means round 3 always actually completes and dequeues its own message,
+        // so nothing is ever left behind for the next scenario to inherit --
+        // AssertNoPendingScriptedResponses (called at the top of every scenario in this class) is
+        // the backstop that would now catch a regression here loudly instead of silently.
+        var responseDone = await browser.ReceivedFrames.WaitForAsync(
             f => f.Sequence > getOrderResponse.Sequence && f.Type == "response.done", FrameTimeout, ct);
+        Assert.True(responseDone is not null, $"Expected this turn's own response.done within {FrameTimeout} before disposing the connection.");
+    });
+
+    /// <summary>
+    /// Rick's PR #253 review item 1: `extension.set_voice` must be rejected the same way
+    /// realtime's own handler (rtmt.py's `_sanitize_voice` call) already rejects it -- an unknown
+    /// voice must never be adopted into `state.voice`/the session store. Proven end to end here
+    /// rather than only at the Python unit-test layer (`HandleClientMessageSetVoiceTests` in
+    /// test_cascade_processor.py) because the wire-protocol contract is what actually matters: a
+    /// forged `extension.set_voice` must not change which voice TTS speaks with for this guest's
+    /// very next turn. Mutation-test seam: reverting `_handle_client_message`'s
+    /// `extension.set_voice` branch back to `if voice: state.voice = voice` makes this assertion
+    /// fail -- the next turn's TTS request would carry the forged voice instead of test-delta's
+    /// own "alloy".
+    /// </summary>
+    [Fact]
+    public Task Cascade_extension_set_voice_with_an_unknown_voice_is_dropped_not_adopted() => fixture.RunAsync(async () =>
+    {
+        // See the greeting test's matching call for why this must run before this scenario
+        // scripts/consumes anything of its own.
+        fixture.Chat.AssertNoPendingScriptedResponses();
+
+        const string forgedVoice = "rick_probe_voice";
+        var ct = TestContext.Current.CancellationToken;
+        var connection = await CascadeScenarioHelpers.ConnectPastGreetingAsync(
+            fixture, fixture.Chat, "gpt-5-mini", ct, persona: Persona);
+        await using var browser = connection.Browser;
+
+        await browser.SendExtensionSetVoiceAsync(forgedVoice, cancellationToken: ct);
+
+        fixture.Chat.EnqueueMessage(FinalMessage("Sure thing!"));
+        fixture.Realtime.NextTranscript = "Hello?";
+        await CascadeScenarioHelpers.SendGuestTurnAsync(browser, ct);
+
+        var responseDone = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Sequence > connection.GreetingWatermark && f.Type == "response.done", FrameTimeout, ct);
+        Assert.True(responseDone is not null, $"Expected this turn's own response.done within {FrameTimeout}.");
+
+        Assert.DoesNotContain(forgedVoice, fixture.Realtime.TtsRequestVoices);
+        Assert.Contains("alloy", fixture.Realtime.TtsRequestVoices);
     });
 }

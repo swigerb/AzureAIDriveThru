@@ -567,6 +567,60 @@ class BargeInEndToEndTests(unittest.IsolatedAsyncioTestCase):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Rick's PR #253 review item 1: `extension.set_voice` must go through the SAME
+# `_sanitize_voice` gate realtime's own handler (rtmt.py) already applies -- only a value
+# present in `self.allowed_voices` may ever be adopted into `state.voice`/the session store.
+# Before this fix, `_handle_client_message` accepted ANY truthy value (an unrecognized
+# string, a dict, an int, ...) straight through, silently breaking TTS on the next turn
+# instead of being dropped with a warning like realtime does. Mutation-test seam: reverting
+# the handler back to `if voice: state.voice = voice` makes
+# `test_an_unknown_voice_string_is_dropped_not_adopted` and
+# `test_a_non_string_voice_is_dropped_not_adopted` fail (state.voice/set_voice would then
+# reflect the bad value), while `test_a_valid_allowed_voice_is_adopted` keeps passing either
+# way -- proving the gate rejects bad input without breaking the legitimate case.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class HandleClientMessageSetVoiceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_an_unknown_voice_string_is_dropped_not_adopted(self):
+        processor = _make_processor({})
+        ws = _make_mock_ws()
+        state = _CascadeSessionState(session_id="s1", persona_id="p", deployment="d", voice="marin")
+        detector = _TurnDetector(threshold=0.5, silence_duration_ms=200, sample_rate=24000)
+
+        await processor._handle_client_message(
+            ws, "s1", state, detector, {"type": "extension.set_voice", "voice": "not-a-real-voice"}, None)
+
+        self.assertEqual(state.voice, "marin")
+        processor._sessions.set_voice.assert_not_called()
+
+    async def test_a_non_string_voice_is_dropped_not_adopted(self):
+        processor = _make_processor({})
+        ws = _make_mock_ws()
+        state = _CascadeSessionState(session_id="s1", persona_id="p", deployment="d", voice="marin")
+        detector = _TurnDetector(threshold=0.5, silence_duration_ms=200, sample_rate=24000)
+
+        for bad_voice in ({"x": 1}, 42, True, ["coral"]):
+            with self.subTest(bad_voice=bad_voice):
+                await processor._handle_client_message(
+                    ws, "s1", state, detector, {"type": "extension.set_voice", "voice": bad_voice}, None)
+
+                self.assertEqual(state.voice, "marin")
+        processor._sessions.set_voice.assert_not_called()
+
+    async def test_a_valid_allowed_voice_is_adopted(self):
+        processor = _make_processor({})
+        ws = _make_mock_ws()
+        state = _CascadeSessionState(session_id="s1", persona_id="p", deployment="d", voice="marin")
+        detector = _TurnDetector(threshold=0.5, silence_duration_ms=200, sample_rate=24000)
+
+        await processor._handle_client_message(
+            ws, "s1", state, detector, {"type": "extension.set_voice", "voice": "coral"}, None)
+
+        self.assertEqual(state.voice, "coral")
+        processor._sessions.set_voice.assert_called_once_with("s1", "coral")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Rick's #118 review item 5: a 429 from chat/STT/TTS goes through the same
 # extension.rate_limited notice path as the realtime pipeline.
 # ═══════════════════════════════════════════════════════════════════════════════
