@@ -87,10 +87,17 @@ validly-formatted `increase_reason`?". Issue #105 hardened every corner that lef
      commits would have item 9's fetch loop exit on the short final page (250, 100, 100, 50)
      without any error, silently missing whatever closing keyword lives in commit 251 onward.
      fetch_pr_commit_messages() now takes a required `expected_count` argument and fails
-     closed (RuntimeError) if the number of messages it actually fetched does not match. The
+     closed (RuntimeError) if the number of commits it actually fetched does not match. The
      workflow passes `github.event.pull_request.commits` (GitHub's own authoritative commit
      count for the PR, an integer, safe to use via `env:`) as PR_COMMITS, and fails closed if
      that value is missing or not parseable as an integer before even attempting the fetch.
+  9c. #238 round 3 (Rick's review of PR #239): round 2's mismatch check compared
+     `expected_count` against the number of EXTRACTED messages (commits with a non-empty
+     message), not the raw number of commit entries GitHub returned. A commit with a
+     genuinely empty message (a legitimate, if unusual, case) would make that count fall one
+     short forever, tripping the 250-cap mismatch error even on a PR nowhere near 250 commits.
+     The comparison now counts every commit entry returned (before filtering empty messages
+     out), so only an actual truncated fetch trips the check.
 
 Usage (see .github/workflows/conformance.yml, python-tests job):
 
@@ -320,8 +327,12 @@ def fetch_pr_commit_messages(repo: str, pr_number: str, token: str, expected_cou
     commits TOTAL regardless of how many pages are requested -- a PR with 251+ commits would
     otherwise end pagination on a short final page (e.g. a 100/100/50 split after the cap) with
     no error at all, silently missing whatever closing keyword lives in commit 251 onward.
-    Raises RuntimeError if the number of messages actually fetched does not equal
-    *expected_count*.
+    Raises RuntimeError if the number of RAW commit entries actually fetched (every entry
+    GitHub returned, counted BEFORE filtering out any with no commit message) does not equal
+    *expected_count*. Comparing against the raw entry count rather than the filtered message
+    count matters: a commit with a genuinely empty message is legitimate and should not itself
+    trip the mismatch check (which exists to catch the 250-commit cap, not to demand every
+    commit have a message).
 
     Raises RuntimeError on ANY OTHER failure too -- network error, timeout, non-200 status,
     malformed/unexpected JSON -- rather than returning an empty or partial list (fail-closed,
@@ -330,6 +341,7 @@ def fetch_pr_commit_messages(repo: str, pr_number: str, token: str, expected_cou
     through undetected).
     """
     messages: list[str] = []
+    commit_count = 0
     page = 1
     while True:
         url = f"https://api.github.com/repos/{repo}/pulls/{pr_number}/commits?per_page=100&page={page}"
@@ -365,6 +377,7 @@ def fetch_pr_commit_messages(repo: str, pr_number: str, token: str, expected_cou
                 f"GitHub API returned an unexpected payload fetching PR #{pr_number} commits "
                 f"(expected a list, got {type(payload).__name__})"
             )
+        commit_count += len(payload)
         for commit in payload:
             message = ((commit or {}).get("commit") or {}).get("message")
             if message:
@@ -372,11 +385,11 @@ def fetch_pr_commit_messages(repo: str, pr_number: str, token: str, expected_cou
         if len(payload) < 100:
             break
         page += 1
-    if len(messages) != expected_count:
+    if commit_count != expected_count:
         raise RuntimeError(
-            f"GitHub API returned {len(messages)} commit message(s) for PR #{pr_number} but "
-            f"the PR reports {expected_count} commit(s) -- the PR commits endpoint caps at "
-            f"250 commits total regardless of pagination, so this mismatch likely means a "
+            f"GitHub API returned {commit_count} commit(s) for PR #{pr_number} but the PR "
+            f"reports {expected_count} commit(s) -- the PR commits endpoint caps at 250 "
+            f"commits total regardless of pagination, so this mismatch likely means a "
             f"closing keyword in commit 251+ was silently missed. Refusing to proceed."
         )
     return messages

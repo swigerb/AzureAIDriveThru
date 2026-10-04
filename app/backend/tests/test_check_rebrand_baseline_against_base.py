@@ -829,11 +829,30 @@ class TestFetchPrCommitMessages(unittest.TestCase):
         with mock.patch.object(
             checker.urllib.request, "urlopen", return_value=_FakeResponse(200, payload)
         ):
-            # #238 round 2: expected_count matches the two COMMITS GitHub reports, not the
-            # one message actually extracted (the other commit has no message field) -- the
-            # count check compares against len(messages), i.e. 1 here, not len(payload).
-            messages = checker.fetch_pr_commit_messages("owner/repo", "42", "tok", expected_count=1)
+            # #238 round 3: expected_count must match the RAW number of commit entries GitHub
+            # reports (2 here), not the filtered message count (1, since the other commit has
+            # no message field) -- an empty-message commit must not itself trip the mismatch
+            # check meant to catch the 250-commit pagination cap.
+            messages = checker.fetch_pr_commit_messages("owner/repo", "42", "tok", expected_count=2)
         self.assertEqual(messages, ["Fix #1: start"])
+
+    def test_empty_message_commit_does_not_trip_count_mismatch(self):
+        """#238 round 3 (Rick's follow-up on PR #239): a commit with a genuinely empty message
+        is legitimate and must not itself cause a false "250-cap" mismatch error -- the count
+        check compares against every raw commit entry GitHub returned, not just the ones with
+        a non-empty message."""
+        payload = json.dumps(
+            [
+                {"commit": {"message": "Fix #1: start"}},
+                {"commit": {"message": ""}},
+                {"commit": {"message": "Refs #2: wip"}},
+            ]
+        ).encode("utf-8")
+        with mock.patch.object(
+            checker.urllib.request, "urlopen", return_value=_FakeResponse(200, payload)
+        ):
+            messages = checker.fetch_pr_commit_messages("owner/repo", "42", "tok", expected_count=3)
+        self.assertEqual(messages, ["Fix #1: start", "Refs #2: wip"])
 
     def test_happy_path_commit_count_matches_expected_count(self):
         """#238 round 2 happy path: when the fetched message count equals expected_count
