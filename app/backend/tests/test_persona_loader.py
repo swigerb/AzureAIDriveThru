@@ -11,6 +11,7 @@ Covers:
 """
 
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -684,6 +685,82 @@ class TestPersonaAssetTypeValidation:
 
         with mock.patch.object(Path, "is_symlink", _fake_is_symlink):
             with pytest.raises(PersonaValidationError, match="symlink"):
+                PersonaCatalog.load(personas_dir=personas_copy)
+
+    def test_persona_dir_itself_symlink_refuses_to_start(self, personas_copy):
+        """#223 (Rick's #222 review): `_validate_persona_assets`'s `rglob("*")`
+        only ever yields entries BELOW `assets/` -- it never considers the
+        persona pack directory itself. If `personas/<id>/` is itself a symlink
+        (e.g. pointing at an arbitrary directory elsewhere on the host), the
+        old code never noticed. Mocked the same way as
+        `test_symlinked_asset_refuses_to_start` above, for the same
+        no-privileged-symlinks-in-CI reason."""
+        pack_dir = personas_copy / self._PID
+
+        real_is_symlink = Path.is_symlink
+
+        def _fake_is_symlink(self):
+            if self == pack_dir:
+                return True
+            return real_is_symlink(self)
+
+        with mock.patch.object(Path, "is_symlink", _fake_is_symlink):
+            with pytest.raises(PersonaValidationError, match="symlink"):
+                PersonaCatalog.load(personas_dir=personas_copy)
+
+    def test_assets_dir_itself_symlink_refuses_to_start(self, personas_copy):
+        """#223: same gap as above, one level down -- `assets/` itself (not
+        just something below it) being a symlink must also be rejected."""
+        assets_dir = personas_copy / self._PID / "assets"
+
+        real_is_symlink = Path.is_symlink
+
+        def _fake_is_symlink(self):
+            if self == assets_dir:
+                return True
+            return real_is_symlink(self)
+
+        with mock.patch.object(Path, "is_symlink", _fake_is_symlink):
+            with pytest.raises(PersonaValidationError, match="symlink"):
+                PersonaCatalog.load(personas_dir=personas_copy)
+
+    def test_junction_asset_refuses_to_start(self, personas_copy):
+        """#223: a Windows directory junction reports `Path.is_symlink() ==
+        False` (a junction sets `FILE_ATTRIBUTE_REPARSE_POINT` but not the
+        reparse tag `is_symlink`/`os.path.islink` check for), so the N5 check
+        alone silently let a junction under `assets/` through. Mocks
+        `os.path.isjunction` for exactly one target, the same
+        no-privileged-junction-creation-in-CI rationale as the symlink
+        mocks above (junction creation needs elevated rights / `mklink /J`)."""
+        assets_dir = personas_copy / self._PID / "assets"
+        target = assets_dir / "sneaky-junction"
+        target.mkdir()
+
+        real_isjunction = os.path.isjunction
+
+        def _fake_isjunction(path):
+            if Path(path) == target:
+                return True
+            return real_isjunction(path)
+
+        with mock.patch("os.path.isjunction", _fake_isjunction):
+            with pytest.raises(PersonaValidationError, match="junction"):
+                PersonaCatalog.load(personas_dir=personas_copy)
+
+    def test_junction_persona_dir_refuses_to_start(self, personas_copy):
+        """#223: the junction gap applies at the pack-dir root too, not just
+        under assets/."""
+        pack_dir = personas_copy / self._PID
+
+        real_isjunction = os.path.isjunction
+
+        def _fake_isjunction(path):
+            if Path(path) == pack_dir:
+                return True
+            return real_isjunction(path)
+
+        with mock.patch("os.path.isjunction", _fake_isjunction):
+            with pytest.raises(PersonaValidationError, match="junction"):
                 PersonaCatalog.load(personas_dir=personas_copy)
 
 

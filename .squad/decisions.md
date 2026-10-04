@@ -1203,3 +1203,30 @@ No production harness behavior changed — only this one test.
 
 **Not merged:** Per instructions, PR #66 was not merged. Commented on the PR addressed to Rick with the change description and evidence above; awaiting his re-review.
 
+#### Summer: #223 item 3 — anonymous persona-asset extension matching rule, for Beth's #147 C# parity
+
+**Date:** 2026-10-02 (session dated per squad clock)
+**Author:** Summer (Backend Dev)
+**Context:** Issue #223 ("Python Entra hardening follow-ups from #222 review") asked me to document, in this file, the exact anonymous-asset-extension matching rule that `app/backend/entra_auth.py` already implements — this record was apparently meant to have been committed alongside PR #222 but never was (no entry for it existed anywhere in this file or `.squad/decisions/inbox/` before this one). Beth needs this spelled out precisely for #147 (the C# backend's persona-auth parity work), so the two backends classify every persona-pack asset file identically rather than Beth having to reverse-engineer the Python behavior from source.
+
+**Decision — the rule, precisely:**
+A persona asset path is served **anonymously** (no Entra bearer token required) if and only if its file extension, taken as the **last** dot-suffix only and compared **case-insensitively**, is one of a fixed 7-entry allow-list. Everything else under a persona's `assets/` tree requires an authenticated request (or, for a `.json` directly under `assets/demo/`, is a separate explicitly-allowed exception unrelated to this rule — see `persona_loader._validate_persona_assets`).
+
+- **Implementation (`entra_auth.py`):**
+  ```python
+  ANONYMOUS_ASSET_EXTENSIONS = frozenset({".svg", ".png", ".jpg", ".webp", ".ico", ".wav", ".mp3"})
+
+  def _is_anonymous(asset_path: str) -> bool:
+      suffix = PurePosixPath(asset_path).suffix.lower()
+      return suffix in ANONYMOUS_ASSET_EXTENSIONS
+  ```
+- **Case-insensitive:** `.lower()` is applied to the extracted suffix before the set membership test, so `logo.SVG`, `logo.Svg`, and `logo.svg` all match the same `".svg"` entry. The allow-list itself is defined in lowercase only — this never *widens* matching (e.g. there is no separate uppercase entry to accidentally diverge from); it only normalizes the candidate side of the comparison.
+- **Last-suffix-only, not every dot-segment:** `PurePosixPath(...).suffix` returns only the final extension segment. For `"logo.tar.gz"` this yields `".gz"`, **not** `".tar.gz"` — a multi-dot filename is classified purely by what follows its last dot. A persona asset named e.g. `"brand.backup.png"` is anonymous (`.png` matches); one named `"brand.png.bak"` is NOT (`.bak` doesn't match), even though `.png` appears earlier in the name.
+- **Fixed 7-entry list, no wildcard/prefix matching:** `.svg`, `.png`, `.jpg`, `.webp`, `.ico`, `.wav`, `.mp3`. Notably absent (and therefore NOT anonymous): `.jpeg` (the 4-letter spelling is a distinct, unmatched suffix from `.jpg` — this was explicitly tested in #163/#222's review as a "must never accidentally widen" case; see `test_uppercase_jpeg_also_refuses_to_start` / sibling tests in `test_persona_loader.py`), `.gif`, `.json`, `.ogg`, `.m4a`.
+
+**For Beth's #147 C# port:** reproduce exactly — extract only the final extension (`Path.GetExtension` in .NET already matches this "last segment only" semantics, same as `PurePosixPath.suffix`), lowercase it (`string.ToLowerInvariant()`, not culture-sensitive `ToLower()`, to avoid locale-dependent casing surprises e.g. Turkish `İ`/`I` — matches Python's own `str.lower()` being locale-independent for ASCII), and compare against the identical 7-entry list above. Do not add `.jpeg`, `.gif`, or any other extension unless this Python-side allow-list is changed first and in sync across both backends — the two lists diverging is exactly the kind of bug #147 exists to prevent.
+
+**Risk/trade-off:** None — this is a documentation-only decision record; no code in this PR implements or changes the rule itself (it was already shipped, unchanged, by #222/PR #222, now merged to `dev`). This record exists purely so #147 has an authoritative, precise reference instead of Beth needing to read Python source to infer the contract.
+
+**Team impact:** Beth (#147 C# persona-auth parity) is the primary consumer. No other team member's scope is affected.
+

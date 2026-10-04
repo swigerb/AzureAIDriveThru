@@ -22,6 +22,7 @@ Covers:
 """
 
 import asyncio
+import http.client
 import json
 import sys
 import time
@@ -616,6 +617,70 @@ class TokenValidatorTests(unittest.IsolatedAsyncioTestCase):
             token = self._sign(_claims(self.settings))
             with self.assertRaises(EntraUnauthorized):
                 await validator.validate(token)
+
+    async def test_discovery_body_read_oserror_becomes_unauthorized(self):
+        """#223 (Rick's #222 review): a body-read failure (e.g. the peer resets
+        the connection mid-response) raises a plain `OSError` subclass from
+        `response.read()`, never a `urllib.error.URLError` -- `urlopen()` itself
+        already succeeded by the time the read fails. Before this fix that
+        propagated uncaught past the 401 fail-closed path."""
+        validator = TokenValidator(self.settings)
+        fake_response = mock.MagicMock()
+        fake_response.read.side_effect = ConnectionResetError("connection reset by peer")
+        fake_response.__enter__ = mock.MagicMock(return_value=fake_response)
+        fake_response.__exit__ = mock.MagicMock(return_value=False)
+        with mock.patch("urllib.request.urlopen", return_value=fake_response):
+            token = self._sign(_claims(self.settings))
+            with self.assertRaises(EntraUnauthorized):
+                await validator.validate(token)
+
+    async def test_discovery_body_read_http_exception_becomes_unauthorized(self):
+        """#223: `http.client.HTTPException` subclasses (e.g. `IncompleteRead`,
+        raised by `http.client` well below `urllib`) are not `OSError` and not
+        `URLError` -- a distinct family that must also be caught."""
+        validator = TokenValidator(self.settings)
+        fake_response = mock.MagicMock()
+        fake_response.read.side_effect = http.client.IncompleteRead(b"partial")
+        fake_response.__enter__ = mock.MagicMock(return_value=fake_response)
+        fake_response.__exit__ = mock.MagicMock(return_value=False)
+        with mock.patch("urllib.request.urlopen", return_value=fake_response):
+            token = self._sign(_claims(self.settings))
+            with self.assertRaises(EntraUnauthorized):
+                await validator.validate(token)
+
+    async def test_discovery_non_dict_json_body_becomes_unauthorized(self):
+        """#223: a syntactically-valid JSON body that isn't an object (e.g. a
+        bare JSON list) would otherwise crash `discovery.get("jwks_uri")` with
+        an uncaught `AttributeError` instead of failing closed as a 401."""
+        validator = TokenValidator(self.settings)
+        fake_response = mock.MagicMock()
+        fake_response.read.return_value = json.dumps(["not", "a", "dict"]).encode()
+        fake_response.__enter__ = mock.MagicMock(return_value=fake_response)
+        fake_response.__exit__ = mock.MagicMock(return_value=False)
+        with mock.patch("urllib.request.urlopen", return_value=fake_response):
+            token = self._sign(_claims(self.settings))
+            with self.assertRaises(EntraUnauthorized):
+                await validator.validate(token)
+
+    async def test_discovery_body_read_failure_engages_negative_cache_cooldown(self):
+        """#223: the whole point of wrapping body-read failures as
+        `EntraUnauthorized` is so they engage the SAME 30s negative-discovery
+        cooldown as every other discovery failure -- a second request within
+        the window must short-circuit without calling `urlopen` again."""
+        validator = TokenValidator(self.settings, discovery_failure_cooldown=60.0)
+        fake_response = mock.MagicMock()
+        fake_response.read.side_effect = ConnectionResetError("connection reset by peer")
+        fake_response.__enter__ = mock.MagicMock(return_value=fake_response)
+        fake_response.__exit__ = mock.MagicMock(return_value=False)
+        with mock.patch(
+            "urllib.request.urlopen", return_value=fake_response
+        ) as mock_urlopen:
+            token = self._sign(_claims(self.settings))
+            with self.assertRaises(EntraUnauthorized):
+                await validator.validate(token)
+            with self.assertRaises(EntraUnauthorized):
+                await validator.validate(token)
+            mock_urlopen.assert_called_once()
 
 
 # ═══════════════════════════════════════════════════════════════════════════

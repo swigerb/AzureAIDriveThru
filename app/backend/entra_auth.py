@@ -18,6 +18,7 @@ configuration. The caller (``app.py``'s ``create_app()``) turns that into
 from __future__ import annotations
 
 import asyncio
+import http.client
 import json
 import logging
 import re
@@ -319,9 +320,41 @@ class TokenValidator:
         )
         try:
             with urllib.request.urlopen(request, timeout=self._timeout) as response:
-                return json.loads(response.read())
-        except (urllib.error.URLError, TimeoutError, ValueError) as exc:
+                body = json.loads(response.read())
+        except (
+            urllib.error.URLError,
+            TimeoutError,
+            ValueError,
+            OSError,
+            http.client.HTTPException,
+        ) as exc:
+            # #223 (Rick's #222 review): `urlopen()` itself only ever raises
+            # `URLError`/`TimeoutError`, both already covered above, but the
+            # *body read* (`response.read()`) and `json.loads()` can also raise
+            # a plain `OSError` (e.g. `ConnectionResetError` if the peer drops
+            # mid-response) or an `http.client.HTTPException` (e.g.
+            # `IncompleteRead`, `BadStatusLine`) -- neither of which is a
+            # `URLError` subclass. Before this fix those propagated out of
+            # `_fetch_discovery_document` uncaught, past `_get_jwks_client`'s
+            # `except EntraUnauthorized` (so the 30s negative-cache cooldown
+            # never engaged) and all the way to aiohttp's default handler,
+            # which turns an unhandled exception into a 500 -- inconsistent
+            # with every other discovery failure here, which fails closed as a
+            # 401 (`_unauthorized_response`, consistent today). Catching the
+            # same superset of body-read failures here, and re-raising as
+            # `EntraUnauthorized`, restores that consistency and lets the
+            # existing cooldown apply.
             raise EntraUnauthorized(f"OIDC discovery failed: {exc}") from exc
+        if not isinstance(body, dict):
+            # A non-dict JSON body (e.g. a bare JSON list or string) would
+            # otherwise crash `.get("jwks_uri")` below with an AttributeError,
+            # which -- like the exceptions above -- is uncaught and surfaces as
+            # a 500 instead of the fail-closed 401 every other malformed-
+            # discovery-response case gets.
+            raise EntraUnauthorized(
+                f"OIDC discovery document was not a JSON object (got {type(body).__name__})"
+            )
+        return body
 
     def _get_jwks_client(self) -> jwt.PyJWKClient:
         with self._lock:
