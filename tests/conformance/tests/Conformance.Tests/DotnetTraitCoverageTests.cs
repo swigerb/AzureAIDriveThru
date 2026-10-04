@@ -218,9 +218,16 @@ namespace Conformance.Tests;
 ///
 /// Refs #76 remaining scope: adding <c>RealPackBundleAutoFillConformanceTests</c>'s three new
 /// tagged Theory methods plus <c>RealPackCapabilityCoverageTests</c>' three tagged Facts raises the
-/// fresh reflection count to <b>262</b>. Re-measured directly with the same
-/// <see cref="CountFloorEligibleDotnetReadyTestMethods"/> logic (via a throwaway reflection probe
-/// over the built test assembly), never by adding a guessed delta.
+/// fresh reflection count to 262. Any PR still rebasing on top of this MUST re-measure fresh at its
+/// own rebase time the same way, not add a historical delta to 262 blindly.
+///
+/// Rick's PR #266 review item 2 (required before approval): the duplicate
+/// <c>Every_real_pack_with_an_extra_item_has_an_extras_theory_row</c> Fact in
+/// <c>RealPackCapabilityCoverageTests</c> was removed (it verbatim-duplicated the Fact already
+/// owned by <c>RealPackExtrasCoverageTests</c>), dropping the floor-eligible count by exactly one
+/// method, 262 to <b>261</b>. Re-measured directly with <c>Conformance.Tests.exe -list methods
+/// -trait Dotnet=ready</c> (279 methods) minus the 18 <see cref="AuthRowGatedTypeNames"/> methods
+/// -- a fresh reflection count, never arithmetic.
 /// </summary>
 public sealed class DotnetTraitCoverageTests
 {
@@ -243,20 +250,22 @@ public sealed class DotnetTraitCoverageTests
     };
 
     [Fact]
-    public void At_least_262_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
+    public void At_least_261_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
     {
         var count = CountFloorEligibleDotnetReadyTestMethods();
 
-        Assert.True(count >= 262,
-            $"Expected at least 262 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
+        Assert.True(count >= 261,
+            $"Expected at least 261 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
             $"and not unconditionally skip-gated by AuthRowCapability (the dotnet leg's " +
             $"`--filter \"{TraitName}={TraitValue}&Category!=Browser\"` baseline, minus the five " +
             "skip-only Scenarios/Auth classes -- see this class's own doc comment; " +
             $"docs/dotnet_mapping.md), but found {count}. If a tagged scenario was removed or " +
-            "renamed without a replacement, the dotnet CI leg silently lost coverage. 262 is a " +
-            "FRESH reflection count (post-#76 bundle-autoFill/capability-coverage rows), not " +
-            "arithmetic -- re-measure the built assembly with the same CountFloorEligible" +
-            "DotnetReadyTestMethods logic before raising this floor again.");
+            "renamed without a replacement, the dotnet CI leg silently lost coverage. 261 is a " +
+            "FRESH reflection count (post-#266 duplicate-Fact removal), not arithmetic -- " +
+            "re-measure the built assembly with the same CountFloorEligible" +
+            "DotnetReadyTestMethods logic before raising this floor again. Any PR still rebasing " +
+            "on top of this MUST re-measure fresh at its own rebase time the same way, not add a " +
+            "historical delta to 261 blindly.");
     }
 
 
