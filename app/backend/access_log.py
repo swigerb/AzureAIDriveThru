@@ -33,9 +33,22 @@ class PathOnlyAccessLogger(AbstractAccessLogger):
         match_info = getattr(request, "match_info", None)
         if match_info is not None:
             route = getattr(match_info, "route", None)
-        resource = getattr(route, "resource", None) if route is not None else None
-        canonical = getattr(resource, "canonical", None) if resource is not None else None
-        template = canonical if canonical else "<unmatched>"
+        if route is None:
+            template = "<unmatched>"
+        else:
+            resource = getattr(route, "resource", None)
+            canonical = getattr(resource, "canonical", None) if resource is not None else None
+            if canonical:
+                template = canonical
+            else:
+                # N7 (#163 round-1 review): a route DID match here -- e.g. the
+                # root-mounted static SPA resource, whose `canonical` is `""`
+                # (falsy) by aiohttp's own design, not a 404 -- so fall back to
+                # the route's own `.name` (e.g. `"static"`) instead of
+                # conflating a genuine hit with a truly unmatched request.
+                # Only `route is None` above still logs as `<unmatched>`.
+                name = getattr(route, "name", None)
+                template = name if name else "<unmatched>"
         self.logger.info(
             "%s %s %s %.3fs", request.method, template, response.status, time
         )

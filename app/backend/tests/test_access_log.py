@@ -189,6 +189,52 @@ class PathOnlyAccessLoggerTests(unittest.TestCase):
         formatted = fake_logger.info.call_args[0][0] % fake_logger.info.call_args[0][1:]
         self.assertIn("<unmatched>", formatted)
 
+    def test_falsy_canonical_with_route_name_logs_the_name_not_unmatched(self):
+        """N7 (#163 round-1 review): a route DID match (e.g. the root-mounted
+        static SPA resource, whose `.resource.canonical` is `""` by aiohttp's
+        own design) -- a genuine hit must log the route's `.name` (e.g.
+        `"static"`), never be conflated with a truly unmatched/404 request."""
+        logger_instance, fake_logger = _make_logger_instance()
+        request = mock.MagicMock(spec=["method", "match_info"])
+        request.method = "GET"
+        resource = mock.MagicMock(spec=["canonical"])
+        resource.canonical = ""  # falsy, but a route DID match
+        route = mock.MagicMock(spec=["resource", "name"])
+        route.resource = resource
+        route.name = "static"
+        match_info = mock.MagicMock(spec=["route"])
+        match_info.route = route
+        request.match_info = match_info
+        response = _make_response(status=200)
+
+        logger_instance.log(request, response, 0.01)
+
+        formatted = fake_logger.info.call_args[0][0] % fake_logger.info.call_args[0][1:]
+        self.assertIn("static", formatted)
+        self.assertNotIn("<unmatched>", formatted)
+
+    def test_falsy_canonical_and_falsy_name_still_falls_back_to_placeholder(self):
+        """Belt-and-braces: if a matched route somehow has NEITHER a truthy
+        `canonical` NOR a truthy `name`, `log()` must still degrade to
+        `<unmatched>` rather than logging an empty/`None` template."""
+        logger_instance, fake_logger = _make_logger_instance()
+        request = mock.MagicMock(spec=["method", "match_info"])
+        request.method = "GET"
+        resource = mock.MagicMock(spec=["canonical"])
+        resource.canonical = ""
+        route = mock.MagicMock(spec=["resource", "name"])
+        route.resource = resource
+        route.name = None
+        match_info = mock.MagicMock(spec=["route"])
+        match_info.route = route
+        request.match_info = match_info
+        response = _make_response(status=404)
+
+        logger_instance.log(request, response, 0.01)
+
+        formatted = fake_logger.info.call_args[0][0] % fake_logger.info.call_args[0][1:]
+        self.assertIn("<unmatched>", formatted)
+
     def test_elapsed_time_formatted_to_three_decimals(self):
         logger_instance, fake_logger = _make_logger_instance()
         request = _make_request(route_template="/health")

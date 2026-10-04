@@ -22,6 +22,7 @@ import json
 import logging
 import re
 import threading
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Mapping
@@ -143,8 +144,8 @@ class EntraSettings:
 
 
 # 18.5's synthetic identity for the Development pass-through, used verbatim as
-# `request["principal"]` so downstream code (e.g. the session-token mint) never
-# needs to special-case "no real principal" -- every request has one.
+# `request[PRINCIPAL_KEY]` so downstream code (e.g. the session-token mint)
+# never needs to special-case "no real principal" -- every request has one.
 SYNTHETIC_PRINCIPAL: dict[str, str] = {
     "oid": "00000000-0000-0000-0000-000000000001",
     "tid": _EMPTY_GUID,
@@ -169,6 +170,17 @@ def resolve_settings(env: Mapping[str, str]) -> EntraSettings:
     client_id = (env.get("ENTRA_CLIENT_ID") or "").strip()
     ids_blank = tenant_id == "" and client_id == ""
     ids_error = None if ids_blank else validate_entra_ids(tenant_id, client_id)
+    # N4 (#163 round-1 review): normalize to lower case. `validate_entra_ids`
+    # itself is case-insensitive (the GUID regex has `re.IGNORECASE`), but a
+    # real Entra token's `tid`/`aud` claims are always lower-case GUIDs, so an
+    # upper-case id typed into config would otherwise fail every token's
+    # issuer/tid/aud comparison in `TokenValidator._validate_sync` -- a
+    # confusing fail-closed outage rather than a config error caught here.
+    # `AUTH_MODE` is already accepted case-insensitively above; note both for
+    # #147 parity.
+    if not ids_blank:
+        tenant_id = tenant_id.lower()
+        client_id = client_id.lower()
     production = _bool_env(env, "RUNNING_IN_PRODUCTION", False)
 
     if normalized_mode == "entra":
@@ -270,12 +282,35 @@ class TokenValidator:
     one forced re-fetch per 5 minutes on an unknown `kid` (its own `lifespan` /
     `cooldown_duration`, verified against its source -- this is not reimplemented
     here).
+
+    N1 (#163 round-1 review, Entra-outage resilience): three things that only
+    matter while the tenant's discovery endpoint is unreachable, never on the
+    happy path:
+      - `jwt.PyJWKClient` is built with this validator's own `timeout`, so a
+        hung discovery endpoint can't hold its internal lock for its 30s
+        default while every request waits behind it.
+      - `_validate_sync` rejects anything that isn't structurally a JWT
+        (`jwt.get_unverified_header`) before ever calling `_get_jwks_client`,
+        so a flood of garbage tokens during an outage can't each independently
+        retry discovery.
+      - A failed discovery fetch is itself cached, negatively, for
+        `_discovery_failure_cooldown` seconds, so repeated requests during an
+        outage 401 immediately instead of each re-attempting the same 10s-
+        timeout network call serially under `self._lock`.
     """
 
-    def __init__(self, settings: EntraSettings, *, timeout: float = 10.0) -> None:
+    def __init__(
+        self,
+        settings: EntraSettings,
+        *,
+        timeout: float = 10.0,
+        discovery_failure_cooldown: float = 30.0,
+    ) -> None:
         self._settings = settings
         self._timeout = timeout
+        self._discovery_failure_cooldown = discovery_failure_cooldown
         self._jwks_client: jwt.PyJWKClient | None = None
+        self._discovery_failure_until: float | None = None
         self._lock = threading.Lock()
 
     def _fetch_discovery_document(self) -> dict:
@@ -291,16 +326,33 @@ class TokenValidator:
     def _get_jwks_client(self) -> jwt.PyJWKClient:
         with self._lock:
             if self._jwks_client is None:
-                discovery = self._fetch_discovery_document()
-                jwks_uri = discovery.get("jwks_uri")
-                if not jwks_uri:
-                    raise EntraUnauthorized("OIDC discovery document has no jwks_uri")
+                now = time.monotonic()
+                if self._discovery_failure_until is not None and now < self._discovery_failure_until:
+                    # N1: a discovery fetch failed recently -- refuse without
+                    # retrying the network call again until the cooldown
+                    # elapses, instead of blocking this request (and every
+                    # other one queued behind `self._lock`) on another
+                    # `self._timeout`-second attempt that is very likely to
+                    # fail the same way during a real outage.
+                    raise EntraUnauthorized(
+                        "OIDC discovery failed recently; refusing to retry yet."
+                    )
+                try:
+                    discovery = self._fetch_discovery_document()
+                    jwks_uri = discovery.get("jwks_uri")
+                    if not jwks_uri:
+                        raise EntraUnauthorized("OIDC discovery document has no jwks_uri")
+                except EntraUnauthorized:
+                    self._discovery_failure_until = now + self._discovery_failure_cooldown
+                    raise
                 self._jwks_client = jwt.PyJWKClient(
                     jwks_uri,
                     cache_jwk_set=True,
                     lifespan=86400,  # 24h cache (18.4)
                     cooldown_duration=300,  # at most one refetch per 5 min on unknown kid
+                    timeout=self._timeout,  # N1: never PyJWKClient's own 30s default
                 )
+                self._discovery_failure_until = None
             return self._jwks_client
 
     async def validate(self, token: str) -> dict[str, Any]:
@@ -311,14 +363,28 @@ class TokenValidator:
 
     def _validate_sync(self, token: str) -> dict[str, Any]:
         try:
+            # N1: reject anything that isn't even structurally a JWT (three
+            # dot-separated, base64url segments with a parseable JSON header)
+            # before ever touching discovery/JWKS -- a flood of garbage
+            # tokens must not each independently retry a hung Entra endpoint.
+            jwt.get_unverified_header(token)
+        except jwt.PyJWTError as exc:
+            raise EntraUnauthorized(f"Malformed token: {exc}") from exc
+
+        try:
             client = self._get_jwks_client()
             signing_key = client.get_signing_key_from_jwt(token)
         except EntraUnauthorized:
             raise
-        except jwt.PyJWTError as exc:
-            raise EntraUnauthorized(f"Malformed token: {exc}") from exc
+        # N6 (#163 round-1 review): `jwt.PyJWKClientError` is a SUBCLASS of
+        # `jwt.PyJWTError`, so it must be caught first -- the reverse order (as
+        # this used to be) made this branch unreachable dead code, and every
+        # signing-key-resolution failure was mislabeled "Malformed token"
+        # instead of "Unable to resolve a signing key" in logs.
         except jwt.PyJWKClientError as exc:
             raise EntraUnauthorized(f"Unable to resolve a signing key: {exc}") from exc
+        except jwt.PyJWTError as exc:
+            raise EntraUnauthorized(f"Malformed token: {exc}") from exc
 
         try:
             claims = jwt.decode(
@@ -340,7 +406,12 @@ class TokenValidator:
         if not isinstance(roles, list) or self._settings.app_role not in roles:
             raise EntraForbidden("Token is missing the required app role.")
 
-        scopes = (claims.get("scp") or "").split()
+        # N2 (#163 round-1 review): `scp` is only ever attacker/tenant
+        # controlled -- a non-string value (e.g. a list, the shape JSON would
+        # produce for a repeated claim) must not raise `AttributeError` out of
+        # `.split()` (a 500), the same way a non-list `roles` is guarded above.
+        scp = claims.get("scp")
+        scopes = scp.split() if isinstance(scp, str) else []
         if self._settings.api_scope not in scopes:
             # Includes app-only tokens (client credentials flow), which carry no `scp`
             # at all -- rejected on purpose (18.4, "Retail Pulse's AllowAppOnlyTokens
@@ -359,11 +430,28 @@ class TokenValidator:
 # Anonymous by route name -- `/` (the SPA shell), the static SPA bundle, and the
 # health probe (18.2). A route added later gets a NEW name and is therefore
 # protected by default unless explicitly added here on purpose.
+#
+# N7 (#163 round-1 review): `static`'s anonymity is only safe as long as
+# `app/frontend/public` (the directory this route serves) holds nothing but
+# public SPA/branding assets -- never persona data or anything else that
+# should require a session. If that directory ever starts holding
+# guest-specific or tenant-specific files, `static` must be re-reviewed before
+# it stays on this list.
 ANONYMOUS_ROUTE_NAMES = frozenset({"index", "health", "static"})
 
 # The one route that is anonymous for SOME requests and protected for others,
 # depending on the requested file's extension (18.2: public branding assets vs.
 # `demo/*.json`, fetched with `fetch()` and therefore able to carry a bearer).
+#
+# F4 (#163 round-1/round-2 review, decided for #147 C# parity): the match is
+# CASE-INSENSITIVE. The requested path's extension is lower-cased (see
+# `_is_anonymous` below and `persona_loader._validate_persona_assets`, which
+# applies the identical rule when validating persona packs at load time)
+# before being compared against this fixed, 7-member set. So `logo.svg`,
+# `logo.SVG`, and `logo.Svg` are all anonymous; `demo/dummyOrder.JSON` (any
+# case) is NOT, because `.json` is not and will never be in this set. The C#
+# port must do the same: lower-case the extension, then compare against this
+# exact literal set.
 PERSONA_ASSET_ROUTE_NAME = "persona-asset"
 ANONYMOUS_ASSET_EXTENSIONS = frozenset({".svg", ".png", ".jpg", ".webp", ".ico", ".wav", ".mp3"})
 
@@ -371,6 +459,15 @@ ANONYMOUS_ASSET_EXTENSIONS = frozenset({".svg", ".png", ".jpg", ".webp", ".ico",
 # instead of the Authorization header (18.3) -- browsers can't set headers on a
 # WebSocket upgrade request.
 REALTIME_PATH = "/realtime"
+
+# F6 (#163 round-2 review): a `web.RequestKey` instead of a plain string, so
+# `request[PRINCIPAL_KEY] = ...` doesn't trigger aiohttp's `NotAppKeyWarning`.
+# Every reader/writer of the authenticated principal (this module, `app.py`'s
+# `get_session_token`, `rtmt.py`'s websocket oid-binding check, and the test
+# suite) must import and use this same key object -- it is intentionally NOT
+# interchangeable with the string `"principal"` (aiohttp keys the request's
+# dict by object identity, not by the key's `str()`).
+PRINCIPAL_KEY: web.RequestKey = web.RequestKey("principal", dict)
 
 
 def _is_anonymous(request: web.Request) -> bool:
@@ -387,8 +484,15 @@ def _is_anonymous(request: web.Request) -> bool:
 
 def _extract_token(request: web.Request) -> str | None:
     header = request.headers.get("Authorization", "")
-    if header.startswith("Bearer "):
-        token = header[len("Bearer "):].strip()
+    # N3 (#163 round-1 review): the scheme name is matched CASE-INSENSITIVELY
+    # (`bearer x`, `BEARER x`, `Bearer x` are all accepted), the same as
+    # ASP.NET Core's `JwtBearerHandler` -- so the C# and Python backends behave
+    # identically for #147. Everything else about the header is unaffected:
+    # a non-bearer scheme (e.g. `Basic ...`) and a bare `Bearer` with no token
+    # value both still fall through to the `None` below, exactly as before.
+    scheme, _, value = header.partition(" ")
+    if scheme.lower() == "bearer":
+        token = value.strip()
         return token or None
     # `?access_token` is honored on /realtime ONLY (18.3) -- everywhere else it's
     # ignored, so a token in the query string there still gets 401.
@@ -416,7 +520,7 @@ def create_middleware(settings: EntraSettings, validator: TokenValidator | None 
     through unconditionally -- there is no token concept to enforce. In
     `Mode.ENTRA`, anonymous routes pass through unauthenticated; everything else
     requires a valid bearer (or, on `/realtime` only, `?access_token`), and sets
-    `request["principal"]` to `{"oid", "tid", "name"}` on success.
+    `request[PRINCIPAL_KEY]` to `{"oid", "tid", "name"}` on success.
     """
     if settings.mode == Mode.ENTRA and validator is None:
         validator = TokenValidator(settings)
@@ -424,7 +528,7 @@ def create_middleware(settings: EntraSettings, validator: TokenValidator | None 
     @web.middleware
     async def entra_middleware(request: web.Request, handler):
         if settings.mode == Mode.DEVELOPMENT:
-            request["principal"] = dict(SYNTHETIC_PRINCIPAL)
+            request[PRINCIPAL_KEY] = dict(SYNTHETIC_PRINCIPAL)
             return await handler(request)
 
         if _is_anonymous(request):
@@ -437,13 +541,17 @@ def create_middleware(settings: EntraSettings, validator: TokenValidator | None 
         try:
             principal = await validator.validate(token)
         except EntraForbidden as exc:
-            logger.warning("Rejected request with a valid token missing role/scope: %s", exc)
+            logger.warning("Rejected request with a valid token missing role/scope: %r", exc)
             return _forbidden_response()
         except EntraUnauthorized as exc:
-            logger.warning("Rejected request with an invalid token: %s", exc)
+            # N6 (#163 round-1 review): `%r` (not `%s`), so attacker-controlled
+            # content folded into these messages (e.g. an unverified token's
+            # `kid`) is repr-escaped -- a newline or other control character in
+            # it can't forge additional, fake-looking log lines.
+            logger.warning("Rejected request with an invalid token: %r", exc)
             return _unauthorized_response()
 
-        request["principal"] = principal
+        request[PRINCIPAL_KEY] = principal
         return await handler(request)
 
     return entra_middleware
