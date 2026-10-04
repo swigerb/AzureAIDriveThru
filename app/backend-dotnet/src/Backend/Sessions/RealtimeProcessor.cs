@@ -59,10 +59,20 @@ public sealed class RealtimeProcessor : IPipelineProcessor
     /// <summary>Rick's #244 round-2 review, issue 1: bounds how long the BACKGROUND
     /// supersede-close (<see cref="CloseSupersededStaleConnectionAsync"/>) may spend trying to
     /// drain a courtesy close frame to a stale peer before giving up and cancelling its CTS
-    /// anyway. Short enough that a genuinely stuck peer is abandoned quickly (the connection is
-    /// being dropped either way), long enough to not routinely abort an ordinary close under
-    /// momentary load.</summary>
-    internal static readonly TimeSpan SupersededCloseTimeout = TimeSpan.FromSeconds(2);
+    /// anyway. Python's own <c>_close_superseded</c> (rtmt.py ~1026) has no timeout at all --
+    /// it is already a background task, so an unbounded await never blocks anything else, and a
+    /// stuck peer just leaks one background task/socket forever. This port chooses to bound it
+    /// instead (a stuck peer's resources get reclaimed eventually), but the bound must be loose:
+    /// CI run 37208960846 caught the first value here (2s) aborting the ordinary, healthy-peer
+    /// <c>Resuming_from_a_still_attached_socket_supersedes_it_with_4002</c> conformance test
+    /// under full-suite parallel load -- the close frame hadn't even failed to send, it simply
+    /// hadn't finished within 2s of CPU-starved scheduling, so the timeout fired and aborted a
+    /// peer that was never actually stuck. Widened to 10s, which stays comfortably inside that
+    /// test's own 30s <c>FrameTimeout</c> while giving a merely-slow-under-load close far more
+    /// room than a merely-busy CI runner should ever need, and still reclaims a truly
+    /// never-draining peer (Rick's actual repro) in bounded time rather than Python's
+    /// forever.</summary>
+    internal static readonly TimeSpan SupersededCloseTimeout = TimeSpan.FromSeconds(10);
 
     private readonly ModelCatalog _catalog;
     private readonly string _defaultDeployment;
