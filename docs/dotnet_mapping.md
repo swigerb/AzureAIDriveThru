@@ -189,6 +189,14 @@ independence and pack-owned wholeBundleSize golden vectors, raising the floor 20
 component delta rule and the additive `componentUpcharges` wire field, raising the floor 203 -> 204.
 See `DotnetTraitCoverageTests`'s own doc comment for the exact arithmetic.
 
+**Issue #21 "flip candidates to check early":** the real tagged-method count had drifted to 208
+since the floor was last raised. This pass tags 11 more genuinely-passing, already-ported rows --
+all 10 `Scenarios/Security/ClientToServerAllowListTests.cs` methods (browser-to-upstream realtime
+allow-list hardening, fully ported in `Backend/Realtime/ClientServerFilter.cs`/
+`RealtimeProcessor.cs`), plus `OriginValidationTests.Exact_origin_is_accepted` (its two siblings
+were already tagged). All 11 verified green against the C# backend (3 clean runs each, no flakes),
+raising the floor 204 -> 219 (208 + 11).
+
 - **DEV_MODE hot-reload** (`prompt_loader.py`'s file-watching reload behaviour) is explicitly
   marked not required in C# by the design doc's per-backend loading table. Not ported.
 - **Jinja2-style template rendering** is implemented for the templates this repo actually ships:
@@ -338,7 +346,7 @@ See the comments left on those issues directly for this wave's position. Summary
   `Backend.dll`. Run locally with
   `CONFORMANCE_BACKEND=dotnet dotnet test Conformance.slnx --filter "Dotnet=ready&Category!=Browser"`
   (repo root needs a built frontend at `app/backend/static` -- `npm run build` in `app/frontend`
-  -- for static-file scenarios). `DotnetTraitCoverageTests` now enforces at least 204 floor-eligible
+  -- for static-file scenarios). `DotnetTraitCoverageTests` now enforces at least 219 floor-eligible
   tagged methods; the early tagged set included:
   - `PersonaDiscoveryConformanceTests` -- 4 of 5 methods (persona list/detail shape, 404 for an
     unknown persona id, pre-upgrade 404 for an unknown `?persona=` on `/realtime`). The 5th
@@ -363,8 +371,10 @@ See the comments left on those issues directly for this wave's position. Summary
   Carried over from PR #96 (unchanged, still tagged): `HealthEndpointTests`,
   `HealthEndpointExtendedTests`, `StaticIndexHtmlTests`, `AuthSessionTests`,
   `AuthSessionTokenFormatTests` (both cases), all 3 of `Scenarios/Http/OriginValidationTests.cs`,
-  and 2 of 3 in `Scenarios/Security/OriginValidationTests.cs`. The conformance workflow now has a
-  `backend: [python, dotnet]` matrix; the dotnet leg runs `Dotnet=ready&Category!=Browser`.
+  and (as of issue #21) all 3 of `Scenarios/Security/OriginValidationTests.cs` (the third,
+  `Exact_origin_is_accepted`, was the one genuinely-untagged row left in that class). The
+  conformance workflow now has a `backend: [python, dotnet]` matrix; the dotnet leg runs
+  `Dotnet=ready&Category!=Browser`.
 - Session-level persona/model/mode binding is now forwarded into the live Azure OpenAI realtime
   session through `RealtimeProcessor.RunSessionAsync`; `ProcessAsync` is intentionally unused for
   accepted WebSockets.

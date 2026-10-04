@@ -37,8 +37,16 @@ namespace Conformance.Tests.Scenarios.Security;
 /// identity passthrough (`filtered = message`) makes every "must never reach upstream" assertion
 /// below fail, while <see cref="Legitimate_frontend_traffic_still_flows"/> keeps passing either
 /// way -- proving the allow-list is what blocks the attack, not some other backend behavior.
+///
+/// swigerb/SonicAIDriveThru#21: all 10 rows verified passing against the C# backend (3 clean runs,
+/// no flakes) -- <c>app/backend-dotnet/src/Backend/Realtime/ClientServerFilter.cs</c> is a
+/// faithful port of `_CLIENT_ALLOWED_TYPES`/`_filter_client_to_server`/`_sanitize_turn_detection`/
+/// `_drop_from_client`/`_sanitize_voice`, wired into `RealtimeProcessor.cs`, and
+/// `input_audio_transcription` is unconditionally rebuilt server-side in
+/// `RealtimeSessionBuilder.cs` so a forged transcription model/prompt can never survive.
 /// </summary>
 [Collection(ConformanceCollection.Name)]
+[Trait("Dotnet", "ready")]
 public sealed class ClientToServerAllowListTests(ConformanceFixture fixture)
 {
     private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);

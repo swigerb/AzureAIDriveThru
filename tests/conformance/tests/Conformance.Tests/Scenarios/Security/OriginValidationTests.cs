@@ -19,6 +19,10 @@ namespace Conformance.Tests.Scenarios.Security;
 /// scenarios don't need a valid session token: the Origin check runs (and can reject) before the
 /// token check, so the token/`allowed_origins` config used by the conformance backend never
 /// enters into it.
+///
+/// swigerb/SonicAIDriveThru#21: <see cref="Exact_origin_is_accepted"/> verified passing against
+/// the C# backend (3 clean runs, no flakes) -- its two siblings here were already tagged; this
+/// was the one genuinely-untagged row left in the class.
 /// </summary>
 [Collection(ConformanceCollection.Name)]
 public sealed class OriginValidationTests(ConformanceFixture fixture)
@@ -26,6 +30,7 @@ public sealed class OriginValidationTests(ConformanceFixture fixture)
     private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Exact_origin_is_accepted() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;

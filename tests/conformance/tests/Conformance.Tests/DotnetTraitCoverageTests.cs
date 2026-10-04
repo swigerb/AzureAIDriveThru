@@ -152,6 +152,16 @@ namespace Conformance.Tests;
 /// Issue #205: one tagged, ungated Fact covers the `componentUpcharge` bundle rule across both
 /// backends, including the wire `componentUpcharges` field and resize-back-to-included-size path,
 /// raising the floor 203 to 204.
+///
+/// Issue #21 "flip candidates to check early" (csharp-100-plan.md): the real tagged-method count
+/// had already drifted to 208 since the floor was last raised (prior waves tagging ahead of this
+/// floor's own updates). This pass tags 11 more genuinely-passing, already-ported rows -- all 10
+/// <c>Scenarios/Security/ClientToServerAllowListTests.cs</c> methods (browser-to-upstream
+/// realtime allow-list hardening -- fully ported in
+/// <c>Backend/Realtime/ClientServerFilter.cs</c>/<c>RealtimeProcessor.cs</c>), plus
+/// <c>OriginValidationTests.Exact_origin_is_accepted</c> (its two siblings were already tagged;
+/// this was the one genuinely-untagged row left). All 11 verified green against the C# backend (3
+/// clean runs each, no flakes) -- raising the floor 204 to 219 (208 + 11).
 /// </summary>
 public sealed class DotnetTraitCoverageTests
 {
@@ -174,18 +184,19 @@ public sealed class DotnetTraitCoverageTests
     };
 
     [Fact]
-    public void At_least_204_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
+    public void At_least_219_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
     {
         var count = CountFloorEligibleDotnetReadyTestMethods();
 
-        Assert.True(count >= 204,
-            $"Expected at least 204 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
+        Assert.True(count >= 219,
+            $"Expected at least 219 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
             $"and not unconditionally skip-gated by AuthRowCapability (the dotnet leg's " +
             $"`--filter \"{TraitName}={TraitValue}&Category!=Browser\"` baseline, minus the five " +
             "skip-only Scenarios/Auth classes -- see this class's own doc comment; " +
             $"docs/dotnet_mapping.md), but found {count}. If a tagged scenario was removed or " +
             "renamed without a replacement, the dotnet CI leg silently lost coverage.");
     }
+
 
     /// <summary>
     /// Counts every <c>[Fact]</c>/<c>[Theory]</c> test *method* (a <c>[Theory]</c> with N
