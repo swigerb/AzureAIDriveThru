@@ -149,10 +149,26 @@ describe("ticket/status copy on persona switch (issue #119 item 1)", () => {
         });
         renderApp();
 
-        // Starts on the catalog default (test-beta)'s copy.
-        await waitFor(() => expect(screen.getByText("BETA TICKET")).toBeInTheDocument());
-        expect(screen.getByText("Your Beta Order")).toBeInTheDocument();
-        expect(screen.getByText("Let's order from Beta!")).toBeInTheDocument();
+        // Starts on the catalog default (test-beta)'s copy. OrderSummary (the ticket) and
+        // StatusMessage are SIBLING components, each independently subscribed to the real
+        // i18next store via its own `useTranslation()`/`useSyncExternalStore` call. React 18
+        // batches both components' store-triggered re-renders into the same commit whenever the
+        // underlying `addResourceBundle`/`removeResourceBundle` calls all happen synchronously
+        // (the normal case) -- but that's an emergent property of scheduling, not a contract
+        // `useSyncExternalStore` or react-i18next documents or guarantees for two independently
+        // subscribed instances. Issue #245: this flaked under parallel-process load (~1 in 128
+        // isolated runs) because the ticket had already committed "ALPHA TICKET" while
+        // StatusMessage's sibling re-render for "Let's order from Alpha!" had not yet landed in
+        // that same commit -- a plain synchronous `expect` right after the ticket's `waitFor`
+        // resolved could observe that in-between state. Asserting every string that must hold
+        // true *together* at a point in time inside the SAME `waitFor` (instead of splitting them
+        // across one `waitFor` plus immediate `expect`s) fixes that false-synchrony assumption
+        // without changing a single expectation.
+        await waitFor(() => {
+            expect(screen.getByText("BETA TICKET")).toBeInTheDocument();
+            expect(screen.getByText("Your Beta Order")).toBeInTheDocument();
+            expect(screen.getByText("Let's order from Beta!")).toBeInTheDocument();
+        });
 
         // This is the regression: before `i18n/config.ts` set `react.bindI18nStore`, these same
         // mounted OrderSummary/StatusMessage instances kept showing test-beta's copy forever,
@@ -163,12 +179,14 @@ describe("ticket/status copy on persona switch (issue #119 item 1)", () => {
             screen.getByText("select alpha").click();
         });
 
-        await waitFor(() => expect(screen.getByText("ALPHA TICKET")).toBeInTheDocument());
-        expect(screen.getByText("Your Alpha Order")).toBeInTheDocument();
-        expect(screen.getByText("Let's order from Alpha!")).toBeInTheDocument();
-        expect(screen.queryByText("BETA TICKET")).not.toBeInTheDocument();
-        expect(screen.queryByText("Your Beta Order")).not.toBeInTheDocument();
-        expect(screen.queryByText("Let's order from Beta!")).not.toBeInTheDocument();
+        await waitFor(() => {
+            expect(screen.getByText("ALPHA TICKET")).toBeInTheDocument();
+            expect(screen.getByText("Your Alpha Order")).toBeInTheDocument();
+            expect(screen.getByText("Let's order from Alpha!")).toBeInTheDocument();
+            expect(screen.queryByText("BETA TICKET")).not.toBeInTheDocument();
+            expect(screen.queryByText("Your Beta Order")).not.toBeInTheDocument();
+            expect(screen.queryByText("Let's order from Beta!")).not.toBeInTheDocument();
+        });
     });
 
     it("falls back to the neutral base copy -- not the previous persona's override -- for a key the new persona doesn't define", async () => {
