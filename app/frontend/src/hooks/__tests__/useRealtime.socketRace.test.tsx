@@ -697,6 +697,125 @@ describe("useRealTime: a persona switch started while the socket is already inte
     });
 });
 
+// Issue #178 (PR #173 round-4 review, non-blocking item 1): the `!shouldConnect` branch inside
+// `cancelSwitch()` -- a failed persona load while idle, with no tap in between -- had no shipped
+// test. Rick's note: "Removing it passes every shipped test. Without it, a failed persona load
+// while idle (no tap) falls through to the CLOSED toggle and silently reopens an old-persona
+// socket, which defeats the idle timeout." This is the suggested spec: idle 4000,
+// endSession({ switching: true }), cancelSwitch(), flush -- expect no new socket. Only once the
+// guest actually taps does an ordinary idle-recovery socket for the OLD persona open.
+describe("useRealTime: cancelSwitch() while idle with no tap in between (issue #178, PR #173 non-blocking item 1)", () => {
+    it("idle 4000, endSession({ switching: true }), cancelSwitch() with no tap: no socket reopens; a later tap opens exactly one socket for the OLD persona, session.update once", async () => {
+        const { result } = renderHook(
+            ({ personaId }) => useRealTime({ enableInputAudioTranscription: true, personaId }),
+            { initialProps: { personaId: "jerry" } }
+        );
+
+        await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+        const socketA = FakeWebSocket.instances[0];
+        act(() => socketA.triggerOpen());
+        act(() => socketA.triggerClose(4000, "idle_timeout"));
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        expect(FakeWebSocket.instances).toHaveLength(1); // genuinely down, no background reconnect
+
+        act(() => result.current.endSession({ switching: true }));
+
+        // The persona fetch fails before the guest ever taps again: App.tsx calls cancelSwitch()
+        // straight away. shouldConnect is still false (the socket was already intentionally down
+        // when the switch started) and reconnectRequestedRef was never set (no tap) -- the
+        // `!shouldConnect` branch this test targets must do nothing here.
+        act(() => result.current.cancelSwitch());
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        expect(FakeWebSocket.instances).toHaveLength(1); // still no new socket
+
+        // Only now does the guest tap -- an ordinary idle-recovery reconnect for the OLD persona,
+        // since the switch never actually happened.
+        act(() => result.current.reconnect());
+        act(() => result.current.startSession());
+        await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(2));
+        const socketB = FakeWebSocket.instances[1];
+        expect(socketB.url).toContain("persona=jerry");
+        act(() => socketB.triggerOpen());
+
+        expect(FakeWebSocket.instances).toHaveLength(2); // exactly one recovery socket
+        expect(sessionUpdateCount(socketB)).toBe(1);
+    });
+});
+
+// Issue #178 (PR #173 round-4 review, non-blocking item 2): "A model or menu-mode change during a
+// pending idle-state persona switch clears `switchingRef` early. The new effect also fires on
+// `modelId`/`menuMode`. A tap after that early clear opens an old-persona socket that the persona
+// prop then replaces." The guard: the H5 finish-line effect in useRealtime.tsx is now keyed on
+// `personaId` alone. These tests construct the exact narrow window Rick described at the hook
+// level (an unrelated modelId/menuMode-only prop change landing between endSession({ switching:
+// true }) and the real personaId change) and assert a tap in that window still defers instead of
+// reopening the OLD persona's socket.
+describe("useRealTime: a model/menu-mode change during a pending idle-state persona switch must not clear switchingRef early (issue #178, PR #173 non-blocking item 2)", () => {
+    it.each([
+        ["modelId", { modelId: "gpt-realtime-mini" }],
+        ["menuMode", { menuMode: "breakfast" }]
+    ] as const)(
+        "idle 4000, endSession({ switching: true }), a %s-only prop change while persona is still pending: a tap still defers instead of reopening the OLD persona; the real switch then completes with exactly one socket for the NEW persona",
+        async (_label, changedProp) => {
+            const baseProps = { personaId: "jerry", modelId: "gpt-realtime-2.1", menuMode: "lunch" };
+            const { result, rerender } = renderHook(
+                (props: typeof baseProps) => useRealTime({ enableInputAudioTranscription: true, ...props }),
+                { initialProps: baseProps }
+            );
+
+            await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+            const socketA = FakeWebSocket.instances[0];
+            act(() => socketA.triggerOpen());
+            act(() => socketA.triggerClose(4000, "idle_timeout"));
+            await act(async () => {
+                await Promise.resolve();
+                await Promise.resolve();
+            });
+
+            // The guest confirms a persona switch; App.tsx calls endSession({ switching: true })
+            // well before the target persona's fetch (and therefore personaId) actually lands.
+            act(() => result.current.endSession({ switching: true }));
+
+            // An UNRELATED model/menu-mode change lands while the switch is still pending -- the
+            // persona prop itself has NOT changed yet. Without the fix, this alone used to fire
+            // the finish-line effect (it was keyed on modelId/menuMode too) and clear
+            // switchingRef right here.
+            rerender({ ...baseProps, ...changedProp });
+            await act(async () => {
+                await Promise.resolve();
+                await Promise.resolve();
+            });
+
+            // A tap right here must still defer (switchingRef must still be true) -- it must NOT
+            // reopen the OLD persona's socket.
+            act(() => result.current.reconnect());
+            act(() => result.current.startSession());
+            await act(async () => {
+                await Promise.resolve();
+                await Promise.resolve();
+            });
+            expect(FakeWebSocket.instances).toHaveLength(1); // still deferred, nothing reopened for jerry
+
+            // The real persona switch now lands.
+            rerender({ ...baseProps, ...changedProp, personaId: "rick" });
+            await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(2));
+            const socketB = FakeWebSocket.instances[1];
+            expect(socketB.url).toContain("persona=rick");
+            act(() => socketB.triggerOpen());
+
+            expect(FakeWebSocket.instances).toHaveLength(2); // exactly one socket, for the NEW persona
+            expect(sessionUpdateCount(socketB)).toBe(1);
+            expect(sessionUpdateCount(socketA)).toBe(0);
+        }
+    );
+});
+
 // Issue GH-180 round 2, R1: App.tsx's handleSelectPersona now awaits the target persona's fetch
 // BEFORE calling endSession({ switching: true }) (so a failed fetch tears nothing down) -- but a
 // tap landing in that in-flight window, before the fetch resolves, used to have no signal to key
