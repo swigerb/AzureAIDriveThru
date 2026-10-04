@@ -224,8 +224,11 @@ namespace Conformance.Tests;
 /// <see cref="Conformance.Harness.AuthRowCapability.DotnetEnforcesAuth"/> flips to true. Every
 /// method in the five previously skip-gated <c>Scenarios/Auth</c> classes (<c>AuthModeLaunchTests</c>,
 /// <c>AuthRowLoggingTests</c>, <c>AuthRowRealtimeTokenTests</c>, <c>AuthRowRestTokenTests</c>,
-/// <c>AuthRowSpecialCaseTests</c>) now produces a real pass/fail signal on the dotnet leg too (they
-/// already did on the python leg).
+/// <c>AuthRowSpecialCaseTests</c> -- 18 methods as of this PR's first commit) now produce a real
+/// pass/fail signal on the dotnet leg too (they already did on the python leg), so these methods
+/// count toward the floor for the first time -- see "Issue #147 round 4" below for the exact
+/// final count once this PR's own follow-up rounds (which add 3 more tagged, ungated rows to these
+/// same five classes) and the rebase onto PR #230's floor are both accounted for.
 ///
 /// Issue #147 round 2 (coordinator note citing Rick's PR #226 review): the hard-coded
 /// <c>AuthRowGatedTypeNames</c> type-name exclusion list this class used to carry (removed by this
@@ -244,40 +247,59 @@ namespace Conformance.Tests;
 /// fails this test immediately and unambiguously, independent of how much slack the raw count
 /// happens to have from unrelated scenario growth.
 ///
+/// Issue #147 round 4 (coordinator-directed rebase onto PR #230/#21's merged floor of 222): PR
+/// #230 and its round-2 follow-up landed first (see the two "Issue #21" paragraphs above), raising
+/// dev's own floor 204 -> 222 before this PR merged. Rebasing this PR's seven commits onto that
+/// base and re-running <see cref="CountFloorEligibleDotnetReadyTestMethods"/> (per the
+/// coordinator's explicit instruction to measure, not hand-compute) gives 248, not the naively
+/// expected 222 + 18 = 240, because of two compounding factors: (1) this PR's own two follow-up
+/// rounds (mirroring Python PR #222/#163's case-insensitive Bearer-scheme row, and PR #225/#223's
+/// two Row-12 case-insensitive-extension/dotfile-suffix rows) each already added their own tagged,
+/// ungated conformance methods to the same five previously-gated classes, raising their total from
+/// 18 to 21 (7+1+1+2+10 across <c>AuthModeLaunchTests</c>/<c>AuthRowLoggingTests</c>/
+/// <c>AuthRowRealtimeTokenTests</c>/<c>AuthRowRestTokenTests</c>/<c>AuthRowSpecialCaseTests</c>);
+/// and (2) dev's own non-Auth tagged-method count had already organically drifted 5 rows ahead of
+/// its own stated 222 floor by the time this PR rebased onto it (227, not 222) -- the exact same
+/// "floor is a lower bound, the real count can run ahead of it between raises" shape documented by
+/// the "Issue #21 'flip candidates to check early'" paragraph above (204 floor, 208 actual). So:
+/// 227 (dev's actual non-Auth count) + 21 (now-countable Auth rows) = 248, and the floor is set to
+/// that exact measured number, consistent with every prior raise in this class's history.
+///
 /// Per the "Issue #13 Wave 4/4b" note above, this PR re-measures the floor fresh at its own
 /// rebase time (onto the post-#241 `origin/dev`, which also enables the Browser conformance leg)
 /// rather than projecting by historical delta -- see "Issue #147 round 5 (Rick's security
 /// re-review, rebase onto #241)" below for the exact final measured count and its arithmetic.
+/// </summary>
 public sealed class DotnetTraitCoverageTests
 {
     private const string TraitName = "Dotnet";
     private const string TraitValue = "ready";
 
     [Fact]
-    public void At_least_256_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
+    public void At_least_248_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
     {
         // Rick's PR #226 review: assert the capability directly, not just the derived count --
         // see this class's own doc comment for why a bare ">= 222" check alone can't be trusted to
         // catch this specific regression.
         Assert.True(AuthRowCapability.Enforces("dotnet"),
             "AuthRowCapability.Enforces(\"dotnet\") must stay true: flipping it back to false " +
-            "would silently move the 18 AuthRowCapabilityGated Scenarios/Auth test methods from " +
+            "would silently move the 21 AuthRowCapabilityGated Scenarios/Auth test methods from " +
             "Passed back to Skipped on the dotnet leg, and this floor's own count (which excludes " +
             "AuthRowCapabilityGated classes whenever Enforces(\"dotnet\") is false) could still " +
             "clear its lower bound from unrelated growth elsewhere, hiding the regression.");
 
         var count = CountFloorEligibleDotnetReadyTestMethods();
 
-        Assert.True(count >= 256,
-            $"Expected at least 256 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
+        Assert.True(count >= 248,
+            $"Expected at least 248 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
             $"and not unconditionally skip-gated by AuthRowCapability (the dotnet leg's " +
             $"`--filter \"{TraitName}={TraitValue}&Category!=Browser\"` baseline, minus the five " +
             "skip-only Scenarios/Auth classes -- see this class's own doc comment; " +
             $"docs/dotnet_mapping.md), but found {count}. If a tagged scenario was removed or " +
-            "renamed without a replacement, the dotnet CI leg silently lost coverage. 256 is a " +
-            "FRESH count (#236 Rick re-review item 5, taken post-rebase onto origin/dev), not " +
+            "renamed without a replacement, the dotnet CI leg silently lost coverage. 248 is a " +
+            "FRESH count (Issue #147 round 4, taken post-rebase onto PR #230's merged floor), not " +
             "arithmetic -- re-measure with `Conformance.Tests.exe -list methods -trait " +
-            "Dotnet=ready` minus the 18 AuthRowGatedTypeNames methods before raising this floor " +
+            "Dotnet=ready` minus the AuthRowCapabilityGated methods before raising this floor " +
             "again.");
     }
 

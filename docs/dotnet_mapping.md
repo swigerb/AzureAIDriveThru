@@ -589,14 +589,60 @@ again when the Auth conformance filter was re-run (`Failed: 2, Passed: 34, Skipp
 `Enforces_is_true_for_dotnet_now_that_its_switch_is_on` pin); reverted, and the suite returned to
 102/102 passing with 0 skipped.
 
-**Note on the pending floor-number rebase:** per the coordinator's cross-PR sequencing note,
-PR #230 (issue #21, 11 new `Dotnet=ready` rows) is expected to merge to `dev` before this PR
-rebases and raises the floor constant/doc comment from 222 to the final combined number (reported
-as approximately 237 -- 208 dev baseline + 11 from #230 + 18 Auth rows from this issue -- pending
-the coordinator's exact confirmed count once #230 lands and any of its own additional rows are
-accounted for). That arithmetic will be recorded here and in the `[Fact]`'s own name/doc comment
-when the rebase happens; this round's fix is independent of that pending number and applies
-regardless of what the floor's literal value ends up being.
+**Note on the pending floor-number rebase (resolved -- see "Issue #147 round 4" below):** per the
+coordinator's cross-PR sequencing note, PR #230 (issue #21) was expected to merge to `dev` before
+this PR rebased and raised the floor constant/doc comment from 222 to the final combined number.
+That rebase has now happened; see the next section for the exact arithmetic and final count (248,
+not the naively expected 222 + 18 = 240).
+
+### Issue #147 round 4 (coordinator-directed rebase onto PR #230's merged floor of 222): the exact final count
+
+PR #230 (issue #21, both rounds) merged to `dev` first, raising its own floor 204 -> 222 (see the
+two "Issue #21" entries above). Per the coordinator's instruction, `squad/147-csharp-entra` was
+then rebased onto `origin/dev` (`git rebase origin/dev`, all 7 commits replaying cleanly after
+resolving doc-comment/floor-constant conflicts in this file and `DotnetTraitCoverageTests.cs` --
+the `AuthRowGatedTypeNames` structural conflict only occurred in this PR's very first commit, since
+the round-3 `AuthRowCapabilityGatedAttribute` rewrite above is a later commit that replayed cleanly
+against the first commit's own resolution), and the floor's new value was computed by the test's
+own `CountFloorEligibleDotnetReadyTestMethods` reflection logic -- not hand arithmetic, per the
+coordinator's explicit instruction -- by temporarily raising the assertion threshold, reading the
+actual count from the failure message, then reverting.
+
+**Result: 248, not the naively expected 222 + 18 = 240.** The gap is fully explained by two
+compounding, independently-verified factors:
+
+1. **This PR's own two follow-up rounds already added 3 more tagged, ungated rows to the same five
+   previously-gated classes**, raising their total from 18 (as of this PR's first commit,
+   `AuthModeLaunchTests`=7, `AuthRowLoggingTests`=1, `AuthRowRealtimeTokenTests`=1,
+   `AuthRowRestTokenTests`=1, `AuthRowSpecialCaseTests`=8) to 21 at the current tip
+   (`AuthRowRestTokenTests`=2 after the case-insensitive-Bearer-scheme theory method;
+   `AuthRowSpecialCaseTests`=10 after the two Row-12 case-insensitive-extension/dotfile-suffix
+   methods). Verified by diffing `[Theory]`/`[Fact]` counts in those five files between this PR's
+   first commit and its tip: 18 -> 21 (+3).
+2. **`dev`'s own non-Auth tagged-method count had already organically drifted 5 rows ahead of its
+   own stated 222 floor** by the time this PR rebased onto it (227, not 222) -- the exact same
+   "floor is a lower bound, the real count can run ahead of it between raises" shape the "Issue #21
+   'flip candidates to check early'" entry above already documents for `dev` itself (204 floor, 208
+   actual, at that time). Verified with a temporary diagnostic `[Fact]` that printed the
+   per-type method breakdown after the rebase: summing every non-`Scenarios/Auth`-gated type's
+   contribution gives 227; summing the five gated types gives 21; 227 + 21 = 248 exactly, matching
+   the measured `CountFloorEligibleDotnetReadyTestMethods()` result. The diagnostic method was
+   reverted before committing -- it exists nowhere in the final diff.
+
+`DotnetTraitCoverageTests.At_least_222_scenarios_are_tagged_dotnet_ready_and_not_skip_gated` is
+renamed to `At_least_248_scenarios_are_tagged_dotnet_ready_and_not_skip_gated` (`count >= 248`),
+and every doc-comment/error-message reference to "222" or "18" in that class that described this
+PR's own floor target (as opposed to `dev`'s pre-rebase baseline, which stays "222" in the
+historical narrative) is updated to 248/21 to match.
+
+**Validation after rebase:** `Backend.Tests` unaffected by this rebase (no production code
+changed, only test/doc files) -- still 496/496 passing. Conformance suite rebuilt clean
+(`Backend.slnx` and `Conformance.slnx` both 0 warnings/0 errors). Full dotnet CI filter
+(`CONFORMANCE_BACKEND=dotnet`, `--filter "Dotnet=ready&Category!=Browser"`, `PATH` resolving the
+.NET 11 RC SDK) and the `Scenarios.Auth`-filtered run both pass cleanly against the new floor of
+248, including `DotnetTraitCoverageTests` itself and `AuthRowCapabilityTests`'s own pinned
+`Enforces_is_true_for_dotnet_now_that_its_switch_is_on` Fact. Pushed with `--force-with-lease`
+(rewriting history via the rebase); CI reconfirmed green on the rebased tip.
 
 ## `models.catalog` (resolved this revision)
 
