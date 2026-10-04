@@ -573,21 +573,50 @@ the tools whose parity bar genuinely depends on response-handling, not request-b
   `personas/*/persona.json`) is never a
   configuration error, only more personas to build a plan for.
 * `MenuDocumentBuilder.cs` -- a faithful port of `prepare_documents` (field-for-field, same
-  `sanitize_key` regex, same empty-string field defaults, same `combined_text` f-string spacing,
-  same file order with no sorting so later 100-document batch slicing matches exactly).
+  `sanitize_key` semantics, same empty-string field defaults, same `combined_text` f-string spacing,
+  same file order with no sorting so later 100-document batch slicing matches exactly). `SanitizeKey`
+  iterates by `System.Text.Rune` (Unicode code point), not by `char`/`Regex` (UTF-16 code unit) --
+  Python's `re` module iterates `str` by code point, so one astral character (e.g. an emoji outside
+  the Basic Multilingual Plane, encoded in .NET as a UTF-16 surrogate PAIR) is a single invalid match
+  there, replaced by one `"_"`; a plain `Regex.Replace` would instead treat each surrogate half as its
+  own invalid character and emit `"__"` (PR #250 review R4; see `MenuDocumentBuilderTests.cs`'s
+  dedicated emoji test).
 * `PythonJsonDumps.cs` -- a byte-for-byte port of Python's `json.dumps(value)` with its DEFAULT
   arguments (`ensure_ascii=True`, `", "`/`": "` separators) -- the OPPOSITE default from
   `update_menu_sizes.py`'s own output file (`ensure_ascii=False`; see `PythonJsonEncoder.cs`), used
   because `prepare_documents` calls `json.dumps(item["sizes"])` with no extra arguments. Whole
   numbers stay whole (Python int `2` stays `2`, never `2.0`) using the same
   `PythonFloatRepr`/number-token-detection convention as `MenuSizeUpdater.cs`.
-* `FixtureEmbedding.cs` -- a deterministic, pure-function stand-in for `generate_embeddings`'s real
-  Azure OpenAI call: `sha256(text)`'s first 8 bytes, each mapped from `[0, 255]` to `[-1, 1]` and
-  rounded to 6 decimals via a fixed-point string round-trip (not a raw `Math.Round` call -- see the
-  mutation-check note on this below) so both this C# code and the Python capture harness land on the
-  exact same IEEE-754 value. **Deliberately 8 dimensions, not the real 3072** (`EMBEDDING_DIMENSIONS`
-  in `setup_search_index.py`) -- a documented, intentional divergence: the point of this fixture is
-  to exercise the request-building code path end to end, not emulate real embedding content, which is
+* `OpenAiSettingsResolver.cs` (`tools/dotnet/src/SearchIndexRequestBuilder/`) -- resolves the real
+  Azure OpenAI endpoint/embedding-deployment the shipped CLI prints in the index definition's
+  vectorizer, matching `setup_search_index.py`'s own `run()` (lines 471-473): `--openai-endpoint` flag
+  > `AZURE_OPENAI_EASTUS2_ENDPOINT` env var, required (throws a clean, single-line, catchable
+  `InvalidOperationException` if neither is set -- Python's own equivalent,
+  `os.environ["AZURE_OPENAI_EASTUS2_ENDPOINT"]`, raises an unhandled `KeyError` with a full stack
+  trace instead; this port deliberately improves on that, it is not a divergence); and
+  `--embedding-deployment` flag > `AZURE_OPENAI_EMBEDDING_DEPLOYMENT` env var > default
+  `"text-embedding-3-large"` (`EMBEDDING_MODEL` in `setup_search_index.py`). `CliRunner.cs` catches
+  that exception and turns it into a one-line stderr message plus exit code 1, same pattern as the
+  existing persona-discovery failure handling. **PR #250 review R1 fix**: before this, the shipped CLI
+  *always* printed hardcoded placeholder values (`resourceUri: https://fake.openai.azure.com`,
+  `deploymentId: fake-embedding-deployment`) regardless of the real environment, and the fixture types
+  (`FixtureEmbedding`, the fake constants) lived in the production project. Both are fixed now: the
+  real resolution logic above is the only thing a shipped CLI run ever uses, and `FixtureEmbedding.cs`
+  plus the fake endpoint/deployment constants (now `TestFixtureValues.cs`) have moved entirely into
+  `tools/dotnet/tests/SearchIndexRequestBuilder.Tests/` -- only `PythonParityTests.cs` ever
+  constructs/injects them, via `SearchIndexRequestPlanner.BuildPlan`'s optional `embeddingProvider`
+  parameter (`null` in production, meaning a shipped CLI run never attaches a document's `"embedding"`
+  field at all -- this tool makes no Azure OpenAI call under any flag, so it has nothing real to put
+  there; the CLI prints a one-line note saying so). See `OpenAiSettingsResolverTests.cs`/
+  `CliRunnerTests.cs` for the default/override/missing-endpoint coverage.
+* `FixtureEmbedding.cs` (now test-only, under `tools/dotnet/tests/SearchIndexRequestBuilder.Tests/`) --
+  a deterministic, pure-function stand-in for `generate_embeddings`'s real Azure OpenAI call:
+  `sha256(text)`'s first 8 bytes, each mapped from `[0, 255]` to `[-1, 1]` and rounded to 6 decimals
+  via a fixed-point string round-trip (not a raw `Math.Round` call -- see the mutation-check note on
+  this below) so both this C# code and the Python capture harness land on the exact same IEEE-754
+  value. **Deliberately 8 dimensions, not the real 3072** (`EMBEDDING_DIMENSIONS` in
+  `setup_search_index.py`) -- a documented, intentional divergence: the point of this fixture is to
+  exercise the request-building code path end to end, not emulate real embedding content, which is
   non-deterministic model output neither side could reproduce anyway. The index definition's own
   `"dimensions": 3072` field comes from the real constant independently in
   `SearchIndexDefinitionBuilder.cs` and is completely unaffected by this fixture's length.
@@ -612,7 +641,13 @@ the tools whose parity bar genuinely depends on response-handling, not request-b
   `update_menu_sizes.py`'s output file or `extract_production_items.py`'s stdout report, where
   literal byte-identity is the point -- except for the "sizes" field specifically, which IS a plain
   JSON string value and so is still compared character-for-character by the same structural
-  comparison (a JSON string leaf is still just a string).
+  comparison (a JSON string leaf is still just a string). On top of the semantic double-value
+  equality (a Python `int` and a C# whole-number `double` with the same value compare equal), it also
+  requires both sides to agree on whether a number is logically an int or a float (PR #250 review
+  R3): a Python `"dimensions": 3072` vs a hypothetical C# `3072.0` now fails, even though they're
+  numerically equal, because Azure AI Search's REST API can itself be type-sensitive about this
+  distinction for some fields. See `JsonStructuralAssertTests.cs` for synthetic, isolated coverage of
+  this rule (the real persona data's own numbers never happen to exercise an int/float divergence).
 
 ### Mutation checks (each performed for real, then reverted, while implementing this batch)
 
@@ -625,7 +660,7 @@ the tools whose parity bar genuinely depends on response-handling, not request-b
   real-data parity test (every persona's embedding values differ) and a dedicated cross-language
   oracle test (`FixtureEmbeddingTests.cs`, comparing directly against the capture harness's own
   `fixture_embedding()` for sample texts) fail -- confirmed, then restored.
-* Temporarily mismatching `SearchIndexRequestPlanner.FakeOpenAiEndpoint` against the harness's own
+* Temporarily mismatching `TestFixtureValues.FakeOpenAiEndpoint` against the harness's own
   `FAKE_OPENAI_ENDPOINT` made the real-data parity test fail on the index definition's vectorizer
   `resourceUri` field -- confirmed, then restored.
 * Removing `PythonJsonDumps.cs`'s `ensure_ascii` `\uXXXX` escaping left the REAL-DATA parity test
@@ -640,6 +675,33 @@ the tools whose parity bar genuinely depends on response-handling, not request-b
   ever produce -- so that particular implementation choice has no test able to distinguish it from
   the alternative, and is kept for its closer conceptual match to Python's `f"{x:.6f}"` formatting
   rather than for a provable behavioural difference.
+
+**PR #250 review fixes** (each mutation-checked the same way: break it, confirm the expected test
+fails, revert):
+
+* Reverting `MenuDocumentBuilder.cs`'s `SanitizeKey` from the Rune-based loop back to a plain
+  `char`-by-`char`/`Regex.Replace` implementation made
+  `MenuDocumentBuilderTests.cs`'s dedicated astral-emoji test fail (`"drinks_party__shake"`, two
+  underscores, instead of the expected `"drinks_party_shake"`, one) -- confirmed, then restored.
+* Replacing `JsonStructuralAssert.cs`'s `IsFloatShaped` check with an always-true condition made
+  `JsonStructuralAssertTests.cs`'s `3072` vs `3072.0` test stop failing (i.e. the regression the check
+  exists to catch became invisible) -- confirmed, then restored. This check was implemented twice:
+  the first attempt compared raw JSON token text on both sides and looked correct against synthetic
+  data, but FAILED the real-data `PythonParityTests` run (Python's captured `-1.0` vs C#'s
+  `JsonValue.Create(-1.0).ToJsonString()`, which renders as `"-1"` with no decimal point -- .NET's
+  `JsonValue` serializer collapses whole-number doubles to int-looking text, unlike Python's
+  `json.dumps`, which always keeps a float's decimal point). The real-data test catching this before
+  it shipped is exactly why the real-fixture parity test exists alongside synthetic unit tests. Fixed
+  by detecting int-vs-float via CLR-boxed-type inspection for programmatically-built values
+  (`JsonValue.TryGetValue(out double _)` succeeds only for a genuine boxed `double`, not `int`/`long`)
+  instead of text shape, while still trusting the parsed source text (`.`/`e`/`E` presence via
+  `GetRawText()`) for values read from real JSON.
+* Hardcoding `CliRunner.cs`'s settings resolution to always use
+  `new OpenAiSettingsResolver.Settings("https://fake.openai.azure.com", "fake-embedding-deployment")`
+  (bypassing `OpenAiSettingsResolver.Resolve(...)` entirely) made
+  `CliRunnerTests.cs`'s missing-endpoint test fail (stderr showed the unrelated persona-discovery
+  error instead of the expected "no OpenAI endpoint configured" message, because the hardcoded fake
+  endpoint always "succeeded") -- confirmed, then restored.
 
 ### CI wiring
 

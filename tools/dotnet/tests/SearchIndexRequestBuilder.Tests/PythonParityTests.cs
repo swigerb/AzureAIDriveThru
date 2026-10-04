@@ -29,7 +29,7 @@ namespace SearchIndexRequestBuilder.Tests;
 ///   never contains a non-ASCII "sizes" value, and the F6-round-trip vs. raw Math.Round(x, 6)
 ///   distinction turned out to produce bit-identical results for every one of this formula's 256
 ///   possible input bytes, so reverting either one leaves THIS real-data test green.)
-/// * Temporarily making SearchIndexRequestPlanner.FakeOpenAiEndpoint differ from the harness's own
+/// * Temporarily making TestFixtureValues.FakeOpenAiEndpoint differ from the harness's own
 ///   FAKE_OPENAI_ENDPOINT made this test fail on the index_definition's vectorizer resourceUri --
 ///   confirmed, then restored.
 /// </summary>
@@ -68,7 +68,11 @@ public sealed class PythonParityTests
 
         foreach (var persona in dotnetPersonas)
         {
-            var plan = SearchIndexRequestPlanner.BuildPlan(persona);
+            var plan = SearchIndexRequestPlanner.BuildPlan(
+                persona,
+                TestFixtureValues.FakeOpenAiEndpoint,
+                TestFixtureValues.FakeEmbeddingDeployment,
+                FixtureEmbedding.For);
             var capturedPersona = capturedPersonas.GetProperty(persona.PersonaId);
 
             Assert.Equal(capturedPersona.GetProperty("index_name").GetString(), plan.IndexName);

@@ -1,5 +1,5 @@
+using System.Text;
 using System.Text.Json.Nodes;
-using System.Text.RegularExpressions;
 
 namespace SearchIndexRequestBuilder;
 
@@ -10,7 +10,7 @@ namespace SearchIndexRequestBuilder;
 /// items, in file order -- never sorted), so later 100-document batching slices identically on both
 /// sides.
 /// </summary>
-internal static partial class MenuDocumentBuilder
+internal static class MenuDocumentBuilder
 {
     /// <summary>One prepared document's field values (not yet given an "embedding" field --
     /// <see cref="FixtureEmbedding"/> attaches that afterwards, mirroring how the real
@@ -65,10 +65,24 @@ internal static partial class MenuDocumentBuilder
     private static string GetStringOrDefault(JsonObject obj, string key, string fallback) =>
         obj.TryGetPropertyValue(key, out var value) && value is not null ? value.GetValue<string>() : fallback;
 
-    /// <summary>Same regex as setup_search_index.py's <c>sanitize_key</c> (line 111-113):
-    /// <c>re.sub(r"[^a-zA-Z0-9_\-]", "_", key)</c>.</summary>
-    private static string SanitizeKey(string key) => InvalidKeyCharacters().Replace(key, "_");
+    /// <summary>Same semantics as setup_search_index.py's <c>sanitize_key</c> (line 111-113):
+    /// <c>re.sub(r"[^a-zA-Z0-9_\-]", "_", key)</c>. Python's <c>re</c> module iterates <c>str</c>
+    /// by Unicode CODE POINT, so one astral character (e.g. an emoji outside the Basic Multilingual
+    /// Plane, encoded as a UTF-16 surrogate PAIR) is one invalid match, replaced by a single "_".
+    /// Iterates by <see cref="Rune"/> (PR #250 review R4) rather than by <c>char</c>/
+    /// <c>Regex</c> (which would walk UTF-16 code UNITS instead) for the same reason -- a
+    /// plain <c>Regex.Replace</c> would treat that same emoji's two surrogate halves as two
+    /// separate invalid characters and emit "__" (two underscores) where Python emits one.</summary>
+    private static string SanitizeKey(string key)
+    {
+        var builder = new StringBuilder(key.Length);
+        foreach (var rune in key.EnumerateRunes())
+        {
+            builder.Append(IsValidKeyRune(rune) ? (char)rune.Value : '_');
+        }
+        return builder.ToString();
+    }
 
-    [GeneratedRegex(@"[^a-zA-Z0-9_\-]")]
-    private static partial Regex InvalidKeyCharacters();
+    private static bool IsValidKeyRune(Rune rune) =>
+        rune.Value is (>= 'a' and <= 'z') or (>= 'A' and <= 'Z') or (>= '0' and <= '9') or '_' or '-';
 }

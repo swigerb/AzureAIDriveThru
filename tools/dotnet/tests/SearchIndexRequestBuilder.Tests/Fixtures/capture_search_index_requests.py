@@ -19,11 +19,14 @@ How it avoids a live Azure/OpenAI call entirely:
   this harness calls `build_plan`/`prepare_documents` directly (the real, read-only functions) and
   attaches FIXTURE_EMBEDDING(text) in its place, exactly where `ingest_plan` would normally zip in
   real embeddings. FIXTURE_EMBEDDING's formula must stay byte-for-byte identical to
-  SearchIndexRequestBuilder/FixtureEmbedding.cs -- see the comment on EMBEDDING_FIXTURE_DIMENSIONS.
+  SearchIndexRequestBuilder.Tests/FixtureEmbedding.cs (test-only; production attaches no embedding at
+  all, see docs/dotnet_tooling.md) -- see the comment on EMBEDDING_FIXTURE_DIMENSIONS.
 * FAKE_OPENAI_ENDPOINT/FAKE_EMBEDDING_DEPLOYMENT must stay identical to
-  SearchIndexRequestPlanner.FakeOpenAiEndpoint/FakeEmbeddingDeployment (C#): both flow directly into
-  the index definition's vectorizer fields, so a mismatch would make the parity test fail for a
-  reason that has nothing to do with the port's own correctness.
+  SearchIndexRequestBuilder.Tests/TestFixtureValues.cs's FakeOpenAiEndpoint/FakeEmbeddingDeployment
+  (C#, test-only): both flow directly into the index definition's vectorizer fields, so a mismatch
+  would make the parity test fail for a reason that has nothing to do with the port's own
+  correctness. A real shipped CLI run never uses these -- it resolves the real endpoint/deployment
+  via OpenAiSettingsResolver.cs instead.
 
 Targets every enabled persona (`PersonaCatalog`-style default: every personas/*/persona.json
 folder, sorted), matching setup_search_index.py's own default `run()` behaviour with no

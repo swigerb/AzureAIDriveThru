@@ -60,6 +60,40 @@ public sealed class MenuDocumentBuilderTests
             documents[0].Fields["id"]!.GetValue<string>());
     }
 
+    /// <summary>
+    /// PR #250 review R4: "🎉" (U+1F389) is ONE Unicode code point but TWO UTF-16 code units (a
+    /// surrogate pair). Python's sanitize_key (re.sub, which iterates str by code point) replaces
+    /// it with a SINGLE "_" -- a naive char-by-char .NET Regex.Replace would instead treat each
+    /// surrogate half as its own invalid character and emit "__" (two underscores).
+    ///
+    /// Mutation check performed (reverted after confirming): temporarily reverting SanitizeKey to
+    /// a plain per-UTF-16-char <c>Regex.Replace(key, "_")</c> (as this method used to be
+    /// implemented) made this test fail with "drinks_party__shake" (two underscores) instead of
+    /// "drinks_party_shake" -- confirmed, then restored to the Rune-based implementation.
+    /// </summary>
+    [Fact]
+    public void Build_SanitizesDocId_ReplacesOneAstralEmoji_WithASingleUnderscore_NotTwo()
+    {
+        const string menuJsonWithEmoji = """
+            {
+              "menuItems": [
+                {
+                  "category": "Drinks",
+                  "items": [
+                    {
+                      "name": "Party🎉Shake",
+                      "description": "A celebratory shake."
+                    }
+                  ]
+                }
+              ]
+            }
+            """;
+        var documents = MenuDocumentBuilder.Build(JsonNode.Parse(menuJsonWithEmoji)!);
+
+        Assert.Equal("drinks_party_shake", documents[0].Fields["id"]!.GetValue<string>());
+    }
+
     [Fact]
     public void Build_DefaultsMissingOptionalFields_ToEmptyString_NotOmitted()
     {

@@ -83,6 +83,25 @@ internal static class JsonStructuralAssert
             Assert.True(
                 expectedNumber == actualNumber,
                 $"At {path}: number differs. expected {expectedNumber}, actual {actualNumber}.");
+
+            // PR #250 review (optional, item 3): the semantic-value check above would let a Python
+            // int 3072 and a C# double 3072.0 compare equal, hiding a real divergence (Azure AI
+            // Search's REST API is itself type-sensitive about "dimensions": 3072 vs 3072.0). Also
+            // require the two sides to agree on whether they're logically an int or a float (see
+            // IsFloatShaped) -- not full literal-text equality, which would be flaky here:
+            // FixtureEmbedding's genuinely-fractional values are independently formatted by .NET's
+            // and Python's own shortest-round-trip float-to-string algorithms, which usually, but
+            // don't always, choose identical digits.
+            //
+            // Mutation check performed (reverted after confirming): temporarily making
+            // IsFloatShaped always return the SAME constant (so this assertion could never fail)
+            // made JsonStructuralAssertTests.Equal_FailsWhenSameNumericValue_IsWrittenAsIntInOneSideAndFloatInTheOther
+            // fail to fail (i.e. 3072 vs 3072.0 passed silently) -- confirmed, then restored.
+            Assert.True(
+                IsFloatShaped(expected) == IsFloatShaped(actual),
+                $"At {path}: number {expectedNumber} is written as an int in one JSON body and a "
+                + "float in the other (one has a '.'/'e'/'E', the other doesn't) -- Azure AI "
+                + "Search's REST API can treat these differently even though they're numerically equal.");
             return;
         }
 
@@ -103,5 +122,33 @@ internal static class JsonStructuralAssert
             default:
                 throw new InvalidOperationException($"Unexpected JsonValueKind at {path}: {expectedKind}.");
         }
+    }
+
+    /// <summary>True if <paramref name="value"/> is logically a "float" rather than an "int" --
+    /// i.e. would Python's json.dumps have written it with a '.', 'e', or 'E'? Two different
+    /// detection strategies are needed depending on where the node came from:
+    /// <list type="bullet">
+    /// <item>Parsed from real JSON text (e.g. the Python-captured side, always via
+    /// <see cref="JsonNode.Parse(string, JsonNodeOptions?, JsonDocumentOptions)"/>): the
+    /// <see cref="JsonElement"/>'s own raw source text preserves exactly what was written --
+    /// "3072" has no '.'/'e'/'E', "3072.0" does.</item>
+    /// <item>Programmatically built (e.g. the C# side's own <see cref="JsonValue"/> tree, built by
+    /// SearchIndexDefinitionBuilder.cs/DocumentBatchBuilder.cs, never parsed from text):
+    /// <see cref="JsonNode.ToJsonString"/> can't be used for this -- it always collapses a
+    /// whole-number <c>double</c> to int-looking text with no trailing ".0" (unlike Python's own
+    /// json.dumps, which always keeps a float's decimal point even for a whole number like -1.0).
+    /// Instead, check the exact boxed CLR type directly: <c>TryGetValue&lt;double&gt;</c> only
+    /// succeeds when the underlying value IS a C# <c>double</c> (no implicit int/long widening --
+    /// see the remarks in the caller above), which reflects whether the ORIGINATING C# code built
+    /// this node as a float or an int, independent of whether its value happens to be whole.</item>
+    /// </list>
+    /// </summary>
+    private static bool IsFloatShaped(JsonValue value)
+    {
+        if (value.TryGetValue(out JsonElement element))
+        {
+            return element.GetRawText().IndexOfAny(['.', 'e', 'E']) >= 0;
+        }
+        return value.TryGetValue(out double _);
     }
 }
