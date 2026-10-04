@@ -439,14 +439,26 @@ complexity than the risk justifies. If any of these ever becomes a real concern,
 underlying C# (`ProductionItemsExtractor.cs`, see its XML doc comments at each site) rather than
 just updating this note.
 
-* **`"price": true`/`"price": false` (a JSON boolean, not a number).** Python's
-  `product.get("price", 0.0)` would simply return the C `bool` (Python's `bool` is a subtype of
-  `int`, so it would be printed as `1.0`/`0.0` after `float()`-style formatting). The C# port's
-  `GetDoubleOrDefault` treats a boolean JSON value as absent and falls back to the default instead.
+* **`"price": true` (a JSON boolean, not a number).** Python's `product.get("price", 0.0)` would
+  simply return the Python `bool` (Python's `bool` is a subtype of `int`, so `True` would be printed
+  as `1.00` after `:.2f`-style formatting). The C# port's `GetDoubleOrDefault` treats a boolean
+  JSON value as absent and falls back to `0.0` instead, printing `0.00`. **`"price": false` does
+  NOT diverge**: Python's `False` is `int` `0`, which also formats as `0.00` -- the exact same
+  value this port's fallback already produces, so the two sides agree on `false` by coincidence of
+  both landing on zero, even though the C# path gets there by a different route (treating it as
+  absent, not by reading a falsy `0`).
 * **Duplicate keys within the same JSON object** (e.g. two `"a"` entries inside one
-  `relatedProducts.alternatives` or `productGroups` object). Python's `json.load` silently keeps
-  only the *last* occurrence; `System.Text.Json`'s `JsonElement.GetProperty`/enumeration semantics
-  are not guaranteed to match that exact "last wins" rule for every malformed-duplicate shape.
+  `relatedProducts.alternatives` or `productGroups` object). The *lookup* dictionaries
+  (`BuildLookup`'s `Dictionary<string, JsonElement>`, used for `dict.get(id)`-style access) DO match
+  Python's `json.load` "last occurrence wins" semantics exactly -- a plain `Dictionary` indexer
+  assignment is itself last-write-wins, same as Python's parsed `dict`. The real divergence is
+  elsewhere: anywhere this port iterates the *original* `JsonElement` for document order (not a
+  `BuildLookup` lookup), `JsonElement.EnumerateObject()` yields **every** property occurrence,
+  duplicates included -- unlike Python's `dict`, which collapses to one entry before any iteration
+  ever sees it. For a product whose `relatedProducts.alternatives`/`productGroups` object has a
+  literal duplicate key, this means the C# port can enumerate and process that one logical size
+  variant **twice**, doubling it in the output, where Python would only ever see it once. See
+  `BuildLookup`'s own XML doc comment for the authoritative statement of this.
 * **İ (Turkish dotted capital I, U+0130) lower-casing.** Python's `str.lower()` and .NET's
   `ToLowerInvariant()` disagree on this one specific codepoint's invariant-culture lowercase
   mapping; `Normalize` uses `ToLowerInvariant()` as everywhere else in this port.

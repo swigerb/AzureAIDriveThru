@@ -448,9 +448,12 @@ public static class ProductionItemsExtractor
     /// JSON int or float in the source data -- both are read as a <see cref="double"/>, since the
     /// only use of a price in this tool is <c>:.2f</c>-style display formatting, which Python
     /// applies identically to an int or a float). Accepted divergence (documented in
-    /// docs/dotnet_tooling.md, real POS/menu exports never do this): a JSON boolean price (e.g.
-    /// <c>"price": true</c>) is treated as absent here, whereas Python's <c>bool</c> is an
-    /// <c>int</c> subtype and would format as <c>1.00</c>/<c>0.00</c>.
+    /// docs/dotnet_tooling.md, real POS/menu exports never do this): a JSON boolean price
+    /// <c>"price": true</c> is treated as absent here and falls back to <paramref name="fallback"/>
+    /// (typically <c>0.0</c>), whereas Python's <c>bool</c> is an <c>int</c> subtype and would
+    /// format <c>True</c> as <c>1.00</c>. <c>"price": false</c> does NOT diverge: Python's
+    /// <c>False</c> is <c>int</c> <c>0</c>, which also formats as <c>0.00</c> -- the same value
+    /// this fallback already produces.
     /// </summary>
     private static double GetDoubleOrDefault(JsonElement obj, string propertyName, double fallback) =>
         obj.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.Number
