@@ -98,6 +98,15 @@ validly-formatted `increase_reason`?". Issue #105 hardened every corner that lef
      short forever, tripping the 250-cap mismatch error even on a PR nowhere near 250 commits.
      The comparison now counts every commit entry returned (before filtering empty messages
      out), so only an actual truncated fetch trips the check.
+  9d. #242 (Rick's review): counting every raw commit entry toward commit_count without
+     validating its shape (9c) meant a malformed entry -- null, {}, {"commit": null},
+     {"commit": {}}, {"commit": {"message": null}}, a non-dict entry, or {"commit": "..."}
+     (a string, not an object) -- failed OPEN: it was silently treated as "no message" (or, for
+     a non-dict `commit` value, crashed with an unhandled AttributeError instead of a
+     RuntimeError). Each entry is now validated before extraction: RuntimeError is raised unless
+     the entry is a dict, its "commit" field is a dict, and that dict's "message" field is a
+     str. An empty string is still the only legitimate "no message" case (it is a valid message,
+     just one with no closing keyword) and is filtered out without raising.
 
 Usage (see .github/workflows/conformance.yml, python-tests job):
 
@@ -339,6 +348,14 @@ def fetch_pr_commit_messages(repo: str, pr_number: str, token: str, expected_cou
     same rationale as check_issue_is_open: silently treating a failed/incomplete fetch as "no
     commit messages" would under-report REBRAND_PR_CLOSES and could let a self-citation slip
     through undetected).
+
+    Each raw commit entry is itself validated before its message is extracted: a non-dict entry,
+    a missing/non-dict ``commit`` field, or a missing/non-string ``commit.message`` field all
+    raise RuntimeError rather than being silently skipped. Counting malformed entries toward
+    commit_count (see above) without validating their shape would fail OPEN -- a closing keyword
+    hidden behind a malformed payload shape would simply vanish instead of being reported. An
+    empty string IS a valid message (just one that carries no closing keyword) and is the only
+    case filtered out of the returned list without raising.
     """
     messages: list[str] = []
     commit_count = 0
@@ -379,7 +396,25 @@ def fetch_pr_commit_messages(repo: str, pr_number: str, token: str, expected_cou
             )
         commit_count += len(payload)
         for commit in payload:
-            message = ((commit or {}).get("commit") or {}).get("message")
+            if not isinstance(commit, dict):
+                raise RuntimeError(
+                    f"GitHub API returned a malformed commit entry fetching PR #{pr_number} "
+                    f"commits (expected an object, got {type(commit).__name__})"
+                )
+            commit_data = commit.get("commit")
+            if not isinstance(commit_data, dict):
+                raise RuntimeError(
+                    f"GitHub API returned a malformed commit entry fetching PR #{pr_number} "
+                    f"commits (expected 'commit' to be an object, got "
+                    f"{type(commit_data).__name__})"
+                )
+            message = commit_data.get("message")
+            if not isinstance(message, str):
+                raise RuntimeError(
+                    f"GitHub API returned a malformed commit entry fetching PR #{pr_number} "
+                    f"commits (expected 'commit.message' to be a string, got "
+                    f"{type(message).__name__})"
+                )
             if message:
                 messages.append(message)
         if len(payload) < 100:

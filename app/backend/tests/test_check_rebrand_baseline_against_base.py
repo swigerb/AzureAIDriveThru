@@ -822,19 +822,79 @@ class TestFetchPrCommitMessages(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 checker.fetch_pr_commit_messages("owner/repo", "42", "tok", expected_count=1)
 
-    def test_commit_without_a_message_field_is_skipped_not_fatal(self):
+    def test_commit_without_a_message_field_raises_runtime_error(self):
+        """#242 (Rick's review of PR #242): a commit object with no "message" field at all is
+        malformed, not merely "no message" -- it must fail closed with RuntimeError rather than
+        being silently treated as an empty/missing message. (Contrast with
+        {"commit": {"message": ""}}, an explicit empty string, which IS a legitimate message and
+        is filtered out without raising -- see test_empty_message_commit_does_not_trip_count_mismatch.)
+        """
         payload = json.dumps([{"commit": {}}, {"commit": {"message": "Fix #1: start"}}]).encode(
             "utf-8"
         )
         with mock.patch.object(
             checker.urllib.request, "urlopen", return_value=_FakeResponse(200, payload)
         ):
-            # #238 round 3: expected_count must match the RAW number of commit entries GitHub
-            # reports (2 here), not the filtered message count (1, since the other commit has
-            # no message field) -- an empty-message commit must not itself trip the mismatch
-            # check meant to catch the 250-commit pagination cap.
-            messages = checker.fetch_pr_commit_messages("owner/repo", "42", "tok", expected_count=2)
-        self.assertEqual(messages, ["Fix #1: start"])
+            with self.assertRaises(RuntimeError) as ctx:
+                checker.fetch_pr_commit_messages("owner/repo", "42", "tok", expected_count=2)
+        self.assertIn("message", str(ctx.exception))
+
+    def test_null_commit_entry_raises_runtime_error(self):
+        """A null entry in the commits array is malformed and must fail closed, not be silently
+        treated as having no message."""
+        payload = json.dumps([None, {"commit": {"message": "Fix #1: start"}}]).encode("utf-8")
+        with mock.patch.object(
+            checker.urllib.request, "urlopen", return_value=_FakeResponse(200, payload)
+        ):
+            with self.assertRaises(RuntimeError) as ctx:
+                checker.fetch_pr_commit_messages("owner/repo", "42", "tok", expected_count=2)
+        self.assertIn("object", str(ctx.exception))
+
+    def test_non_dict_commit_entry_raises_runtime_error_not_attribute_error(self):
+        """A non-dict entry (e.g. a bare string) previously crashed with an unhandled
+        AttributeError on ``.get()`` instead of failing closed with a RuntimeError."""
+        payload = json.dumps(["abc", {"commit": {"message": "Fix #1: start"}}]).encode("utf-8")
+        with mock.patch.object(
+            checker.urllib.request, "urlopen", return_value=_FakeResponse(200, payload)
+        ):
+            with self.assertRaises(RuntimeError) as ctx:
+                checker.fetch_pr_commit_messages("owner/repo", "42", "tok", expected_count=2)
+        self.assertIn("object", str(ctx.exception))
+
+    def test_non_dict_commit_field_raises_runtime_error(self):
+        """If the "commit" field itself is not an object (e.g. a string), extracting a message
+        from it is malformed data, not a legitimately absent message."""
+        payload = json.dumps(
+            [{"commit": "Fix #9"}, {"commit": {"message": "Fix #1: start"}}]
+        ).encode("utf-8")
+        with mock.patch.object(
+            checker.urllib.request, "urlopen", return_value=_FakeResponse(200, payload)
+        ):
+            with self.assertRaises(RuntimeError) as ctx:
+                checker.fetch_pr_commit_messages("owner/repo", "42", "tok", expected_count=2)
+        self.assertIn("commit", str(ctx.exception))
+
+    def test_null_message_raises_runtime_error(self):
+        """{"commit": {"message": null}} is malformed (a real GitHub response never omits the
+        message by setting it to null) and must fail closed."""
+        payload = json.dumps([{"commit": {"message": None}}]).encode("utf-8")
+        with mock.patch.object(
+            checker.urllib.request, "urlopen", return_value=_FakeResponse(200, payload)
+        ):
+            with self.assertRaises(RuntimeError) as ctx:
+                checker.fetch_pr_commit_messages("owner/repo", "42", "tok", expected_count=1)
+        self.assertIn("message", str(ctx.exception))
+
+    def test_non_string_message_raises_runtime_error(self):
+        """A non-string "message" field (e.g. a number) is malformed and must fail closed rather
+        than being coerced or silently skipped."""
+        payload = json.dumps([{"commit": {"message": 123}}]).encode("utf-8")
+        with mock.patch.object(
+            checker.urllib.request, "urlopen", return_value=_FakeResponse(200, payload)
+        ):
+            with self.assertRaises(RuntimeError) as ctx:
+                checker.fetch_pr_commit_messages("owner/repo", "42", "tok", expected_count=1)
+        self.assertIn("message", str(ctx.exception))
 
     def test_empty_message_commit_does_not_trip_count_mismatch(self):
         """#238 round 3 (Rick's follow-up on PR #239): a commit with a genuinely empty message
