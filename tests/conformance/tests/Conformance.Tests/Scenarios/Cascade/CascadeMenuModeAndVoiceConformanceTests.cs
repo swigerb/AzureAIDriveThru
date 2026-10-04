@@ -100,6 +100,15 @@ public sealed class CascadeMenuModeAndVoiceConformanceTests(CascadeMenuModeAndVo
 
         var order = JsonDocument.Parse(toolResponse!.Json.GetProperty("tool_result").GetString()!).RootElement;
         Assert.Equal(1, order.GetProperty("items").GetArrayLength());
+
+        // Drain to this turn's own response.done (round 2's scripted "Added your breakfast
+        // meal." final message, plus its TTS) before disposing -- see the sibling lunch-mode
+        // rejection test's matching comment for why leaving a round's own trailing
+        // /chat/completions call in flight when the connection is disposed is believed to
+        // corrupt the shared `fixture.Chat` fake's single Kestrel connection for whichever test
+        // in this collection runs next.
+        await browser.ReceivedFrames.WaitForAsync(
+            f => f.Sequence > toolResponse.Sequence && f.Type == "response.done", FrameTimeout, ct);
     });
 
     /// <summary>
@@ -153,5 +162,22 @@ public sealed class CascadeMenuModeAndVoiceConformanceTests(CascadeMenuModeAndVo
 
         var order = JsonDocument.Parse(getOrderResponse!.Json.GetProperty("tool_result").GetString()!).RootElement;
         Assert.Equal(0, order.GetProperty("items").GetArrayLength());
+
+        // Drain the guest turn to its OWN natural response.done (the model's 3rd round, the
+        // scripted "Sorry, that's not available right now." final message, plus its TTS) before
+        // disposing the connection. Without this, the test's own assertions above are already
+        // satisfied by round 2 (get_order), so `await using var browser` disposes the WS while
+        // round 3's /chat/completions call is still in flight -- cancelling it server-side
+        // (`_cancel_current_turn`'s "connection closing" path) with its request already sent but
+        // its response never fully read. That stranded in-flight call on the shared
+        // `fixture.Chat` fake's single Kestrel connection is believed to be the root cause of a
+        // CI-only (Linux) flake in the sibling breakfast-mode test immediately after this one in
+        // the same collection: the next test's own greeting completions call intermittently
+        // raced the still-unwinding cancelled connection and never got its scripted response.
+        // Draining to this turn's own response.done removes that race by construction -- the
+        // shared chat-completions fake never has an in-flight request left behind when a test in
+        // this collection finishes.
+        await browser.ReceivedFrames.WaitForAsync(
+            f => f.Sequence > getOrderResponse.Sequence && f.Type == "response.done", FrameTimeout, ct);
     });
 }
