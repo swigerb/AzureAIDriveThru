@@ -131,6 +131,7 @@ public sealed class RealtimeProcessor : IPipelineProcessor
         public required string Voice { get; set; }
         public required EchoSuppressor Echo { get; init; }
         public required RateLimitRecovery RateLimit { get; init; }
+        public required ToolFailureTracker ToolFailures { get; init; }
         public required SessionUpdateGuard Guard { get; init; }
         public required SessionIdentifiers Identifiers { get; init; }
         public bool AssistantAudioSeen { get; set; }
@@ -210,6 +211,10 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                 timeProvider: _timeProvider,
                 sessionId: sessionId,
                 logger: _logger),
+            // Issue #13 Wave 4 (swigerb/SonicAIDriveThru#36, PR #58 re-review "S1"/"S2"): one
+            // tracker per connection, same lifetime as RateLimit/Echo above -- mirrors rtmt.py's
+            // per-connection `tool_failures = _ToolFailureTracker()`.
+            ToolFailures = new ToolFailureTracker(),
             Guard = new SessionUpdateGuard(),
             Identifiers = new SessionIdentifiers(persona.Id, resolvedModel.Id, sessionId),
         };
@@ -638,6 +643,11 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                         }.ToJsonString(), ct).ConfigureAwait(false);
                     }
                 }
+
+                // Issue #13 Wave 4 (swigerb/SonicAIDriveThru#36, PR #58 re-review "S1"/"S2"):
+                // marks this round failed; HandleResponseDoneAsync's response.done handling below
+                // tallies the round (not the call) exactly once via EndRound().
+                state.ToolFailures.RecordCallFailure();
             }
 
             await SendTextAsync(upstream, new JsonObject
@@ -674,10 +684,46 @@ public sealed class RealtimeProcessor : IPipelineProcessor
             if (state.ToolsPending.Count > 0)
             {
                 state.ToolsPending.Clear();
-                // Scope cut (#13): the tool-failure-cap ladder (_ToolFailureTracker) is skipped --
-                // always send a bare, tool-free response.create so the model can act on the
-                // function_call_output(s) already in the conversation.
-                await SendTextAsync(upstream, """{"type":"response.create"}""", ct).ConfigureAwait(false);
+                // Issue #13 Wave 4 (swigerb/SonicAIDriveThru#36, PR #58 re-review "S1"/"S2"):
+                // port of rtmt.py's _ToolFailureTracker wiring -- tally this round's outcome
+                // once, here, not per call, so several parallel failing tool calls in the same
+                // response only count as a single failed round.
+                state.ToolFailures.EndRound();
+                if (state.ToolFailures.AtCap())
+                {
+                    // Two (or more) consecutive *failed rounds* on this connection with no guest
+                    // turn in between. The FIRST response.done that reaches the cap gets one
+                    // server-authored, tool-free response.create instead of nothing: the model
+                    // already has the function_call_output(s) in context, so it can apologise out
+                    // loud and ask the guest what to do, but tool_choice="none" stops it from
+                    // calling a tool again on this turn. This frame is server-authored (never
+                    // derived from browser input), so the #31 browser->upstream allow-list in
+                    // ClientServerFilter is unaffected. Every response.done AFTER that one, while
+                    // still at the cap with no guest turn in between, goes back to sending
+                    // nothing at all -- otherwise a model (or a deterministic test double) that
+                    // keeps calling tools regardless of tool_choice could ride an unbounded
+                    // ladder of one-more-apology responses with zero guest input.
+                    if (state.ToolFailures.ConsumeCapNotice())
+                    {
+                        _logger?.LogWarning(
+                            "Capping auto response.create with tool_choice=none after {Count} " +
+                            "consecutive failed tool round(s) (session={SessionId})",
+                            state.ToolFailures.Count, sessionId);
+                        await SendTextAsync(upstream, ToolFailureCapNotice.BuildMessage(promptLoader), ct)
+                            .ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        _logger?.LogWarning(
+                            "Suppressing auto response.create -- still at the {Count}-round cap " +
+                            "with no guest turn since the apology (session={SessionId})",
+                            state.ToolFailures.Count, sessionId);
+                    }
+                }
+                else
+                {
+                    await SendTextAsync(upstream, """{"type":"response.create"}""", ct).ConfigureAwait(false);
+                }
             }
 
             var isToolCallResponse = false;
@@ -892,6 +938,19 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                             // Issue #13 Wave 4: the guest taking the turn drops any pending
                             // rate-limit retry, same as Python's RateLimitRecovery.on_guest_speech.
                             state.RateLimit.OnGuestSpeech();
+                            // Issue #13 Wave 4 (swigerb/SonicAIDriveThru#36, PR #58 re-review
+                            // "S1"): genuine guest speech is one of rtmt.py's two
+                            // reset_for_new_turn() triggers -- breaks the tool-failure streak, same
+                            // as the completed-transcription case below.
+                            state.ToolFailures.ResetForNewTurn();
+                            break;
+                        case "conversation.item.input_audio_transcription.completed":
+                            // Issue #13 Wave 4 (swigerb/SonicAIDriveThru#36, PR #58 re-review
+                            // "S1"): the other guest-turn signal (besides speech_started) that
+                            // resets the tool-failure streak -- a completed input transcription is
+                            // still genuine guest activity even if VAD never fired speech_started
+                            // first (e.g. push-to-talk clients).
+                            state.ToolFailures.ResetForNewTurn();
                             break;
                         case "response.created":
                             // Issue #13 Wave 4: tells the ladder a response just started -- our own

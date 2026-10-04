@@ -7,9 +7,9 @@ deliberately deferred or reduced in the C# port is written down instead of disco
 
 The C# backend now has the host/config/persona foundation, persona HTTP surface, model catalog,
 pre-upgrade `/realtime` auth and persona/model/mode binding, the Azure OpenAI realtime relay,
-order engine, search tool, prompt rendering, tool dispatch, the full rate-limit retry ladder, and
-the shared conformance dotnet leg. The remaining deliberate gaps versus Python are tracked below:
-session resume/rehydration, the consecutive tool-failure cap, context-window monitoring/turn
+order engine, search tool, prompt rendering, tool dispatch, the full rate-limit retry ladder, the
+consecutive tool-failure cap, and the shared conformance dotnet leg. The remaining deliberate gaps
+versus Python are tracked below: session resume/rehydration, context-window monitoring/turn
 recording, and Entra auth-row execution on the dotnet leg until issue #147 flips that capability.
 
 ## Module mapping
@@ -129,15 +129,26 @@ mirroring `rtmt.py`'s post-exception `order_state_singleton.get_order_summary_js
 (the read is wrapped in its own try/catch; a session with no readable order state yet just skips the
 refresh, and still gets the `function_call_output` below it either way).
 
-**Still not tagged: the other 3 `ToolFailureCapAndTicketRefreshTests.cs` methods (failure cap).**
-These probe `rtmt.py`'s consecutive-tool-failure cap: a per-connection failure streak that suppresses
-the model's own auto-continue once the cap is reached and resets on guest speech.
-`RealtimeProcessor`'s tool-dispatch catch-all is still explicitly commented as a scope cut ("Scope
-cut (#13): the tool-failure-cap ladder (`_ToolFailureTracker`) is skipped"): it always sends a fixed
-apology string and a bare `response.create`, with no failure-streak tracking. Porting the cap ladder
-is a real relay feature, not an order-engine or search-tool one, and stays #13 scope -- tracked as
-the next thing #13's owner (or a follow-up issue) should pick up before this class's remaining 3
-methods can be tagged.
+**Now tagged (issue #13 Wave 4b): the other 3 `ToolFailureCapAndTicketRefreshTests.cs` methods
+(failure cap).** These probe `rtmt.py`'s consecutive-tool-failure cap: a per-connection failure
+streak that suppresses the model's own auto-continue once the cap is reached and resets on guest
+speech. The "Scope cut (#13): the tool-failure-cap ladder (`_ToolFailureTracker`) is skipped"
+comment is gone; `RealtimeProcessor` now owns a real `Realtime/ToolFailureTracker.cs` (a
+round-based, not call-based, counter -- a round with only successes, e.g. the model's own
+prescribed `get_order` retry, must NOT reset the streak, only `ResetForNewTurn()` does; this is
+Python's own PR #58 "S1" infinite-loop fix, ported faithfully) wired at three seams:
+`HandleToolCallDoneAsync`'s catch block records a round failure; `HandleResponseDoneAsync` ends the
+round and, at cap, sends a one-shot `tool_choice=none` apology `response.create`
+(`ToolFailureCapNotice`, mirroring `_build_tool_failure_cap_notice_msg`'s nuance of checking
+`PromptLoader.ErrorMessages` directly rather than calling `RenderError` unconditionally, since
+`RenderError`'s own unknown-key fallback is a worse `response.instructions` value than the neutral
+hardcoded default) and otherwise suppresses the auto-continue entirely once the one-shot notice has
+already fired; and the marker side-effect switch resets the streak on both of Python's two
+guest-turn signals -- `input_audio_buffer.speech_started` (already handled for other purposes) and
+`conversation.item.input_audio_transcription.completed` (previously had **no** handling at all in
+C#, not even passthrough; this is a genuine gap filled, not just a port). All three methods are now
+tagged `Dotnet=ready` and pass 3x locally on the dotnet leg alongside the existing
+`A_genuine_tool_exception_refreshes_the_guests_ticket` row.
 
 **PR #158 (issue #143/ADR-002, R10 + dev-merge floor recount):** tagged all nine
 `Scenarios/Auth` auth-row test classes `Dotnet=ready` (196 raw tagged methods across the merged
@@ -205,6 +216,23 @@ mutation-checked by temporarily reverting its fix and confirming red -- raising 
 219 -> 222 (219 + 3). PR #226 (#147, Beth's C# auth work) independently raises this SAME floor
 204 -> 222 against the stale pre-#21 baseline; agreed merge order is PR #230 lands first at 222,
 then PR #226 rebases and re-targets its own floor to 222 + 18 = 240.
+
+**Issue #13 Wave 4b (tool-failure cap) and floor-constant note:** this wave adds 3 newly-tagged
+`ToolFailureCapAndTicketRefreshTests.cs` methods. `DotnetTraitCoverageTests`'s own `count >= 222`
+constant (already raised by #230, above, by the time this branch rebased onto it) was deliberately
+left untouched at that point. Rather than project the real count by arithmetic (unreliable once
+multiple in-flight PRs are each independently tagging methods against a moving dev base), it was
+measured directly at rebase time by temporarily asserting on the actual
+`CountFloorEligibleDotnetReadyTestMethods()` value on this branch: **239** floor-eligible tagged
+methods, comfortably above the 222 floor.
+
+**Issue #13 Wave 4/4b floor raise (PR #235 merged to dev, PR #237 rebased onto it):** now that #235
+has landed on `dev`, PR #237 re-measured the count the same way immediately after rebasing onto
+`origin/dev` (still **239** -- confirming no drift since the first measurement) and raised the floor
+constant itself 222 -> 239. Per squad coordination, any PR still rebasing on top of this (`#226`,
+`#244`) must re-measure fresh at its own rebase time rather than add its own historical delta (e.g.
+#226's planned "+18") to 239 -- those deltas were computed against the stale 222 baseline and risk
+double-counting methods (such as this wave's 3 tool-failure-cap rows) already folded into 239.
 
 - **DEV_MODE hot-reload** (`prompt_loader.py`'s file-watching reload behaviour) is explicitly
   marked not required in C# by the design doc's per-backend loading table. Not ported.
