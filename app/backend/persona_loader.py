@@ -699,12 +699,25 @@ def _validate_persona_assets(pack_dir: Path, persona_id: str) -> None:
     frontend's `authorizedFetch.ts` contract), are allowed. Anything else -- an
     unexpected extension, or a `.json` outside `demo/` -- has no defined auth
     classification and must not silently fall on one side or the other.
+
+    N5 (#163 round-1 review): a symlink under `assets/` -- file OR directory --
+    is rejected outright, before any extension/location check. `app.py`'s
+    `_resolve_persona_asset_path` already defends against a symlink being used
+    to serve a file from OUTSIDE `pack_dir` at request time, but a pack should
+    never be able to ship one in the first place: a syntactically-fine-looking
+    `.svg` symlink could otherwise point at an arbitrary readable file on the
+    host and get served anonymously the moment some other defense has a gap.
     """
     assets_dir = pack_dir / "assets"
     if not assets_dir.is_dir():
         return
     demo_dir = assets_dir / "demo"
     for path in assets_dir.rglob("*"):
+        if path.is_symlink():
+            raise PersonaValidationError(
+                f"Persona '{persona_id}': asset {path.relative_to(pack_dir)} is a "
+                f"symlink, which is not allowed anywhere under {assets_dir} (#163 N5)."
+            )
         if not path.is_file():
             continue
         suffix = path.suffix.lower()
