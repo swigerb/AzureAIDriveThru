@@ -211,6 +211,7 @@ public sealed record PersonaThemeTokens
     [JsonPropertyName("foreground")] public string? Foreground { get; init; }
     [JsonPropertyName("accents")] public PersonaThemeAccents? Accents { get; init; }
     [JsonPropertyName("surface")] public PersonaThemeSurface? Surface { get; init; }
+    [JsonPropertyName("menuSurface")] public PersonaThemeMenuSurface? MenuSurface { get; init; }
 }
 
 /// <summary>Optional extended brand accent palette (issue #80 F2). Every key optional.</summary>
@@ -260,6 +261,19 @@ public sealed record PersonaThemeSurface
     [JsonPropertyName("chart3")] public string? Chart3 { get; init; }
     [JsonPropertyName("chart4")] public string? Chart4 { get; init; }
     [JsonPropertyName("chart5")] public string? Chart5 { get; init; }
+}
+
+/// <summary>Issue #169 (Rick's PR #167 round 3 review, item N13): optional pack-level menu-card/
+/// header surface tokens, layered on top of the shadcn <see cref="PersonaThemeSurface"/> slots
+/// above. Every key is optional and the same shape is reused for both `light.menuSurface` and
+/// `dark.menuSurface` (same convention as <see cref="PersonaThemeSurface"/>) even though a mode
+/// only ever sets a subset -- a pack that omits the block entirely still deserializes and simply
+/// renders the shared neutral defaults app/frontend/src/index.css falls back to.</summary>
+public sealed record PersonaThemeMenuSurface
+{
+    [JsonPropertyName("categoryCardBackground")] public string? CategoryCardBackground { get; init; }
+    [JsonPropertyName("itemCardBackground")] public string? ItemCardBackground { get; init; }
+    [JsonPropertyName("categoryTitleColor")] public string? CategoryTitleColor { get; init; }
 }
 
 public sealed record PersonaAssets
