@@ -466,6 +466,92 @@ Realtime/Sessions/RateLimit/transport-timing scenario classes (confirmed to repr
 in isolation, outside any parallelization contention) -- zero failures in any Auth-scenario class;
 CI remains the authoritative gate per squad convention.
 
+### Issue #223 (Rick's review of PR #225) follow-up: dotfile extension edge case + JWKS/OIDC outage resilience
+
+Rick's review of Python PR #225 (itself still open/in-progress on the Python side as of this
+writing) surfaced two more auth-hardening items for #147 parity:
+
+- **Dotfile persona-asset names have NO extension (genuine gap, fixed).** Python's
+  `_is_anonymous` uses `PurePosixPath(asset_path).suffix`, which treats a leading dot as a "hidden
+  file" marker, not an extension delimiter: `PurePosixPath(".png").suffix == ""` and
+  `PurePosixPath("demo/.png").suffix == ""` (NOT `".png"`), so a dotfile-named asset is never
+  anonymous -- it falls through to requiring a valid bearer token like any other
+  unrecognized-extension asset. .NET's `Path.GetExtension(".png")` instead returns `".png"`,
+  which would have incorrectly classified such a file as anonymous. `EntraAuthentication.cs`'s
+  `IsAnonymousAssetRequest` now calls a new private `GetPythonStyleSuffix` helper that exactly
+  replicates `PurePosixPath.suffix`'s algorithm (last path segment only, so `"demo/.png"` reduces
+  to `".png"` first; a dot at index 0 or at the very end of the name yields no suffix; a
+  multi-dot name like `"logo.tar.gz"` yields only the final `".gz"`) instead of the naive
+  `Path.GetExtension`. New unit tests in `EntraAccessRequirementHandlerTests.cs`:
+  `PersonaAsset_Dotfile_IsNeverAnonymous_StaysPending` (theory over `.png`, `demo/.png`, `.svg`),
+  `PersonaAsset_TrailingDot_IsNeverAnonymous_StaysPending`,
+  `PersonaAsset_MultiDotName_ClassifiedByLastSuffixOnly_Succeeds`, and
+  `PersonaAsset_MultiDotName_TrailingNonMatchingSuffix_StaysPending`. New conformance coverage:
+  `AuthRowSpecialCaseTests.Row_12_dotfile_asset_has_no_extension_still_401s` (requests
+  `assets/.png` with no token, asserting 401 -- deliberately does not require the asset to exist
+  on disk, since the auth decision happens before file resolution). Mutation-verified twice: once
+  at the unit level (reverting to naive `Path.GetExtension` broke 3 of the new unit tests) and
+  once at the conformance level (same revert broke the new conformance row, returning 404 instead
+  of 401 because the mutated code incorrectly let the request through as anonymous).
+- **JWKS/OIDC discovery-fetch failures must surface as 401, never 500, with a cooldown (genuine
+  gap, fixed).** Reading ASP.NET Core's actual `JwtBearerHandler.HandleAuthenticateAsync` source
+  confirmed a real risk: its outer exception handler calls `Events.AuthenticationFailed` and then,
+  if that event handler leaves `context.Result` unset, **re-throws** the original exception --
+  meaning any failure from the OIDC discovery fetch (`ConfigurationManager.GetConfigurationAsync`,
+  invoked lazily on first token-validation attempt) would crash the request pipeline as an
+  unhandled exception instead of a clean 401. New `Auth/DiscoveryFailureGate.cs`: a thread-safe,
+  `TimeProvider`-injectable cooldown tracker (`RecordFailure()`/`IsInCooldown()`, default 30s).
+  `EntraAuthentication.ConfigureJwtBearer` now wires a new `OnAuthenticationFailed` handler that
+  recognizes discovery/backchannel failures (`HttpRequestException`, `IOException`,
+  `JsonException`, `OperationCanceledException`, walking `InnerException` since
+  `ConfigurationManager<T>` wraps the real cause in its own `InvalidOperationException` on a
+  cold-start failure) and calls `context.Fail(...)` -- turning what would otherwise be an
+  unhandled 500 into a clean 401. `OnMessageReceived` now also short-circuits to an immediate
+  `context.Fail(...)` when a bearer token is present and the gate is in cooldown, avoiding a
+  second doomed network call within the cooldown window. **Provenance note:** the 30s cooldown
+  duration and the "401 not 500, with a cooldown" contract came from the coordinator's description
+  of Rick's review, not from a byte-for-byte-portable Python source -- PR #225's own diff (as
+  inspected) adds a test (`test_discovery_body_read_failure_engages_negative_cache_cooldown`) that
+  references a `TokenValidator(..., discovery_failure_cooldown=60.0)` constructor parameter that
+  does not actually exist anywhere in that diff or in Python's current `dev` branch, meaning PR
+  #225 itself has not yet landed a working implementation of this specific mechanism to mirror.
+  This C# implementation should be revisited once PR #225 merges, in case its final cooldown value
+  or mechanism differs from the 30s default chosen here. New unit tests in
+  `EntraAccessRequirementHandlerTests.cs`'s `ConfigureJwtBearerTests`:
+  `OnAuthenticationFailed_BackchannelFailure_SetsResult_AndRecordsGateFailure` (theory over all
+  four exception types), `OnAuthenticationFailed_BackchannelFailure_WrappedInInvalidOperationException_IsStillRecognized`,
+  `OnAuthenticationFailed_UnrelatedTokenValidationException_LeavesResultUnset` (negative case),
+  `OnMessageReceived_ShortCircuits_WhenGateInCooldown_AndBearerTokenPresent`,
+  `OnMessageReceived_ShortCircuits_WhenGateInCooldown_AndRealtimeQueryTokenPresent`,
+  `OnMessageReceived_DoesNotShortCircuit_WhenGateNotInCooldown`, and
+  `OnMessageReceived_DoesNotShortCircuit_WhenNoTokenPresent_EvenInCooldown`; plus 6 new tests in
+  `DiscoveryFailureGateTests.cs` covering the gate's pure cooldown logic with a local fake
+  `TimeProvider`. Mutation-verified: gutting `OnAuthenticationFailed` to do nothing broke 5 of the
+  10 related unit tests. No conformance-level coverage was added for this item -- simulating a
+  JWKS/discovery outage over the wire would require new fault-injection support in the fake Entra
+  issuer, which is a larger, separate piece of harness work outside this round's scope; the unit
+  tests above give direct, mutation-verified coverage of the actual fix.
+
+**Lesson learned validating this round's conformance coverage:** running
+`dotnet test tests/conformance/...` without first setting `CONFORMANCE_BACKEND=dotnet` silently
+exercises the **Python** reference backend, not the C# port -- a mutation to the C# fix will look
+"caught" by a passing test for the wrong reason (the Python backend was correct all along). Always
+pair `CONFORMANCE_BACKEND=dotnet` with a `PATH` that resolves the .NET 11 RC SDK (the system-wide
+`dotnet` lacks the `global.json`-pinned version; `$env:USERPROFILE\.dotnet` must be prepended to
+`PATH`, not just invoked directly, since `DotnetBackendLauncher` shells out to a bare `dotnet`)
+when locally verifying any dotnet-leg conformance change.
+
+**Validation performed:** `Backend.Tests` 496/496 passing (474 + 22 new: dotfile/multi-dot
+persona-asset cases, `ConfigureJwtBearerTests` coverage of the new `OnAuthenticationFailed`/
+`OnMessageReceived` wiring, `DiscoveryFailureGateTests`). Conformance Auth scenarios
+(`CONFORMANCE_BACKEND=dotnet`, filtered to `Scenarios.Auth`, with `PATH` resolving the .NET 11 RC
+SDK) 101/101 passing (includes the 1 new dotfile row added this round; the rest of the growth
+since the #163/#222 round's 80/80 reflects other squad work merged to `dev` in the interim, not
+anything from this round). Full local unfiltered conformance suite continues to show the same pre-existing,
+unrelated Realtime/Sessions/Browser/transport-timing flakiness noted in the #163/#222 section
+above (reproduces independent of this round's changes); zero failures in any Auth-scenario class;
+CI remains the authoritative gate per squad convention.
+
 ## `models.catalog` (resolved this revision)
 
 The design doc (section 7) said the shared model catalog lives in `config.yaml` under

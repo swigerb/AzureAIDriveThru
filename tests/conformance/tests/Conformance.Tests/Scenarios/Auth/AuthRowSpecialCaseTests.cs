@@ -166,6 +166,33 @@ public sealed class AuthRowSpecialCaseTests(ConformanceFixture fixture)
             "Row 12: expected WWW-Authenticate: Bearer on the protected asset's 401.");
     });
 
+    /// <summary>#223 (Rick's review of PR #225, mirrored here for #147 parity): a persona asset
+    /// name that IS a dotfile (e.g. <c>.png</c>) has NO extension under Python's
+    /// <c>PurePosixPath.suffix</c> rule -- a leading dot is a "hidden file" marker, not an
+    /// extension delimiter -- so it is NOT anonymous and must still 401 with no token, exactly
+    /// like any other unrecognized-extension asset (the <c>demo/dummyOrder.json</c> case above).
+    /// Deliberately does not require the file to exist on disk: the auth decision happens before
+    /// file resolution, so this 401 would fire the same way whether or not <c>.png</c> is actually
+    /// present in the persona pack -- avoiding the case-sensitive-filesystem pitfall that the Row
+    /// 12 case-insensitive-extension test above already had to work around.</summary>
+    [Fact]
+    public Task Row_12_dotfile_asset_has_no_extension_still_401s() => fixture.RunAuthRowAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var path = $"/personas/{ConformancePersonas.DefaultPersonaId}/assets/.png";
+        using var http = new HttpClient();
+        using var response = await http.GetAsync(new Uri(fixture.Backend!.BaseUri, path), ct).ConfigureAwait(false);
+
+        Assert.True(
+            response.StatusCode == HttpStatusCode.Unauthorized,
+            $"Row 12 (#223 dotfile edge case): expected the dotfile asset {path} to 401 with no " +
+            $"token (a leading dot is not an extension delimiter, so it's not anonymous), got " +
+            $"{(int)response.StatusCode}.");
+        Assert.True(
+            response.Headers.WwwAuthenticate.Any(h => h.Scheme == "Bearer"),
+            "Row 12 (#223 dotfile edge case): expected WWW-Authenticate: Bearer on the dotfile asset's 401.");
+    });
+
     /// <summary>Row 13, persona-architecture.md 18.11: "an unknown persona with no token gives
     /// 401" -- the Entra check must run, and win, before the router ever gets far enough to
     /// discover the persona id doesn't exist (which would otherwise be a 404).</summary>

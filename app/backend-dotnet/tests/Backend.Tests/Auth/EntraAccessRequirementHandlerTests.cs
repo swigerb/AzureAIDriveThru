@@ -1,6 +1,9 @@
+using System.Net.Http;
 using System.Security.Claims;
+using System.Text.Json;
 using Backend.Auth;
 using Backend.Personas;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -232,6 +235,64 @@ public sealed class EntraAccessRequirementHandlerTests
         Assert.Equal(AuthorizationResult.Succeeded, result);
     }
 
+    [Theory]
+    [InlineData(".png")]
+    [InlineData("demo/.png")]
+    [InlineData(".svg")]
+    public async Task PersonaAsset_Dotfile_IsNeverAnonymous_StaysPending(string assetPath)
+    {
+        // #223 (Rick's review of PR #225, mirrored for #147 parity): Python's
+        // `PurePosixPath(asset_path).suffix` treats a leading dot as a "hidden file" marker, not
+        // an extension delimiter, so ".png"/"demo/.png" have NO suffix at all (not ".png") and
+        // are therefore NOT anonymous -- .NET's Path.GetExtension(".png") would incorrectly
+        // return ".png" without the GetPythonStyleSuffix special case.
+        var anonymousIdentity = new ClaimsPrincipal(new ClaimsIdentity());
+
+        var result = await EvaluateAsync(
+            anonymousIdentity, RequestFor(PersonaRoutes.PersonaAssetRouteName, assetPath));
+
+        Assert.Equal(AuthorizationResult.Pending, result);
+    }
+
+    [Fact]
+    public async Task PersonaAsset_TrailingDot_IsNeverAnonymous_StaysPending()
+    {
+        // Python's PurePosixPath.suffix: a trailing dot ("foo.") is also not an extension
+        // delimiter -- mirrors the same "0 < i < len(name)-1" rule as the dotfile case above.
+        var anonymousIdentity = new ClaimsPrincipal(new ClaimsIdentity());
+
+        var result = await EvaluateAsync(
+            anonymousIdentity, RequestFor(PersonaRoutes.PersonaAssetRouteName, "logo."));
+
+        Assert.Equal(AuthorizationResult.Pending, result);
+    }
+
+    [Fact]
+    public async Task PersonaAsset_MultiDotName_ClassifiedByLastSuffixOnly_Succeeds()
+    {
+        // Python's PurePosixPath.suffix only ever returns the FINAL dot-suffix: "logo.backup.svg"
+        // is anonymous (".svg" matches), even though an earlier segment isn't an extension match.
+        var anonymousIdentity = new ClaimsPrincipal(new ClaimsIdentity());
+
+        var result = await EvaluateAsync(
+            anonymousIdentity, RequestFor(PersonaRoutes.PersonaAssetRouteName, "logo.backup.svg"));
+
+        Assert.Equal(AuthorizationResult.Succeeded, result);
+    }
+
+    [Fact]
+    public async Task PersonaAsset_MultiDotName_TrailingNonMatchingSuffix_StaysPending()
+    {
+        // The mirror image of the above: "logo.svg.bak" is NOT anonymous -- only the LAST
+        // dot-suffix (".bak") is considered, even though ".svg" appears earlier in the name.
+        var anonymousIdentity = new ClaimsPrincipal(new ClaimsIdentity());
+
+        var result = await EvaluateAsync(
+            anonymousIdentity, RequestFor(PersonaRoutes.PersonaAssetRouteName, "logo.svg.bak"));
+
+        Assert.Equal(AuthorizationResult.Pending, result);
+    }
+
     [Fact]
     public async Task OtherRouteName_IgnoresAssetPath_NeverAnonymous()
     {
@@ -360,5 +421,139 @@ public sealed class ConfigureJwtBearerTests
         EntraAuthentication.ConfigureJwtBearer(options, EntraModeSettings());
 
         Assert.Equal(TimeSpan.FromSeconds(10), options.BackchannelTimeout);
+    }
+
+    private static AuthenticationScheme JwtBearerScheme() =>
+        new(JwtBearerDefaults.AuthenticationScheme, displayName: null, handlerType: typeof(JwtBearerHandler));
+
+    [Theory]
+    [InlineData(typeof(HttpRequestException))]
+    [InlineData(typeof(IOException))]
+    [InlineData(typeof(JsonException))]
+    [InlineData(typeof(OperationCanceledException))]
+    public async Task OnAuthenticationFailed_BackchannelFailure_SetsResult_AndRecordsGateFailure(Type exceptionType)
+    {
+        // #223 item 1 (Rick's review of PR #225, mirrored for #147 parity): a discovery/JWKS
+        // backchannel failure must set context.Result (converting what would otherwise be a
+        // rethrown-and-crash-the-pipeline exception into an ordinary AuthenticateResult.Fail) and
+        // must record the failure on the shared DiscoveryFailureGate.
+        var options = new JwtBearerOptions();
+        var gate = new DiscoveryFailureGate();
+        EntraAuthentication.ConfigureJwtBearer(options, EntraModeSettings(), gate);
+        var context = new AuthenticationFailedContext(new DefaultHttpContext(), JwtBearerScheme(), options)
+        {
+            Exception = (Exception)Activator.CreateInstance(exceptionType, "simulated backchannel failure")!,
+        };
+
+        await ((JwtBearerEvents)options.Events!).AuthenticationFailed(context);
+
+        Assert.NotNull(context.Result);
+        Assert.True(gate.IsInCooldown());
+    }
+
+    [Fact]
+    public async Task OnAuthenticationFailed_BackchannelFailure_WrappedInInvalidOperationException_IsStillRecognized()
+    {
+        // Microsoft.IdentityModel.Protocols.ConfigurationManager<T> wraps the real network/parse
+        // cause inside its own InvalidOperationException ("IDX20803") when no last-known-good
+        // configuration exists yet -- the detection must walk InnerException to find it.
+        var options = new JwtBearerOptions();
+        var gate = new DiscoveryFailureGate();
+        EntraAuthentication.ConfigureJwtBearer(options, EntraModeSettings(), gate);
+        var context = new AuthenticationFailedContext(new DefaultHttpContext(), JwtBearerScheme(), options)
+        {
+            Exception = new InvalidOperationException(
+                "IDX20803: Unable to obtain configuration",
+                new HttpRequestException("connection reset by peer")),
+        };
+
+        await ((JwtBearerEvents)options.Events!).AuthenticationFailed(context);
+
+        Assert.NotNull(context.Result);
+        Assert.True(gate.IsInCooldown());
+    }
+
+    [Fact]
+    public async Task OnAuthenticationFailed_UnrelatedTokenValidationException_LeavesResultUnset()
+    {
+        // A genuine token-validation failure (bad signature, expired, etc) is NOT a discovery/
+        // JWKS backchannel failure -- it must not be absorbed into the cooldown/Fail-conversion
+        // path; it already has its own handling via the normal validation-failure branch.
+        var options = new JwtBearerOptions();
+        var gate = new DiscoveryFailureGate();
+        EntraAuthentication.ConfigureJwtBearer(options, EntraModeSettings(), gate);
+        var context = new AuthenticationFailedContext(new DefaultHttpContext(), JwtBearerScheme(), options)
+        {
+            Exception = new SecurityTokenExpiredException("token has expired"),
+        };
+
+        await ((JwtBearerEvents)options.Events!).AuthenticationFailed(context);
+
+        Assert.Null(context.Result);
+        Assert.False(gate.IsInCooldown());
+    }
+
+    [Fact]
+    public async Task OnMessageReceived_ShortCircuits_WhenGateInCooldown_AndBearerTokenPresent()
+    {
+        var options = new JwtBearerOptions();
+        var gate = new DiscoveryFailureGate();
+        gate.RecordFailure();
+        EntraAuthentication.ConfigureJwtBearer(options, EntraModeSettings(), gate);
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.Headers.Authorization = "Bearer some.jwt.token";
+        var context = new MessageReceivedContext(httpContext, JwtBearerScheme(), options);
+
+        await ((JwtBearerEvents)options.Events!).MessageReceived(context);
+
+        Assert.NotNull(context.Result);
+    }
+
+    [Fact]
+    public async Task OnMessageReceived_ShortCircuits_WhenGateInCooldown_AndRealtimeQueryTokenPresent()
+    {
+        var options = new JwtBearerOptions();
+        var gate = new DiscoveryFailureGate();
+        gate.RecordFailure();
+        EntraAuthentication.ConfigureJwtBearer(options, EntraModeSettings(), gate);
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.Path = EntraAuthentication.RealtimePath;
+        httpContext.Request.QueryString = new QueryString("?access_token=some.jwt.token");
+        var context = new MessageReceivedContext(httpContext, JwtBearerScheme(), options);
+
+        await ((JwtBearerEvents)options.Events!).MessageReceived(context);
+
+        Assert.NotNull(context.Result);
+    }
+
+    [Fact]
+    public async Task OnMessageReceived_DoesNotShortCircuit_WhenGateNotInCooldown()
+    {
+        var options = new JwtBearerOptions();
+        var gate = new DiscoveryFailureGate();
+        EntraAuthentication.ConfigureJwtBearer(options, EntraModeSettings(), gate);
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.Headers.Authorization = "Bearer some.jwt.token";
+        var context = new MessageReceivedContext(httpContext, JwtBearerScheme(), options);
+
+        await ((JwtBearerEvents)options.Events!).MessageReceived(context);
+
+        Assert.Null(context.Result);
+    }
+
+    [Fact]
+    public async Task OnMessageReceived_DoesNotShortCircuit_WhenNoTokenPresent_EvenInCooldown()
+    {
+        // No Authorization header and not the /realtime query-token case -- nothing would have
+        // triggered a discovery fetch for this request anyway, so there's nothing to protect.
+        var options = new JwtBearerOptions();
+        var gate = new DiscoveryFailureGate();
+        gate.RecordFailure();
+        EntraAuthentication.ConfigureJwtBearer(options, EntraModeSettings(), gate);
+        var context = new MessageReceivedContext(new DefaultHttpContext(), JwtBearerScheme(), options);
+
+        await ((JwtBearerEvents)options.Events!).MessageReceived(context);
+
+        Assert.Null(context.Result);
     }
 }
