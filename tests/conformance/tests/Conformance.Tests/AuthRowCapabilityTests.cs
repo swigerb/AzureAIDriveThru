@@ -9,6 +9,7 @@ namespace Conformance.Tests;
 /// exercised directly rather than through real (global, parallel-unsafe) process environment
 /// variables.
 /// </summary>
+[Trait("Category", "Harness")]
 public sealed class AuthRowCapabilityTests
 {
     [Theory]

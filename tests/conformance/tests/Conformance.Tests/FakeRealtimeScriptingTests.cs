@@ -13,6 +13,7 @@ namespace Conformance.Tests;
 /// as a template for S1.2+ scenarios that need finer control over upstream behaviour than the
 /// shared <see cref="ConformanceFixture"/>'s single Python connection allows.
 /// </summary>
+[Trait("Category", "Harness")]
 public sealed class FakeRealtimeScriptingTests
 {
     private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(10);

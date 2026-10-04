@@ -14,6 +14,7 @@ namespace Conformance.Tests;
 /// <c>runBuild</c> delegate passed into each gate's constructor (never real MSBuild), so they're
 /// fast, deterministic, and require no SDK.
 /// </summary>
+[Trait("Category", "Harness")]
 public sealed class DotnetBackendBuildGateTests
 {
     [Fact]

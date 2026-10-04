@@ -11,6 +11,7 @@ namespace Conformance.Tests;
 /// exercised directly instead of relying on real process environment variables or actually
 /// starting Kestrel.
 /// </summary>
+[Trait("Category", "Harness")]
 public sealed class ExternalModeProfilePolicyTests
 {
     [Fact]

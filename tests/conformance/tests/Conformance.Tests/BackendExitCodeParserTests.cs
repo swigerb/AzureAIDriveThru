@@ -10,6 +10,7 @@ namespace Conformance.Tests;
 /// failure), so a mutation that breaks the regex or the parse would fail here without needing a
 /// slow end-to-end launch.
 /// </summary>
+[Trait("Category", "Harness")]
 public sealed class BackendExitCodeParserTests
 {
     [Theory]

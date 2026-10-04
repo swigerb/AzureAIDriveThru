@@ -17,6 +17,7 @@ namespace Conformance.Tests;
 /// below covers the M1 fixture-level scenario-boundary case, which for realism needs a real process
 /// on the real async stderr-capture path (this file's other tests do not).
 /// </summary>
+[Trait("Category", "Harness")]
 public sealed class CapturedProcessOutputWaitTests
 {
     // Generous enough to be reliably distinguishable from CI scheduling jitter without making
