@@ -75,8 +75,13 @@ public static class CascadeRateLimit
         Func<JsonObject, CancellationToken, Task> notifyClient,
         string sessionId,
         ILogger? logger,
-        CancellationToken ct)
+        CancellationToken ct,
+        TimeProvider? timeProvider = null)
     {
+        // Issue #13 Wave 2 convention (RealtimeProcessor's own _timeProvider): sourced from an
+        // injectable clock so a test can swap in a FakeTimeProvider instead of waiting on the
+        // real 0.5-8s wall-clock delays below. Defaults to TimeProvider.System in production.
+        var clock = timeProvider ?? TimeProvider.System;
         var attempt = 0;
         while (true)
         {
@@ -112,7 +117,7 @@ public static class CascadeRateLimit
                 logger?.LogInformation(
                     "Cascade {OpName} rate-limited; retry {Attempt} after {Delay:F2}s (session={SessionId})",
                     opName, attempt + 1, delay, sessionId);
-                await Task.Delay(TimeSpan.FromSeconds(delay), ct).ConfigureAwait(false);
+                await Task.Delay(TimeSpan.FromSeconds(delay), clock, ct).ConfigureAwait(false);
                 attempt++;
             }
         }
@@ -127,12 +132,13 @@ public static class CascadeRateLimit
         Func<JsonObject, CancellationToken, Task> notifyClient,
         string sessionId,
         ILogger? logger,
-        CancellationToken ct)
+        CancellationToken ct,
+        TimeProvider? timeProvider = null)
     {
         await WithRetryAsync<object?>(
             settings,
             async () => { await op().ConfigureAwait(false); return null; },
-            opName, notifyClient, sessionId, logger, ct).ConfigureAwait(false);
+            opName, notifyClient, sessionId, logger, ct, timeProvider).ConfigureAwait(false);
     }
 }
 

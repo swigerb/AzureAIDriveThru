@@ -58,6 +58,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
     private readonly IReadOnlySet<string> _allowedVoices;
     private readonly string _defaultVoice;
     private readonly ILogger? _logger;
+    private readonly TimeProvider _timeProvider;
 
     public CascadeProcessor(
         ModelCatalog catalog,
@@ -71,7 +72,8 @@ public sealed class CascadeProcessor : IPipelineProcessor
         string defaultVoice = "marin",
         ILogger? logger = null,
         IUpstreamBearerTokenProvider? bearerTokenProvider = null,
-        Func<Persona, PromptLoader?, string?, IToolExecutor>? toolExecutorFactory = null)
+        Func<Persona, PromptLoader?, string?, IToolExecutor>? toolExecutorFactory = null,
+        TimeProvider? timeProvider = null)
     {
         _catalog = catalog;
         var credential = bearerTokenProvider ?? DefaultAzureCredentialTokenProvider.Instance.Value;
@@ -85,6 +87,11 @@ public sealed class CascadeProcessor : IPipelineProcessor
         _allowedVoices = allowedVoices ?? ClientServerFilter.DefaultAllowedVoices;
         _defaultVoice = defaultVoice;
         _logger = logger;
+        // Issue #13 Wave 2 convention (RealtimeProcessor's own _timeProvider): the rate-limit
+        // ladder's wall-clock delays (CascadeRateLimit.WithRetryAsync) are driven from this one
+        // clock, so a test can swap in a FakeTimeProvider instead of waiting on the real 0.5-8s
+        // delays. Defaults to TimeProvider.System in production.
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     public string PipelineName => "cascade";
@@ -216,7 +223,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
             await CascadeRateLimit.WithRetryAsync(
                 _rateLimitSettings,
                 () => _chatClient.CompleteAsync(state.Messages, state.Deployment, toolDefinitions, turnCt),
-                "chat completion", NotifyClientAsync, sessionId, _logger, turnCt).ConfigureAwait(false);
+                "chat completion", NotifyClientAsync, sessionId, _logger, turnCt, _timeProvider).ConfigureAwait(false);
 
         async Task ExecuteToolCallAsync(JsonObject toolCall, string previousItemId, CancellationToken turnCt)
         {
@@ -331,7 +338,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
             return await CascadeRateLimit.WithRetryAsync(
                 _rateLimitSettings,
                 () => _audioClient.TranscribeAsync(turnAudio, deployment, AudioSampleRate, turnCt),
-                "transcription", NotifyClientAsync, sessionId, _logger, turnCt).ConfigureAwait(false);
+                "transcription", NotifyClientAsync, sessionId, _logger, turnCt, _timeProvider).ConfigureAwait(false);
         }
 
         async Task SpeakAsync(string text, CancellationToken turnCt)
@@ -357,7 +364,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
                         }.ToJsonString(), turnCt).ConfigureAwait(false);
                     }
                 },
-                "text-to-speech", NotifyClientAsync, sessionId, _logger, turnCt).ConfigureAwait(false);
+                "text-to-speech", NotifyClientAsync, sessionId, _logger, turnCt, _timeProvider).ConfigureAwait(false);
         }
 
         async Task RunTurnAndSpeakAsync(CancellationToken turnCt)
