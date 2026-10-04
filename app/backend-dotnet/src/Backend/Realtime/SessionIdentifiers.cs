@@ -23,18 +23,18 @@ public sealed class SessionIdentifiers
 
     /// <summary>Which pipeline <see cref="ModelId"/> belongs to (Rick's PR #106 review item 3:
     /// order_state.py's <c>model_pipeline</c>, "realtime" | "cascade"; "local" existed here until
-    /// #155 dropped it entirely, 2026-09-28). This processor only ever handles the "realtime"
-    /// pipeline -- order_state.py's own <c>create_session(model_pipeline=None)</c> default -- so
-    /// it is fixed here rather than threaded through as a constructor parameter; a future cascade
-    /// C# processor would pass its own pipeline value instead.</summary>
-    public string Pipeline => "realtime";
+    /// #155 dropped it entirely, 2026-09-28). Defaults to "realtime" (back-compat for every
+    /// existing caller); issue #82's <see cref="Sessions.CascadeProcessor"/> passes "cascade"
+    /// instead so it can reuse this same identifiers/frame machinery verbatim.</summary>
+    public string Pipeline { get; }
 
-    public SessionIdentifiers(string personaId, string modelId, string? sessionToken = null)
+    public SessionIdentifiers(string personaId, string modelId, string? sessionToken = null, string pipeline = "realtime")
     {
         SessionToken = sessionToken ?? Guid.NewGuid().ToString("n");
         RoundTripIndex = 0;
         PersonaId = personaId;
         ModelId = modelId;
+        Pipeline = pipeline;
     }
 
     /// <summary>Advances to the next round trip (called once per non-tool-call response.done) and

@@ -21,6 +21,7 @@ import aiohttp
 from aiohttp import web
 from azure.core.credentials import AzureKeyCredential
 
+import rtmt as rtmt_module
 from audio_pipeline import (
     _GA_TO_LEGACY_EVENTS,
     _PASSTHROUGH_CLIENT_TYPES,
@@ -3827,6 +3828,63 @@ class GARealtime21SurfaceTests(unittest.TestCase):
         frontend_default = re.search(r'DEFAULT_VOICE = "([a-z]+)"', voices).group(1)
         self.assertEqual(frontend_default, "marin")
         self.assertEqual(get_config()["model"]["default_voice"], frontend_default)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SERVER-TO-BROWSER PARSED-TYPE DISPATCH TESTS (#234)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class ServerFrameTypeTests(unittest.TestCase):
+    """Direct unit tests of `_server_frame_type`, the parsed-type extraction
+    `from_server_to_client()` now dispatches on instead of raw substring `in`
+    checks. test_ws_transport.py's ServerToClientDispatchTests drives the full
+    forwarding loop end to end over a real WebSocket pair."""
+
+    def test_extracts_the_top_level_type(self):
+        data = json.dumps({"type": "response.done", "response": {"id": "resp"}})
+        self.assertEqual(rtmt_module._server_frame_type(data), "response.done")
+
+    def test_a_transcript_containing_a_marker_phrase_does_not_fool_it(self):
+        """The regression case: a guest's transcript literally *is* the text of
+        another event's marker. The old substring check (`_MARKER_AUDIO_DELTA in
+        data`) would have matched this frame -- its JSON-encoded transcript value
+        contains the exact bytes `"response.audio.delta"` -- even though the
+        frame's real type is transcription-completed."""
+        data = json.dumps({
+            "type": "conversation.item.input_audio_transcription.completed",
+            "transcript": "response.audio.delta",
+        })
+        self.assertEqual(
+            rtmt_module._server_frame_type(data),
+            "conversation.item.input_audio_transcription.completed",
+        )
+
+    def test_a_nested_objects_own_type_field_does_not_outrank_the_top_level_one(self):
+        """response.done's own payload nests `type` fields inside `response.output[]`
+        and `.content[]` (e.g. "message", "audio") -- the Realtime API always
+        serializes the envelope's own `type` first, so the leftmost `"type":"..."`
+        match in the raw text is still the real one."""
+        data = json.dumps({
+            "type": "response.done",
+            "response": {"id": "resp", "output": [
+                {"type": "message", "content": [{"type": "audio", "transcript": "ok"}]},
+            ]},
+        })
+        self.assertEqual(rtmt_module._server_frame_type(data), "response.done")
+
+    def test_no_type_key_returns_none(self):
+        self.assertIsNone(rtmt_module._server_frame_type(json.dumps({"session": {}})))
+
+    def test_malformed_data_returns_none_rather_than_raising(self):
+        self.assertIsNone(rtmt_module._server_frame_type("not even json"))
+
+    def test_ga_and_legacy_audio_delta_spellings_are_both_in_the_delta_set(self):
+        self.assertIn("response.output_audio.delta", rtmt_module._AUDIO_DELTA_TYPES)
+        self.assertIn("response.audio.delta", rtmt_module._AUDIO_DELTA_TYPES)
+
+    def test_ga_and_legacy_audio_done_spellings_are_both_in_the_done_set(self):
+        self.assertIn("response.output_audio.done", rtmt_module._AUDIO_DONE_TYPES)
+        self.assertIn("response.audio.done", rtmt_module._AUDIO_DONE_TYPES)
 
 
 if __name__ == "__main__":

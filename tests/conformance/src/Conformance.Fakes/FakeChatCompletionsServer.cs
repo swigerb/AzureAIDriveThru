@@ -217,6 +217,18 @@ public sealed class FakeChatCompletionsServer : IAsyncDisposable
             }
         }
 
+        // Issue #236 Rick re-review item 1 (HIGH, blocking): the real Foundry endpoint requires
+        // `?api-version=...` on every call (azure-ai-inference 1.0.0b9 always sends it -- see
+        // FoundryChatClient.ApiVersion's own doc comment) and rejects a request missing it; this
+        // fake must enforce the same contract so a regression (the client forgetting the query
+        // parameter again) fails a conformance run instead of silently passing against a fake
+        // that's more lenient than the real service.
+        if (!context.Request.Query.TryGetValue("api-version", out var apiVersion) || apiVersion.Count == 0 || string.IsNullOrEmpty(apiVersion[0]))
+        {
+            context.Response.StatusCode = StatusCodes.Status400BadRequest;
+            return;
+        }
+
         using var document = await JsonDocument.ParseAsync(context.Request.Body, cancellationToken: context.RequestAborted).ConfigureAwait(false);
         var root = document.RootElement;
         var model = root.TryGetProperty("model", out var modelProp) ? modelProp.GetString() ?? "" : "";

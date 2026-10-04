@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
+using Microsoft.Extensions.Logging.Console;
 
 namespace Backend;
 
@@ -12,11 +13,14 @@ namespace Backend;
 /// in the process environment.
 ///
 /// Also ports Python's ``seconds(env_var, default)`` timer-duration override (see
-/// <see cref="Seconds"/>) -- first used by issue #13 Wave 4's rate-limit retry ladder. Python's
-/// module additionally has a ``cascade_credential()``/``cascade_chat_kwargs()`` pair for the
-/// cascade Foundry chat client, which no code in this file touches yet; it belongs here too,
-/// exactly mirroring Python's "one shared, centralised hooks module" design, whenever the
-/// cascade pipeline first needs it.
+/// <see cref="Seconds"/>) -- first used by issue #13 Wave 4's rate-limit retry ladder, and now
+/// also by Cascade/CascadeRateLimit.cs's retry delays (issue #13's cascade pipeline). Also carries
+/// <see cref="CascadeFakeToken"/> (the `cascade_credential()`/`CONFORMANCE_CASCADE_FAKE_TOKEN`
+/// fake-bearer-token substitution) added here for the same reason, rather than a second,
+/// competing hooks module -- exactly mirroring Python's "one shared, centralised hooks module"
+/// design. `cascade_chat_kwargs()` has no C# equivalent: it exists only to relax azure-core's
+/// BearerTokenCredentialPolicy's https-only enforcement for the azure-ai-inference SDK, which the
+/// C# port doesn't use (a plain HttpClient call has no such policy to relax in the first place).
 ///
 /// NEVER set CONFORMANCE_TEST_HOOKS in infra/ (bicep), the Dockerfile, or azure.yaml -- see
 /// conformance_hooks.py's own module docstring for why (a dedicated guard test scans those files
@@ -27,6 +31,7 @@ public static class ConformanceHooks
 {
     private const string EnabledEnv = "CONFORMANCE_TEST_HOOKS";
     private const string FixedNowEnv = "CONFORMANCE_FIXED_NOW";
+    private const string CascadeFakeTokenEnv = "CONFORMANCE_CASCADE_FAKE_TOKEN";
 
     // Accepts a trailing numeric offset ("+05:00"/"-0500") or a literal "Z" (UTC) -- matches
     // Python's `datetime.fromisoformat` contract of "RFC 3339 with an explicit numeric UTC
@@ -59,12 +64,18 @@ public static class ConformanceHooks
 
     /// <summary>Port of conformance_hooks.py's ``seconds(env_var, default)``: overrides a timer
     /// duration fed into a delayed send (idle timeout, resume grace, resume nudge, the greeting
-    /// timeout, and -- issue #13 Wave 4 -- the two rate-limit retry delays). Returns
+    /// timeout, issue #13 Wave 4's two realtime rate-limit retry delays, and the cascade
+    /// pipeline's own rate-limit retry delays -- see Cascade/CascadeRateLimit.cs). Returns
     /// <paramref name="defaultValue"/> unchanged unless test hooks are enabled AND
     /// <paramref name="envVar"/> is set to a non-empty value, in which case the value must parse as
     /// a finite, strictly-positive number or this throws immediately -- it does NOT silently fall
-    /// back to <paramref name="defaultValue"/>. Has no effect on <see cref="Now"/> (see this
-    /// class's own doc comment: the two mechanisms are independent).</summary>
+    /// back to <paramref name="defaultValue"/>, matching Python's own fail-fast-at-startup
+    /// contract: every call site assigns the result once, so a bad override should fail the
+    /// backend's startup with a clear error instead of quietly running an entire test session with
+    /// a wrong timer value. Has no effect on <see cref="Now"/> (see this class's own doc comment:
+    /// the two mechanisms are independent).</summary>
+    /// <exception cref="InvalidOperationException"><paramref name="envVar"/> is set but not a
+    /// positive, finite number of seconds, while test hooks are enabled.</exception>
     public static double Seconds(string envVar, double defaultValue)
     {
         if (!HooksEnabled)
@@ -88,6 +99,74 @@ public static class ConformanceHooks
                 $"{envVar} must be a positive, finite number of seconds (test hooks are enabled), got: '{raw}'");
         }
         return value;
+    }
+
+    /// <summary>Port of conformance_hooks.py's `cascade_credential()`: the fixed bearer token the
+    /// cascade pipeline's Foundry chat/STT/TTS calls should present instead of a real
+    /// <c>DefaultAzureCredential</c>, when test hooks are enabled AND
+    /// <c>CONFORMANCE_CASCADE_FAKE_TOKEN</c> is set to a non-empty value; <c>null</c> otherwise, in
+    /// which case the caller (Program.cs) constructs the real credential exactly as it already
+    /// does for the realtime pipeline's own upstream connect (see
+    /// <see cref="Realtime.DefaultAzureCredentialTokenProvider"/>). Cascade has no api-key
+    /// fallback to reuse (unlike realtime's own conformance-harness credential story), so this
+    /// fake-token substitution is the only way its three REST calls can be exercised against the
+    /// conformance harness's fakes without a real Azure AD identity.</summary>
+    public static string? CascadeFakeToken =>
+        HooksEnabled && Environment.GetEnvironmentVariable(CascadeFakeTokenEnv) is { Length: > 0 } token
+            ? token
+            : null;
+
+    /// <summary>
+    /// #233 (N32, split from #63): Program.cs's <c>builder.Logging.AddSimpleConsole(
+    /// ConformanceHooks.ApplyConsoleTimestampFormat)</c> call (guarded there by
+    /// <see cref="HooksEnabled"/>, since this method is extracted purely so it has a directly
+    /// unit-testable name/signature -- Program.cs's top-level statements aren't otherwise
+    /// unit-testable). Self-timestamps every console log line with a UTC, microsecond-resolution
+    /// instant THIS process actually logged it at, mirroring app/backend/app.py's
+    /// conformance-hooks-gated logging.Formatter change: see that file's
+    /// <c>_ConformanceTimestampFormatter</c> doc comment for why (the conformance harness's
+    /// <c>CapturedProcessOutput</c> otherwise stamps a line at the moment it *observes* it over
+    /// the redirected stdout/stderr pipe, which can lag the backend's actual write under CI/CPU
+    /// contention enough to make sequential events look simultaneous or reordered).
+    ///
+    /// PR #264 review: the original cut of this used
+    /// <c>builder.Services.Configure&lt;SimpleConsoleFormatterOptions&gt;(...)</c> directly, which
+    /// silently had NO effect -- <see cref="Microsoft.Extensions.Logging.Console.ConsoleLoggerOptions.FormatterName"/>
+    /// is left <see langword="null"/> by <c>WebApplication.CreateBuilder</c>'s default console
+    /// registration, and a <see langword="null"/>/unset formatter name makes
+    /// <c>ConsoleLoggerProvider</c> fall back to its legacy built-in formatter -- which ignores
+    /// <see cref="SimpleConsoleFormatterOptions"/> (including this method's
+    /// <see cref="SimpleConsoleFormatterOptions.TimestampFormat"/>) entirely, ANY configuration of
+    /// it included, regardless of <see cref="HooksEnabled"/>. <c>ILoggingBuilder.AddSimpleConsole</c>
+    /// is the one API that both configures these options AND flips
+    /// <c>ConsoleLoggerOptions.FormatterName</c> to <c>"simple"</c> so they're actually consulted;
+    /// it reuses (via <c>TryAddEnumerable</c>) the single <c>ConsoleLoggerProvider</c>
+    /// <c>CreateBuilder</c> already registered rather than adding a second one, so log lines still
+    /// aren't duplicated.
+    ///
+    /// Also sets <see cref="SimpleConsoleFormatterOptions.SingleLine"/> so the backend's
+    /// self-timestamp prefixes the same physical line as the actual message (the default
+    /// two-line layout puts the timestamp on the bare "level: category[eventId]" line, with the
+    /// message on a separate, unprefixed, indented line below it) -- consistent with the
+    /// Python side's single-line-per-record format, and matching what
+    /// <c>CapturedProcessOutput.BackendTimestampPrefix</c>/<c>StripBackendTimestamp</c> actually
+    /// need: one captured line, one optional leading timestamp. The one tradeoff is that an
+    /// exception's full <c>ToString()</c> (including its stack trace) also collapses onto that
+    /// same line, newlines replaced with spaces, per <c>SimpleConsoleFormatter</c>'s own
+    /// single-line exception handling -- every frame is still present, just space-joined rather
+    /// than one-per-line.
+    ///
+    /// The literal <c>'Z'</c> (not .NET's <c>K</c>/round-trip-offset specifier) matches the
+    /// Python side's literal <c>Z</c> suffix exactly, and the trailing space is load-bearing: both
+    /// together produce the exact <c>yyyy-MM-ddTHH:mm:ss.ffffffZ </c> shape
+    /// <c>CapturedProcessOutput.BackendTimestampPrefix</c>'s regex expects, so the harness only
+    /// needs one timestamp parser for both backends' lines.
+    /// </summary>
+    public static void ApplyConsoleTimestampFormat(SimpleConsoleFormatterOptions options)
+    {
+        options.UseUtcTimestamp = true;
+        options.TimestampFormat = "yyyy-MM-ddTHH:mm:ss.ffffff'Z' ";
+        options.SingleLine = true;
     }
 
     private static DateTimeOffset ParseFixedNow(string raw)

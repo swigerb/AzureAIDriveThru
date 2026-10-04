@@ -179,6 +179,16 @@ namespace Conformance.Tests;
 /// <c>OriginValidationTests.Origin_with_explicit_default_port_is_rejected_against_a_portless_host</c>
 /// -- raising the floor 219 to 222 (219 + 3).
 ///
+/// Issue #13 Wave 5 (PR #236, rebased onto #230/#21 above): <c>Backend.Sessions.CascadeProcessor</c>
+/// lands and is registered in <c>ProcessorRegistry</c>, so
+/// <c>Scenarios/Cascade/CascadeConformanceTests.cs</c>'s 7 rows (session-metadata dispatch, the
+/// tool-calling round trip to get_order, update_order pricing parity with realtime, a not-on-menu
+/// rejection shape, the automatic greeting on connect, barge-in cancelling an in-flight turn, and a
+/// 429-from-chat-completion recovery) are now tagged <c>[Trait("Dotnet", "ready")]</c> at the class
+/// level -- verified green against the C# backend across 3 consecutive local runs
+/// (<c>CONFORMANCE_BACKEND=dotnet</c>) with no flakiness, plus 2 further full-suite runs pinned to
+/// 2 CPUs on native Linux (matching the ubuntu-latest CI runner) to rule out a CI-only timing flake.
+///
 /// Merge-order note for PR #226 (#147, Beth's C# auth work, independently raises this SAME floor
 /// 204 to 222 against the stale pre-#21 baseline): PR #230/#21 lands first at 222 (including this
 /// round's +3); PR #226 must then rebase onto that base and re-target its own floor to 222 + 18 =
@@ -193,6 +203,19 @@ namespace Conformance.Tests;
 /// re-measure fresh at its own rebase time the same way, not add its own historical delta (e.g.
 /// "+18") to 239 blindly -- those deltas were computed against the stale 222 baseline and may double
 /// count methods (such as this wave's 3 tool-failure-cap rows) already folded into 239.
+///
+/// #236 Rick re-review item 5 (rebasing onto the 239 baseline above, which already includes #235's
+/// rate-limit ladder): per Rick's explicit "recount fresh, don't do arithmetic" instruction, a
+/// fresh run of <see cref="CountFloorEligibleDotnetReadyTestMethods"/> (same as
+/// <c>Conformance.Tests.exe -list methods -trait Dotnet=ready</c>, minus the 18
+/// <see cref="AuthRowGatedTypeNames"/> methods) was taken on this branch tip after rebasing onto
+/// origin/dev (which by then carried #226/#147's C# auth work, #235's rate-limit ladder, #237,
+/// #241, and everything else merged ahead of this PR) by temporarily asserting on the actual
+/// count, then reverting -- **256**. This matches the "+#226 = 256" projection from Rick's own
+/// earlier review round (#226's 18 Auth methods landing on top of the 238 baseline that included
+/// #235), now confirmed by direct measurement rather than arithmetic. This raises the floor 239 to
+/// 256. Any PR still rebasing on top of this MUST re-measure fresh at its own rebase time the same
+/// way, not add a historical delta to 256 blindly.
 /// </summary>
 public sealed class DotnetTraitCoverageTests
 {
@@ -215,17 +238,21 @@ public sealed class DotnetTraitCoverageTests
     };
 
     [Fact]
-    public void At_least_239_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
+    public void At_least_256_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
     {
         var count = CountFloorEligibleDotnetReadyTestMethods();
 
-        Assert.True(count >= 239,
-            $"Expected at least 239 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
+        Assert.True(count >= 256,
+            $"Expected at least 256 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
             $"and not unconditionally skip-gated by AuthRowCapability (the dotnet leg's " +
             $"`--filter \"{TraitName}={TraitValue}&Category!=Browser\"` baseline, minus the five " +
             "skip-only Scenarios/Auth classes -- see this class's own doc comment; " +
             $"docs/dotnet_mapping.md), but found {count}. If a tagged scenario was removed or " +
-            "renamed without a replacement, the dotnet CI leg silently lost coverage.");
+            "renamed without a replacement, the dotnet CI leg silently lost coverage. 256 is a " +
+            "FRESH count (#236 Rick re-review item 5, taken post-rebase onto origin/dev), not " +
+            "arithmetic -- re-measure with `Conformance.Tests.exe -list methods -trait " +
+            "Dotnet=ready` minus the 18 AuthRowGatedTypeNames methods before raising this floor " +
+            "again.");
     }
 
 

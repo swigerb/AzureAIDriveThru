@@ -47,3 +47,16 @@ public sealed class DefaultAzureCredentialTokenProvider : IUpstreamBearerTokenPr
     /// configured never touches this.</summary>
     public static readonly Lazy<DefaultAzureCredentialTokenProvider> Instance = new(() => new DefaultAzureCredentialTokenProvider());
 }
+
+/// <summary>Issue #82 (cascade pipeline): C# equivalent of conformance_hooks.py's
+/// <c>_FakeCascadeCredential</c> -- an <see cref="IUpstreamBearerTokenProvider"/> that always
+/// returns the one fixed token string it was built with, regardless of scope. Cascade has no
+/// api-key fallback to reuse (unlike the realtime pipeline's own conformance story), so this is
+/// the ONLY way its chat/STT/TTS REST calls can be exercised against the conformance harness's
+/// fakes -- substituted in by Program.cs when <see cref="ConformanceHooks.CascadeFakeToken"/> is
+/// non-null, exactly like the real <see cref="DefaultAzureCredentialTokenProvider"/> is used
+/// otherwise.</summary>
+public sealed class StaticBearerTokenProvider(string token) : IUpstreamBearerTokenProvider
+{
+    public Task<string> GetTokenAsync(CancellationToken cancellationToken) => Task.FromResult(token);
+}
