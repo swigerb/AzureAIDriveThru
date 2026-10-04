@@ -52,13 +52,6 @@ public sealed class CascadeMenuModeAndVoiceConformanceTests(CascadeMenuModeAndVo
     [Fact]
     public Task Cascade_greeting_is_spoken_with_the_bound_personas_own_voice() => fixture.RunAsync(async () =>
     {
-        // Rick's PR #253 review item 2: a leaked scripted response from a previous scenario's own
-        // abandoned round (see FakeChatCompletionsServer.AssertNoPendingScriptedResponses's own
-        // doc comment for the exact mechanism) must fail LOUDLY here, pointing at whichever
-        // scenario actually left it behind, instead of being silently handed out to this
-        // scenario's own first /chat/completions call below.
-        fixture.Chat.AssertNoPendingScriptedResponses();
-
         var ct = TestContext.Current.CancellationToken;
         fixture.Chat.EnqueueMessage(new JsonObject { ["role"] = "assistant", ["content"] = "Welcome!" });
         var browser = await CascadeScenarioHelpers.ConnectAsync(fixture, "gpt-5-mini", ct, persona: Persona);
@@ -89,10 +82,6 @@ public sealed class CascadeMenuModeAndVoiceConformanceTests(CascadeMenuModeAndVo
     [Fact]
     public Task Cascade_session_bound_to_breakfast_mode_accepts_the_breakfast_only_meal() => fixture.RunAsync(async () =>
     {
-        // See the greeting test's matching call for why this must run before this scenario
-        // scripts/consumes anything of its own.
-        fixture.Chat.AssertNoPendingScriptedResponses();
-
         var ct = TestContext.Current.CancellationToken;
         var connection = await CascadeScenarioHelpers.ConnectPastGreetingAsync(
             fixture, fixture.Chat, "gpt-5-mini", ct, persona: Persona, mode: "breakfast");
@@ -160,10 +149,6 @@ public sealed class CascadeMenuModeAndVoiceConformanceTests(CascadeMenuModeAndVo
     [Fact]
     public Task Cascade_session_bound_to_lunch_mode_rejects_the_breakfast_only_meal_as_out_of_mode() => fixture.RunAsync(async () =>
     {
-        // See the greeting test's matching call for why this must run before this scenario
-        // scripts/consumes anything of its own.
-        fixture.Chat.AssertNoPendingScriptedResponses();
-
         var ct = TestContext.Current.CancellationToken;
         var connection = await CascadeScenarioHelpers.ConnectPastGreetingAsync(
             fixture, fixture.Chat, "gpt-5-mini", ct, persona: Persona, mode: "lunch");
@@ -201,8 +186,9 @@ public sealed class CascadeMenuModeAndVoiceConformanceTests(CascadeMenuModeAndVo
         // call in this shared fixture) instead of being consumed here. Draining to this turn's
         // own response.done means round 3 always actually completes and dequeues its own message,
         // so nothing is ever left behind for the next scenario to inherit --
-        // AssertNoPendingScriptedResponses (called at the top of every scenario in this class) is
-        // the backstop that would now catch a regression here loudly instead of silently.
+        // ConformanceFixture.AssertNoPendingExtraFakeState (which this fixture overrides to call
+        // Chat.AssertNoPendingScriptedResponses AFTER every scenario's body, including this one)
+        // is the backstop that would now catch a regression here loudly instead of silently.
         var responseDone = await browser.ReceivedFrames.WaitForAsync(
             f => f.Sequence > getOrderResponse.Sequence && f.Type == "response.done", FrameTimeout, ct);
         Assert.True(responseDone is not null, $"Expected this turn's own response.done within {FrameTimeout} before disposing the connection.");
@@ -223,10 +209,6 @@ public sealed class CascadeMenuModeAndVoiceConformanceTests(CascadeMenuModeAndVo
     [Fact]
     public Task Cascade_extension_set_voice_with_an_unknown_voice_is_dropped_not_adopted() => fixture.RunAsync(async () =>
     {
-        // See the greeting test's matching call for why this must run before this scenario
-        // scripts/consumes anything of its own.
-        fixture.Chat.AssertNoPendingScriptedResponses();
-
         const string forgedVoice = "rick_probe_voice";
         var ct = TestContext.Current.CancellationToken;
         var connection = await CascadeScenarioHelpers.ConnectPastGreetingAsync(

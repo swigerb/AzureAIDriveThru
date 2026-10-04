@@ -67,6 +67,13 @@ public sealed class CascadeMenuModeAndVoiceConformanceFixture : ConformanceFixtu
     }
 
     protected override async Task StopExtraFakesAsync() => await Chat.DisposeAsync().ConfigureAwait(false);
+
+    // Rick's PR #253 review item 2 (follow-up): see CascadeConformanceFixture's matching
+    // override for why this is wired through the base class's own post-body hook instead of a
+    // hand-placed call at the top of every scenario in CascadeMenuModeAndVoiceConformanceTests.cs
+    // (the 4 hand-placed calls that used to be there are removed -- this override supersedes
+    // them for every scenario in this fixture's collection, present and future).
+    protected override void AssertNoPendingExtraFakeState() => Chat.AssertNoPendingScriptedResponses();
 }
 
 [CollectionDefinition(Name)]

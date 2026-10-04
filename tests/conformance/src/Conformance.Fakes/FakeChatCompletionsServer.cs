@@ -197,14 +197,18 @@ public sealed class FakeChatCompletionsServer : IAsyncDisposable
     /// that the underlying HTTP connection itself is NOT corrupted by this -- the bug is purely
     /// this stale FIFO entry, not connection-pooling/keep-alive state.
     ///
-    /// Tests call this once at the very start of a scenario (mirroring
-    /// <see cref="FakeRealtimeUpstreamServer.AssertNoPendingOneShotSwitches"/>'s own placement in
-    /// <c>ConformanceFixture.RunAsync</c>) so a leaked scripted response from a previous
-    /// scenario's own abandoned round fails LOUDLY, pointing at the scenario that actually left
-    /// it behind, instead of silently misdirecting a later, unrelated scenario's first request.
+    /// Tests never call this directly: <see cref="ConformanceFixture.AssertNoPendingExtraFakeState"/>
+    /// (overridden by the cascade fixtures to call this method) calls it automatically AFTER every
+    /// scenario's body returns (see <c>ConformanceFixture.RunAsync</c>'s own call site) -- not
+    /// before the NEXT scenario's body runs, the way <see cref="FakeRealtimeUpstreamServer
+    /// .AssertNoPendingOneShotSwitches"/> is checked. A before-the-body placement would catch the
+    /// leak, but would misattribute it to whichever scenario happens to run next instead of the
+    /// one that actually left the FIFO entry behind; checking immediately after THIS scenario's
+    /// own body returns means the scenario that caused the leak is the one that fails.
     /// </summary>
-    /// <exception cref="InvalidOperationException">A previous scenario left one or more scripted
-    /// responses in the FIFO that were never consumed by a request.</exception>
+    /// <exception cref="InvalidOperationException">This scenario (or an earlier one, if nothing
+    /// cleared the queue in between) left one or more scripted responses in the FIFO that were
+    /// never consumed by a request.</exception>
     public void AssertNoPendingScriptedResponses()
     {
         int pending;
@@ -216,12 +220,14 @@ public sealed class FakeChatCompletionsServer : IAsyncDisposable
         {
             throw new InvalidOperationException(
                 $"{pending} scripted /chat/completions response(s) were never consumed by a " +
-                "request -- a previous scenario likely had a round whose request was aborted " +
-                "(e.g. a barge-in/connection-closing cancellation) before this fake server " +
-                "finished parsing its body, which skips the FIFO dequeue entirely and leaves " +
-                "the scripted response behind to be wrongly handed out to an unrelated later " +
-                "request instead. Call Drain() (or otherwise reset the queue) before the " +
-                "scenario that leaves a round deliberately in flight returns.");
+                "request -- THIS scenario (checked immediately after its own body returned; see " +
+                "ConformanceFixture.AssertNoPendingExtraFakeState's own doc comment for why it " +
+                "runs after, not before) likely had a round whose request was aborted (e.g. a " +
+                "barge-in/connection-closing cancellation) before this fake server finished " +
+                "parsing its body, which skips the FIFO dequeue entirely and leaves the scripted " +
+                "response behind to be wrongly handed out to an unrelated later request instead. " +
+                "Call Drain() (or otherwise reset the queue) before a scenario that deliberately " +
+                "leaves a round in flight returns.");
         }
     }
 

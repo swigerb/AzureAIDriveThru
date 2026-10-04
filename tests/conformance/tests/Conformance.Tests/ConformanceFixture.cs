@@ -76,6 +76,33 @@ public class ConformanceFixture : IAsyncLifetime
     public FakeSearchServer Search { get; private set; } = null!;
 
     /// <summary>
+    /// Rick's PR #253 review item 2 (follow-up): hook for a derived fixture's own EXTRA fake(s)
+    /// -- i.e. anything beyond the <see cref="Realtime"/>/<see cref="Search"/> fakes every
+    /// fixture already gets, like the cascade fixtures' own <c>Chat</c>
+    /// (<see cref="Conformance.Fakes.FakeChatCompletionsServer"/>) -- to assert it has no leaked
+    /// one-shot/queued state of its own. <see cref="Realtime"/>.AssertNoPendingOneShotSwitches()
+    /// and <see cref="Search"/>.AssertNoPendingOneShotSwitches() below run BEFORE the scenario
+    /// body (so a leak from a PREVIOUS scenario fails loudly before it can silently misfire
+    /// against THIS scenario's own first request -- see their own call sites' comments). This
+    /// hook is different on purpose: it is called AFTER the scenario body (see the call site
+    /// near the end of this method), because a hand-placed "assert nothing pending" call at the
+    /// *start* of every scenario in a fixture's own test file is both easy to forget on a new
+    /// scenario and -- worse -- when it IS present, it blames the WRONG scenario: the one that
+    /// happens to run next, not the one that actually left the leak behind. Asserting here
+    /// instead, immediately after this scenario's own body returns, means the scenario that
+    /// caused a leak is the one that fails.
+    ///
+    /// Default no-op: a fixture with no extra fakes (the common case -- most fixtures only ever
+    /// use <see cref="Realtime"/>/<see cref="Search"/>) has nothing extra to check. Overridden by
+    /// <c>CascadeConformanceFixture</c> and <c>CascadeMenuModeAndVoiceConformanceFixture</c> to
+    /// call their own <c>Chat.AssertNoPendingScriptedResponses()</c> -- see that method's own doc
+    /// comment for the exact FIFO-leak mechanism this guards against.
+    /// </summary>
+    protected virtual void AssertNoPendingExtraFakeState()
+    {
+    }
+
+    /// <summary>
     /// Issue #143/ADR-002: whether this fixture launches its backend in Entra mode against a
     /// fresh <see cref="EntraIssuer"/> (the default -- persona-architecture.md 18.11: "the default
     /// fixture runs in Entra mode against the fake issuer") or leaves Entra entirely unconfigured
@@ -471,6 +498,14 @@ public class ConformanceFixture : IAsyncLifetime
             // above) so a fault from an earlier scenario's already-settled teardown can never
             // fail this one either.
             Realtime.AssertNoHandlerFaults(since: connectionWatermark);
+
+            // Rick's PR #253 review item 2 (follow-up): deliberately placed AFTER the body (and
+            // after the fault/settle checks above), NOT alongside the Realtime/Search one-shot
+            // checks near the top of this method -- see AssertNoPendingExtraFakeState's own doc
+            // comment for why. Not gated on `Backend is not null` below: this is about a derived
+            // fixture's own extra FAKE upstream state, orthogonal to whether a real backend
+            // process is attached.
+            AssertNoPendingExtraFakeState();
 
             // Language-neutral, fixture-wide equivalent of "backend logged no (unexpected)
             // traceback" (item N5): a future C# backend under test reports the same
