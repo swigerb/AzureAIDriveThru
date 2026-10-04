@@ -81,6 +81,7 @@ public sealed class RateLimitRecoveryTests(ShortTimersConformanceFixture fixture
     // contention on a 4-vCPU CI runner).
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task A_pending_retry_is_cancelled_by_detach() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -121,6 +122,7 @@ public sealed class RateLimitRecoveryTests(ShortTimersConformanceFixture fixture
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task A_retried_tool_follow_up_never_re_runs_the_tool() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;

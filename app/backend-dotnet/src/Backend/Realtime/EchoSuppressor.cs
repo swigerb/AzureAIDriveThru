@@ -146,7 +146,7 @@ public sealed class EchoSuppressor : IDisposable
                 {
                     if (!t.IsCanceled)
                     {
-                        _ = BestEffortSend();
+                        _ = FlushIfStillPendingAsync(cts);
                     }
                 },
                 CancellationToken.None,
@@ -272,6 +272,31 @@ public sealed class EchoSuppressor : IDisposable
             _cooldownEnd = 0.0;
             _greetingAwaitingRetry = true;
         }
+    }
+
+    /// <summary>Issue #13 Wave 4/#235 review: the delayed-flush continuation has the identical
+    /// stale-timer shape RateLimitRecovery's own retry scheduling had (see
+    /// <see cref="RateLimitRecovery"/>'s class doc comment for the full race description) --
+    /// <c>Task.Delay(...).ContinueWith(t => { if (!t.IsCanceled) ... })</c> checks <c>t.IsCanceled</c>
+    /// outside the lock, and the delay cannot retroactively become Canceled once it has already
+    /// elapsed, so <see cref="ShouldSuppressAudio"/>/<see cref="Close"/>/a later
+    /// <see cref="OnAudioDone"/> re-arm can all lose the race to a stale flush. This method takes
+    /// the exact CTS it was scheduled with as its identity and, under the lock, only proceeds (and
+    /// clears <see cref="_flushCts"/>) if it is still the live one -- a mismatch means this flush
+    /// was already cancelled or superseded, and the call that did so has nothing left for this one
+    /// to do.</summary>
+    private async Task FlushIfStillPendingAsync(CancellationTokenSource scheduledCts)
+    {
+        lock (_sync)
+        {
+            if (!ReferenceEquals(_flushCts, scheduledCts))
+            {
+                return;
+            }
+            _flushCts = null;
+        }
+
+        await BestEffortSend().ConfigureAwait(false);
     }
 
     private async Task BestEffortSend()

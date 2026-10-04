@@ -34,6 +34,7 @@ public sealed class GreetingRateLimitRetryEchoSuppressionTests(RateLimitTimersCo
         new([new DoneEvent(Status: "failed", ErrorCode: "rate_limit_exceeded", ErrorMessage: null)]);
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Speech_started_during_the_greetings_retried_audio_is_ignored_and_cooldown_accepts_guest_audio() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;

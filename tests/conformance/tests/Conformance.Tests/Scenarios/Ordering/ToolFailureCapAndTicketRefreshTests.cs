@@ -117,6 +117,7 @@ public sealed class ToolFailureCapAndTicketRefreshTests(ConformanceFixture fixtu
     }, allowedNewBackendErrors: 1);
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Consecutive_tool_exceptions_suppress_the_auto_continue_at_the_cap() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -226,6 +227,7 @@ public sealed class ToolFailureCapAndTicketRefreshTests(ConformanceFixture fixtu
     /// reset by get_order) and the one-shot-notice behaviour together, black-box.
     /// </summary>
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Cap_is_not_reset_by_the_prescribed_get_order() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -258,6 +260,7 @@ public sealed class ToolFailureCapAndTicketRefreshTests(ConformanceFixture fixtu
     /// cap again.
     /// </summary>
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Guest_speech_resets_the_failure_streak_after_the_cap() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
