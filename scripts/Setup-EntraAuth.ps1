@@ -68,6 +68,15 @@
     Permit adoption of an owned app that lacks the 'AzureAIDriveThruManaged' marker tag. Ownership
     and identifier-URI checks still apply. Use only after confirming you targeted the right app.
 
+.PARAMETER AllowRedirectUriRemoval
+    Required to confirm dropping an already-registered, non-localhost (live) SPA redirect URI.
+    The redirect-URI reconcile is a full SET: without this switch, a run under -Apply that would
+    remove a live origin (for example because -FrontendOrigin was forgotten on a re-run) stops
+    with an error naming the URIs instead of silently dropping them. Pass -FrontendOrigin (or
+    -RedirectUri) to keep registering the origin, or pass this switch to confirm the removal.
+    Removing ONLY localhost origins never requires this switch. Preview (no -Apply) always prints
+    the would-be removals regardless of this switch, without stopping.
+
 .PARAMETER FrontendOrigin
     Origin(s) of a deployed backend (e.g. https://capps-backend-abc123.region.azurecontainerapps.io).
     Redirect URIs are the bare origin. May be passed multiple times.
@@ -194,6 +203,13 @@ param(
     # Adopt an existing app that does NOT carry this tool's managed marker tag. Requires that the
     # signed-in user still owns the app and its identifier URI is unset or already correct.
     [switch]$AllowUnmarkedAdoption,
+
+    # #162: the section-7 redirect-URI reconcile is a full SET (see -RedirectUri above), so a run
+    # that forgets to re-supply a live origin (-FrontendOrigin/-RedirectUri/-FromAzdEnv) would
+    # otherwise silently drop it. Under -Apply, removing any already-registered NON-localhost SPA
+    # redirect URI is refused unless this switch is passed. Removing localhost-only origins never
+    # requires this switch.
+    [switch]$AllowRedirectUriRemoval,
 
     [switch]$Apply
 )
@@ -348,6 +364,47 @@ function Resolve-TargetApplication {
     return $null
 }
 
+# --- Redirect-URI removal guard helpers (#162) ---------------------------------
+# True when $Uri's host is a loopback/local address. An unparsable URI is conservatively treated
+# as NOT localhost (fail closed: the live-origin guard below still protects it) rather than risk
+# silently waving through a removal we couldn't classify.
+function Test-IsLocalhostUri {
+    param([Parameter(Mandatory)][string]$Uri)
+    try {
+        $uriHost = ([uri]$Uri).Host
+    }
+    catch {
+        return $false
+    }
+    return $uriHost -in @('localhost', '127.0.0.1', '::1', '[::1]')
+}
+
+# Computes the SPA redirect-URI reconcile plan: which currently-registered URIs would be REMOVED
+# by replacing them with $DesiredRedirectUris (section 7 does a full SET, not a merge), and which
+# of those removals are LIVE (non-localhost) origins. Under -Apply, refuses (throws) if any live
+# origin would be dropped and -AllowRedirectUriRemoval was not passed -- this is the actual guard
+# for #162. Never throws in preview (no -Apply); the caller is expected to print $plan.Removed so
+# the operator sees the would-be removals before deciding to -Apply.
+function Resolve-SpaRedirectReconcilePlan {
+    param(
+        [string[]]$CurrentSpaRedirectUris = @(),
+        [string[]]$DesiredRedirectUris = @(),
+        [switch]$Apply,
+        [switch]$AllowRedirectUriRemoval
+    )
+    $removed = @($CurrentSpaRedirectUris | Where-Object { $DesiredRedirectUris -notcontains $_ })
+    $liveRemoved = @($removed | Where-Object { -not (Test-IsLocalhostUri $_) })
+
+    if ($Apply -and $liveRemoved.Count -gt 0 -and -not $AllowRedirectUriRemoval) {
+        throw "Refusing to remove live (non-localhost) SPA redirect URI(s) without -AllowRedirectUriRemoval: $($liveRemoved -join ', '). Pass -FrontendOrigin (or -RedirectUri) to keep registering them, or re-run with -AllowRedirectUriRemoval to confirm you want them dropped."
+    }
+
+    [pscustomobject]@{
+        Removed     = $removed
+        LiveRemoved = $liveRemoved
+    }
+}
+
 # --- 1. Validate az context + tenant -----------------------------------------
 Write-Section 'Validating Azure CLI context'
 $account = az account show --output json 2>$null | ConvertFrom-Json
@@ -397,15 +454,24 @@ foreach ($u in @($FrontendOrigin + $RedirectUri + $azdOrigins)) {
     if (-not [string]::IsNullOrWhiteSpace($u)) { $redirects += $u.TrimEnd('/') }
 }
 $redirects = @($redirects | Select-Object -Unique)
-if ($redirects.Count -eq 0) {
-    Write-Warning 'No -FrontendOrigin / -RedirectUri / -FromAzdEnv origin supplied. SPA redirect URIs will be left unset.'
-}
 
 # --- 3. Resolve or create the application (SAFE reconciliation) ---------------
 # Never adopts by display name. Explicit -ClientId/-AppObjectId adopt an owned, verified, marked
 # app; otherwise create-only after a hard-fail collision check. See helpers above.
 Write-Section "Application registration '$DisplayName'"
 $app = Resolve-TargetApplication
+
+if ($redirects.Count -eq 0) {
+    # #162: the wording depends on whether an app already exists -- on an EXISTING app the section-7
+    # reconcile leaves its current SPA URIs untouched (not "unset"); only a brand-new app actually
+    # has nothing registered yet.
+    if ($app) {
+        Write-Warning 'No -FrontendOrigin / -RedirectUri / -FromAzdEnv origin supplied. Existing SPA redirect URIs will be left unchanged.'
+    }
+    else {
+        Write-Warning 'No -FrontendOrigin / -RedirectUri / -FromAzdEnv origin supplied. SPA redirect URIs will be left unset.'
+    }
+}
 
 if (-not $app) {
     # Review round 3, item 5: the preview for a brand-new app previously named every setting it
@@ -603,6 +669,12 @@ else {
 # @() with no -FrontendOrigin/-FromAzdEnv), breaking sign-in for every already-registered origin.
 # So the SPA reconcile below only ever runs when $redirects.Count -gt 0; with zero redirects the
 # existing SPA URIs are left untouched and only the (always SPA-only) Web platform is cleared.
+#
+# #162: that same full-SET reconcile can silently DROP a live (non-localhost) origin that's
+# already registered but wasn't re-supplied this run (e.g. forgetting -FrontendOrigin on a
+# re-run). Resolve-SpaRedirectReconcilePlan computes exactly what would be removed and, under
+# -Apply, refuses to drop any live origin unless -AllowRedirectUriRemoval is passed. Preview
+# always shows the would-be removals so an operator can catch the mistake before -Apply.
 Write-Section 'Redirect URIs (SPA-only)'
 if ($app) {
     $current = Invoke-Graph -Method GET -Url "$graph/applications/$($app.id)?`$select=spa,web"
@@ -628,6 +700,19 @@ if ($app) {
         $spaKey = ($curSpa | Sort-Object) -join ';'
         $desiredKey = ($redirects | Sort-Object) -join ';'
         $spaChanged = $spaKey -ne $desiredKey
+
+        # #162 guard: throws under -Apply if a live (non-localhost) URI would be dropped and
+        # -AllowRedirectUriRemoval was not passed. Never throws in preview.
+        $redirectPlan = Resolve-SpaRedirectReconcilePlan -CurrentSpaRedirectUris $curSpa -DesiredRedirectUris $redirects -Apply:$Apply -AllowRedirectUriRemoval:$AllowRedirectUriRemoval
+
+        if ($redirectPlan.Removed.Count -gt 0) {
+            if (-not $Apply) {
+                Write-Plan "Would remove SPA redirect URI(s): $($redirectPlan.Removed -join ', ')"
+            }
+            elseif ($AllowRedirectUriRemoval) {
+                Write-Plan "Removing SPA redirect URI(s) (-AllowRedirectUriRemoval supplied): $($redirectPlan.Removed -join ', ')"
+            }
+        }
 
         if ($spaChanged) { Write-Plan "Set SPA redirect URIs: $($redirects -join ', ')" }
         else { Write-Skip "SPA redirect URIs already reconciled: $($redirects -join ', ')" }
