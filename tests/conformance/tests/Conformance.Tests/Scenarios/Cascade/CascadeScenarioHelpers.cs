@@ -5,7 +5,7 @@ using System.Text.Json.Nodes;
 namespace Conformance.Tests.Scenarios.Cascade;
 
 /// <summary>A connected cascade browser client past its own connect-time greeting turn, plus the
-/// frame sequence number of that greeting's own `response.done` -- see
+/// frame sequence number of that greeting's own `extension.round_trip_token` -- see
 /// <see cref="CascadeScenarioHelpers.ConnectPastGreetingAsync"/>. Callers should watermark their
 /// own guest-turn frame waits against <see cref="GreetingWatermark"/> (e.g.
 /// <c>f.Sequence &gt; connection.GreetingWatermark</c>) so a content-agnostic
@@ -75,7 +75,21 @@ public static class CascadeScenarioHelpers
                 throw new InvalidOperationException($"Expected the connect-time greeting's own response.done within {FrameTimeout}.");
             }
 
-            return new CascadeConnection(browser, greetingDone.Sequence);
+            // #236 Rick re-review item 4: wait for the greeting's own `extension.round_trip_token`,
+            // not just `response.done` -- `response.done` is sent mid-turn-teardown, BEFORE the
+            // round-trip token frame (see CascadeProcessor.RunTurnAndSpeakAsync), so a caller that
+            // proceeds immediately after `response.done` can race the greeting's own trailing frame
+            // and misattribute it to the guest's first turn once GreetingWatermark is used to filter.
+            var greetingRoundTrip = await browser.ReceivedFrames.WaitForAsync(
+                    f => f.Type == "extension.round_trip_token", FrameTimeout, ct)
+                .ConfigureAwait(false);
+            if (greetingRoundTrip is null)
+            {
+                throw new InvalidOperationException(
+                    $"Expected the connect-time greeting's own extension.round_trip_token within {FrameTimeout}.");
+            }
+
+            return new CascadeConnection(browser, greetingRoundTrip.Sequence);
         }
         catch
         {

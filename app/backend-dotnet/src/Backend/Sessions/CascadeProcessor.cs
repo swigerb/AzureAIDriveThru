@@ -161,7 +161,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
         // cascade_processor.py's own nested-function style inside _run_session/_handle_client_message).
 
         Task NotifyClientAsync(JsonObject frame, CancellationToken notifyCt) =>
-            SendTextAsync(browserSocket, frame.ToJsonString(), notifyCt);
+            SendTextAsync(browserSocket, frame.ToJsonString(), notifyCt, ct);
 
         async Task CancelCurrentTurnAsync(string reason)
         {
@@ -258,7 +258,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
                 sendToClient = result.Destination is ToolResultDirection.ToClient or ToolResultDirection.ToBoth;
                 clientText = sendToClient ? result.ToClientText() : null;
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (turnCt.IsCancellationRequested)
             {
                 // Python's mirror-image `except Exception:` here (cascade_processor.py's
                 // `_execute_tool_call`) never catches cancellation in the first place --
@@ -267,6 +267,17 @@ public sealed class CascadeProcessor : IPipelineProcessor
                 // clause a guest barging in mid-tool-call would get logged as a tool failure and
                 // a synthetic "something went wrong" error message appended to history, instead
                 // of the turn just quietly ending the way `CancelCurrentTurnAsync` expects.
+                //
+                // #236 Rick re-review item 3 (LOW): the `when` guard matters -- an
+                // `OperationCanceledException` can also come from an HttpClient-internal timeout
+                // (a `TaskCanceledException`, which derives from `OperationCanceledException`)
+                // that has NOTHING to do with a barge-in -- `turnCt` itself was never cancelled.
+                // Without this guard, that would be misclassified as "the turn was barged in on"
+                // and silently swallowed here (re-thrown, then silently absorbed by `Spawn`'s own
+                // catch), with no log and no `response.done` ever reaching the guest. Filtering on
+                // `turnCt.IsCancellationRequested` means a genuine non-barge-in timeout instead
+                // falls through to the `catch (Exception ex)` below, which DOES log it and still
+                // lets the turn finish (synthetic tool-failure message, `response.done` still sent).
                 throw;
             }
             catch (Exception ex)
@@ -299,7 +310,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
                             ["previous_item_id"] = previousItemId,
                             ["tool_name"] = "get_order",
                             ["tool_result"] = ticketJson,
-                        }.ToJsonString(), turnCt).ConfigureAwait(false);
+                        }.ToJsonString(), turnCt, ct).ConfigureAwait(false);
                     }
                 }
             }
@@ -313,7 +324,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
                     ["previous_item_id"] = previousItemId,
                     ["tool_name"] = name,
                     ["tool_result"] = clientText,
-                }.ToJsonString(), turnCt).ConfigureAwait(false);
+                }.ToJsonString(), turnCt, ct).ConfigureAwait(false);
             }
         }
 
@@ -378,7 +389,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
                         {
                             ["type"] = "response.audio.delta",
                             ["delta"] = Convert.ToBase64String(chunk),
-                        }.ToJsonString(), turnCt).ConfigureAwait(false);
+                        }.ToJsonString(), turnCt, ct).ConfigureAwait(false);
                     }
                 },
                 "text-to-speech", NotifyClientAsync, sessionId, _logger, turnCt, _timeProvider).ConfigureAwait(false);
@@ -391,7 +402,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
             {
                 ["type"] = "response.created",
                 ["response"] = new JsonObject { ["id"] = responseId },
-            }.ToJsonString(), turnCt).ConfigureAwait(false);
+            }.ToJsonString(), turnCt, ct).ConfigureAwait(false);
 
             string finalText;
             try
@@ -404,7 +415,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
                 {
                     ["type"] = "response.done",
                     ["response"] = new JsonObject { ["id"] = responseId },
-                }.ToJsonString(), turnCt).ConfigureAwait(false);
+                }.ToJsonString(), turnCt, ct).ConfigureAwait(false);
                 return;
             }
 
@@ -414,7 +425,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
                 {
                     ["type"] = "response.audio_transcript.delta",
                     ["delta"] = finalText,
-                }.ToJsonString(), turnCt).ConfigureAwait(false);
+                }.ToJsonString(), turnCt, ct).ConfigureAwait(false);
 
                 try
                 {
@@ -424,12 +435,15 @@ public sealed class CascadeProcessor : IPipelineProcessor
                 {
                     // Already notified via the final extension.rate_limited frame -- nothing more to do.
                 }
-                catch (OperationCanceledException)
+                catch (OperationCanceledException) when (turnCt.IsCancellationRequested)
                 {
                     // Same parity note as the tool-call catch above: Python's bare `except
                     // Exception:` around `_speak` never catches `asyncio.CancelledError`, so a
                     // barge-in cancelling TTS mid-stream must propagate here too, not get logged
-                    // as a TTS failure.
+                    // as a TTS failure. The `when` guard (see `ExecuteToolCallAsync` for the full
+                    // rationale) keeps a non-barge-in HttpClient timeout from being misclassified
+                    // the same way -- it instead falls to `catch (Exception ex)` below, which logs
+                    // it and lets the turn still finish with `response.done`.
                     throw;
                 }
                 catch (Exception ex)
@@ -442,10 +456,10 @@ public sealed class CascadeProcessor : IPipelineProcessor
             {
                 ["type"] = "response.done",
                 ["response"] = new JsonObject { ["id"] = responseId },
-            }.ToJsonString(), turnCt).ConfigureAwait(false);
+            }.ToJsonString(), turnCt, ct).ConfigureAwait(false);
 
             identifiers.AdvanceRoundTrip();
-            await SendTextAsync(browserSocket, identifiers.ToFrame("extension.round_trip_token").ToJsonString(), turnCt)
+            await SendTextAsync(browserSocket, identifiers.ToFrame("extension.round_trip_token").ToJsonString(), turnCt, ct)
                 .ConfigureAwait(false);
         }
 
@@ -464,12 +478,13 @@ public sealed class CascadeProcessor : IPipelineProcessor
             {
                 return;
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (turnCt.IsCancellationRequested)
             {
                 // Same parity note as the two catches above: Python's bare `except Exception:`
                 // around `_transcribe` never catches `asyncio.CancelledError`, so a barge-in
                 // cancelling STT mid-flight must propagate, not get logged as a transcription
-                // failure.
+                // failure. The `when` guard keeps a non-barge-in HttpClient timeout from being
+                // misclassified the same way -- see `ExecuteToolCallAsync` for the full rationale.
                 throw;
             }
             catch (Exception ex)
@@ -486,7 +501,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
             {
                 ["type"] = "conversation.item.input_audio_transcription.completed",
                 ["transcript"] = transcript,
-            }.ToJsonString(), turnCt).ConfigureAwait(false);
+            }.ToJsonString(), turnCt, ct).ConfigureAwait(false);
             state.Messages.Add(CascadeChatMessage.User(transcript));
             await RunTurnAndSpeakAsync(turnCt).ConfigureAwait(false);
         }
@@ -546,7 +561,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
                     if (vadEvent == "speech_started")
                     {
                         await CancelCurrentTurnAsync("guest started speaking (barge-in)").ConfigureAwait(false);
-                        await SendTextAsync(browserSocket, """{"type":"input_audio_buffer.speech_started"}""", ct)
+                        await SendTextAsync(browserSocket, """{"type":"input_audio_buffer.speech_started"}""", ct, ct)
                             .ConfigureAwait(false);
                     }
                     else if (vadEvent == "speech_stopped")
@@ -564,11 +579,20 @@ public sealed class CascadeProcessor : IPipelineProcessor
                     break;
                 case "extension.set_voice":
                 {
-                    var newVoice = GetString(data, "voice");
-                    if (!string.IsNullOrEmpty(newVoice))
+                    // #236 Rick re-review item 2 (MEDIUM, blocking): mirror RealtimeProcessor's
+                    // HandleClientExtensionMessageAsync (~line 306) exactly -- go through the same
+                    // allow-list check rather than accepting any non-empty string, and log (rather
+                    // than silently drop) an unknown/invalid voice.
+                    var candidate = GetString(data, "voice");
+                    var newVoice = ClientServerFilter.SanitizeVoice(candidate, _allowedVoices);
+                    if (newVoice is null)
                     {
-                        state.Voice = newVoice;
+                        _logger?.LogWarning(
+                            "Dropped extension.set_voice with an unknown/invalid voice {Voice} (session={SessionId})",
+                            candidate, sessionId);
+                        break;
                     }
+                    state.Voice = newVoice;
                     break;
                 }
                 default:
@@ -579,7 +603,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
         }
 
         // ── Session start ────────────────────────────────────────────────────────────────────────
-        await SendTextAsync(browserSocket, identifiers.ToFrame("extension.session_metadata").ToJsonString(), ct)
+        await SendTextAsync(browserSocket, identifiers.ToFrame("extension.session_metadata").ToJsonString(), ct, ct)
             .ConfigureAwait(false);
 
         var (greetingCts, greetingTask) = Spawn(SendGreetingAsync, "greeting");
@@ -639,14 +663,43 @@ public sealed class CascadeProcessor : IPipelineProcessor
         }
     }
 
-    private static async Task SendTextAsync(WebSocket socket, string payload, CancellationToken ct)
+    /// <summary>
+    /// Sends one text frame to the browser socket. <paramref name="turnCt"/> is only ever used to
+    /// decide whether to bother sending at all (via <see cref="CancellationToken.ThrowIfCancellationRequested"/>,
+    /// checked BEFORE the write is issued) -- the write itself always uses <paramref name="socketCt"/>,
+    /// the session-lifetime token, never <paramref name="turnCt"/>.
+    ///
+    /// #236 Rick re-review item 1 (HIGH, blocking): .NET's <c>ManagedWebSocket</c> (the
+    /// implementation behind both Kestrel's server-side <see cref="WebSocket"/> and
+    /// <see cref="WebSocket.CreateFromStream"/>) treats a cancelled in-flight <c>SendAsync</c> as a
+    /// fatal, unrecoverable transport error: cancelling it mid-write aborts the ENTIRE socket, not
+    /// just that one call. <c>CancelCurrentTurnAsync</c> cancels a turn's own
+    /// <c>CurrentTurnCts</c>/<c>turnCt</c> on barge-in while the SESSION (and its socket) must keep
+    /// running for the next turn -- so passing <c>turnCt</c> straight into
+    /// <c>browserSocket.SendAsync</c> (as every call site here used to) meant a barge-in landing
+    /// mid-write (e.g. while a long TTS reply streams <c>response.audio.delta</c> chunks) silently
+    /// killed the guest's WebSocket: the socket flips to <c>Aborted</c>, the browser-read loop exits
+    /// the connection, and this method's own `socket.State != Open` early-return makes every
+    /// subsequent send a silent no-op -- nothing is logged, nothing throws, the guest just goes
+    /// quiet. Rick reproduced this end-to-end with the real <c>Backend.dll</c> (barge-in during a
+    /// large TTS reply under client backpressure) and matched it to the first round of this PR's CI
+    /// failures (a greeting cancelled mid-send of <c>extension.round_trip_token</c> right after
+    /// <c>response.done</c>). Passing <paramref name="socketCt"/> (only ever cancelled once, at
+    /// final session teardown -- see <c>RunSessionAsync</c>'s own <c>linkedCts</c>) keeps every
+    /// already-in-flight write safe from a turn-level cancellation, while
+    /// <paramref name="turnCt"/>'s <c>ThrowIfCancellationRequested()</c> still stops a cancelled
+    /// turn from issuing any FURTHER sends, preserving the original "stop talking once barged in
+    /// on" behaviour.
+    /// </summary>
+    private static async Task SendTextAsync(WebSocket socket, string payload, CancellationToken turnCt, CancellationToken socketCt)
     {
+        turnCt.ThrowIfCancellationRequested();
         if (socket.State != WebSocketState.Open)
         {
             return;
         }
         var bytes = Encoding.UTF8.GetBytes(payload);
-        await socket.SendAsync(bytes, WebSocketMessageType.Text, endOfMessage: true, ct).ConfigureAwait(false);
+        await socket.SendAsync(bytes, WebSocketMessageType.Text, endOfMessage: true, socketCt).ConfigureAwait(false);
     }
 
     /// <summary>Duplicated from <see cref="RealtimeProcessor"/>'s own private helper of the same

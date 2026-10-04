@@ -292,6 +292,13 @@ public sealed class CascadeProcessorTests
             ["audio"] = Convert.ToBase64String(pcm16Bytes),
         }.ToJsonString());
 
+    private static byte[] SetVoiceFrame(string? voice) =>
+        Encoding.UTF8.GetBytes(new JsonObject
+        {
+            ["type"] = "extension.set_voice",
+            ["voice"] = voice,
+        }.ToJsonString());
+
     [Fact]
     public void PipelineName_IsCascade()
     {
@@ -452,21 +459,31 @@ public sealed class CascadeProcessorTests
         Assert.Equal("{}", toolExecutor.ReceivedArgumentsJson[0]);
     }
 
-    /// <summary>#236 Rick re-review item 5: Python's bare `except Exception:` around a tool call
-    /// (cascade_processor.py's `_execute_tool_call`) never catches a barge-in's
-    /// `asyncio.CancelledError` -- it derives from `BaseException`, not `Exception`. C#'s
-    /// `OperationCanceledException` DOES derive from `Exception`, so the equivalent
-    /// <c>catch (Exception ex)</c> in <c>CascadeProcessor.ExecuteToolCallAsync</c> needed its own
-    /// explicit `catch (OperationCanceledException) { throw; }` ahead of it (same fix applied to
-    /// the TTS and transcription catches) -- otherwise a guest barging in mid-tool-call got logged
-    /// as an unhandled tool failure AND a synthetic "something went wrong" error appended to
-    /// history, instead of the turn just quietly ending the way a real barge-in's
-    /// <c>CancelCurrentTurnAsync</c>/<c>Spawn</c> machinery expects (and silently swallows,
-    /// by design -- see <c>Spawn</c>'s own doc comment). Simulates the cancellation by having the
-    /// tool executor itself throw rather than actually racing a second WebSocket frame, since only
-    /// the catch-block behaviour (not the real barge-in race) is under test here.</summary>
+    /// <summary>#236 Rick re-review item 5 (original fix) + item 3 (this re-review's fix, #236
+    /// round 3): Python's bare `except Exception:` around a tool call (cascade_processor.py's
+    /// `_execute_tool_call`) never catches a barge-in's `asyncio.CancelledError` -- it derives
+    /// from `BaseException`, not `Exception`. C#'s `OperationCanceledException` DOES derive from
+    /// `Exception`, so the equivalent <c>catch (Exception ex)</c> in
+    /// <c>CascadeProcessor.ExecuteToolCallAsync</c> needed its own explicit
+    /// <c>catch (OperationCanceledException) when (turnCt.IsCancellationRequested) { throw; }</c>
+    /// ahead of it (same fix applied to the TTS and transcription catches) -- otherwise a guest
+    /// barging in mid-tool-call got logged as an unhandled tool failure AND a synthetic "something
+    /// went wrong" error appended to history, instead of the turn just quietly ending the way a
+    /// real barge-in's <c>CancelCurrentTurnAsync</c>/<c>Spawn</c> machinery expects (and silently
+    /// swallows, by design -- see <c>Spawn</c>'s own doc comment).
+    ///
+    /// Rick's re-review flagged the ORIGINAL version of this test (which had the tool executor
+    /// itself `throw new OperationCanceledException(...)` directly) as too weak: it proved the
+    /// catch block's TYPE match but never actually exercised `turnCt`, so it couldn't distinguish
+    /// the `when (turnCt.IsCancellationRequested)` guard from an unconditional
+    /// `catch (OperationCanceledException) { throw; }` -- both pass the old test identically. This
+    /// version drives a REAL barge-in instead: the tool executor blocks on the genuine `turnCt`
+    /// <see cref="IToolExecutor.ExecuteAsync"/> receives, and only a second
+    /// <c>input_audio_buffer.append</c> frame carrying loud audio -- processed by the real VAD
+    /// detector and routed through the real <c>CancelCurrentTurnAsync</c> -- unblocks it, exactly
+    /// as a guest's spoken interruption would in production.</summary>
     [Fact]
-    public async Task RunSessionAsync_ToolCallThrowsOperationCanceled_PropagatesWithoutBeingLoggedAsAToolFailure()
+    public async Task RunSessionAsync_RealBargeInDuringToolCall_PropagatesWithoutBeingLoggedAsAToolFailure()
     {
         var (persona, loader) = LoadDeltaFixture();
         var handler = new RoutingFoundryHandler()
@@ -482,12 +499,96 @@ public sealed class CascadeProcessorTests
                     ["function"] = new JsonObject { ["name"] = "search", ["arguments"] = "{}" },
                 },
             });
-            // No further chat/TTS responses queued -- the guest turn is cut short by the
-            // simulated cancellation before a second round or a spoken answer would happen.
+            // No further chat/TTS responses queued -- the tool call blocks on its own turnCt until
+            // the real barge-in below cancels it, so the guest turn never reaches a second round.
 
         var toolExecutor = new RecordingToolExecutor(
             ["search"],
-            (_, _, _) => throw new OperationCanceledException("simulated barge-in mid-tool-call"));
+            async (_, _, toolCt) =>
+            {
+                // Blocks on the REAL per-turn token ExecuteToolCallAsync passes through --
+                // unlike the previous version of this test, only a genuine
+                // CancelCurrentTurnAsync (triggered by the second loud-audio frame below) can
+                // unblock this.
+                await Task.Delay(Timeout.InfiniteTimeSpan, toolCt).ConfigureAwait(false);
+                return default!;
+            });
+        var logger = new RecordingLogger();
+        var processor = NewProcessor(handler, toolExecutor, loader, logger: logger);
+        var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
+
+        var loudChunk = Pcm16(20000, count: 10);
+        var silentChunk = Pcm16(0, count: 4800);
+        var socket = new DelayedFakeWebSocket(
+            [
+                (AppendFrame(loudChunk), WebSocketMessageType.Text), // guest turn 1 starts (greeting already finished)
+                (AppendFrame(silentChunk), WebSocketMessageType.Text), // -> speech_stopped: turn 1 spawned, blocks in the tool call
+                (AppendFrame(loudChunk), WebSocketMessageType.Text), // real barge-in: cancels turn 1's turnCt mid-tool-call
+                ([], WebSocketMessageType.Close),
+            ],
+            ReceiveDelay);
+
+        // The cancellation must propagate out of ExecuteToolCallAsync and be swallowed silently
+        // by Spawn's own catch (OperationCanceledException) -- so RunSessionAsync itself must
+        // complete normally, not throw.
+        await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "sess-real-barge-in", TestContext.Current.CancellationToken);
+
+        Assert.DoesNotContain(logger.Entries, e => e.Level >= LogLevel.Warning);
+
+        var frames = socket.SentMessages.Where(m => m.MessageType == WebSocketMessageType.Text).Select(ParseSent).ToList();
+        var types = frames.Select(f => f["type"]!.GetValue<string>()).ToList();
+
+        // Only the greeting's turn completed: the guest turn was cut short by the real barge-in
+        // before reaching its own tool-response frame or response.done. Two speech_started frames:
+        // one from the guest turn's own opening (a no-op cancel against the already-finished
+        // greeting), one from the actual barge-in that cut the tool call short.
+        Assert.Equal(1, types.Count(t => t == "response.done"));
+        Assert.DoesNotContain(types, t => t == "extension.middle_tier_tool_response");
+        Assert.Equal(2, types.Count(t => t == "input_audio_buffer.speech_started"));
+    }
+
+    /// <summary>#236 Rick re-review item 3 (LOW): the `when (turnCt.IsCancellationRequested)`
+    /// guard on each `catch (OperationCanceledException)` matters because an
+    /// `OperationCanceledException` can ALSO come from something unrelated to a barge-in -- e.g.
+    /// an HttpClient-internal timeout (`TaskCanceledException`, a subtype) where `turnCt` itself
+    /// was never cancelled. Without the guard, that would be misclassified as "the turn was barged
+    /// in on" and silently swallowed by Spawn, with no log and no `response.done` ever reaching the
+    /// guest. This test proves the opposite codepath: a tool executor that throws a
+    /// `TaskCanceledException` whose OWN internal token (not `turnCt`) is cancelled must fall
+    /// through to the generic `catch (Exception ex)` -- logged as an error, with the turn still
+    /// finishing normally (synthetic tool-failure message, final chat round, response.done).</summary>
+    [Fact]
+    public async Task RunSessionAsync_ToolCallThrowsTimeoutUnrelatedToBargeIn_StillLogsAndSendsResponseDone()
+    {
+        var (persona, loader) = LoadDeltaFixture();
+        var handler = new RoutingFoundryHandler()
+            .EnqueueChatMessage("assistant", "Welcome!")
+            .EnqueueSpeech([1, 2])
+            .EnqueueTranscript("hi")
+            .EnqueueChatMessage("assistant", null, toolCalls: new JsonArray
+            {
+                new JsonObject
+                {
+                    ["id"] = "call_1",
+                    ["type"] = "function",
+                    ["function"] = new JsonObject { ["name"] = "search", ["arguments"] = "{}" },
+                },
+            })
+            .EnqueueChatMessage("assistant", "Sorry, something went wrong.") // the final round after the synthetic tool-failure message
+            .EnqueueSpeech([9, 9]);
+
+        var toolExecutor = new RecordingToolExecutor(
+            ["search"],
+            (_, _, _) =>
+            {
+                // Simulates an HttpClient-internal timeout: its OWN CancellationTokenSource is
+                // cancelled (unrelated to turnCt, which stays live throughout this test), so
+                // `ex is OperationCanceledException` is true but `turnCt.IsCancellationRequested`
+                // is false.
+                using var unrelatedCts = new CancellationTokenSource();
+                unrelatedCts.Cancel();
+                throw new TaskCanceledException("simulated HttpClient-internal timeout, unrelated to any barge-in", null, unrelatedCts.Token);
+            });
         var logger = new RecordingLogger();
         var processor = NewProcessor(handler, toolExecutor, loader, logger: logger);
         var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
@@ -502,21 +603,19 @@ public sealed class CascadeProcessorTests
             ],
             ReceiveDelay);
 
-        // The cancellation must propagate out of ExecuteToolCallAsync and be swallowed silently
-        // by Spawn's own catch (OperationCanceledException) -- so RunSessionAsync itself must
-        // complete normally, not throw.
-        await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "sess-cancel-tool", TestContext.Current.CancellationToken);
+        await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "sess-timeout-not-bargein", TestContext.Current.CancellationToken);
 
-        Assert.DoesNotContain(logger.Entries, e => e.Level >= LogLevel.Warning);
+        // Must be logged as an error (not silently swallowed), and the turn must still finish:
+        // the generic catch's synthetic failure message gets threaded back in and a final chat
+        // round + response.done + spoken answer still happen.
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Error && e.Exception is TaskCanceledException);
 
         var frames = socket.SentMessages.Where(m => m.MessageType == WebSocketMessageType.Text).Select(ParseSent).ToList();
         var types = frames.Select(f => f["type"]!.GetValue<string>()).ToList();
-
-        // Only the greeting's turn completed: the guest turn was cut short by the cancellation
-        // before reaching its own tool-response frame or response.done.
-        Assert.Equal(1, types.Count(t => t == "response.done"));
-        Assert.DoesNotContain(types, t => t == "extension.middle_tier_tool_response");
+        Assert.Equal(2, types.Count(t => t == "response.done")); // greeting + guest turn
+        Assert.Equal("Sorry, something went wrong.", frames.Last(f => f["type"]!.GetValue<string>() == "response.audio_transcript.delta")["delta"]!.GetValue<string>());
     }
+
 
     [Fact]
     public async Task RunSessionAsync_TranscriptionRateLimitExhausted_EndsTurnCleanlyWithFinalNotice()
@@ -576,5 +675,88 @@ public sealed class CascadeProcessorTests
         var finalNotice = frames.Last(f => f["type"]!.GetValue<string>() == CascadeRateLimit.RateLimitedEvent);
         Assert.True(finalNotice["final"]!.GetValue<bool>());
         Assert.Equal(3, handler.TranscribeRequestCount); // attempt 0 + 2 retries, then exhausted
+    }
+
+    /// <summary>#236 Rick re-review item 2 (MEDIUM, blocking): `extension.set_voice` must go
+    /// through <see cref="ClientServerFilter.SanitizeVoice"/> with the same default allow-list
+    /// RealtimeProcessor uses (<see cref="ClientServerFilter.DefaultAllowedVoices"/>), exactly
+    /// mirroring <c>RealtimeProcessor.HandleClientExtensionMessageAsync</c>'s own
+    /// `extension.set_voice` branch -- not accept any non-empty string as the old code did. A
+    /// known-good voice must be adopted and used for the NEXT turn's TTS request.</summary>
+    [Fact]
+    public async Task RunSessionAsync_SetVoiceWithAKnownVoice_IsAdoptedForTheNextTurnsTts()
+    {
+        var (persona, loader) = LoadDeltaFixture();
+        var handler = new RoutingFoundryHandler()
+            .EnqueueChatMessage("assistant", "Welcome!")
+            .EnqueueSpeech([1, 2]) // greeting's own TTS -- happens before extension.set_voice is even processed.
+            .EnqueueTranscript("hi")
+            .EnqueueChatMessage("assistant", "We have a great burger today!")
+            .EnqueueSpeech([3, 4]); // the guest turn's own TTS -- must use the newly adopted voice.
+
+        var processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader);
+        var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
+
+        var loudChunk = Pcm16(20000, count: 10);
+        var silentChunk = Pcm16(0, count: 4800);
+        var socket = new DelayedFakeWebSocket(
+            [
+                (SetVoiceFrame("echo"), WebSocketMessageType.Text),
+                (AppendFrame(loudChunk), WebSocketMessageType.Text),
+                (AppendFrame(silentChunk), WebSocketMessageType.Text),
+                ([], WebSocketMessageType.Close),
+            ],
+            ReceiveDelay);
+
+        await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "sess-set-voice-ok", TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, handler.SpeakRequestBodies.Count);
+        var guestTurnTtsRequest = JsonNode.Parse(handler.SpeakRequestBodies[1])!.AsObject();
+        Assert.Equal("echo", guestTurnTtsRequest["voice"]!.GetValue<string>());
+    }
+
+    /// <summary>#236 Rick re-review item 2: an unknown/invalid voice must be DROPPED (logged as a
+    /// warning, `state.Voice` left unchanged) rather than adopted, mirroring
+    /// RealtimeProcessor's own drop-and-warn behaviour exactly. This is the C# counterpart to
+    /// #253's Python-only conformance row
+    /// "Cascade_extension_set_voice_with_an_unknown_voice_is_dropped_not_adopted" (tag
+    /// `Dotnet=ready` once #253 merges).</summary>
+    [Fact]
+    public async Task RunSessionAsync_SetVoiceWithAnUnknownVoice_IsDroppedNotAdopted()
+    {
+        var (persona, loader) = LoadDeltaFixture();
+        var handler = new RoutingFoundryHandler()
+            .EnqueueChatMessage("assistant", "Welcome!")
+            .EnqueueSpeech([1, 2])
+            .EnqueueTranscript("hi")
+            .EnqueueChatMessage("assistant", "We have a great burger today!")
+            .EnqueueSpeech([3, 4]);
+
+        var logger = new RecordingLogger();
+        var processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader, logger: logger);
+        var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
+
+        var loudChunk = Pcm16(20000, count: 10);
+        var silentChunk = Pcm16(0, count: 4800);
+        var socket = new DelayedFakeWebSocket(
+            [
+                (SetVoiceFrame("not-a-real-voice"), WebSocketMessageType.Text),
+                (AppendFrame(loudChunk), WebSocketMessageType.Text),
+                (AppendFrame(silentChunk), WebSocketMessageType.Text),
+                ([], WebSocketMessageType.Close),
+            ],
+            ReceiveDelay);
+
+        await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "sess-set-voice-bad", TestContext.Current.CancellationToken);
+
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning && e.Message.Contains("Dropped extension.set_voice"));
+
+        Assert.Equal(2, handler.SpeakRequestBodies.Count);
+        var greetingTtsRequest = JsonNode.Parse(handler.SpeakRequestBodies[0])!.AsObject();
+        var guestTurnTtsRequest = JsonNode.Parse(handler.SpeakRequestBodies[1])!.AsObject();
+        // Both turns must still use the persona's own default voice, not the rejected candidate --
+        // and, critically, the SAME voice the greeting used (proving state.Voice was never mutated).
+        Assert.NotEqual("not-a-real-voice", guestTurnTtsRequest["voice"]!.GetValue<string>());
+        Assert.Equal(greetingTtsRequest["voice"]!.GetValue<string>(), guestTurnTtsRequest["voice"]!.GetValue<string>());
     }
 }
