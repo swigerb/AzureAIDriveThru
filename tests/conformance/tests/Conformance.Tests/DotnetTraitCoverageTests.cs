@@ -240,6 +240,13 @@ namespace Conformance.Tests;
 /// alongside the pre-existing <c>Resuming_from_a_still_attached_socket_supersedes_it_with_4002</c>
 /// (kept as the simple well-behaved-peer baseline rather than overwritten, so 4002/CloseStatus
 /// coverage isn't lost). Measured directly the same way -- **276**. Raises the floor 275 to 276.
+///
+/// Rebase of #244 onto a since-advanced origin/dev (5 commits: the Browser conformance leg, a
+/// port-bind-race retry fix, the search-index C# port, an i18n deflake, and others) brought in
+/// other PRs' own newly-tagged <c>Dotnet=ready</c> rows on top of this branch's 276. Measured
+/// directly the same way (not projected by arithmetic) immediately after the rebase -- **286**.
+/// Raises the floor 276 to 286; this PR adds no new tagged rows of its own in this step, it is
+/// purely absorbing what had already landed on dev.
 /// </summary>
 public sealed class DotnetTraitCoverageTests
 {
@@ -262,12 +269,12 @@ public sealed class DotnetTraitCoverageTests
     };
 
     [Fact]
-    public void At_least_276_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
+    public void At_least_286_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
     {
         var count = CountFloorEligibleDotnetReadyTestMethods();
 
-        Assert.True(count >= 276,
-            $"Expected at least 276 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
+        Assert.True(count >= 286,
+            $"Expected at least 286 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
             $"and not unconditionally skip-gated by AuthRowCapability (the dotnet leg's " +
             $"`--filter \"{TraitName}={TraitValue}&Category!=Browser\"` baseline, minus the five " +
             "skip-only Scenarios/Auth classes -- see this class's own doc comment; " +
