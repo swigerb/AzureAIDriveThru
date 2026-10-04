@@ -394,9 +394,9 @@ class _RaisingJWKSClient:
 
 
 class _KeyedSigningKey:
-    """Unlike `_StubSigningKey`, carries the `kid` it belongs to -- needed so
-    `_CacheAwareJWKSClient.match_kid` below can tell keys apart by `kid`, the
-    same way `jwt.PyJWK`/`PyJWKClient.match_kid` do for real."""
+    """Unlike `_StubSigningKey`, carries the `kid` it belongs to, so
+    `_CacheAwareJWKSClient.get_signing_key_from_jwt` below can tell keys apart
+    by `kid` on its (simulated) network path."""
 
     def __init__(self, key, kid: str):
         self.key = key
@@ -405,14 +405,23 @@ class _KeyedSigningKey:
 
 class _CacheAwareJWKSClient:
     """A `jwt.PyJWKClient` stand-in that models its two load-bearing pieces of
-    behavior `_get_signing_key`'s cooldown-aware cache check now depends on
-    (#223 round 3, Rick's review): a `jwk_set_cache.get()` that returns a
-    cached set without any network call, and `get_signing_keys()`/`match_kid()`
-    that resolve a `kid` from that cached set alone. `get_signing_key_from_jwt`
-    simulates the real client's behavior: an already-cached `kid` resolves
-    without any trouble; a `kid` named in `failing_kids` simulates an unknown
-    `kid` whose forced refetch hits a live JWKS-endpoint fault (the exact
-    #223-round-2 body-read failure `_get_signing_key` already wraps)."""
+    behavior `_get_signing_key`'s cooldown-aware cache check depends on
+    (#223 round 3 / #246, Rick's review): a `jwk_set_cache.get()` that returns
+    a cached set without any network call, and that cached set being resolved
+    into a signing key with NO second cache read. `get_signing_key_from_jwt`
+    simulates the real client's (network) behavior: an already-cached `kid`
+    resolves without any trouble; a `kid` named in `failing_kids` simulates an
+    unknown `kid` whose forced refetch hits a live JWKS-endpoint fault (the
+    exact #223-round-2 body-read failure `_get_signing_key` already wraps).
+
+    #246: the real `jwt.PyJWKClient.jwk_set_cache.get()` returns the *raw*,
+    unparsed JWKS JSON dict (`fetch_data`'s `json.load` result goes straight
+    into the cache; `PyJWKClient.get_jwk_set()` is what calls
+    `PyJWKSet.from_dict` on the way out) -- NOT a parsed `PyJWKSet`. Production
+    code now parses that raw dict itself to resolve a cache-hit `kid` without
+    re-reading the cache, so this fake must cache the same raw, real-JWK-shaped
+    dict a real JWKS endpoint would return, or `PyJWKSet.from_dict` in
+    production code would fail on it."""
 
     class _Cache:
         def __init__(self, cached_set):
@@ -424,23 +433,18 @@ class _CacheAwareJWKSClient:
     def __init__(self, cached_keys: dict[str, _KeyedSigningKey], failing_kids: set[str]):
         self._cached_keys = cached_keys
         self._failing_kids = failing_kids
-        # A non-`None` cache payload here just needs to be non-`None` -- its
-        # actual shape is never inspected by `_get_signing_key`, only passed
-        # to `get_signing_keys()` below (mirroring the real client, where the
-        # cache stores the raw JWKS JSON and `get_signing_keys()` is what
-        # parses it).
-        self.jwk_set_cache = self._Cache({"keys": list(cached_keys)} if cached_keys else None)
+        raw_keys = [
+            {**jwt.algorithms.RSAAlgorithm.to_jwk(signing_key.key, as_dict=True), "kid": kid, "use": "sig"}
+            for kid, signing_key in cached_keys.items()
+        ]
+        self.jwk_set_cache = self._Cache({"keys": raw_keys} if raw_keys else None)
         self.calls: list[str] = []  # kids actually looked up over the network
 
-    def get_signing_keys(self):
-        return list(self._cached_keys.values())
-
-    @staticmethod
-    def match_kid(signing_keys, kid):
-        for key in signing_keys:
-            if key.kid == kid:
-                return key
-        return None
+    # The real `PyJWKClient.match_kid` is a `@staticmethod` that only compares
+    # `key.key_id` -- reuse it as-is so production code's cache-hit path
+    # (which passes real, parsed `jwt.PyJWK` objects) resolves identically
+    # against this fake and against the real client.
+    match_kid = staticmethod(jwt.PyJWKClient.match_kid)
 
     def get_signing_key_from_jwt(self, token):
         kid = jwt.get_unverified_header(token).get("kid")
@@ -1022,6 +1026,47 @@ class JwksCachingAndThreadingTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(EntraUnauthorized):
                 await self.validator.validate(token_2)
             self.assertEqual(opener_open.call_count, 1)
+
+    async def test_cooldown_cache_hit_reads_the_cache_exactly_once(self):
+        """#246 (Rick's review of #225): `JWKSetCache.get()` re-checks expiry
+        on every call, so it's not a one-shot snapshot -- if the cooldown
+        cache-hit path in `_get_signing_key` ever read it twice (e.g. a
+        regression back to resolving the `kid` via `client.get_signing_keys()`,
+        which internally calls `get_jwk_set(False)` -> another
+        `jwk_set_cache.get()`), the cache could validly answer the first read
+        with a hit and the (now impossible, microseconds-later) second read
+        with a miss, falling through to a live, un-tried-for network fetch
+        inside the one branch that exists specifically to avoid one. Pins the
+        fix directly against the real `jwt.PyJWKClient`/`JWKSetCache` by
+        patching `JWKSetCache.get` to return a valid cached set on the first
+        call and `None` on any second call: resolution must still succeed,
+        and the patched `get` must be called exactly once."""
+        kid = "kid-a"
+        jwk_dict = jwt.algorithms.RSAAlgorithm.to_jwk(self.public_key, as_dict=True)
+        jwk_dict.update({"kid": kid, "use": "sig"})
+        valid_raw_jwks = {"keys": [jwk_dict]}
+
+        client = self.validator._get_jwks_client()  # noqa: SLF001 -- real jwt.PyJWKClient
+        # Populate the cache directly (no network call) with exactly the raw,
+        # unparsed shape `fetch_data()` would have cached from a real JWKS
+        # response -- `JWKSetCache.get()` returns this same raw dict, never a
+        # parsed `PyJWKSet` (only `PyJWKClient.get_jwk_set()` parses it).
+        client.jwk_set_cache.put(valid_raw_jwks)
+
+        # Simulate the cooldown already being engaged by some earlier, failed
+        # refetch attempt (the scenario `_get_signing_key`'s cache-hit branch
+        # exists for) without needing to actually trigger and fail one here.
+        with self.validator._lock:  # noqa: SLF001
+            self.validator._jwks_failure_until = time.monotonic() + 60.0  # noqa: SLF001
+
+        token = self._sign(_claims(self.settings), kid=kid)
+        with mock.patch.object(
+            type(client.jwk_set_cache), "get", side_effect=[valid_raw_jwks, None]
+        ) as cache_get:
+            principal = await self.validator.validate(token)
+
+        self.assertEqual(principal["oid"], "oid-abc-123")
+        cache_get.assert_called_once()
 
     async def test_validate_runs_the_synchronous_work_through_to_thread(self):
         """`validate()` must hand its synchronous PyJWT work to `asyncio.to_thread`
