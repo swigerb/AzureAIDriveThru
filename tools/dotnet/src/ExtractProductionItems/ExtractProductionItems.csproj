@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>ExtractProductionItems</RootNamespace>
+    <AssemblyName>ExtractProductionItems</AssemblyName>
+    <!--
+      Issue #16 batch 1: scripts/extract_production_items.py -> this project. A faithful,
+      byte-for-byte-stdout port (see ProductionItemsExtractor.cs), not a redesign. See
+      docs/dotnet_tooling.md for why this tool was chosen next (no Azure/network dependency,
+      deterministic, pure read-only report) and how its output is proven to match the Python
+      twin (ExtractProductionItems.Tests/PythonParityTests.cs).
+    -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="ExtractProductionItems.Tests" />
+  </ItemGroup>
+
+</Project>
