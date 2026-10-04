@@ -98,10 +98,15 @@ jobs:
       # then fail "issue is not open" on a green merge (#105 R1, round 2, Rick's PR #153
       # review -- the previous single-match, four-keyword regex missed close/closed/fix/
       # fixed/resolve/resolved and any match after the first).
-      # #227 (Rick's review of PR #220): also passes the PR's TITLE -- a bare '#N' there now
-      # counts as a reference too (not a closer; titles have no closing-keyword syntax), and
-      # a keyword followed by a comma-/"and"-separated list of refs ("Refs #76, #63") now
-      # yields every number in the list, not just the first.
+      # #227 (Rick's review of PR #220): also passes the PR's TITLE -- a bare '#N' there counts
+      # as a reference too, and a keyword followed by a comma-/"and"-separated list of refs
+      # ("Refs #76, #63") now yields every number in the list, not just the first.
+      # #227 round 2 (Rick's review of PR #231): a keyword-prefixed ref in the TITLE (e.g.
+      # "Fix #N: ...") now counts as a CLOSER too, not just a reference -- dev squash-merges
+      # with squash_merge_commit_title: COMMIT_OR_PR_TITLE, so GitHub's own keyword scan runs
+      # against that title on merge; a bare '#N' with no keyword stays reference-only. The
+      # comma-/"and"-separated list also now handles the Oxford-comma case ("Refs #1, #2, and
+      # #3"), which previously dropped the last number.
       # Written to $GITHUB_ENV (not interpolated into the run script) specifically to avoid
       # a script-injection risk from untrusted PR-body/title content.
       - name: Determine this PR's own issue reference

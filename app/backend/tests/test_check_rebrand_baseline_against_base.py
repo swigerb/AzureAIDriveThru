@@ -544,7 +544,12 @@ class TestParsePrIssueRefs(unittest.TestCase):
         self.assertEqual(closes, frozenset())
 
     def test_comma_separated_list_after_closing_keyword_closes_every_number(self):
-        """'Fixes #1, #2' must close BOTH #1 and #2, not just the first."""
+        """The checker treats 'Fixes #1, #2' as closing BOTH #1 and #2, not just the first --
+        this is the checker's own, deliberately conservative design choice (so item 3b's
+        self-citation guard never under-counts what a PR might close), not a claim about
+        GitHub's actual auto-close behavior: GitHub requires its own closing keyword
+        immediately before EACH '#N' to auto-close that specific issue, so a literal
+        'Fixes #1, #2' only auto-closes #1 on GitHub itself."""
         issues, closes = checker.parse_pr_issue_refs("Fixes #1, #2")
         self.assertEqual(issues, frozenset({"#1", "#2"}))
         self.assertEqual(closes, frozenset({"#1", "#2"}))
@@ -553,6 +558,24 @@ class TestParsePrIssueRefs(unittest.TestCase):
         issues, closes = checker.parse_pr_issue_refs("Closes #1, #2, #3")
         self.assertEqual(issues, frozenset({"#1", "#2", "#3"}))
         self.assertEqual(closes, frozenset({"#1", "#2", "#3"}))
+
+    def test_oxford_comma_list_extracts_every_number(self):
+        """#227 round 2 (Rick's review of PR #231): 'Refs #1, #2, and #3' previously dropped
+        '#3' -- the list continuation required a bare comma OR a bare 'and' before each
+        further ref, never both together, so the ', and #3' continuation (a comma
+        immediately followed by 'and') failed to match at all."""
+        issues, closes = checker.parse_pr_issue_refs("Refs #1, #2, and #3")
+        self.assertEqual(issues, frozenset({"#1", "#2", "#3"}))
+        self.assertEqual(closes, frozenset())
+
+    def test_comma_followed_by_unrelated_word_does_not_extend_the_list(self):
+        """', and the #2' must NOT be absorbed into the list -- the word 'the' between 'and'
+        and the ref breaks the required adjacency, so only '#1' is extracted from the
+        keyword match (the later bare '#2' mention has no keyword of its own and isn't
+        extracted either)."""
+        issues, closes = checker.parse_pr_issue_refs("Refs #1, and the #2 is unrelated")
+        self.assertEqual(issues, frozenset({"#1"}))
+        self.assertEqual(closes, frozenset())
 
     def test_and_separated_list_after_keyword_extracts_every_number(self):
         issues, closes = checker.parse_pr_issue_refs("Refs #10 and #20")
@@ -577,6 +600,23 @@ class TestParsePrIssueRefs(unittest.TestCase):
         self.assertEqual(issues, frozenset({"#227"}))
         self.assertEqual(closes, frozenset())
 
+    def test_keyword_prefixed_title_ref_closes_too(self):
+        """#227 round 2 (Rick's review of PR #231): dev squash-merges with
+        squash_merge_commit_title: COMMIT_OR_PR_TITLE, so a closing keyword in the PR's TITLE
+        becomes the squash commit's subject and really does close the issue on merge (proof:
+        issue #163 was closed by the squash merge of PR #222, whose body said only "Refs
+        #163"; its title, "Fix #163: ...", is what actually closed it). A keyword-prefixed
+        title ref must land in *closing_issues*, not just *all_issues* -- unlike a bare,
+        keyword-less title mention (see the test above), which still only references."""
+        issues, closes = checker.parse_pr_issue_refs("", title="Fix #169: remove dead code")
+        self.assertEqual(issues, frozenset({"#169"}))
+        self.assertEqual(closes, frozenset({"#169"}))
+
+    def test_title_keyword_close_and_body_ref_are_unioned(self):
+        issues, closes = checker.parse_pr_issue_refs("Refs #5", title="Fix #169: remove dead code")
+        self.assertEqual(issues, frozenset({"#169", "#5"}))
+        self.assertEqual(closes, frozenset({"#169"}))
+
     def test_title_refs_are_unioned_with_body_refs(self):
         issues, closes = checker.parse_pr_issue_refs("Fixes #1", title="See also #2")
         self.assertEqual(issues, frozenset({"#1", "#2"}))
@@ -591,25 +631,32 @@ class TestParsePrIssueRefs(unittest.TestCase):
         self.assertEqual(closes, frozenset({"#1"}))
 
     def test_live_pr_220_body_shape_extracts_both_issues(self):
-        """Regression-pins the exact live shape that surfaced this bug (#227): PR #220's body
-        opens with '## Refs #76, #63' (the "### #76: ..." / "### #63: ..." section headings
-        further down have no keyword before the '#N', so they don't themselves match) and its
-        title is 'Fix #76: ... / Refs #63: ...'. Both #76 and #63 must end up in *issues*
-        (from the body's "Refs #76, #63" list, and independently from the title's bare
-        mentions). *closes* must be EMPTY: the body's only keyword match is "Refs" (not a
-        closer), and a title's bare '#N' mentions never count toward closing_issues regardless
-        of what word precedes them in the title text (see parse_pr_issue_refs()'s docstring)."""
+        """Regression-pins the exact live shape that surfaced this bug (#227): PR #220's real
+        title is 'Refs #76, #63: real-persona extras conformance rows / harness follow-ups'
+        (no closing keyword -- it was deliberately retitled away from an earlier "Fix #76"
+        draft, see the body excerpt below) and its real body opens with '## Refs #76, #63'
+        and, later, quotes that earlier draft commit subject verbatim: 'Reworded commit
+        ...'s subject from "Fix #76: ..." to "Refs #76: ..."'. That quoted "Fix #76:" text is
+        itself a live keyword match as far as the regex is concerned (it has no notion of
+        quotation marks or past tense), so *closes* really does end up as {'#76'} for this
+        PR, even though the PR's own intent (and its final title) was reference-only for both
+        issues -- pinning this exact, slightly surprising real shape so a future regex change
+        doesn't silently alter it without the test failing."""
+        title = "Refs #76, #63: real-persona extras conformance rows / harness follow-ups"
         body = (
             "## Refs #76, #63\n\n"
             "### #76: real-persona extras conformance rows\n\n"
             "- New conformance coverage for real personas with extras.\n\n"
-            "### #63: harness follow-ups\n\n"
-            "- Follow-up fixes to the conformance harness.\n"
+            "### #63 checklist triage\n\n"
+            "- Follow-up fixes to the conformance harness.\n\n"
+            '**3 (blocking) -- don\'t close #76.** Retitled this PR to "Refs #76, #63: ..." '
+            "(no closing keyword). Reworded commit `641693e`'s subject from \"Fix #76: ...\" "
+            'to "Refs #76: ..." via `git commit-tree`-based history rewrite + '
+            "force-push-with-lease.\n"
         )
-        title = "Fix #76: real-persona extras conformance rows / Refs #63: harness follow-ups"
         issues, closes = checker.parse_pr_issue_refs(body, title)
         self.assertEqual(issues, frozenset({"#76", "#63"}))
-        self.assertEqual(closes, frozenset())
+        self.assertEqual(closes, frozenset({"#76"}))
 
 
 if __name__ == "__main__":
