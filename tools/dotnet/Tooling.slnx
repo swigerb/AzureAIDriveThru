@@ -3,10 +3,12 @@
     <Project Path="src/UpdateMenuSizes/UpdateMenuSizes.csproj" />
     <Project Path="src/ExtractProductionItems/ExtractProductionItems.csproj" />
     <Project Path="src/SearchIndexRequestBuilder/SearchIndexRequestBuilder.csproj" />
+    <Project Path="src/SearchIndexIngestor/SearchIndexIngestor.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/UpdateMenuSizes.Tests/UpdateMenuSizes.Tests.csproj" />
     <Project Path="tests/ExtractProductionItems.Tests/ExtractProductionItems.Tests.csproj" />
     <Project Path="tests/SearchIndexRequestBuilder.Tests/SearchIndexRequestBuilder.Tests.csproj" />
+    <Project Path="tests/SearchIndexIngestor.Tests/SearchIndexIngestor.Tests.csproj" />
   </Folder>
 </Solution>

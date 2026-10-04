@@ -26,9 +26,21 @@ public static class EnabledPersonaDiscovery
     /// <summary>One enabled persona's id, search index name, and menu data path.</summary>
     public sealed record DiscoveredPersona(string PersonaId, string IndexName, string MenuPath);
 
-    public static IReadOnlyList<DiscoveredPersona> DiscoverAll(string repoRoot)
+    /// <param name="repoRoot">The repo root to look for a <c>personas</c> directory under, when
+    /// <paramref name="personasDirOverride"/> is not given.</param>
+    /// <param name="personasDirOverride">Issue #16 (SearchIndexIngestor's <c>--personas-dir</c>
+    /// flag): an explicit directory to use INSTEAD of <c>&lt;repoRoot&gt;/personas</c>, matching
+    /// setup_search_index.py's own <c>--personas-dir</c> -&gt;
+    /// <c>PersonaCatalog.load(personas_dir=...)</c> precedence -- an explicit value here always
+    /// wins, the same way Python's explicit constructor argument beats its own <c>PERSONAS_DIR</c>
+    /// environment-variable fallback. <c>null</c>/empty (the default, and
+    /// SearchIndexRequestBuilder's only caller) means "use repoRoot/personas", matching this
+    /// method's original, pre-#16-orchestration behaviour exactly.</param>
+    public static IReadOnlyList<DiscoveredPersona> DiscoverAll(string repoRoot, string? personasDirOverride = null)
     {
-        var personasDir = Path.Combine(repoRoot, "personas");
+        var personasDir = string.IsNullOrEmpty(personasDirOverride)
+            ? Path.Combine(repoRoot, "personas")
+            : personasDirOverride;
         if (!Directory.Exists(personasDir))
         {
             throw new InvalidOperationException(

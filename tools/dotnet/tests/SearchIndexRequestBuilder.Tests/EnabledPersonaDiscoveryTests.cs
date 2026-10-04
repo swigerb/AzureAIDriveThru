@@ -91,4 +91,45 @@ public sealed class EnabledPersonaDiscoveryTests : IDisposable
         var ex = Assert.Throws<InvalidOperationException>(() => EnabledPersonaDiscovery.DiscoverAll(_repoRoot));
         Assert.Contains("search.indexName", ex.Message);
     }
+
+    [Fact]
+    public void DiscoverAll_UsesPersonasDirOverride_InsteadOfRepoRootPersonas_WhenGiven()
+    {
+        // Issue #16 (SearchIndexIngestor's --personas-dir flag): an explicit override bypasses
+        // <repoRoot>/personas entirely -- even one that exists and has its own (different)
+        // personas -- matching persona_loader.PersonaCatalog.load(personas_dir=...)'s own
+        // "explicit argument wins outright" precedence.
+        CreatePersona("repo-root-persona", "repo-root-menu-items");
+
+        var overrideDir = Path.Combine(Path.GetTempPath(), $"squanchy-personas-dir-override-{Guid.NewGuid():n}");
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(overrideDir, "fixture-persona", "menu"));
+            File.WriteAllText(
+                Path.Combine(overrideDir, "fixture-persona", "persona.json"),
+                "{\"search\": {\"indexName\": \"fixture-menu-items\"}}");
+            File.WriteAllText(
+                Path.Combine(overrideDir, "fixture-persona", "menu", "menuItems.json"),
+                """{"menuItems": []}""");
+
+            var result = EnabledPersonaDiscovery.DiscoverAll(_repoRoot, overrideDir);
+
+            var persona = Assert.Single(result);
+            Assert.Equal("fixture-persona", persona.PersonaId);
+            Assert.Equal("fixture-menu-items", persona.IndexName);
+        }
+        finally
+        {
+            Directory.Delete(overrideDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void DiscoverAll_IgnoresPersonasDirOverride_WhenNullOrEmpty()
+    {
+        CreatePersona("alpha", "alpha-menu-items");
+
+        Assert.Equal(["alpha"], EnabledPersonaDiscovery.DiscoverAll(_repoRoot, null).Select(p => p.PersonaId));
+        Assert.Equal(["alpha"], EnabledPersonaDiscovery.DiscoverAll(_repoRoot, "").Select(p => p.PersonaId));
+    }
 }
