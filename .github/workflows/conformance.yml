@@ -572,6 +572,105 @@ jobs:
             tests/conformance/conformance-browser-output.log
           retention-days: 7
 
+  # Issue #21 (Browser-on-C#): the dotnet counterpart to conformance-browser above, filtered to
+  # Category=Browser&Dotnet=ready -- exactly the Browser scenarios docs/dotnet_mapping.md
+  # documents as green against the C# realtime relay/order pipeline today (PersonaSwitchBrowserTests
+  # rows A-D, ScrollPositionBrowserTests, BrowserFixtureEnvironmentTests; OrderResumeBrowserTests
+  # and PersonaSwitchBrowserTests rows E/E2/reload-resume stay untagged until extension.resume and
+  # the 4000 idle-timeout close land in #15 -- see those files' own doc comments). Kept as its own
+  # job, same rationale as conformance-browser: a real-browser failure/timeout must never block or
+  # slow down the fast black-box dotnet leg (the `conformance` matrix job's own
+  # --filter "Dotnet=ready&Category!=Browser"), and this job's browser dependency stays isolated
+  # from that leg too. Mirrors conformance-browser's Python/Node/browser-channel setup exactly,
+  # plus the `conformance` matrix job's "dotnet restore and build app/backend-dotnet" step (its own
+  # DotnetBackendLauncher needs Backend.dll already built, same as every other dotnet leg).
+  conformance-browser-dotnet:
+    name: Conformance suite (backend=dotnet, Category=Browser)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/frontend/package-lock.json
+
+      - name: Build frontend (app/backend/static is gitignored and required by Program.cs's static-file serving)
+        working-directory: app/frontend
+        # Same Development pass-through rationale as conformance-browser (item B1, PR GH-148
+        # review round 2) -- an unset VITE_AUTH_MODE now fails `npm run build` outright.
+        env:
+          VITE_AUTH_MODE: Development
+        run: |
+          npm ci
+          npm run build
+
+      - name: Set up .NET ${{ env.DOTNET_VERSION }}
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Cache NuGet packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('tests/conformance/Directory.Packages.props', 'tests/conformance/**/*.csproj', 'tests/conformance/**/packages.lock.json', 'app/backend-dotnet/Directory.Packages.props', 'app/backend-dotnet/**/*.csproj', 'app/backend-dotnet/**/packages.lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: dotnet restore tests/conformance (locked mode)
+        working-directory: tests/conformance
+        run: dotnet restore Conformance.slnx --locked-mode
+
+      - name: dotnet restore and build app/backend-dotnet
+        # Same rationale as the `conformance` job's identically-named step (dotnet leg only
+        # there): pre-building here means DotnetBackendLauncher's launch at test time has nothing
+        # left to do but start the already-built process, so a cold restore/build never eats into
+        # WaitForHealthAsync's 60s health-check timeout.
+        working-directory: app/backend-dotnet
+        run: |
+          dotnet restore Backend.slnx --locked-mode
+          dotnet build Backend.slnx --no-restore
+
+      - name: Verify a supported browser channel is installed (never downloaded by this job)
+        run: |
+          if command -v google-chrome-stable >/dev/null 2>&1 || command -v google-chrome >/dev/null 2>&1 || command -v microsoft-edge-stable >/dev/null 2>&1 || command -v microsoft-edge >/dev/null 2>&1; then
+            echo "Found an installed browser channel."
+          else
+            echo "::error::No installed msedge/chrome channel found on this runner -- Conformance.Harness.BrowserChannelPolicy fails the Category=Browser suite loudly in CI rather than skip it silently (see the runner-image regression note in conformance-browser's own comment)." >&2
+            exit 1
+          fi
+
+      - name: dotnet test tests/conformance --filter Category=Browser&Dotnet=ready
+        working-directory: tests/conformance
+        env:
+          CONFORMANCE_BACKEND: dotnet
+        run: |
+          set -o pipefail
+          dotnet test Conformance.slnx \
+            --no-restore \
+            --filter "Category=Browser&Dotnet=ready" \
+            --logger "trx;LogFileName=conformance-browser-dotnet.trx" \
+            --logger "console;verbosity=detailed" \
+            --results-directory TestResults \
+            --blame-hang --blame-hang-timeout 10min --blame-hang-dump-type mini \
+            --blame-crash --blame-crash-dump-type mini \
+            2>&1 | tee conformance-browser-dotnet-output.log
+
+      - name: Upload browser conformance test results on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: conformance-results-browser-dotnet
+          path: |
+            tests/conformance/TestResults
+            tests/conformance/conformance-browser-dotnet-output.log
+          retention-days: 7
+
   # Issue #129 (Rick, blocks #87 deploy): the Docker build context was ./app, but the Dockerfile's
   # COPY instructions (frontend/, backend/, personas/) assume the repo root, and nothing in CI ever
   # built the image -- so the break (personas/ never found) went unnoticed since #92. This job
@@ -856,7 +955,7 @@ jobs:
   # required check that never ran is not the same as a required check that explicitly failed.
   conformance-gate:
     name: conformance-gate
-    needs: [python-tests, frontend-tests, dotnet-tests, conformance, conformance-browser, docker-build, docker-build-dotnet]
+    needs: [python-tests, frontend-tests, dotnet-tests, conformance, conformance-browser, conformance-browser-dotnet, docker-build, docker-build-dotnet]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5

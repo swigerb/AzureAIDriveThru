@@ -42,6 +42,14 @@ namespace Conformance.Tests.Scenarios.Browser;
 ///    scenarios are actually about; a populated order ticket is not required to prove any of the
 ///    six behaviors this suite is scoped to (drop/reconnect identity, nudge-once, idle-no-
 ///    reconnect, reload-tap-to-continue, strict-autoplay, tap-while-reconnecting).
+///
+/// Issue #21 (Browser-on-C#): deliberately left entirely untagged (no <c>Dotnet=ready</c>
+/// anywhere in this file). Every one of this class's scenarios needs extension.resume/session
+/// rehydration, the 4002 supersede-close, or the 4000 idle-timeout close -- all explicitly #15
+/// per RealtimeProcessor.cs's own class doc comment ("session resume/rehydration itself ... need
+/// a real session registry and land with #15"). Confirmed empirically against
+/// CONFORMANCE_BACKEND=dotnet: all 5 methods time out waiting for a resume/idle-close signal the
+/// C# backend never sends yet. Re-check this whole class once #15 lands.
 /// </summary>
 [Collection(BrowserConformanceCollection.Name)]
 [Trait("Category", "Browser")]

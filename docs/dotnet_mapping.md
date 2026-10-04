@@ -375,6 +375,72 @@ See the comments left on those issues directly for this wave's position. Summary
   "Conformance `[Trait("Dotnet", "ready")]` tagging -- unblocked by #13/#140, landed in PR #149"
   above for the full reasoning and the 3 remaining untagged failure-cap methods.
 
+### Issue #21 (Wave 6 early): Browser-on-C# enablement
+
+The `Category=Browser` subset (`tests/conformance/tests/Conformance.Tests/Scenarios/Browser`) ran
+only against Python until now. No code change was needed to make the fixture itself
+backend-agnostic: `BrowserConformanceFixture`'s inner `BrowserTimersBackendFixture` was already a
+plain `ConformanceFixture` subclass going through the same `IBackendUnderTest`/
+`BackendLauncherFactory` abstraction (`CONFORMANCE_BACKEND=dotnet`) every other scenario uses, and
+both backends already serve the same built frontend from `app/backend/static`
+(`Program.cs`'s `STATIC_FILES_DIR`/`TryFindStaticDir()` fallback matches Python's `app.py`
+exactly) -- `StaticIndexHtmlTests` already proved this. Confirmed empirically: running the whole
+Browser suite with `CONFORMANCE_BACKEND=dotnet` and zero code changes produced a clean 10/18 pass
+split with no infrastructure failures, only capability-gap failures (below).
+
+Added a dedicated `conformance-browser-dotnet` CI job (`.github/workflows/conformance.yml`),
+mirroring `conformance-browser`'s (Python) structure plus the `conformance` matrix job's "dotnet
+restore and build app/backend-dotnet" step, filtered to `--filter "Category=Browser&Dotnet=ready"`
+with `CONFORMANCE_BACKEND=dotnet`. Added to `conformance-gate`'s `needs:` array. Kept as its own job
+(not folded into the `conformance` matrix, which still explicitly excludes
+`Category=Browser` per PR #54's blocker B2) so a real-browser failure/timeout never blocks the fast
+black-box dotnet leg, same rationale as `conformance-browser`.
+
+Ran every Browser test 3x against `CONFORMANCE_BACKEND=dotnet` locally (Playwright against the
+runner's installed Edge/Chrome channel, built frontend via `VITE_AUTH_MODE=Development`). Tagged
+10 floor-eligible `[Trait("Dotnet", "ready")]` methods, all passing 3/3 with zero flakes:
+- `BrowserFixtureEnvironmentTests` -- full class (4 methods), class-level tag. Pure reflection over
+  the fixture's static shape, never starts a backend, so it is backend-agnostic by construction.
+- `ScrollPositionBrowserTests` -- full class (2 methods, 3 persona rows each), class-level tag.
+  Only loads the built frontend from static files and reads `window.scrollY`/DOM layout; never
+  touches the realtime relay or order pipeline.
+- `PersonaSwitchBrowserTests` -- 4 of 7 methods, method-level tags: `Settled_tap_...`,
+  `Immediate_tap_...` (smoke cases A/B), `Mic_tap_while_the_switch_fetch_is_still_pending_...`
+  (case C, held-fetch race inside a still-open socket), `Held_old_close_past_the_new_sockets_open_...`
+  (case D, held onclose-handler race). None of these four depend on the idle-timeout sweep or
+  resume.
+
+Deliberately left untagged (capability gaps, not flakes -- confirmed by reading
+`RealtimeProcessor.cs`'s own class doc comment, which lists these as deferred to #15):
+- `OrderResumeBrowserTests` -- all 5 methods. Every scenario needs `extension.resume`/session
+  rehydration, the 4002 supersede-close, or the 4000 idle-timeout close.
+- `PersonaSwitchBrowserTests.Idle_closed_socket_then_persona_switch_then_tap_recovers_the_new_personas_session`
+  and its held-fetch sibling (cases E/E2) -- both wait for the backend's own idle-timeout close to
+  land first; against `CONFORMANCE_BACKEND=dotnet` both time out after 40s with "Timed out ...
+  waiting for the test-alpha socket's own idle-timeout close to land".
+- `PersonaSwitchBrowserTests.Reload_then_resume_then_switch_through_the_confirm_dialog_delivers_only_to_the_new_personas_session`
+  -- needs a reload to resume a non-empty order, i.e. `extension.resume` itself.
+
+Mutation-checked `PersonaSwitchBrowserTests.Settled_tap_...` against C#: temporarily forced
+`RealtimeProcessor.cs`'s `BuildGreetingFrame()` to always take its generic-fallback branch instead
+of the persona-specific `promptLoader.Greeting` prompt, rebuilt, and confirmed the test goes red
+(`Assert.Contains() Failure: Sub-string not found` on the greeting-substring assertion) -- proving
+this tagged row genuinely exercises the C# persona-prompt wiring, not just transport plumbing.
+Reverted and reconfirmed green.
+
+Floor interaction (`DotnetTraitCoverageTests.CountFloorEligibleDotnetReadyTestMethods`): this
+method has no `Category` filter of its own -- it counts every effectively-`Dotnet=ready`-tagged
+method in the assembly regardless of category, even though the prose in its own doc comment
+describes the count as mirroring the dotnet matrix leg's `Category!=Browser` filter. That means
+these 10 newly-tagged Browser rows DO inflate the underlying count (213 -> 223 in this revision),
+even though the `conformance` matrix job's dotnet leg still never runs them (filtered out by its
+own `Category!=Browser`). The `>= 204` floor assertion is unaffected either way (both 213 and 223
+satisfy it) and this file was not edited for this round, per the floor-coordination freeze across
+#230/#226/#235 -- flagging here for whoever picks the floor coordination back up: either exclude
+`Category=Browser` methods from `CountFloorEligibleDotnetReadyTestMethods` to make the count
+actually mirror the matrix leg's filter, or accept that Browser rows are double-counted against a
+floor they don't contribute to in the job that floor describes.
+
 ## Issue #13 (S3): `RealtimeProcessor` browser&lt;-&gt;Azure OpenAI Realtime GA relay
 
 `RealtimeProcessor.ProcessAsync` is no longer a no-op stub: it dials the upstream Azure OpenAI

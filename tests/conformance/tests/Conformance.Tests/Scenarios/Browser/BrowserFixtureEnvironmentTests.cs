@@ -12,7 +12,15 @@ namespace Conformance.Tests.Scenarios.Browser;
 /// <c>Profile</c>/<c>UseEntraMode</c> overrides by reflection rather than instantiating it (which
 /// would start a real Python process and both fakes), this only needs the static shape those
 /// overrides produce, never a running backend.
+///
+/// Issue #21 (Browser-on-C#): tagged <c>Category=Browser</c>/<c>Dotnet=ready</c> -- it never starts
+/// either backend (pure reflection over the fixture's static shape), so it is backend-agnostic by
+/// construction and passes identically regardless of which launcher a real Browser fixture would
+/// pick. Verified 3x locally with CONFORMANCE_BACKEND=dotnet (no flakes possible: no process, no
+/// I/O, no timing).
 /// </summary>
+[Trait("Category", "Browser")]
+[Trait("Dotnet", "ready")]
 public sealed class BrowserFixtureEnvironmentTests
 {
     private static readonly Type FixtureType =

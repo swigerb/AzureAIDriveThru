@@ -380,11 +380,20 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
         }
     }
 
+    // Issue #21 (Browser-on-C#): Cases A and B are smoke tests for switch-then-talk on a session
+    // that was never idle-closed or resumed, which the C# realtime relay already fully implements
+    // (session.update translation, greeting gate, tool bootstrap) -- verified 3x locally with
+    // CONFORMANCE_BACKEND=dotnet, zero flakes. Cases E/E2 and the reload-resume case below are
+    // deliberately NOT tagged: they each depend on the 4000 idle-timeout close or
+    // extension.resume/rehydration, which RealtimeProcessor.cs's own doc comment lists as deferred
+    // to #15 -- they time out waiting for a close/resume frame the C# backend never sends yet.
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Settled_tap_after_a_persona_switch_sends_session_update_and_gets_the_new_personas_greeting() =>
         fixture.RunAsync(() => RunSwitchScenarioAsync(clickImmediately: false));
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Immediate_tap_right_after_a_persona_switch_still_sends_session_update_and_gets_the_new_personas_greeting() =>
         fixture.RunAsync(() => RunSwitchScenarioAsync(clickImmediately: true));
 
@@ -533,11 +542,17 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
             page, socketsBeforeSwitch, alphaSentBeforeSwitch, secondConnection, expectEndSessionSent: true, ct).ConfigureAwait(false);
     }
 
+    // Issue #21 (Browser-on-C#): Cases C and D hold a race inside a single still-open/still-live
+    // socket pair (held fetch, held onclose handler) -- neither depends on the idle-timeout sweep
+    // or resume, both of which are #15. Verified 3x locally with CONFORMANCE_BACKEND=dotnet, zero
+    // flakes.
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Mic_tap_while_the_switch_fetch_is_still_pending_waits_for_the_switch_then_starts_only_the_new_personas_session() =>
         fixture.RunAsync(RunSwitchScenarioCAsync);
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Held_old_close_past_the_new_sockets_open_still_delivers_only_to_the_new_persona() =>
         fixture.RunAsync(RunSwitchScenarioDAsync);
 
@@ -624,6 +639,12 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
             page, socketsBeforeSwitch, alphaSentBeforeSwitch, secondConnection, expectEndSessionSent: false, ct).ConfigureAwait(false);
     }
 
+    // Issue #21 (Browser-on-C#): deliberately NOT [Trait("Dotnet", "ready")] -- both Case E
+    // variants wait for the test-alpha socket's own idle-timeout close to land before switching,
+    // and RealtimeProcessor.cs's own doc comment lists the 4000 idle-timeout close as deferred to
+    // #15 (needs a real session registry). Against CONFORMANCE_BACKEND=dotnet both time out after
+    // 40s with "Timed out ... waiting for the test-alpha socket's own idle-timeout close to land"
+    // -- a missing capability, not a flake. Re-check once #15 lands.
     [Fact]
     public Task Idle_closed_socket_then_persona_switch_then_tap_recovers_the_new_personas_session() =>
         fixture.RunAsync(() => RunSwitchScenarioEAsync(holdFetch: false));
@@ -809,6 +830,10 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
         Assert.DoesNotContain(alphaItem.OrderableItemName, bodyText, StringComparison.Ordinal);
     }
 
+    // Issue #21 (Browser-on-C#): deliberately NOT [Trait("Dotnet", "ready")] -- this case's own
+    // name says it: reload-then-RESUME. extension.resume/session rehydration is #15 (see
+    // RealtimeProcessor.cs's class doc), so the reload never gets a resumed session to switch away
+    // from on the C# backend. Re-check once #15 lands.
     [Fact]
     public Task Reload_then_resume_then_switch_through_the_confirm_dialog_delivers_only_to_the_new_personas_session() =>
         fixture.RunAsync(RunSwitchAfterReloadResumeScenarioAsync);
