@@ -170,6 +170,60 @@ describe("applyTheme", () => {
         expect(root.style.getPropertyValue(PERSONA_MENU_SURFACE_CSS_VARS.itemCardBackground)).toBe("");
     });
 
+    // #228 (Rick's review of PR #228): `applyTheme` only ever ADDED inline styles, so switching
+    // from a persona that authors `menuSurface` to one that doesn't left the FIRST persona's
+    // card colors sitting on `root.style` -- reproduced live as a cream-card leak after an
+    // in-app switch away from the persona that authors `menuSurface`. These tests reuse the
+    // SAME root across consecutive `applyTheme` calls (every test above this point calls it
+    // only once per root, which can't catch a leak between calls).
+    it("clears a previously-applied persona's menu surface vars on a switch to a persona that omits `menuSurface` entirely", () => {
+        const root = freshRoot();
+        const withoutMenuSurface: PersonaTheme = { ...SAMPLE_THEME, light: { ...SAMPLE_THEME.light, menuSurface: undefined } };
+
+        applyTheme(SAMPLE_THEME, root);
+        expect(root.style.getPropertyValue(PERSONA_MENU_SURFACE_CSS_VARS.categoryCardBackground)).toBe("#FFFAF2");
+        expect(root.style.getPropertyValue(PERSONA_MENU_SURFACE_CSS_VARS.itemCardBackground)).toBe("#FFF6E3");
+
+        applyTheme(withoutMenuSurface, root);
+        expect(root.style.getPropertyValue(PERSONA_MENU_SURFACE_CSS_VARS.categoryCardBackground)).toBe("");
+        expect(root.style.getPropertyValue(PERSONA_MENU_SURFACE_CSS_VARS.itemCardBackground)).toBe("");
+
+        // A second consecutive switch to another persona that also omits `menuSurface` must stay
+        // cleared, not somehow resurrect the first persona's values.
+        applyTheme(withoutMenuSurface, root);
+        expect(root.style.getPropertyValue(PERSONA_MENU_SURFACE_CSS_VARS.categoryCardBackground)).toBe("");
+        expect(root.style.getPropertyValue(PERSONA_MENU_SURFACE_CSS_VARS.itemCardBackground)).toBe("");
+    });
+
+    it("clears only the menu surface keys the next persona's partial `menuSurface` omits, not the ones it still provides", () => {
+        const root = freshRoot();
+        applyTheme(SAMPLE_THEME, root);
+
+        const partialMenuSurface: PersonaTheme = {
+            ...SAMPLE_THEME,
+            light: { ...SAMPLE_THEME.light, menuSurface: { categoryCardBackground: "#112233" } }
+        };
+        applyTheme(partialMenuSurface, root);
+
+        expect(root.style.getPropertyValue(PERSONA_MENU_SURFACE_CSS_VARS.categoryCardBackground)).toBe("#112233");
+        expect(root.style.getPropertyValue(PERSONA_MENU_SURFACE_CSS_VARS.itemCardBackground)).toBe("");
+    });
+
+    // Same pre-existing leak, pre-dating #169 (Rick's #228 review: "apply the same clearing to
+    // the existing `surface` vars").
+    it("clears a previously-applied persona's shadcn surface vars on a switch to a persona that omits `surface` entirely", () => {
+        const root = freshRoot();
+        const withoutSurface: PersonaTheme = { ...SAMPLE_THEME, light: { ...SAMPLE_THEME.light, surface: undefined } };
+
+        applyTheme(SAMPLE_THEME, root);
+        expect(root.style.getPropertyValue(PERSONA_SURFACE_CSS_VARS.cardForeground)).toBe("208 40% 18%");
+        expect(root.style.getPropertyValue(PERSONA_SURFACE_CSS_VARS.border)).toBe("200 20% 85%");
+
+        applyTheme(withoutSurface, root);
+        expect(root.style.getPropertyValue(PERSONA_SURFACE_CSS_VARS.cardForeground)).toBe("");
+        expect(root.style.getPropertyValue(PERSONA_SURFACE_CSS_VARS.border)).toBe("");
+    });
+
     it("defaults to document.documentElement when no root is given", () => {
         applyTheme(SAMPLE_THEME);
         expect(document.documentElement.style.getPropertyValue(PERSONA_THEME_CSS_VARS.primary)).toBe("341 100% 45%");

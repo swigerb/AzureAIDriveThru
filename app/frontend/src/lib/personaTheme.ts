@@ -260,6 +260,24 @@ export function applyTheme(theme: PersonaTheme, root: HTMLElement = document.doc
     const set = (name: string, value: string | undefined) => {
         if (value) root.style.setProperty(name, value);
     };
+    // `light.surface`/`light.menuSurface` are OPTIONAL and PARTIAL (unlike every other field
+    // this function writes, which every persona always provides) -- a persona can omit the
+    // object entirely, or provide only some of its keys. `set` above only ever ADDS an inline
+    // style; it never removes one, so switching from a persona that sets e.g.
+    // `--menu-category-card` to one that doesn't left the PREVIOUS persona's value sitting on
+    // `root.style` indefinitely (Rick's #228 review: switching away from the persona that
+    // authors `menuSurface` kept rendering its cream cards in light mode; the identical leak
+    // already existed for the pre-#169 `surface` vars on any switch away from a persona that
+    // authors one). `setOrClear` always clears the property first and only re-sets it when the
+    // new persona actually provides a value, so a persona that omits a key cleanly falls back
+    // to `index.css`'s static default on every switch.
+    const setOrClear = (name: string, value: string | undefined) => {
+        if (value) {
+            root.style.setProperty(name, value);
+        } else {
+            root.style.removeProperty(name);
+        }
+    };
 
     set(vars.primary, light.primary);
     set(vars.secondary, light.secondary);
@@ -285,25 +303,21 @@ export function applyTheme(theme: PersonaTheme, root: HTMLElement = document.doc
     set(vars.neutral, light.accents.neutral);
 
     const surface = light.surface;
-    if (surface) {
-        set(surfaceVars.cardForeground, surface.cardForeground);
-        set(surfaceVars.secondary, surface.secondary);
-        set(surfaceVars.secondaryForeground, surface.secondaryForeground);
-        set(surfaceVars.muted, surface.muted);
-        set(surfaceVars.mutedForeground, surface.mutedForeground);
-        set(surfaceVars.accent, surface.accent);
-        set(surfaceVars.accentForeground, surface.accentForeground);
-        set(surfaceVars.destructive, surface.destructive);
-        set(surfaceVars.border, surface.border);
-        set(surfaceVars.chart4, surface.chart4);
-        set(surfaceVars.chart5, surface.chart5);
-    }
+    setOrClear(surfaceVars.cardForeground, surface?.cardForeground);
+    setOrClear(surfaceVars.secondary, surface?.secondary);
+    setOrClear(surfaceVars.secondaryForeground, surface?.secondaryForeground);
+    setOrClear(surfaceVars.muted, surface?.muted);
+    setOrClear(surfaceVars.mutedForeground, surface?.mutedForeground);
+    setOrClear(surfaceVars.accent, surface?.accent);
+    setOrClear(surfaceVars.accentForeground, surface?.accentForeground);
+    setOrClear(surfaceVars.destructive, surface?.destructive);
+    setOrClear(surfaceVars.border, surface?.border);
+    setOrClear(surfaceVars.chart4, surface?.chart4);
+    setOrClear(surfaceVars.chart5, surface?.chart5);
 
     const menuSurface = light.menuSurface;
-    if (menuSurface) {
-        set(menuSurfaceVars.categoryCardBackground, menuSurface.categoryCardBackground);
-        set(menuSurfaceVars.itemCardBackground, menuSurface.itemCardBackground);
-    }
+    setOrClear(menuSurfaceVars.categoryCardBackground, menuSurface?.categoryCardBackground);
+    setOrClear(menuSurfaceVars.itemCardBackground, menuSurface?.itemCardBackground);
 
     const font = theme.font ?? DEFAULT_THEME_FONT;
     set(vars.fontFamily, font.family ? `"${font.family}"` : undefined);
