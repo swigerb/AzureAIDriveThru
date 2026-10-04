@@ -282,6 +282,57 @@ public sealed class RateLimitRecoveryUnitTests
         Assert.Single(h.Upstream); // unchanged.
     }
 
+    /// <summary>
+    /// Issue #252: documents the call-order contract <see cref="Sessions.RealtimeProcessor"/>'s
+    /// browser→upstream forwarding loop now relies on (and app/backend/rtmt.py's matching fix) --
+    /// <see cref="RateLimitRecovery.OnExternalResponseCreate"/> for a browser-initiated
+    /// response.create MUST be called before that same frame is ever sent upstream, not after.
+    ///
+    /// The pre-fix order (send first, bookkeeping after) left a TOCTOU window: under enough
+    /// scheduling pressure (confirmed in CI, never locally despite repeated attempts -- exactly
+    /// the kind of race that is real but inherently hard to force), the upstream's own
+    /// response.created/response.done for THIS SAME response.create could complete --
+    /// legitimately scheduling the ladder's first retry -- before the forwarding loop's
+    /// continuation resumed to call OnExternalResponseCreate("browser"). Since nothing else had
+    /// touched the ladder in between, OnExternalResponseCreate saw a pending retry and (correctly,
+    /// by its own contract -- "someone else asked for a response, drop any pending retry") wiped
+    /// out the very retry its own frame had just caused, producing the exact symptom reported in
+    /// #252: a swallowed extension.rate_limited{attempt:1} and a log line reading "Rate-limit
+    /// retry cancelled: browser requested a response" immediately before the test's wait for that
+    /// notification timed out.
+    ///
+    /// This test proves the class's own behaviour is correct GIVEN the fixed call order: calling
+    /// OnExternalResponseCreate for a response.create before that response.create's own failure
+    /// is processed leaves nothing pending to wrongly cancel, so the retry the failure legitimately
+    /// schedules survives and fires normally. (The bug was never in this class's cancellation
+    /// logic itself -- it was purely in the caller's statement order, which is why this is a
+    /// documentation/contract test rather than a reproduction of the race itself: forcing the
+    /// actual async continuation race deterministically would require test-only instrumentation
+    /// in RealtimeProcessor's relay loop, which the fix avoids needing by closing the window
+    /// entirely -- see RealtimeProcessor.cs's and rtmt.py's own #252 comments for the construction
+    /// argument that no await separates the two calls any more.)
+    /// </summary>
+    [Fact]
+    public async Task OnExternalResponseCreate_CalledBeforeTheSameResponsesFailure_Issue252()
+    {
+        var h = new Harness();
+
+        // The browser's response.create: recorded as externally-initiated BEFORE the frame would
+        // have reached upstream (RealtimeProcessor.cs's fixed ordering).
+        h.Recovery.OnExternalResponseCreate("browser");
+        Assert.False(h.Recovery.Busy); // nothing was pending, so this was a no-op reset.
+
+        // That same response.create now reaches upstream and fails as rate-limited -- even if
+        // this happens essentially instantaneously relative to the caller's own bookkeeping.
+        h.Recovery.OnResponseCreated();
+        var handled = await h.Recovery.OnResponseDoneAsync(ResponseDoneFailed(RateLimitError()), CancellationToken.None);
+
+        Assert.True(handled);
+        Assert.True(h.Recovery.Busy); // the first (silent) retry is scheduled, undisturbed.
+        h.Time.Advance(TimeSpan.FromSeconds(10));
+        Assert.Single(h.Upstream); // and it actually fires -- nothing wrongly cancelled it.
+    }
+
     [Fact]
     public void Cancel_DropsPendingRetry()
     {
@@ -415,34 +466,45 @@ public sealed class RateLimitRecoveryUnitTests
     // response.create, teardown) runs AFTER the timer has fired but BEFORE the continuation
     // acquires _sync, the continuation still runs -- sending a stale/duplicate response.create
     // (possibly onto an already-closing socket) and/or corrupting _attempt/_awaitingRetry for a
-    // retry nobody asked for any more. Reproduced here by holding _sync on this thread (via the
-    // SyncRootForTests test hook) while the fake clock is advanced on a background thread: the
-    // background continuation blocks on _sync until this thread's cancellation call (reentrant
-    // on the same monitor) has already fully committed, deterministically recreating the race
-    // without any flaky real-time sleeps on the assertion path itself.
+    // retry nobody asked for any more. RunRetryAsync's fix is the ReferenceEquals(_pendingCts,
+    // scheduledCts) check as the very first thing done under _sync (see this class's own doc
+    // comment).
+    //
+    // Issue #255: this used to be reproduced with a genuine background thread (Task.Run advancing
+    // the fake clock) racing a Thread.Sleep(100) "scheduling bias" against this thread's lock
+    // hand-off. That depended on the OS thread-pool actually scheduling the background thread
+    // within 100ms of real wall-clock time -- true on an idle box, not guaranteed under full-suite
+    // xUnit parallelism/CI load, where a starved background thread could let this thread finish
+    // `duringTheRace` and release the lock before the "stale" continuation had even started,
+    // silently skipping the very interleaving the test exists to prove (intermittent pass, not a
+    // deterministic one). Fixed by dropping real threads/sleeps entirely: capture the CURRENT
+    // _pendingCts (the exact CancellationTokenSource instance the real Task.Delay continuation
+    // would have closed over) via the same white-box reflection technique already used above by
+    // RunRetryAsync_SkipsSend_WhenResponseAlreadyInFlight, let the cancellation source run to
+    // completion synchronously on this thread (so its state change is fully committed -- exactly
+    // "cancellation wins the race to _sync first"), then invoke the private RunRetryAsync directly
+    // with that now-stale CTS. That is precisely what the real timer continuation would observe if
+    // it acquired _sync a moment later: same method, same lock, same reference-equality check --
+    // with zero threads, sleeps, or wall-clock dependence anywhere in the reproduction itself.
+    private static readonly MethodInfo RunRetryAsyncMethod = typeof(RateLimitRecovery).GetMethod(
+        "RunRetryAsync", BindingFlags.NonPublic | BindingFlags.Instance)!;
+
+    private static readonly FieldInfo PendingCtsField = typeof(RateLimitRecovery).GetField(
+        "_pendingCts", BindingFlags.NonPublic | BindingFlags.Instance)!;
+
+    private static CancellationTokenSource CapturePendingCts(RateLimitRecovery recovery) =>
+        (CancellationTokenSource)PendingCtsField.GetValue(recovery)!;
+
     private static async Task RunStaleRetryRaceAsync(Harness h, Action<RateLimitRecovery> duringTheRace)
     {
-        var syncRoot = h.Recovery.SyncRootForTests;
-        Task advanceTask;
-        Monitor.Enter(syncRoot);
-        try
-        {
-            advanceTask = Task.Run(() => h.Time.Advance(TimeSpan.FromSeconds(1.5)));
-            // Bias scheduling so the background thread's stale continuation actually reaches
-            // (and blocks on) _sync before this thread wins the race -- the Monitor itself (not
-            // this sleep) is what makes the final outcome deterministic. A too-short sleep only
-            // risks a false pass (nothing to race against yet), never a false failure.
-            Thread.Sleep(100);
-            duringTheRace(h.Recovery);
-        }
-        finally
-        {
-            Monitor.Exit(syncRoot);
-        }
+        var staleCts = CapturePendingCts(h.Recovery);
 
-        var finished = await Task.WhenAny(advanceTask, Task.Delay(TimeSpan.FromSeconds(5))) == advanceTask;
-        Assert.True(finished, "the stale continuation deadlocked instead of returning once superseded");
-        await advanceTask; // surface any exception thrown on the background thread.
+        duringTheRace(h.Recovery);
+
+        // delaySeconds/attempt are irrelevant: a stale scheduledCts makes RunRetryAsync's very
+        // first lock-held check (ReferenceEquals(_pendingCts, scheduledCts)) return before either
+        // value is ever read.
+        await (Task)RunRetryAsyncMethod.Invoke(h.Recovery, new object[] { 0d, 0, staleCts })!;
     }
 
     public static IEnumerable<object[]> CancellationSources()
@@ -486,9 +548,9 @@ public sealed class RateLimitRecoveryUnitTests
         Assert.True(h.Recovery.Busy);
 
         // The race window: guest speech cancels the stale retry AND a brand-new rate-limit
-        // failure immediately schedules a fresh one of its own -- both committed, under the
-        // same lock this thread is holding, before the stale continuation above can ever reach
-        // it.
+        // failure immediately schedules a fresh one of its own -- both fully committed before
+        // the stale continuation (invoked synchronously below, by direct reflection, with the
+        // now-superseded CTS) ever runs.
         await RunStaleRetryRaceAsync(h, r =>
         {
             r.OnGuestSpeech();

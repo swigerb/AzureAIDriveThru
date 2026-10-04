@@ -466,19 +466,33 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                         continue;
                     }
 
-                    await SendTextAsync(upstream, forwarded.ToJsonString(), ct).ConfigureAwait(false);
-
-                    if (sentType == "response.cancel")
-                    {
-                        state.Echo.OnBargeIn();
-                    }
-                    else if (sentType == "response.create")
+                    if (sentType == "response.create")
                     {
                         state.Echo.OnExternalResponseCreate();
                         // Issue #13 Wave 4: the browser asking for a response on its own (e.g. a
                         // manual nudge/retry) drops any pending rate-limit retry the same way a
                         // tool follow-up or VAD-triggered response.created does.
+                        //
+                        // Issue #252: this bookkeeping MUST run before the frame is sent upstream,
+                        // not after (matches rtmt.py's own #252 fix). The old order (send, then
+                        // bookkeeping) left a TOCTOU window: under the right scheduling pressure,
+                        // upstream's own response.created/response.done for THIS SAME
+                        // response.create can complete -- scheduling a brand-new, legitimate first
+                        // retry -- before this continuation resumes from the SendTextAsync below.
+                        // OnExternalResponseCreate would then cancel that retry, mistaking the one
+                        // it just caused for a stale leftover one (observed as a spurious
+                        // "Rate-limit retry cancelled: browser requested a response" immediately
+                        // swallowing the ladder's first notification under CI load). Recording
+                        // "this response.create was browser-initiated" before the send closes the
+                        // window: upstream cannot possibly react to a frame it hasn't received yet.
                         state.RateLimit.OnExternalResponseCreate("browser");
+                    }
+
+                    await SendTextAsync(upstream, forwarded.ToJsonString(), ct).ConfigureAwait(false);
+
+                    if (sentType == "response.cancel")
+                    {
+                        state.Echo.OnBargeIn();
                     }
 
                     if (!state.GreetingSent && sentType == "session.update")
