@@ -264,6 +264,45 @@ var realtimeProcessor = new RealtimeProcessor(
 // BuildSessionToolExecutor's SearchTool only if AZURE_SEARCH_API_KEY is unset.
 processorRegistry.Register(realtimeProcessor);
 
+// ── 6b. Cascade processor (issue #13 Wave 5 / #82): STT -> chat-completions-with-tools -> TTS,
+// for personas/models that opt into config.yaml's `models.cascade` instead of the Realtime API.
+// Reuses the SAME `promptLoaders`/`toolExecutor`/`BuildSessionToolExecutor` factory realtime does
+// (above) so tool/order/search behavior is identical regardless of pipeline. `foundryEndpoint` is
+// genuinely optional here (app.py's own `os.environ.get("AZURE_AI_FOUNDRY_ENDPOINT")` -- no
+// fail-fast): a deployment that hasn't registered any `models.cascade` entry yet simply never
+// dispatches a session to this processor (ModelDispatch 404s first), so an empty endpoint is
+// harmless until a persona/model actually selects cascade. `audioEndpoint` reuses the SAME
+// `AZURE_OPENAI_EASTUS2_ENDPOINT` realtime already requires (app.py's own `audio_endpoint=
+// llm_endpoint`), and `defaultVoice` reuses the SAME `voiceChoice` resolved above (app.py's
+// `AZURE_OPENAI_REALTIME_VOICE_CHOICE` override or `model.default_voice`) -- one voice default for
+// both pipelines. A dedicated HttpClient (not the shared `searchHttpClient`) keeps cascade's own
+// outbound REST calls (chat/STT/TTS) isolated from search's.
+var cascadeHttpClient = new HttpClient();
+// Mirrors app.py's own `conformance_hooks.cascade_credential() or AsyncDefaultAzureCredential()`:
+// a non-null ConformanceHooks.CascadeFakeToken (CONFORMANCE_TEST_HOOKS=1 AND
+// CONFORMANCE_CASCADE_FAKE_TOKEN set) substitutes the fixed-token StaticBearerTokenProvider so
+// cascade's chat/STT/TTS REST calls can be exercised against the conformance harness's fakes with
+// no real Azure AD identity available; otherwise CascadeProcessor's own default (bearerTokenProvider:
+// null) lazily falls back to the real DefaultAzureCredentialTokenProvider exactly as before.
+var cascadeBearerTokenProvider = ConformanceHooks.CascadeFakeToken is { } cascadeFakeToken
+    ? new StaticBearerTokenProvider(cascadeFakeToken)
+    : null;
+var cascadeProcessor = new CascadeProcessor(
+    modelCatalog,
+    Environment.GetEnvironmentVariable("AZURE_AI_FOUNDRY_ENDPOINT") ?? string.Empty,
+    upstreamEndpoint,
+    appConfig,
+    promptLoaders,
+    toolExecutor,
+    cascadeHttpClient,
+    allowedVoices,
+    voiceChoice,
+    logger: logger,
+    bearerTokenProvider: cascadeBearerTokenProvider,
+    toolExecutorFactory: BuildSessionToolExecutor,
+    timeProvider: timeProvider);
+processorRegistry.Register(cascadeProcessor);
+
 var assetCacheConfig = AssetCacheConfig.FromConfig(appConfig);
 
 logger.LogInformation(
@@ -437,6 +476,15 @@ app.MapGet("/realtime", async (HttpContext context) =>
             // rejected-session-update recovery, rate-limit notice) instead of draining the generic
             // per-session mailbox -- see RealtimeProcessor.RunSessionAsync's own doc comment.
             await realtimeProc.RunSessionAsync(socket, persona, resolvedModel, sessionId, context.RequestAborted, menuMode)
+                .ConfigureAwait(false);
+        }
+        else if (processor is CascadeProcessor cascadeProc)
+        {
+            // Issue #13 Wave 5: the cascade pipeline likewise owns its own session loop directly
+            // (greeting, local VAD-driven turn detection, STT -> chat-tool-loop -> TTS, barge-in,
+            // rate-limit ladder) instead of draining the generic per-session mailbox -- see
+            // CascadeProcessor.RunSessionAsync's own doc comment.
+            await cascadeProc.RunSessionAsync(socket, persona, resolvedModel, sessionId, context.RequestAborted, menuMode)
                 .ConfigureAwait(false);
         }
         else

@@ -69,7 +69,10 @@ public sealed class RateLimitRecoveryUnitTests
     [Fact]
     public async Task Disabled_IgnoresFailures_NoRetryNoNotify()
     {
-        var h = new Harness(new RateLimitSettings(enabled: false));
+        // #236 Rick re-review item 6: `RateLimitSettings` is now the shared
+        // Backend.Shared.RateLimitSettings record (PascalCase positional parameters), aliased
+        // to this name -- was `enabled:` (lowercase) on the old realtime-only class.
+        var h = new Harness(new RateLimitSettings(Enabled: false));
 
         var handledError = await h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError()), CancellationToken.None);
         var handledDone = await h.Recovery.OnResponseDoneAsync(ResponseDoneFailed(RateLimitError()), CancellationToken.None);

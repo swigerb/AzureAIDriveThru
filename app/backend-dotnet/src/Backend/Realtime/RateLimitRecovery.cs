@@ -1,93 +1,14 @@
-using System.Globalization;
+// #236 Rick re-review item 6 (shared rate-limit helper extraction, agreed with #235/Unity):
+// `RateLimitSettings` is a project-wide alias for the single shared
+// `Backend.Shared.RateLimitSettings` record -- see Backend/Shared/RateLimit.cs's own doc comment.
+// Keeping the ALIAS (rather than renaming every call site) means RealtimeProcessor.cs, Program.cs,
+// and every existing realtime test keep compiling unchanged.
+global using RateLimitSettings = Backend.Shared.RateLimitSettings;
+
 using System.Text.Json.Nodes;
-using System.Text.RegularExpressions;
-using Backend.Configuration;
 using Microsoft.Extensions.Logging;
 
 namespace Backend.Realtime;
-
-/// <summary>
-/// Port of app/backend/rate_limit.py's RateLimitSettings -- config.yaml's `resilience.rate_limit`
-/// section, with RATE_LIMIT_RECOVERY_ENABLED overriding `enabled` and the two retry-delay
-/// defaults further overridable (test hooks only, via <see cref="ConformanceHooks.Seconds"/>) --
-/// same shipped defaults as the Python dataclass so an empty/missing section behaves identically
-/// in both backends.
-/// </summary>
-public sealed class RateLimitSettings
-{
-    private const string EnabledEnvVar = "RATE_LIMIT_RECOVERY_ENABLED";
-
-    public bool Enabled { get; }
-    public double RetryDelaySeconds { get; }
-    public double SecondRetryDelaySeconds { get; }
-    public int MaxRetries { get; }
-
-    public RateLimitSettings(
-        bool enabled = true,
-        double retryDelaySeconds = 1.5,
-        double secondRetryDelaySeconds = 4.0,
-        int maxRetries = 2)
-    {
-        Enabled = enabled;
-        RetryDelaySeconds = retryDelaySeconds;
-        SecondRetryDelaySeconds = secondRetryDelaySeconds;
-        MaxRetries = maxRetries;
-    }
-
-    /// <summary>`resilience.rate_limit` from config.yaml; RATE_LIMIT_RECOVERY_ENABLED overrides
-    /// `enabled`. <paramref name="getEnv"/> is injectable for tests, defaulting to the real
-    /// process environment.</summary>
-    public static RateLimitSettings FromAppConfig(AppConfig config, Func<string, string?>? getEnv = null)
-    {
-        getEnv ??= Environment.GetEnvironmentVariable;
-        var resilience = config.TryGetSection("resilience");
-        var rateLimit = resilience is not null && resilience.TryGetValue("rate_limit", out var nested)
-            ? nested as IDictionary<object, object>
-            : null;
-
-        var enabled = GetBool(rateLimit, "enabled", true);
-        var envValue = getEnv(EnabledEnvVar);
-        if (!string.IsNullOrWhiteSpace(envValue))
-        {
-            enabled = IsTruthy(envValue);
-        }
-
-        return new RateLimitSettings(
-            enabled: enabled,
-            retryDelaySeconds: ConformanceHooks.Seconds(
-                "CONFORMANCE_RATE_LIMIT_RETRY_DELAY_SECONDS", GetDouble(rateLimit, "retry_delay_seconds", 1.5)),
-            secondRetryDelaySeconds: ConformanceHooks.Seconds(
-                "CONFORMANCE_RATE_LIMIT_SECOND_RETRY_DELAY_SECONDS", GetDouble(rateLimit, "second_retry_delay_seconds", 4.0)),
-            maxRetries: Math.Max(0, GetInt(rateLimit, "max_retries", 2)));
-    }
-
-    private static bool IsTruthy(string value) =>
-        value.Trim().ToLowerInvariant() is "1" or "true" or "yes" or "on";
-
-    private static int GetInt(IDictionary<object, object>? section, string key, int fallback) =>
-        section is not null && section.TryGetValue(key, out var raw) && int.TryParse(raw?.ToString(), out var value)
-            ? value
-            : fallback;
-
-    private static double GetDouble(IDictionary<object, object>? section, string key, double fallback) =>
-        section is not null && section.TryGetValue(key, out var raw) &&
-        double.TryParse(raw?.ToString(), CultureInfo.InvariantCulture, out var value)
-            ? value
-            : fallback;
-
-    private static bool GetBool(IDictionary<object, object>? section, string key, bool fallback)
-    {
-        if (section is null || !section.TryGetValue(key, out var raw) || raw is null)
-        {
-            return fallback;
-        }
-        if (raw is bool direct)
-        {
-            return direct;
-        }
-        return bool.TryParse(raw.ToString(), out var parsed) ? parsed : fallback;
-    }
-}
 
 /// <summary>
 /// Port of app/backend/rate_limit.py's RateLimitRecovery. All three drive-thru demos share one
@@ -139,16 +60,11 @@ public sealed class RateLimitSettings
 /// </summary>
 public sealed class RateLimitRecovery
 {
-    public const string RateLimitedEventType = "extension.rate_limited";
+    public const string RateLimitedEventType = Shared.RateLimit.RateLimitedEventType;
 
-    private static readonly (double Low, double High) FirstRetryBounds = (0.5, 5.0);
-    private static readonly (double Low, double High) SecondRetryBounds = (2.0, 8.0);
+    private static readonly (double Low, double High) FirstRetryBounds = Shared.RateLimit.FirstRetryBounds;
+    private static readonly (double Low, double High) SecondRetryBounds = Shared.RateLimit.SecondRetryBounds;
     private static readonly string ResponseCreateMessage = new JsonObject { ["type"] = "response.create" }.ToJsonString();
-
-    // "Please try again in 1.5s", "try again in 250ms", "retry after 7 seconds".
-    private static readonly Regex HintPattern = new(
-        @"(?:try\s+again|retry)\s+(?:in|after)\s+(\d+(?:\.\d+)?)\s*(ms|msec|millisecond|milliseconds|s|sec|secs|second|seconds)\b",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     private readonly RateLimitSettings _settings;
     private readonly Func<string, CancellationToken, Task> _sendUpstream;
@@ -499,26 +415,16 @@ public sealed class RateLimitRecovery
         }
     }
 
-    /// <summary>Seconds the service asked us to wait, from an error message, else null.</summary>
-    internal static double? ParseRetryHint(string? text)
-    {
-        if (string.IsNullOrEmpty(text))
-        {
-            return null;
-        }
-        var match = HintPattern.Match(text);
-        if (!match.Success)
-        {
-            return null;
-        }
-        var value = double.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
-        return match.Groups[2].Value.StartsWith("m", StringComparison.OrdinalIgnoreCase) ? value / 1000.0 : value;
-    }
+    /// <summary>Seconds the service asked us to wait, from an error message, else null. Forwards
+    /// to the shared <see cref="Shared.RateLimit.ParseRetryHint"/> (#236 Rick re-review item 6).</summary>
+    internal static double? ParseRetryHint(string? text) => Shared.RateLimit.ParseRetryHint(text);
 
     /// <summary>The service's hint clamped to `bounds`; `defaultSeconds` when there is no hint.
     /// Note: `bounds` are fixed production constants, never overridable via
     /// CONFORMANCE_TEST_HOOKS (see <see cref="ConformanceHooks.Seconds"/> and this class's own
-    /// doc comment for the caveat this implies for scripted rate-limit hints under test hooks).</summary>
+    /// doc comment for the caveat this implies for scripted rate-limit hints under test hooks).
+    /// Forwards to the shared <see cref="Shared.RateLimit.RetryDelay"/> (#236 Rick re-review
+    /// item 6).</summary>
     internal static double RetryDelay(double? hint, double defaultSeconds, (double Low, double High) bounds) =>
-        hint is null ? defaultSeconds : Math.Min(Math.Max(hint.Value, bounds.Low), bounds.High);
+        Shared.RateLimit.RetryDelay(hint, defaultSeconds, bounds);
 }

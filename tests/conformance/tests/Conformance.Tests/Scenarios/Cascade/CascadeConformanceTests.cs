@@ -13,17 +13,22 @@ namespace Conformance.Tests.Scenarios.Cascade;
 /// structured results, the same session metadata (persona, model, pipeline) and the same client
 /// wire protocol toward the frontend" -- proven here against fake STT/chat/TTS upstreams, exactly
 /// as #75's <see cref="ModelSelectionConformanceTests"/> proved model dispatch/selection for the
-/// realtime pipeline. Untagged (no <c>[Trait("Dotnet", "ready")]</c>), matching every other
-/// feature-area test file's convention for a feature the dotnet backend skeleton doesn't
-/// implement yet (see <c>PersonaDiscoveryConformanceTests</c>/<c>ModelSelectionConformanceTests</c>).
+/// realtime pipeline.
 ///
 /// Reuses <see cref="OrderScenarioHelpers.GetOrderFinalTotalDisplay"/>/<c>AssertRejectionShape</c>
 /// (the Ordering folder's own realtime-side pricing/rejection assertions) so a pricing or
 /// not_on_menu regression on either pipeline is caught by literally the same assertion code --
 /// there's no chance of the two pipelines' test code drifting into checking subtly different
 /// things and each staying green while the pipelines themselves silently disagree.
+///
+/// Issue #13 Wave 5: tagged <c>[Trait("Dotnet", "ready")]</c> now that
+/// <c>Backend.Sessions.CascadeProcessor</c> is implemented and registered in
+/// <c>ProcessorRegistry</c> -- all 7 rows verified green against the C# backend across 3
+/// consecutive local runs (<c>CONFORMANCE_BACKEND=dotnet</c>) with no flakiness before this trait
+/// was added.
 /// </summary>
 [Collection(CascadeConformanceCollection.Name)]
+[Trait("Dotnet", "ready")]
 public sealed class CascadeConformanceTests(CascadeConformanceFixture fixture)
 {
     private static readonly TimeSpan FrameTimeout = CascadeScenarioHelpers.FrameTimeout;
