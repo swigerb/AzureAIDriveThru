@@ -13,6 +13,7 @@ namespace Conformance.Tests;
 /// <c>Dispose()</c> kills the assigned process is a faithful, deterministic, automatable proxy for
 /// that scenario. Windows-only; skips on the CI runner (ubuntu-latest).
 /// </summary>
+[Trait("Category", "Harness")]
 public sealed class WindowsJobObjectTests
 {
     [Fact]

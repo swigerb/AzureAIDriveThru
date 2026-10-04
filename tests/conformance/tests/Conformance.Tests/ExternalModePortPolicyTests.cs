@@ -9,6 +9,7 @@ namespace Conformance.Tests;
 /// policy is a plain function of three string inputs, so every combination is exercised directly
 /// instead of relying on real process environment variables or actually starting Kestrel.
 /// </summary>
+[Trait("Category", "Harness")]
 public sealed class ExternalModePortPolicyTests
 {
     [Fact]

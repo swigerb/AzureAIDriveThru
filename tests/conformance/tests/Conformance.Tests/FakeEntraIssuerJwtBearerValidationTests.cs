@@ -34,6 +34,7 @@ namespace Conformance.Tests;
 /// test -- it exists solely to prove the fake issuer itself is a faithful OIDC/JWKS implementation,
 /// independent of whichever backend (#144/#147) eventually wires JwtBearer up for real.
 /// </summary>
+[Trait("Category", "Harness")]
 public sealed class FakeEntraIssuerJwtBearerValidationTests
 {
     private static async Task<(FakeEntraIssuer Issuer, WebApplication App, HttpClient Client)> StartAsync(

@@ -10,6 +10,7 @@ namespace Conformance.Tests;
 /// the new <c>CapturedProcessOutputWaitTests</c> for the process-driven fixture-level coverage
 /// that wires this class up against the real async stderr-capture path.
 /// </summary>
+[Trait("Category", "Harness")]
 public sealed class ScenarioErrorAttributionTests
 {
     [Fact]

@@ -10,6 +10,7 @@ namespace Conformance.Tests;
 /// policy directly and deterministically instead of relying on an end-to-end Python run to
 /// prove it indirectly.
 /// </summary>
+[Trait("Category", "Harness")]
 public sealed class InheritedEnvironmentFilterTests
 {
     [Fact]

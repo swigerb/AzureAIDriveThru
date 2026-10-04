@@ -10,6 +10,7 @@ namespace Conformance.Tests;
 /// makes <see cref="ExternalModePortPolicy"/>'s resolved ports meaningful in practice: without
 /// this, external mode could resolve valid ports and still silently bind to something else.
 /// </summary>
+[Trait("Category", "Harness")]
 public sealed class FakeFixedPortBindingTests
 {
     [Fact]

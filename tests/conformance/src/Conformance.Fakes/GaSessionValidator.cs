@@ -95,6 +95,30 @@ public static class GaSessionValidator
     };
 
     /// <summary>
+    /// #28/#63 N29 (Rick's PR #52 approval): "the fake should reject model-specific transcription
+    /// keys (`delay`, `keywords`, `languages`) when they're sent with a model that doesn't support
+    /// them". <see cref="AudioInputTranscriptionKeys"/> only checks the key NAME is known (#28
+    /// N11/F2) -- it never checked whether the chosen `transcription.model` actually supports that
+    /// key, so a translator regression that forwarded e.g. `delay` unconditionally to every
+    /// transcription model would pass the fake but be rejected by the real service. Per the same
+    /// OpenAI Realtime API reference cited in this class's own doc comment (section "Audio
+    /// Transcription"): `delay` -- "Only supported with `gpt-realtime-whisper` in GA Realtime
+    /// sessions"; `keywords`/`languages` -- "Supported by `gpt-transcribe` and
+    /// `gpt-live-transcribe`". Scoped to exactly these three keys (N29's own list, not `prompt`,
+    /// which the same reference separately documents as unsupported on `gpt-realtime-whisper` --
+    /// left for a follow-up since N29 didn't call for it). NOT independently live-verified (no
+    /// access to a deployment of any of these alternate transcription models) -- kept for
+    /// documentation parity only, same category as this class's `reasoning`-on-"1.5" check below.
+    /// </summary>
+    public static readonly IReadOnlyDictionary<string, IReadOnlySet<string>> TranscriptionKeyRequiredModels =
+        new Dictionary<string, IReadOnlySet<string>>(StringComparer.Ordinal)
+        {
+            ["delay"] = new HashSet<string>(StringComparer.Ordinal) { "gpt-realtime-whisper" },
+            ["keywords"] = new HashSet<string>(StringComparer.Ordinal) { "gpt-transcribe", "gpt-live-transcribe" },
+            ["languages"] = new HashSet<string>(StringComparer.Ordinal) { "gpt-transcribe", "gpt-live-transcribe" },
+        };
+
+    /// <summary>
     /// #28 N11: keys accepted under `session.audio.input.turn_detection` -- previously unchecked.
     /// GA's `turn_detection` is a discriminated union on `type` (`ServerVad` vs `SemanticVad`);
     /// this is the union of both variants' keys, since the discriminator itself
@@ -220,6 +244,29 @@ public static class GaSessionValidator
                             message: $"Unknown parameter: 'session.audio.input.transcription.{badTranscriptionKey}'.",
                             echoEventId: true);
                     }
+
+                    // #63 N29: a known key can still be invalid for the transcription model this
+                    // update actually names (or, if this update's own transcription object omits
+                    // `model`, the model already in effect from an earlier update on this
+                    // connection -- GA's transcription object is replaced wholesale per update,
+                    // see MergeSessionUpdate, so the model that applies to THIS payload's keys is
+                    // whichever one is live at the moment this update takes effect). No basis to
+                    // check at all if no model has ever been named on this connection.
+                    var transcriptionModel = ResolveTranscriptionModel(transcription, state);
+                    if (transcriptionModel is not null)
+                    {
+                        foreach (var (key, requiredModels) in TranscriptionKeyRequiredModels)
+                        {
+                            if (transcription.TryGetProperty(key, out _) && !requiredModels.Contains(transcriptionModel))
+                            {
+                                return SessionUpdateValidationResult.Rejected(
+                                    code: "invalid_value",
+                                    param: null,
+                                    message: $"Unsupported option for this model: 'session.audio.input.transcription.{key}'.",
+                                    echoEventId: false);
+                            }
+                        }
+                    }
                 }
 
                 if (input.TryGetProperty("turn_detection", out var turnDetection) &&
@@ -290,6 +337,34 @@ public static class GaSessionValidator
 
     private static string? FirstUnknownKey(JsonElement obj, IReadOnlySet<string> allowed) =>
         obj.EnumerateObject().Select(p => p.Name).FirstOrDefault(name => !allowed.Contains(name));
+
+    /// <summary>#63 N29: the transcription model this update's own `transcription` object names,
+    /// or -- if it doesn't name one -- whatever model was already in effect for this connection
+    /// from an earlier accepted `session.update` (<see cref="RealtimeSessionState.EffectiveSession"/>).
+    /// Null if neither has one, meaning no transcription model has ever been configured on this
+    /// connection and there is nothing to validate the key set against.</summary>
+    private static string? ResolveTranscriptionModel(JsonElement transcription, RealtimeSessionState state)
+    {
+        if (transcription.TryGetProperty("model", out var modelProp) && modelProp.ValueKind == JsonValueKind.String)
+        {
+            return modelProp.GetString();
+        }
+
+        if (state.EffectiveSession.TryGetPropertyValue("audio", out var audioNode) &&
+            audioNode is JsonObject audioObj &&
+            audioObj.TryGetPropertyValue("input", out var inputNode) &&
+            inputNode is JsonObject inputObj &&
+            inputObj.TryGetPropertyValue("transcription", out var transcriptionNode) &&
+            transcriptionNode is JsonObject transcriptionObj &&
+            transcriptionObj.TryGetPropertyValue("model", out var modelNode) &&
+            modelNode is JsonValue modelValue &&
+            modelValue.TryGetValue<string>(out var modelString))
+        {
+            return modelString;
+        }
+
+        return null;
+    }
 }
 
 public sealed record SessionUpdateValidationResult(bool IsAccepted, string? Code, string? Param, string? Message, bool EchoEventId)

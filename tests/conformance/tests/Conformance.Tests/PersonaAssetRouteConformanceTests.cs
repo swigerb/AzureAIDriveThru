@@ -1,4 +1,6 @@
 using System.Net;
+using System.Net.Sockets;
+using System.Text;
 using System.Text.Json;
 using Conformance.Harness;
 using Xunit;
@@ -203,4 +205,71 @@ public sealed class PersonaAssetRouteConformanceTests(ConformanceFixture fixture
             response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.BadRequest,
             $"Expected a traversal attempt against {requestPath} to be rejected with 404/400, got {response.StatusCode}.");
     });
+
+    /// <summary>
+    /// #63 harness follow-up (adopted from PR #122 review item "Raw-request helper for the
+    /// path-traversal rows"): the literal `/personas/sonic/assets/../persona.json` row above is
+    /// documented (see that test's doc comment) as unable to ever go red on EITHER backend,
+    /// because <see cref="ConformanceHttpClient"/>'s underlying <see cref="HttpClient"/> collapses
+    /// the `..` dot-segment client-side (RFC 3986) before the request line is ever written to the
+    /// wire -- the request each backend actually receives already reads
+    /// `/personas/sonic/persona.json`, with no `..` anywhere in it. This row instead opens a bare
+    /// <see cref="TcpClient"/> and writes a hand-built HTTP/1.1 request line containing the raw,
+    /// uncollapsed `..` bytes, so the backend itself -- not a client-side URI normaliser -- is what
+    /// decides what happens to the traversal attempt. Per PR #122's own review comment: aiohttp
+    /// 3.14.3 passes a raw `../persona.json` through to `match_info` unmodified (so this row
+    /// genuinely exercises `_resolve_persona_asset_path`'s own containment check on the Python
+    /// leg), while Kestrel's routing removes dot segments server-side before a request is ever
+    /// routed (so this row is structurally 404 on the dotnet leg regardless of
+    /// PersonaAssetResolver, exactly like the `%2f`/`%2F` rows above are structurally blind on
+    /// dotnet for the same reason -- a routing/framework difference upstream of our own resolver
+    /// code, not a resolver bug). Flagged "low priority" in the same review comment, since the
+    /// existing `%2f`/`%5c` InlineData rows above already exercise each resolver's own logic
+    /// end-to-end; added here as a small, self-contained follow-up rather than a new shared helper
+    /// class, since nothing else in this suite currently needs a raw non-WebSocket HTTP request.
+    /// </summary>
+    [Fact]
+    public Task Persona_asset_route_rejects_a_raw_uncollapsed_path_traversal_attempt() => fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var backendUri = fixture.Backend!.BaseUri;
+
+        using var tcp = new TcpClient();
+        await tcp.ConnectAsync(backendUri.Host, backendUri.Port, ct);
+        await using var stream = tcp.GetStream();
+
+        var request =
+            "GET /personas/sonic/assets/../persona.json HTTP/1.1\r\n" +
+            $"Host: {backendUri.Host}:{backendUri.Port}\r\n" +
+            "Connection: close\r\n" +
+            "\r\n";
+        await stream.WriteAsync(Encoding.ASCII.GetBytes(request), ct);
+
+        var statusLine = await ReadRawHttpStatusLineAsync(stream, ct);
+
+        Assert.True(
+            statusLine.Contains(" 404 ", StringComparison.Ordinal) || statusLine.Contains(" 400 ", StringComparison.Ordinal),
+            $"Expected a raw, uncollapsed '..' traversal attempt to be rejected with 404/400, got status line: {statusLine}");
+    });
+
+    /// <summary>Reads only the HTTP response status line (first `\r\n`-terminated line) byte by
+    /// byte -- deliberately minimal, mirroring <c>HeartbeatPongSurvivalTests.ReadHttpHeadersAsync</c>'s
+    /// same one-byte-at-a-time approach; this test never needs the rest of the headers or body.</summary>
+    private static async Task<string> ReadRawHttpStatusLineAsync(NetworkStream stream, CancellationToken cancellationToken)
+    {
+        var sb = new StringBuilder();
+        var single = new byte[1];
+        while (!sb.ToString().EndsWith("\r\n", StringComparison.Ordinal))
+        {
+            var read = await stream.ReadAsync(single.AsMemory(0, 1), cancellationToken);
+            if (read == 0)
+            {
+                throw new IOException("Connection closed before an HTTP status line was received.");
+            }
+
+            sb.Append((char)single[0]);
+        }
+
+        return sb.ToString();
+    }
 }

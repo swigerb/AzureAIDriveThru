@@ -12,6 +12,7 @@ namespace Conformance.Tests;
 /// client-initiated close.
 /// </summary>
 [Collection(ConformanceCollection.Name)]
+[Trait("Category", "Harness")]
 public sealed class BrowserClientLifecycleTests(ConformanceFixture fixture)
 {
     private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);

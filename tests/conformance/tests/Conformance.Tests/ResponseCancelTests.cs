@@ -17,6 +17,7 @@ namespace Conformance.Tests;
 /// error paths are NOT independently live-verified — see
 /// <c>tests/conformance/README.md</c>, "Response cancel — GA semantics and unverified error codes".
 /// </summary>
+[Trait("Category", "Harness")]
 public sealed class ResponseCancelTests
 {
     private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(10);
