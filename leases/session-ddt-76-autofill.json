@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "leaseKey": "session-ddt-76-autofill",
+  "sessionId": "ddt-76-autofill",
+  "repository": "swigerb/AzureAIDriveThru",
+  "issueNumber": null,
+  "dispatchSource": "local-cli",
+  "route": "aca-job",
+  "executionMode": "aca-job",
+  "state": "claimed",
+  "attempts": 1,
+  "startedAt": "2026-10-04T20:15:44.994Z",
+  "lastHeartbeatAt": "2026-10-04T20:15:44.994Z",
+  "updatedAt": "2026-10-04T20:15:44.994Z",
+  "terminalReason": null,
+  "executionRef": null
+}
