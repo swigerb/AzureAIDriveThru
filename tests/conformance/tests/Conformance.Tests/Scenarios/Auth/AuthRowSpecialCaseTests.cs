@@ -126,10 +126,16 @@ public sealed class AuthRowSpecialCaseTests(ConformanceFixture fixture)
 
     /// <summary>#163/#222 F4 (decided, case-insensitive asset extension), pinned here per PR
     /// #222's own follow-up note that conformance coverage of this rule "belongs in
-    /// tests/conformance... flagging for whoever owns the conformance suite / #147": the SAME
-    /// row-12 allow-listed asset, requested with an upper-cased extension, must still 200 with no
-    /// token -- byte-for-byte matching Python's <c>_is_anonymous</c>, which lower-cases the
-    /// suffix before comparing against the identical literal extension set.</summary>
+    /// tests/conformance... flagging for whoever owns the conformance suite / #147": a request for
+    /// the SAME row-12 allow-listed asset, but with an upper-cased extension, must never be
+    /// blocked by auth (no 401) -- byte-for-byte matching Python's <c>_is_anonymous</c>, which
+    /// lower-cases the suffix before comparing against the identical literal extension set.
+    /// Asserting "not 401" rather than "200" is deliberate: the on-disk asset is literally named
+    /// <c>logo.svg</c> (lower-case), so on a case-sensitive filesystem (Linux CI runners) a request
+    /// for <c>LOGO.SVG</c> legitimately 404s at the file-serving layer once auth has already let it
+    /// through -- that's a correct, expected outcome of case-sensitive file lookup, not an auth
+    /// bug, and is exactly what Python's own aiohttp static-file serving would do on the same OS.
+    /// A 401 here, and only a 401, would indicate the extension-match itself is case-sensitive.</summary>
     [Fact]
     public Task Row_12_anonymous_allow_list_path_is_case_insensitive_on_extension() => fixture.RunAuthRowAsync(async () =>
     {
@@ -138,9 +144,10 @@ public sealed class AuthRowSpecialCaseTests(ConformanceFixture fixture)
         using var http = new HttpClient();
         using var response = await http.GetAsync(new Uri(fixture.Backend!.BaseUri, path), ct).ConfigureAwait(false);
         Assert.True(
-            response.StatusCode == HttpStatusCode.OK,
-            $"Row 12 (case-insensitive extension, #163/#222 F4): expected 200 with no token on " +
-            $"{path}, got {(int)response.StatusCode}.");
+            response.StatusCode != HttpStatusCode.Unauthorized,
+            $"Row 12 (case-insensitive extension, #163/#222 F4): expected {path} to NOT be " +
+            $"blocked by auth (any status other than 401 is fine -- a 404 just means this " +
+            $"filesystem is case-sensitive and the literal file is named logo.svg), got 401.");
     });
 
     [Fact]
