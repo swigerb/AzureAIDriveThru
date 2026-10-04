@@ -143,6 +143,33 @@ public sealed class EntraAccessRequirementHandlerTests
     }
 
     [Fact]
+    public async Task MultipleScpClaims_TreatedAsNonStringScope_Fails()
+    {
+        // #163 N2 (Python follow-up, mirrored for #147 parity): entra_auth.py guards
+        // `scopes = scp.split() if isinstance(scp, str) else []` because a JSON-array-shaped
+        // `scp` claim previously crashed with AttributeError (500). .NET's JWT handler would
+        // materialize such an array as multiple separate Claim("scp", ...) entries rather than
+        // one non-string value, so the exact Python crash can't occur -- but we still must not
+        // silently fall back to just the first claim (FindFirst) and ignore the rest, which could
+        // accidentally grant or deny based on claim ordering. Multiple "scp" claims, even if one
+        // of them exactly matches the required scope, must fail closed (403), not succeed.
+        var claims = new List<Claim>
+        {
+            new("oid", "33333333-3333-3333-3333-333333333333"),
+            new("tid", "11111111-1111-1111-1111-111111111111"),
+            new("roles", AppRole),
+            new("scp", ApiScope),
+            new("scp", "some.other.scope"),
+        };
+        var identity = new ClaimsIdentity(claims, JwtBearerDefaults.AuthenticationScheme);
+        var principal = new ClaimsPrincipal(identity);
+
+        var result = await EvaluateAsync(principal, RequestFor("some-protected-route"));
+
+        Assert.Equal(AuthorizationResult.Failed, result);
+    }
+
+    [Fact]
     public async Task Unauthenticated_NonAnonymousRoute_StaysPending()
     {
         // No Succeed/Fail: ASP.NET Core's PolicyEvaluator resolves an unauthenticated pending
@@ -320,5 +347,18 @@ public sealed class ConfigureJwtBearerTests
         EntraAuthentication.ConfigureJwtBearer(options, EntraModeSettings());
 
         Assert.Equal(TimeSpan.FromMinutes(5), options.TokenValidationParameters.ClockSkew);
+    }
+
+    [Fact]
+    public void BackchannelTimeout_IsTenSeconds()
+    {
+        // #163 N1a (Python follow-up, mirrored for #147 parity): entra_auth.py's TokenValidator
+        // passes this same 10s default to jwt.PyJWKClient's `timeout=` (PyJWT's own default is
+        // 30s) so a hung Entra discovery/JWKS endpoint can't stall a request indefinitely.
+        var options = new JwtBearerOptions();
+
+        EntraAuthentication.ConfigureJwtBearer(options, EntraModeSettings());
+
+        Assert.Equal(TimeSpan.FromSeconds(10), options.BackchannelTimeout);
     }
 }

@@ -124,6 +124,25 @@ public sealed class AuthRowSpecialCaseTests(ConformanceFixture fixture)
             $"Row 12: expected 200 with no token on allow-listed {path}, got {(int)response.StatusCode}.");
     });
 
+    /// <summary>#163/#222 F4 (decided, case-insensitive asset extension), pinned here per PR
+    /// #222's own follow-up note that conformance coverage of this rule "belongs in
+    /// tests/conformance... flagging for whoever owns the conformance suite / #147": the SAME
+    /// row-12 allow-listed asset, requested with an upper-cased extension, must still 200 with no
+    /// token -- byte-for-byte matching Python's <c>_is_anonymous</c>, which lower-cases the
+    /// suffix before comparing against the identical literal extension set.</summary>
+    [Fact]
+    public Task Row_12_anonymous_allow_list_path_is_case_insensitive_on_extension() => fixture.RunAuthRowAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var path = $"/personas/{ConformancePersonas.DefaultPersonaId}/assets/LOGO.SVG";
+        using var http = new HttpClient();
+        using var response = await http.GetAsync(new Uri(fixture.Backend!.BaseUri, path), ct).ConfigureAwait(false);
+        Assert.True(
+            response.StatusCode == HttpStatusCode.OK,
+            $"Row 12 (case-insensitive extension, #163/#222 F4): expected 200 with no token on " +
+            $"{path}, got {(int)response.StatusCode}.");
+    });
+
     [Fact]
     public Task Row_12_protected_asset_outside_the_allow_list_still_401s() => fixture.RunAuthRowAsync(async () =>
     {

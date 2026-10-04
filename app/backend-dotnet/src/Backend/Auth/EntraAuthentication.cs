@@ -24,8 +24,12 @@ public static class EntraAuthentication
     /// entra_auth.py's ANONYMOUS_ASSET_EXTENSIONS: a persona asset is anonymous purely by its
     /// (lowercased) file extension, regardless of path segments -- e.g. "demo/dummyOrder.json"
     /// stays protected even though it sits under a "demo/" folder, because ".json" isn't in this
-    /// set. Unity is concurrently finalizing this exact rule's final shape in issue #163; this
-    /// matches current Python behaviour today and must track #163's resolution (see PR notes).
+    /// set. #163 (F4) has now decided and pinned this rule as CASE-INSENSITIVE (merged in PR
+    /// #222): "logo.svg"/"logo.SVG"/"logo.Svg" are all anonymous; "demo/dummyOrder.JSON" (any
+    /// case) stays protected, since ".json" is not and will never be in this set. This C# port
+    /// already matched that exact rule (the lower-case comparison below predates #163's decision
+    /// by coincidence) -- no behavior change was needed here, only this comment and the stale
+    /// "Unity is concurrently finalizing" language it replaces.
     /// </summary>
     public static readonly IReadOnlySet<string> AnonymousAssetExtensions =
         new HashSet<string>(StringComparer.OrdinalIgnoreCase) { ".svg", ".png", ".jpg", ".webp", ".ico", ".wav", ".mp3" };
@@ -67,6 +71,19 @@ public static class EntraAuthentication
     {
         options.Authority = settings.Issuer;
         options.RequireHttpsMetadata = settings.Instance.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
+        // #163 N1a (Python follow-up, mirrored here for #147 parity): bound how long a hung OIDC
+        // discovery/JWKS endpoint can stall a request. Python's TokenValidator passes this same
+        // 10s default to jwt.PyJWKClient's own `timeout=` (overriding PyJWT's 30s default) --
+        // ASP.NET Core's JwtBearerHandler uses this BackchannelTimeout for both the discovery
+        // document fetch (via its ConfigurationManager) and the signing-key refresh, so setting
+        // it here is the direct .NET equivalent. (N1b/N1c -- the early malformed-token reject
+        // before any network call, and the negative discovery-failure cache -- are Python-side
+        // implementation details of its hand-rolled JWKS client; the .NET equivalent is
+        // Microsoft.IdentityModel's ConfigurationManager<OpenIdConnectConfiguration>, which
+        // already caches a successfully-fetched discovery document for 24h with its own built-in
+        // refresh throttling/last-known-good fallback on failure -- see docs/dotnet_mapping.md's
+        // #147/#163 section for the full comparison instead of re-deriving it here.)
+        options.BackchannelTimeout = TimeSpan.FromSeconds(10);
         // entra_auth.py's TokenValidator reads claims by their raw Entra names (tid, oid, roles,
         // scp) -- MapInboundClaims=false stops the legacy ClaimTypes.* remap so those claim types
         // survive unchanged onto ClaimsPrincipal, matching FakeEntraIssuerJwtBearerValidationTests.
@@ -86,7 +103,12 @@ public static class EntraAuthentication
             // Issue #147 bullet 4: `?access_token=` is honoured ONLY on /realtime, and only when
             // no Authorization header is present -- entra_auth.py's _extract_token checks the
             // Bearer header first, unconditionally, everywhere; the query fallback only applies
-            // when that header is absent AND the path is exactly /realtime.
+            // when that header is absent AND the path is exactly /realtime. #163 N3 (mirrored
+            // here, already native): the Authorization header's "Bearer" scheme itself is matched
+            // CASE-INSENSITIVELY by ASP.NET Core's JwtBearerHandler before this event ever runs
+            // (it compares the scheme token with StringComparison.OrdinalIgnoreCase internally),
+            // so "bearer x"/"BEARER x"/"BeArEr x" are already accepted exactly like Python's
+            // entra_middleware._extract_token now does -- no code change was needed for that part.
             OnMessageReceived = context =>
             {
                 if (!context.Request.Headers.ContainsKey("Authorization") &&
@@ -191,9 +213,21 @@ public sealed class EntraAccessRequirementHandler : AuthorizationHandler<EntraAc
         var roles = context.User.FindAll("roles").Select(claim => claim.Value);
         var hasRole = roles.Contains(requirement.AppRole, StringComparer.Ordinal);
 
-        var scopeClaim = context.User.FindFirst("scp")?.Value;
-        var hasScope = scopeClaim is not null &&
-            scopeClaim.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Contains(requirement.ApiScope, StringComparer.Ordinal);
+        // #163 N2 (Python follow-up, mirrored here for #147 parity): `scopes = scp.split() if
+        // isinstance(scp, str) else []`. A JSON-array-shaped `scp` claim (non-standard for Entra,
+        // which always issues it as a single space-delimited string, but not unforgeable by a
+        // malicious/malformed token) previously crashed Python's `.split()` with an AttributeError
+        // (500). In .NET, System.IdentityModel's JWT handler materializes a JSON array claim value
+        // as MULTIPLE separate Claim("scp", ...) entries rather than one non-string value, so the
+        // exact Python crash shape can't occur here -- but the equivalent question still matters:
+        // what should a request with more than one "scp" claim do? We treat it the same way
+        // Python's guard does for a non-string value: not-a-valid-scope-string, so no scope
+        // matches and the requirement fails closed (403), rather than naively taking just the
+        // first claim via FindFirst and silently ignoring the rest (which could under- or
+        // over-grant depending on which value happened to come first).
+        var scopeClaims = context.User.FindAll("scp").ToList();
+        var hasScope = scopeClaims.Count == 1 &&
+            scopeClaims[0].Value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Contains(requirement.ApiScope, StringComparer.Ordinal);
 
         if (hasRole && hasScope)
         {

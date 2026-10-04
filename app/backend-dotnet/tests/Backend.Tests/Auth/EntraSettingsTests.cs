@@ -64,6 +64,24 @@ public sealed class EntraSettingsTests
     }
 
     [Fact]
+    public void Resolve_NormalizesTenantAndClientIds_ToLowerCase()
+    {
+        // #163 N4 (Python follow-up, mirrored for #147 parity): resolve_settings lower-cases
+        // tenant/client ids after the GUID-shape check so a real token's always-lower-case
+        // tid/aud claims keep matching even when an operator pastes an upper-case id into config.
+        // Tenant/Client (all digits) would make this a silent no-op, so this uses hex-letter ids.
+        const string upperTenant = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
+        const string mixedClient = "AaBbCcDd-1111-2222-3333-444455556666";
+
+        var settings = EntraSettings.Resolve(
+            Env(("AUTH_MODE", "Entra"), ("ENTRA_TENANT_ID", upperTenant), ("ENTRA_CLIENT_ID", mixedClient)),
+            isProduction: false);
+
+        Assert.Equal(upperTenant.ToLowerInvariant(), settings.TenantId);
+        Assert.Equal(mixedClient.ToLowerInvariant(), settings.ClientId);
+    }
+
+    [Fact]
     public void Resolve_ExplicitEntra_NoIds_Throws()
     {
         var exc = Assert.Throws<EntraConfigException>(

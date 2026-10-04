@@ -101,4 +101,34 @@ public sealed class AuthRowRestTokenTests(ConformanceFixture fixture)
             $"{row} on {path}: expected a WWW-Authenticate: Bearer challenge on 401, got: " +
             $"[{string.Join(", ", response.Headers.WwwAuthenticate)}].");
     }
+
+    /// <summary>#163/#222 N3 (decided, case-insensitive scheme), pinned here per PR #222's own
+    /// follow-up note that conformance coverage of this rule "belongs in tests/conformance...
+    /// flagging for whoever owns the conformance suite / #147": a valid token sent with a
+    /// lower- or mixed-case Authorization scheme token (e.g. "bearer"/"BEARER"/"BeArEr") must be
+    /// accepted exactly like the canonical-cased scheme. entra_middleware._extract_token now
+    /// lower-cases the scheme before comparing; ASP.NET Core's JwtBearerHandler already does this
+    /// natively (it matches the scheme with StringComparison.OrdinalIgnoreCase internally), so
+    /// this pins that already-correct behavior against regression rather than fixing anything.
+    /// </summary>
+    [Theory]
+    [InlineData("bearer")]
+    [InlineData("BEARER")]
+    [InlineData("BeArEr")]
+    public Task Scheme_case_insensitive_Bearer_scheme_is_accepted(string scheme) => fixture.RunAuthRowAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var token = fixture.EntraIssuer!.Mint();
+
+        using var http = new HttpClient();
+        using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(fixture.Backend!.BaseUri, "/api/personas"));
+        request.Headers.Authorization = new AuthenticationHeaderValue(scheme, token);
+
+        using var response = await http.SendAsync(request, ct).ConfigureAwait(false);
+
+        Assert.True(
+            response.StatusCode == HttpStatusCode.OK,
+            $"#163/#222 N3 ({scheme}): expected 200 on /api/personas with a valid token under a " +
+            $"differently-cased scheme, got {(int)response.StatusCode}.");
+    });
 }

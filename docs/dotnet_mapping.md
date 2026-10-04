@@ -388,6 +388,84 @@ dropped the role requirement from `EntraAccessRequirementHandler.HandleRequireme
 scope check only) -- 3 unit tests and 6 conformance Auth-row tests failed as expected; reverted and
 reconfirmed fully green.
 
+### Issue #163 / PR #222 follow-up: mirroring Python's auth-hardening fixes
+
+Unity's PR #222 (fix #163) landed on the Python side after this PR's initial merge, deciding the
+anonymous-asset-extension rule as **case-insensitive** and adding several other auth-hardening
+fixes to `entra_auth.py`/`persona_loader.py`. Each was audited against the C# port and mirrored
+where applicable:
+
+- **Case-insensitive anonymous asset extension (#163's actual decision).** Already correct in C#:
+  `EntraAuthentication.cs`'s extension check already used an ordinal-ignore-case comparison, so no
+  code change was needed -- only the stale doc comment (which still said "Unity is concurrently
+  finalizing...") was updated to state the now-decided rule plainly. New conformance coverage:
+  `AuthRowSpecialCaseTests.Row_12_anonymous_allow_list_path_is_case_insensitive_on_extension`
+  (requests `assets/LOGO.SVG`, expects 200 with no token), directly answering PR #222's explicit
+  ask for conformance coverage of this rule.
+- **Case-insensitive `Bearer` scheme matching.** Already native: ASP.NET Core's own
+  `JwtBearerHandler` scheme-prefix matching is ordinal-ignore-case out of the box, so Python's fix
+  (which hardened a hand-rolled string compare) has no C# equivalent gap. Doc comment added to
+  `OnMessageReceived` noting this explicitly. New conformance coverage:
+  `AuthRowRestTests.Scheme_case_insensitive_Bearer_scheme_is_accepted` (theory over `bearer`/
+  `BEARER`/`BeArEr`, each expected to authenticate successfully against `/api/personas`), again
+  directly answering PR #222's ask.
+- **Lower-cased tenant/client IDs.** Genuine gap, fixed: `EntraSettings.Resolve` now lower-cases
+  `tenantId`/`clientId` after `ValidateEntraIds` succeeds but before constructing the returned
+  record, matching Python's normalization so a mixed-case `ENTRA_TENANT_ID`/`ENTRA_CLIENT_ID`
+  can't produce a token-validation mismatch against lower-case claims. New unit test:
+  `EntraSettingsTests.Resolve_NormalizesTenantAndClientIds_ToLowerCase` (uses hex-letter GUIDs so
+  the assertion isn't a case-insensitive-comparison no-op).
+- **JWKS/OIDC outage resilience (backchannel timeout half).** Genuine gap, fixed:
+  `ConfigureJwtBearer` now sets `options.BackchannelTimeout = TimeSpan.FromSeconds(10)` so a hung
+  OIDC-metadata/JWKS endpoint fails a token-validation attempt within 10s instead of hanging on
+  .NET's much longer default `HttpClient` timeout. New unit test:
+  `ConfigureJwtBearerTests.BackchannelTimeout_IsTenSeconds`. The other half of Python's #222 fix in
+  this area -- an explicit negative-discovery-cache TTL and early malformed-token rejection before
+  attempting signature validation -- is already covered by ASP.NET Core's built-in
+  `ConfigurationManager<OpenIdConnectConfiguration>` (which already caches negatively and the
+  `JwtBearerHandler` already short-circuits structurally invalid tokens before any network call);
+  no additional C# code was needed for those.
+- **Non-string `scp` claim guard.** Genuine gap, fixed, though the *mechanism* differs from Python
+  by necessity: .NET's JWT handler materializes a JSON-array-shaped `scp` claim as multiple
+  separate `Claim("scp", ...)` entries rather than a single non-string value, so Python's exact
+  failure mode (`AttributeError` from calling `.split()` on a list) is structurally impossible
+  here. The previous C# code (`FindFirst("scp")?.Value`) would have silently used only the first
+  such claim and ignored the rest -- not a crash, but a silent under/over-grant depending on claim
+  ordering. `EntraAccessRequirementHandler.HandleRequirementAsync` now uses `FindAll("scp")` and
+  requires *exactly one* matching claim to treat it as a valid scope string; zero or multiple
+  claims now fail closed ("no valid scope"), matching Python's non-string -> empty-scopes
+  fail-closed semantic even though the underlying claim shape differs. New unit test:
+  `EntraAccessRequirementHandlerTests.MultipleScpClaims_TreatedAsNonStringScope_Fails`.
+- **Persona-asset symlink rejection -- not yet applicable, scope decision.** Python's #222 hardens
+  `persona_loader.py`'s `_validate_persona_assets`, a **load-time** classification pass that
+  rejects symlinked persona assets when a persona's catalog is first loaded. The C# port
+  (`Personas/PersonaCatalog.cs`) has no load-time asset-classification equivalent at all -- it
+  validates schema shape, menu-item/asset-name collisions, and directory existence, but never
+  inspects individual asset files for type/symlink-ness. This Python feature predates and is
+  unrelated to #147's original Auth-only scope, so it was never ported. Adding an isolated
+  symlink check with no surrounding classification pass to hang it off of would be architecturally
+  inconsistent; deferring is the right call. Note this is **not a live security gap**: the
+  *request-time* defense Python's own #222 description calls "already existing" (rejecting a
+  symlink when an asset is actually served, not just at catalog-load time) already has a complete,
+  independently-built C# analog in `Personas/PersonaAssetResolver.cs`, predating this PR. Follow-up:
+  whoever eventually ports `persona_loader.py`'s load-time `_validate_persona_assets` classification
+  pass to C# should fold this symlink check in at that time.
+- **Not applicable to C#, no code change:** structured-logging claim/token escaping (Python's `%r`
+  vs `%s` fix) -- .NET's idiomatic `ILogger` already logs claim/token values as separate structured
+  parameters rather than string-interpolating them into message text throughout this codebase, so
+  the anti-log-injection goal is already met natively; access-log route-name fallback -- no generic
+  access-log middleware exists anywhere in the C# backend to apply this to; `PRINCIPAL_KEY`
+  (aiohttp-specific warning-avoidance plumbing) -- ASP.NET Core's native `HttpContext.User`/
+  `ClaimsPrincipal` already solves the underlying problem architecturally.
+
+**Validation performed:** `Backend.Tests` 474/474 passing (471 + 3 new: lower-casing, backchannel
+timeout, multi-`scp`-claim). Conformance Auth scenarios (`CONFORMANCE_BACKEND=dotnet`, filtered to
+`Scenarios.Auth`) 80/80 passing (76 + 4 new/updated). Full local conformance suite
+(`CONFORMANCE_BACKEND=dotnet`, unfiltered) showed pre-existing, unrelated flakiness in
+Realtime/Sessions/RateLimit/transport-timing scenario classes (confirmed to reproduce even when run
+in isolation, outside any parallelization contention) -- zero failures in any Auth-scenario class;
+CI remains the authoritative gate per squad convention.
+
 ## `models.catalog` (resolved this revision)
 
 The design doc (section 7) said the shared model catalog lives in `config.yaml` under

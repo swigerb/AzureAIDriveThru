@@ -159,6 +159,18 @@ public sealed record EntraSettings(
         var idsBlank = tenantId.Length == 0 && clientId.Length == 0;
         var idsError = idsBlank ? null : ValidateEntraIds(tenantId, clientId);
 
+        // #163 N4 (Python follow-up, mirrored here for #147 parity): normalize to lower case.
+        // ValidateEntraIds/GuidRegex are already case-insensitive, but a real Entra token's
+        // tid/aud claims are always lower-case GUIDs -- an upper-case id typed into config would
+        // otherwise fail every token's issuer/tid/aud comparison in ConfigureJwtBearer/
+        // EntraAccessRequirementHandler, a confusing fail-closed outage rather than the config
+        // error caught here. AUTH_MODE is already accepted case-insensitively above.
+        if (!idsBlank)
+        {
+            tenantId = tenantId.ToLowerInvariant();
+            clientId = clientId.ToLowerInvariant();
+        }
+
         EntraMode mode;
         if (normalizedMode == "entra")
         {
