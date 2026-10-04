@@ -231,6 +231,15 @@ namespace Conformance.Tests;
 /// same way (temporarily asserting on <see cref="CountFloorEligibleDotnetReadyTestMethods"/>'s
 /// actual value at rebase time, not projected by arithmetic) -- **275**, reflecting whatever
 /// else had also landed on dev in the meantime on top of #237's 239. Raises the floor 239 to 275.
+///
+/// Issue #15 (PR #244, Rick's round-2 re-review): the supersede-close race fix (background close
+/// with a short timeout + a synchronous <c>SupersededFlag</c> gating tool dispatch, replacing the
+/// prior round's awaited-inline close that could still block the NEW connection's own forwarding
+/// against a non-draining stale peer) adds one new tagged scenario,
+/// <c>ResumeHandshakeTests.Resuming_from_a_still_attached_socket_whose_transport_cannot_drain_still_forwards_the_new_sockets_own_session_update_promptly</c>,
+/// alongside the pre-existing <c>Resuming_from_a_still_attached_socket_supersedes_it_with_4002</c>
+/// (kept as the simple well-behaved-peer baseline rather than overwritten, so 4002/CloseStatus
+/// coverage isn't lost). Measured directly the same way -- **276**. Raises the floor 275 to 276.
 /// </summary>
 public sealed class DotnetTraitCoverageTests
 {
@@ -253,12 +262,12 @@ public sealed class DotnetTraitCoverageTests
     };
 
     [Fact]
-    public void At_least_275_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
+    public void At_least_276_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
     {
         var count = CountFloorEligibleDotnetReadyTestMethods();
 
-        Assert.True(count >= 275,
-            $"Expected at least 275 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
+        Assert.True(count >= 276,
+            $"Expected at least 276 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
             $"and not unconditionally skip-gated by AuthRowCapability (the dotnet leg's " +
             $"`--filter \"{TraitName}={TraitValue}&Category!=Browser\"` baseline, minus the five " +
             "skip-only Scenarios/Auth classes -- see this class's own doc comment; " +

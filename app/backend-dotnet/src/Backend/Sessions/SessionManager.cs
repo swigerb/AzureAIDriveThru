@@ -33,6 +33,25 @@ public sealed record ResumeOutcome(
     CancellationTokenSource? StaleCts = null,
     SessionIdentifiers? Identifiers = null);
 
+/// <summary>Rick's #244 round-2 review (issue 1): a signal independent of <see cref="StaleCts"/>'s
+/// cancellation, set exactly once, synchronously, inside <see cref="SessionManager"/>'s own lock
+/// the instant a resume captures a still-attached socket as stale -- i.e. as early as possible,
+/// before any socket IO (the background supersede-close) is even scheduled, let alone awaited.
+/// <c>OrderToolExecutor.ExecuteAsync</c> is synchronous and ignores its <see cref="CancellationToken"/>
+/// parameter entirely, and the <c>OrderState</c> it mutates isn't thread-safe, so a stale
+/// connection's own in-flight <c>HandleToolCallDoneAsync</c> cannot rely on <see cref="StaleCts"/>
+/// ever being cancelled promptly (the background close it now shares a fate with may legitimately
+/// take up to its own short timeout against a non-draining peer) -- it needs a flag it can check
+/// synchronously, with no IO and no dependency on how long that close takes.</summary>
+public sealed class SupersededFlag
+{
+    private volatile bool _value;
+
+    public bool IsSuperseded => _value;
+
+    public void MarkSuperseded() => _value = true;
+}
+
 /// <summary>
 /// Port of app/backend/session_manager.py's <c>SessionManager</c> (issue #15). A single
 /// process-wide singleton (constructor-injected into <see cref="Backend.Sessions.RealtimeProcessor"/>
@@ -113,6 +132,11 @@ public sealed class SessionManager
         /// before this field, never a hard requirement.</summary>
         public CancellationTokenSource? AttachedCts { get; set; }
 
+        /// <summary>Rick's #244 round-2 review, issue 1: the CURRENTLY attached connection's own
+        /// <see cref="SupersededFlag"/> -- see that class's own doc comment for why this exists
+        /// alongside (not instead of) <see cref="AttachedCts"/>.</summary>
+        public SupersededFlag? AttachedSupersededFlag { get; set; }
+
         /// <summary>Rick's #244 review, issue 5: the wire-facing sessionToken/roundTripIndex pair
         /// (Backend.Realtime.SessionIdentifiers is already a mutable, in-place-incrementing class --
         /// see its own AdvanceRoundTrip -- so persisting THIS SAME OBJECT here, and handing the
@@ -135,7 +159,7 @@ public sealed class SessionManager
     /// one.</summary>
     public void CreateSession(string sessionId, WebSocket ws, string personaId, string modelId, string? menuMode,
         IToolExecutor toolExecutor, string voice, CancellationTokenSource? attachedCts = null,
-        SessionIdentifiers? identifiers = null)
+        SessionIdentifiers? identifiers = null, SupersededFlag? attachedSupersededFlag = null)
     {
         lock (_sync)
         {
@@ -151,6 +175,7 @@ public sealed class SessionManager
                 LastActivity = _timeProvider.GetUtcNow(),
                 AttachedCts = attachedCts,
                 Identifiers = identifiers,
+                AttachedSupersededFlag = attachedSupersededFlag,
             };
         }
     }
@@ -271,7 +296,8 @@ public sealed class SessionManager
         string requestedModelId,
         string? requestedMenuMode,
         string provisionalSessionId,
-        CancellationTokenSource? attachedCts = null)
+        CancellationTokenSource? attachedCts = null,
+        SupersededFlag? attachedSupersededFlag = null)
     {
         if (!_config.ResumeEnabled)
         {
@@ -343,8 +369,15 @@ public sealed class SessionManager
                     // is no still-attached socket to steal from (staleWs is also null then), same
                     // condition as staleWs itself.
                     var staleCts = staleWs is not null ? record.AttachedCts : null;
+                    // Rick's #244 round-2 review, issue 1: mark the STALE connection's own flag
+                    // SYNCHRONOUSLY, right here under the lock -- not deferred to whenever the
+                    // background supersede-close (started by the caller afterward) happens to run
+                    // or finish. This is what lets the stale connection's own in-flight
+                    // HandleToolCallDoneAsync refuse to dispatch a tool the instant it checks,
+                    // regardless of how long that close takes against a non-draining peer.
                     if (staleWs is not null)
                     {
+                        record.AttachedSupersededFlag?.MarkSuperseded();
                         record.AttachedSocket = null;
                     }
                     if (provisionalSessionId != sessionId)
@@ -355,6 +388,7 @@ public sealed class SessionManager
                     record.DetachedAt = null;
                     record.AttachedSocket = ws;
                     record.AttachedCts = attachedCts;
+                    record.AttachedSupersededFlag = attachedSupersededFlag;
                     record.LastActivity = now;
 
                     var newId = IssueResumeIdLocked(record);

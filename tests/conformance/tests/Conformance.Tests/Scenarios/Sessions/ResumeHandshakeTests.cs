@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.Net.WebSockets;
+using System.Text.Json.Nodes;
+using Conformance.Fakes;
 using Conformance.Harness;
 using Xunit;
 
@@ -368,10 +370,146 @@ public sealed class ResumeHandshakeTests(ResumeTimersConformanceFixture fixture)
 
         // rtmt.py's handle_resume spawns _close_superseded(stale_ws) as a background task once
         // the resume completes -- the old socket's close is asynchronous, not synchronous with
-        // the resume frame itself.
+        // the resume frame itself. This baseline covers the well-behaved-peer path end to end
+        // (including the actual 4002 close status); see
+        // Resuming_from_a_still_attached_socket_whose_transport_cannot_drain_still_forwards_the_new_sockets_own_session_update_promptly
+        // below for the non-draining-peer backpressure hazard from Rick's round-2 review of #244,
+        // which can't also observe CloseStatus for reasons explained on that test.
         await first.WaitForCloseAsync(FrameTimeout, ct);
         Assert.Equal((WebSocketCloseStatus)4002, first.CloseStatus);
         Assert.Equal("superseded", first.CloseStatusDescription);
+    });
+
+    [Fact]
+    [Trait("Dotnet", "ready")]
+    public Task Resuming_from_a_still_attached_socket_whose_transport_cannot_drain_still_forwards_the_new_sockets_own_session_update_promptly() => fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+
+        var firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
+        await using var first = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        var firstUpstream = await firstConnectionTask;
+        Assert.True(firstUpstream is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        await first.SendStartSessionAsync(cancellationToken: ct);
+        var metadata = await first.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.session_metadata", FrameTimeout, ct);
+        Assert.True(metadata is not null);
+        var resumeId = metadata!.Json.GetProperty("resumeId").GetString();
+
+        // Rick's round-2 review of #244 (issue 1, BLOCKING): `first`'s own socket is deliberately
+        // made a NON-DRAINING half-open peer, not merely a stuck-but-idle one (CloseCodeTests'
+        // own Superseding_a_stuck_peer_that_never_acks_the_close_still_completes_promptly already
+        // covers that lighter case, and already passed even against the pre-fix code, because a
+        // single ~tiny 4002 close frame always fits in the kernel send buffer regardless of
+        // whether the peer reads). Stopping the reader loop (so `first` can never drain anything,
+        // exactly like a phone that lost signal mid-response) and then flooding its own upstream
+        // connection with a burst of large assistant-audio deltas -- the backend forwards every
+        // one of these to `first`'s real socket as fast as they arrive -- is an attempt to build up
+        // genuine backlog on that socket's own outbound send path, the only way to reproduce a send
+        // that can actually block (not just fail to get an application-level ack).
+        //
+        // HONEST LIMITATION: empirically, even a sustained 5s/1MB-chunk flood over this dev box's
+        // loopback TCP did not reliably make CloseOutputAsync actually block long enough for this
+        // test to fail against the un-fixed (inline-await) code -- Windows loopback autotuning and
+        // Kestrel's own pipe buffering apparently absorb it within the idle-timeout-safe window
+        // available here (see the delay below). This test is kept as a best-effort, real-mechanism
+        // regression guard (it still exercises a reader-stopped peer and asserts on the actual
+        // thing Rick's review asked for -- B's own forwarding, not just session_resumed -- which is
+        // a strictly stronger assertion than the old version had), but it is NOT the proof that the
+        // blocking fix works: that proof is
+        // CloseSupersededStaleConnectionAsyncTests.Completes_within_its_own_timeout_even_when_the_stale_sockets_close_output_hangs_forever
+        // in Backend.Tests, which deterministically mutation-checks the exact production code path
+        // (confirmed failing against the un-fixed code, passing against the fix).
+        first.StopReaderLoopForTesting();
+        var floodDelta = Convert.ToBase64String(new byte[1024 * 1024]);
+        using var floodCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var floodTask = Task.Run(async () =>
+        {
+            try
+            {
+                while (!floodCts.IsCancellationRequested)
+                {
+                    await firstUpstream!.SendAsync(new JsonObject
+                    {
+                        ["type"] = "response.audio.delta",
+                        ["response_id"] = "resp_flood",
+                        ["item_id"] = "item_flood",
+                        ["delta"] = floodDelta,
+                    }, floodCts.Token).ConfigureAwait(false);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected: floodCts is cancelled once the assertions below are done with it.
+            }
+            catch (Exception)
+            {
+                // Once `first` is actually torn down (post-fix, via the background supersede
+                // close, or even pre-fix if the stale connection's OWN relay loop notices
+                // something first) further sends against its upstream connection can legitimately
+                // fail -- this flood's only job is to build up backlog while it can, not to
+                // outlive the connection it's flooding.
+            }
+        }, ct);
+
+        // Give the flood a head start to build up genuine backlog on `first`'s own send path
+        // before triggering the resume -- a single flood iteration or two (as proven by an earlier
+        // run of this test, which passed in ~650ms even against the pre-fix code) isn't nearly
+        // enough: localhost loopback socket buffers are large, so it takes a real burst of
+        // sustained, undrained sends to actually fill them and make the eventual CloseOutputAsync
+        // call block.
+        // Keep comfortably under ResumeTimers' CONFORMANCE_IDLE_TIMEOUT_SECONDS=8 (idle timeout
+        // applies even to a still-attached session, and nothing in this flood touches activity --
+        // by design, matching the same "audio deltas don't count as activity" rule this round's own
+        // fix 1 relies on) -- long enough to build real backlog, short enough that the idle checker
+        // doesn't delete the session out from under the resume attempt.
+        await Task.Delay(TimeSpan.FromSeconds(5), ct);
+
+        // `first` is deliberately left open (never closed) -- session_manager.py's resume() does
+        // not require a detach: it only checks the digest and the idle-timeout window, so a
+        // still-attached session's resume id is equally valid. This is the "steal" path.
+        var secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
+        await using var second = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        var secondUpstream = await secondConnectionTask;
+        Assert.True(secondUpstream is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        await second.SendExtensionResumeAsync(resumeId!, ct);
+
+        var resumed = await second.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.session_resumed", FrameTimeout, ct);
+        Assert.True(resumed is not null, "Expected the still-attached session's resume id to be honoured.");
+
+        // The proof this test targets (round-2 review, issue 1): extension.session_resumed itself
+        // is announced from a SEPARATE task woken by state.FirstFrameDecision resolving (see
+        // AnnounceAfterFirstFrameDecisionAsync), decoupled from whatever HandleResumeFirstFrameAsync
+        // does AFTERWARD on ITS OWN call stack -- so asserting only "resumed is not null" (the old
+        // version of this test) does not actually prove the new connection's OWN forwarding is
+        // unblocked. B's very next frame (its own startSession's session.update, sent right after
+        // the resume) rides that SAME call stack: if the supersede path still awaited `first`'s
+        // stuck close inline AND that close actually blocked, this send would be stuck behind it.
+        var watermark = secondUpstream!.ReceivedFrames.Snapshot().Count;
+        var stopwatch = Stopwatch.StartNew();
+        await second.SendStartSessionAsync(cancellationToken: ct);
+        var secondSessionUpdate = await secondUpstream.ReceivedFrames.WaitForAsync(
+            f => f.Sequence >= watermark && f.Type == "session.update", FrameTimeout, ct);
+        stopwatch.Stop();
+        Assert.True(secondSessionUpdate is not null, "Expected B's own session.update to reach its upstream connection.");
+        Assert.True(stopwatch.Elapsed < WellUnderFirstFrameTimeout,
+            $"B's own session.update took {stopwatch.Elapsed} to reach upstream -- expected well under " +
+            $"{WellUnderFirstFrameTimeout}; a slower time means B's own relay loop is still gated behind " +
+            "A's stuck supersede-close, exactly the hazard Rick's round-2 review of #244 found.");
+
+        // Deliberately NOT asserting first.CloseStatus == 4002 here: StopReaderLoopForTesting()
+        // cancelled first's own reader loop, and that same loop is the only thing that ever
+        // observes an incoming Close frame and records its status (see PumpReceivedFramesAsync) --
+        // its cancellation unconditionally resolves WaitForCloseAsync's task via a `finally`,
+        // indistinguishable from an actual close, with CloseStatus left null. Proving the stale
+        // peer eventually receives an actual 4002 against a well-behaved (reading) peer is already
+        // covered by this class's own simpler resume test above; this test's job is specifically
+        // the backpressure hazard, which requires a peer that never drains, which is exactly what
+        // makes watching its own close frame impossible. Stop the flood so the background close (or
+        // the eventual idle teardown) isn't fighting an endless stream of new sends as cleanup runs.
+        floodCts.Cancel();
+        await floodTask;
     });
 
     [Fact]

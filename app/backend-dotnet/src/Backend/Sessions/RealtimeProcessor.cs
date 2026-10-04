@@ -56,6 +56,14 @@ public sealed class RealtimeProcessor : IPipelineProcessor
     /// guest-initiated <c>extension.end_session</c>.</summary>
     private const string SessionEndedCloseReason = "session_ended";
 
+    /// <summary>Rick's #244 round-2 review, issue 1: bounds how long the BACKGROUND
+    /// supersede-close (<see cref="CloseSupersededStaleConnectionAsync"/>) may spend trying to
+    /// drain a courtesy close frame to a stale peer before giving up and cancelling its CTS
+    /// anyway. Short enough that a genuinely stuck peer is abandoned quickly (the connection is
+    /// being dropped either way), long enough to not routinely abort an ordinary close under
+    /// momentary load.</summary>
+    internal static readonly TimeSpan SupersededCloseTimeout = TimeSpan.FromSeconds(2);
+
     private readonly ModelCatalog _catalog;
     private readonly string _defaultDeployment;
     private readonly string _upstreamEndpoint;
@@ -158,6 +166,14 @@ public sealed class RealtimeProcessor : IPipelineProcessor
         // IToolExecutor from the session this connection resumed, so order state survives a
         // detach/reconnect instead of starting over empty (see RealtimeProcessor's class doc).
         public required IToolExecutor ToolExecutor { get; set; }
+        /// <summary>Rick's #244 round-2 review, issue 1: this connection's OWN
+        /// <see cref="SessionManager.SupersededFlag"/> -- created once per connection (fresh-or-
+        /// resumed alike, same as <see cref="Identifiers"/>) and handed to
+        /// <see cref="SessionManager.CreateSession"/>/<see cref="SessionManager.TryResume"/> as
+        /// <c>attachedSupersededFlag</c> so a LATER resume by some other connection can mark THIS
+        /// connection's own instance superseded. See that class's doc comment for why this exists
+        /// alongside (not instead of) cancelling the linked CTS.</summary>
+        public SupersededFlag Superseded { get; } = new();
         /// <summary>This connection's OWN session id in the registry -- the provisional id it was
         /// created with (<see cref="SessionId"/>), UNLESS a resume succeeds, in which case it
         /// becomes the resumed session's own (older) id. Every <see cref="SessionManager"/> call
@@ -287,7 +303,7 @@ public sealed class RealtimeProcessor : IPipelineProcessor
         {
             _sessionManager.CreateSession(
                 sessionId, browserSocket, persona.Id, resolvedModel.Id, menuMode, toolExecutor, voice,
-                attachedCts: linkedCts, identifiers: state.Identifiers);
+                attachedCts: linkedCts, identifiers: state.Identifiers, attachedSupersededFlag: state.Superseded);
 
             state.Nudge = new NudgeScheduler(
                 _sessionManager.Config.NudgeAfterSeconds,
@@ -529,7 +545,8 @@ public sealed class RealtimeProcessor : IPipelineProcessor
         {
             var presentedId = GetString(message, "resume_id");
             var outcome = _sessionManager!.TryResume(
-                browserSocket, presentedId, persona.Id, resolvedModel.Id, menuMode, sessionId, linkedCts);
+                browserSocket, presentedId, persona.Id, resolvedModel.Id, menuMode, sessionId, linkedCts,
+                attachedSupersededFlag: state.Superseded);
             if (!outcome.Accepted)
             {
                 _logger?.LogInformation(
@@ -568,35 +585,35 @@ public sealed class RealtimeProcessor : IPipelineProcessor
 
             if (outcome.StaleWs is { } staleWs)
             {
-                // Rick's #244 review (issue 4): CloseAsync's full handshake WAITS for the peer's
-                // own close ack -- racing the stale connection's OWN pending ReceiveAsync on the
-                // very same socket (that connection's relay loop may still be blocked there),
-                // exactly the hazard CloseIdleSessionsAsync's own doc comment already explains for
-                // the idle-sweep case. CloseOutputAsync (send-only, never waits) avoids that
-                // contention and can never hang.
+                // Rick's #244 round-2 review, issue 1: this USED to await the close-output send
+                // and only THEN cancel outcome.StaleCts, all inline in THIS (the new, winning)
+                // connection's own call stack -- reasoned (previous comment, now wrong) that
+                // CloseOutputAsync "can never hang" because it never waits for the peer's
+                // handshake reply. That is true of the HANDSHAKE wait, but CloseOutputAsync is
+                // still a SEND, and a send can block on a half-open network-switch where the stale
+                // socket's outbound isn't draining (e.g. assistant audio was streaming when the
+                // network died) or its send lock is held -- Rick proved it with a probe over
+                // exactly such a non-draining transport. Awaited inline here, that blocks not just
+                // the stale connection's teardown but THIS connection's own first-frame handling
+                // (and everything downstream of it), so the new socket forwards nothing -- no
+                // session.update, no audio -- until an eventual 4000 idle close deletes the order,
+                // even though the guest already saw session_resumed.
                 //
-                // Ordering matters: the close-output send is awaited and completed FIRST, and only
-                // THEN is the stale connection's own linked CTS cancelled -- not the reverse. An
-                // earlier version cancelled first and fired the close send off separately
-                // (fire-and-forget), which raced the stale connection's OWN unwind: cancelling its
-                // CTS makes that connection's relay loop observe OperationCanceledException on its
-                // next read and tear itself down (disposing staleWs as part of its own cleanup) on
-                // a separate task, with no guarantee the fire-and-forget close frame had actually
-                // reached the wire first -- a CI-reproducible race that left the resumed-away
-                // browser's CloseStatus permanently null instead of 4002/"superseded"
-                // (ResumeHandshakeTests.Resuming_from_a_still_attached_socket_supersedes_it_with_4002).
-                // Awaiting the send first removes that race entirely: CloseOutputAsync returns as
-                // soon as the frame is queued on the wire (it never waits for the peer, so this
-                // cannot hang), and only after that does cancelling the stale CTS stop that
-                // connection's relay loops -- and any in-flight tool dispatch through the SHARED
-                // IToolExecutor instance -- promptly, rather than leaving a superseded connection
-                // free to keep processing (and dispatching tools for) whatever the peer sends until
-                // it eventually notices the close frame on its own (or never, against an
-                // unresponsive/malicious peer).
-                await CloseOutputIfOpenAsync(
-                        staleWs, (WebSocketCloseStatus)SessionManager.SupersededCloseCode, SessionManager.SupersededCloseReason)
-                    .ConfigureAwait(false);
-                outcome.StaleCts?.Cancel();
+                // Fixed the same way Python does it (rtmt.py's background `_close_superseded`,
+                // ~1026): fire the close-and-cancel off as a background task with its own short
+                // timeout, so it can never block this connection's own processing, while the 4002
+                // close is still attempted promptly on a best-effort basis. The tool-dispatch race
+                // this ordering previously depended on (StaleCts cancelled before another send
+                // could race it) is now closed by state.Superseded instead -- TryResume marks the
+                // STALE connection's own SupersededFlag synchronously under its lock the instant it
+                // captures staleWs, independent of how long this background close later takes, and
+                // HandleToolCallDoneAsync checks that flag (not StaleCts) before ever dispatching a
+                // tool, because OrderToolExecutor.ExecuteAsync is synchronous, ignores its own
+                // CancellationToken, and mutates OrderState, which isn't thread-safe -- a promptly
+                // cancelled StaleCts alone was never enough to stop an already-started dispatch.
+                _ = Task.Run(
+                    () => CloseSupersededStaleConnectionAsync(staleWs, outcome.StaleCts, SupersededCloseTimeout, _logger),
+                    CancellationToken.None);
             }
         }
 
@@ -952,6 +969,25 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                 return;
             }
 
+            // Rick's #244 round-2 review, issue 1: refuse to dispatch once this connection has
+            // been superseded by a resume elsewhere, checked HERE -- synchronously, with no IO --
+            // rather than relying on StaleCts having been cancelled promptly. StaleCts cancellation
+            // now happens from a BACKGROUND task (see HandleResumeFirstFrameAsync) that may still
+            // be mid-flight against a non-draining stale peer, and even when prompt,
+            // OrderToolExecutor.ExecuteAsync is synchronous and ignores its own CancellationToken
+            // entirely -- an in-flight call already past this point would run to completion and
+            // mutate the shared (not thread-safe) OrderState regardless of cancellation. This flag
+            // is set synchronously, under SessionManager's own lock, the instant TryResume captures
+            // this connection as stale (SessionManager.SupersededFlag's own doc comment has the
+            // full reasoning), so it is safe to trust here with no further synchronization.
+            if (state.Superseded.IsSuperseded)
+            {
+                _logger?.LogInformation(
+                    "Dropping tool call '{ToolName}' for call_id={CallId}: this connection was superseded by a " +
+                    "resume elsewhere (session={SessionId})", toolName, callId, sessionId);
+                return;
+            }
+
             string outputText;
             bool sendToClient;
             string? clientText;
@@ -1151,16 +1187,24 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                 var identifiers = state.Identifiers.AdvanceRoundTrip();
                 await SendTextAsync(browserSocket, identifiers.ToFrame("extension.round_trip_token").ToJsonString(), ct)
                     .ConfigureAwait(false);
-                // Rick's #244 review (issue 3): rtmt.py also records the assistant's own turn here
-                // (session_manager.py's record_turn("carhop", spoken)) for later rehydration; this
-                // port uses the role string "assistant" (matching RecordTurn's own existing doc
-                // comment and RecentTurnsLocked's existing "guest"/anything-else-is-the-persona
-                // convention) rather than hardcoding "carhop" -- functionally identical, since
-                // build_rehydration_item/RecentTurnsLocked both already treat ANY non-"guest" role
-                // string as "the persona spoke," substituting the resumed session's own bound
-                // persona's role label regardless of what was actually stored.
-                _sessionManager?.RecordTurn(state.EffectiveSessionId, "assistant", string.Join(" ", spokenParts));
             }
+
+            // Rick's #244 review (issue 3), broadened per round-2 review issue 2: rtmt.py also
+            // records the assistant's own turn here (session_manager.py's
+            // record_turn("carhop", spoken)) for later rehydration -- and, per rtmt.py ~2070-2077,
+            // does so for EVERY response.done that carries a "response" (spoken is simply "" when
+            // there's nothing to say), completely independent of is_tool_call_response: that gate
+            // only decides whether round_trip_token is advanced/sent above, never whether the turn
+            // is recorded. A tool-call round still has the model say SOMETHING in the same
+            // response (e.g. "Let me check on that") that a resumed session should rehydrate, so
+            // this port now records every response.done the same way, no longer skipping
+            // tool-call responses. This port uses the role string "assistant" (matching
+            // RecordTurn's own existing doc comment and RecentTurnsLocked's existing
+            // "guest"/anything-else-is-the-persona convention) rather than hardcoding "carhop" --
+            // functionally identical, since build_rehydration_item/RecentTurnsLocked both already
+            // treat ANY non-"guest" role string as "the persona spoke," substituting the resumed
+            // session's own bound persona's role label regardless of what was actually stored.
+            _sessionManager?.RecordTurn(state.EffectiveSessionId, "assistant", string.Join(" ", spokenParts));
 
             return message;
         }
@@ -1647,14 +1691,21 @@ public sealed class RealtimeProcessor : IPipelineProcessor
         }
     }
 
-    /// <summary>Rick's #244 review, issue 4: the send-only half of <see cref="CloseIfOpenAsync"/>,
-    /// used wherever a socket's OWN relay loop may still have a <c>ReceiveAsync</c> pending on it
-    /// concurrently (supersede; mirrors SessionManager.CloseIdleSessionsAsync's identical choice
-    /// and doc comment for the idle-sweep case). <see cref="WebSocket.CloseOutputAsync"/> sends
-    /// the close frame and returns immediately without waiting for the peer's handshake reply, so
-    /// it can never hang and never contends with that pending receive the way
-    /// <see cref="WebSocket.CloseAsync"/>'s own internal wait-for-ack would.</summary>
-    private static async Task CloseOutputIfOpenAsync(WebSocket socket, WebSocketCloseStatus status, string? description)
+    /// <summary>Rick's #244 review, issue 4 (and round-2 review, issue 1): the send-only half of
+    /// <see cref="CloseIfOpenAsync"/>, used wherever a socket's OWN relay loop may still have a
+    /// <c>ReceiveAsync</c> pending on it concurrently (supersede; mirrors
+    /// SessionManager.CloseIdleSessionsAsync's identical choice and doc comment for the idle-sweep
+    /// case). <see cref="WebSocket.CloseOutputAsync"/> never waits for the peer's own handshake
+    /// reply the way <see cref="WebSocket.CloseAsync"/> does, so it never contends with that
+    /// pending receive -- but it is still a send, and a send can still block on a non-draining
+    /// transport (half-open network-switch, full receive window) until there is buffer space or
+    /// <paramref name="cancellationToken"/> fires; an EARLIER version of this comment claimed it
+    /// "can never hang", which Rick's round-2 review (issue 1) disproved with a probe over exactly
+    /// such a transport. Callers that cannot afford to be blocked by a stuck PEER (i.e. anywhere
+    /// this runs inline in some OTHER connection's own call stack, like the supersede path) must
+    /// pass a bounded token rather than <see cref="CancellationToken.None"/>.</summary>
+    private static async Task CloseOutputIfOpenAsync(
+        WebSocket socket, WebSocketCloseStatus status, string? description, CancellationToken cancellationToken)
     {
         if (socket.State != WebSocketState.Open && socket.State != WebSocketState.CloseReceived)
         {
@@ -1662,11 +1713,55 @@ public sealed class RealtimeProcessor : IPipelineProcessor
         }
         try
         {
-            await socket.CloseOutputAsync(status, description, CancellationToken.None).ConfigureAwait(false);
+            await socket.CloseOutputAsync(status, description, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception)
         {
-            // Best-effort: the peer may have already torn the connection down.
+            // Best-effort: the peer may have already torn the connection down, or (round-2 review,
+            // issue 1) cancellationToken fired because the peer wasn't draining -- either way this
+            // is the connection that's being superseded/dropped, so an incomplete close frame is
+            // acceptable; the caller still cancels its CTS/tears it down regardless.
+        }
+    }
+
+    /// <summary>Rick's #244 round-2 review, issue 1: runs the stale-socket close-and-cancel
+    /// sequence that USED to sit inline in <c>HandleResumeFirstFrameAsync</c>, but now off the
+    /// NEW (winning) connection's own call stack entirely -- see the call site's doc comment for
+    /// why awaiting it there was unsafe. Bounded by <paramref name="closeTimeout"/> so a
+    /// non-draining stale peer can delay this method's own completion by at most that long, never
+    /// indefinitely; a cancelled <see cref="WebSocket.CloseOutputAsync"/> aborts the stuck send,
+    /// which is an acceptable outcome for the connection that's losing anyway. <paramref
+    /// name="staleCts"/> is always cancelled in the <c>finally</c>, independent of whether the
+    /// close itself completed, timed out, or threw -- a stale connection's relay loops must stop
+    /// either way. Marked <c>internal</c> (not <c>private</c>) specifically so Backend.Tests can
+    /// call it directly with a <c>FakeWebSocket</c> rigged to hang on <c>CloseOutputAsync</c> and
+    /// assert it still completes within <paramref name="closeTimeout"/> plus slack -- a
+    /// deterministic, environment-independent proof of the fix that doesn't depend on reproducing
+    /// genuine TCP backpressure.</summary>
+    internal static async Task CloseSupersededStaleConnectionAsync(
+        WebSocket staleWs,
+        CancellationTokenSource? staleCts,
+        TimeSpan closeTimeout,
+        ILogger? logger = null)
+    {
+        try
+        {
+            using var timeoutCts = new CancellationTokenSource(closeTimeout);
+            await CloseOutputIfOpenAsync(
+                    staleWs, (WebSocketCloseStatus)SessionManager.SupersededCloseCode, SessionManager.SupersededCloseReason,
+                    timeoutCts.Token)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // CloseOutputIfOpenAsync already swallows its own close failures; this guards the
+            // Task.Run itself (e.g. the CancellationTokenSource construction) so a stray exception
+            // here can never prevent the finally below from running.
+            logger?.LogWarning(ex, "Unexpected failure closing a superseded stale connection's output");
+        }
+        finally
+        {
+            staleCts?.Cancel();
         }
     }
 
