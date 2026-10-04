@@ -216,6 +216,21 @@ namespace Conformance.Tests;
 /// #235), now confirmed by direct measurement rather than arithmetic. This raises the floor 239 to
 /// 256. Any PR still rebasing on top of this MUST re-measure fresh at its own rebase time the same
 /// way, not add a historical delta to 256 blindly.
+///
+/// Issue #15 (PR #244, C# sessions/resilience, rebased on top of #237's 239 baseline): Rick's #244
+/// review added five new tagged, ungated scenarios closing gaps his own review found --
+/// <c>RateLimitIdleInteractionTests.Repeated_guest_speech_keeps_the_session_alive_past_idle_timeout_seconds</c>
+/// (issue 1, guest-speech activity, mutation-checked), <c>ResumeHandshakeTests.A_resume_sent_after_the_first_frame_timeout_fallback_is_rejected_as_late</c>
+/// (issue 2, late-resume-after-timeout, mutation-checked),
+/// <c>ResumeRehydrationAndNudgeTests.Resuming_mid_conversation_rehydrates_the_recorded_guest_transcript</c>
+/// (issue 3, RecordTurn wiring), <c>CloseCodeTests.Superseding_a_stuck_peer_that_never_acks_the_close_still_completes_promptly</c>
+/// (issue 4, supersede-close ordering -- also caught and fixed a real pre-existing regression this
+/// same work introduced, see <c>ResumeHandshakeTests.Resuming_from_a_still_attached_socket_supersedes_it_with_4002</c>),
+/// and <c>ResumeHandshakeTests.Resuming_carries_over_the_original_sessions_token_and_round_trip_state</c>
+/// (issue 5, session_token/round_trip_index/round_trip_token continuity). Measured directly the
+/// same way (temporarily asserting on <see cref="CountFloorEligibleDotnetReadyTestMethods"/>'s
+/// actual value at rebase time, not projected by arithmetic) -- **275**, reflecting whatever
+/// else had also landed on dev in the meantime on top of #237's 239. Raises the floor 239 to 275.
 /// </summary>
 public sealed class DotnetTraitCoverageTests
 {
@@ -238,21 +253,17 @@ public sealed class DotnetTraitCoverageTests
     };
 
     [Fact]
-    public void At_least_256_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
+    public void At_least_275_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
     {
         var count = CountFloorEligibleDotnetReadyTestMethods();
 
-        Assert.True(count >= 256,
-            $"Expected at least 256 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
+        Assert.True(count >= 275,
+            $"Expected at least 275 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
             $"and not unconditionally skip-gated by AuthRowCapability (the dotnet leg's " +
             $"`--filter \"{TraitName}={TraitValue}&Category!=Browser\"` baseline, minus the five " +
             "skip-only Scenarios/Auth classes -- see this class's own doc comment; " +
             $"docs/dotnet_mapping.md), but found {count}. If a tagged scenario was removed or " +
-            "renamed without a replacement, the dotnet CI leg silently lost coverage. 256 is a " +
-            "FRESH count (#236 Rick re-review item 5, taken post-rebase onto origin/dev), not " +
-            "arithmetic -- re-measure with `Conformance.Tests.exe -list methods -trait " +
-            "Dotnet=ready` minus the 18 AuthRowGatedTypeNames methods before raising this floor " +
-            "again.");
+            "renamed without a replacement, the dotnet CI leg silently lost coverage.");
     }
 
 

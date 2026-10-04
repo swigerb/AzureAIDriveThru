@@ -2,6 +2,7 @@ using System.Net.WebSockets;
 using System.Security.Cryptography;
 using System.Text;
 using Backend.Configuration;
+using Backend.Realtime;
 using Backend.Tools;
 using Microsoft.Extensions.Logging;
 
@@ -12,7 +13,13 @@ namespace Backend.Sessions;
 /// still-attached socket to supersede with 4002 (non-blocking, async) when the resumed session was
 /// never detached in the first place; <see cref="ConversationStarted"/> (Python's
 /// <c>has_sent_greeting</c>) gates whether the resume rehydrates (greeting already happened) or
-/// just re-greets as if fresh.</summary>
+/// just re-greets as if fresh. <see cref="StaleCts"/> -- a C#-only addition with no Python
+/// counterpart (asyncio has no equivalent "cancel this other task" handle threaded through a
+/// dataclass) -- is the STALE connection's own linked <see cref="CancellationTokenSource"/>,
+/// present alongside <see cref="StaleWs"/> precisely when there is one to steal from; cancelling it
+/// is what actually stops that connection's relay loops (and any in-flight tool dispatch through
+/// the shared <see cref="IToolExecutor"/>) promptly on supersede, rather than relying solely on it
+/// noticing the 4002 close frame on its own schedule.</summary>
 public sealed record ResumeOutcome(
     bool Accepted,
     string? Reason = null,
@@ -22,7 +29,9 @@ public sealed record ResumeOutcome(
     bool ConversationStarted = false,
     IToolExecutor? ToolExecutor = null,
     string? Voice = null,
-    IReadOnlyList<(string Role, string Text)>? RecentTurns = null);
+    IReadOnlyList<(string Role, string Text)>? RecentTurns = null,
+    CancellationTokenSource? StaleCts = null,
+    SessionIdentifiers? Identifiers = null);
 
 /// <summary>
 /// Port of app/backend/session_manager.py's <c>SessionManager</c> (issue #15). A single
@@ -96,6 +105,25 @@ public sealed class SessionManager
         public DateTimeOffset? DetachedAt { get; set; }
         public string? ResumeDigest { get; set; }
         public Queue<(string Role, string Text)> Transcript { get; } = new();
+
+        /// <summary>The CURRENTLY attached connection's own linked CTS (Rick's #244 review,
+        /// issue 4), set by whichever of <see cref="CreateSession"/>/<see cref="TryResume"/> most
+        /// recently attached a socket to this record. Null for callers (tests, mainly) that don't
+        /// pass one -- supersede then falls back to the close-frame-only behaviour that existed
+        /// before this field, never a hard requirement.</summary>
+        public CancellationTokenSource? AttachedCts { get; set; }
+
+        /// <summary>Rick's #244 review, issue 5: the wire-facing sessionToken/roundTripIndex pair
+        /// (Backend.Realtime.SessionIdentifiers is already a mutable, in-place-incrementing class --
+        /// see its own AdvanceRoundTrip -- so persisting THIS SAME OBJECT here, and handing the
+        /// identical reference back out on every resume, is all that's needed for a resumed
+        /// connection's round-trip counter to keep counting up from where the original connection
+        /// left off instead of restarting at a brand-new token/index=0. Mirrors
+        /// order_state.py's session-keyed `session_token`/`round_trip_index` fields, which
+        /// order_state_singleton.get_session_identifiers/advance_round_trip read/mutate the exact
+        /// same way (by session id, independent of which physical socket is currently
+        /// attached).</summary>
+        public SessionIdentifiers? Identifiers { get; set; }
     }
 
     // ── Session lifecycle ──
@@ -106,7 +134,8 @@ public sealed class SessionManager
     /// frame decides whether this provisional session survives or is replaced by a resumed
     /// one.</summary>
     public void CreateSession(string sessionId, WebSocket ws, string personaId, string modelId, string? menuMode,
-        IToolExecutor toolExecutor, string voice)
+        IToolExecutor toolExecutor, string voice, CancellationTokenSource? attachedCts = null,
+        SessionIdentifiers? identifiers = null)
     {
         lock (_sync)
         {
@@ -120,6 +149,8 @@ public sealed class SessionManager
                 Voice = voice,
                 AttachedSocket = ws,
                 LastActivity = _timeProvider.GetUtcNow(),
+                AttachedCts = attachedCts,
+                Identifiers = identifiers,
             };
         }
     }
@@ -239,7 +270,8 @@ public sealed class SessionManager
         string requestedPersonaId,
         string requestedModelId,
         string? requestedMenuMode,
-        string provisionalSessionId)
+        string provisionalSessionId,
+        CancellationTokenSource? attachedCts = null)
     {
         if (!_config.ResumeEnabled)
         {
@@ -306,6 +338,11 @@ public sealed class SessionManager
                     {
                         staleWs = null;
                     }
+                    // Issue 4 (Rick's #244 review): capture the STALE connection's own CTS before
+                    // overwriting it with this (new, winning) connection's -- null whenever there
+                    // is no still-attached socket to steal from (staleWs is also null then), same
+                    // condition as staleWs itself.
+                    var staleCts = staleWs is not null ? record.AttachedCts : null;
                     if (staleWs is not null)
                     {
                         record.AttachedSocket = null;
@@ -317,6 +354,7 @@ public sealed class SessionManager
                     RemoveFromDetachedLocked(sessionId);
                     record.DetachedAt = null;
                     record.AttachedSocket = ws;
+                    record.AttachedCts = attachedCts;
                     record.LastActivity = now;
 
                     var newId = IssueResumeIdLocked(record);
@@ -332,7 +370,9 @@ public sealed class SessionManager
                         ConversationStarted: record.ConversationStarted,
                         ToolExecutor: record.ToolExecutor,
                         Voice: record.Voice,
-                        RecentTurns: RecentTurnsLocked(record));
+                        RecentTurns: RecentTurnsLocked(record),
+                        StaleCts: staleCts,
+                        Identifiers: record.Identifiers);
                 }
             }
         }

@@ -107,6 +107,80 @@ public sealed class ResumeHandshakeTests(ResumeTimersConformanceFixture fixture)
         Assert.False(closedQuickly, "The session must continue normally after a rejected late resume, not close.");
     });
 
+    /// <summary>
+    /// Rick's #244 review (issue 2, HIGH): the above test only covers a *structurally* late
+    /// resume (a second frame after a non-resume first frame already decided "fresh" inline).
+    /// rtmt.py's own late-resume check (~2586, 2592-2593) is actually against
+    /// `resume_decided.is_set()`, which the first_frame_timeout_seconds fallback ALSO sets when it
+    /// fires with no first frame at all. Before this fix, HandleResumeFirstFrameAsync had no
+    /// `state.FirstFrameDecision.Task.IsCompleted` guard, so an `extension.resume` arriving after
+    /// the 2s timeout fallback already decided "fresh" (ResumeTimers' own
+    /// CONFORMANCE_FIRST_FRAME_TIMEOUT_SECONDS=2) would still be treated as a legitimate
+    /// first-frame resume attempt instead of being routed through the late-resume rejection --
+    /// accepting a resume well after the socket's own fresh identity was already established and
+    /// announced. This test lets the timeout fallback fire first (no frame sent at all, not even a
+    /// non-resume one), confirms the resulting extension.session_metadata genuinely took the ~2s
+    /// timeout path (not the inline immediate-decision path WellUnderFirstFrameTimeout guards
+    /// against), then sends extension.resume and asserts it gets the exact same
+    /// not_first_frame rejection, fresh re-announce, and uninterrupted session as a structurally
+    /// late resume.
+    ///
+    /// Mutation check: removing the IsCompleted guard in RealtimeProcessor.cs's checkingFirstFrame
+    /// block makes this test fail (the resume is instead accepted as this connection's first
+    /// frame: no extension.resume_rejected is ever observed within FrameTimeout).
+    /// </summary>
+    [Fact]
+    [Trait("Dotnet", "ready")]
+    public Task A_resume_sent_after_the_first_frame_timeout_fallback_is_rejected_as_late() => fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
+        await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        var connection = await connectionTask;
+        Assert.True(connection is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+
+        // Deliberately send nothing: the only way "fresh" gets decided here is the
+        // first_frame_timeout_seconds=2s fallback timer itself (rtmt.py's first_frame_deadline),
+        // not an inline client-frame decision.
+        var stopwatch = Stopwatch.StartNew();
+        var firstMetadata = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.session_metadata", FrameTimeout, ct);
+        stopwatch.Stop();
+        Assert.True(firstMetadata is not null, "Expected extension.session_metadata from the first-frame-timeout fallback.");
+        Assert.True(stopwatch.Elapsed >= TimeSpan.FromMilliseconds(1800),
+            $"Metadata arrived after only {stopwatch.Elapsed} with no client frame ever sent -- expected it to come " +
+            "from the ~2s first_frame_timeout_seconds fallback, not an inline decision (which would imply a frame " +
+            "was decided upon that was never actually sent).");
+
+        // Now send extension.resume -- genuinely this connection's first OUTGOING client frame,
+        // but the timeout fallback already decided "fresh" for this socket. Must be rejected the
+        // same way as a structurally late resume, not accepted as a legitimate first-frame resume.
+        await browser.SendExtensionResumeAsync(RandomResumeLookingId(), ct);
+        var rejected = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.resume_rejected" && f.Sequence > firstMetadata.Sequence, FrameTimeout, ct);
+        Assert.True(rejected is not null,
+            "Expected extension.resume_rejected for a resume sent after the first-frame-timeout fallback already decided fresh.");
+        Assert.Equal("not_first_frame", rejected!.Json.GetProperty("reason").GetString());
+
+        var freshMetadata = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.session_metadata" && f.Sequence > rejected.Sequence, FrameTimeout, ct);
+        Assert.True(freshMetadata is not null, "Expected a fresh re-announce after the late-resume rejection.");
+        var firstResumeId = firstMetadata.Json.GetProperty("resumeId").GetString();
+        var freshResumeId = freshMetadata!.Json.GetProperty("resumeId").GetString();
+        Assert.NotEqual(firstResumeId, freshResumeId);
+
+        var closedQuickly = true;
+        try
+        {
+            await browser.WaitForCloseAsync(TimeSpan.FromMilliseconds(500), ct);
+        }
+        catch (TimeoutException)
+        {
+            closedQuickly = false;
+        }
+        Assert.False(closedQuickly, "The session must continue normally after the rejected timeout-race resume, not close.");
+    });
+
     [Fact]
     [Trait("Dotnet", "ready")]
     public Task A_malformed_resume_id_as_the_first_frame_is_rejected() => fixture.RunAsync(async () =>
@@ -336,5 +410,62 @@ public sealed class ResumeHandshakeTests(ResumeTimersConformanceFixture fixture)
         // own captured diagnostics/log output.
         var diagnostics = fixture.Backend!.DumpDiagnostics();
         Assert.DoesNotContain(resumeId!, diagnostics, StringComparison.Ordinal);
+    });
+
+    /// <summary>
+    /// Rick's #244 review (issue 5): session_token/round_trip_index/round_trip_token must carry
+    /// over from the ORIGINAL session on a resume, not reset -- app/backend/rtmt.py's
+    /// handle_resume reuses the original session's own SessionIdentifiers object exactly
+    /// (session_manager.py's resume() hands the existing session record, identifiers and all,
+    /// back to the new connection), so a browser's own round-trip bookkeeping survives a
+    /// reconnect exactly the same way the order does. extension.session_metadata /
+    /// extension.round_trip_token use camelCase (sessionToken/roundTripIndex/roundTripToken,
+    /// SessionIdentifiers.ToFrame) while extension.session_resumed uses snake_case
+    /// (session_token/round_trip_index/round_trip_token) -- both names for the exact same
+    /// underlying identifiers, so this asserts across that naming boundary.
+    /// </summary>
+    [Fact]
+    [Trait("Dotnet", "ready")]
+    public Task Resuming_carries_over_the_original_sessions_token_and_round_trip_state() => fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
+        var oldBrowser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        Assert.True(await connectionTask is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+
+        await oldBrowser.SendStartSessionAsync(cancellationToken: ct);
+        var metadata = await oldBrowser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.session_metadata", FrameTimeout, ct);
+        Assert.True(metadata is not null, "Expected extension.session_metadata after the first frame.");
+        var resumeId = metadata!.Json.GetProperty("resumeId").GetString();
+        var originalSessionToken = metadata.Json.GetProperty("sessionToken").GetString();
+        Assert.False(string.IsNullOrEmpty(originalSessionToken));
+        Assert.Equal(0, metadata.Json.GetProperty("roundTripIndex").GetInt32());
+
+        // The greeting is one full round trip (a non-tool response.done), which AdvanceRoundTrip()s
+        // the SAME SessionIdentifiers instance to index 1 -- this is the state that must survive
+        // the resume below, not be reset back to 0 as if this were a brand new session.
+        var greetingRoundTrip = await oldBrowser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.round_trip_token", FrameTimeout, ct);
+        Assert.True(greetingRoundTrip is not null, "Greeting round trip never completed.");
+        Assert.Equal(1, greetingRoundTrip!.Json.GetProperty("roundTripIndex").GetInt32());
+        var originalRoundTripToken = greetingRoundTrip.Json.GetProperty("roundTripToken").GetString();
+        Assert.Equal($"{originalSessionToken}-0001", originalRoundTripToken);
+
+        await oldBrowser.CloseAsync(cancellationToken: ct);
+        await oldBrowser.WaitForCloseAsync(FrameTimeout, ct);
+        await oldBrowser.DisposeAsync();
+
+        var secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
+        await using var newBrowser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        Assert.True(await secondConnectionTask is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        await newBrowser.SendExtensionResumeAsync(resumeId!, ct);
+        var resumed = await newBrowser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.session_resumed", FrameTimeout, ct);
+        Assert.True(resumed is not null, "Expected extension.session_resumed on a valid resume.");
+
+        Assert.Equal(originalSessionToken, resumed!.Json.GetProperty("session_token").GetString());
+        Assert.Equal(1, resumed.Json.GetProperty("round_trip_index").GetInt32());
+        Assert.Equal(originalRoundTripToken, resumed.Json.GetProperty("round_trip_token").GetString());
     });
 }

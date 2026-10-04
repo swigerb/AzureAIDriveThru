@@ -76,6 +76,51 @@ public sealed class CloseCodeTests(ConformanceFixture fixture)
         Assert.Equal((WebSocketCloseStatus)4002, browserA.CloseStatus);
         Assert.Equal("superseded", browserA.CloseStatusDescription);
     });
+
+    /// <summary>
+    /// Rick's #244 review (issue 4): a supersede must not hang even when the stale peer is a
+    /// half-open/frozen tab that can never answer the 4002 close (unlike the test above, where A
+    /// is a healthy client that always answers). <see cref="RealtimeBrowserClient.StopReaderLoopForTesting"/>
+    /// simulates exactly that -- A's socket itself is left completely untouched (no Abort, no
+    /// local close), only this harness's own background pump stops calling
+    /// <see cref="System.Net.WebSockets.WebSocket.ReceiveAsync"/>, so A can never notice (let alone
+    /// echo) the server's close frame, exactly like a real stuck browser tab. The regression this
+    /// guards is the one Rick found and this PR fixed: HandleResumeFirstFrameAsync used to cancel
+    /// <c>outcome.StaleCts</c> (which also drives A's own relay loop) BEFORE awaiting the
+    /// close-frame send, letting A's own teardown race the close off the wire; now the
+    /// non-blocking <c>CloseOutputIfOpenAsync</c> helper (never waits for a peer reply) is awaited
+    /// first, and StaleCts is only cancelled afterward, so B's resume must complete promptly
+    /// regardless of what A's stuck peer ever does.
+    /// </summary>
+    [Fact]
+    [Trait("Dotnet", "ready")]
+    public Task Superseding_a_stuck_peer_that_never_acks_the_close_still_completes_promptly() => fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var browserA = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+
+        await browserA.SendStartSessionAsync(cancellationToken: ct);
+        var metadata = await browserA.ReceivedFrames.WaitForAsync(f => f.Type == "extension.session_metadata", FrameTimeout, ct);
+        Assert.True(metadata is not null, "Expected extension.session_metadata (with a resumeId) after A's first frame.");
+        var resumeId = metadata!.Json.GetProperty("resumeId").GetString();
+        Assert.False(string.IsNullOrWhiteSpace(resumeId), "Expected a non-empty resumeId -- resume must be enabled for this scenario to mean anything.");
+
+        // A goes "stuck" here -- its socket stays fully open/attached on the wire (no Abort, no
+        // close), it simply stops reading, so it can never process or answer a close frame.
+        browserA.StopReaderLoopForTesting();
+
+        await using var browserB = await RealtimeBrowserClient.ConnectAsync(fixture.Backend.BaseUri, cancellationToken: ct);
+        await browserB.SendExtensionResumeAsync(resumeId!, cancellationToken: ct);
+
+        // The actual proof: B's resume must still complete within a generous but bounded window --
+        // if the supersede path blocked waiting for A's (never-coming) close acknowledgement, this
+        // would time out instead.
+        var resumed = await browserB.ReceivedFrames.WaitForAsync(f => f.Type == "extension.session_resumed", FrameTimeout, ct);
+        Assert.True(resumed is not null,
+            "Expected extension.session_resumed on B promptly even though A's stuck peer can never " +
+            "acknowledge its own supersede close -- a hang here would mean the supersede path is " +
+            "still waiting on the peer instead of using a non-blocking half-close.");
+    });
 }
 
 /// <summary>See <see cref="CloseCodeTests"/> -- the 4000 idle case needs its own ShortTimers

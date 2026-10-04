@@ -9,9 +9,11 @@ The C# backend now has the host/config/persona foundation, persona HTTP surface,
 pre-upgrade `/realtime` auth and persona/model/mode binding, the Azure OpenAI realtime relay,
 order engine, search tool, prompt rendering, tool dispatch, the full rate-limit retry ladder, the
 consecutive tool-failure cap, session resume/rehydration/idle-timeout/grace-hold/nudge (issue #15),
-and the shared conformance dotnet leg. The remaining deliberate gaps versus Python are tracked
-below: context-window monitoring/turn recording, and Entra auth-row execution on the dotnet leg
-until issue #147 flips that capability.
+and the shared conformance dotnet leg. Guest/assistant turn recording (`SessionManager.RecordTurn`)
+now has real production call sites (upstream `conversation.item.input_audio_transcription.completed`
+for the guest, a non-tool `response.done` for the assistant), feeding rehydration text on resume.
+The remaining deliberate gaps versus Python are tracked below: context-window monitoring, and Entra
+auth-row execution on the dotnet leg until issue #147 flips that capability.
 
 ## Module mapping
 
@@ -604,12 +606,22 @@ grace-window detach hold, idle-timeout close, rehydration-text generation, and t
 (including #181's "arm only after the resumed socket's own `client`/`session.update`" rule) into new
 `Sessions/SessionManager.cs` and `Realtime/NudgeScheduler.cs`, both driven by the injected
 `TimeProvider` and using the same CTS-identity/generation-counter pattern from the #235 rate-limit
-race fix for every scheduled timer, so no stale continuation can fire after cancellation. Design
-simplification versus Python, called out explicitly: no cross-physical-socket resume-token
-*content* continuity is asserted anywhere in the conformance suite, so each physical WebSocket gets
-a fresh `SessionIdentifiers`/resume id pair; rehydration is carried purely via the server-held
-`SessionManager` state (transcript history, voice/model bindings, tool-failure/rate-limit ladder
-state), matching every scenario's observable behaviour.
+race fix for every scheduled timer, so no stale continuation can fire after cancellation. The
+single-use *resume id* itself (the opaque baton handed out in `extension.session_metadata`/
+`extension.session_resumed` that a reconnecting socket presents) always rotates on every hand-off --
+no row anywhere asserts resume-id *content* continuity, and a used resume id is immediately unknown
+(see `ResumeHandshakeTests`'s single-use and stray-late-resume rows). The underlying
+`SessionIdentifiers` (`session_token`/`round_trip_index`/`round_trip_token`), by contrast, **do**
+carry over from the original session on every successful resume (`RealtimeProcessor.cs` assigns
+`state.Identifiers = outcome.Identifiers` from the resumed-from session) -- matching Python's own
+continuity contract, and asserted directly by
+`ResumeHandshakeTests.Resuming_carries_over_the_original_sessions_token_and_round_trip_state`.
+Rehydration itself is carried via the server-held `SessionManager` state (transcript history -- now
+populated by real `RecordTurn` call sites on both the guest and assistant turn-completion paths, see
+above -- and voice/model bindings). Tool-failure
+and rate-limit ladder state is deliberately **not** carried across a resume: a resumed connection
+starts both trackers fresh, matching every scenario's observable behaviour (no row asserts ladder
+state surviving a resume).
 
 All target rows now pass against the real C# backend (confirmed 3+ clean runs) and are tagged
 `Dotnet=ready`: the remaining `ResumeHandshakeTests` methods, all of
@@ -617,9 +629,12 @@ All target rows now pass against the real C# backend (confirmed 3+ clean runs) a
 `IdleCloseCodeTests`'s 4000 row and `CloseCodeTests`'s 4002-supersede row), the `VoicePickerTests`
 and `ModelSelectionConformanceTests` resume rows, `ResumeRehydrationClientVisibilityTests`,
 `ResumeMarginRegressionTests`, `WholeSessionLeakTests`, and `RateLimitIdleInteractionTests` (closing
-the dependency called out two paragraphs above). 42 rows newly passing plus one additional test
-written specifically for this change (see next paragraph), all tagged; `DotnetTraitCoverageTests`'s
-`>= 204` floor reconfirmed passing, untouched.
+the dependency called out two paragraphs above), plus five additional tests closing gaps from
+Rick's #244 review (guest-speech idle activity, late-resume-after-timeout rejection, rehydrated
+turn-text content, a stuck/never-acking peer during supersede, and `session_token`/round-trip
+continuity across resume -- see this section's own notes above). `DotnetTraitCoverageTests`'s floor
+raised 239 to 275 (a fresh reflection-based recount at this PR's own rebase point, not a projected
+arithmetic delta -- see that file's own doc comment).
 
 **Bug found and fixed via the conformance sweep (and self-corrected after an initial wrong fix)**:
 `rtmt.py`'s `reject_late_resume()` re-announces fresh `extension.session_metadata` (with a newly

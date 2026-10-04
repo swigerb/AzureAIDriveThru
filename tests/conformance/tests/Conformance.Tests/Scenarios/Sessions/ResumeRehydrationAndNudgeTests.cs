@@ -198,6 +198,60 @@ public sealed class ResumeRehydrationAndNudgeTests(ResumeTimersConformanceFixtur
     });
 
     /// <summary>
+    /// Rick's #244 review (issue 3): RecordTurn (SessionManager.cs) had no production callers --
+    /// record.Transcript, and therefore RecentTurnsLocked/BuildRehydrationText's "Recent
+    /// conversation" section, was always empty ("(none recorded)"), identically to before this
+    /// fix. This proves the new guest-side call site (RealtimeProcessor.cs's
+    /// conversation.item.input_audio_transcription.completed case, record_turn("guest", ...) in
+    /// rtmt.py) actually reaches the rehydration item's text on a real resume. The transcript is
+    /// injected directly as an upstream frame (rather than relying on WithVadDefaults, whose
+    /// auto-generated transcript is always "") so the test controls distinctive, assertable
+    /// guest-turn content. The assistant-turn call site (non-tool response.done) shares the exact
+    /// same RecordTurn/RecentTurnsLocked/BuildRehydrationText path, differing only in the "guest"
+    /// vs role-name label passed in -- not a separate code path -- so this single test is
+    /// sufficient proof that RecordTurn's wiring, as a whole, is correct.
+    /// </summary>
+    [Fact]
+    [Trait("Dotnet", "ready")]
+    public Task Resuming_mid_conversation_rehydrates_the_recorded_guest_transcript() => fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var (oldBrowser, oldConnection, resumeId) = await ConnectPastGreetingWithResumeIdAsync(ct);
+
+        const string guestTranscript = "I would like a large iced coffee with oat milk please";
+        await oldConnection.SendAsync(new System.Text.Json.Nodes.JsonObject
+        {
+            ["type"] = "conversation.item.input_audio_transcription.completed",
+            ["event_id"] = $"evt_{Guid.NewGuid():N}",
+            ["item_id"] = "item_rehydrate_transcript_1",
+            ["transcript"] = guestTranscript,
+        }, ct);
+
+        var (newBrowser, newConnection) = await DropAndResumeAsync(oldBrowser, resumeId, ct);
+        await using var _ = newBrowser;
+        await newBrowser.SendStartSessionAsync(cancellationToken: ct);
+
+        var resumed = await newBrowser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.session_resumed", FrameTimeout, ct);
+        Assert.True(resumed is not null, "Expected extension.session_resumed after a valid mid-conversation resume.");
+
+        var bootstrap = await newConnection.ReceivedFrames.WaitForAsync(
+            f => f.Type == "session.update", FrameTimeout, ct);
+        Assert.True(bootstrap is not null, "Expected a bootstrap session.update on the new upstream connection.");
+
+        var rehydration = await newConnection.ReceivedFrames.WaitForAsync(
+            f => IsSystemMessageItem(f) && f.Sequence > bootstrap!.Sequence,
+            FrameTimeout, ct);
+        Assert.True(rehydration is not null,
+            "Expected the rehydration conversation.item.create (system-role message) on the new upstream connection.");
+
+        var content = rehydration!.Json.GetProperty("item").GetProperty("content")[0].GetProperty("text").GetString();
+        Assert.True(content is not null && content.Contains(guestTranscript),
+            $"Expected the rehydration item's text to contain the recorded guest transcript '{guestTranscript}', " +
+            $"proving RecordTurn's guest call site actually reaches rehydration. Got: {content}");
+    });
+
+    /// <summary>
     /// PR #52 review ("F1"): every other resume scenario in this file drops the old connection
     /// gracefully (<see cref="DropAndResumeAsync"/>). A real Wi-Fi blip never sends a Close
     /// frame at all -- <see cref="AbortAndResumeAsync"/> reproduces that with
