@@ -542,4 +542,64 @@ public sealed class ClientToServerAllowListTests(ConformanceFixture fixture)
                 "An input_audio_buffer.append with a non-string audio value must never reach the fake upstream.");
         }
     });
+
+    [Fact]
+    public Task Trailing_newline_event_id_response_id_and_audio_fail_like_pythons_fullmatch() => fixture.RunAsync(async () =>
+    {
+        // Rick's #230 review item 3: rtmt.py validates these three fields with
+        // `_CLIENT_EVENT_ID_RE.fullmatch(...)`/`_CLIENT_BASE64_RE.fullmatch(...)`. Python's
+        // `fullmatch` requires the WHOLE string to be consumed -- a value that otherwise matches
+        // `^...{1,64}$` but has one extra trailing "\n" still fails, because nothing in the
+        // pattern accounts for that final byte. A naive `$`-anchored regex engine (anchors only,
+        // no `fullmatch`) can instead treat `$` as "end of string, or just before one trailing
+        // newline" and wrongly accept it -- these three frames each carry that exact shape.
+        var ct = TestContext.Current.CancellationToken;
+        var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
+        await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        var connection = await connectionTask;
+        Assert.True(connection is not null, "No upstream connection was accepted for the browser socket.");
+
+        var bootstrap = await connection!.ReceivedFrames.WaitForAsync(f => f.Sequence == 0, FrameTimeout, ct);
+        Assert.True(bootstrap is not null, "Bootstrap session.update never arrived.");
+
+        // event_id is advisory (the server always mints its own) -- a trailing-newline id has
+        // the key stripped, same treatment as the object/oversized shapes above, and the rest of
+        // the frame still reaches upstream.
+        await browser.SendAsync(new JsonObject
+        {
+            ["type"] = "input_audio_buffer.clear",
+            ["event_id"] = "deadbeefcafe1234\n",
+        }, ct);
+        var eventIdFrame = await connection!.ReceivedFrames.WaitForAsync(
+            f => f.Sequence > bootstrap!.Sequence && f.Type == "input_audio_buffer.clear", FrameTimeout, ct);
+        Assert.True(eventIdFrame is not null, "input_audio_buffer.clear must still reach the fake upstream despite the trailing-newline event_id.");
+        Assert.False(eventIdFrame!.Json.TryGetProperty("event_id", out _), "A trailing-newline event_id must be stripped, not forwarded.");
+
+        // response_id and audio are both load-bearing with no safe partial fallback, so each
+        // drops its whole frame -- same shape as Malformed_response_id_and_audio_shapes_drop_the_whole_frame.
+        await browser.SendAsync(new JsonObject
+        {
+            ["type"] = "response.cancel",
+            ["response_id"] = "resp_deadbeefcafe\n",
+        }, ct);
+        await browser.SendAsync(new JsonObject
+        {
+            ["type"] = "input_audio_buffer.append",
+            ["audio"] = "ZmFrZS1taWMtYXVkaW8=\n",
+        }, ct);
+
+        // Liveness proof: both malformed frames above are dropped silently, not by closing the
+        // socket, so ordinary traffic sent afterward must still get through.
+        await browser.SendInputAudioClearAsync(ct);
+        var clear = await connection.ReceivedFrames.WaitForAsync(
+            f => f.Sequence > eventIdFrame!.Sequence && f.Type == "input_audio_buffer.clear", FrameTimeout, ct);
+        Assert.True(clear is not null, "Expected the subsequent input_audio_buffer.clear to reach the fake upstream -- the socket must stay open.");
+
+        foreach (var frame in connection.ReceivedFrames.Snapshot())
+        {
+            Assert.NotEqual("response.cancel", frame.Type);
+            Assert.False(frame.Type == "input_audio_buffer.append" && frame.Json.TryGetProperty("audio", out var audio) && audio.GetString() == "ZmFrZS1taWMtYXVkaW8=\n",
+                "An input_audio_buffer.append with a trailing-newline audio value must never reach the fake upstream.");
+        }
+    });
 }

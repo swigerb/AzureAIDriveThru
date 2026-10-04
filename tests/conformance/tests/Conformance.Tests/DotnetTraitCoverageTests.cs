@@ -162,6 +162,27 @@ namespace Conformance.Tests;
 /// <c>OriginValidationTests.Exact_origin_is_accepted</c> (its two siblings were already tagged;
 /// this was the one genuinely-untagged row left). All 11 verified green against the C# backend (3
 /// clean runs each, no flakes) -- raising the floor 204 to 219 (208 + 11).
+///
+/// Issue #21 round 2 (PR #230 review, Rick's item 3): `ClientServerFilter.cs`'s `EventIdRegex`/
+/// `Base64Regex` used a `$`-anchored pattern with plain `Regex.IsMatch`, which (absent
+/// `RegexOptions.Multiline`/`Singleline`) also matches just before a single trailing `\n` -- unlike
+/// rtmt.py's own `_CLIENT_EVENT_ID_RE.fullmatch(...)`/`_CLIENT_BASE64_RE.fullmatch(...)`, which
+/// require the WHOLE string to be consumed. `OriginValidator.cs`'s `MatchesHost` compared
+/// `Uri.Authority`, which silently drops both userinfo and an explicit default port, unlike
+/// rtmt.py's `_origin_matches_host`, which compares the raw `urlsplit(...).netloc` (preserving
+/// both). Both are now faithful ports (`\z` anchors; a manual netloc-extraction helper), backed by
+/// three new tagged, ungated test methods verified green against both backends (3 clean runs each
+/// against the C# backend, no flakes), each mutation-checked by temporarily reverting its
+/// corresponding fix and confirming red:
+/// <c>ClientToServerAllowListTests.Trailing_newline_event_id_response_id_and_audio_fail_like_pythons_fullmatch</c>,
+/// <c>OriginValidationTests.Origin_with_userinfo_is_rejected_with_403</c>, and
+/// <c>OriginValidationTests.Origin_with_explicit_default_port_is_rejected_against_a_portless_host</c>
+/// -- raising the floor 219 to 222 (219 + 3).
+///
+/// Merge-order note for PR #226 (#147, Beth's C# auth work, independently raises this SAME floor
+/// 204 to 222 against the stale pre-#21 baseline): PR #230/#21 lands first at 222 (including this
+/// round's +3); PR #226 must then rebase onto that base and re-target its own floor to 222 + 18 =
+/// 240 (not 222) to account for both rounds of #21 tagging on top of the original 204.
 /// </summary>
 public sealed class DotnetTraitCoverageTests
 {
@@ -184,12 +205,12 @@ public sealed class DotnetTraitCoverageTests
     };
 
     [Fact]
-    public void At_least_219_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
+    public void At_least_222_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
     {
         var count = CountFloorEligibleDotnetReadyTestMethods();
 
-        Assert.True(count >= 219,
-            $"Expected at least 219 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
+        Assert.True(count >= 222,
+            $"Expected at least 222 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
             $"and not unconditionally skip-gated by AuthRowCapability (the dotnet leg's " +
             $"`--filter \"{TraitName}={TraitValue}&Category!=Browser\"` baseline, minus the five " +
             "skip-only Scenarios/Auth classes -- see this class's own doc comment; " +
