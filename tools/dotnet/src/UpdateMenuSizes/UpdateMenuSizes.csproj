@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>UpdateMenuSizes</RootNamespace>
+    <AssemblyName>UpdateMenuSizes</AssemblyName>
+    <!--
+      Issue #16's first port: scripts/update_menu_sizes.py -> this project. A faithful,
+      byte-for-logic port (see MenuSizeUpdater.cs), not a redesign. See docs/dotnet_tooling.md
+      for why this tool was chosen (no Azure/network dependency, deterministic, small) and how its
+      output is proven to match the Python twin (UpdateMenuSizes.Tests/PythonParityTests.cs).
+    -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="UpdateMenuSizes.Tests" />
+  </ItemGroup>
+
+</Project>
