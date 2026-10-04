@@ -64,9 +64,20 @@ internal sealed class FakeWebSocket : WebSocket
 
     public List<(byte[] Data, WebSocketMessageType MessageType, bool EndOfMessage)> SentMessages { get; } = [];
 
-    public override Task SendAsync(ArraySegment<byte> buffer, WebSocketMessageType messageType, bool endOfMessage, CancellationToken cancellationToken)
+    /// <summary>Issue #252 (Rick's review): an optional async hook invoked -- and fully awaited --
+    /// from inside <see cref="SendAsync"/> before it returns, so a test can simulate "the upstream
+    /// already processed a reply to THIS exact frame before the send call returned" (the precise
+    /// interleaving a real race under scheduling pressure would produce) deterministically, with no
+    /// real threads/timing involved. Unused by any other existing test (defaults to null, a no-op).</summary>
+    public Func<byte[], Task>? OnSendAsync { get; set; }
+
+    public override async Task SendAsync(ArraySegment<byte> buffer, WebSocketMessageType messageType, bool endOfMessage, CancellationToken cancellationToken)
     {
-        SentMessages.Add((buffer.ToArray(), messageType, endOfMessage));
-        return Task.CompletedTask;
+        var bytes = buffer.ToArray();
+        SentMessages.Add((bytes, messageType, endOfMessage));
+        if (OnSendAsync is not null)
+        {
+            await OnSendAsync(bytes).ConfigureAwait(false);
+        }
     }
 }

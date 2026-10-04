@@ -45,12 +45,6 @@ public sealed class EchoSuppressor : IDisposable
     public double CooldownEnd { get { lock (_sync) { return _cooldownEnd; } } }
     public bool GreetingInProgress { get { lock (_sync) { return _greetingInProgress; } } }
 
-    /// <summary>Test-only: exposes the internal lock object so a test can deterministically
-    /// reproduce the stale-flush-continuation race described on <see cref="FlushIfStillPendingAsync"/>
-    /// -- same technique as <see cref="Backend.Realtime.RateLimitRecovery.SyncRootForTests"/>. Not
-    /// read by any production code path.</summary>
-    internal object SyncRootForTests => _sync;
-
     /// <summary>PR #58 re-review "M1": set when a greeting's response.done arrives with no audio
     /// ever rendered -- the rate-limit recovery ladder may retry that same greeting with a bare
     /// response.create, whose own first audio delta must re-enter greeting suppression instead of
