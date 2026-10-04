@@ -28,10 +28,13 @@ var builder = WebApplication.CreateBuilder(args);
 if (ConformanceHooks.HooksEnabled)
 {
     // #233: see ConformanceHooks.ApplyConsoleTimestampFormat's doc comment for the full
-    // rationale. Reconfigures the options of the default "simple" console formatter
-    // CreateBuilder already registers, rather than adding a second console provider (which
-    // would duplicate every line).
-    builder.Services.Configure<SimpleConsoleFormatterOptions>(ConformanceHooks.ApplyConsoleTimestampFormat);
+    // rationale, including PR #264 review's finding that Configure<SimpleConsoleFormatterOptions>
+    // alone has no effect because CreateBuilder's default console registration leaves
+    // ConsoleLoggerOptions.FormatterName unset. AddSimpleConsole both sets FormatterName to
+    // "simple" (so these options are actually consulted) and reuses the existing
+    // ConsoleLoggerProvider registration rather than adding a second one, so log lines still
+    // aren't duplicated.
+    builder.Logging.AddSimpleConsole(ConformanceHooks.ApplyConsoleTimestampFormat);
 }
 
 var host = Environment.GetEnvironmentVariable("HOST") ?? "127.0.0.1";
