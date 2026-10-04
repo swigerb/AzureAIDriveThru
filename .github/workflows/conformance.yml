@@ -124,6 +124,13 @@ jobs:
       # also required for this step; the commit fetch fails closed (exits 1) on any API error,
       # same rationale as the open-issue API check below -- silently skipping it would
       # under-report REBRAND_PR_CLOSES.
+      # #238 round 2 (Rick's review of PR #239): the GitHub commits endpoint silently caps at
+      # 250 commits total regardless of pagination, so a 251+-commit PR could lose whatever
+      # closing keyword lives in commit 251 onward with no error at all. PR_COMMITS carries
+      # GitHub's own authoritative commit count (github.event.pull_request.commits, an
+      # integer -- safe to pass via env:, no script-injection concern) so the fetch can fail
+      # closed on any mismatch, and also fails closed up front if PR_COMMITS is itself missing
+      # or not parseable as an integer.
       # Written to $GITHUB_ENV (not interpolated into the run script) specifically to avoid
       # a script-injection risk from untrusted PR-body/title/commit-message content.
       - name: Determine this PR's own issue reference
@@ -134,6 +141,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_COMMITS: ${{ github.event.pull_request.commits }}
         run: |
           python - <<'PY' >> "$GITHUB_ENV"
           import os
@@ -162,8 +170,23 @@ jobs:
                   file=sys.stderr,
               )
               sys.exit(1)
+          # #238 round 2: fail closed if PR_COMMITS is missing or non-numeric too -- without
+          # a trustworthy expected count, fetch_pr_commit_messages() cannot detect GitHub's
+          # 250-commit pagination cap silently truncating the fetch.
           try:
-              commit_messages = fetch_pr_commit_messages(repo, pr_number, token)
+              pr_commits = int(os.environ.get("PR_COMMITS") or "")
+          except ValueError:
+              print(
+                  "::error::PR_COMMITS is missing or non-numeric -- cannot verify every "
+                  "commit message was fetched (the GitHub commits endpoint caps at 250 "
+                  "commits total regardless of pagination; #238 round 2).",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+          try:
+              commit_messages = fetch_pr_commit_messages(
+                  repo, pr_number, token, expected_count=pr_commits
+              )
           except RuntimeError as exc:
               print(f"::error::{exc}", file=sys.stderr)
               sys.exit(1)

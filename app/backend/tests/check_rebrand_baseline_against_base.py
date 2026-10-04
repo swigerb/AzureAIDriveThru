@@ -82,6 +82,15 @@ validly-formatted `increase_reason`?". Issue #105 hardened every corner that lef
      iterable, scanned the same way as the body. The "Determine this PR's own issue reference"
      workflow step fetches every commit via the GitHub REST API and passes their messages
      through (see fetch_pr_commit_messages()).
+  9b. #238 round 2 (Rick's review of PR #239): GitHub's PR commits REST endpoint silently
+     caps at 250 commits total, regardless of how many pages are requested -- a PR with 251+
+     commits would have item 9's fetch loop exit on the short final page (250, 100, 100, 50)
+     without any error, silently missing whatever closing keyword lives in commit 251 onward.
+     fetch_pr_commit_messages() now takes a required `expected_count` argument and fails
+     closed (RuntimeError) if the number of messages it actually fetched does not match. The
+     workflow passes `github.event.pull_request.commits` (GitHub's own authoritative commit
+     count for the PR, an integer, safe to use via `env:`) as PR_COMMITS, and fails closed if
+     that value is missing or not parseable as an integer before even attempting the fetch.
 
 Usage (see .github/workflows/conformance.yml, python-tests job):
 
@@ -295,7 +304,7 @@ def check_issue_is_open(issue_ref: str, repo: str, token: str) -> str | None:
     return None
 
 
-def fetch_pr_commit_messages(repo: str, pr_number: str, token: str) -> list[str]:
+def fetch_pr_commit_messages(repo: str, pr_number: str, token: str, expected_count: int) -> list[str]:
     """Fetch every commit message on PR *pr_number* in *repo* ('owner/name'), via the GitHub
     REST API (``GET /repos/{repo}/pulls/{pr_number}/commits``, paginated).
 
@@ -306,10 +315,19 @@ def fetch_pr_commit_messages(repo: str, pr_number: str, token: str) -> list[str]
     PR's own issue reference" workflow step fetches these and passes them to
     ``parse_pr_issue_refs()``'s *commit_messages* parameter.
 
-    Raises RuntimeError on ANY failure -- network error, timeout, non-200 status, malformed/
-    unexpected JSON -- rather than returning an empty list (fail-closed, same rationale as
-    check_issue_is_open: silently treating a failed fetch as "no commit messages" would
-    under-report REBRAND_PR_CLOSES and could let a self-citation slip through undetected).
+    *expected_count* MUST be the PR's true total commit count (the workflow passes GitHub's own
+    ``github.event.pull_request.commits``). The GitHub commits endpoint silently caps at 250
+    commits TOTAL regardless of how many pages are requested -- a PR with 251+ commits would
+    otherwise end pagination on a short final page (e.g. a 100/100/50 split after the cap) with
+    no error at all, silently missing whatever closing keyword lives in commit 251 onward.
+    Raises RuntimeError if the number of messages actually fetched does not equal
+    *expected_count*.
+
+    Raises RuntimeError on ANY OTHER failure too -- network error, timeout, non-200 status,
+    malformed/unexpected JSON -- rather than returning an empty or partial list (fail-closed,
+    same rationale as check_issue_is_open: silently treating a failed/incomplete fetch as "no
+    commit messages" would under-report REBRAND_PR_CLOSES and could let a self-citation slip
+    through undetected).
     """
     messages: list[str] = []
     page = 1
@@ -354,6 +372,13 @@ def fetch_pr_commit_messages(repo: str, pr_number: str, token: str) -> list[str]
         if len(payload) < 100:
             break
         page += 1
+    if len(messages) != expected_count:
+        raise RuntimeError(
+            f"GitHub API returned {len(messages)} commit message(s) for PR #{pr_number} but "
+            f"the PR reports {expected_count} commit(s) -- the PR commits endpoint caps at "
+            f"250 commits total regardless of pagination, so this mismatch likely means a "
+            f"closing keyword in commit 251+ was silently missed. Refusing to proceed."
+        )
     return messages
 
 

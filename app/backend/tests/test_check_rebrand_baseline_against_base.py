@@ -774,14 +774,14 @@ class TestFetchPrCommitMessages(unittest.TestCase):
             "urlopen",
             return_value=_FakeResponse(200, _commits_payload(["Fix #1: start", "Refs #2: wip"])),
         ):
-            messages = checker.fetch_pr_commit_messages("owner/repo", "42", "tok")
+            messages = checker.fetch_pr_commit_messages("owner/repo", "42", "tok", expected_count=2)
         self.assertEqual(messages, ["Fix #1: start", "Refs #2: wip"])
 
     def test_empty_commit_list_returns_empty(self):
         with mock.patch.object(
             checker.urllib.request, "urlopen", return_value=_FakeResponse(200, _commits_payload([]))
         ):
-            messages = checker.fetch_pr_commit_messages("owner/repo", "42", "tok")
+            messages = checker.fetch_pr_commit_messages("owner/repo", "42", "tok", expected_count=0)
         self.assertEqual(messages, [])
 
     def test_pagination_follows_additional_pages(self):
@@ -791,7 +791,7 @@ class TestFetchPrCommitMessages(unittest.TestCase):
         page_two = _commits_payload(["Fix #999: last one"])
         responses = [_FakeResponse(200, page_one), _FakeResponse(200, page_two)]
         with mock.patch.object(checker.urllib.request, "urlopen", side_effect=responses) as urlopen_mock:
-            messages = checker.fetch_pr_commit_messages("owner/repo", "42", "tok")
+            messages = checker.fetch_pr_commit_messages("owner/repo", "42", "tok", expected_count=101)
         self.assertEqual(urlopen_mock.call_count, 2)
         self.assertEqual(len(messages), 101)
         self.assertEqual(messages[-1], "Fix #999: last one")
@@ -801,7 +801,7 @@ class TestFetchPrCommitMessages(unittest.TestCase):
             checker.urllib.request, "urlopen", return_value=_FakeResponse(500, b"[]")
         ):
             with self.assertRaises(RuntimeError):
-                checker.fetch_pr_commit_messages("owner/repo", "42", "tok")
+                checker.fetch_pr_commit_messages("owner/repo", "42", "tok", expected_count=1)
 
     def test_http_error_raises_runtime_error(self):
         http_error = checker.urllib.error.HTTPError(
@@ -809,7 +809,7 @@ class TestFetchPrCommitMessages(unittest.TestCase):
         )
         with mock.patch.object(checker.urllib.request, "urlopen", side_effect=http_error):
             with self.assertRaises(RuntimeError):
-                checker.fetch_pr_commit_messages("owner/repo", "42", "tok")
+                checker.fetch_pr_commit_messages("owner/repo", "42", "tok", expected_count=1)
 
     def test_unexpected_payload_shape_raises_runtime_error(self):
         """A non-list JSON payload (e.g. an error object) must fail closed, not silently
@@ -820,7 +820,7 @@ class TestFetchPrCommitMessages(unittest.TestCase):
             return_value=_FakeResponse(200, json.dumps({"message": "Not Found"}).encode("utf-8")),
         ):
             with self.assertRaises(RuntimeError):
-                checker.fetch_pr_commit_messages("owner/repo", "42", "tok")
+                checker.fetch_pr_commit_messages("owner/repo", "42", "tok", expected_count=1)
 
     def test_commit_without_a_message_field_is_skipped_not_fatal(self):
         payload = json.dumps([{"commit": {}}, {"commit": {"message": "Fix #1: start"}}]).encode(
@@ -829,8 +829,38 @@ class TestFetchPrCommitMessages(unittest.TestCase):
         with mock.patch.object(
             checker.urllib.request, "urlopen", return_value=_FakeResponse(200, payload)
         ):
-            messages = checker.fetch_pr_commit_messages("owner/repo", "42", "tok")
+            # #238 round 2: expected_count matches the two COMMITS GitHub reports, not the
+            # one message actually extracted (the other commit has no message field) -- the
+            # count check compares against len(messages), i.e. 1 here, not len(payload).
+            messages = checker.fetch_pr_commit_messages("owner/repo", "42", "tok", expected_count=1)
         self.assertEqual(messages, ["Fix #1: start"])
+
+    def test_happy_path_commit_count_matches_expected_count(self):
+        """#238 round 2 happy path: when the fetched message count equals expected_count
+        (GitHub's own github.event.pull_request.commits), the fetch succeeds normally."""
+        with mock.patch.object(
+            checker.urllib.request,
+            "urlopen",
+            return_value=_FakeResponse(200, _commits_payload(["Fix #1: a", "Refs #2: b", "Refs #3: c"])),
+        ):
+            messages = checker.fetch_pr_commit_messages("owner/repo", "42", "tok", expected_count=3)
+        self.assertEqual(messages, ["Fix #1: a", "Refs #2: b", "Refs #3: c"])
+
+    def test_commit_count_mismatch_raises_runtime_error(self):
+        """#238 round 2: GitHub's PR commits endpoint silently caps at 250 commits total
+        regardless of pagination. Simulate a 251-commit PR where the fetch loop only ever
+        sees 250 messages (a 100/100/50 split, with the 50-row final page ending pagination
+        normally, no error) -- expected_count=251 must still fail closed rather than silently
+        accept the truncated 250."""
+        page_one = _commits_payload([f"Refs #{i}: wip" for i in range(100)])
+        page_two = _commits_payload([f"Refs #{i}: wip" for i in range(100, 200)])
+        page_three = _commits_payload([f"Refs #{i}: wip" for i in range(200, 250)])
+        responses = [_FakeResponse(200, page_one), _FakeResponse(200, page_two), _FakeResponse(200, page_three)]
+        with mock.patch.object(checker.urllib.request, "urlopen", side_effect=responses):
+            with self.assertRaises(RuntimeError) as ctx:
+                checker.fetch_pr_commit_messages("owner/repo", "42", "tok", expected_count=251)
+        self.assertIn("250", str(ctx.exception))
+        self.assertIn("251", str(ctx.exception))
 
 
 if __name__ == "__main__":
