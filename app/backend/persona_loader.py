@@ -641,7 +641,16 @@ def _is_symlink_or_junction(path: Path) -> bool:
         st = os.lstat(path)
     except OSError:
         return False
-    return getattr(st, "st_reparse_tag", None) == stat.IO_REPARSE_TAG_MOUNT_POINT
+    # `IO_REPARSE_TAG_MOUNT_POINT` (like `st_reparse_tag` itself) is a
+    # Windows-only `stat` module constant -- it does not exist at all on
+    # POSIX. Junctions are a Windows-only concept to begin with, so a missing
+    # constant here correctly means "not applicable on this platform", not
+    # "treat everything as a match" (the latter would be the result of a
+    # naive `None == None` comparison if both sides defaulted to `None`).
+    mount_point_tag = getattr(stat, "IO_REPARSE_TAG_MOUNT_POINT", None)
+    if mount_point_tag is None:
+        return False
+    return getattr(st, "st_reparse_tag", None) == mount_point_tag
 
 
 def _load_one_persona(

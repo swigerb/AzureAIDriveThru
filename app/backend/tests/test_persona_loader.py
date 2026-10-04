@@ -787,7 +787,21 @@ class TestJunctionFallbackOn311:
     tests actually run on. `os.path.isjunction` is patched to `None` so
     `getattr(os.path, "isjunction", None)` sees it as absent, exactly matching
     how the real attribute-lookup behaves on 3.11 -- this does not require
-    `delattr`/simulating a genuinely different Python version."""
+    `delattr`/simulating a genuinely different Python version.
+
+    `stat.IO_REPARSE_TAG_MOUNT_POINT`/`IO_REPARSE_TAG_SYMLINK` are themselves
+    Windows-only `stat` module constants -- absent entirely on POSIX (this
+    repo's CI runs these tests on Linux). `stat` is patched with
+    `create=True` so these Windows-specific tag values exist for the
+    duration of each test regardless of host OS, same spirit as patching
+    `os.path.isjunction`/`os.lstat` above. The literal values used are the
+    real, fixed Windows NTFS reparse-tag constants (`IO_REPARSE_TAG_MOUNT_POINT
+    = 0xA0000003`, `IO_REPARSE_TAG_SYMLINK = 0xA000000C`), so a Windows run of
+    this suite (where the real constants already exist) exercises the exact
+    same values."""
+
+    _MOUNT_POINT_TAG = getattr(stat, "IO_REPARSE_TAG_MOUNT_POINT", 0xA0000003)
+    _SYMLINK_TAG = getattr(stat, "IO_REPARSE_TAG_SYMLINK", 0xA000000C)
 
     def test_plain_directory_is_not_flagged(self, tmp_path):
         """A normal, non-reparse-point directory must not be flagged by the
@@ -802,10 +816,11 @@ class TestJunctionFallbackOn311:
         the fallback must flag exactly this tag."""
         junction_dir = tmp_path / "junction"
         junction_dir.mkdir()
-        fake_stat = SimpleNamespace(st_reparse_tag=stat.IO_REPARSE_TAG_MOUNT_POINT)
-        with mock.patch.object(os.path, "isjunction", None):
-            with mock.patch("os.lstat", return_value=fake_stat):
-                assert _is_symlink_or_junction(junction_dir) is True
+        fake_stat = SimpleNamespace(st_reparse_tag=self._MOUNT_POINT_TAG)
+        with mock.patch.object(stat, "IO_REPARSE_TAG_MOUNT_POINT", self._MOUNT_POINT_TAG, create=True):
+            with mock.patch.object(os.path, "isjunction", None):
+                with mock.patch("os.lstat", return_value=fake_stat):
+                    assert _is_symlink_or_junction(junction_dir) is True
 
     def test_other_reparse_tag_is_not_flagged(self, tmp_path):
         """#223 round 2: the OLD (pre-review) 3.11 fallback checked only the
@@ -819,10 +834,25 @@ class TestJunctionFallbackOn311:
         type") must NOT be flagged."""
         other_dir = tmp_path / "other-reparse-point"
         other_dir.mkdir()
-        fake_stat = SimpleNamespace(st_reparse_tag=stat.IO_REPARSE_TAG_SYMLINK)
-        with mock.patch.object(os.path, "isjunction", None):
-            with mock.patch("os.lstat", return_value=fake_stat):
-                assert _is_symlink_or_junction(other_dir) is False
+        fake_stat = SimpleNamespace(st_reparse_tag=self._SYMLINK_TAG)
+        with mock.patch.object(stat, "IO_REPARSE_TAG_MOUNT_POINT", self._MOUNT_POINT_TAG, create=True):
+            with mock.patch.object(os.path, "isjunction", None):
+                with mock.patch("os.lstat", return_value=fake_stat):
+                    assert _is_symlink_or_junction(other_dir) is False
+
+    def test_mount_point_tag_absent_on_platform_returns_false(self, tmp_path):
+        """On a platform with no `IO_REPARSE_TAG_MOUNT_POINT` concept at all
+        (real POSIX; simulated here regardless of host OS), the fallback must
+        not crash and must not treat every reparse-tagged path as a match --
+        it has nothing meaningful to compare against, so it must return
+        `False` rather than e.g. comparing `None == None`."""
+        some_dir = tmp_path / "posix-style"
+        some_dir.mkdir()
+        fake_stat = SimpleNamespace(st_reparse_tag=self._MOUNT_POINT_TAG)
+        with mock.patch.object(stat, "IO_REPARSE_TAG_MOUNT_POINT", None, create=True):
+            with mock.patch.object(os.path, "isjunction", None):
+                with mock.patch("os.lstat", return_value=fake_stat):
+                    assert _is_symlink_or_junction(some_dir) is False
 
     def test_lstat_oserror_is_not_flagged(self, tmp_path):
         """A path that vanishes between the symlink/isjunction checks and the
