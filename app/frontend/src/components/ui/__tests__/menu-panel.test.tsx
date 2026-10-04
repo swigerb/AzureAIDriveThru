@@ -243,6 +243,47 @@ describe("MenuPanel", () => {
         expect(chip.className).toContain("dark:text-brand-primary-tint");
     });
 
+    // Issue #169 (Rick's PR #167 round 3 review, item N13): the category card, item card, and
+    // category title now resolve through persona-driven `bg-menu-*`/`text-menu-*` utility classes
+    // instead of the hard-coded `bg-white/NN`/`text-primary` literals, so a persona can override
+    // them (via `ui.theme.*.menuSurface`) to its own reference tones while every other persona (no
+    // `menuSurface` authored) keeps rendering the SAME classes as before -- see `index.css`'s
+    // `--menu-category-card`/`--menu-item-card`/`--menu-item-card-dark` literal fallbacks for proof
+    // those classes resolve to today's exact colors by default.
+    it("renders the category card with the persona-driven menu-category-card class (issue #169)", async () => {
+        mockFetchOnce(SAMPLE_MENU);
+        render(<MenuPanel />);
+
+        const title = await screen.findByText("Burgers & Sandwiches");
+        const card = title.closest(".rounded-3xl");
+        expect(card).not.toBeNull();
+        expect(card!.className).toContain("bg-menu-category-card");
+        expect(card!.className).not.toContain("bg-white/80");
+    });
+
+    it("renders the category title with the persona-driven dark:text-menu-category-title-dark class (issue #169)", async () => {
+        mockFetchOnce(SAMPLE_MENU);
+        render(<MenuPanel />);
+
+        const title = await screen.findByText("Burgers & Sandwiches");
+        expect(title.className).toContain("text-primary");
+        expect(title.className).toContain("dark:text-menu-category-title-dark");
+        expect(title.className).not.toContain("dark:text-primary");
+    });
+
+    it("renders each item card with the persona-driven menu-item-card classes (issue #169)", async () => {
+        mockFetchOnce(SAMPLE_MENU);
+        render(<MenuPanel />);
+
+        const name = await screen.findByText("Test Burger");
+        const card = name.closest(".rounded-2xl");
+        expect(card).not.toBeNull();
+        expect(card!.className).toContain("bg-menu-item-card");
+        expect(card!.className).toContain("dark:bg-menu-item-card-dark");
+        expect(card!.className).not.toContain("bg-white/70");
+        expect(card!.className).not.toContain("dark:bg-white/5");
+    });
+
     // issue 165: a single-size item from a pack that also supplies `calories` (the existing
     // menu-fidelity signal) never shows a size label, regardless of the size name's
     // capitalization -- matching the target reference card design.

@@ -346,7 +346,18 @@
         "background": { "type": "string" },
         "foreground": { "type": "string" },
         "accents": { "$ref": "#/$defs/themeAccents" },
-        "surface": { "$ref": "#/$defs/themeSurface" }
+        "surface": { "$ref": "#/$defs/themeSurface" },
+        "menuSurface": { "$ref": "#/$defs/themeMenuSurface" }
+      }
+    },
+    "themeMenuSurface": {
+      "description": "Issue #169 (Rick's PR #167 round 3 review, item N13): optional pack-level menu-card/header surface tokens, layered on top of the shared shadcn `surface` slots above. Every key is optional so a pack without this follow-up still validates and simply renders the shared neutral defaults app/frontend/src/index.css falls back to. The same key set is reused for both `light.menuSurface` and `dark.menuSurface` (same convention as `themeSurface`) even though a mode only ever sets a subset -- e.g. a persona may set only the two card backgrounds in `light` and only the title color plus the item card background in `dark`, matching its own reference design (cream cards/headers in light, a bold category title and dark item cards in dark).",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "categoryCardBackground": { "type": "string" },
+        "itemCardBackground": { "type": "string" },
+        "categoryTitleColor": { "type": "string" }
       }
     },
     "themeSurface": {
