@@ -269,6 +269,12 @@ entries:
     it''s the only persona pack that exists yet -- #78/#79 land the other packs, at
     which point these tests get parameterized per-persona instead of hardcoding Sonic.'
   increase_reason: ''
+- file: app/backend/tests/test_conformance_logging.py
+  brand: sonic
+  max: 5
+  issue: '#233'
+  reason: new test file asserting on real logger names ("sonic-drive-in"/"sonic-verbose") and log line shapes
+  increase_reason: '#233'
 - file: app/backend/tests/test_extras_rules.py
   brand: sonic
   max: 1
@@ -595,6 +601,12 @@ entries:
     same class as the #78 Python test baseline entries; remove only if the pack roster
     or its test coverage changes.'
   increase_reason: '#105'
+- file: tests/conformance/tests/Conformance.Tests/CapturedProcessOutputTimestampTests.cs
+  brand: sonic
+  max: 14
+  issue: '#233'
+  reason: new test file asserting on real logger names ("sonic-drive-in") used in Python subprocess scripts under test
+  increase_reason: '#233'
 - file: tests/conformance/tests/Conformance.Tests/CapturedProcessOutputWaitTests.cs
   brand: sonic
   max: 2

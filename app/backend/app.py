@@ -3,6 +3,7 @@ import hashlib
 import logging
 import os
 import sys
+from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 import aiohttp
@@ -31,6 +32,32 @@ from tools import attach_tools_rtmt
 _log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(level=getattr(logging, _log_level, logging.INFO))
 logger = logging.getLogger(__name__)
+
+
+class _ConformanceTimestampFormatter(logging.Formatter):
+    """#233 (N32, split from #63): self-timestamps every log line with the UTC, microsecond-
+    resolution instant THIS process actually logged it at, rather than relying on the .NET
+    conformance harness's `CapturedProcessOutput` to stamp one in when it happens to *observe*
+    the line over the redirected stdout/stderr pipe. stdout/stderr arrives on a ThreadPool
+    callback some indeterminate time after the line was actually written (see that class's own
+    doc comments); under CI/CPU contention that lag can be large enough to make genuinely
+    sequential backend events look simultaneous or even reordered in harness-side diagnostics
+    (the motivating case: PR #58). The harness prefers this embedded timestamp over its own
+    read-time one when present (falling back for lines that don't have it, e.g. output that
+    bypasses `logging`, or a backend predating this change).
+
+    The literal "Z" suffix (not isoformat()'s "+00:00") matches the format the C# backend emits
+    under the same flag (Program.cs's SimpleConsoleFormatterOptions.TimestampFormat) so the
+    harness only needs one parser for both backends' lines."""
+
+    def formatTime(self, record, datefmt=None):
+        return datetime.fromtimestamp(record.created, tz=UTC).strftime("%Y-%m-%dT%H:%M:%S.%f")
+
+
+if conformance_hooks.HOOKS_ENABLED:
+    _conformance_formatter = _ConformanceTimestampFormatter("%(asctime)sZ %(levelname)s:%(name)s:%(message)s")
+    for _handler in logging.getLogger().handlers:
+        _handler.setFormatter(_conformance_formatter)
 
 # Load centralized config
 _config = get_config()

@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
+using Microsoft.Extensions.Logging.Console;
 
 namespace Backend;
 
@@ -114,6 +115,60 @@ public static class ConformanceHooks
         HooksEnabled && Environment.GetEnvironmentVariable(CascadeFakeTokenEnv) is { Length: > 0 } token
             ? token
             : null;
+
+    /// <summary>
+    /// #233 (N32, split from #63): Program.cs's <c>builder.Logging.AddSimpleConsole(
+    /// ConformanceHooks.ApplyConsoleTimestampFormat)</c> call (guarded there by
+    /// <see cref="HooksEnabled"/>, since this method is extracted purely so it has a directly
+    /// unit-testable name/signature -- Program.cs's top-level statements aren't otherwise
+    /// unit-testable). Self-timestamps every console log line with a UTC, microsecond-resolution
+    /// instant THIS process actually logged it at, mirroring app/backend/app.py's
+    /// conformance-hooks-gated logging.Formatter change: see that file's
+    /// <c>_ConformanceTimestampFormatter</c> doc comment for why (the conformance harness's
+    /// <c>CapturedProcessOutput</c> otherwise stamps a line at the moment it *observes* it over
+    /// the redirected stdout/stderr pipe, which can lag the backend's actual write under CI/CPU
+    /// contention enough to make sequential events look simultaneous or reordered).
+    ///
+    /// PR #264 review: the original cut of this used
+    /// <c>builder.Services.Configure&lt;SimpleConsoleFormatterOptions&gt;(...)</c> directly, which
+    /// silently had NO effect -- <see cref="Microsoft.Extensions.Logging.Console.ConsoleLoggerOptions.FormatterName"/>
+    /// is left <see langword="null"/> by <c>WebApplication.CreateBuilder</c>'s default console
+    /// registration, and a <see langword="null"/>/unset formatter name makes
+    /// <c>ConsoleLoggerProvider</c> fall back to its legacy built-in formatter -- which ignores
+    /// <see cref="SimpleConsoleFormatterOptions"/> (including this method's
+    /// <see cref="SimpleConsoleFormatterOptions.TimestampFormat"/>) entirely, ANY configuration of
+    /// it included, regardless of <see cref="HooksEnabled"/>. <c>ILoggingBuilder.AddSimpleConsole</c>
+    /// is the one API that both configures these options AND flips
+    /// <c>ConsoleLoggerOptions.FormatterName</c> to <c>"simple"</c> so they're actually consulted;
+    /// it reuses (via <c>TryAddEnumerable</c>) the single <c>ConsoleLoggerProvider</c>
+    /// <c>CreateBuilder</c> already registered rather than adding a second one, so log lines still
+    /// aren't duplicated.
+    ///
+    /// Also sets <see cref="SimpleConsoleFormatterOptions.SingleLine"/> so the backend's
+    /// self-timestamp prefixes the same physical line as the actual message (the default
+    /// two-line layout puts the timestamp on the bare "level: category[eventId]" line, with the
+    /// message on a separate, unprefixed, indented line below it) -- consistent with the
+    /// Python side's single-line-per-record format, and matching what
+    /// <c>CapturedProcessOutput.BackendTimestampPrefix</c>/<c>StripBackendTimestamp</c> actually
+    /// need: one captured line, one optional leading timestamp. The one tradeoff is that an
+    /// exception's full <c>ToString()</c> (including its stack trace) also collapses onto that
+    /// same line, newlines replaced with spaces, per <c>SimpleConsoleFormatter</c>'s own
+    /// single-line exception handling -- every frame is still present, just space-joined rather
+    /// than one-per-line.
+    ///
+    /// The literal <c>'Z'</c> (not .NET's <c>K</c>/round-trip-offset specifier) matches the
+    /// Python side's literal <c>Z</c> suffix exactly, and the trailing space is load-bearing: both
+    /// together produce the exact <c>yyyy-MM-ddTHH:mm:ss.ffffffZ </c> shape
+    /// <c>CapturedProcessOutput.BackendTimestampPrefix</c>'s regex expects, so the harness only
+    /// needs one timestamp parser for both backends' lines.
+    /// </summary>
+    public static void ApplyConsoleTimestampFormat(SimpleConsoleFormatterOptions options)
+    {
+        options.UseUtcTimestamp = true;
+        options.TimestampFormat = "yyyy-MM-ddTHH:mm:ss.ffffff'Z' ";
+        options.SingleLine = true;
+    }
+
     private static DateTimeOffset ParseFixedNow(string raw)
     {
         if (!ExplicitOffsetSuffix.IsMatch(raw.Trim()))
