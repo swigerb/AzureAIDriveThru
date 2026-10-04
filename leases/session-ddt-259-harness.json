@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "leaseKey": "session-ddt-259-harness",
+  "sessionId": "ddt-259-harness",
+  "repository": "swigerb/AzureAIDriveThru",
+  "issueNumber": null,
+  "dispatchSource": "local-cli",
+  "route": "aca-job",
+  "executionMode": "aca-job",
+  "state": "claimed",
+  "attempts": 1,
+  "startedAt": "2026-10-04T20:12:31.746Z",
+  "lastHeartbeatAt": "2026-10-04T20:12:31.746Z",
+  "updatedAt": "2026-10-04T20:12:31.746Z",
+  "terminalReason": null,
+  "executionRef": null
+}
