@@ -128,6 +128,93 @@ public sealed class PythonParityTests : IDisposable
     }
 
     /// <summary>
+    /// PR #224 review R4: the real, checked-in production fixture has no whole-number prices today
+    /// (every one has a decimal point), so the byte-identical test above cannot, by itself, catch a
+    /// whole-number price regression. This test builds its own synthetic one-product production
+    /// export (a "price": 2 with no decimal point, under the Python script's own hardcoded
+    /// "Cherry Limeade" search term) and runs it through both the real Python twin and the C# port,
+    /// the same subprocess-vs-in-process byte-identical comparison as the test above, proving
+    /// Python's int-stays-int behavior and this port's <see cref="MenuSizeUpdater.FormatPriceLikePython"/>
+    /// agree on a case the real fixture doesn't exercise. Mutation check: reverting
+    /// FormatPriceLikePython to always call PythonFloatRepr makes the byte-identical assertion below
+    /// fail (dotnet writes "2.0", Python writes "2").
+    /// </summary>
+    [Fact]
+    public async Task DotnetPort_ProducesByteIdenticalOutput_ToRealPythonScript_ForWholeNumberPrice()
+    {
+        var repoRoot = RepoRoot.Find(AppContext.BaseDirectory);
+        var discovery = PersonaMenuLocator.Locate(repoRoot);
+        var realScript = Path.Combine(repoRoot, "scripts", "update_menu_sizes.py");
+        Assert.True(File.Exists(realScript), $"Python twin not found: {realScript}");
+
+        var interpreter = await RequirePythonInterpreterAsync(repoRoot, TestContext.Current.CancellationToken);
+        if (interpreter is null)
+        {
+            return;
+        }
+
+        // A one-product synthetic production export using "Cherry Limeade", one of the Python
+        // script's own hardcoded PRODUCT_SEARCH_MAP keys (needed since this test's menu fixture
+        // must be matched by the Python script's own untouched, hardcoded map, not this port's
+        // externalized product_search_map.json). The whole-number "price": 2 (no decimal point) is
+        // the regression this test exists to catch.
+        const string productionJson = """
+            {
+              "menus": {
+                "menu-1": {
+                  "products": {
+                    "p-small": { "displayName": "Small Cherry Limeade", "price": 2 }
+                  }
+                }
+              }
+            }
+            """;
+        const string menuJson = """
+            {
+              "menuItems": [
+                { "name": "Drinks", "items": [
+                    { "name": "Cherry Limeade", "sizes": [] }
+                ] }
+              ]
+            }
+            """;
+
+        var pythonScriptsDir = Path.Combine(_tempRoot, "whole-number-python-run", "scripts");
+        var pythonMenuDir = Path.Combine(_tempRoot, "whole-number-python-run", "personas", discovery.PersonaId, "menu");
+        Directory.CreateDirectory(pythonScriptsDir);
+        Directory.CreateDirectory(Path.Combine(pythonMenuDir, "source"));
+        File.Copy(realScript, Path.Combine(pythonScriptsDir, "update_menu_sizes.py"));
+        File.WriteAllText(Path.Combine(pythonMenuDir, "source", $"{discovery.PersonaId}-menu-items.json"), productionJson);
+        var pythonMenuPath = Path.Combine(pythonMenuDir, "menuItems.json");
+        File.WriteAllText(pythonMenuPath, menuJson);
+
+        var (exitCode, pythonStdout, stderr) = await RunProcessAsync(
+            interpreter, [Path.Combine(pythonScriptsDir, "update_menu_sizes.py")], TestContext.Current.CancellationToken);
+        Assert.True(exitCode == 0, $"Python twin exited {exitCode}.\nstdout:\n{pythonStdout}\nstderr:\n{stderr}");
+
+        var dotnetDir = Path.Combine(_tempRoot, "whole-number-dotnet-run");
+        Directory.CreateDirectory(dotnetDir);
+        var dotnetProductionPath = Path.Combine(dotnetDir, "production.json");
+        File.WriteAllText(dotnetProductionPath, productionJson);
+        var dotnetMenuPath = Path.Combine(dotnetDir, "menuItems.json");
+        File.WriteAllText(dotnetMenuPath, menuJson);
+        var dotnetProductSearchMapPath = Path.Combine(dotnetDir, "product_search_map.json");
+        File.WriteAllText(dotnetProductSearchMapPath, """{ "Cherry Limeade": "Cherry Limeade" }""");
+
+        MenuSizeUpdater.UpdateMenu(dotnetProductionPath, dotnetMenuPath, dotnetProductSearchMapPath);
+
+        var pythonBytes = File.ReadAllBytes(pythonMenuPath);
+        var dotnetBytes = File.ReadAllBytes(dotnetMenuPath);
+        Assert.True(
+            pythonBytes.AsSpan().SequenceEqual(dotnetBytes),
+            "The C# port's menuItems.json output is not byte-identical to the Python twin's output " +
+            $"for a whole-number production price (python={pythonBytes.Length} bytes, dotnet={dotnetBytes.Length} bytes).");
+        var pythonText = Encoding.UTF8.GetString(pythonBytes);
+        Assert.Contains("\"price\": 2", pythonText);
+        Assert.DoesNotContain("2.0", pythonText);
+    }
+
+    /// <summary>
     /// PR #224 review R3: there are now two sources of truth for the menuItems.json-name -&gt;
     /// production-search-term map -- the Python script's own hardcoded <c>PRODUCT_SEARCH_MAP</c>
     /// dict (kept untouched, per issue #16's scope) and the externalized

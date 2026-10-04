@@ -96,8 +96,8 @@ public sealed class MenuSizeUpdaterTests : IDisposable
 
         var sizes = MenuSizeUpdater.FindSizesForProduct(products, "Cherry Limeade");
 
-        Assert.Equal(2.49m, sizes["small"]);
-        Assert.Equal(3.39m, sizes["large"]);
+        Assert.Equal(2.49m, sizes["small"].Price);
+        Assert.Equal(3.39m, sizes["large"].Price);
     }
 
     [Fact]
@@ -128,7 +128,7 @@ public sealed class MenuSizeUpdaterTests : IDisposable
 
         var size = Assert.Single(sizes);
         Assert.Equal("small", size.Key);
-        Assert.Equal(2.49m, size.Value);
+        Assert.Equal(2.49m, size.Value.Price);
     }
 
     [Fact]
@@ -359,6 +359,66 @@ public sealed class MenuSizeUpdaterTests : IDisposable
         var updatedJson = File.ReadAllText(menuPath);
         Assert.Contains("\"price\": 1.5", updatedJson);
         Assert.DoesNotContain("1.50", updatedJson);
+    }
+
+    [Fact]
+    public void UpdateMenu_WritesWholeNumberPricesAsIntegers_LikePythonWould()
+    {
+        // PR #224 review R4: a production "price": 2 (no decimal point) is a Python int --
+        // json.load parses it as 2, and json.dump writes it back as "2", never "2.0". The prior
+        // fix (PythonFloatRepr, above) assumed every production price has a decimal point and
+        // always appended ".0" when the price happened to be a whole number, which was correct for
+        // "price": 2.0 but wrong for "price": 2. Mutation check: reverting
+        // MenuSizeUpdater.FormatPriceLikePython to always call PythonFloatRepr (the pre-fix
+        // behavior) makes this assertion fail with "2.0" in the output.
+        var productionPath = WriteTempJson("prod", """
+            {
+              "menus": { "menu-1": { "products": {
+                "p-small": { "displayName": "Small Cherry Limeade", "price": 2 }
+              } } }
+            }
+            """);
+        var menuPath = WriteTempJson("menu", """
+            { "menuItems": [ { "name": "Drinks", "items": [
+                { "name": "Cherry Limeade", "sizes": [] }
+            ] } ] }
+            """);
+
+        MenuSizeUpdater.UpdateMenu(productionPath, menuPath, WriteDefaultProductSearchMap());
+
+        var updatedJson = File.ReadAllText(menuPath);
+        Assert.Contains("\"price\": 2", updatedJson);
+        Assert.DoesNotContain("2.0", updatedJson);
+    }
+
+    // ---- FormatPriceLikePython (PR #224 review R4) -----------------------------------------
+
+    [Theory]
+    [InlineData(2, "2", "2")] // a whole-number production price: Python's int stays "2", not "2.0"
+    [InlineData(1.50, "1.50", "1.5")] // a decimal-point price still goes through PythonFloatRepr
+    [InlineData(2, null, "2.0")] // no original text available (e.g. a test-constructed ProductEntry)
+    public void FormatPriceLikePython_PrefersOriginalIntegerTextOverFloatRepr(
+        decimal price, string? priceText, string expected)
+    {
+        Assert.Equal(expected, MenuSizeUpdater.FormatPriceLikePython(price, priceText));
+    }
+
+    [Fact]
+    public void LoadProductionProducts_CapturesOriginalPriceTextForIntAndFloatLiterals()
+    {
+        var productionPath = WriteTempJson("prod", """
+            {
+              "menus": { "menu-1": { "products": {
+                "p-int": { "displayName": "Small Cherry Limeade", "price": 2 },
+                "p-float": { "displayName": "Large Cherry Limeade", "price": 1.50 }
+              } } }
+            }
+            """);
+
+        var products = MenuSizeUpdater.LoadProductionProducts(productionPath);
+
+        Assert.Equal("2", products.Single(p => p.DisplayName == "Small Cherry Limeade").PriceText);
+        Assert.Equal("1.50", products.Single(p => p.DisplayName == "Large Cherry Limeade").PriceText);
     }
 
     [Fact]

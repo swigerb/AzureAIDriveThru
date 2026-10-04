@@ -91,8 +91,15 @@ public static class MenuSizeUpdater
         return map;
     }
 
-    /// <summary>The production export's two fields this tool actually reads, per product.</summary>
-    public readonly record struct ProductEntry(string DisplayName, decimal Price);
+    /// <summary>
+    /// The production export's fields this tool actually reads, per product. <paramref name="PriceText"/>
+    /// is the exact raw JSON number token the price was parsed from (e.g. "2" or "1.50"), preserved
+    /// alongside the parsed <paramref name="Price"/> decimal so a whole-number literal can be written
+    /// back unchanged -- a C# <see cref="decimal"/> alone can't distinguish "price Python parsed as
+    /// an int" from "price Python parsed as a float" (see <see cref="FormatPriceLikePython"/>).
+    /// Null when no number was present (not expected for a real production export's price field).
+    /// </summary>
+    public readonly record struct ProductEntry(string DisplayName, decimal Price, string? PriceText = null);
 
     /// <summary>Result of a single <see cref="UpdateMenu"/> run, for callers (and tests) to inspect.</summary>
     public sealed record UpdateResult(int UpdatedCount, IReadOnlyList<string> Log);
@@ -147,10 +154,16 @@ public static class MenuSizeUpdater
                                nameEl.ValueKind == JsonValueKind.String
                 ? nameEl.GetString() ?? string.Empty
                 : string.Empty;
-            var price = product.TryGetProperty("price", out var priceEl) && priceEl.ValueKind == JsonValueKind.Number
-                ? priceEl.GetDecimal()
-                : 0m;
-            result.Add(new ProductEntry(displayName, price));
+            decimal price = 0m;
+            string? priceText = null;
+            if (product.TryGetProperty("price", out var priceEl) && priceEl.ValueKind == JsonValueKind.Number)
+            {
+                price = priceEl.GetDecimal();
+                // The raw token, e.g. "2" or "1.50" -- not re-derived from `price`, which already
+                // lost whether the source literal had a decimal point.
+                priceText = priceEl.GetRawText();
+            }
+            result.Add(new ProductEntry(displayName, price, priceText));
         }
         return result;
     }
@@ -158,11 +171,13 @@ public static class MenuSizeUpdater
     /// <summary>
     /// Finds all sized variants of <paramref name="searchTerm"/> among <paramref name="products"/>,
     /// walking them in production-document order -- first match per size key wins, matching
-    /// Python's <c>if size_key not in sizes: sizes[size_key] = price</c>.
+    /// Python's <c>if size_key not in sizes: sizes[size_key] = price</c>. Returns the whole winning
+    /// <see cref="ProductEntry"/> per size key (not just its price) so callers can still see the
+    /// original price's raw JSON text for byte-parity writes (see <see cref="FormatPriceLikePython"/>).
     /// </summary>
-    public static Dictionary<string, decimal> FindSizesForProduct(IReadOnlyList<ProductEntry> products, string searchTerm)
+    public static Dictionary<string, ProductEntry> FindSizesForProduct(IReadOnlyList<ProductEntry> products, string searchTerm)
     {
-        var sizes = new Dictionary<string, decimal>();
+        var sizes = new Dictionary<string, ProductEntry>();
         var searchLower = searchTerm.ToLowerInvariant();
 
         foreach (var product in products)
@@ -202,7 +217,7 @@ public static class MenuSizeUpdater
 
             if (!sizes.ContainsKey(sizeKey))
             {
-                sizes[sizeKey] = price;
+                sizes[sizeKey] = product;
             }
         }
         return sizes;
@@ -248,12 +263,12 @@ public static class MenuSizeUpdater
                     continue;
                 }
 
-                var newSizes = new List<(string Size, decimal Price)>();
+                var newSizes = new List<(string Size, ProductEntry Entry)>();
                 foreach (var sizeKey in SizeOrder)
                 {
-                    if (prodSizes.TryGetValue(sizeKey, out var price))
+                    if (prodSizes.TryGetValue(sizeKey, out var entry))
                     {
-                        newSizes.Add((sizeKey, price));
+                        newSizes.Add((sizeKey, entry));
                     }
                 }
 
@@ -272,7 +287,7 @@ public static class MenuSizeUpdater
                             continue;
                         }
                         var existingPrice = existing["price"]!.GetValue<decimal>();
-                        var newPrice = newSizes.First(n => n.Size == sizeKey).Price;
+                        var newPrice = newSizes.First(n => n.Size == sizeKey).Entry.Price;
                         if (existingPrice != newPrice)
                         {
                             changed = true;
@@ -285,19 +300,23 @@ public static class MenuSizeUpdater
                 {
                     var oldCount = existingSizes.Count;
                     var newSizesArray = new JsonArray();
-                    foreach (var (size, price) in newSizes)
+                    foreach (var (size, entry) in newSizes)
                     {
                         newSizesArray.Add(new JsonObject
                         {
                             ["size"] = size,
-                            // Python's json.dump re-serializes every number it parsed as a float
-                            // (any production price, since all of them have a decimal point) via
-                            // float.__repr__ -- the shortest round-trippable form, e.g. 1.50 ->
-                            // "1.5", not whatever trailing-zero scale a C# decimal happened to
-                            // retain from parsing. JsonNode.Parse on that exact string preserves it
-                            // verbatim when re-serialized (see PythonFloatRepr), unlike assigning
-                            // the decimal directly.
-                            ["price"] = JsonNode.Parse(PythonFloatRepr(price)),
+                            // Python's json.dump re-serializes every number via the SAME type it
+                            // parsed it as: a production price with no '.'/'e'/'E' parsed as an int
+                            // and is written back byte-for-byte unchanged (e.g. a whole-number
+                            // "price": 2 stays 2, never becomes 2.0); one that has a decimal point
+                            // parsed as a float and is re-serialized via float.__repr__ -- the
+                            // shortest round-trippable form, e.g. 1.50 -> "1.5", not whatever
+                            // trailing-zero scale a C# decimal happened to retain from parsing.
+                            // FormatPriceLikePython picks between entry.PriceText (the original
+                            // token, reused verbatim) and PythonFloatRepr(entry.Price) accordingly;
+                            // JsonNode.Parse on that exact string preserves it verbatim when
+                            // re-serialized, unlike assigning the decimal directly.
+                            ["price"] = JsonNode.Parse(FormatPriceLikePython(entry.Price, entry.PriceText)),
                         });
                     }
                     item["sizes"] = newSizesArray;
@@ -351,12 +370,27 @@ public static class MenuSizeUpdater
     }
 
     /// <summary>
-    /// Formats <paramref name="value"/> the way Python's <c>json.dump</c> would format the same
-    /// value after round-tripping it through <c>json.load</c> as a float (every production price
-    /// has a decimal point, so Python always parses it as a float, never an int) -- the shortest
-    /// decimal string that round-trips to the same IEEE-754 double, with at least one digit after
-    /// the point (Python's float repr always shows ".0" for a whole number; .NET's default
-    /// shortest-round-trip double formatting does not).
+    /// Formats a production price's new-size write the way Python's <c>json.dump</c> would,
+    /// matching whichever type Python's <c>json.load</c> would have parsed the ORIGINAL production
+    /// price token as (PR #224 review R4: not every production price has a decimal point -- a
+    /// whole-number price like <c>"price": 2</c> parses as a Python <c>int</c> and <c>json.dump</c>
+    /// writes it back unchanged as <c>2</c>, never <c>2.0</c>). When <paramref name="priceText"/>
+    /// (the original raw JSON token, from <see cref="ProductEntry.PriceText"/>) is known and
+    /// contains none of <c>.</c>/<c>e</c>/<c>E</c>, it is reused verbatim. Otherwise -- a token with
+    /// a decimal point, or no original text available -- falls back to <see cref="PythonFloatRepr(decimal)"/>.
+    /// </summary>
+    internal static string FormatPriceLikePython(decimal price, string? priceText) =>
+        priceText is not null && priceText.IndexOfAny(['.', 'e', 'E']) < 0
+            ? priceText
+            : PythonFloatRepr(price);
+
+    /// <summary>
+    /// Formats <paramref name="value"/> the way Python's <c>json.dump</c> would format a price
+    /// known to have parsed as a <c>float</c> (its original token had a decimal point, per
+    /// <see cref="FormatPriceLikePython"/>) -- the shortest decimal string that round-trips to the
+    /// same IEEE-754 double, with at least one digit after the point (Python's float repr always
+    /// shows ".0" for a whole number; .NET's default shortest-round-trip double formatting does
+    /// not).
     /// </summary>
     internal static string PythonFloatRepr(decimal value) => PythonFloatRepr((double)value);
 

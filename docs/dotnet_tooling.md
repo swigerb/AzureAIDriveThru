@@ -155,11 +155,16 @@ mutation-tested (see below):
 * **Newline handling**: `JsonSerializerOptions.NewLine` and the manually-appended final trailing
   newline both use `Environment.NewLine`, matching Python's text-mode `"w"` newline translation
   (CRLF on Windows, LF elsewhere) for every newline the write emits, including the last one.
-* **`PythonFloatRepr`**: every production price Python parses is a float (it always has a decimal
-  point), and `json.dump` re-serializes floats via Python's shortest-round-trip `repr` -- e.g.
-  `1.50` becomes `1.5`, not whatever trailing-zero scale a C# `decimal` happened to retain from
-  parsing. `PythonFloatRepr` reproduces that formatting; the price is inserted into the JSON tree by
-  parsing that exact string (`JsonNode.Parse`), not by assigning the decimal/double directly.
+* **`PythonFloatRepr` and `FormatPriceLikePython`** (PR #224 review R4 fixed a wrong assumption
+  here): not every production price has a decimal point -- a whole-number price like `"price": 2`
+  parses as a Python `int`, and `json.dump` writes it back unchanged as `2`, never `2.0`, while a
+  price with a decimal point (e.g. `1.50`) parses as a `float` and is re-serialized via Python's
+  shortest-round-trip `repr` (`1.50` becomes `1.5`), not whatever trailing-zero scale a C# `decimal`
+  happened to retain from parsing. `ProductEntry` keeps the original raw JSON price token
+  (`PriceText`) alongside the parsed `decimal`, so `FormatPriceLikePython` can tell which case
+  applies: it reuses `PriceText` verbatim when it has no `.`/`e`/`E`, otherwise falls back to
+  `PythonFloatRepr`. Either way the price is inserted into the JSON tree by parsing that exact
+  string (`JsonNode.Parse`), not by assigning the decimal/double directly.
 * **Whole-tree number-literal normalization** (PR #224 review R2): Python's `json.load`/`json.dump`
   round-trip applies the float-vs-int distinction above to *every* number in the parsed document,
   not just the price fields this tool explicitly rewrites -- a pre-existing `2.50` elsewhere in
