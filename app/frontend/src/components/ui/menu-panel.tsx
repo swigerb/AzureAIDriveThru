@@ -273,7 +273,7 @@ export default memo(function MenuPanel({ menuMode }: MenuPanelProps) {
                 return (
                     <div
                         key={category.category}
-                        className="rounded-3xl border border-primary/10 bg-white/80 shadow-[0_15px_35px_var(--brand-secondary-veil-08)] dark:border-white/10 dark:bg-brand-surface-dark/95 dark:shadow-[0_25px_55px_rgba(0,0,0,0.65)]"
+                        className="rounded-3xl border border-primary/10 bg-menu-category-card shadow-[0_15px_35px_var(--brand-secondary-veil-08)] dark:border-white/10 dark:bg-brand-surface-dark/95 dark:shadow-[0_25px_55px_rgba(0,0,0,0.65)]"
                     >
                         <button
                             type="button"
@@ -292,7 +292,7 @@ export default memo(function MenuPanel({ menuMode }: MenuPanelProps) {
                                     still fits the chip+chevron on one row, as it does in that pack's
                                     original (non-collapsible) layout, while a longer name is still free
                                     to wrap exactly as it does in the original apps. */}
-                                <h3 className="break-keep text-left font-semibold uppercase tracking-wide text-primary dark:text-primary">
+                                <h3 className="break-keep text-left font-semibold uppercase tracking-wide text-primary dark:text-menu-category-title-dark">
                                     {displayName}
                                 </h3>
                             </div>
@@ -325,7 +325,7 @@ export default memo(function MenuPanel({ menuMode }: MenuPanelProps) {
                                         {category.items.map(item => (
                                             <div
                                                 key={item.name}
-                                                className="rounded-2xl border border-dashed border-primary/20 bg-white/70 p-3 transition-colors dark:border-white/10 dark:bg-white/5"
+                                                className="rounded-2xl border border-dashed border-primary/20 bg-menu-item-card p-3 transition-colors dark:border-white/10 dark:bg-menu-item-card-dark"
                                             >
                                                 <div className="flex flex-wrap items-baseline justify-between gap-2">
                                                     <div className="pr-1">

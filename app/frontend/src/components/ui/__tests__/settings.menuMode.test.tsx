@@ -2,7 +2,6 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import Settings from "../settings";
 import { DummyDataProvider } from "@/context/dummy-data-context";
-import { AzureSpeechProvider } from "@/context/azure-speech-context";
 
 // Rick's #166 round-1 review, required item 3: the Menu Mode toggle must lock (disabled buttons,
 // same shape as persona-picker.tsx/model-picker.tsx) while a session is already live, because
@@ -15,25 +14,23 @@ import { AzureSpeechProvider } from "@/context/azure-speech-context";
 
 function renderSettings(props: Partial<React.ComponentProps<typeof Settings>> = {}) {
     return render(
-        <AzureSpeechProvider>
-            <DummyDataProvider>
-                <Settings
-                    isMobile={false}
-                    showSessionTokens={false}
-                    onShowSessionTokensChange={() => {}}
-                    verboseLogging={false}
-                    onVerboseLoggingChange={() => {}}
-                    logToFile={false}
-                    onLogToFileChange={() => {}}
-                    voiceChoice="marin"
-                    onVoiceChoiceChange={() => {}}
-                    menuModeEnabled={true}
-                    menuMode="lunch"
-                    onMenuModeChange={() => {}}
-                    {...props}
-                />
-            </DummyDataProvider>
-        </AzureSpeechProvider>
+        <DummyDataProvider>
+            <Settings
+                isMobile={false}
+                showSessionTokens={false}
+                onShowSessionTokensChange={() => {}}
+                verboseLogging={false}
+                onVerboseLoggingChange={() => {}}
+                logToFile={false}
+                onLogToFileChange={() => {}}
+                voiceChoice="marin"
+                onVoiceChoiceChange={() => {}}
+                menuModeEnabled={true}
+                menuMode="lunch"
+                onMenuModeChange={() => {}}
+                {...props}
+            />
+        </DummyDataProvider>
     );
 }
 

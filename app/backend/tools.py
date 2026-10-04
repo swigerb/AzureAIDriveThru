@@ -899,7 +899,17 @@ async def update_order(args, session_id: str) -> ToolResult:
         logger.info("Combo incomplete for session %s — missing: %s", session_id, validation["missing_items"])
     elif action == "add" and not absorbed:
         # ── Category-aware upsell hints (only when combo requirements are met) ──
-        category = menu.infer_category(item_name)
+        # #168 follow-up (Rick's PR #217 review): an "extra" (Flavor Add-In, Add Bacon,
+        # Whipped Topping, Sweet Cream, Jalapeños, etc.) shares its base item's own category
+        # (e.g. this persona's own "Extras & Sides", alongside genuine stand-alone sides like
+        # Cheese Tots) but is its own order line, not a side the guest is choosing instead of/along
+        # with a combo -- a category-specific hint written for that category's REAL items
+        # (e.g. "add a refreshing Drink or Slush to complete your meal!") reads as non-
+        # sequitur stacked right after the item it modifies. Pass "" instead of the real
+        # category so get_upsell_hint/GetUpsellHint always miss every bucket and fall through
+        # to "generic", matching exactly what an extra got before hints.yaml's "extras & sides"
+        # mapping was added in #168 (back then "extras & sides" didn't match ANY bucket either).
+        category = "" if menu.is_extra_item(item_name) else menu.infer_category(item_name)
         if pl:
             delta_text += pl.get_upsell_hint(category)
         logger.debug("Upsell hint for category '%s'", category)

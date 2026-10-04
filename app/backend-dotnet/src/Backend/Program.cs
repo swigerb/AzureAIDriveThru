@@ -222,6 +222,11 @@ IToolExecutor BuildSessionToolExecutor(Persona sessionPersona, PromptLoader? ses
 var upstreamEndpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_EASTUS2_ENDPOINT")!;
 var upstreamApiKey = Environment.GetEnvironmentVariable("AZURE_OPENAI_EASTUS2_API_KEY") ?? string.Empty;
 var echoCooldownSeconds = ReadDouble(audioSection, "echo_cooldown_seconds") ?? 1.5;
+// Issue #13 Wave 2: the realtime relay's one clock (echo-suppression cooldowns, the greeting-gate
+// timeout, NowSeconds()) -- a single TimeProvider.System instance, passed straight into
+// RealtimeProcessor below. Tests construct RealtimeProcessor directly with their own
+// FakeTimeProvider instead, so no DI container registration is needed here.
+var timeProvider = TimeProvider.System;
 
 // ── 6. Processor registry (issue #75, design doc section 7.4): only "realtime" is registered
 // this wave -- its own model resolution is fully ported (Models/ModelDispatch.cs's
@@ -242,7 +247,8 @@ var realtimeProcessor = new RealtimeProcessor(
     allowedVoices,
     echoCooldownSeconds,
     logger: logger,
-    toolExecutorFactory: BuildSessionToolExecutor);
+    toolExecutorFactory: BuildSessionToolExecutor,
+    timeProvider: timeProvider);
 // PR #140 R5: bearerTokenProvider is left at its default (null) here deliberately --
 // RealtimeProcessor.ResolveUpstreamAuthHeaderAsync falls back to the lazily-constructed real
 // DefaultAzureCredentialTokenProvider itself, so a DefaultAzureCredential (which probes several

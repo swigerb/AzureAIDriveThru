@@ -686,24 +686,38 @@ export default function useRealTime({
     // Issue GH-171 round 4, H5: a persona switch started while the socket was already
     // intentionally down (shouldConnect false: idle 4000, superseded 4002, retries exhausted).
     // endSession({ switching: true }) sets switchingRef but there is no open socket to close and
-    // no url-keyed effect waiting to fire once personaId/modelId/menuMode land, so nothing would
-    // ever clear switchingRef or open the new persona's socket: the mic stays dead until "New
-    // order". This effect is the hook's own finish line for that case -- it fires once the persona
-    // fetch resolves and the new identity actually lands in props. If a switch is still pending at
-    // that point and the socket is still intentionally down, the switch is done: clear switchingRef
-    // so reconnect() stops deferring, and if the guest already tapped in the meantime
+    // no url-keyed effect waiting to fire once personaId lands, so nothing would ever clear
+    // switchingRef or open the new persona's socket: the mic stays dead until "New order". This
+    // effect is the hook's own finish line for that case -- it fires once the persona fetch
+    // resolves and the new identity actually lands in props. If a switch is still pending at that
+    // point and the socket is still intentionally down, the switch is done: clear switchingRef so
+    // reconnect() stops deferring, and if the guest already tapped in the meantime
     // (reconnectRequestedRef), open the new persona's socket now (getSocketUrl reads the identity
     // props at call time, so by the time this effect runs they already point at the new persona).
     //
-    // Issue GH-180 round 2, R1-fix: this effect is keyed on identity (personaId/modelId/menuMode)
-    // and only ever fires again on the NEXT such change -- there is no second chance for THIS
-    // transition. App.tsx's handleSelectPersona now moves `current`/`personaId` (via the awaited
-    // `selectPersona()`) before calling endSession({ switching: true }); React commits that prop
-    // change -- and runs this effect -- while that await is still resuming, strictly BEFORE
-    // endSession() itself runs. If switchingRef is already true here (beginSwitch() ran) but
-    // switchArmedRef isn't yet (endSession() hasn't), this firing is premature: record it via
-    // missedArmingRef and do nothing else, so endSession() can perform this same catch-up itself
-    // the moment it arms the switch, since this effect will not run again for this transition.
+    // Issue GH-180 round 2, R1-fix: this effect is keyed on identity and only ever fires again on
+    // the NEXT such change -- there is no second chance for THIS transition. App.tsx's
+    // handleSelectPersona now moves `current`/`personaId` (via the awaited `selectPersona()`)
+    // before calling endSession({ switching: true }); React commits that prop change -- and runs
+    // this effect -- while that await is still resuming, strictly BEFORE endSession() itself runs.
+    // If switchingRef is already true here (beginSwitch() ran) but switchArmedRef isn't yet
+    // (endSession() hasn't), this firing is premature: record it via missedArmingRef and do
+    // nothing else, so endSession() can perform this same catch-up itself the moment it arms the
+    // switch, since this effect will not run again for this transition.
+    //
+    // Issue GH-178 (PR GH-173 round-4 review, non-blocking item 2): keyed on `personaId` ALONE, not
+    // `[personaId, modelId, menuMode]` as originally shipped. `switchingRef`/`switchArmedRef` are
+    // only ever set by beginSwitch()/endSession({ switching: true }), and those are only ever
+    // called from a persona switch (App.tsx's handleSelectPersona) -- a model or menu-mode change
+    // (handleModelChange/handleMenuModeChange) never arms or targets a switch, so it must never be
+    // mistaken for the switch's own identity landing. With the old deps, an UNRELATED model/menu-
+    // mode change that lands while a persona switch is still pending (the target persona's fetch
+    // hasn't resolved; personaId hasn't moved yet) fired this effect for the wrong reason -- and
+    // since switchArmedRef is already true by the time endSession() has run, it cleared
+    // switchingRef right then, well before the real persona identity ever landed. A tap in the
+    // resulting gap reopened the OLD persona's socket (reconnect() no longer saw switchingRef as
+    // true, so it skipped its defer branch) instead of deferring, exactly the bug H5 exists to
+    // prevent -- the old socket was then replaced again once the real persona prop finally landed.
     useEffect(() => {
         if (switchingRef.current && !shouldConnect) {
             if (!switchArmedRef.current) {
@@ -718,7 +732,7 @@ export default function useRealTime({
             }
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [personaId, modelId, menuMode]);
+    }, [personaId]);
 
     // Keep refs in sync so onMessageReceived can call sendJsonMessage, and so onOpen/onClose can
     // tell a stale socket's event apart from the current one (issue GH-171).
