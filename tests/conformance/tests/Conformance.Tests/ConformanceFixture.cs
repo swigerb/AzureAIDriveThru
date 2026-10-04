@@ -103,6 +103,31 @@ public class ConformanceFixture : IAsyncLifetime
     }
 
     /// <summary>
+    /// Rick's PR #253 review (2nd follow-up): complements <see cref="AssertNoPendingExtraFakeState"/>
+    /// for the case that check can never reach -- a scenario body that THROWS (the likeliest real
+    /// leak path: an aborted request mid-parse, per
+    /// <see cref="Conformance.Fakes.FakeChatCompletionsServer.AssertNoPendingScriptedResponses"/>'s
+    /// own doc comment) never falls through to this method's sibling, since that call sits after
+    /// the body in <see cref="RunAsync(Func{Task}, int)"/>'s `try`. Without a reset on THIS path
+    /// too, a throwing scenario's leftover state would silently reach the next scenario sharing
+    /// the same fake instance (via <c>IClassFixture</c>) -- the one case
+    /// <see cref="AssertNoPendingExtraFakeState"/>'s own now-self-clearing check (see
+    /// <c>AssertNoPendingScriptedResponses</c>) cannot help with, because it is never called at
+    /// all. Called from <c>RunAsync</c>'s `finally` ONLY when the scenario did not reach its own
+    /// <see cref="AssertNoPendingExtraFakeState"/> check (i.e. the body threw, or an earlier
+    /// assertion in the try block did) -- never on the normal success path, where that check has
+    /// already handled clearing on its own. Must never throw: this runs in a `finally` specifically
+    /// so it cannot mask the scenario's own original exception.
+    ///
+    /// Default no-op, matching <see cref="AssertNoPendingExtraFakeState"/>. Overridden by
+    /// <c>CascadeConformanceFixture</c> and <c>CascadeMenuModeAndVoiceConformanceFixture</c> to
+    /// call <c>Chat.Drain()</c>.
+    /// </summary>
+    protected virtual void ResetExtraFakeState()
+    {
+    }
+
+    /// <summary>
     /// Issue #143/ADR-002: whether this fixture launches its backend in Entra mode against a
     /// fresh <see cref="EntraIssuer"/> (the default -- persona-architecture.md 18.11: "the default
     /// fixture runs in Entra mode against the fake issuer") or leaves Entra entirely unconfigured
@@ -448,6 +473,14 @@ public class ConformanceFixture : IAsyncLifetime
         }
 
         var postBodyRecorded = false;
+
+        // Rick's PR #253 review (2nd follow-up): set true only once AssertNoPendingExtraFakeState
+        // below has actually run -- i.e. the scenario body returned normally and the settle/fault
+        // checks above it also passed. If the body (or an earlier check) throws first, this stays
+        // false and the `finally` below calls ResetExtraFakeState() instead, so a throwing
+        // scenario's leftover extra-fake state (see that method's own doc comment) still gets
+        // cleared before the next scenario runs.
+        var extraFakeStateChecked = false;
         try
         {
             if (strandedMessage is not null)
@@ -506,6 +539,7 @@ public class ConformanceFixture : IAsyncLifetime
             // fixture's own extra FAKE upstream state, orthogonal to whether a real backend
             // process is attached.
             AssertNoPendingExtraFakeState();
+            extraFakeStateChecked = true;
 
             // Language-neutral, fixture-wide equivalent of "backend logged no (unexpected)
             // traceback" (item N5): a future C# backend under test reports the same
@@ -550,6 +584,23 @@ public class ConformanceFixture : IAsyncLifetime
         }
         finally
         {
+            // Rick's PR #253 review (2nd follow-up): runs whenever this scenario never reached its
+            // own AssertNoPendingExtraFakeState() call above -- the body threw, the settle-timeout
+            // check threw, or AssertNoHandlerFaults threw. That is exactly the case
+            // AssertNoPendingExtraFakeState's own self-clearing fix (see
+            // FakeChatCompletionsServer.AssertNoPendingScriptedResponses) cannot help with, since
+            // it is never invoked at all on this path -- without this call, a throwing scenario's
+            // leftover extra-fake state (e.g. an unconsumed scripted /chat/completions response
+            // left by an aborted request mid-parse) would otherwise silently reach the next
+            // scenario sharing the same fake instance. A `finally` block's own body must never
+            // throw -- ResetExtraFakeState's default no-op and its cascade overrides
+            // (Chat.Drain()) are both side-effect-only resets with nothing to assert, so this can
+            // never mask the scenario's real exception above.
+            if (!extraFakeStateChecked)
+            {
+                ResetExtraFakeState();
+            }
+
             // #66 M1 / re-review R1(b): recorded regardless of outcome (a failed stranded-error
             // charge, the scenario's own body throwing, a settle timeout, a handler fault, or any
             // other exception), so the NEXT scenario's own BeginScenario charge has an accurate

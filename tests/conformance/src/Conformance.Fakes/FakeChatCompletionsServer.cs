@@ -205,6 +205,20 @@ public sealed class FakeChatCompletionsServer : IAsyncDisposable
     /// leak, but would misattribute it to whichever scenario happens to run next instead of the
     /// one that actually left the FIFO entry behind; checking immediately after THIS scenario's
     /// own body returns means the scenario that caused the leak is the one that fails.
+    ///
+    /// Rick's PR #253 review (2nd follow-up): ALWAYS clears the queue before (possibly) throwing
+    /// -- previously only <see cref="Drain"/> emptied it, and nothing ever called that, so one
+    /// leak permanently poisoned every later scenario sharing this fake (each failing on its own
+    /// turn, blaming itself, for a leftover response it never queued). Clearing here means this
+    /// check is self-healing: the scenario that actually caused the leak still fails (the
+    /// `InvalidOperationException` below), but the queue is empty again by the time this method
+    /// returns, so the NEXT scenario starts clean regardless of whether this one's caller observes
+    /// the exception. See <see cref="ConformanceFixture.RunAsync"/>'s own
+    /// <c>ResetExtraFakeState</c> finally-block call for the complementary fix: a scenario body
+    /// that THROWS before ever reaching this method (the likeliest way a leak happens in the
+    /// first place -- see this class's own doc comment above) used to leave the leftover
+    /// response behind forever, since the post-body hook that used to be the only thing calling
+    /// this method never runs when the body doesn't return normally.
     /// </summary>
     /// <exception cref="InvalidOperationException">This scenario (or an earlier one, if nothing
     /// cleared the queue in between) left one or more scripted responses in the FIFO that were
@@ -215,6 +229,7 @@ public sealed class FakeChatCompletionsServer : IAsyncDisposable
         lock (_gate)
         {
             pending = _scriptedResponses.Count;
+            _scriptedResponses.Clear();
         }
         if (pending > 0)
         {
@@ -226,8 +241,8 @@ public sealed class FakeChatCompletionsServer : IAsyncDisposable
                 "barge-in/connection-closing cancellation) before this fake server finished " +
                 "parsing its body, which skips the FIFO dequeue entirely and leaves the scripted " +
                 "response behind to be wrongly handed out to an unrelated later request instead. " +
-                "Call Drain() (or otherwise reset the queue) before a scenario that deliberately " +
-                "leaves a round in flight returns.");
+                "The queue has already been cleared by this check, so only THIS scenario fails -- " +
+                "the next one starts clean.");
         }
     }
 

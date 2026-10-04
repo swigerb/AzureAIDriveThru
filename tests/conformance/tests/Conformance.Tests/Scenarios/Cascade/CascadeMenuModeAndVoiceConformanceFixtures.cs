@@ -74,6 +74,10 @@ public sealed class CascadeMenuModeAndVoiceConformanceFixture : ConformanceFixtu
     // (the 4 hand-placed calls that used to be there are removed -- this override supersedes
     // them for every scenario in this fixture's collection, present and future).
     protected override void AssertNoPendingExtraFakeState() => Chat.AssertNoPendingScriptedResponses();
+
+    // Rick's PR #253 review (2nd follow-up): see CascadeConformanceFixture's matching override
+    // and ConformanceFixture.ResetExtraFakeState's own doc comment for why this is needed.
+    protected override void ResetExtraFakeState() => Chat.Drain();
 }
 
 [CollectionDefinition(Name)]
