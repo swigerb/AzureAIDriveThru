@@ -94,29 +94,32 @@ public static class GaSessionValidator
         "delay", "keywords", "language", "languages", "model", "prompt",
     };
 
-    /// <summary>
-    /// #28/#63 N29 (Rick's PR #52 approval): "the fake should reject model-specific transcription
-    /// keys (`delay`, `keywords`, `languages`) when they're sent with a model that doesn't support
-    /// them". <see cref="AudioInputTranscriptionKeys"/> only checks the key NAME is known (#28
-    /// N11/F2) -- it never checked whether the chosen `transcription.model` actually supports that
-    /// key, so a translator regression that forwarded e.g. `delay` unconditionally to every
-    /// transcription model would pass the fake but be rejected by the real service. Per the same
-    /// OpenAI Realtime API reference cited in this class's own doc comment (section "Audio
-    /// Transcription"): `delay` -- "Only supported with `gpt-realtime-whisper` in GA Realtime
-    /// sessions"; `keywords`/`languages` -- "Supported by `gpt-transcribe` and
-    /// `gpt-live-transcribe`". Scoped to exactly these three keys (N29's own list, not `prompt`,
-    /// which the same reference separately documents as unsupported on `gpt-realtime-whisper` --
-    /// left for a follow-up since N29 didn't call for it). NOT independently live-verified (no
-    /// access to a deployment of any of these alternate transcription models) -- kept for
-    /// documentation parity only, same category as this class's `reasoning`-on-"1.5" check below.
-    /// </summary>
-    public static readonly IReadOnlyDictionary<string, IReadOnlySet<string>> TranscriptionKeyRequiredModels =
-        new Dictionary<string, IReadOnlySet<string>>(StringComparer.Ordinal)
-        {
-            ["delay"] = new HashSet<string>(StringComparer.Ordinal) { "gpt-realtime-whisper" },
-            ["keywords"] = new HashSet<string>(StringComparer.Ordinal) { "gpt-transcribe", "gpt-live-transcribe" },
-            ["languages"] = new HashSet<string>(StringComparer.Ordinal) { "gpt-transcribe", "gpt-live-transcribe" },
-        };
+    // #28/#63 N29 (Rick's PR #52 approval) originally added a model-specific gate here --
+    // rejecting `delay`/`keywords`/`languages` under `session.audio.input.transcription` when
+    // `transcription.model` didn't match the OpenAI public model name each key requires (e.g.
+    // `delay` needs `gpt-realtime-whisper`). Rick's PR #220 review caught the bug that made that
+    // gate itself unsound: on Azure, `audio.input.transcription.model` is a DEPLOYMENT name
+    // (`app/backend/rtmt.py`'s own `transcription_model` is configured from
+    // `AZURE_OPENAI_REALTIME_TRANSCRIPTION_MODEL`/`transcription_model`, an arbitrary
+    // customer-chosen string like `"my-transcribe-deployment"` -- see
+    // `app/backend/tests/test_session_bootstrap.py`), not one of the public model names this
+    // gate compared against. A real, correctly-configured deployment whose name doesn't happen
+    // to equal the underlying public model name would have every one of these keys wrongly
+    // rejected by this fake, even though the real service would accept them. The backend has no
+    // existing deployment-name -> underlying-model-family mapping for transcription deployments
+    // to resolve this properly (unlike the separate, unrelated realtime-model
+    // `AZURE_AI_MODEL_DEPLOYMENTS` catalog in `model_catalog.py`, which `deploymentModel` above
+    // is drawn from for the `reasoning`-on-"1.5" check, and does not cover transcription
+    // deployments), so rather than inventing a fictional, test-only mapping convention, this gate
+    // is removed entirely -- AudioInputTranscriptionKeys above (#28 N11/F2) still validates that
+    // the key NAME itself is known, which is the check this fake can make reliably without
+    // guessing at a deployment's underlying model family. This also removes the "earlier model
+    // still applies" fallback that previously read RealtimeSessionState.EffectiveSession for a
+    // follow-up update which omitted `model` -- that fallback was itself inconsistent, since
+    // `MergeSessionUpdate` replaces `transcription` wholesale per update (GA's own documented
+    // semantics), so a SECOND model-omitting follow-up would silently find no model at all and
+    // skip the check with no visible change in behaviour; removing the model-specific gate
+    // removes that inconsistency along with it rather than patching around it.
 
     /// <summary>
     /// #28 N11: keys accepted under `session.audio.input.turn_detection` -- previously unchecked.
@@ -245,28 +248,10 @@ public static class GaSessionValidator
                             echoEventId: true);
                     }
 
-                    // #63 N29: a known key can still be invalid for the transcription model this
-                    // update actually names (or, if this update's own transcription object omits
-                    // `model`, the model already in effect from an earlier update on this
-                    // connection -- GA's transcription object is replaced wholesale per update,
-                    // see MergeSessionUpdate, so the model that applies to THIS payload's keys is
-                    // whichever one is live at the moment this update takes effect). No basis to
-                    // check at all if no model has ever been named on this connection.
-                    var transcriptionModel = ResolveTranscriptionModel(transcription, state);
-                    if (transcriptionModel is not null)
-                    {
-                        foreach (var (key, requiredModels) in TranscriptionKeyRequiredModels)
-                        {
-                            if (transcription.TryGetProperty(key, out _) && !requiredModels.Contains(transcriptionModel))
-                            {
-                                return SessionUpdateValidationResult.Rejected(
-                                    code: "invalid_value",
-                                    param: null,
-                                    message: $"Unsupported option for this model: 'session.audio.input.transcription.{key}'.",
-                                    echoEventId: false);
-                            }
-                        }
-                    }
+                    // #63 N29's model-specific gate (rejecting delay/keywords/languages for a
+                    // transcription.model that doesn't support them) was removed per Rick's PR
+                    // #220 review -- see the comment above AudioInputTranscriptionKeys for why.
+                    // Only the key NAME is validated now (immediately above).
                 }
 
                 if (input.TryGetProperty("turn_detection", out var turnDetection) &&
@@ -337,34 +322,6 @@ public static class GaSessionValidator
 
     private static string? FirstUnknownKey(JsonElement obj, IReadOnlySet<string> allowed) =>
         obj.EnumerateObject().Select(p => p.Name).FirstOrDefault(name => !allowed.Contains(name));
-
-    /// <summary>#63 N29: the transcription model this update's own `transcription` object names,
-    /// or -- if it doesn't name one -- whatever model was already in effect for this connection
-    /// from an earlier accepted `session.update` (<see cref="RealtimeSessionState.EffectiveSession"/>).
-    /// Null if neither has one, meaning no transcription model has ever been configured on this
-    /// connection and there is nothing to validate the key set against.</summary>
-    private static string? ResolveTranscriptionModel(JsonElement transcription, RealtimeSessionState state)
-    {
-        if (transcription.TryGetProperty("model", out var modelProp) && modelProp.ValueKind == JsonValueKind.String)
-        {
-            return modelProp.GetString();
-        }
-
-        if (state.EffectiveSession.TryGetPropertyValue("audio", out var audioNode) &&
-            audioNode is JsonObject audioObj &&
-            audioObj.TryGetPropertyValue("input", out var inputNode) &&
-            inputNode is JsonObject inputObj &&
-            inputObj.TryGetPropertyValue("transcription", out var transcriptionNode) &&
-            transcriptionNode is JsonObject transcriptionObj &&
-            transcriptionObj.TryGetPropertyValue("model", out var modelNode) &&
-            modelNode is JsonValue modelValue &&
-            modelValue.TryGetValue<string>(out var modelString))
-        {
-            return modelString;
-        }
-
-        return null;
-    }
 }
 
 public sealed record SessionUpdateValidationResult(bool IsAccepted, string? Code, string? Param, string? Message, bool EchoEventId)
