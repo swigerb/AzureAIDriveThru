@@ -227,6 +227,19 @@ public sealed class ResumeRehydrationAndNudgeTests(ResumeTimersConformanceFixtur
             ["transcript"] = guestTranscript,
         }, ct);
 
+        // RecordTurn (RealtimeProcessor's guest-transcription case) runs synchronously before
+        // this same event type falls through DispatchServerMessageAsync's default case and is
+        // forwarded unchanged to the browser -- waiting for the OLD browser to actually receive
+        // this echoed frame is therefore a deterministic proof that RecordTurn has already run,
+        // instead of racing the drop/resume against the processor's own async frame handling
+        // (observed flaky under CI load: the drop could win the race, landing on a resumed
+        // session whose Transcript was still empty).
+        var echoed = await oldBrowser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "conversation.item.input_audio_transcription.completed", FrameTimeout, ct);
+        Assert.True(echoed is not null,
+            "Expected the injected transcription-completed event to be echoed back to the browser " +
+            "(proving the processor has processed it, including RecordTurn) before resuming.");
+
         var (newBrowser, newConnection) = await DropAndResumeAsync(oldBrowser, resumeId, ct);
         await using var _ = newBrowser;
         await newBrowser.SendStartSessionAsync(cancellationToken: ct);
