@@ -179,6 +179,17 @@ namespace Conformance.Tests;
 /// <c>OriginValidationTests.Origin_with_explicit_default_port_is_rejected_against_a_portless_host</c>
 /// -- raising the floor 219 to 222 (219 + 3).
 ///
+/// Issue #13 Wave 5 (PR #236, rebased onto #230/#21 above): <c>Backend.Sessions.CascadeProcessor</c>
+/// lands and is registered in <c>ProcessorRegistry</c>, so
+/// <c>Scenarios/Cascade/CascadeConformanceTests.cs</c>'s 7 rows (session-metadata dispatch, the
+/// tool-calling round trip to get_order, update_order pricing parity with realtime, a not-on-menu
+/// rejection shape, the automatic greeting on connect, barge-in cancelling an in-flight turn, and a
+/// 429-from-chat-completion recovery) are now tagged <c>[Trait("Dotnet", "ready")]</c> at the class
+/// level -- verified green against the C# backend across 3 consecutive local runs
+/// (<c>CONFORMANCE_BACKEND=dotnet</c>) with no flakiness, plus 2 further full-suite runs pinned to
+/// 2 CPUs on native Linux (matching the ubuntu-latest CI runner) to rule out a CI-only timing flake
+/// -- raising the floor 222 to 229 (222 + 7).
+///
 /// Merge-order note for PR #226 (#147, Beth's C# auth work, independently raises this SAME floor
 /// 204 to 222 against the stale pre-#21 baseline): PR #230/#21 lands first at 222 (including this
 /// round's +3); PR #226 must then rebase onto that base and re-target its own floor to 222 + 18 =

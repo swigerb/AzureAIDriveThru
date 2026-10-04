@@ -278,6 +278,15 @@ processorRegistry.Register(realtimeProcessor);
 // both pipelines. A dedicated HttpClient (not the shared `searchHttpClient`) keeps cascade's own
 // outbound REST calls (chat/STT/TTS) isolated from search's.
 var cascadeHttpClient = new HttpClient();
+// Mirrors app.py's own `conformance_hooks.cascade_credential() or AsyncDefaultAzureCredential()`:
+// a non-null ConformanceHooks.CascadeFakeToken (CONFORMANCE_TEST_HOOKS=1 AND
+// CONFORMANCE_CASCADE_FAKE_TOKEN set) substitutes the fixed-token StaticBearerTokenProvider so
+// cascade's chat/STT/TTS REST calls can be exercised against the conformance harness's fakes with
+// no real Azure AD identity available; otherwise CascadeProcessor's own default (bearerTokenProvider:
+// null) lazily falls back to the real DefaultAzureCredentialTokenProvider exactly as before.
+var cascadeBearerTokenProvider = ConformanceHooks.CascadeFakeToken is { } cascadeFakeToken
+    ? new StaticBearerTokenProvider(cascadeFakeToken)
+    : null;
 var cascadeProcessor = new CascadeProcessor(
     modelCatalog,
     Environment.GetEnvironmentVariable("AZURE_AI_FOUNDRY_ENDPOINT") ?? string.Empty,
@@ -289,6 +298,7 @@ var cascadeProcessor = new CascadeProcessor(
     allowedVoices,
     voiceChoice,
     logger: logger,
+    bearerTokenProvider: cascadeBearerTokenProvider,
     toolExecutorFactory: BuildSessionToolExecutor,
     timeProvider: timeProvider);
 processorRegistry.Register(cascadeProcessor);
