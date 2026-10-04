@@ -638,21 +638,48 @@ the tools whose parity bar genuinely depends on response-handling, not request-b
   failure crashes Python's `main()` with an unhandled exception before `run()` is ever reached; this
   port intentionally does not reproduce that crash for a case that isn't really about OpenAI settings
   at all).
-* **Empty-string divergence, generalized.** Python's `os.environ.get(name, default)` returns an empty
-  string, not the default, when the key exists in the environment with an empty value -- and after the
-  R2 fix, this ambiguity now applies to *both* possible non-flag sources: a `.env`-file line like
-  `AZURE_OPENAI_EMBEDDING_DEPLOYMENT=""` from the azd environment, or an empty-but-set process
-  environment variable of the same name. In both cases, Python would silently use `""` as the real
-  deployment name downstream (and if `azd`'s file is the source, `load_dotenv(..., override=True)`
-  would also have blanked out any prior process-env value for the same key). This port treats an empty
-  string as equivalent to "not set" at **every** source -- flag, azd value, and process env var alike
+* **Empty-string divergence, generalized -- applies to BOTH settings, not just the deployment.**
+  Python's `os.environ.get(name, default)`/`os.environ[name]` returns an empty string, not the
+  default, when the key exists with an empty value -- and after the R2 fix, this ambiguity applies
+  to *both* possible non-flag sources: a `.env`-file line like `AZURE_OPENAI_EMBEDDING_DEPLOYMENT=""`
+  (or `AZURE_OPENAI_EASTUS2_ENDPOINT=""`) from the azd environment, or an empty-but-set process
+  environment variable of the same name. This port treats an empty string as equivalent to "not
+  set" at **every** source -- flag, azd value, and process env var alike
   (`OpenAiSettingsResolver.GetNonEmptyOrNull`) -- always falling through to the next source or the
-  built-in `"text-embedding-3-large"` default instead. This can only affect the embedding deployment:
-  an empty *endpoint* is always a hard failure on both sides regardless of source, just presented
-  differently (Python's unhandled `KeyError`/downstream SDK error vs. this port's clean
-    `InvalidOperationException`). See `Resolve_TreatsEmptyStringFlag_SameAsMissingFlag` and
-    `Resolve_TreatsEmptyStringAzdValue_SameAsMissing_FallsBackToProcessEnvThenDefault` in
-  `OpenAiSettingsResolverTests.cs` for both empty-value sources.
+  built-in default instead.
+
+  An earlier draft of this note claimed an empty *endpoint* could "never happen" this way and was
+  always a hard failure on both sides -- **that was wrong** (Rick's review): the real, concrete case
+  is a developer's shell already having a real `AZURE_OPENAI_EASTUS2_ENDPOINT` set, while the azd
+  default environment's `.env` file separately has it set to `""`. Because Python's
+  `load_dotenv(path, override=True)` *overwrites* same-named process-env values with the azd file's
+  value -- even an empty one -- Python ends up using the blanked-out `""`, not the real shell value,
+  whatever downstream consequence that has (the request never reaching a real Azure OpenAI client
+  in this preview tool, but a real `AZURE_OPENAI_EASTUS2_ENDPOINT=""` would eventually fail
+  whatever else reads it). This port's `GetNonEmptyOrNull` instead skips the empty azd value and
+  falls through to the real, non-empty process-env value -- so in this exact scenario this port
+  *succeeds* with the real, intended endpoint while Python would have silently used the empty one.
+  The two settings differ only in how visibly wrong the blanked value is afterwards (an empty
+  deployment id is itself still a valid-looking string Python happily sends onward; an empty
+  endpoint fails loudly the moment anything tries to use it as a URL) -- the root-cause divergence
+  itself (this port recovers the real value; Python's `override=True` does not) is identical for
+  both. See `Resolve_TreatsEmptyStringFlag_SameAsMissingFlag`,
+  `Resolve_TreatsEmptyStringAzdValue_SameAsMissing_FallsBackToProcessEnvThenDefault`, and the
+  endpoint-side `Resolve_TreatsEmptyStringAzdValue_ForEndpoint_SameAsMissing_FallsBackToProcessEnvThenSucceeds`
+  in `OpenAiSettingsResolverTests.cs`.
+* **azd's `\$`/`\!`/backtick escaping -- a real but practically-unreachable divergence.** Rick
+  re-verified `AzdEnvLoader.cs`'s assumptions against a real azd 1.34.2 install: beyond the
+  `\"`-escaped embedded quote already documented above, azd also backslash-escapes a literal `$`,
+  `!`, and backtick in any value it writes (shell-safety for a file that's also meant to be
+  `source`-able). `AzdEnvLoader.UnquoteDotEnvValue`'s catch-all case decodes all three back to the
+  plain character, matching azd's own intent -- but python-dotenv's own parser does **not**
+  recognize `\$`/`\!`/`` \` `` as escape sequences at all, and leaves the literal backslash in the
+  parsed value instead of stripping it. This is a genuine parser-level divergence, but one that can
+  never be exercised by either of the two keys this tool actually reads: `AZURE_OPENAI_EASTUS2_ENDPOINT`
+  is a URL and `AZURE_OPENAI_EMBEDDING_DEPLOYMENT` is an Azure OpenAI deployment name, and neither
+  can legally contain a `$`, `!`, or backtick in the first place. See
+  `LoadDefaultEnvValues_UnescapesBackslashEscapedDollarBangAndBacktick` in `AzdEnvLoaderTests.cs`,
+  which pins this parser's behavior deliberately even though real data never reaches it.
 * `FixtureEmbedding.cs` (now test-only, under `tools/dotnet/tests/SearchIndexRequestBuilder.Tests/`) --
   a deterministic, pure-function stand-in for `generate_embeddings`'s real Azure OpenAI call:
   `sha256(text)`'s first 8 bytes, each mapped from `[0, 255]` to `[-1, 1]` and rounded to 6 decimals

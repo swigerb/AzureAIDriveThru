@@ -196,6 +196,35 @@ public sealed class OpenAiSettingsResolverTests
         Assert.Equal("process-env-deployment", settings.EmbeddingDeployment);
     }
 
+    /// <summary>
+    /// Same divergence as the deployment case above, but for the endpoint -- NOT "impossible for
+    /// the endpoint" as an earlier draft of these docs incorrectly claimed. If the azd default
+    /// environment has overwritten AZURE_OPENAI_EASTUS2_ENDPOINT with an empty string while a
+    /// DIFFERENT, real, non-empty value is still sitting in the process environment (e.g. set
+    /// directly by a developer's shell, bypassing azd), Python's own <c>load_dotenv(override=True)</c>
+    /// would have already clobbered that real process-env value with the empty one by the time
+    /// <c>run()</c> reads <c>os.environ["AZURE_OPENAI_EASTUS2_ENDPOINT"]</c> -- so Python ends up
+    /// with the empty string, not the real value. This port instead falls through past the empty
+    /// azd value to the real process-env value and SUCCEEDS with it, which is the same
+    /// "this port recovers the real value where Python's override=True would have destroyed it"
+    /// divergence as the deployment case, just manifesting as success-vs-silently-wrong instead of
+    /// success-vs-silently-wrong-but-still-a-valid-string.
+    /// </summary>
+    [Fact]
+    public void Resolve_TreatsEmptyStringAzdValue_ForEndpoint_SameAsMissing_FallsBackToProcessEnvThenSucceeds()
+    {
+        var settings = OpenAiSettingsResolver.Resolve(
+            openAiEndpointFlag: null,
+            embeddingDeploymentFlag: "flag-deployment",
+            getEnvironmentVariable: name => name == "AZURE_OPENAI_EASTUS2_ENDPOINT" ? "https://real.openai.azure.com" : null,
+            azdEnvValues: new Dictionary<string, string>
+            {
+                ["AZURE_OPENAI_EASTUS2_ENDPOINT"] = "",
+            });
+
+        Assert.Equal("https://real.openai.azure.com", settings.OpenAiEndpoint);
+    }
+
     [Fact]
     public void Resolve_WorksWithNoAzdEnvValuesGiven_SameAsBeforeThisFeatureExisted()
     {
