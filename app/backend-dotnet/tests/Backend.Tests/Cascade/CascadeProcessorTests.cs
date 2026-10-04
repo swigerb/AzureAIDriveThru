@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.WebSockets;
 using System.Text;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using Backend.Cascade;
 using Backend.Configuration;
@@ -11,6 +12,7 @@ using Backend.Realtime;
 using Backend.Sessions;
 using Backend.Tests.TestSupport;
 using Backend.Tools;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
@@ -98,6 +100,57 @@ internal sealed class RoutingFoundryHandler : HttpMessageHandler
 
     private static HttpResponseMessage Dequeue(Queue<Func<HttpResponseMessage>> queue, string routeName) =>
         queue.Count > 0 ? queue.Dequeue()() : throw new InvalidOperationException($"No queued {routeName} response -- the test under-provisioned its fake responses.");
+}
+
+/// <summary>Records each call's raw arguments JSON (via <see cref="JsonElement.GetRawText"/>) and
+/// optionally delegates to a caller-supplied handler -- used by #236 Rick re-review items 4 (empty
+/// tool-call arguments must arrive here as "{}", not "") and 5 (a cancellation thrown from a tool
+/// must propagate through <see cref="CascadeProcessor"/> unmolested, not get logged as a tool
+/// failure) to observe/control what the processor actually does around a tool call, which
+/// <see cref="StubToolExecutor"/> (a fixed, non-configurable response) can't.</summary>
+internal sealed class RecordingToolExecutor : IToolExecutor
+{
+    private readonly Func<string, JsonElement, CancellationToken, Task<ToolResult>>? _handler;
+
+    public RecordingToolExecutor(
+        IEnumerable<string> toolNames, Func<string, JsonElement, CancellationToken, Task<ToolResult>>? handler = null)
+    {
+        ToolNames = toolNames.Distinct().ToList();
+        _handler = handler;
+    }
+
+    public IReadOnlyList<string> ToolNames { get; }
+    public List<string> ReceivedArgumentsJson { get; } = [];
+
+    public async Task<ToolResult> ExecuteAsync(string toolName, JsonElement args, CancellationToken ct = default)
+    {
+        ReceivedArgumentsJson.Add(args.GetRawText());
+        if (_handler is not null)
+        {
+            return await _handler(toolName, args, ct).ConfigureAwait(false);
+        }
+        return new ToolResult(
+            $"(recording) {toolName} acknowledged.", ToolResultDirection.ToBoth,
+            clientText: $"(recording) {toolName} acknowledged.");
+    }
+}
+
+/// <summary>Captures every Log call so a test can assert on level + exception type without pulling
+/// in an extra test package for a single assertion -- same pattern as
+/// <c>Models.ModelDispatchTests.RecordingLogger</c> (kept separate per-file rather than shared,
+/// matching that file's own precedent).</summary>
+internal sealed class RecordingLogger : ILogger
+{
+    public List<(LogLevel Level, string Message, Exception? Exception)> Entries { get; } = [];
+
+    IDisposable? ILogger.BeginScope<TState>(TState state) => null;
+
+    public bool IsEnabled(LogLevel logLevel) => true;
+
+    public void Log<TState>(
+        LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+        Func<TState, Exception?, string> formatter) =>
+        Entries.Add((logLevel, formatter(state, exception), exception));
 }
 
 /// <summary>Replays a pre-queued sequence of receive chunks like <c>Realtime.FakeWebSocket</c>,
@@ -207,14 +260,16 @@ public sealed class CascadeProcessorTests
         });
 
     private static CascadeProcessor NewProcessor(
-        RoutingFoundryHandler handler, IToolExecutor toolExecutor, PromptLoader loader, TimeProvider? timeProvider = null) =>
+        RoutingFoundryHandler handler, IToolExecutor toolExecutor, PromptLoader loader, TimeProvider? timeProvider = null,
+        ILogger? logger = null) =>
         new(
             NewCatalog(), Endpoint, Endpoint, AppConfig.Load(),
             promptLoaders: new Dictionary<string, PromptLoader> { ["test-delta"] = loader },
             toolExecutor: toolExecutor,
             httpClient: new HttpClient(handler),
             bearerTokenProvider: new StaticBearerTokenProvider("fake-token"),
-            timeProvider: timeProvider);
+            timeProvider: timeProvider,
+            logger: logger);
 
     private static byte[] Pcm16(short sampleValue, int count)
     {
@@ -341,6 +396,126 @@ public sealed class CascadeProcessorTests
         var finalRequestBody = JsonNode.Parse(handler.ChatRequestBodies[2])!.AsObject();
         var messages = finalRequestBody["messages"]!.AsArray();
         Assert.Contains(messages, m => m!["role"]!.GetValue<string>() == "tool" && m["tool_call_id"]!.GetValue<string>() == "call_1");
+    }
+
+    /// <summary>#236 Rick re-review item 4: a tool call with `"arguments": ""` (an empty STRING,
+    /// not an omitted field -- some tool calls with no parameters come back this way) must reach
+    /// <see cref="IToolExecutor.ExecuteAsync"/> as an empty JSON object, exactly mirroring
+    /// Python's `tool_call.function.arguments or "{}"` (cascade_processor.py). Before this fix,
+    /// only a MISSING "arguments" field fell back to "{}" (`?? "{}"`); an explicit "" slipped past
+    /// that null-coalesce and threw out of <c>JsonDocument.Parse("")</c>, routed by the generic
+    /// catch into the "something went wrong" tool-failure branch instead of the no-arg call it
+    /// actually was.</summary>
+    [Fact]
+    public async Task RunSessionAsync_ToolCallWithEmptyStringArguments_IsTreatedAsAnEmptyJsonObject()
+    {
+        var (persona, loader) = LoadDeltaFixture();
+        var handler = new RoutingFoundryHandler()
+            .EnqueueChatMessage("assistant", "Welcome!")
+            .EnqueueChatMessage("assistant", null, toolCalls: new JsonArray
+            {
+                new JsonObject
+                {
+                    ["id"] = "call_1",
+                    ["type"] = "function",
+                    ["function"] = new JsonObject { ["name"] = "search", ["arguments"] = "" }, // empty STRING, not omitted
+                },
+            })
+            .EnqueueChatMessage("assistant", "Done.")
+            .EnqueueTranscript("hi")
+            .EnqueueSpeech([9, 8])
+            .EnqueueSpeech([5, 4]);
+
+        var toolExecutor = new RecordingToolExecutor(["search"]);
+        var processor = NewProcessor(handler, toolExecutor, loader);
+        var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
+
+        var loudChunk = Pcm16(20000, count: 10);
+        var silentChunk = Pcm16(0, count: 4800);
+        var socket = new DelayedFakeWebSocket(
+            [
+                (AppendFrame(loudChunk), WebSocketMessageType.Text),
+                (AppendFrame(silentChunk), WebSocketMessageType.Text),
+                ([], WebSocketMessageType.Close),
+            ],
+            ReceiveDelay);
+
+        await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "sess-empty-args", TestContext.Current.CancellationToken);
+
+        var toolResponse = socket.SentMessages
+            .Where(m => m.MessageType == WebSocketMessageType.Text)
+            .Select(ParseSent)
+            .Single(f => f["type"]!.GetValue<string>() == "extension.middle_tier_tool_response");
+        Assert.Equal("(recording) search acknowledged.", toolResponse["tool_result"]!.GetValue<string>());
+
+        Assert.Single(toolExecutor.ReceivedArgumentsJson);
+        Assert.Equal("{}", toolExecutor.ReceivedArgumentsJson[0]);
+    }
+
+    /// <summary>#236 Rick re-review item 5: Python's bare `except Exception:` around a tool call
+    /// (cascade_processor.py's `_execute_tool_call`) never catches a barge-in's
+    /// `asyncio.CancelledError` -- it derives from `BaseException`, not `Exception`. C#'s
+    /// `OperationCanceledException` DOES derive from `Exception`, so the equivalent
+    /// <c>catch (Exception ex)</c> in <c>CascadeProcessor.ExecuteToolCallAsync</c> needed its own
+    /// explicit `catch (OperationCanceledException) { throw; }` ahead of it (same fix applied to
+    /// the TTS and transcription catches) -- otherwise a guest barging in mid-tool-call got logged
+    /// as an unhandled tool failure AND a synthetic "something went wrong" error appended to
+    /// history, instead of the turn just quietly ending the way a real barge-in's
+    /// <c>CancelCurrentTurnAsync</c>/<c>Spawn</c> machinery expects (and silently swallows,
+    /// by design -- see <c>Spawn</c>'s own doc comment). Simulates the cancellation by having the
+    /// tool executor itself throw rather than actually racing a second WebSocket frame, since only
+    /// the catch-block behaviour (not the real barge-in race) is under test here.</summary>
+    [Fact]
+    public async Task RunSessionAsync_ToolCallThrowsOperationCanceled_PropagatesWithoutBeingLoggedAsAToolFailure()
+    {
+        var (persona, loader) = LoadDeltaFixture();
+        var handler = new RoutingFoundryHandler()
+            .EnqueueChatMessage("assistant", "Welcome!")
+            .EnqueueSpeech([1, 2]) // the greeting's own TTS -- must succeed before the guest turn even starts.
+            .EnqueueTranscript("hi") // the guest turn's STT -- must succeed so the turn reaches the tool call below.
+            .EnqueueChatMessage("assistant", null, toolCalls: new JsonArray
+            {
+                new JsonObject
+                {
+                    ["id"] = "call_1",
+                    ["type"] = "function",
+                    ["function"] = new JsonObject { ["name"] = "search", ["arguments"] = "{}" },
+                },
+            });
+            // No further chat/TTS responses queued -- the guest turn is cut short by the
+            // simulated cancellation before a second round or a spoken answer would happen.
+
+        var toolExecutor = new RecordingToolExecutor(
+            ["search"],
+            (_, _, _) => throw new OperationCanceledException("simulated barge-in mid-tool-call"));
+        var logger = new RecordingLogger();
+        var processor = NewProcessor(handler, toolExecutor, loader, logger: logger);
+        var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
+
+        var loudChunk = Pcm16(20000, count: 10);
+        var silentChunk = Pcm16(0, count: 4800);
+        var socket = new DelayedFakeWebSocket(
+            [
+                (AppendFrame(loudChunk), WebSocketMessageType.Text),
+                (AppendFrame(silentChunk), WebSocketMessageType.Text),
+                ([], WebSocketMessageType.Close),
+            ],
+            ReceiveDelay);
+
+        // The cancellation must propagate out of ExecuteToolCallAsync and be swallowed silently
+        // by Spawn's own catch (OperationCanceledException) -- so RunSessionAsync itself must
+        // complete normally, not throw.
+        await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "sess-cancel-tool", TestContext.Current.CancellationToken);
+
+        Assert.DoesNotContain(logger.Entries, e => e.Level >= LogLevel.Warning);
+
+        var frames = socket.SentMessages.Where(m => m.MessageType == WebSocketMessageType.Text).Select(ParseSent).ToList();
+        var types = frames.Select(f => f["type"]!.GetValue<string>()).ToList();
+
+        // Only the greeting's turn completed: the guest turn was cut short by the cancellation
+        // before reaching its own tool-response frame or response.done.
+        Assert.Equal(1, types.Count(t => t == "response.done"));
+        Assert.DoesNotContain(types, t => t == "extension.middle_tier_tool_response");
     }
 
     [Fact]

@@ -241,7 +241,13 @@ public sealed class CascadeProcessor : IPipelineProcessor
             string? clientText;
             try
             {
-                var argumentsJson = GetString(toolCall["function"] as JsonObject, "arguments") ?? "{}";
+                // Mirrors Python's `tool_call.function.arguments or "{}"`: treat BOTH a missing
+                // field and an empty string the same way (some tool calls with no parameters come
+                // back as `"arguments": ""`, not an omitted field -- `?? "{}"` alone only covers
+                // the missing-field case and would otherwise send "" into JsonDocument.Parse,
+                // throwing and routing a legitimate no-arg call into the generic error branch below).
+                var rawArguments = GetString(toolCall["function"] as JsonObject, "arguments");
+                var argumentsJson = string.IsNullOrEmpty(rawArguments) ? "{}" : rawArguments;
                 using var argumentsDoc = JsonDocument.Parse(argumentsJson);
                 _logger?.LogInformation("Executing cascade tool '{ToolName}' (session={SessionId})", name, sessionId);
                 var result = await toolExecutor.ExecuteAsync(name, argumentsDoc.RootElement.Clone(), turnCt).ConfigureAwait(false);
@@ -251,6 +257,17 @@ public sealed class CascadeProcessor : IPipelineProcessor
                     ? result.ToText() : "";
                 sendToClient = result.Destination is ToolResultDirection.ToClient or ToolResultDirection.ToBoth;
                 clientText = sendToClient ? result.ToClientText() : null;
+            }
+            catch (OperationCanceledException)
+            {
+                // Python's mirror-image `except Exception:` here (cascade_processor.py's
+                // `_execute_tool_call`) never catches cancellation in the first place --
+                // `asyncio.CancelledError` derives from `BaseException`, not `Exception`. C#'s
+                // `OperationCanceledException` DOES derive from `Exception`, so without this
+                // clause a guest barging in mid-tool-call would get logged as a tool failure and
+                // a synthetic "something went wrong" error message appended to history, instead
+                // of the turn just quietly ending the way `CancelCurrentTurnAsync` expects.
+                throw;
             }
             catch (Exception ex)
             {
@@ -407,6 +424,14 @@ public sealed class CascadeProcessor : IPipelineProcessor
                 {
                     // Already notified via the final extension.rate_limited frame -- nothing more to do.
                 }
+                catch (OperationCanceledException)
+                {
+                    // Same parity note as the tool-call catch above: Python's bare `except
+                    // Exception:` around `_speak` never catches `asyncio.CancelledError`, so a
+                    // barge-in cancelling TTS mid-stream must propagate here too, not get logged
+                    // as a TTS failure.
+                    throw;
+                }
                 catch (Exception ex)
                 {
                     _logger?.LogWarning(ex, "Cascade TTS failed for this turn's final answer (session={SessionId})", sessionId);
@@ -438,6 +463,14 @@ public sealed class CascadeProcessor : IPipelineProcessor
             catch (CascadeRateLimitExhausted)
             {
                 return;
+            }
+            catch (OperationCanceledException)
+            {
+                // Same parity note as the two catches above: Python's bare `except Exception:`
+                // around `_transcribe` never catches `asyncio.CancelledError`, so a barge-in
+                // cancelling STT mid-flight must propagate, not get logged as a transcription
+                // failure.
+                throw;
             }
             catch (Exception ex)
             {
