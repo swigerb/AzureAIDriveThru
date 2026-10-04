@@ -991,12 +991,16 @@ jobs:
           # kind of placeholder values) -- no real Azure call happens at startup this wave.
           #
           # #147: this is a content/image smoke test, not a real Entra sign-in, so it explicitly
-          # opts into AUTH_MODE=Development (same rationale as the Python leg's "Development
-          # pass-through" positive check above) -- without it, EntraSettings.Resolve's fail-fast
-          # gate now correctly refuses the image's default ASPNETCORE_ENVIRONMENT=Production with
-          # no AUTH_MODE set at all.
+          # opts into the Development pass-through (same rationale as the Python leg's
+          # "Development pass-through" positive check above). That requires BOTH AUTH_MODE=
+          # Development AND ASPNETCORE_ENVIRONMENT=Development -- EntraSettings.Resolve's
+          # fail-fast gate deliberately refuses Development mode whenever
+          # builder.Environment.IsProduction() is true (ASPNETCORE_ENVIRONMENT defaults to
+          # "Production" when unset, which is exactly what a bare `docker run` gets), matching
+          # ADR-002/Python's own "never silently fall back to unauthenticated in Production" rule.
           container_id="$(docker run -d \
             -e AUTH_MODE=Development \
+            -e ASPNETCORE_ENVIRONMENT=Development \
             -e AZURE_OPENAI_EASTUS2_ENDPOINT=https://ci-placeholder.openai.azure.com/ \
             -e AZURE_OPENAI_REALTIME_DEPLOYMENT=ci-placeholder \
             -e AZURE_SEARCH_ENDPOINT=https://ci-placeholder.search.windows.net \
