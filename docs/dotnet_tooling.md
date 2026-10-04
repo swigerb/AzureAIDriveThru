@@ -681,7 +681,11 @@ the tools whose parity bar genuinely depends on response-handling, not request-b
   parsed value instead of stripping it. This is a genuine parser-level divergence, but one that can
   never be exercised by either of the two keys this tool actually reads: `AZURE_OPENAI_EASTUS2_ENDPOINT`
   is a URL and `AZURE_OPENAI_EMBEDDING_DEPLOYMENT` is an Azure OpenAI deployment name, and neither
-  can legally contain a `$`, `!`, or backtick in the first place. See
+  can contain a `$`, `!`, or backtick in practice -- not because URL syntax forbids it (RFC 3986
+  allows both `$` and `!` as sub-delims; only a literal backtick is disallowed there), but because
+  of Azure's own naming rules: the endpoint is always `https://<resource>.openai.azure.com/`, where
+  Azure OpenAI resource names allow only letters, digits, and hyphens, and deployment names allow
+  only letters, digits, `-`, `_`, and `.`. See
   `LoadDefaultEnvValues_UnescapesBackslashEscapedDollarBangAndBacktick` in `AzdEnvLoaderTests.cs`,
   which pins this parser's behavior deliberately even though real data never reaches it.
 * `FixtureEmbedding.cs` (now test-only, under `tools/dotnet/tests/SearchIndexRequestBuilder.Tests/`) --

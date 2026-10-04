@@ -128,10 +128,15 @@ internal static class AzdEnvLoader
     /// small fixed escape set and would leave an unrecognized <c>\$</c>/<c>\!</c>/<c>\`</c> as a
     /// literal backslash plus character) -- a real, documented divergence
     /// (docs/dotnet_tooling.md) that can never be exercised by the only two keys this tool reads
-    /// (a URL and an Azure deployment name, neither of which can legally contain <c>$</c>,
-    /// <c>!</c>, or a backtick). This parser is deliberately scoped to exactly azd's own output
-    /// shape, not the full dotenv spec: it exists solely to read azd's own output, never a
-    /// hand-edited .env file.
+    /// (a URL and an Azure OpenAI deployment name). Per Azure's own naming rules, neither can ever
+    /// contain any of those three characters in practice: the endpoint is always
+    /// <c>https://&lt;resource&gt;.openai.azure.com/</c>, where Azure OpenAI resource names allow
+    /// only letters, digits, and hyphens; deployment names allow only letters, digits, <c>-</c>,
+    /// <c>_</c>, and <c>.</c>. (Nothing about URL syntax itself forbids <c>$</c>/<c>!</c> --
+    /// RFC 3986 allows both as sub-delims; only a literal backtick is disallowed there -- so this
+    /// divergence is unreachable because of Azure's naming rules, not URL syntax.) This parser is
+    /// deliberately scoped to exactly azd's own output shape, not the full dotenv spec: it exists
+    /// solely to read azd's own output, never a hand-edited .env file.
     /// </summary>
     private static string UnquoteDotEnvValue(string rawValue)
     {
