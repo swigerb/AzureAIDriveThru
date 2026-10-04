@@ -989,7 +989,14 @@ jobs:
           # vars below are the minimum Program.cs requires to get past its fail-fast startup gate
           # (tests/conformance/src/Conformance.Harness/DotnetBackendLauncher.cs uses the same
           # kind of placeholder values) -- no real Azure call happens at startup this wave.
+          #
+          # #147: this is a content/image smoke test, not a real Entra sign-in, so it explicitly
+          # opts into AUTH_MODE=Development (same rationale as the Python leg's "Development
+          # pass-through" positive check above) -- without it, EntraSettings.Resolve's fail-fast
+          # gate now correctly refuses the image's default ASPNETCORE_ENVIRONMENT=Production with
+          # no AUTH_MODE set at all.
           container_id="$(docker run -d \
+            -e AUTH_MODE=Development \
             -e AZURE_OPENAI_EASTUS2_ENDPOINT=https://ci-placeholder.openai.azure.com/ \
             -e AZURE_OPENAI_REALTIME_DEPLOYMENT=ci-placeholder \
             -e AZURE_SEARCH_ENDPOINT=https://ci-placeholder.search.windows.net \
