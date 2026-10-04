@@ -18,7 +18,6 @@ import PersonaSwitchConfirmDialog from "@/components/ui/persona-switch-confirm-d
 import BackendPicker from "@/components/ui/backend-picker";
 const Settings = lazy(() => import("@/components/ui/settings"));
 import useRealTime from "@/hooks/useRealtime";
-import useAzureSpeech from "@/hooks/useAzureSpeech";
 import useAudioRecorder, { AudioStreamProvider } from "@/hooks/useAudioRecorder";
 import useAudioPlayer from "@/hooks/useAudioPlayer";
 
@@ -26,7 +25,6 @@ import { ExtensionMiddleTierToolResponse, ExtensionRateLimited, ExtensionRoundTr
 
 import { ThemeProvider, useTheme } from "./context/theme-context";
 import { DummyDataProvider, useDummyDataContext } from "@/context/dummy-data-context";
-import { AzureSpeechProvider, useAzureSpeechOnContext } from "@/context/azure-speech-context";
 import { AuthGate } from "@/auth/AuthGate";
 import { authConfig } from "@/auth/authConfig";
 import { signOutInteractive } from "@/auth/signOut";
@@ -181,7 +179,6 @@ function SonicApp() {
     const { t, i18n } = useTranslation();
     const [isRecording, setIsRecording] = useState(false);
     const [isMobile, setIsMobile] = useState(false);
-    const { useAzureSpeechOn } = useAzureSpeechOnContext();
     const { useDummyData } = useDummyDataContext();
     const { theme } = useTheme();
     const { personas, backends, current, logoUrl, error: personaError, fetchPersona, applyPersona } = usePersonaContext();
@@ -425,7 +422,6 @@ function SonicApp() {
         onWebSocketClose: () => console.log("WebSocket connection closed"),
         onConnectionLost: ({ code, reason, idle, kind, resuming }) => {
             console.warn(`WebSocket closed (code=${code}${reason ? `, reason=${reason}` : ""})`);
-            if (useAzureSpeechOn) return;
             // Our own "New order": a fresh socket follows by itself, and a tap made
             // meanwhile carries straight on into it.
             if (kind === "ended") return;
@@ -645,41 +641,6 @@ function SonicApp() {
         }
     });
 
-    const azureSpeech = useAzureSpeech({
-        onReceivedToolResponse: ({ tool_name, tool_result }: ExtensionMiddleTierToolResponse) => {
-            if (tool_name === "update_order") {
-                const orderSummary: OrderSummaryProps = JSON.parse(tool_result);
-                setOrder(orderSummary);
-
-                console.log("Order Total:", orderSummary.total);
-                console.log("Tax:", orderSummary.tax);
-                console.log("Final Total:", orderSummary.finalTotal);
-            }
-        },
-        onSpeechToTextTranscriptionCompleted: (message: { transcript: string }) => {
-            const newTranscriptItem = {
-                text: message.transcript,
-                isUser: true,
-                timestamp: new Date()
-            };
-            setTranscripts(prev => [...prev, newTranscriptItem]);
-        },
-        onModelResponseDone: (message: { response: { output: Array<{ content?: Array<{ transcript: string }> }> } }) => {
-            const transcript = message.response.output
-                .map(output => output.content?.map(content => content.transcript).join(" "))
-                .join(" ");
-            if (!transcript) return;
-
-            const newTranscriptItem = {
-                text: transcript,
-                isUser: false,
-                timestamp: new Date()
-            };
-            setTranscripts(prev => [...prev, newTranscriptItem]);
-        },
-        onError: (error: unknown) => console.error("Error:", error)
-    });
-
     const { reset: resetAudioPlayer, play: playAudio, stop: stopAudioPlayer, waitForDrain: waitForAudioDrain } =
         useAudioPlayer();
 
@@ -711,7 +672,7 @@ function SonicApp() {
     }, [stopAudioPlayer, realtime]);
 
     const { start: startAudioRecording, stop: stopAudioRecording, mute: muteAudioRecording, unmute: unmuteAudioRecording } = useAudioRecorder({
-        onAudioRecorded: useAzureSpeechOn ? azureSpeech.addUserAudio : realtime.addUserAudio,
+        onAudioRecorded: realtime.addUserAudio,
         onBargeIn: handleBargeIn
     });
 
@@ -732,11 +693,7 @@ function SonicApp() {
         };
         awaitingGreetingDoneRef.current = false;
         clearRateLimitNotice();
-        if (useAzureSpeechOn) {
-            azureSpeech.inputAudioBufferClear();
-        } else {
-            realtime.inputAudioBufferClear();
-        }
+        realtime.inputAudioBufferClear();
         setIsRecording(false);
     };
 
@@ -802,66 +759,58 @@ function SonicApp() {
     const beginRecording = async (audioStreamProvider?: AudioStreamProvider) => {
         audioStreamProviderRef.current = audioStreamProvider;
         audioCaptureReadyRef.current = false;
-        const continuing = !useAzureSpeechOn && resumedSessionRef.current && !serverSessionLostRef.current;
+        const continuing = resumedSessionRef.current && !serverSessionLostRef.current;
         if (!continuing) setSessionIdentifiers(null);
         setConnectionNotice(null);
-        if (!useAzureSpeechOn) {
-            if (serverSessionLostRef.current) {
-                serverSessionLostRef.current = false;
-                setOrder(initialOrder);
-            }
-            // Idle close / exhausted retries leave the socket down on purpose.
-            // startSession() below is queued and sent once the new socket opens.
-            if (!realtime.isConnected) void realtime.reconnect();
+        if (serverSessionLostRef.current) {
+            serverSessionLostRef.current = false;
+            setOrder(initialOrder);
         }
+        // Idle close / exhausted retries leave the socket down on purpose.
+        // startSession() below is queued and sent once the new socket opens.
+        if (!realtime.isConnected) void realtime.reconnect();
 
         // Start session and playback immediately, but delay mic capture until the greeting finishes.
         isSessionActiveRef.current = true;
         isAiSpeakingRef.current = false;
-        awaitingGreetingDoneRef.current = !useAzureSpeechOn && !continuing;
+        awaitingGreetingDoneRef.current = !continuing;
         greetingAudioSeenRef.current = false;
 
         await resetAudioPlayer();
 
-        if (useAzureSpeechOn) {
-            // AzureSpeech mode doesn't play a synthesized greeting audio stream.
-            azureSpeech.startSession();
-            audioCaptureReadyRef.current = await startAudioRecording(audioStreamProvider);
-        } else {
-            realtime.startSession();
-            if (verboseLogging) {
-                realtime.sendVerboseLogging(true);
-                if (logToFile) {
-                    realtime.sendLogToFile(true);
-                }
+        realtime.startSession();
+        if (verboseLogging) {
+            realtime.sendVerboseLogging(true);
+            if (logToFile) {
+                realtime.sendLogToFile(true);
             }
-
-            if (continuing && !startMicInFlightRef.current) {
-                // Resumed session: no greeting is coming.
-                startMicInFlightRef.current = startAudioRecording(audioStreamProvider)
-                    .then(started => {
-                        audioCaptureReadyRef.current = started;
-                    })
-                    .finally(() => {
-                        startMicInFlightRef.current = null;
-                    });
-            }
-
-            // Safety: if we never receive the greeting completion, start the mic after a short timeout.
-            window.setTimeout(() => {
-                if (!isSessionActiveRef.current) return;
-                if (!awaitingGreetingDoneRef.current) return;
-                awaitingGreetingDoneRef.current = false;
-                if (startMicInFlightRef.current) return;
-                startMicInFlightRef.current = startAudioRecording(audioStreamProvider)
-                    .then(started => {
-                        audioCaptureReadyRef.current = started;
-                    })
-                    .finally(() => {
-                        startMicInFlightRef.current = null;
-                    });
-            }, 3500);
         }
+
+        if (continuing && !startMicInFlightRef.current) {
+            // Resumed session: no greeting is coming.
+            startMicInFlightRef.current = startAudioRecording(audioStreamProvider)
+                .then(started => {
+                    audioCaptureReadyRef.current = started;
+                })
+                .finally(() => {
+                    startMicInFlightRef.current = null;
+                });
+        }
+
+        // Safety: if we never receive the greeting completion, start the mic after a short timeout.
+        window.setTimeout(() => {
+            if (!isSessionActiveRef.current) return;
+            if (!awaitingGreetingDoneRef.current) return;
+            awaitingGreetingDoneRef.current = false;
+            if (startMicInFlightRef.current) return;
+            startMicInFlightRef.current = startAudioRecording(audioStreamProvider)
+                .then(started => {
+                    audioCaptureReadyRef.current = started;
+                })
+                .finally(() => {
+                    startMicInFlightRef.current = null;
+                });
+        }, 3500);
 
         setIsRecording(true);
     };
@@ -1170,7 +1119,7 @@ function SonicApp() {
         setDemoUi(IDLE_DEMO_UI);
     };
 
-    const canRunDemo = demoModeEnabled && Boolean(currentDemoScript) && !useAzureSpeechOn;
+    const canRunDemo = demoModeEnabled && Boolean(currentDemoScript);
 
     return (
         <div className={`min-h-screen bg-background p-4 text-foreground ${theme}`}>
@@ -1320,7 +1269,7 @@ function SonicApp() {
                                     )}
                                 </Button>
                                 <StatusMessage isRecording={isRecording} notice={connectionNotice} />
-                                {!useDummyData && !useAzureSpeechOn && order.items.length > 0 && (
+                                {!useDummyData && order.items.length > 0 && (
                                     <Button variant="ghost" size="sm" onClick={startNewOrder} className="text-xs text-muted-foreground">
                                         {t("app.newOrder")}
                                     </Button>
@@ -1835,9 +1784,7 @@ export default function RootApp() {
             <PersonaProvider>
                 <ThemeProvider>
                     <DummyDataProvider>
-                        <AzureSpeechProvider>
-                            <App />
-                        </AzureSpeechProvider>
+                        <App />
                     </DummyDataProvider>
                 </ThemeProvider>
             </PersonaProvider>
