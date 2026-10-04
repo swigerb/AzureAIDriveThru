@@ -12,6 +12,7 @@ name: .NET Tooling
       - "tools/dotnet/**"
       - ".github/workflows/dotnet-tooling.yml"
       - "scripts/update_menu_sizes.py"
+      - "scripts/extract_production_items.py"
       - "personas/*/menu/**"
   push:
     branches: [dev]
@@ -19,6 +20,7 @@ name: .NET Tooling
       - "tools/dotnet/**"
       - ".github/workflows/dotnet-tooling.yml"
       - "scripts/update_menu_sizes.py"
+      - "scripts/extract_production_items.py"
       - "personas/*/menu/**"
   workflow_dispatch: {}
 
@@ -68,10 +70,11 @@ jobs:
 
       - name: dotnet test tools/dotnet
         working-directory: tools/dotnet
-        # The PythonParityTests leg needs a Python 3 interpreter (stdlib only, no requirements.txt)
-        # to run scripts/update_menu_sizes.py as a real subprocess; ubuntu-latest ships python3,
-        # and the test fails closed (not skip) when GITHUB_ACTIONS=true and none is found, same
-        # fail-closed-in-CI convention as tests/conformance's PyJWT interop tests.
+        # The PythonParityTests legs need a Python 3 interpreter (stdlib only, no requirements.txt)
+        # to run scripts/update_menu_sizes.py and scripts/extract_production_items.py as real
+        # subprocesses; ubuntu-latest ships python3, and each test fails closed (not skip) when
+        # GITHUB_ACTIONS=true and none is found, same fail-closed-in-CI convention as
+        # tests/conformance's PyJWT interop tests.
         run: |
           set -o pipefail
           dotnet test Tooling.slnx \

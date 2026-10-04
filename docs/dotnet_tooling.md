@@ -6,19 +6,21 @@ backends" decision extended to repo tooling). It exists for the same reason
 `docs/dotnet_mapping.md` exists for the application backend: so a port has an obvious place to
 record what moved, what didn't, and why, instead of that history living only in commit messages.
 
-Per epic #6 and the issue #16 P1 update (ADR-001), this is a multi-wave effort. **This PR is wave
-1**: the inventory below, a scaffold for C# tooling (`tools/dotnet/`), and ONE representative,
-low-risk port end-to-end (`update_menu_sizes.py`) with an output-parity test against its Python
-twin. Every other script and notebook in the inventory stays Python-only until a later PR explicitly
-ports it (tracked in the Squad's wave plan). **The Python versions are not removed or modified by
-this PR**, and azd hooks / CI keep running the Python implementations by default.
+Per epic #6 and the issue #16 P1 update (ADR-001), this is a multi-wave effort. The original PR
+(#224) was **wave 1**: the inventory below, a scaffold for C# tooling (`tools/dotnet/`), and ONE
+representative, low-risk port end-to-end (`update_menu_sizes.py`) with an output-parity test against
+its Python twin. **Batch 1** (this update) ports the inventory's own stated next candidate,
+`extract_production_items.py` -- see "Batch 1 port" below. Every other script and notebook in the
+inventory stays Python-only until a later batch/wave explicitly ports it (tracked in the Squad's wave
+plan; see "What's next" for the remaining candidates' design). **The Python versions are not removed
+or modified by this work**, and azd hooks / CI keep running the Python implementations by default.
 
 ## Inventory: Python scripts and notebooks outside `app/backend`
 
 | File | Purpose | Inputs / outputs | azd hook / CI usage | Azure dependency | Proposed C# shape |
 | --- | --- | --- | --- | --- | --- |
 | `scripts/update_menu_sizes.py` | Adds Mini/Small/Medium/Large/RT 44 size+price variants (parsed from the production POS export) to a handful of drink/slush/shake/blast items in the UI menu file. | In: `personas/<id>/menu/source/<id>-menu-items.json` (read-only), `personas/<id>/menu/menuItems.json`. Out: rewrites `menuItems.json` in place. | Manual dev tool only; not an azd hook, not referenced by CI. | None (pure JSON transform, no network/SDK calls). | **Ported this PR** -- `tools/dotnet/src/UpdateMenuSizes` (small console tool project). See "This PR's port" below. |
-| `scripts/extract_production_items.py` | Produces a stdout report of every item in the production POS export grouped by category, then a gap analysis (items in the UI menu but not production, and vice versa) against `menuItems.json`. Shares its category-walking logic with `sonic_menu_ingestion_search.ipynb` ("using the SAME logic" per its own docstring). | In: same two files as `update_menu_sizes.py` (read-only). Out: stdout report only, no file written. | Manual dev/report tool only; not an azd hook, not referenced by CI. | None (pure JSON read + report, no network/SDK calls). | Deferred to a later wave -- a second candidate as easy as `update_menu_sizes.py` (same no-Azure, pure-JSON shape), proposed as a small console tool project (`tools/dotnet/src/ExtractProductionItems`) alongside it. |
+| `scripts/extract_production_items.py` | Produces a stdout report of every item in the production POS export grouped by category, then a gap analysis (items in the UI menu but not production, and vice versa) against `menuItems.json`. Shares its category-walking logic with `sonic_menu_ingestion_search.ipynb` ("using the SAME logic" per its own docstring). | In: same two files as `update_menu_sizes.py` (read-only). Out: stdout report only, no file written. | Manual dev/report tool only; not an azd hook, not referenced by CI. | None (pure JSON read + report, no network/SDK calls). | **Ported in batch 1** -- `tools/dotnet/src/ExtractProductionItems` (small console tool project). See "Batch 1 port" below. |
 | `scripts/benchmark_reasoning.py` | Runs scripted guest utterances against a **live** Azure OpenAI realtime deployment to benchmark `reasoning.effort`/`parallel_tool_calls` latency and tool-call correctness. | In: live realtime deployment (via `azd env get-values`/env vars), optional `--tools real` hits Azure AI Search too. Out: JSON/JSONL results file (`--out`/`--resume`). | Manual dev benchmarking tool only; not an azd hook, not referenced by CI. | **Yes** -- requires a live Azure OpenAI realtime deployment; explicitly out of scope for this issue ("NOT ... anything that calls Azure"). | Deferred indefinitely (or until a C# realtime client exists to drive it) -- excluded from the "first port" candidate set for this reason. |
 | `scripts/generate_apology_clips.py` | Records one pre-recorded "rate limited twice in a row" apology audio clip per UI language, using a live realtime model, with Whisper transcription verification. | In: live Azure OpenAI realtime + Whisper. Out: `personas/<persona-id>/assets/audio/apology-<lang>.wav`. | Manual, occasional dev tool (re-run only when a persona's default voice changes); not an azd hook, not referenced by CI. | **Yes** -- live realtime model + Whisper transcription. | Deferred indefinitely, same reason as `benchmark_reasoning.py`. |
 | `scripts/generate_demo_guest_voice.py` | Generates scripted guest-voice MP3 clips for persona demo packs via Azure Speech, with `ffmpeg`/`subprocess` post-processing (silence trim, crossfade). | In: Azure Speech synthesis, local `ffmpeg`. Out: MP3 clip files under a persona's demo assets. | Manual dev tool only; not an azd hook, not referenced by CI. | **Yes** -- Azure Speech voice synthesis. | Deferred indefinitely, same reason as the other audio-generation tools. |
@@ -307,6 +309,114 @@ PR does not need to touch that file at all -- `conformance.yml` is shared, frequ
 ground for other in-flight work, and `tools/dotnet` is a fully independent solution with nothing to
 gain from sharing a workflow file with it.
 
+## Batch 1 port: `extract_production_items.py` -> `tools/dotnet/src/ExtractProductionItems`
+
+Issue #16's first follow-up wave (`squad/16-tooling-batch-1`), ported with the same rigor as
+`update_menu_sizes.py` above. Chosen because it was the inventory's own stated next candidate: a
+read-only report (no file mutation at all, an even smaller surface than `update_menu_sizes.py`'s
+JSON rewrite), with **no** Azure/network/subprocess dependency and no moving parts that would make a
+stdout-parity test flaky.
+
+### Scaffold shape
+
+Same conventions as `UpdateMenuSizes`: a plain console-app project
+(`tools/dotnet/src/ExtractProductionItems/ExtractProductionItems.csproj`) with a thin `Program.cs`
+delegating to a testable `CliRunner.Run(args, Console.Out, Console.Error)`, plus a matching
+`tools/dotnet/tests/ExtractProductionItems.Tests/` xUnit v3 project, both registered in the shared
+`Tooling.slnx`. `ProductionItemsExtractor.cs` holds the faithful, line-for-line port of
+`extract_production_items.py`'s module-level functions (`collect_products_from_category`,
+`normalize_size_name`, `get_size_variants`, `extract_production_items`, `load_ui_items`,
+`normalize`, and `main`'s report-printing body); `ProductionExportLocator.cs` is a simpler sibling of
+`PersonaMenuLocator.cs` -- this tool needs no `product_search_map.json` opt-in concept (it reads a
+production export and a sibling `menuItems.json` only), so **every** persona with a production
+export is a discovery candidate; zero or more than one is a distinct, actionable
+`InvalidOperationException`, caught by `CliRunner.Run` into a clean one-line `stderr` message plus
+exit code `1`, the same "clean CLI errors, not stack traces" convention as `UpdateMenuSizes`.
+`Program.cs` also sets `Console.OutputEncoding = Encoding.UTF8` before running -- the report's
+box-drawing and emoji characters otherwise get mangled by Windows' legacy console codepage, a
+failure mode this port hit directly against the real Python twin too (which needs
+`PYTHONIOENCODING=utf-8` set for the exact same reason; the Python twin does not set this for itself).
+
+### Faithful ordering/formatting details worth calling out
+
+A read-only report tool's "observable behavior" is almost entirely about **order** and
+**formatting**, not state mutation, so most of this port's care went into reproducing two
+non-obvious Python semantics exactly:
+
+* **`Counter.most_common()`'s tie-break is stable, not alphabetical.** Python's
+  `sorted(counter.items(), key=itemgetter(1), reverse=True)` is documented to stay stable even with
+  `reverse=True`, so two categories with an equal item count keep the `Counter`'s own
+  first-occurrence-in-`production` order, not alphabetical order. The port builds `catCounts` as an
+  explicitly-ordered `List<(string,int)>` (first-occurrence order, not a `Dictionary`, whose
+  enumeration order is not a documented guarantee) and sorts it with LINQ's `OrderByDescending`
+  (also a documented-stable sort) to reproduce the same tie-break -- proven by
+  `ReportBuilderTests.BuildReport_PreservesFirstOccurrenceOrder_ForCategoriesTiedOnCount` (see
+  mutation check below).
+* **Ordinal, not culture-aware, string sorting**, for both the within-category item-name sort
+  (`sorted(..., key=lambda x: x["name"])`) and the gap-analysis name lists (`sorted(set_difference)`)
+  -- Python's default string comparison is codepoint/ordinal, so e.g. `"apple"` (lowercase) sorts
+  *after* `"Banana"`/`"Cherry"` (uppercase), which a culture-aware or case-insensitive C# comparer
+  would get backwards. Reproduced via `StringComparer.Ordinal` everywhere a name is sorted.
+
+`string.Replace(oldValue, newValue)` throws `ArgumentException` for an empty `oldValue` (Python's
+`str.replace("", "")` is a harmless no-op by contrast) -- `NormalizeSizeName` guards this explicitly
+for a product with an empty `displayName`, with its own regression test
+(`NormalizeSizeName_DoesNotThrow_WhenParentDisplayNameIsEmpty`).
+
+### Data-driven persona discovery, zero rebrand hits
+
+Same as `UpdateMenuSizes`: no persona id or brand product name is hardcoded anywhere in this port's
+C# or this doc section -- `ProductionExportLocator.Locate` discovers whichever persona pack(s)
+actually have a production export on disk, and the parity test below uses that same discovery to
+find the real fixtures to compare against, rather than a literal path. (The real, checked-in
+Python twin itself does hardcode one persona id/path, same as `update_menu_sizes.py` -- out of this
+issue's scope to change.)
+
+### Output-parity test (stdout only -- this tool never writes a file)
+
+`tools/dotnet/tests/ExtractProductionItems.Tests/PythonParityTests.cs` follows the same shape as
+`UpdateMenuSizes.Tests/PythonParityTests.cs`: it discovers the real persona fixtures via
+`ProductionExportLocator`, runs the actual `scripts/extract_production_items.py` as a genuine
+subprocess against a throwaway copy, runs `ProductionItemsExtractor`'s equivalent pipeline
+in-process against the same real fixtures, then asserts the two programs' captured stdout is
+**identical byte-for-byte** (not merely each line's parsed content) -- including the box-drawing
+divider characters, the emoji gap-analysis markers, and the verbatim-preserved em dash in
+`"(none — UI is clean)"` (the Python twin's own literal output text, not newly-authored prose, so
+the squad's own no-em-dash style rule does not apply to it) -- plus an independent cross-check that
+both programs' own "Total production items: N" line agrees with each other and with the C# port's
+own data. It resolves a Python interpreter the same way `UpdateMenuSizes.Tests` does (repo-root
+`.venv` first, then a bare `python3`/`python` on PATH), skipping locally if none is found and failing
+(not skipping) in CI.
+
+`tools/dotnet/tests/ExtractProductionItems.Tests/ProductionItemsExtractorTests.cs` unit-tests the
+individual pieces against small synthetic fixtures: every `NormalizeSizeName` prefix case plus the
+strip-parent-name/trademark-stripping/Standard-fallback cases (including the empty-parent-name
+no-throw regression above), `Normalize`'s lowercasing/symbol-stripping/whitespace-collapsing,
+nested-category document-order walking with first-category-wins de-duplication (a product reachable
+from two different top-level categories keeps the first one's name and is not duplicated),
+`isRecipe` skipping, and the `relatedProducts.alternatives` -> `productGroups` size-variant
+resolution (including the Standard-price fallback when none resolve).
+`ProductionExportLocatorTests.cs` builds synthetic `personas/` layouts (0, 1, and 2 persona exports)
+under a fresh temp directory per test, mirroring `PersonaMenuLocatorTests.cs`'s structure but without
+an opt-in-file concept. `CliRunnerTests.cs` drives `CliRunner.Run` directly against in-memory
+`TextWriter`s to verify `--production` bypasses persona discovery entirely (deriving `--menu`'s
+default from `--production`'s own sibling `menu/` directory when omitted) and that a discovery
+failure becomes a clean, single-line `stderr` message plus exit code `1`. `ReportBuilderTests.cs`
+unit-tests `BuildReport`'s sorting/formatting/line-splitting behavior in isolation, constructing
+`ProductionItem`/`UiItem` records directly rather than via JSON fixtures.
+
+**Mutation check performed**: temporarily added a `.ThenBy(c => c.Category, StringComparer.Ordinal)`
+secondary sort key to `BuildReport`'s category-count ordering (simulating an "also alphabetize the
+tie-break" regression) -- `BuildReport_PreservesFirstOccurrenceOrder_ForCategoriesTiedOnCount` failed
+as expected (`Zeta` and `Alpha` swapped order). Restored the fix and reran; all 89 tests across both
+`tools/dotnet` test projects passed again.
+
+### CI wiring
+
+`scripts/extract_production_items.py` was added to `.github/workflows/dotnet-tooling.yml`'s
+`pull_request`/`push` path filters alongside `scripts/update_menu_sizes.py` (its real fixture data,
+`personas/*/menu/**`, was already covered by the existing filter).
+
 ## `TOOLING_IMPL` (future, not wired in this PR)
 
 Issue #16's body describes a future `TOOLING_IMPL=python|dotnet` environment variable so azd hooks
@@ -317,9 +427,58 @@ inventory above is ported, is the right place to introduce `TOOLING_IMPL` for re
 
 ## What's next
 
-Later batches (see the squad's wave plan) continue porting the remaining inventory above,
-roughly in this order of risk: `extract_production_items.py` next (same no-Azure, pure-JSON shape
-as this PR's port), then `e2e_order_resume.py` once a C# browser-automation story is justified,
-then the Azure-dependent tools and notebooks last (and only once there is a reason to run them from
-C# rather than Python, since they need a live Azure OpenAI/Search/Speech dependency regardless of
-implementation language).
+With both no-Azure candidates in the inventory (`update_menu_sizes.py`, `extract_production_items.py`)
+now ported, every remaining script/notebook in the inventory needs a **live** Azure OpenAI, Azure AI
+Search, or Azure Speech dependency, or (for `e2e_order_resume.py`) a real browser engine -- none of
+them can be ported and tested the way this doc's two batches were (a deterministic, no-network,
+no-subprocess transform/report proven byte- or stdout-identical against real fixture data). Porting
+any of them for real is deferred until there is a concrete reason to run them from C# rather than
+Python; this section instead sketches how each *would* be ported and tested without ever touching a
+live Azure resource, so a future wave has a starting design rather than a blank page.
+
+### Design note: porting the Azure-dependent tools without live Azure calls
+
+The common shape across `benchmark_reasoning.py`, `smoke_realtime.py`,
+`generate_apology_clips.py`, `generate_demo_guest_voice.py`, and both ingestion notebooks is: build a
+request payload from local/static inputs, call exactly one Azure SDK client (Azure OpenAI realtime,
+Azure AI Search, or Azure Speech), then validate/transform the response. That shape is already
+testable without live Azure in this repo's own existing C# code -- `tests/conformance`'s
+`FakeEntraIssuer` fakes an entire auth provider for exactly this reason, and `app/backend-dotnet`'s
+own middle tier already has to mock its outbound Azure OpenAI realtime client for its own unit tests.
+A future port of any of these tools should follow the same two-layer split that already exists for
+`update_menu_sizes.py`/`extract_production_items.py`, but with the Azure call itself behind a seam:
+
+* **A thin client-seam interface** (e.g. `IRealtimeSessionClient`, `ISearchIndexClient`,
+  `ISpeechSynthesisClient`) wrapping the one Azure SDK call each tool makes, with exactly one real
+  implementation (the actual SDK client, used by the shipped CLI) and one **recorded-response fake**
+  used by tests -- not a hand-rolled mock asserting on call shape, since these tools' whole point is
+  validating the *content* of a real response (tool-call payloads, transcription text, synthesized
+  audio), not just that a call was made.
+* **Recorded fixtures, not live calls, drive the tests.** Each tool would ship one or more small
+  recorded-response fixtures (JSON for the realtime/search tools; a short reference WAV plus its
+  expected Whisper transcript for the audio-generation tools) captured once, by hand, against a real
+  Azure resource, and checked into the repo next to the tool (same spirit as this repo's existing
+  `personas/<id>/menu/**` fixtures, or `tests/conformance`'s own recorded HTTP fixtures where they
+  exist) -- never regenerated automatically by CI, and never requiring live credentials to run.
+  `benchmark_reasoning.py`'s own `--tools fake` / `--resume` flags and `smoke_realtime.py`'s existing
+  "warn, never fail the deployment" design already lean this direction for their Python twins today,
+  which is a useful head start.
+* **Parity, in this model, means "the fake client's fixture result flows through the port's
+  request-building and response-handling logic identically to the Python twin's,"** not
+  "the live Azure response is byte-identical between runs" (which isn't guaranteed even for two runs
+  of the *same* Python script, since these are non-deterministic model calls). The output-parity test
+  would therefore compare each side's *handling* of the same fixed, recorded input/response pair --
+  the constructed request payload, and the pass/fail verdict or transformed output derived from the
+  fixed response -- rather than attempting byte-identical live output the way the two deterministic
+  JSON tools above do.
+* **The real Azure SDK client implementation itself would stay untested by this repo's own test
+  suite** (same as today: nothing in this repo's CI exercises a live Azure OpenAI/Search/Speech call),
+  with its correctness instead covered by whatever manual or live-smoke verification already gates a
+  real deployment (`smoke_realtime.py`'s own `postdeploy` hook, for instance) -- a port would not
+  change that boundary, only move where the *deterministic* parts of the logic live.
+* `e2e_order_resume.py` is a different shape again (a Playwright-driven browser, not an Azure SDK
+  call) and needs its own design once/if a C# browser-automation story (e.g. Playwright for .NET) is
+  justified; the recorded-fixture approach above does not directly apply to it.
+
+None of this is implemented in this batch -- it is a design note only, so a later wave has a starting
+point instead of re-deriving this shape from scratch.
