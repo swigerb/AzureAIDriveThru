@@ -12,6 +12,7 @@ using Backend.Search;
 using Backend.Sessions;
 using Backend.Tools;
 using Microsoft.Extensions.FileProviders;
+using Microsoft.Extensions.Logging.Console;
 
 // Host wiring (issue #12 S2): config, persona-pack loading, health, auth token endpoint, static
 // files, one event loop per session -- mirrors app/backend/app.py's create_app() startup sequence
@@ -23,6 +24,15 @@ using Microsoft.Extensions.FileProviders;
 var runningInProduction = ParseBool(Environment.GetEnvironmentVariable("RUNNING_IN_PRODUCTION"));
 
 var builder = WebApplication.CreateBuilder(args);
+
+if (ConformanceHooks.HooksEnabled)
+{
+    // #233: see ConformanceHooks.ApplyConsoleTimestampFormat's doc comment for the full
+    // rationale. Reconfigures the options of the default "simple" console formatter
+    // CreateBuilder already registers, rather than adding a second console provider (which
+    // would duplicate every line).
+    builder.Services.Configure<SimpleConsoleFormatterOptions>(ConformanceHooks.ApplyConsoleTimestampFormat);
+}
 
 var host = Environment.GetEnvironmentVariable("HOST") ?? "127.0.0.1";
 // Default port aligned with app/backend/app.py's `int(os.environ.get("PORT", 8000))` (PR #96

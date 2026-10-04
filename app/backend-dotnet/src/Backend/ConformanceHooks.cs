@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
+using Microsoft.Extensions.Logging.Console;
 
 namespace Backend;
 
@@ -114,6 +115,32 @@ public static class ConformanceHooks
         HooksEnabled && Environment.GetEnvironmentVariable(CascadeFakeTokenEnv) is { Length: > 0 } token
             ? token
             : null;
+
+    /// <summary>
+    /// #233 (N32, split from #63): Program.cs's <c>builder.Services.Configure&lt;
+    /// SimpleConsoleFormatterOptions&gt;(ConformanceHooks.ApplyConsoleTimestampFormat)</c> call
+    /// (guarded there by <see cref="HooksEnabled"/>, since this method is extracted purely so it
+    /// has a directly unit-testable name/signature -- Program.cs's top-level statements aren't
+    /// otherwise unit-testable). Self-timestamps every console log line with a UTC,
+    /// microsecond-resolution instant THIS process actually logged it at, mirroring
+    /// app/backend/app.py's conformance-hooks-gated logging.Formatter change: see that file's
+    /// <c>_ConformanceTimestampFormatter</c> doc comment for why (the conformance harness's
+    /// <c>CapturedProcessOutput</c> otherwise stamps a line at the moment it *observes* it over
+    /// the redirected stdout/stderr pipe, which can lag the backend's actual write under CI/CPU
+    /// contention enough to make sequential events look simultaneous or reordered).
+    ///
+    /// The literal <c>'Z'</c> (not .NET's <c>K</c>/round-trip-offset specifier) matches the
+    /// Python side's literal <c>Z</c> suffix exactly, and the trailing space is load-bearing: both
+    /// together produce the exact <c>yyyy-MM-ddTHH:mm:ss.ffffffZ </c> shape
+    /// <c>CapturedProcessOutput.BackendTimestampPrefix</c>'s regex expects, so the harness only
+    /// needs one timestamp parser for both backends' lines.
+    /// </summary>
+    public static void ApplyConsoleTimestampFormat(SimpleConsoleFormatterOptions options)
+    {
+        options.UseUtcTimestamp = true;
+        options.TimestampFormat = "yyyy-MM-ddTHH:mm:ss.ffffff'Z' ";
+    }
+
     private static DateTimeOffset ParseFixedNow(string raw)
     {
         if (!ExplicitOffsetSuffix.IsMatch(raw.Trim()))

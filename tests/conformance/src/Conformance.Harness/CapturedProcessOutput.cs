@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Globalization;
+using System.Text.RegularExpressions;
 
 namespace Conformance.Harness;
 
@@ -69,6 +71,43 @@ public sealed class CapturedProcessOutput
     }
 
     /// <summary>
+    /// #233 (N32, split from #63): matches the literal self-timestamp prefix both backends emit
+    /// on every log line under <c>CONFORMANCE_TEST_HOOKS=1</c> (app/backend/app.py's
+    /// <c>_ConformanceTimestampFormatter</c>; Program.cs's <c>SimpleConsoleFormatterOptions
+    /// .TimestampFormat</c>) -- a UTC, microsecond-resolution <c>yyyy-MM-ddTHH:mm:ss.ffffff</c>
+    /// instant, a literal <c>Z</c>, then a single space. One shared regex for both backends
+    /// since they deliberately emit byte-identical prefixes.
+    /// </summary>
+    private static readonly Regex BackendTimestampPrefix = new(
+        @"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z) ", RegexOptions.Compiled);
+
+    /// <summary>
+    /// #233: splits an optional backend-embedded self-timestamp off the front of a freshly
+    /// captured line. Returns the parsed instant (or <c>null</c> if the line has no such prefix,
+    /// e.g. output that bypasses the gated logging formatter, or a line from a backend version
+    /// that predates this change) and the line with that prefix removed -- callers that inspect
+    /// a line's *content* (<see cref="ScanLine"/>'s <c>ERROR:</c>/<c>Traceback</c> header checks,
+    /// and the later re-derivation in <see cref="TryGetStderrContent"/>) see the same text either
+    /// way, since the prefix (when present) is stripped once here, before the line is ever
+    /// stored or scanned.
+    /// </summary>
+    private static (DateTimeOffset? Timestamp, string Content) StripBackendTimestamp(string line)
+    {
+        var match = BackendTimestampPrefix.Match(line);
+        if (!match.Success)
+        {
+            return (null, line);
+        }
+        if (!DateTimeOffset.TryParseExact(
+                match.Groups[1].Value, "yyyy-MM-ddTHH:mm:ss.ffffff'Z'",
+                CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var parsed))
+        {
+            return (null, line);
+        }
+        return (parsed, line[match.Length..]);
+    }
+
+    /// <summary>
     /// #66 M2: internal rather than private so <c>CapturedProcessOutputTests</c> (see
     /// <c>AssemblyInfo.cs</c>'s <c>InternalsVisibleTo</c>) can drive deterministic, no-process
     /// unit tests of <see cref="WaitForDiagnosticsAsync"/>/<see
@@ -83,13 +122,23 @@ public sealed class CapturedProcessOutput
             return;
         }
 
-        _lines.Enqueue($"[{DateTimeOffset.UtcNow:HH:mm:ss.fff} {stream}] {line}");
+        // #233: prefer the backend's own embedded timestamp (the instant it actually logged the
+        // line) over this class's read-time DateTimeOffset.UtcNow (the instant the ThreadPool
+        // callback happened to observe it) for the displayed/ordering timestamp, when present --
+        // see StripBackendTimestamp's doc comment. _lastAppendUtc below is deliberately left on
+        // real read-time regardless: it drives WaitForOutputQuiescenceAsync's silence detection,
+        // which is inherently about when *this harness* last saw output, not when the backend
+        // wrote it.
+        var (embeddedTimestamp, content) = StripBackendTimestamp(line);
+        var displayTimestamp = embeddedTimestamp ?? DateTimeOffset.UtcNow;
+
+        _lines.Enqueue($"[{displayTimestamp:HH:mm:ss.fff} {stream}] {content}");
         if (Interlocked.Increment(ref _count) > MaxLines)
         {
             _lines.TryDequeue(out _);
         }
 
-        ScanLine(stream, line);
+        ScanLine(stream, content);
 
         TaskCompletionSource released;
         lock (_signalGate)
