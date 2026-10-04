@@ -609,6 +609,50 @@ the tools whose parity bar genuinely depends on response-handling, not request-b
   field at all -- this tool makes no Azure OpenAI call under any flag, so it has nothing real to put
   there; the CLI prints a one-line note saying so). See `OpenAiSettingsResolverTests.cs`/
   `CliRunnerTests.cs` for the default/override/missing-endpoint coverage.
+* **PR #250 review R2 fix -- azd environment precedence.** Python's `main()` (lines 535-539) calls
+  `load_azd_env()` before `run()` whenever `--dry-run` is absent; that helper shells out to
+  `azd env list -o json`, finds the default environment's `.env` file, and calls
+  `load_dotenv(path, override=True)` -- which *overwrites* any same-named value already present in the
+  process environment. Python's real, effective precedence is therefore
+  **azd default-environment `.env` value > process env var > built-in default**, with the CLI flag
+  layered on top by `run()`'s own argument handling. The original C# port only implemented
+  flag > process env > default and never consulted azd at all -- a real gap, since the live app's
+  actual `AZURE_OPENAI_EASTUS2_ENDPOINT` typically lives only in the azd environment file, not in the
+  calling shell's process environment. Fixed by adding `AzdEnvLoader.cs`
+  (`tools/dotnet/src/SearchIndexRequestBuilder/`) and threading its result through
+  `OpenAiSettingsResolver.Resolve`, giving the final precedence **flag > azd value (non-empty) >
+  process env var (non-empty) > built-in default** (deployment) / **throw** (endpoint).
+  `AzdEnvLoader.LoadDefaultEnvValues` deliberately does **not** shell out to the real `azd` CLI (unlike
+  Python); it reads azd's own on-disk state directly -- `.azure/config.json`'s `"defaultEnvironment"`
+  key, then that environment's `.azure/<name>/.env` file -- parsing the `KEY="VALUE"` lines azd itself
+  always emits (always double-quoted, with `\"`/`\\`/`\n` backslash-escaping), confirmed empirically
+  against a real (disposable, local-only) `azd env new`/`azd env set` run during development, never
+  against a live Azure resource. This keeps every test (`AzdEnvLoaderTests.cs`,
+  `OpenAiSettingsResolverTests.cs`'s azd-precedence cases, `CliRunnerTests.cs`'s two azd-wiring cases)
+  free of any real `azd` process invocation -- they use real, disposable temp-directory `.azure`
+  folders instead, or inject the resolved dictionary directly. If `.azure/config.json` is missing, has
+  no `defaultEnvironment`, points at a `.env` file that doesn't exist, or anything else about the
+  lookup fails, `LoadDefaultEnvValues` swallows the failure and returns an empty dictionary -- azd
+  simply contributes nothing, and resolution falls through to process env / default exactly as before
+  this fix, matching "handle azd missing gracefully" rather than Python's own behaviour here (an azd
+  failure crashes Python's `main()` with an unhandled exception before `run()` is ever reached; this
+  port intentionally does not reproduce that crash for a case that isn't really about OpenAI settings
+  at all).
+* **Empty-string divergence, generalized.** Python's `os.environ.get(name, default)` returns an empty
+  string, not the default, when the key exists in the environment with an empty value -- and after the
+  R2 fix, this ambiguity now applies to *both* possible non-flag sources: a `.env`-file line like
+  `AZURE_OPENAI_EMBEDDING_DEPLOYMENT=""` from the azd environment, or an empty-but-set process
+  environment variable of the same name. In both cases, Python would silently use `""` as the real
+  deployment name downstream (and if `azd`'s file is the source, `load_dotenv(..., override=True)`
+  would also have blanked out any prior process-env value for the same key). This port treats an empty
+  string as equivalent to "not set" at **every** source -- flag, azd value, and process env var alike
+  (`OpenAiSettingsResolver.GetNonEmptyOrNull`) -- always falling through to the next source or the
+  built-in `"text-embedding-3-large"` default instead. This can only affect the embedding deployment:
+  an empty *endpoint* is always a hard failure on both sides regardless of source, just presented
+  differently (Python's unhandled `KeyError`/downstream SDK error vs. this port's clean
+    `InvalidOperationException`). See `Resolve_TreatsEmptyStringFlag_SameAsMissingFlag` and
+    `Resolve_TreatsEmptyStringAzdValue_SameAsMissing_FallsBackToProcessEnvThenDefault` in
+  `OpenAiSettingsResolverTests.cs` for both empty-value sources.
 * `FixtureEmbedding.cs` (now test-only, under `tools/dotnet/tests/SearchIndexRequestBuilder.Tests/`) --
   a deterministic, pure-function stand-in for `generate_embeddings`'s real Azure OpenAI call:
   `sha256(text)`'s first 8 bytes, each mapped from `[0, 255]` to `[-1, 1]` and rounded to 6 decimals
@@ -702,6 +746,19 @@ fails, revert):
   `CliRunnerTests.cs`'s missing-endpoint test fail (stderr showed the unrelated persona-discovery
   error instead of the expected "no OpenAI endpoint configured" message, because the hardcoded fake
   endpoint always "succeeded") -- confirmed, then restored.
+* **PR #250 review R2 fix (azd precedence)**: reordering `OpenAiSettingsResolver.Resolve`'s endpoint
+  check to consult the process env var before the azd value made
+  `Resolve_AzdEnvValue_TakesPriorityOverProcessEnvVar` fail as expected (it returned the process-env
+  value instead of the azd value) -- confirmed, then restored. Separately, changing `CliRunner.cs` to
+  pass `null` instead of the computed azd-values dictionary into `OpenAiSettingsResolver.Resolve(...)`
+  (simulating the wiring being dropped entirely) made both new `CliRunnerTests.cs` azd cases
+  (`Run_ResolvesOpenAiEndpoint_FromInjectedAzdEnvValues_WhenNoFlagOrProcessEnvVar` and
+  `Run_ResolvesOpenAiEndpoint_FromARealTempAzureFolder_WithNoInjectionAndNoRealAzdCall`) fail as
+  expected (both printed the "no OpenAI endpoint configured" error instead of succeeding) -- confirmed,
+  then restored. Finally, making `AzdEnvLoader.cs`'s `UnquoteDotEnvValue` a no-op (returning azd's raw,
+  still-double-quoted `"VALUE"` text unchanged) made four of the eight `AzdEnvLoaderTests.cs` cases
+  fail as expected (asserted values still had their surrounding quotes, e.g. `"dev"` instead of `dev`)
+  -- confirmed, then restored.
 
 ### CI wiring
 

@@ -3,11 +3,13 @@ namespace SearchIndexRequestBuilder.Tests;
 /// <summary>
 /// Unit tests for CliRunner, driven directly against in-memory <see cref="TextWriter"/>s so
 /// they're fast and deterministic -- no subprocess spawning, no real Azure OpenAI/Search endpoint
-/// ever contacted. Mirrors ExtractProductionItems.Tests/CliRunnerTests.cs's and
-/// UpdateMenuSizes.Tests/CliRunnerTests.cs's shape. Covers PR #250 review R1: the CLI must resolve
-/// the real OpenAI endpoint/deployment (flag, then env var, then default) and fail cleanly -- not
-/// with a stack trace -- when no endpoint is configured at all, rather than always printing the
-/// old hardcoded fake values.
+/// ever contacted, no real <c>azd</c> process invocation. Mirrors
+/// ExtractProductionItems.Tests/CliRunnerTests.cs's and UpdateMenuSizes.Tests/CliRunnerTests.cs's
+/// shape. Covers PR #250 review R1: the CLI must resolve the real OpenAI endpoint/deployment
+/// (flag, then azd env, then process env var, then default) and fail cleanly -- not with a stack
+/// trace -- when no endpoint is configured at all, rather than always printing the old hardcoded
+/// fake values; and review R5: the azd default-environment value must actually reach resolution,
+/// both via injection and via a real (but temp, disposable) .azure folder.
 /// </summary>
 public sealed class CliRunnerTests : IDisposable
 {
@@ -115,5 +117,71 @@ public sealed class CliRunnerTests : IDisposable
         // The failure is persona discovery's, not the endpoint's -- confirming the endpoint flag
         // was accepted and never re-triggered the "no Azure OpenAI endpoint configured" message.
         Assert.DoesNotContain("Azure OpenAI endpoint not set", stderrText);
+    }
+
+    // --- PR #250 review R5: CliRunner must actually wire AzdEnvLoader's result into
+    // OpenAiSettingsResolver.Resolve, not just accept it as a parameter. ---
+
+    /// <summary>
+    /// Mutation check performed (reverted after confirming): temporarily hardcoding
+    /// <c>loadAzdEnvValues</c>'s effective result to an always-empty dictionary (ignoring whatever
+    /// was actually injected) made this test fail (exit code 1, "Azure OpenAI endpoint not set")
+    /// instead of 0 -- confirming this test genuinely guards the azd value reaching
+    /// OpenAiSettingsResolver, restored before committing.
+    /// </summary>
+    [Fact]
+    public void Run_ResolvesOpenAiEndpoint_FromInjectedAzdEnvValues_WhenNoFlagOrProcessEnvVar()
+    {
+        var stdout = new StringWriter();
+        var stderr = new StringWriter();
+
+        var exitCode = CliRunner.Run(
+            [],
+            stdout,
+            stderr,
+            repoRootOverride: CreateEmptyRepoRoot(),
+            getEnvironmentVariable: _ => null,
+            loadAzdEnvValues: _ => new Dictionary<string, string>
+            {
+                ["AZURE_OPENAI_EASTUS2_ENDPOINT"] = "https://azd.openai.azure.com",
+            });
+
+        // No personas directory exists under the synthetic repo root either, so this still exits
+        // non-zero -- but via persona discovery's failure, not the endpoint's, proving the
+        // injected azd value alone was enough to resolve the endpoint.
+        Assert.Equal(1, exitCode);
+        Assert.DoesNotContain("Azure OpenAI endpoint not set", stderr.ToString());
+    }
+
+    /// <summary>
+    /// End-to-end (no injection): proves CliRunner's default -- real -- AzdEnvLoader wiring reads
+    /// an actual <c>.azure/config.json</c> + <c>.azure/&lt;env&gt;/.env</c> pair written to a real
+    /// temp repo root, with no real <c>azd</c> process invocation and no real Azure call.
+    /// </summary>
+    [Fact]
+    public void Run_ResolvesOpenAiEndpoint_FromARealTempAzureFolder_WithNoInjectionAndNoRealAzdCall()
+    {
+        var repoRoot = CreateEmptyRepoRoot();
+        var envDir = Path.Combine(repoRoot, ".azure", "dev");
+        Directory.CreateDirectory(envDir);
+        File.WriteAllText(
+            Path.Combine(repoRoot, ".azure", "config.json"),
+            "{\"version\":1,\"defaultEnvironment\":\"dev\"}");
+        File.WriteAllText(
+            Path.Combine(envDir, ".env"),
+            "AZURE_OPENAI_EASTUS2_ENDPOINT=\"https://real-temp-azd-folder.openai.azure.com\"\n");
+
+        var stdout = new StringWriter();
+        var stderr = new StringWriter();
+
+        var exitCode = CliRunner.Run(
+            [],
+            stdout,
+            stderr,
+            repoRootOverride: repoRoot,
+            getEnvironmentVariable: _ => null);
+
+        Assert.Equal(1, exitCode);
+        Assert.DoesNotContain("Azure OpenAI endpoint not set", stderr.ToString());
     }
 }

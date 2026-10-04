@@ -13,9 +13,11 @@ namespace SearchIndexRequestBuilder;
 /// setup_search_index.py's own default (no <c>--persona</c>) behaviour, and it never makes a
 /// network call under any flag -- this is a request-building report, not an ingestion tool. It DOES
 /// take <c>--openai-endpoint</c>/<c>--embedding-deployment</c> (or the equivalent
-/// AZURE_OPENAI_EASTUS2_ENDPOINT/AZURE_OPENAI_EMBEDDING_DEPLOYMENT environment variables) so the
-/// printed index definition's vectorizer fields reflect a real environment, not a fixed placeholder
-/// (PR #250 review R4) -- see <see cref="OpenAiSettingsResolver"/>.
+/// AZURE_OPENAI_EASTUS2_ENDPOINT/AZURE_OPENAI_EMBEDDING_DEPLOYMENT environment variables, or an azd
+/// default-environment value -- see <see cref="AzdEnvLoader"/> -- which beats the environment
+/// variable, matching setup_search_index.py's own <c>load_azd_env()</c> precedence) so the printed
+/// index definition's vectorizer fields reflect a real environment, not a fixed placeholder
+/// (PR #250 review R4/R5) -- see <see cref="OpenAiSettingsResolver"/>.
 /// </summary>
 public static class CliRunner
 {
@@ -28,7 +30,8 @@ public static class CliRunner
         TextWriter stdout,
         TextWriter stderr,
         string? repoRootOverride = null,
-        Func<string, string?>? getEnvironmentVariable = null)
+        Func<string, string?>? getEnvironmentVariable = null,
+        Func<string, IReadOnlyDictionary<string, string>>? loadAzdEnvValues = null)
     {
         string? openAiEndpointFlag = null;
         string? embeddingDeploymentFlag = null;
@@ -53,8 +56,9 @@ public static class CliRunner
         IReadOnlyList<EnabledPersonaDiscovery.DiscoveredPersona> personas;
         try
         {
-            settings = OpenAiSettingsResolver.Resolve(openAiEndpointFlag, embeddingDeploymentFlag, getEnvironmentVariable);
             var repoRoot = repoRootOverride ?? RepoRoot.Find(AppContext.BaseDirectory);
+            var azdEnvValues = (loadAzdEnvValues ?? (root => AzdEnvLoader.LoadDefaultEnvValues(root)))(repoRoot);
+            settings = OpenAiSettingsResolver.Resolve(openAiEndpointFlag, embeddingDeploymentFlag, getEnvironmentVariable, azdEnvValues);
             personas = EnabledPersonaDiscovery.DiscoverAll(repoRoot);
         }
         catch (InvalidOperationException ex)

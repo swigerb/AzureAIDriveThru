@@ -103,4 +103,109 @@ public sealed class OpenAiSettingsResolverTests
         Assert.Equal("https://env.openai.azure.com", settings.OpenAiEndpoint);
         Assert.Equal("env-deployment", settings.EmbeddingDeployment);
     }
+
+    // --- PR #250 review R5: azd default-environment precedence (setup_search_index.py's main()
+    // calls load_azd_env() -- load_dotenv(path, override=True) -- before run() reads os.environ,
+    // so an azd value always beats a pre-existing process environment variable). ---
+
+    [Fact]
+    public void Resolve_UsesAzdEnvValue_WhenNoFlagAndNoProcessEnvVar()
+    {
+        var settings = OpenAiSettingsResolver.Resolve(
+            openAiEndpointFlag: null,
+            embeddingDeploymentFlag: null,
+            getEnvironmentVariable: _ => null,
+            azdEnvValues: new Dictionary<string, string>
+            {
+                ["AZURE_OPENAI_EASTUS2_ENDPOINT"] = "https://azd.openai.azure.com",
+                ["AZURE_OPENAI_EMBEDDING_DEPLOYMENT"] = "azd-deployment",
+            });
+
+        Assert.Equal("https://azd.openai.azure.com", settings.OpenAiEndpoint);
+        Assert.Equal("azd-deployment", settings.EmbeddingDeployment);
+    }
+
+    /// <summary>
+    /// Matches python-dotenv's <c>load_dotenv(path, override=True)</c>: the azd-managed value
+    /// REPLACES a pre-existing process environment variable of the same name, rather than only
+    /// filling a gap -- the opposite of python-dotenv's own default (<c>override=False</c>).
+    /// </summary>
+    [Fact]
+    public void Resolve_AzdEnvValue_TakesPriorityOverProcessEnvVar()
+    {
+        var settings = OpenAiSettingsResolver.Resolve(
+            openAiEndpointFlag: null,
+            embeddingDeploymentFlag: null,
+            getEnvironmentVariable: name => name switch
+            {
+                "AZURE_OPENAI_EASTUS2_ENDPOINT" => "https://process-env.openai.azure.com",
+                "AZURE_OPENAI_EMBEDDING_DEPLOYMENT" => "process-env-deployment",
+                _ => null,
+            },
+            azdEnvValues: new Dictionary<string, string>
+            {
+                ["AZURE_OPENAI_EASTUS2_ENDPOINT"] = "https://azd.openai.azure.com",
+                ["AZURE_OPENAI_EMBEDDING_DEPLOYMENT"] = "azd-deployment",
+            });
+
+        Assert.Equal("https://azd.openai.azure.com", settings.OpenAiEndpoint);
+        Assert.Equal("azd-deployment", settings.EmbeddingDeployment);
+    }
+
+    /// <summary>
+    /// This port's own CLI-flag addition (Python has no equivalent) still wins over everything,
+    /// including an azd-managed value.
+    /// </summary>
+    [Fact]
+    public void Resolve_FlagTakesPriorityOverAzdEnvValue()
+    {
+        var settings = OpenAiSettingsResolver.Resolve(
+            openAiEndpointFlag: "https://flag.openai.azure.com",
+            embeddingDeploymentFlag: "flag-deployment",
+            getEnvironmentVariable: _ => null,
+            azdEnvValues: new Dictionary<string, string>
+            {
+                ["AZURE_OPENAI_EASTUS2_ENDPOINT"] = "https://azd.openai.azure.com",
+                ["AZURE_OPENAI_EMBEDDING_DEPLOYMENT"] = "azd-deployment",
+            });
+
+        Assert.Equal("https://flag.openai.azure.com", settings.OpenAiEndpoint);
+        Assert.Equal("flag-deployment", settings.EmbeddingDeployment);
+    }
+
+    /// <summary>
+    /// Documented, intentional divergence from Python (see OpenAiSettingsResolver.Resolve's own
+    /// "known, accepted divergence" remarks): Python's <c>os.environ.get(name, default)</c> would
+    /// still return an empty string set by <c>load_dotenv(override=True)</c> (the key exists, even
+    /// though empty) and send <c>""</c> as the deployment id to Azure; this port treats an
+    /// empty-string azd value the same as "not set" and falls through to the process env / the
+    /// built-in default instead.
+    /// </summary>
+    [Fact]
+    public void Resolve_TreatsEmptyStringAzdValue_SameAsMissing_FallsBackToProcessEnvThenDefault()
+    {
+        var settings = OpenAiSettingsResolver.Resolve(
+            openAiEndpointFlag: "https://real.openai.azure.com",
+            embeddingDeploymentFlag: null,
+            getEnvironmentVariable: name => name == "AZURE_OPENAI_EMBEDDING_DEPLOYMENT" ? "process-env-deployment" : null,
+            azdEnvValues: new Dictionary<string, string>
+            {
+                ["AZURE_OPENAI_EMBEDDING_DEPLOYMENT"] = "",
+            });
+
+        Assert.Equal("process-env-deployment", settings.EmbeddingDeployment);
+    }
+
+    [Fact]
+    public void Resolve_WorksWithNoAzdEnvValuesGiven_SameAsBeforeThisFeatureExisted()
+    {
+        var settings = OpenAiSettingsResolver.Resolve(
+            openAiEndpointFlag: null,
+            embeddingDeploymentFlag: null,
+            getEnvironmentVariable: name => name == "AZURE_OPENAI_EASTUS2_ENDPOINT" ? "https://env.openai.azure.com" : null,
+            azdEnvValues: null);
+
+        Assert.Equal("https://env.openai.azure.com", settings.OpenAiEndpoint);
+        Assert.Equal(OpenAiSettingsResolver.DefaultEmbeddingDeployment, settings.EmbeddingDeployment);
+    }
 }
