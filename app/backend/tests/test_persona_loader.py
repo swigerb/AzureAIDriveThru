@@ -787,7 +787,15 @@ class TestJunctionFallbackOn311:
     tests actually run on. `os.path.isjunction` is patched to `None` so
     `getattr(os.path, "isjunction", None)` sees it as absent, exactly matching
     how the real attribute-lookup behaves on 3.11 -- this does not require
-    `delattr`/simulating a genuinely different Python version.
+    `delattr`/simulating a genuinely different Python version. `create=True`
+    is required on that patch (unlike the plain `mock.patch("os.path.isjunction",
+    ...)` string-target patches on the two 3.12-only tests above, which are
+    skipped on 3.11 instead): `mock.patch.object` refuses to patch an
+    attribute that doesn't already exist unless told to create it, and on a
+    genuine Python 3.11 interpreter `os.path.isjunction` doesn't exist at all
+    -- without `create=True` these tests would themselves raise
+    `AttributeError` on 3.11, the opposite of what they're meant to verify
+    (Rick's review, #223 round 3).
 
     `stat.IO_REPARSE_TAG_MOUNT_POINT`/`IO_REPARSE_TAG_SYMLINK` are themselves
     Windows-only `stat` module constants -- absent entirely on POSIX (this
@@ -808,7 +816,7 @@ class TestJunctionFallbackOn311:
         3.11 fallback."""
         plain_dir = tmp_path / "plain"
         plain_dir.mkdir()
-        with mock.patch.object(os.path, "isjunction", None):
+        with mock.patch.object(os.path, "isjunction", None, create=True):
             assert _is_symlink_or_junction(plain_dir) is False
 
     def test_mount_point_reparse_tag_is_flagged(self, tmp_path):
@@ -818,7 +826,7 @@ class TestJunctionFallbackOn311:
         junction_dir.mkdir()
         fake_stat = SimpleNamespace(st_reparse_tag=self._MOUNT_POINT_TAG)
         with mock.patch.object(stat, "IO_REPARSE_TAG_MOUNT_POINT", self._MOUNT_POINT_TAG, create=True):
-            with mock.patch.object(os.path, "isjunction", None):
+            with mock.patch.object(os.path, "isjunction", None, create=True):
                 with mock.patch("os.lstat", return_value=fake_stat):
                     assert _is_symlink_or_junction(junction_dir) is True
 
@@ -836,7 +844,7 @@ class TestJunctionFallbackOn311:
         other_dir.mkdir()
         fake_stat = SimpleNamespace(st_reparse_tag=self._SYMLINK_TAG)
         with mock.patch.object(stat, "IO_REPARSE_TAG_MOUNT_POINT", self._MOUNT_POINT_TAG, create=True):
-            with mock.patch.object(os.path, "isjunction", None):
+            with mock.patch.object(os.path, "isjunction", None, create=True):
                 with mock.patch("os.lstat", return_value=fake_stat):
                     assert _is_symlink_or_junction(other_dir) is False
 
@@ -850,7 +858,7 @@ class TestJunctionFallbackOn311:
         some_dir.mkdir()
         fake_stat = SimpleNamespace(st_reparse_tag=self._MOUNT_POINT_TAG)
         with mock.patch.object(stat, "IO_REPARSE_TAG_MOUNT_POINT", None, create=True):
-            with mock.patch.object(os.path, "isjunction", None):
+            with mock.patch.object(os.path, "isjunction", None, create=True):
                 with mock.patch("os.lstat", return_value=fake_stat):
                     assert _is_symlink_or_junction(some_dir) is False
 
@@ -860,7 +868,7 @@ class TestJunctionFallbackOn311:
         target) must not raise -- it's treated as "not a junction", same as
         the pre-existing broad-check behavior."""
         missing = tmp_path / "does-not-exist"
-        with mock.patch.object(os.path, "isjunction", None):
+        with mock.patch.object(os.path, "isjunction", None, create=True):
             with mock.patch("os.lstat", side_effect=OSError("boom")):
                 assert _is_symlink_or_junction(missing) is False
 
