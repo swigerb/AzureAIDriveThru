@@ -310,6 +310,16 @@ class TokenValidator:
     caches a failure for `_jwks_failure_cooldown` seconds for the same reason:
     so a JWKS-endpoint outage 401s immediately instead of every request
     serially re-attempting the same doomed network call under `self._lock`.
+
+    #223 round 3 (Rick's review): that cooldown must gate ONLY the network
+    fetch, never a `kid` already resolvable from `PyJWKClient`'s own
+    still-valid cache -- otherwise a single forged, unauthenticated token
+    with an unknown `kid`, arriving during a transient JWKS-endpoint fault,
+    would negatively cache a failure that then ALSO rejects every already-
+    cached, perfectly valid `kid` for the next `_jwks_failure_cooldown`
+    seconds: a trivial, repeatable, unauthenticated denial of service.
+    `_get_signing_key` checks the cache directly while cooling down and only
+    refuses when that cache is empty/expired or genuinely misses the `kid`.
     """
 
     def __init__(
@@ -418,13 +428,47 @@ class TokenValidator:
         cooldown additionally spares a request storm (e.g. an unknown `kid`
         during a JWKS-endpoint outage) from each independently re-attempting
         the same doomed network call serially under `self._lock`.
+
+        #223 round 3 (Rick's review, a real DoS this time, not just a 500):
+        the cooldown must gate ONLY a network fetch, never a `kid` that's
+        already resolvable from `PyJWKClient`'s own still-valid 24h JWK Set
+        cache. Rick's repro: kid A is cached and valid; an unauthenticated,
+        forged token with a random kid B arrives while the JWKS endpoint has
+        a transient fault, forcing a refetch that fails and engages the
+        cooldown; a legitimate request for kid A then ALSO gets rejected --
+        "refusing to retry yet" -- even though resolving kid A needs no
+        network call at all. That turns a single forged `kid` into a
+        trivial, unauthenticated 30s (repeatable forever) denial of service
+        against every legitimate, already-cached token. While the cooldown is
+        active, a cache hit for the requested `kid` must still succeed; only
+        a cache miss (or an empty/expired cache) is refused without
+        attempting the network call the cooldown exists to prevent.
         """
         with self._lock:
             now = time.monotonic()
-            if self._jwks_failure_until is not None and now < self._jwks_failure_until:
-                raise EntraUnauthorized(
-                    "JWKS refetch failed recently; refusing to retry yet."
-                )
+            cooling_down = (
+                self._jwks_failure_until is not None and now < self._jwks_failure_until
+            )
+
+        if cooling_down:
+            cached_jwk_set = (
+                client.jwk_set_cache.get() if client.jwk_set_cache is not None else None
+            )
+            if cached_jwk_set is not None:
+                # `jwk_set_cache.get()` already returns `None` on an empty or
+                # expired cache (its own `is_expired()` check), so reaching
+                # here means a still-valid cache exists -- `get_signing_keys()`
+                # (no `refresh=True`) re-reads that exact same still-valid
+                # cache entry and therefore cannot itself trigger a network
+                # fetch; it is not a plain re-fetch call.
+                kid = jwt.get_unverified_header(token).get("kid")
+                signing_key = client.match_kid(client.get_signing_keys(), kid)
+                if signing_key is not None:
+                    return signing_key
+            raise EntraUnauthorized(
+                "JWKS refetch failed recently; refusing to retry yet."
+            )
+
         try:
             signing_key = client.get_signing_key_from_jwt(token)
         except (OSError, http.client.HTTPException, ValueError) as exc:
