@@ -45,6 +45,12 @@ public sealed class EchoSuppressor : IDisposable
     public double CooldownEnd { get { lock (_sync) { return _cooldownEnd; } } }
     public bool GreetingInProgress { get { lock (_sync) { return _greetingInProgress; } } }
 
+    /// <summary>Test-only: exposes the internal lock object so a test can deterministically
+    /// reproduce the stale-flush-continuation race described on <see cref="FlushIfStillPendingAsync"/>
+    /// -- same technique as <see cref="Backend.Realtime.RateLimitRecovery.SyncRootForTests"/>. Not
+    /// read by any production code path.</summary>
+    internal object SyncRootForTests => _sync;
+
     /// <summary>PR #58 re-review "M1": set when a greeting's response.done arrives with no audio
     /// ever rendered -- the rate-limit recovery ladder may retry that same greeting with a bare
     /// response.create, whose own first audio delta must re-enter greeting suppression instead of
@@ -146,7 +152,7 @@ public sealed class EchoSuppressor : IDisposable
                 {
                     if (!t.IsCanceled)
                     {
-                        _ = BestEffortSend();
+                        _ = FlushIfStillPendingAsync(cts);
                     }
                 },
                 CancellationToken.None,
@@ -272,6 +278,31 @@ public sealed class EchoSuppressor : IDisposable
             _cooldownEnd = 0.0;
             _greetingAwaitingRetry = true;
         }
+    }
+
+    /// <summary>Issue #13 Wave 4/#235 review: the delayed-flush continuation has the identical
+    /// stale-timer shape RateLimitRecovery's own retry scheduling had (see
+    /// <see cref="RateLimitRecovery"/>'s class doc comment for the full race description) --
+    /// <c>Task.Delay(...).ContinueWith(t => { if (!t.IsCanceled) ... })</c> checks <c>t.IsCanceled</c>
+    /// outside the lock, and the delay cannot retroactively become Canceled once it has already
+    /// elapsed, so <see cref="ShouldSuppressAudio"/>/<see cref="Close"/>/a later
+    /// <see cref="OnAudioDone"/> re-arm can all lose the race to a stale flush. This method takes
+    /// the exact CTS it was scheduled with as its identity and, under the lock, only proceeds (and
+    /// clears <see cref="_flushCts"/>) if it is still the live one -- a mismatch means this flush
+    /// was already cancelled or superseded, and the call that did so has nothing left for this one
+    /// to do.</summary>
+    private async Task FlushIfStillPendingAsync(CancellationTokenSource scheduledCts)
+    {
+        lock (_sync)
+        {
+            if (!ReferenceEquals(_flushCts, scheduledCts))
+            {
+                return;
+            }
+            _flushCts = null;
+        }
+
+        await BestEffortSend().ConfigureAwait(false);
     }
 
     private async Task BestEffortSend()

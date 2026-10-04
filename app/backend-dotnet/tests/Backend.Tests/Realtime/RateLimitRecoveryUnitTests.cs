@@ -406,4 +406,102 @@ public sealed class RateLimitRecoveryUnitTests
         h.Time.Advance(TimeSpan.FromSeconds(1.5));
         Assert.Single(h.Upstream);
     }
+
+    // ── Rick's #235 review: a stale timer continuation racing a cancellation source ─────────
+    //
+    // The bug: Task.Delay(...).ContinueWith(t => { if (!t.IsCanceled) RunRetryAsync(...); })
+    // checks t.IsCanceled OUTSIDE _sync, and a Task.Delay cannot retroactively become Canceled
+    // once it has already elapsed. So if a cancellation source (guest speech, the browser's own
+    // response.create, teardown) runs AFTER the timer has fired but BEFORE the continuation
+    // acquires _sync, the continuation still runs -- sending a stale/duplicate response.create
+    // (possibly onto an already-closing socket) and/or corrupting _attempt/_awaitingRetry for a
+    // retry nobody asked for any more. Reproduced here by holding _sync on this thread (via the
+    // SyncRootForTests test hook) while the fake clock is advanced on a background thread: the
+    // background continuation blocks on _sync until this thread's cancellation call (reentrant
+    // on the same monitor) has already fully committed, deterministically recreating the race
+    // without any flaky real-time sleeps on the assertion path itself.
+    private static async Task RunStaleRetryRaceAsync(Harness h, Action<RateLimitRecovery> duringTheRace)
+    {
+        var syncRoot = h.Recovery.SyncRootForTests;
+        Task advanceTask;
+        Monitor.Enter(syncRoot);
+        try
+        {
+            advanceTask = Task.Run(() => h.Time.Advance(TimeSpan.FromSeconds(1.5)));
+            // Bias scheduling so the background thread's stale continuation actually reaches
+            // (and blocks on) _sync before this thread wins the race -- the Monitor itself (not
+            // this sleep) is what makes the final outcome deterministic. A too-short sleep only
+            // risks a false pass (nothing to race against yet), never a false failure.
+            Thread.Sleep(100);
+            duringTheRace(h.Recovery);
+        }
+        finally
+        {
+            Monitor.Exit(syncRoot);
+        }
+
+        var finished = await Task.WhenAny(advanceTask, Task.Delay(TimeSpan.FromSeconds(5))) == advanceTask;
+        Assert.True(finished, "the stale continuation deadlocked instead of returning once superseded");
+        await advanceTask; // surface any exception thrown on the background thread.
+    }
+
+    public static IEnumerable<object[]> CancellationSources()
+    {
+        yield return new object[] { "guest speech", (Action<RateLimitRecovery>)(r => r.OnGuestSpeech()) };
+        yield return new object[]
+        {
+            "browser response.create", (Action<RateLimitRecovery>)(r => r.OnExternalResponseCreate("browser")),
+        };
+        yield return new object[] { "teardown", (Action<RateLimitRecovery>)(r => r.Cancel("socket closed")) };
+    }
+
+    [Theory]
+    [MemberData(nameof(CancellationSources))]
+    public async Task StaleTimerContinuation_LosesRaceToCancellation_SendsNothingAndStaysClean(
+        string _, Action<RateLimitRecovery> cancellationSource)
+    {
+        var h = new Harness();
+        await h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError()), CancellationToken.None);
+        Assert.True(h.Recovery.Busy);
+
+        await RunStaleRetryRaceAsync(h, cancellationSource);
+
+        Assert.Empty(h.Upstream); // the stale retry must never reach the upstream send.
+        Assert.False(h.Recovery.Busy); // clean idle state, not stuck mid-retry bookkeeping.
+
+        // And the ladder genuinely restarted clean: the next failure is attempt 1 again (silent),
+        // not corrupted leftover state from the superseded retry (which would have forced
+        // _attempt=1/_awaitingRetry=true regardless of what the cancellation source itself did).
+        await h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError()), CancellationToken.None);
+        Assert.Empty(h.Client); // still silent -- a fresh attempt 1, not a corrupted later attempt.
+        h.Time.Advance(TimeSpan.FromSeconds(1.5));
+        Assert.Single(h.Upstream);
+    }
+
+    [Fact]
+    public async Task StaleTimerContinuation_LosesRaceToANewlyScheduledRetry_OnlyTheNewOneSends()
+    {
+        var h = new Harness();
+        await h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError()), CancellationToken.None);
+        Assert.True(h.Recovery.Busy);
+
+        // The race window: guest speech cancels the stale retry AND a brand-new rate-limit
+        // failure immediately schedules a fresh one of its own -- both committed, under the
+        // same lock this thread is holding, before the stale continuation above can ever reach
+        // it.
+        await RunStaleRetryRaceAsync(h, r =>
+        {
+            r.OnGuestSpeech();
+            var handled = r.OnErrorAsync(ErrorEvent(RateLimitError()), CancellationToken.None)
+                .GetAwaiter().GetResult();
+            Assert.True(handled);
+        });
+
+        Assert.Empty(h.Upstream); // the new retry hasn't fired yet -- still waiting its own fresh delay.
+        Assert.True(h.Recovery.Busy); // ...but it IS pending (unlike the stale one it replaced).
+
+        h.Time.Advance(TimeSpan.FromSeconds(1.5)); // the NEW retry's own delay elapses.
+
+        Assert.Single(h.Upstream); // exactly one send -- from the new retry; the stale one sent nothing.
+    }
 }

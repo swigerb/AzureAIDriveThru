@@ -115,10 +115,27 @@ public sealed class RateLimitSettings
 /// below does its state transition under <see cref="_sync"/> and only performs unlocked async IO
 /// (notify the browser, schedule a retry's delayed send) after that lock is released -- the same
 /// split already established by <see cref="EchoSuppressor"/>'s own locking. Scheduling a retry
-/// happens fully inside the lock (see <see cref="SchedulePendingLocked"/>) specifically so a
-/// concurrent cancellation signal (guest speech from the upstream loop, the browser's own
-/// response.create from the other loop) can never race a retry into existing after the signal
-/// that should have prevented it already ran.
+/// happens fully inside the lock (see <see cref="SchedulePendingLocked"/>) so a concurrent
+/// cancellation signal can never race a *new* schedule into existing after the signal that
+/// should have prevented it already ran.
+///
+/// That alone is NOT enough to stop a *stale* schedule from firing, though (Rick's #235 review):
+/// <c>Task.Delay(...).ContinueWith(t => { if (!t.IsCanceled) RunRetryAsync(...); })</c> checks
+/// <c>t.IsCanceled</c> OUTSIDE the lock, and <c>Task.Delay</c> cannot retroactively become
+/// Canceled once it has already completed -- so a cancellation signal (guest speech, the
+/// browser's own response.create, teardown) that arrives after the timer has already elapsed
+/// but before the continuation acquires <see cref="_sync"/> loses the race: the continuation
+/// still runs, even though the cancellation already fully committed (cleared
+/// <see cref="_pendingCts"/>/<see cref="_pendingScheduled"/>, possibly scheduled a brand-new
+/// retry in the same call). <see cref="RunRetryAsync"/> therefore takes the exact
+/// <see cref="CancellationTokenSource"/> it was scheduled with as its own identity token and,
+/// as the very first thing under the lock, compares it by reference against the current
+/// <see cref="_pendingCts"/>: a mismatch means this schedule has already been superseded (by a
+/// cancellation OR by a newer retry scheduled in the same race window) and the stale call
+/// returns immediately, touching no state and sending nothing. Only a schedule that is still
+/// the live one proceeds to clear <see cref="_pendingScheduled"/>/<see cref="_pendingCts"/> and
+/// act. <see cref="EchoSuppressor.OnAudioDone"/>'s delayed-flush continuation has the identical
+/// shape and received the identical fix.
 /// </summary>
 public sealed class RateLimitRecovery
 {
@@ -179,6 +196,14 @@ public sealed class RateLimitRecovery
     {
         get { lock (_sync) { return _pendingScheduled || _awaitingRetry; } }
     }
+
+    /// <summary>Test-only: exposes the internal lock object so a test can hold it across a
+    /// FakeTimeProvider.Advance() (run on a background thread) plus a cancellation-source call (on
+    /// the test's own thread, reentrant on the same monitor), deterministically reproducing the
+    /// otherwise-untestable two-thread race between a stale timer continuation and whichever
+    /// cancellation source wins the race to <see cref="_sync"/> first. Not read by any production
+    /// code path.</summary>
+    internal object SyncRootForTests => _sync;
 
     // ── signals from the upstream socket ──
 
@@ -308,7 +333,9 @@ public sealed class RateLimitRecovery
 
     /// <summary>Must be called with <see cref="_sync"/> held. Commits the schedule (CTS created,
     /// <see cref="_pendingScheduled"/> set) fully inside the lock, before the delayed send is ever
-    /// kicked off -- see this class's own doc comment for why that ordering matters here.</summary>
+    /// kicked off -- see this class's own doc comment for why that ordering matters here, and why
+    /// the CTS itself (not just the delay/attempt numbers) is passed through to
+    /// <see cref="RunRetryAsync"/> as this schedule's identity.</summary>
     private void SchedulePendingLocked(double delaySeconds, int attempt)
     {
         var cts = new CancellationTokenSource();
@@ -319,7 +346,7 @@ public sealed class RateLimitRecovery
             {
                 if (!t.IsCanceled)
                 {
-                    _ = RunRetryAsync(delaySeconds, attempt);
+                    _ = RunRetryAsync(delaySeconds, attempt, cts);
                 }
             },
             CancellationToken.None,
@@ -399,11 +426,29 @@ public sealed class RateLimitRecovery
         }
     }
 
-    private async Task RunRetryAsync(double delaySeconds, int attempt)
+    private async Task RunRetryAsync(double delaySeconds, int attempt, CancellationTokenSource scheduledCts)
     {
         bool skip;
         lock (_sync)
         {
+            if (!ReferenceEquals(_pendingCts, scheduledCts))
+            {
+                // This exact schedule has already been superseded: a cancellation source
+                // (guest speech, the browser's own response.create, teardown) won the race and
+                // already cleared/replaced _pendingCts before this continuation could acquire the
+                // lock -- possibly scheduling a brand-new retry in the very same call. Either way,
+                // that call already did everything needed (its own CancelPendingLocked/ResetLocked,
+                // or its own fresh SchedulePendingLocked). Touching _pendingScheduled/_pendingCts or
+                // the ladder state (_attempt/_awaitingRetry) here would either wipe out a newer
+                // pending retry's bookkeeping or resurrect state for an attempt nobody asked for any
+                // more, and sending would be a stale/duplicate response.create (possibly onto an
+                // already-closing socket). Stay out of the way entirely.
+                _logger?.LogInformation(
+                    "Rate-limit retry {Attempt} skipped: superseded before it could run (session={SessionId})",
+                    attempt, _sessionId);
+                return;
+            }
+
             _pendingScheduled = false;
             _pendingCts = null;
             if (_responseInFlight)
