@@ -298,6 +298,18 @@ class TokenValidator:
         `_discovery_failure_cooldown` seconds, so repeated requests during an
         outage 401 immediately instead of each re-attempting the same 10s-
         timeout network call serially under `self._lock`.
+
+    #223 round 2 (Rick's review): a LIVE JWKS refetch (e.g. the 24h cache
+    expired, or an unknown `kid` forced one) can fail the exact same way a
+    discovery fetch can -- `jwt.PyJWKClient.fetch_data` only wraps
+    `URLError`/`TimeoutError` in `PyJWKClientConnectionError`; a body-read
+    `OSError`/`http.client.HTTPException`, or a non-JSON body
+    (`json.JSONDecodeError`, a `ValueError`), all propagate uncaught straight
+    through `get_signing_key_from_jwt`. `_get_signing_key` wraps that call the
+    same way `_fetch_discovery_document` wraps `urlopen`, and negatively
+    caches a failure for `_jwks_failure_cooldown` seconds for the same reason:
+    so a JWKS-endpoint outage 401s immediately instead of every request
+    serially re-attempting the same doomed network call under `self._lock`.
     """
 
     def __init__(
@@ -306,12 +318,15 @@ class TokenValidator:
         *,
         timeout: float = 10.0,
         discovery_failure_cooldown: float = 30.0,
+        jwks_failure_cooldown: float = 30.0,
     ) -> None:
         self._settings = settings
         self._timeout = timeout
         self._discovery_failure_cooldown = discovery_failure_cooldown
+        self._jwks_failure_cooldown = jwks_failure_cooldown
         self._jwks_client: jwt.PyJWKClient | None = None
         self._discovery_failure_until: float | None = None
+        self._jwks_failure_until: float | None = None
         self._lock = threading.Lock()
 
     def _fetch_discovery_document(self) -> dict:
@@ -388,6 +403,38 @@ class TokenValidator:
                 self._discovery_failure_until = None
             return self._jwks_client
 
+    def _get_signing_key(self, client: jwt.PyJWKClient, token: str) -> jwt.PyJWK:
+        """Wraps `client.get_signing_key_from_jwt`, negatively caching body-read
+        failures the same way `_get_jwks_client` negatively caches discovery
+        failures (#223 round 2, Rick's review).
+
+        PyJWT 2.14's `PyJWKClient.fetch_data` only wraps `URLError`/
+        `TimeoutError` in `PyJWKClientConnectionError` -- a `ConnectionResetError`
+        (`OSError`) or `http.client.IncompleteRead` (`http.client.HTTPException`)
+        mid-body-read, or a non-JSON body (`json.JSONDecodeError`, a
+        `ValueError`), all propagate uncaught, past every `except` clause in
+        `_validate_sync`, surfacing as a raw 500 -- unlike every other
+        JWKS/discovery failure here, which fails closed as a 401. The
+        cooldown additionally spares a request storm (e.g. an unknown `kid`
+        during a JWKS-endpoint outage) from each independently re-attempting
+        the same doomed network call serially under `self._lock`.
+        """
+        with self._lock:
+            now = time.monotonic()
+            if self._jwks_failure_until is not None and now < self._jwks_failure_until:
+                raise EntraUnauthorized(
+                    "JWKS refetch failed recently; refusing to retry yet."
+                )
+        try:
+            signing_key = client.get_signing_key_from_jwt(token)
+        except (OSError, http.client.HTTPException, ValueError) as exc:
+            with self._lock:
+                self._jwks_failure_until = time.monotonic() + self._jwks_failure_cooldown
+            raise EntraUnauthorized(f"Unable to fetch JWKS: {exc}") from exc
+        with self._lock:
+            self._jwks_failure_until = None
+        return signing_key
+
     async def validate(self, token: str) -> dict[str, Any]:
         """Returns `{"oid", "tid", "name"}` on success. Raises `EntraUnauthorized` (401)
         or `EntraForbidden` (403). Runs PyJWT's synchronous fetch/verify through
@@ -406,7 +453,7 @@ class TokenValidator:
 
         try:
             client = self._get_jwks_client()
-            signing_key = client.get_signing_key_from_jwt(token)
+            signing_key = self._get_signing_key(client, token)
         except EntraUnauthorized:
             raise
         # N6 (#163 round-1 review): `jwt.PyJWKClientError` is a SUBCLASS of

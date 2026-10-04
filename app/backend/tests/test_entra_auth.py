@@ -594,6 +594,81 @@ class TokenValidatorTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("signing key", str(ctx.exception).lower())
         self.assertNotIn("malformed", str(ctx.exception).lower())
 
+    async def test_jwks_body_read_oserror_becomes_unauthorized(self):
+        """#223 round 2 (Rick's review): a LIVE JWKS refetch's body-read can
+        fail with a plain `OSError` subclass (e.g. the peer resets the
+        connection mid-response) -- `PyJWKClient.fetch_data` only wraps
+        `URLError`/`TimeoutError` in `PyJWKClientConnectionError`, never this.
+        Before this fix that propagated uncaught past every `except` clause
+        in `_validate_sync`, surfacing as a raw 500 instead of the fail-closed
+        401 every other JWKS/discovery failure gets."""
+        self.validator._get_jwks_client = mock.MagicMock(  # noqa: SLF001
+            return_value=_RaisingJWKSClient(ConnectionResetError("connection reset by peer"))
+        )
+        token = self._sign(_claims(self.settings))
+        with self.assertRaises(EntraUnauthorized):
+            await self.validator.validate(token)
+
+    async def test_jwks_body_read_http_exception_becomes_unauthorized(self):
+        """#223 round 2: `http.client.HTTPException` subclasses (e.g.
+        `IncompleteRead`) are not `OSError` and not `URLError` -- a distinct
+        family that must also be caught on the JWKS-refetch path, same as the
+        discovery path above."""
+        self.validator._get_jwks_client = mock.MagicMock(  # noqa: SLF001
+            return_value=_RaisingJWKSClient(http.client.IncompleteRead(b"partial"))
+        )
+        token = self._sign(_claims(self.settings))
+        with self.assertRaises(EntraUnauthorized):
+            await self.validator.validate(token)
+
+    async def test_jwks_body_read_json_decode_error_becomes_unauthorized(self):
+        """#223 round 2: a non-JSON JWKS body raises `json.JSONDecodeError`,
+        a `ValueError` subclass PyJWT itself never catches inside
+        `fetch_data` -- must also fail closed as a 401, not a raw 500."""
+        self.validator._get_jwks_client = mock.MagicMock(  # noqa: SLF001
+            return_value=_RaisingJWKSClient(json.JSONDecodeError("Expecting value", "not json", 0))
+        )
+        token = self._sign(_claims(self.settings))
+        with self.assertRaises(EntraUnauthorized):
+            await self.validator.validate(token)
+
+    async def test_jwks_body_read_failure_engages_negative_cache_cooldown(self):
+        """#223 round 2: wrapping body-read failures as `EntraUnauthorized` is
+        only useful if it engages a negative cache -- a second request within
+        the cooldown window must short-circuit WITHOUT calling
+        `get_signing_key_from_jwt` (the network) again, mirroring the
+        discovery-failure cooldown above."""
+        validator = TokenValidator(self.settings, jwks_failure_cooldown=60.0)
+        client = mock.MagicMock()
+        client.get_signing_key_from_jwt.side_effect = ConnectionResetError("connection reset by peer")
+        validator._get_jwks_client = mock.MagicMock(return_value=client)  # noqa: SLF001
+        token = self._sign(_claims(self.settings))
+        with self.assertRaises(EntraUnauthorized):
+            await validator.validate(token)
+        with self.assertRaises(EntraUnauthorized):
+            await validator.validate(token)
+        client.get_signing_key_from_jwt.assert_called_once()
+
+    async def test_jwks_retried_once_cooldown_elapses(self):
+        """#223 round 2: the JWKS-refetch negative cache is time-bounded, not
+        permanent -- once `jwks_failure_cooldown` elapses, the next request
+        must retry the network call for real (and here, succeed) instead of
+        staying stuck refusing forever."""
+        validator = TokenValidator(self.settings, jwks_failure_cooldown=0.05)
+        client = mock.MagicMock()
+        client.get_signing_key_from_jwt.side_effect = [
+            ConnectionResetError("connection reset by peer"),
+            _StubSigningKey(self.public_key),
+        ]
+        validator._get_jwks_client = mock.MagicMock(return_value=client)  # noqa: SLF001
+        token = self._sign(_claims(self.settings))
+        with self.assertRaises(EntraUnauthorized):
+            await validator.validate(token)
+        await asyncio.sleep(0.1)  # let the 0.05s cooldown window elapse
+        principal = await validator.validate(token)  # must not raise this time
+        self.assertEqual(principal["oid"], "oid-abc-123")
+        self.assertEqual(client.get_signing_key_from_jwt.call_count, 2)
+
     async def test_lazy_discovery_not_fetched_at_construction(self):
         """Constructing a `TokenValidator` (and even signing a valid token) must
         never touch the network -- only `validate()` may."""
