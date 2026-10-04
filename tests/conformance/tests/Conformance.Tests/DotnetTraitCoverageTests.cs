@@ -187,8 +187,7 @@ namespace Conformance.Tests;
 /// 429-from-chat-completion recovery) are now tagged <c>[Trait("Dotnet", "ready")]</c> at the class
 /// level -- verified green against the C# backend across 3 consecutive local runs
 /// (<c>CONFORMANCE_BACKEND=dotnet</c>) with no flakiness, plus 2 further full-suite runs pinned to
-/// 2 CPUs on native Linux (matching the ubuntu-latest CI runner) to rule out a CI-only timing flake
-/// -- raising the floor 222 to 229 (222 + 7).
+/// 2 CPUs on native Linux (matching the ubuntu-latest CI runner) to rule out a CI-only timing flake.
 ///
 /// Merge-order note for PR #226 (#147, Beth's C# auth work, independently raises this SAME floor
 /// 204 to 222 against the stale pre-#21 baseline): PR #230/#21 lands first at 222 (including this
@@ -204,6 +203,16 @@ namespace Conformance.Tests;
 /// re-measure fresh at its own rebase time the same way, not add its own historical delta (e.g.
 /// "+18") to 239 blindly -- those deltas were computed against the stale 222 baseline and may double
 /// count methods (such as this wave's 3 tool-failure-cap rows) already folded into 239.
+///
+/// #236 Rick re-review item 5 (rebasing onto the 239 baseline above, which already includes #235's
+/// rate-limit ladder): a fresh run of <see cref="CountFloorEligibleDotnetReadyTestMethods"/> (same
+/// as <c>Conformance.Tests.exe -list methods -trait Dotnet=ready</c>, minus the 18
+/// <see cref="AuthRowGatedTypeNames"/> methods) taken on this branch tip, post-rebase, is the only
+/// number trusted below -- see that measurement folded into the floor just above/below this note.
+/// Rick's own prior "235" guess (this round's earlier review) was an off-by-one against a
+/// pre-rebase count; 234 was correct for the pre-rebase tree, and the number asserted below is a
+/// brand new fresh count taken after rebasing onto #235/#237/#241 and everything else now on
+/// <c>dev</c>, per Rick's explicit "recount fresh, don't do arithmetic" instruction.
 /// </summary>
 public sealed class DotnetTraitCoverageTests
 {
@@ -236,7 +245,10 @@ public sealed class DotnetTraitCoverageTests
             $"`--filter \"{TraitName}={TraitValue}&Category!=Browser\"` baseline, minus the five " +
             "skip-only Scenarios/Auth classes -- see this class's own doc comment; " +
             $"docs/dotnet_mapping.md), but found {count}. If a tagged scenario was removed or " +
-            "renamed without a replacement, the dotnet CI leg silently lost coverage.");
+            "renamed without a replacement, the dotnet CI leg silently lost coverage. 234 is a " +
+            "FRESH count (#236 Rick re-review item 3), not arithmetic -- re-measure with " +
+            "`Conformance.Tests.exe -list methods -trait Dotnet=ready` minus the 18 " +
+            "AuthRowGatedTypeNames methods before raising this floor again.");
     }
 
 
