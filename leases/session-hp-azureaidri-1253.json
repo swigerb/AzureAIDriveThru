@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "leaseKey": "session-hp-azureaidri-1253",
+  "sessionId": "hp-azureaidri-1253",
+  "repository": "swigerb/AzureAIDriveThru",
+  "issueNumber": null,
+  "dispatchSource": "local-cli",
+  "route": "aca-job",
+  "executionMode": "aca-job",
+  "state": "claimed",
+  "attempts": 1,
+  "startedAt": "2026-10-04T16:53:28.075Z",
+  "lastHeartbeatAt": "2026-10-04T16:53:28.075Z",
+  "updatedAt": "2026-10-04T16:53:28.075Z",
+  "terminalReason": null,
+  "executionRef": null
+}
