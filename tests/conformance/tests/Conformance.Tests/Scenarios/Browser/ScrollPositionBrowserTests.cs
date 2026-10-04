@@ -30,9 +30,16 @@ namespace Conformance.Tests.Scenarios.Browser;
 /// scroll-trigger-into-view (which itself moves the window, since the trigger button sits well
 /// below the fold at this viewport height), the one point in the flow that would surface a
 /// regression back to <c>scrollIntoView()</c>-style ancestor scrolling.
+///
+/// Issue #21 (Browser-on-C#): both rows of both methods (every persona <see
+/// cref="DiscoveredPersonaIds"/> discovers) pass unchanged against CONFORMANCE_BACKEND=dotnet --
+/// this suite only loads the built frontend from static files and reads `window.scrollY`/DOM
+/// layout, none of which touches the realtime relay or order pipeline. Verified 3x locally with
+/// zero flakes.
 /// </summary>
 [Collection(BrowserConformanceCollection.Name)]
 [Trait("Category", "Browser")]
+[Trait("Dotnet", "ready")]
 public sealed class ScrollPositionBrowserTests(BrowserConformanceFixture fixture)
 {
     public static TheoryData<string> DiscoveredPersonaIds()
