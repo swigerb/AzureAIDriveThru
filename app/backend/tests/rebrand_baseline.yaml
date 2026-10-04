@@ -453,14 +453,6 @@ entries:
   reason: Non-ADR docs use the Sonic persona as the illustrative current example pending
     other persona packs landing.
   increase_reason: ''
-- file: docs/dotnet_tooling.md
-  brand: sonic
-  max: 4
-  issue: '#16'
-  reason: Inventory doc names the real Sonic fixture paths/persona id used by the
-    update_menu_sizes.py port and its parity test, same class as docs/dotnet_mapping.md's
-    illustrative-example entry.
-  increase_reason: '#16'
 - file: docs/order_resume.md
   brand: sonic
   max: 1
@@ -898,33 +890,3 @@ entries:
     same class as the #78 Python test baseline entries; remove only if the pack roster
     or its test coverage changes.'
   increase_reason: '#105'
-- file: tools/dotnet/src/UpdateMenuSizes/MenuSizeUpdater.cs
-  brand: sonic
-  max: 3
-  issue: '#16'
-  reason: Faithful C# port of scripts/update_menu_sizes.py, which only ever reads the
-    Sonic pack's production POS export; doc comments name that fixture file/persona
-    the same way the Python twin's own path constant does.
-  increase_reason: '#16'
-- file: tools/dotnet/src/UpdateMenuSizes/Program.cs
-  brand: sonic
-  max: 4
-  issue: '#16'
-  reason: CLI defaults mirror scripts/update_menu_sizes.py's own hardcoded Sonic fixture
-    paths so the port is a drop-in `dotnet run` replacement with no required flags.
-  increase_reason: '#16'
-- file: tools/dotnet/tests/UpdateMenuSizes.Tests/MenuSizeUpdaterTests.cs
-  brand: sonic
-  max: 1
-  issue: '#16'
-  reason: Doc comment contrasts these synthetic-fixture unit tests with PythonParityTests'
-    real personas/sonic/menu/** data.
-  increase_reason: '#16'
-- file: tools/dotnet/tests/UpdateMenuSizes.Tests/PythonParityTests.cs
-  brand: sonic
-  max: 7
-  issue: '#16'
-  reason: Output-parity test copies the real personas/sonic/menu/** fixtures into throwaway
-    temp dirs to diff the Python twin's output against the C# port's; doc comments and
-    path-building code both name the real Sonic fixture files repeatedly.
-  increase_reason: '#16'

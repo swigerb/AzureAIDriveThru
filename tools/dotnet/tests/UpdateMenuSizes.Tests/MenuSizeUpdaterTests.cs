@@ -5,7 +5,7 @@ namespace UpdateMenuSizes.Tests;
 /// <summary>
 /// Unit tests for MenuSizeUpdater (issue #16's first C# tooling port, the twin of
 /// scripts/update_menu_sizes.py) against small synthetic fixtures -- fast, deterministic, and
-/// independent of the real personas/sonic/menu/** data. See PythonParityTests for the
+/// independent of the real checked-in persona menu data. See PythonParityTests for the
 /// real-Python-twin, real-fixture output-parity proof.
 /// </summary>
 public sealed class MenuSizeUpdaterTests : IDisposable
@@ -30,6 +30,16 @@ public sealed class MenuSizeUpdaterTests : IDisposable
         _tempFiles.Add(path);
         return path;
     }
+
+    /// <summary>
+    /// A synthetic product-search-map fixture, standing in for a persona's own
+    /// product_search_map.json (externalized from this library per PR #224 review R1 -- see
+    /// MenuSizeUpdater.LoadProductSearchMap). Covers only the product name these UpdateMenu tests
+    /// use ("Cherry Limeade"); "Not A Tracked Item" is deliberately absent so the
+    /// not-in-the-map SKIP path stays exercised.
+    /// </summary>
+    private string WriteDefaultProductSearchMap() =>
+        WriteTempJson("search-map", """{ "Cherry Limeade": "Cherry Limeade" }""");
 
     // ---- ExtractSize -------------------------------------------------------------------------
 
@@ -189,7 +199,7 @@ public sealed class MenuSizeUpdaterTests : IDisposable
             }
             """);
 
-        var result = MenuSizeUpdater.UpdateMenu(productionPath, menuPath);
+        var result = MenuSizeUpdater.UpdateMenu(productionPath, menuPath, WriteDefaultProductSearchMap());
 
         Assert.Equal(1, result.UpdatedCount);
         var updatedJson = File.ReadAllText(menuPath);
@@ -216,7 +226,7 @@ public sealed class MenuSizeUpdaterTests : IDisposable
             """);
         var before = File.ReadAllText(menuPath);
 
-        var result = MenuSizeUpdater.UpdateMenu(productionPath, menuPath);
+        var result = MenuSizeUpdater.UpdateMenu(productionPath, menuPath, WriteDefaultProductSearchMap());
 
         Assert.Equal(0, result.UpdatedCount);
         // Untracked items must round-trip unchanged in content (formatting may differ).
@@ -241,7 +251,7 @@ public sealed class MenuSizeUpdaterTests : IDisposable
             }
             """);
 
-        var result = MenuSizeUpdater.UpdateMenu(productionPath, menuPath);
+        var result = MenuSizeUpdater.UpdateMenu(productionPath, menuPath, WriteDefaultProductSearchMap());
 
         Assert.Equal(0, result.UpdatedCount);
         Assert.Contains(result.Log, line => line.Contains("SKIP Cherry Limeade: no production data found"));
@@ -264,10 +274,135 @@ public sealed class MenuSizeUpdaterTests : IDisposable
             }
             """);
 
-        var first = MenuSizeUpdater.UpdateMenu(productionPath, menuPath);
-        var second = MenuSizeUpdater.UpdateMenu(productionPath, menuPath);
+        var first = MenuSizeUpdater.UpdateMenu(productionPath, menuPath, WriteDefaultProductSearchMap());
+        var second = MenuSizeUpdater.UpdateMenu(productionPath, menuPath, WriteDefaultProductSearchMap());
 
         Assert.Equal(1, first.UpdatedCount);
         Assert.Equal(0, second.UpdatedCount);
+    }
+
+    // ---- LoadProductSearchMap (PR #224 review R1: externalized to a persona data file) --------
+
+    [Fact]
+    public void LoadProductSearchMap_ParsesFlatJsonObject()
+    {
+        var path = WriteTempJson("search-map", """
+            { "Cherry Limeade": "Cherry Limeade", "Ocean Water\u00ae": "Ocean Water" }
+            """);
+
+        var map = MenuSizeUpdater.LoadProductSearchMap(path);
+
+        Assert.Equal("Cherry Limeade", map["Cherry Limeade"]);
+        Assert.Equal("Ocean Water", map["Ocean Water\u00ae"]);
+    }
+
+    [Fact]
+    public void LoadProductSearchMap_RejectsEmptyMap()
+    {
+        var path = WriteTempJson("search-map", "{}");
+
+        Assert.Throws<InvalidDataException>(() => MenuSizeUpdater.LoadProductSearchMap(path));
+    }
+
+    // ---- Output parity with the Python twin (PR #224 review R2/R3) ----------------------------
+
+    [Theory]
+    [InlineData(1.50, "1.5")] // the issue's own example: Python's float repr drops the trailing zero
+    [InlineData(6.00, "6.0")] // but a "whole" float still gets ".0", unlike .NET's default double.ToString()
+    [InlineData(3.49, "3.49")]
+    [InlineData(0.50, "0.5")]
+    [InlineData(100.00, "100.0")]
+    public void PythonFloatRepr_MatchesPythonJsonFloatFormatting(decimal value, string expected)
+    {
+        Assert.Equal(expected, MenuSizeUpdater.PythonFloatRepr(value));
+    }
+
+    [Fact]
+    public void UpdateMenu_WritesTrailingZeroPricesTheWayPythonWould()
+    {
+        // A production price of 1.50 is what motivated this fix (PR #224 review R2): a C#
+        // decimal parsed from "1.50" keeps its trailing zero, but Python's json.load parses the
+        // same literal as the float 1.5, and json.dump then writes "1.5" -- not "1.50". Mutation
+        // check: reverting MenuSizeUpdater.PythonFloatRepr (or the ["price"] = ... line back to
+        // assigning the decimal directly) makes this assertion fail with "1.50" in the output.
+        var productionPath = WriteTempJson("prod", """
+            {
+              "menus": { "menu-1": { "products": {
+                "p-small": { "displayName": "Small Cherry Limeade", "price": 1.50 }
+              } } }
+            }
+            """);
+        var menuPath = WriteTempJson("menu", """
+            { "menuItems": [ { "name": "Drinks", "items": [
+                { "name": "Cherry Limeade", "sizes": [] }
+            ] } ] }
+            """);
+
+        MenuSizeUpdater.UpdateMenu(productionPath, menuPath, WriteDefaultProductSearchMap());
+
+        var updatedJson = File.ReadAllText(menuPath);
+        Assert.Contains("\"price\": 1.5", updatedJson);
+        Assert.DoesNotContain("1.50", updatedJson);
+    }
+
+    [Fact]
+    public void UpdateMenu_UpdatedLogLine_UsesPythonListReprFormat()
+    {
+        // Python's log line embeds `[s['size'] for s in new_sizes]`, i.e. Python's list repr:
+        // ['small'], single-quoted -- not C#'s default [small].
+        var productionPath = WriteTempJson("prod", ProductionFixture);
+        var menuPath = WriteTempJson("menu", """
+            { "menuItems": [ { "name": "Drinks", "items": [
+                { "name": "Cherry Limeade", "sizes": [] }
+            ] } ] }
+            """);
+
+        var result = MenuSizeUpdater.UpdateMenu(productionPath, menuPath, WriteDefaultProductSearchMap());
+
+        Assert.Contains(result.Log, line => line.Contains("['mini', 'small', 'large']"));
+    }
+
+    [Fact]
+    public void UpdateMenu_NonAsciiCharactersAreWrittenRaw_LikePythonEnsureAsciiFalse()
+    {
+        // Python's json.dump(..., ensure_ascii=False) writes non-ASCII characters (here, an
+        // emoji and a registered-trademark sign) as raw UTF-8 bytes rather than \uXXXX escapes.
+        // Mutation check: swapping PythonJsonEncoder back for JavaScriptEncoder.Default or
+        // .UnsafeRelaxedJsonEscaping makes this assertion fail (both still escape these).
+        var productionPath = WriteTempJson("prod", ProductionFixture);
+        var menuPath = WriteTempJson("menu", """
+            { "menuItems": [ { "name": "Drinks", "items": [
+                { "name": "Cherry Limeade", "description": "Fan favorite \ud83d\ude00 Ocean Water\u00ae", "sizes": [] }
+            ] } ] }
+            """);
+
+        MenuSizeUpdater.UpdateMenu(productionPath, menuPath, WriteDefaultProductSearchMap());
+
+        var updatedJson = File.ReadAllText(menuPath);
+        Assert.Contains("Fan favorite \U0001F600 Ocean Water\u00ae", updatedJson);
+        Assert.DoesNotContain("\\u00ae", updatedJson);
+        Assert.DoesNotContain("\\ud83d", updatedJson, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void UpdateMenu_WritesEnvironmentNewLine_IncludingTrailingNewline()
+    {
+        // Python's open(..., "w") text-mode translates every "\n" it writes to the OS line
+        // separator (CRLF on Windows, LF elsewhere), including the final explicit f.write("\n").
+        // File.WriteAllText does not do this translation on its own -- MenuSizeUpdater must use
+        // Environment.NewLine explicitly for the trailing newline (and configure
+        // JsonSerializerOptions.NewLine the same way) to match.
+        var productionPath = WriteTempJson("prod", ProductionFixture);
+        var menuPath = WriteTempJson("menu", """
+            { "menuItems": [ { "name": "Drinks", "items": [
+                { "name": "Cherry Limeade", "sizes": [] }
+            ] } ] }
+            """);
+
+        MenuSizeUpdater.UpdateMenu(productionPath, menuPath, WriteDefaultProductSearchMap());
+
+        var bytes = File.ReadAllBytes(menuPath);
+        var expectedTrailer = System.Text.Encoding.UTF8.GetBytes(Environment.NewLine);
+        Assert.Equal(expectedTrailer, bytes[^expectedTrailer.Length..]);
     }
 }

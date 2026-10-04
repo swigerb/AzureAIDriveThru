@@ -11,11 +11,15 @@ name: .NET Tooling
     paths:
       - "tools/dotnet/**"
       - ".github/workflows/dotnet-tooling.yml"
+      - "scripts/update_menu_sizes.py"
+      - "personas/*/menu/**"
   push:
     branches: [dev]
     paths:
       - "tools/dotnet/**"
       - ".github/workflows/dotnet-tooling.yml"
+      - "scripts/update_menu_sizes.py"
+      - "personas/*/menu/**"
   workflow_dispatch: {}
 
 concurrency:

@@ -10,6 +10,13 @@
       for why this tool was chosen (no Azure/network dependency, deterministic, small) and how its
       output is proven to match the Python twin (UpdateMenuSizes.Tests/PythonParityTests.cs).
     -->
+    <!--
+      PR #224 review R2 (byte-for-byte Python output parity): PythonJsonEncoder.cs implements a
+      custom System.Text.Encodings.Web.JavaScriptEncoder, whose FindFirstCharacterToEncode and
+      TryEncodeUnicodeScalar overrides take char* buffers, which is the only unsafe code in this
+      project.
+    -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>

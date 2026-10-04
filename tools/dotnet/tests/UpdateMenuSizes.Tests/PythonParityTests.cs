@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
-using System.Text.Json;
+using System.Text;
+using System.Text.RegularExpressions;
 using UpdateMenuSizes;
 
 namespace UpdateMenuSizes.Tests;
@@ -8,16 +9,27 @@ namespace UpdateMenuSizes.Tests;
 /// <summary>
 /// Issue #16's acceptance bar for a ported tool: "the C# tool produces the same output as its
 /// Python twin." This drives the REAL scripts/update_menu_sizes.py as a genuine subprocess
-/// against a private copy of the real personas/sonic/menu/** fixtures, drives
+/// against a private copy of the real persona fixtures (discovered via
+/// <see cref="PersonaMenuLocator"/>, not a hardcoded persona-id literal -- PR #224 review R1), drives
 /// <see cref="MenuSizeUpdater.UpdateMenu"/> in-process against a second private copy of the same
-/// fixtures, then asserts the two resulting menuItems.json files are structurally identical JSON
-/// (not byte-identical text -- json.dump's and System.Text.Json's indentation/escaping
-/// conventions differ even when the parsed values are equal, and that difference isn't
-/// meaningful here).
+/// fixtures, then asserts (PR #224 review R2/R3):
+///   1. the two resulting menuItems.json files are BYTE-IDENTICAL (not just structurally equal --
+///      json.dump's ensure_ascii=False escaping, Python's per-OS newline translation, and float
+///      repr formatting are all externally observable and must match exactly, not just the parsed
+///      values);
+///   2. the two programs' captured console output is identical, line for line including the
+///      blank-line-then-summary and the exact "['mini', 'small']"-style Python list repr; and
+///   3. the "Updated N items" count the two programs report is identical.
 ///
-/// Never touches the real, checked-in personas/sonic/menu/** files -- both runs operate on throwaway
-/// copies under a per-test temp directory, matching this repo's existing C# test convention (see
-/// e.g. app/backend-dotnet/tests/Backend.Tests/TestSupport/PersonaPackFixture.cs,
+/// Mutation check (see MenuSizeUpdaterTests for the individual-behavior unit tests with their own
+/// mutation-check notes): reverting PythonJsonEncoder to JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+/// reverting the trailing-newline literal back to "\n", or reverting PythonFloatRepr's call site
+/// back to assigning the raw decimal, each independently makes the byte-identical assertion below
+/// fail against the real fixtures (confirmed while implementing this fix).
+///
+/// Never touches the real, checked-in personas/&lt;id&gt;/menu/** files -- both runs operate on
+/// throwaway copies under a per-test temp directory, matching this repo's existing C# test
+/// convention (see e.g. app/backend-dotnet/tests/Backend.Tests/TestSupport/PersonaPackFixture.cs,
 /// tests/conformance/tests/Conformance.Tests/MenuIndexResolveIndexPathsTests.cs).
 /// </summary>
 public sealed class PythonParityTests : IDisposable
@@ -34,16 +46,15 @@ public sealed class PythonParityTests : IDisposable
     }
 
     [Fact]
-    public async Task DotnetPort_ProducesStructurallyIdenticalOutput_ToRealPythonScript()
+    public async Task DotnetPort_ProducesByteIdenticalOutput_ToRealPythonScript()
     {
         var repoRoot = RepoRoot.Find(AppContext.BaseDirectory);
-        var realProductionFile = Path.Combine(
-            repoRoot, "personas", "sonic", "menu", "source", "sonic-menu-items.json");
-        var realMenuFile = Path.Combine(repoRoot, "personas", "sonic", "menu", "menuItems.json");
+        var discovery = PersonaMenuLocator.Locate(repoRoot);
         var realScript = Path.Combine(repoRoot, "scripts", "update_menu_sizes.py");
 
-        Assert.True(File.Exists(realProductionFile), $"Fixture not found: {realProductionFile}");
-        Assert.True(File.Exists(realMenuFile), $"Fixture not found: {realMenuFile}");
+        Assert.True(File.Exists(discovery.ProductionFilePath), $"Fixture not found: {discovery.ProductionFilePath}");
+        Assert.True(File.Exists(discovery.MenuFilePath), $"Fixture not found: {discovery.MenuFilePath}");
+        Assert.True(File.Exists(discovery.ProductSearchMapFilePath), $"Fixture not found: {discovery.ProductSearchMapFilePath}");
         Assert.True(File.Exists(realScript), $"Python twin not found: {realScript}");
 
         var interpreter = await FindWorkingPythonInterpreterAsync(repoRoot, TestContext.Current.CancellationToken);
@@ -64,35 +75,72 @@ public sealed class PythonParityTests : IDisposable
 
         // Lay out a private "repo" under _tempRoot containing only what update_menu_sizes.py's
         // __file__-relative paths need: scripts/update_menu_sizes.py, and a copy of the real
-        // production export + menu file for the Python run to mutate.
+        // production export + menu file for the Python run to mutate. The Python twin (kept
+        // untouched per issue #16's scope) hardcodes "personas/<a specific persona id>/menu/..."
+        // in its own source, not whatever persona PersonaMenuLocator discovers -- so this layout
+        // intentionally uses discovery.PersonaId (today, the one persona pack checked into the
+        // repo) rather than a literal, but if that persona pack is ever renamed or a second one is
+        // added, the Python run itself would need updating first (out of scope for this C# port).
         var pythonScriptsDir = Path.Combine(_tempRoot, "python-run", "scripts");
-        var pythonMenuDir = Path.Combine(_tempRoot, "python-run", "personas", "sonic", "menu");
+        var pythonMenuDir = Path.Combine(_tempRoot, "python-run", "personas", discovery.PersonaId, "menu");
         Directory.CreateDirectory(pythonScriptsDir);
         Directory.CreateDirectory(Path.Combine(pythonMenuDir, "source"));
         File.Copy(realScript, Path.Combine(pythonScriptsDir, "update_menu_sizes.py"));
-        File.Copy(realProductionFile, Path.Combine(pythonMenuDir, "source", "sonic-menu-items.json"));
+        File.Copy(discovery.ProductionFilePath, Path.Combine(pythonMenuDir, "source", Path.GetFileName(discovery.ProductionFilePath)));
         var pythonMenuPath = Path.Combine(pythonMenuDir, "menuItems.json");
-        File.Copy(realMenuFile, pythonMenuPath);
+        File.Copy(discovery.MenuFilePath, pythonMenuPath);
 
-        var (exitCode, stdout, stderr) = await RunProcessAsync(
+        var (exitCode, pythonStdout, stderr) = await RunProcessAsync(
             interpreter, [Path.Combine(pythonScriptsDir, "update_menu_sizes.py")], TestContext.Current.CancellationToken);
-        Assert.True(exitCode == 0, $"Python twin exited {exitCode}.\nstdout:\n{stdout}\nstderr:\n{stderr}");
+        Assert.True(exitCode == 0, $"Python twin exited {exitCode}.\nstdout:\n{pythonStdout}\nstderr:\n{stderr}");
 
-        // Same two input fixtures, run through the C# port in-process instead.
+        // Same two input fixtures (plus the product search map, needed by the 3-arg UpdateMenu --
+        // PR #224 review R1), run through the C# port in-process instead.
         var dotnetDir = Path.Combine(_tempRoot, "dotnet-run");
         Directory.CreateDirectory(dotnetDir);
-        var dotnetProductionPath = Path.Combine(dotnetDir, "sonic-menu-items.json");
-        File.Copy(realProductionFile, dotnetProductionPath);
+        var dotnetProductionPath = Path.Combine(dotnetDir, Path.GetFileName(discovery.ProductionFilePath));
+        File.Copy(discovery.ProductionFilePath, dotnetProductionPath);
         var dotnetMenuPath = Path.Combine(dotnetDir, "menuItems.json");
-        File.Copy(realMenuFile, dotnetMenuPath);
+        File.Copy(discovery.MenuFilePath, dotnetMenuPath);
+        var dotnetProductSearchMapPath = Path.Combine(dotnetDir, "product_search_map.json");
+        File.Copy(discovery.ProductSearchMapFilePath, dotnetProductSearchMapPath);
 
-        MenuSizeUpdater.UpdateMenu(dotnetProductionPath, dotnetMenuPath);
+        var result = MenuSizeUpdater.UpdateMenu(dotnetProductionPath, dotnetMenuPath, dotnetProductSearchMapPath);
 
-        using var pythonDoc = JsonDocument.Parse(File.ReadAllText(pythonMenuPath));
-        using var dotnetDoc = JsonDocument.Parse(File.ReadAllText(dotnetMenuPath));
+        // 1. Byte-identical file output -- not structural equality. Proves PythonJsonEncoder's
+        // ensure_ascii=False escaping, the Environment.NewLine-based newline handling (including
+        // the final trailing newline), and PythonFloatRepr's trailing-zero-dropping all match the
+        // real Python twin against the real fixtures, not just a synthetic unit-test sample.
+        var pythonBytes = File.ReadAllBytes(pythonMenuPath);
+        var dotnetBytes = File.ReadAllBytes(dotnetMenuPath);
         Assert.True(
-            JsonStructurallyEquals(pythonDoc.RootElement, dotnetDoc.RootElement),
-            "The C# port's menuItems.json output differs structurally from the Python twin's output.");
+            pythonBytes.AsSpan().SequenceEqual(dotnetBytes),
+            "The C# port's menuItems.json output is not byte-identical to the Python twin's output " +
+            $"(python={pythonBytes.Length} bytes, dotnet={dotnetBytes.Length} bytes).");
+
+        // 2. Console output: reconstruct what Program.cs would have printed (one Console.WriteLine
+        // per Log entry, each terminated by Environment.NewLine, matching how Python's print()
+        // terminates every line including the final one) and compare it to Python's own captured
+        // stdout verbatim -- this also exercises the per-item SKIP/UPDATED line text (including the
+        // Python-list-repr "['mini', 'small']" sizes format) and the blank-line-then-summary shape.
+        var dotnetStdout = string.Join(Environment.NewLine, result.Log) + Environment.NewLine;
+        Assert.Equal(pythonStdout, dotnetStdout);
+
+        // 3. Updated-item count: parsed from each program's own "Updated N items..." stdout line,
+        // not just read off UpdateResult.UpdatedCount directly -- this is what a human (or CI log
+        // reader) actually sees, and is a second, independent check on top of the raw byte/line
+        // comparisons above.
+        var pythonUpdatedCount = ParseUpdatedCount(pythonStdout);
+        var dotnetUpdatedCount = ParseUpdatedCount(dotnetStdout);
+        Assert.Equal(pythonUpdatedCount, dotnetUpdatedCount);
+        Assert.Equal(pythonUpdatedCount, result.UpdatedCount);
+    }
+
+    private static int ParseUpdatedCount(string stdout)
+    {
+        var match = Regex.Match(stdout, @"Updated (\d+) items in menuItems\.json");
+        Assert.True(match.Success, $"Could not find an 'Updated N items...' line in:\n{stdout}");
+        return int.Parse(match.Groups[1].Value);
     }
 
     /// <summary>
@@ -139,7 +187,15 @@ public sealed class PythonParityTests : IDisposable
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
+            // Without this, .NET decodes the child's redirected stdout using the console's
+            // legacy codepage (not UTF-8), mangling the non-ASCII characters this very test is
+            // trying to prove survive round-tripping unescaped (e.g. (R) in "Ocean Water(R)").
+            // PYTHONIOENCODING forces Python's side of the pipe to also encode as UTF-8,
+            // regardless of the host console's codepage.
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8,
         };
+        startInfo.Environment["PYTHONIOENCODING"] = "utf-8";
         foreach (var argument in arguments)
         {
             startInfo.ArgumentList.Add(argument);
@@ -151,56 +207,5 @@ public sealed class PythonParityTests : IDisposable
         var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
         await process.WaitForExitAsync(cancellationToken);
         return (process.ExitCode, await stdoutTask, await stderrTask);
-    }
-
-    /// <summary>
-    /// Deep JSON equality: object property order is NOT significant (json.dump and
-    /// System.Text.Json may legitimately order/escape things differently), array element order
-    /// IS significant (these documents are ordered lists of menu categories/items/sizes, where
-    /// order is meaningful data, not incidental formatting).
-    /// </summary>
-    private static bool JsonStructurallyEquals(JsonElement a, JsonElement b)
-    {
-        if (a.ValueKind != b.ValueKind)
-        {
-            return false;
-        }
-
-        switch (a.ValueKind)
-        {
-            case JsonValueKind.Object:
-                var aProps = a.EnumerateObject().ToDictionary(p => p.Name, p => p.Value);
-                var bProps = b.EnumerateObject().ToDictionary(p => p.Name, p => p.Value);
-                if (aProps.Count != bProps.Count)
-                {
-                    return false;
-                }
-                foreach (var (name, aValue) in aProps)
-                {
-                    if (!bProps.TryGetValue(name, out var bValue) || !JsonStructurallyEquals(aValue, bValue))
-                    {
-                        return false;
-                    }
-                }
-                return true;
-
-            case JsonValueKind.Array:
-                var aItems = a.EnumerateArray().ToList();
-                var bItems = b.EnumerateArray().ToList();
-                if (aItems.Count != bItems.Count)
-                {
-                    return false;
-                }
-                return aItems.Zip(bItems, JsonStructurallyEquals).All(equal => equal);
-
-            case JsonValueKind.Number:
-                return a.GetDecimal() == b.GetDecimal();
-
-            case JsonValueKind.String:
-                return a.GetString() == b.GetString();
-
-            default: // True, False, Null, Undefined
-                return true;
-        }
     }
 }

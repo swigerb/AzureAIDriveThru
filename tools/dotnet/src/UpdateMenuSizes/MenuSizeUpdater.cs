@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -5,9 +6,11 @@ namespace UpdateMenuSizes;
 
 /// <summary>
 /// A faithful port of scripts/update_menu_sizes.py (issue #16's first C# tooling port -- see
-/// docs/dotnet_tooling.md). Adds the size/price variants parsed from the Sonic production POS
-/// export (sonic-menu-items.json) to the handful of drink/slush/shake/blast items named in
-/// <see cref="ProductSearchMap"/>, inside the UI's menuItems.json.
+/// docs/dotnet_tooling.md). Adds the size/price variants parsed from a persona's production POS
+/// export (<c>personas/&lt;id&gt;/menu/source/*-menu-items.json</c>, found via
+/// <see cref="PersonaMenuLocator"/>) to the handful of drink/slush/shake/blast items named in that
+/// same persona's own <c>product_search_map.json</c> (see <see cref="LoadProductSearchMap"/>),
+/// inside the persona's <c>menuItems.json</c>.
 ///
 /// This class intentionally reproduces the Python twin's logic exactly, including its one
 /// apparent dead/no-op size prefix (see <see cref="SizePrefixes"/>) -- a port's job is to match
@@ -41,16 +44,42 @@ public static class MenuSizeUpdater
     /// <summary>Output order for an item's size variants, matching Python's SIZE_ORDER.</summary>
     public static readonly IReadOnlyList<string> SizeOrder = ["mini", "small", "medium", "large", "rt 44"];
 
-    /// <summary>Maps a menuItems.json item name to its search term in the production export.</summary>
-    public static readonly IReadOnlyDictionary<string, string> ProductSearchMap = new Dictionary<string, string>
+    /// <summary>
+    /// Loads a persona's menuItems.json-name -&gt; production-search-term map from
+    /// <paramref name="productSearchMapFilePath"/> (a flat JSON object of string -&gt; string).
+    /// This data moved out of this shared, persona-agnostic port and into each persona's own
+    /// <c>personas/&lt;id&gt;/menu/product_search_map.json</c> (issue #16, PR #224 review R1):
+    /// the mapped item names and search terms ARE that persona's own menu/brand data, not
+    /// something a generic tooling port should hardcode. Parsed via <see cref="JsonDocument"/>
+    /// (not the reflection-based <see cref="JsonSerializer.Deserialize{T}(Stream, JsonSerializerOptions?)"/>),
+    /// matching <see cref="LoadProductionProducts"/>'s existing convention elsewhere in this file.
+    /// </summary>
+    public static IReadOnlyDictionary<string, string> LoadProductSearchMap(string productSearchMapFilePath)
     {
-        ["Cherry Limeade"] = "Cherry Limeade",
-        ["Blue Raspberry Slush"] = "Blue Raspberry Slush",
-        ["Ocean Water\u00ae"] = "Ocean Water",
-        ["Oreo\u00ae Peanut Butter Shake"] = "OREO\u00ae Peanut Butter Master Shake",
-        ["Classic Vanilla Shake"] = "Vanilla Classic Shake",
-        ["SONIC Blast\u00ae with M&M'S\u00ae"] = "SONIC Blast\u00ae made with M&M",
-    };
+        using var stream = File.OpenRead(productSearchMapFilePath);
+        using var doc = JsonDocument.Parse(stream);
+
+        if (doc.RootElement.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidDataException(
+                $"'{productSearchMapFilePath}' did not parse as a JSON object of " +
+                "menuItems.json-name -> production-search-term strings.");
+        }
+
+        var map = new Dictionary<string, string>();
+        foreach (var property in doc.RootElement.EnumerateObject())
+        {
+            map[property.Name] = property.Value.ValueKind == JsonValueKind.String
+                ? property.Value.GetString() ?? string.Empty
+                : string.Empty;
+        }
+
+        if (map.Count == 0)
+        {
+            throw new InvalidDataException($"'{productSearchMapFilePath}' contained no entries.");
+        }
+        return map;
+    }
 
     /// <summary>The production export's two fields this tool actually reads, per product.</summary>
     public readonly record struct ProductEntry(string DisplayName, decimal Price);
@@ -170,15 +199,17 @@ public static class MenuSizeUpdater
     }
 
     /// <summary>
-    /// Reconciles every <see cref="ProductSearchMap"/> item in <paramref name="menuFilePath"/>
-    /// against <paramref name="productionFilePath"/>'s size variants, rewriting
+    /// Reconciles every <paramref name="productSearchMapFilePath"/> (see
+    /// <see cref="LoadProductSearchMap"/>) item in <paramref name="menuFilePath"/> against
+    /// <paramref name="productionFilePath"/>'s size variants, rewriting
     /// <paramref name="menuFilePath"/> in place -- the same observable effect as Python's
     /// <c>update_menu()</c>. Returns how many items changed and the same SKIP/UPDATED log lines
     /// the Python twin prints, for callers to display or assert against.
     /// </summary>
-    public static UpdateResult UpdateMenu(string productionFilePath, string menuFilePath)
+    public static UpdateResult UpdateMenu(string productionFilePath, string menuFilePath, string productSearchMapFilePath)
     {
         var products = LoadProductionProducts(productionFilePath);
+        var productSearchMap = LoadProductSearchMap(productSearchMapFilePath);
 
         var menuText = File.ReadAllText(menuFilePath);
         var menuNode = JsonNode.Parse(menuText)
@@ -195,7 +226,7 @@ public static class MenuSizeUpdater
             {
                 var item = itemNode!.AsObject();
                 var name = item["name"]!.GetValue<string>();
-                if (!ProductSearchMap.TryGetValue(name, out var searchTerm))
+                if (!productSearchMap.TryGetValue(name, out var searchTerm))
                 {
                     continue;
                 }
@@ -249,12 +280,25 @@ public static class MenuSizeUpdater
                         newSizesArray.Add(new JsonObject
                         {
                             ["size"] = size,
-                            ["price"] = price,
+                            // Python's json.dump re-serializes every number it parsed as a float
+                            // (any production price, since all of them have a decimal point) via
+                            // float.__repr__ -- the shortest round-trippable form, e.g. 1.50 ->
+                            // "1.5", not whatever trailing-zero scale a C# decimal happened to
+                            // retain from parsing. JsonNode.Parse on that exact string preserves it
+                            // verbatim when re-serialized (see PythonFloatRepr), unlike assigning
+                            // the decimal directly.
+                            ["price"] = JsonNode.Parse(PythonFloatRepr(price)),
                         });
                     }
                     item["sizes"] = newSizesArray;
                     updatedCount++;
-                    log.Add($"  UPDATED {name}: {oldCount} -> {newSizes.Count} sizes: [{string.Join(", ", newSizes.Select(s => s.Size))}]");
+                    // Python's log line embeds the new sizes list via an f-string, which calls
+                    // Python's list repr -- ['mini', 'small'], not C#'s default
+                    // string.Join-style [mini, small]. SizeOrder's values are a small fixed,
+                    // internal set of plain words with no quotes/backslashes, so naive
+                    // single-quote wrapping is safe here (not a general-purpose Python repr).
+                    var sizesRepr = "[" + string.Join(", ", newSizes.Select(s => $"'{s.Size}'")) + "]";
+                    log.Add($"  UPDATED {name}: {oldCount} -> {newSizes.Count} sizes: {sizesRepr}");
                 }
                 else
                 {
@@ -263,17 +307,39 @@ public static class MenuSizeUpdater
             }
         }
 
+        // Byte-for-byte match of Python's `json.dump(menu_data, f, indent=4, ensure_ascii=False)`
+        // + `f.write("\n")`: PythonJsonEncoder reproduces ensure_ascii=False's narrower escape set
+        // (see its own doc comment), and NewLine/the trailing newline use Environment.NewLine to
+        // reproduce Python's text-mode "w" newline translation (CRLF on Windows, LF elsewhere) for
+        // every newline the write emits, including the final one -- System.Text.Json's own default
+        // NewLine already matches Environment.NewLine on this SDK, but this is set explicitly so
+        // that remains true regardless of SDK defaults changing.
         var writeOptions = new JsonSerializerOptions
         {
             WriteIndented = true,
             IndentSize = 4,
-            Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+            NewLine = Environment.NewLine,
+            Encoder = PythonJsonEncoder.Instance,
         };
-        File.WriteAllText(menuFilePath, menuNode.ToJsonString(writeOptions) + "\n");
+        File.WriteAllText(menuFilePath, menuNode.ToJsonString(writeOptions) + Environment.NewLine);
 
         log.Add(string.Empty);
         log.Add($"Updated {updatedCount} items in menuItems.json");
 
         return new UpdateResult(updatedCount, log);
+    }
+
+    /// <summary>
+    /// Formats <paramref name="value"/> the way Python's <c>json.dump</c> would format the same
+    /// value after round-tripping it through <c>json.load</c> as a float (every production price
+    /// has a decimal point, so Python always parses it as a float, never an int) -- the shortest
+    /// decimal string that round-trips to the same IEEE-754 double, with at least one digit after
+    /// the point (Python's float repr always shows ".0" for a whole number; .NET's default
+    /// shortest-round-trip double formatting does not).
+    /// </summary>
+    internal static string PythonFloatRepr(decimal value)
+    {
+        var text = ((double)value).ToString(CultureInfo.InvariantCulture);
+        return text.IndexOfAny(['.', 'e', 'E']) < 0 ? text + ".0" : text;
     }
 }

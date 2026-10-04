@@ -17,7 +17,7 @@ this PR**, and azd hooks / CI keep running the Python implementations by default
 
 | File | Purpose | Inputs / outputs | azd hook / CI usage | Azure dependency | Proposed C# shape |
 | --- | --- | --- | --- | --- | --- |
-| `scripts/update_menu_sizes.py` | Adds Mini/Small/Medium/Large/RT 44 size+price variants (parsed from the production POS export) to a handful of drink/slush/shake/blast items in the UI menu file. | In: `personas/sonic/menu/source/sonic-menu-items.json` (read-only), `personas/sonic/menu/menuItems.json`. Out: rewrites `menuItems.json` in place. | Manual dev tool only; not an azd hook, not referenced by CI. | None (pure JSON transform, no network/SDK calls). | **Ported this PR** -- `tools/dotnet/src/UpdateMenuSizes` (small console tool project). See "This PR's port" below. |
+| `scripts/update_menu_sizes.py` | Adds Mini/Small/Medium/Large/RT 44 size+price variants (parsed from the production POS export) to a handful of drink/slush/shake/blast items in the UI menu file. | In: `personas/<id>/menu/source/<id>-menu-items.json` (read-only), `personas/<id>/menu/menuItems.json`. Out: rewrites `menuItems.json` in place. | Manual dev tool only; not an azd hook, not referenced by CI. | None (pure JSON transform, no network/SDK calls). | **Ported this PR** -- `tools/dotnet/src/UpdateMenuSizes` (small console tool project). See "This PR's port" below. |
 | `scripts/extract_production_items.py` | Produces a stdout report of every item in the production POS export grouped by category, then a gap analysis (items in the UI menu but not production, and vice versa) against `menuItems.json`. Shares its category-walking logic with `sonic_menu_ingestion_search.ipynb` ("using the SAME logic" per its own docstring). | In: same two files as `update_menu_sizes.py` (read-only). Out: stdout report only, no file written. | Manual dev/report tool only; not an azd hook, not referenced by CI. | None (pure JSON read + report, no network/SDK calls). | Deferred to a later wave -- a second candidate as easy as `update_menu_sizes.py` (same no-Azure, pure-JSON shape), proposed as a small console tool project (`tools/dotnet/src/ExtractProductionItems`) alongside it. |
 | `scripts/benchmark_reasoning.py` | Runs scripted guest utterances against a **live** Azure OpenAI realtime deployment to benchmark `reasoning.effort`/`parallel_tool_calls` latency and tool-call correctness. | In: live realtime deployment (via `azd env get-values`/env vars), optional `--tools real` hits Azure AI Search too. Out: JSON/JSONL results file (`--out`/`--resume`). | Manual dev benchmarking tool only; not an azd hook, not referenced by CI. | **Yes** -- requires a live Azure OpenAI realtime deployment; explicitly out of scope for this issue ("NOT ... anything that calls Azure"). | Deferred indefinitely (or until a C# realtime client exists to drive it) -- excluded from the "first port" candidate set for this reason. |
 | `scripts/generate_apology_clips.py` | Records one pre-recorded "rate limited twice in a row" apology audio clip per UI language, using a live realtime model, with Whisper transcription verification. | In: live Azure OpenAI realtime + Whisper. Out: `personas/<persona-id>/assets/audio/apology-<lang>.wav`. | Manual, occasional dev tool (re-run only when a persona's default voice changes); not an azd hook, not referenced by CI. | **Yes** -- live realtime model + Whisper transcription. | Deferred indefinitely, same reason as `benchmark_reasoning.py`. |
@@ -26,6 +26,7 @@ this PR**, and azd hooks / CI keep running the Python implementations by default
 | `scripts/e2e_order_resume.py` | Real-browser (Playwright/headless Chromium or Edge) end-to-end check of order-resume behavior (reconnect, tap-to-continue, page reload, idle close) against the built frontend and the real middle tier, with a fake realtime upstream. No Azure calls. | In: a built frontend (`app/backend/static`), a running middle tier, Playwright-driven browser. Out: pass/fail + console diagnostics (no file). | Not part of the default test run (needs a browser + Playwright installed); not an azd hook, not referenced by CI. | None directly, but needs a real browser engine and a built frontend bundle -- too heavy/complex to be the "representative, low-risk" first port. | Deferred -- a plausible future candidate once a C# equivalent of Playwright-driven browser automation is justified for a later wave (not attempted here). |
 | `scripts/menu_ingestion_search_json.ipynb` | Generic (persona-agnostic) notebook walkthrough: configure Azure OpenAI + Azure AI Search, prepare menu JSON, and upload it to a search index for hybrid semantic search. | In: a raw menu JSON export. Out: documents upserted into a live Azure AI Search index. | Manual, interactive notebook only; not an azd hook, not referenced by CI (the production path is `app/backend/setup_search_index.py`, which already lives in, and is out of scope per, `app/backend`). | **Yes** -- Azure OpenAI + Azure AI Search throughout. | Deferred indefinitely -- notebooks are explicitly the kind of Azure-dependent, interactive tooling this issue's "no Azure calls" constraint excludes from a first port; also the least "representative, low-risk" shape (interactive exploration, not a deterministic CLI tool). |
 | `scripts/sonic_menu_ingestion_search.ipynb` | Same pipeline as `menu_ingestion_search_json.ipynb`, specialized to ingest one persona's menu (`personas/<PERSONA_ID>/`) by id. | Same as above, scoped to one persona. | Manual, interactive notebook only; not an azd hook, not referenced by CI. | **Yes** -- Azure OpenAI + Azure AI Search throughout. | Deferred indefinitely, same reason as `menu_ingestion_search_json.ipynb`. |
+| `tests/conformance/tests/Conformance.Tests/Scripts/verify_fake_entra_token.py` | Verifies a `FakeEntraIssuer`-minted JWT the same way a real client-side PyJWT consumer would (signature, issuer, audience, claims) -- an interop check that the fake issuer's tokens are genuinely PyJWT-compatible, not just internally self-consistent. | In: a signing key + token passed as CLI args by its caller. Out: exit code only (no file). | Not an azd hook, not referenced by any workflow directly; invoked as a subprocess by `FakeEntraIssuerPyJwtValidationTests.cs` (an xUnit test in `tests/conformance`), which IS exercised by CI's existing `conformance.yml` `dotnet-tests` job. | None (local JWT verification only). | **Intentionally stays Python** -- its entire purpose is PyJWT interop verification (would the real Python `PyJWT` library accept this token), so porting it to a C# JWT library would defeat the point of the check. Not a candidate for any future wave. |
 
 Note: `app/backend/setup_search_index.py` itself is inside `app/backend` and is therefore **out of
 this inventory's scope** (the issue is scoped to Python outside `app/backend`); only its `scripts/`
@@ -38,7 +39,7 @@ launcher wrappers are in scope, below.
 | `scripts/setup_search_index.ps1`, `scripts/setup_search_index.sh` | `app/backend/setup_search_index.py` (builds/refreshes the Azure AI Search index from the production menu export) | **azd `postprovision` hook** (after `postprovision_auth`/`write_env`) | Not ported (wraps an Azure-dependent, in-scope-elsewhere script); stays Python. A C# equivalent is only relevant once/if `app/backend/setup_search_index.py` itself is ported, which is outside this issue's `app/backend`-excluded scope. |
 | `scripts/smoke_realtime.ps1`, `scripts/smoke_realtime.sh` | `scripts/smoke_realtime.py` (realtime session smoke check; never fails the deployment, warns only) | **azd `postdeploy` hook** | Not ported (wraps an explicitly-excluded, Azure-dependent script); stays Python. |
 | `scripts/start.ps1`, `scripts/start.sh` | `app/backend/app.py` directly (runs the Python backend itself via gunicorn, the application entry point) | Not an azd hook; local dev convenience only. | Out of scope -- this is the application, not "tooling" (and a C# backend entry point is `app/backend-dotnet`'s own, separately-tracked concern, not this issue's). |
-| `scripts/load_python_env.ps1`, `scripts/load_python_env.sh` | Nothing Python-specific to port -- it bootstraps the Python `.venv` itself (creates it, installs `app/backend/requirements.txt`) so the OTHER scripts above have an interpreter to run. | Sourced by `setup_search_index.ps1`/`.sh` before they invoke Python. | Out of scope -- there is no Python *logic* here to port; it is the venv bootstrap `update_menu_sizes.py` et al. depend on existing at all. |
+| `scripts/load_python_env.ps1`, `scripts/load_python_env.sh` | Nothing Python-specific to port -- it bootstraps the Python `.venv` itself (creates it, installs `app/backend/requirements.txt`) so the OTHER scripts above have an interpreter to run. | Sourced by `setup_search_index.ps1`/`.sh` AND `start.ps1`/`.sh` before they invoke Python. | Out of scope -- there is no Python *logic* here to port; it is the venv bootstrap `update_menu_sizes.py` et al. depend on existing at all. |
 
 `postprovision_auth.ps1`/`.sh`, `write_env.ps1`/`.sh`, and `install_prerequisites.ps1`/`.sh` were
 also checked and confirmed to shell out only to `az`/`azd` CLIs, never Python -- they are not
@@ -107,37 +108,88 @@ job is to match its twin's *observable behavior*, including its harmless bugs --
 a silent, undocumented behavior decision smuggled into what should be a mechanical port. (Any real
 fix belongs in the Python script first, with this port following.)
 
-The one load-bearing difference from a literal transliteration: where the Python script hardcodes
-its two file paths via `Path(__file__).resolve().parent.parent / ...`, the C# tool accepts optional
-`--production <path>` and `--menu <path>` arguments (falling back to the identical repo-relative
-defaults when omitted), purely so tests can point it at throwaway copies instead of the real,
-checked-in `personas/sonic/menu/**` files.
+The two load-bearing differences from a literal transliteration:
 
-### Output-parity test (and the mutation check)
+* Where the Python script hardcodes its file paths via `Path(__file__).resolve().parent.parent /
+  "personas" / "<a specific persona id>" / ...`, the C# tool discovers whichever persona pack is
+  actually checked in (`tools/dotnet/src/UpdateMenuSizes/PersonaMenuLocator.cs`, globbing
+  `personas/*/menu/source/*-menu-items.json`) and derives `menuItems.json` and
+  `product_search_map.json`'s paths from that match, rather than hardcoding a persona id -- so the
+  tool (and its tests) keep working unchanged as persona packs are added, renamed, or removed.
+  `--production`/`--menu`/`--product-search-map` arguments still let tests (or a developer) point
+  it at throwaway copies instead of the real, checked-in files.
+* `PRODUCT_SEARCH_MAP` (the Python script's hardcoded `menuItems.json`-name -> production-search-term
+  dictionary, which names actual brand products like `"Oreo® Peanut Butter Shake"`) is **not**
+  duplicated as a hardcoded C# dictionary -- that data is a persona's own menu/brand data, not
+  something a generic, persona-agnostic tooling port should own. It was moved into each persona's
+  own `personas/<id>/menu/product_search_map.json` (loaded via
+  `MenuSizeUpdater.LoadProductSearchMap`), which also keeps this brand-specific data exempt from
+  the repo's brand-word rebrand scanner the same way the rest of `personas/<id>/**` already is.
+
+### Byte-for-byte output parity, not just equivalent JSON
+
+Matching Python's `json.dump(menu_data, f, indent=4, ensure_ascii=False)` + `f.write("\n")` exactly
+(not just producing structurally-equal JSON) needed three separate fixes, each independently
+mutation-tested (see below):
+
+* **`PythonJsonEncoder.cs`**: a fully custom `System.Text.Encodings.Web.JavaScriptEncoder`
+  reproducing `ensure_ascii=False`'s exact escape set (only `"`, `\`, and C0 control characters) --
+  neither of System.Text.Json's built-in encoders matches this; both still force-escape emoji and
+  non-breaking spaces that Python writes raw as UTF-8.
+* **Newline handling**: `JsonSerializerOptions.NewLine` and the manually-appended final trailing
+  newline both use `Environment.NewLine`, matching Python's text-mode `"w"` newline translation
+  (CRLF on Windows, LF elsewhere) for every newline the write emits, including the last one.
+* **`PythonFloatRepr`**: every production price Python parses is a float (it always has a decimal
+  point), and `json.dump` re-serializes floats via Python's shortest-round-trip `repr` -- e.g.
+  `1.50` becomes `1.5`, not whatever trailing-zero scale a C# `decimal` happened to retain from
+  parsing. `PythonFloatRepr` reproduces that formatting; the price is inserted into the JSON tree by
+  parsing that exact string (`JsonNode.Parse`), not by assigning the decimal/double directly.
+
+### Output-parity test (and the mutation checks)
 
 `tools/dotnet/tests/UpdateMenuSizes.Tests/PythonParityTests.cs` is the issue's acceptance bar made
-concrete: it copies the REAL `personas/sonic/menu/source/sonic-menu-items.json` and
-`personas/sonic/menu/menuItems.json` into two private temp directories, runs the actual
-`scripts/update_menu_sizes.py` as a genuine subprocess against one copy, runs the C# port
-in-process against the other, then asserts the two resulting `menuItems.json` files are
-**structurally** identical JSON (property order within an object is not significant; array order
-is, since these documents are ordered lists of categories/items/sizes). It never touches the real,
-checked-in fixture files. It resolves a Python interpreter the same way
+concrete: it discovers the real persona fixtures via `PersonaMenuLocator`, copies them (production
+export, `menuItems.json`, and `product_search_map.json`) into two private temp directories, runs the
+actual `scripts/update_menu_sizes.py` as a genuine subprocess against one copy, runs the C# port
+in-process against the other, then asserts:
+
+1. the two resulting `menuItems.json` files are **byte-identical** (`File.ReadAllBytes` compared as
+   spans) -- not merely structurally-equal JSON, since the encoding/newline/float-repr fixes above
+   are only provable at the byte level;
+2. the two programs' captured console output is identical, including the per-item SKIP/UPDATED
+   lines (with Python's `['mini', 'small']`-style list repr) and the trailing blank-line-then-summary
+   shape; and
+3. the "Updated N items" count each program reports (parsed from its own stdout, not just read off
+   an in-process result object) agrees.
+
+It never touches the real, checked-in fixture files. It resolves a Python interpreter the same way
 `tests/conformance`'s `FakeEntraIssuerPyJwtValidationTests` does (repo-root `.venv` first, then a
 bare `python3`/`python` on PATH), skips locally if none is found, and fails (not skips) in CI
 (`GITHUB_ACTIONS=true`) -- update_menu_sizes.py needs only the standard library, so any Python 3
 interpreter qualifies.
 
 `tools/dotnet/tests/UpdateMenuSizes.Tests/MenuSizeUpdaterTests.cs` unit-tests the individual
-pieces (`ExtractSize`'s prefix matching including the dead-prefix case above, the Cherry
-Limeade/Ocean Water slush/diet exclusions, first-match-per-size-key-wins, idempotency, and that
-`UpdateMenu` only replaces a changed item's `sizes` array, leaving every other field untouched)
-against small synthetic fixtures, independent of the real menu data.
+pieces against small synthetic fixtures, independent of the real menu data: `ExtractSize`'s prefix
+matching (including the dead-prefix case above), the Cherry Limeade/Ocean Water slush/diet
+exclusions, first-match-per-size-key-wins, idempotency, that `UpdateMenu` only replaces a changed
+item's `sizes` array (leaving every other field untouched), `LoadProductSearchMap`'s parsing, and
+each of the three byte-parity fixes above in isolation (trailing-zero price formatting, the Python
+list-repr log line, non-ASCII characters written raw, and the trailing `Environment.NewLine`).
 
-**Mutation check performed**: temporarily removed the Cherry Limeade "slush" exclusion from
-`FindSizesForProduct` and reran the suite -- `FindSizesForProduct_ExcludesCherryLimeadeSlushAndDietVariants`
-failed as expected (it picked up an unrelated "...Slush" product's price under a size key the
-legitimate product didn't already have). Restored the guard and reran; all tests passed again.
+**Mutation checks performed**:
+
+* Temporarily removed the Cherry Limeade "slush" exclusion from `FindSizesForProduct` and reran the
+  suite -- `FindSizesForProduct_ExcludesCherryLimeadeSlushAndDietVariants` failed as expected (it
+  picked up an unrelated "...Slush" product's price under a size key the legitimate product didn't
+  already have). Restored the guard and reran; all tests passed again.
+* Reverted `PythonJsonEncoder.Instance` to `JavaScriptEncoder.UnsafeRelaxedJsonEscaping` -- both the
+  byte-identical parity test and the dedicated non-ASCII unit test failed as expected. Reverted the
+  trailing-newline `Environment.NewLine` back to a literal `"\n"` -- both the parity test and the
+  dedicated trailing-newline unit test failed as expected. Reverted the `PythonFloatRepr`-based price
+  write-out back to assigning the raw `decimal` -- the dedicated trailing-zero-price unit test failed
+  as expected (the real fixtures happen not to contain a trailing-zero price today, so the parity
+  test alone would not have caught this one). Restored all three fixes and reran; all 31 tests passed
+  again.
 
 ### CI wiring
 
