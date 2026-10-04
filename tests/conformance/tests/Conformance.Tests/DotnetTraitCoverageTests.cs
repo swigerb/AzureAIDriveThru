@@ -216,6 +216,19 @@ namespace Conformance.Tests;
 /// #235), now confirmed by direct measurement rather than arithmetic. This raises the floor 239 to
 /// 256. Any PR still rebasing on top of this MUST re-measure fresh at its own rebase time the same
 /// way, not add a historical delta to 256 blindly.
+///
+/// Issue #147 (ADR-002, PR #226): app/backend-dotnet now enforces Entra JwtBearer authentication
+/// end to end (JwtBearer validation as a fallback authorization policy, the anonymous allow-list,
+/// `?access_token=` on `/realtime` only, and the layered session token's oid binding), so
+/// <see cref="Conformance.Harness.AuthRowCapability.DotnetEnforcesAuth"/> flips to true. Every
+/// method in the five previously skip-gated <c>Scenarios/Auth</c> classes (<c>AuthModeLaunchTests</c>,
+/// <c>AuthRowLoggingTests</c>, <c>AuthRowRealtimeTokenTests</c>, <c>AuthRowRestTokenTests</c>,
+/// <c>AuthRowSpecialCaseTests</c>) now produces a real pass/fail signal on the dotnet leg too (they
+/// already did on the python leg). Per the "Issue #13 Wave 4/4b" note directly above, this PR
+/// re-measures the floor fresh at its own rebase time (onto the post-#241 `origin/dev`, which also
+/// enables the Browser conformance leg) rather than projecting by historical delta -- see "Issue
+/// #147 round 5 (Rick's security re-review, rebase onto #241)" below for the exact final measured
+/// count and its arithmetic.
 /// </summary>
 public sealed class DotnetTraitCoverageTests
 {
@@ -223,19 +236,15 @@ public sealed class DotnetTraitCoverageTests
     private const string TraitValue = "ready";
 
     /// <summary>
-    /// Full names of the <c>Scenarios/Auth</c> test classes whose methods are unconditionally
-    /// skip-gated (see the class doc above) -- excluded from <see cref="CountFloorEligibleDotnetReadyTestMethods"/>
-    /// so this floor only ever counts methods that produce a real pass/fail signal on the dotnet
-    /// leg today.
+    /// Full names of any <c>Scenarios/Auth</c> test classes still unconditionally skip-gated on
+    /// the dotnet leg (see the class doc above) -- excluded from
+    /// <see cref="CountFloorEligibleDotnetReadyTestMethods"/> so this floor only ever counts
+    /// methods that produce a real pass/fail signal on the dotnet leg today. Empty as of issue
+    /// #147: both backends now enforce ADR-002 auth, so no Auth class is unconditionally
+    /// skip-gated any more. Kept (rather than deleted outright) as the seam a future
+    /// still-gated scenario would use.
     /// </summary>
-    private static readonly HashSet<string> AuthRowGatedTypeNames = new(StringComparer.Ordinal)
-    {
-        "Conformance.Tests.Scenarios.Auth.AuthModeLaunchTests",
-        "Conformance.Tests.Scenarios.Auth.AuthRowLoggingTests",
-        "Conformance.Tests.Scenarios.Auth.AuthRowRealtimeTokenTests",
-        "Conformance.Tests.Scenarios.Auth.AuthRowRestTokenTests",
-        "Conformance.Tests.Scenarios.Auth.AuthRowSpecialCaseTests",
-    };
+    private static readonly HashSet<string> AuthRowGatedTypeNames = new(StringComparer.Ordinal);
 
     [Fact]
     public void At_least_256_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()

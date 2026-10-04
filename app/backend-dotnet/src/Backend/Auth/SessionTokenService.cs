@@ -18,23 +18,40 @@ public sealed class SessionTokenService(byte[] secret)
 
     /// <summary>
     /// Mints a token good for <paramref name="expirySeconds"/> seconds from now (Python default:
-    /// 900). The payload is deliberately hand-formatted as <c>{"exp": &lt;n&gt;}</c> -- matching
-    /// Python's <c>json.dumps({"exp": n})</c> byte-for-byte (space after the colon, no trailing
-    /// whitespace) -- rather than delegated to System.Text.Json's default (no-space) formatting,
-    /// so the two backends' tokens are byte-identical for the same secret and expiry.
+    /// 900). The payload is deliberately hand-formatted as <c>{"exp": &lt;n&gt;}</c> (or
+    /// <c>{"exp": &lt;n&gt;, "oid": "&lt;oid&gt;"}</c> when <paramref name="oid"/> is supplied,
+    /// issue #144/#147, design doc 18.3) -- matching Python's <c>json.dumps({"exp": n, "oid":
+    /// oid})</c> byte-for-byte (insertion order exp-then-oid, space after each colon and after the
+    /// comma, no trailing whitespace) -- rather than delegated to System.Text.Json's default
+    /// (no-space) formatting, so the two backends' tokens are byte-identical for the same secret,
+    /// expiry and oid. <paramref name="oid"/> is always a validated Entra object id (a GUID) or
+    /// the Development pass-through's synthetic constant -- never attacker-controlled free text --
+    /// so no JSON-string escaping is required here, matching rtmt.py's own unescaped f-string.
     /// </summary>
-    public string Create(int expirySeconds = 900)
+    public string Create(int expirySeconds = 900, string? oid = null)
     {
         var exp = DateTimeOffset.UtcNow.ToUnixTimeSeconds() + expirySeconds;
-        var payloadJson = $"{{\"exp\": {exp.ToString(CultureInfo.InvariantCulture)}}}";
+        var payloadJson = oid is null
+            ? $"{{\"exp\": {exp.ToString(CultureInfo.InvariantCulture)}}}"
+            : $"{{\"exp\": {exp.ToString(CultureInfo.InvariantCulture)}, \"oid\": \"{oid}\"}}";
         var payloadB64 = UrlSafeBase64Encode(Encoding.UTF8.GetBytes(payloadJson));
         var signature = Sign(payloadB64);
         return $"{payloadB64}.{signature}";
     }
 
     /// <summary>True iff the signature matches (constant-time) and the token has not expired.</summary>
-    public bool Validate(string token)
+    public bool Validate(string token) => TryValidate(token, out _);
+
+    /// <summary>
+    /// Same validation as <see cref="Validate"/>, additionally returning the payload's <c>oid</c>
+    /// claim (issue #147, design doc 18.3's layered session token) -- null when the token is
+    /// invalid/expired, or when it is valid but carries no <c>oid</c> (a token minted before #144,
+    /// or minted with <paramref name="oid"/> omitted).
+    /// </summary>
+    public bool TryValidate(string token, out string? oid)
     {
+        oid = null;
+
         var lastDot = token.LastIndexOf('.');
         if (lastDot < 0)
         {
@@ -73,13 +90,23 @@ public sealed class SessionTokenService(byte[] secret)
         {
             using var doc = JsonDocument.Parse(payloadBytes);
             exp = doc.RootElement.TryGetProperty("exp", out var expElement) ? expElement.GetInt64() : 0;
+            if (doc.RootElement.TryGetProperty("oid", out var oidElement) && oidElement.ValueKind == JsonValueKind.String)
+            {
+                oid = oidElement.GetString();
+            }
         }
         catch (JsonException)
         {
             return false;
         }
 
-        return exp > DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        if (exp <= DateTimeOffset.UtcNow.ToUnixTimeSeconds())
+        {
+            oid = null;
+            return false;
+        }
+
+        return true;
     }
 
     private string Sign(string payloadB64)

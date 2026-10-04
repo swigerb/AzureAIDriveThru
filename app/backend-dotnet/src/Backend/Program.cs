@@ -45,8 +45,52 @@ builder.WebHost.UseUrls($"http://{host}:{port}");
 
 var startupChecks = new StartupChecks();
 
+// ── Entra authentication mode resolution (ADR-002, issue #147) -- must run BEFORE
+// builder.Build(), since registering JwtBearer authentication is a service-registration-time
+// concern (builder.Services, not app.Services). Uses Console.Error directly for its one possible
+// FATAL line since app.Logger doesn't exist yet at this point in Program.cs; every other
+// fail-fast check below logs the same "FATAL: ..." shape via app.Logger once it does. ──────────
+EntraSettings entraSettings;
+try
+{
+    entraSettings = EntraSettings.Resolve(Environment.GetEnvironmentVariable, builder.Environment.IsProduction());
+}
+catch (EntraConfigException exc)
+{
+    Console.Error.WriteLine($"FATAL: {exc.Message}");
+    return 1;
+}
+
+// Issue #147 bullets 1/3: JwtBearer validation as a fallback authorization policy over every API
+// route, registered only in Entra mode -- Development mode registers no authentication scheme
+// at all and leaves authorization unconfigured (FallbackPolicy null), an unconditional,
+// zero-enforcement pass-through matching entra_auth.py's Development mode exactly.
+if (entraSettings.Mode == EntraMode.Entra)
+{
+    EntraAuthentication.AddEntraAuthentication(builder.Services, entraSettings);
+}
+else
+{
+    builder.Services.AddAuthorization();
+}
+
 var app = builder.Build();
 var logger = app.Logger;
+
+if (entraSettings.Mode == EntraMode.Development)
+{
+    logger.LogWarning(
+        "AUTH_MODE is unconfigured: running with a SYNTHETIC Entra identity (oid={Oid}). Every " +
+        "request is treated as this principal. This is the Development pass-through -- it must " +
+        "NEVER run in Production. Set AUTH_MODE=Entra with valid ENTRA_TENANT_ID and " +
+        "ENTRA_CLIENT_ID for a real deployment.",
+        EntraSettings.SyntheticOid);
+}
+else
+{
+    logger.LogInformation(
+        "Auth mode: Entra (tenant={TenantId}, issuer={Issuer})", entraSettings.TenantId, entraSettings.Issuer);
+}
 
 // ── 1. Required environment variables (app.py's _REQUIRED_ENV_VARS) ────────────────────────
 string[] requiredEnvVars =
@@ -332,15 +376,66 @@ var securityConfig = SecurityConfig.FromConfig(appConfig);
 
 var sessionRegistry = new SessionRegistry();
 
-// ── Routes ───────────────────────────────────────────────────────────────────────────────────
-app.MapGet("/health", () => HealthEndpoint.Handle(startupChecks, personaCatalog));
+// ── Static files (shared with the Python backend -- frontend unchanged by the port) -- placed
+// BEFORE UseRouting/UseAuthentication/UseAuthorization below so a static-file request never
+// reaches routing/authorization at all (standard ASP.NET Core ordering: UseStaticFiles short-
+// circuits the pipeline for any file it serves). Computed here (rather than down where it maps
+// "/") so UseStaticFiles can be registered at the correct pipeline position while the "/" route
+// itself can still be mapped anywhere (Map* calls aren't position-sensitive). ───────────────────
+var staticDir = Environment.GetEnvironmentVariable("STATIC_FILES_DIR") ?? TryFindStaticDir();
+if (staticDir is not null && Directory.Exists(staticDir))
+{
+    var fileProvider = new PhysicalFileProvider(staticDir);
+    app.UseStaticFiles(new StaticFileOptions { FileProvider = fileProvider, RequestPath = "" });
+}
+else
+{
+    logger.LogWarning(
+        "Static files directory not found (STATIC_FILES_DIR unset and no app/backend/static next " +
+        "to the repo root) - '/' will 404. Run `VITE_AUTH_MODE=Development npm run build` in app/frontend first.");
+}
 
-app.MapGet("/api/auth/session", () => Results.Json(new { token = tokenService.Create(expirySeconds: 900) }));
+// ── Issue #147 (ADR-002): explicit routing/authentication/authorization middleware, in the
+// standard ASP.NET Core order (UseStaticFiles -> UseRouting -> UseAuthentication ->
+// UseAuthorization -> endpoints). Previously relied entirely on WebApplication's implicit
+// auto-insertion; made explicit and deterministic now that Entra mode needs UseAuthentication
+// registered (Development mode skips it -- no scheme was registered for it above, and calling
+// UseAuthentication() with none configured throws). UseAuthorization() is always safe to call:
+// Development mode's AddAuthorization() above has no FallbackPolicy, so it is a no-op for every
+// endpoint (none declare RequireAuthorization either). ──────────────────────────────────────────
+app.UseRouting();
+if (entraSettings.Mode == EntraMode.Entra)
+{
+    app.UseAuthentication();
+}
+app.UseAuthorization();
+
+// ── Routes ───────────────────────────────────────────────────────────────────────────────────
+app.MapGet("/health", () => HealthEndpoint.Handle(startupChecks, personaCatalog)).AllowAnonymous();
+
+// Issue #147 bullet 6 (design doc 18.3's layered session token): the minted token's `oid` binds
+// to the caller's own Entra-validated principal (Entra mode) or the Development pass-through's
+// synthetic principal (Development mode, matching app.py's get_session_token -- entra_middleware
+// sets request["principal"] unconditionally in BOTH modes, so this endpoint's own mode branch
+// below only exists because ASP.NET Core's ClaimsPrincipal isn't populated at all in Development
+// mode, there being no authentication scheme registered for it). This endpoint itself falls
+// under the fallback policy like any other route in Entra mode (no .AllowAnonymous() here), so by
+// the time this delegate runs, context.User is guaranteed authenticated with an `oid` claim.
+app.MapGet("/api/auth/session", (HttpContext context) =>
+{
+    var oid = entraSettings.Mode == EntraMode.Development
+        ? EntraSettings.SyntheticOid
+        : context.User.FindFirst("oid")?.Value;
+    return Results.Json(new { token = tokenService.Create(expirySeconds: 900, oid) });
+});
 
 // `/api/personas`, `/api/personas/{id}`, `/personas/{id}/menu.json`,
 // `/personas/{id}/assets/{*assetPath}` (issue #74/#12, design doc section 5.2): the persona
 // discovery/asset HTTP surface, matching the wire contract Python defines and conformance pins.
-// See Personas/PersonaRoutes.cs for the ported route handlers.
+// See Personas/PersonaRoutes.cs for the ported route handlers. The asset route's mixed
+// anonymous/protected shape (issue #147: public extensions vs. e.g. .json) is handled entirely
+// inside the fallback policy's own EntraAccessRequirementHandler, not here -- this mapping is
+// unchanged by #147.
 PersonaRoutes.Map(app, personaCatalog, modelCatalog, assetCacheConfig);
 
 app.UseWebSockets();
@@ -358,19 +453,25 @@ app.MapGet("/realtime", async (HttpContext context) =>
         return Results.BadRequest();
     }
 
-    // Pre-upgrade auth gate (PR #96 review, required item 1): Origin validation, then (only when
-    // config.yaml's security.require_session_token is true) HMAC session-token validation --
-    // same order and rejection statuses as rtmt.py's _websocket_handler. See
-    // Realtime/RealtimeAuthGate.cs for the ported logic and its own unit tests, and
-    // tests/conformance's Scenarios/Http and Scenarios/Security OriginValidationTests for the
-    // over-the-wire proof against this backend.
+    // Pre-upgrade auth gate: Origin validation (PR #96 review, required item 1), then HMAC
+    // session-token validation -- forced on in Entra mode and bound to the Entra principal's own
+    // oid (issue #147, design doc 18.3), otherwise only when config.yaml's
+    // security.require_session_token is true. The JwtBearer fallback policy (issue #147,
+    // Program.cs above) has already run upstream of this handler for every request reaching this
+    // line, including one with no token at all -- that's what makes a bad-Origin + no-token
+    // request 401, not 403 (18.11 row 11): the Entra check already rejected it before this
+    // delegate ever started running. See Realtime/RealtimeAuthGate.cs for the ported logic and
+    // its own unit tests, and tests/conformance's Scenarios/Http, Scenarios/Security, and
+    // Scenarios/Auth tests for the over-the-wire proof against this backend.
     var rejection = RealtimeAuthGate.Check(
         context.Request.Headers["Origin"].ToString(),
         context.Request.Headers["Host"].ToString(),
         context.Request.Query["token"].ToString(),
         securityConfig,
         tokenService,
-        logger);
+        logger,
+        entraMode: entraSettings.Mode == EntraMode.Entra,
+        principalOid: entraSettings.Mode == EntraMode.Entra ? context.User.FindFirst("oid")?.Value : null);
     if (rejection is not null)
     {
         return rejection;
@@ -527,13 +628,13 @@ app.MapGet("/realtime", async (HttpContext context) =>
     return Results.Empty;
 });
 
-// ── Static files (shared with the Python backend -- frontend unchanged by the port) ─────────
-var staticDir = Environment.GetEnvironmentVariable("STATIC_FILES_DIR")
-    ?? TryFindStaticDir();
+// `/` (index.html) -- UseStaticFiles for every OTHER path was already registered earlier,
+// before UseRouting/UseAuthentication/UseAuthorization, so it stays anonymous by pipeline
+// position; this route itself needs .AllowAnonymous() since it's a normal mapped endpoint that
+// would otherwise fall under the fallback policy (issue #147 bullet 3: index is on the same
+// anonymous allow-list as health/static in entra_auth.py's ANONYMOUS_ROUTE_NAMES).
 if (staticDir is not null && Directory.Exists(staticDir))
 {
-    var fileProvider = new PhysicalFileProvider(staticDir);
-    app.UseStaticFiles(new StaticFileOptions { FileProvider = fileProvider, RequestPath = "" });
     app.MapGet("/", (HttpContext context) =>
     {
         var indexPath = Path.Combine(staticDir, "index.html");
@@ -546,13 +647,7 @@ if (staticDir is not null && Directory.Exists(staticDir))
         // UseStaticFiles above (those get the browser's normal caching).
         context.Response.Headers.CacheControl = "no-cache";
         return Results.File(indexPath, "text/html");
-    });
-}
-else
-{
-    logger.LogWarning(
-        "Static files directory not found (STATIC_FILES_DIR unset and no app/backend/static next " +
-        "to the repo root) - '/' will 404. Run `VITE_AUTH_MODE=Development npm run build` in app/frontend first.");
+    }).AllowAnonymous();
 }
 
 app.Run();

@@ -6,16 +6,16 @@ namespace Conformance.Harness;
 /// a pure, unit-testable decision function instead of scattering
 /// <c>Environment.GetEnvironmentVariable("CONFORMANCE_BACKEND")</c> checks through every row test.
 ///
-/// Both switches start OFF: neither backend enforces ADR-002 auth yet (this issue's own critical
-/// acceptance criterion is that the *whole* suite stays green on both legs while that's true --
-/// today's backends simply ignore the extra ENTRA_*/token env and query params the harness now
-/// sends by default). <see cref="PythonEnforcesAuth"/> flips to true in issue #144 once
-/// app/backend enforces it end to end; <see cref="DotnetEnforcesAuth"/> flips to true in issue
-/// #147 once app/backend-dotnet does. Per persona-architecture.md 18.11's closing note: "Rows are
-/// turned on per backend when that backend's auth lands ... through the existing
-/// DotnetPlaceholderPolicy pattern. The gate then requires both legs" -- i.e. flipping one switch
-/// only turns the rows on for that one backend's CI leg; the OTHER backend's leg still skips until
-/// its own switch flips too.
+/// Both switches started OFF: neither backend enforced ADR-002 auth at first (this issue's own
+/// critical acceptance criterion was that the *whole* suite stayed green on both legs while that
+/// was true -- the backends simply ignored the extra ENTRA_*/token env and query params the
+/// harness always sends). <see cref="PythonEnforcesAuth"/> flipped to true in issue #144 once
+/// app/backend enforced it end to end; <see cref="DotnetEnforcesAuth"/> flips to true in issue
+/// #147 now that app/backend-dotnet does too -- both legs are on as of #147. Per
+/// persona-architecture.md 18.11's closing note: "Rows are turned on per backend when that
+/// backend's auth lands ... through the existing DotnetPlaceholderPolicy pattern. The gate then
+/// requires both legs" -- i.e. flipping one switch only turns the rows on for that one backend's
+/// CI leg; the OTHER backend's leg still skips until its own switch flips too.
 /// </summary>
 public static class AuthRowCapability
 {
@@ -23,7 +23,7 @@ public static class AuthRowCapability
     public const bool PythonEnforcesAuth = true;
 
     /// <summary>Flip to true in issue #147 once app/backend-dotnet enforces ADR-002 auth end to end.</summary>
-    public const bool DotnetEnforcesAuth = false;
+    public const bool DotnetEnforcesAuth = true;
 
     public const string SkipReason =
         "Auth-row conformance (issue #143/ADR-002, persona-architecture.md 18.11) is gated per " +

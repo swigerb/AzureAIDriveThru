@@ -8,9 +8,9 @@ deliberately deferred or reduced in the C# port is written down instead of disco
 The C# backend now has the host/config/persona foundation, persona HTTP surface, model catalog,
 pre-upgrade `/realtime` auth and persona/model/mode binding, the Azure OpenAI realtime relay,
 order engine, search tool, prompt rendering, tool dispatch, the full rate-limit retry ladder, the
-consecutive tool-failure cap, and the shared conformance dotnet leg. The remaining deliberate gaps
-versus Python are tracked below: session resume/rehydration, context-window monitoring/turn
-recording, and Entra auth-row execution on the dotnet leg until issue #147 flips that capability.
+consecutive tool-failure cap, ADR-002 Entra JwtBearer auth (issue #147), and the shared conformance
+dotnet leg. The remaining deliberate gaps versus Python are tracked below: session
+resume/rehydration and context-window monitoring/turn recording.
 
 ## Module mapping
 
@@ -28,6 +28,8 @@ recording, and Entra auth-row execution on the dotnet leg until issue #147 flips
 | `rtmt.py`'s `create_hmac_token` / `validate_hmac_token` | `Auth/SessionTokenService.cs` | Byte-for-byte compatible: same payload JSON spacing (`{"exp": N}`), same URL-safe base64 (padding kept), same HMAC-SHA256-as-lowercase-hex signature, same "split on the last `.`" framing, constant-time signature comparison. See spike #44. PR #96 review nit: an earlier draft lowercased the *presented* signature before comparing, silently accepting uppercase hex that Python's `hmac.compare_digest` rejects -- fixed, covered by `Validate_RejectsUppercaseSignature`. |
 | `app.py`'s `load_app_secret()` | `Auth/AppSecretProvider.cs` | Reads `APP_SESSION_SECRET`; warns if short; generates a random 32-byte secret if unset (warning only when running in production). |
 | `config.yaml`'s `security` section (rtmt.py's module-level `_security_cfg`) | `Configuration/SecurityConfig.cs` | Typed, tolerant view of `security.allowed_origins` (list, default `[]`) and `security.require_session_token` (bool, default `false`) -- handles the YamlDotNet string-scalar gotcha below the same way `PromptLoader.ParsePriority` does. |
+| `entra_auth.py`'s `resolve_settings` (ADR-002, issue #147) | `Auth/EntraSettings.cs` | Same `AUTH_MODE` handling (`Entra`\|`Development`, case-insensitive, default `Development`) and the same fail-fast startup validation in Entra mode: `ENTRA_TENANT_ID`/`ENTRA_CLIENT_ID` required and not a placeholder GUID, `ENTRA_INSTANCE` must be `https` unless it's a loopback address (test/dev only). See "Issue #147 (ADR-002)" below for the full decision record, including the one deliberate `RUNNING_IN_PRODUCTION` vs `ASPNETCORE_ENVIRONMENT`/`DOTNET_ENVIRONMENT` naming deviation. |
+| `entra_auth.py`'s deny-by-default middleware + `TokenValidator` (ADR-002, issue #147) | `Auth/EntraAuthentication.cs` | `AddEntraAuthentication` wires ASP.NET Core's `Microsoft.AspNetCore.Authentication.JwtBearer` (issuer/audience/signing-keys-via-OIDC-metadata/lifetime validation) plus one `EntraAccessRequirement`/`EntraAccessRequirementHandler` authorization requirement (role + scope, since JwtBearer's own validation doesn't express either) as `AddAuthorization`'s `FallbackPolicy` -- i.e. every route is auth-required by default, same as Python's deny-by-default middleware, unless `.AllowAnonymous()` (health, persona assets matching the same extension allow-list, static files, `/`). `?access_token=` is read from the query string only for the `/realtime` path (`JwtBearerEvents.OnMessageReceived`), matching ADR-002's WebSocket-can't-set-headers carve-out. |
 | `rtmt.py`'s `_origin_matches_host` | `Realtime/OriginValidator.cs` | Exact, case-insensitive match only (never a suffix/substring match) of the raw `netloc` exactly as `urllib.parse.urlsplit(origin).netloc` would extract it -- preserving any userinfo prefix and an explicit port even when it equals the scheme's own default. PR #230 round-2 review (Rick's item 3): an earlier version compared `Uri.Authority`, which silently drops BOTH of those, over-permissively accepting an Origin Python rejects; fixed by a manual scheme-prefix-then-`//`-prefix netloc extraction (see the class's own doc comment), covered by new unit tests (`OriginValidatorTests`) and new tagged conformance rows (`OriginValidationTests.Origin_with_userinfo_is_rejected_with_403`, `.Origin_with_explicit_default_port_is_rejected_against_a_portless_host`). |
 | `rtmt.py`'s `_websocket_handler`'s pre-upgrade Origin + token checks ("Task 3"/"Task 4") | `Realtime/RealtimeAuthGate.cs` | PR #96 review, required item 1 -- see "`/realtime` auth enforcement (PR #96)" below for the full decision record. |
 | (module-level `_startup_checks` dict + `/health` handler) | `Health/StartupChecks.cs`, `Health/HealthEndpoint.cs` | Same JSON shape: `{status, version, checks, personas}`, 200 if every check passed else 503. |
@@ -234,6 +236,18 @@ constant itself 222 -> 239. Per squad coordination, any PR still rebasing on top
 #226's planned "+18") to 239 -- those deltas were computed against the stale 222 baseline and risk
 double-counting methods (such as this wave's 3 tool-failure-cap rows) already folded into 239.
 
+**Issue #147 (ADR-002: Entra JwtBearer auth, PR #226) ungates all previously-skip-gated Auth
+methods.** `AuthRowCapability.DotnetEnforcesAuth` flips `false` -> `true` now that
+`app/backend-dotnet` enforces ADR-002 auth end to end (see "Issue #147 (ADR-002)" above for the
+full decision record), so every method in the five previously-gated classes
+(`AuthModeLaunchTests`, `AuthRowLoggingTests`, `AuthRowRealtimeTokenTests`, `AuthRowRestTokenTests`,
+`AuthRowSpecialCaseTests`) now counts toward the floor, since each can genuinely fail against the
+dotnet leg instead of only ever skipping. Per the squad-coordination note directly above, this PR
+re-measured fresh at its own rebase time (onto the post-#241 `origin/dev`, which itself includes
+the Browser conformance leg) rather than projecting by historical delta -- see "Issue #147 round 5
+(rebase onto #241, Rick's security re-review)" below for the exact final measured count and
+arithmetic.
+
 - **DEV_MODE hot-reload** (`prompt_loader.py`'s file-watching reload behaviour) is explicitly
   marked not required in C# by the design doc's per-backend loading table. Not ported.
 - **Jinja2-style template rendering** is implemented for the templates this repo actually ships:
@@ -291,6 +305,88 @@ handler before `AcceptWebSocketAsync`). Rationale:
   *shapes*, not just different current defaults. `Realtime/RealtimeAuthGateTests.cs` unit-tests
   both branches directly (pure-function style, matching `Health/HealthEndpointTests.cs`); only
   the Origin half is additionally proven over the wire by conformance this wave.
+
+## Issue #147 (ADR-002): Entra JwtBearer auth lands on the dotnet leg
+
+PR for issue #147 ports `entra_auth.py`'s whole deny-by-default auth model to C#, matching
+`AUTH_MODE`'s two modes exactly:
+
+- **`Development` (default)** -- unchanged pass-through, identical to today: no JwtBearer
+  middleware is registered at all, every route stays reachable exactly as before.
+- **`Entra`** -- `EntraSettings.Resolve` fails fast at startup (process exit code 1, same as
+  Python's `sys.exit(1)`) if `ENTRA_TENANT_ID`/`ENTRA_CLIENT_ID` are unset or a placeholder GUID,
+  or if `ENTRA_INSTANCE` isn't `https` (loopback exempted, test/dev only). Once validated,
+  `AddEntraAuthentication` (`Auth/EntraAuthentication.cs`) registers `JwtBearer` (issuer, audience,
+  signing keys via the tenant's OIDC discovery/JWKS metadata, lifetime) and one
+  `EntraAccessRequirement`/`EntraAccessRequirementHandler` authorization requirement (the
+  `DriveThru.User` app role plus the configured API scope) as `AddAuthorization`'s
+  `FallbackPolicy` -- every route requires a valid, role-bearing Entra token by default, unless
+  explicitly `.AllowAnonymous()`'d: `/health`, persona assets matching the same extension
+  allow-list Python has (`.svg .png .jpg .webp .ico .wav .mp3`), static files, and `/`.
+
+**One deliberate naming deviation from Python**, called out explicitly rather than silently
+matched: Python's fail-fast gate asks "is this a real deployment?" via `RUNNING_IN_PRODUCTION`
+(an app-specific env var `entra_auth.py` itself defines and checks). ASP.NET Core already has its
+own idiomatic, host-wide equivalent -- `ASPNETCORE_ENVIRONMENT`/`DOTNET_ENVIRONMENT` ==
+`Production` -- and every other fail-fast/log-level decision in this codebase already keys off
+that pair (`AppSecretProvider`, `PersonaCatalog`'s dev-only diagnostics), so `EntraSettings.Resolve`
+uses the same signal rather than inventing a parallel `RUNNING_IN_PRODUCTION` env var with no other
+consumer in the C# codebase. The observable fail-fast *behavior* (production + unconfigured =>
+process exit 1) is unchanged; only the env var that answers "are we in production" differs, and
+only there.
+
+**`?access_token=` is honored only on `/realtime`** (`JwtBearerEvents.OnMessageReceived`, scoped
+to that one path) -- browsers can't set an `Authorization` header on a WebSocket upgrade, so ADR-002
+carves out this one query-string fallback; every other route requires the real header. The
+layered session token (`/api/auth/session`, `Auth/SessionTokenService.cs`) now binds to the
+Entra-validated principal's own `oid` claim: minting requires a valid Entra bearer, and
+`Realtime/RealtimeAuthGate.cs`'s pre-upgrade check (forced on in Entra mode, independent of
+`config.yaml`'s `security.require_session_token`) rejects a session token whose `oid` doesn't match
+the connecting principal's `oid` -- exactly `rtmt.py`'s own binding.
+
+**Issue #163 (anonymous asset extension rule, tracked separately):** Unity's #163 is concurrently
+finalizing the exact anonymous-asset-extension carve-out rule (today: a fixed
+`.svg .png .jpg .webp .ico .wav .mp3` set, ported byte-for-byte from `entra_auth.py`'s
+`ANONYMOUS_ASSET_EXTENSIONS`). This PR matches Python's *current* behavior exactly and does not
+pre-empt #163's outcome; whichever extension-rule change #163 lands should be mirrored here as a
+small follow-up to `EntraAuthentication.cs`'s `AnonymousAssetExtensions` set, not re-litigated.
+
+**Conformance: `AuthRowCapability.DotnetEnforcesAuth` flips `false` -> `true`.** All 18
+previously-skip-gated methods (`AuthModeLaunchTests`=7, `AuthRowLoggingTests`=1,
+`AuthRowRealtimeTokenTests`=1, `AuthRowRestTokenTests`=1, `AuthRowSpecialCaseTests`=8) now run for
+real against the dotnet backend instead of unconditionally skipping, raising
+`DotnetTraitCoverageTests`' floor 204 -> 222. `AuthRowCapabilityTests.cs`'s own pinned "still off"
+unit test is replaced with its mirror-image ("now on"), matching the pattern
+`Enforces_is_true_for_python_now_that_its_switch_is_on` already established for issue #144.
+
+Two small, in-scope fixes were needed to make the newly-ungated rows genuinely pass (not just
+stop skipping), both discovered by running the real Auth conformance rows end to end against a
+live dotnet backend with the frontend built (`app/backend/static/index.html` present, matching
+what `PythonBackendLauncher`/CI's own frontend-build step already require of both legs):
+
+- **Row 14 (token-leak logging) needed a real `/realtime` access line to exist as its own positive
+  control**, proving the leak-checks below it aren't passing vacuously because nothing was logged
+  at all. `Realtime/RealtimeAuthGate.cs`'s `Check` now logs one `LogInformation` line per handshake
+  attempt (`"Realtime handshake: GET /realtime (host=..., origin=...)"`, deliberately never
+  including `token`/`principalOid`) before its Origin/session-token checks run, mirroring aiohttp's
+  own access logger wrapping `app.py`'s whole request pipeline.
+- Row 12 (`/` on the anonymous allow-list) initially 401'd instead of 200 in a from-scratch
+  checkout with no frontend build yet -- traced to `Program.cs` only registering `MapGet("/")` (and
+  its `.AllowAnonymous()`) when a static files directory is actually found on disk, combined with
+  ASP.NET Core's `FallbackPolicy` applying even to completely unmatched routes. Building the
+  frontend (`npm ci && VITE_AUTH_MODE=Development npm run build` in `app/frontend`, the same
+  prerequisite `PythonBackendLauncher` already enforces before even launching Python) resolves this
+  for a normal checkout; no route-registration code change was needed once that prerequisite is met.
+
+**Validation performed:** `Backend.Tests` 471/471 passing (36 new `EntraSettingsTests`, 28 new
+`EntraAccessRequirementHandlerTests`, plus oid/gate additions to existing suites). Conformance:
+`CONFORMANCE_BACKEND=dotnet dotnet test Conformance.slnx --filter "Scenarios.Auth"` 76/76 passing;
+the full CI dotnet-leg filter `dotnet test Conformance.slnx --filter "Dotnet=ready&Category!=Browser"`
+573/573 passing; `CONFORMANCE_BACKEND=python` with `Category!=Browser` 872/876 passing (4 unrelated
+pre-existing skips), confirming issue #144's python leg stays green. Mutation check: temporarily
+dropped the role requirement from `EntraAccessRequirementHandler.HandleRequirementAsync` (kept the
+scope check only) -- 3 unit tests and 6 conformance Auth-row tests failed as expected; reverted and
+reconfirmed fully green.
 
 ## `models.catalog` (resolved this revision)
 
