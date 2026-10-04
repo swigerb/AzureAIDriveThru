@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "leaseKey": "session-hp2-azureaid-1302",
+  "sessionId": "hp2-azureaid-1302",
+  "repository": "swigerb/AzureAIDriveThru",
+  "issueNumber": null,
+  "dispatchSource": "local-cli",
+  "route": "aca-job",
+  "executionMode": "aca-job",
+  "state": "claimed",
+  "attempts": 1,
+  "startedAt": "2026-10-04T17:02:48.658Z",
+  "lastHeartbeatAt": "2026-10-04T17:02:48.658Z",
+  "updatedAt": "2026-10-04T17:02:48.658Z",
+  "terminalReason": null,
+  "executionRef": null
+}
