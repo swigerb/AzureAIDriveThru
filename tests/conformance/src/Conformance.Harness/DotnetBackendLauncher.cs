@@ -111,9 +111,9 @@ internal static class DotnetBackendEnvironment
 /// <c>HappyHourAtOpenFixture</c>/<c>HappyHourAtCloseTests</c> and siblings, each its own xunit
 /// collection) call <see cref="NetworkUtils.GetFreeTcpPort"/> and start a backend concurrently;
 /// <see cref="NetworkUtils.GetFreeTcpPort"/>'s own doc comment already names the inherent TOCTOU
-/// race between releasing the probe socket and the real bind -- Kestrel lost that race for
-/// "mcdonalds" (port 46037, <c>AddressInUseException</c>, process exit code 134) while "dunkin"
-/// and "sonic" (same theory, different rows, different ports) passed. Now mirrors Python's own
+/// race between releasing the probe socket and the real bind -- Kestrel lost that race for one
+/// persona row (port 46037, <c>AddressInUseException</c>, process exit code 134) while its sibling
+/// rows in the same theory (different ports) passed. Now mirrors Python's own
 /// bind-and-retry loop exactly (<see cref="MaxStartAttempts"/>, <see cref="PortRaceDetection"/> --
 /// already backend-agnostic: its signature list includes the literal text .NET's
 /// <c>SocketException</c>/<c>AddressInUseException</c> renders, "Address already in use", so no
