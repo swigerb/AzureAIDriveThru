@@ -75,4 +75,29 @@ public sealed class RateLimitDetectionTests
 
         Assert.Null(RateLimitDetection.RateLimitErrorOfResponseDone(message));
     }
+
+    [Fact]
+    public void RateLimitErrorOfErrorEvent_ReturnsErrorWhenRateLimit()
+    {
+        var message = new JsonObject { ["error"] = new JsonObject { ["code"] = "rate_limit_exceeded" } };
+
+        var error = RateLimitDetection.RateLimitErrorOfErrorEvent(message);
+
+        Assert.NotNull(error);
+        Assert.Equal("rate_limit_exceeded", error!["code"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void RateLimitErrorOfErrorEvent_NullForOtherErrors()
+    {
+        var message = new JsonObject { ["error"] = new JsonObject { ["code"] = "invalid_value" } };
+
+        Assert.Null(RateLimitDetection.RateLimitErrorOfErrorEvent(message));
+    }
+
+    [Fact]
+    public void RateLimitErrorOfErrorEvent_NullWhenNoErrorObject()
+    {
+        Assert.Null(RateLimitDetection.RateLimitErrorOfErrorEvent(new JsonObject()));
+    }
 }

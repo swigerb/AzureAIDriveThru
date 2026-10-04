@@ -152,6 +152,47 @@ namespace Conformance.Tests;
 /// Issue #205: one tagged, ungated Fact covers the `componentUpcharge` bundle rule across both
 /// backends, including the wire `componentUpcharges` field and resize-back-to-included-size path,
 /// raising the floor 203 to 204.
+///
+/// Issue #21 "flip candidates to check early" (csharp-100-plan.md): the real tagged-method count
+/// had already drifted to 208 since the floor was last raised (prior waves tagging ahead of this
+/// floor's own updates). This pass tags 11 more genuinely-passing, already-ported rows -- all 10
+/// <c>Scenarios/Security/ClientToServerAllowListTests.cs</c> methods (browser-to-upstream
+/// realtime allow-list hardening -- fully ported in
+/// <c>Backend/Realtime/ClientServerFilter.cs</c>/<c>RealtimeProcessor.cs</c>), plus
+/// <c>OriginValidationTests.Exact_origin_is_accepted</c> (its two siblings were already tagged;
+/// this was the one genuinely-untagged row left). All 11 verified green against the C# backend (3
+/// clean runs each, no flakes) -- raising the floor 204 to 219 (208 + 11).
+///
+/// Issue #21 round 2 (PR #230 review, Rick's item 3): `ClientServerFilter.cs`'s `EventIdRegex`/
+/// `Base64Regex` used a `$`-anchored pattern with plain `Regex.IsMatch`, which (absent
+/// `RegexOptions.Multiline`/`Singleline`) also matches just before a single trailing `\n` -- unlike
+/// rtmt.py's own `_CLIENT_EVENT_ID_RE.fullmatch(...)`/`_CLIENT_BASE64_RE.fullmatch(...)`, which
+/// require the WHOLE string to be consumed. `OriginValidator.cs`'s `MatchesHost` compared
+/// `Uri.Authority`, which silently drops both userinfo and an explicit default port, unlike
+/// rtmt.py's `_origin_matches_host`, which compares the raw `urlsplit(...).netloc` (preserving
+/// both). Both are now faithful ports (`\z` anchors; a manual netloc-extraction helper), backed by
+/// three new tagged, ungated test methods verified green against both backends (3 clean runs each
+/// against the C# backend, no flakes), each mutation-checked by temporarily reverting its
+/// corresponding fix and confirming red:
+/// <c>ClientToServerAllowListTests.Trailing_newline_event_id_response_id_and_audio_fail_like_pythons_fullmatch</c>,
+/// <c>OriginValidationTests.Origin_with_userinfo_is_rejected_with_403</c>, and
+/// <c>OriginValidationTests.Origin_with_explicit_default_port_is_rejected_against_a_portless_host</c>
+/// -- raising the floor 219 to 222 (219 + 3).
+///
+/// Merge-order note for PR #226 (#147, Beth's C# auth work, independently raises this SAME floor
+/// 204 to 222 against the stale pre-#21 baseline): PR #230/#21 lands first at 222 (including this
+/// round's +3); PR #226 must then rebase onto that base and re-target its own floor to 222 + 18 =
+/// 240 (not 222) to account for both rounds of #21 tagging on top of the original 204.
+///
+/// Issue #13 Wave 4/4b (PR #235 rate-limit ladder + PR #237 tool-failure cap, both merged/landing
+/// on top of the 222 baseline above): rather than project the new count by arithmetic across two
+/// concurrently-rebasing PRs, the real count was measured directly on PR #237's branch (after #235
+/// had already merged to dev) by temporarily asserting on the actual
+/// <see cref="CountFloorEligibleDotnetReadyTestMethods"/> value, then reverting -- **239**. PR #237
+/// raises the floor 222 to 239 here. Any PR still rebasing on top of this (e.g. #226, #244) MUST
+/// re-measure fresh at its own rebase time the same way, not add its own historical delta (e.g.
+/// "+18") to 239 blindly -- those deltas were computed against the stale 222 baseline and may double
+/// count methods (such as this wave's 3 tool-failure-cap rows) already folded into 239.
 /// </summary>
 public sealed class DotnetTraitCoverageTests
 {
@@ -174,18 +215,19 @@ public sealed class DotnetTraitCoverageTests
     };
 
     [Fact]
-    public void At_least_204_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
+    public void At_least_239_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
     {
         var count = CountFloorEligibleDotnetReadyTestMethods();
 
-        Assert.True(count >= 204,
-            $"Expected at least 204 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
+        Assert.True(count >= 239,
+            $"Expected at least 239 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
             $"and not unconditionally skip-gated by AuthRowCapability (the dotnet leg's " +
             $"`--filter \"{TraitName}={TraitValue}&Category!=Browser\"` baseline, minus the five " +
             "skip-only Scenarios/Auth classes -- see this class's own doc comment; " +
             $"docs/dotnet_mapping.md), but found {count}. If a tagged scenario was removed or " +
             "renamed without a replacement, the dotnet CI leg silently lost coverage.");
     }
+
 
     /// <summary>
     /// Counts every <c>[Fact]</c>/<c>[Theory]</c> test *method* (a <c>[Theory]</c> with N

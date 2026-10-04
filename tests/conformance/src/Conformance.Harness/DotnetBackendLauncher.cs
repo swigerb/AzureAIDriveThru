@@ -102,14 +102,39 @@ internal static class DotnetBackendEnvironment
 /// it that are necessarily a subset (health + auth token scenarios only) until later waves add
 /// the rest. See docs/dotnet_mapping.md for exactly what is/isn't covered yet.
 ///
-/// Deliberately simpler than <see cref="PythonBackendLauncher"/> in one respect: no port-bind-race
-/// retry loop (<see cref="PortRaceDetection"/>) -- that hardening can be ported here if this
-/// launcher is ever promoted into the CI matrix and racy port reuse shows up in practice.
+/// Issue #240: used to be deliberately simpler than <see cref="PythonBackendLauncher"/> in one
+/// respect -- no port-bind-race retry loop (<see cref="PortRaceDetection"/>) -- on the stated
+/// theory that this launcher wasn't yet promoted into the CI matrix. It was already in the CI
+/// matrix (.github/workflows/conformance.yml's `backend: [python, dotnet]` axis, since #76), and
+/// CI (PR #224 run 37174516348, attempt 1) hit exactly the race that theory dismissed: many
+/// Happy-Hour-related fixtures (<c>RealPackHappyHourFixture</c> per persona/instant,
+/// <c>HappyHourAtOpenFixture</c>/<c>HappyHourAtCloseTests</c> and siblings, each its own xunit
+/// collection) call <see cref="NetworkUtils.GetFreeTcpPort"/> and start a backend concurrently;
+/// <see cref="NetworkUtils.GetFreeTcpPort"/>'s own doc comment already names the inherent TOCTOU
+/// race between releasing the probe socket and the real bind -- Kestrel lost that race for one
+/// persona row (port 46037, <c>AddressInUseException</c>, process exit code 134) while its sibling
+/// rows in the same theory (different ports) passed. Now mirrors Python's own
+/// bind-and-retry loop exactly (<see cref="MaxStartAttempts"/>, <see cref="PortRaceDetection"/> --
+/// already backend-agnostic: its signature list includes the literal text .NET's
+/// <c>SocketException</c>/<c>AddressInUseException</c> renders, "Address already in use", so no
+/// change was needed there), reusing the same <see cref="PortBindRaceException"/> type Python's
+/// launcher throws internally (declared in PythonBackendLauncher.cs, scoped to the shared
+/// <c>Conformance.Harness</c> namespace, not duplicated here).
 /// </summary>
 public static class DotnetBackendLauncher
 {
     private static readonly TimeSpan HealthTimeout = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan HealthPollInterval = TimeSpan.FromMilliseconds(250);
+
+    /// <summary>
+    /// Same rationale and same value as <see cref="PythonBackendLauncher"/>'s own
+    /// <c>MaxStartAttempts</c> (issue #240): bounded so a genuinely unbindable environment fails
+    /// loudly instead of retrying forever. Kept as this class's own constant (not shared) so each
+    /// launcher's retry policy can be tuned independently later, matching how
+    /// <see cref="HealthTimeout"/>/<see cref="HealthPollInterval"/> are already duplicated per
+    /// launcher rather than factored out.
+    /// </summary>
+    private const int MaxStartAttempts = 3;
 
     // Issue #135: `dotnet run` rebuilds every time it's invoked. Several fixtures in parallel
     // xunit collections used to each call StartAsync (and therefore `dotnet run`) at the same
@@ -138,6 +163,26 @@ public static class DotnetBackendLauncher
     public static async Task<IBackendUnderTest> StartAsync(
         BackendContract contract, DotnetBackendOptions options, CancellationToken cancellationToken = default)
     {
+        var attemptContract = contract;
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return await StartAttemptAsync(attemptContract, options, cancellationToken).ConfigureAwait(false);
+            }
+            catch (PortBindRaceException) when (attempt < MaxStartAttempts)
+            {
+                // Same rationale as PythonBackendLauncher: NetworkUtils.GetFreeTcpPort() has an
+                // inherent TOCTOU race between releasing the probe socket and this backend's own
+                // Kestrel bind -- pick a fresh port and try again.
+                attemptContract = attemptContract with { Port = NetworkUtils.GetFreeTcpPort() };
+            }
+        }
+    }
+
+    private static async Task<IBackendUnderTest> StartAttemptAsync(
+        BackendContract contract, DotnetBackendOptions options, CancellationToken cancellationToken)
+    {
         var repoRoot = RepoPaths.FindRepoRoot();
         var csprojPath = Path.Combine(repoRoot, "app", "backend-dotnet", "src", "Backend", "Backend.csproj");
         if (!File.Exists(csprojPath))
@@ -165,6 +210,7 @@ public static class DotnetBackendLauncher
         var output = new CapturedProcessOutput();
         output.Attach(process);
 
+        var startedAt = DateTimeOffset.UtcNow;
         if (!process.Start())
         {
             throw new InvalidOperationException($"Failed to start C# backend process 'dotnet \"{dllPath}\"'.");
@@ -185,7 +231,7 @@ public static class DotnetBackendLauncher
 
         try
         {
-            await WaitForHealthAsync(baseUri, process, output, cancellationToken).ConfigureAwait(false);
+            await WaitForHealthAsync(baseUri, process, output, startedAt, cancellationToken).ConfigureAwait(false);
         }
         catch
         {
@@ -199,7 +245,8 @@ public static class DotnetBackendLauncher
     }
 
     private static async Task WaitForHealthAsync(
-        Uri baseUri, Process process, CapturedProcessOutput output, CancellationToken cancellationToken)
+        Uri baseUri, Process process, CapturedProcessOutput output, DateTimeOffset startedAt,
+        CancellationToken cancellationToken)
     {
         using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
         var healthUri = new Uri(baseUri, "/health");
@@ -211,9 +258,26 @@ public static class DotnetBackendLauncher
 
             if (process.HasExited)
             {
+                var elapsed = DateTimeOffset.UtcNow - startedAt;
+                var dump = output.Dump();
+
+                // Issue #240: same heuristic/rationale as PythonBackendLauncher -- an early exit
+                // whose captured output matches a known TCP bind-failure signature is a port race
+                // between NetworkUtils.GetFreeTcpPort() and this backend's own Kestrel bind, not a
+                // real backend crash; only that case is worth retrying with a fresh port.
+                if (PortRaceDetection.ShouldRetry(elapsed, dump))
+                {
+                    throw new PortBindRaceException(
+                        $"C# backend exited immediately (code {process.ExitCode}), " +
+                        $"{elapsed.TotalSeconds:F1}s after starting, with output matching a TCP " +
+                        $"port-bind failure signature -- treating as a port race between " +
+                        $"NetworkUtils.GetFreeTcpPort() and the backend's own Kestrel bind.\n" +
+                        $"--- backend stdout/stderr ---\n{dump}");
+                }
+
                 throw new InvalidOperationException(
                     $"C# backend exited early (code {process.ExitCode}) before becoming healthy.\n" +
-                    $"--- backend stdout/stderr ---\n{output.Dump()}");
+                    $"--- backend stdout/stderr ---\n{dump}");
             }
 
             try

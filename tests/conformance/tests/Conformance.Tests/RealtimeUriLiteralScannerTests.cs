@@ -83,11 +83,34 @@ public sealed class RealtimeUriLiteralScannerTests
     }
 
     [Fact]
+    public void The_OriginValidationTests_portless_host_splice_site_is_not_a_violation()
+    {
+        // PR #230 round 2 review, item 3: Origin_with_explicit_default_port_is_rejected_against_a_
+        // portless_host needs a raw TcpClient handshake (ClientWebSocket can't forge a custom,
+        // deliberately portless Host header), mirroring HeartbeatPongSurvivalTests.cs's own
+        // already-approved splice exactly -- including building the query via
+        // RealtimeUris.BuildQueryAsync first, so the request still carries the default credentials.
+        var lines = new[]
+        {
+            "        var query = await RealtimeUris.BuildQueryAsync(backend, cancellationToken: ct);",
+            "        var request =",
+            "            $\"GET /realtime?{query} HTTP/1.1\\r\\n\" +",
+            "            $\"Host: {backend.Host}\\r\\n\" +",
+            "            \"Upgrade: websocket\\r\\n\";",
+        };
+
+        var violations = RealtimeUriLiteralScanner.Scan(
+            "tests/conformance/tests/Conformance.Tests/Scenarios/Security/OriginValidationTests.cs", lines);
+
+        Assert.Empty(violations);
+    }
+
+    [Fact]
     public void An_allowed_splice_line_reformatted_in_the_wrong_file_is_still_a_violation()
     {
         // The allow-list is keyed by (file name, exact trimmed line) -- the same literal line
         // showing up in some other file is not automatically trusted just because it matches one
-        // of the two known-good shapes textually.
+        // of the known-good shapes textually.
         var lines = new[]
         {
             "using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(backendBaseUri, $\"/realtime?{fullQuery}\"));",
@@ -97,6 +120,30 @@ public sealed class RealtimeUriLiteralScannerTests
             "Scenarios/Security/SomeOtherFile.cs", lines);
 
         Assert.Single(violations);
+    }
+
+    [Fact]
+    public void A_hand_built_realtime_literal_elsewhere_in_OriginValidationTests_cs_is_still_a_violation()
+    {
+        // Guards against reopening the exact hole Rick proved at
+        // Scenarios/Security/OriginValidationTests.cs:78 (PR #158 round 2 review, N2): being on the
+        // allow-list for ONE specific line must not exempt a second, unrelated hand-built literal
+        // elsewhere in the same file.
+        var lines = new[]
+        {
+            "        var query = await RealtimeUris.BuildQueryAsync(backend, cancellationToken: ct);",
+            "        var request =",
+            "            $\"GET /realtime?{query} HTTP/1.1\\r\\n\" +",
+            "            \"Host: whatever\\r\\n\\r\\n\";",
+            "",
+            "        var badUri = new Uri($\"ws://{backend.Host}:{backend.Port}/realtime\");",
+        };
+
+        var violations = RealtimeUriLiteralScanner.Scan(
+            "tests/conformance/tests/Conformance.Tests/Scenarios/Security/OriginValidationTests.cs", lines);
+
+        var violation = Assert.Single(violations);
+        Assert.Contains(":6:", violation);
     }
 
     [Fact]

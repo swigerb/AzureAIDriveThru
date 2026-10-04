@@ -34,6 +34,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import stat
 from pathlib import Path
 from typing import Any
 
@@ -618,6 +619,56 @@ def _load_json_schema(path: Path) -> dict[str, Any]:
         raise PersonaValidationError(f"Malformed JSON in schema file {path}: {exc}") from exc
 
 
+def _is_symlink_or_junction(path: Path) -> bool:
+    """True if `path` is a symlink (POSIX and Windows) or a Windows directory
+    junction. `Path.is_symlink()` alone misses junctions: a junction sets the
+    `FILE_ATTRIBUTE_REPARSE_POINT` flag but Windows does NOT also set the
+    reparse *tag* `os.path.islink`/`Path.is_symlink()` check for, so
+    `junction.is_symlink()` is `False` even though a junction can redirect a
+    read to an arbitrary directory elsewhere on the host -- the exact same
+    escape `#163 N5` already rejects plain symlinks for (#223 follow-up on
+    #163/PR #222's review).
+
+    `os.path.isjunction` (Python 3.12+) is used when available. This repo's
+    stated floor is Python 3.11+ (README.md), so on 3.11 we fall back to
+    `os.lstat().st_reparse_tag == stat.IO_REPARSE_TAG_MOUNT_POINT` (#223
+    round 2, Rick's review): `st_reparse_tag` and `IO_REPARSE_TAG_MOUNT_POINT`
+    have both existed since Python 3.8 on Windows, and are absent (hence
+    `None`, never equal to the tag constant) on POSIX, where `is_symlink()` is
+    already the complete, correct check on its own. This is deliberately
+    NARROWER than the bare `FILE_ATTRIBUTE_REPARSE_POINT` bit this used to
+    check: that flag is set on EVERY reparse point, not just mount-point
+    junctions -- including OneDrive's own "online-only" cloud-filter
+    placeholder files (directly relevant: this very repo lives under a
+    OneDrive-synced folder), deduplicated files, and other non-junction
+    reparse types. The old, broader check would have flagged a legitimate
+    OneDrive placeholder persona asset as a forbidden junction; comparing the
+    specific reparse *tag* instead of the generic attribute bit avoids that
+    false positive while still catching real junctions. Either way this never
+    follows the link/junction itself (`os.lstat`, not `os.stat`), so a
+    broken/dangling one is still correctly flagged.
+    """
+    if path.is_symlink():
+        return True
+    isjunction = getattr(os.path, "isjunction", None)
+    if isjunction is not None:
+        return isjunction(path)
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return False
+    # `IO_REPARSE_TAG_MOUNT_POINT` (like `st_reparse_tag` itself) is a
+    # Windows-only `stat` module constant -- it does not exist at all on
+    # POSIX. Junctions are a Windows-only concept to begin with, so a missing
+    # constant here correctly means "not applicable on this platform", not
+    # "treat everything as a match" (the latter would be the result of a
+    # naive `None == None` comparison if both sides defaulted to `None`).
+    mount_point_tag = getattr(stat, "IO_REPARSE_TAG_MOUNT_POINT", None)
+    if mount_point_tag is None:
+        return False
+    return getattr(st, "st_reparse_tag", None) == mount_point_tag
+
+
 def _load_one_persona(
     base_dir: Path,
     persona_id: str,
@@ -625,6 +676,18 @@ def _load_one_persona(
     menu_schema: dict[str, Any],
 ) -> Persona:
     pack_dir = base_dir / persona_id
+    if _is_symlink_or_junction(pack_dir):
+        # #223 (Rick's #222 review): the request-time `resolve()` +
+        # `relative_to` containment check in app.py's
+        # `_resolve_persona_asset_path` still blocks escape even if the
+        # persona dir itself is a symlink/junction, but a persona pack should
+        # never be able to ship one in the first place -- same rationale as
+        # `_validate_persona_assets`'s existing per-asset check (#163 N5),
+        # just one level up, at the pack root instead of inside `assets/`.
+        raise PersonaValidationError(
+            f"Persona '{persona_id}': pack directory {pack_dir} is a symlink or "
+            f"junction, which is not allowed (#223)."
+        )
     manifest_path = pack_dir / "persona.json"
 
     if not manifest_path.is_file():
@@ -723,16 +786,35 @@ def _validate_persona_assets(pack_dir: Path, persona_id: str) -> None:
     never be able to ship one in the first place: a syntactically-fine-looking
     `.svg` symlink could otherwise point at an arbitrary readable file on the
     host and get served anonymously the moment some other defense has a gap.
+
+    #223 (Rick's #222 review): two gaps in the above. First, `rglob("*")` only
+    ever yields entries BELOW `assets_dir` -- if `assets_dir` ITSELF is a
+    symlink (pointing at an arbitrary directory elsewhere), nothing here ever
+    notices, since the loop never considers its own root. Second, on Windows a
+    directory junction reports `Path.is_symlink() == False` (it is not the
+    same reparse tag `os.path.islink` checks for), so a junction anywhere
+    under `assets/` -- or as `assets_dir` itself -- silently passed the old
+    check entirely. Both gaps are closed via `_is_symlink_or_junction`
+    (shared with `_load_one_persona`'s analogous pack-dir check). Production
+    is Linux-only (no junctions there), and the request-time `resolve()` +
+    `relative_to` containment check in `app.py` still independently blocks any
+    escape regardless -- this is defense-in-depth, not the only backstop.
     """
     assets_dir = pack_dir / "assets"
+    if _is_symlink_or_junction(assets_dir):
+        raise PersonaValidationError(
+            f"Persona '{persona_id}': {assets_dir} itself is a symlink or "
+            f"junction, which is not allowed (#223)."
+        )
     if not assets_dir.is_dir():
         return
     demo_dir = assets_dir / "demo"
     for path in assets_dir.rglob("*"):
-        if path.is_symlink():
+        if _is_symlink_or_junction(path):
             raise PersonaValidationError(
                 f"Persona '{persona_id}': asset {path.relative_to(pack_dir)} is a "
-                f"symlink, which is not allowed anywhere under {assets_dir} (#163 N5)."
+                f"symlink or junction, which is not allowed anywhere under "
+                f"{assets_dir} (#163 N5, extended to junctions by #223)."
             )
         if not path.is_file():
             continue

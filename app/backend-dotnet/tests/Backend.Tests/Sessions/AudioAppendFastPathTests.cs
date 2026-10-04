@@ -23,7 +23,9 @@ namespace Backend.Tests.Sessions;
 /// <see cref="RealtimeProcessorSessionBindingTests"/>'s use of the internal
 /// <c>ResolveSessionBinding</c>) without needing a live upstream connection:
 /// <see cref="RealtimeProcessor.TryMatchAppendFastPath"/> (shape match only),
-/// <see cref="RealtimeProcessor.TryAppendFastPath"/> (shape match + echo-suppression gating), and
+/// <see cref="RealtimeProcessor.TryAppendFastPath"/> (shape match + echo-suppression gating),
+/// <see cref="RealtimeProcessor.ForwardFastPathAudioAsync"/> (the actual
+/// <c>if (!fastPath.Suppressed)</c> forward branch, end to end), and
 /// <see cref="RealtimeProcessor.SendBytesAsync"/> (byte-identical forwarding).
 /// </summary>
 public sealed class AudioAppendFastPathTests
@@ -135,8 +137,18 @@ public sealed class AudioAppendFastPathTests
         Assert.True(result.Suppressed);
     }
 
-    [Fact]
-    public void TryAppendFastPath_computes_NowSeconds_from_the_injected_TimeProvider_not_the_system_clock()
+    [Theory]
+    // Rick's #229 review: the original version of this test only advanced the fake clock PAST
+    // the 1.5s cooldown. A comparison bug that always took the "past cooldown" branch (e.g. a
+    // hardcoded `false`, or a `<=` that always failed) would have passed that single case
+    // vacuously. Covering both sides of the `loopTimeSeconds < _cooldownEnd` comparison -- advance
+    // less than the cooldown (still-pending flush must be cancelled, CooldownEnd resets to 0) and
+    // advance past it (nothing to cancel, CooldownEnd is untouched) -- means ANY wrong clock
+    // reading fails at least one of the two cases below, not just a total system-clock swap.
+    [InlineData(0.5, true)]  // within the 1.5s cooldown -- cancels the pending flush.
+    [InlineData(3.0, false)] // past the 1.5s cooldown -- nothing left to cancel.
+    public void TryAppendFastPath_computes_NowSeconds_from_the_injected_TimeProvider_not_the_system_clock(
+        double advanceSeconds, bool expectCooldownCancelled)
     {
         // EchoSuppressor.ShouldSuppressAudio's own contract (see its doc comment): once the
         // assistant has finished speaking, it never suppresses guest audio again -- the cooldown
@@ -147,7 +159,8 @@ public sealed class AudioAppendFastPathTests
         // enormous number of seconds compared to any real wall-clock reading, so if NowSeconds()
         // silently reverted to a system-clock source, a real wall-clock reading would always be
         // judged as "still within the cooldown" (tiny < huge) and CooldownEnd would incorrectly
-        // reset to 0 below -- regardless of how far the FAKE clock is actually advanced.
+        // reset to 0 regardless of how far the FAKE clock is actually advanced -- which the
+        // advanceSeconds=3.0 case below catches directly.
         var fakeTime = new FakeTimeProvider();
         var processor = CreateProcessor(fakeTime);
         using var echo = new EchoSuppressor(cooldownSeconds: 1.5, flushSendAsync: static _ => Task.CompletedTask);
@@ -158,18 +171,65 @@ public sealed class AudioAppendFastPathTests
         var cooldownEndAfterCompletion = echo.CooldownEnd;
         Assert.True(cooldownEndAfterCompletion > 0.0);
 
-        fakeTime.Advance(TimeSpan.FromSeconds(3)); // past the 1.5s cooldown, on the FAKE clock.
+        fakeTime.Advance(TimeSpan.FromSeconds(advanceSeconds));
 
         var result = processor.TryAppendFastPath(appendFrame, echo);
 
         Assert.True(result.IsMatch);
         Assert.False(result.Suppressed); // never suppressed once the assistant has stopped speaking.
-        // Cooldown already elapsed (on the fake clock) by the time this ran, so there was nothing
-        // to cancel -- CooldownEnd is left exactly as OnAudioDone set it.
-        Assert.Equal(cooldownEndAfterCompletion, echo.CooldownEnd);
+        Assert.Equal(expectCooldownCancelled ? 0.0 : cooldownEndAfterCompletion, echo.CooldownEnd);
     }
 
     private static double Now(TimeProvider timeProvider) => timeProvider.GetTimestamp() / (double)timeProvider.TimestampFrequency;
+
+    // ── ForwardFastPathAudioAsync: RelayBrowserToUpstreamAsync's forward branch, end to end ──
+
+    [Fact]
+    public async Task ForwardFastPathAudioAsync_drives_the_full_not_suppressed_path_end_to_end()
+    {
+        // Rick's #229 review: TryAppendFastPath's own Suppressed field (tested above) and
+        // SendBytesAsync's own byte-identical forwarding (tested below) are each proven in
+        // isolation, but neither proves RelayBrowserToUpstreamAsync's actual
+        // `if (!fastPath.Suppressed)` branch really wires "not suppressed" to "send these exact
+        // bytes upstream". This drives the real shape match, the real (silent) echo-suppression
+        // gate, and the real forward together, through a FakeWebSocket stand-in for upstream.
+        var processor = CreateProcessor();
+        using var echo = new EchoSuppressor(cooldownSeconds: 1.5, flushSendAsync: static _ => Task.CompletedTask);
+        var upstream = new FakeWebSocket(Array.Empty<(byte[], bool, WebSocketMessageType)>());
+        var payload = Utf8("""{"type":"input_audio_buffer.append","audio":"AQIDBA=="}""");
+
+        var fastPath = processor.TryAppendFastPath(payload, echo); // assistant silent -- real gate says "forward".
+        Assert.True(fastPath.IsMatch);
+        Assert.False(fastPath.Suppressed);
+
+        await processor.ForwardFastPathAudioAsync(fastPath, payload, upstream, sessionId: "s1", CancellationToken.None);
+
+        var sent = Assert.Single(upstream.SentMessages);
+        Assert.Equal(payload, sent.Data);
+        Assert.Equal(WebSocketMessageType.Text, sent.MessageType);
+        Assert.True(sent.EndOfMessage);
+    }
+
+    [Fact]
+    public async Task ForwardFastPathAudioAsync_drives_the_full_suppressed_path_end_to_end_as_a_no_op()
+    {
+        // Mutation check target: if the forward branch stopped checking fastPath.Suppressed (or
+        // the echo gate itself stopped suppressing while the assistant speaks), this frame would
+        // reach upstream and the Assert.Empty below would fail.
+        var processor = CreateProcessor();
+        using var echo = new EchoSuppressor(cooldownSeconds: 1.5, flushSendAsync: static _ => Task.CompletedTask);
+        echo.OnAudioDelta(); // assistant speaking -- real gate says "suppress".
+        var upstream = new FakeWebSocket(Array.Empty<(byte[], bool, WebSocketMessageType)>());
+        var payload = Utf8("""{"type":"input_audio_buffer.append","audio":"AQIDBA=="}""");
+
+        var fastPath = processor.TryAppendFastPath(payload, echo);
+        Assert.True(fastPath.IsMatch);
+        Assert.True(fastPath.Suppressed);
+
+        await processor.ForwardFastPathAudioAsync(fastPath, payload, upstream, sessionId: "s1", CancellationToken.None);
+
+        Assert.Empty(upstream.SentMessages);
+    }
 
     // ── SendBytesAsync: byte-identical forwarding ───────────────────────────────────────────
 

@@ -7,10 +7,10 @@ deliberately deferred or reduced in the C# port is written down instead of disco
 
 The C# backend now has the host/config/persona foundation, persona HTTP surface, model catalog,
 pre-upgrade `/realtime` auth and persona/model/mode binding, the Azure OpenAI realtime relay,
-order engine, search tool, prompt rendering, tool dispatch and the shared conformance dotnet leg.
-The remaining deliberate gaps versus Python are tracked below: session resume/rehydration, the full
-rate-limit retry ladder, the consecutive tool-failure cap, context-window monitoring/turn recording,
-and Entra auth-row execution on the dotnet leg until issue #147 flips that capability.
+order engine, search tool, prompt rendering, tool dispatch, the full rate-limit retry ladder, the
+consecutive tool-failure cap, and the shared conformance dotnet leg. The remaining deliberate gaps
+versus Python are tracked below: session resume/rehydration, context-window monitoring/turn
+recording, and Entra auth-row execution on the dotnet leg until issue #147 flips that capability.
 
 ## Module mapping
 
@@ -28,7 +28,7 @@ and Entra auth-row execution on the dotnet leg until issue #147 flips that capab
 | `rtmt.py`'s `create_hmac_token` / `validate_hmac_token` | `Auth/SessionTokenService.cs` | Byte-for-byte compatible: same payload JSON spacing (`{"exp": N}`), same URL-safe base64 (padding kept), same HMAC-SHA256-as-lowercase-hex signature, same "split on the last `.`" framing, constant-time signature comparison. See spike #44. PR #96 review nit: an earlier draft lowercased the *presented* signature before comparing, silently accepting uppercase hex that Python's `hmac.compare_digest` rejects -- fixed, covered by `Validate_RejectsUppercaseSignature`. |
 | `app.py`'s `load_app_secret()` | `Auth/AppSecretProvider.cs` | Reads `APP_SESSION_SECRET`; warns if short; generates a random 32-byte secret if unset (warning only when running in production). |
 | `config.yaml`'s `security` section (rtmt.py's module-level `_security_cfg`) | `Configuration/SecurityConfig.cs` | Typed, tolerant view of `security.allowed_origins` (list, default `[]`) and `security.require_session_token` (bool, default `false`) -- handles the YamlDotNet string-scalar gotcha below the same way `PromptLoader.ParsePriority` does. |
-| `rtmt.py`'s `_origin_matches_host` | `Realtime/OriginValidator.cs` | Exact, case-insensitive authority match only (never a suffix/substring match) -- mirrors `urllib.parse.urlsplit(origin).netloc` comparison semantics via `Uri.Authority`. |
+| `rtmt.py`'s `_origin_matches_host` | `Realtime/OriginValidator.cs` | Exact, case-insensitive match only (never a suffix/substring match) of the raw `netloc` exactly as `urllib.parse.urlsplit(origin).netloc` would extract it -- preserving any userinfo prefix and an explicit port even when it equals the scheme's own default. PR #230 round-2 review (Rick's item 3): an earlier version compared `Uri.Authority`, which silently drops BOTH of those, over-permissively accepting an Origin Python rejects; fixed by a manual scheme-prefix-then-`//`-prefix netloc extraction (see the class's own doc comment), covered by new unit tests (`OriginValidatorTests`) and new tagged conformance rows (`OriginValidationTests.Origin_with_userinfo_is_rejected_with_403`, `.Origin_with_explicit_default_port_is_rejected_against_a_portless_host`). |
 | `rtmt.py`'s `_websocket_handler`'s pre-upgrade Origin + token checks ("Task 3"/"Task 4") | `Realtime/RealtimeAuthGate.cs` | PR #96 review, required item 1 -- see "`/realtime` auth enforcement (PR #96)" below for the full decision record. |
 | (module-level `_startup_checks` dict + `/health` handler) | `Health/StartupChecks.cs`, `Health/HealthEndpoint.cs` | Same JSON shape: `{status, version, checks, personas}`, 200 if every check passed else 503. |
 | (aiohttp route table's WebSocket handler + per-session state) | `Sessions/RealtimeProcessor.cs`, `Sessions/SessionActor.cs`, `Sessions/SessionRegistry.cs`, `Sessions/IPipelineProcessor.cs` | `RealtimeProcessor.RunSessionAsync` owns the accepted WebSocket and upstream relay for the `realtime` pipeline: bootstrap, greeting gate, bidirectional frame loops, echo suppression/barge-in, session echoes, round-trip tokens and tool calls. `SessionActor`/`SessionRegistry` still exist as the generic session seam, but session resume and 4002 supersede handling remain a documented gap. |
@@ -129,15 +129,26 @@ mirroring `rtmt.py`'s post-exception `order_state_singleton.get_order_summary_js
 (the read is wrapped in its own try/catch; a session with no readable order state yet just skips the
 refresh, and still gets the `function_call_output` below it either way).
 
-**Still not tagged: the other 3 `ToolFailureCapAndTicketRefreshTests.cs` methods (failure cap).**
-These probe `rtmt.py`'s consecutive-tool-failure cap: a per-connection failure streak that suppresses
-the model's own auto-continue once the cap is reached and resets on guest speech.
-`RealtimeProcessor`'s tool-dispatch catch-all is still explicitly commented as a scope cut ("Scope
-cut (#13): the tool-failure-cap ladder (`_ToolFailureTracker`) is skipped"): it always sends a fixed
-apology string and a bare `response.create`, with no failure-streak tracking. Porting the cap ladder
-is a real relay feature, not an order-engine or search-tool one, and stays #13 scope -- tracked as
-the next thing #13's owner (or a follow-up issue) should pick up before this class's remaining 3
-methods can be tagged.
+**Now tagged (issue #13 Wave 4b): the other 3 `ToolFailureCapAndTicketRefreshTests.cs` methods
+(failure cap).** These probe `rtmt.py`'s consecutive-tool-failure cap: a per-connection failure
+streak that suppresses the model's own auto-continue once the cap is reached and resets on guest
+speech. The "Scope cut (#13): the tool-failure-cap ladder (`_ToolFailureTracker`) is skipped"
+comment is gone; `RealtimeProcessor` now owns a real `Realtime/ToolFailureTracker.cs` (a
+round-based, not call-based, counter -- a round with only successes, e.g. the model's own
+prescribed `get_order` retry, must NOT reset the streak, only `ResetForNewTurn()` does; this is
+Python's own PR #58 "S1" infinite-loop fix, ported faithfully) wired at three seams:
+`HandleToolCallDoneAsync`'s catch block records a round failure; `HandleResponseDoneAsync` ends the
+round and, at cap, sends a one-shot `tool_choice=none` apology `response.create`
+(`ToolFailureCapNotice`, mirroring `_build_tool_failure_cap_notice_msg`'s nuance of checking
+`PromptLoader.ErrorMessages` directly rather than calling `RenderError` unconditionally, since
+`RenderError`'s own unknown-key fallback is a worse `response.instructions` value than the neutral
+hardcoded default) and otherwise suppresses the auto-continue entirely once the one-shot notice has
+already fired; and the marker side-effect switch resets the streak on both of Python's two
+guest-turn signals -- `input_audio_buffer.speech_started` (already handled for other purposes) and
+`conversation.item.input_audio_transcription.completed` (previously had **no** handling at all in
+C#, not even passthrough; this is a genuine gap filled, not just a port). All three methods are now
+tagged `Dotnet=ready` and pass 3x locally on the dotnet leg alongside the existing
+`A_genuine_tool_exception_refreshes_the_guests_ticket` row.
 
 **PR #158 (issue #143/ADR-002, R10 + dev-merge floor recount):** tagged all nine
 `Scenarios/Auth` auth-row test classes `Dotnet=ready` (196 raw tagged methods across the merged
@@ -188,6 +199,40 @@ independence and pack-owned wholeBundleSize golden vectors, raising the floor 20
 #205 adds one tagged, ungated `componentUpcharge` conformance Fact for the medium-included
 component delta rule and the additive `componentUpcharges` wire field, raising the floor 203 -> 204.
 See `DotnetTraitCoverageTests`'s own doc comment for the exact arithmetic.
+
+**Issue #21 "flip candidates to check early":** the real tagged-method count had drifted to 208
+since the floor was last raised. This pass tags 11 more genuinely-passing, already-ported rows --
+all 10 `Scenarios/Security/ClientToServerAllowListTests.cs` methods (browser-to-upstream realtime
+allow-list hardening, fully ported in `Backend/Realtime/ClientServerFilter.cs`/
+`RealtimeProcessor.cs`), plus `OriginValidationTests.Exact_origin_is_accepted` (its two siblings
+were already tagged). All 11 verified green against the C# backend (3 clean runs each, no flakes),
+raising the floor 204 -> 219 (208 + 11).
+
+**Issue #21 round 2 (PR #230 review, Rick's item 3):** `ClientServerFilter.cs`'s event-id/base64
+regexes and `OriginValidator.cs`'s authority comparison are now faithful ports (see the two table
+rows above for the exact gaps fixed), backed by 3 new tagged, ungated conformance rows verified
+green against both backends (3 clean runs each against the C# backend, no flakes), each
+mutation-checked by temporarily reverting its fix and confirming red -- raising the floor
+219 -> 222 (219 + 3). PR #226 (#147, Beth's C# auth work) independently raises this SAME floor
+204 -> 222 against the stale pre-#21 baseline; agreed merge order is PR #230 lands first at 222,
+then PR #226 rebases and re-targets its own floor to 222 + 18 = 240.
+
+**Issue #13 Wave 4b (tool-failure cap) and floor-constant note:** this wave adds 3 newly-tagged
+`ToolFailureCapAndTicketRefreshTests.cs` methods. `DotnetTraitCoverageTests`'s own `count >= 222`
+constant (already raised by #230, above, by the time this branch rebased onto it) was deliberately
+left untouched at that point. Rather than project the real count by arithmetic (unreliable once
+multiple in-flight PRs are each independently tagging methods against a moving dev base), it was
+measured directly at rebase time by temporarily asserting on the actual
+`CountFloorEligibleDotnetReadyTestMethods()` value on this branch: **239** floor-eligible tagged
+methods, comfortably above the 222 floor.
+
+**Issue #13 Wave 4/4b floor raise (PR #235 merged to dev, PR #237 rebased onto it):** now that #235
+has landed on `dev`, PR #237 re-measured the count the same way immediately after rebasing onto
+`origin/dev` (still **239** -- confirming no drift since the first measurement) and raised the floor
+constant itself 222 -> 239. Per squad coordination, any PR still rebasing on top of this (`#226`,
+`#244`) must re-measure fresh at its own rebase time rather than add its own historical delta (e.g.
+#226's planned "+18") to 239 -- those deltas were computed against the stale 222 baseline and risk
+double-counting methods (such as this wave's 3 tool-failure-cap rows) already folded into 239.
 
 - **DEV_MODE hot-reload** (`prompt_loader.py`'s file-watching reload behaviour) is explicitly
   marked not required in C# by the design doc's per-backend loading table. Not ported.
@@ -338,7 +383,7 @@ See the comments left on those issues directly for this wave's position. Summary
   `Backend.dll`. Run locally with
   `CONFORMANCE_BACKEND=dotnet dotnet test Conformance.slnx --filter "Dotnet=ready&Category!=Browser"`
   (repo root needs a built frontend at `app/backend/static` -- `npm run build` in `app/frontend`
-  -- for static-file scenarios). `DotnetTraitCoverageTests` now enforces at least 204 floor-eligible
+  -- for static-file scenarios). `DotnetTraitCoverageTests` now enforces at least 222 floor-eligible
   tagged methods; the early tagged set included:
   - `PersonaDiscoveryConformanceTests` -- 4 of 5 methods (persona list/detail shape, 404 for an
     unknown persona id, pre-upgrade 404 for an unknown `?persona=` on `/realtime`). The 5th
@@ -363,8 +408,10 @@ See the comments left on those issues directly for this wave's position. Summary
   Carried over from PR #96 (unchanged, still tagged): `HealthEndpointTests`,
   `HealthEndpointExtendedTests`, `StaticIndexHtmlTests`, `AuthSessionTests`,
   `AuthSessionTokenFormatTests` (both cases), all 3 of `Scenarios/Http/OriginValidationTests.cs`,
-  and 2 of 3 in `Scenarios/Security/OriginValidationTests.cs`. The conformance workflow now has a
-  `backend: [python, dotnet]` matrix; the dotnet leg runs `Dotnet=ready&Category!=Browser`.
+  and (as of issue #21) all 3 of `Scenarios/Security/OriginValidationTests.cs` (the third,
+  `Exact_origin_is_accepted`, was the one genuinely-untagged row left in that class). The
+  conformance workflow now has a `backend: [python, dotnet]` matrix; the dotnet leg runs
+  `Dotnet=ready&Category!=Browser`.
 - Session-level persona/model/mode binding is now forwarded into the live Azure OpenAI realtime
   session through `RealtimeProcessor.RunSessionAsync`; `ProcessAsync` is intentionally unused for
   accepted WebSockets.
@@ -535,14 +582,16 @@ resume): `CloseCodeTests`'s remaining 4002-supersede scenario, `IdleCloseCodeTes
 doc comment requires a disconnect+resume and a silence nudge, i.e. #15's resume/rehydration
 machinery -- not a bug, correctly deferred).
 The `RateLimit` ladder (backoff retries of `response.create`, the `response.created` hook, the
-greeting-retry interplay `EchoSuppressor` already models) is deferred, tracked on #13 (not
-blocked) -- PR #140 round 2, Rick's review: the notice relay (one final `extension.rate_limited`
-on a 429, instead of Python's retry) is already covered by other tagged scenarios, and nothing
-about #13's own S1.2 acceptance is blocked by the ladder itself; it needs timers/`TimeProvider`
-and is a sizable separate port, tracked on #15 (S5: C# sessions and resilience, which already
-ports `rate_limit.py`) and flagged as an **#17 go-live blocker** for the deployed C# app in the
-meantime. So the whole `RateLimit` scenario family remains untagged here. A handful of failures
-(`CapturedProcessOutputTests`, `CapturedProcessOutputWaitTests`,
+greeting-retry interplay `EchoSuppressor` already models) is now implemented: Wave 4 of #13 ported
+`rate_limit.py`'s `RateLimitRecovery` verbatim into
+`app/backend-dotnet/src/Backend/Realtime/RateLimitRecovery.cs`, driven by the Wave-2 `TimeProvider`
+seam, replacing the old one-shot `extension.rate_limited` notice (previously the only behaviour
+here, per PR #140 round 2 / Rick's review) with the full silent-first-retry /
+notify-non-final-then-final / guest-speech-resets-the-ladder behaviour. Scenarios that only exercise
+the ladder itself are now tagged `Dotnet=ready` (see the PR that landed this change for the exact
+list and count); `RateLimitIdleInteractionTests` remains untagged -- it additionally needs #15's
+idle-timeout machinery, not yet ported. The **#17 go-live blocker** tag on the ladder is resolved by
+this change. A handful of failures (`CapturedProcessOutputTests`, `CapturedProcessOutputWaitTests`,
 `WindowsJobObjectTests`) are pre-existing harness self-tests unrelated to `CONFORMANCE_BACKEND` and
 out of scope.
 
