@@ -69,9 +69,19 @@ public static class MenuSizeUpdater
         var map = new Dictionary<string, string>();
         foreach (var property in doc.RootElement.EnumerateObject())
         {
-            map[property.Name] = property.Value.ValueKind == JsonValueKind.String
-                ? property.Value.GetString() ?? string.Empty
-                : string.Empty;
+            // PR #224 review R3: a non-string value here (e.g. a typo'd `null`/number/object) must
+            // not silently become "" -- FindSizesForProduct's search term would then be an empty
+            // string, whose Contains check matches EVERY production displayName, corrupting that
+            // menu item's sizes with whatever product happens to be first in production order
+            // instead of visibly failing. Fail loudly and specifically instead.
+            if (property.Value.ValueKind != JsonValueKind.String)
+            {
+                throw new InvalidDataException(
+                    $"'{productSearchMapFilePath}': entry '{property.Name}' is not a string " +
+                    $"(found {property.Value.ValueKind}). Every value must be the production " +
+                    "search term string, or FindSizesForProduct would match every product.");
+            }
+            map[property.Name] = property.Value.GetString() ?? string.Empty;
         }
 
         if (map.Count == 0)
@@ -307,6 +317,17 @@ public static class MenuSizeUpdater
             }
         }
 
+        // Python's json.load/json.dump round-trip re-serializes EVERY number in the whole parsed
+        // dict via float repr if it parsed as a float (any token with '.', 'e', or 'E' -- e.g.
+        // "2.50" -> "2.5"), and leaves it alone if it parsed as an int (no such token -- e.g. "2"
+        // stays "2", never becomes "2.0"). This port's own edits above already produce
+        // canonical-repr price literals for changed items (via PythonFloatRepr), but every OTHER
+        // number already in the document -- untouched items' prices included -- round-trips
+        // through JsonNode verbatim as originally written unless walked and rewritten here too
+        // (PR #224 review R3: caught because a non-size-field int or an untouched trailing-zero
+        // price elsewhere in the tree would otherwise silently diverge from Python's output).
+        NormalizeNumberLiteralsLikePythonJsonDump(menuNode);
+
         // Byte-for-byte match of Python's `json.dump(menu_data, f, indent=4, ensure_ascii=False)`
         // + `f.write("\n")`: PythonJsonEncoder reproduces ensure_ascii=False's narrower escape set
         // (see its own doc comment), and NewLine/the trailing newline use Environment.NewLine to
@@ -337,9 +358,72 @@ public static class MenuSizeUpdater
     /// the point (Python's float repr always shows ".0" for a whole number; .NET's default
     /// shortest-round-trip double formatting does not).
     /// </summary>
-    internal static string PythonFloatRepr(decimal value)
+    internal static string PythonFloatRepr(decimal value) => PythonFloatRepr((double)value);
+
+    /// <summary>Core formatting shared by both <see cref="PythonFloatRepr(decimal)"/> and the
+    /// whole-tree number normalization below, which parses an existing float-literal token's raw
+    /// text as a double rather than starting from a C# <see cref="decimal"/>.</summary>
+    internal static string PythonFloatRepr(double value)
     {
-        var text = ((double)value).ToString(CultureInfo.InvariantCulture);
+        var text = value.ToString(CultureInfo.InvariantCulture);
         return text.IndexOfAny(['.', 'e', 'E']) < 0 ? text + ".0" : text;
+    }
+
+    /// <summary>
+    /// Walks the WHOLE <paramref name="node"/> tree (not just the sizes/price fields
+    /// <see cref="UpdateMenu"/> directly edits) and rewrites every number literal the way Python's
+    /// <c>json.load</c> + <c>json.dump</c> round-trip would: a token containing <c>.</c>, <c>e</c>,
+    /// or <c>E</c> parses as a Python <c>float</c> and is re-serialized via float repr (e.g.
+    /// <c>"2.50"</c> -&gt; <c>"2.5"</c>); a token with none of those parses as a Python <c>int</c>
+    /// and is written back byte-for-byte unchanged (e.g. <c>"2"</c> stays <c>"2"</c>, never becomes
+    /// <c>"2.0"</c>). PR #224 review R3: this must cover every number anywhere in the document,
+    /// because Python's <c>json.dump</c> re-serializes the ENTIRE parsed dict, not only the
+    /// size/price fields this tool itself changed.
+    /// </summary>
+    internal static void NormalizeNumberLiteralsLikePythonJsonDump(JsonNode? node)
+    {
+        switch (node)
+        {
+            case JsonObject obj:
+                // ToList(): iterating obj directly while assigning obj[key] below would mutate
+                // the collection being enumerated.
+                foreach (var key in obj.Select(property => property.Key).ToList())
+                {
+                    NormalizeChildInPlace(obj[key], replacement => obj[key] = replacement);
+                }
+                break;
+            case JsonArray arr:
+                for (var i = 0; i < arr.Count; i++)
+                {
+                    var index = i;
+                    NormalizeChildInPlace(arr[index], replacement => arr[index] = replacement);
+                }
+                break;
+        }
+    }
+
+    /// <summary>
+    /// If <paramref name="child"/> is a float-literal number token, builds its normalized
+    /// replacement and hands it to <paramref name="assign"/> (a freshly-<see cref="JsonNode.Parse"/>d
+    /// node has no parent yet, so it is always safe to assign into its new slot). Otherwise,
+    /// recurses into containers in place and never calls <paramref name="assign"/> at all --
+    /// re-assigning a JsonObject/JsonArray property to the SAME child reference it already holds
+    /// throws ("the node already has a parent"), so an unmodified child must be left untouched,
+    /// not written back to its own slot.
+    /// </summary>
+    private static void NormalizeChildInPlace(JsonNode? child, Action<JsonNode?> assign)
+    {
+        if (child is JsonValue value && value.TryGetValue(out JsonElement element) &&
+            element.ValueKind == JsonValueKind.Number)
+        {
+            var raw = element.GetRawText();
+            if (raw.IndexOfAny(['.', 'e', 'E']) >= 0)
+            {
+                assign(JsonNode.Parse(PythonFloatRepr(double.Parse(raw, CultureInfo.InvariantCulture))));
+            }
+            // else: an integer literal -- Python keeps this as an int, written back unchanged.
+            return;
+        }
+        NormalizeNumberLiteralsLikePythonJsonDump(child);
     }
 }

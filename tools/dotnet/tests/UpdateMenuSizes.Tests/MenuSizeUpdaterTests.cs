@@ -304,6 +304,22 @@ public sealed class MenuSizeUpdaterTests : IDisposable
         Assert.Throws<InvalidDataException>(() => MenuSizeUpdater.LoadProductSearchMap(path));
     }
 
+    [Fact]
+    public void LoadProductSearchMap_RejectsNonStringValue()
+    {
+        // PR #224 review R3: a non-string value (null, a number, an object/array -- here, a typo'd
+        // null) must not silently become "" -- FindSizesForProduct's `name.Contains(searchLower)`
+        // check would then match EVERY production displayName (an empty string is a substring of
+        // everything), corrupting that menu item's sizes with whatever product happens to be
+        // first in production order instead of visibly failing. Mutation check: reverting
+        // LoadProductSearchMap's non-string branch back to `string.Empty` makes this assertion
+        // fail (no exception thrown).
+        var path = WriteTempJson("search-map", """{ "Cherry Limeade": null }""");
+
+        var ex = Assert.Throws<InvalidDataException>(() => MenuSizeUpdater.LoadProductSearchMap(path));
+        Assert.Contains("Cherry Limeade", ex.Message);
+    }
+
     // ---- Output parity with the Python twin (PR #224 review R2/R3) ----------------------------
 
     [Theory]
@@ -404,5 +420,72 @@ public sealed class MenuSizeUpdaterTests : IDisposable
         var bytes = File.ReadAllBytes(menuPath);
         var expectedTrailer = System.Text.Encoding.UTF8.GetBytes(Environment.NewLine);
         Assert.Equal(expectedTrailer, bytes[^expectedTrailer.Length..]);
+    }
+
+    [Fact]
+    public void UpdateMenu_NormalizesUntouchedTrailingZeroNumbers_ElsewhereInTheTree()
+    {
+        // Rick's case 1 (PR #224 review R3): Python's json.dump re-serializes EVERY float-literal
+        // number it parsed, not only the size/price fields UpdateMenu itself changed. An untouched
+        // item's price (here, "Not A Tracked Item" -- absent from the product search map, so
+        // UpdateMenu never looks at it) must still come out as "2.5", not "2.50", because Python's
+        // json.load/json.dump round-trip would rewrite it too. Mutation check: removing the
+        // NormalizeNumberLiteralsLikePythonJsonDump call (or its whole-tree recursion into objects
+        // it didn't directly construct) makes this assertion fail with "2.50" still present.
+        var productionPath = WriteTempJson("prod", ProductionFixture);
+        var menuPath = WriteTempJson("menu", """
+            {
+              "menuItems": [
+                {
+                  "name": "Food",
+                  "items": [
+                    { "name": "Not A Tracked Item", "sizes": [ { "size": "small", "price": 2.50 } ] }
+                  ]
+                }
+              ]
+            }
+            """);
+
+        var result = MenuSizeUpdater.UpdateMenu(productionPath, menuPath, WriteDefaultProductSearchMap());
+
+        Assert.Equal(0, result.UpdatedCount); // never touched by the reconciliation logic itself
+        var updatedJson = File.ReadAllText(menuPath);
+        Assert.Contains("\"price\": 2.5", updatedJson);
+        Assert.DoesNotContain("2.50", updatedJson);
+    }
+
+    [Fact]
+    public void UpdateMenu_LeavesWholeNumberIntegerLiteralsUnchanged_ElsewhereInTheTree()
+    {
+        // Rick's case 2 (PR #224 review R3): a number token with no '.', 'e', or 'E' parses as a
+        // Python int, not a float, and json.dump writes an int back exactly as-is -- "2" stays
+        // "2", it must NOT become "2.0" (unlike a genuine float literal such as "6.0", which stays
+        // "6.0" -- see PythonFloatRepr_MatchesPythonJsonFloatFormatting). Mutation check: applying
+        // PythonFloatRepr to every number regardless of its original token (dropping the
+        // IndexOfAny('.', 'e', 'E') >= 0 guard in NormalizeChildInPlace) makes this assertion fail
+        // by turning "quantity": 2 into "quantity": 2.0.
+        var productionPath = WriteTempJson("prod", ProductionFixture);
+        var menuPath = WriteTempJson("menu", """
+            {
+              "menuItems": [
+                {
+                  "name": "Food",
+                  "items": [
+                    {
+                      "name": "Not A Tracked Item",
+                      "quantity": 2,
+                      "sizes": [ { "size": "small", "price": 1.0 } ]
+                    }
+                  ]
+                }
+              ]
+            }
+            """);
+
+        MenuSizeUpdater.UpdateMenu(productionPath, menuPath, WriteDefaultProductSearchMap());
+
+        var updatedJson = File.ReadAllText(menuPath);
+        Assert.Contains("\"quantity\": 2,", updatedJson);
+        Assert.DoesNotContain("\"quantity\": 2.0", updatedJson);
     }
 }

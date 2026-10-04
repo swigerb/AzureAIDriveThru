@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using UpdateMenuSizes;
 
@@ -57,19 +58,9 @@ public sealed class PythonParityTests : IDisposable
         Assert.True(File.Exists(discovery.ProductSearchMapFilePath), $"Fixture not found: {discovery.ProductSearchMapFilePath}");
         Assert.True(File.Exists(realScript), $"Python twin not found: {realScript}");
 
-        var interpreter = await FindWorkingPythonInterpreterAsync(repoRoot, TestContext.Current.CancellationToken);
+        var interpreter = await RequirePythonInterpreterAsync(repoRoot, TestContext.Current.CancellationToken);
         if (interpreter is null)
         {
-            var isCi = string.Equals(Environment.GetEnvironmentVariable("GITHUB_ACTIONS"), "true", StringComparison.OrdinalIgnoreCase);
-            var message =
-                "No Python interpreter was found (checked the repo-root .venv, then bare " +
-                "\"python3\"/\"python\" on PATH). This test needs only the standard library " +
-                "(json, pathlib), so any Python 3 interpreter works.";
-            if (isCi)
-            {
-                Assert.Fail(message + " CI must have a Python interpreter available -- this is not a legitimate skip in CI.");
-            }
-            Assert.Skip(message + " Install Python 3, or run `python -m venv .venv` at the repo root, to run this test locally.");
             return;
         }
 
@@ -136,11 +127,96 @@ public sealed class PythonParityTests : IDisposable
         Assert.Equal(pythonUpdatedCount, result.UpdatedCount);
     }
 
+    /// <summary>
+    /// PR #224 review R3: there are now two sources of truth for the menuItems.json-name -&gt;
+    /// production-search-term map -- the Python script's own hardcoded <c>PRODUCT_SEARCH_MAP</c>
+    /// dict (kept untouched, per issue #16's scope) and the externalized
+    /// <c>personas/&lt;id&gt;/menu/product_search_map.json</c> this C# port reads instead
+    /// (<see cref="MenuSizeUpdater.LoadProductSearchMap"/>). Three of the six real entries never
+    /// surface in <c>UpdateMenu</c>'s own log/output (their production search terms don't match
+    /// anything in today's fixture, so they're silently absorbed into a "no production data found"
+    /// SKIP line that says nothing about the search term itself) -- so the byte-identical parity
+    /// test above cannot, by itself, catch the two files drifting apart. This test instead loads
+    /// the Python script's module-level <c>PRODUCT_SEARCH_MAP</c> directly (via <c>runpy</c>,
+    /// without running <c>update_menu()</c>) and asserts it matches the JSON file exactly --
+    /// same keys, same values, same ORDER (Python 3.7+ dict order, and <c>json.dumps</c>'s default
+    /// order, are both insertion order, so this also catches an entry reordered relative to the
+    /// twin, not just a value or key changed).
+    /// </summary>
+    [Fact]
+    public async Task ProductSearchMapFile_MatchesPythonScriptsHardcodedDict_ExactlyInOrder()
+    {
+        var repoRoot = RepoRoot.Find(AppContext.BaseDirectory);
+        var discovery = PersonaMenuLocator.Locate(repoRoot);
+        var realScript = Path.Combine(repoRoot, "scripts", "update_menu_sizes.py");
+
+        Assert.True(File.Exists(realScript), $"Python twin not found: {realScript}");
+        Assert.True(File.Exists(discovery.ProductSearchMapFilePath), $"Fixture not found: {discovery.ProductSearchMapFilePath}");
+
+        var interpreter = await RequirePythonInterpreterAsync(repoRoot, TestContext.Current.CancellationToken);
+        if (interpreter is null)
+        {
+            return;
+        }
+
+        // runpy.run_path's default run_name is "<run_path>", not "__main__", so the script's own
+        // `if __name__ == "__main__": update_menu()` guard never fires -- only the module-level
+        // constants (including PRODUCT_SEARCH_MAP) are evaluated, with no file I/O against the
+        // real production/menu fixtures.
+        const string inspectProductSearchMap =
+            "import json, runpy, sys\n" +
+            "ns = runpy.run_path(sys.argv[1])\n" +
+            "print(json.dumps(ns['PRODUCT_SEARCH_MAP']))\n";
+        var (exitCode, pythonStdout, stderr) = await RunProcessAsync(
+            interpreter, ["-c", inspectProductSearchMap, realScript], TestContext.Current.CancellationToken);
+        Assert.True(exitCode == 0, $"Python inspection exited {exitCode}.\nstdout:\n{pythonStdout}\nstderr:\n{stderr}");
+
+        using var pythonDoc = JsonDocument.Parse(pythonStdout.Trim());
+        using var fileDoc = JsonDocument.Parse(
+            await File.ReadAllTextAsync(discovery.ProductSearchMapFilePath, TestContext.Current.CancellationToken));
+
+        var pythonEntries = pythonDoc.RootElement.EnumerateObject()
+            .Select(p => (Key: p.Name, Value: p.Value.GetString()))
+            .ToList();
+        var fileEntries = fileDoc.RootElement.EnumerateObject()
+            .Select(p => (Key: p.Name, Value: p.Value.GetString()))
+            .ToList();
+
+        Assert.Equal(pythonEntries, fileEntries);
+    }
+
     private static int ParseUpdatedCount(string stdout)
     {
         var match = Regex.Match(stdout, @"Updated (\d+) items in menuItems\.json");
         Assert.True(match.Success, $"Could not find an 'Updated N items...' line in:\n{stdout}");
         return int.Parse(match.Groups[1].Value);
+    }
+
+    /// <summary>
+    /// Resolves a working Python interpreter via <see cref="FindWorkingPythonInterpreterAsync"/>,
+    /// or fails/skips the calling test the same way both parity tests in this class need to: a
+    /// missing interpreter is a legitimate local-dev skip, but a hard failure in CI (update_menu_sizes.py
+    /// and this inspection script both need only the standard library, so CI must always have one).
+    /// </summary>
+    private static async Task<string?> RequirePythonInterpreterAsync(string repoRoot, CancellationToken cancellationToken)
+    {
+        var interpreter = await FindWorkingPythonInterpreterAsync(repoRoot, cancellationToken);
+        if (interpreter is not null)
+        {
+            return interpreter;
+        }
+
+        var isCi = string.Equals(Environment.GetEnvironmentVariable("GITHUB_ACTIONS"), "true", StringComparison.OrdinalIgnoreCase);
+        var message =
+            "No Python interpreter was found (checked the repo-root .venv, then bare " +
+            "\"python3\"/\"python\" on PATH). This test needs only the standard library " +
+            "(json, pathlib, runpy), so any Python 3 interpreter works.";
+        if (isCi)
+        {
+            Assert.Fail(message + " CI must have a Python interpreter available -- this is not a legitimate skip in CI.");
+        }
+        Assert.Skip(message + " Install Python 3, or run `python -m venv .venv` at the repo root, to run this test locally.");
+        return null;
     }
 
     /// <summary>

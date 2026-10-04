@@ -117,19 +117,35 @@ The two load-bearing differences from a literal transliteration:
   `product_search_map.json`'s paths from that match, rather than hardcoding a persona id -- so the
   tool (and its tests) keep working unchanged as persona packs are added, renamed, or removed.
   `--production`/`--menu`/`--product-search-map` arguments still let tests (or a developer) point
-  it at throwaway copies instead of the real, checked-in files.
+  it at throwaway copies instead of the real, checked-in files. Per PR #224 review R3,
+  `docs/persona-architecture.md`'s planned multi-persona layout means a *second* persona can add
+  its own `menu/source/*-menu-items.json` export without wanting this tool at all, so discovery
+  further filters matches down to whichever persona(s) have **opted in** by also placing a sibling
+  `menu/product_search_map.json` next to their export; zero or more-than-one opted-in match is a
+  clear, actionable error (see "Clean CLI errors, not stack traces" below), not an ambiguous crash.
 * `PRODUCT_SEARCH_MAP` (the Python script's hardcoded `menuItems.json`-name -> production-search-term
   dictionary, which names actual brand products like `"Oreo® Peanut Butter Shake"`) is **not**
   duplicated as a hardcoded C# dictionary -- that data is a persona's own menu/brand data, not
-  something a generic, persona-agnostic tooling port should own. It was moved into each persona's
+  something a generic, persona-agnostic tooling port should own. It was copied into each persona's
   own `personas/<id>/menu/product_search_map.json` (loaded via
   `MenuSizeUpdater.LoadProductSearchMap`), which also keeps this brand-specific data exempt from
   the repo's brand-word rebrand scanner the same way the rest of `personas/<id>/**` already is.
+  Because a hand-copied file can silently drift from the Python script's own hardcoded dict (PR
+  #224 review R2 found exactly this: a product's search term was changed in the JSON file and
+  parity on real data stayed green, since that product never triggers a visible size change), a
+  dedicated test,
+  `PythonParityTests.ProductSearchMapFile_MatchesPythonScriptsHardcodedDict_ExactlyInOrder`, loads
+  the Python script's module-level `PRODUCT_SEARCH_MAP` dict directly (`runpy.run_path` plus
+  `json.dumps`, which does not trigger the script's `__main__` guard) and asserts it equals the JSON
+  file's entries exactly -- same keys, same values, same order -- so the copy is kept identical by
+  test, not merely by discipline. `LoadProductSearchMap` also throws (naming the offending key)
+  rather than silently mapping a non-string JSON value to `""`, which would otherwise make
+  `FindSizesForProduct`'s substring search match *every* product.
 
 ### Byte-for-byte output parity, not just equivalent JSON
 
 Matching Python's `json.dump(menu_data, f, indent=4, ensure_ascii=False)` + `f.write("\n")` exactly
-(not just producing structurally-equal JSON) needed three separate fixes, each independently
+(not just producing structurally-equal JSON) needed four separate fixes, each independently
 mutation-tested (see below):
 
 * **`PythonJsonEncoder.cs`**: a fully custom `System.Text.Encodings.Web.JavaScriptEncoder`
@@ -144,6 +160,53 @@ mutation-tested (see below):
   `1.50` becomes `1.5`, not whatever trailing-zero scale a C# `decimal` happened to retain from
   parsing. `PythonFloatRepr` reproduces that formatting; the price is inserted into the JSON tree by
   parsing that exact string (`JsonNode.Parse`), not by assigning the decimal/double directly.
+* **Whole-tree number-literal normalization** (PR #224 review R2): Python's `json.load`/`json.dump`
+  round-trip applies the float-vs-int distinction above to *every* number in the parsed document,
+  not just the price fields this tool explicitly rewrites -- a pre-existing `2.50` elsewhere in
+  `menuItems.json` becomes `2.5` on any run, while a pre-existing bare integer like `"quantity": 2`
+  stays `2` (never `2.0`), because Python's `json` module itself distinguishes `int` and `float`
+  tokens on parse and re-serializes each with its own type's `repr`. A naive C# port that only
+  reformats the handful of fields it touches would leave every *other* number exactly as typed in
+  the source file, silently breaking byte parity the moment any untouched number has a trailing
+  zero. `MenuSizeUpdater.NormalizeNumberLiteralsLikePythonJsonDump` walks the entire parsed
+  `JsonNode` tree after the per-item update loop and, for every numeric leaf whose raw JSON text
+  contains `.`, `e`, or `E` (i.e. was written as a float), replaces it with `PythonFloatRepr`'s
+  canonical string; leaves bare-integer leaves (no `.`/`e`/`E`) completely untouched.
+
+### Multi-persona discovery, and clean CLI errors, not stack traces
+
+`PersonaMenuLocator.Locate` (PR #224 review R3) first globs `personas/*/menu/source/*-menu-items.json`
+for *candidate* persona production exports, then filters those down to whichever candidate(s) have
+also **opted in** by placing a sibling `personas/<id>/menu/product_search_map.json` next to their
+export. This two-step filter exists because `docs/persona-architecture.md`'s planned layout lets a
+second persona add its own production export (porting its own POS data) without wanting this
+specific size-reconciliation tool at all -- an un-opted-in persona's export must stay invisible to
+this tool, so adding one never breaks the first, already-opted-in persona's existing automated run.
+Zero candidates, candidates with zero opted in, or more than one opted in are each a distinct,
+actionable `InvalidOperationException` message (see `PersonaMenuLocator.cs`); exactly one opted-in
+match is auto-selected, matching today's single-persona behavior.
+
+`Program.cs`'s entry point is a single line delegating to `CliRunner.Run(args, Console.Out,
+Console.Error)` -- all argument parsing, persona discovery, and top-level error handling lives in
+`CliRunner.cs` instead of C# top-level-statement local functions, which compile to `private`
+methods on the compiler-synthesized `Program` class and so cannot be unit-tested directly (even
+`InternalsVisibleTo` only affects `internal`-or-looser members). `CliRunner.Run` takes `TextWriter`s
+for stdout/stderr specifically so `CliRunnerTests.cs` can assert on exactly what a real run would
+print, without spawning a subprocess. Two behaviors `CliRunner.Run` is responsible for:
+
+* **`--production` skips persona discovery entirely.** An explicit `--production` means the caller
+  has already picked a persona, so the run must not also need (or be blocked by) however many other
+  persona packs happen to exist on disk -- including a case `PersonaMenuLocator` itself would
+  otherwise refuse (two personas both opted in). `--menu`/`--product-search-map` still default to
+  the same menu/source-sibling convention `PersonaMenuLocator` uses when only `--production` is
+  given.
+* **A clean one-line error, not a stack trace, when discovery fails.** When no `--production` is
+  given, `CliRunner.Run` calls `PersonaMenuLocator.Locate` inside a `try`/`catch
+  (InvalidOperationException)`; on catch, it writes `update-menu-sizes: <message>` to `stderr` and
+  returns exit code `1`, instead of letting the exception propagate as an unhandled-exception stack
+  trace. The catch is scoped to `InvalidOperationException` specifically (not a blanket catch-all),
+  so a genuine bug elsewhere (e.g. a bad `--production` path the caller supplied explicitly) still
+  surfaces as a real, diagnosable exception.
 
 ### Output-parity test (and the mutation checks)
 
@@ -172,9 +235,23 @@ interpreter qualifies.
 pieces against small synthetic fixtures, independent of the real menu data: `ExtractSize`'s prefix
 matching (including the dead-prefix case above), the Cherry Limeade/Ocean Water slush/diet
 exclusions, first-match-per-size-key-wins, idempotency, that `UpdateMenu` only replaces a changed
-item's `sizes` array (leaving every other field untouched), `LoadProductSearchMap`'s parsing, and
-each of the three byte-parity fixes above in isolation (trailing-zero price formatting, the Python
-list-repr log line, non-ASCII characters written raw, and the trailing `Environment.NewLine`).
+item's `sizes` array (leaving every other field untouched), `LoadProductSearchMap`'s parsing (and
+its non-string-value guard), and each of the four byte-parity fixes above in isolation
+(trailing-zero price formatting, the Python list-repr log line, non-ASCII characters written raw,
+the trailing `Environment.NewLine`, and whole-tree number-literal normalization -- both the
+trailing-zero-becomes-trimmed case and the bare-integer-stays-untouched case).
+
+`tools/dotnet/tests/UpdateMenuSizes.Tests/PersonaMenuLocatorTests.cs` builds synthetic
+`personas/` layouts under a fresh temp directory per test (0 personas, 1 opted-in persona, 2
+personas with only one opted in, and 2 personas both opted in) to exercise the multi-persona
+discovery logic described above without depending on however many real persona packs exist in the
+repo today.
+
+`tools/dotnet/tests/UpdateMenuSizes.Tests/CliRunnerTests.cs` drives `CliRunner.Run` directly
+against in-memory `TextWriter`s (no subprocess) to verify `--production` bypasses persona discovery
+entirely (even deriving `--menu`/`--product-search-map` defaults from `--production`'s own sibling
+`menu/` directory when they're omitted), and that a `PersonaMenuLocator` discovery failure becomes a
+clean, single-line `stderr` message plus exit code `1` -- never an unhandled stack trace.
 
 **Mutation checks performed**:
 
@@ -190,6 +267,29 @@ list-repr log line, non-ASCII characters written raw, and the trailing `Environm
   as expected (the real fixtures happen not to contain a trailing-zero price today, so the parity
   test alone would not have caught this one). Restored all three fixes and reran; all 31 tests passed
   again.
+* Removed the `NormalizeNumberLiteralsLikePythonJsonDump` call from `UpdateMenu` -- the dedicated
+  "untouched trailing-zero number elsewhere in the tree" unit test failed as expected (the stray
+  `2.50` stayed `2.50` instead of becoming `2.5`). Restored the call, then removed the
+  `'.'`/`'e'`/`'E'` guard so *every* number got reformatted -- the dedicated "whole-number integer
+  literal stays unchanged" unit test failed as expected (`"quantity": 2` became `"quantity": 2.0`).
+  Restored the guard and reran; all tests passed again.
+* Replaced `LoadProductSearchMap`'s non-string-value guard with the original silent
+  `?? string.Empty` fallback -- `LoadProductSearchMap_RejectsNonStringValue` failed as expected ("No
+  exception was thrown"). Restored the guard and reran; all tests passed again.
+* Reproduced PR #224 review R2's exact scenario by changing `"Classic Vanilla Shake"` to a wrong
+  term directly in the checked-in persona's `product_search_map.json` -- confirmed
+  `ProductSearchMapFile_MatchesPythonScriptsHardcodedDict_ExactlyInOrder` failed with a clear
+  collection-diff at that exact entry, proving this test (unlike the real-fixture byte-parity test
+  alone) actually catches this class of drift. Restored the file (`git diff` confirmed byte-identical
+  afterward) and reran; all tests passed again.
+* In `PersonaMenuLocator.Locate`, bypassed the opt-in filter (`candidates.Where(HasOptedIn)` ->
+  `candidates`) -- both `Locate_ThrowsCleanError_WhenOnePersonaExistsButHasNotOptedIn` and
+  `Locate_SelectsTheOptedInPersona_WhenASecondPersonaAddsAnExportWithoutOptingIn` failed as expected
+  (the latter now hit the "more than one persona has opted in" ambiguity error instead of cleanly
+  selecting the one true opted-in persona). Restored the filter and reran; all tests passed again.
+* In `CliRunner.Run`, changed the discovery-failure branch's `return 1` to `return 0` -- 
+  `Run_PrintsCleanErrorAndReturnsNonZeroExitCode_WhenPersonaDiscoveryFails` failed as expected
+  (`Expected: 1, Actual: 0`). Restored the fix and reran; all 46 tests passed again.
 
 ### CI wiring
 
