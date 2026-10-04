@@ -6,7 +6,7 @@ using Xunit;
 namespace Conformance.Tests.Scenarios.Auth;
 
 /// <summary>
-/// Issue #143/ADR-002, persona-architecture.md 18.11 rows 1 to 8 (including 6b) on REST: "Each
+/// Issue #143/ADR-002, persona-architecture.md 18.11 rows 1 to 8/17 to 19 (including 6b) on REST: "Each
 /// runs on REST (`/api/personas`, `/api/auth/session`, `menu.json`) and on `/realtime` unless
 /// noted." Runs every <see cref="AuthRowTokenCase"/> against all three REST paths in one theory
 /// row per case (the paths aren't an independent axis worth reporting separately -- a row either

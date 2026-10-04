@@ -12,7 +12,7 @@ namespace Backend.Auth;
 /// #246 mirror-check (Summer's Python JWKS-cooldown-race fix, coordinator's follow-up question on
 /// PR #226): OnMessageReceived only honours <see cref="IsInCooldown"/> when there is no
 /// already-warm, usable Last-Known-Good configuration to fall back on -- see
-/// EntraAuthentication.HasUsableLastKnownGoodConfiguration's doc comment for the full rationale;
+/// EntraAuthentication.HasUsableCachedConfiguration's doc comment for the full rationale;
 /// this gate itself needed no change, only its caller's use of it.
 /// <see cref="TimeProvider"/> is injectable purely for deterministic unit testing of the cooldown
 /// window; production code always uses <see cref="TimeProvider.System"/> (the implicit default).

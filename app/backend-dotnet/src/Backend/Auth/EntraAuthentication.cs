@@ -8,6 +8,9 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Primitives;
+using Microsoft.IdentityModel.JsonWebTokens;
+using Microsoft.IdentityModel.Protocols;
+using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Microsoft.IdentityModel.Tokens;
 
 namespace Backend.Auth;
@@ -23,6 +26,23 @@ namespace Backend.Auth;
 /// </summary>
 public static class EntraAuthentication
 {
+    /// <summary>
+    /// #226 Rick's review, fix #2 (MEDIUM): key used to relay OnTokenValidated's raw-JSON
+    /// roles/scp SHAPE check into <see cref="HttpContext.Items"/> for
+    /// <see cref="EntraAccessRequirementHandler"/> to consume. A single materialized
+    /// <see cref="System.Security.Claims.Claim"/> can't distinguish a genuine one-element JSON
+    /// array from a malformed bare value (both become one Claim with the same string value), so
+    /// the only place that can tell the difference -- OnTokenValidated, via
+    /// <c>context.SecurityToken as JsonWebToken</c>'s raw payload -- isn't the place that can
+    /// produce a 403 (ASP.NET Core's <c>context.Fail()</c> inside a JwtBearer event always
+    /// resolves to a 401 Challenge, never a 403 Forbid). <see cref="EntraAccessRequirementHandler"/>
+    /// treats a missing entry (e.g. the many existing unit tests that construct an
+    /// <see cref="AuthorizationHandlerContext"/> directly without a real OnTokenValidated having
+    /// run first) as "shape OK" -- this is purely an additional structural defense layer on top
+    /// of the existing, always-enforced role/scope VALUE checks, not a replacement for them.
+    /// </summary>
+    internal static readonly object ClaimShapeViolationKey = new();
+
     /// <summary>
     /// entra_auth.py's ANONYMOUS_ASSET_EXTENSIONS: a persona asset is anonymous purely by its
     /// (lowercased) file extension, regardless of path segments -- e.g. "demo/dummyOrder.json"
@@ -78,9 +98,20 @@ public static class EntraAuthentication
     /// <paramref name="discoveryFailureGate"/> defaults to a fresh, per-call instance when
     /// omitted (existing callers/tests that don't care about the cooldown); AddEntraAuthentication
     /// passes a single app-lifetime instance shared across every request on the scheme.
+    /// <paramref name="backchannelTimeout"/> defaults to the production 10s value when omitted --
+    /// exposed only so the #226 HIGH-finding pipeline integration tests can use a much shorter
+    /// timeout against a deliberately-hanging fake metadata endpoint without waiting 10 real
+    /// seconds per request. <paramref name="lastKnownGoodLifetime"/> defaults to the production
+    /// 300s value (fix #3) when omitted -- exposed only so the #226 LOW-MED-finding key-rotation
+    /// pipeline test can shrink it to a couple hundred milliseconds instead of waiting 300 real
+    /// seconds for a rotated-out key's grace window to elapse.
     /// </summary>
     public static void ConfigureJwtBearer(
-        JwtBearerOptions options, EntraSettings settings, DiscoveryFailureGate? discoveryFailureGate = null)
+        JwtBearerOptions options,
+        EntraSettings settings,
+        DiscoveryFailureGate? discoveryFailureGate = null,
+        TimeSpan? backchannelTimeout = null,
+        TimeSpan? lastKnownGoodLifetime = null)
     {
         discoveryFailureGate ??= new DiscoveryFailureGate();
         options.Authority = settings.Issuer;
@@ -97,7 +128,25 @@ public static class EntraAuthentication
         // -- the negative discovery-failure cache -- IS reimplemented below via
         // DiscoveryFailureGate, see OnMessageReceived/OnAuthenticationFailed; see
         // docs/dotnet_mapping.md's #147/#223 section for the full comparison.)
-        options.BackchannelTimeout = TimeSpan.FromSeconds(10);
+        options.BackchannelTimeout = backchannelTimeout ?? TimeSpan.FromSeconds(10);
+        // #226 Rick's review, fix #1 (HIGH): JwtBearerHandler.RecordTokenValidationError calls
+        // Options.ConfigurationManager.RequestRefresh() whenever signature validation fails with
+        // SecurityTokenSignatureKeyNotFoundException -- precisely the shape a cold/hung discovery
+        // fetch produces (no keys were ever obtained, so "no keys match" is reported instead of
+        // the real network failure). ConfigurationManager&lt;T&gt;.RequestRefresh's own
+        // RefreshInterval throttle (5-minute default) does NOT apply to the first-ever call
+        // (_isFirstRefreshRequest bypasses it unconditionally) -- so on a cold/hung IdP, the very
+        // first request's signing-key failure fires an UNBOUNDED, untracked, detached
+        // background re-fetch of the same hung endpoint, entirely outside
+        // CooldownAwareConfigurationManager/DiscoveryFailureGate's view (RequestRefresh is a bare
+        // passthrough -- see that type's own remarks). That extra background fetch can't block
+        // this request's own fast 401, but it is itself exactly the uncontrolled, ungated network
+        // call to a wedged IdP that fix #1 exists to eliminate. Disabling this redundant signal
+        // entirely is safe: CooldownAwareConfigurationManager's own catch-based gate-arming (on
+        // the SAME GetBaseConfigurationAsync call already made for this request) and the normal
+        // RefreshOnIssuerKeyNotFound-independent LastKnownGood/AutomaticRefreshInterval cadence
+        // already cover genuine key-rotation recovery (fix #3's conformance row verifies this).
+        options.RefreshOnIssuerKeyNotFound = false;
         // entra_auth.py's TokenValidator reads claims by their raw Entra names (tid, oid, roles,
         // scp) -- MapInboundClaims=false stops the legacy ClaimTypes.* remap so those claim types
         // survive unchanged onto ClaimsPrincipal, matching FakeEntraIssuerJwtBearerValidationTests.
@@ -111,7 +160,53 @@ public static class EntraAuthentication
             RequireExpirationTime = true,
             RoleClaimType = "roles",
             NameClaimType = "name",
+            // #226 Rick's review, fix #2 (MEDIUM): entra_auth.py's PyJWKClient always resolves the
+            // signing key strictly by the token's own `kid` -- pinned here explicitly (rather than
+            // relying on .NET's already-matching `false` default) so a future IdentityModel/
+            // ASP.NET Core default change can't silently reopen "try every published key regardless
+            // of what kid the token claims", which would also defeat the point of an
+            // unresolvable/forged kid ever failing key resolution (401) at all.
+            TryAllIssuerSigningKeys = false,
         };
+
+        // #226 Rick's review, fix #1 (HIGH) and fix #3 (LOW-MED): construct the real
+        // ConfigurationManager ourselves -- mirroring JwtBearerPostConfigureOptions's own default
+        // construction exactly (same retriever, same HttpDocumentRetriever/RequireHttps, same
+        // Backchannel wiring), so no existing timeout/HTTPS-requirement/custom-handler behavior is
+        // lost -- instead of letting ASP.NET Core build one implicitly, for two reasons:
+        //  1. CooldownAwareConfigurationManager (fix #1) needs to wrap it -- see that type's own
+        //     doc comment for the full story on why a decorator at this exact seam is the only way
+        //     to reliably observe genuine, request-awaited fetch failures on the real pipeline.
+        //  2. UseLastKnownGoodConfiguration/LastKnownGoodLifetime (fix #3) must be set on whatever
+        //     BaseConfigurationManager instance ends up assigned to
+        //     TokenValidationParameters.ConfigurationManager -- i.e. this decorator, once wired in
+        //     below -- not the wrapped inner manager, since Microsoft.IdentityModel.Tokens only
+        //     ever tracks LastKnownGoodConfiguration on the OUTERMOST BaseConfigurationManager
+        //     JwtBearerHandler was handed.
+        options.Backchannel ??= new HttpClient(options.BackchannelHttpHandler ?? new HttpClientHandler())
+        {
+            Timeout = options.BackchannelTimeout,
+            MaxResponseContentBufferSize = 10 * 1024 * 1024,
+        };
+        var innerConfigurationManager = new ConfigurationManager<OpenIdConnectConfiguration>(
+            settings.DiscoveryUrl,
+            new OpenIdConnectConfigurationRetriever(),
+            new HttpDocumentRetriever(options.Backchannel) { RequireHttps = options.RequireHttpsMetadata });
+        options.ConfigurationManager = new CooldownAwareConfigurationManager(innerConfigurationManager, discoveryFailureGate)
+        {
+            // #226 Rick's review, fix #3 (LOW-MED): IdentityModel's Last-Known-Good fallback lets
+            // a rotated-out signing key stay valid for up to UseLastKnownGoodConfiguration's
+            // default 1-hour LastKnownGoodLifetime after the IdP has already stopped publishing
+            // it -- entra_auth.py's PyJWKClient has no such grace period at all (a rotated key is
+            // only ever as stale as PyJWT's own 5-minute `cooldown_duration`/signing-key cache,
+            // refreshed on any kid-lookup miss). Shrinking this (rather than disabling it outright)
+            // keeps this port's own warm-outage resilience -- which comes from the inner
+            // ConfigurationManager's ordinary held-configuration caching, wholly independent of
+            // LastKnownGood -- while bounding a rotated key's grace period to the same order of
+            // magnitude as the 30s discovery-failure cooldown above, not 12x longer than it.
+            LastKnownGoodLifetime = lastKnownGoodLifetime ?? TimeSpan.FromSeconds(300),
+        };
+
         options.Events = new JwtBearerEvents
         {
             // Issue #147 bullet 4: `?access_token=` is honoured ONLY on /realtime, and only when
@@ -148,9 +243,9 @@ public static class EntraAuthentication
                 // #246 mirror-check (Summer's Python JWKS-cooldown-race fix; coordinator's
                 // follow-up question on PR #226): this short-circuit must NOT fire for a request
                 // whose signing key is already resolvable without any network call --
-                // HasUsableLastKnownGoodConfiguration's doc comment below has the full story.
+                // HasUsableCachedConfiguration's doc comment below has the full story.
                 var hasToken = context.Request.Headers.ContainsKey("Authorization") || context.Token is not null;
-                if (hasToken && discoveryFailureGate.IsInCooldown() && !HasUsableLastKnownGoodConfiguration(options))
+                if (hasToken && discoveryFailureGate.IsInCooldown() && !HasUsableCachedConfiguration(options))
                 {
                     context.Fail("OIDC discovery/JWKS endpoint is in a failure cooldown window.");
                 }
@@ -193,7 +288,51 @@ public static class EntraAuthentication
                 if (!string.Equals(tid, settings.TenantId, StringComparison.Ordinal))
                 {
                     context.Fail("Token tid does not match the configured ENTRA_TENANT_ID.");
+                    return Task.CompletedTask;
                 }
+
+                // #226 Rick's review, fix #2 (MEDIUM): entra_auth.py's TokenValidator decodes with
+                // `jwt.decode(..., options={"require": ["exp", "nbf"]})` -- a token missing `nbf`
+                // entirely raises EntraUnauthorized (401), the same as any other required-claim-
+                // missing case. TokenValidationParameters has no built-in "require nbf present"
+                // flag (only RequireAudience/RequireExpirationTime/RequireSignedTokens) --
+                // IdentityModel's own lifetime validation silently treats an absent `nbf` as "no
+                // lower bound to check", not a rejection, so this must be checked by hand against
+                // the raw payload (context.SecurityToken as JsonWebToken -- JwtBearerOptions
+                // defaults to the JsonWebTokenHandler validation path, so this cast always
+                // succeeds for a token that reached this event at all).
+                if (context.SecurityToken is not JsonWebToken jsonWebToken ||
+                    !jsonWebToken.TryGetPayloadValue<long>(JwtRegisteredClaimNames.Nbf, out _))
+                {
+                    context.Fail("Token is missing the required nbf (not-before) claim.");
+                    return Task.CompletedTask;
+                }
+
+                // #226 Rick's review, fix #2 (MEDIUM): a single materialized Claim can't
+                // distinguish a genuine one-element JSON array from a malformed bare value (both
+                // become one Claim with the same string value), so malformed-SHAPE `roles`/`scp`
+                // claims must be inspected here, against the raw JSON payload, exactly like
+                // entra_auth.py's TokenValidator does in the same function as its missing-role/
+                // missing-scope checks: `roles = claims.get("roles") or []` (then requires a
+                // list); `scp = claims.get("scp"); scopes = scp.split() if isinstance(scp, str)
+                // else []` (a non-string scp simply yields no scopes, same as if it were absent).
+                // ASP.NET Core's context.Fail() here always resolves to a 401 Challenge, never a
+                // 403 Forbid (see ClaimShapeViolationKey's doc comment), so the shape-violation
+                // VERDICT is relayed via HttpContext.Items for EntraAccessRequirementHandler --
+                // the authorization layer that already produces the matching 403 for a missing
+                // role/scope VALUE -- to fold into its own decision. A claim that is absent,
+                // explicit JSON null, or (for roles) a JSON array, or (for scp) a JSON string is
+                // shape-OK -- these are the same "no shape problem, possibly still no match"
+                // shapes Python's own `or []` / `isinstance` checks let through unharmed.
+                var rolesShapeOk = !jsonWebToken.TryGetPayloadValue<JsonElement>("roles", out var rolesElement) ||
+                    rolesElement.ValueKind is JsonValueKind.Array or JsonValueKind.Null;
+                var scpShapeOk = !jsonWebToken.TryGetPayloadValue<JsonElement>("scp", out var scpElement) ||
+                    scpElement.ValueKind is JsonValueKind.String or JsonValueKind.Null;
+                if (!rolesShapeOk || !scpShapeOk)
+                {
+                    context.HttpContext.Items[ClaimShapeViolationKey] = true;
+                }
+
                 return Task.CompletedTask;
             },
 
@@ -231,7 +370,7 @@ public static class EntraAuthentication
     /// inside its own InvalidOperationException ("IDX20803") when no last-known-good
     /// configuration exists yet to fall back on.
     /// </summary>
-    private static bool IsDiscoveryOrBackchannelFailure(Exception? exception)
+    internal static bool IsDiscoveryOrBackchannelFailure(Exception? exception)
     {
         for (var current = exception; current is not null; current = current.InnerException)
         {
@@ -258,23 +397,33 @@ public static class EntraAuthentication
     /// unknown-kid token's forced <c>ConfigurationManager.RequestRefresh()</c> attempt happened to
     /// coincide with a real transient Entra/discovery outage, the resulting cooldown would 401
     /// EVERY other request for the next 30s -- including ones bearing a completely different,
-    /// already-cached kid that Microsoft.IdentityModel.Tokens could resolve instantly from
-    /// <see cref="BaseConfigurationManager.LastKnownGoodConfiguration"/> without touching the
-    /// network at all. That is exactly the "forged/unrelated input blocks an already-cached,
-    /// otherwise-valid result" bug class Rick's review fixed in Python (#246: a cache-hit path
-    /// must not be defeated by an unrelated miss). <see cref="BaseConfigurationManager.IsLastKnownGoodValid"/>
-    /// is a pure, allocation-free, synchronous property read (no I/O, no async, mirroring
-    /// `self._jwks_client is not None`'s own O(1) cost) that Microsoft.IdentityModel.Tokens itself
-    /// only ever sets to a non-null, unexpired value after at least one token has already
-    /// validated successfully against some configuration -- i.e. "warm" in precisely the same
-    /// sense Python's `self._jwks_client is not None` means "warm". Letting the request through in
-    /// that case does not reopen the unbounded-repeated-network-call DoS the gate exists to
+    /// already-cached kid that Microsoft.IdentityModel.Tokens could resolve instantly from the
+    /// already-held configuration without touching the network at all. That is exactly the
+    /// "forged/unrelated input blocks an already-cached, otherwise-valid result" bug class Rick's
+    /// review fixed in Python (#246: a cache-hit path must not be defeated by an unrelated miss).
+    ///
+    /// #226 Rick's HIGH-finding follow-up: this used to read
+    /// <see cref="BaseConfigurationManager.IsLastKnownGoodValid"/>, but that property's own
+    /// validity window is <see cref="BaseConfigurationManager.LastKnownGoodLifetime"/> -- which
+    /// fix #3 (LOW-MED) deliberately shortens to 300s precisely so a rotated-out signing key
+    /// can't keep validating long after the IdP stops publishing it. Reading
+    /// IsLastKnownGoodValid here would therefore make THIS short-circuit flicker back to "not
+    /// cached" every 300s even while the underlying configuration is still perfectly warm and
+    /// held (LastKnownGood tracks "is my FALLBACK snapshot still fresh enough to use if the
+    /// CURRENT configuration becomes unusable", not "do I have ANY usable configuration at all") --
+    /// re-arming exactly the "forged/unrelated input blocks an already-cached, otherwise-valid
+    /// result" bug this check exists to prevent. <see cref="CooldownAwareConfigurationManager.HasConfiguration"/>
+    /// is the correct signal instead: a pure, allocation-free, synchronous property read (no I/O,
+    /// no async) that only ever becomes true once SOME configuration -- current or last-known-
+    /// good -- has actually been obtained, and (unlike IsLastKnownGoodValid) never becomes false
+    /// again afterward merely because a short-lived snapshot expired. Letting the request through
+    /// in that case does not reopen the unbounded-repeated-network-call DoS the gate exists to
     /// prevent: an unresolvable/still-unknown kid falls through to ordinary token validation,
     /// which is itself bounded by <see cref="BaseConfigurationManager.RefreshInterval"/> (5-minute
     /// default) -- more conservative than this gate's own 30s window, not less.
     /// </summary>
-    private static bool HasUsableLastKnownGoodConfiguration(JwtBearerOptions options) =>
-        options.ConfigurationManager is BaseConfigurationManager { IsLastKnownGoodValid: true };
+    private static bool HasUsableCachedConfiguration(JwtBearerOptions options) =>
+        options.ConfigurationManager is CooldownAwareConfigurationManager { HasConfiguration: true };
 
     /// <summary>
     /// The single fallback+default authorization policy (issue #147 bullet 1/3): one
@@ -311,7 +460,9 @@ public sealed class EntraAccessRequirementHandler : AuthorizationHandler<EntraAc
     protected override Task HandleRequirementAsync(
         AuthorizationHandlerContext context, EntraAccessRequirement requirement)
     {
-        if (context.Resource is HttpContext httpContext && IsAnonymousAssetRequest(httpContext))
+        var httpContext = context.Resource as HttpContext;
+
+        if (httpContext is not null && IsAnonymousAssetRequest(httpContext))
         {
             context.Succeed(requirement);
             return Task.CompletedTask;
@@ -325,6 +476,20 @@ public sealed class EntraAccessRequirementHandler : AuthorizationHandler<EntraAc
             // never reaching here at all for a role/scope check, since there's no principal yet.
             return Task.CompletedTask;
         }
+
+        // #226 Rick's review, fix #2 (MEDIUM): a malformed-SHAPE `roles`/`scp` claim (detected
+        // against the raw JSON payload in EntraAuthentication.ConfigureJwtBearer's
+        // OnTokenValidated, since a single materialized Claim can't tell a genuine one-element
+        // array from a malformed bare value -- see ClaimShapeViolationKey's doc comment) is
+        // relayed here via HttpContext.Items and fails closed (403), exactly like Python's
+        // TokenValidator raising EntraForbidden in the same function as its role/scope VALUE
+        // checks below. A missing Items entry -- no real OnTokenValidated ever ran, e.g. every
+        // existing unit test that constructs an AuthorizationHandlerContext directly -- is
+        // treated as "shape OK", so this is purely an additional structural defense layer on top
+        // of the value checks, never a substitute for them.
+        var hasClaimShapeViolation = httpContext is not null &&
+            httpContext.Items.TryGetValue(EntraAuthentication.ClaimShapeViolationKey, out var violation) &&
+            violation is true;
 
         var roles = context.User.FindAll("roles").Select(claim => claim.Value);
         var hasRole = roles.Contains(requirement.AppRole, StringComparer.Ordinal);
@@ -345,7 +510,7 @@ public sealed class EntraAccessRequirementHandler : AuthorizationHandler<EntraAc
         var hasScope = scopeClaims.Count == 1 &&
             scopeClaims[0].Value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Contains(requirement.ApiScope, StringComparer.Ordinal);
 
-        if (hasRole && hasScope)
+        if (hasRole && hasScope && !hasClaimShapeViolation)
         {
             context.Succeed(requirement);
         }

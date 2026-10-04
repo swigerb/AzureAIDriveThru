@@ -306,6 +306,36 @@ public sealed class EntraAccessRequirementHandlerTests
 
         Assert.Equal(AuthorizationResult.Pending, result);
     }
+
+    [Fact]
+    public async Task ClaimShapeViolationFlagged_FailsEvenWithValidRoleAndScope()
+    {
+        // Rick's finding #2 (MEDIUM): OnTokenValidated relays a malformed roles/scp JSON shape
+        // (e.g. a bare string for "roles", or a one-element array for "scp") via
+        // HttpContext.Items[EntraAuthentication.ClaimShapeViolationKey] because context.Fail()
+        // in a JwtBearer event always yields 401, but Python's parity behavior is 403
+        // (EntraForbidden) -- so the 403 must come from this authorization handler instead, even
+        // though the materialized role/scope Claim values are otherwise perfectly valid.
+        var resource = RequestFor("some-protected-route");
+        resource.Items[EntraAuthentication.ClaimShapeViolationKey] = true;
+
+        var result = await EvaluateAsync(AuthenticatedPrincipal(), resource);
+
+        Assert.Equal(AuthorizationResult.Failed, result);
+    }
+
+    [Fact]
+    public async Task ClaimShapeViolationKey_WrongValueType_IsTreatedAsNoViolation()
+    {
+        // Only a literal `true` bool arms the shape-violation failure -- defends against a
+        // hypothetical future Items[] collision writing some other truthy-but-not-bool value.
+        var resource = RequestFor("some-protected-route");
+        resource.Items[EntraAuthentication.ClaimShapeViolationKey] = "true";
+
+        var result = await EvaluateAsync(AuthenticatedPrincipal(), resource);
+
+        Assert.Equal(AuthorizationResult.Succeeded, result);
+    }
 }
 
 /// <summary>
@@ -560,37 +590,38 @@ public sealed class ConfigureJwtBearerTests
     }
 
     /// <summary>
-    /// Minimal, test-only <see cref="BaseConfigurationManager"/> -- just enough surface
-    /// (RequestRefresh/GetConfigurationAsync) to satisfy <see cref="IConfigurationManager{T}"/> so
-    /// it can be assigned to <see cref="JwtBearerOptions.ConfigurationManager"/>. Neither method is
-    /// ever invoked by the tests below; only the base class's own
-    /// <see cref="BaseConfigurationManager.LastKnownGoodConfiguration"/> setter and
-    /// <see cref="BaseConfigurationManager.IsLastKnownGoodValid"/> getter are exercised.
+    /// Minimal, test-only <see cref="IConfigurationRetriever{T}"/> that returns a canned
+    /// configuration instantly with no network call -- used to warm a real
+    /// <see cref="ConfigurationManager{T}"/> (and, through it,
+    /// <see cref="CooldownAwareConfigurationManager"/>) deterministically in-process.
     /// </summary>
-    private sealed class FakeConfigurationManager : BaseConfigurationManager, IConfigurationManager<OpenIdConnectConfiguration>
+    private sealed class FakeConfigurationRetriever : IConfigurationRetriever<OpenIdConnectConfiguration>
     {
-        public override void RequestRefresh() { }
-
-        public Task<OpenIdConnectConfiguration> GetConfigurationAsync(CancellationToken cancel) =>
-            throw new NotSupportedException("Not exercised by these tests -- see class doc comment.");
+        public Task<OpenIdConnectConfiguration> GetConfigurationAsync(string address, IDocumentRetriever retriever, CancellationToken cancel) =>
+            Task.FromResult(new OpenIdConnectConfiguration());
     }
 
     [Fact]
-    public async Task OnMessageReceived_DoesNotShortCircuit_WhenGateInCooldown_ButLastKnownGoodConfigurationIsWarm()
+    public async Task OnMessageReceived_DoesNotShortCircuit_WhenGateInCooldown_ButConfigurationIsWarm()
     {
         // #246 mirror-check (Summer's Python JWKS-cooldown-race fix, coordinator's follow-up
         // question on PR #226): a forged/unrelated token's discovery failure must not 401 a
         // request whose signing key Microsoft.IdentityModel.Tokens could already resolve from a
-        // warm Last-Known-Good configuration, without touching the network at all -- the same
+        // warm, already-held configuration, without touching the network at all -- the same
         // "unrelated miss must not defeat an existing cache hit" principle behind the Python fix.
         var options = new JwtBearerOptions();
         var gate = new DiscoveryFailureGate();
         gate.RecordFailure();
         EntraAuthentication.ConfigureJwtBearer(options, EntraModeSettings(), gate);
-        options.ConfigurationManager = new FakeConfigurationManager
-        {
-            LastKnownGoodConfiguration = new OpenIdConnectConfiguration(),
-        };
+        var decorator = Assert.IsType<CooldownAwareConfigurationManager>(options.ConfigurationManager);
+        // Warm it directly, with no network call, via a fake retriever -- fix #1's whole point is
+        // that HasConfiguration (not IsLastKnownGoodValid) must become true as soon as ANY
+        // configuration has actually been obtained.
+        var inner = new ConfigurationManager<OpenIdConnectConfiguration>("http://unused/", new FakeConfigurationRetriever());
+        var warmDecorator = new CooldownAwareConfigurationManager(inner, gate);
+        await warmDecorator.GetBaseConfigurationAsync(CancellationToken.None);
+        Assert.True(warmDecorator.HasConfiguration);
+        options.ConfigurationManager = warmDecorator;
         var httpContext = new DefaultHttpContext();
         httpContext.Request.Headers.Authorization = "******";
         var context = new MessageReceivedContext(httpContext, JwtBearerScheme(), options);
@@ -601,37 +632,23 @@ public sealed class ConfigureJwtBearerTests
     }
 
     [Fact]
-    public async Task OnMessageReceived_StillShortCircuits_WhenGateInCooldown_AndConfigurationManagerIsNull()
+    public async Task OnMessageReceived_StillShortCircuits_WhenGateInCooldown_AndConfigurationNeverFetched()
     {
-        // The cold-start case (no ConfigurationManager assigned at all, e.g. before
-        // JwtBearerPostConfigureOptions has run, or in these pure-unit tests that call
-        // ConfigureJwtBearer directly) must keep failing closed -- there is nothing cached to
-        // resolve the token from, so this is not the #246 mirror-check's "already cached" case.
+        // The cold-start case: ConfigureJwtBearer always constructs its own
+        // CooldownAwareConfigurationManager (fix #1/#3), but a FRESH instance has never
+        // successfully fetched/held a configuration yet -- HasConfiguration is false, so this is
+        // not the #246 mirror-check's "already cached" case; the blanket cooldown must still
+        // apply. (Supersedes the pre-fix-#1 "ConfigurationManager is null" /
+        // "LastKnownGoodConfiguration never set" tests -- under the old wiring, ASP.NET Core left
+        // ConfigurationManager unassigned until JwtBearerPostConfigureOptions ran; now
+        // ConfigureJwtBearer always assigns its own decorator directly, so "cold" is simply this
+        // decorator's own just-constructed, not-yet-warm state.)
         var options = new JwtBearerOptions();
         var gate = new DiscoveryFailureGate();
         gate.RecordFailure();
         EntraAuthentication.ConfigureJwtBearer(options, EntraModeSettings(), gate);
-        Assert.Null(options.ConfigurationManager);
-        var httpContext = new DefaultHttpContext();
-        httpContext.Request.Headers.Authorization = "******";
-        var context = new MessageReceivedContext(httpContext, JwtBearerScheme(), options);
-
-        await ((JwtBearerEvents)options.Events!).MessageReceived(context);
-
-        Assert.NotNull(context.Result);
-    }
-
-    [Fact]
-    public async Task OnMessageReceived_StillShortCircuits_WhenGateInCooldown_AndLastKnownGoodConfigurationNeverSet()
-    {
-        // A ConfigurationManager exists but has never validated a token successfully yet (truly
-        // cold, e.g. the very first request after startup during an outage) -- IsLastKnownGoodValid
-        // is false, so the blanket cooldown must still apply.
-        var options = new JwtBearerOptions();
-        var gate = new DiscoveryFailureGate();
-        gate.RecordFailure();
-        EntraAuthentication.ConfigureJwtBearer(options, EntraModeSettings(), gate);
-        options.ConfigurationManager = new FakeConfigurationManager();
+        var decorator = Assert.IsType<CooldownAwareConfigurationManager>(options.ConfigurationManager);
+        Assert.False(decorator.HasConfiguration);
         var httpContext = new DefaultHttpContext();
         httpContext.Request.Headers.Authorization = "******";
         var context = new MessageReceivedContext(httpContext, JwtBearerScheme(), options);

@@ -2,7 +2,7 @@ using Conformance.Fakes;
 
 namespace Conformance.Tests.Scenarios.Auth;
 
-/// <summary>What a token-shape row (18.11 rows 1 to 8, including 6b) should produce.</summary>
+/// <summary>What a token-shape row (18.11 rows 1 to 8/17 to 19, including 6b) should produce.</summary>
 public enum AuthRowExpectedOutcome
 {
     /// <summary>401, with <c>WWW-Authenticate: Bearer</c> on the response.</summary>
@@ -16,11 +16,12 @@ public enum AuthRowExpectedOutcome
 }
 
 /// <summary>
-/// One persona-architecture.md 18.11 token-shape row (1 to 8, including 6b) -- shared between the
-/// REST and <c>/realtime</c> variants of each row, since (per 18.11's own header) "Each runs on
-/// REST ... and on <c>/realtime</c> unless noted", and every one of rows 1-8 is exactly that: no
-/// exception noted. Rows 9 to 16 have their own per-row shape (REST-only, realtime-only, or not a
-/// per-route assertion at all) and are covered by the other files in this folder instead of here.
+/// One persona-architecture.md 18.11 token-shape row (1 to 8/17 to 19, including 6b) -- shared
+/// between the REST and <c>/realtime</c> variants of each row, since (per 18.11's own header)
+/// "Each runs on REST ... and on <c>/realtime</c> unless noted", and every one of rows 1-8/17-19 is
+/// exactly that: no exception noted. Rows 9 to 16 have their own per-row shape (REST-only,
+/// realtime-only, or not a per-route assertion at all) and are covered by the other files in this
+/// folder instead of here.
 /// </summary>
 public sealed record AuthRowTokenCase(
     string Row, string Description, Func<FakeEntraIssuer, string?> MintToken, AuthRowExpectedOutcome Expected)
@@ -141,6 +142,32 @@ public sealed record AuthRowTokenCase(
         new("7 (HS256, published kid)", "HS256, but the header claims the published kid",
             issuer => issuer.Mint(new FakeEntraTokenOverrides { Alg = "HS256", Kid = FakeEntraIssuer.PublishedKid }),
             AuthRowExpectedOutcome.Reject401),
+
+        // #226 Rick's review, fix #2 (MEDIUM): "unknown kid returns 401" (TryAllIssuerSigningKeys
+        // = false) is already pinned by row 7's "bad signature (unpublished key)" above -- that
+        // mint produces exactly an unknown-kid token (signed with a key whose kid the JWKS never
+        // serves), and TryAllIssuerSigningKeys=false is precisely what stops JwtBearer from
+        // falling back to trying every published key anyway. No separate row needed.
+        //
+        // Claim-shape parity with entra_auth.py -- a
+        // structurally valid, correctly-signed token can still carry a malformed `nbf`/`roles`/
+        // `scp` shape IdentityModel's own claim materialization can't distinguish from a
+        // legitimate value (one Claim either way), so these three are inspected against the raw
+        // JSON payload (EntraAuthentication.OnTokenValidated) exactly like entra_auth.py's
+        // TokenValidator does for the same three fields. Python already enforces all three
+        // (jwt.decode(..., options={"require": ["exp", "nbf"]}); isinstance(roles, list);
+        // isinstance(scp, str)) -- these rows run on both legs and Python already passes them.
+        new("17", "Missing nbf claim entirely",
+            issuer => issuer.Mint(new FakeEntraTokenOverrides { OmitNbf = true }),
+            AuthRowExpectedOutcome.Reject401),
+
+        new("18", "Malformed roles shape (bare string, not a JSON array)",
+            issuer => issuer.Mint(new FakeEntraTokenOverrides { MalformedRolesShape = true }),
+            AuthRowExpectedOutcome.Reject403),
+
+        new("19", "Malformed scp shape (one-element JSON array, not a string)",
+            issuer => issuer.Mint(new FakeEntraTokenOverrides { MalformedScopeShape = true }),
+            AuthRowExpectedOutcome.Reject403),
 
         new("8", "Valid", issuer => issuer.Mint(), AuthRowExpectedOutcome.Accept),
     ];
