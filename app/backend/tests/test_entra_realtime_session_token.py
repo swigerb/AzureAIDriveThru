@@ -9,9 +9,9 @@ do -- the origin, session-token and oid checks all return a plain `web.Response`
 before any `ws.prepare()` call, so a non-WebSocket GET is enough to observe them.
 
 A tiny test-only middleware stands in for `entra_auth.py`'s real Entra middleware
-(which is app.py's concern, not rtmt.py's) -- it just sets `request["principal"]`
-to a fixed dict, the same contract the real middleware guarantees before
-`_websocket_handler` ever runs.
+(which is app.py's concern, not rtmt.py's) -- it just sets
+`request[entra_auth.PRINCIPAL_KEY]` to a fixed dict, the same contract the real
+middleware guarantees before `_websocket_handler` ever runs.
 """
 
 import sys
@@ -25,6 +25,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from azure.core.credentials import AzureKeyCredential
 
+import entra_auth
 import rtmt as rtmt_module
 from rtmt import RTMiddleTier, create_hmac_token
 
@@ -36,16 +37,16 @@ def _principal_middleware(principal: dict | None):
     @web.middleware
     async def middleware(request: web.Request, handler):
         if principal is not None:
-            request["principal"] = dict(principal)
+            request[entra_auth.PRINCIPAL_KEY] = dict(principal)
         return await handler(request)
     return middleware
 
 
 class _OidBindingHarness(unittest.IsolatedAsyncioTestCase):
     """Builds a real RTMiddleTier + a standalone app with /realtime attached,
-    with a test-only middleware that can inject (or omit) `request["principal"]`
-    -- the same shape the real Entra middleware guarantees, without needing the
-    whole of app.py's create_app()."""
+    with a test-only middleware that can inject (or omit)
+    `request[entra_auth.PRINCIPAL_KEY]` -- the same shape the real Entra
+    middleware guarantees, without needing the whole of app.py's create_app()."""
 
     principal: dict | None = None  # overridden per subclass/test
 
@@ -123,9 +124,10 @@ class EntraModeForcesSessionTokenTests(_OidBindingHarness):
 
 
 class EntraModeNoPrincipalTests(_OidBindingHarness):
-    """No `request["principal"]` at all (middleware never ran / Development
-    pass-through somehow skipped) -- must never be treated as a wildcard match;
-    a present, valid oid claim with nothing to compare against is still 401."""
+    """No `request[entra_auth.PRINCIPAL_KEY]` at all (middleware never ran /
+    Development pass-through somehow skipped) -- must never be treated as a
+    wildcard match; a present, valid oid claim with nothing to compare against
+    is still 401."""
 
     principal = None
 
