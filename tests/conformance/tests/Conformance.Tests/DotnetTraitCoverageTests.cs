@@ -214,8 +214,13 @@ namespace Conformance.Tests;
 /// count, then reverting -- **256**. This matches the "+#226 = 256" projection from Rick's own
 /// earlier review round (#226's 18 Auth methods landing on top of the 238 baseline that included
 /// #235), now confirmed by direct measurement rather than arithmetic. This raises the floor 239 to
-/// 256. Any PR still rebasing on top of this MUST re-measure fresh at its own rebase time the same
-/// way, not add a historical delta to 256 blindly.
+/// 256.
+///
+/// Refs #76 remaining scope: adding <c>RealPackBundleAutoFillConformanceTests</c>'s three new
+/// tagged Theory methods plus <c>RealPackCapabilityCoverageTests</c>' three tagged Facts raises the
+/// fresh reflection count to <b>262</b>. Re-measured directly with the same
+/// <see cref="CountFloorEligibleDotnetReadyTestMethods"/> logic (via a throwaway reflection probe
+/// over the built test assembly), never by adding a guessed delta.
 /// </summary>
 public sealed class DotnetTraitCoverageTests
 {
@@ -238,21 +243,20 @@ public sealed class DotnetTraitCoverageTests
     };
 
     [Fact]
-    public void At_least_256_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
+    public void At_least_262_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
     {
         var count = CountFloorEligibleDotnetReadyTestMethods();
 
-        Assert.True(count >= 256,
-            $"Expected at least 256 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
+        Assert.True(count >= 262,
+            $"Expected at least 262 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
             $"and not unconditionally skip-gated by AuthRowCapability (the dotnet leg's " +
             $"`--filter \"{TraitName}={TraitValue}&Category!=Browser\"` baseline, minus the five " +
             "skip-only Scenarios/Auth classes -- see this class's own doc comment; " +
             $"docs/dotnet_mapping.md), but found {count}. If a tagged scenario was removed or " +
-            "renamed without a replacement, the dotnet CI leg silently lost coverage. 256 is a " +
-            "FRESH count (#236 Rick re-review item 5, taken post-rebase onto origin/dev), not " +
-            "arithmetic -- re-measure with `Conformance.Tests.exe -list methods -trait " +
-            "Dotnet=ready` minus the 18 AuthRowGatedTypeNames methods before raising this floor " +
-            "again.");
+            "renamed without a replacement, the dotnet CI leg silently lost coverage. 262 is a " +
+            "FRESH reflection count (post-#76 bundle-autoFill/capability-coverage rows), not " +
+            "arithmetic -- re-measure the built assembly with the same CountFloorEligible" +
+            "DotnetReadyTestMethods logic before raising this floor again.");
     }
 
 
