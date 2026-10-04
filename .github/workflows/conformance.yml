@@ -3,6 +3,13 @@ name: Conformance Suite
 "on":
   pull_request:
     branches: [dev, main]
+    # #238 (Rick's follow-up on PR #231): the PR body/title can be edited after the last push
+    # (e.g. retitling to add/remove a closing keyword), which this workflow previously never
+    # re-checked without a new commit. Specifying `types:` at all REPLACES GitHub's implicit
+    # default set, so every default type is listed explicitly alongside `edited` -- omitting
+    # any of them here would silently narrow every job in this workflow to fewer trigger
+    # events, not just add the new one.
+    types: [opened, synchronize, reopened, edited]
   push:
     # Issue #24: catch anything that reached dev without going through this workflow as a
     # PR check (e.g. an administrator merge, or a merge commit built from a stale base).
@@ -39,10 +46,13 @@ jobs:
     timeout-minutes: 15
     # #105: the "PR's own issue" extraction step and the open-issue GitHub API check both
     # need to read issues (the pull_request event/its body is already available without any
-    # extra permission; `issues: read` is what the API lookup itself needs).
+    # extra permission; `issues: read` is what the API lookup itself needs). #238: the same
+    # extraction step now also fetches this PR's own commit list, which needs `pull-requests:
+    # read` (contents: read alone does not cover the GitHub REST API's pulls endpoints).
     permissions:
       contents: read
       issues: read
+      pull-requests: read
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -107,24 +117,58 @@ jobs:
       # against that title on merge; a bare '#N' with no keyword stays reference-only. The
       # comma-/"and"-separated list also now handles the Oxford-comma case ("Refs #1, #2, and
       # #3"), which previously dropped the last number.
+      # #238 (Rick's follow-up on PR #231): also fetches and scans this PR's own COMMIT
+      # MESSAGES -- dev squash-merges with squash_merge_commit_message: COMMIT_MESSAGES, which
+      # concatenates EVERY commit's message into the final squash commit body, not just the
+      # sole commit of a single-commit PR. GITHUB_TOKEN/GITHUB_REPOSITORY/PR_NUMBER are now
+      # also required for this step; the commit fetch fails closed (exits 1) on any API error,
+      # same rationale as the open-issue API check below -- silently skipping it would
+      # under-report REBRAND_PR_CLOSES.
       # Written to $GITHUB_ENV (not interpolated into the run script) specifically to avoid
-      # a script-injection risk from untrusted PR-body/title content.
+      # a script-injection risk from untrusted PR-body/title/commit-message content.
       - name: Determine this PR's own issue reference
         if: github.event_name == 'pull_request'
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
           PR_TITLE: ${{ github.event.pull_request.title }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           python - <<'PY' >> "$GITHUB_ENV"
           import os
           import sys
 
           sys.path.insert(0, "app/backend/tests")
-          from check_rebrand_baseline_against_base import parse_pr_issue_refs
+          from check_rebrand_baseline_against_base import (
+              fetch_pr_commit_messages,
+              parse_pr_issue_refs,
+          )
 
           body = os.environ.get("PR_BODY") or ""
           title = os.environ.get("PR_TITLE") or ""
-          issues, closes = parse_pr_issue_refs(body, title)
+          token = os.environ.get("GITHUB_TOKEN") or ""
+          repo = os.environ.get("GITHUB_REPOSITORY") or ""
+          pr_number = os.environ.get("PR_NUMBER") or ""
+
+          # #238: fail closed -- a commit message carrying a closing keyword is just as able
+          # to close an issue on merge as the PR body/title, so silently treating a failed
+          # fetch as "no commit messages" would under-report REBRAND_PR_CLOSES.
+          if not (token and repo and pr_number):
+              print(
+                  "::error::GITHUB_TOKEN/GITHUB_REPOSITORY/PR_NUMBER are required to fetch "
+                  "this PR's commit messages (#238) -- cannot determine REBRAND_PR_ISSUES/"
+                  "REBRAND_PR_CLOSES safely.",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+          try:
+              commit_messages = fetch_pr_commit_messages(repo, pr_number, token)
+          except RuntimeError as exc:
+              print(f"::error::{exc}", file=sys.stderr)
+              sys.exit(1)
+
+          issues, closes = parse_pr_issue_refs(body, title, commit_messages=commit_messages)
           if issues:
               print(f"REBRAND_PR_ISSUES={','.join(sorted(issues))}")
           if closes:
