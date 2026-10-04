@@ -219,30 +219,50 @@ public sealed class FakeChatCompletionsServer : IAsyncDisposable
     /// first place -- see this class's own doc comment above) used to leave the leftover
     /// response behind forever, since the post-body hook that used to be the only thing calling
     /// this method never runs when the body doesn't return normally.
+    ///
+    /// Rick's PR #253 re-review: also flags (and clears) an armed-but-never-consumed
+    /// <see cref="HoldNextResponse"/> gate the same way -- a scenario that calls
+    /// <see cref="HoldNextResponse"/> and then fails/throws before any request ever claims that
+    /// gate (see <see cref="Drain"/>'s own doc comment for the exact hang this otherwise causes
+    /// in whichever request lands next) is just as much a leak as an unconsumed scripted
+    /// response, and deserves the same "THIS scenario fails, the next one starts clean" fate.
     /// </summary>
     /// <exception cref="InvalidOperationException">This scenario (or an earlier one, if nothing
-    /// cleared the queue in between) left one or more scripted responses in the FIFO that were
-    /// never consumed by a request.</exception>
+    /// cleared the queue in between) left one or more scripted responses in the FIFO, and/or an
+    /// armed <see cref="HoldNextResponse"/> gate, that were never consumed by a request.</exception>
     public void AssertNoPendingScriptedResponses()
     {
         int pending;
+        TaskCompletionSource? leakedGate;
         lock (_gate)
         {
             pending = _scriptedResponses.Count;
             _scriptedResponses.Clear();
+            leakedGate = _pendingResponseGate;
+            _pendingResponseGate = null;
         }
-        if (pending > 0)
+
+        // Released (not left to dangle) regardless of whether this throws below -- nothing may
+        // ever await this specific TaskCompletionSource again (its field slot is already gone),
+        // but releasing it defensively costs nothing and matches Drain()'s own handling.
+        leakedGate?.TrySetResult();
+
+        if (pending > 0 || leakedGate is not null)
         {
+            var what = pending > 0 && leakedGate is not null
+                ? $"{pending} scripted /chat/completions response(s) and an armed HoldNextResponse() gate were"
+                : pending > 0
+                    ? $"{pending} scripted /chat/completions response(s) were"
+                    : "An armed HoldNextResponse() gate was";
             throw new InvalidOperationException(
-                $"{pending} scripted /chat/completions response(s) were never consumed by a " +
-                "request -- THIS scenario (checked immediately after its own body returned; see " +
-                "ConformanceFixture.AssertNoPendingExtraFakeState's own doc comment for why it " +
-                "runs after, not before) likely had a round whose request was aborted (e.g. a " +
-                "barge-in/connection-closing cancellation) before this fake server finished " +
-                "parsing its body, which skips the FIFO dequeue entirely and leaves the scripted " +
-                "response behind to be wrongly handed out to an unrelated later request instead. " +
-                "The queue has already been cleared by this check, so only THIS scenario fails -- " +
-                "the next one starts clean.");
+                $"{what} never consumed by a request -- THIS scenario (checked immediately after " +
+                "its own body returned; see ConformanceFixture.AssertNoPendingExtraFakeState's own " +
+                "doc comment for why it runs after, not before) likely had a round whose request " +
+                "was aborted (e.g. a barge-in/connection-closing cancellation) before this fake " +
+                "server finished parsing its body, which skips the FIFO dequeue (and any pending " +
+                "gate claim) entirely and leaves the leftover state behind to be wrongly handed " +
+                "out to an unrelated later request instead. Both have already been cleared by this " +
+                "check, so only THIS scenario fails -- the next one starts clean.");
         }
     }
 
@@ -252,13 +272,32 @@ public sealed class FakeChatCompletionsServer : IAsyncDisposable
     /// <see cref="AssertNoPendingScriptedResponses"/>'s check, for a scenario that deliberately
     /// leaves its own final round's response unconsumed (e.g. by design, not by accident) and
     /// wants to explicitly clear the queue afterwards rather than draining to `response.done`.
+    ///
+    /// Rick's PR #253 re-review: also releases an armed-but-never-claimed
+    /// <see cref="HoldNextResponse"/> gate. <see cref="HandleCompletionAsync"/> only ever clears
+    /// <see cref="_pendingResponseGate"/> when a REQUEST arrives to claim it; a scenario that
+    /// calls <see cref="HoldNextResponse"/> and then throws (or otherwise never sends that
+    /// request) leaves the gate armed in this field forever. Without this, the very next request
+    /// to land here -- from ANY later scenario sharing this fake, e.g. the next scenario's own
+    /// connect-time greeting -- would wrongly inherit that stale gate and suspend on a
+    /// <see cref="TaskCompletionSource"/> nobody will ever release, hanging until ITS OWN caller
+    /// times out and blaming the wrong scenario (exactly the bug <see
+    /// cref="AssertNoPendingScriptedResponses"/>'s own self-healing fix addresses for the FIFO --
+    /// this is the same fix for the gate). Releasing with <c>TrySetResult()</c> (not
+    /// <c>TrySetCanceled()</c>) mirrors <see cref="ResponseGate.Release"/>'s own normal-completion
+    /// semantics; it is a no-op if nothing is actually awaiting this specific instance (the usual
+    /// case here, since the request that would have awaited it never arrived).
     /// </summary>
     public void Drain()
     {
+        TaskCompletionSource? gate;
         lock (_gate)
         {
             _scriptedResponses.Clear();
+            gate = _pendingResponseGate;
+            _pendingResponseGate = null;
         }
+        gate?.TrySetResult();
     }
 
     public async Task StartAsync(CancellationToken cancellationToken = default, int? fixedPort = null)

@@ -1,3 +1,5 @@
+using System.Net;
+using System.Text;
 using System.Text.Json.Nodes;
 using Conformance.Fakes;
 using Xunit;
@@ -86,5 +88,50 @@ public sealed class FakeChatCompletionsServerTests
         var exception = Record.Exception(fake.AssertNoPendingScriptedResponses);
 
         Assert.Null(exception);
+    }
+
+    /// <summary>
+    /// Rick's PR #253 re-review: <see cref="FakeChatCompletionsServer.HoldNextResponse"/> arms
+    /// <c>_pendingResponseGate</c>, but only <see cref="FakeChatCompletionsServer.HandleCompletionAsync"/>
+    /// (triggered by a REQUEST actually landing) used to ever clear it -- <see cref="FakeChatCompletionsServer.Drain"/>
+    /// emptied the scripted-response queue but left an armed, never-claimed gate untouched. A
+    /// scenario that calls <see cref="FakeChatCompletionsServer.HoldNextResponse"/> (e.g. to prove
+    /// a turn is genuinely "in flight", like the barge-in row does) and then fails/throws BEFORE
+    /// ever sending the request that would have claimed that gate leaves it armed in the field
+    /// forever; the very next request to land here -- from ANY later scenario sharing this same
+    /// fake, e.g. the next scenario's own connect-time greeting -- would otherwise wrongly inherit
+    /// it and suspend on a <see cref="TaskCompletionSource"/> nobody will ever release, hanging
+    /// until ITS OWN caller times out and blaming the wrong scenario. This proves <see
+    /// cref="FakeChatCompletionsServer.Drain"/> now releases that gate too, so a real request sent
+    /// AFTER <see cref="FakeChatCompletionsServer.Drain"/> completes promptly instead of hanging.
+    /// </summary>
+    [Fact]
+    public async Task Drain_releases_an_armed_but_never_claimed_HoldNextResponse_gate_so_the_next_request_does_not_hang()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var fake = new FakeChatCompletionsServer();
+        await fake.StartAsync(ct);
+
+        // Models a scenario that armed the gate (e.g. to later prove a turn is suspended on it)
+        // but never sent the request that would have claimed it -- HandleCompletionAsync only
+        // clears _pendingResponseGate when a request arrives, so without Drain() also releasing
+        // it, this field would stay armed indefinitely.
+        fake.HoldNextResponse();
+
+        // Models ConformanceFixture.RunAsync's `finally` calling ResetExtraFakeState() ->
+        // Chat.Drain() for both cascade fixtures, when the scenario that armed the gate above
+        // threw before reaching its own AssertNoPendingExtraFakeState() check.
+        fake.Drain();
+
+        // The next scenario's own first request (modelled here as a bare POST, same contract a
+        // real cascade client uses) must complete promptly -- before this fix, it would have
+        // inherited the stale armed gate and suspended until this HttpClient's own timeout, with
+        // nothing ever logged to explain why.
+        using var client = new HttpClient { BaseAddress = fake.BaseUri, Timeout = TimeSpan.FromSeconds(10) };
+        using var content = new StringContent(
+            """{"messages":[],"model":"whatever"}""", Encoding.UTF8, "application/json");
+        using var response = await client.PostAsync("/chat/completions?api-version=2024-05-01-preview", content, ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 }
