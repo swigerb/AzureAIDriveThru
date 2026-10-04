@@ -10,6 +10,7 @@ namespace Conformance.Tests;
 /// <see cref="DotnetPlaceholderPolicyTests"/>'s style for the analogous
 /// <see cref="DotnetPlaceholderPolicy"/> decision function.
 /// </summary>
+[Trait("Category", "Harness")]
 public sealed class PyJwtInteropPolicyTests
 {
     [Fact]
