@@ -217,15 +217,16 @@ mutation-checked by temporarily reverting its fix and confirming red -- raising 
 204 -> 222 against the stale pre-#21 baseline; agreed merge order is PR #230 lands first at 222,
 then PR #226 rebases and re-targets its own floor to 222 + 18 = 240.
 
-**Issue #13 Wave 4b (tool-failure cap) and floor-constant note:** this wave's 3 newly-tagged
-`ToolFailureCapAndTicketRefreshTests.cs` methods add to the real floor-eligible count, but
-`DotnetTraitCoverageTests`'s own `count >= 222` constant (already raised by #230, above, by the
-time this branch rebased onto it) is deliberately left untouched here. The real tagged count is
-222 + 3 = 225 after this PR; per squad coordination the constant is raised once, in whichever
-in-flight PR lands last (so it isn't bumped redundantly across #226/#235/#237/#244 and risk a
-spurious merge conflict), to the final reconciled total. This PR's own contribution (+3, one per
-previously-untagged `ToolFailureCapAndTicketRefreshTests.cs` method) is reported here in prose
-instead.
+**Issue #13 Wave 4b (tool-failure cap) and floor-constant note:** this wave adds 3 newly-tagged
+`ToolFailureCapAndTicketRefreshTests.cs` methods. `DotnetTraitCoverageTests`'s own `count >= 222`
+constant (already raised by #230, above, by the time this branch rebased onto it) is deliberately
+left untouched here. Rather than project the real count by arithmetic (unreliable once multiple
+in-flight PRs are each independently tagging methods against a moving dev base), it was measured
+directly at rebase time by temporarily asserting on the actual `CountFloorEligibleDotnetReadyTestMethods()`
+value on this branch: **239** floor-eligible tagged methods, comfortably above the 222 floor. Per
+squad coordination the constant itself is raised once, in whichever in-flight PR lands last (so it
+isn't bumped redundantly across #226/#235/#237/#244 and risk a spurious merge conflict), to a fresh
+count taken at that time -- not to this PR's own snapshot, since further PRs may land in between.
 
 - **DEV_MODE hot-reload** (`prompt_loader.py`'s file-watching reload behaviour) is explicitly
   marked not required in C# by the design doc's per-backend loading table. Not ported.
