@@ -65,7 +65,7 @@ public sealed class FoundryAudioClientTests
         var handler = new QueuedFoundryHttpHandler().EnqueueBytes(HttpStatusCode.OK, pcmResponse);
         var client = NewClient(handler, token: "my-token");
 
-        var result = await client.SpeakAsync("Welcome to Sonic!", voice: "marin", deployment: "gpt-4o-mini-tts", CancellationToken.None);
+        var result = await client.SpeakAsync("Welcome to Test Co.!", voice: "marin", deployment: "gpt-4o-mini-tts", CancellationToken.None);
 
         Assert.Equal(pcmResponse, result);
         var request = Assert.Single(handler.Requests);
@@ -74,7 +74,7 @@ public sealed class FoundryAudioClientTests
 
         var body = System.Text.Json.Nodes.JsonNode.Parse(handler.RequestBodies.Single())!.AsObject();
         Assert.Equal("gpt-4o-mini-tts", body["model"]!.GetValue<string>());
-        Assert.Equal("Welcome to Sonic!", body["input"]!.GetValue<string>());
+        Assert.Equal("Welcome to Test Co.!", body["input"]!.GetValue<string>());
         Assert.Equal("marin", body["voice"]!.GetValue<string>());
         Assert.Equal("pcm", body["response_format"]!.GetValue<string>());
     }
