@@ -114,5 +114,63 @@ public static class ModelDispatch
         return new ResolvedModel(modelId, "realtime", deployment, entry.Reasoning);
     }
 
+    /// <summary>
+    /// Port of processors.py's `resolve_cascade_model` (issue #82): the same catalog ∩ deployment
+    /// ∩ persona-allowed algorithm as <see cref="ResolveRealtimeModel"/> (design doc sections 5.2,
+    /// 7.3), EXCEPT there is no AZURE_OPENAI_REALTIME_DEPLOYMENT-style back-compat fallback for
+    /// the pipeline default: unlike the realtime pipeline (which predates issue #75 and had to
+    /// keep an existing bare env var working), the cascade pipeline is new in this issue, so there
+    /// is no old behavior to preserve here. EVERY cascade model -- including a persona's own
+    /// `models.cascade.default` -- must have a real AZURE_AI_MODEL_DEPLOYMENTS entry; an
+    /// undeployed default is rejected exactly like an undeployed non-default id, never a silent
+    /// fallback (Rick's PR #106 review item 1's "no default-path special case", taken one step
+    /// further here since cascade has no legacy fallback to even offer).
+    /// </summary>
+    /// <exception cref="ModelSelectionException"><paramref name="persona"/> has no
+    /// `models.cascade` block at all (the pipeline isn't enabled for it), or any of the usual
+    /// unknown/disallowed/cross-wired/undeployed checks fail.</exception>
+    public static ResolvedModel ResolveCascadeModel(
+        Persona persona,
+        string? requestedModelId,
+        ModelCatalog catalog)
+    {
+        var pipelineCfg = persona.Models.Cascade;
+        if (pipelineCfg is null)
+        {
+            throw new ModelSelectionException(
+                $"Persona '{persona.Id}' has no models.cascade configured -- cascade is not enabled for it.");
+        }
+
+        var modelId = requestedModelId ?? pipelineCfg.Default;
+        var isDefault = modelId == pipelineCfg.Default;
+
+        if (!pipelineCfg.Allowed.Contains(modelId) && !isDefault)
+        {
+            throw new ModelSelectionException(
+                $"Model '{modelId}' is not allowed for persona '{persona.Id}''s cascade pipeline " +
+                $"(allowed: {FormatList(pipelineCfg.Allowed)}).");
+        }
+
+        if (!catalog.IsCataloguedFor(modelId, "cascade"))
+        {
+            throw new ModelSelectionException(
+                $"Model '{modelId}' is not in config.yaml's models.catalog for the cascade pipeline.");
+        }
+
+        var entry = catalog.Get(modelId);
+
+        var deployment = catalog.DeploymentFor(modelId);
+        if (deployment is null)
+        {
+            throw new ModelSelectionException(
+                $"Model '{modelId}' is catalogued for the cascade pipeline but has no deployment mapped " +
+                "in AZURE_AI_MODEL_DEPLOYMENTS.");
+        }
+
+        return new ResolvedModel(modelId, "cascade", deployment, entry.Reasoning);
+    }
+
+    private static string FormatList(IEnumerable<string> values) => "[" + string.Join(", ", values) + "]";
+
     private static string Repr(string? value) => value is null ? "null" : $"'{value}'";
 }

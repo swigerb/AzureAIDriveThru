@@ -12,11 +12,14 @@ namespace Backend;
 /// in the process environment.
 ///
 /// Also ports Python's ``seconds(env_var, default)`` timer-duration override (see
-/// <see cref="Seconds"/>) -- first used by issue #13 Wave 4's rate-limit retry ladder. Python's
-/// module additionally has a ``cascade_credential()``/``cascade_chat_kwargs()`` pair for the
-/// cascade Foundry chat client, which no code in this file touches yet; it belongs here too,
-/// exactly mirroring Python's "one shared, centralised hooks module" design, whenever the
-/// cascade pipeline first needs it.
+/// <see cref="Seconds"/>) -- first used by issue #13 Wave 4's rate-limit retry ladder, and now
+/// also by Cascade/CascadeRateLimit.cs's retry delays (issue #13's cascade pipeline). Also carries
+/// <see cref="CascadeFakeToken"/> (the `cascade_credential()`/`CONFORMANCE_CASCADE_FAKE_TOKEN`
+/// fake-bearer-token substitution) added here for the same reason, rather than a second,
+/// competing hooks module -- exactly mirroring Python's "one shared, centralised hooks module"
+/// design. `cascade_chat_kwargs()` has no C# equivalent: it exists only to relax azure-core's
+/// BearerTokenCredentialPolicy's https-only enforcement for the azure-ai-inference SDK, which the
+/// C# port doesn't use (a plain HttpClient call has no such policy to relax in the first place).
 ///
 /// NEVER set CONFORMANCE_TEST_HOOKS in infra/ (bicep), the Dockerfile, or azure.yaml -- see
 /// conformance_hooks.py's own module docstring for why (a dedicated guard test scans those files
@@ -27,6 +30,7 @@ public static class ConformanceHooks
 {
     private const string EnabledEnv = "CONFORMANCE_TEST_HOOKS";
     private const string FixedNowEnv = "CONFORMANCE_FIXED_NOW";
+    private const string CascadeFakeTokenEnv = "CONFORMANCE_CASCADE_FAKE_TOKEN";
 
     // Accepts a trailing numeric offset ("+05:00"/"-0500") or a literal "Z" (UTC) -- matches
     // Python's `datetime.fromisoformat` contract of "RFC 3339 with an explicit numeric UTC
@@ -59,12 +63,18 @@ public static class ConformanceHooks
 
     /// <summary>Port of conformance_hooks.py's ``seconds(env_var, default)``: overrides a timer
     /// duration fed into a delayed send (idle timeout, resume grace, resume nudge, the greeting
-    /// timeout, and -- issue #13 Wave 4 -- the two rate-limit retry delays). Returns
+    /// timeout, issue #13 Wave 4's two realtime rate-limit retry delays, and the cascade
+    /// pipeline's own rate-limit retry delays -- see Cascade/CascadeRateLimit.cs). Returns
     /// <paramref name="defaultValue"/> unchanged unless test hooks are enabled AND
     /// <paramref name="envVar"/> is set to a non-empty value, in which case the value must parse as
     /// a finite, strictly-positive number or this throws immediately -- it does NOT silently fall
-    /// back to <paramref name="defaultValue"/>. Has no effect on <see cref="Now"/> (see this
-    /// class's own doc comment: the two mechanisms are independent).</summary>
+    /// back to <paramref name="defaultValue"/>, matching Python's own fail-fast-at-startup
+    /// contract: every call site assigns the result once, so a bad override should fail the
+    /// backend's startup with a clear error instead of quietly running an entire test session with
+    /// a wrong timer value. Has no effect on <see cref="Now"/> (see this class's own doc comment:
+    /// the two mechanisms are independent).</summary>
+    /// <exception cref="InvalidOperationException"><paramref name="envVar"/> is set but not a
+    /// positive, finite number of seconds, while test hooks are enabled.</exception>
     public static double Seconds(string envVar, double defaultValue)
     {
         if (!HooksEnabled)
@@ -90,6 +100,20 @@ public static class ConformanceHooks
         return value;
     }
 
+    /// <summary>Port of conformance_hooks.py's `cascade_credential()`: the fixed bearer token the
+    /// cascade pipeline's Foundry chat/STT/TTS calls should present instead of a real
+    /// <c>DefaultAzureCredential</c>, when test hooks are enabled AND
+    /// <c>CONFORMANCE_CASCADE_FAKE_TOKEN</c> is set to a non-empty value; <c>null</c> otherwise, in
+    /// which case the caller (Program.cs) constructs the real credential exactly as it already
+    /// does for the realtime pipeline's own upstream connect (see
+    /// <see cref="Realtime.DefaultAzureCredentialTokenProvider"/>). Cascade has no api-key
+    /// fallback to reuse (unlike realtime's own conformance-harness credential story), so this
+    /// fake-token substitution is the only way its three REST calls can be exercised against the
+    /// conformance harness's fakes without a real Azure AD identity.</summary>
+    public static string? CascadeFakeToken =>
+        HooksEnabled && Environment.GetEnvironmentVariable(CascadeFakeTokenEnv) is { Length: > 0 } token
+            ? token
+            : null;
     private static DateTimeOffset ParseFixedNow(string raw)
     {
         if (!ExplicitOffsetSuffix.IsMatch(raw.Trim()))

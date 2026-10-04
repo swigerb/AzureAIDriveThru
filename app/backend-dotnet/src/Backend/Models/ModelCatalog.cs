@@ -42,11 +42,14 @@ public sealed class ModelCatalog
 
     private readonly IReadOnlyDictionary<string, ModelEntry> _entries;
     private readonly IReadOnlyDictionary<string, string> _deployments;
+    private readonly CascadeAudioConfig? _cascadeAudio;
 
-    private ModelCatalog(IReadOnlyDictionary<string, ModelEntry> entries, IReadOnlyDictionary<string, string> deployments)
+    private ModelCatalog(IReadOnlyDictionary<string, ModelEntry> entries, IReadOnlyDictionary<string, string> deployments,
+        CascadeAudioConfig? cascadeAudio = null)
     {
         _entries = entries;
         _deployments = deployments;
+        _cascadeAudio = cascadeAudio;
     }
 
     /// <summary>Every catalogued model id, ordinal sorted (mirrors Python's `sorted(self._entries)`).</summary>
@@ -80,6 +83,14 @@ public sealed class ModelCatalog
     /// fallback is still NOT selectable by this definition, so /api/personas/{id}'s picker never
     /// offers a model that would 404 if explicitly requested by id.</summary>
     public bool IsSelectable(string modelId, string pipeline) => IsCataloguedFor(modelId, pipeline) && IsDeployed(modelId);
+
+    /// <summary>config.yaml's `models.cascade`'s transcription/tts catalog ids (issue #82), or
+    /// null if config.yaml doesn't declare one -- e.g. a deployment with the cascade pipeline
+    /// unregistered, or a test fixture catalog that doesn't need it. <see cref="Sessions.CascadeProcessor"/>
+    /// resolves each id's actual deployment name via <see cref="DeploymentFor"/>, same as any chat
+    /// model.</summary>
+    public CascadeAudioConfig? CascadeAudio => _cascadeAudio;
+
 
     /// <summary>
     /// Rick's PR #106 review item 1: startup fails if any enabled persona's own pipeline default
@@ -180,8 +191,57 @@ public sealed class ModelCatalog
         }
 
         var deployments = ParseDeploymentMap(deploymentsRaw);
-        return new ModelCatalog(entries, deployments);
+        object? cascadeRaw = null;
+        modelsSection?.TryGetValue("cascade", out cascadeRaw);
+        var cascadeAudio = ParseCascadeAudioConfig(cascadeRaw);
+        return new ModelCatalog(entries, deployments, cascadeAudio);
     }
+
+    /// <summary>
+    /// Port of model_catalog.py's `_parse_cascade_audio_config`: config.yaml's `models.cascade`
+    /// is optional (a deployment that hasn't registered the cascade pipeline yet simply omits it,
+    /// yielding a null config -- not an error), but if present must be a mapping with exactly the
+    /// two required fields, each a non-empty string.
+    /// </summary>
+    /// <exception cref="ModelValidationException">`models.cascade` is present but malformed.</exception>
+    private static CascadeAudioConfig? ParseCascadeAudioConfig(object? raw)
+    {
+        if (raw is null)
+        {
+            return null;
+        }
+        if (raw is not IDictionary<object, object> map)
+        {
+            throw new ModelValidationException($"config.yaml models.cascade must be a mapping, got {DescribeType(raw)}.");
+        }
+
+        var dict = map.ToDictionary(kv => kv.Key.ToString()!, kv => kv.Value);
+        var known = new HashSet<string> { "transcription", "tts" };
+
+        var unknown = dict.Keys.Where(k => !known.Contains(k)).OrderBy(k => k, StringComparer.Ordinal).ToList();
+        if (unknown.Count > 0)
+        {
+            throw new ModelValidationException($"config.yaml models.cascade has unknown field(s): {FormatList(unknown)}.");
+        }
+
+        var missing = known.Where(f => !dict.ContainsKey(f)).OrderBy(f => f, StringComparer.Ordinal).ToList();
+        if (missing.Count > 0)
+        {
+            throw new ModelValidationException($"config.yaml models.cascade is missing required field(s): {FormatList(missing)}.");
+        }
+
+        if (dict["transcription"] is not string transcription || string.IsNullOrWhiteSpace(transcription))
+        {
+            throw new ModelValidationException("config.yaml models.cascade's 'transcription' must be a non-empty string.");
+        }
+        if (dict["tts"] is not string tts || string.IsNullOrWhiteSpace(tts))
+        {
+            throw new ModelValidationException("config.yaml models.cascade's 'tts' must be a non-empty string.");
+        }
+
+        return new CascadeAudioConfig(transcription, tts);
+    }
+
 
     private static ModelEntry ParseEntry(object raw, int index)
     {
