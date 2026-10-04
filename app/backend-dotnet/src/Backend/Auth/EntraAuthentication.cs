@@ -144,8 +144,13 @@ public static class EntraAuthentication
                 // anonymous/no-token request never reaches the config-manager fetch anyway. Fails
                 // closed via context.Fail -- same 401 Challenge path as any other authentication
                 // failure (see OnChallenge below), never a 500/503.
+                //
+                // #246 mirror-check (Summer's Python JWKS-cooldown-race fix; coordinator's
+                // follow-up question on PR #226): this short-circuit must NOT fire for a request
+                // whose signing key is already resolvable without any network call --
+                // HasUsableLastKnownGoodConfiguration's doc comment below has the full story.
                 var hasToken = context.Request.Headers.ContainsKey("Authorization") || context.Token is not null;
-                if (hasToken && discoveryFailureGate.IsInCooldown())
+                if (hasToken && discoveryFailureGate.IsInCooldown() && !HasUsableLastKnownGoodConfiguration(options))
                 {
                     context.Fail("OIDC discovery/JWKS endpoint is in a failure cooldown window.");
                 }
@@ -237,6 +242,39 @@ public static class EntraAuthentication
         }
         return false;
     }
+
+    /// <summary>
+    /// #246 mirror-check (Summer's Python JWKS-cooldown-race fix; coordinator's follow-up question
+    /// on PR #226): entra_auth.py's own discovery-failure cooldown (`_discovery_failure_until`)
+    /// only ever gates the COLD-START path -- the check lives solely inside
+    /// `if self._jwks_client is None`, so once a JWKS client has been built successfully once, a
+    /// LATER forged/unknown-kid-triggered refetch failure never re-engages it; from then on Python
+    /// relies entirely on PyJWT's own internal signing-key cache plus its 5-minute
+    /// `cooldown_duration` (see the comment above TokenValidator.__init__ -- "this is not
+    /// reimplemented here"). <see cref="DiscoveryFailureGate"/>'s OnMessageReceived check had no
+    /// equivalent "only while cold" narrowing: <see cref="EntraAuthentication.IsDiscoveryOrBackchannelFailure"/>
+    /// only records a failure for a genuine network/parse error (never a plain
+    /// SecurityTokenSignatureKeyNotFoundException from an unrelated unknown kid), but IF that
+    /// unknown-kid token's forced <c>ConfigurationManager.RequestRefresh()</c> attempt happened to
+    /// coincide with a real transient Entra/discovery outage, the resulting cooldown would 401
+    /// EVERY other request for the next 30s -- including ones bearing a completely different,
+    /// already-cached kid that Microsoft.IdentityModel.Tokens could resolve instantly from
+    /// <see cref="BaseConfigurationManager.LastKnownGoodConfiguration"/> without touching the
+    /// network at all. That is exactly the "forged/unrelated input blocks an already-cached,
+    /// otherwise-valid result" bug class Rick's review fixed in Python (#246: a cache-hit path
+    /// must not be defeated by an unrelated miss). <see cref="BaseConfigurationManager.IsLastKnownGoodValid"/>
+    /// is a pure, allocation-free, synchronous property read (no I/O, no async, mirroring
+    /// `self._jwks_client is not None`'s own O(1) cost) that Microsoft.IdentityModel.Tokens itself
+    /// only ever sets to a non-null, unexpired value after at least one token has already
+    /// validated successfully against some configuration -- i.e. "warm" in precisely the same
+    /// sense Python's `self._jwks_client is not None` means "warm". Letting the request through in
+    /// that case does not reopen the unbounded-repeated-network-call DoS the gate exists to
+    /// prevent: an unresolvable/still-unknown kid falls through to ordinary token validation,
+    /// which is itself bounded by <see cref="BaseConfigurationManager.RefreshInterval"/> (5-minute
+    /// default) -- more conservative than this gate's own 30s window, not less.
+    /// </summary>
+    private static bool HasUsableLastKnownGoodConfiguration(JwtBearerOptions options) =>
+        options.ConfigurationManager is BaseConfigurationManager { IsLastKnownGoodValid: true };
 
     /// <summary>
     /// The single fallback+default authorization policy (issue #147 bullet 1/3): one

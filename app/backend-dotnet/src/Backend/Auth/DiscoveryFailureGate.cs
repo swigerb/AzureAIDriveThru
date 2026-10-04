@@ -9,6 +9,11 @@ namespace Backend.Auth;
 /// EntraAuthentication.ConfigureJwtBearer's OnMessageReceived) without ever calling
 /// GetConfigurationAsync() again. One instance is shared across every request on the JwtBearer
 /// scheme for the lifetime of the app (registered as a DI singleton by AddEntraAuthentication).
+/// #246 mirror-check (Summer's Python JWKS-cooldown-race fix, coordinator's follow-up question on
+/// PR #226): OnMessageReceived only honours <see cref="IsInCooldown"/> when there is no
+/// already-warm, usable Last-Known-Good configuration to fall back on -- see
+/// EntraAuthentication.HasUsableLastKnownGoodConfiguration's doc comment for the full rationale;
+/// this gate itself needed no change, only its caller's use of it.
 /// <see cref="TimeProvider"/> is injectable purely for deterministic unit testing of the cooldown
 /// window; production code always uses <see cref="TimeProvider.System"/> (the implicit default).
 /// </summary>
