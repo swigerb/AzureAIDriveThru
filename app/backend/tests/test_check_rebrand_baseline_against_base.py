@@ -7,7 +7,9 @@ the network -- every GitHub API lookup is mocked via `check_issue_is_open`.
 """
 from __future__ import annotations
 
+import json
 import sys
+import time
 import unittest
 from io import StringIO
 from pathlib import Path
@@ -631,17 +633,21 @@ class TestParsePrIssueRefs(unittest.TestCase):
         self.assertEqual(closes, frozenset({"#1"}))
 
     def test_live_pr_220_body_shape_extracts_both_issues(self):
-        """Regression-pins the exact live shape that surfaced this bug (#227): PR #220's real
-        title is 'Refs #76, #63: real-persona extras conformance rows / harness follow-ups'
-        (no closing keyword -- it was deliberately retitled away from an earlier "Fix #76"
-        draft, see the body excerpt below) and its real body opens with '## Refs #76, #63'
-        and, later, quotes that earlier draft commit subject verbatim: 'Reworded commit
-        ...'s subject from "Fix #76: ..." to "Refs #76: ..."'. That quoted "Fix #76:" text is
-        itself a live keyword match as far as the regex is concerned (it has no notion of
-        quotation marks or past tense), so *closes* really does end up as {'#76'} for this
-        PR, even though the PR's own intent (and its final title) was reference-only for both
-        issues -- pinning this exact, slightly surprising real shape so a future regex change
-        doesn't silently alter it without the test failing."""
+        """Regression-pins a SNAPSHOT of an earlier version of PR #220's title/body that
+        surfaced this bug (#227), not a claim that this is the exact/current live shape
+        forever (#238, Rick's follow-up on PR #231: PR bodies/titles can be edited after the
+        fact, so "real/exact live" overclaims a shape that was true when this test was
+        written). At the time this was pinned, PR #220's title was 'Refs #76, #63:
+        real-persona extras conformance rows / harness follow-ups' (no closing keyword -- it
+        was deliberately retitled away from an earlier "Fix #76" draft, see the body excerpt
+        below) and its body opened with '## Refs #76, #63' and, later, quoted that earlier
+        draft commit subject verbatim: 'Reworded commit ...'s subject from "Fix #76: ..." to
+        "Refs #76: ..."'. That quoted "Fix #76:" text is itself a live keyword match as far as
+        the regex is concerned (it has no notion of quotation marks or past tense), so
+        *closes* really does end up as {'#76'} for this snapshot, even though the PR's own
+        intent (and its final title) was reference-only for both issues -- pinning this exact,
+        slightly surprising shape so a future regex change doesn't silently alter it without
+        the test failing."""
         title = "Refs #76, #63: real-persona extras conformance rows / harness follow-ups"
         body = (
             "## Refs #76, #63\n\n"
@@ -657,6 +663,204 @@ class TestParsePrIssueRefs(unittest.TestCase):
         issues, closes = checker.parse_pr_issue_refs(body, title)
         self.assertEqual(issues, frozenset({"#76", "#63"}))
         self.assertEqual(closes, frozenset({"#76"}))
+
+    def test_handles_adversarial_whitespace_without_catastrophic_backtracking(self):
+        """#238 (Rick's follow-up on PR #231): the pre-fix list-continuation group shared one
+        trailing whitespace token across both alternation branches, leaving two adjacent,
+        independently-backtracking whitespace matches with nothing deterministic between them
+        whenever the optional "and" didn't match. On a run of many comma-plus-whitespace list
+        separators with no terminating '#N' to anchor the match, the old regex had to try
+        every way of splitting each separator's whitespace between the two groups, compounding
+        across every repeated separator -- confirmed interactively to make this exact adversarial
+        shape (24 repeats) take several seconds pre-fix, versus sub-millisecond post-fix. This
+        test doesn't compare old vs. new (the old pattern no longer exists in the module) -- it
+        just asserts the CURRENT regex stays fast on the shape that used to be pathological, so
+        a future regression reintroducing the shared-whitespace bug would show up as a timeout
+        here rather than silently passing every correctness test while being slow in CI."""
+        adversarial = "Refs #1" + (", #2" * 24) + "X"  # trailing 'X': no further '#N', so the
+        # engine must exhaust every whitespace split before the repeated group gives up.
+        # fullmatch (not search/finditer) is required to reproduce this: an unanchored search
+        # can simply stop at the last successfully-matched '#2' and never touch the trailing
+        # 'X' at all, so it never needs to backtrack through the ambiguous whitespace.
+        start = time.perf_counter()
+        checker.PR_ISSUE_REF_RE.fullmatch(adversarial)
+        elapsed = time.perf_counter() - start
+        self.assertLess(
+            elapsed,
+            1.0,
+            f"PR_ISSUE_REF_RE took {elapsed:.3f}s on an adversarial whitespace-list input -- "
+            f"this used to be the shared-trailing-\\s* catastrophic-backtracking shape (#238); "
+            f"a fixed regex should finish in well under a second.",
+        )
+
+    def test_commit_message_with_closing_keyword_closes(self):
+        """#238: dev's squash-merge setting concatenates every commit's message into the final
+        squash commit body, so a closing keyword in ANY commit message closes its issue on
+        merge, not just one in the PR body/title."""
+        issues, closes = checker.parse_pr_issue_refs("", commit_messages=["Fix #84: add widget"])
+        self.assertEqual(issues, frozenset({"#84"}))
+        self.assertEqual(closes, frozenset({"#84"}))
+
+    def test_commit_message_with_ref_only_keyword_does_not_close(self):
+        issues, closes = checker.parse_pr_issue_refs("", commit_messages=["Refs #84: wip"])
+        self.assertEqual(issues, frozenset({"#84"}))
+        self.assertEqual(closes, frozenset())
+
+    def test_commit_message_without_any_hash_n_contributes_nothing(self):
+        issues, closes = checker.parse_pr_issue_refs("", commit_messages=["Tidy up formatting"])
+        self.assertEqual(issues, frozenset())
+        self.assertEqual(closes, frozenset())
+
+    def test_multiple_commit_messages_are_all_scanned(self):
+        issues, closes = checker.parse_pr_issue_refs(
+            "", commit_messages=["Fix #1: start", "Refs #2: wip", "Closes #3: finish"]
+        )
+        self.assertEqual(issues, frozenset({"#1", "#2", "#3"}))
+        self.assertEqual(closes, frozenset({"#1", "#3"}))
+
+    def test_commit_message_refs_are_unioned_with_body_and_title(self):
+        issues, closes = checker.parse_pr_issue_refs(
+            "Refs #5", title="Fix #169: remove dead code", commit_messages=["Closes #42: wip"]
+        )
+        self.assertEqual(issues, frozenset({"#5", "#169", "#42"}))
+        self.assertEqual(closes, frozenset({"#169", "#42"}))
+
+    def test_commit_message_bare_hash_n_without_keyword_is_not_counted(self):
+        """Unlike the title, a commit message gets no special bare-'#N'-counts-as-reference
+        treatment -- GitHub's own commit-message closing syntax requires the keyword too, same
+        as the body, so a bare mention in a commit message is simply invisible to this
+        function (same as a bare mention in the body)."""
+        issues, closes = checker.parse_pr_issue_refs("", commit_messages=["See #84 for context"])
+        self.assertEqual(issues, frozenset())
+        self.assertEqual(closes, frozenset())
+
+    def test_default_commit_messages_argument_does_not_change_existing_behaviour(self):
+        """Every pre-#238 call site (and every pre-#238 test above) calls parse_pr_issue_refs()
+        without commit_messages -- it must default to not adding anything, not raise
+        TypeError."""
+        issues, closes = checker.parse_pr_issue_refs("Fixes #1", title="See also #2")
+        self.assertEqual(issues, frozenset({"#1", "#2"}))
+        self.assertEqual(closes, frozenset({"#1"}))
+
+
+class _FakeResponse:
+    """Minimal stand-in for the context-manager object urllib.request.urlopen() returns."""
+
+    def __init__(self, status: int, payload: bytes):
+        self.status = status
+        self._payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return False
+
+    def read(self) -> bytes:
+        return self._payload
+
+
+def _commits_payload(messages: list[str]) -> bytes:
+    return json.dumps([{"commit": {"message": m}} for m in messages]).encode("utf-8")
+
+
+class TestFetchPrCommitMessages(unittest.TestCase):
+    """Unit tests for fetch_pr_commit_messages() (#238) -- mocks urllib.request.urlopen so
+    these never touch the real network, same convention as the rest of this test module."""
+
+    def test_single_page_extracts_every_message(self):
+        with mock.patch.object(
+            checker.urllib.request,
+            "urlopen",
+            return_value=_FakeResponse(200, _commits_payload(["Fix #1: start", "Refs #2: wip"])),
+        ):
+            messages = checker.fetch_pr_commit_messages("owner/repo", "42", "tok", expected_count=2)
+        self.assertEqual(messages, ["Fix #1: start", "Refs #2: wip"])
+
+    def test_empty_commit_list_returns_empty(self):
+        with mock.patch.object(
+            checker.urllib.request, "urlopen", return_value=_FakeResponse(200, _commits_payload([]))
+        ):
+            messages = checker.fetch_pr_commit_messages("owner/repo", "42", "tok", expected_count=0)
+        self.assertEqual(messages, [])
+
+    def test_pagination_follows_additional_pages(self):
+        """A first full page (100 commits) must trigger a second request; a short page (< 100)
+        must stop there."""
+        page_one = _commits_payload([f"Refs #{i}: wip" for i in range(100)])
+        page_two = _commits_payload(["Fix #999: last one"])
+        responses = [_FakeResponse(200, page_one), _FakeResponse(200, page_two)]
+        with mock.patch.object(checker.urllib.request, "urlopen", side_effect=responses) as urlopen_mock:
+            messages = checker.fetch_pr_commit_messages("owner/repo", "42", "tok", expected_count=101)
+        self.assertEqual(urlopen_mock.call_count, 2)
+        self.assertEqual(len(messages), 101)
+        self.assertEqual(messages[-1], "Fix #999: last one")
+
+    def test_non_200_status_raises_runtime_error(self):
+        with mock.patch.object(
+            checker.urllib.request, "urlopen", return_value=_FakeResponse(500, b"[]")
+        ):
+            with self.assertRaises(RuntimeError):
+                checker.fetch_pr_commit_messages("owner/repo", "42", "tok", expected_count=1)
+
+    def test_http_error_raises_runtime_error(self):
+        http_error = checker.urllib.error.HTTPError(
+            "https://api.github.com/x", 404, "Not Found", hdrs=None, fp=None
+        )
+        with mock.patch.object(checker.urllib.request, "urlopen", side_effect=http_error):
+            with self.assertRaises(RuntimeError):
+                checker.fetch_pr_commit_messages("owner/repo", "42", "tok", expected_count=1)
+
+    def test_unexpected_payload_shape_raises_runtime_error(self):
+        """A non-list JSON payload (e.g. an error object) must fail closed, not silently
+        return an empty/partial message list."""
+        with mock.patch.object(
+            checker.urllib.request,
+            "urlopen",
+            return_value=_FakeResponse(200, json.dumps({"message": "Not Found"}).encode("utf-8")),
+        ):
+            with self.assertRaises(RuntimeError):
+                checker.fetch_pr_commit_messages("owner/repo", "42", "tok", expected_count=1)
+
+    def test_commit_without_a_message_field_is_skipped_not_fatal(self):
+        payload = json.dumps([{"commit": {}}, {"commit": {"message": "Fix #1: start"}}]).encode(
+            "utf-8"
+        )
+        with mock.patch.object(
+            checker.urllib.request, "urlopen", return_value=_FakeResponse(200, payload)
+        ):
+            # #238 round 2: expected_count matches the two COMMITS GitHub reports, not the
+            # one message actually extracted (the other commit has no message field) -- the
+            # count check compares against len(messages), i.e. 1 here, not len(payload).
+            messages = checker.fetch_pr_commit_messages("owner/repo", "42", "tok", expected_count=1)
+        self.assertEqual(messages, ["Fix #1: start"])
+
+    def test_happy_path_commit_count_matches_expected_count(self):
+        """#238 round 2 happy path: when the fetched message count equals expected_count
+        (GitHub's own github.event.pull_request.commits), the fetch succeeds normally."""
+        with mock.patch.object(
+            checker.urllib.request,
+            "urlopen",
+            return_value=_FakeResponse(200, _commits_payload(["Fix #1: a", "Refs #2: b", "Refs #3: c"])),
+        ):
+            messages = checker.fetch_pr_commit_messages("owner/repo", "42", "tok", expected_count=3)
+        self.assertEqual(messages, ["Fix #1: a", "Refs #2: b", "Refs #3: c"])
+
+    def test_commit_count_mismatch_raises_runtime_error(self):
+        """#238 round 2: GitHub's PR commits endpoint silently caps at 250 commits total
+        regardless of pagination. Simulate a 251-commit PR where the fetch loop only ever
+        sees 250 messages (a 100/100/50 split, with the 50-row final page ending pagination
+        normally, no error) -- expected_count=251 must still fail closed rather than silently
+        accept the truncated 250."""
+        page_one = _commits_payload([f"Refs #{i}: wip" for i in range(100)])
+        page_two = _commits_payload([f"Refs #{i}: wip" for i in range(100, 200)])
+        page_three = _commits_payload([f"Refs #{i}: wip" for i in range(200, 250)])
+        responses = [_FakeResponse(200, page_one), _FakeResponse(200, page_two), _FakeResponse(200, page_three)]
+        with mock.patch.object(checker.urllib.request, "urlopen", side_effect=responses):
+            with self.assertRaises(RuntimeError) as ctx:
+                checker.fetch_pr_commit_messages("owner/repo", "42", "tok", expected_count=251)
+        self.assertIn("250", str(ctx.exception))
+        self.assertIn("251", str(ctx.exception))
 
 
 if __name__ == "__main__":

@@ -66,6 +66,31 @@ validly-formatted `increase_reason`?". Issue #105 hardened every corner that lef
      BOTH a comma and "and" together, which the old list group didn't allow) -- the
      continuation now accepts a comma optionally followed by "and", or a bare "and", so the
      full list is always captured.
+  9. #238 (Rick's follow-up on PR #231): two things. First, the Oxford-comma fix's list group
+     shared one trailing whitespace-run token across both alternation branches, leaving an
+     adjacent, independently-backtracking whitespace pair with nothing deterministic between
+     them whenever the optional "and" didn't match -- a whitespace-heavy list with no terminating `#N` could force
+     the engine through every possible way of splitting that run between the two groups,
+     compounding across every list item (catastrophic backtracking, not just a slow path). The
+     trailing whitespace is now folded into each alternation branch individually instead of
+     shared, removing the ambiguity entirely; behaviour on every valid list shape is unchanged.
+     Second, and unrelated: `dev`'s squash-merge setting is `squash_merge_commit_message:
+     COMMIT_MESSAGES`, which concatenates EVERY individual commit's message into the final
+     squash commit body -- not just the sole commit of a single-commit PR. A closing keyword in
+     any commit message therefore closes its issue on merge just as surely as one in the PR body
+     or title, so `parse_pr_issue_refs()` now also accepts an optional `commit_messages`
+     iterable, scanned the same way as the body. The "Determine this PR's own issue reference"
+     workflow step fetches every commit via the GitHub REST API and passes their messages
+     through (see fetch_pr_commit_messages()).
+  9b. #238 round 2 (Rick's review of PR #239): GitHub's PR commits REST endpoint silently
+     caps at 250 commits total, regardless of how many pages are requested -- a PR with 251+
+     commits would have item 9's fetch loop exit on the short final page (250, 100, 100, 50)
+     without any error, silently missing whatever closing keyword lives in commit 251 onward.
+     fetch_pr_commit_messages() now takes a required `expected_count` argument and fails
+     closed (RuntimeError) if the number of messages it actually fetched does not match. The
+     workflow passes `github.event.pull_request.commits` (GitHub's own authoritative commit
+     count for the PR, an integer, safe to use via `env:`) as PR_COMMITS, and fails closed if
+     that value is missing or not parseable as an integer before even attempting the fetch.
 
 Usage (see .github/workflows/conformance.yml, python-tests job):
 
@@ -74,22 +99,24 @@ Usage (see .github/workflows/conformance.yml, python-tests job):
 Environment variables (all optional for local/manual runs; CI sets every one of them):
     GITHUB_TOKEN                    Bearer token for the GitHub REST API issue lookup.
     GITHUB_REPOSITORY               "owner/name" of the repo to look issues up in.
-    REBRAND_PR_ISSUES               Comma-separated '#N' issue refs this PR's body OR TITLE
-                                     mentions via ANY supported keyword (close/closes/closed,
-                                     fix/fixes/fixed, resolve/resolves/resolved, ref/refs),
-                                     case-insensitive, each optionally followed by a comma-/
-                                     "and"-separated list of further '#N' refs, PLUS every
-                                     bare '#N' mentioned in the PR's TITLE with no keyword at
-                                     all (#227) -- a RAISE's increase_reason may not equal any
-                                     of these (item 3).
-    REBRAND_PR_CLOSES               Comma-separated '#N' issue refs this PR's body OR TITLE
-                                     mentions via a CLOSING keyword specifically
-                                     (REBRAND_PR_ISSUES minus any ref/refs-only or bare-title
-                                     matches) -- a title keyword closes too, since `dev`
-                                     squash-merges use the PR title as the commit subject
-                                     (#227 round 2) -- NO entry, RAISE or NEW, may cite one of
-                                     these: merging this PR closes the issue, so the
-                                     post-merge push-to-dev check would then fail (item 3b).
+    REBRAND_PR_ISSUES               Comma-separated '#N' issue refs this PR's body, TITLE, OR
+                                     any of its COMMIT MESSAGES mentions via ANY supported
+                                     keyword (close/closes/closed, fix/fixes/fixed, resolve/
+                                     resolves/resolved, ref/refs), case-insensitive, each
+                                     optionally followed by a comma-/"and"-separated list of
+                                     further '#N' refs, PLUS every bare '#N' mentioned in the
+                                     PR's TITLE with no keyword at all (#227) -- a RAISE's
+                                     increase_reason may not equal any of these (item 3).
+    REBRAND_PR_CLOSES               Comma-separated '#N' issue refs this PR's body, TITLE, OR
+                                     any of its COMMIT MESSAGES mentions via a CLOSING keyword
+                                     specifically (REBRAND_PR_ISSUES minus any ref/refs-only or
+                                     bare-title matches) -- a title or commit-message keyword
+                                     closes too, since `dev` squash-merges use the PR title as
+                                     the commit subject (#227 round 2) AND concatenate every
+                                     commit's message into the squash body (#238) -- NO entry,
+                                     RAISE or NEW, may cite one of these: merging this PR closes
+                                     the issue, so the post-merge push-to-dev check would then
+                                     fail (item 3b).
     REBRAND_REQUIRE_ISSUE_API_CHECK Set to "1"/"true" to make the open-issue API check
                                      mandatory: if GITHUB_TOKEN/GITHUB_REPOSITORY are missing,
                                      or the API call fails for any reason, every raise/new
@@ -110,6 +137,7 @@ import re
 import sys
 import urllib.error
 import urllib.request
+from collections.abc import Iterable
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -140,9 +168,22 @@ ISSUE_REF_RE = re.compile(r"#\d+")
 # branch below now optionally also consumes a trailing "and", so a comma-only separator, an
 # "and"-only separator, and a ", and" Oxford-comma separator all continue the same list; ", and
 # the #2" (a word between "and" and the ref) still fails to match, same as before.
+#
+# #238 (Rick's follow-up on PR #231): that fix shared ONE trailing `\s*` across both
+# alternation branches ("...and\b)?|\band\b)\s*#\d+"), applied after whichever branch matched.
+# Whenever the comma branch's optional "and" did NOT match, the engine was left with two
+# adjacent, independently-backtracking `\s*` groups (the comma branch's own `\s*` plus the
+# shared one) and nothing deterministic between them -- on a long run of whitespace with no
+# terminating '#N' to anchor against, every possible way of splitting that run between the two
+# groups gets tried, compounding across every further list item (catastrophic backtracking, not
+# merely a slow path -- see test_handles_adversarial_whitespace_without_catastrophic_
+# backtracking). The trailing whitespace is now folded into EACH branch individually instead of
+# being shared outside the alternation, leaving exactly one `\s*` per branch; this changes
+# nothing about which strings match (verified against every case above), only how many ways the
+# engine can arrive at that match.
 PR_ISSUE_REF_RE = re.compile(
     r"\b(close[sd]?|fix(?:e[sd])?|resolve[sd]?|refs?)\s*:?\s+#\d+"
-    r"(?:\s*(?:,\s*(?:and\b)?|\band\b)\s*#\d+)*",
+    r"(?:\s*(?:,\s*(?:and\b\s*)?|\band\b\s*)#\d+)*",
     re.IGNORECASE,
 )
 
@@ -155,18 +196,22 @@ GITHUB_REPOSITORY_ENV = "GITHUB_REPOSITORY"
 _TRUTHY = {"1", "true", "True", "yes", "on"}
 
 
-def parse_pr_issue_refs(body: str, title: str = "") -> tuple[frozenset[str], frozenset[str]]:
-    """Extract every issue reference this PR's body (and, optionally, title) makes.
+def parse_pr_issue_refs(
+    body: str, title: str = "", commit_messages: Iterable[str] = ()
+) -> tuple[frozenset[str], frozenset[str]]:
+    """Extract every issue reference this PR's body, title, and commit messages make.
 
     Returns ``(all_issues, closing_issues)``, both as frozensets of ``'#N'`` strings:
 
-    - *all_issues* is every issue referenced by ANY supported keyword in the body OR title --
-      close(s/d), fix(es/ed), resolve(s/d), ref(s) -- case-insensitive, every match (not just
-      the first), PLUS every bare ``#N`` mentioned in *title* with no keyword at all.
+    - *all_issues* is every issue referenced by ANY supported keyword in the body, title, OR
+      any of *commit_messages* -- close(s/d), fix(es/ed), resolve(s/d), ref(s) --
+      case-insensitive, every match (not just the first), PLUS every bare ``#N`` mentioned in
+      *title* with no keyword at all.
     - *closing_issues* is the subset referenced via a keyword GitHub itself treats as CLOSING
       the issue on merge (i.e. *all_issues* minus any ref/refs-only matches and minus any bare,
-      keyword-less title mention). A closing keyword in the TITLE counts here too (see #227
-      round 2 below) -- only a keyword-less bare ``#N`` in the title is reference-only.
+      keyword-less title mention). A closing keyword in the TITLE or a commit message counts
+      here too (see #227 round 2 and #238 below) -- only a keyword-less bare ``#N`` in the
+      title is reference-only.
 
     #105 R1 (round 2, Rick's PR #153 review): the original single-match regex only recognised
     "Refs/Closes/Fixes/Resolves" (missing GitHub's own "close", "closed", "fix", "fixed",
@@ -188,6 +233,15 @@ def parse_pr_issue_refs(body: str, title: str = "") -> tuple[frozenset[str], fro
     itself, title or body alike. The same list-continuation regex also gained an Oxford-comma
     fix: "Refs #1, #2, and #3" previously extracted only ``#1``/``#2``.
 
+    #238 (Rick's follow-up on PR #231): *commit_messages* is new -- ``dev``'s squash-merge
+    setting is ``squash_merge_commit_message: COMMIT_MESSAGES``, which concatenates EVERY
+    individual commit's message into the final squash commit body, not just the sole commit of
+    a single-commit PR. Each message is scanned with the same keyword regex as the body (NOT
+    the title's extra bare-``#N``-counts-as-reference treatment -- GitHub's commit-message
+    closing syntax requires the keyword too, same as the body). The list-continuation regex
+    also had its one remaining pathological whitespace case fixed here (see PR_ISSUE_REF_RE's
+    comment) -- a pure performance fix, not a behaviour change.
+
     This helper is imported directly by the "Determine this PR's own issue reference"
     workflow step so the regex is tested once, here, rather than duplicated in workflow YAML.
     """
@@ -204,6 +258,8 @@ def parse_pr_issue_refs(body: str, title: str = "") -> tuple[frozenset[str], fro
 
     _scan(body)
     _scan(title)
+    for message in commit_messages:
+        _scan(message)
     # A bare '#N' in the title with no keyword at all still counts as a reference (item 3's
     # self-citation check needs to see it), but never as a closer -- GitHub's closing-keyword
     # syntax still requires the keyword itself.
@@ -246,6 +302,84 @@ def check_issue_is_open(issue_ref: str, repo: str, token: str) -> str | None:
     if payload.get("state") != "open":
         return f"{issue_ref} is not open (state={payload.get('state')!r})"
     return None
+
+
+def fetch_pr_commit_messages(repo: str, pr_number: str, token: str, expected_count: int) -> list[str]:
+    """Fetch every commit message on PR *pr_number* in *repo* ('owner/name'), via the GitHub
+    REST API (``GET /repos/{repo}/pulls/{pr_number}/commits``, paginated).
+
+    #238: ``dev``'s squash-merge setting is ``squash_merge_commit_message: COMMIT_MESSAGES``,
+    which concatenates EVERY commit's message into the final squash commit body -- not just the
+    sole commit of a single-commit PR. A closing keyword in any commit message therefore closes
+    its issue on merge just as surely as one in the PR body or title, so the "Determine this
+    PR's own issue reference" workflow step fetches these and passes them to
+    ``parse_pr_issue_refs()``'s *commit_messages* parameter.
+
+    *expected_count* MUST be the PR's true total commit count (the workflow passes GitHub's own
+    ``github.event.pull_request.commits``). The GitHub commits endpoint silently caps at 250
+    commits TOTAL regardless of how many pages are requested -- a PR with 251+ commits would
+    otherwise end pagination on a short final page (e.g. a 100/100/50 split after the cap) with
+    no error at all, silently missing whatever closing keyword lives in commit 251 onward.
+    Raises RuntimeError if the number of messages actually fetched does not equal
+    *expected_count*.
+
+    Raises RuntimeError on ANY OTHER failure too -- network error, timeout, non-200 status,
+    malformed/unexpected JSON -- rather than returning an empty or partial list (fail-closed,
+    same rationale as check_issue_is_open: silently treating a failed/incomplete fetch as "no
+    commit messages" would under-report REBRAND_PR_CLOSES and could let a self-citation slip
+    through undetected).
+    """
+    messages: list[str] = []
+    page = 1
+    while True:
+        url = f"https://api.github.com/repos/{repo}/pulls/{pr_number}/commits?per_page=100&page={page}"
+        req = urllib.request.Request(  # noqa: S310 -- fixed https://api.github.com host, not user input
+            url,
+            headers={
+                "Authorization": f"token {token}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+                "User-Agent": "rebrand-baseline-ratchet-check",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310
+                if resp.status != 200:
+                    raise RuntimeError(
+                        f"GitHub API returned HTTP {resp.status} fetching PR #{pr_number} commits"
+                    )
+                payload = json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            raise RuntimeError(
+                f"GitHub API returned HTTP {exc.code} fetching PR #{pr_number} commits"
+            ) from exc
+        except RuntimeError:
+            raise
+        except Exception as exc:  # noqa: BLE001 -- fail-closed on ANY error, not just HTTP ones
+            raise RuntimeError(
+                f"GitHub API lookup for PR #{pr_number} commits failed: {exc!r}"
+            ) from exc
+
+        if not isinstance(payload, list):
+            raise RuntimeError(
+                f"GitHub API returned an unexpected payload fetching PR #{pr_number} commits "
+                f"(expected a list, got {type(payload).__name__})"
+            )
+        for commit in payload:
+            message = ((commit or {}).get("commit") or {}).get("message")
+            if message:
+                messages.append(message)
+        if len(payload) < 100:
+            break
+        page += 1
+    if len(messages) != expected_count:
+        raise RuntimeError(
+            f"GitHub API returned {len(messages)} commit message(s) for PR #{pr_number} but "
+            f"the PR reports {expected_count} commit(s) -- the PR commits endpoint caps at "
+            f"250 commits total regardless of pagination, so this mismatch likely means a "
+            f"closing keyword in commit 251+ was silently missed. Refusing to proceed."
+        )
+    return messages
 
 
 def _existing_brands_for_file(baseline: dict[tuple[str, str], BaselineEntry], file: str) -> set[str]:
