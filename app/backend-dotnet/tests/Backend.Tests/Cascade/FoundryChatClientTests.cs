@@ -89,7 +89,7 @@ public sealed class FoundryChatClientTests
         Assert.Equal("Hi there!", message["content"]!.GetValue<string>());
 
         var request = Assert.Single(handler.Requests);
-        Assert.Equal($"{Endpoint}/chat/completions", request.RequestUri!.ToString());
+        Assert.Equal($"{Endpoint}/chat/completions?api-version=2024-05-01-preview", request.RequestUri!.ToString());
         Assert.Equal("Bearer", request.Headers.Authorization!.Scheme);
         Assert.Equal("my-token", request.Headers.Authorization!.Parameter);
 

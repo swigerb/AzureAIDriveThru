@@ -25,6 +25,14 @@ public sealed class FoundryChatClient(HttpClient httpClient, string endpoint, IU
     /// scope the realtime pipeline's own upstream connect uses (Realtime/UpstreamAuth.cs).</summary>
     public const string CognitiveServicesScope = "https://cognitiveservices.azure.com/.default";
 
+    /// <summary>Rick's #236 review item 1 (HIGH, blocking): azure-ai-inference 1.0.0b9's
+    /// `ChatCompletionsClient` always sends this as the `api-version` query parameter (see
+    /// `_configuration.py`'s `api_version: str = kwargs.pop("api_version", ..., "2024-05-01-preview")`,
+    /// applied to every operation including `/chat/completions`) -- never overridden anywhere in
+    /// cascade_processor.py, so this is the real, deployed contract. Without it, the real Foundry
+    /// `/models` endpoint rejects every request, so every real cascade turn would have failed.</summary>
+    public const string ApiVersion = "2024-05-01-preview";
+
     private readonly string _endpoint = endpoint.TrimEnd('/');
 
     /// <summary>Posts ONE `/chat/completions` request and returns the raw `choices[0].message`
@@ -50,7 +58,7 @@ public sealed class FoundryChatClient(HttpClient httpClient, string endpoint, IU
             body["tools"] = new JsonArray(toolDefinitions.Select(t => (JsonNode)t.DeepClone()).ToArray());
         }
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, $"{_endpoint}/chat/completions")
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{_endpoint}/chat/completions?api-version={ApiVersion}")
         {
             Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json"),
         };
