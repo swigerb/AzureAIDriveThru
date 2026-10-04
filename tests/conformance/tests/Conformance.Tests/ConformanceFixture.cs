@@ -190,7 +190,15 @@ public class ConformanceFixture : IAsyncLifetime
         var extraEnvironment = MergeEnvironment(
             MergeEnvironment(Profile.ExtraEnvironment, entraEnvironment), extraFakeEnvironment);
 
-        var port = NetworkUtils.GetFreeTcpPort();
+        // Issue #259: used to pre-reserve a port with NetworkUtils.GetFreeTcpPort() -- that probe
+        // has an inherent TOCTOU race between releasing it and the backend's own bind (the exact
+        // failure mode PortRaceDetection/the retry loop exist to paper over), and nothing stopped
+        // a DIFFERENT fixture's backend from winning that race and binding this fixture's
+        // "reserved" port out from under it. Port 0 asks the OS to atomically assign a genuinely
+        // free ephemeral port at bind time instead -- no reservation, no TOCTOU window, and no way
+        // for two fixtures to ever collide on the same port. Each launcher reads the real bound
+        // port back from the backend's own startup output and reports it via Backend.BaseUri.
+        var port = 0;
         try
         {
             Backend = await BackendLauncherFactory.StartAsync(

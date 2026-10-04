@@ -1,6 +1,8 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Net.Http;
 using System.Security.Cryptography;
+using System.Text.RegularExpressions;
 
 namespace Conformance.Harness;
 
@@ -127,6 +129,23 @@ public static class DotnetBackendLauncher
     private static readonly TimeSpan HealthPollInterval = TimeSpan.FromMilliseconds(250);
 
     /// <summary>
+    /// Issue #259: matches ASP.NET Core's own hosting-lifetime log line (`Microsoft.Hosting
+    /// .Lifetime`'s "Now listening on: {address}", logged once per configured endpoint only AFTER
+    /// Kestrel has actually bound it) so the harness can read back the REAL bound port when the
+    /// backend is launched with `PORT=0` (see <see cref="DotnetBackendEnvironment"/> and
+    /// <see cref="StartAttemptAsync"/>) instead of assuming whatever port it originally requested.
+    /// Matches regardless of which console format is active: the default two-line format splits
+    /// "Now listening on:" onto its own (indented) line, and app/backend-dotnet's own
+    /// <c>ConformanceHooks.ApplyConsoleTimestampFormat</c> single-line format puts it
+    /// on the same physical line as the category/event id -- both end up as one captured line
+    /// (after <see cref="CapturedProcessOutput"/> wraps/strips its own prefixes) containing this
+    /// exact substring, which is all this regex needs since it is applied against the whole
+    /// dump, not anchored to line start.
+    /// </summary>
+    private static readonly Regex ListeningOnPortPattern = new(
+        @"Now listening on:\s*https?://[^\s:]+:(\d+)", RegexOptions.Compiled);
+
+    /// <summary>
     /// Same rationale and same value as <see cref="PythonBackendLauncher"/>'s own
     /// <c>MaxStartAttempts</c> (issue #240): bounded so a genuinely unbindable environment fails
     /// loudly instead of retrying forever. Kept as this class's own constant (not shared) so each
@@ -172,10 +191,17 @@ public static class DotnetBackendLauncher
             }
             catch (PortBindRaceException) when (attempt < MaxStartAttempts)
             {
-                // Same rationale as PythonBackendLauncher: NetworkUtils.GetFreeTcpPort() has an
-                // inherent TOCTOU race between releasing the probe socket and this backend's own
-                // Kestrel bind -- pick a fresh port and try again.
-                attemptContract = attemptContract with { Port = NetworkUtils.GetFreeTcpPort() };
+                // Issue #259: used to reassign via NetworkUtils.GetFreeTcpPort(), which has the
+                // exact same inherent TOCTOU race (probe-then-release) that this bind failure is
+                // itself evidence of. Port 0 asks the OS to atomically assign a genuinely free
+                // ephemeral port at bind time -- no probe-then-release window at all -- and the
+                // real bound port is read back afterwards from Kestrel's own "Now listening on"
+                // log line (see ListeningOnPortPattern/WaitForListeningAndHealthyAsync). A forced
+                // collision on a specific, already-occupied port (as in
+                // DotnetBackendLauncherPortRaceTests) still exercises this exact retry path: only
+                // the *first* attempt uses whatever port the caller explicitly requested, every
+                // retry always falls back to 0.
+                attemptContract = attemptContract with { Port = 0 };
             }
         }
     }
@@ -227,11 +253,12 @@ public static class DotnetBackendLauncher
         processExitHandler = (_, _) => TryKill(process);
         AppDomain.CurrentDomain.ProcessExit += processExitHandler;
 
-        var baseUri = new Uri($"http://{BackendContract.Host}:{contract.Port}/");
+        Uri baseUri;
 
         try
         {
-            await WaitForHealthAsync(baseUri, process, output, startedAt, cancellationToken).ConfigureAwait(false);
+            baseUri = await WaitForListeningAndHealthyAsync(process, output, startedAt, cancellationToken)
+                .ConfigureAwait(false);
         }
         catch
         {
@@ -244,13 +271,24 @@ public static class DotnetBackendLauncher
         return new ProcessBackend(process, baseUri, output, jobObject, processExitHandler);
     }
 
-    private static async Task WaitForHealthAsync(
-        Uri baseUri, Process process, CapturedProcessOutput output, DateTimeOffset startedAt,
+    /// <summary>
+    /// Issue #259: previously the caller computed <c>baseUri</c> upfront from
+    /// <see cref="BackendContract.Port"/> before the process even started -- only possible because
+    /// that port had already been reserved (racily) via <see cref="NetworkUtils.GetFreeTcpPort"/>.
+    /// Now that the backend is launched with <c>PORT=0</c> (the OS assigns a genuinely free
+    /// ephemeral port atomically at bind time), the real listening address is only known once
+    /// Kestrel has actually bound it and logged "Now listening on" (<see
+    /// cref="ListeningOnPortPattern"/>) -- so this method discovers that address AND waits for
+    /// `/health` to come up, under one shared <see cref="HealthTimeout"/> deadline, returning the
+    /// discovered <see cref="Uri"/> once both are satisfied.
+    /// </summary>
+    private static async Task<Uri> WaitForListeningAndHealthyAsync(
+        Process process, CapturedProcessOutput output, DateTimeOffset startedAt,
         CancellationToken cancellationToken)
     {
         using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
-        var healthUri = new Uri(baseUri, "/health");
         var deadline = DateTimeOffset.UtcNow + HealthTimeout;
+        Uri? baseUri = null;
 
         while (DateTimeOffset.UtcNow < deadline)
         {
@@ -258,20 +296,35 @@ public static class DotnetBackendLauncher
 
             if (process.HasExited)
             {
+                // Issue #259: HasExited flips the instant the process object itself observes the
+                // OS-level exit, but this process's redirected stdout/stderr lines are delivered
+                // asynchronously on a ThreadPool callback (BeginOutputReadLine/BeginErrorReadLine)
+                // that can still be in flight at that exact instant -- reading output.Dump() right
+                // here, before that callback has run, could miss the very last lines (e.g. the
+                // "address already in use" exception text a crash-on-bind prints right before
+                // exiting), making PortRaceDetection.ShouldRetry below see an incomplete dump and
+                // misclassify a port race as an unrecognised crash (or vice versa). The
+                // parameterless Process.WaitForExit() overload blocks until BOTH the process has
+                // exited AND every redirected stream has reached EOF -- guaranteed precisely
+                // because BeginOutputReadLine/BeginErrorReadLine were used to start the async
+                // reads -- so it's safe (and fast: the process has already exited) to call here,
+                // immediately before classifying the exit from the now-fully-drained dump.
+                process.WaitForExit();
+
                 var elapsed = DateTimeOffset.UtcNow - startedAt;
                 var dump = output.Dump();
 
-                // Issue #240: same heuristic/rationale as PythonBackendLauncher -- an early exit
-                // whose captured output matches a known TCP bind-failure signature is a port race
-                // between NetworkUtils.GetFreeTcpPort() and this backend's own Kestrel bind, not a
-                // real backend crash; only that case is worth retrying with a fresh port.
+                // Issue #240: an early exit whose captured output matches a known TCP
+                // bind-failure signature is a port race (something else grabbed the port between
+                // this launcher requesting it and Kestrel's own bind), not a real backend crash;
+                // only that case is worth retrying with a fresh port.
                 if (PortRaceDetection.ShouldRetry(elapsed, dump))
                 {
                     throw new PortBindRaceException(
                         $"C# backend exited immediately (code {process.ExitCode}), " +
                         $"{elapsed.TotalSeconds:F1}s after starting, with output matching a TCP " +
                         $"port-bind failure signature -- treating as a port race between " +
-                        $"NetworkUtils.GetFreeTcpPort() and the backend's own Kestrel bind.\n" +
+                        $"something else and the backend's own Kestrel bind.\n" +
                         $"--- backend stdout/stderr ---\n{dump}");
                 }
 
@@ -280,28 +333,43 @@ public static class DotnetBackendLauncher
                     $"--- backend stdout/stderr ---\n{dump}");
             }
 
-            try
+            if (baseUri is null)
             {
-                using var response = await http.GetAsync(healthUri, cancellationToken).ConfigureAwait(false);
-                if (response.StatusCode == System.Net.HttpStatusCode.OK)
+                var match = ListeningOnPortPattern.Match(output.Dump());
+                if (match.Success)
                 {
-                    return;
+                    var boundPort = int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
+                    baseUri = new Uri($"http://{BackendContract.Host}:{boundPort}/");
                 }
             }
-            catch (HttpRequestException)
+
+            if (baseUri is not null)
             {
-                // Not listening yet -- keep polling.
-            }
-            catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
-            {
-                // Per-request timeout, not overall cancellation -- keep polling.
+                try
+                {
+                    using var response = await http.GetAsync(new Uri(baseUri, "/health"), cancellationToken)
+                        .ConfigureAwait(false);
+                    if (response.StatusCode == System.Net.HttpStatusCode.OK)
+                    {
+                        return baseUri;
+                    }
+                }
+                catch (HttpRequestException)
+                {
+                    // Not listening yet -- keep polling.
+                }
+                catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    // Per-request timeout, not overall cancellation -- keep polling.
+                }
             }
 
             await Task.Delay(HealthPollInterval, cancellationToken).ConfigureAwait(false);
         }
 
         throw new TimeoutException(
-            $"C# backend did not report healthy at {healthUri} within {HealthTimeout.TotalSeconds:F0}s.\n" +
+            $"C# backend did not report listening/healthy within {HealthTimeout.TotalSeconds:F0}s " +
+            $"(bound port {(baseUri is null ? "never discovered" : baseUri.Port.ToString(CultureInfo.InvariantCulture))}).\n" +
             $"--- backend stdout/stderr ---\n{output.Dump()}");
     }
 

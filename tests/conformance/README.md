@@ -119,7 +119,7 @@ developer's local `.env`; every value below is authoritative for the launched pr
 | Variable | Value | Source / why |
 |---|---|---|
 | `HOST` | `127.0.0.1` | `BackendContract.Host` — loopback only, never reachable off-box. |
-| `PORT` | a free TCP port picked per test run | `NetworkUtils.GetFreeTcpPort()`. |
+| `PORT` | `0` | Issue #259: the OS picks a genuinely free ephemeral port atomically at bind time (no `NetworkUtils.GetFreeTcpPort()` pre-reservation, which had a TOCTOU gap between probing a free port and the backend actually binding it). The launcher discovers the real bound port afterwards from the backend's own startup banner — see "Retry on port-bind races" below. |
 | `AZURE_OPENAI_EASTUS2_API_KEY` | `conformance-test-openai-key` | `BackendContract.OpenAiApiKey` — fixed key-auth value; `FakeRealtimeUpstreamServer.ExpectedApiKey` is set to the exact same constant. |
 | `AZURE_SEARCH_API_KEY` | `conformance-test-search-key` | `BackendContract.SearchApiKey`, analogous to the OpenAI key above. |
 | `AZURE_OPENAI_EASTUS2_ENDPOINT` | `FakeRealtimeUpstreamServer.BaseUri` | Points the backend's realtime client straight at the fake instead of the real Azure OpenAI GA service. |
@@ -441,18 +441,47 @@ as a hard requirement, not just the graceful `IAsyncDisposable.DisposeAsync` pat
   `IAsyncDisposable`, a stray `Environment.Exit` elsewhere in the process). Registered right after
   the process starts, unregistered in `ProcessBackend.DisposeAsync` so it never fires twice or
   outlives the backend it was meant to guard.
-- **Retry on port-bind races** (`PortRaceDetection.cs`): `NetworkUtils.GetFreeTcpPort()` has an
-  inherent (tiny) TOCTOU race between releasing its probe socket and the backend's own bind. If
-  the Python process exits within `PortRaceDetection.RaceDetectionWindow` (20s — widened from an
-  initial 5s guess after empirically observing the real backend's own non-fatal Azure
+- **Bind to port 0, discover the real port afterwards** (issue #259): both launchers request
+  `PORT=0` by default (`ConformanceFixture` no longer pre-reserves a port via
+  `NetworkUtils.GetFreeTcpPort()` before the backend even starts). The OS assigns a genuinely free
+  ephemeral port atomically at bind time, eliminating the old probe-then-bind TOCTOU gap entirely
+  for the normal path. Once the backend is listening, each launcher parses its own startup banner
+  out of captured stdout to learn the real bound port — Kestrel's `Now listening on: http://host:
+  PORT` (`Microsoft.Hosting.Lifetime`, always logged regardless of the `Microsoft.AspNetCore:
+  Warning` override) for the C# backend, aiohttp's `======== Running on http://host:PORT ========`
+  banner for the Python backend — then polls `/health` as before, all under one shared deadline
+  (`WaitForListeningAndHealthyAsync`). No backend application code changes were needed: both
+  already emitted these banners and already honoured `PORT=0`.
+- **Full output drain before classifying a crash** (issue #259): `Process.HasExited` can flip the
+  instant the OS reports the process has exited, while the redirected stdout/stderr lines
+  (`BeginOutputReadLine`/`BeginErrorReadLine`) are still being delivered asynchronously on a
+  ThreadPool callback — reading the captured dump at that exact instant can miss the final lines
+  (e.g. the "address already in use" text a crash-on-bind prints right before exiting), causing
+  `PortRaceDetection.ShouldRetry` to see an incomplete dump and misclassify the exit. Both
+  launchers now call the parameterless, blocking `Process.WaitForExit()` overload — documented to
+  block until *both* the process has exited *and* every redirected stream reader has reached EOF —
+  immediately before reading the dump, guaranteeing it is complete. `OutputDrainAfterExitTests.cs`
+  proves this matters: it forces a real child process to emit a large burst of output (tens of
+  thousands of lines) ending in a sentinel right before exiting, busy-polls `HasExited` with no
+  delay to maximise the chance of observing the exit before the async pump has caught up, and
+  asserts the post-`WaitForExit()` dump always contains the sentinel — a mutation check (deleting
+  the `WaitForExit()` call) makes this assertion fail intermittently, confirming the race is real
+  and the fix closes it deterministically rather than probabilistically.
+- **Retry on port-bind races** (`PortRaceDetection.cs`): a backend can still fail to bind (another
+  process won a race for the same ephemeral port, or — in `DotnetBackendLauncherPortRaceTests.cs`
+  — a test deliberately pins a specific port to force a guaranteed collision on the first launch
+  attempt). If the process exits within `PortRaceDetection.RaceDetectionWindow` (20s — widened from
+  an initial 5s guess after empirically observing the real backend's own non-fatal Azure
   OpenAI/Search reachability probes, each with their own ~2s timeout, run *before* it attempts its
-  socket bind, PR #22 review item 17) **and** its captured output matches a known bind-failure
-  signature (`errno 98`/`WinError 10048`/`WinError 10013`/"address already in use"),
-  `PythonBackendLauncher.StartAsync` picks a fresh port and retries, up to 3 attempts total. Any
-  other early exit (a real crash) is never retried — retrying it would just hide a real bug behind
-  a slow, flaky-looking pass. `PortRaceDetectionTests.cs` covers the pure heuristic; verified for
-  real by pre-occupying a port with a raw `TcpListener` and confirming `PythonBackendLauncher`
-  retries past it and starts healthy on a different port.
+  socket bind, PR #22 review item 17) **and** its (now fully-drained) captured output matches a
+  known bind-failure signature (`errno 98`/`WinError 10048`/`WinError 10013`/"address already in
+  use"), the launcher reassigns the port to `0` and retries, up to 3 attempts total — every retry
+  (not just the first attempt) always uses `0`, never `NetworkUtils.GetFreeTcpPort()`, so a retry
+  can never reintroduce the TOCTOU gap the port-0 default was meant to remove. Any other early exit
+  (a real crash) is never retried — retrying it would just hide a real bug behind a slow,
+  flaky-looking pass. `PortRaceDetectionTests.cs` covers the pure heuristic; verified for real by
+  pre-occupying a port with a raw `TcpListener` and confirming the launcher retries past it and
+  starts healthy on a different port.
 - **CI**: `.github/workflows/conformance.yml` sets `timeout-minutes` on every job (15m for
   `python-tests`/`frontend-tests`, 20m for `conformance`) so a genuine hang fails the job instead
   of burning the whole Actions time budget, and the `dotnet test` step passes

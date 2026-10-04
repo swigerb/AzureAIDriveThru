@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Net.Http;
+using System.Text.RegularExpressions;
 
 namespace Conformance.Harness;
 
@@ -32,6 +34,19 @@ public static class PythonBackendLauncher
 {
     private static readonly TimeSpan HealthTimeout = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan HealthPollInterval = TimeSpan.FromMilliseconds(250);
+
+    /// <summary>
+    /// Issue #259: matches aiohttp's own `web.run_app` startup banner (a plain `print()` to
+    /// stdout -- not through the logging module at all -- of the form
+    /// `======== Running on http://host:port ========`, emitted once per bound site only AFTER
+    /// `TCPSite.start()` has actually bound it) so the harness can read back the REAL bound port
+    /// when the backend is launched with `PORT=0` (see <see cref="BackendEnvironment"/>) instead
+    /// of assuming whatever port it originally requested. aiohttp's `TCPSite.port` property
+    /// resolves to the real OS-assigned port once bound, even when 0 was requested -- so this
+    /// banner always names the actual listening port, never the literal "0" that was asked for.
+    /// </summary>
+    private static readonly Regex RunningOnPortPattern = new(
+        @"Running on https?://[^\s:]+:(\d+)", RegexOptions.Compiled);
 
     /// <summary>
     /// Bounded so a genuinely unbindable environment (e.g. loopback sockets exhausted) fails
@@ -78,9 +93,16 @@ public static class PythonBackendLauncher
             }
             catch (PortBindRaceException) when (attempt < MaxStartAttempts)
             {
-                // NetworkUtils.GetFreeTcpPort() has an inherent TOCTOU race between releasing the
-                // probe socket and the backend's own bind — pick a fresh port and try again.
-                attemptContract = attemptContract with { Port = NetworkUtils.GetFreeTcpPort() };
+                // Issue #259: used to reassign via NetworkUtils.GetFreeTcpPort(), which has the
+                // exact same inherent TOCTOU race (probe-then-release) that this bind failure is
+                // itself evidence of. Port 0 asks the OS to atomically assign a genuinely free
+                // ephemeral port at bind time -- no probe-then-release window at all -- and the
+                // real bound port is read back afterwards from aiohttp's own "Running on" startup
+                // banner (see RunningOnPortPattern/WaitForListeningAndHealthyAsync). A forced
+                // collision on a specific, already-occupied port still exercises this exact retry
+                // path: only the *first* attempt uses whatever port the caller explicitly
+                // requested, every retry always falls back to 0.
+                attemptContract = attemptContract with { Port = 0 };
             }
         }
     }
@@ -140,11 +162,12 @@ public static class PythonBackendLauncher
         processExitHandler = (_, _) => TryKill(process);
         AppDomain.CurrentDomain.ProcessExit += processExitHandler;
 
-        var baseUri = new Uri($"http://{BackendContract.Host}:{contract.Port}/");
+        Uri baseUri;
 
         try
         {
-            await WaitForHealthAsync(baseUri, process, output, startedAt, cancellationToken).ConfigureAwait(false);
+            baseUri = await WaitForListeningAndHealthyAsync(process, output, startedAt, cancellationToken)
+                .ConfigureAwait(false);
         }
         catch
         {
@@ -157,13 +180,24 @@ public static class PythonBackendLauncher
         return new ProcessBackend(process, baseUri, output, jobObject, processExitHandler);
     }
 
-    private static async Task WaitForHealthAsync(
-        Uri baseUri, Process process, CapturedProcessOutput output, DateTimeOffset startedAt,
+    /// <summary>
+    /// Issue #259: previously the caller computed <c>baseUri</c> upfront from
+    /// <see cref="BackendContract.Port"/> before the process even started -- only possible because
+    /// that port had already been reserved (racily) via <see cref="NetworkUtils.GetFreeTcpPort"/>.
+    /// Now that the backend is launched with <c>PORT=0</c> (the OS assigns a genuinely free
+    /// ephemeral port atomically at bind time), the real listening address is only known once
+    /// aiohttp has actually bound it and printed its "Running on" banner (see
+    /// <see cref="RunningOnPortPattern"/>) -- so this method discovers that address AND waits for
+    /// `/health` to come up, under one shared <see cref="HealthTimeout"/> deadline, returning the
+    /// discovered <see cref="Uri"/> once both are satisfied.
+    /// </summary>
+    private static async Task<Uri> WaitForListeningAndHealthyAsync(
+        Process process, CapturedProcessOutput output, DateTimeOffset startedAt,
         CancellationToken cancellationToken)
     {
         using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
-        var healthUri = new Uri(baseUri, "/health");
         var deadline = DateTimeOffset.UtcNow + HealthTimeout;
+        Uri? baseUri = null;
 
         while (DateTimeOffset.UtcNow < deadline)
         {
@@ -171,6 +205,21 @@ public static class PythonBackendLauncher
 
             if (process.HasExited)
             {
+                // Issue #259: HasExited flips the instant the process object itself observes the
+                // OS-level exit, but this process's redirected stdout/stderr lines are delivered
+                // asynchronously on a ThreadPool callback (BeginOutputReadLine/BeginErrorReadLine)
+                // that can still be in flight at that exact instant -- reading output.Dump() right
+                // here, before that callback has run, could miss the very last lines (e.g. the
+                // "[Errno 98] Address already in use" traceback text a crash-on-bind prints right
+                // before exiting), making PortRaceDetection.ShouldRetry below see an incomplete
+                // dump and misclassify a port race as an unrecognised crash (or vice versa). The
+                // parameterless Process.WaitForExit() overload blocks until BOTH the process has
+                // exited AND every redirected stream has reached EOF -- guaranteed precisely
+                // because BeginOutputReadLine/BeginErrorReadLine were used to start the async
+                // reads -- so it's safe (and fast: the process has already exited) to call here,
+                // immediately before classifying the exit from the now-fully-drained dump.
+                process.WaitForExit();
+
                 var elapsed = DateTimeOffset.UtcNow - startedAt;
                 var dump = output.Dump();
                 if (PortRaceDetection.ShouldRetry(elapsed, dump))
@@ -179,7 +228,7 @@ public static class PythonBackendLauncher
                         $"Python backend exited immediately (code {process.ExitCode}), " +
                         $"{elapsed.TotalSeconds:F1}s after starting, with output matching a TCP " +
                         $"port-bind failure signature -- treating as a port race between " +
-                        $"NetworkUtils.GetFreeTcpPort() and the backend's own bind.\n" +
+                        $"something else and the backend's own bind.\n" +
                         $"--- backend stdout/stderr ---\n{dump}");
                 }
 
@@ -188,28 +237,43 @@ public static class PythonBackendLauncher
                     $"--- backend stdout/stderr ---\n{dump}");
             }
 
-            try
+            if (baseUri is null)
             {
-                using var response = await http.GetAsync(healthUri, cancellationToken).ConfigureAwait(false);
-                if (response.StatusCode == System.Net.HttpStatusCode.OK)
+                var match = RunningOnPortPattern.Match(output.Dump());
+                if (match.Success)
                 {
-                    return;
+                    var boundPort = int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
+                    baseUri = new Uri($"http://{BackendContract.Host}:{boundPort}/");
                 }
             }
-            catch (HttpRequestException)
+
+            if (baseUri is not null)
             {
-                // Not listening yet — keep polling until the deadline.
-            }
-            catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
-            {
-                // Per-request timeout, not overall cancellation — keep polling.
+                try
+                {
+                    using var response = await http.GetAsync(new Uri(baseUri, "/health"), cancellationToken)
+                        .ConfigureAwait(false);
+                    if (response.StatusCode == System.Net.HttpStatusCode.OK)
+                    {
+                        return baseUri;
+                    }
+                }
+                catch (HttpRequestException)
+                {
+                    // Not listening yet — keep polling until the deadline.
+                }
+                catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    // Per-request timeout, not overall cancellation — keep polling.
+                }
             }
 
             await Task.Delay(HealthPollInterval, cancellationToken).ConfigureAwait(false);
         }
 
         throw new TimeoutException(
-            $"Python backend did not report healthy at {healthUri} within {HealthTimeout.TotalSeconds:F0}s.\n" +
+            $"Python backend did not report listening/healthy within {HealthTimeout.TotalSeconds:F0}s " +
+            $"(bound port {(baseUri is null ? "never discovered" : baseUri.Port.ToString(CultureInfo.InvariantCulture))}).\n" +
             $"--- backend stdout/stderr ---\n{output.Dump()}");
     }
 
