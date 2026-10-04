@@ -11,10 +11,10 @@ namespace Conformance.Tests.Scenarios.Ordering;
 /// shared extras gate (#77's engine -- <c>OrderToolExecutor.CheckExtrasGate</c> in C#,
 /// <c>tools.py</c>'s matching block in Python) over every REAL pack discovered on disk that has at
 /// least one <c>isExtra</c> menu item (<see cref="ConformancePersonas.DiscoverFromDisk()"/> plus
-/// <see cref="PersonaExtrasMenuData.HasAnyExtraItem"/>) -- every real pack that opts in so far
-/// (today: sonic, dunkin), and any future pack automatically the moment its own PR adds an
+/// <see cref="PersonaExtrasMenuData.HasAnyExtraItem"/>) -- every real pack that opts in so far,
+/// and any future pack automatically the moment its own PR adds an
 /// <c>isExtra</c> item to its menu, with no change needed here. A pack with no <c>isExtra</c> item
-/// at all (today: mcdonalds) has nothing to prove and is intentionally skipped -- not a bug, see
+/// at all has nothing to prove and is intentionally skipped -- not a bug, see
 /// <see cref="RealPackExtrasCoverageTests"/> for the guard that a pack which DOES qualify actually
 /// got a row.
 ///
@@ -178,7 +178,7 @@ file sealed class ExtrasFixture(string personaId) : ConformanceFixture
 public sealed class RealPackExtrasConformanceTests
 {
     /// <summary>Every real pack discovered on disk that has at least one <c>isExtra</c> menu item
-    /// -- a pack with none (today: mcdonalds) has nothing to prove here and is naturally excluded,
+    /// -- a pack with none has nothing to prove here and is naturally excluded,
     /// automatically re-included the moment a future PR adds one, with no change needed to this
     /// Theory.</summary>
     public static TheoryData<string> DiscoveredPersonaIdsWithExtras()
