@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "leaseKey": "session-probe-azureaidrive-1211",
+  "sessionId": "probe-azureaidrive-1211",
+  "repository": "swigerb/AzureAIDriveThru",
+  "issueNumber": null,
+  "dispatchSource": "local-cli",
+  "route": "aca-job",
+  "executionMode": "aca-job",
+  "state": "claimed",
+  "attempts": 1,
+  "startedAt": "2026-10-04T16:11:29.688Z",
+  "lastHeartbeatAt": "2026-10-04T16:11:29.688Z",
+  "updatedAt": "2026-10-04T16:11:29.688Z",
+  "terminalReason": null,
+  "executionRef": null
+}
