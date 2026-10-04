@@ -50,6 +50,7 @@ public sealed class ResumeRehydrationClientVisibilityTests(ResumeMarginConforman
     private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Browser_never_receives_the_resume_rehydration_system_item() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;

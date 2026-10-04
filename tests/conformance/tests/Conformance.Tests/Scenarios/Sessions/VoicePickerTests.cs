@@ -109,6 +109,7 @@ public sealed class VoicePickerTests(VoicePickerConformanceFixture fixture)
     /// issue reports the live suite previously had.
     /// </summary>
     [Fact]
+    [Trait("Dotnet", "ready")]
     public void HasTurnDetection_accepts_the_real_follow_up_and_rejects_the_D2_fallback_shape()
     {
         var realFollowUp = MakeSessionUpdateFrame("""
@@ -258,6 +259,7 @@ public sealed class VoicePickerTests(VoicePickerConformanceFixture fixture)
     /// after bootstrap" pattern (see <see cref="ResumeRehydrationClientVisibilityTests"/>).
     /// </summary>
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Resumed_connection_restores_the_picked_voice() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -510,6 +512,7 @@ public sealed class VoicePickerTests(VoicePickerConformanceFixture fixture)
     /// for the non-resume case).
     /// </summary>
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Resumed_voice_restore_precedes_any_response_create_and_a_third_guest_still_gets_the_default() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -610,6 +613,7 @@ public sealed class VoicePickerTests(VoicePickerConformanceFixture fixture)
     /// does) so a regression that skips the voice-cleanup step specifically is still caught.
     /// </summary>
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Ending_the_session_clears_the_voice_so_the_next_fresh_session_gets_the_default() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;

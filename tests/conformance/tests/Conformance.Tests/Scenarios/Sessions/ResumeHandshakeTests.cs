@@ -33,6 +33,7 @@ public sealed class ResumeHandshakeTests(ResumeTimersConformanceFixture fixture)
     private static string RandomResumeLookingId() => Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N"); // 64 chars, in [32,128]
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task A_non_resume_first_frame_decides_fresh_immediately_not_after_the_timeout() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -56,6 +57,7 @@ public sealed class ResumeHandshakeTests(ResumeTimersConformanceFixture fixture)
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task A_late_resume_attempt_is_rejected_and_the_session_continues() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -106,6 +108,7 @@ public sealed class ResumeHandshakeTests(ResumeTimersConformanceFixture fixture)
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task A_malformed_resume_id_as_the_first_frame_is_rejected() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -128,6 +131,7 @@ public sealed class ResumeHandshakeTests(ResumeTimersConformanceFixture fixture)
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task An_unknown_resume_id_as_the_first_frame_is_rejected() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -150,6 +154,7 @@ public sealed class ResumeHandshakeTests(ResumeTimersConformanceFixture fixture)
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task A_resume_id_is_single_use_a_second_attempt_with_the_same_id_is_unknown() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -192,6 +197,69 @@ public sealed class ResumeHandshakeTests(ResumeTimersConformanceFixture fixture)
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
+    public Task A_stray_late_resume_on_an_already_resumed_connection_gets_no_re_announce() => fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+
+        // Establish a genuinely resumable session, then detach without extension.end_session.
+        var firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
+        var original = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        Assert.True(await firstConnectionTask is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        await original.SendStartSessionAsync(cancellationToken: ct);
+        var originalMetadata = await original.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.session_metadata", FrameTimeout, ct);
+        Assert.True(originalMetadata is not null);
+        var resumeId = originalMetadata!.Json.GetProperty("resumeId").GetString();
+        await original.CloseAsync(cancellationToken: ct);
+        await original.WaitForCloseAsync(FrameTimeout, ct);
+        await original.DisposeAsync();
+
+        // This connection's own first frame IS the resume -- it succeeds, so this socket never
+        // ran the "fresh" announce_fresh() path (it sent extension.session_resumed instead).
+        var secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
+        await using var resumedConnection = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        Assert.True(await secondConnectionTask is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        await resumedConnection.SendExtensionResumeAsync(resumeId!, ct);
+        var resumed = await resumedConnection.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.session_resumed", FrameTimeout, ct);
+        Assert.True(resumed is not null, "Expected the resume to succeed.");
+
+        // A stray second extension.resume on this already-resumed connection is still rejected as
+        // "not_first_frame" -- but since this socket never announced fresh metadata (it resumed
+        // instead), rtmt.py's own `announced` flag is still false, so reject_late_resume's
+        // `if announced: ... announce_fresh()` never fires. No extension.session_metadata may
+        // follow: a resumed connection must never start sending the fresh-connection announce.
+        await resumedConnection.SendExtensionResumeAsync(RandomResumeLookingId(), ct);
+        var rejectedOnResumedSocket = await resumedConnection.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.resume_rejected" && f.Sequence > resumed.Sequence, FrameTimeout, ct);
+        Assert.True(rejectedOnResumedSocket is not null,
+            "Expected extension.resume_rejected for a stray resume attempt on an already-resumed connection.");
+        Assert.Equal("not_first_frame", rejectedOnResumedSocket!.Json.GetProperty("reason").GetString());
+
+        var strayMetadata = await resumedConnection.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.session_metadata" && f.Sequence > rejectedOnResumedSocket.Sequence,
+            TimeSpan.FromMilliseconds(500), ct);
+        Assert.True(strayMetadata is null,
+            "A resumed connection must never send a fresh extension.session_metadata re-announce " +
+            "after a stray late resume attempt -- it never announced fresh metadata in the first " +
+            "place (it sent extension.session_resumed instead), so there is nothing to re-announce.");
+
+        // The session itself must still be untouched by the stray attempt.
+        var closedQuickly = true;
+        try
+        {
+            await resumedConnection.WaitForCloseAsync(TimeSpan.FromMilliseconds(500), ct);
+        }
+        catch (TimeoutException)
+        {
+            closedQuickly = false;
+        }
+        Assert.False(closedQuickly, "The resumed session must continue normally after the stray late resume, not close.");
+    });
+
+    [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Resuming_from_a_still_attached_socket_supersedes_it_with_4002() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -226,6 +294,7 @@ public sealed class ResumeHandshakeTests(ResumeTimersConformanceFixture fixture)
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Resume_id_never_appears_in_backend_diagnostics() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;

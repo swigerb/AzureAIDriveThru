@@ -52,6 +52,7 @@ public sealed class RateLimitIdleInteractionTests(RateLimitIdleInteractionTimers
     }
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task A_retry_is_not_guest_activity_the_idle_clock_still_closes_the_socket_on_schedule() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;

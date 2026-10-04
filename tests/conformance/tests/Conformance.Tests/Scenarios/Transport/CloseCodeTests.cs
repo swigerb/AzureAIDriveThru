@@ -48,6 +48,7 @@ public sealed class CloseCodeTests(ConformanceFixture fixture)
     /// this needs no ShortTimers/extra env at all -- the plain Default profile already supports it.
     /// </summary>
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Resuming_a_still_attached_session_supersedes_the_original_socket_with_4002() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -86,6 +87,7 @@ public sealed class IdleCloseCodeTests(ShortTimersConformanceFixture fixture)
     private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Idle_connection_closes_with_4000_idle_timeout() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;

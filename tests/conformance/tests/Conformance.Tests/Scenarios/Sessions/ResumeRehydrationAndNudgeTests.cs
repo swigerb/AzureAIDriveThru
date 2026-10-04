@@ -121,6 +121,7 @@ public sealed class ResumeRehydrationAndNudgeTests(ResumeTimersConformanceFixtur
     }
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Resuming_mid_conversation_rehydrates_the_order_with_no_greeting() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -211,6 +212,7 @@ public sealed class ResumeRehydrationAndNudgeTests(ResumeTimersConformanceFixtur
     /// `end_session` instead turns this red.
     /// </summary>
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Resuming_after_an_abrupt_abort_with_no_close_frame_restores_the_order_with_no_greeting() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -272,6 +274,7 @@ public sealed class ResumeRehydrationAndNudgeTests(ResumeTimersConformanceFixtur
     /// before the fix.
     /// </summary>
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task A_silent_guest_gets_nudged_exactly_once_after_the_resume() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -322,6 +325,7 @@ public sealed class ResumeRehydrationAndNudgeTests(ResumeTimersConformanceFixtur
     /// appear, even generously past nudge_after_seconds.
     /// </summary>
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task A_resume_without_a_client_session_update_never_nudges_or_responds() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -353,6 +357,7 @@ public sealed class ResumeRehydrationAndNudgeTests(ResumeTimersConformanceFixtur
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task The_nudge_is_cancelled_by_guest_speech() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -383,6 +388,7 @@ public sealed class ResumeRehydrationAndNudgeTests(ResumeTimersConformanceFixtur
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task The_nudge_never_fires_without_session_updated_confirming_the_resumed_connection() => fixture.RunAsync(async () =>
     {
         // PR #54 review: a mutation removing rtmt.py's nudge_after_silence() `await
@@ -445,6 +451,7 @@ public sealed class ResumeRehydrationAndNudgeTests(ResumeTimersConformanceFixtur
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Ending_the_session_closes_with_1000_and_the_order_and_credential_are_gone() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;

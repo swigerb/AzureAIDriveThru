@@ -3,10 +3,12 @@ namespace Backend.Configuration;
 /// <summary>
 /// Typed view of config.yaml's `security` section -- specifically the two fields the `/realtime`
 /// pre-upgrade auth gate needs (`Realtime/RealtimeAuthGate.cs`), matching app/backend/rtmt.py's
-/// module-level `_security_cfg = _config.get("security", {})` (docs/dotnet_mapping.md). The other
-/// `security.*` keys (`max_concurrent_sessions`, `idle_timeout_seconds`, `allow_client_log_control`)
-/// aren't consumed by anything in this wave's skeleton, so they are deliberately left out of this
-/// typed view rather than guessed at ahead of the waves that need them.
+/// module-level `_security_cfg = _config.get("security", {})` (docs/dotnet_mapping.md). Issue #15
+/// moved `idle_timeout_seconds` into <see cref="SessionsConfig"/> instead (it belongs with the
+/// rest of the session-lifecycle timers, not this request-gate-scoped view). The remaining
+/// `security.*` keys (`max_concurrent_sessions`, `allow_client_log_control`) still aren't consumed
+/// by anything, so they stay out of this typed view rather than guessed at ahead of the wave that
+/// needs them.
 ///
 /// YamlDotNet's untyped `Deserialize&lt;object?&gt;()` returns every scalar as a plain string (see
 /// `Prompts/PromptLoader.cs`'s `ParsePriority` comment for the same gotcha) -- so

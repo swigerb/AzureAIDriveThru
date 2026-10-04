@@ -71,6 +71,7 @@ public sealed class RealtimeProcessor : IPipelineProcessor
     private readonly ILogger? _logger;
     private readonly TimeProvider _timeProvider;
     private readonly RateLimitSettings _rateLimitSettings;
+    private readonly SessionManager? _sessionManager;
 
     public RealtimeProcessor(
         ModelCatalog catalog,
@@ -87,7 +88,8 @@ public sealed class RealtimeProcessor : IPipelineProcessor
         IUpstreamBearerTokenProvider? bearerTokenProvider = null,
         Func<Persona, PromptLoader?, string?, IToolExecutor>? toolExecutorFactory = null,
         TimeProvider? timeProvider = null,
-        RateLimitSettings? rateLimitSettings = null)
+        RateLimitSettings? rateLimitSettings = null,
+        SessionManager? sessionManager = null)
     {
         _catalog = catalog;
         _defaultDeployment = defaultDeployment;
@@ -111,6 +113,12 @@ public sealed class RealtimeProcessor : IPipelineProcessor
         // read) is driven from this one clock, so a test can swap in a FakeTimeProvider instead of
         // waiting on real wall-clock delays. Defaults to TimeProvider.System in production.
         _timeProvider = timeProvider ?? TimeProvider.System;
+        // Issue #15: the session registry (resume/rehydration/idle/grace/nudge). Left null by
+        // every existing caller/test that doesn't pass one -- the whole feature is then fully
+        // inert: extension.resume is silently swallowed (the pre-#15 scope-cut behaviour) and no
+        // extra session_metadata field/first-frame wait is introduced, so nothing built against
+        // this constructor before #15 changes behaviour.
+        _sessionManager = sessionManager;
     }
 
     public string PipelineName => "realtime";
@@ -140,6 +148,40 @@ public sealed class RealtimeProcessor : IPipelineProcessor
         public Dictionary<string, string> ToolsPending { get; } = new();
         public TaskCompletionSource<bool> SessionConfigured { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        // ── Issue #15: session registry / resume / idle / grace / nudge ──
+        // Mutable (not init-only) because a successful resume swaps it for the PERSISTED
+        // IToolExecutor from the session this connection resumed, so order state survives a
+        // detach/reconnect instead of starting over empty (see RealtimeProcessor's class doc).
+        public required IToolExecutor ToolExecutor { get; set; }
+        /// <summary>This connection's OWN session id in the registry -- the provisional id it was
+        /// created with (<see cref="SessionId"/>), UNLESS a resume succeeds, in which case it
+        /// becomes the resumed session's own (older) id. Every <see cref="SessionManager"/> call
+        /// made for the lifetime of this connection (touch-activity, detach, ...) must use this,
+        /// never <see cref="SessionId"/> directly, once a resume may have happened.</summary>
+        public string EffectiveSessionId { get; set; } = "";
+        /// <summary>Set true only by a successful resume whose own <c>conversation_started</c> was
+        /// true (issue #181): the next client-authored <c>session.update</c> this connection
+        /// forwards arms <see cref="Nudge"/> exactly once, then this is cleared.</summary>
+        public bool NudgeArmEligible { get; set; }
+        public NudgeScheduler? Nudge { get; set; }
+        /// <summary>Resolved exactly once, by whichever happens first: this connection's own first
+        /// client frame (resume or not), or the first-frame-timeout fallback. <c>true</c> means a
+        /// resume was accepted (<see cref="ResumeAnnounce"/> carries the outcome to announce);
+        /// <c>false</c> means "fresh" (a plain <c>extension.session_metadata</c>, same as every
+        /// connection before #15). Never created/awaited at all when no <see cref="SessionManager"/>
+        /// was injected -- see that field's own doc comment.</summary>
+        public TaskCompletionSource<bool> FirstFrameDecision { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public ResumeOutcome? ResumeAnnounce { get; set; }
+        /// <summary>Port of rtmt.py's own <c>announced</c> nonlocal: set true only by the "fresh"
+        /// (non-resumed) branch of <c>AnnounceAfterFirstFrameDecisionAsync</c> actually sending
+        /// <c>extension.session_metadata</c>. A resumed connection never sets this (it sends
+        /// <c>extension.session_resumed</c> instead) -- so a late (non-first-frame) resume attempt
+        /// on a RESUMED connection is rejected with no re-announce, exactly mirroring Python: only a
+        /// fresh connection that has already announced gets a rotated re-announce when a stray late
+        /// <c>extension.resume</c> arrives.</summary>
+        public bool MetadataAnnounced { get; set; }
     }
 
     /// <summary>
@@ -217,10 +259,76 @@ public sealed class RealtimeProcessor : IPipelineProcessor
             ToolFailures = new ToolFailureTracker(),
             Guard = new SessionUpdateGuard(),
             Identifiers = new SessionIdentifiers(persona.Id, resolvedModel.Id, sessionId),
+            ToolExecutor = toolExecutor,
+            EffectiveSessionId = sessionId,
         };
 
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var ct = linkedCts.Token;
+
+        // ── Issue #15: register this connection with the session registry up front, mirroring
+        // rtmt.py's own create_session(...) call before _forward_messages starts relaying any
+        // client traffic. Entirely inert when no SessionManager was injected (see that field's
+        // own doc comment) -- every pre-#15 caller/test keeps today's exact behaviour.
+        if (_sessionManager is not null)
+        {
+            _sessionManager.CreateSession(
+                sessionId, browserSocket, persona.Id, resolvedModel.Id, menuMode, toolExecutor, voice);
+
+            state.Nudge = new NudgeScheduler(
+                _sessionManager.Config.NudgeAfterSeconds,
+                sendNudgeAsync: async nudgeCt =>
+                {
+                    var nudgeItem = new JsonObject
+                    {
+                        ["type"] = "conversation.item.create",
+                        ["item"] = new JsonObject
+                        {
+                            ["id"] = MiddleTierItemIds.NewId(),
+                            ["type"] = "message",
+                            ["role"] = "system",
+                            ["content"] = new JsonArray(new JsonObject
+                            {
+                                ["type"] = "input_text",
+                                ["text"] = SessionManager.BuildNudgeText(persona.RoleName),
+                            }),
+                        },
+                    };
+                    await SendTextAsync(upstream, nudgeItem.ToJsonString(), nudgeCt).ConfigureAwait(false);
+                    await SendTextAsync(upstream, """{"type":"response.create"}""", nudgeCt).ConfigureAwait(false);
+                },
+                isRateLimitBusy: () => state.RateLimit.Busy,
+                sessionConfigured: state.SessionConfigured.Task,
+                timeProvider: _timeProvider,
+                sessionId: sessionId,
+                logger: _logger);
+
+            // "Decide fresh" fallback: if the browser's very first frame never arrives (or isn't
+            // extension.resume) within first_frame_timeout_seconds, unblock the deferred
+            // session_metadata/session_resumed announce so a slow/silent client isn't stuck
+            // forever. A real first frame racing in afterwards still lands on the EXISTING
+            // (non-resume) code path -- TrySetResult is idempotent, this is purely a timeout net.
+            var firstFrameTimeoutSeconds = _sessionManager.Config.FirstFrameTimeoutSeconds;
+            if (firstFrameTimeoutSeconds > 0)
+            {
+                _ = Task.Delay(TimeSpan.FromSeconds(firstFrameTimeoutSeconds), _timeProvider, ct)
+                    .ContinueWith(
+                        t =>
+                        {
+                            if (!t.IsCanceled)
+                            {
+                                state.FirstFrameDecision.TrySetResult(false);
+                            }
+                        },
+                        CancellationToken.None,
+                        TaskContinuationOptions.ExecuteSynchronously,
+                        TaskScheduler.Default);
+            }
+            else
+            {
+                state.FirstFrameDecision.TrySetResult(false);
+            }
+        }
 
         // ── Local helpers (closures over browserSocket/upstream/state/toolSchemas/...) ──────────
         // Mirrors rtmt.py's own nested-function style inside _forward_messages (send_greeting_once
@@ -294,12 +402,45 @@ public sealed class RealtimeProcessor : IPipelineProcessor
 
         async Task HandleClientExtensionMessageAsync(string msgType, JsonObject message)
         {
+            _sessionManager?.TouchActivity(state.EffectiveSessionId);
+
+            if (msgType == "extension.resume")
+            {
+                if (_sessionManager is not null)
+                {
+                    // A resume attempt that isn't this connection's own first frame -- #15's
+                    // registry is live, but ResumeHandshakeTests' late-resume scenario requires a
+                    // FRESH rejection (never the connection's original/already-settled decision)
+                    // and the session itself must stay open, not close.
+                    _logger?.LogWarning(
+                        "Dropped extension.resume arriving after the first frame (session={SessionId})", sessionId);
+                    await SendTextAsync(browserSocket, new JsonObject
+                    {
+                        ["type"] = "extension.resume_rejected",
+                        ["reason"] = "not_first_frame",
+                    }.ToJsonString(), ct).ConfigureAwait(false);
+
+                    // rtmt.py's reject_late_resume: the browser drops its stored id on ANY
+                    // rejection, so re-announce this socket's own session (with a rotated id) --
+                    // but only if it already announced fresh metadata once (a resumed connection
+                    // never did, since it sent extension.session_resumed instead, and must not
+                    // start doing so now).
+                    if (state.MetadataAnnounced)
+                    {
+                        await SendFreshSessionMetadataAsync().ConfigureAwait(false);
+                    }
+                }
+                // _sessionManager is null: the whole resume feature isn't wired in for this
+                // instance -- keep the pre-#15 behaviour of silently consuming it.
+                return;
+            }
+
             if (msgType != "extension.set_voice")
             {
-                // extension.resume/set_verbose_logging/set_log_to_file (#13 scope cuts, see class
-                // doc) -- consumed silently, never forwarded upstream. extension.end_session is
-                // handled by the caller (RelayBrowserToUpstreamAsync), not here, since it needs to
-                // break the relay loop rather than just fall through to the next frame.
+                // set_verbose_logging/set_log_to_file (#13 scope cuts, see class doc) -- consumed
+                // silently, never forwarded upstream. extension.end_session is handled by the
+                // caller (RelayBrowserToUpstreamAsync), not here, since it needs to break the
+                // relay loop rather than just fall through to the next frame.
                 return;
             }
             var candidate = GetString(message, "voice");
@@ -312,6 +453,7 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                 return;
             }
             state.Voice = newVoice;
+            _sessionManager?.SetVoice(state.EffectiveSessionId, newVoice);
             if (state.AssistantAudioSeen)
             {
                 // GA would reject this outright (cannot_update_voice) and take tools/instructions
@@ -323,6 +465,54 @@ public sealed class RealtimeProcessor : IPipelineProcessor
             }
             var voiceUpdate = state.Guard.Track(BuildVoiceUpdateFrame(newVoice).ToJsonString());
             await SendTextAsync(upstream, voiceUpdate, ct).ConfigureAwait(false);
+        }
+
+        // Issue #15: handles extension.resume when it IS this connection's own first frame (see
+        // the isFirstFrame gate in RelayBrowserToUpstreamAsync -- a late resume is rejected there
+        // via HandleClientExtensionMessageAsync instead, never here). Resolves
+        // state.FirstFrameDecision exactly once either way, so AnnounceAfterFirstFrameDecisionAsync
+        // (armed from the session.created handler) can proceed.
+        async Task HandleResumeFirstFrameAsync(JsonObject message)
+        {
+            var presentedId = GetString(message, "resume_id");
+            var outcome = _sessionManager!.TryResume(
+                browserSocket, presentedId, persona.Id, resolvedModel.Id, menuMode, sessionId);
+            if (!outcome.Accepted)
+            {
+                _logger?.LogInformation(
+                    "extension.resume rejected (reason={Reason}, session={SessionId})", outcome.Reason, sessionId);
+                await SendTextAsync(browserSocket, new JsonObject
+                {
+                    ["type"] = "extension.resume_rejected",
+                    ["reason"] = outcome.Reason,
+                }.ToJsonString(), ct).ConfigureAwait(false);
+                state.FirstFrameDecision.TrySetResult(false);
+                return;
+            }
+
+            _logger?.LogInformation(
+                "Session resumed (resumedSessionId={ResumedSessionId}, session={SessionId})", outcome.SessionId, sessionId);
+            state.EffectiveSessionId = outcome.SessionId!;
+            state.ToolExecutor = outcome.ToolExecutor!;
+            state.Voice = outcome.Voice!;
+            // Issue #181: conversation_started gates whether this resume rehydrates silently
+            // (greeting already happened -- GreetingSent=true suppresses SendGreetingOnceAsync
+            // entirely) or re-greets as if fresh. Only a rehydrating resume is nudge-eligible; a
+            // resume before the greeting ever fired still greets normally and must not nudge on
+            // top of that.
+            state.GreetingSent = outcome.ConversationStarted;
+            state.NudgeArmEligible = outcome.ConversationStarted;
+            state.ResumeAnnounce = outcome;
+            state.FirstFrameDecision.TrySetResult(true);
+
+            if (outcome.StaleWs is { } staleWs)
+            {
+                // Background, non-blocking supersede of a still-attached stale socket (the
+                // two-tabs-race "steal" case) -- must not be synchronous with the resume response
+                // itself (ResumeHandshakeTests' own requirement).
+                _ = CloseIfOpenAsync(
+                    staleWs, (WebSocketCloseStatus)SessionManager.SupersededCloseCode, SessionManager.SupersededCloseReason);
+            }
         }
 
         (JsonObject? Forwarded, string? SentType) ProcessClientMessage(JsonObject message, bool hooksEnabled)
@@ -369,6 +559,11 @@ public sealed class RealtimeProcessor : IPipelineProcessor
 
         async Task RelayBrowserToUpstreamAsync()
         {
+            // Issue #15: only the very first TEXT frame this connection forwards gets the
+            // resume-or-fresh decision treatment; everything after goes through the pre-#15 code
+            // paths completely unchanged. Entirely skipped when no SessionManager was injected.
+            var isFirstFrame = _sessionManager is not null;
+
             while (!ct.IsCancellationRequested)
             {
                 WebSocketFrame? frame;
@@ -395,17 +590,27 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                     continue;
                 }
 
-                var fastPath = TryAppendFastPath(frame.Payload, state.Echo);
-                if (fastPath.IsMatch)
+                var checkingFirstFrame = isFirstFrame;
+                isFirstFrame = false;
+
+                if (!checkingFirstFrame)
                 {
-                    // Issue #13 Wave 2: skips the JSON parse, allow-list rebuild and re-serialize
-                    // entirely for the one exact frame shape addUserAudio() sends (~10/sec while
-                    // the guest is talking). Echo-suppression gating still runs first, exactly as
-                    // it does on the slow path below -- the fast path only ever changes HOW a
-                    // genuine, unsuppressed append frame gets forwarded, never WHETHER it does.
-                    await ForwardFastPathAudioAsync(fastPath, frame.Payload, upstream, sessionId, ct).ConfigureAwait(false);
-                    continue;
+                    var fastPath = TryAppendFastPath(frame.Payload, state.Echo);
+                    if (fastPath.IsMatch)
+                    {
+                        // Issue #13 Wave 2: skips the JSON parse, allow-list rebuild and re-serialize
+                        // entirely for the one exact frame shape addUserAudio() sends (~10/sec while
+                        // the guest is talking). Echo-suppression gating still runs first, exactly as
+                        // it does on the slow path below -- the fast path only ever changes HOW a
+                        // genuine, unsuppressed append frame gets forwarded, never WHETHER it does.
+                        await ForwardFastPathAudioAsync(fastPath, frame.Payload, upstream, sessionId, ct).ConfigureAwait(false);
+                        continue;
+                    }
                 }
+                // checkingFirstFrame skips the fast path unconditionally: a real extension.resume
+                // can never match that one fixed shape anyway, and the first frame always needs a
+                // real parse regardless, so there is no behavioural loss, only one skipped (and
+                // guaranteed-to-fail) shape check.
 
                 JsonObject message;
                 string msgType;
@@ -424,7 +629,35 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                 catch (Exception ex) when (ex is JsonException or ArgumentException)
                 {
                     _logger?.LogWarning("Dropped malformed/non-object client→server frame (session={SessionId})", sessionId);
+                    if (checkingFirstFrame)
+                    {
+                        state.FirstFrameDecision.TrySetResult(false);
+                    }
                     continue;
+                }
+
+                if (checkingFirstFrame)
+                {
+                    if (msgType == "extension.resume")
+                    {
+                        try
+                        {
+                            await HandleResumeFirstFrameAsync(message).ConfigureAwait(false);
+                        }
+                        catch (Exception ex) when (ex is not OperationCanceledException)
+                        {
+                            _logger?.LogWarning(ex, "Error processing extension.resume (session={SessionId})", sessionId);
+                            state.FirstFrameDecision.TrySetResult(false);
+                        }
+                        continue;
+                    }
+
+                    // Any other first frame (almost always a plain session.update -- the browser's
+                    // normal non-resume bootstrap) decides "fresh" immediately, before falling
+                    // through to its own ordinary handling below -- satisfies
+                    // ResumeHandshakeTests' non-resume-first-frame timing assertion (must decide
+                    // well under the first-frame-timeout fallback).
+                    state.FirstFrameDecision.TrySetResult(false);
                 }
 
                 try
@@ -438,11 +671,14 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                     if (msgType == "extension.end_session")
                     {
                         // Port of rtmt.py's _forward_messages: a guest-initiated end_session closes
-                        // the browser socket with the fixed 1000/"session_ended" shape immediately --
-                        // this needs no session registry/resume state (unlike the resume-triggered
-                        // 4002 supersede or the idle-timeout 4000, both #15) since it is purely "the
-                        // guest asked to leave right now".
+                        // the browser socket with the fixed 1000/"session_ended" shape immediately.
+                        // Issue #15: unlike every other close, this one PERMANENTLY ends the
+                        // session (deletes the order/resume credential right now) rather than
+                        // detaching it with a grace window -- mirrors session_manager.py's own
+                        // end_session() semantics: the same resume id must come back "unknown",
+                        // never "expired", after this.
                         _logger?.LogInformation("Guest ended session (session={SessionId})", sessionId);
+                        _sessionManager?.EndSession(state.EffectiveSessionId, SessionEndedCloseReason);
                         await CloseIfOpenAsync(browserSocket, WebSocketCloseStatus.NormalClosure, SessionEndedCloseReason)
                             .ConfigureAwait(false);
                         break;
@@ -459,6 +695,16 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                         continue;
                     }
 
+                    // Port of rtmt.py's touch_activity call sites: every forwarded client frame
+                    // EXCEPT input_audio_buffer.append (far too high-frequency to be a meaningful
+                    // idle-activity signal, and already excluded above when actually suppressed --
+                    // an unsuppressed append still reaches here, so this still touches activity for
+                    // genuine mic audio) keeps the idle clock from expiring a live conversation.
+                    if (msgType != "input_audio_buffer.append")
+                    {
+                        _sessionManager?.TouchActivity(state.EffectiveSessionId);
+                    }
+
                     var hooksEnabled = Environment.GetEnvironmentVariable("CONFORMANCE_TEST_HOOKS") == "1";
                     var (forwarded, sentType) = ProcessClientMessage(message, hooksEnabled);
                     if (forwarded is null)
@@ -466,12 +712,34 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                         continue;
                     }
 
+                    // ForwardClientFrameAsync (dev's #252 race fix) already calls
+                    // echo.OnExternalResponseCreate/rateLimit.OnExternalResponseCreate("browser")
+                    // BEFORE forwarding a browser response.create upstream -- see its own doc
+                    // comment. Issue #15/#181's nudge-cancel wasn't part of that merge (Nudge
+                    // didn't exist on dev yet), so it's added here, after the same send, matching
+                    // where it always lived relative to the send in this branch.
                     await ForwardClientFrameAsync(forwarded, sentType, state.Echo, state.RateLimit, upstream, ct)
                         .ConfigureAwait(false);
+                    if (sentType == "response.create")
+                    {
+                        // Issue #15/#181: the guest (or the UI on the guest's behalf) asking for a
+                        // response is exactly the "guest spoke" signal that cancels a pending nudge.
+                        state.Nudge?.Cancel("browser response.create");
+                    }
 
                     if (!state.GreetingSent && sentType == "session.update")
                     {
                         await SendGreetingOnceAsync("client-session.update").ConfigureAwait(false);
+                    }
+
+                    // Issue #181: a resumed connection only arms its nudge once ITS OWN
+                    // client-authored session.update has been forwarded (the browser's
+                    // mic-restart/resumeConversation() path) -- never immediately on accepting the
+                    // resume itself. A resume whose client never re-arms the mic must never nudge.
+                    if (state.NudgeArmEligible && sentType == "session.update")
+                    {
+                        state.NudgeArmEligible = false;
+                        state.Nudge?.Arm();
                     }
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
@@ -567,7 +835,7 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                 return;
             }
             var toolName = GetString(item, "name") ?? "";
-            if (!toolExecutor.ToolNames.Contains(toolName))
+            if (!state.ToolExecutor.ToolNames.Contains(toolName))
             {
                 _logger?.LogError("Unknown tool requested: {ToolName} (session={SessionId})", toolName, sessionId);
                 return;
@@ -581,7 +849,7 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                 var argumentsJson = GetString(item, "arguments") ?? "{}";
                 using var argumentsDoc = JsonDocument.Parse(argumentsJson);
                 _logger?.LogInformation("Executing tool '{ToolName}' (session={SessionId})", toolName, sessionId);
-                var result = await toolExecutor.ExecuteAsync(toolName, argumentsDoc.RootElement.Clone(), ct)
+                var result = await state.ToolExecutor.ExecuteAsync(toolName, argumentsDoc.RootElement.Clone(), ct)
                     .ConfigureAwait(false);
                 _logger?.LogInformation("Tool '{ToolName}' result direction={Direction} (session={SessionId})",
                     toolName, result.Destination, sessionId);
@@ -606,7 +874,7 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                 // read itself is wrapped separately from the send so a session with no readable
                 // order state yet just skips the refresh instead of losing the function_call_output
                 // below too.
-                if (toolExecutor is IOrderTicketSource ticketSource)
+                if (state.ToolExecutor is IOrderTicketSource ticketSource)
                 {
                     string? ticketJson = null;
                     try
@@ -753,9 +1021,120 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                 var identifiers = state.Identifiers.AdvanceRoundTrip();
                 await SendTextAsync(browserSocket, identifiers.ToFrame("extension.round_trip_token").ToJsonString(), ct)
                     .ConfigureAwait(false);
+                // Issue #15: a full (non-tool-call) round trip completing is what "has this
+                // session actually greeted/spoken" means for resume's conversation_started gate --
+                // mirrors session_manager.py's own has_sent_greeting semantics.
+                _sessionManager?.MarkConversationStarted(state.EffectiveSessionId);
             }
 
             return message;
+        }
+
+        // Issue #15: reads an IOrderTicketSource best-effort, matching HandleToolCallDoneAsync's
+        // own post-exception refresh pattern -- a session with no readable order state yet (or an
+        // executor that throws on read) just gets "{}" instead of losing the whole announcement.
+        string SafeOrderSummaryJson(IOrderTicketSource source)
+        {
+            try
+            {
+                return source.CurrentOrderSummaryJson;
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex,
+                    "Could not read order state while building a session-resumed announcement (session={SessionId})",
+                    sessionId);
+                return "{}";
+            }
+        }
+
+        // Issue #15: the deferred half of the session.created handler -- waits for this
+        // connection's own first-frame decision (resume accepted/rejected/never attempted) before
+        // telling the browser which it got. Ordering: the bootstrap session.update that
+        // RunSessionAsync already sent upstream always precedes whatever this sends, since
+        // session.created itself can only arrive after that connect/bootstrap completed.
+        async Task AnnounceAfterFirstFrameDecisionAsync()
+        {
+            bool resumed;
+            try
+            {
+                resumed = await state.FirstFrameDecision.Task.WaitAsync(ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                // Session tore down (browser/upstream closed, cancellation requested) before any
+                // first-frame decision was ever reached -- nothing left to announce.
+                return;
+            }
+
+            if (resumed)
+            {
+                var outcome = state.ResumeAnnounce!;
+                var orderSummaryJson = outcome.ToolExecutor is IOrderTicketSource ticketSource
+                    ? SafeOrderSummaryJson(ticketSource)
+                    : "{}";
+                var resumedFrame = new JsonObject
+                {
+                    ["type"] = "extension.session_resumed",
+                    ["order_summary"] = JsonNode.Parse(orderSummaryJson) ?? new JsonObject(),
+                    ["session_token"] = state.Identifiers.SessionToken,
+                    ["round_trip_index"] = state.Identifiers.RoundTripIndex,
+                    ["resume_id"] = outcome.ResumeId,
+                };
+                await SendTextAsync(browserSocket, resumedFrame.ToJsonString(), ct).ConfigureAwait(false);
+
+                if (outcome.ConversationStarted)
+                {
+                    var rehydrationItem = new JsonObject
+                    {
+                        ["type"] = "conversation.item.create",
+                        ["item"] = new JsonObject
+                        {
+                            ["id"] = MiddleTierItemIds.NewId(),
+                            ["type"] = "message",
+                            ["role"] = "system",
+                            ["content"] = new JsonArray(new JsonObject
+                            {
+                                ["type"] = "input_text",
+                                ["text"] = SessionManager.BuildRehydrationText(
+                                    orderSummaryJson,
+                                    outcome.RecentTurns ?? Array.Empty<(string Role, string Text)>(),
+                                    persona.RoleName),
+                            }),
+                        },
+                    };
+                    await SendTextAsync(upstream, rehydrationItem.ToJsonString(), ct).ConfigureAwait(false);
+
+                    // Restore the persisted voice on the (brand new) upstream connection BEFORE any
+                    // response.create can fire -- the bootstrap session.update already went out with
+                    // whatever voice the fresh persona binding resolved to, so this corrects it in
+                    // place (VoicePickerTests' resume-restore-precedes-response.create requirement).
+                    var voiceUpdate = state.Guard.Track(BuildVoiceUpdateFrame(state.Voice).ToJsonString());
+                    await SendTextAsync(upstream, voiceUpdate, ct).ConfigureAwait(false);
+                }
+            }
+            else
+            {
+                await SendFreshSessionMetadataAsync().ConfigureAwait(false);
+            }
+        }
+
+        // Port of rtmt.py's announce_fresh(): mints a rotated resumeId and (re-)announces
+        // extension.session_metadata. Called once from AnnounceAfterFirstFrameDecisionAsync for a
+        // genuinely fresh connection, and again -- only if that already happened
+        // (state.MetadataAnnounced) -- from a late (non-first-frame) extension.resume rejection, so
+        // the browser's dropped stored id is replaced with a fresh one without re-greeting or
+        // otherwise disturbing the still-live session.
+        async Task SendFreshSessionMetadataAsync()
+        {
+            var resumeId = _sessionManager!.IssueResumeId(state.EffectiveSessionId);
+            var metadataFrame = state.Identifiers.ToFrame("extension.session_metadata");
+            if (resumeId is not null)
+            {
+                metadataFrame["resumeId"] = resumeId;
+            }
+            state.MetadataAnnounced = true;
+            await SendTextAsync(browserSocket, metadataFrame.ToJsonString(), ct).ConfigureAwait(false);
         }
 
         async Task<JsonObject?> DispatchServerMessageAsync(JsonObject message, string msgType)
@@ -777,8 +1156,20 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                     if (!state.SessionMetadataSent)
                     {
                         state.SessionMetadataSent = true;
-                        await SendTextAsync(browserSocket,
-                            state.Identifiers.ToFrame("extension.session_metadata").ToJsonString(), ct).ConfigureAwait(false);
+                        if (_sessionManager is not null)
+                        {
+                            // Deferred: the browser doesn't learn whether this connection is fresh
+                            // or a resume until its own first frame has been processed (or the
+                            // first-frame-timeout fallback elapses) -- see
+                            // HandleResumeFirstFrameAsync/RelayBrowserToUpstreamAsync. Fire-and-forget
+                            // here (not awaited): session.created's own caller must not block on it.
+                            _ = AnnounceAfterFirstFrameDecisionAsync();
+                        }
+                        else
+                        {
+                            await SendTextAsync(browserSocket,
+                                state.Identifiers.ToFrame("extension.session_metadata").ToJsonString(), ct).ConfigureAwait(false);
+                        }
                     }
                     return echo;
                 }
@@ -926,6 +1317,10 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                             // Issue #13 Wave 4: the guest taking the turn drops any pending
                             // rate-limit retry, same as Python's RateLimitRecovery.on_guest_speech.
                             state.RateLimit.OnGuestSpeech();
+                            // Issue #15/#181: genuine guest speech also cancels a pending nudge --
+                            // the guest answering (even just acknowledging) means no "are you still
+                            // there?" prompt is needed.
+                            state.Nudge?.Cancel("guest speech_started");
                             // Issue #13 Wave 4 (swigerb/SonicAIDriveThru#36, PR #58 re-review
                             // "S1"): genuine guest speech is one of rtmt.py's two
                             // reset_for_new_turn() triggers -- breaks the tool-failure streak, same
@@ -939,6 +1334,8 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                             // still genuine guest activity even if VAD never fired speech_started
                             // first (e.g. push-to-talk clients).
                             state.ToolFailures.ResetForNewTurn();
+                            // Issue #15/#181: same guest-activity signal, same nudge cancellation.
+                            state.Nudge?.Cancel("guest transcription completed");
                             break;
                         case "response.created":
                             // Issue #13 Wave 4: tells the ladder a response just started -- our own
@@ -1029,6 +1426,15 @@ public sealed class RealtimeProcessor : IPipelineProcessor
             // Issue #13 Wave 4: same reasoning -- a pending rate-limit retry must never fire (and
             // attempt a send) after the socket has already gone away.
             state.RateLimit.Cancel("socket closed");
+            // Issue #15: same reasoning -- a pending nudge must never fire after teardown.
+            state.Nudge?.Cancel("socket closed");
+            // Issue #15: unconditional detach, mirroring rtmt.py's own `finally:` comment --
+            // this runs for EVERY disconnect (graceful close, abrupt abort/EOF, or any unhandled
+            // exception above), never just the orderly-close path. A resume already in flight
+            // (state.FirstFrameDecision not yet resolved) leaves EffectiveSessionId at the
+            // original provisional id, so the provisional (now-abandoned) session is what gets
+            // detached/evicted -- correct, since no resume ever actually completed for it.
+            _sessionManager?.Detach(browserSocket, state.EffectiveSessionId, "socket closed");
             await CloseIfOpenAsync(browserSocket, WebSocketCloseStatus.NormalClosure, null).ConfigureAwait(false);
             await CloseIfOpenAsync(upstream, WebSocketCloseStatus.NormalClosure, null).ConfigureAwait(false);
         }
