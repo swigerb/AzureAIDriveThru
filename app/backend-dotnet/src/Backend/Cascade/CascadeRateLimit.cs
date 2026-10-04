@@ -11,15 +11,24 @@ namespace Backend.Cascade;
 /// cascade_processor.py's module-level `_http_status_of`/`_retry_hint_of`/
 /// `_with_rate_limit_retry` plus the pieces of rate_limit.py it reuses (`FIRST_RETRY_BOUNDS`/
 /// `SECOND_RETRY_BOUNDS`/`RATE_LIMITED_EVENT`/`RateLimitSettings`/`parse_retry_hint`/
-/// `retry_delay`). Deliberately NOT the realtime pipeline's own `RateLimitRecovery` class
-/// (rate_limit.py) or <see cref="Realtime.RateLimitDetection"/> -- those answer "is this upstream
-/// WS `response.done`/`error` event a rate limit, and should a NEW `response.create` be sent for
-/// it" for the realtime pipeline's own event-driven WS relay, which RealtimeProcessor.cs's own
-/// class doc already scope-cuts to a single final notice (no retry at all). Cascade's calls are
-/// plain REST round trips (chat/STT/TTS), so its own ladder wraps ONE such call directly and
-/// retries it in place -- a materially different shape that happens to share the same constants,
-/// settings fields, and `extension.rate_limited` wire event Python's cascade_processor.py reuses
-/// from rate_limit.py, ported here verbatim for the same reason.
+/// `retry_delay`). Deliberately a SEPARATE type from the realtime pipeline's own
+/// <see cref="Realtime.RateLimitDetection"/> (RealtimeProcessor.cs) -- that one answers "is this
+/// upstream WS `response.done`/`error` event a rate limit, and should a NEW `response.create` be
+/// sent for it" for the realtime pipeline's own event-driven WS relay. Cascade's calls are plain
+/// REST round trips (chat/STT/TTS), so its own ladder wraps ONE such call directly and retries it
+/// in place -- a materially different shape from realtime's event-driven retry.
+///
+/// #236 Rick re-review item 2: #235 (Unity, "C# rate-limit retry ladder", realtime) independently
+/// added its own retry to <see cref="Realtime.RateLimitDetection"/>, duplicating this type's own
+/// `FIRST_RETRY_BOUNDS`/`SECOND_RETRY_BOUNDS`/`RateLimitSettings`/`ParseRetryHint`/`RetryDelay`
+/// and the same `extension.rate_limited` event shape (both are ports of the SAME Python
+/// rate_limit.py). This class's doc previously claimed realtime had "no retry at all" -- that was
+/// true when this was written but #235 changed it. Agreed de-duplication plan (not done in this
+/// PR, to keep #236's and #235's diffs independently reviewable): whichever of #235/#236 merges
+/// SECOND extracts the shared settings/hint-parsing/delay/bounds/event-shape pieces into one
+/// common C# helper (the equivalent of Python's rate_limit.py itself), while keeping the two
+/// orchestrations (cascade's wrap-one-REST-call loop vs. realtime's WS-event-driven retry)
+/// separate, exactly as cascade_processor.py and rate_limit.py stay separate in Python today.
 /// </summary>
 public static class CascadeRateLimit
 {
