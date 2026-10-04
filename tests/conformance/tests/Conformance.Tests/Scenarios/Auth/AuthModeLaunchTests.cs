@@ -22,6 +22,7 @@ namespace Conformance.Tests.Scenarios.Auth;
 /// that, today, is known to actually succeed.
 /// </summary>
 [Trait("Dotnet", "ready")]
+[AuthRowCapabilityGated]
 public sealed class AuthModeLaunchTests
 {
     // Never-dialled: a genuinely fail-fast backend must exit before attempting to reach either of

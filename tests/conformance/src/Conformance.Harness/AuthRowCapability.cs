@@ -66,3 +66,27 @@ public static class AuthRowCapability
             ? null
             : SkipReason;
 }
+
+/// <summary>
+/// Issue #147 (Rick's PR #226 review, issue #223 follow-up note): marks a test class whose
+/// methods call <see cref="AuthRowCapability.ShouldSkipCurrentBackend"/> -- directly, or
+/// indirectly via <c>ConformanceFixture.RunAuthRowAsync</c> -- and so report <c>Skipped</c>,
+/// never <c>Passed</c>/<c>Failed</c>, whenever <see cref="AuthRowCapability.Enforces"/> resolves
+/// false for the backend under test.
+///
+/// <see cref="Conformance.Tests.DotnetTraitCoverageTests"/> uses this attribute, instead of a
+/// hand-maintained list of "currently gated" type full names, to decide which
+/// <c>[Trait("Dotnet", "ready")]</c> methods may legitimately be excluded from its dotnet-ready
+/// coverage floor: a method on a class carrying this attribute counts toward the floor only while
+/// <see cref="AuthRowCapability.Enforces"/> actually resolves true for <c>"dotnet"</c> right now.
+/// Rick's concern this closes: a plain reflection-based count (tag presence only) can't tell a
+/// method that genuinely passes on the dotnet leg from one that is tagged but unconditionally
+/// skip-gated there -- so a hand-maintained exclusion list has to be remembered and kept in sync
+/// by hand every time a capability flag flips, and nothing fails loudly if someone forgets. Tying
+/// the exclusion directly to <see cref="AuthRowCapability.Enforces"/> instead means the floor
+/// self-corrects the moment the real capability flag changes, with no second list to maintain.
+/// </summary>
+[AttributeUsage(AttributeTargets.Class, Inherited = true)]
+public sealed class AuthRowCapabilityGatedAttribute : Attribute
+{
+}

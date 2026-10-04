@@ -1,3 +1,4 @@
+using Conformance.Harness;
 using Xunit;
 
 namespace Conformance.Tests.Scenarios.Auth;
@@ -10,6 +11,7 @@ namespace Conformance.Tests.Scenarios.Auth;
 /// </summary>
 [Collection(ConformanceCollection.Name)]
 [Trait("Dotnet", "ready")]
+[AuthRowCapabilityGated]
 public sealed class AuthRowRealtimeTokenTests(ConformanceFixture fixture)
 {
     public static TheoryData<int> CaseIndexes()

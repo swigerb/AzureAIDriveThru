@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using Conformance.Harness;
 using Xunit;
 
 namespace Conformance.Tests;
@@ -224,31 +225,47 @@ namespace Conformance.Tests;
 /// method in the five previously skip-gated <c>Scenarios/Auth</c> classes (<c>AuthModeLaunchTests</c>,
 /// <c>AuthRowLoggingTests</c>, <c>AuthRowRealtimeTokenTests</c>, <c>AuthRowRestTokenTests</c>,
 /// <c>AuthRowSpecialCaseTests</c>) now produces a real pass/fail signal on the dotnet leg too (they
-/// already did on the python leg). Per the "Issue #13 Wave 4/4b" note directly above, this PR
-/// re-measures the floor fresh at its own rebase time (onto the post-#241 `origin/dev`, which also
-/// enables the Browser conformance leg) rather than projecting by historical delta -- see "Issue
-/// #147 round 5 (Rick's security re-review, rebase onto #241)" below for the exact final measured
-/// count and its arithmetic.
-/// </summary>
+/// already did on the python leg).
+///
+/// Issue #147 round 2 (coordinator note citing Rick's PR #226 review): the hard-coded
+/// <c>AuthRowGatedTypeNames</c> type-name exclusion list this class used to carry (removed by this
+/// round) required a human to remember to add/remove entries every time
+/// <see cref="Conformance.Harness.AuthRowCapability.DotnetEnforcesAuth"/> changed -- and nothing
+/// would fail loudly if they forgot, since this floor is only ever a lower bound: if that flag
+/// ever flipped back to false, these methods would silently start reporting Skipped again, and
+/// the raw count could still clear the (by-then-stale) floor purely from unrelated growth
+/// elsewhere, hiding the regression completely. Replaced with
+/// <see cref="Conformance.Harness.AuthRowCapabilityGatedAttribute"/>, declared directly on the five
+/// classes above: <see cref="CountFloorEligibleDotnetReadyTestMethods"/> now excludes a
+/// attribute-carrying class's methods only while
+/// <see cref="Conformance.Harness.AuthRowCapability.Enforces"/> actually resolves false for
+/// <c>"dotnet"</c> -- no separate list to keep in sync -- and the floor Fact additionally
+/// asserts <c>AuthRowCapability.Enforces("dotnet")</c> directly, so a regression on that one flag
+/// fails this test immediately and unambiguously, independent of how much slack the raw count
+/// happens to have from unrelated scenario growth.
+///
+/// Per the "Issue #13 Wave 4/4b" note above, this PR re-measures the floor fresh at its own
+/// rebase time (onto the post-#241 `origin/dev`, which also enables the Browser conformance leg)
+/// rather than projecting by historical delta -- see "Issue #147 round 5 (Rick's security
+/// re-review, rebase onto #241)" below for the exact final measured count and its arithmetic.
 public sealed class DotnetTraitCoverageTests
 {
     private const string TraitName = "Dotnet";
     private const string TraitValue = "ready";
 
-    /// <summary>
-    /// Full names of any <c>Scenarios/Auth</c> test classes still unconditionally skip-gated on
-    /// the dotnet leg (see the class doc above) -- excluded from
-    /// <see cref="CountFloorEligibleDotnetReadyTestMethods"/> so this floor only ever counts
-    /// methods that produce a real pass/fail signal on the dotnet leg today. Empty as of issue
-    /// #147: both backends now enforce ADR-002 auth, so no Auth class is unconditionally
-    /// skip-gated any more. Kept (rather than deleted outright) as the seam a future
-    /// still-gated scenario would use.
-    /// </summary>
-    private static readonly HashSet<string> AuthRowGatedTypeNames = new(StringComparer.Ordinal);
-
     [Fact]
     public void At_least_256_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
     {
+        // Rick's PR #226 review: assert the capability directly, not just the derived count --
+        // see this class's own doc comment for why a bare ">= 222" check alone can't be trusted to
+        // catch this specific regression.
+        Assert.True(AuthRowCapability.Enforces("dotnet"),
+            "AuthRowCapability.Enforces(\"dotnet\") must stay true: flipping it back to false " +
+            "would silently move the 18 AuthRowCapabilityGated Scenarios/Auth test methods from " +
+            "Passed back to Skipped on the dotnet leg, and this floor's own count (which excludes " +
+            "AuthRowCapabilityGated classes whenever Enforces(\"dotnet\") is false) could still " +
+            "clear its lower bound from unrelated growth elsewhere, hiding the regression.");
+
         var count = CountFloorEligibleDotnetReadyTestMethods();
 
         Assert.True(count >= 256,
@@ -272,9 +289,11 @@ public sealed class DotnetTraitCoverageTests
     /// distinct data rows) whose effective Dotnet trait is "ready", combining method-level and
     /// class-level <c>[Trait]</c> attributes the same way xunit's own trait-based filtering does:
     /// a class-level trait applies to every test method declared in that class. Excludes any type
-    /// listed in <see cref="AuthRowGatedTypeNames"/>: those methods are unconditionally
-    /// <c>Assert.Skip</c>'d on the dotnet leg today (see this class's own doc comment), so they
-    /// never contribute a real pass/fail signal and must not count toward the coverage floor.
+    /// carrying <see cref="Conformance.Harness.AuthRowCapabilityGatedAttribute"/> while
+    /// <see cref="Conformance.Harness.AuthRowCapability.Enforces"/> resolves false for
+    /// <c>"dotnet"</c>: those methods are unconditionally <c>Assert.Skip</c>'d on the dotnet leg in
+    /// that state (see this class's own doc comment), so they never contribute a real pass/fail
+    /// signal and must not count toward the coverage floor.
     ///
     /// Issue #143/ADR-002 (R10): abstract types are skipped outright -- xunit never discovers an
     /// abstract class as a runnable test class in its own right, only its concrete subclasses --
@@ -293,7 +312,13 @@ public sealed class DotnetTraitCoverageTests
 
         foreach (var type in assembly.GetTypes())
         {
-            if (type.IsAbstract || (type.FullName is not null && AuthRowGatedTypeNames.Contains(type.FullName)))
+            if (type.IsAbstract)
+            {
+                continue;
+            }
+
+            if (type.IsDefined(typeof(AuthRowCapabilityGatedAttribute), inherit: true)
+                && !AuthRowCapability.Enforces("dotnet"))
             {
                 continue;
             }

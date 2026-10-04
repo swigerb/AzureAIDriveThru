@@ -17,6 +17,7 @@ namespace Conformance.Tests.Scenarios.Auth;
 /// </summary>
 [Collection(ConformanceCollection.Name)]
 [Trait("Dotnet", "ready")]
+[AuthRowCapabilityGated]
 public sealed class AuthRowRestTokenTests(ConformanceFixture fixture)
 {
     /// <summary>18.11's own three named REST routes -- deliberately not the anonymous allow-list

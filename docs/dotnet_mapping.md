@@ -552,6 +552,52 @@ unrelated Realtime/Sessions/Browser/transport-timing flakiness noted in the #163
 above (reproduces independent of this round's changes); zero failures in any Auth-scenario class;
 CI remains the authoritative gate per squad convention.
 
+### Issue #147 round 3 (coordinator note citing Rick's PR #226 review): making the coverage floor honest about skip-gated rows
+
+`DotnetTraitCoverageTests.At_least_222_scenarios_are_tagged_dotnet_ready_and_not_skip_gated`
+previously excluded skip-gated `Scenarios/Auth` classes from its reflection-based count via a
+hand-maintained `HashSet<string>` of type full names (`AuthRowGatedTypeNames`), emptied when this
+issue flipped `AuthRowCapability.DotnetEnforcesAuth` to `true`. Rick's concern: this floor is only
+ever a *lower bound* (`count >= 222`), so if `DotnetEnforcesAuth` were ever flipped back to `false`
+-- a real regression that would silently move the 18 gated methods from `Passed` back to `Skipped`
+on the dotnet leg -- the raw count could still clear 222 purely from unrelated scenario growth
+elsewhere in the suite, and the floor test would stay green despite the regression. A
+reflection-only count can't tell "tagged and genuinely passing" from "tagged but unconditionally
+skip-gated" apart; only a hand-maintained exclusion list could, and nothing forced that list to
+stay in sync with the real capability flag.
+
+Fixed by replacing the list with two changes:
+
+- A new `[AuthRowCapabilityGated]` marker attribute (`Conformance.Harness.AuthRowCapabilityGatedAttribute`,
+  declared alongside `AuthRowCapability` itself) applied directly to the five gated classes
+  (`AuthModeLaunchTests`, `AuthRowLoggingTests`, `AuthRowRealtimeTokenTests`,
+  `AuthRowRestTokenTests`, `AuthRowSpecialCaseTests`). `CountFloorEligibleDotnetReadyTestMethods`
+  now excludes an attribute-carrying type's methods only while
+  `AuthRowCapability.Enforces("dotnet")` resolves `false` -- no separate list to remember to update
+  when the flag changes; the exclusion is derived from the real capability function every time the
+  floor runs.
+- The floor `[Fact]` now also asserts `AuthRowCapability.Enforces("dotnet")` directly (with a
+  message naming the exact regression it guards against), *in addition to* the `count >= 222`
+  check -- so a `DotnetEnforcesAuth` regression fails this test immediately and unambiguously,
+  independent of how much slack the raw count has from unrelated growth.
+
+**Mutation check:** temporarily set `AuthRowCapability.DotnetEnforcesAuth = false` --
+`DotnetTraitCoverageTests`'s new capability assertion failed with the expected message, and (as a
+second, independent confirmation) the 18 previously-gated methods correctly reported `Skipped`
+again when the Auth conformance filter was re-run (`Failed: 2, Passed: 34, Skipped: 66, Total: 102`
+-- the two failures being this floor test and `AuthRowCapabilityTests`'s own existing
+`Enforces_is_true_for_dotnet_now_that_its_switch_is_on` pin); reverted, and the suite returned to
+102/102 passing with 0 skipped.
+
+**Note on the pending floor-number rebase:** per the coordinator's cross-PR sequencing note,
+PR #230 (issue #21, 11 new `Dotnet=ready` rows) is expected to merge to `dev` before this PR
+rebases and raises the floor constant/doc comment from 222 to the final combined number (reported
+as approximately 237 -- 208 dev baseline + 11 from #230 + 18 Auth rows from this issue -- pending
+the coordinator's exact confirmed count once #230 lands and any of its own additional rows are
+accounted for). That arithmetic will be recorded here and in the `[Fact]`'s own name/doc comment
+when the rebase happens; this round's fix is independent of that pending number and applies
+regardless of what the floor's literal value ends up being.
+
 ## `models.catalog` (resolved this revision)
 
 The design doc (section 7) said the shared model catalog lives in `config.yaml` under

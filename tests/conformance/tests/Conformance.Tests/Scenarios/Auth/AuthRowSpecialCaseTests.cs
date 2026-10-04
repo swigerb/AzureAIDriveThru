@@ -12,6 +12,7 @@ namespace Conformance.Tests.Scenarios.Auth;
 /// </summary>
 [Collection(ConformanceCollection.Name)]
 [Trait("Dotnet", "ready")]
+[AuthRowCapabilityGated]
 public sealed class AuthRowSpecialCaseTests(ConformanceFixture fixture)
 {
     /// <summary>Row 9, persona-architecture.md 18.11: "a query token on a REST path." A valid
