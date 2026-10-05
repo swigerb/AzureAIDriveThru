@@ -32,6 +32,14 @@ public sealed class RealPackExtrasCoverageTests
         var discovered = ConformancePersonas.DiscoverFromDisk()
             .Where(id => PersonaExtrasMenuData.HasAnyExtraItem(personasDir, id))
             .ToArray();
+
+        // Issue #274 follow-up D (#266 re-review): an empty `discovered` set produces an empty
+        // `missing` set below, which trivially passes `Assert.True(missing.Length == 0, ...)` --
+        // exactly the same gap Rick's review caught in RealPackCapabilityCoverageTests (see that
+        // class's own doc comment). A predicate or disk-discovery regression that silently empties
+        // the qualifying set must turn this test red, not green.
+        Assert.NotEmpty(discovered);
+
         var covered = GetTheoryDataValues<string>(
             typeof(RealPackExtrasConformanceTests), nameof(RealPackExtrasConformanceTests.DiscoveredPersonaIdsWithExtras));
 

@@ -21,8 +21,16 @@ namespace Conformance.Tests.Scenarios.Cascade;
 /// <see cref="CascadeConformanceCollection"/> instead of starting a dedicated fixture, so this
 /// costs nothing beyond the backend process every other Cascade test in this collection already
 /// shares.
+///
+/// Issue #274 follow-up C (#253 follow-up C): tagged <c>[Trait("Dotnet", "ready")]</c> -- verified
+/// green against the C# backend (<c>CONFORMANCE_BACKEND=dotnet</c>) across 3 consecutive local
+/// runs with no flakiness. The wiring this test proves (<see cref="ConformanceFixture.RunAsync(Func{Task})"/>'s
+/// own `finally` and <see cref="CascadeConformanceFixture"/>'s overrides) is backend-agnostic C#
+/// harness code, not Python-backend-specific behaviour, so there is no reason it would behave any
+/// differently under the dotnet backend than it does here under Python.
 /// </summary>
 [Collection(CascadeConformanceCollection.Name)]
+[Trait("Dotnet", "ready")]
 public sealed class CascadeFakeResetWiringTests(CascadeConformanceFixture fixture)
 {
     /// <summary>Distinguishes this test's own deliberate failure from any of
