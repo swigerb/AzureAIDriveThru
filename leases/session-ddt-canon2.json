@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "leaseKey": "session-ddt-canon2",
+  "sessionId": "ddt-canon2",
+  "repository": "swigerb/AzureAIDriveThru",
+  "issueNumber": null,
+  "dispatchSource": "local-cli",
+  "route": "aca-job",
+  "executionMode": "aca-job",
+  "state": "claimed",
+  "attempts": 1,
+  "startedAt": "2026-10-05T23:38:03.345Z",
+  "lastHeartbeatAt": "2026-10-05T23:38:03.345Z",
+  "updatedAt": "2026-10-05T23:38:03.345Z",
+  "terminalReason": null,
+  "executionRef": null
+}
