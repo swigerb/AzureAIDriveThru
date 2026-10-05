@@ -198,12 +198,23 @@ public sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings
             // "extras & sides" mapping was added in #168 (back then "extras & sides" didn't
             // match ANY bucket either).
             var category = _menu.IsExtraItem(itemName) ? "" : _menu.InferCategory(itemName);
-            deltaText += _promptLoader is not null ? _promptLoader.GetUpsellHint(category) : FallbackUpsellHint(category);
+            // #313 (Rick's review, 1.2): hints.yaml's upsell copy is free-form prose that can
+            // itself name a brand item (e.g. "upgrade to a Large or add a Widget!") -- it must go
+            // through the same pronunciation lexicon as everything else the realtime model speaks.
+            var hintText = _promptLoader is not null ? _promptLoader.GetUpsellHint(category) : FallbackUpsellHint(category);
+            deltaText += _menu.Spoken(hintText);
         }
 
+        // #313 (Rick's review, 1.4): the realtime model never sees the client-only JSON payload
+        // (`jsonOrderSummary`, ToolResultDirection.ToBoth's client channel) -- only the text
+        // channel below. Appending the already-cached `Summary.SpokenReadBack` here is what makes
+        // the mandatory read-back actually mandatory on realtime: the model has the full order
+        // read-back available verbatim in its own tool result, not just an instruction in the
+        // system prompt to "read back the order" from nothing.
         // #113: this session's own bound persona's happy-hour banner -- never hardcoded here.
         var happyHourNote = _order.HappyHourBanner;
-        return new ToolResult(deltaText + happyHourNote, ToolResultDirection.ToBoth, clientText: jsonOrderSummary);
+        return new ToolResult(
+            deltaText + happyHourNote + "\n\n" + summary.SpokenReadBack, ToolResultDirection.ToBoth, clientText: jsonOrderSummary);
     }
 
     private ToolResult GetOrder()
@@ -530,8 +541,8 @@ public sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings
         if (resultInfo.AbsorbedIntoCombo)
         {
             return resultInfo.ComboComponentUpchargeDisplay is { Length: > 0 } upcharge
-                ? $"{spokenDisplayName} included with your combo with a {upcharge} upcharge — your total is {summary.FinalTotalDisplay}"
-                : $"{spokenDisplayName} included with your combo — your total is {summary.FinalTotalDisplay}";
+                ? $"{spokenDisplayName} included with your combo with a {upcharge} upcharge — your total is {summary.FinalTotalSpoken}"
+                : $"{spokenDisplayName} included with your combo — your total is {summary.FinalTotalSpoken}";
         }
         if (resultInfo.ComboConvertedFrom is not null && action == "add")
         {
@@ -541,7 +552,7 @@ public sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings
             {
                 comboDisplay = $"{spokenDisplayName} {mods}";
             }
-            return $"Upgraded to {comboDisplay} — your total is now {summary.FinalTotalDisplay}";
+            return $"Upgraded to {comboDisplay} — your total is now {summary.FinalTotalSpoken}";
         }
         // #179: set by OrderState.HandleOrderUpdate whenever a combo's side/drink slot was
         // (re)sized in place -- via an `add` of the same item at a different size while the slot
@@ -554,31 +565,29 @@ public sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings
         if (resultInfo.ResizedComboComponent is not null)
         {
             return resultInfo.ComboComponentUpchargeDisplay is { Length: > 0 } upcharge
-                ? $"Changed {spokenDisplayName} with a {upcharge} upcharge, your total is now {summary.FinalTotalDisplay}"
-                : $"Changed {spokenDisplayName}, your total is now {summary.FinalTotalDisplay}";
+                ? $"Changed {spokenDisplayName} with a {upcharge} upcharge, your total is now {summary.FinalTotalSpoken}"
+                : $"Changed {spokenDisplayName}, your total is now {summary.FinalTotalSpoken}";
         }
-        // PR #184 round 3 (Rick's review, item C): set by OrderState.HandleOrderUpdate whenever
-        // `modify` actually changed an existing order line's OWN size (a bare resize,
-        // "wholeBundleSize" or not) -- distinct from ResizedComboComponent above, which is a
-        // combo's SIDE/DRINK slot resizing in place. Matches the original app's exact
-        // wording/verb for this case.
+        // #313 (Rick's review, 1.7): "Upgraded" implies the new size is always bigger, but a
+        // guest can resize down too (Brian's exact bug report: "25 to 10 count" shrank, yet the
+        // realtime model said "I've upgraded you"). "Changed" is accurate either direction.
         if (resultInfo.ModifiedFromSize is { Length: > 0 } fromSize
             && resultInfo.ModifiedToSize is { Length: > 0 } toSize
             && fromSize != toSize)
         {
-            return $"Upgraded {spokenItemName} from {Capitalize(fromSize)} to {Capitalize(toSize)}, your total is now {summary.FinalTotalDisplay}";
+            return $"Changed {spokenItemName} from {Capitalize(fromSize)} to {Capitalize(toSize)}, your total is now {summary.FinalTotalSpoken}";
         }
         if (_promptLoader is { } pl)
         {
             var tpl = pl.GetDeltaTemplate(action);
             return pl.RenderTemplate(tpl, Vars(
-                ("quantity", quantity), ("display_name", spokenDisplayName), ("total", summary.FinalTotalDisplay)));
+                ("quantity", Ordering.Money.NumberToWords(quantity)), ("display_name", spokenDisplayName), ("total", summary.FinalTotalSpoken)));
         }
         return action switch
         {
-            "add" => $"Added {quantity} {spokenDisplayName} — your total is now {summary.FinalTotalDisplay}",
-            "modify" => $"Changed {spokenDisplayName} — your total is now {summary.FinalTotalDisplay}",
-            _ => $"Removed {quantity} {spokenDisplayName} — your total is now {summary.FinalTotalDisplay}",
+            "add" => $"Added {Ordering.Money.NumberToWords(quantity)} {spokenDisplayName} — your total is now {summary.FinalTotalSpoken}",
+            "modify" => $"Changed {spokenDisplayName} — your total is now {summary.FinalTotalSpoken}",
+            _ => $"Removed {Ordering.Money.NumberToWords(quantity)} {spokenDisplayName} — your total is now {summary.FinalTotalSpoken}",
         };
     }
 

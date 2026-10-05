@@ -203,16 +203,17 @@ public sealed class OrderToolExecutorBundleAndExtrasTests
     [Fact]
     public async Task Modify_ASizeChange_SpeaksTheOriginalAppsUpgradedWording()
     {
-        // PR #184 round 3 (Rick's review, item C): a genuine size resize via `modify` must
-        // speak the original app's exact wording/verb and from/to form -- "Upgraded {item}
-        // from {Old} to {New}, your total is now $X" -- not the generic "Changed ..."
-        // fallback, and with no em dash.
+        // #313 (Rick's review, item 1/1.7): "Upgraded" implies the new size is always bigger, but
+        // a genuine size resize via `modify` can go either direction (Brian's exact bug report
+        // shrank 25 count to 10 count), so the neutral "Changed {item} from {Old} to {New}, your
+        // total is now ..." wording applies regardless of direction -- not "Upgraded", and with no
+        // em dash.
         var executor = NewExecutor(DeltaFixture.Load());
         await executor.ExecuteAsync("update_order", Args("add", "Delta Latte", "regular", 1, 3.49m), TestContext.Current.CancellationToken);
         var result = await executor.ExecuteAsync("update_order", Args("modify", "Delta Latte", "large", 1, 4.29m), TestContext.Current.CancellationToken);
 
         var text = result.ToText();
-        Assert.StartsWith("Upgraded Delta Latte from Regular to Large, your total is now", text);
+        Assert.StartsWith("Changed Delta Latte from Regular to Large, your total is now", text);
         Assert.DoesNotContain('\u2014', text);
     }
 

@@ -71,6 +71,11 @@
         "popularity": { "type": "string" },
         "image": { "type": "string" },
 
+        "spokenName": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Issue #304: optional per-item phonetic/brand-safe spoken override (e.g. a trademark-styled name's natural-speech form), applied everywhere this item's name is spoken back to the guest (tool-result delta text, get_order's spokenReadBack) via the same spokenAs-style text substitution sizes.spokenAs already uses -- the canonical `name` above is UNCHANGED for search, update_order, and order storage. Omit for an item whose plain name is already guest-friendly."
+        },
         "comboSlot": { "type": "string", "enum": ["sides", "drinks", "none"], "default": "none" },
         "happyHourDiscounted": { "type": "boolean", "default": false },
         "aliases": { "type": "array", "items": { "type": "string" }, "default": [] },

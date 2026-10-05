@@ -5,12 +5,15 @@ using Xunit;
 namespace Conformance.Tests.Scenarios.Ordering;
 
 /// <summary>
-/// PR #38 second re-review should-fix 2: the spoken `$X.XX` text embedded in the
-/// `function_call_output` (tools.py's `delta_text`, e.g. "Added 1 Tots — your total is now
-/// $9.26") is a *display* concern, separate from the exact-decimal wire contract asserted
-/// elsewhere in this suite. This still needs its own assertion because Rick's N2 mutation
-/// (building that spoken text from the pre-tax subtotal instead of finalTotal) doesn't touch any
-/// JSON money field and so is invisible to every other scenario in this file.
+/// PR #38 second re-review should-fix 2: the spoken total text embedded in the
+/// `function_call_output` (tools.py's `delta_text`, e.g. "Added one Tots — your total is now nine
+/// dollars and twenty-six cents" -- #313, Rick's review item 6 + coordinator fix-up round: this
+/// used to be a digit/`$`-formatted total, "your total is now $9.26", which gave the realtime
+/// model two different renderings of the same total in one tool result) is a *display* concern,
+/// separate from the exact-decimal wire contract asserted elsewhere in this suite. This still
+/// needs its own assertion because Rick's N2 mutation (building that spoken text from the
+/// pre-tax subtotal instead of finalTotal) doesn't touch any JSON money field and so is invisible
+/// to every other scenario in this file.
 ///
 /// The display-rounding rule (README "Rendering money for display": round half away from zero on
 /// the exact decimal) is distinct from the wire contract's "no rounding, ever" rule. Golden cases

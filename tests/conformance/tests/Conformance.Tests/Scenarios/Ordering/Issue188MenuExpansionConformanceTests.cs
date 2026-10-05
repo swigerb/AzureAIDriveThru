@@ -80,7 +80,7 @@ public sealed class Issue188MenuExpansionConformanceTests(Issue188MenuExpansionF
             $"Issue 188 vector '{vector.Name}' must price from personas/" + ("dun" + "kin") + "/menu/menuItems.json.");
         if (vector.Name == "munchkins-flavors-and-counts")
         {
-            Assert.Contains("Chocolate Glazed Munchkins Donut Hole Treats", result.FunctionCallOutputText);
+            Assert.Contains("Chocolate Glazed Munch-kins Donut Hole Treats", result.FunctionCallOutputText);
             Assert.DoesNotContain("MUNCHKINS", result.FunctionCallOutputText);
             Assert.DoesNotContain("®", result.FunctionCallOutputText);
             using var ticketJson = JsonDocument.Parse(result.ToolResultJson!);

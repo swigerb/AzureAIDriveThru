@@ -80,8 +80,14 @@ public sealed record ComboAbsorptionScenario(
     int? ExpectedStandaloneQuantityAfterConversion = null);
 
 /// <summary>
-/// PR #38 second re-review should-fix 2: a golden case for the spoken `$X.XX` display text in the
-/// `function_call_output`, distinct from the exact-decimal wire contract above. <see
+/// PR #38 second re-review should-fix 2: a golden case for the spoken total text embedded in the
+/// `function_call_output`, distinct from the exact-decimal wire contract above. #313 (Rick's
+/// review, item 6 + coordinator fix-up round): the update_order delta text used to embed a
+/// digit/`$`-formatted total (e.g. "your total is now $9.26") ahead of the voice read-back,
+/// giving the realtime model two different renderings of the same total in one tool result;
+/// <see cref="ExpectedSpokenTotalText"/> now holds the spoken-English words
+/// (money_utils.format_money_spoken / Money.FormatMoneySpoken produce, e.g. "nine dollars and
+/// twenty-six cents") that both the delta text and the mandatory read-back speak instead. <see
 /// cref="LandsOnHalfCent"/> tells scenario code whether this case can be asserted against the live
 /// Python backend today (false) or must stay `[Fact(Skip = ...)]` referencing #46 until a
 /// conforming backend exists (true) -- see the README's "Rendering money for display" section.

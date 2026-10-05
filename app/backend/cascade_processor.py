@@ -64,6 +64,7 @@ from azure.core.exceptions import HttpResponseError
 
 from config_loader import get_config
 from conformance_hooks import cascade_chat_kwargs
+from menu_utils import apply_lexicon
 from order_state import order_state_singleton
 from processors import ResolvedModel, resolve_cascade_model
 from rate_limit import (
@@ -1131,11 +1132,28 @@ class CascadeProcessor:
                 payload = await resp.json()
         return payload.get("text", "")
 
+    def _apply_pronunciations(self, text: str, persona_id: str) -> str:
+        """Issue #304: apply *persona_id*'s own ``pronunciations`` lexicon (persona.json) to
+        *text* right before it becomes TTS input -- ONLY here, never to the chat-transcript text
+        sent to the browser/`state.messages`/session history above, and never consulted by the
+        realtime pipeline at all (that pipeline's model hears/speaks its own tool-result/
+        item-name text directly -- see `MenuCatalog.spoken`'s merged `spokenName` substitutions
+        for that path instead). Falls back to *text* unchanged for a persona id the catalog
+        doesn't recognize (defensive only -- `state.persona_id` is always a real, already-bound
+        persona) or a pack with no `pronunciations` entries at all (every pack predating #304)."""
+        if persona_id not in self.persona_catalog:
+            return text
+        pronunciations = self.persona_catalog.get(persona_id).manifest.pronunciations
+        if not pronunciations:
+            return text
+        return apply_lexicon(text, pronunciations)
+
     async def _speak(self, ws: web.WebSocketResponse, text: str, state: _CascadeSessionState) -> None:
         token = await self._bearer_token()
         deployment = self.model_catalog.deployment_for(self.model_catalog.cascade_audio.tts)
         url = f"{self.audio_endpoint}/openai/v1/audio/speech"
-        body = {"model": deployment, "input": text, "voice": state.voice, "response_format": "pcm"}
+        tts_text = self._apply_pronunciations(text, state.persona_id)
+        body = {"model": deployment, "input": tts_text, "voice": state.voice, "response_format": "pcm"}
         async with aiohttp.ClientSession() as http:
             async with http.post(url, json=body, headers={"Authorization": f"Bearer {token}"}) as resp:
                 resp.raise_for_status()

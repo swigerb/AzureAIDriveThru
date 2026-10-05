@@ -134,6 +134,49 @@ class SearchQueryFormattingTests(unittest.TestCase):
         result = _run(search(client, "cfg", "id", "description", "embedding", False, {"query": "tots"}))
         self.assertIn("One Size", result.text)
 
+    def test_real_search_path_appends_say_hint_for_an_item_with_a_spoken_name_override(self):
+        """#313 ("item 7"/item 4a, coordinator fix-up round): the real, Azure-AI-Search-backed
+        ``search()`` path (not the local fallback scripts/eval_voice.py added) must append the
+        "Item: <canonical> (say: <spoken>)" pronunciation hint whenever the matched item's own
+        catalog name has a spokenName override -- see tools.py's own `name_for_speech` comment
+        (#313, item 1.1): this is the model's first exposure to the item's name, so it must never
+        have to improvise a pronunciation. Runs against the synthetic test-zeta fixture pack's
+        "ZORBS® Bite Treats" item (spokenName "Zorb Bite Treats") so no real brand word is needed
+        to exercise this."""
+        catalog = PersonaCatalog.load(
+            personas_dir=FIXTURES_DIR, enabled=["test-zeta"], default_persona_id="test-zeta",
+        )
+        zeta_persona = catalog.get("test-zeta")
+        zeta_menu = get_catalog_for_persona(zeta_persona)
+        records = [
+            {"id": "1", "name": "ZORBS® Bite Treats", "category": "Snacks",
+             "sizes": json.dumps([{"size": "10 count", "price": "3.99"}])},
+        ]
+        client = _make_mock_search_client(records)
+        result = _run(search(
+            client, "cfg", "id", "description", "embedding", False, {"query": "zorbs"}, menu=zeta_menu,
+        ))
+        self.assertIn("Item: ZORBS® Bite Treats (say: Zorb Bite Treats)", result.text)
+
+    def test_real_search_path_omits_say_hint_when_spoken_name_matches_the_canonical_name(self):
+        """Companion to the test above: an item with no pronunciation override must not grow a
+        redundant "(say: ...)" hint that just repeats its own canonical name."""
+        catalog = PersonaCatalog.load(
+            personas_dir=FIXTURES_DIR, enabled=["test-zeta"], default_persona_id="test-zeta",
+        )
+        zeta_persona = catalog.get("test-zeta")
+        zeta_menu = get_catalog_for_persona(zeta_persona)
+        records = [
+            {"id": "1", "name": "Zeta Cola", "category": "Drinks",
+             "sizes": json.dumps([{"size": "regular", "price": "1.99"}])},
+        ]
+        client = _make_mock_search_client(records)
+        result = _run(search(
+            client, "cfg", "id", "description", "embedding", False, {"query": "cola"}, menu=zeta_menu,
+        ))
+        self.assertIn("Item: Zeta Cola,", result.text)
+        self.assertNotIn("(say:", result.text)
+
 
 class SearchEmptyResultTests(unittest.TestCase):
     """Test empty search results handling."""
@@ -339,25 +382,32 @@ class UpdateOrderAddTests(unittest.TestCase):
         summary = order_state_singleton.get_order_summary(sid)
         self.assertEqual(len(summary.items), 1)
 
-    def test_delta_text_spoken_total_matches_finalTotalDisplay_exactly(self):
-        """PR #50 review follow-up: the delta text's spoken total must be the exact same string
-        as summary.finalTotalDisplay -- there is exactly one format_money() call per mutation
-        (inside OrderSummary), and every spoken surface downstream reads that string rather than
-        recomputing its own."""
+    def test_delta_text_spoken_total_matches_finalTotalSpoken_exactly(self):
+        """PR #50 review follow-up, updated for #313 (Rick's review, item 6): the delta text's
+        spoken total must be the exact same string as summary.finalTotalSpoken -- there is
+        exactly one format_money_spoken() call per mutation (inside OrderSummary), and every
+        spoken surface downstream reads that string rather than recomputing its own. Previously
+        asserted against finalTotalDisplay ("$X.XX"); #313 item 6 moved the model-facing delta
+        text off the digit/`$` rendering entirely, since a realtime model seeing both a `$9.71`
+        delta line and a spoken "nine dollars and seventy-one cents" read-back in the same tool
+        result risked speaking the wrong one."""
         sid = _make_session()
         result = _run(update_order({
             "action": "add", "item_name": "Tots",
             "size": "medium", "quantity": 1, "price": 2.79,
         }, sid))
         summary = order_state_singleton.get_order_summary(sid)
-        self.assertIn(summary.finalTotalDisplay, result.text)
+        self.assertIn(summary.finalTotalSpoken, result.text)
+        self.assertNotIn(summary.finalTotalDisplay, result.text)
 
     @patch("order_state.is_happy_hour", return_value=False)
-    def test_modify_size_delta_text_matches_the_original_apps_upgraded_wording(self, _hh):
-        """PR #184 round 3 (Rick's review, item C): a genuine size resize via `modify` must
-        speak the original app's exact wording/verb and from/to form -- "Upgraded {item} from
-        {Old} to {New}, your total is now $X" -- not the generic "Changed ..." fallback, and
-        with no em dash."""
+    def test_modify_size_delta_text_matches_the_original_apps_changed_wording(self, _hh):
+        """#313 (Rick's review, item 1.7 + item 6): a genuine size resize via `modify` must speak
+        a neutral "Changed {item} from {Old} to {New}, your total is now <spoken total>" --
+        "Upgraded" wrongly implies the new size is always bigger, which is exactly backwards for
+        a downgrade (Brian's #304 bug report: 25 count -> 10 count). Item 6 (this re-review)
+        moved the total off the digit/`$` rendering: the delta text now speaks finalTotalSpoken,
+        never finalTotalDisplay, same as every other delta form."""
         sid = _make_session()
         _run(update_order({
             "action": "add", "item_name": "Tots",
@@ -370,10 +420,44 @@ class UpdateOrderAddTests(unittest.TestCase):
         summary = order_state_singleton.get_order_summary(sid)
         delta_text = result.text.split("[HAPPY HOUR ACTIVE", 1)[0].rstrip()
         self.assertEqual(
-            f"Upgraded Tots from Medium to Large, your total is now {summary.finalTotalDisplay}",
+            f"Changed Tots from Medium to Large, your total is now {summary.finalTotalSpoken}",
             delta_text.split("\n\n")[0],
         )
         self.assertNotIn("\u2014", result.text)
+
+    @patch("order_state.is_happy_hour", return_value=False)
+    def test_modify_25_count_to_10_count_reproduces_brians_exact_bug_report(self, _hh):
+        """#313 (Rick's review, Section 2 required item): reproduces Brian's exact bug report
+        verbatim -- a guest resizes a count-sized order from 25 Count down to 10 Count. The
+        delta text the realtime model actually receives (`FunctionCallOutputText`, not just the
+        browser-only JSON channel) must say "Changed" (never "Upgraded" -- that verb wrongly
+        implies the new size is always bigger) and must speak the NEW count, not the old one.
+        Runs against the synthetic, TEST-ONLY test-zeta fixture pack (#313 item 3: the previous
+        version of this test loaded the real persona pack via a string-concatenated persona id
+        that existed only to evade rebrand_scan.py's brand-word guard -- not
+        acceptable)."""
+        order_state_singleton.sessions = {}
+        persona_id = "test-zeta"
+        catalog = PersonaCatalog.load(
+            personas_dir=FIXTURES_DIR, enabled=[persona_id], default_persona_id=persona_id,
+        )
+        persona = catalog.get(persona_id)
+        sid = order_state_singleton.create_session(persona=persona)
+
+        _run(update_order({
+            "action": "add", "item_name": "ZORBS® Bite Treats",
+            "size": "25 count", "quantity": 1, "price": 8.99,
+        }, sid))
+        result = _run(update_order({
+            "action": "modify", "item_name": "ZORBS® Bite Treats",
+            "size": "10 count", "quantity": 1, "price": 3.99,
+        }, sid))
+
+        delta_text = result.text.split("[HAPPY HOUR ACTIVE", 1)[0]
+        self.assertIn("Changed", delta_text)
+        self.assertNotIn("Upgraded", delta_text)
+        self.assertIn("10 Count", delta_text)
+        self.assertNotIn("25 Count", delta_text)
 
     def test_add_multiple_quantity(self):
         sid = _make_session()
@@ -792,7 +876,8 @@ class GetOrderTests(unittest.TestCase):
         order_state_singleton.handle_order_update(sid, "add", "Cherry Limeade", "medium", 2, 2.89)
         result = _run(get_order({}, sid))
         self.assertIn("Cherry Limeade", result.text)
-        self.assertRegex(result.text, r"\d+\.\d{2}")
+        # #313 (Rick's review, item 2): money is spoken in words, not digits.
+        self.assertRegex(result.text, r"[a-z]+ dollars? and [a-z-]+ cents?")
 
     def test_get_order_returns_json_summary_for_client(self):
         sid = _make_session()
@@ -972,6 +1057,50 @@ class UpsellHintTests(unittest.TestCase):
         )
 
 
+class UpsellHintSpokenLexiconTests(unittest.TestCase):
+    """#313 ("item 7"/item 4b, coordinator fix-up round): tools.py's own comment at the upsell
+    hint append site (1.2) says the hint text "must go through the same menu.spoken() pronunciation
+    lexicon" as every other guest-facing string -- but nothing in the suite actually proved a raw,
+    un-substituted hint string gets rewritten before reaching delta_text. Runs against the
+    synthetic test-zeta fixture pack (its own prompts/hints.yaml generic bucket literally quotes
+    the raw, un-rewritten "ZORBS®" catalog string) so this is provable without any real brand
+    word: if menu.spoken() were ever skipped for the hint, "ZORBS®" would appear verbatim in the
+    model-facing delta text instead of "Zorbs"."""
+
+    def setUp(self):
+        from prompt_loader import PromptLoader
+
+        self.catalog = PersonaCatalog.load(
+            personas_dir=FIXTURES_DIR, enabled=["test-zeta"], default_persona_id="test-zeta",
+        )
+        patcher = patch("tools._prompt_loader", PromptLoader(
+            brand="test-zeta", prompts_dir=FIXTURES_DIR / "test-zeta" / "prompts",
+        ))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self._sessions_created: list[str] = []
+        self.addCleanup(self._cleanup_sessions)
+
+    def _cleanup_sessions(self):
+        for sid in self._sessions_created:
+            order_state_singleton.delete_session(sid)
+
+    def _new_session(self) -> str:
+        sid = order_state_singleton.create_session(persona=self.catalog.get("test-zeta"))
+        self._sessions_created.append(sid)
+        return sid
+
+    def test_upsell_hint_text_is_passed_through_menu_spoken_before_reaching_delta_text(self):
+        sid = self._new_session()
+        result = _run(update_order({
+            "action": "add", "item_name": "Zeta Cola", "size": "regular", "quantity": 1, "price": 1.99,
+        }, sid))
+        # The whole item name has its own spokenName, which wins over the single-word spokenAs
+        # entry (longest match), so the hint reads "Zorb Bite Treats" -- never the raw catalog form.
+        self.assertIn("Zorb Bite Treats", result.text)
+        self.assertNotIn("ZORBS", result.text)
+
+
 class ComboValidationInToolsTests(unittest.TestCase):
     """Test combo validation hints in update_order results."""
 
@@ -994,6 +1123,53 @@ class ComboValidationInToolsTests(unittest.TestCase):
             "size": "standard", "quantity": 1, "price": 10.19,
         }, sid))
         self.assertNotIn("SYSTEM HINT", result.text)
+
+
+class ComboComponentUpchargeSpokenDeltaTests(unittest.TestCase):
+    """#313 (Rick's re-review, item 2): `update_order`'s model-facing delta text must speak a
+    combo component upcharge in words (`format_money_spoken`), never the digit/`$` display --
+    on BOTH the "absorbed into a vacant slot" delta and the "resized an already-absorbed
+    component" delta."""
+
+    @patch("order_state.is_happy_hour", return_value=False)
+    def test_absorbed_large_drink_upcharge_delta_has_no_dollar_sign(self, _hh):
+        sid = _make_session()
+        _run(update_order({
+            "action": "add", "item_name": "SuperSONIC Double Cheeseburger Combo",
+            "size": "standard", "quantity": 1, "price": 10.19,
+        }, sid))
+        _run(update_order({
+            "action": "add", "item_name": "Tots",
+            "size": "medium", "quantity": 1, "price": 2.79,
+        }, sid))
+        result = _run(update_order({
+            "action": "add", "item_name": "Cherry Limeade",
+            "size": "large", "quantity": 1, "price": 3.39,
+        }, sid))
+        self.assertIn("fifty cents upcharge", result.text)
+        self.assertNotIn("$", result.text)
+
+    @patch("order_state.is_happy_hour", return_value=False)
+    def test_resized_absorbed_component_upcharge_delta_has_no_dollar_sign(self, _hh):
+        sid = _make_session()
+        _run(update_order({
+            "action": "add", "item_name": "SuperSONIC Double Cheeseburger Combo",
+            "size": "standard", "quantity": 1, "price": 10.19,
+        }, sid))
+        _run(update_order({
+            "action": "add", "item_name": "Tots",
+            "size": "medium", "quantity": 1, "price": 2.79,
+        }, sid))
+        _run(update_order({
+            "action": "add", "item_name": "Cherry Limeade",
+            "size": "medium", "quantity": 1, "price": 2.89,
+        }, sid))
+        result = _run(update_order({
+            "action": "modify", "item_name": "Cherry Limeade",
+            "size": "large", "quantity": 1, "price": 3.39,
+        }, sid))
+        self.assertIn("fifty cents upcharge", result.text)
+        self.assertNotIn("$", result.text)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

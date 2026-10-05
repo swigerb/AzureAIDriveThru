@@ -767,7 +767,12 @@ public sealed class OrderState
         if (upcharge > 0m)
         {
             result.ComboComponentUpcharge = upcharge;
-            result.ComboComponentUpchargeDisplay = Money.Format(upcharge);
+            // #313 (Rick's re-review, item 2): the model-facing delta text embeds this display
+            // string directly (see OrderToolExecutor.BuildDeltaText's "with a {upcharge} upcharge"
+            // branches) -- it must be the SAME spoken form as every other model-facing money
+            // surface (Money.FormatMoneySpoken), never the "$X.XX" digit display a realtime model
+            // must never see.
+            result.ComboComponentUpchargeDisplay = Money.FormatMoneySpoken(upcharge);
         }
     }
 
@@ -1284,7 +1289,7 @@ public sealed class OrderState
         }
         var tax = total * _taxRate;
         var finalTotal = total + tax;
-        Summary = OrderSummary.Build(_items.ToList(), total, tax, finalTotal);
+        Summary = OrderSummary.Build(_items.ToList(), total, tax, finalTotal, ComposeSpokenReadBack(_items, finalTotal));
     }
 
     /// <summary>Ports order_state.py's <c>get_combo_requirements</c>: scans the order for bundles
@@ -1326,20 +1331,23 @@ public sealed class OrderState
         return new ComboRequirements(missing.Count == 0, missing, promptHint);
     }
 
-    /// <summary>Ports order_state.py's <c>get_grouped_order_for_readback</c>: groups items with the
-    /// same display name (spoken via this persona's own <c>sizes.spokenAs</c>) for a natural voice
-    /// read-back, ending with the already-computed <see cref="OrderSummary.FinalTotalDisplay"/> --
-    /// never re-derived here.</summary>
-    public string GetGroupedOrderForReadback()
+    /// <summary>Ports order_state.py's <c>get_grouped_order_for_readback</c> / the new
+    /// <c>_compose_spoken_readback</c> extraction (issue #304): groups items with the same display
+    /// name (spoken via this persona's own <c>sizes.spokenAs</c> + per-item <c>spokenName</c>) for
+    /// a natural voice read-back, ending with the already-computed <paramref
+    /// name="finalTotalDisplay"/> -- never re-derived here. Cached once per <see cref="UpdateSummary"/>
+    /// call onto <see cref="OrderSummary.SpokenReadBack"/> so it can never drift from the tool
+    /// response that serializes the same <see cref="OrderSummary"/>.</summary>
+    private string ComposeSpokenReadBack(IReadOnlyList<OrderItem> items, decimal finalTotal)
     {
-        if (_items.Count == 0)
+        if (items.Count == 0)
         {
             return "Your order is currently empty.";
         }
 
         var counts = new Dictionary<string, int>();
         var order = new List<string>();
-        foreach (var item in _items)
+        foreach (var item in items)
         {
             var cleanName = _menu.Spoken(item.Display);
             if (cleanName.Contains('(') && cleanName.Contains(')'))
@@ -1351,8 +1359,8 @@ public sealed class OrderState
             {
                 var upchargeTotal = positiveUpcharges.Sum();
                 cleanName = positiveUpcharges.Count == 1
-                    ? $"{cleanName} with a {Money.Format(upchargeTotal)} upcharge"
-                    : $"{cleanName} with {Money.Format(upchargeTotal)} in component upcharges";
+                    ? $"{cleanName} with a {Money.FormatMoneySpoken(upchargeTotal)} upcharge"
+                    : $"{cleanName} with {Money.FormatMoneySpoken(upchargeTotal)} in component upcharges";
             }
             if (!counts.ContainsKey(cleanName))
             {
@@ -1361,13 +1369,21 @@ public sealed class OrderState
             counts[cleanName] = counts.GetValueOrDefault(cleanName) + item.Quantity;
         }
 
-        var parts = order.Select(display => (counts[display] > 1 ? $"{counts[display]} " : "one ") + display).ToList();
+        // #313 (Rick's review, item 2): a bare digit quantity read next to a count-based size
+        // (e.g. "3 10 Count Glazed Munch-kins Donut Hole Treats") is ambiguous -- spelling the
+        // quantity out as a word removes it.
+        var parts = order.Select(display => $"{Money.NumberToWords(counts[display])} {display}").ToList();
         var summaryStr = parts.Count > 1
             ? string.Join(", ", parts[..^1]) + $", and {parts[^1]}"
             : parts[0];
 
-        return $"I have {summaryStr}. Your total is {Summary.FinalTotalDisplay}. ";
+        return $"I have {summaryStr}. Your total is {Money.FormatMoneySpoken(finalTotal)}. ";
     }
+
+    /// <summary>Ports order_state.py's <c>get_grouped_order_for_readback</c>: a one-line read of the
+    /// already-cached <see cref="OrderSummary.SpokenReadBack"/> (issue #304) -- guarantees this can
+    /// never drift from the <see cref="OrderSummary"/> the get_order tool actually returns.</summary>
+    public string GetGroupedOrderForReadback() => Summary.SpokenReadBack;
 
     /// <summary>Ports order_state.py's <c>reset_order</c> (#41): clears the order lines. PR #184
     /// round 2 (Rick's review, item 3 -- "removing the combo clears its slot state"): all

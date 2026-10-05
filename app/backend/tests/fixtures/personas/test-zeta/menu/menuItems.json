@@ -62,6 +62,22 @@
           "comboSlot": "sides"
         }
       ]
+    },
+    {
+      "category": "snacks",
+      "items": [
+        {
+          "name": "ZORBS® Bite Treats",
+          "sizes": [
+            { "size": "10 count", "price": 3.99 },
+            { "size": "25 count", "price": 8.99 }
+          ],
+          "description": "#313 (Rick's review, items 2/3): a TEST-ONLY, count-sized, trademark-cased item -- the synthetic equivalent of a real pack's own bite-sized brand treat (e.g. a real pack's own MUNCHKINS-style item), so the count-size word-spelled-quantity read-back and the case-sensitive spokenAs/spokenName pronunciation rewrite can be exercised against a non-branded fixture pack instead of a real persona pack id.",
+          "comboSlot": "none",
+          "aliases": ["ZORBS Bite Treats", "Zorbs"],
+          "spokenName": "Zorb Bite Treats"
+        }
+      ]
     }
   ]
 }

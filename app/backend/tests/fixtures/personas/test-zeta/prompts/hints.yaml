@@ -1,3 +1,6 @@
-upsell_hints: {}
+upsell_hints:
+  generic:
+    trigger_categories: []
+    hint: "Ask if they'd like to add some ZORBS® Bite Treats!"
 system_hints: {}
 zeta_templates: {}
