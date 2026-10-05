@@ -1269,3 +1269,39 @@ On any failure or cancellation while executing a round's tool calls, **delete th
 **Team impact:** No other team member's in-flight scope is affected. The `FakeRealtimeUpstreamServer.NextSpeechErrorStatus` and `FakeSearchServer.HoldNextResponse()` additions to the conformance fakes are reusable building blocks for any future conformance test needing to simulate a TTS failure or a slow/blocked tool-execution network call.
 
 **Not merged:** Per instructions, this PR was not pushed/opened by me — publishing is handled by the Squad-on-ACA worker after this session ends.
+
+#### 2026-10-05: C# 100% parity program — wrap-up decisions (Scribe)
+
+**Context:** All engineering work for the C# 100% parity program (#13, #15, #16, #21, #147) is merged to `dev`; no open PRs remain. The following decisions are durable and carry forward into any future work on this codebase.
+
+**Squad operating model (Squad on ACA):**
+- All Squad work for this program ran on Squad on ACA, with the coordinator dispatching work, retargeting PRs from `main` to `dev` (squad-on-aca#130), and merging a PR only after Rick's APPROVE.
+
+**Conformance suite rules:**
+- Every test class must carry a `Dotnet` trait (`ready` or `n/a-*`); untagged classes are not permitted.
+- The `DotnetTraitCoverageTests` floor is always a fresh measurement (`Conformance.Tests.exe -list methods -trait Dotnet=ready`), never computed by hand or carried forward arithmetically.
+- A zero-row `SkipTestWithoutData` theory never counts toward the floor.
+
+**Cascade echo-suppression semantics (matches realtime #190, identical in both backends):**
+- Estimated playback duration plus `min(echo_cooldown_seconds, 300ms)` defines the echo-suppression window.
+- Frames dropped during that window never reach STT.
+- A configured `0` disables echo suppression entirely.
+
+**Cascade nudge semantics:**
+- A cascade nudge is registered as the current turn (not a new or ancillary turn).
+
+**Barge-in / receive-loop rule:**
+- Barge-in handling must never await the cancelled turn from inside the receive loop — doing so is a write/write deadlock. The cancelled turn's own cleanup must happen outside the receive loop's await path.
+
+**#17 go-live gating:**
+- The `azure.yaml` `backend-dotnet` service entry and the `azd-service-name` tag land only in the owner's flip commit (DEPLOY.md Step 0).
+- `deployDotnetApp` defaults to `false`; the C# container app is provisioned only when the owner explicitly enables it.
+
+**Architecture PNG rendering:**
+- The architecture PNG renders correctly on Windows (Segoe UI font). A Linux rendering environment falls back to different fonts and reflows labels — Windows is the authoritative rendering environment for this asset.
+
+**Status:** #20 (P2 Python unified demo) — every engineering child item is closed; remaining work is owner-gated: #85/#87 (interactive `Verify-ProductionAuth -Authenticated` sign-off plus the manual UX checklist) and #88 (teardown). #6 (epic) — S2-S6, P3/S8 acceptance and the architecture diagram are done; remaining owner-gated items are #17 (live flip), #18 (live A/B and release `dev` to `main`), #85/#87 (sign-off), and #88 (teardown). #20, #6, #17, #18, #85, #87 and #88 remain open pending Brian.
+
+**Risk/trade-off:** None — this is a documentation-only decision record capturing rules and semantics already shipped and tested in prior PRs; no code changes accompany this entry.
+
+**Team impact:** Captures durable program-level rules so future contributors (and future C# or conformance work) don't have to reconstruct them from individual PR history.
