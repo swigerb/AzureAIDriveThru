@@ -179,6 +179,14 @@ public static class ClientServerFilter
     public static string? SanitizeVoice(string? candidate, IReadOnlySet<string> allowedVoices) =>
         candidate is not null && allowedVoices.Contains(candidate) ? candidate : null;
 
+    /// <summary>Exact wire-contract sanitizer for <c>extension.set_machine_status.status</c>.</summary>
+    public static string? SanitizeMachineStatus(string? candidate) =>
+        candidate is "up" or "down" ? candidate : null;
+
+    /// <summary>Exact wire-contract sanitizer for <c>extension.set_happy_hour_mode.mode</c>.</summary>
+    public static string? SanitizeHappyHourMode(string? candidate) =>
+        candidate is "auto" or "on" or "off" ? candidate : null;
+
     private static void AddBoundedNumber(
         JsonObject source, JsonObject target, string key, double lo, double hi, bool intOnly)
     {

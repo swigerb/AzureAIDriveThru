@@ -207,9 +207,25 @@ public static class PersonaRoutes
         result["features"] = new JsonObject { ["dayparts"] = persona.Features.Dayparts };
         result["menuUrl"] = BuildMenuUrl(persona);
         result["models"] = BuildModelPipelinesBody(persona.Models, modelCatalog);
+        result["machines"] = BuildMachinesBody(persona.Machines);
+        result["happyHour"] = persona.Pricing.HappyHour is { } happyHour ? ToJsonObject(happyHour) : null;
         // Issue #164 E2: mirrors app.py's `_persona_detail_body`, which forwards `pricing.taxRate`
         // here so the ticket can render "Tax (N%)" instead of a bare "Tax".
         result["taxRate"] = persona.Pricing.TaxRate;
+        return result;
+    }
+
+    private static JsonObject BuildMachinesBody(IReadOnlyDictionary<string, PersonaMachine> machines)
+    {
+        var result = new JsonObject();
+        foreach (var (key, value) in machines)
+        {
+            result[key] = new JsonObject
+            {
+                ["status"] = value.Status == "down" ? "down" : "up",
+                ["label"] = value.Label,
+            };
+        }
         return result;
     }
 

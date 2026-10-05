@@ -693,7 +693,7 @@ entries:
   increase_reason: '#105'
 - file: tests/conformance/tests/Conformance.Tests/PersonaBusinessRuleConformanceTests.cs
   brand: sonic
-  max: 2
+  max: 1
   issue: '#105'
   reason: 'Fixture/test data naming a real persona pack id (sonic/mcdonalds/dunkin)
     for conformance or unit-test coverage across all three packs -- expected, the

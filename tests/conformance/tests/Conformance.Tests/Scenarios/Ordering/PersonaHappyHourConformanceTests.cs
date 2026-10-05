@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using Conformance.Fakes;
 using Conformance.Harness;
 using Xunit;
@@ -23,6 +24,27 @@ file static class PersonaHappyHourTestSupport
     {
         var result = await AddItemAndReadResultAsync(fixture, persona, itemName, size, price, ct);
         return OrderScenarioHelpers.GetOrderFinalTotal(result.ToolResultJson!);
+    }
+
+    public static async Task<ToolCallResult> AddItemAfterHappyHourModeAsync(
+        ConformanceFixture fixture, string persona, string itemName, string size, decimal price, CancellationToken ct, params string[] modes)
+    {
+        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, persona: persona);
+        await using var _ = browser;
+
+        foreach (var mode in modes)
+        {
+            await browser.SendAsync(new JsonObject
+            {
+                ["type"] = "extension.set_happy_hour_mode",
+                ["mode"] = mode,
+            }, ct);
+        }
+
+        return await OrderScenarioHelpers.RunOrderStepsAsync(
+            connection, browser,
+            [("add", itemName, size, 1, price)],
+            roundTripIndex, ct);
     }
 }
 
@@ -171,5 +193,72 @@ public sealed class PersonaHappyHourConformanceTests(
         // ever appear -- clock-invariant, same as the price.
         Assert.DoesNotContain("HAPPY HOUR", insideResult.FunctionCallOutputText);
         Assert.DoesNotContain("HAPPY HOUR", outsideResult.FunctionCallOutputText);
+    }
+
+    [Fact]
+    [Trait("Dotnet", "ready")]
+    public async Task Happy_hour_mode_on_applies_discount_even_outside_the_window()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var expectedBanner = PersonaHappyHourBanner.Read(
+            RepoPaths.FixturePersonasDirectory(RepoPaths.FindRepoRoot()), TwoPersonaConformanceFixture.PersonaA);
+        const decimal unitPrice = 1.99m;
+        ToolCallResult outsideResult = null!;
+
+        await outsideWindowFixture.RunAsync(async () =>
+        {
+            outsideResult = await PersonaHappyHourTestSupport.AddItemAfterHappyHourModeAsync(
+                outsideWindowFixture, TwoPersonaConformanceFixture.PersonaA, "Alpha Cola", "small", unitPrice, ct, "on");
+        });
+
+        Assert.Contains(expectedBanner, outsideResult.FunctionCallOutputText);
+        OrderScenarioHelpers.AssertMoneyEqual(
+            unitPrice * 0.5m * 1.05m,
+            OrderScenarioHelpers.GetOrderFinalTotal(outsideResult.ToolResultJson!));
+    }
+
+    [Fact]
+    [Trait("Dotnet", "ready")]
+    public async Task Happy_hour_mode_off_suppresses_discount_even_inside_the_window()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var expectedBanner = PersonaHappyHourBanner.Read(
+            RepoPaths.FixturePersonasDirectory(RepoPaths.FindRepoRoot()), TwoPersonaConformanceFixture.PersonaA);
+        const decimal unitPrice = 1.99m;
+        ToolCallResult insideResult = null!;
+
+        await windowFixture.RunAsync(async () =>
+        {
+            insideResult = await PersonaHappyHourTestSupport.AddItemAfterHappyHourModeAsync(
+                windowFixture, TwoPersonaConformanceFixture.PersonaA, "Alpha Cola", "small", unitPrice, ct, "off");
+        });
+
+        Assert.DoesNotContain(expectedBanner, insideResult.FunctionCallOutputText);
+        Assert.DoesNotContain("HAPPY HOUR DISCOUNT APPLIED", insideResult.FunctionCallOutputText);
+        OrderScenarioHelpers.AssertMoneyEqual(
+            unitPrice * 1.05m,
+            OrderScenarioHelpers.GetOrderFinalTotal(insideResult.ToolResultJson!));
+    }
+
+    [Fact]
+    [Trait("Dotnet", "ready")]
+    public async Task Happy_hour_mode_auto_restores_the_existing_clock_based_behavior()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var expectedBanner = PersonaHappyHourBanner.Read(
+            RepoPaths.FixturePersonasDirectory(RepoPaths.FindRepoRoot()), TwoPersonaConformanceFixture.PersonaA);
+        const decimal unitPrice = 1.99m;
+        ToolCallResult insideResult = null!;
+
+        await windowFixture.RunAsync(async () =>
+        {
+            insideResult = await PersonaHappyHourTestSupport.AddItemAfterHappyHourModeAsync(
+                windowFixture, TwoPersonaConformanceFixture.PersonaA, "Alpha Cola", "small", unitPrice, ct, "off", "auto");
+        });
+
+        Assert.Contains(expectedBanner, insideResult.FunctionCallOutputText);
+        OrderScenarioHelpers.AssertMoneyEqual(
+            unitPrice * 0.5m * 1.05m,
+            OrderScenarioHelpers.GetOrderFinalTotal(insideResult.ToolResultJson!));
     }
 }

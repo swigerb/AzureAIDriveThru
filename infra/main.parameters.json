@@ -101,6 +101,9 @@
     "realtimeDeploymentCapacity": {
       "value": "${AZURE_OPENAI_REALTIME_DEPLOYMENT_CAPACITY=10}"
     },
+    "realtime21MiniDeploymentCapacity": {
+      "value": "${AZURE_OPENAI_REALTIME_21_MINI_DEPLOYMENT_CAPACITY=10}"
+    },
     "embeddingDeploymentCapacity": {
       "value": "${AZURE_OPENAI_EMB_DEPLOYMENT_CAPACITY=30}"
     },

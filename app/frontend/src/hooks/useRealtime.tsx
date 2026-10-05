@@ -799,6 +799,14 @@ export default function useRealTime({
         send({ type: "extension.set_voice", voice });
     };
 
+    const setMachineStatus = (machine: string, status: "up" | "down") => {
+        send({ type: "extension.set_machine_status", machine, status });
+    };
+
+    const setHappyHourMode = (mode: "auto" | "on" | "off") => {
+        send({ type: "extension.set_happy_hour_mode", mode });
+    };
+
     // Issue GH-180 round 2, R1: handleSelectPersona now awaits the target persona's fetch BEFORE
     // calling endSession() (so a failed fetch tears nothing down), but reconnect() still needs to
     // tell "a switch is pending" apart from "ordinary dead socket" the instant the guest confirms
@@ -873,6 +881,8 @@ export default function useRealTime({
         sendVerboseLogging,
         sendLogToFile,
         sendVoiceChoice,
+        setMachineStatus,
+        setHappyHourMode,
         endSession,
         isConnected,
         reconnect,

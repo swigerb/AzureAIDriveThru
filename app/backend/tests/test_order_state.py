@@ -876,5 +876,51 @@ class ZetaCountSizeReadBackTests(unittest.TestCase):
         self.assertNotIn("25 Count", summary.spokenReadBack)
 
 
+class NonStringOverrideGuardTests(unittest.TestCase):
+    """#309 (S5, parity with the C# backend): a malformed/malicious client frame sending a
+    non-string value for `machine`/`status` (`set_machine_override`) or `mode`
+    (`set_happy_hour_mode`) -- e.g. `"machine": []` -- must be rejected cleanly (log a WARNING,
+    store nothing, return False), never raise. Before this fix, a non-string `machine` blew up
+    with an uncaught `TypeError: unhashable type` inside `machine not in
+    self._menu_for(session).machines` (a dict membership test), which `rtmt.py`'s surrounding
+    `except (json.JSONDecodeError, KeyError)` does NOT catch -- crashing that guest's entire
+    client-message relay loop."""
+
+    def setUp(self):
+        order_state_singleton.sessions = {}
+
+    def test_non_string_machine_with_valid_status_is_rejected_without_raising_or_storing(self):
+        session_id = order_state_singleton.create_session()
+        with self.assertLogs("order_state", level="WARNING"):
+            accepted = order_state_singleton.set_machine_override(session_id, [], "down")
+        self.assertFalse(accepted)
+        self.assertEqual(order_state_singleton.sessions[session_id]["_machine_overrides"], {})
+
+    def test_non_string_machine_dict_variant_is_also_rejected(self):
+        session_id = order_state_singleton.create_session()
+        with self.assertLogs("order_state", level="WARNING"):
+            accepted = order_state_singleton.set_machine_override(session_id, {}, "down")
+        self.assertFalse(accepted)
+        self.assertEqual(order_state_singleton.sessions[session_id]["_machine_overrides"], {})
+
+    def test_non_string_status_with_valid_machine_is_rejected_without_raising_or_storing(self):
+        session_id = order_state_singleton.create_session()
+        # Whatever machine this persona's default pack declares -- the point is *status* being
+        # non-string must be rejected before anything is ever looked up or stored.
+        machine_name = next(iter(order_state_singleton.get_menu_catalog(session_id).machines), None)
+        with self.assertLogs("order_state", level="WARNING"):
+            accepted = order_state_singleton.set_machine_override(session_id, machine_name, [])
+        self.assertFalse(accepted)
+        self.assertEqual(order_state_singleton.sessions[session_id]["_machine_overrides"], {})
+
+    def test_non_string_mode_is_rejected_without_raising_or_storing(self):
+        session_id = order_state_singleton.create_session()
+        before = order_state_singleton.get_happy_hour_mode(session_id)
+        with self.assertLogs("order_state", level="WARNING"):
+            accepted = order_state_singleton.set_happy_hour_mode(session_id, [])
+        self.assertFalse(accepted)
+        self.assertEqual(order_state_singleton.get_happy_hour_mode(session_id), before)
+
+
 if __name__ == "__main__":
     unittest.main()

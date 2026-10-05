@@ -28,7 +28,7 @@ https://github.com/user-attachments/assets/d4dc2713-5117-45cd-ba49-9aa2d707432d
 
 - Personas under `personas/`: currently `sonic`, `dunkin`, and `mcdonalds`. Each persona owns `persona.json`, `menu/menuItems.json`, prompt YAML, hints, assets, theme data, and optional demo assets.
 - Persona picker with `?persona=<id>` deep links and a confirm dialog before switching when an order or conversation is active.
-- Settings panel with Demo Mode, breakfast or lunch menu mode for daypart personas, voice picker, model picker, dummy data, session-token display, and operator logging toggles.
+- Settings panel with Demo Mode, breakfast or lunch menu mode for daypart personas, a Store operations section with session-scoped per-machine up/down toggles and happy-hour Auto/On/Off control where supported, voice picker, model picker, dummy data, session-token display, and operator logging toggles.
 - Demo Mode for personas that ship `assets/demo/guestScript.json`, including **Run demo: This brand**, **Full tour**, an Ava guest voice card, captions, and synthetic guest audio playback.
 - Search-grounded ordering with four tools: `search`, `update_order`, `get_order`, and `reset_order`.
 - Server-side pricing, 8 percent tax, order validation, live ticket updates, transcript, and off-menu rejection.
@@ -43,9 +43,11 @@ https://github.com/user-attachments/assets/d4dc2713-5117-45cd-ba49-9aa2d707432d
 
 ### Realtime pipeline
 
-The browser streams microphone PCM over one `/realtime` WebSocket. The Python backend relays audio to the configured Foundry realtime deployment, with default catalog id `gpt-realtime-2.1`, voice `marin`, server VAD threshold `0.5`, 300 ms prefix padding, 200 ms silence duration, the active persona prompt, and persona-specific tool schemas. Guest speech transcription defaults to `whisper-1`. The model can call ordering tools, and the backend returns tool results to both the model and the frontend ticket.
+The browser streams microphone PCM over one `/realtime` WebSocket. The Python backend relays audio to the configured Foundry realtime deployment, with default catalog id `gpt-realtime-2.1-mini`, voice `marin`, server VAD threshold `0.5`, 300 ms prefix padding, 200 ms silence duration, the active persona prompt, and persona-specific tool schemas. Guest speech transcription defaults to `whisper-1`. The model can call ordering tools, and the backend returns tool results to both the model and the frontend ticket.
 
-`gpt-realtime-mini` is present in `app/backend/config.yaml`, but `infra/model-deployments.json` does not deploy it today, so it is not selectable in a standard azd deployment.
+`gpt-realtime-2.1` remains catalogued and deployed as a selectable (non-default) alternative -- it runs deeper reasoning passes than `gpt-realtime-2.1-mini`, at the cost of latency straightforward transactional intents don't need (issue #306).
+
+A Grok voice/realtime model is not offered in Microsoft Foundry for this subscription today (checked 2026-10-05 in eastus2, eastus, westus, westus3, northcentralus, and swedencentral -- only Grok text models are listed). Deferred until Foundry offers one.
 
 ### Cascade pipeline
 
@@ -55,7 +57,7 @@ The cascade pipeline uses the same WebSocket and frontend contract. The backend 
 
 `azd` provisions or connects these resources:
 
-- Microsoft Foundry `AIServices` account, kind `AIServices`, SKU `S0`, with deployments from `infra/model-deployments.json`: `gpt-realtime-2.1`, `text-embedding-3-large`, `gpt-5-mini`, `phi-4`, `gpt-4o-transcribe`, and `gpt-4o-mini-tts`.
+- Microsoft Foundry `AIServices` account, kind `AIServices`, SKU `S0`, with deployments from `infra/model-deployments.json`: `gpt-realtime-2.1`, `gpt-realtime-2.1-mini`, `text-embedding-3-large`, `gpt-5-mini`, `phi-4`, `gpt-4o-transcribe`, and `gpt-4o-mini-tts`.
 - Azure AI Search, Basic tier by default, with one index per persona from each `persona.json` `search.indexName`.
 - Azure Container Apps hosting one container app that serves the built frontend and Python backend.
 - Azure Container Registry, Log Analytics, Storage, and a user-assigned managed identity.

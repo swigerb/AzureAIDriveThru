@@ -300,6 +300,20 @@ public static class GaSessionValidator
             }
         }
 
+        // #315: the real realtime API validates every `session.tools[*].parameters` against the
+        // JSON Schema metaschema and rejects a malformed one with `invalid_function_parameters`
+        // (live 2026-10-05: a YAML-sourced `additionalProperties` typed as the STRING `"false"`
+        // rather than the JSON boolean `false` was rejected on every C# session, see #314). This
+        // fake previously accepted any `tools` shape at all, so that exact regression was CI-green
+        // on both legs while production ran with no tools and no instructions. Checked before the
+        // `type` discriminator below so a malformed schema is reported as the specific tool/field
+        // at fault rather than a generic missing-`type` message when both happen to be present.
+        var toolSchemaError = ValidateToolSchemas(session);
+        if (toolSchemaError is not null)
+        {
+            return toolSchemaError;
+        }
+
         // GA requires the `type` discriminator on every session.update's `session` object
         // (SessionUpdateEvent.session: RealtimeSessionCreateRequest, whose `type` field is
         // non-optional — literal "realtime"). Checked last so the more specific errors above
@@ -322,6 +336,158 @@ public static class GaSessionValidator
 
     private static string? FirstUnknownKey(JsonElement obj, IReadOnlySet<string> allowed) =>
         obj.EnumerateObject().Select(p => p.Name).FirstOrDefault(name => !allowed.Contains(name));
+
+    /// <summary>
+    /// #315: validates every `session.tools[*].parameters` against the JSON Schema metaschema
+    /// (at minimum -- matching the issue's own acceptance criteria -- `type` is a string or array
+    /// of strings, `additionalProperties` is a bool or object, `required` is an array of strings,
+    /// `properties` is an object whose own values are themselves recursively validated as nested
+    /// schemas). Returns the rejection on the first malformed tool, `null` if every tool's
+    /// `parameters` (if present at all -- a tool with no `parameters` is unchanged behaviour, same
+    /// as before this check existed) is well-typed.
+    /// </summary>
+    private static SessionUpdateValidationResult? ValidateToolSchemas(JsonElement session)
+    {
+        if (!session.TryGetProperty("tools", out var tools) || tools.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        var index = 0;
+        foreach (var tool in tools.EnumerateArray())
+        {
+            if (tool.ValueKind == JsonValueKind.Object &&
+                tool.TryGetProperty("parameters", out var parameters) &&
+                parameters.ValueKind != JsonValueKind.Null &&
+                parameters.ValueKind != JsonValueKind.Undefined)
+            {
+                var schemaError = ValidateSchemaNode(parameters);
+                if (schemaError is not null)
+                {
+                    var name = TryGetToolName(tool) ?? "<unnamed>";
+                    return SessionUpdateValidationResult.Rejected(
+                        code: "invalid_function_parameters",
+                        param: $"session.tools[{index}].parameters",
+                        message: $"Invalid schema for function '{name}': {schemaError}.",
+                        echoEventId: true);
+                }
+            }
+
+            index++;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Validates one JSON Schema node (a tool's top-level `parameters`, or a nested schema found
+    /// under `properties`/`items`) and returns a human-readable description of the first thing
+    /// wrong with it, or `null` if it's well-typed. Deliberately narrow -- this is NOT a full
+    /// metaschema/JSON-Schema-draft validator (no `$ref`, no `enum`/`const`/numeric-keyword shape
+    /// checks, no draft-version-specific rules); it only catches the class of bug #314 actually
+    /// hit -- a value landing on the wire with the wrong JSON *kind* for a keyword every JSON
+    /// Schema draft agrees on (e.g. a YAML-sourced boolean/array/object coming through as a bare
+    /// string) -- which is exactly what the real realtime API's own `invalid_function_parameters`
+    /// rejection guards against.
+    /// </summary>
+    private static string? ValidateSchemaNode(JsonElement node)
+    {
+        if (node.ValueKind != JsonValueKind.Object)
+        {
+            return $"{Describe(node)} is not of type 'object'";
+        }
+
+        if (node.TryGetProperty("type", out var typeProp))
+        {
+            if (typeProp.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in typeProp.EnumerateArray())
+                {
+                    if (item.ValueKind != JsonValueKind.String)
+                    {
+                        return $"{Describe(item)} is not of type 'string'";
+                    }
+                }
+            }
+            else if (typeProp.ValueKind != JsonValueKind.String)
+            {
+                return $"{Describe(typeProp)} is not of type 'string'";
+            }
+        }
+
+        if (node.TryGetProperty("additionalProperties", out var additionalProperties) &&
+            additionalProperties.ValueKind is not (JsonValueKind.True or JsonValueKind.False or JsonValueKind.Object))
+        {
+            return $"{Describe(additionalProperties)} is not of type 'object', 'boolean'";
+        }
+
+        if (node.TryGetProperty("required", out var required))
+        {
+            if (required.ValueKind != JsonValueKind.Array)
+            {
+                return $"{Describe(required)} is not of type 'array'";
+            }
+
+            foreach (var item in required.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.String)
+                {
+                    return $"{Describe(item)} is not of type 'string'";
+                }
+            }
+        }
+
+        if (node.TryGetProperty("properties", out var properties))
+        {
+            if (properties.ValueKind != JsonValueKind.Object)
+            {
+                return $"{Describe(properties)} is not of type 'object'";
+            }
+
+            foreach (var property in properties.EnumerateObject())
+            {
+                var nestedError = ValidateSchemaNode(property.Value);
+                if (nestedError is not null)
+                {
+                    return nestedError;
+                }
+            }
+        }
+
+        if (node.TryGetProperty("items", out var items) && items.ValueKind == JsonValueKind.Object)
+        {
+            var nestedError = ValidateSchemaNode(items);
+            if (nestedError is not null)
+            {
+                return nestedError;
+            }
+        }
+
+        return null;
+    }
+
+    private static string? TryGetToolName(JsonElement tool) =>
+        tool.TryGetProperty("name", out var name) && name.ValueKind == JsonValueKind.String
+            ? name.GetString()
+            : null;
+
+    /// <summary>Renders the offending JSON value the same way the real API's own error messages
+    /// quote an offending scalar (e.g. `'false' is not of type 'object', 'boolean'` from #314's
+    /// own live error text) -- a bare string is quoted verbatim, every other kind gets a short
+    /// JSON-ish description since the real service never observed those shapes failing this
+    /// check (only a string-typed scalar that should have been a different JSON kind is NOT
+    /// independently live-verified wording).</summary>
+    private static string Describe(JsonElement value) => value.ValueKind switch
+    {
+        JsonValueKind.String => $"'{value.GetString()}'",
+        JsonValueKind.Number => value.GetRawText(),
+        JsonValueKind.True => "'true'",
+        JsonValueKind.False => "'false'",
+        JsonValueKind.Null => "'null'",
+        JsonValueKind.Array => "an array",
+        JsonValueKind.Object => "an object",
+        _ => value.GetRawText(),
+    };
 }
 
 public sealed record SessionUpdateValidationResult(bool IsAccepted, string? Code, string? Param, string? Message, bool EchoEventId)

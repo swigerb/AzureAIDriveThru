@@ -58,6 +58,8 @@ function loadRealPersonaDetail(packId: string): PersonaDetail {
         menuUrl: `/personas/${raw.id}/menu.json`,
         models: raw.models,
         taxRate: raw.pricing?.taxRate ?? "0",
+        machines: raw.machines ?? {},
+        happyHour: raw.pricing?.happyHour ?? null,
         sessionBar: ui.sessionBar,
         categoryIcons: ui.categoryIcons,
         textRoles: ui.textRoles
@@ -112,6 +114,8 @@ function detailFor(overrides: Partial<PersonaDetail> = {}): PersonaDetail {
         menuUrl: "/personas/test-alpha/menu.json",
         models: { realtime: { default: "gpt-realtime-2.1", models: [] } },
         taxRate: "0.08",
+        machines: {},
+        happyHour: null,
         ...overrides
     };
 }

@@ -114,10 +114,10 @@
   "machines": {},
   "models": {
     "realtime": {
-      "default": "gpt-realtime-2.1",
+      "default": "gpt-realtime-2.1-mini",
       "allowed": [
         "gpt-realtime-2.1",
-        "gpt-realtime-mini"
+        "gpt-realtime-2.1-mini"
       ]
     },
     "cascade": {

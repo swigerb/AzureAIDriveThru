@@ -312,6 +312,8 @@ internal sealed class ProcessBackend(
 
     public string DumpDiagnostics() => output.Dump();
 
+    public string DumpSince(int watermark) => output.DumpSince(watermark);
+
     public int UnhandledErrorCount() => output.CountUnhandledErrors();
 
     public int UnhandledErrorCount(Func<IReadOnlyList<string>, bool> isBenignIncident) =>

@@ -83,7 +83,16 @@ export function resolveModelId(stored: string | null | undefined, models: Person
  * Per-persona localStorage key (issue #80 F10: "persisted per persona") -- unlike the single,
  * un-namespaced `voiceChoice` key in `App.tsx`, a model choice is namespaced by persona id so
  * switching personas never leaks one persona's chosen model onto another's.
+ *
+ * Rick's PR 308 review item 2 (issue 306): versioned `v2.` prefix. Before issue 306, `gpt-realtime-2.1`
+ * was the ONLY selectable realtime model, so every returning browser already has
+ * `modelChoice.<persona> = "gpt-realtime-2.1"` written under the unversioned key -- still a
+ * valid, listed option today, so `resolveModelId` would keep honoring it forever and the new
+ * `gpt-realtime-2.1-mini` default would never reach an existing browser, only brand-new ones.
+ * Bumping the key makes every pre-306 stored value a clean cache-miss, so `resolveModelId`
+ * falls through to the persona's current default exactly once. Bump this again any time a
+ * default model change should similarly reach returning guests.
  */
 export function modelStorageKey(personaId: string): string {
-    return `modelChoice.${personaId}`;
+    return `modelChoice.v2.${personaId}`;
 }

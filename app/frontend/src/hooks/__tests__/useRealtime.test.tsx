@@ -166,6 +166,19 @@ describe("useRealTime order resume", () => {
         expect(ws.send.mock.calls.every(([, keep]) => keep === false)).toBe(true);
     });
 
+    it("sends machine-status and happy-hour mode updates over the same fire-and-forget transport", async () => {
+        const { result } = await renderConnected();
+        open();
+
+        result.current.setMachineStatus("ice_cream_machine", "down");
+        result.current.setHappyHourMode("off");
+
+        expect(sent()).toEqual([
+            { type: "extension.set_machine_status", machine: "ice_cream_machine", status: "down" },
+            { type: "extension.set_happy_hour_mode", mode: "off" }
+        ]);
+    });
+
     it("sends no resume frame when the tab holds no id", async () => {
         const { result } = await renderConnected();
         result.current.startSession();

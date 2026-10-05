@@ -44,6 +44,12 @@ public sealed class SearchTool
     // connect time -- null for a persona with no features.dayparts, or an unbound caller. The
     // single reader is the OData filter built in ExecuteAsync below.
     private readonly string? _menuMode;
+    // #309 (R1): this session's own OrderState.EffectiveMachineStatus (pack default + the
+    // session's own operator override, if any, applied on top) -- mirrors tools.py's
+    // `order_state_singleton.effective_machine_status(session_id, machine)`. Null for an
+    // unbound/direct caller (e.g. most of this class's own tests), in which case FormatRecord
+    // falls back to `_menu.MachineStatus(machine)` exactly as before this fix.
+    private readonly Func<string, string?>? _effectiveMachineStatus;
 
     public SearchTool(
         HttpClient http,
@@ -55,7 +61,8 @@ public sealed class SearchTool
         string? personaId,
         ISearchBearerTokenProvider? bearerTokenProvider = null,
         ILogger? logger = null,
-        string? menuMode = null)
+        string? menuMode = null,
+        Func<string, string?>? effectiveMachineStatus = null)
     {
         _http = http;
         _config = config;
@@ -67,6 +74,7 @@ public sealed class SearchTool
         _bearerTokenProvider = bearerTokenProvider;
         _logger = logger;
         _menuMode = menuMode;
+        _effectiveMachineStatus = effectiveMachineStatus;
     }
 
     /// <summary>Executes one <c>search</c> tool call. Always <see
@@ -81,11 +89,13 @@ public sealed class SearchTool
         // to `query` itself so the cache key and every search request see the same rewritten text.
         var query = _menu.RewriteSearchQuery(rawQuery);
 
+        // #309 (R1): the cache stores the RAW records Azure AI Search returned, not the
+        // formatted/OOS-tagged ToolResult -- see FormatRecord below and SearchResultCache's own
+        // doc comment for why. Machine status (and therefore which items get an "[OOS: ...]"
+        // tag) is a per-session, override-sensitive property, so the formatted text is built
+        // fresh on EVERY call, cache hit or not, off THIS call's own effective status.
         var cacheKey = $"{_personaId ?? ""}::{_menuMode ?? ""}::{query.Trim().ToLowerInvariant()}";
-        if (Cache.TryGet(cacheKey, out var cached) && cached is not null)
-        {
-            return cached;
-        }
+        List<JsonElement>? records = Cache.TryGet(cacheKey, out var cachedRecords) ? cachedRecords : null;
 
         // Issue 165: restrict results server-side to items whose own menuPeriod is _menuMode,
         // "allDay", or unset ("" -- setup_search_index.py's own sentinel for a period-less item)
@@ -102,93 +112,100 @@ public sealed class SearchTool
         var selectFields = new[] { _config.IdentifierField, "name", "category", "description", "sizes" };
         var semanticEnabled = _config.UseSemanticRanker && !string.IsNullOrEmpty(_config.SemanticConfiguration);
 
-        List<JsonElement> records;
-        try
+        if (records is null)
         {
-            records = await FetchRecordsAsync(query, selectFields, includeVector: true, semantic: semanticEnabled, modeFilter, cancellationToken)
-                .ConfigureAwait(false);
-        }
-        catch (TimeoutException exc)
-        {
-            _logger?.LogError(exc,
-                "Search timed out for persona {PersonaId} index {IndexName}: {ExceptionType}: {ExceptionMessage}",
-                _personaId, _indexName, exc.GetType().Name, exc.Message);
-            return ServerError("search_service_unavailable",
-                "I'm having trouble reaching our menu right now — could you try that again?");
-        }
-        catch (SearchApiException exc) when (exc.Message.Contains("Could not find a property named"))
-        {
-            // #37/PR #50 review: gracefully retry with a minimal projection on a field-name
-            // mismatch (e.g. an out-of-date `select` list against the real index's schema, or --
-            // issue 165 -- a `menuPeriod` filter against an index that hasn't been rebuilt with
-            // that field yet). Dropping the mode filter here too means a stale index degrades to
-            // unfiltered search rather than failing the lookup outright.
-            _logger?.LogWarning(exc,
-                "Search field-name mismatch for persona {PersonaId} index {IndexName}; retrying with a minimal projection: {ExceptionType}: {ExceptionMessage}",
-                _personaId, _indexName, exc.GetType().Name, exc.Message);
             try
             {
-                string?[] fallbackCandidates = [_config.IdentifierField, _config.ContentField];
-                var fallbackSelect = fallbackCandidates.Where(f => !string.IsNullOrEmpty(f)).Select(f => f!).ToArray();
-                records = await FetchRecordsAsync(query, fallbackSelect, includeVector: true, semantic: semanticEnabled, filter: null, cancellationToken)
+                records = await FetchRecordsAsync(query, selectFields, includeVector: true, semantic: semanticEnabled, modeFilter, cancellationToken)
                     .ConfigureAwait(false);
             }
-            catch (Exception retryExc)
+            catch (TimeoutException exc)
             {
-                _logger?.LogError(retryExc,
-                    "Search field-name-mismatch retry also failed for persona {PersonaId} index {IndexName}: {ExceptionType}: {ExceptionMessage}",
-                    _personaId, _indexName, retryExc.GetType().Name, retryExc.Message);
+                _logger?.LogError(exc,
+                    "Search timed out for persona {PersonaId} index {IndexName}: {ExceptionType}: {ExceptionMessage}",
+                    _personaId, _indexName, exc.GetType().Name, exc.Message);
+                return ServerError("search_service_unavailable",
+                    "I'm having trouble reaching our menu right now — could you try that again?");
+            }
+            catch (SearchApiException exc) when (exc.Message.Contains("Could not find a property named"))
+            {
+                // #37/PR #50 review: gracefully retry with a minimal projection on a field-name
+                // mismatch (e.g. an out-of-date `select` list against the real index's schema, or --
+                // issue 165 -- a `menuPeriod` filter against an index that hasn't been rebuilt with
+                // that field yet). Dropping the mode filter here too means a stale index degrades to
+                // unfiltered search rather than failing the lookup outright.
+                _logger?.LogWarning(exc,
+                    "Search field-name mismatch for persona {PersonaId} index {IndexName}; retrying with a minimal projection: {ExceptionType}: {ExceptionMessage}",
+                    _personaId, _indexName, exc.GetType().Name, exc.Message);
+                try
+                {
+                    string?[] fallbackCandidates = [_config.IdentifierField, _config.ContentField];
+                    var fallbackSelect = fallbackCandidates.Where(f => !string.IsNullOrEmpty(f)).Select(f => f!).ToArray();
+                    records = await FetchRecordsAsync(query, fallbackSelect, includeVector: true, semantic: semanticEnabled, filter: null, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception retryExc)
+                {
+                    _logger?.LogError(retryExc,
+                        "Search field-name-mismatch retry also failed for persona {PersonaId} index {IndexName}: {ExceptionType}: {ExceptionMessage}",
+                        _personaId, _indexName, retryExc.GetType().Name, retryExc.Message);
+                    return ServerError("search_service_unavailable", "I'm sorry, I can't reach our menu data right now.");
+                }
+            }
+            catch (SearchApiException exc) when (semanticEnabled && exc.Message.Contains("semantic", StringComparison.OrdinalIgnoreCase))
+            {
+                // Belt and braces: the service rejected the semantic query even though configuration
+                // said it was available (e.g. the SKU changed after deployment). Retry without the
+                // ranker rather than failing the lookup outright.
+                _logger?.LogWarning(exc,
+                    "Semantic ranker rejected by the service for persona {PersonaId} index {IndexName}; retrying without it: {ExceptionType}: {ExceptionMessage}",
+                    _personaId, _indexName, exc.GetType().Name, exc.Message);
+                try
+                {
+                    records = await FetchRecordsAsync(query, selectFields, includeVector: true, semantic: false, modeFilter, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception retryExc)
+                {
+                    _logger?.LogError(retryExc,
+                        "Semantic-ranker retry also failed for persona {PersonaId} index {IndexName}: {ExceptionType}: {ExceptionMessage}",
+                        _personaId, _indexName, retryExc.GetType().Name, retryExc.Message);
+                    return ServerError("search_service_unavailable", "I'm sorry, I can't reach our menu data right now.");
+                }
+            }
+            catch (SearchApiException exc)
+            {
+                _logger?.LogError(exc,
+                    "Search failed for persona {PersonaId} index {IndexName}: {ExceptionType}: {ExceptionMessage}",
+                    _personaId, _indexName, exc.GetType().Name, exc.Message);
                 return ServerError("search_service_unavailable", "I'm sorry, I can't reach our menu data right now.");
             }
-        }
-        catch (SearchApiException exc) when (semanticEnabled && exc.Message.Contains("semantic", StringComparison.OrdinalIgnoreCase))
-        {
-            // Belt and braces: the service rejected the semantic query even though configuration
-            // said it was available (e.g. the SKU changed after deployment). Retry without the
-            // ranker rather than failing the lookup outright.
-            _logger?.LogWarning(exc,
-                "Semantic ranker rejected by the service for persona {PersonaId} index {IndexName}; retrying without it: {ExceptionType}: {ExceptionMessage}",
-                _personaId, _indexName, exc.GetType().Name, exc.Message);
-            try
+            catch (OperationCanceledException)
             {
-                records = await FetchRecordsAsync(query, selectFields, includeVector: true, semantic: false, modeFilter, cancellationToken)
-                    .ConfigureAwait(false);
+                // #247: a genuine caller-side cancellation (e.g. a barge-in cancelling this still
+                // in-flight tool call) must propagate as a real cancellation, not be swallowed into a
+                // "graceful" ServerError tool result here. RunChatToolLoopAsync's own tool-execution
+                // loop relies on exactly this exception reaching it so it can truncate the now-
+                // orphaned tool_calls round out of history; converting it to a normal-looking
+                // completed ToolResult would let the round "succeed" and leave this call's id (which
+                // this cancelled response never actually answered) orphaned in history for the next
+                // request. FetchRecordsAsync already distinguishes this from an internal timeout via
+                // its own `when (!cancellationToken.IsCancellationRequested)` guard, so this only
+                // fires for real caller cancellation.
+                throw;
             }
-            catch (Exception retryExc)
+            catch (Exception exc)
             {
-                _logger?.LogError(retryExc,
-                    "Semantic-ranker retry also failed for persona {PersonaId} index {IndexName}: {ExceptionType}: {ExceptionMessage}",
-                    _personaId, _indexName, retryExc.GetType().Name, retryExc.Message);
-                return ServerError("search_service_unavailable", "I'm sorry, I can't reach our menu data right now.");
+                _logger?.LogError(exc,
+                    "Search failed unexpectedly for persona {PersonaId} index {IndexName}: {ExceptionType}: {ExceptionMessage}",
+                    _personaId, _indexName, exc.GetType().Name, exc.Message);
+                return ServerError("search_service_unavailable", "I had a little glitch looking that up — could you say that again?");
             }
-        }
-        catch (SearchApiException exc)
-        {
-            _logger?.LogError(exc,
-                "Search failed for persona {PersonaId} index {IndexName}: {ExceptionType}: {ExceptionMessage}",
-                _personaId, _indexName, exc.GetType().Name, exc.Message);
-            return ServerError("search_service_unavailable", "I'm sorry, I can't reach our menu data right now.");
-        }
-        catch (OperationCanceledException)
-        {
-            // #247: a genuine caller-side cancellation (e.g. a barge-in cancelling this still
-            // in-flight tool call) must propagate as a real cancellation, not be swallowed into a
-            // "graceful" ServerError tool result here. RunChatToolLoopAsync's own tool-execution
-            // loop relies on exactly this exception reaching it so it can truncate the now-
-            // orphaned tool_calls round out of history; converting it to a normal-looking
-            // completed ToolResult would let the round "succeed" and leave this call's id (which
-            // this cancelled response never actually answered) orphaned in history for the next
-            // request. FetchRecordsAsync already distinguishes this from an internal timeout via
-            // its own `when (!cancellationToken.IsCancellationRequested)` guard, so this only
-            // fires for real caller cancellation.
-            throw;
-        }
-        catch (Exception exc)
-        {
-            _logger?.LogError(exc,
-                "Search failed unexpectedly for persona {PersonaId} index {IndexName}: {ExceptionType}: {ExceptionMessage}",
-                _personaId, _indexName, exc.GetType().Name, exc.Message);
-            return ServerError("search_service_unavailable", "I had a little glitch looking that up — could you say that again?");
+
+            // #309 (R1): cache the RAW records (pre-formatting/pre-OOS-tagging) -- see the
+            // comment above the cache lookup for why the formatted ToolResult itself must never
+            // be cached.
+            Cache.Put(cacheKey, records, _searchConfig.CacheTtlSeconds, _searchConfig.CacheMaxSize);
         }
 
         var results = records.Select(FormatRecord).ToList();
@@ -197,9 +214,7 @@ public sealed class SearchTool
             ? rawText
             : "No matching menu entries found.";
 
-        var result = new ToolResult(joined.Length > 0 ? joined : noResults, ToolResultDirection.ToServer);
-        Cache.Put(cacheKey, result, _searchConfig.CacheTtlSeconds, _searchConfig.CacheMaxSize);
-        return result;
+        return new ToolResult(joined.Length > 0 ? joined : noResults, ToolResultDirection.ToServer);
     }
 
     private ToolResult ServerError(string errorKey, string fallback) =>
@@ -224,8 +239,18 @@ public sealed class SearchTool
 
         // Flag items affected by machine outages so the model knows not to recommend them --
         // data-driven off the item's own `requiresMachine` field (#73), never a keyword list.
+        // #309 (R1): routed through this session's *effective* status (pack default with the
+        // session's own operator override, if any, applied on top -- see
+        // OrderState.EffectiveMachineStatus, the same one OrderToolExecutor.UpdateOrder already
+        // checks) so a guest-visible OOS tag always agrees with what update_order will actually
+        // do with the same item, instead of the raw, override-blind pack default. An unbound/
+        // direct caller (no effectiveMachineStatus delegate, e.g. this class's own tests) falls
+        // back to the pack default exactly as before.
         var machine = _menu.RequiresMachine(itemName);
-        if (!string.IsNullOrEmpty(machine) && _menu.MachineStatus(machine) == "down")
+        var machineStatus = !string.IsNullOrEmpty(machine)
+            ? (_effectiveMachineStatus is not null ? _effectiveMachineStatus(machine) : _menu.MachineStatus(machine))
+            : null;
+        if (!string.IsNullOrEmpty(machine) && machineStatus == "down")
         {
             summary += $" [OOS: {_menu.MachineLabel(machine)}]";
         }
