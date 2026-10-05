@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json.Nodes;
 
 namespace Backend.Prompts;
@@ -19,9 +20,11 @@ public static class YamlJson
         IDictionary<object, object> map => ToJsonObject(map),
         IEnumerable<object> list => ToJsonArray(list),
         bool b => JsonValue.Create(b),
-        int i => JsonValue.Create(i),
-        long l => JsonValue.Create(l),
-        double d => JsonValue.Create(d),
+        // WithAttemptingUnquotedStringTypeDeserialization picks the smallest numeric type that fits
+        // (\3\ comes back as Byte), so every integral and floating type must map to a JSON number.
+        byte or sbyte or short or ushort or int or uint or long => JsonValue.Create(Convert.ToInt64(value, CultureInfo.InvariantCulture)),
+        ulong u => JsonValue.Create(u),
+        float or double or decimal => JsonValue.Create(Convert.ToDouble(value, CultureInfo.InvariantCulture)),
         string s => JsonValue.Create(s),
         _ => JsonValue.Create(value.ToString()),
     };
