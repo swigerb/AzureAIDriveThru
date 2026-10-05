@@ -10,8 +10,8 @@
   "state": "running",
   "attempts": 1,
   "startedAt": "2026-10-05T16:09:21.410Z",
-  "lastHeartbeatAt": "2026-10-05T16:10:09.421Z",
-  "updatedAt": "2026-10-05T16:10:09.421Z",
+  "lastHeartbeatAt": "2026-10-05T16:15:11.804Z",
+  "updatedAt": "2026-10-05T16:15:11.804Z",
   "terminalReason": null,
   "executionRef": null
 }
