@@ -20,7 +20,7 @@ public sealed class ModelCatalogTests
         var catalog = ModelCatalog.FromConfig(config);
 
         Assert.Equal(
-            new[] { "gpt-5-mini", "gpt-realtime-2.1", "gpt-realtime-mini", "phi-4" },
+            new[] { "gpt-5-mini", "gpt-realtime-2.1", "gpt-realtime-2.1-mini", "phi-4" },
             catalog.Ids);
 
         var realtime = catalog.Get("gpt-realtime-2.1");
@@ -28,8 +28,8 @@ public sealed class ModelCatalogTests
         Assert.Equal("GPT Realtime 2.1", realtime.Label);
         Assert.True(realtime.Reasoning);
 
-        var realtimeMini = catalog.Get("gpt-realtime-mini");
-        Assert.False(realtimeMini.Reasoning);
+        var realtimeMini = catalog.Get("gpt-realtime-2.1-mini");
+        Assert.True(realtimeMini.Reasoning);
 
         var cascade = catalog.Get("gpt-5-mini");
         Assert.Equal("cascade", cascade.Pipeline);
@@ -181,7 +181,7 @@ public sealed class ModelCatalogTests
 
         Assert.True(catalog.IsDeployed("gpt-realtime-2.1"));
         Assert.Equal("my-deployment", catalog.DeploymentFor("gpt-realtime-2.1"));
-        Assert.False(catalog.IsDeployed("gpt-realtime-mini"));
+        Assert.False(catalog.IsDeployed("gpt-realtime-2.1-mini"));
     }
 
     [Fact]
@@ -206,7 +206,7 @@ public sealed class ModelCatalogTests
 
         Assert.True(catalog.IsSelectable("gpt-realtime-2.1", "realtime"));
         // Catalogued for realtime but not deployed -- not selectable.
-        Assert.False(catalog.IsSelectable("gpt-realtime-mini", "realtime"));
+        Assert.False(catalog.IsSelectable("gpt-realtime-2.1-mini", "realtime"));
         // Deployed but for the wrong pipeline -- not selectable.
         Assert.False(catalog.IsSelectable("gpt-realtime-2.1", "cascade"));
     }

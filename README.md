@@ -43,9 +43,11 @@ https://github.com/user-attachments/assets/d4dc2713-5117-45cd-ba49-9aa2d707432d
 
 ### Realtime pipeline
 
-The browser streams microphone PCM over one `/realtime` WebSocket. The Python backend relays audio to the configured Foundry realtime deployment, with default catalog id `gpt-realtime-2.1`, voice `marin`, server VAD threshold `0.5`, 300 ms prefix padding, 200 ms silence duration, the active persona prompt, and persona-specific tool schemas. Guest speech transcription defaults to `whisper-1`. The model can call ordering tools, and the backend returns tool results to both the model and the frontend ticket.
+The browser streams microphone PCM over one `/realtime` WebSocket. The Python backend relays audio to the configured Foundry realtime deployment, with default catalog id `gpt-realtime-2.1-mini`, voice `marin`, server VAD threshold `0.5`, 300 ms prefix padding, 200 ms silence duration, the active persona prompt, and persona-specific tool schemas. Guest speech transcription defaults to `whisper-1`. The model can call ordering tools, and the backend returns tool results to both the model and the frontend ticket.
 
-`gpt-realtime-mini` is present in `app/backend/config.yaml`, but `infra/model-deployments.json` does not deploy it today, so it is not selectable in a standard azd deployment.
+`gpt-realtime-2.1` remains catalogued and deployed as a selectable (non-default) alternative -- it runs deeper reasoning passes than `gpt-realtime-2.1-mini`, at the cost of latency straightforward transactional intents don't need (issue #306).
+
+A Grok voice/realtime model is not offered in Microsoft Foundry for this subscription today (checked 2026-10-05 in eastus2, eastus, westus, westus3, northcentralus, and swedencentral -- only Grok text models are listed). Deferred until Foundry offers one.
 
 ### Cascade pipeline
 
@@ -55,7 +57,7 @@ The cascade pipeline uses the same WebSocket and frontend contract. The backend 
 
 `azd` provisions or connects these resources:
 
-- Microsoft Foundry `AIServices` account, kind `AIServices`, SKU `S0`, with deployments from `infra/model-deployments.json`: `gpt-realtime-2.1`, `text-embedding-3-large`, `gpt-5-mini`, `phi-4`, `gpt-4o-transcribe`, and `gpt-4o-mini-tts`.
+- Microsoft Foundry `AIServices` account, kind `AIServices`, SKU `S0`, with deployments from `infra/model-deployments.json`: `gpt-realtime-2.1`, `gpt-realtime-2.1-mini`, `text-embedding-3-large`, `gpt-5-mini`, `phi-4`, `gpt-4o-transcribe`, and `gpt-4o-mini-tts`.
 - Azure AI Search, Basic tier by default, with one index per persona from each `persona.json` `search.indexName`.
 - Azure Container Apps hosting one container app that serves the built frontend and Python backend.
 - Azure Container Registry, Log Analytics, Storage, and a user-assigned managed identity.
