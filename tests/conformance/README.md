@@ -366,7 +366,7 @@ own realtime default model (`gpt-realtime-2.1-mini`, catalog `reasoning: true` s
 override — the deployment name only changes what the fake upstream's rejection behavior does, not
 which model the session binds to — so input 3 (the catalog) is held constant at `true` in every row
 here; see `ModelSelectionConformanceTests.Reasoning_is_sent_for_both_of_sonics_selectable_realtime_models`
-for the row that proves BOTH of sonic's selectable realtime models (`gpt-realtime-2.1-mini`,
+for the row that proves BOTH of the default persona's selectable realtime models (`gpt-realtime-2.1-mini`,
 `gpt-realtime-2.1`) send `reasoning`, with the switch left on `auto`:
 
 | Deployment name | `reasoning_model` | Expected | Fixture |

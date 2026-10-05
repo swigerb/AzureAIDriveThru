@@ -16,7 +16,7 @@ namespace Conformance.Tests;
 /// claims. Every fixture below still binds the same persona default (sonic's own,
 /// `gpt-realtime-2.1-mini`, catalog `reasoning: true` since issue #306) — see
 /// <see cref="ModelSelectionConformanceTests.Reasoning_is_sent_for_both_of_sonics_selectable_realtime_models"/>
-/// for the row that proves BOTH of sonic's selectable realtime models (`gpt-realtime-2.1-mini`,
+/// for the row that proves BOTH of the default persona's selectable realtime models (`gpt-realtime-2.1-mini`,
 /// `gpt-realtime-2.1`) send `reasoning`, with the switch left on `auto`. Each deployment
 /// name/switch value still gets its own dedicated fixture/collection (its own Python process) —
 /// see Scenarios/Sessions/ReasoningDeploymentFixtures.cs.

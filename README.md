@@ -47,7 +47,7 @@ The browser streams microphone PCM over one `/realtime` WebSocket. The Python ba
 
 `gpt-realtime-2.1` remains catalogued and deployed as a selectable (non-default) alternative -- it runs deeper reasoning passes than `gpt-realtime-2.1-mini`, at the cost of latency straightforward transactional intents don't need (issue #306).
 
-`grok-voice-latest`: no Grok voice or realtime model is offered in Microsoft Foundry for this subscription today (checked 2026-10-05 in eastus2, eastus, westus, westus3, northcentralus, and swedencentral -- only Grok text models are listed). Deferred until Foundry offers one.
+A Grok voice/realtime model is not offered in Microsoft Foundry for this subscription today (checked 2026-10-05 in eastus2, eastus, westus, westus3, northcentralus, and swedencentral -- only Grok text models are listed). Deferred until Foundry offers one.
 
 ### Cascade pipeline
 

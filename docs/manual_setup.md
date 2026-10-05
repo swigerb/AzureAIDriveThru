@@ -46,8 +46,8 @@ At minimum, the Python backend needs these settings for local development with e
 AZURE_TENANT_ID=<tenant-id>
 AZURE_OPENAI_EASTUS2_ENDPOINT=https://<foundry-subdomain>.openai.azure.com
 AZURE_AI_FOUNDRY_ENDPOINT=https://<foundry-subdomain>.services.ai.azure.com/models
-AZURE_OPENAI_REALTIME_DEPLOYMENT=gpt-realtime-2.1
-AZURE_AI_MODEL_DEPLOYMENTS={"gpt-realtime-2.1":"gpt-realtime-2.1","text-embedding-3-large":"text-embedding-3-large","gpt-5-mini":"gpt-5-mini","phi-4":"phi-4","gpt-4o-transcribe":"gpt-4o-transcribe","gpt-4o-mini-tts":"gpt-4o-mini-tts"}
+AZURE_OPENAI_REALTIME_DEPLOYMENT=gpt-realtime-2.1-mini
+AZURE_AI_MODEL_DEPLOYMENTS={"gpt-realtime-2.1":"gpt-realtime-2.1","gpt-realtime-2.1-mini":"gpt-realtime-2.1-mini","text-embedding-3-large":"text-embedding-3-large","gpt-5-mini":"gpt-5-mini","phi-4":"phi-4","gpt-4o-transcribe":"gpt-4o-transcribe","gpt-4o-mini-tts":"gpt-4o-mini-tts"}
 AZURE_SEARCH_ENDPOINT=https://<search-service>.search.windows.net
 AZURE_SEARCH_SEMANTIC_CONFIGURATION=menuSemanticConfig
 AZURE_SEARCH_IDENTIFIER_FIELD=id

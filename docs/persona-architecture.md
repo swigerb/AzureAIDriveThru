@@ -253,7 +253,7 @@ All money values are quoted decimal strings, so C# reads them as `decimal` witho
   },
 
   "models": {
-    "realtime": { "default": "gpt-realtime-2.1", "allowed": ["gpt-realtime-2.1", "gpt-realtime-mini"] },
+    "realtime": { "default": "gpt-realtime-2.1-mini", "allowed": ["gpt-realtime-2.1", "gpt-realtime-2.1-mini"] },
     "cascade":  { "default": "gpt-5-mini", "allowed": ["gpt-5-mini", "phi-4"] }
   },
 
@@ -725,7 +725,7 @@ There are three layers, each owned by one team:
    models:
      catalog:
        - { id: gpt-realtime-2.1, pipeline: realtime, label: "GPT Realtime 2.1", reasoning: true }
-       - { id: gpt-realtime-mini, pipeline: realtime, label: "GPT Realtime mini", reasoning: false }
+       - { id: gpt-realtime-2.1-mini, pipeline: realtime, label: "GPT Realtime 2.1 mini", reasoning: true }
        - { id: gpt-5-mini, pipeline: cascade, label: "GPT-5 mini", toolCalling: true }
        - { id: phi-4, pipeline: cascade, label: "Phi-4 (Foundry)", toolCalling: true }
      cascade:
@@ -893,8 +893,8 @@ small and scales after cutover.
 
 | Deployment | SKU | Stand-up capacity | After cutover | Notes |
 | --- | --- | --- | --- | --- |
-| `gpt-realtime-2.1` (realtime default) | GlobalStandard | **10 or less** | Scale up (for example to 40) once #88 deletes `cog-axgpampkq3yfa` | Bicep param `realtimeDeploymentCapacity`; scaling is a param change plus `azd provision`, then the smoke again |
-| One alternative realtime model (for example `gpt-realtime-mini`) | GlobalStandard | Small | Unchanged | Separate quota bucket with headroom; proves the model picker live |
+| `gpt-realtime-2.1` (realtime, selectable for deeper reasoning) | GlobalStandard | **10 or less** | Scale up (for example to 40) once #88 deletes `cog-axgpampkq3yfa` | Bicep param `realtimeDeploymentCapacity`; scaling is a param change plus `azd provision`, then the smoke again |
+| `gpt-realtime-2.1-mini` (realtime default, issue #306) | GlobalStandard | **10 or less** | Unchanged | Separate quota bucket; Bicep param `realtime21MiniDeploymentCapacity`; proves the model picker live |
 | `gpt-5-mini` (cascade chat, OpenAI) | GlobalStandard | **50** | Unchanged | Version `2025-08-07` (`2026-08-07` doesn't exist in eastus2, verified read-only). 1 unit is ~1K TPM; a cascade turn (~2.5K-token system prompt plus tool schemas and history) needs more than 1. `OpenAI.GlobalStandard.gpt-5-mini` usage was 170/1000 at review time, so 50 fits with headroom (#118 review item 3) |
 | `Phi-4` (cascade chat, non-OpenAI) | GlobalStandard | **20** | Unchanged | Version `7` (`1` doesn't exist; versions 2-7 are listed). Catalog-only until Unity's live tool-calling qualification in #87 passes (the eastus2 listing shows only `chatCompletion`, not `assistants`/`agentsV2`) -- removed from every persona's `models.cascade.allowed` until then. `AIServices.GlobalStandard.Phi-4` usage was 0/1000 at review time |
 | `gpt-4o-transcribe` (cascade transcription) | GlobalStandard | **10** | Unchanged | Version `2025-03-20`, confirmed listed (`audioTranscriptions`). `OpenAI.GlobalStandard.gpt-4o-transcribe` usage was 0/400 at review time |
