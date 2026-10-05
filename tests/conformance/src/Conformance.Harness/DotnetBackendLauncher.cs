@@ -155,6 +155,25 @@ public static class DotnetBackendLauncher
     /// </summary>
     private const int MaxStartAttempts = 3;
 
+    /// <summary>
+    /// Refs #259 (Rick's #267 review, required item (b)): injectable test-only seam -- see the
+    /// same-named property on <see cref="PythonBackendLauncher"/> for the full rationale. Backed
+    /// by <see cref="AsyncLocal{T}"/> (not a plain static field) specifically so a test that sets
+    /// this is only ever observed by process launches reachable from that same test's own async
+    /// call chain -- many fixtures across many xunit collections launch this exact backend
+    /// concurrently (every <c>CONFORMANCE_BACKEND=dotnet</c> test, not just this file's), and a
+    /// plain static field would let one test's observer silently capture (or be captured by)
+    /// another, unrelated fixture's launch running on a different thread at the same time. Never
+    /// set outside tests; a no-op in production.
+    /// </summary>
+    internal static Action<ProcessStartInfo>? TestOnlyProcessStartInfoObserver
+    {
+        get => TestOnlyProcessStartInfoObserverLocal.Value;
+        set => TestOnlyProcessStartInfoObserverLocal.Value = value;
+    }
+
+    private static readonly AsyncLocal<Action<ProcessStartInfo>?> TestOnlyProcessStartInfoObserverLocal = new();
+
     // Issue #135: `dotnet run` rebuilds every time it's invoked. Several fixtures in parallel
     // xunit collections used to each call StartAsync (and therefore `dotnet run`) at the same
     // time, so concurrent MSBuild invocations raced on the same app/backend-dotnet/**/obj outputs
@@ -232,6 +251,15 @@ public static class DotnetBackendLauncher
             startInfo.Environment[key] = value;
         }
 
+        // Refs #259 (Rick's #267 review, required item (b)): injectable test-only seam so
+        // DotnetBackendLauncherPortRaceTests can assert that every attempt's actual
+        // ProcessStartInfo.Environment["PORT"] -- the first attempt (whatever the caller
+        // requested) and, critically, every retry (which must always be "0", never a fresh
+        // NetworkUtils.GetFreeTcpPort() reservation that would reintroduce the TOCTOU gap port 0
+        // exists to remove) -- is what actually gets launched, not merely what StartAsync's own
+        // retry loop computed in isolation. Never set outside tests; a no-op in production.
+        TestOnlyProcessStartInfoObserver?.Invoke(startInfo);
+
         var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
         var output = new CapturedProcessOutput();
         output.Attach(process);
@@ -296,41 +324,13 @@ public static class DotnetBackendLauncher
 
             if (process.HasExited)
             {
-                // Issue #259: HasExited flips the instant the process object itself observes the
-                // OS-level exit, but this process's redirected stdout/stderr lines are delivered
-                // asynchronously on a ThreadPool callback (BeginOutputReadLine/BeginErrorReadLine)
-                // that can still be in flight at that exact instant -- reading output.Dump() right
-                // here, before that callback has run, could miss the very last lines (e.g. the
-                // "address already in use" exception text a crash-on-bind prints right before
-                // exiting), making PortRaceDetection.ShouldRetry below see an incomplete dump and
-                // misclassify a port race as an unrecognised crash (or vice versa). The
-                // parameterless Process.WaitForExit() overload blocks until BOTH the process has
-                // exited AND every redirected stream has reached EOF -- guaranteed precisely
-                // because BeginOutputReadLine/BeginErrorReadLine were used to start the async
-                // reads -- so it's safe (and fast: the process has already exited) to call here,
-                // immediately before classifying the exit from the now-fully-drained dump.
-                process.WaitForExit();
-
-                var elapsed = DateTimeOffset.UtcNow - startedAt;
-                var dump = output.Dump();
-
-                // Issue #240: an early exit whose captured output matches a known TCP
-                // bind-failure signature is a port race (something else grabbed the port between
-                // this launcher requesting it and Kestrel's own bind), not a real backend crash;
-                // only that case is worth retrying with a fresh port.
-                if (PortRaceDetection.ShouldRetry(elapsed, dump))
-                {
-                    throw new PortBindRaceException(
-                        $"C# backend exited immediately (code {process.ExitCode}), " +
-                        $"{elapsed.TotalSeconds:F1}s after starting, with output matching a TCP " +
-                        $"port-bind failure signature -- treating as a port race between " +
-                        $"something else and the backend's own Kestrel bind.\n" +
-                        $"--- backend stdout/stderr ---\n{dump}");
-                }
-
-                throw new InvalidOperationException(
-                    $"C# backend exited early (code {process.ExitCode}) before becoming healthy.\n" +
-                    $"--- backend stdout/stderr ---\n{dump}");
+                // Refs #259 (Rick's #267 review, required item (a)): drain, then dump, then
+                // classify, via the one shared helper both launchers call -- see
+                // ExitClassification's own doc comment for why the drain must happen before the
+                // dump is read, and why it's now bounded by this method's own `deadline` instead
+                // of an unbounded WaitForExit().
+                throw await ExitClassification.DrainAndClassifyAsync(
+                    process, output, startedAt, deadline, "C#").ConfigureAwait(false);
             }
 
             if (baseUri is null)

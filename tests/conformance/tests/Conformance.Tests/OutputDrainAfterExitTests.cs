@@ -5,13 +5,19 @@ using Xunit;
 namespace Conformance.Tests;
 
 /// <summary>
-/// Issue #259: end-to-end proof that draining a process's captured output fully before
-/// classifying its exit (the fix in
-/// <see cref="DotnetBackendLauncher"/>/<see cref="PythonBackendLauncher"/>'s shared
-/// <c>WaitForListeningAndHealthyAsync</c> pattern -- call the parameterless, blocking
-/// <see cref="Process.WaitForExit()"/> overload once <see cref="Process.HasExited"/> is observed
-/// true, BEFORE reading <see cref="CapturedProcessOutput.Dump"/> -- actually matters, not just a
-/// theoretical concern.
+/// Refs #259 (Rick's #267 review, required item (a)): end-to-end proof that draining a process's
+/// captured output fully before classifying its exit (the fix in the one shared
+/// <see cref="ExitClassification.DrainAndClassifyAsync"/> helper both
+/// <see cref="DotnetBackendLauncher"/> and <see cref="PythonBackendLauncher"/> call from their own
+/// <c>WaitForListeningAndHealthyAsync</c> -- block on the parameterless <see
+/// cref="Process.WaitForExit()"/> overload once <see cref="Process.HasExited"/> is observed true,
+/// BEFORE reading <see cref="CapturedProcessOutput.Dump"/>) actually matters, not just a
+/// theoretical concern. Exercises the shared helper directly (not a hand-rolled
+/// re-implementation of the pattern) so that deleting the drain from inside <see
+/// cref="ExitClassification"/> itself -- not just from one launcher -- is what this test is
+/// sensitive to; see Rick's #267 review finding 4, which flagged the pre-this-fix version of this
+/// test for only proving the general <see cref="Process.WaitForExit()"/> contract, never the
+/// launchers' own code path.
 ///
 /// Same manufacturing technique as
 /// <see cref="DotnetBackendLauncherPortRaceTests"/>'s forced bind collision: rather than relying
@@ -31,19 +37,23 @@ public sealed class OutputDrainAfterExitTests
     private const string SentinelLine = "SENTINEL-LAST-LINE-#259";
 
     /// <summary>
-    /// Mutation check: delete (or no-op) the <see cref="Process.WaitForExit()"/> call below --
-    /// restoring the pre-#259 behaviour of reading <see cref="CapturedProcessOutput.Dump"/>
-    /// immediately once <see cref="Process.HasExited"/> is observed true, with no drain wait --
-    /// and this assertion fails: the tight spin loop reliably observes the OS-level exit before
-    /// the async output pump has delivered all <see cref="BurstLineCount"/> lines, so the dump is
-    /// missing <see cref="SentinelLine"/> (and/or earlier lines) without the fix. With the fix,
-    /// <see cref="Process.WaitForExit()"/>'s documented guarantee (it blocks until BOTH the
-    /// process has exited AND every redirected stream reader started via
+    /// Mutation check: delete (or no-op) the <see cref="Process.WaitForExit()"/> call inside <see
+    /// cref="ExitClassification.DrainAndClassifyAsync"/> -- restoring the pre-#259 behaviour of
+    /// reading <see cref="CapturedProcessOutput.Dump"/> immediately once <see
+    /// cref="Process.HasExited"/> is observed true, with no drain wait -- and this assertion
+    /// fails: the tight spin loop reliably observes the OS-level exit before the async output
+    /// pump has delivered all <see cref="BurstLineCount"/> lines, so the classifying exception's
+    /// message is missing <see cref="SentinelLine"/> (and/or earlier lines) without the fix. With
+    /// the fix, <see cref="Process.WaitForExit()"/>'s documented guarantee (it blocks until BOTH
+    /// the process has exited AND every redirected stream reader started via
     /// <c>BeginOutputReadLine</c>/<c>BeginErrorReadLine</c> has reached EOF) makes the dump
-    /// complete every time, deterministically -- not probabilistically.
+    /// complete every time, deterministically -- not probabilistically. Measured rate when this
+    /// drain is removed: see the README's "Full output drain before classifying a crash" entry,
+    /// which the race reproduces probabilistically (about 60% locally); the fix itself is
+    /// deterministic.
     /// </summary>
     [Fact]
-    public async Task Dump_after_WaitForExit_always_contains_the_final_line_of_a_large_burst_from_a_fast_exiting_process()
+    public async Task DrainAndClassifyAsync_message_always_contains_the_final_line_of_a_large_burst_from_a_fast_exiting_process()
     {
         var repoRoot = RepoPaths.FindRepoRoot();
         var pythonExe = RepoPaths.PythonExecutable(repoRoot);
@@ -67,6 +77,7 @@ public sealed class OutputDrainAfterExitTests
         var output = new CapturedProcessOutput();
         output.Attach(process);
 
+        var startedAt = DateTimeOffset.UtcNow;
         Assert.True(process.Start(), "Failed to start the Python venv interpreter for this test.");
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
@@ -82,12 +93,14 @@ public sealed class OutputDrainAfterExitTests
             ct.ThrowIfCancellationRequested();
         }
 
-        // The fix under test: block until the redirected streams are fully drained BEFORE
-        // classifying/reading the dump, exactly as WaitForListeningAndHealthyAsync does.
-        process.WaitForExit();
+        // The fix under test: the shared helper both launchers call from
+        // WaitForListeningAndHealthyAsync once HasExited is observed true -- drains the redirected
+        // streams BEFORE reading/classifying the dump. A generous 30s deadline keeps this a no-op
+        // bound (the process has already exited; the drain itself is near-instant) rather than
+        // something this test could itself race.
+        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(30);
+        var ex = await ExitClassification.DrainAndClassifyAsync(process, output, startedAt, deadline, "Test");
 
-        var dump = output.Dump();
-
-        Assert.Contains(SentinelLine, dump);
+        Assert.Contains(SentinelLine, ex.Message);
     }
 }

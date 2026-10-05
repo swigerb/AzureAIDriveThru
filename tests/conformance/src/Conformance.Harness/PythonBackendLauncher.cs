@@ -56,6 +56,31 @@ public static class PythonBackendLauncher
     /// </summary>
     private const int MaxStartAttempts = 3;
 
+    /// <summary>
+    /// Refs #259 (Rick's #267 review, required item (b)): injectable test-only seam -- a hook
+    /// into the exact <see cref="ProcessStartInfo"/> (including its <c>Environment["PORT"]</c>)
+    /// this launcher is about to hand to <see cref="Process.Start"/> for a given attempt,
+    /// invoked once per attempt (first attempt and every retry). Lets a test assert directly on
+    /// what was actually launched -- e.g. that a forced-collision first attempt used the
+    /// caller-requested port while every subsequent retry always requested port 0, never a fresh
+    /// <see cref="NetworkUtils.GetFreeTcpPort"/> reservation (reintroducing the exact TOCTOU race
+    /// port 0 exists to remove) -- instead of only proving the retry loop recovers *some* way
+    /// (already covered end-to-end by <see cref="DotnetBackendLauncherPortRaceTests"/>'s
+    /// counterpart). Backed by <see cref="AsyncLocal{T}"/> (not a plain static field) so a test
+    /// that sets this is only ever observed by launches reachable from that same test's own async
+    /// call chain -- many other fixtures across many xunit collections launch the Python backend
+    /// concurrently, and a plain static field would let one test's observer silently capture (or
+    /// be captured by) another, unrelated fixture's launch running on a different thread at the
+    /// same time. Never set outside tests; a no-op in production (defaults to null).
+    /// </summary>
+    internal static Action<ProcessStartInfo>? TestOnlyProcessStartInfoObserver
+    {
+        get => TestOnlyProcessStartInfoObserverLocal.Value;
+        set => TestOnlyProcessStartInfoObserverLocal.Value = value;
+    }
+
+    private static readonly AsyncLocal<Action<ProcessStartInfo>?> TestOnlyProcessStartInfoObserverLocal = new();
+
     public static async Task<IBackendUnderTest> StartAsync(
         BackendContract contract, PythonBackendOptions options, CancellationToken cancellationToken = default)
     {
@@ -135,6 +160,15 @@ public static class PythonBackendLauncher
             startInfo.Environment[key] = value;
         }
 
+        // Refs #259 (Rick's #267 review, required item (b)): injectable test-only seam so
+        // PythonBackendLauncherPortRaceTests can assert that every attempt's actual
+        // ProcessStartInfo.Environment["PORT"] -- the first attempt (whatever the caller
+        // requested) and, critically, every retry (which must always be "0", never a fresh
+        // NetworkUtils.GetFreeTcpPort() reservation that would reintroduce the TOCTOU gap port 0
+        // exists to remove) -- is what actually gets launched, not merely what StartAsync's own
+        // retry loop computed in isolation. Never set outside tests; a no-op in production.
+        TestOnlyProcessStartInfoObserver?.Invoke(startInfo);
+
         var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
         var output = new CapturedProcessOutput();
         output.Attach(process);
@@ -205,36 +239,13 @@ public static class PythonBackendLauncher
 
             if (process.HasExited)
             {
-                // Issue #259: HasExited flips the instant the process object itself observes the
-                // OS-level exit, but this process's redirected stdout/stderr lines are delivered
-                // asynchronously on a ThreadPool callback (BeginOutputReadLine/BeginErrorReadLine)
-                // that can still be in flight at that exact instant -- reading output.Dump() right
-                // here, before that callback has run, could miss the very last lines (e.g. the
-                // "[Errno 98] Address already in use" traceback text a crash-on-bind prints right
-                // before exiting), making PortRaceDetection.ShouldRetry below see an incomplete
-                // dump and misclassify a port race as an unrecognised crash (or vice versa). The
-                // parameterless Process.WaitForExit() overload blocks until BOTH the process has
-                // exited AND every redirected stream has reached EOF -- guaranteed precisely
-                // because BeginOutputReadLine/BeginErrorReadLine were used to start the async
-                // reads -- so it's safe (and fast: the process has already exited) to call here,
-                // immediately before classifying the exit from the now-fully-drained dump.
-                process.WaitForExit();
-
-                var elapsed = DateTimeOffset.UtcNow - startedAt;
-                var dump = output.Dump();
-                if (PortRaceDetection.ShouldRetry(elapsed, dump))
-                {
-                    throw new PortBindRaceException(
-                        $"Python backend exited immediately (code {process.ExitCode}), " +
-                        $"{elapsed.TotalSeconds:F1}s after starting, with output matching a TCP " +
-                        $"port-bind failure signature -- treating as a port race between " +
-                        $"something else and the backend's own bind.\n" +
-                        $"--- backend stdout/stderr ---\n{dump}");
-                }
-
-                throw new InvalidOperationException(
-                    $"Python backend exited early (code {process.ExitCode}) before becoming healthy.\n" +
-                    $"--- backend stdout/stderr ---\n{dump}");
+                // Refs #259 (Rick's #267 review, required item (a)): drain, then dump, then
+                // classify, via the one shared helper both launchers call -- see
+                // ExitClassification's own doc comment for why the drain must happen before the
+                // dump is read, and why it's now bounded by this method's own `deadline` instead
+                // of an unbounded WaitForExit().
+                throw await ExitClassification.DrainAndClassifyAsync(
+                    process, output, startedAt, deadline, "Python").ConfigureAwait(false);
             }
 
             if (baseUri is null)
