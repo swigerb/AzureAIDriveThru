@@ -619,9 +619,21 @@ public sealed class DotnetTraitCoverageTests
     /// manual untag/retag dance had to work around by hand. This resolves the method's own
     /// MemberData attribute(s) (if any; a plain <c>[Theory]</c> with only <c>[InlineData]</c> rows
     /// always has a non-empty, statically-known row count and is never excluded here), invokes the
-    /// referenced static data-source method via reflection, and reports whether it yields zero
+    /// referenced static data-source member via reflection, and reports whether it yields zero
     /// rows -- so <see cref="CountFloorEligibleDotnetReadyTestMethods"/> can exclude exactly the
     /// methods that would otherwise silently inflate the floor with a SKIPPED, not PASSED, row.
+    ///
+    /// Issue #296 follow-up 1 (Rick's review of #295): a static property- or field-backed
+    /// <c>[MemberData]</c> source (xunit supports both, not just methods) used to fall through
+    /// <see cref="TryResolveMemberDataRows"/>'s method-only lookup, resolve to <c>null</c>, and be
+    /// counted toward the floor as if it had rows -- the exact "fails open" gap this follow-up
+    /// closes. <see cref="TryResolveMemberDataRows"/> now also tries <c>GetProperty</c>/
+    /// <c>GetField</c>, and when a source can't be resolved as a method, property, OR field at
+    /// all, this method now fails CLOSED: it excludes the method from the floor (returns
+    /// <c>true</c>) rather than leaving it counted. That silent exclusion is paired with
+    /// <see cref="SkipTestWithoutData_MemberData_sources_are_all_resolvable"/>, a loud guard Fact
+    /// that fails with an explicit message naming every unresolvable source, so an unresolvable
+    /// reference is never silently swallowed in either direction.
     /// </summary>
     private static bool TheoryYieldsZeroRowsWhenSkipGated(MethodInfo method)
     {
@@ -642,26 +654,116 @@ public sealed class DotnetTraitCoverageTests
         foreach (var memberData in memberDataAttributes)
         {
             var declaringType = memberData.MemberType ?? method.DeclaringType!;
-            var member = declaringType.GetMethod(
-                memberData.MemberName, BindingFlags.Public | BindingFlags.Static | BindingFlags.NonPublic);
-            if (member is null)
+            if (!TryResolveMemberDataRows(declaringType, memberData, out var rows))
             {
-                // Can't resolve the data source by reflection -- don't guess; leave it counted
-                // rather than risk silently excluding a method that genuinely has rows.
-                return false;
+                // Can't resolve this source as a method, property, or field -- fail CLOSED:
+                // exclude it from the floor rather than risk silently counting a SKIPPED row.
+                // SkipTestWithoutData_MemberData_sources_are_all_resolvable asserts loudly (with
+                // an explicit message naming the method and source) if this ever actually fires.
+                return true;
             }
 
-            var result = member.Invoke(null, memberData.Arguments is { Length: > 0 } args ? args : null);
-            if (result is System.Collections.IEnumerable rows && !rows.Cast<object?>().Any())
+            if (rows is null || rows.Any())
+            {
+                // Not enumerable (can't say it's zero rows), or yielded at least one row -- the
+                // Theory runs for real.
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Resolves a <c>[MemberData]</c> source as a static method, property, or field (in that
+    /// order -- xunit itself supports all three) and invokes/reads it, returning its rows. Issue
+    /// #296 follow-up 1: previously only <c>GetMethod</c> was tried, so a property- or
+    /// field-backed source (e.g. <c>public static IEnumerable&lt;object[]&gt; Cases { get; }</c>)
+    /// silently failed to resolve and was treated as "can't determine, leave it counted" by the
+    /// caller -- exactly backwards for a genuinely empty property/field source. Returns
+    /// <c>false</c> (with <paramref name="rows"/> <c>null</c>) only when none of the three member
+    /// kinds resolve at all.
+    /// </summary>
+    private static bool TryResolveMemberDataRows(
+        Type declaringType, MemberDataAttribute memberData, out IEnumerable<object?>? rows)
+    {
+        const BindingFlags flags = BindingFlags.Public | BindingFlags.Static | BindingFlags.NonPublic;
+        var arguments = memberData.Arguments is { Length: > 0 } args ? args : null;
+
+        var methodSource = declaringType.GetMethod(memberData.MemberName, flags);
+        if (methodSource is not null)
+        {
+            rows = (methodSource.Invoke(null, arguments) as System.Collections.IEnumerable)?.Cast<object?>();
+            return true;
+        }
+
+        var propertySource = declaringType.GetProperty(memberData.MemberName, flags);
+        if (propertySource is not null)
+        {
+            rows = (propertySource.GetValue(null) as System.Collections.IEnumerable)?.Cast<object?>();
+            return true;
+        }
+
+        var fieldSource = declaringType.GetField(memberData.MemberName, flags);
+        if (fieldSource is not null)
+        {
+            rows = (fieldSource.GetValue(null) as System.Collections.IEnumerable)?.Cast<object?>();
+            return true;
+        }
+
+        rows = null;
+        return false;
+    }
+
+    /// <summary>
+    /// Issue #296 follow-up 1: the loud counterpart to <see cref="TheoryYieldsZeroRowsWhenSkipGated"/>'s
+    /// new fail-closed behavior. An unresolvable <c>[MemberData]</c> source on a
+    /// <c>[Theory(SkipTestWithoutData = true)]</c> method is now silently excluded from the
+    /// coverage floor (fail closed) rather than silently counted (the old fail-open bug) -- but
+    /// "silently" should never apply to both directions at once, so this Fact scans the same
+    /// surface and fails loudly, naming every method/source pair that couldn't be resolved as a
+    /// method, property, or field, if that ever actually happens.
+    /// </summary>
+    [Fact]
+    public void SkipTestWithoutData_MemberData_sources_are_all_resolvable()
+    {
+        var assembly = typeof(DotnetTraitCoverageTests).Assembly;
+        var violations = new List<string>();
+
+        foreach (var type in assembly.GetTypes())
+        {
+            if (type.IsAbstract)
             {
                 continue;
             }
 
-            // This data source yielded at least one row -- the Theory runs for real.
-            return false;
+            foreach (var method in type.GetMethods(
+                BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static))
+            {
+                var theoryAttribute = method.GetCustomAttribute<TheoryAttribute>(inherit: true);
+                if (theoryAttribute is null || !theoryAttribute.SkipTestWithoutData)
+                {
+                    continue;
+                }
+
+                foreach (var memberData in method.GetCustomAttributes<MemberDataAttribute>(inherit: true))
+                {
+                    var declaringType = memberData.MemberType ?? method.DeclaringType!;
+                    if (!TryResolveMemberDataRows(declaringType, memberData, out _))
+                    {
+                        violations.Add($"{type.FullName}.{method.Name}: [MemberData(\"{memberData.MemberName}\")] " +
+                            $"could not be resolved as a static method, property, or field on " +
+                            $"{declaringType.FullName}.");
+                    }
+                }
+            }
         }
 
-        return true;
+        Assert.True(violations.Count == 0,
+            "Every [MemberData] source referenced by a [Theory(SkipTestWithoutData = true)] method " +
+            $"must resolve as a static method, property, or field (see issue #296); an unresolvable " +
+            $"source is excluded from the coverage floor (fail closed) but should never happen " +
+            $"silently. Violations:\n{string.Join("\n", violations)}");
     }
 
     /// <summary>

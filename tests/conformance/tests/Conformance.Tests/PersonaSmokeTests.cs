@@ -250,7 +250,8 @@ public sealed class FixturePackPersonaSmokeTests(TwoPersonaConformanceFixture fi
                 "DiscoveredBundleResizeCases() (its 'Delta Classic Meal' bundle genuinely leaves " +
                 "a drink slot open) -- it is still not part of TwoPersonaConformanceFixture " +
                 "(test-alpha/test-beta) and doesn't need its own generic greeting/search/order/" +
-                "happy-hour smoke coverage; the combo-resize Theory above already covers it.",
+                "happy-hour smoke coverage; the combo-resize Theory in " +
+                "Scenarios/Ordering/ComboComponentResizeConformanceTests.cs already covers it.",
             ["test-epsilon"] = "Refs #179/#184: a narrow wholeBundleSize plus happy-hour fixture " +
                 "pack exercised by backend unit tests only -- it is not part of " +
                 "TwoPersonaConformanceFixture (test-alpha/test-beta) and doesn't need generic " +
