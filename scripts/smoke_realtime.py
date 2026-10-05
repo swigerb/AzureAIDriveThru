@@ -56,6 +56,7 @@ import asyncio
 import base64
 import copy
 import difflib
+import io
 import json
 import os
 import re
@@ -63,6 +64,7 @@ import subprocess
 import sys
 import time
 import unicodedata
+import wave
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -73,12 +75,17 @@ import aiohttp  # noqa: E402
 from azure.core.credentials import AzureKeyCredential  # noqa: E402
 
 from config_loader import get_config  # noqa: E402
-from model_catalog import ModelCatalog  # noqa: E402
+from model_catalog import ModelCatalog, ModelValidationError  # noqa: E402
 from persona_loader import Persona, PersonaCatalog, PersonaValidationError  # noqa: E402
 from prompt_loader import PromptLoader  # noqa: E402
 from rtmt import RTMiddleTier, Tool, configure_realtime_model  # noqa: E402
 
 EXPECTED_TOOLS = ("search", "update_order", "get_order", "reset_order")
+
+# The guest turn sent for the live one-tool-call check (#302): generic enough that every
+# persona's own system prompt/menu should route it to the "search" tool rather than
+# update_order/get_order/reset_order.
+SEARCH_TOOL_GUEST_TEXT = "What drinks do you have?"
 
 # What app/frontend/src/hooks/useRealtime.tsx startSession() sends.
 BROWSER_SESSION = {
@@ -309,6 +316,156 @@ async def check_session_updates(rtmt: RTMiddleTier, url: str, headers: dict, tim
     return failures, report
 
 
+def get_search_credential(tenant_id: str | None = None, subscription_id: str | None = None):
+    """A credential for Azure AI Search's own ``SearchClient`` (#302's one-tool-call check):
+    ``AZURE_SEARCH_API_KEY`` if set (mirrors ``app.py``'s own ``search_credential``
+    resolution), else the SAME tenant-pinned ``azure.identity`` credential chain as
+    ``get_auth_headers``/``_credentials`` -- ``SearchClient`` takes a credential OBJECT
+    (not a header dict), so this returns the credential itself."""
+    if key := os.environ.get("AZURE_SEARCH_API_KEY"):
+        return AzureKeyCredential(key)
+    errors = []
+    try:
+        credentials = _credentials(tenant_id, subscription_id)
+    except Exception as exc:  # noqa: BLE001 - any credential failure means "cannot run"
+        raise SmokeError(f"could not get credentials for Azure AI Search: {exc}") from exc
+    for credential in credentials:
+        try:
+            credential.get_token("https://search.azure.com/.default")
+            return credential
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"{type(credential).__name__}: {str(exc).splitlines()[0] if str(exc) else exc!r}")
+    raise SmokeError("could not get credentials for Azure AI Search: " + "; ".join(errors))
+
+
+def _search_context_for(persona: Persona | None, search_credential) -> dict:
+    """The same search field-schema config (semantic configuration, identifier/content/embedding
+    fields, vector/ranker flags) ``app.py``'s ``persona_search_contexts`` builds for ``tools.
+    search()``, resolved for *persona* (its own ``search.indexName``) or, with no persona (the
+    legacy no-``--persona`` invocation), the deployment-wide ``AZURE_SEARCH_INDEX`` default --
+    same fallback shape as ``build_middle_tier``/``_transcription_phrase_for``."""
+    from azure.search.documents.aio import SearchClient
+
+    import default_persona
+    import menu_utils
+
+    endpoint = os.environ.get("AZURE_SEARCH_ENDPOINT")
+    if not endpoint:
+        raise SmokeError("AZURE_SEARCH_ENDPOINT is not set -- cannot run the search tool-call check")
+    index = persona.manifest.search.indexName if persona is not None else os.environ.get("AZURE_SEARCH_INDEX")
+    if not index:
+        raise SmokeError("no Azure AI Search index configured (persona.json's search.indexName, "
+                         "or AZURE_SEARCH_INDEX for the legacy no-persona invocation)")
+    menu = menu_utils.get_catalog_for_persona(persona) if persona is not None else default_persona.get_default_menu_catalog()
+    prompt_loader = (PromptLoader(brand=persona.id, prompts_dir=persona.prompts_dir)
+                     if persona is not None else PromptLoader())
+    return {
+        "search_client": SearchClient(endpoint, index, search_credential, user_agent="RTMiddleTier"),
+        "semantic_configuration": os.environ.get("AZURE_SEARCH_SEMANTIC_CONFIGURATION") or "menuSemanticConfig",
+        "identifier_field": os.environ.get("AZURE_SEARCH_IDENTIFIER_FIELD") or "id",
+        "content_field": os.environ.get("AZURE_SEARCH_CONTENT_FIELD") or "description",
+        "embedding_field": os.environ.get("AZURE_SEARCH_EMBEDDING_FIELD") or "embedding",
+        "use_vector_query": _get_bool_env("AZURE_SEARCH_USE_VECTOR_QUERY", True),
+        "use_semantic_ranker": (os.environ.get("AZURE_SEARCH_SEMANTIC_RANKER") or "standard").lower() != "disabled",
+        "menu": menu,
+        "prompt_loader": prompt_loader,
+    }
+
+
+def _get_bool_env(variable_name: str, default: bool = False) -> bool:
+    """Same parsing as ``app.py``'s own ``_get_bool_env`` -- duplicated here (not imported) to
+    keep this standalone script's only backend-module dependency the shared domain modules
+    (``tools``, ``menu_utils``, ``default_persona``, ...), never ``app.py`` itself, which builds
+    a whole ``aiohttp.web.Application`` on import."""
+    value = os.environ.get(variable_name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _count_search_hits(result_text: str) -> int:
+    """Hits in a ``tools.search()`` ``ToolResult``'s text: one ``"[identifier]: ..."`` summary
+    per result, joined by ``"\\n-----\\n"`` (see ``tools.search``'s own ``joined_results``) -- 0
+    for the "no results" error message, which never starts with ``"["``."""
+    if not result_text.strip():
+        return 0
+    return sum(1 for block in result_text.split("\n-----\n") if block.strip().startswith("["))
+
+
+async def check_search_tool_call(rtmt: RTMiddleTier, url: str, headers: dict, timeout: float,
+                                 persona: Persona | None, search_credential) -> tuple[list[str], list[str]]:
+    """#302 step 1: send a scripted guest turn over the realtime session and assert the model
+    emits a well-formed ``search`` ``function_call`` (name and JSON ``{"query": ...}`` args),
+    then run THAT SAME query for real against the persona's own index through the backend's own
+    ``tools.search()`` code path (no app server needed) and assert at least one hit."""
+    import tools
+
+    tool_schemas = [tool.schema for tool in rtmt.tools.values()]
+    failures: list[str] = []
+    report: list[str] = []
+    call: dict | None = None
+    async with aiohttp.ClientSession() as http, http.ws_connect(url, headers=headers) as ws:
+        session_payload = rtmt.build_bootstrap_session_update(system_message=rtmt.system_message, tool_schemas=tool_schemas)
+        _echoed, error = await send_session_update(ws, session_payload, timeout)
+        if error is not None:
+            return [f"search tool call: session.update rejected: {error.get('error')}"], []
+        await ws.send_json({
+            "type": "conversation.item.create",
+            "item": {"type": "message", "role": "user",
+                     "content": [{"type": "input_text", "text": SEARCH_TOOL_GUEST_TEXT}]},
+        })
+        await ws.send_json({"type": "response.create"})
+        deadline = time.monotonic() + timeout
+        while (remaining := deadline - time.monotonic()) > 0:
+            try:
+                event = await _next_event(ws, remaining)
+            except TimeoutError:
+                break
+            if event is None:
+                continue
+            kind = event.get("type")
+            if kind == "response.output_item.done" and (event.get("item") or {}).get("type") == "function_call":
+                call = event["item"]
+                break
+            if kind == "error":
+                return [f"search tool call: error {event.get('error')}"], []
+            if kind == "response.done":
+                break
+    if call is None:
+        return [f"search tool call: the model did not emit a function_call for the guest turn "
+                f"{SEARCH_TOOL_GUEST_TEXT!r} within {timeout:.0f}s"], []
+    if call.get("name") != "search":
+        return [f"search tool call: the model called {call.get('name')!r} instead of 'search' "
+                f"for the guest turn {SEARCH_TOOL_GUEST_TEXT!r}"], []
+    try:
+        args = json.loads(call.get("arguments") or "")
+    except json.JSONDecodeError as exc:
+        return [f"search tool call: arguments were not valid JSON: {exc} (raw: {call.get('arguments')!r})"], []
+    query = args.get("query") if isinstance(args, dict) else None
+    if not query:
+        return [f"search tool call: arguments had no non-empty 'query' field (raw: {args!r})"], []
+    report.append(f"PASS  search tool call: the model called search({args!r}) for {SEARCH_TOOL_GUEST_TEXT!r}")
+
+    # Run that SAME query for real, through the backend's own search() code path -- no app
+    # server needed, just the same SearchClient/field-config app.py itself builds.
+    ctx = _search_context_for(persona, search_credential)
+    result = await tools.search(
+        ctx["search_client"], ctx["semantic_configuration"], ctx["identifier_field"],
+        ctx["content_field"], ctx["embedding_field"], ctx["use_vector_query"], {"query": query},
+        ctx["use_semantic_ranker"], menu=ctx["menu"], prompt_loader=ctx["prompt_loader"],
+        persona_id=persona.id if persona is not None else None,
+    )
+    hits = _count_search_hits(result.to_text())
+    if hits < 1:
+        failures.append(f"search tool call: query {query!r} against "
+                        f"{persona.id if persona is not None else '(default)'}'s own index "
+                        f"returned no hits")
+    else:
+        report.append(f"PASS  search tool call: query {query!r} returned {hits} hit(s) from "
+                      f"{persona.id if persona is not None else '(default)'}'s own index")
+    return failures, report
+
+
 def synthesis_instructions(text: str) -> str:
     return f"Say exactly this sentence, word for word, and nothing else: \"{text}\""
 
@@ -410,7 +567,7 @@ async def check_transcription(rtmt: RTMiddleTier, url: str, headers: dict, timeo
 async def run(endpoint: str, deployment: str, *, voice: str | None, timeout: float,
               skip_transcription: bool, headers: dict[str, str] | None = None,
               tenant_id: str | None = None, subscription_id: str | None = None,
-              persona: Persona | None = None) -> int:
+              persona: Persona | None = None, skip_search: bool = False) -> int:
     rtmt = build_middle_tier(endpoint, deployment, voice, persona=persona)
     url = realtime_url(endpoint, deployment)
     print(f"Realtime smoke check: persona={persona.id if persona else '(default)'} "
@@ -425,6 +582,13 @@ async def run(endpoint: str, deployment: str, *, voice: str | None, timeout: flo
             t_failures, t_report = await check_transcription(rtmt, url, headers, timeout, phrase)
             failures += t_failures
             report += t_report + [f"FAIL  {f}" for f in t_failures]
+        if not skip_search:
+            # #302 step 1: one scripted guest turn -> assert a well-formed `search`
+            # function_call -> run that query for real against the persona's own index.
+            search_credential = get_search_credential(tenant_id, subscription_id)
+            s_failures, s_report = await check_search_tool_call(rtmt, url, headers, timeout, persona, search_credential)
+            failures += s_failures
+            report += s_report + [f"FAIL  {f}" for f in s_failures]
     except aiohttp.WSServerHandshakeError as exc:
         raise SmokeError(f"websocket handshake failed: HTTP {exc.status} {exc.message}") from exc
     except (aiohttp.ClientError, OSError) as exc:
@@ -436,6 +600,247 @@ async def run(endpoint: str, deployment: str, *, voice: str | None, timeout: flo
               "or without transcripts on this deployment.")
         return 1
     print("SMOKE CHECK PASSED")
+    return 0
+
+
+# ── Cascade pipeline smoke (#302 step 2) ────────────────────────────────────────────────
+#
+# `CascadeProcessor` (app/backend/cascade_processor.py) is STT (Azure OpenAI
+# `gpt-4o-transcribe`) -> a Foundry chat model (azure-ai-inference `ChatCompletionsClient`,
+# tool calling) -> TTS (Azure OpenAI `gpt-4o-mini-tts`), and -- unlike the realtime pipeline's
+# `llm_credential`/`search_credential` (which may be an API key) -- ALWAYS authenticates with a
+# real Entra ID token (design doc section 7.4 / issue #82: "DefaultAzureCredential only, never
+# an API key"), so this smoke check's own cascade credential chain below has no api-key branch.
+
+def _async_credentials(tenant_id: str | None, subscription_id: str | None) -> list:
+    """The async ``azure.identity.aio`` equivalent of ``_credentials`` -- same tenant-pinned
+    fallback order, needed because ``ChatCompletionsClient`` (and this script's own bearer-token
+    audio calls) are async, unlike the realtime pipeline's sync ``get_auth_headers`` path."""
+    from azure.identity.aio import (
+        AzureCliCredential,
+        AzureDeveloperCliCredential,
+        DefaultAzureCredential,
+    )
+    creds = []
+    if subscription_id:
+        creds.append(AzureCliCredential(subscription=subscription_id, process_timeout=60))
+    if tenant_id:
+        creds.append(AzureDeveloperCliCredential(tenant_id=tenant_id, process_timeout=60))
+        creds.append(AzureCliCredential(tenant_id=tenant_id, process_timeout=60))
+    if not creds:
+        creds.append(DefaultAzureCredential(exclude_interactive_browser_credential=True))
+    return creds
+
+
+async def get_cascade_credential(tenant_id: str | None = None, subscription_id: str | None = None):
+    """An async ``TokenCredential`` for the cascade pipeline's own Foundry chat/audio calls --
+    never an API key (see module note above). Tried in turn exactly like ``get_auth_headers``:
+    a hard auth error moves on to the next candidate instead of failing outright."""
+    errors = []
+    try:
+        credentials = _async_credentials(tenant_id, subscription_id)
+    except Exception as exc:  # noqa: BLE001
+        raise SmokeError(f"could not get an Entra ID token for the cascade pipeline: {exc}") from exc
+    for credential in credentials:
+        try:
+            await credential.get_token(_TOKEN_SCOPE)
+            return credential
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"{type(credential).__name__}: {str(exc).splitlines()[0] if str(exc) else exc!r}")
+    raise SmokeError("could not get an Entra ID token for the cascade pipeline: " + "; ".join(errors))
+
+
+async def _cascade_bearer_token(credential) -> str:
+    token = await credential.get_token(_TOKEN_SCOPE)
+    return token.token
+
+
+_CASCADE_AUDIO_SAMPLE_RATE = 24000
+_CASCADE_AUDIO_SAMPLE_WIDTH = 2  # PCM16, matches cascade_processor.py's own audio constants.
+
+
+def _pcm16_to_wav_bytes(pcm: bytes, sample_rate: int = _CASCADE_AUDIO_SAMPLE_RATE) -> bytes:
+    """Wraps raw PCM16 mono audio in a minimal WAV container (stdlib ``wave``) -- the exact
+    same transform ``cascade_processor._pcm16_to_wav_bytes`` applies before POSTing to the
+    transcription endpoint, duplicated here (not imported) for the same reason as
+    ``_cascade_tool_definitions``: this standalone script never imports ``cascade_processor``."""
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(_CASCADE_AUDIO_SAMPLE_WIDTH)
+        wav_file.setframerate(sample_rate)
+        wav_file.writeframes(pcm)
+    return buf.getvalue()
+
+
+async def _cascade_transcribe(audio_endpoint: str, deployment: str, pcm: bytes, credential, timeout: float) -> str:
+    """POSTs *pcm* (24kHz mono PCM16) to the cascade pipeline's own STT deployment, the exact
+    request shape ``CascadeProcessor._transcribe`` sends (a WAV-wrapped multipart upload to
+    ``/openai/v1/audio/transcriptions``), live."""
+    wav_bytes = _pcm16_to_wav_bytes(pcm)
+    token = await _cascade_bearer_token(credential)
+    url = f"{audio_endpoint.rstrip('/')}/openai/v1/audio/transcriptions"
+    form = aiohttp.FormData()
+    form.add_field("file", wav_bytes, filename="smoke.wav", content_type="audio/wav")
+    form.add_field("model", deployment)
+    async with aiohttp.ClientSession() as http:
+        async with http.post(url, data=form, headers={"Authorization": "Bearer " + token},
+                              timeout=aiohttp.ClientTimeout(total=timeout)) as resp:
+            resp.raise_for_status()
+            payload = await resp.json()
+    return payload.get("text", "")
+
+
+async def _cascade_speak(audio_endpoint: str, deployment: str, text: str, credential, timeout: float) -> bytes:
+    """POSTs to the cascade pipeline's own TTS deployment, the exact request shape
+    ``CascadeProcessor._speak`` sends (``/openai/v1/audio/speech``, ``response_format: "pcm"``),
+    live."""
+    token = await _cascade_bearer_token(credential)
+    url = f"{audio_endpoint.rstrip('/')}/openai/v1/audio/speech"
+    body = {"model": deployment, "input": text, "voice": "alloy", "response_format": "pcm"}
+    async with aiohttp.ClientSession() as http:
+        async with http.post(url, json=body, headers={"Authorization": "Bearer " + token},
+                              timeout=aiohttp.ClientTimeout(total=timeout)) as resp:
+            resp.raise_for_status()
+            return await resp.read()
+
+
+def _cascade_tool_definitions(tool_schemas: list[dict]):
+    """``tools.py``'s flat Realtime-API-style schemas, converted to the nested
+    Chat-Completions-style definitions the azure-ai-inference SDK expects -- the exact same
+    conversion ``cascade_processor._tool_definitions`` does, duplicated here (not imported) so
+    this standalone script never imports ``cascade_processor`` itself (which pulls in
+    ``aiohttp.web``/``session_manager``/the whole processor machinery for a single pure
+    function)."""
+    from azure.ai.inference.models import (
+        ChatCompletionsToolDefinition,
+        FunctionDefinition,
+    )
+    return [
+        ChatCompletionsToolDefinition(function=FunctionDefinition(
+            name=schema["name"], description=schema.get("description", ""), parameters=schema.get("parameters", {})))
+        for schema in tool_schemas
+    ]
+
+
+async def _cascade_chat_completion(foundry_endpoint: str, deployment: str, persona: Persona,
+                                   tool_schemas: list[dict], guest_text: str, credential,
+                                   timeout: float) -> tuple[bool, str]:
+    """One chat completion against the cascade pipeline's own Foundry chat deployment
+    (azure-ai-inference ``ChatCompletionsClient``, the same client/message/tool shape
+    ``CascadeProcessor._run_chat_tool_loop`` uses), live. Passes iff the model returns a tool
+    call OR non-empty text -- either is a well-formed completion; this check isn't asserting
+    which one a guest's own words should produce."""
+    from azure.ai.inference.aio import ChatCompletionsClient
+    from azure.ai.inference.models import SystemMessage, UserMessage
+
+    prompt_loader = PromptLoader(brand=persona.id, prompts_dir=persona.prompts_dir)
+    tool_defs = _cascade_tool_definitions(tool_schemas)
+    client = ChatCompletionsClient(endpoint=foundry_endpoint, credential=credential,
+                                   credential_scopes=[_TOKEN_SCOPE])
+    try:
+        completion = await asyncio.wait_for(
+            client.complete(
+                messages=[SystemMessage(content=prompt_loader.get_system_prompt()), UserMessage(content=guest_text)],
+                model=deployment,
+                tools=tool_defs or None,
+            ),
+            timeout=timeout,
+        )
+    finally:
+        await client.close()
+    message = completion.choices[0].message
+    tool_calls = message.tool_calls or []
+    if tool_calls:
+        names = ", ".join(tc.function.name for tc in tool_calls)
+        return True, f"tool_call(s): {names}"
+    content = (message.content or "").strip()
+    if content:
+        return True, f"text: {content[:80]!r}"
+    return False, "returned neither a tool call nor any text"
+
+
+async def run_cascade(endpoint: str, deployment: str, *, audio_endpoint: str, foundry_endpoint: str,
+                      persona: Persona, model_catalog: ModelCatalog, timeout: float,
+                      headers: dict[str, str], tenant_id: str | None, subscription_id: str | None) -> int:
+    """#302 step 2: per persona, ``gpt-4o-transcribe`` on the test phrase, one chat completion
+    with the tool schemas on the cascade chat model from the catalog, and ``gpt-4o-mini-tts``
+    returning audio bytes. Deployments resolve via ``AZURE_AI_MODEL_DEPLOYMENTS`` exactly like
+    ``app.create_app()`` resolves them for a real cascade session."""
+    cascade_cfg = persona.manifest.models.cascade
+    if cascade_cfg is None:
+        raise SmokeError(f"persona {persona.id!r} has no cascade pipeline configured (models.cascade in persona.json)")
+    audio_cfg = model_catalog.cascade_audio
+    if audio_cfg is None:
+        raise SmokeError("config.yaml's models.cascade (transcription/tts catalog ids) is not configured")
+    missing = [(label, model_id) for label, model_id in (
+        ("cascade chat model", cascade_cfg.default),
+        ("cascade transcription model", audio_cfg.transcription),
+        ("cascade tts model", audio_cfg.tts),
+    ) if model_catalog.deployment_for(model_id) is None]
+    if missing:
+        raise SmokeError("AZURE_AI_MODEL_DEPLOYMENTS is missing an entry for: " +
+                         ", ".join(f"{label} {model_id!r}" for label, model_id in missing))
+    if not foundry_endpoint:
+        raise SmokeError("AZURE_AI_FOUNDRY_ENDPOINT is not set -- cannot run the cascade chat completion check")
+    chat_deployment = model_catalog.deployment_for(cascade_cfg.default)
+    transcription_deployment = model_catalog.deployment_for(audio_cfg.transcription)
+    tts_deployment = model_catalog.deployment_for(audio_cfg.tts)
+
+    print(f"Cascade smoke check: persona={persona.id} "
+          f"chat={cascade_cfg.default}->{chat_deployment} "
+          f"transcription={audio_cfg.transcription}->{transcription_deployment} "
+          f"tts={audio_cfg.tts}->{tts_deployment}")
+
+    failures: list[str] = []
+    report: list[str] = []
+    try:
+        credential = await get_cascade_credential(tenant_id, subscription_id)
+
+        phrase = _transcription_phrase_for(persona)
+        realtime_ws_url = realtime_url(endpoint, deployment)
+        pcm = await _synthesize(realtime_ws_url, headers, phrase, timeout)
+        if not pcm:
+            raise SmokeError("could not synthesize test audio for the cascade transcription check")
+        transcript = await _cascade_transcribe(audio_endpoint, transcription_deployment, pcm, credential, timeout)
+        if not transcript.strip():
+            failures.append(f"cascade transcription ({transcription_deployment}): completed with an empty transcript")
+        elif not transcript_matches(phrase, transcript):
+            similarity = transcript_similarity(phrase, transcript)
+            failures.append(f"cascade transcription ({transcription_deployment}): transcript {transcript!r} does "
+                            f"not match the test phrase {phrase!r} (similarity {similarity:.2f} < "
+                            f"{TRANSCRIPT_MATCH_THRESHOLD:.2f})")
+        else:
+            report.append(f"PASS  cascade transcription ({transcription_deployment}): {transcript!r} "
+                          "(matches the test phrase)")
+
+        tool_schemas = _tool_schemas(PromptLoader(brand=persona.id, prompts_dir=persona.prompts_dir))
+        completion_ok, detail = await _cascade_chat_completion(
+            foundry_endpoint, chat_deployment, persona, tool_schemas, phrase, credential, timeout)
+        if completion_ok:
+            report.append(f"PASS  cascade chat completion ({chat_deployment}): {detail}")
+        else:
+            failures.append(f"cascade chat completion ({chat_deployment}): {detail}")
+
+        audio_bytes = await _cascade_speak(audio_endpoint, tts_deployment, "Here's your order, thanks for stopping by!",
+                                           credential, timeout)
+        if audio_bytes:
+            report.append(f"PASS  cascade tts ({tts_deployment}): {len(audio_bytes)} bytes of audio returned")
+        else:
+            failures.append(f"cascade tts ({tts_deployment}): no audio bytes returned")
+    except aiohttp.ClientResponseError as exc:
+        raise SmokeError(f"cascade pipeline request failed: HTTP {exc.status} {exc.message}") from exc
+    except (aiohttp.ClientError, OSError) as exc:
+        raise SmokeError(f"could not reach the cascade pipeline: {exc}") from exc
+
+    for line in report:
+        print(f"  {line}")
+    for f in failures:
+        print(f"  FAIL  {f}")
+    if failures:
+        print(f"CASCADE SMOKE CHECK FAILED ({len(failures)} problem(s))")
+        return 1
+    print("CASCADE SMOKE CHECK PASSED")
     return 0
 
 
@@ -497,23 +902,39 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--endpoint", help="Azure OpenAI endpoint (default: AZURE_OPENAI_EASTUS2_ENDPOINT)")
     parser.add_argument("--deployment", help="Realtime deployment (default: AZURE_OPENAI_REALTIME_DEPLOYMENT)")
     parser.add_argument("--persona", help="Persona pack id to smoke-test prompts/tools for "
-                                          "(default: unchanged single-brand PromptLoader default)")
+                                          "(default: unchanged single-brand PromptLoader default, "
+                                          "or -- with --pipeline cascade -- the persona catalog's own default)")
     parser.add_argument("--model", help="Model catalog id (config.yaml models.catalog) to resolve a "
                                          "deployment for via AZURE_AI_MODEL_DEPLOYMENTS; overrides "
                                          "--deployment/env when given")
+    parser.add_argument("--pipeline", choices=["realtime", "cascade"], default="realtime",
+                        help="Which pipeline to smoke-test (default: realtime)")
+    parser.add_argument("--foundry-endpoint", help="Foundry chat endpoint for --pipeline cascade "
+                                                    "(default: AZURE_AI_FOUNDRY_ENDPOINT)")
     parser.add_argument("--voice", help="Voice to send (default: AZURE_OPENAI_REALTIME_VOICE_CHOICE or config.yaml)")
     parser.add_argument("--tenant", help="Entra tenant of the Azure OpenAI resource (default: AZURE_TENANT_ID)")
     parser.add_argument("--subscription", help="Subscription whose `az` sign-in to use (default: AZURE_SUBSCRIPTION_ID)")
     parser.add_argument("--timeout", type=float, default=20.0, help="Seconds to wait per server reply (default 20)")
     parser.add_argument("--skip-transcription", action="store_true",
-                        help="Skip the live speech-transcription check")
+                        help="Skip the live speech-transcription check (--pipeline realtime only)")
+    parser.add_argument("--skip-search", action="store_true",
+                        help="Skip the live search tool-call check (--pipeline realtime only)")
     args = parser.parse_args(argv)
 
     try:
         persona = resolve_persona(args.persona)
         model_deployment = resolve_model_deployment(args.model, persona)
-    except SmokeError as exc:
-        print(f"Realtime smoke check could not run: {exc}", file=sys.stderr)
+        if args.pipeline == "cascade":
+            # Cascade (#302 step 2) always needs a real persona pack -- its models.cascade
+            # config, prompts and tool schemas -- so an omitted --persona resolves to the
+            # SAME persona catalog's own default, never a single hardcoded brand.
+            if persona is None:
+                catalog = PersonaCatalog.load()
+                persona = catalog.get(catalog.default_persona_id)
+            model_catalog = ModelCatalog.load()
+    except (SmokeError, PersonaValidationError, ModelValidationError) as exc:
+        print(f"{'Cascade' if args.pipeline == 'cascade' else 'Realtime'} smoke check could not run: {exc}",
+              file=sys.stderr)
         return 2
 
     azd_values = {} if (args.endpoint and (args.deployment or model_deployment)) else _azd_env_values()
@@ -532,11 +953,24 @@ def main(argv: list[str] | None = None) -> int:
     tenant_id = subscription_id = None
     if not os.environ.get("AZURE_OPENAI_EASTUS2_API_KEY"):
         tenant_id, subscription_id = resolve_identity(args.tenant, args.subscription, azd_values)
+
+    if args.pipeline == "cascade":
+        foundry_endpoint = resolve_setting("AZURE_AI_FOUNDRY_ENDPOINT", args.foundry_endpoint, azd_values)
+        try:
+            headers = get_auth_headers(tenant_id, subscription_id)
+            return asyncio.run(run_cascade(endpoint, deployment, audio_endpoint=endpoint,
+                                           foundry_endpoint=foundry_endpoint, persona=persona,
+                                           model_catalog=model_catalog, timeout=args.timeout,
+                                           headers=headers, tenant_id=tenant_id, subscription_id=subscription_id))
+        except SmokeError as exc:
+            print(f"Cascade smoke check could not run: {exc}", file=sys.stderr)
+            return 2
+
     try:
         return asyncio.run(run(endpoint, deployment, voice=args.voice, timeout=args.timeout,
                                skip_transcription=args.skip_transcription,
                                tenant_id=tenant_id, subscription_id=subscription_id,
-                               persona=persona))
+                               persona=persona, skip_search=args.skip_search))
     except SmokeError as exc:
         print(f"Realtime smoke check could not run: {exc}", file=sys.stderr)
         return 2

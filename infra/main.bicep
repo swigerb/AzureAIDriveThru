@@ -363,13 +363,13 @@ module acaBackend 'core/host/container-app-upsert.bicep' = {
 
 // Container App for the .NET backend (10.1 option A, 10.2). Disabled by
 // default (deployDotnetApp = false, bound to DEPLOY_DOTNET_APP in
-// main.parameters.json): app/backend-dotnet exists now (S7, #17 go-live prep),
-// but its azure.yaml service entry does not land until the owner-gated flip
-// commit (Rick's review of #281, R1 -- see DEPLOY.md's "Step 0"), so this PR
-// stays cost-neutral and deploy-neutral -- deploying the live resource is
-// Brian's call, gated behind that one flag. It shares acaIdentity, so the RBAC
-// already granted below (openAiRoleBackend, searchRoleBackend) covers it too --
-// no separate role assignments needed for a second app on the same identity.
+// main.parameters.json): app/backend-dotnet and its azure.yaml service entry
+// both exist now, together with the azd-service-name tag below (the
+// owner-gated flip commit, DEPLOY.md's "Step 0"), but provisioning the live
+// resource itself still requires DEPLOY_DOTNET_APP=true -- Brian's call, per
+// environment. It shares acaIdentity, so the RBAC already granted below
+// (openAiRoleBackend, searchRoleBackend) covers it too -- no separate role
+// assignments needed for a second app on the same identity.
 module acaBackendDotnet 'core/host/container-app-upsert.bicep' = if (deployDotnetApp) {
   name: 'aca-web-dotnet'
   scope: resourceGroup
@@ -384,17 +384,13 @@ module acaBackendDotnet 'core/host/container-app-upsert.bicep' = if (deployDotne
     containerRegistryName: containerApps.outputs.registryName
     containerAppsEnvironmentName: containerApps.outputs.environmentName
     identityType: 'UserAssigned'
-    // S7 (#17 go-live): no azd-service-name tag for this app yet. Rick's review of #281 (R1)
-    // found that tagging this module while it is still gated `if (deployDotnetApp)` (default
-    // false), with no matching azure.yaml service declared, is fine for provision but breaks
-    // nothing either way -- the real hazard was the other direction (a declared azure.yaml
-    // service with no tag anywhere to resolve). The tag moves into the owner-gated flip commit
-    // together with the azure.yaml service entry (the SERVICE_BACKEND_DOTNET_RESOURCE_EXISTS
-    // mapping has already landed separately, in infra/main.parameters.json) -- see DEPLOY.md's
-    // ".NET container app (S7, #17)" section, "Step 0", for the exact patch, and
-    // test_azd_service_wiring.py for the bidirectional drift guard that keeps the tag and
-    // service in sync once they land.
-    tags: tags
+    // S7 (#17 go-live, the flip commit): the azd-service-name tag landed here together with the
+    // matching azure.yaml `backend-dotnet` service entry, inside this module's `if
+    // (deployDotnetApp)` gate so an environment that has not flipped DEPLOY_DOTNET_APP=true never
+    // provisions this Container App. See DEPLOY.md's ".NET container app (S7, #17)" section,
+    // "Step 0", and test_azd_service_wiring.py for the bidirectional drift guard that keeps the
+    // tag and service in sync.
+    tags: union(tags, { 'azd-service-name': 'backend-dotnet' })
     targetPort: 8000
     containerCpuCoreCount: '1.0'
     containerMemory: '2Gi'
