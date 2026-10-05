@@ -182,6 +182,124 @@ public sealed class FakeChatCompletionsServer : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Rick's PR #253 review item 2: asserts the scripted-response FIFO is empty. A round whose
+    /// HTTP request is aborted WHILE <see cref="HandleCompletionAsync"/> is still awaiting
+    /// <c>JsonDocument.ParseAsync(context.Request.Body, ...)</c> -- e.g. because the cascade
+    /// processor's own call was cancelled mid-flight by <c>_cancel_current_turn</c>'s
+    /// "connection closing"/barge-in path -- never reaches this method's dequeue
+    /// (<c>_scriptedResponses.TryDequeue</c> only runs AFTER that parse completes). The scripted
+    /// response queued for that never-consumed round is left sitting in the FIFO, to be silently
+    /// handed out to whichever UNRELATED request arrives next -- the very next round of the SAME
+    /// scenario, or (worse, since this fake is shared across every scenario in the collection)
+    /// the very first `/chat/completions` call of whichever scenario happens to run next. Rick
+    /// confirmed via the barge-in row's own <see cref="ChatCompletionsRequest.Aborted"/> proof
+    /// that the underlying HTTP connection itself is NOT corrupted by this -- the bug is purely
+    /// this stale FIFO entry, not connection-pooling/keep-alive state.
+    ///
+    /// Tests never call this directly: <see cref="ConformanceFixture.AssertNoPendingExtraFakeState"/>
+    /// (overridden by the cascade fixtures to call this method) calls it automatically AFTER every
+    /// scenario's body returns (see <c>ConformanceFixture.RunAsync</c>'s own call site) -- not
+    /// before the NEXT scenario's body runs, the way <see cref="FakeRealtimeUpstreamServer
+    /// .AssertNoPendingOneShotSwitches"/> is checked. A before-the-body placement would catch the
+    /// leak, but would misattribute it to whichever scenario happens to run next instead of the
+    /// one that actually left the FIFO entry behind; checking immediately after THIS scenario's
+    /// own body returns means the scenario that caused the leak is the one that fails.
+    ///
+    /// Rick's PR #253 review (2nd follow-up): ALWAYS clears the queue before (possibly) throwing
+    /// -- previously only <see cref="Drain"/> emptied it, and nothing ever called that, so one
+    /// leak permanently poisoned every later scenario sharing this fake (each failing on its own
+    /// turn, blaming itself, for a leftover response it never queued). Clearing here means this
+    /// check is self-healing: the scenario that actually caused the leak still fails (the
+    /// `InvalidOperationException` below), but the queue is empty again by the time this method
+    /// returns, so the NEXT scenario starts clean regardless of whether this one's caller observes
+    /// the exception. See <see cref="ConformanceFixture.RunAsync"/>'s own
+    /// <c>ResetExtraFakeState</c> finally-block call for the complementary fix: a scenario body
+    /// that THROWS before ever reaching this method (the likeliest way a leak happens in the
+    /// first place -- see this class's own doc comment above) used to leave the leftover
+    /// response behind forever, since the post-body hook that used to be the only thing calling
+    /// this method never runs when the body doesn't return normally.
+    ///
+    /// Rick's PR #253 re-review: also flags (and clears) an armed-but-never-consumed
+    /// <see cref="HoldNextResponse"/> gate the same way -- a scenario that calls
+    /// <see cref="HoldNextResponse"/> and then fails/throws before any request ever claims that
+    /// gate (see <see cref="Drain"/>'s own doc comment for the exact hang this otherwise causes
+    /// in whichever request lands next) is just as much a leak as an unconsumed scripted
+    /// response, and deserves the same "THIS scenario fails, the next one starts clean" fate.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">This scenario (or an earlier one, if nothing
+    /// cleared the queue in between) left one or more scripted responses in the FIFO, and/or an
+    /// armed <see cref="HoldNextResponse"/> gate, that were never consumed by a request.</exception>
+    public void AssertNoPendingScriptedResponses()
+    {
+        int pending;
+        TaskCompletionSource? leakedGate;
+        lock (_gate)
+        {
+            pending = _scriptedResponses.Count;
+            _scriptedResponses.Clear();
+            leakedGate = _pendingResponseGate;
+            _pendingResponseGate = null;
+        }
+
+        // Released (not left to dangle) regardless of whether this throws below -- nothing may
+        // ever await this specific TaskCompletionSource again (its field slot is already gone),
+        // but releasing it defensively costs nothing and matches Drain()'s own handling.
+        leakedGate?.TrySetResult();
+
+        if (pending > 0 || leakedGate is not null)
+        {
+            var what = pending > 0 && leakedGate is not null
+                ? $"{pending} scripted /chat/completions response(s) and an armed HoldNextResponse() gate were"
+                : pending > 0
+                    ? $"{pending} scripted /chat/completions response(s) were"
+                    : "An armed HoldNextResponse() gate was";
+            throw new InvalidOperationException(
+                $"{what} never consumed by a request -- THIS scenario (checked immediately after " +
+                "its own body returned; see ConformanceFixture.AssertNoPendingExtraFakeState's own " +
+                "doc comment for why it runs after, not before) likely had a round whose request " +
+                "was aborted (e.g. a barge-in/connection-closing cancellation) before this fake " +
+                "server finished parsing its body, which skips the FIFO dequeue (and any pending " +
+                "gate claim) entirely and leaves the leftover state behind to be wrongly handed " +
+                "out to an unrelated later request instead. Both have already been cleared by this " +
+                "check, so only THIS scenario fails -- the next one starts clean.");
+        }
+    }
+
+    /// <summary>
+    /// Rick's PR #253 review item 2: discards any scripted responses left in the FIFO without
+    /// requiring a matching request to consume them -- the reset half of
+    /// <see cref="AssertNoPendingScriptedResponses"/>'s check, for a scenario that deliberately
+    /// leaves its own final round's response unconsumed (e.g. by design, not by accident) and
+    /// wants to explicitly clear the queue afterwards rather than draining to `response.done`.
+    ///
+    /// Rick's PR #253 re-review: also releases an armed-but-never-claimed
+    /// <see cref="HoldNextResponse"/> gate. <see cref="HandleCompletionAsync"/> only ever clears
+    /// <see cref="_pendingResponseGate"/> when a REQUEST arrives to claim it; a scenario that
+    /// calls <see cref="HoldNextResponse"/> and then throws (or otherwise never sends that
+    /// request) leaves the gate armed in this field forever. Without this, the very next request
+    /// to land here -- from ANY later scenario sharing this fake, e.g. the next scenario's own
+    /// connect-time greeting -- would wrongly inherit that stale gate and suspend on a
+    /// <see cref="TaskCompletionSource"/> nobody will ever release, hanging until ITS OWN caller
+    /// times out and blaming the wrong scenario (exactly the bug <see
+    /// cref="AssertNoPendingScriptedResponses"/>'s own self-healing fix addresses for the FIFO --
+    /// this is the same fix for the gate). Releasing with <c>TrySetResult()</c> (not
+    /// <c>TrySetCanceled()</c>) mirrors <see cref="ResponseGate.Release"/>'s own normal-completion
+    /// semantics; it is a no-op if nothing is actually awaiting this specific instance (the usual
+    /// case here, since the request that would have awaited it never arrived).
+    /// </summary>
+    public void Drain()
+    {
+        TaskCompletionSource? gate;
+        lock (_gate)
+        {
+            _scriptedResponses.Clear();
+            gate = _pendingResponseGate;
+            _pendingResponseGate = null;
+        }
+        gate?.TrySetResult();
+    }
+
     public async Task StartAsync(CancellationToken cancellationToken = default, int? fixedPort = null)
     {
         var builder = WebApplication.CreateBuilder();

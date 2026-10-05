@@ -42,8 +42,8 @@ public static class CascadeScenarioHelpers
     /// #82's dispatch seam (`dispatch_processor`/`ProcessorRegistry`) routes it to
     /// <c>CascadeProcessor</c>, never `RTMiddleTier`/realtime, with no `rtmt.py` special-casing.</summary>
     public static Task<RealtimeBrowserClient> ConnectAsync(
-        ConformanceFixture fixture, string model, CancellationToken ct, string? persona = null) =>
-        RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, persona: persona, model: model, cancellationToken: ct);
+        ConformanceFixture fixture, string model, CancellationToken ct, string? persona = null, string? mode = null) =>
+        RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, persona: persona, model: model, mode: mode, cancellationToken: ct);
 
     /// <summary>
     /// Connects, waits for extension.session_metadata, then drains the automatic connect-time
@@ -55,10 +55,11 @@ public static class CascadeScenarioHelpers
     /// for its own guest turn.
     /// </summary>
     public static async Task<CascadeConnection> ConnectPastGreetingAsync(
-        ConformanceFixture fixture, FakeChatCompletionsServer chat, string model, CancellationToken ct, string? persona = null)
+        ConformanceFixture fixture, FakeChatCompletionsServer chat, string model, CancellationToken ct,
+        string? persona = null, string? mode = null)
     {
         chat.EnqueueMessage(new JsonObject { ["role"] = "assistant", ["content"] = "Welcome to the drive-thru!" });
-        var browser = await ConnectAsync(fixture, model, ct, persona).ConfigureAwait(false);
+        var browser = await ConnectAsync(fixture, model, ct, persona, mode).ConfigureAwait(false);
         try
         {
             var metadata = await browser.ReceivedFrames.WaitForAsync(f => f.Type == "extension.session_metadata", FrameTimeout, ct)

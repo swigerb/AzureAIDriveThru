@@ -42,6 +42,7 @@ import base64
 import io
 import json
 import logging
+import os
 import time
 import wave
 from dataclasses import dataclass, field
@@ -72,7 +73,15 @@ from rate_limit import (
     parse_retry_hint,
     retry_delay,
 )
-from rtmt import Tool, ToolResult, ToolResultDirection
+from rtmt import (
+    _DEFAULT_ALLOWED_VOICES,
+    Tool,
+    ToolResult,
+    ToolResultDirection,
+    _extract_raw_mode_param,
+    _sanitize_voice,
+    _truncate_for_log,
+)
 from session_manager import SessionManager, new_middle_tier_item_id
 
 logger = logging.getLogger(__name__)
@@ -273,6 +282,23 @@ class _CascadeSessionState:
     current_turn_task: asyncio.Task | None = None
 
 
+def _resolve_persona_voice(persona, default_voice: str, allowed_voices: frozenset[str]) -> str:
+    """#248: the per-persona default-voice lookup `RTMiddleTier._forward_messages` already does
+    for realtime (``persona_voice = _sanitize_voice(bound_persona.manifest.voice.default,
+    self.allowed_voices); if persona_voice is not None: voice = persona_voice``), extracted into
+    its own function so it's unit-testable without driving `CascadeProcessor._run_session`'s
+    whole async message loop. Unlike realtime's relay loop (which may have no bound persona at
+    all on some code paths), `persona` here is always the already-resolved, already-validated
+    bound persona `RTMiddleTier._websocket_handler` selected before ever dispatching to
+    `CascadeProcessor.handle` -- so there is no "persona is None"/"persona not in catalog"
+    branch to port, only the sanitize-and-fall-back-to-default shape itself. Returns
+    `default_voice` verbatim when the persona's own voice is unset, not a string, or not in
+    `allowed_voices` (the exact same silent-fallback semantics `_sanitize_voice`'s own callers
+    everywhere else in this codebase already rely on)."""
+    persona_voice = _sanitize_voice(persona.manifest.voice.default, allowed_voices)
+    return persona_voice if persona_voice is not None else default_voice
+
+
 class CascadeProcessor:
     """`processors.PipelineProcessor` for the cascade pipeline (issue #82, design doc 7.1/7.4)."""
 
@@ -297,6 +323,7 @@ class CascadeProcessor:
         audio_endpoint: str,
         credential,
         default_voice: str = "marin",
+        allowed_voices: frozenset[str] | None = None,
     ):
         self.tools = tools
         self._sessions = sessions
@@ -313,6 +340,12 @@ class CascadeProcessor:
         self.audio_endpoint = audio_endpoint.rstrip("/") if audio_endpoint else audio_endpoint
         self.credential = credential
         self.default_voice = default_voice
+        # #248: the SAME allow-list rtmt.py's own `configure_realtime_model` computes
+        # (`model.allowed_voices`/the ten GA voices default) -- passed through from app.py as
+        # `rtmt.allowed_voices` so a per-persona voice this app's own config.yaml disallows is
+        # rejected here exactly like it already is for realtime, rather than trusting any
+        # string a persona.json happens to declare.
+        self.allowed_voices = allowed_voices if allowed_voices is not None else _DEFAULT_ALLOWED_VOICES
         self._chat_client: ChatCompletionsClient | None = None
         self._vad_threshold = _vad_cfg.get("threshold", 0.5)
         self._vad_silence_ms = _vad_cfg.get("silence_duration_ms", 200)
@@ -320,7 +353,14 @@ class CascadeProcessor:
         # settings/constants/ladder-shape so a chat/STT/TTS 429 surfaces to the guest through
         # the SAME `extension.rate_limited` event contract the realtime pipeline's own
         # `RateLimitRecovery` already uses -- see `_with_rate_limit_retry` below.
-        self._rate_limit_settings = RateLimitSettings.from_config(_config)
+        # #248 (Summer's review note): `from_config` was called with no `environ` argument,
+        # so its `RATE_LIMIT_RECOVERY_ENABLED` override (`environ.get(ENABLED_ENV)`) silently
+        # never fired for cascade sessions -- `rtmt.py:1341`'s own call already passes
+        # `os.environ` and has for as long as the env override has existed; this was simply
+        # never ported over when `_rate_limit_settings` was added here. A cascade session's
+        # rate-limit recovery could not be toggled off (or on, over a config.yaml default of
+        # off) via the env var the way realtime's already can.
+        self._rate_limit_settings = RateLimitSettings.from_config(_config, os.environ)
 
     def resolve_model(self, persona, requested_model_id: str | None) -> ResolvedModel:
         """`processors.PipelineProcessor`'s model-resolution hook -- delegates to
@@ -357,10 +397,21 @@ class CascadeProcessor:
         )
         await ws.prepare(request)
 
+        # #248 (issue #165 parity): re-derived from `request.query["mode"]` the exact same way
+        # `RTMiddleTier.handle` does -- `_websocket_handler` (the SHARED dispatch seam this
+        # pipeline is only ever reached through, see `app.py`'s wiring) has already validated,
+        # before the WS upgrade, that an explicit `?mode=` is `None`/"breakfast"/"lunch" for a
+        # persona declaring `features.dayparts`, and rejected anything else with a 400 -- this
+        # is redundant-but-harmless defense in depth, not the only enforcement point, same as
+        # that method's own comment explains. `None` for a persona that doesn't declare
+        # `features.dayparts`, so `create_session`/`order_state_singleton` normalize it to "no
+        # menu mode" (unfiltered menu) exactly like realtime already does for the same persona.
+        requested_menu_mode = _extract_raw_mode_param(request) if persona.manifest.features.dayparts else None
+
         session_id = self._sessions.create_session(
             ws, persona=persona, model_id=resolved_model.id,
             model_deployment=resolved_model.deployment, model_reasoning=resolved_model.reasoning,
-            model_pipeline=resolved_model.pipeline,
+            model_pipeline=resolved_model.pipeline, menu_mode=requested_menu_mode,
         )
         try:
             identifiers = order_state_singleton.get_session_identifiers(session_id)
@@ -376,11 +427,13 @@ class CascadeProcessor:
 
     async def _run_session(self, ws: web.WebSocketResponse, session_id: str, persona, resolved_model: ResolvedModel) -> None:
         prompt_loader = self.persona_prompt_loaders.get(persona.id)
+        # #248: per-persona default voice -- see `_resolve_persona_voice`'s own doc comment.
+        voice = _resolve_persona_voice(persona, self.default_voice, self.allowed_voices)
         state = _CascadeSessionState(
             session_id=session_id,
             persona_id=persona.id,
             deployment=resolved_model.deployment,
-            voice=self.default_voice,
+            voice=voice,
         )
         if prompt_loader is not None:
             state.messages.append(SystemMessage(content=prompt_loader.get_system_prompt()))
@@ -433,10 +486,19 @@ class CascadeProcessor:
         elif msg_type == "input_audio_buffer.clear":
             detector.reset()
         elif msg_type == "extension.set_voice":
-            voice = data.get("voice")
-            if voice:
-                state.voice = voice
-                self._sessions.set_voice(session_id, voice)
+            # Rick's #253 review item 1: mirror realtime's own extension.set_voice handler
+            # (rtmt.py's `_sanitize_voice` call) -- only a value from `self.allowed_voices`
+            # may ever be adopted. Before this fix, any truthy value (an unknown string, a
+            # dict, an int, ...) was accepted straight into `state.voice`/the session store,
+            # silently breaking TTS on the next turn instead of being dropped with a warning.
+            new_voice = _sanitize_voice(data.get("voice"), self.allowed_voices)
+            if new_voice is None:
+                logger.warning(
+                    "Cascade: dropped extension.set_voice with an unknown/invalid voice %s (session=%s)",
+                    _truncate_for_log(data.get("voice")), session_id)
+            else:
+                state.voice = new_voice
+                self._sessions.set_voice(session_id, new_voice)
         # session.update / extension.resume / anything else not listed above: a documented,
         # explicit scope cut for this issue's v1 (see the decision note) -- no-op rather than an
         # error, so an unrecognized/unused message never disrupts the session.
