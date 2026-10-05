@@ -38,8 +38,16 @@ namespace Backend.Sessions;
 ///
 /// Deliberate scope cuts from cascade_processor.py, mirroring <see cref="RealtimeProcessor"/>'s own
 /// documented cuts (docs/dotnet_mapping.md): <c>session.update</c>/<c>extension.resume</c> are
-/// explicit no-ops (v1 scope cut, same as Python), there is no context-window-monitor hook (no C#
-/// equivalent exists yet), and session resume/rehydration/idle-sweep is out of scope (issue #15).
+/// explicit no-ops (v1 scope cut, same as Python), and session resume/rehydration/idle-sweep is
+/// out of scope (issue #15). Context-window monitoring landed in the issue #13 tail: since this
+/// class doesn't call <see cref="SessionManager.CreateSession"/> (full resume/registry
+/// integration remains out of scope), <see cref="RunSessionAsync"/> creates/tears down its own
+/// <see cref="ContextMonitor"/> directly via <see cref="SessionManager.CreateContextMonitor"/>/
+/// <see cref="SessionManager.RemoveContextMonitor"/>, and <see cref="ExecuteToolCallAsync"/> tracks
+/// tool call args/result in it -- mirroring cascade_processor.py's own two
+/// <c>ctx_monitor.add_content</c> call sites exactly (cascade has no session.update/greeting/nudge/
+/// rehydration tracking sites of its own to port, since those features are themselves still
+/// out of scope here).
 /// </summary>
 public sealed class CascadeProcessor : IPipelineProcessor
 {
@@ -59,6 +67,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
     private readonly string _defaultVoice;
     private readonly ILogger? _logger;
     private readonly TimeProvider _timeProvider;
+    private readonly SessionManager? _sessionManager;
 
     public CascadeProcessor(
         ModelCatalog catalog,
@@ -73,7 +82,8 @@ public sealed class CascadeProcessor : IPipelineProcessor
         ILogger? logger = null,
         IUpstreamBearerTokenProvider? bearerTokenProvider = null,
         Func<Persona, PromptLoader?, string?, IToolExecutor>? toolExecutorFactory = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        SessionManager? sessionManager = null)
     {
         _catalog = catalog;
         var credential = bearerTokenProvider ?? DefaultAzureCredentialTokenProvider.Instance.Value;
@@ -92,6 +102,12 @@ public sealed class CascadeProcessor : IPipelineProcessor
         // clock, so a test can swap in a FakeTimeProvider instead of waiting on the real 0.5-8s
         // delays. Defaults to TimeProvider.System in production.
         _timeProvider = timeProvider ?? TimeProvider.System;
+        // Issue #13 tail: cascade doesn't call SessionManager.CreateSession (full resume/registry
+        // integration is out of scope here, see this class's own doc comment above), so unlike
+        // RealtimeProcessor it manages its context monitor's lifecycle directly via
+        // CreateContextMonitor/RemoveContextMonitor in RunSessionAsync instead of getting one for
+        // free from CreateSession.
+        _sessionManager = sessionManager;
     }
 
     public string PipelineName => "cascade";
@@ -155,6 +171,12 @@ public sealed class CascadeProcessor : IPipelineProcessor
             state.Messages.Add(CascadeChatMessage.System(promptLoader.SystemPrompt));
         }
         var detector = new TurnDetector(_vadConfig.Threshold, _vadConfig.SilenceDurationMs, AudioSampleRate);
+
+        // Issue #13 tail: mirrors cascade_processor.py's create_session's own
+        // ContextMonitor(session_id) construction -- cascade doesn't call
+        // SessionManager.CreateSession (see this class's doc comment above), so it creates/tears
+        // down its context monitor directly instead of getting one for free from that call.
+        _sessionManager?.CreateContextMonitor(sessionId);
 
         // ── Local helpers (closures over browserSocket/state/toolDefinitions/toolExecutor/...) ──
         // Mirrors RealtimeProcessor.RunSessionAsync's own nested-function style (and
@@ -265,6 +287,18 @@ public sealed class CascadeProcessor : IPipelineProcessor
                 var result = await toolExecutor.ExecuteAsync(name, argumentsDoc.RootElement.Clone(), turnCt).ConfigureAwait(false);
                 _logger?.LogInformation("Cascade tool '{ToolName}' result direction={Direction} (session={SessionId})",
                     name, result.Destination, sessionId);
+
+                // Issue #13 tail: track tool call args + result in the context window, mirroring
+                // cascade_processor.py's own ctx_monitor.add_content(tool_call.function.arguments
+                // or "") / ctx_monitor.add_content(result.to_text()) right after logging the
+                // result.
+                var ctxMonitorForTool = _sessionManager?.GetContextMonitor(sessionId);
+                if (ctxMonitorForTool is not null)
+                {
+                    ctxMonitorForTool.AddContent(argumentsJson);
+                    ctxMonitorForTool.AddContent(result.ToText());
+                }
+
                 outputText = result.Destination is ToolResultDirection.ToServer or ToolResultDirection.ToBoth
                     ? result.ToText() : "";
                 sendToClient = result.Destination is ToolResultDirection.ToClient or ToolResultDirection.ToBoth;
@@ -672,6 +706,10 @@ public sealed class CascadeProcessor : IPipelineProcessor
         finally
         {
             await CancelCurrentTurnAsync("connection closing").ConfigureAwait(false);
+            // Issue #13 tail: tears down the context monitor this RunSessionAsync call created
+            // above -- the cascade equivalent of SessionManager.EndSessionLocked's own
+            // RemoveContextMonitor call.
+            _sessionManager?.RemoveContextMonitor(sessionId);
         }
     }
 

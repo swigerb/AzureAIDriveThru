@@ -33,8 +33,16 @@ namespace Backend.Sessions;
 /// Deliberate scope cuts from rtmt.py, documented in docs/dotnet_mapping.md: the tool
 /// failure-cap ladder (`_ToolFailureTracker`), session resume/rehydration itself --
 /// `extension.resume`, the 4002 supersede-close, and the 4000 idle-timeout close all need a real
-/// session registry and land with #15 -- context-window monitoring/turn recording, and the
-/// fast-path regex/marker-substring optimisations (every frame is fully JSON-parsed instead).
+/// session registry and land with #15 -- turn recording, and the fast-path regex/marker-substring
+/// optimisations (every frame is fully JSON-parsed instead). Context-window monitoring
+/// (<see cref="ContextMonitor"/>) landed in the issue #13 tail: every `ctx_monitor.add_content`
+/// call site in rtmt.py (session.update instructions/tools, tool call args/result, response
+/// output text/transcript, greeting, resume-nudge, and rehydration text) has a matching
+/// <see cref="SessionManager.GetContextMonitor"/> call here, with the sole exception of the
+/// verbose-only user-transcript tracking site, which is intentionally not ported since it only
+/// ever fires in Python when verbose debug logging -- itself a separate, still-deferred scope
+/// cut -- is enabled (see the `conversation.item.input_audio_transcription.completed` case below
+/// for the full reasoning).
 /// Issue #13 Wave 4 closed the rate-limit retry ladder scope cut: `rate_limit.py`'s
 /// `RateLimitRecovery` is now ported verbatim as <see cref="RateLimitRecovery"/>, wired at the
 /// same seams as Python (response.created/response.done/error/guest-speech/external
@@ -99,6 +107,7 @@ public sealed class RealtimeProcessor : IPipelineProcessor
     private readonly TimeProvider _timeProvider;
     private readonly RateLimitSettings _rateLimitSettings;
     private readonly SessionManager? _sessionManager;
+    private readonly Configuration.ConnectionConfig _connectionConfig;
 
     public RealtimeProcessor(
         ModelCatalog catalog,
@@ -116,7 +125,8 @@ public sealed class RealtimeProcessor : IPipelineProcessor
         Func<Persona, PromptLoader?, string?, IToolExecutor>? toolExecutorFactory = null,
         TimeProvider? timeProvider = null,
         RateLimitSettings? rateLimitSettings = null,
-        SessionManager? sessionManager = null)
+        SessionManager? sessionManager = null,
+        Configuration.ConnectionConfig? connectionConfig = null)
     {
         _catalog = catalog;
         _defaultDeployment = defaultDeployment;
@@ -146,6 +156,10 @@ public sealed class RealtimeProcessor : IPipelineProcessor
         // extra session_metadata field/first-frame wait is introduced, so nothing built against
         // this constructor before #15 changes behaviour.
         _sessionManager = sessionManager;
+        // Issue #13 tail: config.yaml's `connection` section (ws_heartbeat_seconds/
+        // ws_connect_timeout_total) -- see ConnectionConfig's own doc comment for the full
+        // heartbeat/connect-timeout mapping and the documented .NET-vs-aiohttp differences.
+        _connectionConfig = connectionConfig ?? new Configuration.ConnectionConfig();
     }
 
     public string PipelineName => "realtime";
@@ -259,6 +273,11 @@ public sealed class RealtimeProcessor : IPipelineProcessor
         var deployment = string.IsNullOrEmpty(resolvedModel.Deployment) ? _defaultDeployment : resolvedModel.Deployment;
 
         using var upstream = new ClientWebSocket();
+        // Issue #13 tail: rtmt.py's upstream ws_connect always passes
+        // heartbeat=_WS_HEARTBEAT_SEC -- KeepAliveInterval is .NET's closest analog (sends/expects
+        // periodic pings so a dead peer is detected rather than hanging forever). Set before
+        // ConnectAsync, same as aiohttp requires heartbeat configured at connect time.
+        upstream.Options.KeepAliveInterval = TimeSpan.FromSeconds(_connectionConfig.WsHeartbeatSeconds);
         // PR #140 R5: NOT #147 (that's the inbound Entra check on the browser-facing /realtime
         // upgrade in Program.cs) -- this picks the OUTBOUND credential for the Azure OpenAI
         // realtime endpoint itself, api-key when one is configured, else a managed-identity
@@ -268,7 +287,16 @@ public sealed class RealtimeProcessor : IPipelineProcessor
             var (headerName, headerValue) = await ResolveUpstreamAuthHeaderAsync(cancellationToken).ConfigureAwait(false);
             upstream.Options.SetRequestHeader(headerName, headerValue);
 
-            await upstream.ConnectAsync(BuildUpstreamUri(_upstreamEndpoint, deployment), cancellationToken)
+            // Issue #13 tail: rtmt.py's upstream ws_connect uses aiohttp.ClientTimeout(total=
+            // ws_connect_timeout_total, connect=ws_connect_timeout_connect) -- .NET's
+            // ClientWebSocket has no equivalent two-phase split (see ConnectionConfig's own doc
+            // comment), so this wraps the whole ConnectAsync in a single combined timeout using
+            // the more lenient of Python's two bounds (ws_connect_timeout_total).
+            using var connectTimeoutCts = new CancellationTokenSource(
+                TimeSpan.FromSeconds(_connectionConfig.WsConnectTimeoutSeconds));
+            using var connectCts = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken, connectTimeoutCts.Token);
+            await upstream.ConnectAsync(BuildUpstreamUri(_upstreamEndpoint, deployment), connectCts.Token)
                 .ConfigureAwait(false);
         }
         catch (Exception ex)
@@ -343,8 +371,12 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                             }),
                         },
                     };
-                    await SendTextAsync(upstream, nudgeItem.ToJsonString(), nudgeCt).ConfigureAwait(false);
+                    var nudgeItemJson = nudgeItem.ToJsonString();
+                    await SendTextAsync(upstream, nudgeItemJson, nudgeCt).ConfigureAwait(false);
                     await SendTextAsync(upstream, """{"type":"response.create"}""", nudgeCt).ConfigureAwait(false);
+                    // Issue #13 tail: track the nudge in the context window, mirroring rtmt.py's
+                    // ctx_monitor.add_content(nudge) in the resume-nudge timer callback.
+                    _sessionManager?.GetContextMonitor(state.EffectiveSessionId)?.AddContent(nudgeItemJson);
                 },
                 isRateLimitBusy: () => state.RateLimit.Busy,
                 sessionConfigured: state.SessionConfigured.Task,
@@ -445,9 +477,13 @@ public sealed class RealtimeProcessor : IPipelineProcessor
             state.GreetingSent = true;
             state.Echo.StartGreetingSuppression();
             _logger?.LogInformation("Sending greeting (trigger={Trigger}, session={SessionId})", trigger, sessionId);
+            var greetingFrameJson = BuildGreetingFrame().ToJsonString();
             await SendTextAsync(upstream, """{"type":"input_audio_buffer.clear"}""", ct).ConfigureAwait(false);
-            await SendTextAsync(upstream, BuildGreetingFrame().ToJsonString(), ct).ConfigureAwait(false);
+            await SendTextAsync(upstream, greetingFrameJson, ct).ConfigureAwait(false);
             await SendTextAsync(upstream, """{"type":"response.create"}""", ct).ConfigureAwait(false);
+            // Issue #13 tail: track the greeting in the context window, mirroring rtmt.py's
+            // ctx_monitor.add_content(greeting_msg) right after the greeting is sent.
+            _sessionManager?.GetContextMonitor(state.EffectiveSessionId)?.AddContent(greetingFrameJson);
             // Rick's #244 review (issue 5): rtmt.py's send_greeting_once marks
             // conversation_started immediately after sending the greeting's response.create
             // (mark_greeting_sent), NOT after the greeting's response.done later arrives -- a
@@ -675,6 +711,21 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                 reasoningOverride: reasoningOverride);
             filtered["session"] = session;
             state.Guard.Stamp(filtered);
+            // Issue #13 tail: track the system message + tool schemas this session.update just
+            // injected in the context window -- mirrors rtmt.py's _process_message_to_server
+            // ctx_monitor.add_content(session.get("instructions", "")) / per-tool-schema calls.
+            var ctxMonitorForUpdate = _sessionManager?.GetContextMonitor(state.EffectiveSessionId);
+            if (ctxMonitorForUpdate is not null)
+            {
+                ctxMonitorForUpdate.AddContent(GetString(session, "instructions"));
+                if (session["tools"] is JsonArray injectedTools)
+                {
+                    foreach (var toolSchema in injectedTools)
+                    {
+                        ctxMonitorForUpdate.AddContent(toolSchema?.ToJsonString());
+                    }
+                }
+            }
             return (filtered, msgType);
         }
 
@@ -1023,6 +1074,16 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                     ? result.ToText() : "";
                 sendToClient = result.Destination is ToolResultDirection.ToClient or ToolResultDirection.ToBoth;
                 clientText = sendToClient ? result.ToClientText() : null;
+
+                // Issue #13 tail: track tool call args + result in the context window, mirroring
+                // rtmt.py's ctx_monitor.add_content(item.get("arguments", "")) /
+                // ctx_monitor.add_content(result.to_text()).
+                var ctxMonitorForTool = _sessionManager?.GetContextMonitor(state.EffectiveSessionId);
+                if (ctxMonitorForTool is not null)
+                {
+                    ctxMonitorForTool.AddContent(argumentsJson);
+                    ctxMonitorForTool.AddContent(result.ToText());
+                }
             }
             catch (Exception ex)
             {
@@ -1199,6 +1260,29 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                     _logger?.LogInformation("Response contained {Count} tool call(s): {Names} (session={SessionId})",
                         toolCallNames.Count, string.Join(", ", toolCallNames), sessionId);
                 }
+
+                // Issue #13 tail: track response output content in the context window -- mirrors
+                // rtmt.py's own (separate) loop over message["response"]["output"] after the
+                // function_call/function_call_output scrub above, tracking every item's content
+                // text/transcript regardless of output item type.
+                var ctxMonitorForResponse = _sessionManager?.GetContextMonitor(state.EffectiveSessionId);
+                if (ctxMonitorForResponse is not null && response["output"] is JsonArray finalOutput)
+                {
+                    foreach (var outItem in finalOutput)
+                    {
+                        if (outItem is JsonObject outItemObj && outItemObj["content"] is JsonArray outContentParts)
+                        {
+                            foreach (var contentNode in outContentParts)
+                            {
+                                if (contentNode is JsonObject contentObj)
+                                {
+                                    ctxMonitorForResponse.AddContent(GetString(contentObj, "text"));
+                                    ctxMonitorForResponse.AddContent(GetString(contentObj, "transcript"));
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             if (!isToolCallResponse)
@@ -1313,7 +1397,11 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                             }),
                         },
                     };
-                    await SendTextAsync(upstream, rehydrationItem.ToJsonString(), ct).ConfigureAwait(false);
+                    var rehydrationItemJson = rehydrationItem.ToJsonString();
+                    await SendTextAsync(upstream, rehydrationItemJson, ct).ConfigureAwait(false);
+                    // Issue #13 tail: track the rehydration item in the context window, mirroring
+                    // rtmt.py's ctx_monitor.add_content(rehydration) right after it's sent.
+                    _sessionManager?.GetContextMonitor(state.EffectiveSessionId)?.AddContent(rehydrationItemJson);
 
                     // Restore the persisted voice on the (brand new) upstream connection BEFORE any
                     // response.create can fire -- the bootstrap session.update already went out with
@@ -1546,6 +1634,15 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                             state.ToolFailures.ResetForNewTurn();
                             break;
                         case "conversation.item.input_audio_transcription.completed":
+                            // Issue #13 tail: rtmt.py's own ctx_monitor.add_content(transcript[:200])
+                            // for this event type is nested strictly inside `if (verbose or
+                            // _VERBOSE_GLOBAL):` -- i.e. it only fires when verbose debug logging is
+                            // on, which defaults OFF in production (_VERBOSE_GLOBAL's default is
+                            // false, and no session enables it unless the browser explicitly sends
+                            // extension.set_verbose_logging). Verbose debug logging itself remains a
+                            // documented, deliberate C# scope cut (see docs/dotnet_mapping.md), so
+                            // this port intentionally does NOT track this specific event -- that
+                            // matches Python's own default (verbose-off) production behavior exactly.
                             // Issue #13 Wave 4 (swigerb/SonicAIDriveThru#36, PR #58 re-review
                             // "S1"): the other guest-turn signal (besides speech_started) that
                             // resets the tool-failure streak -- a completed input transcription is

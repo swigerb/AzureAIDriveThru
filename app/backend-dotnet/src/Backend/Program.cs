@@ -104,6 +104,13 @@ catch (PromptLoadException exc)
 }
 startupChecks.Pass("prompts_loaded");
 
+// ── 4b. Optional: verify Azure service connectivity (non-blocking). Issue #13 tail port of
+// app.py's own `await _check_service_connectivity()` call site (step 4, right after
+// prompts_loaded) -- best-effort GET pings to AZURE_OPENAI_EASTUS2_ENDPOINT/
+// AZURE_SEARCH_ENDPOINT with a 5s total timeout, logs only, NEVER gates /health or fails
+// startup. See CheckServiceConnectivityAsync below for the full per-endpoint behaviour. ──────
+await CheckServiceConnectivityAsync(logger).ConfigureAwait(false);
+
 // ── 5. Model catalog (issue #75, design doc section 7.2): config.yaml's models.catalog +
 // AZURE_AI_MODEL_DEPLOYMENTS. Fail-fast if any enabled persona's own pipeline default isn't
 // catalogued for that pipeline (Rick's PR #106 review item 1) -- an unusable default should stop
@@ -251,6 +258,10 @@ var rateLimitSettings = RateLimitSettings.FromAppConfig(appConfig);
 // stops cleanly instead of leaking a background loop past app shutdown.
 var sessionsConfig = SessionsConfig.FromConfig(appConfig);
 var sessionManager = new SessionManager(sessionsConfig, timeProvider, logger);
+// Issue #13 tail: config.yaml's `connection` section (ws_heartbeat_seconds/ws_compression/
+// ws_connect_timeout_total) -- shared by the browser-facing UseWebSockets() call below and
+// RealtimeProcessor's own upstream ClientWebSocket connect.
+var connectionConfig = ConnectionConfig.FromConfig(appConfig);
 
 // ── 6. Processor registry (issue #75, design doc section 7.4): only "realtime" is registered
 // this wave -- its own model resolution is fully ported (Models/ModelDispatch.cs's
@@ -274,7 +285,8 @@ var realtimeProcessor = new RealtimeProcessor(
     toolExecutorFactory: BuildSessionToolExecutor,
     timeProvider: timeProvider,
     rateLimitSettings: rateLimitSettings,
-    sessionManager: sessionManager);
+    sessionManager: sessionManager,
+    connectionConfig: connectionConfig);
 // Issue #15: the idle-close/grace-eviction sweep -- mirrors rtmt.py's own background
 // _idle_check_loop task. Runs for the whole app lifetime, stopping only when the host itself
 // shuts down (no separate IHostedService registration needed for one background loop).
@@ -324,7 +336,8 @@ var cascadeProcessor = new CascadeProcessor(
     logger: logger,
     bearerTokenProvider: cascadeBearerTokenProvider,
     toolExecutorFactory: BuildSessionToolExecutor,
-    timeProvider: timeProvider);
+    timeProvider: timeProvider,
+    sessionManager: sessionManager);
 processorRegistry.Register(cascadeProcessor);
 
 var assetCacheConfig = AssetCacheConfig.FromConfig(appConfig);
@@ -354,7 +367,16 @@ app.MapGet("/api/auth/session", () => Results.Json(new { token = tokenService.Cr
 // See Personas/PersonaRoutes.cs for the ported route handlers.
 PersonaRoutes.Map(app, personaCatalog, modelCatalog, assetCacheConfig);
 
-app.UseWebSockets();
+// Issue #13 tail: rtmt.py's browser-facing `web.WebSocketResponse(heartbeat=_WS_HEARTBEAT_SEC, ...)`
+// -- ASP.NET Core's WebSocketOptions.KeepAliveInterval is the equivalent knob for THIS side of the
+// relay (Program.cs's /realtime upgrade), same config.yaml `connection.ws_heartbeat_seconds`
+// value RealtimeProcessor's own upstream ClientWebSocket uses. `ws_compression` has no Kestrel
+// WebSocketOptions equivalent to wire it to (see ConnectionConfig's own doc comment for why that's
+// a documented, harmless no-op rather than a gap).
+app.UseWebSockets(new WebSocketOptions
+{
+    KeepAliveInterval = TimeSpan.FromSeconds(connectionConfig.WsHeartbeatSeconds),
+});
 
 // One sequential event loop per session (issue #12), reachable at /realtime. Persona+model
 // binding (issue #74/#75) happens once, before the WebSocket upgrade -- an unknown/disabled
@@ -571,6 +593,46 @@ return 0;
 
 static bool ParseBool(string? value) =>
     value is not null && (value.Equals("true", StringComparison.OrdinalIgnoreCase) || value == "1");
+
+// Issue #13 tail: port of app.py's own `_check_service_connectivity()` -- best-effort GET pings
+// to the two Azure endpoints, logging only. Deliberately double-wrapped in try/catch, matching
+// Python's own outer `try` (around the whole ClientSession block) AND inner `try` (around each
+// individual GET): a per-endpoint failure (DNS, TLS, 4xx/5xx, timeout) logs a warning and moves
+// on to the next endpoint, while a failure constructing the HttpClient/session itself (the outer
+// try) logs once and skips every endpoint -- neither path ever throws out of this function, so it
+// can never fail startup or gate /health, exactly like Python's version.
+static async Task CheckServiceConnectivityAsync(ILogger logger)
+{
+    var endpoints = new (string Name, string? Url)[]
+    {
+        ("Azure OpenAI", Environment.GetEnvironmentVariable("AZURE_OPENAI_EASTUS2_ENDPOINT")),
+        ("Azure Search", Environment.GetEnvironmentVariable("AZURE_SEARCH_ENDPOINT")),
+    };
+    try
+    {
+        using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+        foreach (var (name, url) in endpoints)
+        {
+            if (string.IsNullOrEmpty(url))
+            {
+                continue;
+            }
+            try
+            {
+                using var response = await httpClient.GetAsync(url).ConfigureAwait(false);
+                logger.LogInformation("✅ {Name} reachable (HTTP {StatusCode})", name, (int)response.StatusCode);
+            }
+            catch (Exception exc)
+            {
+                logger.LogWarning("⚠️ {Name} unreachable at {Url} — {Message} (non-fatal)", name, url, exc.Message);
+            }
+        }
+    }
+    catch (Exception exc)
+    {
+        logger.LogWarning("⚠️ Service connectivity check failed — {Message} (non-fatal)", exc.Message);
+    }
+}
 
 // config.yaml section readers for issue #13's RealtimeSessionConfig wiring: YamlDotNet's untyped
 // Deserialize<object?>() returns every scalar as a plain string (Configuration/SecurityConfig.cs's
