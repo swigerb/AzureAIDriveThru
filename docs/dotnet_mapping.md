@@ -966,7 +966,95 @@ satisfy it) and this file was not edited for this round, per the floor-coordinat
 actually mirror the matrix leg's filter, or accept that Browser rows are double-counted against a
 floor they don't contribute to in the job that floor describes.
 
-## Issue #13 (S3): `RealtimeProcessor` browser&lt;-&gt;Azure OpenAI Realtime GA relay
+### Issue #21 acceptance (coordinator dispatch, Birdperson/Beth): every backend-applicable
+scenario explicitly classified, floor raised 323 -> 338
+
+Closed out #21's acceptance bar: every test class in `Conformance.Tests` now carries an explicit
+`Dotnet` classification (either `ready` or an `n/a-*` reason), enforced going forward by a new
+guard test (`DotnetTraitCoverageTests.Every_test_class_in_the_assembly_carries_an_explicit_dotnet_classification`)
+that fails the build the moment any future class/method is added without one.
+
+**Newly tagged `ready`** (all verified green 3x locally against `CONFORMANCE_BACKEND=dotnet`
+before tagging; floor 323 -> 338, +15):
+- `WebSocketCompressionTests` (+1) -- real backend-applicable scenario, was simply never tagged.
+- `PersonaMismatchConformanceTests` (+1) -- its own "deliberately UNTAGGED, same reasoning as
+  `PersonaDiscoveryConformanceTests`" comment was stale: that referenced class had already been
+  tagged `ready` itself in an earlier wave.
+- `BrowserClientLifecycleTests` (+12, full class) -- despite the name, exercises
+  `RealtimeBrowserClient`/`ConformanceFixture.Backend` directly, never a real browser; all 12
+  close/abort/dispose methods pass 12/12 on 3 consecutive runs.
+- `CascadeMenuModeAndVoiceFakeResetWiringTests` (+1) -- sibling of the already-`ready`
+  `CascadeFakeResetWiringTests` (issue #274 follow-up C precedent); same reasoning applies.
+
+**Classified `n/a-harness`** (~32 classes): every pure harness self-test that never starts a real
+backend process -- the ~30 classes already carrying `[Trait("Category","Harness")]`
+(`AuthRowCapabilityTests`, `BackendExitCodeParserTests`, `CapturedProcessOutput*Tests`,
+`DotnetBackendBuildGateTests`, `DotnetBackendLauncherPortRaceTests`,
+`DotnetBackendLauncherStartInfoTests`, `DotnetPlaceholderPolicyTests`, `ExternalMode*PolicyTests`,
+`FakeChatCompletionsServerTests`, `FakeEntraIssuer*ValidationTests`, `FakeFixedPortBindingTests`,
+`FakeRealtimeScripting*Tests`, `InheritedEnvironmentFilterTests`, `MenuIndexResolveIndexPathsTests`,
+`OutputDrainAfterExitTests`, `PortRaceDetectionTests`, `PyJwtInteropPolicyTests`,
+`PythonBackendLauncherPortRaceTests`, `RealtimeUriLiteralScannerTests`, `RepoPathsTests`,
+`ScenarioErrorAttributionTests`, `WindowsJobObjectTests`, etc.), plus four more that lacked that
+Category tag but are equally harness-only on inspection: `HandlerFaultTeardownRegressionTests`
+(exercises `FakeRealtimeUpstreamServer` directly), `PersonaSmokeCoverageTests` and
+`ConformancePersonasTests` (disk/reflection discovery of persona packs, no backend involved),
+`ResponseCancelTests` (pure unit test of a harness helper), `RealtimeUriLiteralScanTests`, and
+`DotnetTraitCoverageTests` itself (a reflection probe over its own assembly).
+
+**Classified `n/a-no-matching-persona-data`**: the 4 `ComboComponentResizeConformanceTests.Discovered_*`
+`[Theory(SkipTestWithoutData = true)]` methods (issue #274 follow-up E) -- zero persona packs on
+disk today match the `includedAnySize` precondition these theories require, so they have no rows
+to run against either backend. Already had extensive inline justification; this just adds the
+explicit trait the new guard test requires.
+
+**Classified `n/a-pending-browser-verification`** (8 methods, the one open item from this dispatch):
+`OrderResumeBrowserTests`'s 5 methods and `PersonaSwitchBrowserTests`'s Case-E/E2 + reload-resume-switch
+3 methods. Their own prior doc comments (and `RealtimeProcessor.cs`'s class-level doc comment, also
+fixed in this pass) cited issue #15 (session resume/rehydration, the 4002 supersede-close, the 4000
+idle-timeout close) as a still-pending capability gap blocking these scenarios on C#. Code
+inspection confirms **#15 has actually landed** (PR #244: `extension.resume` handling and
+`IdleCloseCode = 4000` idle-deadline logic are both fully implemented in `RealtimeProcessor.cs` /
+`SessionManager.cs`) -- the stale "deferred to #15" comments had simply never been updated. However,
+this dispatch's sandbox has no `google-chrome`/`microsoft-edge` binary reachable via
+`BrowserChannelPolicy`'s hardcoded probe paths and no root access to install one, so these 8
+methods could not be empirically re-run against a real browser + the C# backend. Rather than guess
+`ready` or leave them silently untagged, they were classified `n/a-pending-browser-verification`
+with inline comments instructing whoever has browser access (the `conformance-browser-dotnet` CI
+job, or a local dev machine with Chrome/Edge installed) to re-run them 3x against
+`CONFORMANCE_BACKEND=dotnet` and upgrade to `ready` once confirmed green. **This is the one
+remaining action item from #21's acceptance bar that needs a non-sandboxed environment to close.**
+
+**C#-only skips (brief item 3):** grepped the whole suite for `Assert.Skip`/conditional-skip call
+sites keyed on the dotnet backend, `AuthRowCapability`, or `DotnetPlaceholder`. Found no live skip
+that silently hides real dotnet coverage:
+- The `AuthRowCapability.ShouldSkipCurrentBackend()` gate (`ConformanceFixture.RunAuthRowAsync`,
+  `AuthModeLaunchTests`) is the already-documented, intentional mechanism from issues #144/#147 --
+  with `DotnetEnforcesAuth` now `true` (#226), it no longer skips on the dotnet leg at all, and
+  `AuthRowCapabilityGated` classes are already correctly excluded from the floor count.
+- `DotnetPlaceholderPolicy`/`ConformanceFixture.SkipReason` (PR #22 review item 15, "S2 placeholder
+  for issue #7") is legacy: `BackendLauncherFactory` always starts the real C# backend now and
+  never consults this policy for gating; it only fires if a caller explicitly sets
+  `CONFORMANCE_ALLOW_SKIP=1`, which nothing in CI or this suite's own test bodies does. Its own
+  unit tests (`DotnetPlaceholderPolicyTests`) are classified `n/a-harness` above. No live scenario
+  skip depends on it.
+- The remaining `Assert.Skip` sites (`WindowsJobObjectTests` -- OS-gated, not backend-gated;
+  `FakeEntraIssuerPyJwtValidationTests`/`PyJwtInteropPolicyTests` -- gated on local Python
+  interpreter availability for a harness self-test, unrelated to which conformance backend is under
+  test; the two `Scenarios/Browser` fixtures' `Assert.Skip(_browserSkipReason)` -- gated on browser
+  channel availability, identical on both backends) are all pre-existing, already-justified, and
+  not specific to the dotnet backend. No changes were needed here.
+
+**Persona x pipeline parity:** `ConformancePersonas.DiscoverFromDisk()` resolves exactly one
+persona pack on disk today (`sonic`), so persona x pipeline parity on C# reduces to: does `sonic`
+pass on both the realtime pipeline and the cascade pipeline against `CONFORMANCE_BACKEND=dotnet`?
+Yes on both -- the realtime-pipeline scenarios under `Scenarios/` (ordering, auth, websocket,
+persona-switch, etc.) and the full `Scenarios/Cascade/*` suite (including the newly-tagged
+`CascadeMenuModeAndVoiceFakeResetWiringTests`) both run against the `sonic` pack and are green on
+the dotnet backend. There is currently no second shipped persona pack to cross-check against, so
+this is a 1x2 matrix (1 persona x {realtime, cascade}), not a larger grid; if/when a second persona
+pack ships, the guard test's floor-eligible count plus this parity note should be revisited
+together.
 
 `RealtimeProcessor.ProcessAsync` is no longer a no-op stub: it dials the upstream Azure OpenAI
 Realtime GA WebSocket, bootstraps the session (persona instructions/voice/tools, catalog-resolved

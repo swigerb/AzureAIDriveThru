@@ -31,10 +31,13 @@ namespace Backend.Sessions;
 /// nothing posts to this processor's mailbox for the "realtime" pipeline any more.
 ///
 /// Deliberate scope cuts from rtmt.py, documented in docs/dotnet_mapping.md: the tool
-/// failure-cap ladder (`_ToolFailureTracker`), session resume/rehydration itself --
-/// `extension.resume`, the 4002 supersede-close, and the 4000 idle-timeout close all need a real
-/// session registry and land with #15 -- context-window monitoring/turn recording, and the
-/// fast-path regex/marker-substring optimisations (every frame is fully JSON-parsed instead).
+/// failure-cap ladder (`_ToolFailureTracker`), and context-window monitoring/turn recording, and
+/// the fast-path regex/marker-substring optimisations (every frame is fully JSON-parsed instead).
+/// Session resume/rehydration itself -- `extension.resume`, the 4002 supersede-close, and the 4000
+/// idle-timeout close -- needed a real session registry and landed with #15 (PR #244); this class
+/// and <see cref="SessionManager"/> now implement all three (issue #21 coordinator note,
+/// 2026-10-05: this paragraph itself was stale, still describing them as a future cut, after #15
+/// had already landed them).
 /// Issue #13 Wave 4 closed the rate-limit retry ladder scope cut: `rate_limit.py`'s
 /// `RateLimitRecovery` is now ported verbatim as <see cref="RateLimitRecovery"/>, wired at the
 /// same seams as Python (response.created/response.done/error/guest-speech/external

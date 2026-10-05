@@ -43,16 +43,22 @@ namespace Conformance.Tests.Scenarios.Browser;
 ///    six behaviors this suite is scoped to (drop/reconnect identity, nudge-once, idle-no-
 ///    reconnect, reload-tap-to-continue, strict-autoplay, tap-while-reconnecting).
 ///
-/// Issue #21 (Browser-on-C#): deliberately left entirely untagged (no <c>Dotnet=ready</c>
-/// anywhere in this file). Every one of this class's scenarios needs extension.resume/session
-/// rehydration, the 4002 supersede-close, or the 4000 idle-timeout close -- all explicitly #15
-/// per RealtimeProcessor.cs's own class doc comment ("session resume/rehydration itself ... need
-/// a real session registry and land with #15"). Confirmed empirically against
-/// CONFORMANCE_BACKEND=dotnet: all 5 methods time out waiting for a resume/idle-close signal the
-/// C# backend never sends yet. Re-check this whole class once #15 lands.
+/// Issue #21 (Browser-on-C#, coordinator dispatch 2026-10-05): previously left entirely untagged
+/// because every scenario here needs extension.resume/session rehydration, the 4002
+/// supersede-close, or the 4000 idle-timeout close -- all of which were #15 scope cuts at the time
+/// this comment was written. #15 (PR #244) has since landed: RealtimeProcessor.cs/SessionManager.cs
+/// now implement all three. This class's own 5 methods could not be re-verified in this dispatch's
+/// sandbox (no msedge/chrome binary installed and no root to install one -- see
+/// <see cref="Conformance.Harness.BrowserChannelPolicy"/>), so they are classified
+/// <c>n/a-pending-browser-verification</c> rather than either silently left untagged or tagged
+/// <c>ready</c> on an unverified guess: a CI run (or any machine with msedge/chrome installed)
+/// should re-run <c>CONFORMANCE_BACKEND=dotnet dotnet test --filter
+/// "Category=Browser&amp;FullyQualifiedName~OrderResumeBrowserTests"</c> 3x and, if green, replace
+/// this trait with <c>[Trait("Dotnet", "ready")]</c> per method.
 /// </summary>
 [Collection(BrowserConformanceCollection.Name)]
 [Trait("Category", "Browser")]
+[Trait("Dotnet", "n/a-pending-browser-verification")]
 public sealed class OrderResumeBrowserTests(BrowserConformanceFixture fixture)
 {
     private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);

@@ -31,6 +31,7 @@ namespace Conformance.Tests;
 /// callback queue has delivered every line to <see cref="CapturedProcessOutput"/>.
 /// </summary>
 [Trait("Category", "Harness")]
+[Trait("Dotnet", "n/a-harness")] // Issue #21: backend-agnostic harness self-test, never exercises app/backend or app/backend-dotnet.
 public sealed class OutputDrainAfterExitTests
 {
     private const int BurstLineCount = 20_000;

@@ -11,6 +11,7 @@ namespace Conformance.Tests;
 /// this, external mode could resolve valid ports and still silently bind to something else.
 /// </summary>
 [Trait("Category", "Harness")]
+[Trait("Dotnet", "n/a-harness")] // Issue #21: backend-agnostic harness self-test, never exercises app/backend or app/backend-dotnet.
 public sealed class FakeFixedPortBindingTests
 {
     [Fact]

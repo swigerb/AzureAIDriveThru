@@ -35,6 +35,7 @@ namespace Conformance.Tests;
 /// independent of whichever backend (#144/#147) eventually wires JwtBearer up for real.
 /// </summary>
 [Trait("Category", "Harness")]
+[Trait("Dotnet", "n/a-harness")] // Issue #21: backend-agnostic harness self-test, never exercises app/backend or app/backend-dotnet.
 public sealed class FakeEntraIssuerJwtBearerValidationTests
 {
     private static async Task<(FakeEntraIssuer Issuer, WebApplication App, HttpClient Client)> StartAsync(

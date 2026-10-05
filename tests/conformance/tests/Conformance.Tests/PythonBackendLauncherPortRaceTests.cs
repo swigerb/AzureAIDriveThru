@@ -27,6 +27,7 @@ namespace Conformance.Tests;
 /// `Dotnet=ready` requirement, already covers it).
 /// </summary>
 [Trait("Category", "Harness")]
+[Trait("Dotnet", "n/a-harness")] // Issue #21: backend-agnostic harness self-test, never exercises app/backend or app/backend-dotnet.
 public sealed class PythonBackendLauncherPortRaceTests
 {
     // Never-dialled: app/backend's own HealthEndpoint-equivalent checks only check config

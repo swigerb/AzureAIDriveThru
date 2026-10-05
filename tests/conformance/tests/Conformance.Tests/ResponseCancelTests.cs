@@ -18,6 +18,7 @@ namespace Conformance.Tests;
 /// <c>tests/conformance/README.md</c>, "Response cancel — GA semantics and unverified error codes".
 /// </summary>
 [Trait("Category", "Harness")]
+[Trait("Dotnet", "n/a-harness")] // Issue #21: backend-agnostic harness self-test, never exercises app/backend or app/backend-dotnet.
 public sealed class ResponseCancelTests
 {
     private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(10);
