@@ -1,5 +1,6 @@
 using Backend.Ordering;
 using Backend.Personas;
+using Backend.Tests.TestSupport;
 
 namespace Backend.Tests.Ordering;
 
@@ -79,10 +80,15 @@ public sealed class ApplyLexiconTests
 
 /// <summary>Exercises the real, shipped Munchkins-lexicon persona pack's ``pronunciations``
 /// entry and its menu items' ``spokenName`` overrides through the normal <see cref="MenuCatalog"/>
-/// loading path -- proving the feature works end-to-end on real pack data, not just the primitive.</summary>
+/// loading path -- proving the feature works end-to-end on real pack data, not just the primitive.
+/// #313 (Rick's re-review, item 1): this class's whole point is to validate the REAL, shipped
+/// pack's own lexicon data (the synthetic test-zeta fixture has no Munchkins-equivalent
+/// ``pronunciations`` entry to exercise), so it names the real persona id directly rather than
+/// string-concatenating around rebrand_scan.py's brand-word guard -- see this file's own
+/// rebrand_baseline.yaml entry (issue #304).</summary>
 public sealed class RealPersonaPronunciationsAndSpokenNameTests
 {
-    private static Persona Pack() => PersonaCatalog.Load(personasEnv: "dun" + "kin", defaultPersonaEnv: "dun" + "kin").Get("dun" + "kin");
+    private static Persona Pack() => PersonaCatalog.Load(personasEnv: "dunkin", defaultPersonaEnv: "dunkin").Get("dunkin");
 
     [Fact]
     public void Persona_declares_the_munchkins_pronunciation()
@@ -110,10 +116,16 @@ public sealed class RealPersonaPronunciationsAndSpokenNameTests
 /// <summary>Issue #304: <c>OrderSummary.SpokenReadBack</c> is composed once per
 /// <c>UpdateSummary</c> call and must always equal what <c>get_order</c>'s wire field and
 /// <c>GetGroupedOrderForReadback()</c> both return -- these tests pin down the edge cases the
-/// brief calls out directly (empty order, single item, multiple items).</summary>
+/// brief calls out directly (empty order, single item, multiple items). #313 (Rick's re-review,
+/// item 1): none of these cases needs the real, shipped Munchkins-lexicon pack's own pronunciation
+/// data -- only its generic SpokenReadBack composition AND (the last test) a <c>spokenName</c>
+/// override being reflected in the read-back, which the synthetic <see cref="ZetaFixture"/>'s own
+/// "ZORBS® Bite Treats" item (spokenName "Zorb Bite Treats") already covers -- so this class runs
+/// against that TEST-ONLY fixture pack instead of naming a real persona id in its own source.
+/// </summary>
 public sealed class SpokenReadBackCompositionTests
 {
-    private static Persona Pack() => PersonaCatalog.Load(personasEnv: "dun" + "kin", defaultPersonaEnv: "dun" + "kin").Get("dun" + "kin");
+    private static Persona Pack() => ZetaFixture.Load();
 
     [Fact]
     public void Empty_order_readback_is_the_empty_order_sentence()
@@ -126,7 +138,7 @@ public sealed class SpokenReadBackCompositionTests
     public void Single_item_readback_uses_singular_one_prefix_and_includes_total()
     {
         var order = PersonaOrderFactory.CreateOrderState(Pack());
-        order.HandleOrderUpdate("add", "Original Blend Iced Coffee (Black)", "medium", 1, 0.01m);
+        order.HandleOrderUpdate("add", "Zeta Cola", "regular", 1, 0.01m);
 
         Assert.Contains("I have one ", order.Summary.SpokenReadBack);
         // #313 (Rick's review, item 1/2): the read-back speaks the total in words
@@ -139,7 +151,7 @@ public sealed class SpokenReadBackCompositionTests
     public void Multiple_quantity_readback_uses_numeric_prefix()
     {
         var order = PersonaOrderFactory.CreateOrderState(Pack());
-        order.HandleOrderUpdate("add", "Original Blend Iced Coffee (Black)", "medium", 3, 0.01m);
+        order.HandleOrderUpdate("add", "Zeta Cola", "regular", 3, 0.01m);
 
         // #313 (Rick's review, item 1/2): a bare digit quantity is ambiguous next to a count-based
         // size, so the read-back spells it out as a word.
@@ -150,8 +162,8 @@ public sealed class SpokenReadBackCompositionTests
     public void Multiple_distinct_items_are_joined_with_an_oxford_and()
     {
         var order = PersonaOrderFactory.CreateOrderState(Pack());
-        order.HandleOrderUpdate("add", "Original Blend Iced Coffee (Black)", "medium", 1, 0.01m);
-        order.HandleOrderUpdate("add", "Glazed MUNCHKINS® Donut Hole Treats", "10 count", 1, 0.01m);
+        order.HandleOrderUpdate("add", "Zeta Cola", "regular", 1, 0.01m);
+        order.HandleOrderUpdate("add", "ZORBS® Bite Treats", "10 count", 1, 0.01m);
 
         Assert.Contains(", and ", order.Summary.SpokenReadBack);
     }
@@ -160,7 +172,7 @@ public sealed class SpokenReadBackCompositionTests
     public void Get_grouped_order_for_readback_matches_the_cached_summary_field()
     {
         var order = PersonaOrderFactory.CreateOrderState(Pack());
-        order.HandleOrderUpdate("add", "Original Blend Iced Coffee (Black)", "medium", 2, 0.01m);
+        order.HandleOrderUpdate("add", "Zeta Cola", "regular", 2, 0.01m);
 
         Assert.Equal(order.Summary.SpokenReadBack, order.GetGroupedOrderForReadback());
     }
@@ -169,22 +181,22 @@ public sealed class SpokenReadBackCompositionTests
     public void Readback_updates_after_a_subsequent_mutation()
     {
         var order = PersonaOrderFactory.CreateOrderState(Pack());
-        order.HandleOrderUpdate("add", "Original Blend Iced Coffee (Black)", "medium", 1, 0.01m);
+        order.HandleOrderUpdate("add", "Zeta Cola", "regular", 1, 0.01m);
         var first = order.Summary.SpokenReadBack;
 
-        order.HandleOrderUpdate("add", "Glazed MUNCHKINS® Donut Hole Treats", "10 count", 1, 0.01m);
+        order.HandleOrderUpdate("add", "ZORBS® Bite Treats", "10 count", 1, 0.01m);
         var second = order.Summary.SpokenReadBack;
 
         Assert.NotEqual(first, second);
     }
 
     [Fact]
-    public void Munchkins_spoken_name_is_reflected_in_the_readback()
+    public void Zorbs_spoken_name_is_reflected_in_the_readback()
     {
         var order = PersonaOrderFactory.CreateOrderState(Pack());
-        order.HandleOrderUpdate("add", "Glazed MUNCHKINS® Donut Hole Treats", "10 count", 1, 0.01m);
+        order.HandleOrderUpdate("add", "ZORBS® Bite Treats", "10 count", 1, 0.01m);
 
-        Assert.Contains("Munch-kins", order.Summary.SpokenReadBack);
-        Assert.DoesNotContain("MUNCHKINS", order.Summary.SpokenReadBack);
+        Assert.Contains("Zorb Bite Treats", order.Summary.SpokenReadBack);
+        Assert.DoesNotContain("ZORBS", order.Summary.SpokenReadBack);
     }
 }

@@ -1047,7 +1047,11 @@ def _local_menu_search(args: Any, menu, prompt_loader=None) -> ToolResult:
     query = (args.get("query") or "").strip().lower()
     results: list[str] = []
     if query:
-        tokens = [t for t in query.split() if t]
+        # Rick's non-blocking note (#313 re-review): tokens of 2 characters or fewer (e.g. "a",
+        # "to", "an") match almost every item's name by sheer coincidence, defeating the point of
+        # a token match at all -- drop them and rely on the whole-query substring check above for
+        # short queries instead.
+        tokens = [t for t in query.split() if len(t) > 2]
         for fields in menu.item_fields.values():
             name = fields.get("name")
             if not name:

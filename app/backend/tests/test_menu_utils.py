@@ -913,14 +913,20 @@ class ApplyLexiconTests(unittest.TestCase):
 class RealPersonaPronunciationsAndSpokenNameTests(unittest.TestCase):
     """Issue #304: exercise the real, shipped Munchkins-lexicon persona pack's ``pronunciations``
     entry and its menu items' ``spokenName`` overrides through the normal ``MenuCatalog`` loading
-    path -- proving the feature works end-to-end on real pack data, not just the primitive above."""
+    path -- proving the feature works end-to-end on real pack data, not just the primitive above.
+
+    #313 (Rick's re-review, item 1): this class's whole point is to validate the REAL, shipped
+    pack's own lexicon data (the synthetic test-zeta fixture has no Munchkins-equivalent
+    ``pronunciations`` entry to exercise), so it names the real persona id directly rather than
+    string-concatenating around rebrand_scan.py's brand-word guard -- see this file's own
+    rebrand_baseline.yaml entry (issue #304)."""
 
     @classmethod
     def setUpClass(cls):
         from persona_loader import PersonaCatalog
 
         catalog = PersonaCatalog.load(personas_dir=_PERSONAS_DIR)
-        cls.persona = catalog.get("dun" + "kin")
+        cls.persona = catalog.get("dunkin")
         cls.menu = menu_utils.get_catalog_for_persona(cls.persona)
 
     def test_persona_declares_the_munchkins_pronunciation(self):

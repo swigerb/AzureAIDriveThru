@@ -958,7 +958,7 @@ class OrderState:
                         component_upcharge = self._component_upcharge(menu, item_name, size)
                         if component_upcharge > 0:
                             result_info["combo_component_upcharge"] = component_upcharge
-                            result_info["combo_component_upcharge_display"] = format_money(component_upcharge)
+                            result_info["combo_component_upcharge_display"] = format_money_spoken(component_upcharge)
                         logger.info("Post-combo absorption: '%s' absorbed as combo %s", display, component)
                     if remaining <= 0 and absorbed_count > 0:
                         self._update_summary(session_id)
@@ -997,7 +997,7 @@ class OrderState:
                                     component_upcharge = self._component_upcharge(menu, item_name, size)
                                     if component_upcharge > 0:
                                         result_info["combo_component_upcharge"] = component_upcharge
-                                        result_info["combo_component_upcharge_display"] = format_money(component_upcharge)
+                                        result_info["combo_component_upcharge_display"] = format_money_spoken(component_upcharge)
                                     logger.info(
                                         "Resize-via-add: '%s' resized combo %s slot from '%s' to '%s' (session=%s)",
                                         item_name, component, current_size, size, session_id,
@@ -1214,7 +1214,7 @@ class OrderState:
                             component_upcharge = self._component_upcharge(menu, item_name, size)
                             if component_upcharge > 0:
                                 result_info["combo_component_upcharge"] = component_upcharge
-                                result_info["combo_component_upcharge_display"] = format_money(component_upcharge)
+                                result_info["combo_component_upcharge_display"] = format_money_spoken(component_upcharge)
                             logger.info(
                                 "Modified combo %s slot '%s' from '%s' to '%s' in session %s",
                                 component, item_name, old_component_size, size, session_id,

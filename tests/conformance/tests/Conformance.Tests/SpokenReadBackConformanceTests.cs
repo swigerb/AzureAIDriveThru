@@ -99,6 +99,19 @@ public sealed class SpokenReadBackConformanceTests(ConformanceFixture fixture)
         Assert.Contains("Added", text);
         Assert.Contains("Your total is", text);
         Assert.Contains("Tots", text);
+
+        // #313 ("item 7"/item 4d, coordinator fix-up round): the one-line delta and the
+        // read-back are concatenated in a fixed order (tools.py's
+        // `delta_text_with_readback = f"{delta_text}{happy_hour_note}\n\n{spoken_read_back}"`) --
+        // the SAME spokenReadBack string get_order's own client-facing JSON carries must be the
+        // exact trailing content of update_order's model-facing text too, not merely present
+        // somewhere inside it.
+        var getOrderResult = await OrderScenarioHelpers.CallToolAsync(
+            connection, browser, "get_order", "{}", "call_update_order_readback_get", addResult.RoundTripIndex, ct);
+        using var summary = JsonDocument.Parse(getOrderResult.ToolResultJson!);
+        var spokenReadBack = summary.RootElement.GetProperty("spokenReadBack").GetString();
+        Assert.False(string.IsNullOrWhiteSpace(spokenReadBack));
+        Assert.EndsWith(spokenReadBack!, text, StringComparison.Ordinal);
     });
 }
 

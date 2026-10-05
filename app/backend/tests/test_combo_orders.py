@@ -267,7 +267,7 @@ class TestComponentUpcharge:
         order_state_singleton.handle_order_update(sid, "add", "Tots", "medium", 1, 2.79)
         result = order_state_singleton.handle_order_update(sid, "add", "Cherry Limeade", "large", 1, 3.39)
 
-        assert result["combo_component_upcharge_display"] == "$0.50"
+        assert result["combo_component_upcharge_display"] == "fifty cents"
         summary = order_state_singleton.get_order_summary(sid)
         assert math.isclose(summary.total, 10.69, rel_tol=1e-9)
         item = order_state_singleton.get_order_items(sid)[0]
@@ -326,7 +326,7 @@ class TestComponentUpcharge:
         order_state_singleton.handle_order_update(sid, "add", "Cherry Limeade", "medium", 2, 2.89)
 
         result = order_state_singleton.handle_order_update(sid, "modify", "Cherry Limeade", "large", 1, 3.39)
-        assert result["combo_component_upcharge_display"] == "$0.50"
+        assert result["combo_component_upcharge_display"] == "fifty cents"
         items = order_state_singleton.get_order_items(sid)
         assert len(items) == 2
         assert sorted((item.quantity, item.price, item.componentUpcharges) for item in items) == [

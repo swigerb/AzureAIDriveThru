@@ -86,6 +86,17 @@ entries:
   reason: Issue-specific unit coverage loads the target persona pack to verify its
     componentUpcharge bundle pricing rule; remove if this coverage becomes pack-neutral.
   increase_reason: '#205'
+- file: app/backend-dotnet/tests/Backend.Tests/Ordering/SpokenReadBackAndPronunciationTests.cs
+  brand: dunkin
+  max: 1
+  issue: '#304'
+  reason: 'RealPersonaPronunciationsAndSpokenNameTests exercises the real, shipped
+    Munchkins-lexicon persona pack''s own pronunciations entry and spokenName overrides
+    end-to-end -- there is no test-only-fixture equivalent of that real lexicon data
+    to substitute, so it names the real persona id directly (#313, Rick''s re-review
+    item 1, replacing an earlier "dun" + "kin" string-concatenation evasion of this
+    same guard).'
+  increase_reason: '#313'
 - file: app/backend-dotnet/tests/Backend.Tests/Personas/MenuKeyValidatorTests.cs
   brand: sonic
   max: 1
@@ -158,6 +169,16 @@ entries:
     same class as the #78 Python test baseline entries; remove only if the pack roster
     or its test coverage changes.'
   increase_reason: '#105'
+- file: app/backend-dotnet/tests/Backend.Tests/Tools/OrderToolExecutorComboUpchargeSpokenDeltaTests.cs
+  brand: sonic
+  max: 2
+  issue: '#304'
+  reason: 'Item 2''s "no $ in the spoken combo-upcharge delta" coverage loads the
+    real, shipped "sonic" pack directly (pure pricing/wording behavior, not any
+    persona-specific lexicon, so no test-only fixture substitution is needed) --
+    one hit from the PersonaId constant, one from this class''s own doc comment
+    naming the pack by id.'
+  increase_reason: '#313'
 - file: app/backend/audio_pipeline.py
   brand: sonic
   max: 4
@@ -284,6 +305,17 @@ entries:
     it''s the only persona pack that exists yet -- #78/#79 land the other packs, at
     which point these tests get parameterized per-persona instead of hardcoding Sonic.'
   increase_reason: ''
+- file: app/backend/tests/test_menu_utils.py
+  brand: dunkin
+  max: 1
+  issue: '#304'
+  reason: 'RealPersonaPronunciationsAndSpokenNameTests exercises the real, shipped
+    Munchkins-lexicon persona pack''s own pronunciations entry and spokenName overrides
+    end-to-end -- there is no test-only-fixture equivalent of that real lexicon data
+    to substitute, so it names the real persona id directly (#313, Rick''s re-review
+    item 1, replacing an earlier "dun" + "kin" string-concatenation evasion of this
+    same guard).'
+  increase_reason: '#313'
 - file: app/backend/tests/test_menu_utils.py
   brand: sonic
   max: 7
@@ -736,6 +768,16 @@ entries:
     same class as the #78 Python test baseline entries; remove only if the pack roster
     or its test coverage changes.'
   increase_reason: '#105'
+- file: tests/conformance/tests/Conformance.Tests/Scenarios/Cascade/CascadePronunciationLexiconConformanceTests.cs
+  brand: dunkin
+  max: 1
+  issue: '#304'
+  reason: 'Proves the cascade pipeline''s TTS input actually has the real, shipped
+    Munchkins-lexicon persona pack''s own pronunciations lexicon applied -- there is
+    no test-only-fixture equivalent of that real lexicon data to substitute, so it
+    names the real persona id directly (#313, Rick''s re-review item 1, replacing an
+    earlier "dun" + "kin" string-concatenation evasion of this same guard).'
+  increase_reason: '#313'
 - file: tests/conformance/tests/Conformance.Tests/Scenarios/Ordering/ComboAbsorptionTests.cs
   brand: sonic
   max: 6

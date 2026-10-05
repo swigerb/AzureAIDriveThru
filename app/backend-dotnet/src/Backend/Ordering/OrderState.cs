@@ -767,7 +767,12 @@ public sealed class OrderState
         if (upcharge > 0m)
         {
             result.ComboComponentUpcharge = upcharge;
-            result.ComboComponentUpchargeDisplay = Money.Format(upcharge);
+            // #313 (Rick's re-review, item 2): the model-facing delta text embeds this display
+            // string directly (see OrderToolExecutor.BuildDeltaText's "with a {upcharge} upcharge"
+            // branches) -- it must be the SAME spoken form as every other model-facing money
+            // surface (Money.FormatMoneySpoken), never the "$X.XX" digit display a realtime model
+            // must never see.
+            result.ComboComponentUpchargeDisplay = Money.FormatMoneySpoken(upcharge);
         }
     }
 

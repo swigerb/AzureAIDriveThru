@@ -17,7 +17,10 @@ namespace Conformance.Tests.Scenarios.Cascade;
 ///
 /// Uses the real, shipped Munchkins-lexicon persona pack -- its own <c>persona.json</c> declares
 /// <c>pronunciations: {"Munchkins": "Munch-kins"}</c> (the same entry the coordinator brief calls
-/// out by name), so no test-only fixture pack is needed to exercise this feature.
+/// out by name), so no test-only fixture pack is needed to exercise this feature. #313 (Rick's
+/// re-review, item 1): names the real persona id directly rather than string-concatenating
+/// around rebrand_scan.py's brand-word guard -- see this file's own rebrand_baseline.yaml entry
+/// (issue #304).
 /// </summary>
 [Collection(CascadeConformanceCollection.Name)]
 [Trait("Dotnet", "ready")]
@@ -30,7 +33,7 @@ public sealed class CascadePronunciationLexiconConformanceTests(CascadeConforman
     {
         var ct = TestContext.Current.CancellationToken;
         var connection = await CascadeScenarioHelpers.ConnectPastGreetingAsync(
-            fixture, fixture.Chat, "gpt-5-mini", ct, persona: "dun" + "kin");
+            fixture, fixture.Chat, "gpt-5-mini", ct, persona: "dunkin");
         await using var browser = connection.Browser;
 
         // The model's own final answer text deliberately uses the RAW, un-respelled brand word --
