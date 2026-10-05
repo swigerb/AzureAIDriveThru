@@ -10,12 +10,11 @@ pre-upgrade `/realtime` auth and persona/model/mode binding, the Azure OpenAI re
 order engine, search tool, prompt rendering, tool dispatch, the full rate-limit retry ladder, the
 consecutive tool-failure cap, session resume/rehydration/idle-timeout/grace-hold/nudge (issue #15),
 context-window monitoring, websocket heartbeat/connect-timeout, the best-effort startup
-connectivity check, and the shared conformance dotnet leg. Guest/assistant turn recording
-(`SessionManager.RecordTurn`) now has real production call sites (upstream
-`conversation.item.input_audio_transcription.completed` for the guest, a non-tool `response.done`
-for the assistant), feeding rehydration text on resume.
-The remaining deliberate gap versus Python is Entra auth-row execution on the dotnet leg until
-issue #147 flips that capability.
+connectivity check, ADR-002 Entra JwtBearer auth (issue #147), and the shared conformance dotnet
+leg. Guest/assistant turn recording (`SessionManager.RecordTurn`) has real production call sites
+(upstream `conversation.item.input_audio_transcription.completed` for the guest, a non-tool
+`response.done` for the assistant), feeding rehydration text on resume. No deliberate
+middle-tier gap versus Python remains; see the deferred list below for what is still out of scope.
 
 ## Module mapping
 
@@ -34,6 +33,8 @@ issue #147 flips that capability.
 | `rtmt.py`'s `create_hmac_token` / `validate_hmac_token` | `Auth/SessionTokenService.cs` | Byte-for-byte compatible: same payload JSON spacing (`{"exp": N}`), same URL-safe base64 (padding kept), same HMAC-SHA256-as-lowercase-hex signature, same "split on the last `.`" framing, constant-time signature comparison. See spike #44. PR #96 review nit: an earlier draft lowercased the *presented* signature before comparing, silently accepting uppercase hex that Python's `hmac.compare_digest` rejects -- fixed, covered by `Validate_RejectsUppercaseSignature`. |
 | `app.py`'s `load_app_secret()` | `Auth/AppSecretProvider.cs` | Reads `APP_SESSION_SECRET`; warns if short; generates a random 32-byte secret if unset (warning only when running in production). |
 | `config.yaml`'s `security` section (rtmt.py's module-level `_security_cfg`) | `Configuration/SecurityConfig.cs` | Typed, tolerant view of `security.allowed_origins` (list, default `[]`) and `security.require_session_token` (bool, default `false`) -- handles the YamlDotNet string-scalar gotcha below the same way `PromptLoader.ParsePriority` does. |
+| `entra_auth.py`'s `resolve_settings` (ADR-002, issue #147) | `Auth/EntraSettings.cs` | Same `AUTH_MODE` handling (`Entra`\|`Development`, case-insensitive, default `Development`) and the same fail-fast startup validation in Entra mode: `ENTRA_TENANT_ID`/`ENTRA_CLIENT_ID` required and not a placeholder GUID, `ENTRA_INSTANCE` must be `https` unless it's a loopback address (test/dev only). See "Issue #147 (ADR-002)" below for the full decision record, including the one deliberate `RUNNING_IN_PRODUCTION` vs `ASPNETCORE_ENVIRONMENT`/`DOTNET_ENVIRONMENT` naming deviation. |
+| `entra_auth.py`'s deny-by-default middleware + `TokenValidator` (ADR-002, issue #147) | `Auth/EntraAuthentication.cs` | `AddEntraAuthentication` wires ASP.NET Core's `Microsoft.AspNetCore.Authentication.JwtBearer` (issuer/audience/signing-keys-via-OIDC-metadata/lifetime validation) plus one `EntraAccessRequirement`/`EntraAccessRequirementHandler` authorization requirement (role + scope, since JwtBearer's own validation doesn't express either) as `AddAuthorization`'s `FallbackPolicy` -- i.e. every route is auth-required by default, same as Python's deny-by-default middleware, unless `.AllowAnonymous()` (health, persona assets matching the same extension allow-list, static files, `/`). `?access_token=` is read from the query string only for the `/realtime` path (`JwtBearerEvents.OnMessageReceived`), matching ADR-002's WebSocket-can't-set-headers carve-out. |
 | `rtmt.py`'s `_origin_matches_host` | `Realtime/OriginValidator.cs` | Exact, case-insensitive match only (never a suffix/substring match) of the raw `netloc` exactly as `urllib.parse.urlsplit(origin).netloc` would extract it -- preserving any userinfo prefix and an explicit port even when it equals the scheme's own default. PR #230 round-2 review (Rick's item 3): an earlier version compared `Uri.Authority`, which silently drops BOTH of those, over-permissively accepting an Origin Python rejects; fixed by a manual scheme-prefix-then-`//`-prefix netloc extraction (see the class's own doc comment), covered by new unit tests (`OriginValidatorTests`) and new tagged conformance rows (`OriginValidationTests.Origin_with_userinfo_is_rejected_with_403`, `.Origin_with_explicit_default_port_is_rejected_against_a_portless_host`). |
 | `rtmt.py`'s `_websocket_handler`'s pre-upgrade Origin + token checks ("Task 3"/"Task 4") | `Realtime/RealtimeAuthGate.cs` | PR #96 review, required item 1 -- see "`/realtime` auth enforcement (PR #96)" below for the full decision record. |
 | (module-level `_startup_checks` dict + `/health` handler) | `Health/StartupChecks.cs`, `Health/HealthEndpoint.cs` | Same JSON shape: `{status, version, checks, personas}`, 200 if every check passed else 503. |
@@ -242,6 +243,18 @@ constant itself 222 -> 239. Per squad coordination, any PR still rebasing on top
 #226's planned "+18") to 239 -- those deltas were computed against the stale 222 baseline and risk
 double-counting methods (such as this wave's 3 tool-failure-cap rows) already folded into 239.
 
+**Issue #147 (ADR-002: Entra JwtBearer auth, PR #226) ungates all previously-skip-gated Auth
+methods.** `AuthRowCapability.DotnetEnforcesAuth` flips `false` -> `true` now that
+`app/backend-dotnet` enforces ADR-002 auth end to end (see "Issue #147 (ADR-002)" above for the
+full decision record), so every method in the five previously-gated classes
+(`AuthModeLaunchTests`, `AuthRowLoggingTests`, `AuthRowRealtimeTokenTests`, `AuthRowRestTokenTests`,
+`AuthRowSpecialCaseTests`) now counts toward the floor, since each can genuinely fail against the
+dotnet leg instead of only ever skipping. Per the squad-coordination note directly above, this PR
+re-measured fresh at its own rebase time (onto the post-#241 `origin/dev`, which itself includes
+the Browser conformance leg) rather than projecting by historical delta -- see "Issue #147 round 5
+(rebase onto #241, Rick's security re-review)" below for the exact final measured count and
+arithmetic.
+
 - **DEV_MODE hot-reload** (`prompt_loader.py`'s file-watching reload behaviour) is explicitly
   marked not required in C# by the design doc's per-backend loading table. Not ported.
 - **Jinja2-style template rendering** is implemented for the templates this repo actually ships:
@@ -301,6 +314,467 @@ handler before `AcceptWebSocketAsync`). Rationale:
   *shapes*, not just different current defaults. `Realtime/RealtimeAuthGateTests.cs` unit-tests
   both branches directly (pure-function style, matching `Health/HealthEndpointTests.cs`); only
   the Origin half is additionally proven over the wire by conformance this wave.
+
+## Issue #147 (ADR-002): Entra JwtBearer auth lands on the dotnet leg
+
+PR for issue #147 ports `entra_auth.py`'s whole deny-by-default auth model to C#, matching
+`AUTH_MODE`'s two modes exactly:
+
+- **`Development` (default)** -- unchanged pass-through, identical to today: no JwtBearer
+  middleware is registered at all, every route stays reachable exactly as before.
+- **`Entra`** -- `EntraSettings.Resolve` fails fast at startup (process exit code 1, same as
+  Python's `sys.exit(1)`) if `ENTRA_TENANT_ID`/`ENTRA_CLIENT_ID` are unset or a placeholder GUID,
+  or if `ENTRA_INSTANCE` isn't `https` (loopback exempted, test/dev only). Once validated,
+  `AddEntraAuthentication` (`Auth/EntraAuthentication.cs`) registers `JwtBearer` (issuer, audience,
+  signing keys via the tenant's OIDC discovery/JWKS metadata, lifetime) and one
+  `EntraAccessRequirement`/`EntraAccessRequirementHandler` authorization requirement (the
+  `DriveThru.User` app role plus the configured API scope) as `AddAuthorization`'s
+  `FallbackPolicy` -- every route requires a valid, role-bearing Entra token by default, unless
+  explicitly `.AllowAnonymous()`'d: `/health`, persona assets matching the same extension
+  allow-list Python has (`.svg .png .jpg .webp .ico .wav .mp3`), static files, and `/`.
+
+**One deliberate naming deviation from Python**, called out explicitly rather than silently
+matched: Python's fail-fast gate asks "is this a real deployment?" via `RUNNING_IN_PRODUCTION`
+(an app-specific env var `entra_auth.py` itself defines and checks). ASP.NET Core already has its
+own idiomatic, host-wide equivalent -- `ASPNETCORE_ENVIRONMENT`/`DOTNET_ENVIRONMENT` ==
+`Production` -- and every other fail-fast/log-level decision in this codebase already keys off
+that pair (`AppSecretProvider`, `PersonaCatalog`'s dev-only diagnostics), so `EntraSettings.Resolve`
+uses the same signal rather than inventing a parallel `RUNNING_IN_PRODUCTION` env var with no other
+consumer in the C# codebase. The observable fail-fast *behavior* (production + unconfigured =>
+process exit 1) is unchanged; only the env var that answers "are we in production" differs, and
+only there.
+
+**`?access_token=` is honored only on `/realtime`** (`JwtBearerEvents.OnMessageReceived`, scoped
+to that one path) -- browsers can't set an `Authorization` header on a WebSocket upgrade, so ADR-002
+carves out this one query-string fallback; every other route requires the real header. The
+layered session token (`/api/auth/session`, `Auth/SessionTokenService.cs`) now binds to the
+Entra-validated principal's own `oid` claim: minting requires a valid Entra bearer, and
+`Realtime/RealtimeAuthGate.cs`'s pre-upgrade check (forced on in Entra mode, independent of
+`config.yaml`'s `security.require_session_token`) rejects a session token whose `oid` doesn't match
+the connecting principal's `oid` -- exactly `rtmt.py`'s own binding.
+
+**Issue #163 (anonymous asset extension rule, tracked separately):** Unity's #163 is concurrently
+finalizing the exact anonymous-asset-extension carve-out rule (today: a fixed
+`.svg .png .jpg .webp .ico .wav .mp3` set, ported byte-for-byte from `entra_auth.py`'s
+`ANONYMOUS_ASSET_EXTENSIONS`). This PR matches Python's *current* behavior exactly and does not
+pre-empt #163's outcome; whichever extension-rule change #163 lands should be mirrored here as a
+small follow-up to `EntraAuthentication.cs`'s `AnonymousAssetExtensions` set, not re-litigated.
+
+**Conformance: `AuthRowCapability.DotnetEnforcesAuth` flips `false` -> `true`.** All 18
+previously-skip-gated methods (`AuthModeLaunchTests`=7, `AuthRowLoggingTests`=1,
+`AuthRowRealtimeTokenTests`=1, `AuthRowRestTokenTests`=1, `AuthRowSpecialCaseTests`=8) now run for
+real against the dotnet backend instead of unconditionally skipping, raising
+`DotnetTraitCoverageTests`' floor 204 -> 222. `AuthRowCapabilityTests.cs`'s own pinned "still off"
+unit test is replaced with its mirror-image ("now on"), matching the pattern
+`Enforces_is_true_for_python_now_that_its_switch_is_on` already established for issue #144.
+
+Two small, in-scope fixes were needed to make the newly-ungated rows genuinely pass (not just
+stop skipping), both discovered by running the real Auth conformance rows end to end against a
+live dotnet backend with the frontend built (`app/backend/static/index.html` present, matching
+what `PythonBackendLauncher`/CI's own frontend-build step already require of both legs):
+
+- **Row 14 (token-leak logging) needed a real `/realtime` access line to exist as its own positive
+  control**, proving the leak-checks below it aren't passing vacuously because nothing was logged
+  at all. `Realtime/RealtimeAuthGate.cs`'s `Check` now logs one `LogInformation` line per handshake
+  attempt (`"Realtime handshake: GET /realtime (host=..., origin=...)"`, deliberately never
+  including `token`/`principalOid`) before its Origin/session-token checks run, mirroring aiohttp's
+  own access logger wrapping `app.py`'s whole request pipeline.
+- Row 12 (`/` on the anonymous allow-list) initially 401'd instead of 200 in a from-scratch
+  checkout with no frontend build yet -- traced to `Program.cs` only registering `MapGet("/")` (and
+  its `.AllowAnonymous()`) when a static files directory is actually found on disk, combined with
+  ASP.NET Core's `FallbackPolicy` applying even to completely unmatched routes. Building the
+  frontend (`npm ci && VITE_AUTH_MODE=Development npm run build` in `app/frontend`, the same
+  prerequisite `PythonBackendLauncher` already enforces before even launching Python) resolves this
+  for a normal checkout; no route-registration code change was needed once that prerequisite is met.
+
+**Validation performed:** `Backend.Tests` 471/471 passing (36 new `EntraSettingsTests`, 28 new
+`EntraAccessRequirementHandlerTests`, plus oid/gate additions to existing suites). Conformance:
+`CONFORMANCE_BACKEND=dotnet dotnet test Conformance.slnx --filter "Scenarios.Auth"` 76/76 passing;
+the full CI dotnet-leg filter `dotnet test Conformance.slnx --filter "Dotnet=ready&Category!=Browser"`
+573/573 passing; `CONFORMANCE_BACKEND=python` with `Category!=Browser` 872/876 passing (4 unrelated
+pre-existing skips), confirming issue #144's python leg stays green. Mutation check: temporarily
+dropped the role requirement from `EntraAccessRequirementHandler.HandleRequirementAsync` (kept the
+scope check only) -- 3 unit tests and 6 conformance Auth-row tests failed as expected; reverted and
+reconfirmed fully green.
+
+### Issue #163 / PR #222 follow-up: mirroring Python's auth-hardening fixes
+
+Unity's PR #222 (fix #163) landed on the Python side after this PR's initial merge, deciding the
+anonymous-asset-extension rule as **case-insensitive** and adding several other auth-hardening
+fixes to `entra_auth.py`/`persona_loader.py`. Each was audited against the C# port and mirrored
+where applicable:
+
+- **Case-insensitive anonymous asset extension (#163's actual decision).** Already correct in C#:
+  `EntraAuthentication.cs`'s extension check already used an ordinal-ignore-case comparison, so no
+  code change was needed -- only the stale doc comment (which still said "Unity is concurrently
+  finalizing...") was updated to state the now-decided rule plainly. New conformance coverage:
+  `AuthRowSpecialCaseTests.Row_12_anonymous_allow_list_path_is_case_insensitive_on_extension`
+  (requests `assets/LOGO.SVG`, expects 200 with no token), directly answering PR #222's explicit
+  ask for conformance coverage of this rule.
+- **Case-insensitive `Bearer` scheme matching.** Already native: ASP.NET Core's own
+  `JwtBearerHandler` scheme-prefix matching is ordinal-ignore-case out of the box, so Python's fix
+  (which hardened a hand-rolled string compare) has no C# equivalent gap. Doc comment added to
+  `OnMessageReceived` noting this explicitly. New conformance coverage:
+  `AuthRowRestTests.Scheme_case_insensitive_Bearer_scheme_is_accepted` (theory over `bearer`/
+  `BEARER`/`BeArEr`, each expected to authenticate successfully against `/api/personas`), again
+  directly answering PR #222's ask.
+- **Lower-cased tenant/client IDs.** Genuine gap, fixed: `EntraSettings.Resolve` now lower-cases
+  `tenantId`/`clientId` after `ValidateEntraIds` succeeds but before constructing the returned
+  record, matching Python's normalization so a mixed-case `ENTRA_TENANT_ID`/`ENTRA_CLIENT_ID`
+  can't produce a token-validation mismatch against lower-case claims. New unit test:
+  `EntraSettingsTests.Resolve_NormalizesTenantAndClientIds_ToLowerCase` (uses hex-letter GUIDs so
+  the assertion isn't a case-insensitive-comparison no-op).
+- **JWKS/OIDC outage resilience (backchannel timeout half).** Genuine gap, fixed:
+  `ConfigureJwtBearer` now sets `options.BackchannelTimeout = TimeSpan.FromSeconds(10)` so a hung
+  OIDC-metadata/JWKS endpoint fails a token-validation attempt within 10s instead of hanging on
+  .NET's much longer default `HttpClient` timeout. New unit test:
+  `ConfigureJwtBearerTests.BackchannelTimeout_IsTenSeconds`. The other half of Python's #222 fix in
+  this area -- an explicit negative-discovery-cache TTL and early malformed-token rejection before
+  attempting signature validation -- is already covered by ASP.NET Core's built-in
+  `ConfigurationManager<OpenIdConnectConfiguration>` (which already caches negatively and the
+  `JwtBearerHandler` already short-circuits structurally invalid tokens before any network call);
+  no additional C# code was needed for those.
+- **Non-string `scp` claim guard.** Genuine gap, fixed, though the *mechanism* differs from Python
+  by necessity: .NET's JWT handler materializes a JSON-array-shaped `scp` claim as multiple
+  separate `Claim("scp", ...)` entries rather than a single non-string value, so Python's exact
+  failure mode (`AttributeError` from calling `.split()` on a list) is structurally impossible
+  here. The previous C# code (`FindFirst("scp")?.Value`) would have silently used only the first
+  such claim and ignored the rest -- not a crash, but a silent under/over-grant depending on claim
+  ordering. `EntraAccessRequirementHandler.HandleRequirementAsync` now uses `FindAll("scp")` and
+  requires *exactly one* matching claim to treat it as a valid scope string; zero or multiple
+  claims now fail closed ("no valid scope"), matching Python's non-string -> empty-scopes
+  fail-closed semantic even though the underlying claim shape differs. New unit test:
+  `EntraAccessRequirementHandlerTests.MultipleScpClaims_TreatedAsNonStringScope_Fails`.
+- **Persona-asset symlink rejection -- not yet applicable, scope decision.** Python's #222 hardens
+  `persona_loader.py`'s `_validate_persona_assets`, a **load-time** classification pass that
+  rejects symlinked persona assets when a persona's catalog is first loaded. The C# port
+  (`Personas/PersonaCatalog.cs`) has no load-time asset-classification equivalent at all -- it
+  validates schema shape, menu-item/asset-name collisions, and directory existence, but never
+  inspects individual asset files for type/symlink-ness. This Python feature predates and is
+  unrelated to #147's original Auth-only scope, so it was never ported. Adding an isolated
+  symlink check with no surrounding classification pass to hang it off of would be architecturally
+  inconsistent; deferring is the right call. Note this is **not a live security gap**: the
+  *request-time* defense Python's own #222 description calls "already existing" (rejecting a
+  symlink when an asset is actually served, not just at catalog-load time) already has a complete,
+  independently-built C# analog in `Personas/PersonaAssetResolver.cs`, predating this PR. Follow-up:
+  whoever eventually ports `persona_loader.py`'s load-time `_validate_persona_assets` classification
+  pass to C# should fold this symlink check in at that time.
+- **Not applicable to C#, no code change:** structured-logging claim/token escaping (Python's `%r`
+  vs `%s` fix) -- .NET's idiomatic `ILogger` already logs claim/token values as separate structured
+  parameters rather than string-interpolating them into message text throughout this codebase, so
+  the anti-log-injection goal is already met natively; access-log route-name fallback -- no generic
+  access-log middleware exists anywhere in the C# backend to apply this to; `PRINCIPAL_KEY`
+  (aiohttp-specific warning-avoidance plumbing) -- ASP.NET Core's native `HttpContext.User`/
+  `ClaimsPrincipal` already solves the underlying problem architecturally.
+
+**Validation performed:** `Backend.Tests` 474/474 passing (471 + 3 new: lower-casing, backchannel
+timeout, multi-`scp`-claim). Conformance Auth scenarios (`CONFORMANCE_BACKEND=dotnet`, filtered to
+`Scenarios.Auth`) 80/80 passing (76 + 4 new/updated). Full local conformance suite
+(`CONFORMANCE_BACKEND=dotnet`, unfiltered) showed pre-existing, unrelated flakiness in
+Realtime/Sessions/RateLimit/transport-timing scenario classes (confirmed to reproduce even when run
+in isolation, outside any parallelization contention) -- zero failures in any Auth-scenario class;
+CI remains the authoritative gate per squad convention.
+
+### Issue #223 (Rick's review of PR #225) follow-up: dotfile extension edge case + JWKS/OIDC outage resilience
+
+Rick's review of Python PR #225 (itself still open/in-progress on the Python side as of this
+writing) surfaced two more auth-hardening items for #147 parity:
+
+- **Dotfile persona-asset names have NO extension (genuine gap, fixed).** Python's
+  `_is_anonymous` uses `PurePosixPath(asset_path).suffix`, which treats a leading dot as a "hidden
+  file" marker, not an extension delimiter: `PurePosixPath(".png").suffix == ""` and
+  `PurePosixPath("demo/.png").suffix == ""` (NOT `".png"`), so a dotfile-named asset is never
+  anonymous -- it falls through to requiring a valid bearer token like any other
+  unrecognized-extension asset. .NET's `Path.GetExtension(".png")` instead returns `".png"`,
+  which would have incorrectly classified such a file as anonymous. `EntraAuthentication.cs`'s
+  `IsAnonymousAssetRequest` now calls a new private `GetPythonStyleSuffix` helper that exactly
+  replicates `PurePosixPath.suffix`'s algorithm (last path segment only, so `"demo/.png"` reduces
+  to `".png"` first; a dot at index 0 or at the very end of the name yields no suffix; a
+  multi-dot name like `"logo.tar.gz"` yields only the final `".gz"`) instead of the naive
+  `Path.GetExtension`. New unit tests in `EntraAccessRequirementHandlerTests.cs`:
+  `PersonaAsset_Dotfile_IsNeverAnonymous_StaysPending` (theory over `.png`, `demo/.png`, `.svg`),
+  `PersonaAsset_TrailingDot_IsNeverAnonymous_StaysPending`,
+  `PersonaAsset_MultiDotName_ClassifiedByLastSuffixOnly_Succeeds`, and
+  `PersonaAsset_MultiDotName_TrailingNonMatchingSuffix_StaysPending`. New conformance coverage:
+  `AuthRowSpecialCaseTests.Row_12_dotfile_asset_has_no_extension_still_401s` (requests
+  `assets/.png` with no token, asserting 401 -- deliberately does not require the asset to exist
+  on disk, since the auth decision happens before file resolution). Mutation-verified twice: once
+  at the unit level (reverting to naive `Path.GetExtension` broke 3 of the new unit tests) and
+  once at the conformance level (same revert broke the new conformance row, returning 404 instead
+  of 401 because the mutated code incorrectly let the request through as anonymous).
+- **JWKS/OIDC discovery-fetch failures must surface as 401, never 500, with a cooldown (genuine
+  gap, fixed).** Reading ASP.NET Core's actual `JwtBearerHandler.HandleAuthenticateAsync` source
+  confirmed a real risk: its outer exception handler calls `Events.AuthenticationFailed` and then,
+  if that event handler leaves `context.Result` unset, **re-throws** the original exception --
+  meaning any failure from the OIDC discovery fetch (`ConfigurationManager.GetConfigurationAsync`,
+  invoked lazily on first token-validation attempt) would crash the request pipeline as an
+  unhandled exception instead of a clean 401. New `Auth/DiscoveryFailureGate.cs`: a thread-safe,
+  `TimeProvider`-injectable cooldown tracker (`RecordFailure()`/`IsInCooldown()`, default 30s).
+  `EntraAuthentication.ConfigureJwtBearer` now wires a new `OnAuthenticationFailed` handler that
+  recognizes discovery/backchannel failures (`HttpRequestException`, `IOException`,
+  `JsonException`, `OperationCanceledException`, walking `InnerException` since
+  `ConfigurationManager<T>` wraps the real cause in its own `InvalidOperationException` on a
+  cold-start failure) and calls `context.Fail(...)` -- turning what would otherwise be an
+  unhandled 500 into a clean 401. `OnMessageReceived` now also short-circuits to an immediate
+  `context.Fail(...)` when a bearer token is present and the gate is in cooldown, avoiding a
+  second doomed network call within the cooldown window. **Provenance note:** the 30s cooldown
+  duration and the "401 not 500, with a cooldown" contract came from the coordinator's description
+  of Rick's review, not from a byte-for-byte-portable Python source -- PR #225's own diff (as
+  inspected) adds a test (`test_discovery_body_read_failure_engages_negative_cache_cooldown`) that
+  references a `TokenValidator(..., discovery_failure_cooldown=60.0)` constructor parameter that
+  does not actually exist anywhere in that diff or in Python's current `dev` branch, meaning PR
+  #225 itself has not yet landed a working implementation of this specific mechanism to mirror.
+  This C# implementation should be revisited once PR #225 merges, in case its final cooldown value
+  or mechanism differs from the 30s default chosen here. New unit tests in
+  `EntraAccessRequirementHandlerTests.cs`'s `ConfigureJwtBearerTests`:
+  `OnAuthenticationFailed_BackchannelFailure_SetsResult_AndRecordsGateFailure` (theory over all
+  four exception types), `OnAuthenticationFailed_BackchannelFailure_WrappedInInvalidOperationException_IsStillRecognized`,
+  `OnAuthenticationFailed_UnrelatedTokenValidationException_LeavesResultUnset` (negative case),
+  `OnMessageReceived_ShortCircuits_WhenGateInCooldown_AndBearerTokenPresent`,
+  `OnMessageReceived_ShortCircuits_WhenGateInCooldown_AndRealtimeQueryTokenPresent`,
+  `OnMessageReceived_DoesNotShortCircuit_WhenGateNotInCooldown`, and
+  `OnMessageReceived_DoesNotShortCircuit_WhenNoTokenPresent_EvenInCooldown`; plus 6 new tests in
+  `DiscoveryFailureGateTests.cs` covering the gate's pure cooldown logic with a local fake
+  `TimeProvider`. Mutation-verified: gutting `OnAuthenticationFailed` to do nothing broke 5 of the
+  10 related unit tests. No conformance-level coverage was added for this item -- simulating a
+  JWKS/discovery outage over the wire would require new fault-injection support in the fake Entra
+  issuer, which is a larger, separate piece of harness work outside this round's scope; the unit
+  tests above give direct, mutation-verified coverage of the actual fix.
+
+**Lesson learned validating this round's conformance coverage:** running
+`dotnet test tests/conformance/...` without first setting `CONFORMANCE_BACKEND=dotnet` silently
+exercises the **Python** reference backend, not the C# port -- a mutation to the C# fix will look
+"caught" by a passing test for the wrong reason (the Python backend was correct all along). Always
+pair `CONFORMANCE_BACKEND=dotnet` with a `PATH` that resolves the .NET 11 RC SDK (the system-wide
+`dotnet` lacks the `global.json`-pinned version; `$env:USERPROFILE\.dotnet` must be prepended to
+`PATH`, not just invoked directly, since `DotnetBackendLauncher` shells out to a bare `dotnet`)
+when locally verifying any dotnet-leg conformance change.
+
+**Validation performed:** `Backend.Tests` 496/496 passing (474 + 22 new: dotfile/multi-dot
+persona-asset cases, `ConfigureJwtBearerTests` coverage of the new `OnAuthenticationFailed`/
+`OnMessageReceived` wiring, `DiscoveryFailureGateTests`). Conformance Auth scenarios
+(`CONFORMANCE_BACKEND=dotnet`, filtered to `Scenarios.Auth`, with `PATH` resolving the .NET 11 RC
+SDK) 101/101 passing (includes the 1 new dotfile row added this round; the rest of the growth
+since the #163/#222 round's 80/80 reflects other squad work merged to `dev` in the interim, not
+anything from this round). Full local unfiltered conformance suite continues to show the same pre-existing,
+unrelated Realtime/Sessions/Browser/transport-timing flakiness noted in the #163/#222 section
+above (reproduces independent of this round's changes); zero failures in any Auth-scenario class;
+CI remains the authoritative gate per squad convention.
+
+### Issue #147 round 3 (coordinator note citing Rick's PR #226 review): making the coverage floor honest about skip-gated rows
+
+`DotnetTraitCoverageTests.At_least_222_scenarios_are_tagged_dotnet_ready_and_not_skip_gated`
+previously excluded skip-gated `Scenarios/Auth` classes from its reflection-based count via a
+hand-maintained `HashSet<string>` of type full names (`AuthRowGatedTypeNames`), emptied when this
+issue flipped `AuthRowCapability.DotnetEnforcesAuth` to `true`. Rick's concern: this floor is only
+ever a *lower bound* (`count >= 222`), so if `DotnetEnforcesAuth` were ever flipped back to `false`
+-- a real regression that would silently move the 18 gated methods from `Passed` back to `Skipped`
+on the dotnet leg -- the raw count could still clear 222 purely from unrelated scenario growth
+elsewhere in the suite, and the floor test would stay green despite the regression. A
+reflection-only count can't tell "tagged and genuinely passing" from "tagged but unconditionally
+skip-gated" apart; only a hand-maintained exclusion list could, and nothing forced that list to
+stay in sync with the real capability flag.
+
+Fixed by replacing the list with two changes:
+
+- A new `[AuthRowCapabilityGated]` marker attribute (`Conformance.Harness.AuthRowCapabilityGatedAttribute`,
+  declared alongside `AuthRowCapability` itself) applied directly to the five gated classes
+  (`AuthModeLaunchTests`, `AuthRowLoggingTests`, `AuthRowRealtimeTokenTests`,
+  `AuthRowRestTokenTests`, `AuthRowSpecialCaseTests`). `CountFloorEligibleDotnetReadyTestMethods`
+  now excludes an attribute-carrying type's methods only while
+  `AuthRowCapability.Enforces("dotnet")` resolves `false` -- no separate list to remember to update
+  when the flag changes; the exclusion is derived from the real capability function every time the
+  floor runs.
+- The floor `[Fact]` now also asserts `AuthRowCapability.Enforces("dotnet")` directly (with a
+  message naming the exact regression it guards against), *in addition to* the `count >= 222`
+  check -- so a `DotnetEnforcesAuth` regression fails this test immediately and unambiguously,
+  independent of how much slack the raw count has from unrelated growth.
+
+**Mutation check:** temporarily set `AuthRowCapability.DotnetEnforcesAuth = false` --
+`DotnetTraitCoverageTests`'s new capability assertion failed with the expected message, and (as a
+second, independent confirmation) the 18 previously-gated methods correctly reported `Skipped`
+again when the Auth conformance filter was re-run (`Failed: 2, Passed: 34, Skipped: 66, Total: 102`
+-- the two failures being this floor test and `AuthRowCapabilityTests`'s own existing
+`Enforces_is_true_for_dotnet_now_that_its_switch_is_on` pin); reverted, and the suite returned to
+102/102 passing with 0 skipped.
+
+**Note on the pending floor-number rebase (resolved -- see "Issue #147 round 4" below):** per the
+coordinator's cross-PR sequencing note, PR #230 (issue #21) was expected to merge to `dev` before
+this PR rebased and raised the floor constant/doc comment from 222 to the final combined number.
+That rebase has now happened; see the next section for the exact arithmetic and final count (248,
+not the naively expected 222 + 18 = 240).
+
+### Issue #147 round 4 (coordinator-directed rebase onto PR #230's merged floor of 222): the exact final count
+
+PR #230 (issue #21, both rounds) merged to `dev` first, raising its own floor 204 -> 222 (see the
+two "Issue #21" entries above). Per the coordinator's instruction, `squad/147-csharp-entra` was
+then rebased onto `origin/dev` (`git rebase origin/dev`, all 7 commits replaying cleanly after
+resolving doc-comment/floor-constant conflicts in this file and `DotnetTraitCoverageTests.cs` --
+the `AuthRowGatedTypeNames` structural conflict only occurred in this PR's very first commit, since
+the round-3 `AuthRowCapabilityGatedAttribute` rewrite above is a later commit that replayed cleanly
+against the first commit's own resolution), and the floor's new value was computed by the test's
+own `CountFloorEligibleDotnetReadyTestMethods` reflection logic -- not hand arithmetic, per the
+coordinator's explicit instruction -- by temporarily raising the assertion threshold, reading the
+actual count from the failure message, then reverting.
+
+**Result: 248, not the naively expected 222 + 18 = 240.** The gap is fully explained by two
+compounding, independently-verified factors:
+
+1. **This PR's own two follow-up rounds already added 3 more tagged, ungated rows to the same five
+   previously-gated classes**, raising their total from 18 (as of this PR's first commit,
+   `AuthModeLaunchTests`=7, `AuthRowLoggingTests`=1, `AuthRowRealtimeTokenTests`=1,
+   `AuthRowRestTokenTests`=1, `AuthRowSpecialCaseTests`=8) to 21 at the current tip
+   (`AuthRowRestTokenTests`=2 after the case-insensitive-Bearer-scheme theory method;
+   `AuthRowSpecialCaseTests`=10 after the two Row-12 case-insensitive-extension/dotfile-suffix
+   methods). Verified by diffing `[Theory]`/`[Fact]` counts in those five files between this PR's
+   first commit and its tip: 18 -> 21 (+3).
+2. **`dev`'s own non-Auth tagged-method count had already organically drifted 5 rows ahead of its
+   own stated 222 floor** by the time this PR rebased onto it (227, not 222) -- the exact same
+   "floor is a lower bound, the real count can run ahead of it between raises" shape the "Issue #21
+   'flip candidates to check early'" entry above already documents for `dev` itself (204 floor, 208
+   actual, at that time). Verified with a temporary diagnostic `[Fact]` that printed the
+   per-type method breakdown after the rebase: summing every non-`Scenarios/Auth`-gated type's
+   contribution gives 227; summing the five gated types gives 21; 227 + 21 = 248 exactly, matching
+   the measured `CountFloorEligibleDotnetReadyTestMethods()` result. The diagnostic method was
+   reverted before committing -- it exists nowhere in the final diff.
+
+`DotnetTraitCoverageTests.At_least_222_scenarios_are_tagged_dotnet_ready_and_not_skip_gated` is
+renamed to `At_least_248_scenarios_are_tagged_dotnet_ready_and_not_skip_gated` (`count >= 248`),
+and every doc-comment/error-message reference to "222" or "18" in that class that described this
+PR's own floor target (as opposed to `dev`'s pre-rebase baseline, which stays "222" in the
+historical narrative) is updated to 248/21 to match.
+
+**Validation after rebase:** `Backend.Tests` unaffected by this rebase (no production code
+changed, only test/doc files) -- still 496/496 passing. Conformance suite rebuilt clean
+(`Backend.slnx` and `Conformance.slnx` both 0 warnings/0 errors). Full dotnet CI filter
+(`CONFORMANCE_BACKEND=dotnet`, `--filter "Dotnet=ready&Category!=Browser"`, `PATH` resolving the
+.NET 11 RC SDK) and the `Scenarios.Auth`-filtered run both pass cleanly against the new floor of
+248, including `DotnetTraitCoverageTests` itself and `AuthRowCapabilityTests`'s own pinned
+`Enforces_is_true_for_dotnet_now_that_its_switch_is_on` Fact. Pushed with `--force-with-lease`
+(rewriting history via the rebase); CI reconfirmed green on the rebased tip.
+
+### Issue #147 round 5 (rebase onto #241, Rick's security re-review): fixing the 3 outstanding findings
+
+Rick's PR #226 security re-review passed the core model outright (startup fail-fast, alg/issuer/
+audience/tid/300s skew, the anonymous allow-list including encoding tricks, `?access_token` only on
+`/realtime`, session-token oid binding, the CI Docker step, the package) and flagged 3 remaining
+findings. A prior, cancelled session had already landed most of the fix for all 3 (the cooldown
+decorator, the claim-shape checks, and the `LastKnownGoodLifetime` shrink) but left one genuine
+regression undiscovered and the doc/floor bookkeeping unfinished; this round finished that work.
+
+**Finding #1 (HIGH, JWKS/OIDC outage cooldown never arms on the real pipeline):** already correctly
+implemented by the prior session in `Auth/CooldownAwareConfigurationManager.cs` -- a decorator
+around the inner `ConfigurationManager<OpenIdConnectConfiguration>` whose `GetBaseConfigurationAsync`
+records a failure via `DiscoveryFailureGate.RecordFailure()` only inside the `catch` for a fetch the
+request actually awaited, and only when `_hasConfiguration` is false (never from a background
+`RequestRefresh`, which never throws through this code path at all, and never merely because
+`IsLastKnownGoodValid` happens to be false). `Auth/DiscoveryFailureGate.cs` is the thread-safe
+30-second cooldown tracker consulted by `ConfigureJwtBearer`'s `OnMessageReceived` to fail fast
+(401, no fetch attempted) while in cooldown and no configuration is held. No changes needed here
+this round; verified via a fresh read of both files plus a mutation check (see below).
+
+**Finding #2 (MEDIUM, claim-shape parity with Python) -- found and fixed a genuine pipeline bug:**
+the prior session's `nbf`-missing and `roles`/`scp`-shape checks in `EntraAuthentication.cs`'s
+`OnTokenValidated`, and the matching `AuthRowCases.cs` rows (17: missing nbf, 18: malformed roles
+shape, 19: malformed scp shape) plus `FakeEntraIssuer.cs`'s `OmitNbf`/`MalformedRolesShape`/
+`MalformedScopeShape` overrides, were all already in place and unit-tested
+(`EntraAccessRequirementHandlerTests`) -- but running the conformance suite against the real
+pipeline for the first time this round (`CONFORMANCE_BACKEND=dotnet`, `Scenarios.Auth`) surfaced
+Row 18 (malformed `roles` shape: a bare JSON string, not an array) returning 200 instead of 403 on
+both `AuthRowRestTokenTests` and `AuthRowRealtimeTokenTests`. Root-caused with an isolated
+`JsonWebTokenHandler.ValidateTokenAsync` scratch test: the implementation's
+`JsonWebToken.TryGetPayloadValue<JsonElement>("roles", out ...)` silently returns `false` -- not an
+exception, a false negative -- for ANY claim whose underlying JSON value is a scalar (string, in
+this case), because IdentityModel's `JsonWebToken` only stores a genuine `JsonElement` internally
+for array/object-valued claims; scalar-valued claims are stored as their natively-mapped CLR type
+(`string` here, confirmed via `TryGetPayloadValue<string>` succeeding on the exact same claim in the
+exact same scratch test). The code's first cut misread "TryGetPayloadValue returned false" as
+"claim absent, shape OK," so a bare-string `roles` claim always sailed through unflagged. Fixed by
+replacing the `TryGetPayloadValue<JsonElement>` calls for `roles`/`scp` with a new
+`EntraAuthentication.ParseRawPayload(JsonWebToken)` helper that base64url-decodes
+`JsonWebToken.EncodedPayload` and parses it directly as a `System.Text.Json.JsonDocument`, then uses
+`JsonElement.TryGetProperty` -- reading the TRUE raw JSON shape regardless of which CLR type
+IdentityModel happened to map a given value to, matching Python's own `claims.get(...)`/
+`isinstance(...)` checks against the real parsed JSON payload. `jwt.TryGetPayloadValue<long>` for
+`nbf` is unaffected (numeric claims DO round-trip through IdentityModel's native-type path
+correctly; only the `JsonElement`-typed generic accessor has this gap), confirmed because Row 17
+(missing nbf) was never among the conformance failures. `TryAllIssuerSigningKeys = false` (so an
+unknown kid -> 401) was already set correctly by the prior session; re-verified unchanged this
+round. Files touched: `Auth/EntraAuthentication.cs` only (the `OnTokenValidated` shape-check block
+and the new `ParseRawPayload` helper); no test files needed changes since the existing Row 17/18/19
+conformance rows already existed and now genuinely pass end to end.
+
+**Finding #3 (LOW-MED, rotated-out signing keys stay valid up to 1h):** already correctly fixed by
+the prior session -- `ConfigureJwtBearer` constructs its own `CooldownAwareConfigurationManager`
+wrapping a `ConfigurationManager<OpenIdConnectConfiguration>` with
+`LastKnownGoodLifetime = lastKnownGoodLifetime ?? TimeSpan.FromSeconds(300)` (an optional parameter
+defaulting to the production 300s, overridable only by tests), replacing IdentityModel's 1-hour
+default while keeping warm-outage resilience (the LKG fallback itself is not disabled, just bounded
+to a much shorter grace period). No changes needed; verified via a mutation check (see below). No
+conformance-level key-rotation row was added -- see "Known gaps" below for why.
+
+**Validation performed this round:**
+- `Backend.slnx` builds clean (0 warnings, 0 errors) after the finding-#2 fix.
+- `Backend.Tests`, `FullyQualifiedName~Backend.Tests.Auth`: 126/126 passing (includes the 3
+  pipeline-level `EntraPipelineCooldownTests` scenarios for findings #1/#3, and
+  `CooldownAwareConfigurationManagerTests.ConfigureJwtBearer_DefaultsLastKnownGoodLifetimeTo300Seconds`
+  pinning finding #3's production default).
+- `Backend.Tests`, full suite: 672/674 (later re-run) / 673/674 (earlier re-run) passing -- the one
+  consistently-failing test, `Backend.Tests.Cascade.BrowserSocketCancellationTests.RunSessionAsync_
+  BargeInDuringABackpressuredTtsWrite_DoesNotAbortTheBrowserSocket`, reproduces identically in
+  isolation and on a clean `git stash` of this round's entire diff (confirmed by re-running it
+  against the pristine pre-round working tree) -- a pre-existing, unrelated WebSocket-timing/
+  Cascade test, not a regression from this round's auth work.
+- Conformance, `CONFORMANCE_BACKEND=dotnet`, `Scenarios.Auth`: 87/87 passing (confirms Row 18 fix
+  end to end, plus Rows 17/19 and everything else in the Auth scenario tree).
+- Conformance, `CONFORMANCE_BACKEND=dotnet`, full CI filter (`Dotnet=ready&Category!=Browser`):
+  627/627 passing.
+- Conformance, `CONFORMANCE_BACKEND=python`, `Category!=Browser` (full suite, both tagged and
+  untagged): 911/918 passing, 6 skipped, 1 failed
+  (`DotnetBackendLauncherPortRaceTests.StartAsync_recovers_when_the_assigned_port_is_already_bound_
+  by_someone_else`) -- this test launches a real dotnet-leg backend process regardless of
+  `CONFORMANCE_BACKEND`, and fails identically (same `AUTH_MODE=Development ... refused in
+  Production` fatal) on a clean `git stash` of this round's entire diff, i.e. it was already broken
+  before this round started and is unrelated to findings #1/#2/#3 or auth claim-shape handling; not
+  fixed here as it is out of this round's scope (harness/launcher config, not `Auth/*` production
+  code), but flagged honestly as a pre-existing gap.
+- `DotnetTraitCoverageTests`'s floor was re-measured fresh (temporarily raised to an unreachable
+  bound, actual count read off the assertion-failure message, then set to the real value, per the
+  coordinator's explicit "measure, don't compute" instruction): **281** (up from 260). The ~21-count
+  rise is explained by the finding-#2 conformance rows (17/18/19) each being exercised by both
+  `AuthRowRestTokenTests.Row_asserts_on_every_REST_path` and
+  `AuthRowRealtimeTokenTests.Row_asserts_on_realtime` as individual `[Theory]` cases, which
+  `CountFloorEligibleDotnetReadyTestMethods` counts as distinct cases, plus unrelated organic growth
+  elsewhere on `origin/dev` since the round-4/PR#253 260 measurement.
+- **Mutation checks (temporarily break, confirm red, revert, confirm green) for all 3 findings:**
+  1. Finding #1: commented out `CooldownAwareConfigurationManager.GetBaseConfigurationAsync`'s
+     `_gate.RecordFailure()` call -- `EntraPipelineCooldownTests.ColdOutage_AtMostOneFetchPerWindow_
+     AndFastFailures` (and 7 other cases in the same filtered run) went red
+     (`Assert.True() Failure: Expected True, Actual False`); reverted; full 18/18 green again.
+  2. Finding #2: widened the mutated `rolesShapeOk` check to also accept `JsonValueKind.String`
+     (restoring the exact shape of the original bug class) -- `AuthRowRestTokenTests.Row_asserts_on_
+     every_REST_path(caseIndex: 21)` and `AuthRowRealtimeTokenTests.Row_asserts_on_realtime
+     (caseIndex: 21)` (Row 18) both went red (2/51 failed); reverted; full 51/51 green again.
+  3. Finding #3: changed the production default back to IdentityModel's
+     `LastKnownGoodLifetime = lastKnownGoodLifetime ?? TimeSpan.FromHours(1)` --
+     `CooldownAwareConfigurationManagerTests.ConfigureJwtBearer_DefaultsLastKnownGoodLifetimeTo300Seconds`
+     went red (`Expected: 00:05:00, Actual: 01:00:00`); reverted; green again.
+
+**Known gaps (honest, not glossed over):**
+- No conformance-level key-rotation row for finding #3. `EntraPipelineCooldownTests.KeyRotation_
+  RotatedOutSigningKeyIsRejectedAfterLastKnownGoodLifetimeElapses` proves the mechanism pipeline-
+  wide, but it does so only by constructing the host in-process with a test-shrunk
+  `lastKnownGoodLifetime` parameter (300ms instead of 300s) passed directly to
+  `ConfigureJwtBearer`. The conformance suite launches the real, external dotnet backend process
+  with no such override hook in its production startup path (`lastKnownGoodLifetime` is an optional
+  parameter used only by tests that call `ConfigureJwtBearer` directly) -- a true black-box
+  conformance row would need to wait out the real 300-second production window, impractical for a
+  CI-speed suite. This mirrors the precedent already set for finding #1's own cooldown window when
+  #223 first landed it (also Backend.Tests-only, for the same 30-second-real-wait reason).
+- The pre-existing `DotnetBackendLauncherPortRaceTests` and `BrowserSocketCancellationTests`
+  failures noted above were confirmed unrelated to this round's changes (reproduce identically with
+  this round's diff stashed out) but were not investigated further or fixed, being out of this
+  round's stated scope (C# backend auth + its tests + conformance + this doc only).
 
 ## `models.catalog` (resolved this revision)
 

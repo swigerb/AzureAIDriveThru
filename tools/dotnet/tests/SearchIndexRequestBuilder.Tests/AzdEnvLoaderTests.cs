@@ -164,9 +164,14 @@ public sealed class AzdEnvLoaderTests : IDisposable
     /// character. This is a real, documented divergence (see docs/dotnet_tooling.md), but one that
     /// cannot occur for either of the two keys this tool ever reads: a URL
     /// (AZURE_OPENAI_EASTUS2_ENDPOINT) and an Azure OpenAI deployment name
-    /// (AZURE_OPENAI_EMBEDDING_DEPLOYMENT) can never legally contain <c>$</c>, <c>!</c>, or a
-    /// backtick in the first place, so this parser's extra-permissive unescaping is never actually
-    /// exercised by real data -- this test exists only to pin the behavior deliberately.
+    /// (AZURE_OPENAI_EMBEDDING_DEPLOYMENT) can never contain <c>$</c>, <c>!</c>, or a backtick in
+    /// practice, per Azure's own naming rules: the endpoint is always
+    /// <c>https://&lt;resource&gt;.openai.azure.com/</c>, where resource names allow only letters,
+    /// digits, and hyphens, and deployment names allow only letters, digits, <c>-</c>, <c>_</c>,
+    /// and <c>.</c> -- not because URL syntax itself forbids those characters (RFC 3986 allows
+    /// both <c>$</c> and <c>!</c> as sub-delims; only a literal backtick is disallowed there). So
+    /// this parser's extra-permissive unescaping is never actually exercised by real data -- this
+    /// test exists only to pin the behavior deliberately.
     /// </summary>
     [Fact]
     public void LoadDefaultEnvValues_UnescapesBackslashEscapedDollarBangAndBacktick()

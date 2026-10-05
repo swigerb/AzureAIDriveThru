@@ -104,4 +104,71 @@ public sealed class SessionTokenServiceTests
 
         Assert.False(service.Validate(uppercased));
     }
+
+    // ── Issue #147 (ADR-002, design doc 18.3): the layered session token's `oid` binding ─────────
+
+    [Fact]
+    public void TryValidate_RoundTripsOid()
+    {
+        var service = new SessionTokenService(Secret);
+        var token = service.Create(expirySeconds: 900, oid: "33333333-3333-3333-3333-333333333333");
+
+        Assert.True(service.TryValidate(token, out var oid));
+        Assert.Equal("33333333-3333-3333-3333-333333333333", oid);
+    }
+
+    [Fact]
+    public void TryValidate_OmittedOid_ReturnsNull()
+    {
+        var service = new SessionTokenService(Secret);
+        var token = service.Create(expirySeconds: 900);
+
+        Assert.True(service.TryValidate(token, out var oid));
+        Assert.Null(oid);
+    }
+
+    [Fact]
+    public void TryValidate_ExpiredTokenWithOid_ReturnsNullOid()
+    {
+        var service = new SessionTokenService(Secret);
+        var token = service.Create(expirySeconds: -10, oid: "33333333-3333-3333-3333-333333333333");
+
+        Assert.False(service.TryValidate(token, out var oid));
+        Assert.Null(oid);
+    }
+
+    [Fact]
+    public void Create_WithOid_PayloadMatchesPythonJsonDumpsSpacing()
+    {
+        // Same byte-compatibility guard as the exp-only case above, but for create_hmac_token's
+        // `oid` branch: Python's json.dumps({"exp": n, "oid": oid}) inserts exp before oid, one
+        // space after each colon, one space after the comma, no trailing whitespace.
+        var service = new SessionTokenService(Secret);
+
+        var token = service.Create(expirySeconds: 900, oid: "33333333-3333-3333-3333-333333333333");
+        var payloadB64 = token[..token.LastIndexOf('.')];
+        var payloadJson = System.Text.Encoding.UTF8.GetString(
+            Convert.FromBase64String(payloadB64.Replace('-', '+').Replace('_', '/')));
+
+        Assert.Matches(
+            @"^\{""exp"": \d+, ""oid"": ""33333333-3333-3333-3333-333333333333""\}$", payloadJson);
+    }
+
+    [Fact]
+    public void TryValidate_TamperedOid_FailsSignatureCheck()
+    {
+        // The oid is inside the signed payload, not appended after it -- swapping it for a
+        // different (still well-formed) oid must fail the HMAC check like any other payload
+        // tamper, not silently validate with the attacker's substituted oid.
+        var service = new SessionTokenService(Secret);
+        var token = service.Create(expirySeconds: 900, oid: "33333333-3333-3333-3333-333333333333");
+        var forged = service.Create(expirySeconds: 900, oid: "44444444-4444-4444-4444-444444444444");
+        var lastDot = token.LastIndexOf('.');
+        var forgedLastDot = forged.LastIndexOf('.');
+        // Re-attach the ORIGINAL signature to the FORGED (different-oid) payload.
+        var tampered = forged[..forgedLastDot] + "." + token[(lastDot + 1)..];
+
+        Assert.False(service.TryValidate(tampered, out var oid));
+        Assert.Null(oid);
+    }
 }

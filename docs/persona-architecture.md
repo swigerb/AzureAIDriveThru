@@ -1390,6 +1390,10 @@ A backend that doesn't enforce auth yet ignores the extra env and tokens, so the
 | 14 | Logging: after rows 8 and 10, the captured backend output contains neither token | Pass. The harness runs `python app.py`, not gunicorn, so the deployed gunicorn path is pinned by the unit and Dockerfile tests in 18.4 |
 | 15 | Modes (launch-and-exit rows): Production and unconfigured; Production with `AUTH_MODE=Development`; `AUTH_MODE=Development` with `ENTRA_TENANT_ID` and `ENTRA_CLIENT_ID` set, not Production; `AUTH_MODE=Development` with only one id set, not Production; unknown `AUTH_MODE`; `ENTRA_INSTANCE=http://` to a non-loopback host; Entra with a placeholder client id | The process exits non-zero before listening. The harness runs `python app.py`; the gunicorn image is covered by #144's CI boot check (18.4) |
 | 16 | Development pass-through (non-Production, unconfigured, with `AUTH_MODE` unset and with `AUTH_MODE=Development`) | 200 with no token; `/realtime` opens |
+| 17 | Missing `nbf` claim entirely (a structurally valid, correctly-signed, otherwise-valid token) | 401 |
+| 18 | Malformed `roles` shape: a bare JSON string instead of an array (one role, serialized without the array wrapper real Entra always uses) | 403 |
+| 19 | Malformed `scp` shape: a one-element JSON array instead of a string (real Entra always emits `scp` as a single space-delimited string) | 403 |
+| 20 | Rotated-out signing key: a token signed with a key that was published and accepted, then removed from the JWKS on a later refresh | 401 within a bounded grace period after the rotation propagates -- C# caps `LastKnownGoodLifetime` at 300s (vs. IdentityModel's 1-hour default); Python's `PyJWKClient` has no comparable grace period at all |
 
 Rows are turned on per backend when that backend's auth lands: by the Python issue for `python`, and by the C#
 issue for `dotnet`, through the existing `DotnetPlaceholderPolicy` pattern. The gate then requires both legs.
@@ -1398,7 +1402,7 @@ issue for `dotnet`, through the existing `DotnetPlaceholderPolicy` pattern. The 
 
 | Issue | Work | Owner | Milestone | Depends on |
 | --- | --- | --- | --- | --- |
-| #143 | Harness `FakeEntraIssuer`, Entra-mode default fixture, token-attaching clients, rows 1 to 16 | Birdperson | P2 | This ADR |
+| #143 | Harness `FakeEntraIssuer`, Entra-mode default fixture, token-attaching clients, rows 1 to 20 | Birdperson | P2 | This ADR |
 | #144 | Python: `entra_auth.py`, route matrix, `/realtime` check order, layered session token, modes (explicit `Development` with ids fails fast), route-template access logger on both run paths, `create_runner()` turning a startup exit into a clean gunicorn halt, CI image-boot check | Unity | P2 | This ADR; #143 harness part lands first |
 | #145 | Frontend: MSAL `AuthGate` (no retry after a failed redirect), `authorizedFetch` on the protected path list, per-connect WebSocket tokens, fail-closed config (explicit `Development` for pass-through bundles, `loadEnv`), marker, removal of legacy auth | Morty | P2 | This ADR. Mocked MSAL, so it can start now |
 | #146 | Infra: Bicep pins, `backendIngressEnabled` switch, EasyAuth removal, postprovision, build args (`VITE_AUTH_MODE=Entra` default), Setup and Verify scripts (active-revision check, `-RevisionsOnly`), contract test, `DEPLOY.md`, then the rollout in 18.10 (dark provision, check, then enable ingress) | Squanchy | P2 | This ADR for the scripts; #144 and #145 for the rollout |

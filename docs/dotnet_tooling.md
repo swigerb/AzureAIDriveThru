@@ -6,17 +6,20 @@ backends" decision extended to repo tooling). It exists for the same reason
 `docs/dotnet_mapping.md` exists for the application backend: so a port has an obvious place to
 record what moved, what didn't, and why, instead of that history living only in commit messages.
 
-Per epic #6 and the issue #16 P1 update (ADR-001), this is a multi-wave effort. The original PR
+Per epic #6 and the issue #16 P1 update (ADR-001), this was a multi-wave effort. The original PR
 (#224) was **wave 1**: the inventory below, a scaffold for C# tooling (`tools/dotnet/`), and ONE
 representative, low-risk port end-to-end (`update_menu_sizes.py`) with an output-parity test against
 its Python twin. **Batch 1** ported the inventory's own stated next no-Azure candidate,
-`extract_production_items.py` -- see "Batch 1 port" below. **Batch 2** (this update), with no
-no-Azure candidates left, instead proves out this doc's own design note for porting an
-Azure-dependent tool without live Azure calls, for `app/backend/setup_search_index.py`'s
-request-building half -- see "Batch 2 port" below. Every other script and notebook in the inventory
-stays Python-only until a later batch/wave explicitly ports it (tracked in the Squad's wave plan; see
-"What's next" for the remaining candidates' design). **The Python versions are not removed or
-modified by this work**, and azd hooks / CI keep running the Python implementations by default.
+`extract_production_items.py` -- see "Batch 1 port" below. **Batch 2** proved out this doc's own
+design note for porting an Azure-dependent tool without live Azure calls, for
+`app/backend/setup_search_index.py`'s request-building half -- see "Batch 2 port" below. **This PR**
+ports the REST of that script -- CLI/`main()`/`run()` orchestration, persona targeting, index
+create-or-update, the embeddings-and-upload-batch loop, dry-run, and azd env loading -- see "This
+PR's port: orchestration" below. Per the repo owner's scope decision quoted in "What's next" below,
+**this closes issue #16**: every other script/notebook in the inventory below is now **intentionally,
+permanently kept Python-only** (not merely deferred to a future wave) -- see "What's next" for the
+full list and rationale. **The Python versions are not removed or modified by any of this work**,
+and azd hooks / CI keep running the Python implementations by default.
 
 ## Inventory: Python scripts and notebooks outside `app/backend`
 
@@ -24,30 +27,31 @@ modified by this work**, and azd hooks / CI keep running the Python implementati
 | --- | --- | --- | --- | --- | --- |
 | `scripts/update_menu_sizes.py` | Adds Mini/Small/Medium/Large/RT 44 size+price variants (parsed from the production POS export) to a handful of drink/slush/shake/blast items in the UI menu file. | In: `personas/<id>/menu/source/<id>-menu-items.json` (read-only), `personas/<id>/menu/menuItems.json`. Out: rewrites `menuItems.json` in place. | Manual dev tool only; not an azd hook, not referenced by CI. | None (pure JSON transform, no network/SDK calls). | **Ported this PR** -- `tools/dotnet/src/UpdateMenuSizes` (small console tool project). See "This PR's port" below. |
 | `scripts/extract_production_items.py` | Produces a stdout report of every item in the production POS export grouped by category, then a gap analysis (items in the UI menu but not production, and vice versa) against `menuItems.json`. Shares its category-walking logic with `sonic_menu_ingestion_search.ipynb` ("using the SAME logic" per its own docstring). | In: same two files as `update_menu_sizes.py` (read-only). Out: stdout report only, no file written. | Manual dev/report tool only; not an azd hook, not referenced by CI. | None (pure JSON read + report, no network/SDK calls). | **Ported in batch 1** -- `tools/dotnet/src/ExtractProductionItems` (small console tool project). See "Batch 1 port" below. |
-| `scripts/benchmark_reasoning.py` | Runs scripted guest utterances against a **live** Azure OpenAI realtime deployment to benchmark `reasoning.effort`/`parallel_tool_calls` latency and tool-call correctness. | In: live realtime deployment (via `azd env get-values`/env vars), optional `--tools real` hits Azure AI Search too. Out: JSON/JSONL results file (`--out`/`--resume`). | Manual dev benchmarking tool only; not an azd hook, not referenced by CI. | **Yes** -- requires a live Azure OpenAI realtime deployment; explicitly out of scope for this issue ("NOT ... anything that calls Azure"). | Deferred indefinitely (or until a C# realtime client exists to drive it) -- excluded from the "first port" candidate set for this reason. |
-| `scripts/generate_apology_clips.py` | Records one pre-recorded "rate limited twice in a row" apology audio clip per UI language, using a live realtime model, with Whisper transcription verification. | In: live Azure OpenAI realtime + Whisper. Out: `personas/<persona-id>/assets/audio/apology-<lang>.wav`. | Manual, occasional dev tool (re-run only when a persona's default voice changes); not an azd hook, not referenced by CI. | **Yes** -- live realtime model + Whisper transcription. | Deferred indefinitely, same reason as `benchmark_reasoning.py`. |
-| `scripts/generate_demo_guest_voice.py` | Generates scripted guest-voice MP3 clips for persona demo packs via Azure Speech, with `ffmpeg`/`subprocess` post-processing (silence trim, crossfade). | In: Azure Speech synthesis, local `ffmpeg`. Out: MP3 clip files under a persona's demo assets. | Manual dev tool only; not an azd hook, not referenced by CI. | **Yes** -- Azure Speech voice synthesis. | Deferred indefinitely, same reason as the other audio-generation tools. |
-| `scripts/smoke_realtime.py` | Post-deploy smoke check: builds the exact `session.update` payloads the middle tier sends and fires them at a **live** Azure OpenAI realtime deployment, failing if tools/instructions/transcription don't come back correctly. | In: live Azure OpenAI realtime deployment (via flags/env/`azd env get-values`). Out: exit code + stdout diagnostics (no file). | **azd `postdeploy` hook** (via `scripts/smoke_realtime.ps1`/`.sh`). Not referenced by CI. | **Yes** -- the entire point of the script is to probe a live deployment. | Deferred indefinitely -- explicitly excluded ("NOT setup_search_index or anything that calls Azure"); the azd hook keeps running the Python version by default (`TOOLING_IMPL` note below). |
-| `scripts/e2e_order_resume.py` | Real-browser (Playwright/headless Chromium or Edge) end-to-end check of order-resume behavior (reconnect, tap-to-continue, page reload, idle close) against the built frontend and the real middle tier, with a fake realtime upstream. No Azure calls. | In: a built frontend (`app/backend/static`), a running middle tier, Playwright-driven browser. Out: pass/fail + console diagnostics (no file). | Not part of the default test run (needs a browser + Playwright installed); not an azd hook, not referenced by CI. | None directly, but needs a real browser engine and a built frontend bundle -- too heavy/complex to be the "representative, low-risk" first port. | Deferred -- a plausible future candidate once a C# equivalent of Playwright-driven browser automation is justified for a later wave (not attempted here). |
-| `scripts/menu_ingestion_search_json.ipynb` | Generic (persona-agnostic) notebook walkthrough: configure Azure OpenAI + Azure AI Search, prepare menu JSON, and upload it to a search index for hybrid semantic search. | In: a raw menu JSON export. Out: documents upserted into a live Azure AI Search index. | Manual, interactive notebook only; not an azd hook, not referenced by CI (the production path is `app/backend/setup_search_index.py`, which already lives in, and is out of scope per, `app/backend`). | **Yes** -- Azure OpenAI + Azure AI Search throughout. | Deferred indefinitely -- notebooks are explicitly the kind of Azure-dependent, interactive tooling this issue's "no Azure calls" constraint excludes from a first port; also the least "representative, low-risk" shape (interactive exploration, not a deterministic CLI tool). |
-| `scripts/sonic_menu_ingestion_search.ipynb` | Same pipeline as `menu_ingestion_search_json.ipynb`, specialized to ingest one persona's menu (`personas/<PERSONA_ID>/`) by id. | Same as above, scoped to one persona. | Manual, interactive notebook only; not an azd hook, not referenced by CI. | **Yes** -- Azure OpenAI + Azure AI Search throughout. | Deferred indefinitely, same reason as `menu_ingestion_search_json.ipynb`. |
-| `tests/conformance/tests/Conformance.Tests/Scripts/verify_fake_entra_token.py` | Verifies a `FakeEntraIssuer`-minted JWT the same way a real client-side PyJWT consumer would (signature, issuer, audience, claims) -- an interop check that the fake issuer's tokens are genuinely PyJWT-compatible, not just internally self-consistent. | In: a signing key + token passed as CLI args by its caller. Out: exit code only (no file). | Not an azd hook, not referenced by any workflow directly; invoked as a subprocess by `FakeEntraIssuerPyJwtValidationTests.cs` (an xUnit test in `tests/conformance`), which IS exercised by CI's existing `conformance.yml` `dotnet-tests` job. | None (local JWT verification only). | **Intentionally stays Python** -- its entire purpose is PyJWT interop verification (would the real Python `PyJWT` library accept this token), so porting it to a C# JWT library would defeat the point of the check. Not a candidate for any future wave. |
+| `scripts/benchmark_reasoning.py` | Runs scripted guest utterances against a **live** Azure OpenAI realtime deployment to benchmark `reasoning.effort`/`parallel_tool_calls` latency and tool-call correctness. | In: live realtime deployment (via `azd env get-values`/env vars), optional `--tools real` hits Azure AI Search too. Out: JSON/JSONL results file (`--out`/`--resume`). | Manual dev benchmarking tool only; not an azd hook, not referenced by CI. | **Yes** -- requires a live Azure OpenAI realtime deployment; explicitly out of scope for this issue ("NOT ... anything that calls Azure"). | **Intentionally, permanently Python-only** (owner decision, 2026-10-04, quoted in "What's next" below): "No deterministic parity test is possible without live Azure." Not a candidate for any future wave absent a new, separately scoped issue. |
+| `scripts/generate_apology_clips.py` | Records one pre-recorded "rate limited twice in a row" apology audio clip per UI language, using a live realtime model, with Whisper transcription verification. | In: live Azure OpenAI realtime + Whisper. Out: `personas/<persona-id>/assets/audio/apology-<lang>.wav`. | Manual, occasional dev tool (re-run only when a persona's default voice changes); not an azd hook, not referenced by CI. | **Yes** -- live realtime model + Whisper transcription. | **Intentionally, permanently Python-only**, same owner decision and rationale as `benchmark_reasoning.py` ("live-Azure tools... No deterministic parity test is possible without live Azure"). |
+| `scripts/generate_demo_guest_voice.py` | Generates scripted guest-voice MP3 clips for persona demo packs via Azure Speech, with `ffmpeg`/`subprocess` post-processing (silence trim, crossfade). | In: Azure Speech synthesis, local `ffmpeg`. Out: MP3 clip files under a persona's demo assets. | Manual dev tool only; not an azd hook, not referenced by CI. | **Yes** -- Azure Speech voice synthesis. | **Intentionally, permanently Python-only**, same owner decision and rationale as `benchmark_reasoning.py`. |
+| `scripts/smoke_realtime.py` | Post-deploy smoke check: builds the exact `session.update` payloads the middle tier sends and fires them at a **live** Azure OpenAI realtime deployment, failing if tools/instructions/transcription don't come back correctly. | In: live Azure OpenAI realtime deployment (via flags/env/`azd env get-values`). Out: exit code + stdout diagnostics (no file). | **azd `postdeploy` hook** (via `scripts/smoke_realtime.ps1`/`.sh`). Not referenced by CI. | **Yes** -- the entire point of the script is to probe a live deployment. | **Intentionally, permanently Python-only** (owner decision, 2026-10-04): explicitly named as a live-Azure tool with "no deterministic parity test possible"; "the trusted postdeploy check" keeps running the Python version unconditionally (`TOOLING_IMPL` note below). |
+| `scripts/e2e_order_resume.py` | Real-browser (Playwright/headless Chromium or Edge) end-to-end check of order-resume behavior (reconnect, tap-to-continue, page reload, idle close) against the built frontend and the real middle tier, with a fake realtime upstream. No Azure calls. | In: a built frontend (`app/backend/static`), a running middle tier, Playwright-driven browser. Out: pass/fail + console diagnostics (no file). | Not part of the default test run (needs a browser + Playwright installed); not an azd hook, not referenced by CI. | None directly, but needs a real browser engine and a built frontend bundle -- too heavy/complex to be the "representative, low-risk" first port. | **Intentionally, permanently Python-only** (owner decision, 2026-10-04): "Playwright browser E2E, out of scope for tooling parity." |
+| `scripts/menu_ingestion_search_json.ipynb` | Generic (persona-agnostic) notebook walkthrough: configure Azure OpenAI + Azure AI Search, prepare menu JSON, and upload it to a search index for hybrid semantic search. | In: a raw menu JSON export. Out: documents upserted into a live Azure AI Search index. | Manual, interactive notebook only; not an azd hook, not referenced by CI (the production path is `app/backend/setup_search_index.py`, which already lives in, and is out of scope per, `app/backend`). | **Yes** -- Azure OpenAI + Azure AI Search throughout. | **Intentionally, permanently Python-only** (owner decision, 2026-10-04): "Both ingestion notebooks: interactive and exploratory, not CLI tools." |
+| `scripts/sonic_menu_ingestion_search.ipynb` | Same pipeline as `menu_ingestion_search_json.ipynb`, specialized to ingest one persona's menu (`personas/<PERSONA_ID>/`) by id. | Same as above, scoped to one persona. | Manual, interactive notebook only; not an azd hook, not referenced by CI. | **Yes** -- Azure OpenAI + Azure AI Search throughout. | **Intentionally, permanently Python-only**, same owner decision and rationale as `menu_ingestion_search_json.ipynb`. |
+| `tests/conformance/tests/Conformance.Tests/Scripts/verify_fake_entra_token.py` | Verifies a `FakeEntraIssuer`-minted JWT the same way a real client-side PyJWT consumer would (signature, issuer, audience, claims) -- an interop check that the fake issuer's tokens are genuinely PyJWT-compatible, not just internally self-consistent. | In: a signing key + token passed as CLI args by its caller. Out: exit code only (no file). | Not an azd hook, not referenced by any workflow directly; invoked as a subprocess by `FakeEntraIssuerPyJwtValidationTests.cs` (an xUnit test in `tests/conformance`), which IS exercised by CI's existing `conformance.yml` `dotnet-tests` job. | None (local JWT verification only). | **Intentionally, permanently Python-only** (owner decision, 2026-10-04, quoted in "What's next" below): "its purpose is PyJWT interop verification" -- porting it to a C# JWT library would defeat the point of the check. Not a candidate for any future wave. |
 
 Note: `app/backend/setup_search_index.py` itself is inside `app/backend` and is therefore **out of
 this inventory's scope** (the issue is scoped to Python outside `app/backend`); only its `scripts/`
-launcher wrappers are in scope, below. Batch 2 made one explicit, narrow exception to this rule for
-this one script's request-building half only, at the Squad's own direction -- see "Batch 2 port"
-below for what was (and, just as importantly, was NOT) ported, and why this stays an exception rather
-than a scope change.
+launcher wrappers are in scope, below. Batch 2 and this PR made an explicit, narrow exception to this
+rule for this one script's request-building half (Batch 2) and its CLI/orchestration half (this PR)
+only, at the Squad's own direction -- see "Batch 2 port" and "This PR's port: orchestration" below
+for what was (and, just as importantly, was NOT) ported, and why this stays an exception rather than
+a scope change for the rest of `app/backend`.
 
 ## Inventory: `.ps1`/`.sh` wrappers that shell out to Python
 
 | File(s) | Wraps | azd hook | Proposed C# shape |
 | --- | --- | --- | --- |
-| `scripts/setup_search_index.ps1`, `scripts/setup_search_index.sh` | `app/backend/setup_search_index.py` (builds/refreshes the Azure AI Search index from the production menu export) | **azd `postprovision` hook** (after `postprovision_auth`/`write_env`) | Not ported (wraps an Azure-dependent script). Still stays Python for the live azd hook: batch 2 ported `setup_search_index.py`'s own request-building logic in C# as a proof of concept (see "Batch 2 port" below), but that port has no CLI/`run()` orchestration and is not wired into this wrapper or the azd hook, which keep running the Python implementation unconditionally. |
-| `scripts/smoke_realtime.ps1`, `scripts/smoke_realtime.sh` | `scripts/smoke_realtime.py` (realtime session smoke check; never fails the deployment, warns only) | **azd `postdeploy` hook** | Not ported (wraps an explicitly-excluded, Azure-dependent script); stays Python. |
-| `scripts/start.ps1`, `scripts/start.sh` | `app/backend/app.py` directly (runs the Python backend itself via gunicorn, the application entry point) | Not an azd hook; local dev convenience only. | Out of scope -- this is the application, not "tooling" (and a C# backend entry point is `app/backend-dotnet`'s own, separately-tracked concern, not this issue's). |
-| `scripts/load_python_env.ps1`, `scripts/load_python_env.sh` | Nothing Python-specific to port -- it bootstraps the Python `.venv` itself (creates it, installs `app/backend/requirements.txt`) so the OTHER scripts above have an interpreter to run. | Sourced by `setup_search_index.ps1`/`.sh` AND `start.ps1`/`.sh` before they invoke Python. | Out of scope -- there is no Python *logic* here to port; it is the venv bootstrap `update_menu_sizes.py` et al. depend on existing at all. |
+| `scripts/setup_search_index.ps1`, `scripts/setup_search_index.sh` | `app/backend/setup_search_index.py` (builds/refreshes the Azure AI Search index from the production menu export) | **azd `postprovision` hook** (after `postprovision_auth`/`write_env`) | **Not yet wired to the C# port; the azd hook stays on Python (`TOOLING_IMPL` is a future concern)** -- unlike the other rows in this table, this one is not an owner decision to stay Python-only. `setup_search_index.py` itself now has a full C# port of both its request-building half (Batch 2) and its CLI/orchestration half (this PR, `tools/dotnet/src/SearchIndexIngestor`) -- see "This PR's port: orchestration" below -- but this wrapper and the live azd `postprovision` hook keep running the Python implementation unconditionally; the C# port is not wired into either (see the `TOOLING_IMPL` section below for the mechanism that would eventually let it). |
+| `scripts/smoke_realtime.ps1`, `scripts/smoke_realtime.sh` | `scripts/smoke_realtime.py` (realtime session smoke check; never fails the deployment, warns only) | **azd `postdeploy` hook** | **Intentionally, permanently Python-only** (owner decision, 2026-10-04): wraps a live-Azure tool that stays Python-only; stays Python itself. |
+| `scripts/start.ps1`, `scripts/start.sh` | `app/backend/app.py` directly (runs the Python backend itself via gunicorn, the application entry point) | Not an azd hook; local dev convenience only. | **Intentionally, permanently Python-only** (owner decision, 2026-10-04) -- this is the application, not "tooling" (and a C# backend entry point is `app/backend-dotnet`'s own, separately-tracked concern, not this issue's). |
+| `scripts/load_python_env.ps1`, `scripts/load_python_env.sh` | Nothing Python-specific to port -- it bootstraps the Python `.venv` itself (creates it, installs `app/backend/requirements.txt`) so the OTHER scripts above have an interpreter to run. | Sourced by `setup_search_index.ps1`/`.sh` AND `start.ps1`/`.sh` before they invoke Python. | **Intentionally, permanently Python-only** (owner decision, 2026-10-04) -- there is no Python *logic* here to port; it is the venv bootstrap `update_menu_sizes.py` et al. depend on existing at all. |
 
 `postprovision_auth.ps1`/`.sh`, `write_env.ps1`/`.sh`, and `install_prerequisites.ps1`/`.sh` were
 also checked and confirmed to shell out only to `az`/`azd` CLIs, never Python -- they are not
@@ -677,7 +681,11 @@ the tools whose parity bar genuinely depends on response-handling, not request-b
   parsed value instead of stripping it. This is a genuine parser-level divergence, but one that can
   never be exercised by either of the two keys this tool actually reads: `AZURE_OPENAI_EASTUS2_ENDPOINT`
   is a URL and `AZURE_OPENAI_EMBEDDING_DEPLOYMENT` is an Azure OpenAI deployment name, and neither
-  can legally contain a `$`, `!`, or backtick in the first place. See
+  can contain a `$`, `!`, or backtick in practice -- not because URL syntax forbids it (RFC 3986
+  allows both `$` and `!` as sub-delims; only a literal backtick is disallowed there), but because
+  of Azure's own naming rules: the endpoint is always `https://<resource>.openai.azure.com/`, where
+  Azure OpenAI resource names allow only letters, digits, and hyphens, and deployment names allow
+  only letters, digits, `-`, `_`, and `.`. See
   `LoadDefaultEnvValues_UnescapesBackslashEscapedDollarBangAndBacktick` in `AzdEnvLoaderTests.cs`,
   which pins this parser's behavior deliberately even though real data never reaches it.
 * `FixtureEmbedding.cs` (now test-only, under `tools/dotnet/tests/SearchIndexRequestBuilder.Tests/`) --
@@ -798,30 +806,295 @@ imports `persona_loader.py`, which pulls in `jsonschema`/`pydantic`/`PyJWT`/`aio
 filters already cover `tools/dotnet/**` and `personas/*/menu/**` (this batch's new persona-data reads
 are all `menuItems.json`/`persona.json`, already covered); no new filter entries were needed.
 
+## This PR's port: `setup_search_index.py`'s orchestration -> `tools/dotnet/src/SearchIndexIngestor` (closes #16)
+
+Batch 2 ported `setup_search_index.py`'s REQUEST-BUILDING half only (index-definition and
+document-batch JSON, via `SearchIndexRequestBuilder`) and explicitly left `run()`/`main()`'s own
+orchestration, the CLI surface, persona targeting, and the embeddings-generation call unported. This
+PR ports the rest: a new `tools/dotnet/src/SearchIndexIngestor` console tool that is a complete,
+drop-in-equivalent CLI for `app/backend/setup_search_index.py` (not wired into the azd hook -- see
+the wrapper-table note above -- but functionally complete on its own). Per the repo owner's scope
+decision (quoted in full in "What's next" below), **landing this PR closes issue #16**.
+
+### What's ported
+
+* **CLI surface** (`CliRunner.cs`, `Program.cs`): `--persona ID[,ID...]` (repeatable
+  and/or comma-separated, default every enabled persona), `--dry-run`, `--personas-dir`, plus
+  `--search-endpoint`/`--openai-endpoint`/`--embedding-deployment` overrides reusing
+  `SearchEndpointResolver`/`OpenAiSettingsResolver`'s existing CLI-flag-beats-azd-beats-environment-
+  variable precedence (Batch 2, PR #250) -- Python itself has no CLI overrides for these three; they
+  always come from the azd-managed environment there. **Round 2 (Rick's review, item 1):**
+  `PERSONAS`/`PERSONAS_DIR` are now also honoured, via `PersonaCatalogEnvResolver.cs`, with the same
+  CLI-flag (where one exists) > azd-default-environment-value > process-environment-variable
+  precedence every other azd-aware setting here uses -- matching `persona_loader.PersonaCatalog.load()`'s
+  own `PERSONAS`/`PERSONAS_DIR` env-var handling (`persona_loader.py`, lines ~548-584) exactly, so a
+  real run can no longer create/populate indexes for personas an environment's own `PERSONAS`
+  setting never enabled.
+* **`run()`/`main()` orchestration** (`CliRunner.RunAsync`, `SearchIndexOrchestrator.IngestAsync`):
+  azd env loading (skipped entirely for `--dry-run`, matching Python's own early-return before any
+  env read, lines 455-473), the `SKIP_SEARCH_INDEX_SETUP` escape hatch, persona discovery ->
+  targeting -> per-persona plan -> index create-or-update -> embeddings generation -> upload-batch
+  loop -> stale-document deletion -> document-count verification with retry (`verify_document_count`,
+  lines 326-348, including its distinct `RuntimeError`-not-`SystemExit` failure mode -- see
+  `SearchIndexOrchestrator.cs`'s remarks).
+* **Persona targeting** (`PersonaTargeting.cs`): faithful port of `resolve_target_personas`
+  (lines 365-389), including the unknown-persona-id `SystemExit` path (ported as a single, clean
+  `InvalidOperationException` all the way out to `CliRunner`'s one catch block -- this port's
+  established convention since PR #224, not a new one).
+* **Embeddings generation, via an injectable seam** (`IEmbeddingClient`,
+  `AzureOpenAiEmbeddingClient.cs`): the one genuinely new Azure dependency this batch adds. The
+  production implementation is a direct Azure OpenAI REST call
+  (`POST .../openai/deployments/<deployment>/embeddings?api-version=...`), authenticated with
+  `DefaultAzureCredential` against the `https://cognitiveservices.azure.com/.default` scope --
+  the same credential type and scope Python's own `get_bearer_token_provider(DefaultAzureCredential(), ...)`
+  uses (`run()`, lines 480-484), no API key ever read or sent. `IEmbeddingClient` is the seam: tests
+  never touch this real implementation, only deterministic fakes (`FixtureEmbeddingClient`,
+  `FixedVectorEmbeddingClient` -- see "Tests" below), matching this task's explicit instruction that
+  only the test project may use fakes. **Caveat**: unlike the Search REST calls (captured verbatim
+  from the real Python twin's own HTTP traffic -- see Batch 2 and "Tests" below), the embeddings
+  REST request/response shape here is this port's own informed-but-not-independently-captured
+  assumption about the standard Azure OpenAI embeddings wire contract (now
+  `{"input": [...], "model": "<deployment>"}` -- the `model` field was added in round 2, Rick's
+  review item 4, to match the `openai` Python SDK's own request body shape for this call -- /
+  `{"data": [{"embedding": [...], "index": N}, ...]}`) -- `setup_search_index.py`'s own Python
+  twin talks to Azure OpenAI through the `openai` SDK, not raw HTTP, so there was no equivalent
+  HTTP-transport-capture technique available for this one call the way there was for the Search
+  calls. `encoding_format` is deliberately still omitted (an accepted divergence, not an oversight --
+  see `AzureOpenAiEmbeddingClient.cs`'s own XML doc comment for the same note at the source).
+  **Round 2 (item 4):** a count-mismatch guard was added in `SearchIndexOrchestrator.cs`, between
+  embedding generation and the embedding-attachment loop, raising a clean `InvalidOperationException`
+  if the embeddings response returns a different number of vectors than documents were sent -- this
+  can never happen with a well-behaved real Azure OpenAI endpoint, but fails loudly and immediately
+  (rather than an obscure index-out-of-range/silent-misalignment bug further down) if it ever does.
+* **Index create-or-update and the upload-batch loop** (`SearchIndexOrchestrator.cs`): reuses
+  Batch 2's `SearchIndexDefinitionBuilder`/`DocumentBatchBuilder` request-building logic verbatim,
+  now actually wired into a real orchestration loop (100-document batches, in original order,
+  matching `upload_documents`'s own manual batching, lines ~286-325) via the production
+  `SearchIndexHttpClient` (Batch 2, bearer-token-authenticated against Azure AI Search, no API key).
+* **Retries/timeouts matching the pinned Python SDKs' own defaults (round 2, Rick's review, item
+  2):** `SearchIndexHttpClient.CreateForProduction` wraps a `SearchRetryHandler`
+  (`RetryTotal`=10, exponential backoff with `BackoffFactor`=0.8/`BackoffMax`=120s, retrying on
+  408/429/500/502/503/504 plus transport exceptions) and a 300-second connect+overall timeout,
+  matching `azure-search-documents`' pinned `azure-core` transport defaults.
+  `AzureOpenAiEmbeddingClient.CreateForProduction` wraps an `OpenAiRetryHandler` (`MaxRetries`=2,
+  backoff 0.5-8s, honouring a `Retry-After` header only when it's <= 60s) and a 5-second connect /
+  600-second overall timeout, matching the pinned `openai` Python SDK's own `DEFAULT_MAX_RETRIES`/
+  `DEFAULT_TIMEOUT` defaults. Both handlers are `DelegatingHandler`s, independently unit-tested
+  against synthetic failing-then-succeeding responses (`RetryHandlerTests.cs`) with no real network
+  call, and separately wired into each production `HttpClient` via an internal, test-only
+  `CreateProductionHttpClient` factory method on each client class.
+* **Dry-run behaviour**: prints `"[dry-run] persona '<id>': index '<name>', <n> document(s) planned"`
+  per targeted persona and exits 0 -- zero Azure Search/OpenAI calls, no credential constructed, no
+  azd env loaded at all, matching Python's own dry-run early-return (lines 447-469) exactly.
+* **Logging/output and exit codes**: every orchestration step logs one line to stdout (index
+  setup, embeddings generation, each batch's upload result, stale-deletion count, completion),
+  mirroring `ingest_plan`'s own `logger.info` calls; every expected/resolvable configuration error
+  (unknown persona, no endpoint configured, missing menu file) becomes a single clean stderr line
+  plus exit code 1 (`CliRunner`'s one catch block), while the one genuinely unexpected failure mode
+  (`verify_document_count`'s final count mismatch) is deliberately left as an uncaught exception,
+  matching Python's own `RuntimeError`-not-`SystemExit` distinction there.
+* **azd env loading**: reuses `AzdEnvLoader`/`OpenAiSettingsResolver` (Batch 2, PR #250) as-is --
+  no changes needed to either for this batch. **Accepted divergence (Rick's review, round 2, item
+  6):** Python's own `load_azd_env()` RAISES (`RuntimeError("Error loading azd env")` /
+  `"No default azd env file found"`) if azd or its default env file isn't found; `AzdEnvLoader`
+  instead treats that as "contributes nothing" and returns an empty dictionary, falling through to
+  the process environment and this port's own CLI flags. If nothing resolves an endpoint either
+  way, the CLI still raises its one, existing clean `InvalidOperationException` ("Azure AI Search
+  endpoint not set...", `SearchEndpointResolver`/`OpenAiSettingsResolver`) -- the same single,
+  well-tested, catchable failure path as a missing `--search-endpoint` flag, never a raw, uncaught
+  azd-specific error. Matching Python's exact azd-missing wording was judged not worth a second
+  error path purely for its own sake, when the existing endpoint-not-set message already tells the
+  operator exactly what to do next. See `AzdEnvLoader.cs`'s own XML doc comment for the fuller
+  rationale.
+
+### A genuine production bug this batch's tests found and fixed
+
+Building the strict Python-twin parity test (below) surfaced a real wire-format divergence:
+`System.Text.Json`'s `JsonValue.Create(double)` drops the decimal point for a whole-number value
+(e.g. `-1.0` serializes as the JSON token `-1`, not `-1.0`), while Python's `json.dumps` always
+writes a float with a `.`. Azure AI Search's REST API can treat an int-shaped and a float-shaped
+token differently for the same `Collection(Edm.Single)` field even though they're numerically
+equal -- a genuine "Python-faithful JSON encoding/number repr" parity bug, not a cosmetic one.
+Fixed in `SearchIndexOrchestrator.cs`'s embedding-vector-building loop by routing every embedding
+component through the existing `PythonJsonDumps.PythonFloatRepr` helper (Batch 2,
+`SearchIndexRequestBuilder`, already `InternalsVisibleTo`-exposed to this project) and parsing the
+resulting Python-faithful text back into a `JsonNode`, instead of handing the raw `double` to
+`JsonValue.Create`. Pinned by a dedicated regression test,
+`SearchIndexOrchestratorTests.IngestAsync_WritesWholeNumberEmbeddingComponents_WithAPythonFaithfulDecimalPoint`
+(a fixed `[1.0, -1.0, 0.0, 2.5]` embedding fake), since the strict parity test below builds its own
+embedding JSON independently of the orchestrator and would not, by itself, catch a regression in
+the orchestrator's own code path. This bug is very unlikely with REAL Azure OpenAI embeddings
+(an irrational-looking float almost never lands on an exact whole number) but was triggered
+reliably by this batch's own deterministic, hash-derived test/capture-harness embedding fixture.
+
+### Tests (`tools/dotnet/tests/SearchIndexIngestor.Tests`)
+
+Every component has an isolated unit-test file against in-memory fakes (`PersonaTargetingTests.cs`,
+`SearchEndpointResolverTests.cs`, `SearchIndexHttpClientTests.cs`, `SearchIndexOrchestratorTests.cs`,
+`AzureOpenAiEmbeddingClientTests.cs`, `PersonaIngestPlanBuilderTests.cs`, `CliRunnerTests.cs`,
+`PersonaCatalogEnvResolverTests.cs`, `RetryHandlerTests.cs` -- the last two new in round 2) --
+same two-layer split (component logic vs. output-parity-at-the-edges) every prior port in this doc
+uses. The capstone is `PythonParityTests.cs`, which extends Batch 2's HTTP-transport-capture
+technique (`RecordingTransport` monkeypatching `azure-search-documents`' transport layer, no socket
+ever opened) with a new capture harness, `Fixtures/capture_search_index_ingestion.py`, that records
+not just request bodies (Batch 2) but method/URL (including index name and api-version)/headers too:
+
+* **Index create-or-update + upload-batch-loop parity**: for every real enabled persona in the
+  actual repo, drives the real Python capture harness as a subprocess (no network), then drives the
+  REAL `SearchIndexOrchestrator.IngestAsync` (round 2, Rick's review item 1 -- not a hand-rolled
+  create+upload loop standing in for it) wrapped around a `FakeHttpMessageHandler`, and strictly
+  compares method, URL (path including index name and api-version), the headers that matter,
+  bodies, and batch boundaries against the Python-captured requests -- structurally (key-by-key,
+  order-independent for JSON objects) rather than byte-for-byte, the same JSON-structural-equality
+  bar Batch 2 established. This now also exercises (but, per this file's own prior documented
+  reasoning, deliberately does NOT byte-compare) `IngestAsync`'s delete-stale-document and
+  `$count`-verification steps, against one synthetic seeded stale document id.
+* **Dry-run stdout-content parity**: spawns the real `setup_search_index.py --dry-run` as a genuine
+  subprocess (`COLUMNS=1000` forces Python's `RichHandler` to stop word-wrapping each log line across
+  multiple physical lines, which otherwise breaks naive line-matching when stdout isn't a real tty)
+  alongside an in-process `CliRunner.RunAsync(["--dry-run"], ...)` run against the same real repo,
+  extracts `(persona, index, document-count)` triples from both sides' stdout, and asserts they
+  match exactly, plus exit code 0 and empty stderr on both sides, for every enabled persona, for a
+  single targeted `--persona` (round 2, item 5), and for the `PERSONAS` environment variable
+  restricting the catalog to a named two-persona subset (round 2, item 5).
+* **Unknown-persona error-case parity**: compares exit codes (both 1) and that both sides' stderr
+  mentions the bogus persona id, for an unrecognized `--persona` flag value -- Python raises
+  `SystemExit(message)` (lines 365-389); this port's `CliRunner` catches the equivalent
+  `InvalidOperationException` and returns 1 (same convention as `PersonaTargeting.cs`'s own doc
+  comment note above).
+* **Missing-endpoint error-case parity (round 2, item 5):** a non-dry-run real-subprocess
+  comparison for each of `AZURE_SEARCH_ENDPOINT` and `AZURE_OPENAI_EASTUS2_ENDPOINT` being unset --
+  Python's `run()` raises a raw, unhandled `KeyError` for either (lines 471-472). Since Python's
+  non-dry-run path always calls `load_azd_env()` first (`main()`, line 539), which shells out to a
+  real `azd` CLI that isn't installed in this (or presumably any CI) test sandbox, these two tests
+  prepend a tiny stub `azd` script (just enough to satisfy `azd env list -o json` against a
+  deliberately endpoint-less `.env` file) to `PATH` for that one subprocess only, so Python actually
+  reaches the `KeyError` this test means to compare, rather than always failing one step earlier at
+  the azd shell-out regardless of which endpoint is or isn't set. Compared at the same
+  exit-code/"mentions the right variable name" content level as the unknown-persona test above, not
+  byte-for-byte -- Python's raw `KeyError` traceback vs. this port's own clean, single-line
+  `InvalidOperationException` message are a deliberate, documented divergence (see
+  `SearchEndpointResolver.cs`/`OpenAiSettingsResolver.cs`'s own remarks), not a parity bug.
+* **Retry/timeout behaviour (round 2, item 2):** `RetryHandlerTests.cs` unit-tests
+  `SearchRetryHandler`/`OpenAiRetryHandler` directly (retry-on-each-retriable-status-code, no-retry
+  on non-retriable codes, retry exhaustion, `Retry-After` precedence over backoff, transport-
+  exception retries) with no real network call; `SearchIndexHttpClientTests.cs`/
+  `AzureOpenAiEmbeddingClientTests.cs` each add a `CreateProductionHttpClient`-level test confirming
+  the configured timeouts and a representative single-retry-then-success scenario end to end through
+  the real production factory method (exposed to the test project via `InternalsVisibleTo`).
+* **Embeddings `model` field + count-mismatch guard (round 2, item 4):**
+  `AzureOpenAiEmbeddingClientTests.cs` asserts the request body now includes `"model": "<deployment>"`
+  alongside `"input"`; `SearchIndexOrchestratorTests.cs` adds a `FixedCountEmbeddingClient` test
+  double proving `IngestAsync` raises a clean `InvalidOperationException` (rather than silently
+  misaligning embeddings to documents, or throwing an obscure index-out-of-range exception further
+  down) if the embeddings response ever returns a different vector count than documents were sent.
+* **PERSONAS/PERSONAS_DIR resolution (round 2, item 1):** `PersonaCatalogEnvResolverTests.cs`
+  unit-tests `PersonaCatalogEnvResolver`'s CLI-flag/azd-value/process-env precedence directly (9
+  cases); `CliRunnerTests.cs` adds integration-level cases through the full `CliRunner.RunAsync`
+  path (`PERSONAS` restricting dry-run output, a `PERSONAS` entry naming a non-existent persona id
+  erroring cleanly, an azd-sourced `PERSONAS_DIR` beating a process-env `PERSONAS_DIR` in a full
+  non-dry-run flow, and an explicit `--personas-dir` flag beating both).
+
+No test in this project makes a live Azure call: the embeddings seam (`IEmbeddingClient`) is always
+a deterministic fake (`FixtureEmbeddingClient`, SHA-256-hash-derived, or the fixed-vector regression
+fake above) in every test, and the Search REST calls are always against `FakeHttpMessageHandler` or
+the Python capture harness's own `RecordingTransport` -- never a real endpoint. The two missing-
+endpoint parity tests' stub `azd` script is likewise never a real `azd` installation or a real Azure
+call -- it only ever echoes a fixed, local JSON literal.
+
+### Mutation checks (each performed for real, then reverted, while implementing this batch)
+
+1. Reverted the embedding float-repr fix above (back to `vector.Add(component)`) -- the new
+   orchestrator regression test failed with `"1"` where `"1.0"` was expected; the parity test itself
+   was unaffected (confirming the two tests check genuinely different things, since the parity test
+   builds its embedding JSON independently of the orchestrator).
+2. Changed `SearchIndexHttpClient`'s `ApiVersion` constant from its real value to a different,
+   wrong one -- the parity test failed on a URL mismatch (api-version is part of the query string).
+3. Changed the `Prefer` header from `"return=representation"` to `"return=minimal"` -- the parity
+   test failed on a header mismatch.
+4. Changed the parity test's own batch-loop slice size from 100 to 99 -- failed on the one real
+   enabled persona with 180 documents (2 real batches of 100+80), with "array length differs.
+   expected 100, actual 99."
+5. **(Round 2)** Changed `SearchRetryHandler.RetryTotal` from 10 to 1 -- 9 of 22 `RetryHandlerTests`
+   failed as expected (every case asserting more than 1 total retry attempt).
+6. **(Round 2)** Removed the single seeded stale document id from `PythonParityTests.cs`'s own
+   `FakeHttpMessageHandler` search-results stub -- the new delete-stale assertion
+   (`Assert.Equal([staleDocId], deletedIds)`) correctly failed with an empty list instead,
+   confirming the real-orchestrator-driven parity test actually exercises the delete-stale path
+   rather than vacuously passing.
+7. **(Round 2)** Disabled `PersonaCatalogEnvResolver.ResolvePersonasDir`'s `--personas-dir`-flag
+   precedence check (forced it to always fall through to azd/env) -- the existing
+   `ResolvePersonasDir_Flag_BeatsBothAzdAndEnvironmentVariable` test failed as expected (got the
+   azd value instead of the flag value).
+8. **(Round 2)** Disabled the count-mismatch guard in `SearchIndexOrchestrator.cs` (forced its
+   condition to `false`) -- `IngestAsync_Throws_WhenAzureOpenAiReturnsFewerEmbeddingsThanDocuments`
+   failed as expected, but not merely with a different exception message: it threw an entirely
+   different, unhandled `ArgumentOutOfRangeException` from deep inside the embedding-attachment
+   loop instead of the guard's own clean `InvalidOperationException` -- concretely demonstrating
+   the "obscure index-out-of-range exception further down" failure mode the guard exists to
+   prevent, not just a cosmetic difference.
+
+All eight were restored and the full suite re-verified green afterward.
+
+### CI wiring
+
+No new workflow changes were needed: `.github/workflows/dotnet-tooling.yml`'s existing path filters
+(`tools/dotnet/**`, `app/backend/setup_search_index.py`, `app/backend/persona_loader.py`,
+`app/backend/requirements.txt`, `personas/*/menu/**`, `personas/*/persona.json`) and its existing
+"Install backend dependencies" step (added in Batch 2, since the capture harness imports the real
+`setup_search_index.py`/`persona_loader.py`) already cover this PR's new test project and its new
+capture harness file -- `capture_search_index_ingestion.py` has the same `app/backend/requirements.txt`
+dependency footprint as Batch 2's `capture_search_index_requests.py`.
+
 ## `TOOLING_IMPL` (future, not wired in this PR)
 
 Issue #16's body describes a future `TOOLING_IMPL=python|dotnet` environment variable so azd hooks
 could eventually choose which implementation to run, defaulting to `python`. **This PR does not
-introduce that variable or any hook wiring for it** -- per this PR's explicit scope, azd hooks and
-CI defaults stay on the Python implementations unconditionally. A later wave, once more of the
-inventory above is ported, is the right place to introduce `TOOLING_IMPL` for real.
+introduce that variable or any hook wiring for it** -- per this PR's explicit scope (and the owner's
+closing scope decision in "What's next" below, which stops #16 at the orchestration port itself),
+azd hooks and CI defaults stay on the Python implementations unconditionally. With #16 now closed
+and no further wave planned under it, a new, separately scoped issue would be the right place to
+introduce `TOOLING_IMPL` for real, if it's ever wanted.
 
 ## What's next
 
-With both no-Azure candidates in the inventory (`update_menu_sizes.py`, `extract_production_items.py`)
-now ported, and the design note below's approach now proven once for real (the "Batch 2 port" section
-above, `app/backend/setup_search_index.py`'s request-building half), every remaining script/notebook
-in the inventory still needs a **live** Azure OpenAI realtime/Whisper, Azure Speech dependency, or
-(for `e2e_order_resume.py`) a real browser engine -- none of them has the same "fully deterministic
-request AND response shape" property that made `setup_search_index.py`'s request-building half
-portable with zero live calls (its responses are genuinely non-deterministic model output, not just
-an SDK call this repo hasn't wired a fake for yet). Porting any of them for real is deferred until
-there is a concrete reason to run them from C# rather than Python; this section instead sketches how
-each *would* be ported and tested without ever touching a live Azure resource, so a future wave has a
-starting design rather than a blank page -- updated below to note which parts of this design are now
-proven and which remain a sketch.
+**Issue #16 is complete as of this PR.** The repo owner's scope decision, recorded on the issue and
+quoted here in full for the permanent record:
 
-### Design note: porting the Azure-dependent tools without live Azure calls
+> **Scope decision (Brian, 2026-10-04):** #16 is complete once the `setup_search_index.py`
+> orchestration port lands. Agreed scope:
+>
+> **Ported to C# (with byte/structural parity tests against the Python twin, both versions kept):**
+> - `scripts/update_menu_sizes.py` (PR #224)
+> - `scripts/extract_production_items.py` (PR #243)
+> - `app/backend/setup_search_index.py`: request building (PR #250, #258) and orchestration (in progress)
+>
+> **Intentionally kept Python-only (documented in `docs/dotnet_tooling.md`):**
+> - `verify_fake_entra_token.py`: its purpose is PyJWT interop verification.
+> - Live-Azure tools: `benchmark_reasoning.py`, `generate_apology_clips.py`,
+>   `generate_demo_guest_voice.py`, `smoke_realtime.py` (the trusted postdeploy check). No
+>   deterministic parity test is possible without live Azure.
+> - `e2e_order_resume.py`: Playwright browser E2E, out of scope for tooling parity.
+> - Both ingestion notebooks: interactive and exploratory, not CLI tools.
+> - The `.ps1`/`.sh` wrappers for the above, `start.*`, `load_python_env.*`.
+>
+> This supersedes the "port all Python tooling and notebooks" line in epic #6 for these items. A new,
+> separately scoped issue can be opened if live-Azure tool ports are wanted later.
+
+With this PR landing the orchestration port, every item in that "agreed scope" list is now
+accounted for: three ported (all three with byte/structural parity tests against their Python
+twins, both language versions kept, Python still the default everywhere), everything else
+**intentionally and permanently kept Python-only** for the reasons quoted above (already annotated
+at each inventory row, above) -- not merely deferred to a future wave. No further wave is planned
+under issue #16; a new, separately scoped issue would be the right place to revisit any of the
+Python-only items, per the owner's own closing note.
+
+The design note below is kept as historical/reference material: it documents the
+client-seam-plus-recorded-response-fake shape that *would* be the right starting point if a future,
+separately scoped issue ever did decide to port one of the live-Azure tools or the Playwright
+e2e check -- not an active plan for this repo today.
+
+### Design note: porting the Azure-dependent tools without live Azure calls (reference only -- not an active plan)
 
 The common shape across `benchmark_reasoning.py`, `smoke_realtime.py`,
 `generate_apology_clips.py`, `generate_demo_guest_voice.py`, and both ingestion notebooks is: build a
@@ -830,8 +1103,9 @@ Azure AI Search, or Azure Speech), then validate/transform the response. That sh
 testable without live Azure in this repo's own existing C# code -- `tests/conformance`'s
 `FakeEntraIssuer` fakes an entire auth provider for exactly this reason, and `app/backend-dotnet`'s
 own middle tier already has to mock its outbound Azure OpenAI realtime client for its own unit tests.
-A future port of any of these tools should follow the same two-layer split that already exists for
-`update_menu_sizes.py`/`extract_production_items.py`, but with the Azure call itself behind a seam:
+If a future, separately scoped issue ever revisits one of these tools, it should follow the same
+two-layer split that already exists for `update_menu_sizes.py`/`extract_production_items.py`, but
+with the Azure call itself behind a seam:
 
 * **A thin client-seam interface** (e.g. `IRealtimeSessionClient`, `ISearchIndexClient`,
   `ISpeechSynthesisClient`) wrapping the one Azure SDK call each tool makes, with exactly one real
@@ -865,13 +1139,16 @@ A future port of any of these tools should follow the same two-layer split that 
   call) and needs its own design once/if a C# browser-automation story (e.g. Playwright for .NET) is
   justified; the recorded-fixture approach above does not directly apply to it.
 
-**Status: this client-seam/recorded-fixture shape is still a sketch for every tool listed above**
-(`benchmark_reasoning.py`, `smoke_realtime.py`, `generate_apology_clips.py`,
-`generate_demo_guest_voice.py`, both ingestion notebooks) -- none of them has been ported. The "Batch
-2 port" section above DOES implement this batch's design for `app/backend/setup_search_index.py`'s
-request-building half, but via a variant technique (HTTP-transport capture of the real Python twin's
-actual request bodies, since those are fully deterministic) rather than this note's
-client-seam-plus-recorded-response-fake shape (needed for tools whose *responses*, not just requests,
-are the non-deterministic part being handled). A future port of any of the tools above should follow
-this note's shape, not the request-capture variant, since their Azure calls' response content -- not
-just their request content -- is what the port's logic actually has to handle correctly.
+**Status: this client-seam/recorded-fixture shape is a sketch only, kept for reference** -- none of
+`benchmark_reasoning.py`, `smoke_realtime.py`, `generate_apology_clips.py`,
+`generate_demo_guest_voice.py`, or either ingestion notebook has been ported, and per the owner's
+scope decision quoted above, none of them is planned to be under issue #16. The "Batch 2 port" and
+"This PR's port: orchestration" sections above DO implement this same design's intent for
+`app/backend/setup_search_index.py`, but via a variant technique (HTTP-transport capture of the real
+Python twin's actual request/response traffic, since that script's requests -- and, for the
+orchestration port's dry-run/error-case checks, its stdout/exit codes -- are fully deterministic)
+rather than this note's client-seam-plus-recorded-response-fake shape (needed for tools whose
+*responses*, not just requests, are the non-deterministic part being handled). If a future,
+separately scoped issue ever revisits one of the tools above, it should follow this note's shape,
+not the request-capture variant, since their Azure calls' response content -- not just their request
+content -- is what the port's logic actually has to handle correctly.
