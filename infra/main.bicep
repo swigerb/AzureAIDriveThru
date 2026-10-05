@@ -121,9 +121,9 @@ param defaultPersona string = ''
 param openAiModelDeploymentsData array = loadJsonContent('model-deployments.json')
 
 // --- C# backend (section 10.1 option A, 10.2; added by S7, #17) ---
-// The module is always present so #17 only has to flip this flag, but it
-// deploys nothing until then: no app/backend-dotnet project exists yet.
-@description('Deploy the .NET container app alongside the Python one, sharing the same ACA environment, Foundry account, Search service and managed identity (10.2). Leave false until #12-#17 land a real image; the module compiles either way.')
+// The module is always present so going live (#17) is a flag flip plus the DEPLOY.md
+// Step 0 service+tag patch; it deploys nothing while the flag is false.
+@description('Deploy the .NET container app alongside the Python one, sharing the same ACA environment, Foundry account, Search service and managed identity (10.2). app/backend-dotnet and app/Dockerfile.dotnet build a real image today; leave false until the owner-gated #17 go-live (DEPLOY.md, Step 0 onward). The module compiles either way.')
 param deployDotnetApp bool = false
 
 @description('Name override for the .NET container app. Empty = derived from the environment token, matching the Python app\'s naming convention.')
