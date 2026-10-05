@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "leaseKey": "session-ddt-17-flipcommit",
+  "sessionId": "ddt-17-flipcommit",
+  "repository": "swigerb/AzureAIDriveThru",
+  "issueNumber": null,
+  "dispatchSource": "local-cli",
+  "route": "aca-job",
+  "executionMode": "aca-job",
+  "state": "claimed",
+  "attempts": 1,
+  "startedAt": "2026-10-05T14:08:41.585Z",
+  "lastHeartbeatAt": "2026-10-05T14:08:41.585Z",
+  "updatedAt": "2026-10-05T14:08:41.585Z",
+  "terminalReason": null,
+  "executionRef": null
+}
