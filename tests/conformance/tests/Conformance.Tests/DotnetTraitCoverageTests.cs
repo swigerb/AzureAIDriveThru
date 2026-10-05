@@ -456,8 +456,29 @@ namespace Conformance.Tests;
 /// suite, never a real browser despite its name), and
 /// <c>CascadeMenuModeAndVoiceFakeResetWiringTests</c> (+1, same precedent as the already-tagged
 /// <c>CascadeFakeResetWiringTests</c>). A fresh <c>Conformance.Tests -list tests -trait
-/// Dotnet=ready</c> measurement on this branch tip gives <b>338</b> (323 + 15), the floor asserted
-/// below.
+/// Dotnet=ready</c> measurement on this branch tip gives <b>338</b> (323 + 15).
+///
+/// Coordinator follow-up (same-day PR #287 review, Birdperson/Beth, 2026-10-05): closed the two
+/// remaining acceptance gaps. (1) The persona-pack matrix claim above ("one persona pack exists
+/// on disk today, sonic") was stale: <c>personas/dunkin</c> and <c>personas/mcdonalds</c> both
+/// ship for real, and the realtime pipeline's own `RealPack*`/`PackOwnedWholeBundleGolden*`/
+/// `ComboComponentResize*` theories already discover and run all three automatically (no code
+/// change needed there -- only the stale doc comments were wrong, fixed in
+/// <c>docs/dotnet_mapping.md</c> and <c>ConformancePersonas.cs</c>). The cascade pipeline, however,
+/// genuinely only ever exercised `sonic` -- <c>CascadeConformanceTests</c> has no persona
+/// dimension at all -- so <c>CascadePersonaParityConformanceTests</c> (+1 new tagged Theory method,
+/// 2 rows: dunkin/mcdonalds, verified green 3x locally against CONFORMANCE_BACKEND=dotnet) closes
+/// that gap: no C# divergence found, persona-scoped menu/tax binding already threads correctly
+/// through `CascadeProcessor`. (2) The 8 `Scenarios/Browser` methods classified
+/// <c>n/a-pending-browser-verification</c> above (<c>OrderResumeBrowserTests</c>'s 5,
+/// <c>PersonaSwitchBrowserTests</c>'s Case-E/reload-resume 3) are now tagged <c>ready</c>: #15
+/// landed the resume/idle-close/supersede machinery these all depend on (re-confirmed by code
+/// inspection of <c>SessionManager.cs</c>/<c>RealtimeProcessor.cs</c>), and this sandbox still has
+/// no msedge/chrome binary and no root to install one, so per explicit instruction these are
+/// tagged ready now with CI's own `Conformance suite (backend=dotnet, Category=Browser)` job (a
+/// real browser) as the actual verification, not a local one. A fresh
+/// <see cref="CountFloorEligibleDotnetReadyTestMethods"/> measurement on this branch tip gives
+/// <b>347</b> (338 + 1 cascade-parity + 8 browser), the floor asserted below.
 /// </summary>
 [Trait("Dotnet", "n/a-harness")]
 public sealed class DotnetTraitCoverageTests
@@ -540,7 +561,7 @@ public sealed class DotnetTraitCoverageTests
     }
 
     [Fact]
-    public void At_least_338_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
+    public void At_least_347_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
     {
         // Rick's PR #226 review: assert the capability directly, not just the derived count --
         // see this class's own doc comment for why a bare ">= 222" check alone can't be trusted to
@@ -554,16 +575,16 @@ public sealed class DotnetTraitCoverageTests
 
         var count = CountFloorEligibleDotnetReadyTestMethods();
 
-        Assert.True(count >= 338,
-            $"Expected at least 338 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
+        Assert.True(count >= 347,
+            $"Expected at least 347 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
             $"and not unconditionally skip-gated by AuthRowCapability (the dotnet leg's " +
-            $"`--filter \"{TraitName}={TraitValue}&Category!=Browser\"` baseline, minus the five " +
+            $"`--filter \"{TraitName}={TraitValue}\"` baseline, minus the five " +
             "skip-only Scenarios/Auth classes -- see this class's own doc comment; " +
             $"docs/dotnet_mapping.md), but found {count}. If a tagged scenario was removed or " +
-            "renamed without a replacement, the dotnet CI leg silently lost coverage. 338 is a " +
-            "FRESH count (issue #21 acceptance dispatch, coordinator 2026-10-05: WebSocketCompressionTests " +
-            "+1, PersonaMismatchConformanceTests +1, BrowserClientLifecycleTests +12, " +
-            "CascadeMenuModeAndVoiceFakeResetWiringTests +1 newly tagged ready, 323 + 15 = 338), not " +
+            "renamed without a replacement, the dotnet CI leg silently lost coverage. 347 is a " +
+            "FRESH count (coordinator PR #287 follow-up, Birdperson/Beth, 2026-10-05: " +
+            "CascadePersonaParityConformanceTests +1, OrderResumeBrowserTests's 5 + " +
+            "PersonaSwitchBrowserTests's 3 newly tagged ready, 338 + 9 = 347), not " +
             "arithmetic -- re-measure with `Conformance.Tests.exe -list methods -trait " +
             "Dotnet=ready` minus the AuthRowCapabilityGated methods before raising this floor " +
             "again.");

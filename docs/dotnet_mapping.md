@@ -1008,22 +1008,24 @@ disk today match the `includedAnySize` precondition these theories require, so t
 to run against either backend. Already had extensive inline justification; this just adds the
 explicit trait the new guard test requires.
 
-**Classified `n/a-pending-browser-verification`** (8 methods, the one open item from this dispatch):
+**Classified `n/a-pending-browser-verification`, then upgraded to `ready`** (8 methods):
 `OrderResumeBrowserTests`'s 5 methods and `PersonaSwitchBrowserTests`'s Case-E/E2 + reload-resume-switch
 3 methods. Their own prior doc comments (and `RealtimeProcessor.cs`'s class-level doc comment, also
-fixed in this pass) cited issue #15 (session resume/rehydration, the 4002 supersede-close, the 4000
+fixed in an earlier pass) cited issue #15 (session resume/rehydration, the 4002 supersede-close, the 4000
 idle-timeout close) as a still-pending capability gap blocking these scenarios on C#. Code
 inspection confirms **#15 has actually landed** (PR #244: `extension.resume` handling and
 `IdleCloseCode = 4000` idle-deadline logic are both fully implemented in `RealtimeProcessor.cs` /
-`SessionManager.cs`) -- the stale "deferred to #15" comments had simply never been updated. However,
-this dispatch's sandbox has no `google-chrome`/`microsoft-edge` binary reachable via
-`BrowserChannelPolicy`'s hardcoded probe paths and no root access to install one, so these 8
-methods could not be empirically re-run against a real browser + the C# backend. Rather than guess
-`ready` or leave them silently untagged, they were classified `n/a-pending-browser-verification`
-with inline comments instructing whoever has browser access (the `conformance-browser-dotnet` CI
-job, or a local dev machine with Chrome/Edge installed) to re-run them 3x against
-`CONFORMANCE_BACKEND=dotnet` and upgrade to `ready` once confirmed green. **This is the one
-remaining action item from #21's acceptance bar that needs a non-sandboxed environment to close.**
+`SessionManager.cs`) -- the stale "deferred to #15" comments had simply never been updated.
+
+Coordinator follow-up (same-day PR #287 review, 2026-10-05): this sandbox still has no
+`google-chrome`/`microsoft-edge` binary reachable via `BrowserChannelPolicy`'s hardcoded probe paths
+and no root access to install one, so these 8 methods still could not be empirically re-run against
+a real browser + the C# backend here. Per explicit instruction, they are now tagged `ready` rather
+than left `n/a-pending-browser-verification` -- CI's `conformance-browser-dotnet` job (a real
+browser) is the actual verification, re-run 3x by name to confirm before #21 is considered fully
+closed. **If any of the 8 comes back red there, the fix belongs in the C# backend
+(`RealtimeProcessor.cs`/`SessionManager.cs`), not a revert of this trait back to pending.**
+
 
 **C#-only skips (brief item 3):** grepped the whole suite for `Assert.Skip`/conditional-skip call
 sites keyed on the dotnet backend, `AuthRowCapability`, or `DotnetPlaceholder`. Found no live skip
@@ -1045,16 +1047,39 @@ that silently hides real dotnet coverage:
   channel availability, identical on both backends) are all pre-existing, already-justified, and
   not specific to the dotnet backend. No changes were needed here.
 
-**Persona x pipeline parity:** `ConformancePersonas.DiscoverFromDisk()` resolves exactly one
-persona pack on disk today (`sonic`), so persona x pipeline parity on C# reduces to: does `sonic`
-pass on both the realtime pipeline and the cascade pipeline against `CONFORMANCE_BACKEND=dotnet`?
-Yes on both -- the realtime-pipeline scenarios under `Scenarios/` (ordering, auth, websocket,
-persona-switch, etc.) and the full `Scenarios/Cascade/*` suite (including the newly-tagged
-`CascadeMenuModeAndVoiceFakeResetWiringTests`) both run against the `sonic` pack and are green on
-the dotnet backend. There is currently no second shipped persona pack to cross-check against, so
-this is a 1x2 matrix (1 persona x {realtime, cascade}), not a larger grid; if/when a second persona
-pack ships, the guard test's floor-eligible count plus this parity note should be revisited
-together.
+**Persona x pipeline parity (coordinator follow-up, PR #287, 2026-10-05 -- corrects the stale
+paragraph this replaces):** `ConformancePersonas.DiscoverFromDisk()` actually resolves all **three**
+real, shipped packs today -- `personas/sonic`, `personas/dunkin`, `personas/mcdonalds` (#78/#79
+landed; `tests/conformance/testdata/personas` holds only test-only fixtures like `test-alpha`,
+never a fourth real pack). The claim below that only `sonic` exists was simply wrong by the time it
+was written -- `DiscoverFromDisk()`'s own code was already correct, only its doc comments and this
+note had gone stale.
+
+The full 3-pack x 2-pipeline matrix, measured directly against `CONFORMANCE_BACKEND=dotnet`:
+
+| Persona     | Realtime pipeline | Cascade pipeline |
+| ----------- | ------------------ | ----------------- |
+| `sonic`     | ✅ green (`Scenarios/` ordering/auth/websocket/persona-switch/etc., `RealPack*`/`PackOwnedWholeBundleGolden*`/`ComboComponentResize*` theories) | ✅ green (`CascadeConformanceTests`, `CascadeMenuModeAndVoiceConformanceTests`/`CascadeMenuModeAndVoiceFakeResetWiringTests`) |
+| `dunkin`    | ✅ green (`RealPackMenuModeConformanceTests`/`RealPackBundleAutoFillConformanceTests`/`RealPackExtrasConformanceTests`/`RealPackHappyHourConformanceTests`/`RealPackMealNumberConformanceTests`/`PackOwnedWholeBundleGoldenConformanceTests` all discover and run it automatically via `ConformancePersonas.DiscoverFromDisk()` -- no code change needed, these theories were already pack-agnostic) | ✅ green (new `CascadePersonaParityConformanceTests`: session metadata binds to `dunkin`, menu-sourced pricing for `dunkin`'s own "Original Blend Coffee" matches its own `menu/menuItems.json`/`taxRate`) |
+| `mcdonalds` | ✅ green (same `RealPack*`/`PackOwnedWholeBundleGolden*` theories, discovered automatically) | ✅ green (new `CascadePersonaParityConformanceTests`: session metadata binds to `mcdonalds`, menu-sourced pricing for `mcdonalds`'s own "Cheeseburger" matches its own menu/tax data) |
+
+Realtime-side per-pack coverage required no new test code: the `RealPack*`/`PackOwnedWholeBundleGolden*`/
+`ComboComponentResize*` theories already iterate every real pack `ConformancePersonas.DiscoverFromDisk()`
+finds (`DiscoveredPersonaIds()`/`DiscoveredBundleAutoFillCases()`/etc. member-data methods), so they
+silently started covering `dunkin`/`mcdonalds` the moment those packs' JSON files were added -- the
+gap was that nobody had re-run them against `CONFORMANCE_BACKEND=dotnet` and corrected this note
+since. The cascade side genuinely was sonic-only (`CascadeConformanceFixture`/`CascadeConformanceTests`
+have no persona dimension), so `CascadePersonaParityConformanceTests` was added to close it, reusing
+the same `CascadeConformanceFixture` process (it already boots with `PERSONAS=dunkin,mcdonalds,sonic`
+since it never overrides `Personas`/`Persona`) rather than starting a second backend. No C#
+divergence was found in either direction -- persona-scoped menu/tax/voice resolution already threads
+correctly through both `RealtimeProcessor`/`CascadeProcessor`.
+
+The `CascadeMenuModeAndVoiceConformanceTests` menu-mode/voice rows intentionally still use the
+`test-delta` fixture pack, not a real pack: every real pack's own `voice.default` is `"marin"`
+(identical across all three, see each pack's `persona.json`) and none declares `features.dayparts`,
+so a real pack cannot exercise per-persona voice/mode resolution as a cross-check -- this is a
+documented, deliberate design choice (see that fixture's own class doc comment), not a gap.
 
 `RealtimeProcessor.ProcessAsync` is no longer a no-op stub: it dials the upstream Azure OpenAI
 Realtime GA WebSocket, bootstraps the session (persona instructions/voice/tools, catalog-resolved
@@ -1160,6 +1185,36 @@ idle-timeout machinery, not yet ported. The **#17 go-live blocker** tag on the l
 this change. A handful of failures (`CapturedProcessOutputTests`, `CapturedProcessOutputWaitTests`,
 `WindowsJobObjectTests`) are pre-existing harness self-tests unrelated to `CONFORMANCE_BACKEND` and
 out of scope.
+
+### Issue #21 follow-up (coordinator review of PR #287, Birdperson/Beth, same day): the two
+remaining gaps closed, floor raised 338 -> 347
+
+PR #287's own acceptance claims had two gaps caught on review:
+
+1. **Persona matrix was stale, not actually missing.** `personas/dunkin` and `personas/mcdonalds`
+   both ship for real (`#78/#79` landed before this review), but the prior pass's own doc comments
+   and `docs/dotnet_mapping.md` note still said "only sonic exists on disk today." The realtime
+   pipeline's `RealPack*`/`PackOwnedWholeBundleGolden*`/`ComboComponentResize*` theories already
+   discover every real pack automatically via `ConformancePersonas.DiscoverFromDisk()` (no code
+   change needed -- re-ran them against `CONFORMANCE_BACKEND=dotnet` and confirmed all three packs
+   green). The cascade pipeline genuinely had no persona dimension at all
+   (`CascadeConformanceTests` only ever used `sonic`), so `CascadePersonaParityConformanceTests`
+   (+1 new `[Theory]` method, `dunkin`/`mcdonalds` rows, verified green 3x locally) was added,
+   reusing the existing `CascadeConformanceFixture` process (already boots with all three real
+   packs enabled). No C# divergence found in either pipeline -- persona-scoped menu/tax/voice
+   binding already threads correctly. See "Persona x pipeline parity" above for the full 3x2
+   matrix and the stale comments that were corrected (`ConformancePersonas.cs`,
+   `docs/dotnet_mapping.md`).
+2. **The 8 `n/a-pending-browser-verification` Browser methods** (`OrderResumeBrowserTests`'s 5,
+   `PersonaSwitchBrowserTests`'s Case-E/E2 + reload-resume-switch 3) are now tagged `ready`. This
+   sandbox still has no msedge/chrome binary and no root to install one, so CI's
+   `conformance-browser-dotnet` job (a real browser) is the actual verification -- re-confirmed by
+   code inspection that #15's resume/idle-close/supersede machinery these depend on is fully
+   implemented in `SessionManager.cs`/`RealtimeProcessor.cs`.
+
+**Floor raised 338 -> 347** (+1 `CascadePersonaParityConformanceTests`, +8 the two Browser
+classes/methods above), re-measured fresh via `CountFloorEligibleDotnetReadyTestMethods`, not
+arithmetic.
 
 ### Issue #15 (S5: C# sessions and resilience) -- session resume/rehydration, idle timeout, grace hold, nudge, 4002 supersede
 

@@ -639,22 +639,23 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
             page, socketsBeforeSwitch, alphaSentBeforeSwitch, secondConnection, expectEndSessionSent: false, ct).ConfigureAwait(false);
     }
 
-    // Issue #21 (Browser-on-C#, coordinator dispatch 2026-10-05): both Case E variants wait for
-    // the test-alpha socket's own idle-timeout close to land before switching. #15 (PR #244) has
-    // since landed the 4000 idle-timeout close (RealtimeProcessor.cs's own class doc comment was
-    // stale, still describing it as pending -- fixed in this same dispatch). Could not be
-    // re-verified here (no msedge/chrome binary installed and no root to install one -- see
-    // Conformance.Harness.BrowserChannelPolicy), so classified n/a-pending-browser-verification
-    // rather than silently left untagged or guessed ready. Re-run
-    // `CONFORMANCE_BACKEND=dotnet dotnet test --filter "Category=Browser&FullyQualifiedName~Idle_closed"`
-    // 3x on a machine with msedge/chrome and replace with [Trait("Dotnet", "ready")] if green.
+    // Issue #21 (Browser-on-C#, coordinator follow-up dispatch 2026-10-05): both Case E variants
+    // wait for the test-alpha socket's own idle-timeout close to land before switching. #15 (PR
+    // #244) landed the 4000 idle-timeout close (RealtimeProcessor.cs's own class doc comment was
+    // stale, still describing it as pending -- fixed in an earlier pass of this same issue). This
+    // sandbox still has no msedge/chrome binary installed and no root to install one (see
+    // Conformance.Harness.BrowserChannelPolicy's hardcoded probe paths), so this could not be
+    // re-run here; per the coordinator's explicit instruction, tagging ready now and relying on
+    // CI's `Conformance suite (backend=dotnet, Category=Browser)` job (which has a real browser)
+    // as the actual verification. If CI finds either method red, it must be fixed in the C#
+    // backend (RealtimeProcessor.cs/SessionManager.cs), not reverted to pending.
     [Fact]
-    [Trait("Dotnet", "n/a-pending-browser-verification")]
+    [Trait("Dotnet", "ready")]
     public Task Idle_closed_socket_then_persona_switch_then_tap_recovers_the_new_personas_session() =>
         fixture.RunAsync(() => RunSwitchScenarioEAsync(holdFetch: false));
 
     [Fact]
-    [Trait("Dotnet", "n/a-pending-browser-verification")]
+    [Trait("Dotnet", "ready")]
     public Task Idle_closed_socket_then_persona_switch_with_held_fetch_then_tap_recovers_the_new_personas_session() =>
         fixture.RunAsync(() => RunSwitchScenarioEAsync(holdFetch: true));
 
@@ -835,16 +836,17 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
         Assert.DoesNotContain(alphaItem.OrderableItemName, bodyText, StringComparison.Ordinal);
     }
 
-    // Issue #21 (Browser-on-C#, coordinator dispatch 2026-10-05): this case's own name says it:
-    // reload-then-RESUME. #15 (PR #244) has since landed extension.resume/session rehydration
-    // (RealtimeProcessor.cs's class doc was stale, still describing it as pending -- fixed in this
-    // same dispatch). Could not be re-verified here (no msedge/chrome binary installed and no root
-    // to install one -- see Conformance.Harness.BrowserChannelPolicy), so classified
-    // n/a-pending-browser-verification rather than silently left untagged or guessed ready.
-    // Re-run `CONFORMANCE_BACKEND=dotnet dotnet test --filter "Category=Browser&FullyQualifiedName~Reload_then_resume_then_switch"`
-    // 3x on a machine with msedge/chrome and replace with [Trait("Dotnet", "ready")] if green.
+    // Issue #21 (Browser-on-C#, coordinator follow-up dispatch 2026-10-05): this case's own name
+    // says it: reload-then-RESUME. #15 (PR #244) landed extension.resume/session rehydration
+    // (RealtimeProcessor.cs's class doc was stale, still describing it as pending -- fixed in an
+    // earlier pass of this same issue). This sandbox still has no msedge/chrome binary installed
+    // and no root to install one (see Conformance.Harness.BrowserChannelPolicy's hardcoded probe
+    // paths), so this could not be re-run here; per the coordinator's explicit instruction,
+    // tagging ready now and relying on CI's `Conformance suite (backend=dotnet, Category=Browser)`
+    // job (which has a real browser) as the actual verification. If CI finds this method red, it
+    // must be fixed in the C# backend, not reverted to pending.
     [Fact]
-    [Trait("Dotnet", "n/a-pending-browser-verification")]
+    [Trait("Dotnet", "ready")]
     public Task Reload_then_resume_then_switch_through_the_confirm_dialog_delivers_only_to_the_new_personas_session() =>
         fixture.RunAsync(RunSwitchAfterReloadResumeScenarioAsync);
 }

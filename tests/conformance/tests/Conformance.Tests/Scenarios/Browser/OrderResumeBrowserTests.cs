@@ -43,22 +43,22 @@ namespace Conformance.Tests.Scenarios.Browser;
 ///    six behaviors this suite is scoped to (drop/reconnect identity, nudge-once, idle-no-
 ///    reconnect, reload-tap-to-continue, strict-autoplay, tap-while-reconnecting).
 ///
-/// Issue #21 (Browser-on-C#, coordinator dispatch 2026-10-05): previously left entirely untagged
-/// because every scenario here needs extension.resume/session rehydration, the 4002
-/// supersede-close, or the 4000 idle-timeout close -- all of which were #15 scope cuts at the time
-/// this comment was written. #15 (PR #244) has since landed: RealtimeProcessor.cs/SessionManager.cs
-/// now implement all three. This class's own 5 methods could not be re-verified in this dispatch's
-/// sandbox (no msedge/chrome binary installed and no root to install one -- see
-/// <see cref="Conformance.Harness.BrowserChannelPolicy"/>), so they are classified
-/// <c>n/a-pending-browser-verification</c> rather than either silently left untagged or tagged
-/// <c>ready</c> on an unverified guess: a CI run (or any machine with msedge/chrome installed)
-/// should re-run <c>CONFORMANCE_BACKEND=dotnet dotnet test --filter
-/// "Category=Browser&amp;FullyQualifiedName~OrderResumeBrowserTests"</c> 3x and, if green, replace
-/// this trait with <c>[Trait("Dotnet", "ready")]</c> per method.
+/// Issue #21 (Browser-on-C#, coordinator dispatch 2026-10-05, follow-up same day): previously left
+/// entirely untagged because every scenario here needs extension.resume/session rehydration, the
+/// 4002 supersede-close, or the 4000 idle-timeout close -- all of which were #15 scope cuts at the
+/// time this comment was written. #15 (PR #244) has since landed: RealtimeProcessor.cs/
+/// SessionManager.cs now implement all three (resume id issuance/consumption, the grace-window
+/// detach hold, idle-timeout close, and 4002 supersede -- see those files' own doc comments). This
+/// class's own 5 methods still could not be re-verified in this sandbox (no msedge/chrome binary
+/// installed and no root to install one -- see <see cref="Conformance.Harness.BrowserChannelPolicy"/>'s
+/// hardcoded probe paths), so per the coordinator's explicit follow-up instruction they are tagged
+/// <c>ready</c> now rather than left pending, with CI's `Conformance suite (backend=dotnet,
+/// Category=Browser)` job (which has a real browser) as the actual verification. If CI finds any
+/// of these 5 red, the fix belongs in the C# backend, not a revert of this trait.
 /// </summary>
 [Collection(BrowserConformanceCollection.Name)]
 [Trait("Category", "Browser")]
-[Trait("Dotnet", "n/a-pending-browser-verification")]
+[Trait("Dotnet", "ready")]
 public sealed class OrderResumeBrowserTests(BrowserConformanceFixture fixture)
 {
     private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
