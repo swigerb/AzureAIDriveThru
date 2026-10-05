@@ -458,30 +458,44 @@ as a hard requirement, not just the graceful `IAsyncDisposable.DisposeAsync` pat
   ThreadPool callback — reading the captured dump at that exact instant can miss the final lines
   (e.g. the "address already in use" text a crash-on-bind prints right before exiting), causing
   `PortRaceDetection.ShouldRetry` to see an incomplete dump and misclassify the exit. Both
-  launchers now call the parameterless, blocking `Process.WaitForExit()` overload — documented to
-  block until *both* the process has exited *and* every redirected stream reader has reached EOF —
-  immediately before reading the dump, guaranteeing it is complete. `OutputDrainAfterExitTests.cs`
-  proves this matters: it forces a real child process to emit a large burst of output (tens of
-  thousands of lines) ending in a sentinel right before exiting, busy-polls `HasExited` with no
-  delay to maximise the chance of observing the exit before the async pump has caught up, and
-  asserts the post-`WaitForExit()` dump always contains the sentinel — a mutation check (deleting
-  the `WaitForExit()` call) makes this assertion fail intermittently, confirming the race is real
-  and the fix closes it deterministically rather than probabilistically.
+  launchers now call one shared helper, `ExitClassification.DrainAndClassifyAsync` (refs #259,
+  Rick's #267 review), the instant `HasExited` is observed — it blocks (on a background thread,
+  bounded by the caller's own remaining `/health` deadline rather than an unbounded wait, so an
+  orphaned grandchild process still holding the redirected pipe open can't hang the whole suite)
+  on the parameterless `Process.WaitForExit()` overload — documented to block until *both* the
+  process has exited *and* every redirected stream reader has reached EOF — immediately before
+  reading the dump, guaranteeing it is complete, then classifies it. `OutputDrainAfterExitTests.cs`
+  proves this matters and exercises the shared helper directly (not a hand-rolled
+  re-implementation of the pattern, which the previous version of this test used and which only
+  proved the general `Process.WaitForExit()` contract, never the launchers' own code path): it
+  forces a real child process to emit a large burst of output (tens of thousands of lines) ending
+  in a sentinel right before exiting, busy-polls `HasExited` with no delay to maximise the chance
+  of observing the exit before the async pump has caught up, and asserts the classifying
+  exception's message always contains the sentinel. The race reproduces probabilistically (rate
+  varies by machine/CPU contention — observed anywhere from roughly 25% to 60% locally across
+  different boxes) when the drain is removed from inside the shared helper; the fix itself is
+  deterministic (every run passes with it in place).
 - **Retry on port-bind races** (`PortRaceDetection.cs`): a backend can still fail to bind (another
-  process won a race for the same ephemeral port, or — in `DotnetBackendLauncherPortRaceTests.cs`
-  — a test deliberately pins a specific port to force a guaranteed collision on the first launch
-  attempt). If the process exits within `PortRaceDetection.RaceDetectionWindow` (20s — widened from
-  an initial 5s guess after empirically observing the real backend's own non-fatal Azure
-  OpenAI/Search reachability probes, each with their own ~2s timeout, run *before* it attempts its
-  socket bind, PR #22 review item 17) **and** its (now fully-drained) captured output matches a
-  known bind-failure signature (`errno 98`/`WinError 10048`/`WinError 10013`/"address already in
-  use"), the launcher reassigns the port to `0` and retries, up to 3 attempts total — every retry
-  (not just the first attempt) always uses `0`, never `NetworkUtils.GetFreeTcpPort()`, so a retry
-  can never reintroduce the TOCTOU gap the port-0 default was meant to remove. Any other early exit
-  (a real crash) is never retried — retrying it would just hide a real bug behind a slow,
-  flaky-looking pass. `PortRaceDetectionTests.cs` covers the pure heuristic; verified for real by
-  pre-occupying a port with a raw `TcpListener` and confirming the launcher retries past it and
-  starts healthy on a different port.
+  process won a race for the same ephemeral port, or — in `DotnetBackendLauncherPortRaceTests.cs`/
+  `PythonBackendLauncherPortRaceTests.cs` — a test deliberately pins a specific port to force a
+  guaranteed collision on the first launch attempt). If the process exits within
+  `PortRaceDetection.RaceDetectionWindow` (20s — widened from an initial 5s guess after
+  empirically observing the real backend's own non-fatal Azure OpenAI/Search reachability probes,
+  each with their own ~2s timeout, run *before* it attempts its socket bind, PR #22 review item 17)
+  **and** its (now fully-drained) captured output matches a known bind-failure signature (`errno
+  98`/`WinError 10048`/`WinError 10013`/"address already in use"), the launcher reassigns the port
+  to `0` and retries, up to 3 attempts total — every retry (not just the first attempt) always uses
+  `0`, never `NetworkUtils.GetFreeTcpPort()`, so a retry can never reintroduce the TOCTOU gap the
+  port-0 default was meant to remove. Any other early exit (a real crash) is never retried —
+  retrying it would just hide a real bug behind a slow, flaky-looking pass. `PortRaceDetectionTests
+  .cs` covers the pure heuristic; `DotnetBackendLauncherPortRaceTests.cs`/
+  `PythonBackendLauncherPortRaceTests.cs` verify for real by pre-occupying a port with a raw
+  `TcpListener` and confirming each launcher retries past it and starts healthy on a different
+  port — and (refs #259, Rick's #267 review) assert directly, via each launcher's
+  `TestOnlyProcessStartInfoObserver` test-only seam, that the first attempt's `ProcessStartInfo`
+  environment requests the caller's explicit port while every retry's environment specifically
+  requests `PORT=0`, not merely "a different port" (which a reintroduced
+  `NetworkUtils.GetFreeTcpPort()` retry would also satisfy).
 - **CI**: `.github/workflows/conformance.yml` sets `timeout-minutes` on every job (15m for
   `python-tests`/`frontend-tests`, 20m for `conformance`) so a genuine hang fails the job instead
   of burning the whole Actions time budget, and the `dotnet test` step passes
