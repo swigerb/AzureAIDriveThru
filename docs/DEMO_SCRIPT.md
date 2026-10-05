@@ -6,7 +6,7 @@
 2. Start with Dunkin'. Say: "I need a large hot regular coffee and a 25 count MUNCHKINS with glazed, chocolate glazed, and jelly." Point out that regular coffee becomes cream and sugar, MUNCHKINS are captured by flavor and count, and the ticket is priced server-side.
 3. Switch to Sonic. Confirm the switch. Say: "Make a SuperSONIC Double Cheeseburger Combo with tots and a medium Cherry Limeade, then make the drink large." Point out combo slots, drink resize, and the upcharge when the combo drink is larger than the included Medium.
 4. Switch to McDonald's. Say: "I want a Big Mac Meal, large, with fries and a Diet Coke. Actually make the whole meal medium." Point out whole-meal resizing and off-menu rejection by asking for a Whopper.
-5. Open Settings. Show Demo Mode, the model picker grouped by Realtime and Cascade, the voice picker, and breakfast or lunch menu mode for daypart personas. Explain that realtime uses `gpt-realtime-2.1`, while cascade uses STT, a reasoning model, and TTS.
+5. Open Settings. Show Demo Mode, the model picker grouped by Realtime and Cascade, the voice picker, and breakfast or lunch menu mode for daypart personas. Explain that realtime defaults to `gpt-realtime-2.1-mini` for low-latency ordering, with `gpt-realtime-2.1` selectable for deeper reasoning, while cascade uses STT, a reasoning model, and TTS.
 
 ## Setup checklist
 
