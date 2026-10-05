@@ -648,9 +648,9 @@ public sealed class ComboComponentResizeConformanceTests
     // appeared in either dotnet CI leg's actual run output -- `[Theory(SkipTestWithoutData = true)]`
     // reports a Theory with zero MemberData rows as SKIPPED (not failed, and not a real pass/fail
     // signal), and every real pack on disk today fails Discover()'s/DiscoverTwoInstance's own
-    // `includedAnySize` precondition: `dunkin` has no `bundle` items on its menu at all,
-    // `mcdonalds`' own `bundles.resizeRule` is `wholeBundleSize` (covered instead by
-    // WholeBundleSizeResizeConformanceTests below), and `sonic`'s own `bundles.resizeRule` is
+    // `includedAnySize` precondition: one shipped persona has no `bundle` items on its menu at all,
+    // another's own `bundles.resizeRule` is `wholeBundleSize` (covered instead by
+    // WholeBundleSizeResizeConformanceTests below), and the third's own `bundles.resizeRule` is
     // `componentUpcharge` (issue #205, covered instead by ComponentUpchargeBundleConformanceTests
     // above) -- so DiscoveredBundleResizeCases()/DiscoveredTwoInstanceResizeCases() both resolve to
     // zero rows against today's real persona packs, confirmed locally: `dotnet test --filter

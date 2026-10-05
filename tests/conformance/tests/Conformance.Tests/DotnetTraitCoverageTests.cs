@@ -394,8 +394,8 @@ namespace Conformance.Tests;
 /// Follow-up E UNtags the 4 <c>Scenarios/Ordering/ComboComponentResizeConformanceTests.cs</c>
 /// <c>Discovered_*</c> methods that depend on <c>DiscoveredBundleResizeCases</c>/
 /// <c>DiscoveredTwoInstanceResizeCases</c>: every real persona pack on disk today fails
-/// <c>ComboBundleDiscovery.Discover</c>'s own <c>includedAnySize</c> precondition (`dunkin` has no
-/// bundle items at all; `mcdonalds` is `wholeBundleSize`; `sonic` is `componentUpcharge`), so both
+/// <c>ComboBundleDiscovery.Discover</c>'s own <c>includedAnySize</c> precondition (one shipped persona has no
+/// bundle items at all; the others use `wholeBundleSize` or `componentUpcharge`), so both
 /// MemberData sources resolve to zero rows and `[Theory(SkipTestWithoutData = true)]` reports all
 /// 4 as SKIPPED, not passed -- they were counted toward this floor but never actually produced a
 /// pass/fail signal on the dotnet leg, exactly the gap this issue's own title describes. Net -4.
