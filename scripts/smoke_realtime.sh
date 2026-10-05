@@ -22,22 +22,49 @@ if [ -z "$PYTHON" ]; then
   exit 0
 fi
 
-"$PYTHON" "$SCRIPT_DIR/smoke_realtime.py"
-code=$?
-if [ "$code" -ne 0 ]; then
-  echo ""
-  echo "WARNING: =================================================================="
-  if [ "$code" -eq 1 ]; then
-    echo "WARNING:  REALTIME SMOKE CHECK FAILED: the live deployment rejected part of"
-    echo "WARNING:  the carhop's session config (tools may NOT register) or did not"
-    echo "WARNING:  transcribe the test phrase word for word. See above."
-  else
-    echo "WARNING:  Realtime smoke check could not run (exit $code) - auth, network or"
-    echo "WARNING:  missing settings. Right after a first provision the OpenAI role"
-    echo "WARNING:  assignment can take a few minutes to apply; rerun with:"
-    echo "WARNING:    python scripts/smoke_realtime.py"
+# Prints a loud (non-fatal) warning for one labeled run's exit code; never changes the hook's own
+# exit status -- the whole hook stays non-fatal to the deployment, per the module doc above.
+report_result() {
+  label="$1"
+  code="$2"
+  if [ "$code" -ne 0 ]; then
+    echo ""
+    echo "WARNING: =================================================================="
+    if [ "$code" -eq 1 ]; then
+      echo "WARNING:  REALTIME SMOKE CHECK FAILED ($label): the live deployment rejected part"
+      echo "WARNING:  of the carhop's session config (tools may NOT register) or did not"
+      echo "WARNING:  transcribe the test phrase word for word. See above."
+    else
+      echo "WARNING:  Realtime smoke check ($label) could not run (exit $code) - auth, network"
+      echo "WARNING:  or missing settings. Right after a first provision the OpenAI role"
+      echo "WARNING:  assignment can take a few minutes to apply; rerun with:"
+      echo "WARNING:    python scripts/smoke_realtime.py"
+    fi
+    echo "WARNING:  The deployment itself was NOT rolled back."
+    echo "WARNING: =================================================================="
   fi
-  echo "WARNING:  The deployment itself was NOT rolled back."
-  echo "WARNING: =================================================================="
+}
+
+echo "Realtime smoke check (backend): running..."
+"$PYTHON" "$SCRIPT_DIR/smoke_realtime.py"
+report_result "backend" "$?"
+
+# S7 (#17 go-live): once BACKEND_DOTNET_URI is populated (deployDotnetApp=true, infra/main.bicep),
+# re-run the SAME check a second time so a postdeploy against the .NET app's rollout also gets a
+# fresh realtime-session verification, not just whatever the Python app's last run happened to
+# confirm. This talks directly to the shared Azure OpenAI realtime deployment (not either app's own
+# HTTP endpoint -- see the module doc in smoke_realtime.py), which is why the two runs MUST be
+# serial, never concurrent: the realtime deployment's capacity may be provisioned as low as 10
+# concurrent sessions (AZURE_OPENAI_REALTIME_DEPLOYMENT_CAPACITY), and this hook already competes
+# with real guest traffic for that same quota.
+dotnet_uri="$(azd env get-value BACKEND_DOTNET_URI 2>/dev/null || true)"
+if [ -n "$dotnet_uri" ]; then
+  echo ""
+  echo "Realtime smoke check (backend-dotnet): BACKEND_DOTNET_URI is set -- running a second, serial pass..."
+  "$PYTHON" "$SCRIPT_DIR/smoke_realtime.py"
+  report_result "backend-dotnet" "$?"
+else
+  echo "Realtime smoke check (backend-dotnet): BACKEND_DOTNET_URI is empty -- skipping (the .NET app is not deployed, #17)."
 fi
+
 exit 0

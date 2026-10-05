@@ -26,18 +26,47 @@ services:
         - VITE_ENTRA_TENANT_ID=${ENTRA_TENANT_ID}
         - VITE_ENTRA_CLIENT_ID=${ENTRA_CLIENT_ID}
         - VITE_ENTRA_API_SCOPE=${ENTRA_API_SCOPE}
-  # S7 (#17) prep: app/backend-dotnet builds a real image (this PR), but the azure.yaml service
-  # entry itself is deliberately NOT added yet. `language: csharp` here would make azd resolve a
-  # dotnet project (editing Backend.csproj's UserSecretsId, writing outputs into dotnet
-  # user-secrets) on every provision/package/deploy, and with no matching infra/backend-dotnet
-  # resource `azd-service-name: backend-dotnet` tag, `azd deploy`/`azd up` would fail with
-  # "unable to find a resource tagged with 'azd-service-name: backend-dotnet'" in every
-  # environment that hasn't flipped DEPLOY_DOTNET_APP=true (Rick's #152 review, R1). The #17
-  # go-live PR adds this service back with `language: docker` (no csproj handling), `project:
-  # ./app`, `docker.path: ./Dockerfile.dotnet` and `docker.context: ..` (mirrors `backend` above),
-  # in the same commit that flips infra/main.bicep's deployDotnetApp to true, plus the
-  # SERVICE_BACKEND_DOTNET_RESOURCE_EXISTS mapping in infra/main.parameters.json and the
-  # 'azd-service-name': 'backend-dotnet' tag on acaBackendDotnet in infra/main.bicep.
+  # S7 (#17 go-live): side-by-side C# container app, beside `backend` above, sharing the same ACA
+  # environment, Foundry account, Search service and managed identity (10.2). `language: docker`
+  # (not `csharp`) so azd never touches a dotnet project file (no Backend.csproj UserSecretsId
+  # edits, no dotnet user-secrets writes) on provision/package/deploy -- it just builds
+  # app/Dockerfile.dotnet like any other container service. `project: ./app` + `docker.context: ..`
+  # mirror `backend` above for the same reason (issue #129): azd resolves `context` relative to the
+  # service dir, and `..` from `./app` lands on the repo root, which both Dockerfiles' COPY paths
+  # assume. `docker.path` points directly at the sibling Dockerfile.dotnet (not the default
+  # ./Dockerfile) so the two services build from different images out of the same project dir.
+  #
+  # This service entry, infra/main.bicep's `'azd-service-name': 'backend-dotnet'` tag on
+  # acaBackendDotnet (gated behind `if (deployDotnetApp)`, same as the rest of that module) and the
+  # SERVICE_BACKEND_DOTNET_RESOURCE_EXISTS mapping in infra/main.parameters.json land together in
+  # this one PR (Rick's #152 review, R1), but `deployDotnetApp` (DEPLOY_DOTNET_APP) still defaults
+  # to `false` -- this PR stays a deploy-nothing-new, cost-neutral prep until Brian flips it.
+  #
+  # Operator note (no azd `condition:` support on services as of the pinned azd release -- see
+  # https://aka.ms/azure.yaml.json, no such field documented): with DEPLOY_DOTNET_APP=false, the
+  # acaBackendDotnet module is never deployed, so NO resource anywhere carries the
+  # 'azd-service-name': 'backend-dotnet' tag this service entry expects. A plain `azd deploy` or
+  # `azd up` (both iterate every azure.yaml service) then fails this service with "unable to find a
+  # resource tagged with 'azd-service-name: backend-dotnet'". Until azd ships a service `condition`,
+  # every environment that has not flipped DEPLOY_DOTNET_APP=true MUST scope deploys to the Python
+  # service explicitly -- `azd deploy backend` (not bare `azd deploy`/`azd up`) -- and run
+  # `azd provision` on its own (provision never resolves service tags, so it is unaffected). See
+  # DEPLOY.md's ".NET container app (S7, #17)" section for the full rollout.
+  backend-dotnet:
+    project: ./app
+    language: docker
+    host: containerapp
+    docker:
+      path: ./Dockerfile.dotnet
+      context: ..
+      remoteBuild: true
+      # Same build-time Entra config as `backend` above (design 18.8) -- the .NET image's frontend
+      # build stage (app/Dockerfile.dotnet) declares and consumes the identical four ARGs/ENVs.
+      buildArgs:
+        - VITE_AUTH_MODE=Entra
+        - VITE_ENTRA_TENANT_ID=${ENTRA_TENANT_ID}
+        - VITE_ENTRA_CLIENT_ID=${ENTRA_CLIENT_ID}
+        - VITE_ENTRA_API_SCOPE=${ENTRA_API_SCOPE}
 hooks:
     postprovision:
       windows:

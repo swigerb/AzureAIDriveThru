@@ -134,6 +134,9 @@
     "webAppExists": {
       "value": "${SERVICE_BACKEND_RESOURCE_EXISTS=false}"
     },
+    "dotnetWebAppExists": {
+      "value": "${SERVICE_BACKEND_DOTNET_RESOURCE_EXISTS=false}"
+    },
     "azureContainerAppsWorkloadProfile": {
       "value": "${AZURE_CONTAINER_APPS_WORKLOAD_PROFILE=Consumption}"
     },
