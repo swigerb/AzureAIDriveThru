@@ -44,6 +44,12 @@ public static class OrderScenarioHelpers
         Assert.True(noneOpen, $"Expected no open upstream connections at test start, but " +
             $"{fixture.Realtime.OpenConnectionCount} are still open — a previous test leaked a connection.");
 
+        // #315: scoped BEFORE the connect/greet below so the guard at the end of this method only
+        // ever sees output this scenario's own connection produced, never an identically-worded
+        // line an earlier scenario sharing this collection's backend process already logged (and
+        // that earlier scenario's own assertions would have already failed on).
+        var watermark = fixture.Backend!.DiagnosticsWatermark;
+
         var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
         var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, persona: persona, mode: mode, cancellationToken: ct);
         var connection = await connectionTask;
@@ -56,6 +62,13 @@ public static class OrderScenarioHelpers
             f => f.Type == "extension.round_trip_token", FrameTimeout, ct);
         Assert.True(greetingRoundTrip is not null,
             "Greeting round trip never completed" + (persona is null ? "." : $" for persona={persona}."));
+
+        // #315: a rejected session.update must never pass silently again -- the backend's own
+        // rejection-recovery path can still let the greeting above complete (it resends a minimal
+        // fallback), which would otherwise hide exactly the regression #314 shipped with (every
+        // session running with no tools and no instructions) behind an apparently-green scenario.
+        var sinceConnect = fixture.Backend!.DumpSince(watermark);
+        Assert.DoesNotContain("Upstream REJECTED session.update", sinceConnect, StringComparison.Ordinal);
 
         var roundTripIndex = greetingRoundTrip!.Json.GetProperty("roundTripIndex").GetInt32();
         return (browser, connection!, roundTripIndex);
