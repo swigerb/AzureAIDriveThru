@@ -126,4 +126,40 @@ public sealed class SearchIndexHttpClientTests
             () => client.CreateOrUpdateIndexAsync(IndexName, new JsonObject(), CancellationToken.None));
         Assert.Contains("403", ex.Message);
     }
+
+    [Fact]
+    public void CreateProductionHttpClient_ConfiguresAzureCoreDefaultTimeouts()
+    {
+        // Rick's review, item 2b: azure-core's own pinned default connect-AND-read timeout is
+        // 300 s. This port has no separate connect-vs-read split the way azure-core's transport
+        // does, so both SocketsHttpHandler.ConnectTimeout and HttpClient.Timeout are set to the
+        // same 300 s value (see SearchIndexHttpClient.CreateForProduction's own remarks).
+        using var http = SearchIndexHttpClient.CreateProductionHttpClient(new FakeTokenCredential());
+
+        Assert.Equal(TimeSpan.FromSeconds(300), http.Timeout);
+        Assert.Equal(TimeSpan.FromSeconds(300), SearchIndexHttpClient.ProductionTimeout);
+    }
+
+    [Fact]
+    public async Task CreateProductionHttpClient_RetriesATransient503_ThenSucceeds()
+    {
+        // End-to-end proof that CreateForProduction's handler chain (SearchRetryHandler wrapping
+        // the bearer-token handler) actually retries -- not just that SearchRetryHandler's own unit
+        // tests pass in isolation.
+        var attempts = 0;
+        var innerHandler = new FakeHttpMessageHandler(_ =>
+        {
+            attempts++;
+            return attempts == 1
+                ? FakeHttpMessageHandler.PlainText(HttpStatusCode.ServiceUnavailable, "busy")
+                : FakeHttpMessageHandler.Json(HttpStatusCode.OK, "{}");
+        });
+        var retryHandler = new SearchRetryHandler(innerHandler, delay: (_, _) => Task.CompletedTask);
+        using var http = new HttpClient(retryHandler);
+        using var client = new SearchIndexHttpClient(http, Endpoint);
+
+        await client.CreateOrUpdateIndexAsync(IndexName, new JsonObject(), CancellationToken.None);
+
+        Assert.Equal(2, attempts);
+    }
 }

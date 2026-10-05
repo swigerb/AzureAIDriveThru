@@ -53,6 +53,11 @@ public sealed class SearchIndexHttpClient : IDisposable
         _ownsHttpClient = ownsHttpClient;
     }
 
+    /// <summary>azure-core's own default connection AND read timeout for every
+    /// <c>azure-search-documents</c> request (Rick's review, item 2b) -- see
+    /// <see cref="CreateForProduction"/>'s remarks for how this is applied.</summary>
+    public static readonly TimeSpan ProductionTimeout = TimeSpan.FromSeconds(300);
+
     /// <summary>
     /// Builds a production client: <c>DefaultAzureCredential</c> bearer tokens scoped to
     /// <c>https://search.azure.com/.default</c> -- the exact same scope
@@ -60,12 +65,32 @@ public sealed class SearchIndexHttpClient : IDisposable
     /// <c>credential_scopes</c> to (confirmed by reading the pinned SDK's source directly, not
     /// guessed) -- matching setup_search_index.py's own "DefaultAzureCredential only: no Azure
     /// OpenAI or Search key is ever read, issued, or stored" guarantee (module docstring, line 24).
+    ///
+    /// Wraps <see cref="SearchRetryHandler"/> (Rick's review, item 2b: azure-core's own
+    /// <c>retry_total=10</c>/<c>backoff_factor=0.8</c>/<c>backoff_max=120</c>, retrying
+    /// 408/429/500/502-504 and honouring <c>Retry-After</c>) around a <see cref="SocketsHttpHandler"/>
+    /// whose own <see cref="SocketsHttpHandler.ConnectTimeout"/> AND whose owning
+    /// <see cref="HttpClient.Timeout"/> are both set to <see cref="ProductionTimeout"/> (300 s),
+    /// matching azure-core's pinned 300 s connection AND read timeouts (<c>HttpClient.Timeout</c>
+    /// is the closest .NET equivalent to a per-request "read" timeout; .NET has no separate
+    /// connect-vs-read split the way azure-core's own transport does, so both knobs are set to the
+    /// same value here deliberately).
     /// </summary>
     public static SearchIndexHttpClient CreateForProduction(string searchEndpoint, TokenCredential credential)
     {
-        var handler = new BearerTokenHandler(credential, "https://search.azure.com/.default", new SocketsHttpHandler());
-        var http = new HttpClient(handler) { Timeout = TimeSpan.FromMinutes(5) };
+        var http = CreateProductionHttpClient(credential);
         return new SearchIndexHttpClient(http, searchEndpoint, ownsHttpClient: true);
+    }
+
+    /// <summary>Factored out of <see cref="CreateForProduction"/> so tests can assert on the
+    /// configured timeout/retry-handler shape directly, without constructing a real
+    /// <c>DefaultAzureCredential</c> (see <see cref="CreateForProduction"/>'s own remarks).</summary>
+    internal static HttpClient CreateProductionHttpClient(TokenCredential credential)
+    {
+        var socketsHandler = new SocketsHttpHandler { ConnectTimeout = ProductionTimeout };
+        var bearerHandler = new BearerTokenHandler(credential, "https://search.azure.com/.default", socketsHandler);
+        var retryHandler = new SearchRetryHandler(bearerHandler);
+        return new HttpClient(retryHandler) { Timeout = ProductionTimeout };
     }
 
     /// <summary>

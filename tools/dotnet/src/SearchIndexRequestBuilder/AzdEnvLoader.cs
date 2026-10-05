@@ -32,6 +32,23 @@ namespace SearchIndexRequestBuilder;
 /// nothing resolves an endpoint, the caller still raises the one, existing clean error
 /// (<see cref="OpenAiSettingsResolver"/>'s <see cref="InvalidOperationException"/>) -- never a
 /// new/different error path for "azd missing" specifically.
+///
+/// <para><b>Issue #16 round 2 (Rick's review, item 6):</b> this class is now ALSO reused as-is by
+/// the real ingestion CLI (<c>tools/dotnet/src/SearchIndexIngestor/CliRunner.cs</c>), not just this
+/// request-building preview tool -- so the paragraph above's "unlike the real ingestion script"
+/// framing is now only half true. This remains a deliberate, ACCEPTED divergence for the ingestion
+/// CLI too (the brief's second option: "list it as an accepted divergence"), not an oversight:
+/// falling through to "no azd env" still only ever surfaces as the ingestion CLI's own existing
+/// clean <c>InvalidOperationException</c> ("Azure AI Search endpoint not set...", see
+/// <c>SearchEndpointResolver.Resolve</c>/<c>OpenAiSettingsResolver.Resolve</c>) once nothing else
+/// resolves an endpoint either -- the same single, well-tested, catchable failure path as a
+/// missing <c>--search-endpoint</c> flag or missing process-env var, never a raw, uncaught
+/// <c>RuntimeError</c>-style surprise the way Python's own <c>load_azd_env()</c> would produce.
+/// Matching Python's exact <c>RuntimeError("Error loading azd env")</c>/<c>"No default azd env
+/// file found"</c> text was judged not worth a second, azd-specific error path purely for its own
+/// sake, when the existing endpoint-not-set message already tells the operator exactly what to do
+/// next. See <c>docs/dotnet_tooling.md</c>'s "This PR's port: orchestration" section for the same
+/// note at the documentation layer.</para>
 /// </summary>
 internal static class AzdEnvLoader
 {

@@ -105,7 +105,15 @@ public static class CliRunner
                 }
             }
 
-            var catalog = EnabledPersonaDiscovery.DiscoverAll(repoRoot, personasDir);
+            // Issue #16 round 2 (Rick's review, 2a): PERSONAS/PERSONAS_DIR must be honoured exactly
+            // like persona_loader.PersonaCatalog.load() does -- reading the process env AND the azd
+            // env (azdEnvValues is already {} above for --dry-run, matching Python's own
+            // load_azd_env()-only-outside-dry-run behaviour) with the same override=True precedence
+            // every other azd-aware setting here already uses. Otherwise a real run can create and
+            // populate indexes for personas an environment's own PERSONAS setting never enabled.
+            var resolvedPersonasDir = PersonaCatalogEnvResolver.ResolvePersonasDir(personasDir, getEnv, azdEnvValues);
+            var enabledIds = PersonaCatalogEnvResolver.ResolveEnabledIds(getEnv, azdEnvValues);
+            var catalog = EnabledPersonaDiscovery.DiscoverAll(repoRoot, resolvedPersonasDir, enabledIds);
             var targeted = PersonaTargeting.ResolveTargetPersonas(catalog, personaFlags);
             var plans = targeted.Select(PersonaIngestPlanBuilder.Build).ToList();
 

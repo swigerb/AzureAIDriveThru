@@ -34,11 +34,37 @@ public sealed class AzureOpenAiEmbeddingClient : IEmbeddingClient, IDisposable
         _ownsHttpClient = ownsHttpClient;
     }
 
+    /// <summary>openai 1.109.1's own default connect timeout (Rick's review, item 2b).</summary>
+    public static readonly TimeSpan ProductionConnectTimeout = TimeSpan.FromSeconds(5);
+
+    /// <summary>openai 1.109.1's own default read/write/pool timeout (Rick's review, item 2b).</summary>
+    public static readonly TimeSpan ProductionOverallTimeout = TimeSpan.FromSeconds(600);
+
     public static AzureOpenAiEmbeddingClient CreateForProduction(string endpoint, TokenCredential credential)
     {
-        var handler = new BearerTokenHandler(credential, "https://cognitiveservices.azure.com/.default", new SocketsHttpHandler());
-        var http = new HttpClient(handler) { Timeout = TimeSpan.FromMinutes(5) };
+        var http = CreateProductionHttpClient(credential);
         return new AzureOpenAiEmbeddingClient(http, endpoint, ownsHttpClient: true);
+    }
+
+    /// <summary>Factored out of <see cref="CreateForProduction"/> so tests can assert on the
+    /// configured timeout/retry-handler shape directly, without constructing a real
+    /// <c>DefaultAzureCredential</c>.
+    ///
+    /// Wraps <see cref="OpenAiRetryHandler"/> (Rick's review, item 2b: openai 1.109.1's own
+    /// <c>max_retries=2</c>, retrying 408/409/429/5xx and connection errors) around a
+    /// <see cref="SocketsHttpHandler"/> whose own <see cref="SocketsHttpHandler.ConnectTimeout"/> is
+    /// <see cref="ProductionConnectTimeout"/> (5 s) and whose owning <see cref="HttpClient.Timeout"/>
+    /// is <see cref="ProductionOverallTimeout"/> (600 s), matching the pinned openai SDK's own
+    /// <c>Timeout(connect=5, read=600, write=600, pool=600)</c> (<c>HttpClient.Timeout</c> is the
+    /// closest .NET equivalent to the SDK's combined read/write/pool timeout; .NET has no separate
+    /// read-vs-write-vs-pool split the way <c>httpx</c>'s own transport does, so all three are
+    /// represented by the one 600 s knob here deliberately).</summary>
+    internal static HttpClient CreateProductionHttpClient(TokenCredential credential)
+    {
+        var socketsHandler = new SocketsHttpHandler { ConnectTimeout = ProductionConnectTimeout };
+        var bearerHandler = new BearerTokenHandler(credential, "https://cognitiveservices.azure.com/.default", socketsHandler);
+        var retryHandler = new OpenAiRetryHandler(bearerHandler);
+        return new HttpClient(retryHandler) { Timeout = ProductionOverallTimeout };
     }
 
     public async Task<IReadOnlyList<IReadOnlyList<double>>> GenerateEmbeddingsAsync(
@@ -50,7 +76,16 @@ public sealed class AzureOpenAiEmbeddingClient : IEmbeddingClient, IDisposable
         {
             inputArray.Add(JsonValue.Create(text));
         }
-        var requestBody = new JsonObject { ["input"] = inputArray };
+        // Matches the real request the pinned openai==1.109.1 SDK sends (captured by Rick's
+        // review, item 3): {"input": [...], "model": "<deployment>", "encoding_format": "base64"}.
+        // "model" is included here (Python's embeddings.create(input=texts, model=deployment)); the
+        // SDK's own "encoding_format": "base64" is deliberately NOT sent -- a documented, accepted
+        // divergence (docs/dotnet_tooling.md): omitting it makes the raw REST API respond with
+        // plain float JSON instead of a base64-encoded float32 buffer, which is numerically
+        // equivalent at Edm.Single precision and avoids this port needing a base64-decode step for
+        // no parity benefit (Azure routes purely on the deployment in the URL, never on this body's
+        // "model" field, for an Azure OpenAI resource).
+        var requestBody = new JsonObject { ["input"] = inputArray, ["model"] = deployment };
 
         using var response = await _http.PostAsJsonAsync(url, requestBody, cancellationToken).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)

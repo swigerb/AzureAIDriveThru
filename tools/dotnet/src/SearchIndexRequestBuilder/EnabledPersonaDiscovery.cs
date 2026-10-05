@@ -36,7 +36,23 @@ public static class EnabledPersonaDiscovery
     /// environment-variable fallback. <c>null</c>/empty (the default, and
     /// SearchIndexRequestBuilder's only caller) means "use repoRoot/personas", matching this
     /// method's original, pre-#16-orchestration behaviour exactly.</param>
-    public static IReadOnlyList<DiscoveredPersona> DiscoverAll(string repoRoot, string? personasDirOverride = null)
+    /// <param name="enabledIdsOverride">Issue #16 round 2 (Rick's review, 2a): an explicit allow-list
+    /// of persona ids to use INSTEAD OF "every folder with a persona.json", matching
+    /// <c>persona_loader.PersonaCatalog.load()</c>'s own <c>PERSONAS</c> env-var allow-list
+    /// precedence (SearchIndexIngestor's <see cref="SearchIndexIngestor.PersonaCatalogEnvResolver"/>
+    /// resolves <c>PERSONAS</c> into this list before calling here). <c>null</c>/empty (the
+    /// default, and SearchIndexRequestBuilder's only caller, which has no <c>PERSONAS</c>-allow-list
+    /// concept of its own) means "every enabled persona", matching this method's original
+    /// behaviour exactly. Each requested id MUST have a <c>persona.json</c> under
+    /// <paramref name="personasDirOverride"/>/<c>repoRoot/personas</c> -- an id that doesn't is a
+    /// configuration error (mirrors <c>persona_loader._load_one_persona</c>'s own
+    /// "enabled but does not exist" failure), not silently ignored. The returned list is still
+    /// sorted by id regardless of the requested ids' own order, matching
+    /// <c>PersonaCatalog.ids</c>'s own <c>sorted(self._personas.keys())</c> (the requested ids'
+    /// order only matters for <c>--persona</c>, handled entirely by
+    /// <see cref="SearchIndexIngestor.PersonaTargeting"/>, a separate, later step).</param>
+    public static IReadOnlyList<DiscoveredPersona> DiscoverAll(
+        string repoRoot, string? personasDirOverride = null, IReadOnlyList<string>? enabledIdsOverride = null)
     {
         var personasDir = string.IsNullOrEmpty(personasDirOverride)
             ? Path.Combine(repoRoot, "personas")
@@ -47,12 +63,37 @@ public static class EnabledPersonaDiscovery
                 $"No 'personas' directory found under repo root '{repoRoot}'.");
         }
 
-        var personaIds = Directory.GetDirectories(personasDir)
-            .Select(Path.GetFileName)
-            .Where(id => id is not null && File.Exists(Path.Combine(personasDir, id, "persona.json")))
-            .Select(id => id!)
-            .OrderBy(id => id, StringComparer.Ordinal)
-            .ToList();
+        List<string> personaIds;
+        if (enabledIdsOverride is { Count: > 0 })
+        {
+            var missing = enabledIdsOverride
+                .Where(id => !File.Exists(Path.Combine(personasDir, id, "persona.json")))
+                .ToList();
+            if (missing.Count > 0)
+            {
+                // Mirrors persona_loader._load_one_persona's own
+                // f"Persona '{persona_id}' is enabled but {manifest_path} does not exist." message
+                // content -- raised as this port's established clean, catchable
+                // InvalidOperationException (see PersonaTargeting's remarks) rather than Python's
+                // unhandled PersonaValidationError/stack trace, since PERSONAS naming a
+                // non-existent pack is just as much an expected, resolvable configuration error as
+                // an unknown --persona id.
+                throw new InvalidOperationException(
+                    $"Persona '{missing[0]}' is enabled (PERSONAS) but " +
+                    $"{Path.Combine(personasDir, missing[0], "persona.json")} does not exist.");
+            }
+
+            personaIds = enabledIdsOverride.Distinct(StringComparer.Ordinal).OrderBy(id => id, StringComparer.Ordinal).ToList();
+        }
+        else
+        {
+            personaIds = Directory.GetDirectories(personasDir)
+                .Select(Path.GetFileName)
+                .Where(id => id is not null && File.Exists(Path.Combine(personasDir, id, "persona.json")))
+                .Select(id => id!)
+                .OrderBy(id => id, StringComparer.Ordinal)
+                .ToList();
+        }
 
         if (personaIds.Count == 0)
         {

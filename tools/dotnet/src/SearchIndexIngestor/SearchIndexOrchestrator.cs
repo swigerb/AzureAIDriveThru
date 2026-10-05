@@ -48,6 +48,18 @@ public sealed class SearchIndexOrchestrator
         var embeddings = await _embeddingClient
             .GenerateEmbeddingsAsync(plan.TextsForEmbedding, _embeddingDeployment, cancellationToken)
             .ConfigureAwait(false);
+        if (embeddings.Count != plan.Documents.Count)
+        {
+            // Python's zip(plan.documents, embeddings) silently truncates to the shorter sequence
+            // on a count mismatch (ingest_plan, line 435) instead of failing -- this port instead
+            // raises a clean, catchable error (Rick's review, item 3), matching this port's
+            // established "expected, resolvable configuration/validation failure" convention (see
+            // PersonaTargeting's remarks) rather than letting the loop below throw an unhandled
+            // ArgumentOutOfRangeException/IndexOutOfRangeException.
+            throw new InvalidOperationException(
+                $"Persona '{plan.PersonaId}': Azure OpenAI returned {embeddings.Count} embedding(s) " +
+                $"for {plan.Documents.Count} document(s) -- expected one embedding per document.");
+        }
         for (var i = 0; i < plan.Documents.Count; i++)
         {
             var vector = new System.Text.Json.Nodes.JsonArray();

@@ -48,7 +48,7 @@ a scope change for the rest of `app/backend`.
 
 | File(s) | Wraps | azd hook | Proposed C# shape |
 | --- | --- | --- | --- |
-| `scripts/setup_search_index.ps1`, `scripts/setup_search_index.sh` | `app/backend/setup_search_index.py` (builds/refreshes the Azure AI Search index from the production menu export) | **azd `postprovision` hook** (after `postprovision_auth`/`write_env`) | **Intentionally, permanently Python-only** (owner decision, 2026-10-04, quoted in "What's next" below: wrapper scripts for ported tools stay Python). `setup_search_index.py` itself now has a full C# port of both its request-building half (Batch 2) and its CLI/orchestration half (this PR, `tools/dotnet/src/SearchIndexIngestor`) -- see "This PR's port: orchestration" below -- but this wrapper and the live azd `postprovision` hook keep running the Python implementation unconditionally; the C# port is not wired into either. |
+| `scripts/setup_search_index.ps1`, `scripts/setup_search_index.sh` | `app/backend/setup_search_index.py` (builds/refreshes the Azure AI Search index from the production menu export) | **azd `postprovision` hook** (after `postprovision_auth`/`write_env`) | **Not yet wired to the C# port; the azd hook stays on Python (`TOOLING_IMPL` is a future concern)** -- unlike the other rows in this table, this one is not an owner decision to stay Python-only. `setup_search_index.py` itself now has a full C# port of both its request-building half (Batch 2) and its CLI/orchestration half (this PR, `tools/dotnet/src/SearchIndexIngestor`) -- see "This PR's port: orchestration" below -- but this wrapper and the live azd `postprovision` hook keep running the Python implementation unconditionally; the C# port is not wired into either (see the `TOOLING_IMPL` section below for the mechanism that would eventually let it). |
 | `scripts/smoke_realtime.ps1`, `scripts/smoke_realtime.sh` | `scripts/smoke_realtime.py` (realtime session smoke check; never fails the deployment, warns only) | **azd `postdeploy` hook** | **Intentionally, permanently Python-only** (owner decision, 2026-10-04): wraps a live-Azure tool that stays Python-only; stays Python itself. |
 | `scripts/start.ps1`, `scripts/start.sh` | `app/backend/app.py` directly (runs the Python backend itself via gunicorn, the application entry point) | Not an azd hook; local dev convenience only. | **Intentionally, permanently Python-only** (owner decision, 2026-10-04) -- this is the application, not "tooling" (and a C# backend entry point is `app/backend-dotnet`'s own, separately-tracked concern, not this issue's). |
 | `scripts/load_python_env.ps1`, `scripts/load_python_env.sh` | Nothing Python-specific to port -- it bootstraps the Python `.venv` itself (creates it, installs `app/backend/requirements.txt`) so the OTHER scripts above have an interpreter to run. | Sourced by `setup_search_index.ps1`/`.sh` AND `start.ps1`/`.sh` before they invoke Python. | **Intentionally, permanently Python-only** (owner decision, 2026-10-04) -- there is no Python *logic* here to port; it is the venv bootstrap `update_menu_sizes.py` et al. depend on existing at all. |
@@ -823,7 +823,13 @@ decision (quoted in full in "What's next" below), **landing this PR closes issue
   `--search-endpoint`/`--openai-endpoint`/`--embedding-deployment` overrides reusing
   `SearchEndpointResolver`/`OpenAiSettingsResolver`'s existing CLI-flag-beats-azd-beats-environment-
   variable precedence (Batch 2, PR #250) -- Python itself has no CLI overrides for these three; they
-  always come from the azd-managed environment there.
+  always come from the azd-managed environment there. **Round 2 (Rick's review, item 1):**
+  `PERSONAS`/`PERSONAS_DIR` are now also honoured, via `PersonaCatalogEnvResolver.cs`, with the same
+  CLI-flag (where one exists) > azd-default-environment-value > process-environment-variable
+  precedence every other azd-aware setting here uses -- matching `persona_loader.PersonaCatalog.load()`'s
+  own `PERSONAS`/`PERSONAS_DIR` env-var handling (`persona_loader.py`, lines ~548-584) exactly, so a
+  real run can no longer create/populate indexes for personas an environment's own `PERSONAS`
+  setting never enabled.
 * **`run()`/`main()` orchestration** (`CliRunner.RunAsync`, `SearchIndexOrchestrator.IngestAsync`):
   azd env loading (skipped entirely for `--dry-run`, matching Python's own early-return before any
   env read, lines 455-473), the `SKIP_SEARCH_INDEX_SETUP` escape hatch, persona discovery ->
@@ -847,16 +853,36 @@ decision (quoted in full in "What's next" below), **landing this PR closes issue
   only the test project may use fakes. **Caveat**: unlike the Search REST calls (captured verbatim
   from the real Python twin's own HTTP traffic -- see Batch 2 and "Tests" below), the embeddings
   REST request/response shape here is this port's own informed-but-not-independently-captured
-  assumption about the standard Azure OpenAI embeddings wire contract (`{"input": [...]}` /
+  assumption about the standard Azure OpenAI embeddings wire contract (now
+  `{"input": [...], "model": "<deployment>"}` -- the `model` field was added in round 2, Rick's
+  review item 4, to match the `openai` Python SDK's own request body shape for this call -- /
   `{"data": [{"embedding": [...], "index": N}, ...]}`) -- `setup_search_index.py`'s own Python
   twin talks to Azure OpenAI through the `openai` SDK, not raw HTTP, so there was no equivalent
   HTTP-transport-capture technique available for this one call the way there was for the Search
-  calls. See `AzureOpenAiEmbeddingClient.cs`'s own XML doc comment for the same note at the source.
+  calls. `encoding_format` is deliberately still omitted (an accepted divergence, not an oversight --
+  see `AzureOpenAiEmbeddingClient.cs`'s own XML doc comment for the same note at the source).
+  **Round 2 (item 4):** a count-mismatch guard was added in `SearchIndexOrchestrator.cs`, between
+  embedding generation and the embedding-attachment loop, raising a clean `InvalidOperationException`
+  if the embeddings response returns a different number of vectors than documents were sent -- this
+  can never happen with a well-behaved real Azure OpenAI endpoint, but fails loudly and immediately
+  (rather than an obscure index-out-of-range/silent-misalignment bug further down) if it ever does.
 * **Index create-or-update and the upload-batch loop** (`SearchIndexOrchestrator.cs`): reuses
   Batch 2's `SearchIndexDefinitionBuilder`/`DocumentBatchBuilder` request-building logic verbatim,
   now actually wired into a real orchestration loop (100-document batches, in original order,
   matching `upload_documents`'s own manual batching, lines ~286-325) via the production
   `SearchIndexHttpClient` (Batch 2, bearer-token-authenticated against Azure AI Search, no API key).
+* **Retries/timeouts matching the pinned Python SDKs' own defaults (round 2, Rick's review, item
+  2):** `SearchIndexHttpClient.CreateForProduction` wraps a `SearchRetryHandler`
+  (`RetryTotal`=10, exponential backoff with `BackoffFactor`=0.8/`BackoffMax`=120s, retrying on
+  408/429/500/502/503/504 plus transport exceptions) and a 300-second connect+overall timeout,
+  matching `azure-search-documents`' pinned `azure-core` transport defaults.
+  `AzureOpenAiEmbeddingClient.CreateForProduction` wraps an `OpenAiRetryHandler` (`MaxRetries`=2,
+  backoff 0.5-8s, honouring a `Retry-After` header only when it's <= 60s) and a 5-second connect /
+  600-second overall timeout, matching the pinned `openai` Python SDK's own `DEFAULT_MAX_RETRIES`/
+  `DEFAULT_TIMEOUT` defaults. Both handlers are `DelegatingHandler`s, independently unit-tested
+  against synthetic failing-then-succeeding responses (`RetryHandlerTests.cs`) with no real network
+  call, and separately wired into each production `HttpClient` via an internal, test-only
+  `CreateProductionHttpClient` factory method on each client class.
 * **Dry-run behaviour**: prints `"[dry-run] persona '<id>': index '<name>', <n> document(s) planned"`
   per targeted persona and exits 0 -- zero Azure Search/OpenAI calls, no credential constructed, no
   azd env loaded at all, matching Python's own dry-run early-return (lines 447-469) exactly.
@@ -868,7 +894,18 @@ decision (quoted in full in "What's next" below), **landing this PR closes issue
   (`verify_document_count`'s final count mismatch) is deliberately left as an uncaught exception,
   matching Python's own `RuntimeError`-not-`SystemExit` distinction there.
 * **azd env loading**: reuses `AzdEnvLoader`/`OpenAiSettingsResolver` (Batch 2, PR #250) as-is --
-  no changes needed to either for this batch.
+  no changes needed to either for this batch. **Accepted divergence (Rick's review, round 2, item
+  6):** Python's own `load_azd_env()` RAISES (`RuntimeError("Error loading azd env")` /
+  `"No default azd env file found"`) if azd or its default env file isn't found; `AzdEnvLoader`
+  instead treats that as "contributes nothing" and returns an empty dictionary, falling through to
+  the process environment and this port's own CLI flags. If nothing resolves an endpoint either
+  way, the CLI still raises its one, existing clean `InvalidOperationException` ("Azure AI Search
+  endpoint not set...", `SearchEndpointResolver`/`OpenAiSettingsResolver`) -- the same single,
+  well-tested, catchable failure path as a missing `--search-endpoint` flag, never a raw, uncaught
+  azd-specific error. Matching Python's exact azd-missing wording was judged not worth a second
+  error path purely for its own sake, when the existing endpoint-not-set message already tells the
+  operator exactly what to do next. See `AzdEnvLoader.cs`'s own XML doc comment for the fuller
+  rationale.
 
 ### A genuine production bug this batch's tests found and fixed
 
@@ -894,7 +931,8 @@ reliably by this batch's own deterministic, hash-derived test/capture-harness em
 
 Every component has an isolated unit-test file against in-memory fakes (`PersonaTargetingTests.cs`,
 `SearchEndpointResolverTests.cs`, `SearchIndexHttpClientTests.cs`, `SearchIndexOrchestratorTests.cs`,
-`AzureOpenAiEmbeddingClientTests.cs`, `PersonaIngestPlanBuilderTests.cs`, `CliRunnerTests.cs`) --
+`AzureOpenAiEmbeddingClientTests.cs`, `PersonaIngestPlanBuilderTests.cs`, `CliRunnerTests.cs`,
+`PersonaCatalogEnvResolverTests.cs`, `RetryHandlerTests.cs` -- the last two new in round 2) --
 same two-layer split (component logic vs. output-parity-at-the-edges) every prior port in this doc
 uses. The capstone is `PythonParityTests.cs`, which extends Batch 2's HTTP-transport-capture
 technique (`RecordingTransport` monkeypatching `azure-search-documents`' transport layer, no socket
@@ -902,28 +940,67 @@ ever opened) with a new capture harness, `Fixtures/capture_search_index_ingestio
 not just request bodies (Batch 2) but method/URL (including index name and api-version)/headers too:
 
 * **Index create-or-update + upload-batch-loop parity**: for every real enabled persona in the
-  actual repo, drives the real Python capture harness as a subprocess (no network), then builds the
-  same index definition and upload batches in C# via `SearchIndexHttpClient` wrapped around a
-  `FakeHttpMessageHandler`, and strictly compares method, URL (path including index name and
-  api-version), the headers that matter, bodies, and batch boundaries against the Python-captured
-  requests -- structurally (key-by-key, order-independent for JSON objects) rather than
-  byte-for-byte, the same JSON-structural-equality bar Batch 2 established.
+  actual repo, drives the real Python capture harness as a subprocess (no network), then drives the
+  REAL `SearchIndexOrchestrator.IngestAsync` (round 2, Rick's review item 1 -- not a hand-rolled
+  create+upload loop standing in for it) wrapped around a `FakeHttpMessageHandler`, and strictly
+  compares method, URL (path including index name and api-version), the headers that matter,
+  bodies, and batch boundaries against the Python-captured requests -- structurally (key-by-key,
+  order-independent for JSON objects) rather than byte-for-byte, the same JSON-structural-equality
+  bar Batch 2 established. This now also exercises (but, per this file's own prior documented
+  reasoning, deliberately does NOT byte-compare) `IngestAsync`'s delete-stale-document and
+  `$count`-verification steps, against one synthetic seeded stale document id.
 * **Dry-run stdout-content parity**: spawns the real `setup_search_index.py --dry-run` as a genuine
   subprocess (`COLUMNS=1000` forces Python's `RichHandler` to stop word-wrapping each log line across
   multiple physical lines, which otherwise breaks naive line-matching when stdout isn't a real tty)
   alongside an in-process `CliRunner.RunAsync(["--dry-run"], ...)` run against the same real repo,
   extracts `(persona, index, document-count)` triples from both sides' stdout, and asserts they
-  match exactly, plus exit code 0 and empty stderr on both sides, for every enabled persona.
+  match exactly, plus exit code 0 and empty stderr on both sides, for every enabled persona, for a
+  single targeted `--persona` (round 2, item 5), and for the `PERSONAS` environment variable
+  restricting the catalog to a named two-persona subset (round 2, item 5).
 * **Unknown-persona error-case parity**: compares exit codes (both 1) and that both sides' stderr
   mentions the bogus persona id, for an unrecognized `--persona` flag value -- Python raises
   `SystemExit(message)` (lines 365-389); this port's `CliRunner` catches the equivalent
   `InvalidOperationException` and returns 1 (same convention as `PersonaTargeting.cs`'s own doc
   comment note above).
+* **Missing-endpoint error-case parity (round 2, item 5):** a non-dry-run real-subprocess
+  comparison for each of `AZURE_SEARCH_ENDPOINT` and `AZURE_OPENAI_EASTUS2_ENDPOINT` being unset --
+  Python's `run()` raises a raw, unhandled `KeyError` for either (lines 471-472). Since Python's
+  non-dry-run path always calls `load_azd_env()` first (`main()`, line 539), which shells out to a
+  real `azd` CLI that isn't installed in this (or presumably any CI) test sandbox, these two tests
+  prepend a tiny stub `azd` script (just enough to satisfy `azd env list -o json` against a
+  deliberately endpoint-less `.env` file) to `PATH` for that one subprocess only, so Python actually
+  reaches the `KeyError` this test means to compare, rather than always failing one step earlier at
+  the azd shell-out regardless of which endpoint is or isn't set. Compared at the same
+  exit-code/"mentions the right variable name" content level as the unknown-persona test above, not
+  byte-for-byte -- Python's raw `KeyError` traceback vs. this port's own clean, single-line
+  `InvalidOperationException` message are a deliberate, documented divergence (see
+  `SearchEndpointResolver.cs`/`OpenAiSettingsResolver.cs`'s own remarks), not a parity bug.
+* **Retry/timeout behaviour (round 2, item 2):** `RetryHandlerTests.cs` unit-tests
+  `SearchRetryHandler`/`OpenAiRetryHandler` directly (retry-on-each-retriable-status-code, no-retry
+  on non-retriable codes, retry exhaustion, `Retry-After` precedence over backoff, transport-
+  exception retries) with no real network call; `SearchIndexHttpClientTests.cs`/
+  `AzureOpenAiEmbeddingClientTests.cs` each add a `CreateProductionHttpClient`-level test confirming
+  the configured timeouts and a representative single-retry-then-success scenario end to end through
+  the real production factory method (exposed to the test project via `InternalsVisibleTo`).
+* **Embeddings `model` field + count-mismatch guard (round 2, item 4):**
+  `AzureOpenAiEmbeddingClientTests.cs` asserts the request body now includes `"model": "<deployment>"`
+  alongside `"input"`; `SearchIndexOrchestratorTests.cs` adds a `FixedCountEmbeddingClient` test
+  double proving `IngestAsync` raises a clean `InvalidOperationException` (rather than silently
+  misaligning embeddings to documents, or throwing an obscure index-out-of-range exception further
+  down) if the embeddings response ever returns a different vector count than documents were sent.
+* **PERSONAS/PERSONAS_DIR resolution (round 2, item 1):** `PersonaCatalogEnvResolverTests.cs`
+  unit-tests `PersonaCatalogEnvResolver`'s CLI-flag/azd-value/process-env precedence directly (9
+  cases); `CliRunnerTests.cs` adds integration-level cases through the full `CliRunner.RunAsync`
+  path (`PERSONAS` restricting dry-run output, a `PERSONAS` entry naming a non-existent persona id
+  erroring cleanly, an azd-sourced `PERSONAS_DIR` beating a process-env `PERSONAS_DIR` in a full
+  non-dry-run flow, and an explicit `--personas-dir` flag beating both).
 
 No test in this project makes a live Azure call: the embeddings seam (`IEmbeddingClient`) is always
 a deterministic fake (`FixtureEmbeddingClient`, SHA-256-hash-derived, or the fixed-vector regression
 fake above) in every test, and the Search REST calls are always against `FakeHttpMessageHandler` or
-the Python capture harness's own `RecordingTransport` -- never a real endpoint.
+the Python capture harness's own `RecordingTransport` -- never a real endpoint. The two missing-
+endpoint parity tests' stub `azd` script is likewise never a real `azd` installation or a real Azure
+call -- it only ever echoes a fixed, local JSON literal.
 
 ### Mutation checks (each performed for real, then reverted, while implementing this batch)
 
@@ -938,8 +1015,26 @@ the Python capture harness's own `RecordingTransport` -- never a real endpoint.
 4. Changed the parity test's own batch-loop slice size from 100 to 99 -- failed on the one real
    enabled persona with 180 documents (2 real batches of 100+80), with "array length differs.
    expected 100, actual 99."
+5. **(Round 2)** Changed `SearchRetryHandler.RetryTotal` from 10 to 1 -- 9 of 22 `RetryHandlerTests`
+   failed as expected (every case asserting more than 1 total retry attempt).
+6. **(Round 2)** Removed the single seeded stale document id from `PythonParityTests.cs`'s own
+   `FakeHttpMessageHandler` search-results stub -- the new delete-stale assertion
+   (`Assert.Equal([staleDocId], deletedIds)`) correctly failed with an empty list instead,
+   confirming the real-orchestrator-driven parity test actually exercises the delete-stale path
+   rather than vacuously passing.
+7. **(Round 2)** Disabled `PersonaCatalogEnvResolver.ResolvePersonasDir`'s `--personas-dir`-flag
+   precedence check (forced it to always fall through to azd/env) -- the existing
+   `ResolvePersonasDir_Flag_BeatsBothAzdAndEnvironmentVariable` test failed as expected (got the
+   azd value instead of the flag value).
+8. **(Round 2)** Disabled the count-mismatch guard in `SearchIndexOrchestrator.cs` (forced its
+   condition to `false`) -- `IngestAsync_Throws_WhenAzureOpenAiReturnsFewerEmbeddingsThanDocuments`
+   failed as expected, but not merely with a different exception message: it threw an entirely
+   different, unhandled `ArgumentOutOfRangeException` from deep inside the embedding-attachment
+   loop instead of the guard's own clean `InvalidOperationException` -- concretely demonstrating
+   the "obscure index-out-of-range exception further down" failure mode the guard exists to
+   prevent, not just a cosmetic difference.
 
-All four were restored and the full suite re-verified green afterward.
+All eight were restored and the full suite re-verified green afterward.
 
 ### CI wiring
 

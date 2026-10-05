@@ -272,4 +272,40 @@ public sealed class SearchIndexOrchestratorTests
         Assert.Contains("holds 0 document(s)", ex.Message);
         Assert.Contains("the plan has 5", ex.Message);
     }
+
+    /// <summary>Test-only <see cref="IEmbeddingClient"/> fake that always returns a fixed number of
+    /// embeddings, regardless of how many texts it's asked to embed -- used to force the
+    /// count-mismatch guard (Rick's review, item 3/round 2).</summary>
+    private sealed class FixedCountEmbeddingClient(int count) : IEmbeddingClient
+    {
+        public Task<IReadOnlyList<IReadOnlyList<double>>> GenerateEmbeddingsAsync(
+            IReadOnlyList<string> texts, string deployment, CancellationToken cancellationToken)
+        {
+            IReadOnlyList<IReadOnlyList<double>> result =
+                Enumerable.Range(0, count).Select(i => (IReadOnlyList<double>)FixtureEmbeddingClient.For($"fixed-{i}")).ToList();
+            return Task.FromResult(result);
+        }
+    }
+
+    [Fact]
+    public async Task IngestAsync_Throws_WhenAzureOpenAiReturnsFewerEmbeddingsThanDocuments()
+    {
+        // setup_search_index.py's own zip(plan.documents, embeddings) would silently truncate to
+        // the shorter sequence here instead of failing (ingest_plan, line 435) -- this port
+        // deliberately diverges by raising a clean, catchable error instead of letting the
+        // embedding-attachment loop below throw an unhandled index-out-of-range exception.
+        var plan = MakePlan("alpha", "alpha-index", documentCount: 3);
+        var handler = new FakeHttpMessageHandler(request =>
+            request.Method == HttpMethod.Put
+                ? FakeHttpMessageHandler.Json(HttpStatusCode.OK, request.Body!)
+                : FakeHttpMessageHandler.Json(HttpStatusCode.OK, "{}"));
+        using var searchClient = new SearchIndexHttpClient(new HttpClient(handler), "https://fake.search.windows.net");
+        var orchestrator = new SearchIndexOrchestrator(
+            searchClient, new FixedCountEmbeddingClient(count: 2), "https://fake.openai.azure.com", "fake-deployment", TextWriter.Null);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => orchestrator.IngestAsync(plan, CancellationToken.None));
+
+        Assert.Contains("returned 2 embedding(s)", ex.Message);
+        Assert.Contains("for 3 document(s)", ex.Message);
+    }
 }
