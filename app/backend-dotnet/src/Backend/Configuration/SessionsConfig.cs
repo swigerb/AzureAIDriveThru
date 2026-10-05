@@ -24,6 +24,13 @@ public sealed class SessionsConfig
     public double FirstFrameTimeoutSeconds { get; }
     public double SweepIntervalSeconds { get; }
 
+    /// <summary>Issue #13 tail: config.yaml's `context` section (session_manager.py's
+    /// `_CTX_MAX_TOKENS`/`_CTX_WARNING_PCT`/`_CTX_CRITICAL_PCT` module-level reads), threaded
+    /// into every <see cref="Sessions.ContextMonitor"/> this manager creates.</summary>
+    public int ContextMaxTokens { get; }
+    public double ContextWarningThresholdPct { get; }
+    public double ContextCriticalThresholdPct { get; }
+
     public SessionsConfig(
         double idleTimeoutSeconds = 300,
         bool resumeEnabled = true,
@@ -33,7 +40,10 @@ public sealed class SessionsConfig
         int historyChars = 2000,
         double nudgeAfterSeconds = 30,
         double firstFrameTimeoutSeconds = 2.0,
-        double sweepIntervalSeconds = 15)
+        double sweepIntervalSeconds = 15,
+        int contextMaxTokens = 128_000,
+        double contextWarningThresholdPct = 80,
+        double contextCriticalThresholdPct = 95)
     {
         IdleTimeoutSeconds = idleTimeoutSeconds;
         ResumeEnabled = resumeEnabled;
@@ -44,12 +54,16 @@ public sealed class SessionsConfig
         NudgeAfterSeconds = nudgeAfterSeconds;
         FirstFrameTimeoutSeconds = firstFrameTimeoutSeconds;
         SweepIntervalSeconds = sweepIntervalSeconds;
+        ContextMaxTokens = contextMaxTokens;
+        ContextWarningThresholdPct = contextWarningThresholdPct;
+        ContextCriticalThresholdPct = contextCriticalThresholdPct;
     }
 
     public static SessionsConfig FromConfig(AppConfig config)
     {
         var security = config.TryGetSection("security");
         var resume = config.TryGetSection("resume");
+        var context = config.TryGetSection("context");
 
         return new SessionsConfig(
             idleTimeoutSeconds: ConformanceHooks.Seconds(
@@ -65,7 +79,10 @@ public sealed class SessionsConfig
             firstFrameTimeoutSeconds: ConformanceHooks.Seconds(
                 "CONFORMANCE_FIRST_FRAME_TIMEOUT_SECONDS", GetDouble(resume, "first_frame_timeout_seconds", 2.0)),
             sweepIntervalSeconds: ConformanceHooks.Seconds(
-                "CONFORMANCE_SWEEP_INTERVAL_SECONDS", GetDouble(resume, "sweep_interval_seconds", 15)));
+                "CONFORMANCE_SWEEP_INTERVAL_SECONDS", GetDouble(resume, "sweep_interval_seconds", 15)),
+            contextMaxTokens: GetInt(context, "max_tokens", 128_000),
+            contextWarningThresholdPct: GetDouble(context, "warning_threshold_pct", 80),
+            contextCriticalThresholdPct: GetDouble(context, "critical_threshold_pct", 95));
     }
 
     private static int GetInt(IDictionary<object, object>? section, string key, int fallback) =>
