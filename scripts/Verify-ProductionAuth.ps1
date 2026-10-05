@@ -327,11 +327,11 @@ if ([string]::IsNullOrWhiteSpace($probePersonaId)) {
     $probePersonaId = $null
 }
 
-# The dotnet app's bicep resource DOES carry the 'azd-service-name': 'backend-dotnet' tag as of
-# the #17 go-live PR, but only while deployDotnetApp is true (the whole module is conditional) --
-# an environment that provisioned the dotnet app before this PR, or any future app whose tag write
-# races this read, still needs a name-based fallback. Kept as a belt-and-suspenders discovery path
-# rather than assuming the tag is always present.
+# The dotnet app's bicep resource does NOT yet carry the 'azd-service-name': 'backend-dotnet' tag
+# as of this PR -- the tag lands together with the matching azure.yaml service entry in the
+# owner-gated flip commit (see DEPLOY.md's ".NET container app (S7, #17)" section, "Step 0").
+# Until then, and for any environment that provisioned the dotnet app before that commit, a
+# name-based fallback is required to discover it at all.
 $script:DotnetAppName = Get-AzdEnvValue 'AZURE_CONTAINER_APP_DOTNET_NAME'
 
 # Resolves a container app's KnownServices key, safely under StrictMode: an app's `tags` may be

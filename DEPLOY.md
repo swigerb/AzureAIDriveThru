@@ -298,10 +298,13 @@ Brian's sign-off first.
 
 As of this PR, `azure.yaml` does NOT declare a `backend-dotnet` service, and `infra/main.bicep`'s
 `acaBackendDotnet` module carries no `azd-service-name` tag either (Rick's review of #281, R1):
-declaring the service ahead of the tag -- or the tag ahead of the service -- while
-`DEPLOY_DOTNET_APP` stays `false` broke a bare `azd deploy`/`azd up` for every environment that has
-not flipped the flag, because azd has no service-level `condition:` (as of the pinned release,
-<https://aka.ms/azure.yaml.json>) to skip a service entirely. That means today:
+declaring the service ahead of the tag -- while `DEPLOY_DOTNET_APP` stays `false` -- would break a
+bare `azd deploy`/`azd up` for every environment that has not flipped the flag, because azd has no
+service-level `condition:` (as of the pinned release, <https://aka.ms/azure.yaml.json>) to skip a
+service entirely. The other direction (the tag ahead of the service) is harmless -- a tagged
+resource with no declared service for azd to resolve breaks nothing. That's why the service and the
+tag land together in the same owner-gated flip commit below, rather than independently. That means
+today:
 
 - `azd provision` works normally and creates nothing new for the dotnet app (the module is
   disabled).

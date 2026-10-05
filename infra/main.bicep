@@ -387,10 +387,11 @@ module acaBackendDotnet 'core/host/container-app-upsert.bicep' = if (deployDotne
     // false), with no matching azure.yaml service declared, is fine for provision but breaks
     // nothing either way -- the real hazard was the other direction (a declared azure.yaml
     // service with no tag anywhere to resolve). The tag moves into the owner-gated flip commit
-    // together with the azure.yaml service entry and the SERVICE_BACKEND_DOTNET_RESOURCE_EXISTS
-    // mapping -- see DEPLOY.md's ".NET container app (S7, #17)" section, "Step 0", for the exact
-    // patch, and test_azd_service_wiring.py for the bidirectional drift guard that keeps the three
-    // in sync once they land.
+    // together with the azure.yaml service entry (the SERVICE_BACKEND_DOTNET_RESOURCE_EXISTS
+    // mapping has already landed separately, in infra/main.parameters.json) -- see DEPLOY.md's
+    // ".NET container app (S7, #17)" section, "Step 0", for the exact patch, and
+    // test_azd_service_wiring.py for the bidirectional drift guard that keeps the tag and
+    // service in sync once they land.
     tags: tags
     targetPort: 8000
     containerCpuCoreCount: '1.0'
