@@ -48,9 +48,10 @@ public sealed class OutputDrainAfterExitTests
     /// the process has exited AND every redirected stream reader started via
     /// <c>BeginOutputReadLine</c>/<c>BeginErrorReadLine</c> has reached EOF) makes the dump
     /// complete every time, deterministically -- not probabilistically. Measured rate when this
-    /// drain is removed: see the README's "Full output drain before classifying a crash" entry,
-    /// which the race reproduces probabilistically (about 60% locally); the fix itself is
-    /// deterministic.
+    /// drain is removed: see the README's "Full output drain before classifying a crash" entry.
+    /// The race reproduces probabilistically (the rate varies by machine and CPU contention,
+    /// observed anywhere from roughly 25% to 60% locally across different boxes); the fix itself
+    /// is deterministic.
     /// </summary>
     [Fact]
     public async Task DrainAndClassifyAsync_message_always_contains_the_final_line_of_a_large_burst_from_a_fast_exiting_process()
