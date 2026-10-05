@@ -280,6 +280,18 @@ namespace Conformance.Tests;
 /// temporarily-assert-then-revert measurement technique as every prior round) gives **260**
 /// (256 + these 4), confirming the delta by direct count rather than arithmetic. This raises the
 /// floor 256 to 260.
+///
+/// Issue #15 (PR #244, merge reconciliation): the coordinator's merge of <c>origin/dev</c> into
+/// this branch (bringing in #253's 260-floor paragraph above alongside this branch's own
+/// pre-merge 293-floor paragraph further up) left the test method named
+/// <c>At_least_293_scenarios...</c> while asserting <c>count &gt;= 260</c> -- an interim
+/// placeholder the coordinator deliberately left for this session to correct by direct
+/// measurement rather than arithmetic. A fresh run of
+/// <see cref="CountFloorEligibleDotnetReadyTestMethods"/> on this branch tip, post-merge (same
+/// temporarily-assert-then-revert technique as every prior round), gives **297**, reflecting both
+/// this PR's own five #244-review rows and #253's four cascade rows landing on top of whatever
+/// else had merged to dev in the meantime. Raises the floor 260 to 297; test method and assertion
+/// renamed/updated to match.
 /// </summary>
 public sealed class DotnetTraitCoverageTests
 {
@@ -302,18 +314,18 @@ public sealed class DotnetTraitCoverageTests
     };
 
     [Fact]
-    public void At_least_293_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
+    public void At_least_297_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
     {
         var count = CountFloorEligibleDotnetReadyTestMethods();
 
-        Assert.True(count >= 260,
-            $"Expected at least 260 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
+        Assert.True(count >= 297,
+            $"Expected at least 297 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
             $"and not unconditionally skip-gated by AuthRowCapability (the dotnet leg's " +
             $"`--filter \"{TraitName}={TraitValue}&Category!=Browser\"` baseline, minus the five " +
             "skip-only Scenarios/Auth classes -- see this class's own doc comment; " +
             $"docs/dotnet_mapping.md), but found {count}. If a tagged scenario was removed or " +
-            "renamed without a replacement, the dotnet CI leg silently lost coverage. 260 is a " +
-            "FRESH count (PR #253 review item 3, taken post-rebase onto origin/dev), not " +
+            "renamed without a replacement, the dotnet CI leg silently lost coverage. 297 is a " +
+            "FRESH count (PR #244 merge reconciliation, taken post-merge of origin/dev), not " +
             "arithmetic -- re-measure with `Conformance.Tests.exe -list methods -trait " +
             "Dotnet=ready` minus the 18 AuthRowGatedTypeNames methods before raising this floor " +
             "again.");
