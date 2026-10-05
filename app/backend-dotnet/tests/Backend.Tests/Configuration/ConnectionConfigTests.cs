@@ -26,10 +26,13 @@ public sealed class ConnectionConfigTests
         Assert.Equal(15.0, connection.WsHeartbeatSeconds);
         Assert.False(connection.WsCompression);
         Assert.Equal(30, connection.WsConnectTimeoutSeconds);
+        // Rick's #280 review, item 3: Python's own default for ws_connect_timeout_connect
+        // (rtmt.py:115) is 10 -- the C# default must match.
+        Assert.Equal(10, connection.WsConnectTimeoutConnectSeconds);
     }
 
     [Fact]
-    public void FromConfig_ParsesAllThreeFields()
+    public void FromConfig_ParsesAllFourFields()
     {
         var config = LoadWithConnection(
             "connection:\n" +
@@ -43,6 +46,7 @@ public sealed class ConnectionConfigTests
         Assert.Equal(20.0, connection.WsHeartbeatSeconds);
         Assert.True(connection.WsCompression);
         Assert.Equal(45, connection.WsConnectTimeoutSeconds);
+        Assert.Equal(12, connection.WsConnectTimeoutConnectSeconds);
     }
 
     private static AppConfig LoadWithConnection(string? section)

@@ -1,3 +1,4 @@
+using System.Net.Http;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
@@ -287,16 +288,25 @@ public sealed class RealtimeProcessor : IPipelineProcessor
             var (headerName, headerValue) = await ResolveUpstreamAuthHeaderAsync(cancellationToken).ConfigureAwait(false);
             upstream.Options.SetRequestHeader(headerName, headerValue);
 
-            // Issue #13 tail: rtmt.py's upstream ws_connect uses aiohttp.ClientTimeout(total=
-            // ws_connect_timeout_total, connect=ws_connect_timeout_connect) -- .NET's
-            // ClientWebSocket has no equivalent two-phase split (see ConnectionConfig's own doc
-            // comment), so this wraps the whole ConnectAsync in a single combined timeout using
-            // the more lenient of Python's two bounds (ws_connect_timeout_total).
+            // Rick's #280 review, item 3: rtmt.py's upstream ws_connect uses
+            // aiohttp.ClientTimeout(total=ws_connect_timeout_total, connect=ws_connect_timeout_connect)
+            // -- a genuine two-phase split, where a stalled TCP/TLS connect fails at the shorter
+            // `connect` bound even though the overall budget is the longer `total` one. The
+            // SocketsHttpHandler.ConnectTimeout below, wired through the HttpMessageInvoker overload
+            // of ConnectAsync, is .NET's equivalent of that `connect` sub-phase (it only bounds the
+            // TCP/TLS connect, not the WebSocket upgrade handshake that follows). The outer CTS below
+            // still bounds the WHOLE call at ws_connect_timeout_total, same as before, so a slow
+            // (but under 10s) connect followed by a slow upgrade still gets the full 30s budget.
+            using var connectPhaseHandler = new SocketsHttpHandler
+            {
+                ConnectTimeout = TimeSpan.FromSeconds(_connectionConfig.WsConnectTimeoutConnectSeconds),
+            };
+            using var connectPhaseInvoker = new HttpMessageInvoker(connectPhaseHandler);
             using var connectTimeoutCts = new CancellationTokenSource(
                 TimeSpan.FromSeconds(_connectionConfig.WsConnectTimeoutSeconds));
             using var connectCts = CancellationTokenSource.CreateLinkedTokenSource(
                 cancellationToken, connectTimeoutCts.Token);
-            await upstream.ConnectAsync(BuildUpstreamUri(_upstreamEndpoint, deployment), connectCts.Token)
+            await upstream.ConnectAsync(BuildUpstreamUri(_upstreamEndpoint, deployment), connectPhaseInvoker, connectCts.Token)
                 .ConfigureAwait(false);
         }
         catch (Exception ex)
