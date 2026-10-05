@@ -140,6 +140,24 @@ var abbrs = loadJsonContent('abbreviations.json')
 var resourceToken = toLower(uniqueString(subscription().id, environmentName, location))
 var tags = { 'azd-env-name': environmentName }
 
+// --- Deterministic app names + URIs (#311) ---
+// Both container apps' names are computed here, once, so the BACKEND_URI /
+// BACKEND_DOTNET_URI env vars below can be derived from name + the ACA
+// environment's defaultDomain (containerApps.outputs.defaultDomain) instead
+// of from the *other* app's module output. Reading acaBackend.outputs.uri
+// from inside acaBackendDotnet's env (or vice versa) would make one app
+// module depend on the other's deployment finishing first for no real
+// reason; computing the FQDN deterministically keeps the two modules
+// independent, matching container-app.bicep's own
+// `'https://${app.properties.configuration.ingress.fqdn}'` construction.
+var backendAppName = !empty(backendServiceName) ? backendServiceName : '${abbrs.webSitesContainerApps}backend-${resourceToken}'
+// Fit in the Container Apps 32-char name limit: 'capps-backend-dotnet-' plus the
+// 13-char resourceToken was 34 chars (over the limit). Production pins the override
+// explicitly (AZURE_CONTAINER_APP_DOTNET_NAME=capps-dotnet-pwvzk3t22wttm, 26 chars), so the
+// default below is shaped to match that exact pattern -- 'capps-dotnet-' (13) + a 13-char
+// resourceToken is 26 chars, well under 32, and the override continues to work unchanged.
+var dotnetAppName = !empty(dotnetServiceName) ? dotnetServiceName : '${abbrs.webSitesContainerApps}dotnet-${resourceToken}'
+
 @description('Whether the deployment is running on GitHub Actions')
 param runningOnGh string = ''
 
@@ -270,6 +288,13 @@ module containerApps 'core/host/container-apps.bicep' = {
   }
 }
 
+// Deterministic FQDNs (#311): same host Container Apps itself assigns
+// (<app-name>.<environment defaultDomain>), built from containerApps.outputs.defaultDomain
+// rather than acaBackend.outputs.uri / acaBackendDotnet.outputs.uri so neither app module
+// depends on the other's deployment -- see the backendAppName/dotnetAppName comment above.
+var backendUri = 'https://${backendAppName}.${containerApps.outputs.defaultDomain}'
+var dotnetUri = 'https://${dotnetAppName}.${containerApps.outputs.defaultDomain}'
+
 // Container Apps for the web application (Python Quart app with JS frontend)
 module acaBackend 'core/host/container-app-upsert.bicep' = {
   name: 'aca-web'
@@ -279,7 +304,7 @@ module acaBackend 'core/host/container-app-upsert.bicep' = {
     acaIdentity
   ]
   params: {
-    name: !empty(backendServiceName) ? backendServiceName : '${abbrs.webSitesContainerApps}backend-${resourceToken}'
+    name: backendAppName
     location: location
     identityName: acaIdentityName
     exists: webAppExists
@@ -344,6 +369,13 @@ module acaBackend 'core/host/container-app-upsert.bicep' = {
       ENTRA_API_SCOPE: entraApiScope
       ENTRA_APP_ROLE: entraAppRole
     },
+    // Both apps get both URIs (#311): each app may need to call the other (e.g. a future
+    // cross-backend health check or redirect), so BACKEND_URI / BACKEND_DOTNET_URI are injected
+    // identically into acaBackend's and acaBackendDotnet's env. Each is included only when that
+    // app's own ingress is actually enabled -- an app with ingress off has no public URI, so the
+    // env var is omitted entirely rather than carrying a URL nothing can reach.
+    backendIngressEnabled ? { BACKEND_URI: backendUri } : {},
+    (deployDotnetApp && backendDotnetIngressEnabled) ? { BACKEND_DOTNET_URI: dotnetUri } : {},
     // Persona allow-list (4.2, 10.2): omit PERSONAS entirely when empty (the
     // tracked default) so app/backend/persona_loader.py's own "no PERSONAS ->
     // enable every pack found under PERSONAS_DIR" behavior applies, instead of
@@ -374,7 +406,7 @@ module acaBackendDotnet 'core/host/container-app-upsert.bicep' = if (deployDotne
   name: 'aca-web-dotnet'
   scope: resourceGroup
   params: {
-    name: !empty(dotnetServiceName) ? dotnetServiceName : '${abbrs.webSitesContainerApps}backend-dotnet-${resourceToken}'
+    name: dotnetAppName
     location: location
     identityName: acaIdentityName
     // S7 (#17 go-live): same pattern as acaBackend's webAppExists above, so a redeploy of an
@@ -447,6 +479,9 @@ module acaBackendDotnet 'core/host/container-app-upsert.bicep' = if (deployDotne
       ENTRA_API_SCOPE: entraApiScope
       ENTRA_APP_ROLE: entraAppRole
     },
+    // Same BACKEND_URI / BACKEND_DOTNET_URI treatment as acaBackend's env above.
+    backendIngressEnabled ? { BACKEND_URI: backendUri } : {},
+    (deployDotnetApp && backendDotnetIngressEnabled) ? { BACKEND_DOTNET_URI: dotnetUri } : {},
     // Same "omit when empty" persona behavior as the Python app's env, above.
     empty(personas) ? {} : { PERSONAS: personas },
     empty(defaultPersona) ? {} : { DEFAULT_PERSONA: defaultPersona },

@@ -55,13 +55,27 @@ The tracked default leaves `DEFAULT_PERSONA` empty. When no query string is supp
 | `searchServiceSkuName` | `AZURE_SEARCH_SERVICE_SKU` | `basic` | Paid tier for a clean-clone `azd up` (design section 10.2): Basic removes the free tier's 3-index cap at roughly a third of Standard's cost. |
 | `searchServiceLocation` | `AZURE_SEARCH_SERVICE_LOCATION` | *(empty -- falls back to `location`)* | Independent region override for the Search module only (same pattern as `openAiServiceLocation`/`AZURE_OPENAI_SERVICE_LOCATION`). Set this when the main `location` has no Basic-SKU Search capacity. |
 | `deployDotnetApp` | `DEPLOY_DOTNET_APP` | `false` | Deploys the optional `acaBackendDotnet` Container App module. The azd `backend-dotnet` deploy target in `azure.yaml` and the matching bicep tag have already landed (the flip commit, [".NET container app (S7, #17)"](#net-container-app-s7-17) below, "Step 0"); flipping this param per environment is still a real, owner-gated spend decision (a second always-on Container App) -- see "Turning it on" below for the `azd env set` steps and the full ingress-last rollout. |
-| `dotnetServiceName` | `AZURE_CONTAINER_APP_DOTNET_NAME` | *(auto-generated)* | Only used when `deployDotnetApp` is `true`. |
+| `dotnetServiceName` | `AZURE_CONTAINER_APP_DOTNET_NAME` | *(auto-generated: `capps-dotnet-<resourceToken>`)* | Only used when `deployDotnetApp` is `true`. The auto-generated default is shaped to fit the Container Apps 32-char name limit (`capps-dotnet-` + the 13-char `resourceToken` = 26 chars); production pins `AZURE_CONTAINER_APP_DOTNET_NAME=capps-dotnet-pwvzk3t22wttm` (#311), which is exactly what the default produces for that environment's token, so the override keeps working unchanged. |
 | `backendDotnetIngressEnabled` | `BACKEND_DOTNET_INGRESS_ENABLED` | `false` | Same ingress-last pattern as `backendIngressEnabled` below, independent per app. Flip only after #147's Entra parity work has been verified dark on the dotnet app. |
 
 Search index names are not tracked in infra at all: each persona's own
 `persona.json` `search.indexName` (design section 4.2) is the one source of
 truth, read by the #84 ingestion hook and by the app itself. An infra-level
 index-name map would be a second source of truth for the same data.
+
+### `BACKEND_URI` / `BACKEND_DOTNET_URI` container env vars (#311)
+
+Both container apps' own env blocks (not just the azd output/`.env` file -- see
+"Entra redirect URIs" below) now carry `BACKEND_URI` and, once the dotnet app is deployed with
+ingress on, `BACKEND_DOTNET_URI`: each is the running app's (or sibling app's) own public HTTPS
+origin, so either backend can address the other (e.g. a future cross-backend health check or
+redirect) without a hardcoded hostname. Each is computed deterministically as
+`https://<app-name>.<ACA environment defaultDomain>` -- from the app's own name and the shared ACA
+environment's `defaultDomain` output, not from the *other* app's module output -- so neither
+container app module depends on the other's deployment finishing first. Each var is included only
+when the app it names actually has public ingress: `BACKEND_URI` requires `backendIngressEnabled`;
+`BACKEND_DOTNET_URI` requires both `deployDotnetApp` and `backendDotnetIngressEnabled`. An app with
+ingress off is omitted entirely rather than injecting a URL nothing can reach.
 
 All resources use only user-assigned managed identity for authentication
 (`AZURE_CLIENT_ID` env var); no Azure OpenAI or Search keys are issued or
