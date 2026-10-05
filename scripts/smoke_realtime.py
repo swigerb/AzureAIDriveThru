@@ -77,6 +77,7 @@ from azure.core.credentials import AzureKeyCredential  # noqa: E402
 from config_loader import get_config  # noqa: E402
 from model_catalog import ModelCatalog, ModelValidationError  # noqa: E402
 from persona_loader import Persona, PersonaCatalog, PersonaValidationError  # noqa: E402
+from cascade_processor import transcription_url  # noqa: E402
 from prompt_loader import PromptLoader  # noqa: E402
 from rtmt import RTMiddleTier, Tool, configure_realtime_model  # noqa: E402
 
@@ -679,7 +680,7 @@ async def _cascade_transcribe(audio_endpoint: str, deployment: str, pcm: bytes, 
     ``/openai/v1/audio/transcriptions``), live."""
     wav_bytes = _pcm16_to_wav_bytes(pcm)
     token = await _cascade_bearer_token(credential)
-    url = f"{audio_endpoint.rstrip('/')}/openai/v1/audio/transcriptions"
+    url = transcription_url(audio_endpoint, deployment)
     form = aiohttp.FormData()
     form.add_field("file", wav_bytes, filename="smoke.wav", content_type="audio/wav")
     form.add_field("model", deployment)

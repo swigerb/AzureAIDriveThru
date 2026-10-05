@@ -61,7 +61,7 @@ class EchoingRealtime:
     #302: also fakes the search tool-call turn (emits a `function_call` item instead of audio
     when the preceding user turn is the search check's own scripted guest text, if
     `self.search_call` is set) and the cascade pipeline's own audio HTTP endpoints
-    (`/openai/v1/audio/transcriptions`, `/openai/v1/audio/speech`) on the SAME fake server,
+    (`/openai/deployments/{deployment}/audio/transcriptions`, `/openai/v1/audio/speech`) on the SAME fake server,
     since a real cascade deployment reuses the realtime resource for its audio models too."""
 
     def __init__(self):
@@ -80,7 +80,7 @@ class EchoingRealtime:
     def app(self):
         app = web.Application()
         app.router.add_get("/openai/v1/realtime", self.handler)
-        app.router.add_post("/openai/v1/audio/transcriptions", self.transcriptions_handler)
+        app.router.add_post("/openai/deployments/{deployment}/audio/transcriptions", self.transcriptions_handler)
         app.router.add_post("/openai/v1/audio/speech", self.speech_handler)
         return app
 

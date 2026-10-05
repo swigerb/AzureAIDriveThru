@@ -28,7 +28,7 @@ public sealed class FoundryAudioClientTests
         Assert.Equal("two burgers please", transcript);
         var request = Assert.Single(handler.Requests);
         // Endpoint trailing slash is trimmed, same as FoundryChatClient.
-        Assert.Equal("https://fake-foundry.example.com/openai/v1/audio/transcriptions", request.RequestUri!.ToString());
+        Assert.Equal("https://fake-foundry.example.com/openai/deployments/gpt-4o-transcribe/audio/transcriptions?api-version=2025-03-01-preview", request.RequestUri!.ToString());
         Assert.Equal("Bearer", request.Headers.Authorization!.Scheme);
         Assert.Equal("my-token", request.Headers.Authorization!.Parameter);
         Assert.IsType<MultipartFormDataContent>(request.Content);
