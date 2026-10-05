@@ -95,6 +95,11 @@ public sealed class SessionManager
     private readonly Dictionary<string, string> _resumeIndex = new(); // digest -> sessionId
     private readonly LinkedList<string> _detachedLru = new(); // oldest first
     private readonly Dictionary<string, LinkedListNode<string>> _detachedNodes = new();
+    /// <summary>Port of session_manager.py's `self._context_monitors` dict. Kept independent of
+    /// <see cref="_sessions"/> (rather than a field on <see cref="SessionRecord"/>) so a pipeline
+    /// that doesn't yet register a full session record with this manager -- see
+    /// <see cref="CreateContextMonitor"/>'s own doc comment -- can still get one.</summary>
+    private readonly Dictionary<string, ContextMonitor> _contextMonitors = new();
 
     public SessionManager(SessionsConfig? config = null, TimeProvider? timeProvider = null, ILogger? logger = null)
     {
@@ -177,6 +182,54 @@ public sealed class SessionManager
                 Identifiers = identifiers,
                 AttachedSupersededFlag = attachedSupersededFlag,
             };
+            _contextMonitors[sessionId] = CreateContextMonitorLocked(sessionId);
+        }
+    }
+
+    /// <summary>Port of session_manager.py's `self._context_monitors[session_id] =
+    /// ContextMonitor(session_id)` line inside `create_session` -- standalone (not folded into
+    /// <see cref="CreateSession"/> itself) so <see cref="Backend.Sessions.CascadeProcessor"/>,
+    /// which does not yet register a full <see cref="SessionRecord"/> with this manager (issue
+    /// #15's resume/rehydration machinery is realtime-only so far), can still get a
+    /// per-session <see cref="ContextMonitor"/> the same way Python's cascade_processor.py does
+    /// (it calls the SAME shared `self._sessions.create_session`, full session record included).
+    /// Safe to call even when a full session record already exists for this id (overwrites, same
+    /// as Python re-running `create_session` would).</summary>
+    public void CreateContextMonitor(string sessionId)
+    {
+        lock (_sync)
+        {
+            _contextMonitors[sessionId] = CreateContextMonitorLocked(sessionId);
+        }
+    }
+
+    private ContextMonitor CreateContextMonitorLocked(string sessionId) =>
+        new(sessionId, _config.ContextMaxTokens, _config.ContextWarningThresholdPct,
+            _config.ContextCriticalThresholdPct, _logger);
+
+    /// <summary>Port of session_manager.py's `get_context_monitor`: returns null for a null/unknown
+    /// session id, never throws.</summary>
+    public ContextMonitor? GetContextMonitor(string? sessionId)
+    {
+        if (sessionId is null)
+        {
+            return null;
+        }
+        lock (_sync)
+        {
+            return _contextMonitors.GetValueOrDefault(sessionId);
+        }
+    }
+
+    /// <summary>Removes this session's <see cref="ContextMonitor"/> without touching any other
+    /// session state -- the cascade-only counterpart to <see cref="EndSessionLocked"/>'s own
+    /// `_contextMonitors.Remove`, for a pipeline (cascade) that doesn't go through
+    /// <see cref="EndSession"/> yet.</summary>
+    public void RemoveContextMonitor(string sessionId)
+    {
+        lock (_sync)
+        {
+            _contextMonitors.Remove(sessionId);
         }
     }
 
@@ -510,6 +563,7 @@ public sealed class SessionManager
         {
             _resumeIndex.Remove(record.ResumeDigest);
         }
+        _contextMonitors.Remove(sessionId);
         RemoveFromDetachedLocked(sessionId);
         _logger?.LogInformation("Session {SessionId} ended ({Reason})", sessionId, reason);
     }

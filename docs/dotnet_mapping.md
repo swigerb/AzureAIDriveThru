@@ -9,17 +9,19 @@ The C# backend now has the host/config/persona foundation, persona HTTP surface,
 pre-upgrade `/realtime` auth and persona/model/mode binding, the Azure OpenAI realtime relay,
 order engine, search tool, prompt rendering, tool dispatch, the full rate-limit retry ladder, the
 consecutive tool-failure cap, session resume/rehydration/idle-timeout/grace-hold/nudge (issue #15),
-ADR-002 Entra JwtBearer auth (issue #147), and the shared conformance dotnet leg. Guest/assistant
-turn recording (`SessionManager.RecordTurn`) has real production call sites (upstream
-`conversation.item.input_audio_transcription.completed` for the guest, `response.done` for the
-assistant), feeding rehydration text on resume. The remaining deliberate gap versus Python is
-tracked below: context-window monitoring.
+context-window monitoring, websocket heartbeat/connect-timeout, the best-effort startup
+connectivity check, ADR-002 Entra JwtBearer auth (issue #147), and the shared conformance dotnet
+leg. Guest/assistant turn recording (`SessionManager.RecordTurn`) has real production call sites
+(upstream `conversation.item.input_audio_transcription.completed` for the guest, a non-tool
+`response.done` for the assistant), feeding rehydration text on resume. No deliberate
+middle-tier gap versus Python remains; see the deferred list below for what is still out of scope.
 
 ## Module mapping
 
 | Python (`app/backend/`) | C# (`app/backend-dotnet/src/Backend/`) | Notes |
 | --- | --- | --- |
 | `app.py` (create_app, startup validation, route table) | `Program.cs` | Same startup order: required env vars -> persona catalog -> config -> prompts for the default persona. Fails fast (process exit code 1) on the first problem, same as Python's `sys.exit(1)`. |
+| `app.py`'s `_check_service_connectivity()` | `Program.cs`'s `CheckServiceConnectivityAsync` | Issue #13 tail: best-effort GET pings to `AZURE_OPENAI_EASTUS2_ENDPOINT`/`AZURE_SEARCH_ENDPOINT` with a 5s total timeout, called right after `prompts_loaded` (step 4, optional). Logs only -- never gates `/health` or fails startup in either backend, same double try/catch shape (outer around the whole check, inner per-endpoint) as Python. |
 | `persona_loader.py`'s `PersonaCatalog` | `Personas/PersonaCatalog.cs` | Same env vars (`PERSONAS_DIR`, `PERSONAS`, `DEFAULT_PERSONA`), same two-layer validation (JSON Schema, then a strict typed model), same fail-fast checks: missing dir, empty dir, unlisted enabled persona, id/folder mismatch, malformed JSON, missing/invalid menu file, missing prompts dir, default persona not enabled. |
 | `persona_loader.py`'s Pydantic models | `Personas/PersonaModels.cs`, `Personas/MenuModels.cs` | C# records with `required` init-only properties and `[JsonPropertyName]`, deserialized with `JsonUnmappedMemberHandling.Disallow` (belt-and-suspenders against schema/model drift), matching Pydantic's `extra="forbid"`. |
 | (JSON Schema validation, ad hoc in `persona_loader.py`) | `Personas/PersonaSchemaValidator.cs` | Wraps `JsonSchema.Net`; both backends validate against the exact same `personas/persona.schema.json` / `personas/menu.schema.json` files -- neither backend has its own copy. |
@@ -37,6 +39,8 @@ tracked below: context-window monitoring.
 | `rtmt.py`'s `_websocket_handler`'s pre-upgrade Origin + token checks ("Task 3"/"Task 4") | `Realtime/RealtimeAuthGate.cs` | PR #96 review, required item 1 -- see "`/realtime` auth enforcement (PR #96)" below for the full decision record. |
 | (module-level `_startup_checks` dict + `/health` handler) | `Health/StartupChecks.cs`, `Health/HealthEndpoint.cs` | Same JSON shape: `{status, version, checks, personas}`, 200 if every check passed else 503. |
 | (aiohttp route table's WebSocket handler + per-session state) | `Sessions/RealtimeProcessor.cs`, `Sessions/SessionActor.cs`, `Sessions/SessionRegistry.cs`, `Sessions/SessionManager.cs`, `Realtime/NudgeScheduler.cs`, `Sessions/IPipelineProcessor.cs` | `RealtimeProcessor.RunSessionAsync` owns the accepted WebSocket and upstream relay for the `realtime` pipeline: bootstrap, greeting gate, bidirectional frame loops, echo suppression/barge-in, session echoes, round-trip tokens and tool calls. `SessionManager` (issue #15) owns resume-id issuance/consumption, the grace-window detach hold, idle-timeout close (4000), and 4002 supersede; `NudgeScheduler` owns the silent-guest nudge, armed only after the resumed socket's own `session.update` per #181. Both are driven by the injected `TimeProvider`. |
+| `session_manager.py`'s `ContextMonitor` | `Sessions/ContextMonitor.cs` | Issue #13 tail: 1:1 port of the char-based token estimator (~4 chars/token) and warning/critical threshold logging. One instance per session, owned by `SessionManager` (`CreateSession`/`CreateContextMonitor`, removed on session end/`RemoveContextMonitor`); `RealtimeProcessor` tracks all 6 non-verbose-gated `ctx_monitor.add_content` call sites from `rtmt.py` (session.update instructions/tools, tool call args/result, response output text/transcript, greeting, resume-nudge, rehydration text) and `CascadeProcessor` tracks its 1 call site (tool call args/result) from `cascade_processor.py`. The 7th Python call site (verbose-only user-transcript tracking) is intentionally not ported -- see `RealtimeProcessor`'s `conversation.item.input_audio_transcription.completed` case comment for why that matches Python's own default (verbose-off) behaviour exactly. Config via `Configuration/SessionsConfig.cs`'s `Context*` fields (config.yaml's `context` section); unit-tested in `ContextMonitorTests.cs` (ported from `test_rtmt.py`'s `ContextMonitorTests`). |
+| `rtmt.py`'s/`cascade_processor.py`'s shared `connection:` config reads (`_WS_HEARTBEAT_SEC`, `_WS_COMPRESS`, `_WS_CONNECT_TIMEOUT`) | `Configuration/ConnectionConfig.cs` | Issue #13 tail: `ClientWebSocket.Options.KeepAliveInterval` (upstream, `RealtimeProcessor`) and `WebSocketOptions.KeepAliveInterval` (browser-facing, `Program.cs`'s shared `app.UseWebSockets(...)` -- covers both the realtime and cascade pipelines, since both are accepted through the same `/realtime` handler) are wired from `ws_heartbeat_seconds`. Rick's #280 review, item 3: aiohttp's two-phase `ClientTimeout(total=, connect=)` IS now fully matched -- `ws_connect_timeout_total` still bounds the whole upstream `ConnectAsync` call via an outer `CancellationTokenSource`, and `ws_connect_timeout_connect` is wired into `SocketsHttpHandler.ConnectTimeout` on the `HttpMessageInvoker` passed to `ClientWebSocket.ConnectAsync(Uri, HttpMessageInvoker, CancellationToken)`, which bounds the TCP/TLS connect sub-phase the same way aiohttp's `connect=` does. `ws_compression` is parsed for config-shape parity but is a no-op in both backends (Azure OpenAI declines upstream compression regardless, and Kestrel's WebSocket middleware has no permessage-deflate knob to wire it to). Unit-tested in `ConnectionConfigTests.cs` (config parsing) and `UpstreamConnectTimeoutTests.cs` (behavioural: a loopback listener that accepts TCP but never answers the TLS handshake proves a stalled connect fails at the short `connect` bound, not the long `total` one -- deterministic on every runner, unlike an external network black-hole target). |
 | (repo-relative path resolution, implicit via `os.path` calls) | `RepoRootLocator.cs` | Walks up from the running assembly looking for a directory containing both `personas/` and `azure.yaml`. A dev/CI convenience only -- production containers are expected to set `PERSONAS_DIR`, `CONFIG_PATH`, and `STATIC_FILES_DIR` explicitly. |
 | `money_utils.py` | `Ordering/Money.cs` | Same `decimal`-based rounding (`ROUND_HALF_UP` equivalent) and `$X.XX` formatting; ports `format_money` 1:1 (see `Ordering/MoneyTests.cs`). |
 | `menu_utils.py`'s `MenuCatalog` (`_menu_key`/`strip_modifiers`, size/alias/category maps, machine status, happy-hour eligibility, combo-slot inference) | `Personas/MenuCatalog.cs` | One instance built once per persona and cached (`PersonaOrderFactory.GetMenuCatalog`), same data-driven-only classification contract as #73/#74 (no keyword fallback). `MenuKeyValidator.MenuKey`/`StripModifiers` (issue #128/#137) is the exact `_menu_key`/`strip_modifiers` port; both backends now assert against the SAME shared golden vector file -- see "Shared menu-key golden vectors (#137)" below. |
@@ -259,9 +263,11 @@ arithmetic.
   `OrderToolExecutor` uses them for structured rejections and delta text. It is not a full Jinja2
   engine because the current `error_messages.yaml` and `hints.yaml` files do not use control flow.
 - **Non-blocking connectivity check** (`app.py`'s best-effort, log-only ping to the configured
-  Azure OpenAI/Search endpoints at startup) is not ported. It does not gate `/health` in Python
-  either, so its absence changes no observable behaviour this wave; revisit once real
-  OpenAI/Search clients exist.
+  Azure OpenAI/Search endpoints at startup) **landed in the issue #13 tail**:
+  `Program.cs`'s `CheckServiceConnectivityAsync` pings `AZURE_OPENAI_EASTUS2_ENDPOINT`/
+  `AZURE_SEARCH_ENDPOINT` with a 5s total `HttpClient` timeout right after `prompts_loaded`,
+  logging success/failure only -- it never gates `/health` or fails startup in either backend, so
+  this is purely additive logging parity.
 - **Per-session persona/model selection** (`?persona=`/`?model=` query params) was wave 7's scope
   (#74/#75) and **landed this revision** (#12 part 2): `Program.cs`'s `/realtime` handler resolves
   `?persona=` (omitted -> `DEFAULT_PERSONA`, unknown/disabled -> 404 plain text before the upgrade)
@@ -1455,3 +1461,53 @@ before committing; confirmed via `git status --porcelain` showing zero diff. Thi
 stale comment: `RealtimeProcessor.ResolveModel` is a one-line delegation to
 `ModelDispatch.ResolveRealtimeModel`, so `ModelDispatchTests.cs` alone gives full coverage and no
 separate `RealtimeProcessorTests.cs` is needed; the comment now says so.
+
+## Issue #17 (S7: side-by-side go-live, DevOps prep) -- `azure.yaml`, `infra/`, and the Entra/smoke scripts
+
+This revision is infra/scripts/docs only -- no `app/backend-dotnet` source changed, so the
+`DotnetTraitCoverageTests` floor is unaffected. It prepares (but does not itself execute) the
+production go-live of the C# container app beside the Python one in `rg-azureaidrivethru-prod`,
+per Rick's #93 review notes on this issue and the plan already recorded in `azure.yaml`'s own `S7`
+comment. The PR this lands in stays a **draft**: `deployDotnetApp`/`DEPLOY_DOTNET_APP` still
+defaults to `false` everywhere, so no new Azure resource is actually created or billed by merging
+it alone -- see `DEPLOY.md`'s [".NET container app (S7, #17)"](../DEPLOY.md#net-container-app-s7-17)
+section for the full operator runbook this section summarizes.
+
+- **`azure.yaml`**: does **NOT** declare a `backend-dotnet` service yet. Declaring the service
+  ahead of the matching bicep tag would break a bare `azd deploy`/`azd up` for every environment
+  that has not flipped `DEPLOY_DOTNET_APP=true` (`azd` has no service-level `condition:`, as of the
+  pinned release, to skip a declared service entirely), so the service entry is deliberately held
+  back for the owner-gated flip commit -- see `DEPLOY.md`'s ".NET container app (S7, #17)" section,
+  "Step 0", for the exact patch.
+- **`infra/main.bicep`**: `acaBackendDotnet` still carries a plain `tags: tags` -- no
+  `'azd-service-name': 'backend-dotnet'` tag yet. Tagging the module without a matching
+  `azure.yaml` service entry would be harmless (the other direction, service-without-tag, is the
+  real hazard), but the tag still lands together with the service entry in the same flip commit for
+  clarity. A new `dotnetWebAppExists` param (bound to `SERVICE_BACKEND_DOTNET_RESOURCE_EXISTS`,
+  mirroring `webAppExists`/`SERVICE_BACKEND_RESOURCE_EXISTS` on the Python app) replaces the
+  hardcoded `exists: false` so a redeploy of an already-provisioned dotnet app does not fall back to
+  the helloworld placeholder image. `APP_SESSION_SECRET`, `AUTH_MODE=Entra` and the `ENTRA_*` block
+  were already byte-identical to `acaBackend` (both read the same `effectiveAppSessionSecret`/
+  `effectiveEntraTenantId` Bicep variables) -- confirmed, not re-wired, by this change.
+- **`infra/main.parameters.json`**: the `dotnetWebAppExists` -> `SERVICE_BACKEND_DOTNET_RESOURCE_EXISTS`
+  mapping has **already landed** in this PR (it does not wait for the flip commit).
+  `DEPLOY_DOTNET_APP`/`BACKEND_DOTNET_INGRESS_ENABLED` were already wired by an earlier revision.
+- **`scripts/Setup-EntraAuth.ps1`**: already added the C# app's `BACKEND_DOTNET_URI` as a second,
+  idempotent SPA redirect URI on the one Entra registration from #85 (`-FromAzdEnv`), only when
+  non-empty -- confirmed by this review, no further change needed.
+- **`scripts/Verify-ProductionAuth.ps1`**: already discovers and iterates every deployed container
+  app generically (tag first, `AZURE_CONTAINER_APP_DOTNET_NAME` as a fallback), so `backend-dotnet`
+  gets the exact same env-pin/active-revision/EasyAuth/anonymous-probe checks as `backend` with no
+  per-app special-casing. The dotnet app does **not** carry the `azd-service-name` tag yet (that
+  lands in the flip commit alongside the `azure.yaml` service entry), so the name-based
+  `AZURE_CONTAINER_APP_DOTNET_NAME` fallback is what actually resolves it today.
+- **`scripts/smoke_realtime.sh`/`.ps1`** (the azd `postdeploy` hook): run
+  `scripts/smoke_realtime.py` a single time, against the Python backend only. There is **no**
+  second pass for the dotnet app -- the check talks directly to the shared Azure OpenAI realtime
+  deployment (not either app's own HTTP endpoint) and never reads `BACKEND_DOTNET_URI`, so a second
+  invocation would just repeat the same Python-side check while burning realtime capacity guests
+  share. A real .NET realtime smoke probe is tracked as a follow-up, not yet implemented.
+- **Drift guard**: `app/backend/tests/test_azd_service_wiring.py` (pre-existing,
+  `test_bicep_service_tags_match_azure_yaml` and `test_every_containerapp_service_has_an_exists_mapping`)
+  now checks both directions (service -> tag and tag -> service) for `backend-dotnet`, and asserts
+  `deployDotnetApp` still defaults off and gates the dotnet tag once it lands.

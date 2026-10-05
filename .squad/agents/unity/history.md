@@ -734,3 +734,49 @@ ame\ as a "customization suffix" (by design, so
   not draft (READY for review). Posted a detailed follow-up PR comment
   covering phi-4, the alias audit (incl. the flagged "nuggets" gap), and the
   nugget-name-collision bug + fix.
+
+- Issue #13 tail (C# middle-tier parity, foreground/no-bg-agents dispatch):
+  ported the 4 remaining deferred Python->.NET items. (1) Context-window
+  monitoring: new `ContextMonitor.cs` (char-count heuristic, warn/critical
+  logging), wired into `SessionManager` lifecycle and all 6 non-verbose-gated
+  tracking call sites across `RealtimeProcessor.cs`/`CascadeProcessor.cs`
+  (session.update, tool call args/result, response output, greeting, nudge,
+  resume rehydration). Deliberately did NOT port the 7th Python call site
+  (verbose-only user-transcript tracking) since it's gated behind Python's
+  `verbose`/`_VERBOSE_GLOBAL` flag (default off) and C# has no verbose-logging
+  feature at all -- matches Python's own default production behavior exactly,
+  documented inline. (2) Heartbeat/connect-timeout: new `ConnectionConfig.cs`
+  (mirrors Python's `connection:` config section), wired
+  `ClientWebSocket.Options.KeepAliveInterval` + a combined connect-timeout
+  (linked CTS) on the upstream connect in `RealtimeProcessor.cs`, and
+  `app.UseWebSockets(new WebSocketOptions{KeepAliveInterval=...})` in
+  `Program.cs` (covers both realtime + cascade browser-facing sockets, they
+  share one upgrade handler). `ws_compression` parsed for config-shape parity
+  only -- documented no-op on both backends. (3) Startup connectivity check:
+  `CheckServiceConnectivityAsync` local fn in `Program.cs`, ported from
+  `app.py`'s `_check_service_connectivity()`, runs after `prompts_loaded`.
+  (4) `docs/dotnet_mapping.md` updated: intro, module-mapping table (3 new/
+  updated rows), connectivity-check paragraph -- left the historical R7
+  PR-checklist paragraph untouched (point-in-time record, not live status).
+  Tests: `ContextMonitorTests.cs` (4, ported from `test_rtmt.py`),
+  `ConnectionConfigTests.cs` (2, new -- had to test an empty `connection: {}`
+  section rather than a missing one since `connection` is AppConfig-required,
+  unlike `security`), 4 new context-monitor lifecycle tests in
+  `SessionManagerTests.cs`. Validation: `dotnet build` clean (0 warn/0 err,
+  TreatWarningsAsErrors); `Backend.Tests` 604/604 pass (excluding 1
+  pre-existing `BrowserSocketCancellationTests` flake, confirmed via
+  git-stash-on-baseline to fail identically unmodified); conformance dotnet
+  leg 596 passed/61 skipped/1 failed (the 1 failure,
+  `StaticIndexHtmlTests.Root_route_...`, confirmed via the same stash
+  technique to be a pre-existing sandbox artifact -- no frontend `npm run
+  build` output present, unrelated to this change); `DotnetTraitCoverageTests`
+  floor re-measured, still holds at >=302 (all 4 items are log/infra-only,
+  not wire-observable, so no floor raise needed); brand-word scan done via
+  manual grep substitute (no Python interpreter in this sandbox to run
+  `rebrand_scan.py` directly) -- 2 hits found, both confirmed pre-existing/
+  untouched via `git diff`. Mutation-checked `ContextMonitor`'s critical-
+  threshold branch and `ConnectionConfig`'s default-heartbeat value by
+  breaking each and confirming the respective new unit tests fail, then
+  reverted. Committed to `dev` in place (no branch switch, no push/PR --
+  per dispatch brief, an external worker handles publishing after this
+  session exits).
