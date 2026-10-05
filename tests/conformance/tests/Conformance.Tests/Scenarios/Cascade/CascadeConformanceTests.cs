@@ -380,4 +380,182 @@ public sealed class CascadeConformanceTests(CascadeConformanceFixture fixture)
             f => f.Type == "response.done" && f.Sequence > attempt1Notification.Sequence, FrameTimeout, ct);
         Assert.True(doneFrame is not null, "Expected response.done once the retried turn finished.");
     });
+
+    // The two rows below cover #247/#262's own cascade turn-lifecycle fixes end to end, against
+    // the real backend process (not just the Python/C# unit suites) -- see cascade_processor.py's
+    // _run_chat_tool_loop/_run_turn_and_speak (and CascadeProcessor.cs's identical
+    // RunChatToolLoopAsync/RunTurnAndSpeakAsync) for the implementation each proves.
+
+    [Fact]
+    public Task Cascade_barge_in_during_a_tool_calling_round_truncates_the_orphaned_tool_call_so_the_next_turn_succeeds() => fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var connection = await CascadeScenarioHelpers.ConnectPastGreetingAsync(fixture, fixture.Chat, "gpt-5-mini", ct);
+        await using var browser = connection.Browser;
+
+        var chatWatermark = fixture.Chat.RequestCount;
+        var searchWatermark = fixture.Search.ReceivedRequests.Count;
+
+        // #247's actual bug window: a SINGLE round with MULTIPLE tool calls, where a real
+        // barge-in lands while the FIRST tool call (get_order -- synchronous local dispatch, no
+        // network call of its own) has already resolved and appended its own ToolMessage, but the
+        // SECOND (search -- a real network round trip to the fake Azure AI Search index, held
+        // open below) is still genuinely in flight. CascadeProcessor's own tool-call loop runs
+        // these sequentially (`for tool_call in tool_calls: await self._execute_tool_call(...)`),
+        // so this reproduces the exact "some ids answered, one not yet" state that would leave an
+        // orphaned tool_calls message if the whole round weren't truncated out of history.
+        fixture.Chat.EnqueueMessage(new JsonObject
+        {
+            ["role"] = "assistant",
+            ["content"] = null,
+            ["tool_calls"] = new JsonArray(
+                new JsonObject
+                {
+                    ["id"] = "call_get_order_1",
+                    ["type"] = "function",
+                    ["function"] = new JsonObject { ["name"] = "get_order", ["arguments"] = "{}" },
+                },
+                new JsonObject
+                {
+                    ["id"] = "call_search_1",
+                    ["type"] = "function",
+                    ["function"] = new JsonObject { ["name"] = "search", ["arguments"] = """{"query":"burger"}""" },
+                }),
+        });
+        var searchGate = fixture.Search.HoldNextResponse();
+        fixture.Realtime.NextTranscript = "What's on my order, and do you have burgers?";
+        await CascadeScenarioHelpers.SendGuestTurnAsync(browser, ct);
+
+        // Proves get_order's own tool response already reached the client (the round is
+        // genuinely PARTWAY through, not merely "hasn't started") before barging in.
+        var getOrderResponse = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Sequence > connection.GreetingWatermark &&
+                 f.Type == "extension.middle_tier_tool_response" &&
+                 f.Json.TryGetProperty("tool_name", out var name) && name.GetString() == "get_order",
+            FrameTimeout, ct);
+        Assert.True(getOrderResponse is not null, "Expected get_order's own tool response to land before the search call blocks.");
+
+        // Proves the search call genuinely landed and is now suspended on the gate -- same
+        // "landed, not merely not-yet-happened" proof Cascade_barge_in_cancels_the_in_flight_turn_before_it_speaks
+        // uses for its own held /chat/completions request.
+        var searchLanded = await fixture.Search.ReceivedRequests.WaitForAsync(f => f.Sequence >= searchWatermark, FrameTimeout, ct);
+        Assert.True(searchLanded is not null, "Expected the round's own search tool call to land.");
+
+        // Real barge-in: a second guest turn cancels the whole in-flight first turn (including
+        // the still-suspended search call) before it can ever reach _speak.
+        fixture.Chat.EnqueueMessage(FinalMessage("All set for the next query."));
+        fixture.Realtime.NextTranscript = "Never mind, can I get a corn dog?";
+        await CascadeScenarioHelpers.SendGuestTurnAsync(browser, ct);
+
+        var nextAnswer = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Sequence > connection.GreetingWatermark &&
+                 f.Type == "response.audio_transcript.delta" && f.Json.GetProperty("delta").GetString() == "All set for the next query.",
+            FrameTimeout, ct);
+        Assert.True(nextAnswer is not null, "Expected the next guest turn to complete normally after the barge-in.");
+
+        searchGate.Release(); // hygiene only -- the search call was already cancelled client-side.
+
+        // THE #247 proof: the next turn's own /chat/completions request must carry no trace of
+        // EITHER of the cancelled round's tool_calls/tool-result pairs -- proving
+        // CascadeProcessor truncated the whole round out of history (including get_order's
+        // already-answered ToolMessage) instead of leaving an orphaned tool_calls message (for
+        // the still-pending search call) a real chat API would 400 on the next request.
+        var nextRequest = fixture.Chat.Requests[chatWatermark + 1];
+        foreach (var message in nextRequest.RawBody.GetProperty("messages").EnumerateArray())
+        {
+            if (message.TryGetProperty("tool_calls", out var toolCalls))
+            {
+                foreach (var toolCall in toolCalls.EnumerateArray())
+                {
+                    var id = toolCall.GetProperty("id").GetString();
+                    Assert.NotEqual("call_get_order_1", id);
+                    Assert.NotEqual("call_search_1", id);
+                }
+            }
+
+            if (message.TryGetProperty("role", out var role) && role.GetString() == "tool" &&
+                message.TryGetProperty("tool_call_id", out var toolCallId))
+            {
+                var id = toolCallId.GetString();
+                Assert.NotEqual("call_get_order_1", id);
+                Assert.NotEqual("call_search_1", id);
+            }
+        }
+    });
+
+    [Fact]
+    public Task Cascade_a_non_429_chat_completion_failure_ends_the_turn_with_a_failed_response_done_instead_of_vanishing_silently() => fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var connection = await CascadeScenarioHelpers.ConnectPastGreetingAsync(fixture, fixture.Chat, "gpt-5-mini", ct);
+        await using var browser = connection.Browser;
+
+        // Unlike the 429 row above (which retries and ultimately succeeds), a non-429 failure
+        // has no retry ladder at all -- #262's bug was that this uncaught exception left
+        // response.created with no matching response.done, wedging the browser's "response in
+        // progress" state forever. The fix sends an error event + a failed response.done instead.
+        // 400 (not 500/503/504) deliberately avoids azure-ai-inference's OWN client-side
+        // azure-core retry policy, which silently retries POST requests that receive 500/503/504
+        // (see azure.core.pipeline.policies._retry.RetryPolicyBase._is_method_retryable) --
+        // a transient-error retry at the SDK layer, unrelated to #262's bug, that would otherwise
+        // mask this row's failure-path assertion behind a successful retried response.
+        fixture.Chat.EnqueueErrorStatus(400);
+        fixture.Realtime.NextTranscript = "Can I get a shake?";
+
+        await CascadeScenarioHelpers.SendGuestTurnAsync(browser, ct);
+
+        var errorEvent = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Sequence > connection.GreetingWatermark && f.Type == "error", FrameTimeout, ct);
+        Assert.True(errorEvent is not null, "Expected an error event for the non-429 chat-completion failure.");
+
+        var doneFrame = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Sequence > connection.GreetingWatermark && f.Type == "response.done", FrameTimeout, ct);
+        Assert.True(doneFrame is not null, "Expected a response.done once the failed turn was torn down -- never a silently vanishing turn.");
+        Assert.Equal("failed", doneFrame!.Json.GetProperty("response").GetProperty("status").GetString());
+        Assert.Equal(0, doneFrame.Json.GetProperty("response").GetProperty("output").GetArrayLength());
+    }, allowedNewBackendErrors: 1); // the one expected logger.exception(...)/LogError(...) call the fix itself makes
+
+    [Fact]
+    public Task Cascade_a_non_429_tts_failure_ends_the_turn_with_a_failed_response_done_instead_of_vanishing_silently() => fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var connection = await CascadeScenarioHelpers.ConnectPastGreetingAsync(fixture, fixture.Chat, "gpt-5-mini", ct);
+        await using var browser = connection.Browser;
+
+        // The model itself answers fine -- the failure is purely in the TTS leg (_speak), the
+        // other half of #262's fix (RunTurnAndSpeakAsync's own TTS catch, not the chat-tool-loop
+        // catch the row above exercises). Unlike chat completions, cascade's TTS call uses a
+        // plain aiohttp.ClientSession with no retry middleware (see _speak), so 500 here needs no
+        // non-retryable-status workaround the way the chat-completion row above does.
+        fixture.Chat.EnqueueMessage(FinalMessage("Here's your answer, but TTS is about to fail."));
+        fixture.Realtime.NextTranscript = "Can I get a shake?";
+        fixture.Realtime.NextSpeechErrorStatus = 500;
+
+        await CascadeScenarioHelpers.SendGuestTurnAsync(browser, ct);
+
+        var errorEvent = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Sequence > connection.GreetingWatermark && f.Type == "error", FrameTimeout, ct);
+        Assert.True(errorEvent is not null, "Expected an error event for the non-429 TTS failure.");
+
+        // The model's own text IS still sent as a transcript delta (cascade_processor.py's
+        // _run_turn_and_speak sends it BEFORE calling _speak -- the model succeeded here, only
+        // the TTS leg failed afterward), so this is not a negative check.
+        var textDelta = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Sequence > connection.GreetingWatermark &&
+                 f.Type == "response.audio_transcript.delta" &&
+                 f.Json.GetProperty("delta").GetString() == "Here's your answer, but TTS is about to fail.",
+            FrameTimeout, ct);
+        Assert.True(textDelta is not null, "Expected the model's own answer text as response.audio_transcript.delta before the TTS failure.");
+
+        var doneFrame = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Sequence > textDelta!.Sequence && f.Type == "response.done", FrameTimeout, ct);
+        Assert.True(doneFrame is not null, "Expected a response.done once the failed turn was torn down -- never a silently vanishing turn.");
+        Assert.Equal("failed", doneFrame!.Json.GetProperty("response").GetProperty("status").GetString());
+        Assert.Equal(0, doneFrame.Json.GetProperty("response").GetProperty("output").GetArrayLength());
+
+        // No audio.delta ever streamed for this turn -- TTS failed before any bytes arrived.
+        var neverAudio = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Sequence > textDelta.Sequence && f.Type == "response.audio.delta", NegativeCheckTimeout, ct);
+        Assert.True(neverAudio is null, "A TTS failure must never surface any response.audio.delta for this turn.");
+    }, allowedNewBackendErrors: 1); // the one expected logger.exception(...)/LogError(...) call the fix itself makes
 }

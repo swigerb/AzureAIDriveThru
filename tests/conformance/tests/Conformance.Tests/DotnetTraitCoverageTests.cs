@@ -386,6 +386,15 @@ namespace Conformance.Tests;
 /// Dotnet=ready</c> lists 283 methods; minus the 18 <see cref="AuthRowGatedTypeNames"/> methods
 /// that gives <b>265</b>, the floor asserted below. Any PR still rebasing on top of this MUST
 /// re-measure fresh at its own rebase time the same way, not add a historical delta to 265 blindly.
+///
+/// Issues #247/#262 (Summer, 2026-10-05): <c>CascadeConformanceTests</c> (already class-level
+/// <c>[Trait("Dotnet", "ready")]</c>) gained 3 new rows covering the barge-in-mid-tool-call-round
+/// truncation fix (#247) and the non-429 chat-completion/TTS failure-to-`response.done` fix
+/// (#262) -- verified green against the C# backend across 3 consecutive local runs with no
+/// flakiness (and against the Python backend the same way). A fresh <c>Conformance.Tests.exe
+/// -list methods -trait Dotnet=ready</c> lists 286 methods; minus the same 18 <see
+/// cref="AuthRowGatedTypeNames"/> methods gives <b>268</b>, the floor asserted below. This raises
+/// the floor 265 to 268.
 /// </summary>
 public sealed class DotnetTraitCoverageTests
 {
@@ -393,7 +402,7 @@ public sealed class DotnetTraitCoverageTests
     private const string TraitValue = "ready";
 
     [Fact]
-    public void At_least_323_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
+    public void At_least_326_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
     {
         // Rick's PR #226 review: assert the capability directly, not just the derived count --
         // see this class's own doc comment for why a bare ">= 222" check alone can't be trusted to
@@ -407,14 +416,14 @@ public sealed class DotnetTraitCoverageTests
 
         var count = CountFloorEligibleDotnetReadyTestMethods();
 
-        Assert.True(count >= 323,
-            $"Expected at least 323 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
+        Assert.True(count >= 326,
+            $"Expected at least 326 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
             $"and not unconditionally skip-gated by AuthRowCapability (the dotnet leg's " +
             $"`--filter \"{TraitName}={TraitValue}&Category!=Browser\"` baseline, minus the five " +
             "skip-only Scenarios/Auth classes -- see this class's own doc comment; " +
             $"docs/dotnet_mapping.md), but found {count}. If a tagged scenario was removed or " +
-            "renamed without a replacement, the dotnet CI leg silently lost coverage. 323 is a " +
-            "FRESH count (merge with origin/dev after #266, coordinator 2026-10-05), not " +
+            "renamed without a replacement, the dotnet CI leg silently lost coverage. 326 is a " +
+            "FRESH count (#247/#262 merged with origin/dev after #226, coordinator 2026-10-05), not " +
             "arithmetic -- re-measure with `Conformance.Tests.exe -list methods -trait " +
             "Dotnet=ready` minus the AuthRowCapabilityGated methods before raising this floor " +
             "again.");

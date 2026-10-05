@@ -46,6 +46,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from aiohttp import web
+from azure.ai.inference.models import UserMessage
 from azure.core.exceptions import HttpResponseError
 
 from cascade_processor import (
@@ -724,6 +725,128 @@ class RunChatToolLoopRateLimitTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(final_text, "All set.")
         ws.send_json.assert_not_called()  # the first failure is a silent retry
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# #247: a barge-in (or any failure) mid-tool-round must never leave an orphaned
+# assistant `tool_calls` message -- every id must have a matching `ToolMessage`, or the
+# WHOLE round must be gone from `state.messages`.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class RunChatToolLoopOrphanedToolCallTests(unittest.IsolatedAsyncioTestCase):
+    async def test_cancellation_mid_round_truncates_the_round_from_history(self):
+        """Mutation-test seam: drop the `try/except BaseException: del state.messages[...]`
+        truncation (or narrow it to `except Exception`, which never catches
+        `asyncio.CancelledError`) and this assertion fails -- the assistant `tool_calls`
+        message stays in `state.messages` with no matching `ToolMessage` for `call_1`."""
+        processor = _make_processor({"get_order": Tool(target=AsyncMock(), schema={"name": "get_order"})})
+        processor._execute_tool_call = AsyncMock(side_effect=asyncio.CancelledError())
+        fake_client = MagicMock()
+        fake_client.complete = AsyncMock(return_value=_completion_with_tool_call("get_order"))
+        processor._get_chat_client = AsyncMock(return_value=fake_client)
+        ws = _make_mock_ws()
+        state = _CascadeSessionState(session_id="s1", persona_id="p", deployment="d", voice="marin")
+        state.messages.append(UserMessage(content="one large fries"))
+        pre_cancel_message_count = len(state.messages)
+
+        with self.assertRaises(asyncio.CancelledError):
+            await processor._run_chat_tool_loop(ws, "s1", state)
+
+        self.assertEqual(len(state.messages), pre_cancel_message_count)
+        self.assertTrue(all(not hasattr(m, "tool_calls") or not m.tool_calls for m in state.messages))
+
+    async def test_a_second_tool_calls_message_unaffected_by_an_earlier_rounds_cancellation(self):
+        """A round that completed normally (every id answered) before a LATER round is
+        cancelled must be left untouched -- only the in-flight round's partial state is
+        truncated."""
+        processor = _make_processor({
+            "get_order": Tool(target=AsyncMock(return_value=ToolResult("ok", ToolResultDirection.TO_SERVER)),
+                               schema={"name": "get_order"}),
+        })
+        fake_client = MagicMock()
+        fake_client.complete = AsyncMock(side_effect=[
+            _completion_with_tool_call("get_order", call_id="call_1"),
+            _completion_with_tool_call("get_order", call_id="call_2"),
+        ])
+        processor._get_chat_client = AsyncMock(return_value=fake_client)
+        ws = _make_mock_ws()
+        state = _CascadeSessionState(session_id="s1", persona_id="p", deployment="d", voice="marin")
+
+        # The first round executes for real (call_1 gets answered); the second round's tool
+        # call is where cancellation strikes.
+        real_execute = processor._execute_tool_call
+        call_count = 0
+
+        async def _execute_then_cancel_on_second_round(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return await real_execute(*args, **kwargs)
+            raise asyncio.CancelledError()
+
+        processor._execute_tool_call = _execute_then_cancel_on_second_round
+
+        with self.assertRaises(asyncio.CancelledError):
+            await processor._run_chat_tool_loop(ws, "s1", state)
+
+        # First round's assistant tool_calls message + its matching ToolMessage(call_1) survive.
+        self.assertEqual(len(state.messages), 2)
+        self.assertEqual(state.messages[0].tool_calls[0].id, "call_1")
+        self.assertEqual(state.messages[1].tool_call_id, "call_1")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# #262: a non-429 chat-completion or TTS failure after `response.created` must still
+# close the turn (`response.done`) for the browser -- never silently hang.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class RunTurnAndSpeakFailureTests(unittest.IsolatedAsyncioTestCase):
+    async def test_non_429_chat_completion_failure_still_sends_a_failed_response_done(self):
+        """Mutation-test seam: remove the `except Exception:` branch around
+        `_run_chat_tool_loop` (or let it silently fall through) and `response.done` is never
+        sent -- the browser is stuck on "response in progress" forever."""
+        processor = _make_processor({})
+        processor._run_chat_tool_loop = AsyncMock(side_effect=RuntimeError("500 from Foundry"))
+        ws = _make_mock_ws()
+        state = _CascadeSessionState(session_id="s1", persona_id="p", deployment="d", voice="marin")
+
+        await processor._run_turn_and_speak(ws, "s1", state)
+
+        sent_types = _sent_types(ws)
+        self.assertEqual(sent_types, ["response.created", "error", "response.done"])
+        done_msg = ws.send_json.await_args_list[-1].args[0]
+        self.assertEqual(done_msg["response"]["status"], "failed")
+        self.assertEqual(done_msg["response"]["output"], [])
+
+    async def test_non_429_tts_failure_still_sends_a_failed_response_done(self):
+        processor = _make_processor({})
+        processor._run_chat_tool_loop = AsyncMock(return_value="Sure thing.")
+        processor._speak = AsyncMock(side_effect=RuntimeError("500 from the TTS endpoint"))
+        ws = _make_mock_ws()
+        state = _CascadeSessionState(session_id="s1", persona_id="p", deployment="d", voice="marin")
+
+        await processor._run_turn_and_speak(ws, "s1", state)
+
+        sent_types = _sent_types(ws)
+        self.assertEqual(
+            sent_types,
+            ["response.created", "response.audio_transcript.delta", "error", "response.done"],
+        )
+        done_msg = ws.send_json.await_args_list[-1].args[0]
+        self.assertEqual(done_msg["response"]["status"], "failed")
+
+    async def test_barge_in_during_chat_completion_is_not_treated_as_a_failure(self):
+        """Cancellation (barge-in) must propagate unchanged -- NOT get rewritten into a
+        failed `response.done` -- `_cancel_current_turn` owns that turn's cleanup."""
+        processor = _make_processor({})
+        processor._run_chat_tool_loop = AsyncMock(side_effect=asyncio.CancelledError())
+        ws = _make_mock_ws()
+        state = _CascadeSessionState(session_id="s1", persona_id="p", deployment="d", voice="marin")
+
+        with self.assertRaises(asyncio.CancelledError):
+            await processor._run_turn_and_speak(ws, "s1", state)
+
+        self.assertEqual(_sent_types(ws), ["response.created"])  # no response.done at all
 
 
 class ProcessTurnRateLimitTests(unittest.IsolatedAsyncioTestCase):

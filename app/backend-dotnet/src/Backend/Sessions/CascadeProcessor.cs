@@ -353,14 +353,37 @@ public sealed class CascadeProcessor : IPipelineProcessor
                     return content;
                 }
 
+                var preRoundCount = state.Messages.Count;
                 state.Messages.Add((JsonObject)message.DeepClone());
                 var previousItemId = MiddleTierItemIds.NewId();
-                foreach (var toolCallNode in toolCalls)
+                try
                 {
-                    if (toolCallNode is JsonObject toolCall)
+                    foreach (var toolCallNode in toolCalls)
                     {
-                        await ExecuteToolCallAsync(toolCall, previousItemId, turnCt).ConfigureAwait(false);
+                        if (toolCallNode is JsonObject toolCall)
+                        {
+                            await ExecuteToolCallAsync(toolCall, previousItemId, turnCt).ConfigureAwait(false);
+                        }
                     }
+                }
+                catch
+                {
+                    // #247: a barge-in (`OperationCanceledException`, re-thrown unchanged by
+                    // `ExecuteToolCallAsync`'s own `when (turnCt.IsCancellationRequested)` guard)
+                    // or any other failure mid-round can leave some of this round's `toolCalls`
+                    // ids answered (a tool message appended) and others not. A chat API that sees
+                    // an assistant `tool_calls` message without a matching tool message for EVERY
+                    // id 400s the next request -- exactly what the fake chat server in the
+                    // conformance scenario enforces. Rather than appending neutral placeholder
+                    // tool messages for the unanswered ids, truncate the whole round back out of
+                    // `state.Messages`: history is then always either "fully pre-round" or "fully
+                    // post-round", never partially answered, and the next turn's model can always
+                    // re-discover real-world state via `get_order` (the same tool-failure-recovery
+                    // instruction `ExecuteToolCallAsync` already gives it), so nothing is actually
+                    // lost. A tool that already mutated the order (e.g. `update_order`) keeps its
+                    // real-world effect -- the order store is untouched by this truncation.
+                    state.Messages.RemoveRange(preRoundCount, state.Messages.Count - preRoundCount);
+                    throw;
                 }
             }
             _logger?.LogWarning("Cascade chat-tool loop hit its {MaxRounds}-round cap without a final answer (session={SessionId})",
@@ -407,6 +430,38 @@ public sealed class CascadeProcessor : IPipelineProcessor
                 "text-to-speech", NotifyClientAsync, sessionId, _logger, turnCt, _timeProvider).ConfigureAwait(false);
         }
 
+        async Task SendFailedResponseDoneAsync(string responseId, string message, CancellationToken turnCt)
+        {
+            // #262: closes out a turn that failed (non-429) after `response.created` was already
+            // sent, so the browser is never left thinking a response is still in progress. Shape
+            // mirrors the Realtime API's own failed-response `response.done` (`status: "failed"`,
+            // `status_details.error`) -- see RealtimeProcessor's own passthrough of upstream's
+            // `response.done`, which never needs to construct this shape itself -- so the
+            // frontend's shared `onReceivedResponseDone` handler needs no cascade-specific
+            // branch, just a `status` check. The plain `error` event mirrors the Realtime API's
+            // own `error` passthrough (upstream protocol errors reach the browser the same way).
+            await SendTextAsync(browserSocket, new JsonObject
+            {
+                ["type"] = "error",
+                ["error"] = new JsonObject { ["type"] = "server_error", ["message"] = message },
+            }.ToJsonString(), turnCt, ct).ConfigureAwait(false);
+            await SendTextAsync(browserSocket, new JsonObject
+            {
+                ["type"] = "response.done",
+                ["response"] = new JsonObject
+                {
+                    ["id"] = responseId,
+                    ["status"] = "failed",
+                    ["status_details"] = new JsonObject
+                    {
+                        ["type"] = "failed",
+                        ["error"] = new JsonObject { ["type"] = "server_error", ["message"] = message },
+                    },
+                    ["output"] = new JsonArray(),
+                },
+            }.ToJsonString(), turnCt, ct).ConfigureAwait(false);
+        }
+
         async Task RunTurnAndSpeakAsync(CancellationToken turnCt)
         {
             var responseId = MiddleTierItemIds.NewId();
@@ -428,6 +483,27 @@ public sealed class CascadeProcessor : IPipelineProcessor
                     ["type"] = "response.done",
                     ["response"] = new JsonObject { ["id"] = responseId },
                 }.ToJsonString(), turnCt, ct).ConfigureAwait(false);
+                return;
+            }
+            catch (OperationCanceledException) when (turnCt.IsCancellationRequested)
+            {
+                // Barge-in: `CancelCurrentTurnAsync` owns this turn's cleanup, not us.
+                throw;
+            }
+            catch (Exception ex)
+            {
+                // #262: a non-429 chat-completion failure (e.g. a transient 500) used to
+                // propagate straight out of this method, through `ProcessTurnAsync`/
+                // `SendGreetingAsync`, into `Spawn`'s own `catch (Exception ex) { _logger?.
+                // LogError(...) }` -- which swallows it with NO `response.done` ever reaching
+                // the browser. The frontend had already flipped to "response in progress" on
+                // `response.created` above, with nothing left to ever flip it back: the mic
+                // stayed muted and the UI stuck, forever, on a turn that will never continue.
+                // Send a terminal `response.done` (failed status) plus a best-effort `error`
+                // event instead. The 429 path and barge-in (both just above) are unaffected --
+                // this `catch` only ever reaches OTHER failures.
+                _logger?.LogError(ex, "Cascade chat completion failed (session={SessionId})", sessionId);
+                await SendFailedResponseDoneAsync(responseId, "chat completion failed", turnCt).ConfigureAwait(false);
                 return;
             }
 
@@ -455,12 +531,20 @@ public sealed class CascadeProcessor : IPipelineProcessor
                     // as a TTS failure. The `when` guard (see `ExecuteToolCallAsync` for the full
                     // rationale) keeps a non-barge-in HttpClient timeout from being misclassified
                     // the same way -- it instead falls to `catch (Exception ex)` below, which logs
-                    // it and lets the turn still finish with `response.done`.
+                    // it and still ends the turn with a failed `response.done`.
                     throw;
                 }
                 catch (Exception ex)
                 {
+                    // #262: same gap as the chat-completion catch above, for TTS -- previously
+                    // this just logged and fell through to a NORMAL `response.done` below (no
+                    // status, no error event), silently hiding a real TTS failure from the guest/
+                    // frontend as if the turn had succeeded with no audio. Report it the same way
+                    // chat-completion failures are now reported, instead of a quiet, misleading
+                    // "success".
                     _logger?.LogWarning(ex, "Cascade TTS failed for this turn's final answer (session={SessionId})", sessionId);
+                    await SendFailedResponseDoneAsync(responseId, "text-to-speech failed", turnCt).ConfigureAwait(false);
+                    return;
                 }
             }
 
