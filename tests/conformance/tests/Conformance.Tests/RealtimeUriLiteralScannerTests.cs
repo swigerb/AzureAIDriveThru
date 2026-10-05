@@ -8,6 +8,7 @@ namespace Conformance.Tests;
 /// ("does <c>RealtimeUris.</c> appear anywhere earlier in the same file") has a hole.
 /// </summary>
 [Trait("Category", "Harness")]
+[Trait("Dotnet", "n/a-harness")] // Issue #21: backend-agnostic harness self-test, never exercises app/backend or app/backend-dotnet.
 public sealed class RealtimeUriLiteralScannerTests
 {
     [Fact]

@@ -10,8 +10,13 @@ namespace Conformance.Tests;
 /// PR #22 review item 11: the browser client should support a real graceful close, not just a
 /// disposal-time best-effort teardown, so tests can assert on how the backend answers a
 /// client-initiated close.
+///
+/// Issue #21 (coordinator dispatch, 2026-10-05): all 12 methods exercise a real connection
+/// against <see cref="ConformanceFixture.Backend"/> (close/abort/dispose semantics), never a real
+/// browser -- verified green against CONFORMANCE_BACKEND=dotnet across 3 consecutive local runs.
 /// </summary>
 [Collection(ConformanceCollection.Name)]
+[Trait("Dotnet", "ready")]
 public sealed class BrowserClientLifecycleTests(ConformanceFixture fixture)
 {
     private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);

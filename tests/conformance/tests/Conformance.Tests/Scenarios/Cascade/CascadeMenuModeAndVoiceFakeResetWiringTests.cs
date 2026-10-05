@@ -25,7 +25,11 @@ namespace Conformance.Tests.Scenarios.Cascade;
 /// fixture, same reasoning as <see cref="CascadeFakeResetWiringTests"/>'s own doc comment: this
 /// costs nothing beyond the backend process every other test in that collection already shares.
 /// </summary>
+/// Issue #21 (coordinator dispatch, 2026-10-05): same precedent as
+/// <see cref="CascadeFakeResetWiringTests"/> (also tagged ready) -- verified green against
+/// CONFORMANCE_BACKEND=dotnet across 3 consecutive local runs.
 [Collection(CascadeMenuModeAndVoiceConformanceCollection.Name)]
+[Trait("Dotnet", "ready")]
 public sealed class CascadeMenuModeAndVoiceFakeResetWiringTests(CascadeMenuModeAndVoiceConformanceFixture fixture)
 {
     /// <summary>Same reasoning as <see cref="CascadeFakeResetWiringTests.DeliberateLeakScenarioException"/>'s

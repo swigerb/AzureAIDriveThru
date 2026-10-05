@@ -423,14 +423,147 @@ namespace Conformance.Tests;
 /// Issue #274 merge with origin/dev after #226/#279 (coordinator, 2026-10-05): with
 /// DotnetEnforcesAuth true every Dotnet=ready method counts; a fresh listing on the merged tip
 /// gives <b>323</b> (dev's 326, follow-up C +1, follow-up E -4), the floor asserted below.
+///
+/// Issue #21 acceptance (coordinator dispatch, Birdperson/Beth, 2026-10-05): closes out #21's
+/// acceptance bar. Classified every remaining untagged class explicitly: 30 real harness
+/// self-tests (<c>AuthRowCapabilityTests</c>, <c>BackendExitCodeParserTests</c>,
+/// <c>CapturedProcessOutput*</c>, <c>ConformancePersonasTests</c>, <c>DotnetBackendBuildGateTests</c>,
+/// <c>DotnetBackendLauncherPortRaceTests</c>, <c>DotnetBackendLauncherStartInfoTests</c>,
+/// <c>DotnetPlaceholderPolicyTests</c>, <c>ExternalMode*PolicyTests</c>,
+/// <c>FakeChatCompletionsServerTests</c>, <c>FakeEntraIssuer*ValidationTests</c>,
+/// <c>FakeFixedPortBindingTests</c>, <c>FakeRealtimeScripting*Tests</c>,
+/// <c>HandlerFaultTeardownRegressionTests</c>, <c>InheritedEnvironmentFilterTests</c>,
+/// <c>MenuIndexResolveIndexPathsTests</c>, <c>OutputDrainAfterExitTests</c>,
+/// <c>PortRaceDetectionTests</c>, <c>PyJwtInteropPolicyTests</c>,
+/// <c>PythonBackendLauncherPortRaceTests</c>, <c>RealtimeUriLiteralScan(ner)?Tests</c>,
+/// <c>RepoPathsTests</c>, <c>ResponseCancelTests</c>, <c>ScenarioErrorAttributionTests</c>,
+/// <c>WindowsJobObjectTests</c>, <c>PersonaSmokeCoverageTests</c>, and this very class) now carry
+/// <c>[Trait("Dotnet", "n/a-harness")]</c>; 8 real <c>Scenarios/Browser</c> methods
+/// (<c>OrderResumeBrowserTests</c>'s 5, <c>PersonaSwitchBrowserTests</c>'s Case-E/reload-resume 3)
+/// whose own prior comments cited #15 as a blocking scope cut -- #15 landed (PR #244) but this
+/// dispatch's sandbox had no msedge/chrome binary and no root to install one, so they were
+/// classified <c>n/a-pending-browser-verification</c> (not silently left untagged, not guessed
+/// ready) pending a re-run with a real browser; and the 4
+/// <c>ComboComponentResizeConformanceTests.Discovered_*</c> methods already documented as
+/// permanently data-empty today got an explicit <c>n/a-no-matching-persona-data</c>. A new guard
+/// Fact (<see cref="Every_test_class_in_the_assembly_carries_an_explicit_dotnet_classification"/>)
+/// now fails if any FUTURE class/method joins this assembly with no Dotnet trait at all. Four
+/// classes were verified green against CONFORMANCE_BACKEND=dotnet across 3 consecutive local runs
+/// and newly tagged <c>ready</c>: <c>WebSocketCompressionTests</c> (+1),
+/// <c>PersonaMismatchConformanceTests</c> (+1, its own prior "deliberately UNTAGGED" comment was
+/// stale -- the class it deferred to, <c>PersonaDiscoveryConformanceTests</c>, had since been
+/// tagged itself), <c>BrowserClientLifecycleTests</c> (+12, a real-connection close/abort/dispose
+/// suite, never a real browser despite its name), and
+/// <c>CascadeMenuModeAndVoiceFakeResetWiringTests</c> (+1, same precedent as the already-tagged
+/// <c>CascadeFakeResetWiringTests</c>). A fresh <c>Conformance.Tests -list tests -trait
+/// Dotnet=ready</c> measurement on this branch tip gives <b>338</b> (323 + 15).
+///
+/// Coordinator follow-up (same-day PR #287 review, Birdperson/Beth, 2026-10-05): closed the two
+/// remaining acceptance gaps. (1) The persona-pack matrix claim above ("one persona pack exists
+/// on disk today") was stale: every one of the other shipped packs under <c>personas/</c> ships
+/// for real, and the realtime pipeline's own `RealPack*`/`PackOwnedWholeBundleGolden*`/
+/// `ComboComponentResize*` theories already discover and run every shipped pack automatically (no
+/// code change needed there -- only the stale doc comments were wrong, fixed in
+/// <c>docs/dotnet_mapping.md</c> and <c>ConformancePersonas.cs</c>). The cascade pipeline, however,
+/// genuinely only ever exercised the fixture's own default pack --
+/// <c>CascadeConformanceTests</c> has no persona dimension at all -- so
+/// <c>CascadePersonaParityConformanceTests</c> (+1 new tagged Theory method, one row per
+/// non-default shipped pack discovered via <c>ConformancePersonas.DiscoverFromDisk()</c>, verified
+/// green 3x locally against CONFORMANCE_BACKEND=dotnet) closes that gap: no C# divergence found,
+/// persona-scoped menu/tax binding already threads correctly through `CascadeProcessor`. (2) The
+/// 8 `Scenarios/Browser` methods classified
+/// <c>n/a-pending-browser-verification</c> above (<c>OrderResumeBrowserTests</c>'s 5,
+/// <c>PersonaSwitchBrowserTests</c>'s Case-E/reload-resume 3) are now tagged <c>ready</c>: #15
+/// landed the resume/idle-close/supersede machinery these all depend on (re-confirmed by code
+/// inspection of <c>SessionManager.cs</c>/<c>RealtimeProcessor.cs</c>), and this sandbox still has
+/// no msedge/chrome binary and no root to install one, so per explicit instruction these are
+/// tagged ready now with CI's own `Conformance suite (backend=dotnet, Category=Browser)` job (a
+/// real browser) as the actual verification, not a local one. A fresh
+/// <see cref="CountFloorEligibleDotnetReadyTestMethods"/> measurement on this branch tip gives
+/// <b>347</b> (338 + 1 cascade-parity + 8 browser), the floor asserted below.
 /// </summary>
+[Trait("Dotnet", "n/a-harness")]
 public sealed class DotnetTraitCoverageTests
 {
     private const string TraitName = "Dotnet";
     private const string TraitValue = "ready";
 
+    /// <summary>
+    /// Issue #21 (coordinator dispatch, item 2): guards against a test class being added to this
+    /// assembly with NO <c>Dotnet</c> trait at all -- neither <c>ready</c> (a real, verified-green
+    /// dotnet-leg scenario) nor an explicit <c>n/a-*</c> classification (a backend-agnostic harness
+    /// self-test, with its own one-line reason in a comment next to the attribute). Before this
+    /// guard, 39 real classes (<see cref="DotnetTraitCoverageTests"/> itself, every
+    /// <c>Scenarios/Auth</c>-adjacent harness class, <c>FakeRealtimeScripting*</c>,
+    /// <c>CapturedProcessOutput*</c>, <c>*PortRace*</c>, <c>ExternalMode*Policy</c>, and others)
+    /// carried no Dotnet trait whatsoever and were silently excluded from
+    /// <see cref="CountFloorEligibleDotnetReadyTestMethods"/>'s floor with no test failing to call
+    /// that out -- a newly added class could join that same silent blind spot forever. Every
+    /// concrete, non-abstract class declaring at least one <c>[Fact]</c>/<c>[Theory]</c> method
+    /// must now resolve, for EVERY one of its own test methods (combining class-level and
+    /// method-level <c>[Trait]</c> attributes exactly like <see cref="HasDotnetReadyTrait"/>/xUnit's
+    /// own trait-based filtering do), to a non-empty set of <c>Dotnet</c> trait values where every
+    /// value is either exactly <c>"ready"</c> or starts with <c>"n/a-"</c> -- catching both a
+    /// missing trait and a typo'd/unrecognized one.
+    /// </summary>
     [Fact]
-    public void At_least_323_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
+    public void Every_test_class_in_the_assembly_carries_an_explicit_dotnet_classification()
+    {
+        var assembly = typeof(DotnetTraitCoverageTests).Assembly;
+        var violations = new List<string>();
+
+        foreach (var type in assembly.GetTypes())
+        {
+            if (type.IsAbstract)
+            {
+                continue;
+            }
+
+            var classValues = type.GetCustomAttributes<TraitAttribute>(inherit: true)
+                .Where(t => t.Name == TraitName)
+                .Select(t => t.Value)
+                .ToArray();
+
+            foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static))
+            {
+                if (!method.IsDefined(typeof(FactAttribute), inherit: true))
+                {
+                    continue;
+                }
+
+                var methodValues = method.GetCustomAttributes<TraitAttribute>(inherit: true)
+                    .Where(t => t.Name == TraitName)
+                    .Select(t => t.Value)
+                    .ToArray();
+
+                var effective = classValues.Concat(methodValues).Distinct().ToArray();
+
+                if (effective.Length == 0)
+                {
+                    violations.Add($"{type.FullName}.{method.Name}: no [Trait(\"Dotnet\", ...)] at all " +
+                        "(neither class- nor method-level) -- tag [Trait(\"Dotnet\", \"ready\")] if this " +
+                        "scenario is verified green against the C# backend, or " +
+                        "[Trait(\"Dotnet\", \"n/a-<reason>\")] (e.g. \"n/a-harness\") with a one-line " +
+                        "reason comment if it's backend-agnostic.");
+                    continue;
+                }
+
+                var invalid = effective.Where(v => v != "ready" && !v.StartsWith("n/a-", StringComparison.Ordinal)).ToArray();
+                if (invalid.Length > 0)
+                {
+                    violations.Add($"{type.FullName}.{method.Name}: unrecognized Dotnet trait value(s) " +
+                        $"[{string.Join(", ", invalid)}] -- expected \"ready\" or an \"n/a-*\" classification.");
+                }
+            }
+        }
+
+        Assert.True(violations.Count == 0,
+            "Every test class/method must carry an explicit Dotnet classification (\"ready\" or " +
+            $"\"n/a-*\"); see issue #21. Violations:\n{string.Join("\n", violations)}");
+    }
+
+    [Fact]
+    public void At_least_347_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
     {
         // Rick's PR #226 review: assert the capability directly, not just the derived count --
         // see this class's own doc comment for why a bare ">= 222" check alone can't be trusted to
@@ -444,14 +577,16 @@ public sealed class DotnetTraitCoverageTests
 
         var count = CountFloorEligibleDotnetReadyTestMethods();
 
-        Assert.True(count >= 323,
-            $"Expected at least 323 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
+        Assert.True(count >= 347,
+            $"Expected at least 347 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
             $"and not unconditionally skip-gated by AuthRowCapability (the dotnet leg's " +
-            $"`--filter \"{TraitName}={TraitValue}&Category!=Browser\"` baseline, minus the five " +
+            $"`--filter \"{TraitName}={TraitValue}\"` baseline, minus the five " +
             "skip-only Scenarios/Auth classes -- see this class's own doc comment; " +
             $"docs/dotnet_mapping.md), but found {count}. If a tagged scenario was removed or " +
-            "renamed without a replacement, the dotnet CI leg silently lost coverage. 323 is a " +
-            "FRESH count (#274 C/E merged with origin/dev after #279, coordinator 2026-10-05), not " +
+            "renamed without a replacement, the dotnet CI leg silently lost coverage. 347 is a " +
+            "FRESH count (coordinator PR #287 follow-up, Birdperson/Beth, 2026-10-05: " +
+            "CascadePersonaParityConformanceTests +1, OrderResumeBrowserTests's 5 + " +
+            "PersonaSwitchBrowserTests's 3 newly tagged ready, 338 + 9 = 347), not " +
             "arithmetic -- re-measure with `Conformance.Tests.exe -list methods -trait " +
             "Dotnet=ready` minus the AuthRowCapabilityGated methods before raising this floor " +
             "again.");

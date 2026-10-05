@@ -27,6 +27,7 @@ namespace Conformance.Tests;
 /// 2 review, N2), so it can be unit tested directly against synthetic samples -- see
 /// <c>RealtimeUriLiteralScannerTests</c> -- instead of only ever running against the real tree.
 /// </summary>
+[Trait("Dotnet", "n/a-harness")] // Issue #21: source-scan guard against silent regression, no fixture/no backend (see this class's own doc comment).
 public sealed class RealtimeUriLiteralScanTests
 {
     [Fact]

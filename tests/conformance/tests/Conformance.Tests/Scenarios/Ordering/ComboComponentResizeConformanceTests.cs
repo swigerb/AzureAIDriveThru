@@ -664,6 +664,7 @@ public sealed class ComboComponentResizeConformanceTests
     // reintroducing an `includedAnySize` bundle with a genuinely open drink slot makes these rows
     // real again for free, on whichever backend leg they're re-tagged for.
     [Theory(SkipTestWithoutData = true)]
+    [Trait("Dotnet", "n/a-no-matching-persona-data")] // Issue #21: zero real packs match today (see this method's own comment above) -- explicit n/a classification, not silently untagged.
     [MemberData(nameof(DiscoveredBundleResizeCases))]
     public async Task Discovered_pack_resizes_the_combo_drink_via_remove_then_add(
         ComboBundleDiscovery.BundleResizeCase bundleCase)
@@ -696,6 +697,7 @@ public sealed class ComboComponentResizeConformanceTests
     // Issue #274 follow-up E: see Discovered_pack_resizes_the_combo_drink_via_remove_then_add's
     // own doc comment above -- untagged for the same reason (no real pack qualifies today).
     [Theory(SkipTestWithoutData = true)]
+    [Trait("Dotnet", "n/a-no-matching-persona-data")] // Issue #21: zero real packs match today (see this method's own comment above) -- explicit n/a classification, not silently untagged.
     [MemberData(nameof(DiscoveredBundleResizeCases))]
     public async Task Discovered_pack_resizes_the_combo_drink_via_explicit_modify(
         ComboBundleDiscovery.BundleResizeCase bundleCase)
@@ -731,6 +733,7 @@ public sealed class ComboComponentResizeConformanceTests
     // Issue #274 follow-up E: see Discovered_pack_resizes_the_combo_drink_via_remove_then_add's
     // own doc comment above -- untagged for the same reason (no real pack qualifies today).
     [Theory(SkipTestWithoutData = true)]
+    [Trait("Dotnet", "n/a-no-matching-persona-data")] // Issue #21: zero real packs match today (see this method's own comment above) -- explicit n/a classification, not silently untagged.
     [MemberData(nameof(DiscoveredBundleResizeCases))]
     public async Task Discovered_pack_charges_the_same_total_large_up_front_or_resized_later(
         ComboBundleDiscovery.BundleResizeCase bundleCase)
@@ -815,6 +818,7 @@ public sealed class ComboComponentResizeConformanceTests
     // own doc comment above -- untagged for the same reason (DiscoverTwoInstance also requires
     // `includedAnySize`, which no real pack has today).
     [Theory(SkipTestWithoutData = true)]
+    [Trait("Dotnet", "n/a-no-matching-persona-data")] // Issue #21: zero real packs match today (see this method's own comment above) -- explicit n/a classification, not silently untagged.
     [MemberData(nameof(DiscoveredTwoInstanceResizeCases))]
     public async Task Discovered_pack_with_two_bundle_instances_resizes_only_the_holder(
         ComboBundleDiscovery.TwoInstanceCase twoCase)

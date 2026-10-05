@@ -18,6 +18,7 @@ namespace Conformance.Tests;
 /// on the real async stderr-capture path (this file's other tests do not).
 /// </summary>
 [Trait("Category", "Harness")]
+[Trait("Dotnet", "n/a-harness")] // Issue #21: backend-agnostic harness self-test, never exercises app/backend or app/backend-dotnet.
 public sealed class CapturedProcessOutputWaitTests
 {
     // Generous enough to be reliably distinguishable from CI scheduling jitter without making
