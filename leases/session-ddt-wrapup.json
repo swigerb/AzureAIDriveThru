@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "leaseKey": "session-ddt-wrapup",
+  "sessionId": "ddt-wrapup",
+  "repository": "swigerb/AzureAIDriveThru",
+  "issueNumber": null,
+  "dispatchSource": "local-cli",
+  "route": "aca-job",
+  "executionMode": "aca-job",
+  "state": "claimed",
+  "attempts": 1,
+  "startedAt": "2026-10-05T09:15:31.105Z",
+  "lastHeartbeatAt": "2026-10-05T09:15:31.105Z",
+  "updatedAt": "2026-10-05T09:15:31.105Z",
+  "terminalReason": null,
+  "executionRef": null
+}
