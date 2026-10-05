@@ -244,6 +244,48 @@ public sealed class SessionManager
         }
     }
 
+    public IReadOnlyDictionary<string, string> GetMachineOverrides(string sessionId)
+    {
+        lock (_sync)
+        {
+            return _sessions.TryGetValue(sessionId, out var record)
+                && record.ToolExecutor is IOrderSessionSettings settings
+                ? settings.GetMachineOverrides()
+                : new Dictionary<string, string>(StringComparer.Ordinal);
+        }
+    }
+
+    public bool SetMachineStatus(string sessionId, string machine, string status)
+    {
+        lock (_sync)
+        {
+            return _sessions.TryGetValue(sessionId, out var record)
+                && record.ToolExecutor is IOrderSessionSettings settings
+                && settings.SetMachineOverride(machine, status);
+        }
+    }
+
+    public string GetHappyHourMode(string sessionId)
+    {
+        lock (_sync)
+        {
+            return _sessions.TryGetValue(sessionId, out var record)
+                && record.ToolExecutor is IOrderSessionSettings settings
+                ? settings.GetHappyHourMode()
+                : "auto";
+        }
+    }
+
+    public bool SetHappyHourMode(string sessionId, string mode)
+    {
+        lock (_sync)
+        {
+            return _sessions.TryGetValue(sessionId, out var record)
+                && record.ToolExecutor is IOrderSessionSettings settings
+                && settings.SetHappyHourMode(mode);
+        }
+    }
+
     /// <summary>Port of record_turn: keeps the last <see cref="SessionsConfig.HistoryTurns"/> turns
     /// ("guest"/"assistant"), each capped at <see cref="SessionsConfig.HistoryChars"/> characters,
     /// for later rehydration. A no-op once the config disables history (`history_turns &lt;=

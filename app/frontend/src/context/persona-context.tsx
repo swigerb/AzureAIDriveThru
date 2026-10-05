@@ -60,7 +60,9 @@ const NEUTRAL_DETAIL: PersonaDetail = {
     features: { dayparts: false },
     menuUrl: "",
     models: { realtime: { default: "gpt-realtime-2.1", models: [{ id: "gpt-realtime-2.1", label: "GPT Realtime 2.1", reasoning: true }] } },
-    taxRate: "0"
+    taxRate: "0",
+    machines: {},
+    happyHour: null
 };
 
 interface PersonaContextValue {

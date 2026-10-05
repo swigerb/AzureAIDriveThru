@@ -28,7 +28,7 @@ https://github.com/user-attachments/assets/d4dc2713-5117-45cd-ba49-9aa2d707432d
 
 - Personas under `personas/`: currently `sonic`, `dunkin`, and `mcdonalds`. Each persona owns `persona.json`, `menu/menuItems.json`, prompt YAML, hints, assets, theme data, and optional demo assets.
 - Persona picker with `?persona=<id>` deep links and a confirm dialog before switching when an order or conversation is active.
-- Settings panel with Demo Mode, breakfast or lunch menu mode for daypart personas, voice picker, model picker, dummy data, session-token display, and operator logging toggles.
+- Settings panel with Demo Mode, breakfast or lunch menu mode for daypart personas, a Store operations section with session-scoped per-machine up/down toggles and happy-hour Auto/On/Off control where supported, voice picker, model picker, dummy data, session-token display, and operator logging toggles.
 - Demo Mode for personas that ship `assets/demo/guestScript.json`, including **Run demo: This brand**, **Full tour**, an Ava guest voice card, captions, and synthetic guest audio playback.
 - Search-grounded ordering with four tools: `search`, `update_order`, `get_order`, and `reset_order`.
 - Server-side pricing, 8 percent tax, order validation, live ticket updates, transcript, and off-menu rejection.

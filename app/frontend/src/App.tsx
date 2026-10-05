@@ -38,7 +38,7 @@ import { loadDemoGuestScript } from "@/lib/demo/guestScript";
 import { browserDemoClock, runDemoScenes } from "@/lib/demo/demoRunner";
 import type { AssistantAudioState, DemoGuestLine, DemoGuestScript, DemoScene, DemoStatus, GuestTranscriptState } from "@/lib/demo/demoRunner";
 import { SyntheticGuestAudio } from "@/lib/demo/syntheticGuestAudio";
-import type { PersonaDetail, PersonaHeroSpotlight, PersonaTextRoles } from "@/types/persona";
+import type { PersonaDetail, PersonaHeroSpotlight, PersonaMachine, PersonaTextRoles } from "@/types/persona";
 
 import azureLogo from "@/assets/azurelogo.svg";
 
@@ -103,6 +103,10 @@ function useDemoData(personaId: string, enabled: boolean) {
 
 const DEMO_MODE_STORAGE_KEY = "demoModeEnabled";
 const RESUME_STORAGE_KEY_PREFIX = "drivethru.resumeId.";
+
+function resolveMachineStatuses(machines?: Record<string, PersonaMachine>) {
+    return Object.fromEntries(Object.entries(machines ?? {}).map(([machine, detail]) => [machine, detail.status])) as Record<string, "up" | "down">;
+}
 
 function demoResumeStorageKey(personaId?: string): string {
     return `${RESUME_STORAGE_KEY_PREFIX}${personaId ?? "default"}`;
@@ -250,6 +254,8 @@ function SonicApp() {
     const [demoModeEnabled, setDemoModeEnabled] = useState<boolean>(() => {
         return localStorage.getItem(DEMO_MODE_STORAGE_KEY) === "true";
     });
+    const [machineStatuses, setMachineStatuses] = useState<Record<string, "up" | "down">>(() => resolveMachineStatuses(current.machines));
+    const [happyHourMode, setHappyHourMode] = useState<"auto" | "on" | "off">(() => "auto");
     const [currentDemoScript, setCurrentDemoScript] = useState<DemoGuestScript | null>(null);
     const [demoUi, setDemoUi] = useState<DemoUiState>(IDLE_DEMO_UI);
     const demoAbortRef = useRef<AbortController | null>(null);
@@ -353,6 +359,11 @@ function SonicApp() {
         setMenuMode(resolved);
         localStorage.setItem(menuModeStorageKey(current.id), resolved);
     }, [current.id, current.features.dayparts]);
+
+    useEffect(() => {
+        setMachineStatuses(resolveMachineStatuses(current.machines));
+        setHappyHourMode("auto");
+    }, [current.id, current.machines, current.happyHour]);
 
     useEffect(() => {
         const controller = new AbortController();
@@ -991,6 +1002,16 @@ function SonicApp() {
         localStorage.setItem(menuModeStorageKey(current.id), mode);
     };
 
+    const handleMachineStatusChange = (machine: string, status: "up" | "down") => {
+        setMachineStatuses(current => ({ ...current, [machine]: status }));
+        realtime.setMachineStatus(machine, status);
+    };
+
+    const handleHappyHourModeChange = (mode: "auto" | "on" | "off") => {
+        setHappyHourMode(mode);
+        realtime.setHappyHourMode(mode);
+    };
+
     const ensureDemoAudio = () => {
         if (!demoAudioRef.current) demoAudioRef.current = new SyntheticGuestAudio();
         return demoAudioRef.current;
@@ -1193,6 +1214,12 @@ function SonicApp() {
                                 modelId={modelId}
                                 onModelChange={handleModelChange}
                                 modelDisabled={isRecording || order.items.length > 0}
+                                machines={current.machines ?? {}}
+                                machineStatuses={machineStatuses}
+                                onMachineStatusChange={handleMachineStatusChange}
+                                happyHour={current.happyHour ?? null}
+                                happyHourMode={happyHourMode}
+                                onHappyHourModeChange={handleHappyHourModeChange}
                                 menuModeEnabled={current.features.dayparts}
                                 menuMode={menuMode}
                                 onMenuModeChange={handleMenuModeChange}

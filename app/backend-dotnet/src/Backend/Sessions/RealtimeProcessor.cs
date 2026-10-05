@@ -562,6 +562,11 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                 return;
             }
 
+            if (TryHandleSessionOverrideExtensionMessage(msgType, message, state.EffectiveSessionId))
+            {
+                return;
+            }
+
             if (msgType != "extension.set_voice")
             {
                 // set_verbose_logging/set_log_to_file (#13 scope cuts, see class doc) -- consumed
@@ -2113,6 +2118,57 @@ public sealed class RealtimeProcessor : IPipelineProcessor
 
     private static string? GetString(JsonObject? obj, string key) =>
         obj?[key] is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
+
+    /// <summary>Consumes extension messages that mutate only this session's own order settings
+    /// (machine/happy-hour overrides), never forwarding anything upstream to Azure OpenAI. Internal
+    /// so tests can exercise the exact drop/apply behaviour without a live websocket relay.</summary>
+    internal bool TryHandleSessionOverrideExtensionMessage(string msgType, JsonObject message, string effectiveSessionId)
+    {
+        if (_sessionManager is null)
+        {
+            return msgType is "extension.set_machine_status" or "extension.set_happy_hour_mode";
+        }
+
+        if (msgType == "extension.set_machine_status")
+        {
+            var machine = GetString(message, "machine");
+            var candidateStatus = GetString(message, "status");
+            var status = ClientServerFilter.SanitizeMachineStatus(candidateStatus);
+            if (string.IsNullOrEmpty(machine) || status is null
+                || !_sessionManager.SetMachineStatus(effectiveSessionId, machine, status))
+            {
+                _logger?.LogWarning(
+                    "Dropped extension.set_machine_status with unknown/invalid machine or status (machine={Machine}, status={Status}, session={SessionId})",
+                    machine, candidateStatus, effectiveSessionId);
+                return true;
+            }
+
+            _logger?.LogInformation(
+                "Applied extension.set_machine_status machine={Machine} status={Status} (session={SessionId})",
+                machine, status, effectiveSessionId);
+            return true;
+        }
+
+        if (msgType == "extension.set_happy_hour_mode")
+        {
+            var candidateMode = GetString(message, "mode");
+            var mode = ClientServerFilter.SanitizeHappyHourMode(candidateMode);
+            if (mode is null || !_sessionManager.SetHappyHourMode(effectiveSessionId, mode))
+            {
+                _logger?.LogWarning(
+                    "Dropped extension.set_happy_hour_mode with an invalid mode or unsupported persona (mode={Mode}, session={SessionId})",
+                    candidateMode, effectiveSessionId);
+                return true;
+            }
+
+            _logger?.LogInformation(
+                "Applied extension.set_happy_hour_mode mode={Mode} (session={SessionId})",
+                mode, effectiveSessionId);
+            return true;
+        }
+
+        return false;
+    }
 
     /// <summary>Monotonic "loop time" in seconds, mirroring Python's
     /// <c>asyncio.AbstractEventLoop.time()</c> -- immune to system clock adjustments. Issue #13

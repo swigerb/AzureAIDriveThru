@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { useDummyDataContext } from "@/context/dummy-data-context";
 import ModelPicker from "@/components/ui/model-picker";
 import { VOICE_OPTIONS } from "@/lib/voices";
-import type { PersonaModels } from "@/types/persona";
+import type { PersonaHappyHour, PersonaMachine, PersonaModels } from "@/types/persona";
 
 /** Capitalizes the first letter of a single word (e.g. "carhop" -> "Carhop"), leaving the rest
  * untouched. */
@@ -27,8 +27,24 @@ function titleCase(roleName: string): string {
     return roleName.split(/\s+/).map(capitalize).join(" ");
 }
 
+function humanizeMachineKey(machine: string): string {
+    return titleCase(machine.replace(/_/g, " "));
+}
+
+function machineDisplayLabel(machine: string, label: string): string {
+    const match = label.match(/^(.*?)\s+is\s+/i);
+    return match?.[1]?.trim() || humanizeMachineKey(machine);
+}
+
+function resolveMachineStatuses(machines: Record<string, PersonaMachine>, overrides?: Record<string, "up" | "down">) {
+    return Object.fromEntries(
+        Object.entries(machines).map(([machine, detail]) => [machine, overrides?.[machine] ?? detail.status])
+    ) as Record<string, "up" | "down">;
+}
+
 const MENU_MODE_LOCK_HINT_ID = "menu-mode-lock-hint";
 const MENU_MODE_LOCK_HINT_TEXT = "Locked for this order -- start a new order to switch menus";
+const EMPTY_MACHINES: Record<string, PersonaMachine> = {};
 
 /** Rick's PR 166 round-1 review, required item 3: same locked-radiogroup shape as
  * `persona-picker.tsx`/`model-picker.tsx` -- disabled buttons, a visible Tooltip, and an
@@ -79,6 +95,34 @@ function renderMenuModeRadioGroup(menuMode: string, onMenuModeChange: (mode: str
     );
 }
 
+function renderHappyHourRadioGroup(happyHourMode: "auto" | "on" | "off", onHappyHourModeChange: (mode: "auto" | "on" | "off") => void) {
+    return (
+        <div
+            id="happy-hour-mode"
+            className="inline-flex rounded-lg border border-gray-300 dark:border-gray-600 overflow-hidden"
+            role="radiogroup"
+            aria-label="Happy hour mode"
+        >
+            {(["auto", "on", "off"] as const).map(mode => (
+                <button
+                    key={mode}
+                    type="button"
+                    role="radio"
+                    aria-checked={happyHourMode === mode}
+                    onClick={() => onHappyHourModeChange(mode)}
+                    className={`px-3 py-1.5 text-sm font-medium transition-colors ${
+                        happyHourMode === mode
+                            ? "bg-secondary text-secondary-foreground"
+                            : "bg-white text-gray-600 hover:bg-gray-50 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700"
+                    }`}
+                >
+                    {mode === "auto" ? "Auto" : capitalize(mode)}
+                </button>
+            ))}
+        </div>
+    );
+}
+
 interface SettingsProps {
     isMobile: boolean;
     showSessionTokens: boolean;
@@ -117,6 +161,12 @@ interface SettingsProps {
     /** Locked while a session is active (ADR-001 decision 2), same rule as the persona picker --
      * a model change here only ever takes effect on the next session. */
     modelDisabled?: boolean;
+    machines?: Record<string, PersonaMachine>;
+    machineStatuses?: Record<string, "up" | "down">;
+    onMachineStatusChange?: (machine: string, status: "up" | "down") => void;
+    happyHour?: PersonaHappyHour | null;
+    happyHourMode?: "auto" | "on" | "off";
+    onHappyHourModeChange?: (mode: "auto" | "on" | "off") => void;
     /** issue 165: only the current persona knows whether it declares `features.dayparts` at all
      * (one persona pack declares breakfast+lunch today; others declare none) -- the toggle below
      * renders nothing unless this is true, exactly like the original's persona-specific build
@@ -158,6 +208,12 @@ export default function Settings({
     modelId = "",
     onModelChange = () => {},
     modelDisabled = false,
+    machines = EMPTY_MACHINES,
+    machineStatuses,
+    onMachineStatusChange = () => {},
+    happyHour = null,
+    happyHourMode = "auto",
+    onHappyHourModeChange = () => {},
     menuModeEnabled = false,
     menuMode = "lunch",
     onMenuModeChange = () => {},
@@ -173,6 +229,10 @@ export default function Settings({
     const voiceLabel = voiceLabelOverride ?? (roleName ? `${titleCase(roleName)} Voice` : "Voice");
     const voiceAriaLabel = roleName ? `Select ${roleName} voice` : "Select voice";
     const voiceDefaultHint = voiceLabelOverride && defaultVoiceId ? `Default: ${capitalize(defaultVoiceId)}` : undefined;
+    const [localMachineStatuses, setLocalMachineStatuses] = useState<Record<string, "up" | "down">>(() => resolveMachineStatuses(machines, machineStatuses));
+    const [localHappyHourMode, setLocalHappyHourMode] = useState<"auto" | "on" | "off">(() => happyHourMode);
+    const machineEntries = Object.entries(machines);
+    const showStoreOperations = machineEntries.length > 0 || happyHour !== null;
 
     useEffect(() => {
         localStorage.setItem("isDarkMode", isDarkMode.toString());
@@ -182,6 +242,14 @@ export default function Settings({
             document.documentElement.classList.remove("dark");
         }
     }, [isDarkMode]);
+
+    useEffect(() => {
+        setLocalMachineStatuses(resolveMachineStatuses(machines, machineStatuses));
+    }, [machines, machineStatuses]);
+
+    useEffect(() => {
+        setLocalHappyHourMode(happyHourMode);
+    }, [happyHour, happyHourMode]);
 
 
     const handleDarkModeChange = (checked: boolean) => {
@@ -208,8 +276,68 @@ export default function Settings({
         onDemoModeChange(checked);
     };
 
+    const handleMachineStatusChange = (machine: string, checked: boolean) => {
+        const status = checked ? "up" : "down";
+        setLocalMachineStatuses(current => ({ ...current, [machine]: status }));
+        onMachineStatusChange(machine, status);
+    };
+
+    const handleHappyHourModeChange = (mode: "auto" | "on" | "off") => {
+        setLocalHappyHourMode(mode);
+        onHappyHourModeChange(mode);
+    };
+
     const SettingsContent = () => (
         <div className="space-y-6">
+            {showStoreOperations && (
+                <section className="space-y-4">
+                    <div className="space-y-0.5">
+                        <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Store operations</h3>
+                        <p className="text-sm text-gray-600 dark:text-gray-400">Adjust live machine availability and happy-hour behavior for this persona.</p>
+                    </div>
+                    {machineEntries.map(([machine, detail]) => {
+                        const displayLabel = machineDisplayLabel(machine, detail.label);
+                        const isUp = localMachineStatuses[machine] === "up";
+                        return (
+                            <div key={machine} className="flex items-start justify-between">
+                                <div className="flex-1 space-y-0.5">
+                                    <Label htmlFor={`machine-${machine}`} className="text-gray-900 dark:text-gray-100">
+                                        {displayLabel}
+                                    </Label>
+                                    <p className="text-sm text-gray-600 dark:text-gray-400">{detail.label}</p>
+                                </div>
+                                <div className="ml-4 flex items-center gap-3 shrink-0">
+                                    <span className="min-w-[5rem] text-right text-xs text-muted-foreground">{isUp ? "Up" : "Down"}</span>
+                                    <Switch
+                                        id={`machine-${machine}`}
+                                        checked={isUp}
+                                        onCheckedChange={(checked) => handleMachineStatusChange(machine, checked)}
+                                        aria-label={`Toggle ${displayLabel} status`}
+                                    />
+                                </div>
+                            </div>
+                        );
+                    })}
+                    {happyHour && (
+                        <div className="flex items-start justify-between">
+                            <div className="flex-1 space-y-0.5">
+                                <Label htmlFor="happy-hour-mode" className="text-gray-900 dark:text-gray-100">
+                                    Happy hour
+                                </Label>
+                                <p className="text-sm text-gray-600 dark:text-gray-400">
+                                    Follow the configured schedule or force happy hour on or off.
+                                </p>
+                            </div>
+                            <div className="ml-4 flex items-center gap-3 shrink-0">
+                                {renderHappyHourRadioGroup(localHappyHourMode, handleHappyHourModeChange)}
+                                <span className="text-xs text-muted-foreground">
+                                    {localHappyHourMode === "auto" ? "Automatic" : capitalize(localHappyHourMode)}
+                                </span>
+                            </div>
+                        </div>
+                    )}
+                </section>
+            )}
             {menuModeEnabled && (
                 <div className="flex items-start justify-between">
                     <div className="flex-1 space-y-0.5">

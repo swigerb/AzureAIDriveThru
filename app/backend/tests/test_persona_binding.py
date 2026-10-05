@@ -219,6 +219,47 @@ class OrderStatePersonaBindingTests(unittest.TestCase):
             default_persona.get_default_persona().id,
         )
 
+    def test_machine_override_accepts_a_known_machine_and_applies_immediately(self):
+        sid = self._new_session(self.alpha)
+        self.assertEqual(order_state_singleton.effective_machine_status(sid, "soda_machine"), "down")
+        self.assertTrue(order_state_singleton.set_machine_override(sid, "soda_machine", "up"))
+        self.assertEqual(order_state_singleton.effective_machine_status(sid, "soda_machine"), "up")
+
+    def test_machine_override_rejects_an_unknown_machine_without_mutating_state(self):
+        sid = self._new_session(self.alpha)
+        self.assertFalse(order_state_singleton.set_machine_override(sid, "does_not_exist", "down"))
+        self.assertEqual(order_state_singleton.sessions[sid]["_machine_overrides"], {})
+        self.assertEqual(order_state_singleton.effective_machine_status(sid, "soda_machine"), "down")
+
+    def test_machine_override_rejects_an_invalid_status_without_mutating_state(self):
+        sid = self._new_session(self.beta)
+        self.assertFalse(order_state_singleton.set_machine_override(sid, "soda_machine", "operational"))
+        self.assertEqual(order_state_singleton.sessions[sid]["_machine_overrides"], {})
+        self.assertEqual(order_state_singleton.effective_machine_status(sid, "soda_machine"), "operational")
+
+    def test_happy_hour_mode_defaults_to_auto_and_honours_on_off_overrides(self):
+        sid = self._new_session(self.alpha)
+        self.assertEqual(order_state_singleton.get_happy_hour_mode(sid), "auto")
+        with patch("order_state.conformance_hooks.now", return_value=datetime(2026, 1, 1, 20, 0, tzinfo=ZoneInfo("America/Chicago"))):
+            self.assertFalse(order_state_singleton.is_happy_hour_for_session(sid))
+        self.assertTrue(order_state_singleton.set_happy_hour_mode(sid, "on"))
+        self.assertEqual(order_state_singleton.get_happy_hour_mode(sid), "on")
+        with patch("order_state.conformance_hooks.now", return_value=datetime(2026, 1, 1, 20, 0, tzinfo=ZoneInfo("America/Chicago"))):
+            self.assertTrue(order_state_singleton.is_happy_hour_for_session(sid))
+        self.assertTrue(order_state_singleton.set_happy_hour_mode(sid, "off"))
+        self.assertEqual(order_state_singleton.get_happy_hour_mode(sid), "off")
+        with patch("order_state.conformance_hooks.now", return_value=datetime(2026, 1, 1, 15, 0, tzinfo=ZoneInfo("America/Chicago"))):
+            self.assertFalse(order_state_singleton.is_happy_hour_for_session(sid))
+        self.assertTrue(order_state_singleton.set_happy_hour_mode(sid, "auto"))
+        self.assertEqual(order_state_singleton.get_happy_hour_mode(sid), "auto")
+        with patch("order_state.conformance_hooks.now", return_value=datetime(2026, 1, 1, 15, 0, tzinfo=ZoneInfo("America/Chicago"))):
+            self.assertTrue(order_state_singleton.is_happy_hour_for_session(sid))
+
+    def test_happy_hour_mode_is_rejected_for_a_persona_with_no_happy_hour(self):
+        sid = self._new_session(self.beta)
+        self.assertFalse(order_state_singleton.set_happy_hour_mode(sid, "on"))
+        self.assertEqual(order_state_singleton.get_happy_hour_mode(sid), "auto")
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # PER-SESSION BUSINESS RULES (Rick's PR #102 review, round 3, required item 1): every
@@ -679,6 +720,34 @@ class ApiPersonasResponseShapeTests(unittest.TestCase):
         self.assertNotIn("cascade", detail["models"])
         self.assertNotIn("local", detail["models"])
 
+    def test_persona_detail_includes_machines_and_happy_hour_fields(self):
+        alpha = self.catalog.get("test-alpha")
+        detail = self._detail_body(alpha)
+        self.assertEqual(
+            detail["machines"],
+            {"soda_machine": {"status": "down", "label": "Soda machine is down"}},
+        )
+        self.assertEqual(detail["happyHour"], {"startHour": 14, "endHour": 16})
+
+    def test_persona_detail_normalizes_operational_machine_status_to_up(self):
+        beta = self.catalog.get("test-beta")
+        detail = self._detail_body(beta)
+        self.assertEqual(
+            detail["machines"],
+            {"soda_machine": {"status": "up", "label": "Soda machine is down"}},
+        )
+        self.assertIsNone(detail["happyHour"])
+
+    def test_persona_detail_reports_empty_machines_and_null_happy_hour_when_absent(self):
+        zeta_catalog = PersonaCatalog.load(
+            personas_dir=FIXTURES_DIR,
+            enabled=["test-zeta"],
+            default_persona_id="test-zeta",
+        )
+        detail = self._detail_body(zeta_catalog.get("test-zeta"))
+        self.assertEqual(detail["machines"], {})
+        self.assertIsNone(detail["happyHour"])
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # PERSONA ASSET + MENU.JSON ROUTES (issue #74, design doc section 5.2, Rick's PR #102
@@ -974,6 +1043,74 @@ class PersonaWebSocketHandlerTests(_RealtimeHarness):
         self.assertEqual(persona_ids, {"test-alpha", "test-beta"})
         await browser_a.close()
         await browser_b.close()
+
+    async def test_machine_status_extension_updates_only_this_sessions_override(self):
+        browser = await self.client.ws_connect("/realtime?persona=test-alpha")
+        await self._until(lambda: self.rtmt._sessions.active_session_count >= 1)
+        await self._until(lambda: len(self._session_updates()) >= 1)
+        sid = next(iter(self.rtmt._sessions._session_map.values()))
+        before = len(self._session_updates())
+        await browser.send_json({"type": "extension.set_machine_status", "machine": "soda_machine", "status": "up"})
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(self._session_updates()), before)
+        self.assertEqual(order_state_singleton.effective_machine_status(sid, "soda_machine"), "up")
+        await browser.close()
+
+    async def test_unknown_machine_override_is_dropped_with_a_warning(self):
+        browser = await self.client.ws_connect("/realtime?persona=test-alpha")
+        await self._until(lambda: self.rtmt._sessions.active_session_count >= 1)
+        sid = next(iter(self.rtmt._sessions._session_map.values()))
+        with self.assertLogs(rtmt.logger, level="WARNING") as logs:
+            await browser.send_json({"type": "extension.set_machine_status", "machine": "unknown_machine", "status": "up"})
+            await asyncio.sleep(0.1)
+        self.assertTrue(any("extension.set_machine_status" in line for line in logs.output))
+        self.assertEqual(order_state_singleton.sessions[sid]["_machine_overrides"], {})
+        await browser.close()
+
+    async def test_invalid_machine_status_override_is_dropped_with_a_warning(self):
+        browser = await self.client.ws_connect("/realtime?persona=test-alpha")
+        await self._until(lambda: self.rtmt._sessions.active_session_count >= 1)
+        sid = next(iter(self.rtmt._sessions._session_map.values()))
+        with self.assertLogs(rtmt.logger, level="WARNING") as logs:
+            await browser.send_json({"type": "extension.set_machine_status", "machine": "soda_machine", "status": "broken"})
+            await asyncio.sleep(0.1)
+        self.assertTrue(any("extension.set_machine_status" in line for line in logs.output))
+        self.assertEqual(order_state_singleton.sessions[sid]["_machine_overrides"], {})
+        await browser.close()
+
+    async def test_happy_hour_mode_extension_updates_only_this_sessions_mode(self):
+        browser = await self.client.ws_connect("/realtime?persona=test-alpha")
+        await self._until(lambda: self.rtmt._sessions.active_session_count >= 1)
+        await self._until(lambda: len(self._session_updates()) >= 1)
+        sid = next(iter(self.rtmt._sessions._session_map.values()))
+        before = len(self._session_updates())
+        await browser.send_json({"type": "extension.set_happy_hour_mode", "mode": "on"})
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(self._session_updates()), before)
+        self.assertEqual(order_state_singleton.get_happy_hour_mode(sid), "on")
+        await browser.close()
+
+    async def test_invalid_happy_hour_mode_is_dropped_with_a_warning(self):
+        browser = await self.client.ws_connect("/realtime?persona=test-alpha")
+        await self._until(lambda: self.rtmt._sessions.active_session_count >= 1)
+        sid = next(iter(self.rtmt._sessions._session_map.values()))
+        with self.assertLogs(rtmt.logger, level="WARNING") as logs:
+            await browser.send_json({"type": "extension.set_happy_hour_mode", "mode": "maybe"})
+            await asyncio.sleep(0.1)
+        self.assertTrue(any("extension.set_happy_hour_mode" in line for line in logs.output))
+        self.assertEqual(order_state_singleton.get_happy_hour_mode(sid), "auto")
+        await browser.close()
+
+    async def test_happy_hour_mode_is_rejected_for_a_persona_without_happy_hour(self):
+        browser = await self.client.ws_connect("/realtime?persona=test-beta")
+        await self._until(lambda: self.rtmt._sessions.active_session_count >= 1)
+        sid = next(iter(self.rtmt._sessions._session_map.values()))
+        with self.assertLogs(rtmt.logger, level="WARNING") as logs:
+            await browser.send_json({"type": "extension.set_happy_hour_mode", "mode": "on"})
+            await asyncio.sleep(0.1)
+        self.assertTrue(any("extension.set_happy_hour_mode" in line for line in logs.output))
+        self.assertEqual(order_state_singleton.get_happy_hour_mode(sid), "auto")
+        await browser.close()
 
 
 class MenuModeWebSocketHandlerTests(_RealtimeHarness):

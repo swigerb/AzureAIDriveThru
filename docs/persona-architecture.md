@@ -366,12 +366,27 @@ starts a new session.
 | Surface | Contract |
 | --- | --- |
 | `GET /api/personas` | `{ "default": "sonic", "personas": [ { "id", "displayName", "logoUrl", "theme" } ], "backends": [ { "id": "python", "url" }, { "id": "dotnet", "url" } ] }`, enabled personas only; `backends` lists the deployed backends (section 10) |
-| `GET /api/personas/{id}` | The pack's `ui` block, plus `roleName`, `voice.default`, `locales`, `features.dayparts`, `menuUrl`, and the selectable `models` per pipeline (section 7). 404 if not enabled |
+| `GET /api/personas/{id}` | The pack's `ui` block, plus `roleName`, `voice.default`, `locales`, `features.dayparts`, `menuUrl`, `machines`, `happyHour`, and the selectable `models` per pipeline (section 7). `machines` is `{ "<key>": { "status", "label" } }` (or `{}`), where the public API normalizes pack-authored machine states to `"up"`/`"down"` (`"operational"` becomes `"up"`); `happyHour` is `{ "startHour", "endHour" }` or `null`. 404 if not enabled |
 | `GET /personas/{id}/assets/*`, `GET /personas/{id}/menu.json` | Static files from the pack, immutable caching (the existing compression and caching middleware) |
 | `GET /realtime?persona={id}&model={id}` | Omitted persona: `DEFAULT_PERSONA`. Omitted model: the persona's default realtime model. Unknown or not enabled: **HTTP 404 before the WebSocket upgrade**, never a silent fallback. Both are fixed for the session |
 | `extension.metadata` | Gains `persona`, `model` and `pipeline` (additive) |
 | Resume | The held session remembers its persona and model. `extension.resume` from a socket opened with a different persona or model gets `extension.resume_rejected` with `reason: "persona_mismatch"` or `"model_mismatch"`, then a fresh session (the existing rejection path, then metadata) |
 | Session token, Origin checks, authentication | Entra ID per section 18 (ADR-002, which replaces EasyAuth): every route above except `/personas/{id}/assets/*` branding files needs a bearer, and `/realtime` takes it as `?access_token`. The HMAC session token gains the caller's `oid`. The persona and model are not secrets and are not in the HMAC token |
+
+**Session-only operator overrides (both backends).** Two browser-only extension messages travel on the existing
+`extension.*` WebSocket channel and are never forwarded upstream to OpenAI:
+
+- `{"type":"extension.set_machine_status","machine":"<key>","status":"up"|"down"}` updates THIS session's
+  effective machine status override, but only when `<key>` is one of the bound persona's own
+  `manifest.machines` keys and `status` is exactly `"up"` or `"down"`. Anything else is dropped with a
+  WARNING, not stored, and never echoed.
+- `{"type":"extension.set_happy_hour_mode","mode":"auto"|"on"|"off"}` updates THIS session's happy-hour
+  mode, but only when the bound persona actually declares `pricing.happyHour`. `"on"` forces happy hour on,
+  `"off"` forces it off, and `"auto"` restores the persona's normal window-based computation. Invalid modes, or
+  any toggle sent to a persona with `happyHour: null`, are dropped with a WARNING.
+
+These controls are pure server-side session state: the model never decides them, and every write is validated
+against the bound persona pack first.
 
 ## 6. Menu rules: #51, #64 and no off-menu ordering (decided)
 

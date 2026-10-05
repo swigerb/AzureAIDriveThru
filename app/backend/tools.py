@@ -645,7 +645,7 @@ async def update_order(args, session_id: str) -> ToolResult:
     # required when it was added.
     if args["action"] == "add":
         machine = menu.requires_machine(item_name)
-        if machine and menu.machine_status(machine) == "down":
+        if machine and order_state_singleton.effective_machine_status(session_id, machine) == "down":
             machine_label = menu.machine_label(machine)
             logger.info(
                 "Rejected '%s' for session %s (machine_unavailable: %s)", item_name, session_id, machine,

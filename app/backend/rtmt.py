@@ -31,6 +31,8 @@ from audio_pipeline import (
     INPUT_AUDIO_CLEAR_MSG as _INPUT_AUDIO_CLEAR_MSG,
     MARKER_AUDIO_APPEND as _MARKER_AUDIO_APPEND,
     MARKER_END_SESSION as _MARKER_END_SESSION,
+    MARKER_SET_HAPPY_HOUR_MODE as _MARKER_SET_HAPPY_HOUR_MODE,
+    MARKER_SET_MACHINE_STATUS as _MARKER_SET_MACHINE_STATUS,
     MARKER_LOG_TO_FILE as _MARKER_LOG_TO_FILE,
     MARKER_RESUME as _MARKER_RESUME,
     MARKER_SET_VOICE as _MARKER_SET_VOICE,
@@ -2744,6 +2746,50 @@ class RTMiddleTier:
                                                 logger.info("Assistant audio already present — voice %s applies from the next conversation", new_voice)
                                             else:
                                                 await target_ws.send_str(guard.track(self.build_voice_update(new_voice)))
+                                        continue
+                                except (json.JSONDecodeError, KeyError):
+                                    pass
+
+                            if _MARKER_SET_MACHINE_STATUS in msg.data:
+                                try:
+                                    ext_msg = json.loads(msg.data)
+                                    if ext_msg.get("type") == "extension.set_machine_status":
+                                        if session_id:
+                                            self._sessions.touch_activity(session_id)
+                                        machine = ext_msg.get("machine")
+                                        status = ext_msg.get("status")
+                                        if order_state_singleton.set_machine_override(session_id, machine, status):
+                                            logger.info(
+                                                "Machine override set to %s for %s in session %s",
+                                                status, machine, session_id,
+                                            )
+                                        else:
+                                            _warn_dropped_frame(
+                                                drop_limiter,
+                                                "Dropped extension.set_machine_status with invalid machine/status "
+                                                "(machine=%s, status=%s, session=%s)",
+                                                _truncate_for_log(machine), _truncate_for_log(status), session_id,
+                                            )
+                                        continue
+                                except (json.JSONDecodeError, KeyError):
+                                    pass
+
+                            if _MARKER_SET_HAPPY_HOUR_MODE in msg.data:
+                                try:
+                                    ext_msg = json.loads(msg.data)
+                                    if ext_msg.get("type") == "extension.set_happy_hour_mode":
+                                        if session_id:
+                                            self._sessions.touch_activity(session_id)
+                                        mode = ext_msg.get("mode")
+                                        if order_state_singleton.set_happy_hour_mode(session_id, mode):
+                                            logger.info("Happy-hour mode changed to %s for session %s", mode, session_id)
+                                        else:
+                                            _warn_dropped_frame(
+                                                drop_limiter,
+                                                "Dropped extension.set_happy_hour_mode with invalid/unsupported mode "
+                                                "(mode=%s, session=%s)",
+                                                _truncate_for_log(mode), session_id,
+                                            )
                                         continue
                                 except (json.JSONDecodeError, KeyError):
                                     pass

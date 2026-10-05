@@ -40,6 +40,11 @@ def is_happy_hour(session: dict | None = None) -> bool:
     suite, which mocks the whole function regardless of which session (or none) it's called
     with/without."""
     if session is not None:
+        mode = session.get("_happy_hour_mode", "auto")
+        if mode == "on":
+            return True
+        if mode == "off":
+            return False
         window = session.get("_happy_hour_window")
         tz = session["_tz"]
     else:
@@ -279,6 +284,8 @@ class OrderState:
             # `announce=False`/`banner=""` here, so it can never announce regardless of clock.
             "_happy_hour_announce": happy_hour_cfg.announce if happy_hour_cfg is not None else False,
             "_happy_hour_banner": happy_hour_cfg.banner if happy_hour_cfg is not None else "",
+            "_machine_overrides": {},
+            "_happy_hour_mode": "auto",
         }
         self._reset_order_state(self.sessions[session_id])
         logger.info("Session created: %s (persona=%s, model=%s)", session_id, persona.id, model_id)
@@ -1419,6 +1426,28 @@ class OrderState:
         self._check_owner(session_id)
         return self._menu_for(self.sessions[session_id])
 
+    def set_machine_override(self, session_id: str, machine: str, status: str) -> bool:
+        if session_id not in self.sessions:
+            return False
+        self._check_owner(session_id)
+        if status not in ("up", "down"):
+            return False
+        session = self.sessions[session_id]
+        if machine not in self._menu_for(session).machines:
+            return False
+        session["_machine_overrides"][machine] = status
+        return True
+
+    def effective_machine_status(self, session_id: str, machine: str) -> str | None:
+        if session_id not in self.sessions:
+            return default_persona.get_default_menu_catalog().machine_status(machine)
+        self._check_owner(session_id)
+        session = self.sessions[session_id]
+        override = session["_machine_overrides"].get(machine)
+        if override is not None:
+            return override
+        return self._menu_for(session).machine_status(machine)
+
     def get_menu_mode(self, session_id: str) -> str | None:
         """This session's own bound daypart (``"breakfast"`` | ``"lunch"``), or ``None`` for a
         persona that doesn't declare ``features.dayparts`` (#165) -- resolved once at
@@ -1440,6 +1469,22 @@ class OrderState:
             return is_happy_hour()
         self._check_owner(session_id)
         return self._is_happy_hour_for(self.sessions[session_id])
+
+    def set_happy_hour_mode(self, session_id: str, mode: str) -> bool:
+        if session_id not in self.sessions:
+            return False
+        self._check_owner(session_id)
+        session = self.sessions[session_id]
+        if session.get("_happy_hour_window") is None or mode not in ("auto", "on", "off"):
+            return False
+        session["_happy_hour_mode"] = mode
+        return True
+
+    def get_happy_hour_mode(self, session_id: str) -> str:
+        if session_id not in self.sessions:
+            return "auto"
+        self._check_owner(session_id)
+        return self.sessions[session_id].get("_happy_hour_mode", "auto")
 
     def get_happy_hour_banner_for_session(self, session_id: str) -> str:
         """The happy-hour note ``tools.py`` appends for THIS session.
