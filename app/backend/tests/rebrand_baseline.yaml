@@ -96,7 +96,7 @@ entries:
     to substitute, so it names the real persona id directly (#313, Rick''s re-review
     item 1, replacing an earlier "dun" + "kin" string-concatenation evasion of this
     same guard).'
-  increase_reason: '#313'
+  increase_reason: '#304'
 - file: app/backend-dotnet/tests/Backend.Tests/Personas/MenuKeyValidatorTests.cs
   brand: sonic
   max: 1
@@ -178,7 +178,7 @@ entries:
     persona-specific lexicon, so no test-only fixture substitution is needed) --
     one hit from the PersonaId constant, one from this class''s own doc comment
     naming the pack by id.'
-  increase_reason: '#313'
+  increase_reason: '#304'
 - file: app/backend/audio_pipeline.py
   brand: sonic
   max: 4
@@ -305,7 +305,7 @@ entries:
     it''s the only persona pack that exists yet -- #78/#79 land the other packs, at
     which point these tests get parameterized per-persona instead of hardcoding Sonic.'
   increase_reason: ''
-- file: app/backend/tests/test_menu_utils.py
+- file: app/backend/tests/test_real_persona_lexicon.py
   brand: dunkin
   max: 1
   issue: '#304'
@@ -315,7 +315,7 @@ entries:
     to substitute, so it names the real persona id directly (#313, Rick''s re-review
     item 1, replacing an earlier "dun" + "kin" string-concatenation evasion of this
     same guard).'
-  increase_reason: '#313'
+  increase_reason: '#304'
 - file: app/backend/tests/test_menu_utils.py
   brand: sonic
   max: 7
@@ -777,7 +777,7 @@ entries:
     no test-only-fixture equivalent of that real lexicon data to substitute, so it
     names the real persona id directly (#313, Rick''s re-review item 1, replacing an
     earlier "dun" + "kin" string-concatenation evasion of this same guard).'
-  increase_reason: '#313'
+  increase_reason: '#304'
 - file: tests/conformance/tests/Conformance.Tests/Scenarios/Ordering/ComboAbsorptionTests.cs
   brand: sonic
   max: 6
