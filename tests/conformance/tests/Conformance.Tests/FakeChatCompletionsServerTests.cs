@@ -91,6 +91,36 @@ public sealed class FakeChatCompletionsServerTests
     }
 
     /// <summary>
+    /// Issue #274 follow-up A (#253 re-review): the 3 tests above only ever exercise
+    /// <see cref="FakeChatCompletionsServer.AssertNoPendingScriptedResponses"/>'s FIFO-leak branch
+    /// (an unconsumed scripted response, with no armed gate) and <see cref="FakeChatCompletionsServer.Drain"/>'s
+    /// own gate-release behaviour -- none of them call
+    /// <see cref="FakeChatCompletionsServer.AssertNoPendingScriptedResponses"/> itself with an
+    /// armed-but-empty gate (an <see cref="FakeChatCompletionsServer.HoldNextResponse"/> call with
+    /// NO scripted response ever queued at all), the exact shape that exercises this method's own
+    /// `leakedGate is not null` branch in isolation and selects its "An armed HoldNextResponse() gate
+    /// was" message text (as opposed to the "N scripted ... response(s) were" or combined message --
+    /// see that method's own `what` ternary). A mutation that flipped `leakedGate is not null` to
+    /// always false, or that swapped the message strings, would survive every existing test here
+    /// undetected.
+    /// </summary>
+    [Fact]
+    public async Task AssertNoPendingScriptedResponses_with_only_an_armed_gate_throws_mentioning_the_gate_and_a_later_call_is_clean()
+    {
+        await using var fake = new FakeChatCompletionsServer();
+        fake.HoldNextResponse();
+
+        var ex = Assert.Throws<InvalidOperationException>(fake.AssertNoPendingScriptedResponses);
+        Assert.Contains("An armed HoldNextResponse() gate was", ex.Message);
+
+        // Mirrors the FIFO-leak test's own "a later call is clean" assertion above: the gate (like
+        // the queue) is already cleared by the time the exception was thrown, so a second, later
+        // call must not re-discover it and must not throw at all.
+        var exception = Record.Exception(fake.AssertNoPendingScriptedResponses);
+        Assert.Null(exception);
+    }
+
+    /// <summary>
     /// Rick's PR #253 re-review: <see cref="FakeChatCompletionsServer.HoldNextResponse"/> arms
     /// <c>_pendingResponseGate</c>, but only <see cref="FakeChatCompletionsServer.HandleCompletionAsync"/>
     /// (triggered by a REQUEST actually landing) used to ever clear it -- <see cref="FakeChatCompletionsServer.Drain"/>
