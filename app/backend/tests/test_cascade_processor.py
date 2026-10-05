@@ -35,6 +35,7 @@ covered by the C# conformance suite's fake upstreams, per the task's own accepta
 import asyncio
 import base64
 import io
+import json
 import sys
 import unittest
 import wave
@@ -49,6 +50,7 @@ from aiohttp import web
 from azure.ai.inference.models import UserMessage
 from azure.core.exceptions import HttpResponseError
 
+import session_manager
 from cascade_processor import (
     _AUDIO_SAMPLE_RATE,
     CascadeProcessor,
@@ -450,9 +452,10 @@ class SendGreetingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(state.messages), 1)
         self.assertIn("Welcome to the drive-thru!", state.messages[0].content)
         processor._speak.assert_awaited_once_with(
-            ws, "Welcome to the drive-thru! What can I get started for you today?", "marin"
+            ws, "Welcome to the drive-thru! What can I get started for you today?", state
         )
         self.assertEqual(_sent_types(ws), ["response.created", "response.audio_transcript.delta", "response.done"])
+        processor._sessions.mark_greeting_sent.assert_called_once_with("s1")
 
     async def test_greeting_is_a_noop_without_a_bound_prompt_loader(self):
         """A persona with no PromptLoader bound (shouldn't happen for a real persona, but this
@@ -949,6 +952,423 @@ class RunSessionVoiceTests(unittest.IsolatedAsyncioTestCase):
 
         seeded_state = processor._start_greeting.call_args.args[2]
         self.assertEqual(seeded_state.voice, "cedar")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# #126: echo suppression cooldown (_TurnDetector)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class EchoCooldownTests(unittest.TestCase):
+    """Issue #126 point 3: a `speech_started` right after the assistant's own TTS starts
+    playing must not be mistaken for barge-in. Mutation-test seam: dropping the cooldown check
+    in `feed()` (or never calling `start_echo_cooldown` from `_speak`, covered separately below)
+    makes `test_loud_audio_during_the_cooldown_window_is_swallowed_not_detected` fail; letting
+    the cooldown block detection FOREVER (instead of only until its deadline) makes
+    `test_real_barge_in_is_still_detected_once_the_cooldown_window_ends` fail."""
+
+    def test_loud_audio_during_the_cooldown_window_is_swallowed_not_detected(self):
+        detector = _TurnDetector(threshold=0.5, silence_duration_ms=200, sample_rate=24000)
+        detector.start_echo_cooldown(1.0, now=0.0)
+        event = detector.feed(_loud_tone(2400), now=0.5)
+        self.assertIsNone(event)
+        self.assertFalse(detector.is_speaking)
+
+    def test_real_barge_in_is_still_detected_once_the_cooldown_window_ends(self):
+        detector = _TurnDetector(threshold=0.5, silence_duration_ms=200, sample_rate=24000)
+        detector.start_echo_cooldown(1.0, now=0.0)
+        event = detector.feed(_loud_tone(2400), now=1.5)
+        self.assertEqual(event, "speech_started")
+
+    def test_start_echo_cooldown_never_shrinks_an_already_armed_longer_window(self):
+        """A second (shorter) `start_echo_cooldown` call must never regress an existing, still
+        in-effect cooldown -- `max()`, not overwrite."""
+        detector = _TurnDetector(threshold=0.5, silence_duration_ms=200, sample_rate=24000)
+        detector.start_echo_cooldown(2.0, now=0.0)
+        detector.start_echo_cooldown(0.1, now=0.0)
+        event = detector.feed(_loud_tone(2400), now=1.0)
+        self.assertIsNone(event)
+
+    def test_feed_without_a_now_argument_never_applies_a_cooldown(self):
+        """Existing callers that never pass `now` (none left in production code, but this
+        documents the contract) must behave exactly like before this issue -- no cooldown ever
+        suppresses detection."""
+        detector = _TurnDetector(threshold=0.5, silence_duration_ms=200, sample_rate=24000)
+        detector.start_echo_cooldown(10.0, now=0.0)
+        event = detector.feed(_loud_tone(2400))
+        self.assertEqual(event, "speech_started")
+
+
+class SpeakArmsEchoCooldownTests(unittest.IsolatedAsyncioTestCase):
+    """Proves `CascadeProcessor._speak` actually arms `state.detector`'s echo cooldown for
+    roughly the real playback duration of the synthesized audio (not this method's own fast
+    send loop) plus `_ECHO_COOLDOWN_SECONDS` -- the other half of the #126 mutation-test seam
+    above: a `_speak` that stops calling `start_echo_cooldown` would make every
+    `EchoCooldownTests` row irrelevant in production even though they'd still pass in isolation."""
+
+    async def test_speak_arms_the_cooldown_for_the_audio_duration_plus_the_configured_buffer(self):
+        processor = _make_processor({})
+        processor.model_catalog.deployment_for.return_value = "tts-deploy"
+        processor._bearer_token = AsyncMock(return_value="tok")
+        audio_bytes = b"\x00\x00" * _AUDIO_SAMPLE_RATE  # exactly 1.0s of 24kHz mono PCM16.
+
+        fake_resp = MagicMock()
+        fake_resp.raise_for_status = MagicMock()
+        fake_resp.read = AsyncMock(return_value=audio_bytes)
+        fake_post_cm = MagicMock()
+        fake_post_cm.__aenter__ = AsyncMock(return_value=fake_resp)
+        fake_post_cm.__aexit__ = AsyncMock(return_value=False)
+        fake_http = MagicMock()
+        fake_http.post = MagicMock(return_value=fake_post_cm)
+        fake_session_cm = MagicMock()
+        fake_session_cm.__aenter__ = AsyncMock(return_value=fake_http)
+        fake_session_cm.__aexit__ = AsyncMock(return_value=False)
+
+        ws = _make_mock_ws()
+        state = _CascadeSessionState(session_id="s1", persona_id="p", deployment="d", voice="marin")
+        state.detector = _TurnDetector(threshold=0.5, silence_duration_ms=200, sample_rate=24000)
+
+        with patch("cascade_processor.aiohttp.ClientSession", return_value=fake_session_cm), \
+             patch("cascade_processor._ECHO_COOLDOWN_SECONDS", 1.5):
+            with patch.object(state.detector, "start_echo_cooldown") as mock_start:
+                await processor._speak(ws, "hello", state)
+
+        mock_start.assert_called_once()
+        (duration_seconds,), _ = mock_start.call_args
+        self.assertAlmostEqual(duration_seconds, 1.0 + 1.5)
+
+    async def test_speak_is_a_noop_on_the_cooldown_when_state_has_no_detector(self):
+        """`_run_turn_and_speak` is also reachable from a code path with no detector attached
+        (defensive -- never happens for a real connection); `_speak` must not crash."""
+        processor = _make_processor({})
+        processor.model_catalog.deployment_for.return_value = "tts-deploy"
+        processor._bearer_token = AsyncMock(return_value="tok")
+        fake_resp = MagicMock()
+        fake_resp.raise_for_status = MagicMock()
+        fake_resp.read = AsyncMock(return_value=b"\x00\x00")
+        fake_post_cm = MagicMock()
+        fake_post_cm.__aenter__ = AsyncMock(return_value=fake_resp)
+        fake_post_cm.__aexit__ = AsyncMock(return_value=False)
+        fake_http = MagicMock()
+        fake_http.post = MagicMock(return_value=fake_post_cm)
+        fake_session_cm = MagicMock()
+        fake_session_cm.__aenter__ = AsyncMock(return_value=fake_http)
+        fake_session_cm.__aexit__ = AsyncMock(return_value=False)
+
+        ws = _make_mock_ws()
+        state = _CascadeSessionState(session_id="s1", persona_id="p", deployment="d", voice="marin")
+        self.assertIsNone(state.detector)
+
+        with patch("cascade_processor.aiohttp.ClientSession", return_value=fake_session_cm):
+            await processor._speak(ws, "hello", state)  # must not raise
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# #126: resume/rehydration bookkeeping -- `record_turn`/`mark_greeting_sent` calls that make
+# `SessionManager.recent_turns()`/`ResumeOutcome.conversation_started` meaningful for cascade
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class RecordTurnTests(unittest.IsolatedAsyncioTestCase):
+    """Before #126, cascade never called `record_turn` or `mark_greeting_sent` at all -- a
+    resumed cascade session's rehydration would always be empty, and `conversation_started`
+    would always read False (always re-greeting instead of rehydrating silently). Mutation-test
+    seam: dropping either call below makes its own assertion fail while every other test in this
+    file still passes (none of them assert on `self._sessions.record_turn`/`mark_greeting_sent`
+    already)."""
+
+    async def test_process_turn_records_the_guest_turn(self):
+        processor = _make_processor({})
+        processor._with_rate_limit_retry = AsyncMock(return_value="a burger please")
+        processor._run_turn_and_speak = AsyncMock()
+        ws = _make_mock_ws()
+        state = _CascadeSessionState(session_id="s1", persona_id="p", deployment="d", voice="marin")
+
+        await processor._process_turn(ws, "s1", state, _loud_tone(100))
+
+        processor._sessions.record_turn.assert_called_once_with("s1", "guest", "a burger please")
+
+    async def test_run_turn_and_speak_records_the_assistant_turn(self):
+        processor = _make_processor({})
+        processor._run_chat_tool_loop = AsyncMock(return_value="Sure thing!")
+        processor._speak = AsyncMock()
+        ws = _make_mock_ws()
+        state = _CascadeSessionState(session_id="s1", persona_id="p", deployment="d", voice="marin")
+
+        with patch("cascade_processor.order_state_singleton") as mock_order_state:
+            mock_order_state.advance_round_trip.return_value = SimpleNamespace()
+            await processor._run_turn_and_speak(ws, "s1", state)
+
+        processor._sessions.record_turn.assert_called_once_with("s1", "assistant", "Sure thing!")
+
+    async def test_send_greeting_marks_the_greeting_sent_before_speaking(self):
+        processor = _make_processor({})
+        processor._run_chat_tool_loop = AsyncMock(return_value="Welcome!")
+        processor._speak = AsyncMock()
+        ws = _make_mock_ws()
+        state = _CascadeSessionState(session_id="s1", persona_id="p", deployment="d", voice="marin")
+        prompt_loader = MagicMock()
+        prompt_loader.get_greeting.return_value = _greeting_payload("Say EXACTLY this: hi")
+
+        with patch("cascade_processor.order_state_singleton") as mock_order_state:
+            mock_order_state.advance_round_trip.return_value = SimpleNamespace()
+            await processor._send_greeting(ws, "s1", state, prompt_loader)
+
+        processor._sessions.mark_greeting_sent.assert_called_once_with("s1")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# #126: cascade's own resume handshake (`_negotiate_session`) -- SAME `SessionManager.resume`/
+# grace-held order state/4002-supersede semantics the realtime pipeline already uses
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _fake_resume_first_frame(resume_id="abc123"):
+    return SimpleNamespace(type=web.WSMsgType.TEXT, data=json.dumps({"type": "extension.resume", "resume_id": resume_id}))
+
+
+class NegotiateSessionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_no_first_frame_within_the_timeout_creates_a_fresh_session_with_a_resume_id(self):
+        """The actual root-cause bug fix: before #126, `handle()` never passed `extra=` at all,
+        so a cascade session's `extension.session_metadata` never carried a `resumeId`, making
+        every cascade session permanently unresumable regardless of `SessionManager`'s own
+        already-complete resume support."""
+        processor = _make_processor({})
+        processor._sessions.first_frame_timeout_seconds = 0.01
+        processor._sessions.create_session.return_value = "new-session-1"
+        processor._sessions.issue_resume_id.return_value = "resume-xyz"
+        ws = _make_mock_ws()
+        ws.receive = AsyncMock(side_effect=asyncio.TimeoutError())
+        persona = _fake_persona("marin")
+        resolved_model = SimpleNamespace(id="m1", deployment="d", reasoning=None, pipeline="cascade")
+
+        with patch("cascade_processor.order_state_singleton") as mock_order_state:
+            mock_order_state.get_session_identifiers.return_value = SimpleNamespace(
+                session_token="tok", round_trip_index=0, round_trip_token="rtt", persona_id="p", model_id="m1", pipeline="cascade")
+            session_id, resumed_state, leftover = await processor._negotiate_session(ws, persona, resolved_model, None)
+
+        self.assertEqual(session_id, "new-session-1")
+        self.assertIsNone(resumed_state)
+        self.assertIsNone(leftover)
+        processor._sessions.create_session.assert_called_once()
+        processor._sessions.emit_session_identifiers.assert_awaited_once()
+        call_kwargs = processor._sessions.emit_session_identifiers.await_args.kwargs
+        self.assertEqual(call_kwargs["extra"], {"resumeId": "resume-xyz"})
+
+    async def test_a_non_resume_first_frame_is_replayed_as_leftover_not_dropped(self):
+        """A real first frame (e.g. `extension.set_voice`, sent before any resume id exists)
+        peeked while checking for a resume attempt must never be silently dropped."""
+        processor = _make_processor({})
+        processor._sessions.first_frame_timeout_seconds = 2.0
+        processor._sessions.create_session.return_value = "new-session-1"
+        processor._sessions.issue_resume_id.return_value = None
+        ws = _make_mock_ws()
+        set_voice_frame = SimpleNamespace(type=web.WSMsgType.TEXT, data=json.dumps({"type": "extension.set_voice", "voice": "cedar"}))
+        ws.receive = AsyncMock(return_value=set_voice_frame)
+        persona = _fake_persona("marin")
+        resolved_model = SimpleNamespace(id="m1", deployment="d", reasoning=None, pipeline="cascade")
+
+        with patch("cascade_processor.order_state_singleton") as mock_order_state:
+            mock_order_state.get_session_identifiers.return_value = SimpleNamespace(
+                session_token="tok", round_trip_index=0, round_trip_token="rtt", persona_id="p", model_id="m1", pipeline="cascade")
+            session_id, resumed_state, leftover = await processor._negotiate_session(ws, persona, resolved_model, None)
+
+        self.assertIsNone(resumed_state)
+        self.assertIs(leftover, set_voice_frame)
+
+    async def test_resume_accepted_mid_conversation_rehydrates_and_suppresses_the_greeting(self):
+        processor = _make_processor({})
+        processor._sessions.first_frame_timeout_seconds = 2.0
+        processor._sessions.nudge_after_seconds = 30.0
+        processor._sessions.rehydration_text.return_value = "ORDER + HISTORY"
+        processor._sessions.get_voice.return_value = "cedar"
+        processor._start_greeting = MagicMock()
+        outcome = session_manager.ResumeOutcome(
+            True, session_id="resumed-1", reason=None, resume_id="rotated-id", stale_ws=None, conversation_started=True,
+        )
+        processor._sessions.resume.return_value = outcome
+        ws = _make_mock_ws()
+        ws.receive = AsyncMock(return_value=_fake_resume_first_frame())
+        persona = _fake_persona("marin")
+        resolved_model = SimpleNamespace(id="m1", deployment="d", reasoning=None, pipeline="cascade")
+
+        with patch("cascade_processor.order_state_singleton") as mock_order_state:
+            mock_order_state.get_session_identifiers.return_value = SimpleNamespace(
+                session_token="tok", round_trip_index=2, round_trip_token="rtt", persona_id="p", model_id="m1", pipeline="cascade")
+            mock_order_state.get_order_summary_json.return_value = "{}"
+            session_id, resumed_state, leftover = await processor._negotiate_session(ws, persona, resolved_model, None)
+
+        self.assertEqual(session_id, "resumed-1")
+        self.assertIsNone(leftover)
+        self.assertIsNotNone(resumed_state)
+        self.assertEqual(resumed_state.voice, "cedar")
+        self.assertTrue(resumed_state.nudge_eligible)
+        self.assertEqual(resumed_state.messages[-1].content, "ORDER + HISTORY")
+        processor._start_greeting.assert_not_called()  # #247/#126: never re-greet mid-conversation
+        self.assertIn("extension.session_resumed", _sent_types(ws))
+
+    async def test_resume_accepted_before_any_greeting_still_runs_the_normal_greeting(self):
+        processor = _make_processor({})
+        processor._sessions.first_frame_timeout_seconds = 2.0
+        processor._start_greeting = MagicMock()
+        outcome = session_manager.ResumeOutcome(
+            True, session_id="resumed-1", reason=None, resume_id="rotated-id", stale_ws=None, conversation_started=False,
+        )
+        processor._sessions.resume.return_value = outcome
+        processor._sessions.get_voice.return_value = None
+        ws = _make_mock_ws()
+        ws.receive = AsyncMock(return_value=_fake_resume_first_frame())
+        persona = _fake_persona("marin")
+        resolved_model = SimpleNamespace(id="m1", deployment="d", reasoning=None, pipeline="cascade")
+
+        with patch("cascade_processor.order_state_singleton") as mock_order_state:
+            mock_order_state.get_session_identifiers.return_value = SimpleNamespace(
+                session_token="tok", round_trip_index=0, round_trip_token="rtt", persona_id="p", model_id="m1", pipeline="cascade")
+            mock_order_state.get_order_summary_json.return_value = "{}"
+            session_id, resumed_state, leftover = await processor._negotiate_session(ws, persona, resolved_model, None)
+
+        processor._start_greeting.assert_called_once()
+        self.assertFalse(resumed_state.nudge_eligible)
+
+    async def test_resume_with_a_stale_attached_socket_closes_it_with_4002(self):
+        processor = _make_processor({})
+        processor._sessions.first_frame_timeout_seconds = 2.0
+        processor._start_greeting = MagicMock()
+        stale_ws = _make_mock_ws()
+        stale_ws.close = AsyncMock()
+        outcome = session_manager.ResumeOutcome(
+            True, session_id="resumed-1", reason=None, resume_id="rotated-id", stale_ws=stale_ws, conversation_started=False,
+        )
+        processor._sessions.resume.return_value = outcome
+        processor._sessions.get_voice.return_value = None
+        ws = _make_mock_ws()
+        ws.receive = AsyncMock(return_value=_fake_resume_first_frame())
+        persona = _fake_persona("marin")
+        resolved_model = SimpleNamespace(id="m1", deployment="d", reasoning=None, pipeline="cascade")
+
+        with patch("cascade_processor.order_state_singleton") as mock_order_state:
+            mock_order_state.get_session_identifiers.return_value = SimpleNamespace(
+                session_token="tok", round_trip_index=0, round_trip_token="rtt", persona_id="p", model_id="m1", pipeline="cascade")
+            mock_order_state.get_order_summary_json.return_value = "{}"
+            await processor._negotiate_session(ws, persona, resolved_model, None)
+            # `_close_superseded` is spawned as a background task -- give the event loop a turn.
+            await asyncio.sleep(0)
+
+        stale_ws.close.assert_awaited_once()
+        self.assertEqual(stale_ws.close.await_args.kwargs.get("code"), session_manager.SUPERSEDED_CLOSE_CODE)
+
+    async def test_resume_rejected_falls_through_to_a_fresh_session(self):
+        processor = _make_processor({})
+        processor._sessions.first_frame_timeout_seconds = 2.0
+        processor._sessions.create_session.return_value = "fresh-1"
+        processor._sessions.issue_resume_id.return_value = "new-resume-id"
+        outcome = session_manager.ResumeOutcome(False, reason="expired")
+        processor._sessions.resume.return_value = outcome
+        ws = _make_mock_ws()
+        ws.receive = AsyncMock(return_value=_fake_resume_first_frame())
+        persona = _fake_persona("marin")
+        resolved_model = SimpleNamespace(id="m1", deployment="d", reasoning=None, pipeline="cascade")
+
+        with patch("cascade_processor.order_state_singleton") as mock_order_state:
+            mock_order_state.get_session_identifiers.return_value = SimpleNamespace(
+                session_token="tok", round_trip_index=0, round_trip_token="rtt", persona_id="p", model_id="m1", pipeline="cascade")
+            session_id, resumed_state, leftover = await processor._negotiate_session(ws, persona, resolved_model, None)
+
+        self.assertEqual(session_id, "fresh-1")
+        self.assertIsNone(resumed_state)
+        self.assertIsNone(leftover)
+        sent_types = _sent_types(ws)
+        self.assertIn("extension.resume_rejected", sent_types)
+        rejected = ws.send_json.await_args_list[sent_types.index("extension.resume_rejected")].args[0]
+        self.assertEqual(rejected["reason"], "expired")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# #126: cascade's own one-shot resume nudge
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class NudgeSchedulingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_a_late_resumes_first_mic_chunk_arms_the_nudge_exactly_once(self):
+        processor = _make_processor({})
+        processor._sessions.nudge_after_seconds = 9999  # never actually fires in this test
+        ws = _make_mock_ws()
+        detector = _TurnDetector(threshold=0.5, silence_duration_ms=200, sample_rate=24000)
+        state = _CascadeSessionState(session_id="s1", persona_id="p", deployment="d", voice="marin",
+                                      detector=detector, nudge_eligible=True)
+
+        with patch.object(processor, "_schedule_nudge") as mock_schedule:
+            await processor._handle_client_message(
+                ws, "s1", state, detector,
+                {"type": "input_audio_buffer.append", "audio": base64.b64encode(_silence(10)).decode()},
+                None,
+            )
+            await processor._handle_client_message(
+                ws, "s1", state, detector,
+                {"type": "input_audio_buffer.append", "audio": base64.b64encode(_silence(10)).decode()},
+                None,
+            )
+
+        mock_schedule.assert_called_once()
+        self.assertTrue(state.nudge_armed)
+
+    async def test_nudge_does_not_arm_when_the_connection_was_not_resume_eligible(self):
+        processor = _make_processor({})
+        ws = _make_mock_ws()
+        detector = _TurnDetector(threshold=0.5, silence_duration_ms=200, sample_rate=24000)
+        state = _CascadeSessionState(session_id="s1", persona_id="p", deployment="d", voice="marin", detector=detector)
+
+        with patch.object(processor, "_schedule_nudge") as mock_schedule:
+            await processor._handle_client_message(
+                ws, "s1", state, detector,
+                {"type": "input_audio_buffer.append", "audio": base64.b64encode(_silence(10)).decode()},
+                None,
+            )
+
+        mock_schedule.assert_not_called()
+
+    async def test_barge_in_cancels_a_pending_nudge(self):
+        processor = _make_processor({})
+        ws = _make_mock_ws()
+        detector = _TurnDetector(threshold=0.5, silence_duration_ms=200, sample_rate=24000)
+        state = _CascadeSessionState(session_id="s1", persona_id="p", deployment="d", voice="marin", detector=detector)
+        state.nudge_task = asyncio.ensure_future(asyncio.sleep(100))
+
+        with patch.object(processor, "_cancel_current_turn", AsyncMock()):
+            await processor._handle_client_message(
+                ws, "s1", state, detector,
+                {"type": "input_audio_buffer.append", "audio": base64.b64encode(_loud_tone(2400)).decode()},
+                None,
+            )
+
+        self.assertIsNone(state.nudge_task)
+
+    async def test_nudge_fires_the_prompt_text_through_the_normal_turn_machinery_when_idle(self):
+        """Mutation-test seam: dropping the `current_turn_task` in-flight check would let a
+        nudge fire while the assistant is already speaking -- stacking a second response on top
+        of the first, exactly the bug #126's brief calls out."""
+        processor = _make_processor({})
+        processor._sessions.nudge_after_seconds = 0.01
+        processor._sessions.nudge_text.return_value = "ask if they need anything else"
+        processor._run_turn_and_speak = AsyncMock()
+        ws = _make_mock_ws()
+        state = _CascadeSessionState(session_id="s1", persona_id="p", deployment="d", voice="marin", role_name="carhop")
+
+        processor._schedule_nudge(ws, "s1", state)
+        await state.nudge_task
+
+        processor._run_turn_and_speak.assert_awaited_once_with(ws, "s1", state)
+        self.assertEqual(state.messages[-1].content, "ask if they need anything else")
+
+    async def test_nudge_skips_firing_when_a_turn_is_still_in_flight(self):
+        processor = _make_processor({})
+        processor._sessions.nudge_after_seconds = 0.01
+        processor._run_turn_and_speak = AsyncMock()
+        ws = _make_mock_ws()
+        state = _CascadeSessionState(session_id="s1", persona_id="p", deployment="d", voice="marin")
+        state.current_turn_task = asyncio.ensure_future(asyncio.sleep(100))
+
+        processor._schedule_nudge(ws, "s1", state)
+        await state.nudge_task
+
+        processor._run_turn_and_speak.assert_not_awaited()
+        state.current_turn_task.cancel()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

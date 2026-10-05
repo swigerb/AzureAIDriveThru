@@ -475,8 +475,12 @@ class SessionManager:
         kept.reverse()
         return kept
 
-    def build_rehydration_item(self, session_id: str, role_name: str | None = None) -> str:
-        """One system conversation.item.create carrying the order and the recent turns.
+    def rehydration_text(self, session_id: str, role_name: str | None = None) -> str:
+        """The plain-text rehydration briefing -- the order summary plus the recent transcript
+        -- with no wire-protocol wrapping. Issue #126: the cascade pipeline has no upstream
+        Realtime API `conversation.item.create` to seed, so it appends this text directly as a
+        chat message instead; extracted here (backing `build_rehydration_item` below, unchanged)
+        so both pipelines share the exact same briefing content/wording.
 
         *role_name* (#74, optional): the resumed session's own bound persona's roleName (e.g.
         "carhop"), used to label that persona's turns in the replayed history instead of a
@@ -486,8 +490,13 @@ class SessionManager:
         turns = self.recent_turns(session_id)
         role_label = (role_name if role_name is not None else default_persona.get_default_persona().manifest.roleName).capitalize()
         history = "\n".join(f"{'Guest' if role == 'guest' else role_label}: {text}" for role, text in turns)
-        text = (f"{_REHYDRATION_PREAMBLE}\n\nCurrent order (JSON): {order_json}\n\n"
+        return (f"{_REHYDRATION_PREAMBLE}\n\nCurrent order (JSON): {order_json}\n\n"
                 f"Recent conversation (oldest first):\n{history or '(none recorded)'}")
+
+    def build_rehydration_item(self, session_id: str, role_name: str | None = None) -> str:
+        """One system conversation.item.create carrying the order and the recent turns -- the
+        realtime pipeline's own wire shape, built from `rehydration_text` above."""
+        text = self.rehydration_text(session_id, role_name=role_name)
         return json.dumps({
             "type": "conversation.item.create",
             "item": {
@@ -497,13 +506,21 @@ class SessionManager:
         })
 
     @staticmethod
-    def build_nudge_item(role_name: str | None = None) -> str:
-        """*role_name* (#74, optional): the session's own bound persona's roleName, substituted
-        into ``_NUDGE_TEXT_TEMPLATE``. Omitted: the deployment default persona's own roleName --
-        never a hardcoded "carhop"."""
-        text = _NUDGE_TEXT_TEMPLATE.format(
+    def nudge_text(role_name: str | None = None) -> str:
+        """The plain-text nudge prompt, with no wire-protocol wrapping (issue #126: cascade
+        appends this directly as a chat message instead of seeding an upstream
+        `conversation.item.create`; extracted here so both pipelines share the exact same
+        wording). *role_name* (#74, optional): the session's own bound persona's roleName,
+        substituted into ``_NUDGE_TEXT_TEMPLATE``. Omitted: the deployment default persona's own
+        roleName -- never a hardcoded "carhop"."""
+        return _NUDGE_TEXT_TEMPLATE.format(
             role_name=role_name if role_name is not None else default_persona.get_default_persona().manifest.roleName
         )
+
+    @staticmethod
+    def build_nudge_item(role_name: str | None = None) -> str:
+        """The realtime pipeline's own wire shape, built from `nudge_text` above."""
+        text = SessionManager.nudge_text(role_name)
         return json.dumps({
             "type": "conversation.item.create",
             "item": {

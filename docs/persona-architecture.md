@@ -669,17 +669,39 @@ matches `realtime`'s observable behavior where the demo needs it:
 | Greeting on connect: the persona's `greeting.yaml`, spoken, with the same `response.*` frames | yes | yes |
 | Barge-in: a `speech_started` cancels the in-flight model call and speech; nothing more is sent for the cancelled turn | yes (upstream VAD) | yes (local VAD) |
 | Upstream failure is never silent | rate limit: `extension.rate_limited` | a 429 from chat, transcription or TTS: the same `extension.rate_limited` path |
-| Resume (grace hold, rehydration) | yes | deferred to #126 |
-| Idle nudge | yes | deferred to #126 |
-| Echo suppression after playback | yes | deferred to #126 |
+| Resume (grace hold, rehydration) | yes | yes (#126) |
+| Idle nudge | yes | yes (#126) |
+| Echo suppression after playback | yes | yes (#126) |
 
 Each "yes" on `cascade` has a conformance row (`tests/conformance/.../Scenarios/Cascade/`).
 
-**Explicitly deferred, tracked in #126:** resume (a reconnect on `cascade` today gets a fresh session, with no
-grace-hold/rehydration equivalent to `realtime`'s), the idle-nudge, and echo suppression (`cascade_processor.py`
-doesn't import `audio_pipeline.py`'s `EchoSuppressor`, so there is no cooldown window after playback the way
-`realtime` has). None of these are required for the P2 demo's happy path or the conformance rows above; each
-needs its own design pass before landing on `cascade`.
+**#126 landed:** `cascade` now shares `SessionManager`'s resume handshake (grace hold + rehydration), idle
+nudge, and echo-suppression cooldown with `realtime`, through the same injected `SessionManager` instance
+(and, on the .NET side, the same echo-cooldown duration) rather than a `cascade`-specific reimplementation.
+Both backends mirror `realtime`'s own semantics exactly:
+
+- **Resume** is honoured only as a connection's literal first client frame (a late `extension.resume` is
+  rejected with `reason: "not_first_frame"`, mirroring `realtime`'s own `reject_late_resume`). A resume that
+  lands on an already-greeted session rehydrates (a system-role message/chat turn carrying the order summary
+  and recent transcript) and suppresses the greeting entirely; a resume that lands before the original
+  connection ever greeted still greets normally. A rejected/expired/mismatched resume falls through to the
+  normal fresh-session path (`extension.resume_rejected`, then `extension.session_metadata`, then the
+  greeting).
+- **Idle nudge** arms the moment the resumed, already-started conversation's guest re-opens their mic (the
+  first `input_audio_buffer.append`/mic-restart after rehydration), fires once `nudge_after_seconds` later if
+  the guest still hasn't spoken, and is cancelled by any barge-in or turn start -- same one-shot semantics as
+  `realtime`'s `NudgeScheduler`, just driven by cascade's own turn-taking loop instead of an upstream relay.
+- **Echo suppression** arms a cooldown window (`echo_cooldown_seconds` beyond the TTS clip's own playback
+  duration) after every spoken turn -- greeting included -- so the guest's own device audio echoing the
+  carhop's voice back is swallowed as silence rather than mistaken for a fresh turn. This is unconditional
+  (not gated behind resume being enabled), matching the stated rationale that echo is a room/device-acoustic
+  property independent of which pipeline answered.
+
+Python: `cascade_processor.py`'s `_negotiate_session`/`_schedule_nudge`/`_cancel_nudge`/`_send_nudge`, and
+`_TurnDetector`'s cooldown. .NET: `CascadeProcessor.cs`'s `NegotiateResumeAsync`/`ScheduleNudge`/`CancelNudge`
+local functions, and `TurnDetector.StartEchoCooldown`. Both share the existing `SessionManager` with
+`realtime` (no `cascade`-specific resume/nudge config); the .NET side additionally shares one
+`echoCooldownSeconds` value across both pipelines via `Program.cs`.
 
 ### 7.2 Config shape
 

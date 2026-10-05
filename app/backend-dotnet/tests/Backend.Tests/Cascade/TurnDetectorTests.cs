@@ -123,8 +123,59 @@ public sealed class TurnDetectorTests
     {
         var vad = CascadeVadConfig.FromAppConfig(AppConfig.Load());
 
-        // config.yaml's own top-level `vad` block, shared with the realtime pipeline's server_vad config.
+        // config.yaml's own top-level `vad` block, shared with the realtime pipeline's own server_vad config.
         Assert.Equal(0.5, vad.Threshold);
         Assert.Equal(200, vad.SilenceDurationMs);
+    }
+
+    // ── #126 echo-suppression cooldown ──────────────────────────────────────────────────────
+
+    [Fact]
+    public void Feed_SwallowsLoudAudioAsSilence_WhileNowIsInsideAnArmedEchoCooldown()
+    {
+        var detector = NewDetector();
+        detector.StartEchoCooldown(durationSeconds: 1.0, now: 100.0); // cooldown active through t=101.0
+
+        // Still inside the cooldown window (now=100.5 < 101.0) -- loud audio must be swallowed
+        // exactly like silence: no speech_started, IsSpeaking stays false.
+        Assert.Null(detector.Feed(LoudChunk, now: 100.5));
+        Assert.False(detector.IsSpeaking);
+    }
+
+    [Fact]
+    public void Feed_FiresSpeechStarted_OnceNowHasMovedPastTheEchoCooldownDeadline()
+    {
+        var detector = NewDetector();
+        detector.StartEchoCooldown(durationSeconds: 1.0, now: 100.0); // cooldown active through t=101.0
+
+        // Real barge-in: the guest actually talks AFTER the cooldown deadline has passed --
+        // must fire speech_started exactly like no cooldown had ever been armed.
+        Assert.Equal("speech_started", detector.Feed(LoudChunk, now: 101.5));
+        Assert.True(detector.IsSpeaking);
+    }
+
+    [Fact]
+    public void StartEchoCooldown_NeverShrinksAnAlreadyArmedLongerDeadline()
+    {
+        var detector = NewDetector();
+        detector.StartEchoCooldown(durationSeconds: 5.0, now: 100.0); // deadline = 105.0
+        detector.StartEchoCooldown(durationSeconds: 1.0, now: 100.0); // a shorter turn's own arm call -- must NOT shrink the deadline to 101.0
+
+        // Still well inside the ORIGINAL (longer) deadline -- a second, shorter _speak call must
+        // never shrink a cooldown another still-in-flight turn already armed.
+        Assert.Null(detector.Feed(LoudChunk, now: 103.0));
+        Assert.False(detector.IsSpeaking);
+    }
+
+    [Fact]
+    public void Feed_NeverAppliesACooldown_WhenNowIsNull()
+    {
+        var detector = NewDetector();
+        detector.StartEchoCooldown(durationSeconds: 5.0, now: 100.0);
+
+        // Every pre-#126 production/test caller passes no `now` at all (the default) -- must
+        // behave exactly as it always did, cooldown or not.
+        Assert.Equal("speech_started", detector.Feed(LoudChunk));
+        Assert.True(detector.IsSpeaking);
     }
 }

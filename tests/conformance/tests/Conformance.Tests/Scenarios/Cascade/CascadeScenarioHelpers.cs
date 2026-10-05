@@ -27,6 +27,10 @@ public static class CascadeScenarioHelpers
 {
     public static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
 
+    // #126: config.yaml's audio.echo_cooldown_seconds default (1.5s) plus a small buffer for
+    // scheduling jitter -- see ConnectPastGreetingAsync's own doc comment for why this matters.
+    public static readonly TimeSpan EchoCooldownClearDelay = TimeSpan.FromMilliseconds(1800);
+
     // Mirrors cascade_processor.py's _AUDIO_SAMPLE_RATE (24 kHz mono PCM16, matching the
     // realtime pipeline's own wire format so both pipelines sound identical to a guest).
     private const int SampleRate = 24000;
@@ -53,10 +57,21 @@ public static class CascadeScenarioHelpers
     /// Enqueues a harmless, fixed greeting reply onto <paramref name="chat"/> BEFORE connecting so
     /// the greeting's own completions call can never dequeue a message a test scripts afterward
     /// for its own guest turn.
+    ///
+    /// #126: the greeting's own TTS arms cascade's echo-suppression cooldown (config.yaml
+    /// `audio.echo_cooldown_seconds`, 1.5s by default -- a REAL production value here, never
+    /// overridable via a `CONFORMANCE_*` hook the way the idle/grace/nudge/first-frame timers
+    /// are). A caller that immediately sends a guest turn right after this method returns would
+    /// land inside that window and have its own genuine speech swallowed as suspected self-echo
+    /// -- exactly the behavior <see cref="CascadeResumeRehydrationAndNudgeTests"/>'s own
+    /// cooldown row proves on purpose. Every OTHER caller wants a guest turn to behave
+    /// normally, so this waits out the cooldown (plus a small buffer for scheduling jitter)
+    /// before returning, UNLESS <paramref name="skipEchoCooldownWait"/> opts out for a test that
+    /// deliberately wants to probe the cooldown window itself.
     /// </summary>
     public static async Task<CascadeConnection> ConnectPastGreetingAsync(
         ConformanceFixture fixture, FakeChatCompletionsServer chat, string model, CancellationToken ct,
-        string? persona = null, string? mode = null)
+        string? persona = null, string? mode = null, bool skipEchoCooldownWait = false)
     {
         chat.EnqueueMessage(new JsonObject { ["role"] = "assistant", ["content"] = "Welcome to the drive-thru!" });
         var browser = await ConnectAsync(fixture, model, ct, persona, mode).ConfigureAwait(false);
@@ -88,6 +103,11 @@ public static class CascadeScenarioHelpers
             {
                 throw new InvalidOperationException(
                     $"Expected the connect-time greeting's own extension.round_trip_token within {FrameTimeout}.");
+            }
+
+            if (!skipEchoCooldownWait)
+            {
+                await Task.Delay(EchoCooldownClearDelay, ct).ConfigureAwait(false);
             }
 
             return new CascadeConnection(browser, greetingRoundTrip.Sequence);

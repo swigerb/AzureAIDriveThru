@@ -21,6 +21,14 @@ public sealed class TurnDetector
     private readonly List<byte> _buffer = [];
     private int _silenceRun;
 
+    /// <summary>#126: echo suppression -- a monotonic-clock-comparable deadline (caller-supplied
+    /// via <paramref name="now"/> on <see cref="StartEchoCooldown"/>/<see cref="Feed"/>, never
+    /// read from a wall clock internally, matching cascade_processor.py's own
+    /// <c>_TurnDetector._echo_cooldown_until</c>/<c>time.monotonic()</c> convention) up to which
+    /// loud audio is treated as the assistant's own TTS bleeding back into the guest's mic, not
+    /// real barge-in. 0.0 (the default) means "no cooldown in effect".</summary>
+    private double _echoCooldownUntil;
+
     public TurnDetector(double threshold = 0.5, int silenceDurationMs = 200, int sampleRate = AudioSampleRate)
     {
         _cutoff = threshold * 32767;
@@ -43,12 +51,31 @@ public sealed class TurnDetector
         return data;
     }
 
+    /// <summary>Arms (or extends) the echo-suppression window from <paramref name="now"/> for
+    /// <paramref name="durationSeconds"/> (#126) -- port of cascade_processor.py's
+    /// <c>start_echo_cooldown</c>. Takes the max with any existing deadline so a new, shorter TTS
+    /// turn can never shrink -- only extend -- a cooldown another still-in-flight speak call
+    /// already armed.</summary>
+    public void StartEchoCooldown(double durationSeconds, double now) =>
+        _echoCooldownUntil = Math.Max(_echoCooldownUntil, now + durationSeconds);
+
     /// <summary>Feed one chunk of raw PCM16 mono audio. Returns "speech_started" the first time
     /// this turn crosses the energy threshold, "speech_stopped" once enough trailing silence has
     /// elapsed after speech was detected, or null otherwise. Always buffers the raw audio (even
     /// pre-threshold, so a turn's very first word isn't clipped) for the eventual transcription
-    /// upload.</summary>
-    public string? Feed(byte[] pcm16Bytes)
+    /// upload.
+    ///
+    /// #126 echo suppression: while <paramref name="now"/> is still inside the armed cooldown
+    /// window (<see cref="StartEchoCooldown"/>), loud audio is treated exactly like silence --
+    /// <see cref="IsSpeaking"/>/the trailing-silence run are left untouched and no
+    /// "speech_started" fires -- so the assistant's own TTS being picked back up by the guest's
+    /// mic right after it starts speaking is never mistaken for barge-in. Real barge-in (the
+    /// guest actually talking over the assistant) still fires once <paramref name="now"/> has
+    /// moved past the cooldown deadline -- this only ever delays detection, never blocks it
+    /// outright. A null <paramref name="now"/> (the default -- every existing production/test
+    /// caller before #126) never applies a cooldown, matching cascade_processor.py's own
+    /// contract.</summary>
+    public string? Feed(byte[] pcm16Bytes, double? now = null)
     {
         _buffer.AddRange(pcm16Bytes);
         var usableLen = pcm16Bytes.Length - (pcm16Bytes.Length % 2);
@@ -69,6 +96,11 @@ public sealed class TurnDetector
             return null;
         }
         var rms = Math.Sqrt(sumSquares / sampleCount);
+
+        if (rms >= _cutoff && !IsSpeaking && now is { } n && n < _echoCooldownUntil)
+        {
+            return null;
+        }
 
         string? result = null;
         if (rms >= _cutoff)

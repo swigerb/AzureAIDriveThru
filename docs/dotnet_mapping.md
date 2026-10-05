@@ -10,9 +10,14 @@ pre-upgrade `/realtime` auth and persona/model/mode binding, the Azure OpenAI re
 order engine, search tool, prompt rendering, tool dispatch, the full rate-limit retry ladder, the
 consecutive tool-failure cap, session resume/rehydration/idle-timeout/grace-hold/nudge (issue #15),
 ADR-002 Entra JwtBearer auth (issue #147), and the shared conformance dotnet leg. Guest/assistant
-turn recording (`SessionManager.RecordTurn`) has real production call sites (upstream
-`conversation.item.input_audio_transcription.completed` for the guest, `response.done` for the
-assistant), feeding rehydration text on resume. The remaining deliberate gap versus Python is
+turn recording (`SessionManager.RecordTurn`) has real production call sites for both pipelines
+(`realtime`'s upstream `conversation.item.input_audio_transcription.completed` for the guest and
+`response.done` for the assistant; `cascade`'s own transcription and chat-completion turns), feeding
+rehydration text on resume. Issue #126 extended the same `SessionManager`-backed resume/rehydration,
+idle nudge, and a new echo-suppression cooldown to `cascade` (see `CascadeProcessor.cs`'s
+`NegotiateResumeAsync`/`ScheduleNudge`/`CancelNudge` and `TurnDetector.StartEchoCooldown`), so both
+pipelines share one `SessionManager` instance and one echo-cooldown duration end to end. The
+remaining deliberate gap versus Python is
 tracked below: context-window monitoring.
 
 ## Module mapping

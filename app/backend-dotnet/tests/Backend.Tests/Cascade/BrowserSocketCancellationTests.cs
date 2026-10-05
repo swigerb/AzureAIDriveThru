@@ -53,7 +53,13 @@ public sealed class BrowserSocketCancellationTests
             promptLoaders: new Dictionary<string, PromptLoader> { ["test-delta"] = loader },
             toolExecutor: toolExecutor,
             httpClient: new HttpClient(handler),
-            bearerTokenProvider: new StaticBearerTokenProvider("fake-token"));
+            bearerTokenProvider: new StaticBearerTokenProvider("fake-token"),
+            // #126: this file's barge-in-during-backpressure scenario predates cascade's own
+            // echo-suppression feature and deliberately uses REAL wall-clock delays between the
+            // greeting's TTS and the guest's own next turn -- well within what would be a real
+            // 1.5s echo cooldown, but not testing echo suppression at all. 0 keeps the existing
+            // barge-in behaviour this file actually tests unaffected.
+            echoCooldownSeconds: 0);
 
     private static byte[] Pcm16(short sampleValue, int count)
     {
