@@ -896,12 +896,3 @@ entries:
     same class as the #78 Python test baseline entries; remove only if the pack roster
     or its test coverage changes.'
   increase_reason: '#105'
-- file: tests/conformance/tests/Conformance.Tests/SpokenReadBackConformanceTests.cs
-  brand: dunkin
-  max: 3
-  issue: '#313'
-  reason: 'Fixture/test data naming a real persona pack id (sonic/mcdonalds/dunkin)
-    to bind a conformance scenario (Munchkins multi-line read-back + Brian''s
-    modify-then-readback bug) to the one persona pack that actually ships that
-    brand-specific menu item and case-sensitive pronunciation lexicon entry.'
-  increase_reason: '#313'

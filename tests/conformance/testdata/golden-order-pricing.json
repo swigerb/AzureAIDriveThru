@@ -387,7 +387,7 @@
       ],
       "happyHour": false,
       "expectedFinalTotal": "9.2556",
-      "expectedSpokenTotalText": "$9.26",
+      "expectedSpokenTotalText": "nine dollars and twenty-six cents",
       "landsOnHalfCent": false
     },
     {
@@ -399,7 +399,7 @@
       ],
       "happyHour": true,
       "expectedFinalTotal": "6.345",
-      "expectedSpokenTotalText": "$6.35",
+      "expectedSpokenTotalText": "six dollars and thirty-five cents",
       "landsOnHalfCent": true
     },
     {
@@ -410,7 +410,7 @@
       ],
       "happyHour": false,
       "expectedFinalTotal": "32.40",
-      "expectedSpokenTotalText": "$32.40",
+      "expectedSpokenTotalText": "thirty-two dollars and forty cents",
       "landsOnHalfCent": false
     },
     {
@@ -421,7 +421,7 @@
       ],
       "happyHour": false,
       "expectedFinalTotal": "9.0396",
-      "expectedSpokenTotalText": "$9.04",
+      "expectedSpokenTotalText": "nine dollars and four cents",
       "landsOnHalfCent": false
     }
   ]

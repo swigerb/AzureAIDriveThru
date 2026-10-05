@@ -129,7 +129,10 @@ public sealed class SpokenReadBackCompositionTests
         order.HandleOrderUpdate("add", "Original Blend Iced Coffee (Black)", "medium", 1, 0.01m);
 
         Assert.Contains("I have one ", order.Summary.SpokenReadBack);
-        Assert.Contains(order.Summary.FinalTotalDisplay, order.Summary.SpokenReadBack);
+        // #313 (Rick's review, item 1/2): the read-back speaks the total in words
+        // (Money.FormatMoneySpoken), never the "$X.XX" digit display -- a realtime model must
+        // never see two different renderings of the same total.
+        Assert.Contains(Money.FormatMoneySpoken(order.Summary.FinalTotal), order.Summary.SpokenReadBack);
     }
 
     [Fact]
@@ -138,7 +141,9 @@ public sealed class SpokenReadBackCompositionTests
         var order = PersonaOrderFactory.CreateOrderState(Pack());
         order.HandleOrderUpdate("add", "Original Blend Iced Coffee (Black)", "medium", 3, 0.01m);
 
-        Assert.Contains("I have 3 ", order.Summary.SpokenReadBack);
+        // #313 (Rick's review, item 1/2): a bare digit quantity is ambiguous next to a count-based
+        // size, so the read-back spells it out as a word.
+        Assert.Contains("I have three ", order.Summary.SpokenReadBack);
     }
 
     [Fact]

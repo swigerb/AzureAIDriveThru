@@ -84,9 +84,11 @@ public sealed class ComponentUpchargeBundleTests
             Assert.Equal(new[] { 0m, 0.50m }, item.ComponentUpcharges);
         });
         Assert.Equal(21.38m, order.Summary.Total);
+        // #313 (Rick's review, item 1/2): the read-back spells the quantity out as a word and
+        // speaks the upcharge in words, never as "$0.50" digit money.
         var readback = order.GetGroupedOrderForReadback();
-        Assert.Contains("2 SuperSONIC", readback);
-        Assert.Contains("$0.50 upcharge", readback);
+        Assert.Contains("two SuperSONIC", readback);
+        Assert.Contains($"{Money.FormatMoneySpoken(0.50m)} upcharge", readback);
     }
 
     [Theory]

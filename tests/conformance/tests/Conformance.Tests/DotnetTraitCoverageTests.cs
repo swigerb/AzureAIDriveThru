@@ -505,9 +505,15 @@ namespace Conformance.Tests;
 /// test). This fix-up round replaces that one original <c>SpokenReadBackConformanceTests</c>
 /// method with four <c>[Trait("Dotnet", "ready")]</c> <c>[Fact]</c>s (a
 /// <c>FunctionCallOutputText</c>-based <c>get_order</c> assertion replacing the old
-/// client-JSON-only one, a new <c>update_order</c> mandatory-read-back assertion, a Munchkins
-/// multi-line read-back row, and Brian's exact modify-then-readback bug row) -- a net +3 methods,
-/// 356 + 3 = <b>359</b>, the floor asserted below.</para>
+/// client-JSON-only one, a new <c>update_order</c> mandatory-read-back assertion, split across
+/// the original <see cref="SpokenReadBackConformanceTests"/> class and a new
+/// <c>SpokenReadBackZetaConformanceTests</c> class (item 2/3's fixture-pack move, see
+/// <see cref="ZetaConformanceFixture"/>) holding the Munchkins-style multi-line read-back row and
+/// Brian's exact modify-then-readback bug row. Coordinator fix-up round (item 5, this
+/// re-review): re-measured FRESH at this branch's final head -- not by arithmetic on Rick's
+/// 356 -- via a temporary local <c>Assert.Fail($"MEASURED_COUNT={count}")</c> swapped into
+/// <see cref="At_least_359_scenarios_are_tagged_dotnet_ready_and_not_skip_gated"/> (reverted,
+/// never committed), giving <b>MEASURED=359</b>, the floor asserted below.</para>
 /// </summary>
 [Trait("Dotnet", "n/a-harness")]
 public sealed class DotnetTraitCoverageTests
@@ -613,20 +619,16 @@ public sealed class DotnetTraitCoverageTests
             $"the dotnet leg's `--filter \"{TraitName}={TraitValue}\"` baseline, minus the five " +
             "skip-only Scenarios/Auth classes -- see this class's own doc comment; " +
             $"docs/dotnet_mapping.md), but found {count}. If a tagged scenario was removed or " +
-            "renamed without a replacement, the dotnet CI leg silently lost coverage. 359 is " +
-            "arithmetic on top of Rick's own freshly-measured 356 (PR #313 review: " +
-            "CountFloorEligibleDotnetReadyTestMethods, temporary local assert, reverted, never " +
-            "committed -- the 354 baseline plus the 2 ready-tagged methods this PR had already " +
-            "added before his review: SpokenReadBackConformanceTests's original single read-back " +
-            "test and CascadePronunciationLexiconConformanceTests's pronunciation-lexicon test). " +
-            "This round's own fix-up (coordinator brief, Summer+Beth) replaces that ONE original " +
-            "SpokenReadBackConformanceTests method with FOUR [Trait(\"Dotnet\", \"ready\")] " +
-            "[Fact]s (FunctionCallOutputText-based get_order assertion, a new update_order " +
-            "mandatory-read-back assertion, a Munchkins multi-line read-back row, and Brian's " +
-            "exact modify-then-readback bug row) -- a net +3 methods, 356 + 3 = 359. Re-measure " +
-            "with `Conformance.Tests.exe -list methods -trait Dotnet=ready` minus the " +
-            "AuthRowCapabilityGated methods and any zero-row SkipTestWithoutData methods before " +
-            "raising this floor again.");
+            "renamed without a replacement, the dotnet CI leg silently lost coverage. 359 is a " +
+            "FRESH measurement (coordinator fix-up round, item 5, Summer+Beth) of this exact " +
+            "branch's final head, taken via a temporary local `Assert.Fail($\"MEASURED_COUNT=" +
+            "{count}\")` swapped into this method (reverted, never committed) and run with " +
+            "`dotnet test --filter " +
+            "FullyQualifiedName~At_least_359_scenarios_are_tagged_dotnet_ready_and_not_skip_gated`" +
+            " -- NOT arithmetic on Rick's own prior 356 measurement (which predates item 2/3's " +
+            "fixture-pack move of the Munchkins and modify-then-readback rows onto " +
+            "SpokenReadBackZetaConformanceTests). Re-measure the same way before raising this " +
+            "floor again.");
     }
 
 

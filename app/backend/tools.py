@@ -13,6 +13,7 @@ from azure.search.documents.models import VectorizableTextQuery
 import default_persona
 from config_loader import get_config
 from menu_utils import strip_modifiers
+from money_utils import number_to_words
 from order_state import order_state_singleton
 from rtmt import RTMiddleTier, Tool, ToolResult, ToolResultDirection
 
@@ -871,20 +872,20 @@ async def update_order(args, session_id: str) -> ToolResult:
 
     if absorbed:
         if component_upcharge_display:
-            delta_text = f"{spoken_display_name} included with your combo with a {component_upcharge_display} upcharge — your total is {summary.finalTotalDisplay}"
+            delta_text = f"{spoken_display_name} included with your combo with a {component_upcharge_display} upcharge — your total is {summary.finalTotalSpoken}"
         else:
-            delta_text = f"{spoken_display_name} included with your combo — your total is {summary.finalTotalDisplay}"
+            delta_text = f"{spoken_display_name} included with your combo — your total is {summary.finalTotalSpoken}"
     elif converted_from and action == "add":
         combo_display = spoken_display_name
         mods = result_info.get("mods_carried", "")
         if mods:
             combo_display = f"{spoken_display_name} {mods}"
-        delta_text = f"Upgraded to {combo_display} — your total is now {summary.finalTotalDisplay}"
+        delta_text = f"Upgraded to {combo_display} — your total is now {summary.finalTotalSpoken}"
     elif resized_component:
         if component_upcharge_display:
-            delta_text = f"Changed {spoken_display_name} with a {component_upcharge_display} upcharge, your total is now {summary.finalTotalDisplay}"
+            delta_text = f"Changed {spoken_display_name} with a {component_upcharge_display} upcharge, your total is now {summary.finalTotalSpoken}"
         else:
-            delta_text = f"Changed {spoken_display_name}, your total is now {summary.finalTotalDisplay}"
+            delta_text = f"Changed {spoken_display_name}, your total is now {summary.finalTotalSpoken}"
     elif modified_from_size and modified_to_size and modified_from_size != modified_to_size:
         old_label = modified_from_size.capitalize()
         new_label = modified_to_size.capitalize()
@@ -892,16 +893,16 @@ async def update_order(args, session_id: str) -> ToolResult:
         # resize can go either way (Brian's bug report: 25 count -> 10 count). Use the neutral
         # "Changed" for every size change, same verb already used by the resized_component and
         # `modify` action branches above/below.
-        delta_text = f"Changed {spoken_item_name} from {old_label} to {new_label}, your total is now {summary.finalTotalDisplay}"
+        delta_text = f"Changed {spoken_item_name} from {old_label} to {new_label}, your total is now {summary.finalTotalSpoken}"
     elif pl:
         tpl = pl.get_delta_template(action)
-        delta_text = pl.render_template(tpl, quantity=quantity, display_name=spoken_display_name, total=summary.finalTotalDisplay)
+        delta_text = pl.render_template(tpl, quantity=number_to_words(quantity), display_name=spoken_display_name, total=summary.finalTotalSpoken)
     elif action == "add":
-        delta_text = f"Added {quantity} {spoken_display_name} — your total is now {summary.finalTotalDisplay}"
+        delta_text = f"Added {number_to_words(quantity)} {spoken_display_name} — your total is now {summary.finalTotalSpoken}"
     elif action == "modify":
-        delta_text = f"Changed {spoken_display_name} — your total is now {summary.finalTotalDisplay}"
+        delta_text = f"Changed {spoken_display_name} — your total is now {summary.finalTotalSpoken}"
     else:
-        delta_text = f"Removed {quantity} {spoken_display_name} — your total is now {summary.finalTotalDisplay}"
+        delta_text = f"Removed {number_to_words(quantity)} {spoken_display_name} — your total is now {summary.finalTotalSpoken}"
 
     # ── Combo validation: flag missing components ──
     validation = order_state_singleton.get_combo_requirements(session_id)
@@ -992,6 +993,49 @@ async def reset_order(_args: Any, session_id: str) -> ToolResult:
     return ToolResult(f"Order cleared. {json_summary}", ToolResultDirection.TO_BOTH, client_text=json_summary)
 
 
+def _local_menu_search(args: Any, menu, prompt_loader=None) -> ToolResult:
+    """In-process menu-catalog lookup used when no Azure AI Search context is configured for
+    this session (#313 item 4, Rick's review): ``_search_dispatch`` used to assume ``cfg``
+    always had a real ``search_client`` and blew up with a bare ``KeyError`` the instant it
+    didn't -- the case for any caller (``scripts/eval_voice.py``'s live sessions; any future
+    persona a deployer hasn't wired an index for yet) that never calls ``attach_tools_rtmt``.
+
+    A substring match over *menu*'s own ``item_fields`` against the query, formatted in the
+    exact same ``Item: <canonical> (say: <spoken>)`` style ``search()`` above produces from a
+    real Azure AI Search record, so a caller can't tell the two apart by format alone -- the
+    whole point of #304's search-result pronunciation fix (item 1) is that the model sees a
+    ``(say: ...)`` hint before it ever has to speak the item's name, and that must hold true
+    whether or not a real search index is behind this call."""
+    query = (args.get("query") or "").strip().lower()
+    results: list[str] = []
+    if query:
+        tokens = [t for t in query.split() if t]
+        for fields in menu.item_fields.values():
+            name = fields.get("name")
+            if not name:
+                continue
+            haystack = name.lower()
+            if query in haystack or any(tok in haystack for tok in tokens):
+                prices = fields.get("prices") or {}
+                sizes = fields.get("sizes") or ()
+                size_str = ", ".join(
+                    f"{_format_size_human_readable(s, menu=menu)} (${prices[s]})"
+                    for s in sizes if s in prices
+                ) or "N/A"
+                spoken_name = menu.spoken(name) if menu else name
+                name_for_speech = f"{name} (say: {spoken_name})" if spoken_name != name else name
+                results.append(
+                    f"[{name}]: Item: {name_for_speech}, Category: {fields.get('category', 'N/A')}, "
+                    f"Available Sizes: {size_str}"
+                )
+    joined_results = "\n-----\n".join(results)
+    _no_results = (
+        prompt_loader.get_error_messages().get("search_no_results", "No matching menu entries found.")
+        if prompt_loader else "No matching menu entries found."
+    )
+    return ToolResult(joined_results or _no_results, ToolResultDirection.TO_SERVER)
+
+
 async def _search_dispatch(args, session_id: str | None) -> ToolResult:
     """Resolve *this session's* bound persona search client/field-config (or the shared
     deployment-wide default for an unbound session or a persona with no registered override,
@@ -1000,12 +1044,24 @@ async def _search_dispatch(args, session_id: str | None) -> ToolResult:
     This is the function actually registered as ``rtmt.tools["search"].target`` -- it is the
     one place a per-persona ``SearchClient``/index gets selected, keeping ``search()`` itself
     100% backward compatible (same positional signature every existing direct test call uses).
+
+    #313 (Rick's review, item 4): ``cfg`` is only ever populated by ``attach_tools_rtmt`` (or a
+    ``personas`` registry entry it was given) -- a caller that never wires up Azure AI Search at
+    all (``scripts/eval_voice.py``'s live sessions, which build the middle tier with tool
+    schemas only and never call ``attach_tools_rtmt``) leaves ``cfg`` as the still-empty
+    ``_default_search_ctx``/``{}``, and indexing ``cfg["search_client"]`` used to raise a bare
+    ``KeyError`` that nothing upstream caught, aborting the whole session on its very first
+    (mandatory, per every persona's own prompt) ``search`` call. Falling back to
+    ``_local_menu_search`` instead keeps that call answerable with real menu data -- in the same
+    ``(say: ...)`` format a real search result carries -- whenever no search context is bound.
     """
     pid = order_state_singleton.get_persona_id(session_id) if session_id else None
     cfg = (_persona_registry.get(pid) if pid else None) or _default_search_ctx
     menu = _menu_for(session_id)
     pl = _prompt_loader_for(session_id)
     menu_mode = order_state_singleton.get_menu_mode(session_id) if session_id else None
+    if "search_client" not in cfg:
+        return _local_menu_search(args, menu, prompt_loader=pl)
     return await search(
         cfg["search_client"],
         cfg["semantic_configuration"],

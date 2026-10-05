@@ -531,8 +531,8 @@ public sealed class OrderToolExecutor : IToolExecutor
         if (resultInfo.AbsorbedIntoCombo)
         {
             return resultInfo.ComboComponentUpchargeDisplay is { Length: > 0 } upcharge
-                ? $"{spokenDisplayName} included with your combo with a {upcharge} upcharge — your total is {summary.FinalTotalDisplay}"
-                : $"{spokenDisplayName} included with your combo — your total is {summary.FinalTotalDisplay}";
+                ? $"{spokenDisplayName} included with your combo with a {upcharge} upcharge — your total is {summary.FinalTotalSpoken}"
+                : $"{spokenDisplayName} included with your combo — your total is {summary.FinalTotalSpoken}";
         }
         if (resultInfo.ComboConvertedFrom is not null && action == "add")
         {
@@ -542,7 +542,7 @@ public sealed class OrderToolExecutor : IToolExecutor
             {
                 comboDisplay = $"{spokenDisplayName} {mods}";
             }
-            return $"Upgraded to {comboDisplay} — your total is now {summary.FinalTotalDisplay}";
+            return $"Upgraded to {comboDisplay} — your total is now {summary.FinalTotalSpoken}";
         }
         // #179: set by OrderState.HandleOrderUpdate whenever a combo's side/drink slot was
         // (re)sized in place -- via an `add` of the same item at a different size while the slot
@@ -555,8 +555,8 @@ public sealed class OrderToolExecutor : IToolExecutor
         if (resultInfo.ResizedComboComponent is not null)
         {
             return resultInfo.ComboComponentUpchargeDisplay is { Length: > 0 } upcharge
-                ? $"Changed {spokenDisplayName} with a {upcharge} upcharge, your total is now {summary.FinalTotalDisplay}"
-                : $"Changed {spokenDisplayName}, your total is now {summary.FinalTotalDisplay}";
+                ? $"Changed {spokenDisplayName} with a {upcharge} upcharge, your total is now {summary.FinalTotalSpoken}"
+                : $"Changed {spokenDisplayName}, your total is now {summary.FinalTotalSpoken}";
         }
         // #313 (Rick's review, 1.7): "Upgraded" implies the new size is always bigger, but a
         // guest can resize down too (Brian's exact bug report: "25 to 10 count" shrank, yet the
@@ -565,19 +565,19 @@ public sealed class OrderToolExecutor : IToolExecutor
             && resultInfo.ModifiedToSize is { Length: > 0 } toSize
             && fromSize != toSize)
         {
-            return $"Changed {spokenItemName} from {Capitalize(fromSize)} to {Capitalize(toSize)}, your total is now {summary.FinalTotalDisplay}";
+            return $"Changed {spokenItemName} from {Capitalize(fromSize)} to {Capitalize(toSize)}, your total is now {summary.FinalTotalSpoken}";
         }
         if (_promptLoader is { } pl)
         {
             var tpl = pl.GetDeltaTemplate(action);
             return pl.RenderTemplate(tpl, Vars(
-                ("quantity", quantity), ("display_name", spokenDisplayName), ("total", summary.FinalTotalDisplay)));
+                ("quantity", Ordering.Money.NumberToWords(quantity)), ("display_name", spokenDisplayName), ("total", summary.FinalTotalSpoken)));
         }
         return action switch
         {
-            "add" => $"Added {quantity} {spokenDisplayName} — your total is now {summary.FinalTotalDisplay}",
-            "modify" => $"Changed {spokenDisplayName} — your total is now {summary.FinalTotalDisplay}",
-            _ => $"Removed {quantity} {spokenDisplayName} — your total is now {summary.FinalTotalDisplay}",
+            "add" => $"Added {Ordering.Money.NumberToWords(quantity)} {spokenDisplayName} — your total is now {summary.FinalTotalSpoken}",
+            "modify" => $"Changed {spokenDisplayName} — your total is now {summary.FinalTotalSpoken}",
+            _ => $"Removed {Ordering.Money.NumberToWords(quantity)} {spokenDisplayName} — your total is now {summary.FinalTotalSpoken}",
         };
     }
 

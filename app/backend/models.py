@@ -1,6 +1,6 @@
 from pydantic import BaseModel, PrivateAttr, model_validator
 
-from money_utils import format_money
+from money_utils import format_money, format_money_spoken
 
 __all__ = ["OrderItem", "OrderSummary"]
 
@@ -65,6 +65,15 @@ class OrderSummary(BaseModel):
     # totalDisplay/taxDisplay/finalTotalDisplay are: existing call sites that build an
     # OrderSummary with only the numeric/display fields keep working unchanged.
     spokenReadBack: str = ""
+    # #313 (Rick's review, item 6): the same finalTotal, spoken out in words (money_utils
+    # .format_money_spoken) -- the model-facing `update_order` delta text used to append the
+    # digit/`$`-formatted finalTotalDisplay ahead of the voice read-back, giving the realtime
+    # model TWO different renderings of the same total in one tool result (a `$9.71` followed
+    # moments later by "nine dollars and seventy-one cents") and risking it speaking the wrong
+    # one. tools.py's update_order now builds its delta text from this field instead. Left as
+    # "" (never required) for the same backward-compatible reason the other *Display fields
+    # are: existing call sites that only pass the numeric fields keep working unchanged.
+    finalTotalSpoken: str = ""
 
     @model_validator(mode="after")
     def _fill_display_defaults(self) -> "OrderSummary":
@@ -74,4 +83,6 @@ class OrderSummary(BaseModel):
             self.taxDisplay = format_money(self.tax)
         if not self.finalTotalDisplay:
             self.finalTotalDisplay = format_money(self.finalTotal)
+        if not self.finalTotalSpoken:
+            self.finalTotalSpoken = format_money_spoken(self.finalTotal)
         return self

@@ -339,25 +339,32 @@ class UpdateOrderAddTests(unittest.TestCase):
         summary = order_state_singleton.get_order_summary(sid)
         self.assertEqual(len(summary.items), 1)
 
-    def test_delta_text_spoken_total_matches_finalTotalDisplay_exactly(self):
-        """PR #50 review follow-up: the delta text's spoken total must be the exact same string
-        as summary.finalTotalDisplay -- there is exactly one format_money() call per mutation
-        (inside OrderSummary), and every spoken surface downstream reads that string rather than
-        recomputing its own."""
+    def test_delta_text_spoken_total_matches_finalTotalSpoken_exactly(self):
+        """PR #50 review follow-up, updated for #313 (Rick's review, item 6): the delta text's
+        spoken total must be the exact same string as summary.finalTotalSpoken -- there is
+        exactly one format_money_spoken() call per mutation (inside OrderSummary), and every
+        spoken surface downstream reads that string rather than recomputing its own. Previously
+        asserted against finalTotalDisplay ("$X.XX"); #313 item 6 moved the model-facing delta
+        text off the digit/`$` rendering entirely, since a realtime model seeing both a `$9.71`
+        delta line and a spoken "nine dollars and seventy-one cents" read-back in the same tool
+        result risked speaking the wrong one."""
         sid = _make_session()
         result = _run(update_order({
             "action": "add", "item_name": "Tots",
             "size": "medium", "quantity": 1, "price": 2.79,
         }, sid))
         summary = order_state_singleton.get_order_summary(sid)
-        self.assertIn(summary.finalTotalDisplay, result.text)
+        self.assertIn(summary.finalTotalSpoken, result.text)
+        self.assertNotIn(summary.finalTotalDisplay, result.text)
 
     @patch("order_state.is_happy_hour", return_value=False)
     def test_modify_size_delta_text_matches_the_original_apps_changed_wording(self, _hh):
-        """#313 (Rick's review, item 1.7): a genuine size resize via `modify` must speak a
-        neutral "Changed {item} from {Old} to {New}, your total is now $X" -- "Upgraded" wrongly
-        implies the new size is always bigger, which is exactly backwards for a downgrade
-        (Brian's #304 bug report: 25 count -> 10 count)."""
+        """#313 (Rick's review, item 1.7 + item 6): a genuine size resize via `modify` must speak
+        a neutral "Changed {item} from {Old} to {New}, your total is now <spoken total>" --
+        "Upgraded" wrongly implies the new size is always bigger, which is exactly backwards for
+        a downgrade (Brian's #304 bug report: 25 count -> 10 count). Item 6 (this re-review)
+        moved the total off the digit/`$` rendering: the delta text now speaks finalTotalSpoken,
+        never finalTotalDisplay, same as every other delta form."""
         sid = _make_session()
         _run(update_order({
             "action": "add", "item_name": "Tots",
@@ -370,7 +377,7 @@ class UpdateOrderAddTests(unittest.TestCase):
         summary = order_state_singleton.get_order_summary(sid)
         delta_text = result.text.split("[HAPPY HOUR ACTIVE", 1)[0].rstrip()
         self.assertEqual(
-            f"Changed Tots from Medium to Large, your total is now {summary.finalTotalDisplay}",
+            f"Changed Tots from Medium to Large, your total is now {summary.finalTotalSpoken}",
             delta_text.split("\n\n")[0],
         )
         self.assertNotIn("\u2014", result.text)
@@ -378,22 +385,28 @@ class UpdateOrderAddTests(unittest.TestCase):
     @patch("order_state.is_happy_hour", return_value=False)
     def test_modify_25_count_to_10_count_reproduces_brians_exact_bug_report(self, _hh):
         """#313 (Rick's review, Section 2 required item): reproduces Brian's exact bug report
-        verbatim -- a guest resizes a Munchkins order from 25 Count down to 10 Count. The delta
-        text the realtime model actually receives (`FunctionCallOutputText`, not just the
+        verbatim -- a guest resizes a count-sized order from 25 Count down to 10 Count. The
+        delta text the realtime model actually receives (`FunctionCallOutputText`, not just the
         browser-only JSON channel) must say "Changed" (never "Upgraded" -- that verb wrongly
-        implies the new size is always bigger) and must speak the NEW count, not the old one."""
+        implies the new size is always bigger) and must speak the NEW count, not the old one.
+        Runs against the synthetic, TEST-ONLY test-zeta fixture pack (#313 item 3: the previous
+        version of this test loaded the real persona pack via a string-concatenated persona id
+        that existed only to evade rebrand_scan.py's brand-word guard -- not
+        acceptable)."""
         order_state_singleton.sessions = {}
-        persona_id = "dun" + "kin"
-        catalog = PersonaCatalog.load(enabled=[persona_id], default_persona_id=persona_id)
+        persona_id = "test-zeta"
+        catalog = PersonaCatalog.load(
+            personas_dir=FIXTURES_DIR, enabled=[persona_id], default_persona_id=persona_id,
+        )
         persona = catalog.get(persona_id)
         sid = order_state_singleton.create_session(persona=persona)
 
         _run(update_order({
-            "action": "add", "item_name": "Glazed MUNCHKINS® Donut Hole Treats",
+            "action": "add", "item_name": "ZORBS® Bite Treats",
             "size": "25 count", "quantity": 1, "price": 8.99,
         }, sid))
         result = _run(update_order({
-            "action": "modify", "item_name": "Glazed MUNCHKINS® Donut Hole Treats",
+            "action": "modify", "item_name": "ZORBS® Bite Treats",
             "size": "10 count", "quantity": 1, "price": 3.99,
         }, sid))
 

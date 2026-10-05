@@ -23,11 +23,10 @@ namespace Conformance.Tests;
 /// channel it can ever read from.</para>
 ///
 /// <para>Also asserts the words-not-digits rendering from #313 item 2 (a bare digit quantity read
-/// next to a count-based size, e.g. "3 10 Count Munchkins", is ambiguous on a voice channel) and
-/// adds the two scenarios Rick's review called out by name: a Munchkins multi-line read-back
-/// (real guest-facing brand item, case-sensitive pronunciation lexicon engaged) and Brian's exact
-/// bug report -- modify an order line's count-based size, then read the order back, and confirm
-/// the read-back (not just the delta text) reflects the NEW count, never the stale one.</para>
+/// next to a count-based size is ambiguous on a voice channel). The Munchkins multi-line
+/// read-back and Brian's exact modify-then-readback bug-report scenarios Rick's review called
+/// out by name live in <see cref="SpokenReadBackZetaConformanceTests"/> below, against a
+/// synthetic fixture pack rather than a real brand item.</para>
 /// </summary>
 [Collection(ConformanceCollection.Name)]
 public sealed class SpokenReadBackConformanceTests(ConformanceFixture fixture)
@@ -101,38 +100,53 @@ public sealed class SpokenReadBackConformanceTests(ConformanceFixture fixture)
         Assert.Contains("Your total is", text);
         Assert.Contains("Tots", text);
     });
+}
 
+/// <summary>
+/// #313 (Rick's REQUEST CHANGES re-review, items 2/3): these two scenarios were previously
+/// scripted against a real persona pack's own trademarked item (a real
+/// guest-facing brand name), which forced a dedicated `rebrand_baseline.yaml` "increase" entry
+/// just to keep the rebrand ratchet green for this one test file. They now run against
+/// <see cref="ZetaConformanceFixture"/>'s own synthetic, TEST-ONLY count-sized item
+/// ("ZORBS® Bite Treats", sizes "10 count"/"25 count", a <c>spokenName</c> override, and a
+/// trademark-cased <c>sizes.spokenAs</c> key) -- the same case-sensitive pronunciation-rewrite
+/// and word-spelled-quantity behavior, with no real brand word anywhere in this file and no
+/// baseline entry required.
+/// </summary>
+[Collection(ZetaConformanceCollection.Name)]
+public sealed class SpokenReadBackZetaConformanceTests(ZetaConformanceFixture fixture)
+{
     [Fact]
     [Trait("Dotnet", "ready")]
-    public Task Munchkins_multi_line_read_back_uses_the_spoken_pronunciation_on_both_lines() => fixture.RunAsync(async () =>
+    public Task Zorbs_multi_line_read_back_uses_the_spoken_pronunciation_on_both_lines() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
         var (browser, connection, roundTripIndex) =
-            await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, persona: "dunkin");
+            await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, persona: ZetaConformanceFixture.PersonaId);
         await using var _ = browser;
 
-        // Real, guest-facing brand item names straight off the dunkin persona pack's own
-        // menuItems.json -- "MUNCHKINS®"/"MUNCHKINS" raw catalog casing, both of which the
-        // case-sensitive pronunciation lexicon (#313 item 14) and sizes.spokenAs mapping must
-        // correct to "Munch-kins" on the realtime channel the model actually reads from.
+        // Synthetic, guest-facing brand-STYLE item names straight off test-zeta's own
+        // menuItems.json -- "ZORBS®"/"Zorbs" raw catalog casing, both of which the
+        // case-sensitive pronunciation lexicon and sizes.spokenAs mapping must correct to
+        // "Zorbs" on the realtime channel the model actually reads from.
         var addFirst = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "update_order",
-            """{"action":"add","item_name":"Glazed MUNCHKINS® Donut Hole Treats","size":"10 count","quantity":1,"price":3.99}""",
-            "call_munchkins_add_1", roundTripIndex, ct);
+            """{"action":"add","item_name":"ZORBS® Bite Treats","size":"10 count","quantity":1,"price":3.99}""",
+            "call_zorbs_add_1", roundTripIndex, ct);
 
         var addSecond = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "update_order",
-            """{"action":"add","item_name":"Munchkins","size":"50 count","quantity":1,"price":15.99}""",
-            "call_munchkins_add_2", addFirst.RoundTripIndex, ct);
+            """{"action":"add","item_name":"Zorbs","size":"25 count","quantity":1,"price":8.99}""",
+            "call_zorbs_add_2", addFirst.RoundTripIndex, ct);
 
         var getOrderResult = await OrderScenarioHelpers.CallToolAsync(
-            connection, browser, "get_order", "{}", "call_munchkins_get", addSecond.RoundTripIndex, ct);
+            connection, browser, "get_order", "{}", "call_zorbs_get", addSecond.RoundTripIndex, ct);
 
         var text = getOrderResult.FunctionCallOutputText;
-        Assert.DoesNotContain("MUNCHKINS", text);
-        Assert.Contains("Munch-kins", text);
+        Assert.DoesNotContain("ZORBS", text);
+        Assert.Contains("Zorb", text);
         Assert.Contains("10 Count", text);
-        Assert.Contains("50 Count", text);
+        Assert.Contains("25 Count", text);
     });
 
     [Fact]
@@ -141,22 +155,22 @@ public sealed class SpokenReadBackConformanceTests(ConformanceFixture fixture)
     {
         var ct = TestContext.Current.CancellationToken;
         var (browser, connection, roundTripIndex) =
-            await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, persona: "dunkin");
+            await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, persona: ZetaConformanceFixture.PersonaId);
         await using var _ = browser;
 
-        // Brian's exact bug report (coordinator brief): a guest adds 25 Count Munchkins, then
+        // Brian's exact bug report (coordinator brief): a guest adds 25 Count Zorbs, then
         // asks to change it down to 10 Count -- the realtime model spoke "I've upgraded you" and
         // the read-back that followed still described the ORIGINAL count. "Changed" (not
         // "Upgraded") is asserted on the delta line; the read-back below asserts the actual bug.
         var addResult = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "update_order",
-            """{"action":"add","item_name":"Glazed MUNCHKINS® Donut Hole Treats","size":"25 count","quantity":1,"price":8.99}""",
+            """{"action":"add","item_name":"ZORBS® Bite Treats","size":"25 count","quantity":1,"price":8.99}""",
             "call_modify_readback_add", roundTripIndex, ct);
         Assert.Contains("25 Count", addResult.FunctionCallOutputText);
 
         var modifyResult = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "update_order",
-            """{"action":"modify","item_name":"Glazed MUNCHKINS® Donut Hole Treats","size":"10 count","quantity":1,"price":3.99}""",
+            """{"action":"modify","item_name":"ZORBS® Bite Treats","size":"10 count","quantity":1,"price":3.99}""",
             "call_modify_readback_modify", addResult.RoundTripIndex, ct);
 
         // #313 item 1.7: the delta line itself must say "Changed", never "Upgraded" -- a resize

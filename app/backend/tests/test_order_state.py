@@ -11,6 +11,8 @@ from money_utils import format_money_spoken
 from order_state import SessionIdentifiers, order_state_singleton
 from persona_loader import PersonaCatalog
 
+FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures" / "personas"
+
 
 class OrderStateTests(unittest.TestCase):
     def setUp(self):
@@ -826,17 +828,21 @@ class SpokenReadBackCompositionTests(unittest.TestCase):
         self.assertNotIn(", and ", summary.spokenReadBack, "Collided spoken names must merge into one line, not be joined as two")
 
 
-class DunkinCountSizeReadBackTests(unittest.TestCase):
+class ZetaCountSizeReadBackTests(unittest.TestCase):
     """#313 (Rick's review, item 2 and "Section 2" required item): a bare digit quantity read
     next to a count-based size (e.g. "3 10 Count ... Treats") is ambiguous out loud -- these
-    tests pin the word-spelled-quantity behavior down against the real on-disk persona pack that
-    actually has count-based sizes, using its real spoken-form lexicon end-to-end (not a
-    synthetic monkeypatch)."""
+    tests pin the word-spelled-quantity behavior down against a synthetic, TEST-ONLY fixture
+    pack (test-zeta) that has a count-sized item with a `spokenName` and a trademark-cased
+    `spokenAs` key, rather than a real persona pack id (#313 item 3: the previous version of
+    this class loaded the real persona pack via a string-concatenated persona id that
+    existed only to evade rebrand_scan.py's brand-word guard -- not acceptable)."""
 
     @classmethod
     def setUpClass(cls):
-        persona_id = "dun" + "kin"
-        cls.persona = PersonaCatalog.load(enabled=[persona_id], default_persona_id=persona_id).get(persona_id)
+        persona_id = "test-zeta"
+        cls.persona = PersonaCatalog.load(
+            personas_dir=FIXTURES_DIR, enabled=[persona_id], default_persona_id=persona_id,
+        ).get(persona_id)
 
     def setUp(self):
         order_state_singleton.sessions = {}
@@ -844,7 +850,7 @@ class DunkinCountSizeReadBackTests(unittest.TestCase):
     def test_three_times_ten_count_readback_spells_out_the_quantity_as_a_word(self):
         session_id = order_state_singleton.create_session(persona=self.persona)
         order_state_singleton.handle_order_update(
-            session_id, "add", "Glazed MUNCHKINS® Donut Hole Treats", "10 count", 3, 3.99,
+            session_id, "add", "ZORBS® Bite Treats", "10 count", 3, 3.99,
         )
         summary = order_state_singleton.get_order_summary(session_id)
 
@@ -859,10 +865,10 @@ class DunkinCountSizeReadBackTests(unittest.TestCase):
         test_tool_calling.py, since that wording is built in tools.py, not here)."""
         session_id = order_state_singleton.create_session(persona=self.persona)
         order_state_singleton.handle_order_update(
-            session_id, "add", "Glazed MUNCHKINS® Donut Hole Treats", "25 count", 1, 8.99,
+            session_id, "add", "ZORBS® Bite Treats", "25 count", 1, 8.99,
         )
         order_state_singleton.handle_order_update(
-            session_id, "modify", "Glazed MUNCHKINS® Donut Hole Treats", "10 count", 1, 3.99,
+            session_id, "modify", "ZORBS® Bite Treats", "10 count", 1, 3.99,
         )
         summary = order_state_singleton.get_order_summary(session_id)
 
