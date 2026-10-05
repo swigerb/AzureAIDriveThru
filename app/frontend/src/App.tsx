@@ -602,6 +602,19 @@ function SonicApp() {
             responseTracker.startAudioCount = assistantAudioRef.current.count;
             responseTracker.sawRoundTripToken = false;
 
+            // Issues 247/262: a "failed" response.done always carries an empty `output` (see
+            // _send_failed_response_done/SendFailedResponseDoneAsync in both backends), so the
+            // transcript-derived early return below would otherwise skip the "AI finished
+            // speaking" unmute entirely. Without this, a turn that fails AFTER TTS has already
+            // started streaming some audio (isAiSpeakingRef already true) would leave the mic
+            // muted until the guest's next utterance happens to be loud enough to trip
+            // handleBargeIn's own separate recovery path -- recover immediately instead of
+            // relying on that.
+            if (message.response.status === "failed" && isAiSpeakingRef.current) {
+                isAiSpeakingRef.current = false;
+                unmuteAudioRecording();
+            }
+
             const transcript = message.response.output.map(output => output.content?.map(content => content.transcript).join(" ")).join(" ");
             if (!transcript) return;
             // Defense in depth (issue 181): a resumed-but-idle socket must never surface assistant

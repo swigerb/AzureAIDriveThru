@@ -73,6 +73,11 @@ export type ResponseDone = {
     event_id: string;
     response: {
         id: string;
+        // Issues 247/262: "failed" when the backend's cascade turn pipeline hit an unrecoverable error
+        // (e.g. a non-429 chat-completion failure, or a TTS failure) partway through a turn and
+        // had to end it early with an empty `output` -- see _send_failed_response_done /
+        // SendFailedResponseDoneAsync in both backends. Absent/"completed" for the normal path.
+        status?: string;
         output: { id: string; content?: { transcript: string; type: string }[] }[];
     };
 };

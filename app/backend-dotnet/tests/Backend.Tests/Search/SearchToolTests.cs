@@ -38,6 +38,15 @@ internal sealed class QueuedHttpHandler : HttpMessageHandler
     }
 }
 
+/// <summary>A fake <see cref="HttpMessageHandler"/> that throws instead of returning any
+/// response -- used to simulate a genuine caller-side cancellation (e.g. a barge-in) arriving
+/// mid-request, as opposed to <see cref="QueuedHttpHandler"/>'s scripted HTTP error responses.</summary>
+internal sealed class ThrowingHttpHandler(Func<Exception> makeException) : HttpMessageHandler
+{
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+        throw makeException();
+}
+
 /// <summary>
 /// Direct C# port of representative app/backend/tests/test_tools_search.py scenarios (#14/#23/
 /// #37): result formatting (incl. the double-encoded ``sizes`` JSON-string quirk and the
@@ -49,7 +58,7 @@ internal sealed class QueuedHttpHandler : HttpMessageHandler
 public sealed class SearchToolTests
 {
     private static SearchTool NewTool(
-        QueuedHttpHandler handler, string personaId = "search-tool-tests", bool useSemanticRanker = false,
+        HttpMessageHandler handler, string personaId = "search-tool-tests", bool useSemanticRanker = false,
         string? menuMode = null)
     {
         var persona = DeltaFixture.Load();
@@ -162,6 +171,34 @@ public sealed class SearchToolTests
         var result = await tool.ExecuteAsync(QueryArgs("anything"), TestContext.Current.CancellationToken);
 
         Assert.Equal("I'm sorry, I can't reach our menu data right now.", result.ToText());
+    }
+
+    /// <summary>#247 regression: a genuine caller-side cancellation (e.g. a barge-in cancelling
+    /// this still in-flight tool call) must propagate as <see cref="OperationCanceledException"/>
+    /// out of <see cref="SearchTool.ExecuteAsync"/>, NOT be swallowed into a normal-looking
+    /// completed <see cref="ToolResult"/> by the generic catch-all. <see
+    /// cref="Cascade.CascadeProcessorTests"/>'s own tool-execution-round truncation relies on
+    /// exactly this exception reaching <c>RunChatToolLoopAsync</c>'s tool-call loop so it can
+    /// remove the now-orphaned <c>tool_calls</c> round from history; swallowing it here would let
+    /// the round "succeed" and leave this call's id orphaned in history for the next request --
+    /// exactly the conformance-level bug this test was written to catch (and which the fake
+    /// Azure AI Search endpoint used for the corresponding conformance row exposed). Mutation
+    /// check: deleting <see cref="SearchTool"/>'s own <c>catch (OperationCanceledException) {
+    /// throw; }</c> branch (letting the generic <c>catch (Exception)</c> absorb it again) fails
+    /// this test.</summary>
+    [Fact]
+    public async Task ExecuteAsync_CallerCancelsMidRequest_PropagatesOperationCanceledExceptionInsteadOfSwallowingIt()
+    {
+        using var cts = new CancellationTokenSource();
+        var handler = new ThrowingHttpHandler(() =>
+        {
+            cts.Cancel();
+            return new TaskCanceledException("simulated barge-in cancellation mid-request");
+        });
+        var tool = NewTool(handler, personaId: Guid.NewGuid().ToString("n"));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => tool.ExecuteAsync(QueryArgs("anything"), cts.Token));
     }
 
     /// <summary>Rick's PR #149 R2 review: the Search Documents REST request body property is

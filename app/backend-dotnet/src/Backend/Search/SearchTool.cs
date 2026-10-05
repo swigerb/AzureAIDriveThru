@@ -169,6 +169,20 @@ public sealed class SearchTool
                 _personaId, _indexName, exc.GetType().Name, exc.Message);
             return ServerError("search_service_unavailable", "I'm sorry, I can't reach our menu data right now.");
         }
+        catch (OperationCanceledException)
+        {
+            // #247: a genuine caller-side cancellation (e.g. a barge-in cancelling this still
+            // in-flight tool call) must propagate as a real cancellation, not be swallowed into a
+            // "graceful" ServerError tool result here. RunChatToolLoopAsync's own tool-execution
+            // loop relies on exactly this exception reaching it so it can truncate the now-
+            // orphaned tool_calls round out of history; converting it to a normal-looking
+            // completed ToolResult would let the round "succeed" and leave this call's id (which
+            // this cancelled response never actually answered) orphaned in history for the next
+            // request. FetchRecordsAsync already distinguishes this from an internal timeout via
+            // its own `when (!cancellationToken.IsCancellationRequested)` guard, so this only
+            // fires for real caller cancellation.
+            throw;
+        }
         catch (Exception exc)
         {
             _logger?.LogError(exc,
