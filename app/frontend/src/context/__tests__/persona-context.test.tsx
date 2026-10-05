@@ -38,7 +38,9 @@ const ALPHA_DETAIL: PersonaDetail = {
     features: { dayparts: false },
     menuUrl: "/personas/test-alpha/menu.json",
     models: { realtime: { default: "gpt-realtime-2.1", models: [{ id: "gpt-realtime-2.1", label: "GPT Realtime 2.1", reasoning: true }] } },
-    taxRate: "0.08"
+    taxRate: "0.08",
+    machines: {},
+    happyHour: null
 };
 
 function Probe() {

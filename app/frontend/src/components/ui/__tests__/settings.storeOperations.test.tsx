@@ -120,7 +120,7 @@ describe("Settings store operations", () => {
         expect(onHappyHourModeChange).toHaveBeenCalledWith("on");
         expect(screen.getByRole("radio", { name: "On" })).toHaveAttribute("aria-checked", "true");
 
-        fireEvent.click(screen.getByRole("radio", { name: "Off" }));
+        fireEvent.click(off);
         expect(onHappyHourModeChange).toHaveBeenCalledWith("off");
         expect(screen.getByRole("radio", { name: "Off" })).toHaveAttribute("aria-checked", "true");
 
