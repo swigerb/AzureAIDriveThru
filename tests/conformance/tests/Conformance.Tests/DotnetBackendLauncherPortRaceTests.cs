@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using Conformance.Harness;
@@ -76,4 +77,65 @@ public sealed class DotnetBackendLauncherPortRaceTests
             occupyingListener.Stop();
         }
     }
+
+    /// <summary>
+    /// Refs #259 (Rick's #267 review, required item (b)): the previous version of this file only
+    /// asserted that the retry loop reached a *different* port, never that the retry specifically
+    /// requested port 0 (as opposed to, say, a reintroduced <see
+    /// cref="NetworkUtils.GetFreeTcpPort"/> call, which would also produce "a different port" and
+    /// pass that weaker assertion). Captures the real <see cref="ProcessStartInfo"/> handed to
+    /// every attempt via <see cref="DotnetBackendLauncher.TestOnlyProcessStartInfoObserver"/> and
+    /// asserts directly on each one's <c>Environment["PORT"]</c>.
+    ///
+    /// Mutation check: revert either retry clause (<c>attemptContract = attemptContract with {{
+    /// Port = 0 }}</c>) back to re-probing via <see cref="NetworkUtils.GetFreeTcpPort"/> and this
+    /// test fails deterministically -- the occupied port guarantees a first-attempt failure, so a
+    /// retry is certain to happen, and its environment's PORT would then be some nonzero probed
+    /// value instead of "0".
+    /// </summary>
+    [Fact]
+    public async Task StartAsync_every_retry_requests_port_0_even_though_the_first_attempt_used_an_explicit_port()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var occupiedPort = NetworkUtils.GetFreeTcpPort();
+
+        using var occupyingListener = new TcpListener(IPAddress.Loopback, occupiedPort);
+        occupyingListener.Start();
+
+        var observedPorts = new List<string?>();
+        DotnetBackendLauncher.TestOnlyProcessStartInfoObserver = startInfo =>
+        {
+            lock (observedPorts)
+            {
+                observedPorts.Add(startInfo.Environment.TryGetValue("PORT", out var port) ? port : null);
+            }
+        };
+        try
+        {
+            var contract = BackendContract.ForPort(NeverDialedRealtime, NeverDialedSearch, occupiedPort);
+
+            await using var backend = await DotnetBackendLauncher.StartAsync(
+                contract, new DotnetBackendOptions(), ct);
+
+            Assert.True(
+                observedPorts.Count >= 2,
+                $"Expected at least one retry (first attempt + at least one retry), observed " +
+                $"{observedPorts.Count} attempt(s): {string.Join(", ", observedPorts)}.");
+
+            // First attempt: whatever the caller explicitly requested (the occupied port, here).
+            Assert.Equal(occupiedPort.ToString(), observedPorts[0]);
+
+            // Every retry (everything after the first attempt) must always request port 0.
+            for (var i = 1; i < observedPorts.Count; i++)
+            {
+                Assert.Equal("0", observedPorts[i]);
+            }
+        }
+        finally
+        {
+            DotnetBackendLauncher.TestOnlyProcessStartInfoObserver = null;
+            occupyingListener.Stop();
+        }
+    }
 }
+
