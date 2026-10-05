@@ -1095,8 +1095,10 @@ class UpsellHintSpokenLexiconTests(unittest.TestCase):
         result = _run(update_order({
             "action": "add", "item_name": "Zeta Cola", "size": "regular", "quantity": 1, "price": 1.99,
         }, sid))
-        self.assertIn("Zorbs", result.text)
-        self.assertNotIn("ZORBS®", result.text)
+        # The whole item name has its own spokenName, which wins over the single-word spokenAs
+        # entry (longest match), so the hint reads "Zorb Bite Treats" -- never the raw catalog form.
+        self.assertIn("Zorb Bite Treats", result.text)
+        self.assertNotIn("ZORBS", result.text)
 
 
 class ComboValidationInToolsTests(unittest.TestCase):

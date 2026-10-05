@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Backend.Ordering;
 using Backend.Personas;
 using Backend.Prompts;
 using Backend.Tests.TestSupport;
@@ -50,7 +51,8 @@ public sealed class OrderToolExecutorUpsellHintSpokenLexiconTests
             "update_order", Args("add", "Zeta Cola", "regular", 1, 1.99m), TestContext.Current.CancellationToken);
 
         var text = result.ToText();
-        Assert.Contains("Zorbs", text);
-        Assert.DoesNotContain("ZORBS®", text);
+        // The item's own spokenName wins over the single-word spokenAs entry (longest match).
+        Assert.Contains("Zorb Bite Treats", text);
+        Assert.DoesNotContain("ZORBS", text);
     }
 }
