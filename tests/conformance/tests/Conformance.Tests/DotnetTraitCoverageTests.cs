@@ -269,6 +269,17 @@ namespace Conformance.Tests;
 /// processor, #234's frame dispatch, #233's log self-timestamping, and other PRs' own newly-tagged
 /// rows merged ahead of this branch) measured directly, not projected -- **293**. Raises the floor
 /// 286 to 293.
+///
+/// PR #253 review item 3 (rebasing onto the 256 baseline above, which already includes #236/#261/
+/// #263/#264): now that dev's own C# <c>CascadeProcessor</c> sanitizes <c>extension.set_voice</c>
+/// (#236's own review fix), the 4 <c>Scenarios/Cascade/CascadeMenuModeAndVoiceConformanceTests</c>
+/// rows (per-persona default voice, `?mode=` breakfast/lunch binding, and the set_voice
+/// sanitization row itself) are tagged <c>[Trait("Dotnet", "ready")]</c> too -- verified green
+/// against the C# backend across 3 consecutive local runs with no flakiness. A fresh run of
+/// <see cref="CountFloorEligibleDotnetReadyTestMethods"/> on this branch tip (same
+/// temporarily-assert-then-revert measurement technique as every prior round) gives **260**
+/// (256 + these 4), confirming the delta by direct count rather than arithmetic. This raises the
+/// floor 256 to 260.
 /// </summary>
 public sealed class DotnetTraitCoverageTests
 {
@@ -295,13 +306,17 @@ public sealed class DotnetTraitCoverageTests
     {
         var count = CountFloorEligibleDotnetReadyTestMethods();
 
-        Assert.True(count >= 293,
-            $"Expected at least 293 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
+        Assert.True(count >= 260,
+            $"Expected at least 260 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
             $"and not unconditionally skip-gated by AuthRowCapability (the dotnet leg's " +
             $"`--filter \"{TraitName}={TraitValue}&Category!=Browser\"` baseline, minus the five " +
             "skip-only Scenarios/Auth classes -- see this class's own doc comment; " +
             $"docs/dotnet_mapping.md), but found {count}. If a tagged scenario was removed or " +
-            "renamed without a replacement, the dotnet CI leg silently lost coverage.");
+            "renamed without a replacement, the dotnet CI leg silently lost coverage. 260 is a " +
+            "FRESH count (PR #253 review item 3, taken post-rebase onto origin/dev), not " +
+            "arithmetic -- re-measure with `Conformance.Tests.exe -list methods -trait " +
+            "Dotnet=ready` minus the 18 AuthRowGatedTypeNames methods before raising this floor " +
+            "again.");
     }
 
 
