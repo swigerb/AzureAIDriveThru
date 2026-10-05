@@ -245,6 +245,12 @@ var timeProvider = TimeProvider.System;
 // file is unrelated to this, kept as a minimal one-line addition plus the matching constructor arg
 // below.
 var rateLimitSettings = RateLimitSettings.FromAppConfig(appConfig);
+// Issue #15: the session registry (resume/rehydration/idle/grace/nudge) -- one process-wide
+// singleton, same lifetime/shape as rateLimitSettings above. RunSweepLoopAsync is started once,
+// right after realtimeProcessor is constructed below, tied to the host's own shutdown token so it
+// stops cleanly instead of leaking a background loop past app shutdown.
+var sessionsConfig = SessionsConfig.FromConfig(appConfig);
+var sessionManager = new SessionManager(sessionsConfig, timeProvider, logger);
 
 // ── 6. Processor registry (issue #75, design doc section 7.4): only "realtime" is registered
 // this wave -- its own model resolution is fully ported (Models/ModelDispatch.cs's
@@ -267,7 +273,12 @@ var realtimeProcessor = new RealtimeProcessor(
     logger: logger,
     toolExecutorFactory: BuildSessionToolExecutor,
     timeProvider: timeProvider,
-    rateLimitSettings: rateLimitSettings);
+    rateLimitSettings: rateLimitSettings,
+    sessionManager: sessionManager);
+// Issue #15: the idle-close/grace-eviction sweep -- mirrors rtmt.py's own background
+// _idle_check_loop task. Runs for the whole app lifetime, stopping only when the host itself
+// shuts down (no separate IHostedService registration needed for one background loop).
+_ = Task.Run(() => sessionManager.RunSweepLoopAsync(app.Lifetime.ApplicationStopping));
 // PR #140 R5: bearerTokenProvider is left at its default (null) here deliberately --
 // RealtimeProcessor.ResolveUpstreamAuthHeaderAsync falls back to the lazily-constructed real
 // DefaultAzureCredentialTokenProvider itself, so a DefaultAzureCredential (which probes several

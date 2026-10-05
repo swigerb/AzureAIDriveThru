@@ -769,6 +769,11 @@ async def create_app() -> web.Application:
         audio_endpoint=llm_endpoint,
         credential=cascade_credential,
         default_voice=os.environ.get("AZURE_OPENAI_REALTIME_VOICE_CHOICE") or model_cfg.get("default_voice", "marin"),
+        # #248: the SAME allow-list `configure_realtime_model` (called above) already computed
+        # for `rtmt` -- `rtmt.allowed_voices` is set by the time this constructor runs, so
+        # cascade's own per-persona voice lookup validates against it instead of trusting any
+        # string a persona.json happens to declare.
+        allowed_voices=rtmt.allowed_voices,
     )
     rtmt.processor_registry = ProcessorRegistry([rtmt, cascade_processor])
 

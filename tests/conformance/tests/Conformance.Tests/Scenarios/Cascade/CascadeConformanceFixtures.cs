@@ -100,6 +100,22 @@ public sealed class CascadeConformanceFixture : ConformanceFixture
     }
 
     protected override async Task StopExtraFakesAsync() => await Chat.DisposeAsync().ConfigureAwait(false);
+
+    // Rick's PR #253 review item 2 (follow-up): this fixture's 7 scenarios (including the
+    // barge-in row that actually causes the FIFO leak -- see
+    // FakeChatCompletionsServer.AssertNoPendingScriptedResponses's own doc comment for the exact
+    // mechanism) never called AssertNoPendingScriptedResponses by hand, so a leak here would
+    // have gone uncaught entirely. Wiring it through the base class's own post-body hook instead
+    // of a hand-placed call in every scenario means every CURRENT and FUTURE scenario in this
+    // fixture is covered automatically, and a leak fails the scenario that actually caused it.
+    protected override void AssertNoPendingExtraFakeState() => Chat.AssertNoPendingScriptedResponses();
+
+    // Rick's PR #253 review (2nd follow-up): see ConformanceFixture.ResetExtraFakeState's own doc
+    // comment -- this covers the scenario-body-throws case AssertNoPendingExtraFakeState above
+    // can never reach (it is never called at all when the body throws), so without this override
+    // a throwing scenario's own leftover scripted response would otherwise silently reach the
+    // next scenario in this fixture's shared Chat instance.
+    protected override void ResetExtraFakeState() => Chat.Drain();
 }
 
 [CollectionDefinition(Name)]

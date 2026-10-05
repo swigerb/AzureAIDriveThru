@@ -52,6 +52,7 @@ public sealed class RateLimitIdleInteractionTests(RateLimitIdleInteractionTimers
     }
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task A_retry_is_not_guest_activity_the_idle_clock_still_closes_the_socket_on_schedule() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -101,5 +102,80 @@ public sealed class RateLimitIdleInteractionTests(RateLimitIdleInteractionTimers
             $"Idle close took {stopwatch.Elapsed.TotalSeconds:F2}s after the response.create -- expected " +
             "~6.0-6.2s (idle_timeout plus at most one sweep pass). Anything approaching ~10.5s+ would mean " +
             "a retry reset the idle clock instead of being correctly ignored by it.");
+    });
+
+    /// <summary>Comfortably longer than the fixed 3.0s post-greeting echo-suppression cooldown
+    /// (audio.echo_cooldown_seconds=1.5, doubled because the greeting itself is in progress) --
+    /// same reasoning as RateLimitGuestSpeechCancellationTests' identical constant. An append sent
+    /// any earlier is silently dropped by the echo-suppression `continue` before it ever reaches
+    /// the fake upstream, so WithVadDefaults' speech_started reply (and this test's activity
+    /// signal) would never fire.</summary>
+    private static readonly TimeSpan EchoCooldownWait = TimeSpan.FromSeconds(3.3);
+
+    /// <summary>
+    /// Rick's #244 review (issue 1, HIGH): rtmt.py's from_server_to_client also calls
+    /// touch_activity on the upstream input_audio_buffer.speech_started and
+    /// conversation.item.input_audio_transcription.completed events (rtmt.py ~2816-2817,
+    /// ~2828-2829) -- NOT just on forwarded non-append client frames. A guest who talks
+    /// continuously sends nothing BUT input_audio_buffer.append on the browser->server side
+    /// (which deliberately never touches activity, see RealtimeProcessor.cs's own comment), so
+    /// without this upstream-side touch, a genuinely-talking guest would still hit a 4000 idle
+    /// close after idle_timeout_seconds and lose the order -- exactly the bug this profile's own
+    /// generous 6s idle_timeout_seconds makes easy to prove deterministically: three rounds of
+    /// append (each one triggering WithVadDefaults' synthetic speech_started reply, see
+    /// RealtimeScript.WithVadDefaults), spaced 3s apart (comfortably under the 6s budget each
+    /// time, with real margin), must keep the session alive well past the 6s mark measured from
+    /// the FIRST append alone -- proving each round's speech_started genuinely reset the idle
+    /// clock, not merely that the test didn't wait long enough. Once the guest goes truly silent
+    /// afterward, the same idle clock must still close the session on schedule (proving this
+    /// isn't "never times out" but "times out from the last REAL activity").
+    ///
+    /// Mutation check: removing TouchActivity from the speech_started/transcription.completed
+    /// cases in RealtimeProcessor.cs's server-to-client marker switch makes the
+    /// "stays open" assertion below fail (the session closes mid-loop, at or shortly after the
+    /// first ~6s window from the FIRST append instead of the last one).
+    /// </summary>
+    [Fact]
+    [Trait("Dotnet", "ready")]
+    public Task Repeated_guest_speech_keeps_the_session_alive_past_idle_timeout_seconds() => fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
+        await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        await ConnectAndGetPastGreetingAsync(connectionTask, browser, ct);
+
+        await Task.Delay(EchoCooldownWait, ct);
+
+        // Three rounds, 3s apart (idle_timeout_seconds=6, so each gap leaves real margin): each
+        // append's synthetic speech_started reply must independently reset last_activity. By the
+        // third append, ~6s has elapsed since the FIRST one alone -- if speech_started genuinely
+        // weren't touching activity, the idle sweep (CONFORMANCE_SWEEP_INTERVAL_SECONDS=0.2) would
+        // have already closed the socket by now, measuring entirely from that first touch.
+        for (var round = 0; round < 3; round++)
+        {
+            var sinceSequence = browser.ReceivedFrames.Count;
+            await browser.SendInputAudioAppendAsync("dGVzdA==", ct);
+            var speechStarted = await browser.ReceivedFrames.WaitForAsync(
+                f => f.Sequence >= sinceSequence && f.Type == "input_audio_buffer.speech_started", FrameTimeout, ct);
+            Assert.True(speechStarted is not null, $"Expected speech_started to be forwarded for round {round}.");
+
+            var closedQuickly = true;
+            try
+            {
+                await browser.WaitForCloseAsync(TimeSpan.FromSeconds(3), ct);
+            }
+            catch (TimeoutException)
+            {
+                closedQuickly = false;
+            }
+            Assert.False(closedQuickly,
+                $"Session closed during round {round} -- repeated guest speech should have kept it alive.");
+        }
+
+        // Now the guest genuinely goes silent: no more appends. The SAME idle clock must still
+        // fire on schedule, measured from the LAST speech_started (~3s ago), not reset forever.
+        await browser.WaitForCloseAsync(TimeSpan.FromSeconds(10), ct);
+        Assert.Equal((System.Net.WebSockets.WebSocketCloseStatus)4000, browser.CloseStatus);
+        Assert.Equal("idle_timeout", browser.CloseStatusDescription);
     });
 }

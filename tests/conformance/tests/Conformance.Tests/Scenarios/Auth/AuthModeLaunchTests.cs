@@ -38,7 +38,13 @@ public sealed class AuthModeLaunchTests
             return;
         }
 
-        var port = NetworkUtils.GetFreeTcpPort();
+        // Refs #259 (Rick's #267 review, minor item): port 0 for consistency with every other
+        // caller post-#259 (ConformanceFixture, both launchers' retry attempts) -- these rows
+        // expect a fail-fast exit before the backend ever attempts its own socket bind, so the
+        // exact port requested here never actually matters for what's under test, but a stray
+        // NetworkUtils.GetFreeTcpPort() probe-then-release TOCTOU window (however unlikely to
+        // matter here) is no longer the only path left in the harness that still does this.
+        var port = 0;
         // R7 (Rick's PR #158 round 1 review): InvalidOperationException specifically -- both
         // launchers' own "exited early"/"exited immediately" message, never a TimeoutException (a
         // hang, not a fail-fast exit), a PortBindRaceException, or a build/launch error. Any of
