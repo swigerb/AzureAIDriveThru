@@ -366,6 +366,20 @@ public sealed class FakeRealtimeUpstreamServer : IAsyncDisposable
         return string.Equals(header, $"Bearer {ExpectedCascadeBearerToken}", StringComparison.Ordinal);
     }
 
+    private static async Task HandleV1TranscriptionNotFoundAsync(HttpContext context)
+    {
+        context.Response.StatusCode = StatusCodes.Status404NotFound;
+        context.Response.ContentType = "application/json";
+        await context.Response.WriteAsync(new JsonObject
+        {
+            ["error"] = new JsonObject
+            {
+                ["code"] = "DeploymentNotFound",
+                ["message"] = "The API deployment for this resource does not exist.",
+            },
+        }.ToJsonString()).ConfigureAwait(false);
+    }
+
     private async Task HandleTranscriptionAsync(HttpContext context)
     {
         if (!CheckCascadeBearerToken(context))
@@ -493,7 +507,11 @@ public sealed class FakeRealtimeUpstreamServer : IAsyncDisposable
         // Issue #82: cascade's STT/TTS reuse this same fake's base URI -- see
         // ExpectedCascadeBearerToken's own doc comment above for why these two routes live here
         // instead of on a separate fake process.
-        app.MapPost("/openai/v1/audio/transcriptions", HandleTranscriptionAsync);
+        // Mirrors real Azure OpenAI (2026-10-05): the preview /v1 transcription route 404s with
+        // DeploymentNotFound; only the deployment-scoped route transcribes. Serving the old route
+        // as a 404 makes the conformance suite catch a regression back to it on either backend.
+        app.MapPost("/openai/v1/audio/transcriptions", HandleV1TranscriptionNotFoundAsync);
+        app.MapPost("/openai/deployments/{deployment}/audio/transcriptions", HandleTranscriptionAsync);
         app.MapPost("/openai/v1/audio/speech", HandleSpeechAsync);
 
         await app.StartAsync(cancellationToken).ConfigureAwait(false);

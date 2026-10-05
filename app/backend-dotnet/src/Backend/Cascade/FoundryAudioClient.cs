@@ -18,8 +18,17 @@ public sealed class FoundryAudioClient(HttpClient httpClient, string endpoint, I
 {
     private readonly string _endpoint = endpoint.TrimEnd('/');
 
+    /// <summary>Azure OpenAI's preview `/openai/v1/audio/transcriptions` route returns 404
+    /// DeploymentNotFound for gpt-4o-transcribe deployments (verified live 2026-10-05) even though
+    /// `/openai/v1/audio/speech` works, so STT uses the deployment-scoped route. Mirrors
+    /// cascade_processor.py's <c>transcription_url</c>.</summary>
+    internal const string TranscriptionApiVersion = "2024-10-21"; // GA; verified live with gpt-4o-transcribe 2026-10-05
+
+    internal static string TranscriptionUrl(string endpoint, string deployment) =>
+        $"{endpoint.TrimEnd('/')}/openai/deployments/{Uri.EscapeDataString(deployment)}/audio/transcriptions?api-version={TranscriptionApiVersion}";
+
     /// <summary>Uploads <paramref name="pcm16Bytes"/> (wrapped in a minimal WAV container, see
-    /// <see cref="WavEncoder"/>) to `/openai/v1/audio/transcriptions` and returns the transcript
+    /// <see cref="WavEncoder"/>) to the deployment-scoped transcription route (see <see cref="TranscriptionUrl"/>) and returns the transcript
     /// text (empty string if the response has none). Port of cascade_processor.py's `_transcribe`.</summary>
     public async Task<string> TranscribeAsync(byte[] pcm16Bytes, string deployment, int sampleRate, CancellationToken ct)
     {
@@ -33,7 +42,7 @@ public sealed class FoundryAudioClient(HttpClient httpClient, string endpoint, I
         fileContent.Headers.ContentType = new MediaTypeHeaderValue("audio/wav");
         content.Add(fileContent, "file", "turn.wav");
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, $"{_endpoint}/openai/v1/audio/transcriptions")
+        using var request = new HttpRequestMessage(HttpMethod.Post, TranscriptionUrl(_endpoint, deployment))
         {
             Content = content,
         };
