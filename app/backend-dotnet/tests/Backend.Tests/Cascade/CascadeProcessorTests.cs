@@ -1101,6 +1101,14 @@ public sealed class CascadeProcessorTests
         Assert.Contains(messages, m => m!["role"]!.GetValue<string>() == "system"
             && m["content"]!.GetValue<string>().Contains("I'd like fries")
             && m["content"]!.GetValue<string>().Contains("Sure thing!"));
+
+        // The provisional connection created at accept-time is ended inside TryResume, while the
+        // resumed/original session survives this socket close only until its normal grace sweep.
+        Assert.Null(sessionManager.GetContextMonitor("new-conn-sess"));
+        Assert.NotNull(sessionManager.GetContextMonitor("prior-sess"));
+        fakeTime.Advance(TimeSpan.FromSeconds(sessionManager.Config.GraceSeconds + 1));
+        Assert.Equal(1, sessionManager.SweepDetached());
+        Assert.Null(sessionManager.GetContextMonitor("prior-sess"));
     }
 
     [Fact]
@@ -1339,6 +1347,33 @@ public sealed class CascadeProcessorTests
         Assert.DoesNotContain("input_audio_buffer.speech_started", types);
         Assert.Single(handler.ChatRequestBodies); // only the greeting -- no guest turn was ever started
         Assert.Equal(0, handler.TranscribeRequestCount);
+    }
+
+    [Fact]
+    public async Task RunSessionAsync_SocketCloseDetachesCascadeSession_AndGraceSweepRemovesItsContextMonitor()
+    {
+        var (persona, loader) = LoadDeltaFixture();
+        var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
+        var fakeTime = new FakeTimeProvider();
+        var sessionManager = NewSessionManager(fakeTime);
+        var handler = new RoutingFoundryHandler()
+            .EnqueueChatMessage("assistant", "Welcome to Test Delta Meal Co.! What can I get started for you?")
+            .EnqueueSpeech([1, 2]);
+        var processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader, timeProvider: fakeTime, sessionManager: sessionManager);
+
+        var socket = new DelayedFakeWebSocket(
+            [
+                ([], WebSocketMessageType.Close),
+                ([], WebSocketMessageType.Close),
+            ],
+            ReceiveDelay);
+
+        await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "cascade-grace-sess", TestContext.Current.CancellationToken);
+
+        Assert.NotNull(sessionManager.GetContextMonitor("cascade-grace-sess"));
+        fakeTime.Advance(TimeSpan.FromSeconds(sessionManager.Config.GraceSeconds + 1));
+        Assert.Equal(1, sessionManager.SweepDetached());
+        Assert.Null(sessionManager.GetContextMonitor("cascade-grace-sess"));
     }
 
 }

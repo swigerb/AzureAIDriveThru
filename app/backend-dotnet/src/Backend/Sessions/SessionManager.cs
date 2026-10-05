@@ -187,14 +187,10 @@ public sealed class SessionManager
     }
 
     /// <summary>Port of session_manager.py's `self._context_monitors[session_id] =
-    /// ContextMonitor(session_id)` line inside `create_session` -- standalone (not folded into
-    /// <see cref="CreateSession"/> itself) so <see cref="Backend.Sessions.CascadeProcessor"/>,
-    /// which does not yet register a full <see cref="SessionRecord"/> with this manager (issue
-    /// #15's resume/rehydration machinery is realtime-only so far), can still get a
-    /// per-session <see cref="ContextMonitor"/> the same way Python's cascade_processor.py does
-    /// (it calls the SAME shared `self._sessions.create_session`, full session record included).
-    /// Safe to call even when a full session record already exists for this id (overwrites, same
-    /// as Python re-running `create_session` would).</summary>
+    /// ContextMonitor(session_id)` line inside `create_session`, kept as a standalone helper for
+    /// any caller that wants a per-session <see cref="ContextMonitor"/> without registering a full
+    /// <see cref="SessionRecord"/>. Safe to call even when a full session record already exists
+    /// for this id (overwrites, same as Python re-running `create_session` would).</summary>
     public void CreateContextMonitor(string sessionId)
     {
         lock (_sync)

@@ -104,10 +104,8 @@ public sealed class SessionManagerTests
     [Fact]
     public void CreateContextMonitor_StandaloneForCascade_IsIndependentOfTheFullSessionRegistry()
     {
-        // Mirrors cascade_processor.py's create_session's own ContextMonitor(session_id)
-        // construction: CascadeProcessor never calls SessionManager.CreateSession (see that
-        // class's own doc comment), so it creates/tears down a context monitor directly via this
-        // standalone API instead.
+        // The standalone API remains valid for any caller that wants a ContextMonitor without a
+        // full SessionRecord; it should stay independent of CreateSession/EndSession.
         var mgr = NewManager(new FakeTimeProvider());
         mgr.CreateContextMonitor("cascade-session");
         var monitor = mgr.GetContextMonitor("cascade-session");

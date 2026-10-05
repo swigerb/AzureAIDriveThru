@@ -532,13 +532,19 @@ public sealed class CascadeProcessor : IPipelineProcessor
                 async () =>
                 {
                     var pcm = await _audioClient.SpeakAsync(text, state.Voice, deployment, turnCt).ConfigureAwait(false);
-                    // #126: arm the echo-suppression cooldown for roughly the GUEST'S actual
-                    // speaker playback duration of this reply (not this loop's own fast send
-                    // time) plus `_echoCooldownSeconds` -- mirrors cascade_processor.py's own
-                    // `_speak`, which computes `len(audio_bytes) / (sample_rate * sample_width)`.
-                    // PCM16 mono => 2 bytes/sample.
-                    var durationSeconds = pcm.Length / (double)(AudioSampleRate * 2);
-                    detector.StartEchoCooldown(durationSeconds + _echoCooldownSeconds, NowSeconds());
+                    if (_echoCooldownSeconds > 0)
+                    {
+                        // #126: a non-positive configured buffer disables cascade's local
+                        // echo-suppression cooldown entirely, preserving the pre-#126
+                        // immediate-barge-in behaviour older tests (and explicit 0 overrides)
+                        // rely on. When enabled, arm the cooldown for roughly the GUEST'S actual
+                        // speaker playback duration of this reply (not this loop's own fast send
+                        // time) plus `_echoCooldownSeconds` -- mirrors cascade_processor.py's own
+                        // `_speak`, which computes `len(audio_bytes) / (sample_rate * sample_width)`.
+                        // PCM16 mono => 2 bytes/sample.
+                        var durationSeconds = pcm.Length / (double)(AudioSampleRate * 2);
+                        detector.StartEchoCooldown(durationSeconds + _echoCooldownSeconds, NowSeconds());
+                    }
                     for (var offset = 0; offset < pcm.Length; offset += TtsChunkBytes)
                     {
                         var chunkLength = Math.Min(TtsChunkBytes, pcm.Length - offset);
@@ -1132,6 +1138,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
         {
             await CancelCurrentTurnAsync("connection closing").ConfigureAwait(false);
             CancelNudge("connection closing");
+            _sessionManager?.Detach(browserSocket, sessionId, "socket closed");
         }
     }
 
