@@ -1179,7 +1179,7 @@ class NegotiateSessionTests(unittest.IsolatedAsyncioTestCase):
         processor._sessions.create_session.return_value = "new-session-1"
         processor._sessions.issue_resume_id.return_value = "resume-xyz"
         ws = _make_mock_ws()
-        ws.receive = AsyncMock(side_effect=asyncio.TimeoutError())
+        ws.receive = AsyncMock(side_effect=TimeoutError())
         persona = _fake_persona("marin")
         resolved_model = SimpleNamespace(id="m1", deployment="d", reasoning=None, pipeline="cascade")
 

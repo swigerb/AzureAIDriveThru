@@ -484,7 +484,7 @@ class CascadeProcessor:
 
     async def _negotiate_session(
         self, ws: web.WebSocketResponse, persona, resolved_model: ResolvedModel, requested_menu_mode: str | None,
-    ) -> tuple[str, "_CascadeSessionState | None", "web.WSMessage | None"]:
+    ) -> tuple[str, _CascadeSessionState | None, web.WSMessage | None]:
         """Issue #126: cascade's own resume handshake, through the SAME
         `SessionManager.resume`/grace-held order state/4002-supersede semantics
         (`session_manager.py`, #15) the realtime pipeline already uses -- a resume is honoured
@@ -507,7 +507,7 @@ class CascadeProcessor:
         if timeout and timeout > 0:
             try:
                 first_msg = await asyncio.wait_for(ws.receive(), timeout=timeout)
-            except (asyncio.TimeoutError, TimeoutError):
+            except TimeoutError:
                 first_msg = None
             except Exception:
                 logger.debug("Cascade: error peeking the first client frame; treating as fresh", exc_info=True)
@@ -586,7 +586,7 @@ class CascadeProcessor:
 
     async def _run_session(
         self, ws: web.WebSocketResponse, session_id: str, persona, resolved_model: ResolvedModel, *,
-        resumed_state: "_CascadeSessionState | None" = None, leftover_msg: "web.WSMessage | None" = None,
+        resumed_state: _CascadeSessionState | None = None, leftover_msg: web.WSMessage | None = None,
     ) -> None:
         prompt_loader = self.persona_prompt_loaders.get(persona.id)
         if resumed_state is not None:
