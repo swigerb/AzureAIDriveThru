@@ -496,6 +496,18 @@ namespace Conformance.Tests;
 /// branch tip (via `Conformance.Tests.exe -list methods -trait Dotnet=ready`, cross-checked by
 /// directly invoking this method via reflection) gives <b>351</b> (347 + 4 newly-tagged, now
 /// non-zero-row, <c>Discovered_*</c> methods), the floor asserted below.
+///
+/// <para>PR #313 (Rick's REQUEST CHANGES review, item 6 + coordinator brief, Summer+Beth): Rick
+/// measured fresh with a temporary local assert (reverted, never committed) giving
+/// <b>MEASURED=356</b> on this PR's branch tip at review time (354 baseline + 2 ready-tagged
+/// methods this PR had already added: <c>SpokenReadBackConformanceTests</c>'s original single
+/// read-back test and <c>CascadePronunciationLexiconConformanceTests</c>'s pronunciation-lexicon
+/// test). This fix-up round replaces that one original <c>SpokenReadBackConformanceTests</c>
+/// method with four <c>[Trait("Dotnet", "ready")]</c> <c>[Fact]</c>s (a
+/// <c>FunctionCallOutputText</c>-based <c>get_order</c> assertion replacing the old
+/// client-JSON-only one, a new <c>update_order</c> mandatory-read-back assertion, a Munchkins
+/// multi-line read-back row, and Brian's exact modify-then-readback bug row) -- a net +3 methods,
+/// 356 + 3 = <b>359</b>, the floor asserted below.</para>
 /// </summary>
 [Trait("Dotnet", "n/a-harness")]
 public sealed class DotnetTraitCoverageTests
@@ -578,7 +590,7 @@ public sealed class DotnetTraitCoverageTests
     }
 
     [Fact]
-    public void At_least_354_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
+    public void At_least_359_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
     {
         // Rick's PR #226 review: assert the capability directly, not just the derived count --
         // see this class's own doc comment for why a bare ">= 222" check alone can't be trusted to
@@ -592,8 +604,8 @@ public sealed class DotnetTraitCoverageTests
 
         var count = CountFloorEligibleDotnetReadyTestMethods();
 
-        Assert.True(count >= 354,
-            $"Expected at least 354 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")], " +
+        Assert.True(count >= 359,
+            $"Expected at least 359 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")], " +
             $"not unconditionally skip-gated by AuthRowCapability, and (per issue #283) not a " +
             $"[Theory(SkipTestWithoutData = true)] whose own [MemberData] source resolves to zero " +
             $"rows (see {nameof(TheoryYieldsZeroRowsWhenSkipGated)} -- such a method is SKIPPED, " +
@@ -601,12 +613,18 @@ public sealed class DotnetTraitCoverageTests
             $"the dotnet leg's `--filter \"{TraitName}={TraitValue}\"` baseline, minus the five " +
             "skip-only Scenarios/Auth classes -- see this class's own doc comment; " +
             $"docs/dotnet_mapping.md), but found {count}. If a tagged scenario was removed or " +
-            "renamed without a replacement, the dotnet CI leg silently lost coverage. 354 is a " +
-            "FRESH count (coordinator issue #283, Birdperson, 2026-10-05: " +
-            "ComboComponentResizeConformanceTests's 4 Discovered_* theories re-tagged from " +
-            "n/a-no-matching-persona-data to ready after adding the test-zeta synthetic fixture " +
-            "pack gave each of them at least one real row, 347 + 4 = 351), not arithmetic -- " +
-            "re-measure with `Conformance.Tests.exe -list methods -trait Dotnet=ready` minus the " +
+            "renamed without a replacement, the dotnet CI leg silently lost coverage. 359 is " +
+            "arithmetic on top of Rick's own freshly-measured 356 (PR #313 review: " +
+            "CountFloorEligibleDotnetReadyTestMethods, temporary local assert, reverted, never " +
+            "committed -- the 354 baseline plus the 2 ready-tagged methods this PR had already " +
+            "added before his review: SpokenReadBackConformanceTests's original single read-back " +
+            "test and CascadePronunciationLexiconConformanceTests's pronunciation-lexicon test). " +
+            "This round's own fix-up (coordinator brief, Summer+Beth) replaces that ONE original " +
+            "SpokenReadBackConformanceTests method with FOUR [Trait(\"Dotnet\", \"ready\")] " +
+            "[Fact]s (FunctionCallOutputText-based get_order assertion, a new update_order " +
+            "mandatory-read-back assertion, a Munchkins multi-line read-back row, and Brian's " +
+            "exact modify-then-readback bug row) -- a net +3 methods, 356 + 3 = 359. Re-measure " +
+            "with `Conformance.Tests.exe -list methods -trait Dotnet=ready` minus the " +
             "AuthRowCapabilityGated methods and any zero-row SkipTestWithoutData methods before " +
             "raising this floor again.");
     }
@@ -898,7 +916,7 @@ public sealed class DotnetTraitCoverageTests
     /// End-to-end mutation-check for the fail-closed guard itself (not just its resolution
     /// helper): an empty static property-backed <c>[MemberData]</c> source on a
     /// <c>[Theory(SkipTestWithoutData = true)]</c> method must be reported as yielding zero rows,
-    /// exactly the behavior <see cref="At_least_354_scenarios_are_tagged_dotnet_ready_and_not_skip_gated"/>
+    /// exactly the behavior <see cref="At_least_359_scenarios_are_tagged_dotnet_ready_and_not_skip_gated"/>
     /// relies on to exclude it from the floor. Reverting either the property-resolution branch
     /// above or this guard's own fail-closed wiring must turn this test red.
     /// </summary>

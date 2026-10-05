@@ -392,9 +392,17 @@ async def search(
             size_str = raw_sizes
 
         item_name = record.get('name', 'N/A')
+        # #313 (Rick's review, 1.1): every persona prompt requires calling `search` BEFORE
+        # `update_order`, so this is the model's first (and often only) exposure to the item's
+        # name -- it previously saw only the raw catalog string (e.g. a trademarked "WIDGET®")
+        # and had to improvise a pronunciation. The canonical name stays first (it
+        # is what the model must still pass back to `update_order`); the spoken form is appended
+        # so the model has a correct pronunciation to actually say out loud.
+        spoken_name = menu.spoken(item_name) if menu else item_name
+        name_for_speech = f"{item_name} (say: {spoken_name})" if spoken_name != item_name else item_name
         summary = (
             f"[{identifier}]: "
-            f"Item: {item_name}, Category: {record.get('category', 'N/A')}, "
+            f"Item: {name_for_speech}, Category: {record.get('category', 'N/A')}, "
             f"Available Sizes: {size_str}"
         )
 
@@ -880,7 +888,11 @@ async def update_order(args, session_id: str) -> ToolResult:
     elif modified_from_size and modified_to_size and modified_from_size != modified_to_size:
         old_label = modified_from_size.capitalize()
         new_label = modified_to_size.capitalize()
-        delta_text = f"Upgraded {spoken_item_name} from {old_label} to {new_label}, your total is now {summary.finalTotalDisplay}"
+        # #313 (Rick's review, 1.7): "Upgraded" implies the new size is always bigger, but a
+        # resize can go either way (Brian's bug report: 25 count -> 10 count). Use the neutral
+        # "Changed" for every size change, same verb already used by the resized_component and
+        # `modify` action branches above/below.
+        delta_text = f"Changed {spoken_item_name} from {old_label} to {new_label}, your total is now {summary.finalTotalDisplay}"
     elif pl:
         tpl = pl.get_delta_template(action)
         delta_text = pl.render_template(tpl, quantity=quantity, display_name=spoken_display_name, total=summary.finalTotalDisplay)
@@ -911,7 +923,11 @@ async def update_order(args, session_id: str) -> ToolResult:
         # mapping was added in #168 (back then "extras & sides" didn't match ANY bucket either).
         category = "" if menu.is_extra_item(item_name) else menu.infer_category(item_name)
         if pl:
-            delta_text += pl.get_upsell_hint(category)
+            # #313 (Rick's review, 1.2): the upsell hint text (e.g. hints.yaml's "maybe a coffee,
+            # a Widget, or a donut!") is guest-facing speech, same as every other string appended
+            # to delta_text -- it must go through the same menu.spoken() pronunciation lexicon or
+            # the model reads the raw brand string verbatim right after a correctly-spoken item name.
+            delta_text += menu.spoken(pl.get_upsell_hint(category))
         logger.debug("Upsell hint for category '%s'", category)
 
     # #113: the banner text (and whether to announce at all) is this session's OWN bound
@@ -919,7 +935,17 @@ async def update_order(args, session_id: str) -> ToolResult:
     # order_state.OrderState.get_happy_hour_banner_for_session for the single place that's
     # decided (mirrors is_happy_hour_for_session's per-session lookup just above it).
     happy_hour_note = order_state_singleton.get_happy_hour_banner_for_session(session_id)
-    return ToolResult(delta_text + happy_hour_note, ToolResultDirection.TO_BOTH, client_text=json_order_summary)
+    # #313 (Rick's review, 1.4): Brian's bug was that the read-back after a *modify* never
+    # reached the model unless it made a second `get_order` call a prompt told it to -- the same
+    # model behavior that dropped the read-back in the original #304 report. Appending the
+    # already-composed, server-side `spokenReadBack` to EVERY successful add/remove/modify
+    # `function_call_output` means the read-back is in the model's context the instant it has to
+    # speak, with no second tool call required. `summary` here is this same call's freshly
+    # recomputed `OrderSummary` (see `get_order_summary` above), so it always reflects the change
+    # that was just made.
+    spoken_read_back = summary.spokenReadBack
+    delta_text_with_readback = f"{delta_text}{happy_hour_note}\n\n{spoken_read_back}" if spoken_read_back else delta_text + happy_hour_note
+    return ToolResult(delta_text_with_readback, ToolResultDirection.TO_BOTH, client_text=json_order_summary)
 
 
 get_order_tool_schema = {

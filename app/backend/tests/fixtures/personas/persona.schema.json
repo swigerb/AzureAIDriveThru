@@ -124,7 +124,7 @@
     },
     "pronunciations": {
       "type": "object",
-      "description": "Issue #304: pack-level phonetic respelling lexicon -- e.g. {\"Munchkins\": \"Munch-kins\"} -- applied ONLY to the cascade pipeline's text-to-speech input text (CascadeProcessor/cascade_processor.py's `_speak`), never to the realtime model's own tool/item-name text, never to order/search data. Keys and values must be non-empty, trimmed strings. Optional: a pack with no brand words at pronunciation risk may omit this entirely or leave it {}.",
+      "description": "Issue #304: pack-level phonetic respelling lexicon -- e.g. {\"Widget\": \"Wid-jet\"} -- applied ONLY to the cascade pipeline's text-to-speech input text (CascadeProcessor/cascade_processor.py's `_speak`), never to the realtime model's own tool/item-name text, never to order/search data. Keys and values must be non-empty, trimmed strings. Optional: a pack with no brand words at pronunciation risk may omit this entirely or leave it {}.",
       "propertyNames": { "pattern": "\\S" },
       "additionalProperties": { "type": "string", "pattern": "\\S" }
     },

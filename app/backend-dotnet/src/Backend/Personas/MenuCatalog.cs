@@ -327,7 +327,7 @@ public sealed class MenuCatalog
     /// cref="Spoken"/> uses for <c>sizes.spokenAs</c>/per-item <c>spokenName</c> -- one
     /// substitution algorithm, multiple callers. Issue #304: this is also the exact mechanism
     /// CascadeProcessor's SpeakAsync uses to apply a persona's own <c>pronunciations</c> lexicon to
-    /// its TTS input text, so a phonetic respelling (e.g. {"Munchkins": "Munch-kins"}) can never
+    /// its TTS input text, so a phonetic respelling (e.g. {"Widget": "Wid-jet"}) can never
     /// rewrite the middle of an unrelated word. Mirrors menu_utils.py's module-level
     /// <c>apply_lexicon</c>.</summary>
     public static string ApplyLexicon(string text, IReadOnlyDictionary<string, string> lexicon)
@@ -347,7 +347,7 @@ public sealed class MenuCatalog
     /// <summary>Applies this persona's own <c>sizes.spokenAs</c> spoken-readback substitutions to a
     /// display string (#74; Route 44 readback etc.) -- generic per-persona, never hardcoded. Longer
     /// keys run first and matches require alphanumeric/trademark boundaries so item-name hints (for
-    /// example MUNCHKINS® -> Munchkins) cannot rewrite the middle of another token.</summary>
+    /// example WIDGET® -> Widget) cannot rewrite the middle of another token.</summary>
     public string Spoken(string text) => ApplyLexicon(text, _spokenAs);
 
     public string InferCategory(string itemName)

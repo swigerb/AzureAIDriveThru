@@ -10,9 +10,10 @@ import conformance_hooks
 import default_persona
 from menu_utils import _menu_key, get_catalog_for_persona
 from models import OrderItem, OrderSummary
-from money_utils import format_money, to_decimal
+from money_utils import format_money, format_money_spoken, number_to_words, to_decimal
 
 if TYPE_CHECKING:
+    from menu_utils import MenuCatalog
     from persona_loader import Persona
 
 __all__ = ["OrderState", "SessionIdentifiers", "order_state_singleton", "is_happy_hour"]
@@ -54,7 +55,7 @@ def is_happy_hour(session: dict | None = None) -> bool:
     return start_hour <= now.hour < end_hour
 
 
-def _compose_spoken_readback(order_items: list, menu: "MenuCatalog", final_total_display: str) -> str:
+def _compose_spoken_readback(order_items: list, menu: "MenuCatalog", final_total: Decimal) -> str:
     """Issue #304: the shared, server-composed voice read-back -- "I have ... Your total is
     ....". Groups items with the same (spoken) display name, same exact wording
     ``get_grouped_order_for_readback`` always returned, now the SINGLE implementation behind
@@ -62,9 +63,11 @@ def _compose_spoken_readback(order_items: list, menu: "MenuCatalog", final_total
     (``_update_summary`` below) -- the two can never drift apart because there is only ever one
     composition. *menu* is this session's own bound persona's ``MenuCatalog`` (its ``.spoken()``
     already folds in both ``sizes.spokenAs`` and any per-item ``spokenName`` -- see
-    ``MenuCatalog.from_persona``); *final_total_display* is the already-computed, exact
-    ``OrderSummary.finalTotalDisplay`` string -- never re-derived here (#47/PR #50 follow-up: one
-    place turns the exact Decimal total into a "$0.00" string)."""
+    ``MenuCatalog.from_persona``); *final_total* is the exact ``Decimal`` total (#313, Rick's
+    review item 2: speaking money needs the exact value, not the already-rounded "$0.00" display
+    string, so the digit and word renderings of the SAME amount can never drift -- both go
+    through the identical ``ROUND_HALF_UP`` rounding, one in ``format_money``, one here in
+    ``format_money_spoken``)."""
     if not order_items:
         return "Your order is currently empty."
 
@@ -86,9 +89,14 @@ def _compose_spoken_readback(order_items: list, menu: "MenuCatalog", final_total
         if positive_upcharges:
             upcharge_total = sum(positive_upcharges, Decimal("0"))
             if len(positive_upcharges) == 1:
-                clean_name = f"{clean_name} with a {format_money(upcharge_total)} upcharge"
+                clean_name = f"{clean_name} with a {format_money_spoken(upcharge_total)} upcharge"
             else:
-                clean_name = f"{clean_name} with {format_money(upcharge_total)} in component upcharges"
+                clean_name = f"{clean_name} with {format_money_spoken(upcharge_total)} in component upcharges"
+        # #313 (Rick's review, item "grouping key"): the grouping key is deliberately this
+        # already-spoken display string (not the raw item/size) -- two items whose spoken form
+        # collides (e.g. two differently-cased raw names that both speak as "Widget") are
+        # meant to merge into one read-back line, same as two literally-identical lines would.
+        # See tests/test_order_state.py::test_spoken_name_collision_groups_into_one_readback_line.
         if clean_name not in counts:
             order.append(clean_name)
         counts[clean_name] = counts.get(clean_name, 0) + oi.quantity
@@ -97,7 +105,10 @@ def _compose_spoken_readback(order_items: list, menu: "MenuCatalog", final_total
     parts = []
     for display in order:
         qty = counts[display]
-        prefix = f"{qty} " if qty > 1 else "one "
+        # #313 (Rick's review, item 2): a bare digit quantity read next to a count-based size
+        # (e.g. "3 10 Count Glazed Munch-kins Donut Hole Treats") is ambiguous -- "three ten
+        # count" or "three hundred ten"? Spelling the quantity out as a word removes it.
+        prefix = f"{number_to_words(qty)} "
         parts.append(f"{prefix}{display}")
 
     if len(parts) > 1:
@@ -105,7 +116,7 @@ def _compose_spoken_readback(order_items: list, menu: "MenuCatalog", final_total
     else:
         summary_str = parts[0]
 
-    return f"I have {summary_str}. Your total is {final_total_display}. "
+    return f"I have {summary_str}. Your total is {format_money_spoken(final_total)}. "
 
 
 @dataclass
@@ -218,7 +229,7 @@ class OrderState:
             totalDisplay=format_money(total),
             taxDisplay=format_money(tax),
             finalTotalDisplay=final_total_display,
-            spokenReadBack=_compose_spoken_readback(order_items, menu, final_total_display),
+            spokenReadBack=_compose_spoken_readback(order_items, menu, finalTotal),
         )
         session["order_summary"] = summary
         # Cache the JSON representation to avoid repeated Pydantic serialization

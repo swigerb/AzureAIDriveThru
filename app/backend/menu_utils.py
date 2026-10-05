@@ -57,9 +57,9 @@ def apply_lexicon(text: str, lexicon: dict[str, str]) -> str:
     ``sizes.spokenAs``/per-item ``spokenName`` -- one substitution algorithm, two callers.
     Issue #304: this is also the exact mechanism ``cascade_processor.py``'s ``_speak`` uses to
     apply a persona's own ``pronunciations`` lexicon to its TTS input text, so a phonetic
-    respelling (e.g. ``{"Munchkins": "Munch-kins"}``) can never rewrite the middle of an
-    unrelated word (a bare substring match could, e.g. turning "Munchkinsy" into
-    "Munch-kinsy"). Longer keys are applied first so a multi-word entry always wins over a
+    respelling (e.g. ``{"Widget": "Wid-jet"}``) can never rewrite the middle of an
+    unrelated word (a bare substring match could, e.g. turning "Widgety" into
+    "Wid-jety"). Longer keys are applied first so a multi-word entry always wins over a
     single-word one it happens to contain."""
     for raw, replacement in sorted(lexicon.items(), key=lambda item: len(item[0]), reverse=True):
         if not raw:
@@ -601,7 +601,7 @@ class MenuCatalog:
         mapping, so this is a no-op behavior change for Sonic, but a future persona with its own
         size vocabulary now drives its own readback text instead of inheriting Sonic's.
         Longer keys are applied first, and matches require alphanumeric/trademark boundaries so
-        item-name pronunciation hints (e.g. MUNCHKINS® -> Munchkins) cannot rewrite unrelated
+        item-name pronunciation hints (e.g. WIDGET® -> Widget) cannot rewrite unrelated
         tokens or leave a registered mark behind."""
         return apply_lexicon(text, self.spoken_as)
 

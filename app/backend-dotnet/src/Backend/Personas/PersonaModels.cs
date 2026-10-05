@@ -30,7 +30,7 @@ public sealed record Persona
     [JsonPropertyName("extras")] public required PersonaExtras Extras { get; init; }
     [JsonPropertyName("invalidModifiers")] public required Dictionary<string, List<string>> InvalidModifiers { get; init; }
 
-    // Issue #304: optional persona-level phonetic lexicon ("Munchkins" -> "Munch-kins"),
+    // Issue #304: optional persona-level phonetic lexicon (e.g. {"Widget": "Wid-jet"}),
     // consulted ONLY by the cascade pipeline's SpeakAsync (never by the realtime model, never
     // applied to order/search/display data). Mirrors persona_loader.py's
     // PersonaManifest.pronunciations.

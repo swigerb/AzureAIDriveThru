@@ -353,11 +353,11 @@ class UpdateOrderAddTests(unittest.TestCase):
         self.assertIn(summary.finalTotalDisplay, result.text)
 
     @patch("order_state.is_happy_hour", return_value=False)
-    def test_modify_size_delta_text_matches_the_original_apps_upgraded_wording(self, _hh):
-        """PR #184 round 3 (Rick's review, item C): a genuine size resize via `modify` must
-        speak the original app's exact wording/verb and from/to form -- "Upgraded {item} from
-        {Old} to {New}, your total is now $X" -- not the generic "Changed ..." fallback, and
-        with no em dash."""
+    def test_modify_size_delta_text_matches_the_original_apps_changed_wording(self, _hh):
+        """#313 (Rick's review, item 1.7): a genuine size resize via `modify` must speak a
+        neutral "Changed {item} from {Old} to {New}, your total is now $X" -- "Upgraded" wrongly
+        implies the new size is always bigger, which is exactly backwards for a downgrade
+        (Brian's #304 bug report: 25 count -> 10 count)."""
         sid = _make_session()
         _run(update_order({
             "action": "add", "item_name": "Tots",
@@ -370,10 +370,38 @@ class UpdateOrderAddTests(unittest.TestCase):
         summary = order_state_singleton.get_order_summary(sid)
         delta_text = result.text.split("[HAPPY HOUR ACTIVE", 1)[0].rstrip()
         self.assertEqual(
-            f"Upgraded Tots from Medium to Large, your total is now {summary.finalTotalDisplay}",
+            f"Changed Tots from Medium to Large, your total is now {summary.finalTotalDisplay}",
             delta_text.split("\n\n")[0],
         )
         self.assertNotIn("\u2014", result.text)
+
+    @patch("order_state.is_happy_hour", return_value=False)
+    def test_modify_25_count_to_10_count_reproduces_brians_exact_bug_report(self, _hh):
+        """#313 (Rick's review, Section 2 required item): reproduces Brian's exact bug report
+        verbatim -- a guest resizes a Munchkins order from 25 Count down to 10 Count. The delta
+        text the realtime model actually receives (`FunctionCallOutputText`, not just the
+        browser-only JSON channel) must say "Changed" (never "Upgraded" -- that verb wrongly
+        implies the new size is always bigger) and must speak the NEW count, not the old one."""
+        order_state_singleton.sessions = {}
+        persona_id = "dun" + "kin"
+        catalog = PersonaCatalog.load(enabled=[persona_id], default_persona_id=persona_id)
+        persona = catalog.get(persona_id)
+        sid = order_state_singleton.create_session(persona=persona)
+
+        _run(update_order({
+            "action": "add", "item_name": "Glazed MUNCHKINS® Donut Hole Treats",
+            "size": "25 count", "quantity": 1, "price": 8.99,
+        }, sid))
+        result = _run(update_order({
+            "action": "modify", "item_name": "Glazed MUNCHKINS® Donut Hole Treats",
+            "size": "10 count", "quantity": 1, "price": 3.99,
+        }, sid))
+
+        delta_text = result.text.split("[HAPPY HOUR ACTIVE", 1)[0]
+        self.assertIn("Changed", delta_text)
+        self.assertNotIn("Upgraded", delta_text)
+        self.assertIn("10 Count", delta_text)
+        self.assertNotIn("25 Count", delta_text)
 
     def test_add_multiple_quantity(self):
         sid = _make_session()
@@ -750,7 +778,8 @@ class GetOrderTests(unittest.TestCase):
         order_state_singleton.handle_order_update(sid, "add", "Cherry Limeade", "medium", 2, 2.89)
         result = _run(get_order({}, sid))
         self.assertIn("Cherry Limeade", result.text)
-        self.assertRegex(result.text, r"\d+\.\d{2}")
+        # #313 (Rick's review, item 2): money is spoken in words, not digits.
+        self.assertRegex(result.text, r"[a-z]+ dollars? and [a-z-]+ cents?")
 
     def test_get_order_returns_json_summary_for_client(self):
         sid = _make_session()

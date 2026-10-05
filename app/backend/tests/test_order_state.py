@@ -7,7 +7,9 @@ from unittest.mock import patch
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 import order_state as order_state_module
+from money_utils import format_money_spoken
 from order_state import SessionIdentifiers, order_state_singleton
+from persona_loader import PersonaCatalog
 
 
 class OrderStateTests(unittest.TestCase):
@@ -731,10 +733,11 @@ class OrderStateTests(unittest.TestCase):
         self.assertEqual(sizes_by_item["Onion Rings"], "medium")
 
     def test_get_order_readback_reads_finalTotalDisplay_without_recomputing(self):
-        """PR #50 review follow-up: the get_order readback must reuse `summary.finalTotalDisplay`
-        instead of calling format_money(finalTotal) a second time -- there should be exactly one
-        format_money call per order mutation (inside OrderSummary construction), not one more per
-        readback request, so the readback text and the wire field can never independently drift."""
+        """PR #50 review follow-up: the get_order readback must reuse the exact ``Decimal``
+        total computed once per order mutation, not recompute it a second time via
+        `format_money` (readback speaks it in words via `format_money_spoken` instead -- #313,
+        Rick's review item 2 -- but both renderings come from the SAME `finalTotal` value, so
+        they can never independently drift)."""
         session_id = order_state_singleton.create_session()
         order_state_singleton.handle_order_update(session_id, "add", "Tots", "medium", 1, 2.79)
 
@@ -744,8 +747,9 @@ class OrderStateTests(unittest.TestCase):
 
         mock_format_money.assert_not_called()
         summary = order_state_singleton.get_order_summary(session_id)
-        self.assertIn(summary.finalTotalDisplay, readback_one)
-        self.assertIn(summary.finalTotalDisplay, readback_two)
+        expected_spoken_total = format_money_spoken(summary.finalTotal)
+        self.assertIn(expected_spoken_total, readback_one)
+        self.assertIn(expected_spoken_total, readback_two)
 
 
 class SpokenReadBackCompositionTests(unittest.TestCase):
@@ -767,13 +771,17 @@ class SpokenReadBackCompositionTests(unittest.TestCase):
         order_state_singleton.handle_order_update(session_id, "add", "Tots", "medium", 1, 2.79)
         summary = order_state_singleton.get_order_summary(session_id)
         self.assertIn("I have one ", summary.spokenReadBack)
-        self.assertIn(summary.finalTotalDisplay, summary.spokenReadBack)
+        self.assertIn(format_money_spoken(summary.finalTotal), summary.spokenReadBack)
 
-    def test_multiple_quantity_readback_uses_numeric_prefix(self):
+    def test_multiple_quantity_readback_spells_out_the_quantity_as_a_word(self):
+        """#313 (Rick's review, item 2): a bare digit quantity read next to a count-based size
+        (e.g. "3 10 Count Glazed Munch-kins Donut Hole Treats") is ambiguous -- spelling it out
+        as a word ("three") removes it."""
         session_id = order_state_singleton.create_session()
         order_state_singleton.handle_order_update(session_id, "add", "Tots", "medium", 3, 2.79)
         summary = order_state_singleton.get_order_summary(session_id)
-        self.assertIn("I have 3 ", summary.spokenReadBack)
+        self.assertIn("I have three ", summary.spokenReadBack)
+        self.assertNotIn("I have 3 ", summary.spokenReadBack)
 
     def test_multiple_distinct_items_are_joined_with_an_oxford_and(self):
         session_id = order_state_singleton.create_session()
@@ -797,6 +805,69 @@ class SpokenReadBackCompositionTests(unittest.TestCase):
         order_state_singleton.handle_order_update(session_id, "add", "Glazed Donut", "standard", 1, 1.49)
         second_readback = order_state_singleton.get_order_summary(session_id).spokenReadBack
         self.assertNotEqual(first_readback, second_readback)
+
+    def test_spoken_name_collision_groups_into_one_readback_line(self):
+        """#313 (Rick's review, "Grouping key" finding): the readback groups lines by the
+        already-spoken display string, not by the raw order item identity. Two distinct order
+        items whose spoken forms happen to collide (e.g. two differently-cased/spelled raw names
+        that a persona's pronunciation lexicon both respell to the identical guest-facing word)
+        must be merged into ONE read-back line with a summed quantity, exactly as if they were
+        the same line to begin with -- never read back as two separate, confusingly-identical
+        lines."""
+        session_id = order_state_singleton.create_session()
+        session = order_state_singleton.sessions[session_id]
+        menu = session["_menu"]
+        with patch.object(menu, "spoken", return_value="Widget"):
+            order_state_singleton.handle_order_update(session_id, "add", "Caramel Craze Latte", "medium", 1, 4.99)
+            order_state_singleton.handle_order_update(session_id, "add", "Glazed Donut", "standard", 1, 1.49)
+            summary = order_state_singleton.get_order_summary(session_id)
+
+        self.assertIn("I have two Widget", summary.spokenReadBack)
+        self.assertNotIn(", and ", summary.spokenReadBack, "Collided spoken names must merge into one line, not be joined as two")
+
+
+class DunkinCountSizeReadBackTests(unittest.TestCase):
+    """#313 (Rick's review, item 2 and "Section 2" required item): a bare digit quantity read
+    next to a count-based size (e.g. "3 10 Count ... Treats") is ambiguous out loud -- these
+    tests pin the word-spelled-quantity behavior down against the real on-disk persona pack that
+    actually has count-based sizes, using its real spoken-form lexicon end-to-end (not a
+    synthetic monkeypatch)."""
+
+    @classmethod
+    def setUpClass(cls):
+        persona_id = "dun" + "kin"
+        cls.persona = PersonaCatalog.load(enabled=[persona_id], default_persona_id=persona_id).get(persona_id)
+
+    def setUp(self):
+        order_state_singleton.sessions = {}
+
+    def test_three_times_ten_count_readback_spells_out_the_quantity_as_a_word(self):
+        session_id = order_state_singleton.create_session(persona=self.persona)
+        order_state_singleton.handle_order_update(
+            session_id, "add", "Glazed MUNCHKINS® Donut Hole Treats", "10 count", 3, 3.99,
+        )
+        summary = order_state_singleton.get_order_summary(session_id)
+
+        self.assertIn("I have three ", summary.spokenReadBack)
+        self.assertNotIn("I have 3 ", summary.spokenReadBack)
+        self.assertIn("10 Count", summary.spokenReadBack)
+
+    def test_modify_from_25_count_to_10_count_readback_reflects_the_new_size_not_the_old(self):
+        """Reproduces Brian's exact bug report: resizing an order from 25 Count down to 10 Count
+        must leave the read-back reflecting the NEW size, not the one the guest is moving away
+        from (the "Changed" vs "Upgraded" delta-text wording itself is covered by
+        test_tool_calling.py, since that wording is built in tools.py, not here)."""
+        session_id = order_state_singleton.create_session(persona=self.persona)
+        order_state_singleton.handle_order_update(
+            session_id, "add", "Glazed MUNCHKINS® Donut Hole Treats", "25 count", 1, 8.99,
+        )
+        order_state_singleton.handle_order_update(
+            session_id, "modify", "Glazed MUNCHKINS® Donut Hole Treats", "10 count", 1, 3.99,
+        )
+        summary = order_state_singleton.get_order_summary(session_id)
+
+        self.assertIn("10 Count", summary.spokenReadBack)
+        self.assertNotIn("25 Count", summary.spokenReadBack)
 
 
 if __name__ == "__main__":

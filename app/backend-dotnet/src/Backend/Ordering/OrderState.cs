@@ -1227,8 +1227,7 @@ public sealed class OrderState
         }
         var tax = total * _taxRate;
         var finalTotal = total + tax;
-        var finalTotalDisplay = Money.Format(finalTotal);
-        Summary = OrderSummary.Build(_items.ToList(), total, tax, finalTotal, ComposeSpokenReadBack(_items, finalTotalDisplay));
+        Summary = OrderSummary.Build(_items.ToList(), total, tax, finalTotal, ComposeSpokenReadBack(_items, finalTotal));
     }
 
     /// <summary>Ports order_state.py's <c>get_combo_requirements</c>: scans the order for bundles
@@ -1277,7 +1276,7 @@ public sealed class OrderState
     /// name="finalTotalDisplay"/> -- never re-derived here. Cached once per <see cref="UpdateSummary"/>
     /// call onto <see cref="OrderSummary.SpokenReadBack"/> so it can never drift from the tool
     /// response that serializes the same <see cref="OrderSummary"/>.</summary>
-    private string ComposeSpokenReadBack(IReadOnlyList<OrderItem> items, string finalTotalDisplay)
+    private string ComposeSpokenReadBack(IReadOnlyList<OrderItem> items, decimal finalTotal)
     {
         if (items.Count == 0)
         {
@@ -1298,8 +1297,8 @@ public sealed class OrderState
             {
                 var upchargeTotal = positiveUpcharges.Sum();
                 cleanName = positiveUpcharges.Count == 1
-                    ? $"{cleanName} with a {Money.Format(upchargeTotal)} upcharge"
-                    : $"{cleanName} with {Money.Format(upchargeTotal)} in component upcharges";
+                    ? $"{cleanName} with a {Money.FormatMoneySpoken(upchargeTotal)} upcharge"
+                    : $"{cleanName} with {Money.FormatMoneySpoken(upchargeTotal)} in component upcharges";
             }
             if (!counts.ContainsKey(cleanName))
             {
@@ -1308,12 +1307,15 @@ public sealed class OrderState
             counts[cleanName] = counts.GetValueOrDefault(cleanName) + item.Quantity;
         }
 
-        var parts = order.Select(display => (counts[display] > 1 ? $"{counts[display]} " : "one ") + display).ToList();
+        // #313 (Rick's review, item 2): a bare digit quantity read next to a count-based size
+        // (e.g. "3 10 Count Glazed Munch-kins Donut Hole Treats") is ambiguous -- spelling the
+        // quantity out as a word removes it.
+        var parts = order.Select(display => $"{Money.NumberToWords(counts[display])} {display}").ToList();
         var summaryStr = parts.Count > 1
             ? string.Join(", ", parts[..^1]) + $", and {parts[^1]}"
             : parts[0];
 
-        return $"I have {summaryStr}. Your total is {finalTotalDisplay}. ";
+        return $"I have {summaryStr}. Your total is {Money.FormatMoneySpoken(finalTotal)}. ";
     }
 
     /// <summary>Ports order_state.py's <c>get_grouped_order_for_readback</c>: a one-line read of the

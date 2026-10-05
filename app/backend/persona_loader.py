@@ -476,8 +476,8 @@ class PersonaManifest(BaseModel):
     bundles: _Bundles
     extras: _Extras
     invalidModifiers: dict[str, list[str]]
-    # Issue #304: optional pack-level phonetic respelling lexicon (e.g. {"Munchkins":
-    # "Munch-kins"}), consulted ONLY by the cascade pipeline's `_speak` right before its TTS
+    # Issue #304: optional pack-level phonetic respelling lexicon (e.g. {"Widget":
+    # "Wid-jet"}), consulted ONLY by the cascade pipeline's `_speak` right before its TTS
     # input text is sent upstream -- never by the realtime pipeline and never applied to
     # order/search data. Defaults to {} so every pack predating #304 (and any pack with no
     # brand words at pronunciation risk) needs no persona.json change at all.

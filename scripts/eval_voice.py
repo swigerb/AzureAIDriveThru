@@ -56,9 +56,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import dataclasses
 import json
-import os
 import sys
 import time
 from pathlib import Path
@@ -70,21 +70,27 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import aiohttp  # noqa: E402
 
+# Reuse smoke_realtime's auth/session/persona-resolution plumbing instead of duplicating it --
+# this script's only new logic is the scripted multi-turn order conversation and its report.
+import smoke_realtime as sr  # noqa: E402
+
 import menu_utils  # noqa: E402
 import tools  # noqa: E402
 from order_state import order_state_singleton  # noqa: E402
 from persona_loader import Persona, PersonaCatalog, PersonaValidationError  # noqa: E402
-
-# Reuse smoke_realtime's auth/session/persona-resolution plumbing instead of duplicating it --
-# this script's only new logic is the scripted multi-turn order conversation and its report.
-import smoke_realtime as sr  # noqa: E402
 
 DEFAULT_SESSIONS_PER_PERSONA = 3
 DEFAULT_TIMEOUT = 30.0
 # Phrases the final turn's transcript is checked for, to flag an outright-missing read-back
 # (an empty or near-empty transcript, or one that never names an item) even though judging
 # *correctness* of the read-back's wording is left to the conformance suite, not this script.
-_READBACK_HINTS = ("here's your order", "here is your order", "i have", "you have", "total")
+# #313 (Rick's review, eval_voice.py defect list): split into two buckets instead of one flat
+# list -- a reply that says only "Your total is $4.31" used to satisfy `has_readback` on the
+# "total" hint alone, which is EXACTLY the total-only regression #304/#313 are about. A real
+# read-back must name the item(s) (one of the `_ITEM_HINTS`) *and* state the total (one of the
+# `_TOTAL_HINTS`).
+_ITEM_HINTS = ("here's your order", "here is your order", "i have", "you have")
+_TOTAL_HINTS = ("total",)
 
 
 class EvalVoiceError(Exception):
@@ -104,6 +110,7 @@ class SessionReport:
     session_index: int
     scripted_items: tuple[str, str]
     turns: list[TurnResult]
+    expected_readback: str = ""
     error: str | None = None
 
     @property
@@ -113,7 +120,9 @@ class SessionReport:
     @property
     def has_readback(self) -> bool:
         transcript = self.final_transcript.lower()
-        return any(hint in transcript for hint in _READBACK_HINTS)
+        mentions_items = any(hint in transcript for hint in _ITEM_HINTS)
+        mentions_total = any(hint in transcript for hint in _TOTAL_HINTS)
+        return mentions_items and mentions_total
 
     def to_dict(self) -> dict:
         return {
@@ -122,51 +131,109 @@ class SessionReport:
             "scripted_items": list(self.scripted_items),
             "has_readback": self.has_readback if not self.error else None,
             "final_transcript": self.final_transcript,
+            # #313: the docstring promises the transcript is reported "next to the item's
+            # spokenReadBack-composed expected wording" -- this was never actually populated.
+            "expected_readback": self.expected_readback,
             "error": self.error,
             "turns": [dataclasses.asdict(t) for t in self.turns],
         }
 
 
-def pick_scripted_items(persona: Persona) -> tuple[str, str]:
-    """Two real menu item names for *persona*: the first is a lexicon- or spokenName-covered
-    item when one exists (so the session actually exercises #304's new fields), the second is
-    any other real item for the mid-order "change". Falls back to the first two catalog items
-    when the persona has no `pronunciations`/`spokenName` entries at all -- the read-back is
-    still mandatory and still worth evaluating even without a lexicon hit."""
+@dataclasses.dataclass
+class ScriptedOrder:
+    """The guest-order script for one session: *primary*/*primary_size* is ordered first (a
+    lexicon- or spokenName-covered item when one exists, at an explicit size so the model never
+    has to ask), then resized to *resize_size* (Brian's #304 bug: order 25 Munchkins, then
+    change to 10 -- the read-back after a `modify`, not just an `add`, is what's under test),
+    then *secondary* is added as a second line before the guest finishes."""
+    primary: str
+    primary_size: str
+    resize_size: str
+    secondary: str
+    secondary_size: str
+
+
+def pick_scripted_items(persona: Persona) -> ScriptedOrder:
+    """Build *persona*'s scripted order (#313, Rick's review: the old script never stated a
+    size, so the model had to ask and turns 2/3 ran against an incomplete order, and it never
+    exercised Brian's actual bug -- order one size, then change it, then confirm the read-back).
+    *primary* prefers a lexicon- or spokenName-covered item (so the session exercises #304's
+    pronunciation fields) that also has 2+ real sizes (so a genuine resize can be scripted);
+    falls back to the first covered/real item and its sole size (or "") otherwise."""
     catalog = menu_utils.get_catalog_for_persona(persona)
-    names = [fields["name"] for fields in catalog.item_fields.values() if fields.get("name")]
-    if not names:
+    entries = [(fields["name"], fields) for fields in catalog.item_fields.values() if fields.get("name")]
+    if not entries:
         raise EvalVoiceError(f"persona {persona.id!r} has no real menu items to script a session with")
     lexicon_keys = sorted(persona.manifest.pronunciations, key=len, reverse=True)
 
     def covered(name: str) -> bool:
         return name in catalog.spoken_as or any(key in name for key in lexicon_keys)
 
-    primary = next((n for n in names if covered(n)), names[0])
-    secondary = next((n for n in names if n != primary), primary)
-    return primary, secondary
+    def sizes_for(fields: dict) -> list[str]:
+        return [s for s in (fields.get("sizes") or ()) if s]
+
+    # Prefer a covered item with 2+ sizes (lets the script resize it, Brian's exact flow);
+    # fall back to any covered item, then to the catalog's first item.
+    primary_name, primary_fields = next(
+        ((n, f) for n, f in entries if covered(n) and len(sizes_for(f)) >= 2),
+        next(((n, f) for n, f in entries if covered(n)), entries[0]),
+    )
+    secondary_name, secondary_fields = next(((n, f) for n, f in entries if n != primary_name),
+                                            (primary_name, primary_fields))
+
+    primary_sizes = sizes_for(primary_fields)
+
+    def _as_count(size: str) -> int | None:
+        head = size.split()[0] if size else ""
+        return int(head) if head.isdigit() else None
+
+    counts = [(c, s) for s in primary_sizes if (c := _as_count(s)) is not None]
+    if len(counts) >= 2:
+        counts.sort(key=lambda pair: pair[0])
+        primary_size, resize_size = counts[-1][1], counts[0][1]
+    elif len(primary_sizes) >= 2:
+        primary_size, resize_size = primary_sizes[0], primary_sizes[1]
+    else:
+        primary_size = primary_sizes[0] if primary_sizes else ""
+        resize_size = primary_size
+
+    secondary_sizes = sizes_for(secondary_fields)
+    secondary_size = secondary_sizes[0] if secondary_sizes else ""
+    return ScriptedOrder(primary_name, primary_size, resize_size, secondary_name, secondary_size)
 
 
 async def _run_tool_call(session_id: str, name: str, args: dict) -> str:
-    """Execute the real `tools.update_order`/`tools.get_order` for *name* -- the same
-    production functions the middle tier calls -- so the read-back text evaluated here is the
-    actual `spokenReadBack` field under test, not a stand-in."""
+    """Execute the real `tools.update_order`/`tools.get_order`/`tools._search_dispatch` for
+    *name* -- the same production functions the middle tier calls -- so the read-back text
+    evaluated here is the actual `spokenReadBack` field under test, not a stand-in.
+
+    #313 (Rick's review): every persona's system prompt makes `search` MANDATORY before
+    `update_order` ("ALWAYS call search BEFORE adding any item"), so a live model calls it on
+    effectively every turn -- this used to raise `EvalVoiceError` on that very first call,
+    aborting the whole session before the scripted order could run at all."""
     if name == "update_order":
         result = await tools.update_order(args, session_id)
     elif name == "get_order":
         result = await tools.get_order(args, session_id)
     elif name == "reset_order":
         result = await tools.reset_order(args, session_id)
+    elif name == "search":
+        result = await tools._search_dispatch(args, session_id)
     else:
         raise EvalVoiceError(f"unexpected tool call {name!r} during a scripted #304 eval session")
     return result.to_text()
 
 
-async def _script_turn(ws, session_id: str, guest_text: str, timeout: float) -> TurnResult:
+async def _script_turn(ws, session_id: str, guest_text: str, timeout: float,
+                       audio_chunks: list[bytes] | None = None) -> TurnResult:
     """Send one scripted guest turn (as text -- only the ASSISTANT's audio/transcript is
     under evaluation here, so the guest side doesn't need synthesized audio) and drive the
     tool-call loop (function_call -> real tool execution -> function_call_output ->
-    response.create) until the assistant's turn finishes, collecting its spoken transcript."""
+    response.create) until the assistant's turn finishes, collecting its spoken transcript.
+    *audio_chunks*, if given (``--save-audio``), accumulates every ``response.audio.delta``'s
+    base64-decoded PCM bytes so the caller can write them out for a human to actually listen to
+    the pronunciation under test (the transcript alone only proves what speech-to-text heard,
+    not how it sounded -- see the module docstring's "Lexicon spelling" caveat)."""
     await ws.send_str(json.dumps({
         "type": "conversation.item.create",
         "item": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": guest_text}]},
@@ -182,6 +249,10 @@ async def _script_turn(ws, session_id: str, guest_text: str, timeout: float) -> 
         etype = event.get("type")
         if etype == "response.audio_transcript.done":
             transcript_parts.append(event.get("transcript") or "")
+        elif etype == "response.audio.delta" and audio_chunks is not None:
+            delta = event.get("delta")
+            if delta:
+                audio_chunks.append(base64.b64decode(delta))
         elif etype == "response.function_call_arguments.done":
             call_id = event["call_id"]
             tool_name = event["name"]
@@ -203,30 +274,70 @@ async def _script_turn(ws, session_id: str, guest_text: str, timeout: float) -> 
                       tool_calls=tool_calls)
 
 
+def _write_audio_clip(output_dir: Path, persona_id: str, session_index: int, turn_index: int,
+                      pcm: bytes) -> None:
+    """Write raw 24kHz mono 16-bit PCM (the realtime API's `pcm16` output format) as a WAV file
+    under *output_dir* -- #313 (Rick's review): `--save-audio` was documented but not
+    implemented at all; this is the minimal, dependency-free WAV container so a human can play
+    the clip back in any media player without needing ffmpeg/pydub installed."""
+    import wave
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path = output_dir / f"{persona_id}-{session_index}-turn{turn_index}.wav"
+    with wave.open(str(path), "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)  # 16-bit
+        wav_file.setframerate(24000)
+        wav_file.writeframes(pcm)
+
+
 async def run_one_session(persona: Persona, index: int, rtmt, url: str, headers: dict,
-                           timeout: float) -> SessionReport:
-    primary, secondary = pick_scripted_items(persona)
+                          timeout: float, save_audio_dir: Path | None = None) -> SessionReport:
+    scripted = pick_scripted_items(persona)
     session_id = order_state_singleton.create_session(persona=persona)
+    size_phrase = f" {scripted.primary_size.title()}" if scripted.primary_size else ""
+    resize_phrase = scripted.resize_size.title() if scripted.resize_size else scripted.primary_size.title()
+    secondary_size_phrase = f" {scripted.secondary_size.title()}" if scripted.secondary_size else ""
+    # #313 (Rick's review): the old script never stated a size (the model had to ask, so turns
+    # 2/3 ran against an incomplete/empty order) and never exercised Brian's actual bug (a
+    # `modify` resize, not just an `add`). This scripts that flow explicitly: order the primary
+    # item at an explicit size, add a second item, then RESIZE the primary (Brian: 25 -> 10
+    # count) and confirm the guest hears the full, correct read-back afterward.
     scripted_turns = [
-        f"Hi, can I get a {primary}, please?",
-        f"Actually, can you also add a {secondary}?",
+        f"Hi, can I get a{size_phrase} {scripted.primary}, please?",
+        f"Actually, can you also add a{secondary_size_phrase} {scripted.secondary}?",
+        f"Can you change that {scripted.primary} to {resize_phrase}?",
         "That's everything, I'm done.",
     ]
-    report = SessionReport(persona_id=persona.id, session_index=index, scripted_items=(primary, secondary), turns=[])
+    report = SessionReport(persona_id=persona.id, session_index=index,
+                           scripted_items=(scripted.primary, scripted.secondary), turns=[])
+    audio_chunks: list[bytes] = [] if save_audio_dir is not None else None
     try:
         async with aiohttp.ClientSession() as http, http.ws_connect(url, headers=headers) as ws:
             tool_schemas = [tool.schema for tool in rtmt.tools.values()]
-            await ws.send_str(rtmt.build_bootstrap_session_update(system_message=rtmt.system_message,
-                                                                   tool_schemas=tool_schemas))
+            # #313 (Rick's review): `session.update` was sent TWICE -- once raw, once more via
+            # `sr.send_session_update` (which also waits for the `session.updated`/error echo).
+            # Only the second call's confirmation was ever even checked. Send it exactly once.
             echoed, error = await sr.send_session_update(ws, rtmt.build_bootstrap_session_update(
                 system_message=rtmt.system_message, tool_schemas=tool_schemas), timeout)
             if error is not None:
                 raise EvalVoiceError(f"session.update rejected: {error}")
-            for guest_text in scripted_turns:
-                report.turns.append(await _script_turn(ws, session_id, guest_text, timeout))
+            for turn_index, guest_text in enumerate(scripted_turns):
+                turn_audio: list[bytes] = [] if audio_chunks is not None else None
+                result = await _script_turn(ws, session_id, guest_text, timeout, turn_audio)
+                report.turns.append(result)
+                if turn_audio and save_audio_dir is not None:
+                    _write_audio_clip(save_audio_dir, persona.id, index, turn_index, b"".join(turn_audio))
+        # The expected wording a human reviewer compares the transcript against -- the real,
+        # server-composed `spokenReadBack` for this session's final order state (#313: the
+        # docstring promised this but it was never populated).
+        report.expected_readback = order_state_singleton.get_grouped_order_for_readback(session_id)
     except EvalVoiceError as exc:
         report.error = str(exc)
-    except (aiohttp.ClientError, OSError, TimeoutError) as exc:
+    # #313 (Rick's review): `sr._next_event` raises `sr.SmokeError` on a closed/errored socket,
+    # but this previously caught only `EvalVoiceError`/`aiohttp.ClientError`/`OSError`/
+    # `TimeoutError` -- a dropped connection produced an unhandled traceback instead of a
+    # reported, per-session error.
+    except (aiohttp.ClientError, sr.SmokeError, OSError, TimeoutError) as exc:
         report.error = f"{type(exc).__name__}: {exc}"
     finally:
         order_state_singleton.end_session(session_id) if hasattr(order_state_singleton, "end_session") else None
@@ -234,12 +345,12 @@ async def run_one_session(persona: Persona, index: int, rtmt, url: str, headers:
 
 
 async def evaluate_persona(persona: Persona, n: int, endpoint: str, deployment: str, headers: dict,
-                           timeout: float) -> list[SessionReport]:
+                           timeout: float, save_audio_dir: Path | None = None) -> list[SessionReport]:
     rtmt = sr.build_middle_tier(endpoint, deployment, persona=persona)
     url = sr.realtime_url(endpoint, deployment)
     reports = []
     for index in range(n):
-        reports.append(await run_one_session(persona, index, rtmt, url, headers, timeout))
+        reports.append(await run_one_session(persona, index, rtmt, url, headers, timeout, save_audio_dir))
     return reports
 
 
@@ -269,6 +380,10 @@ def print_report(reports: list[SessionReport]) -> None:
             continue
         print(f"{label}: items={report.scripted_items} readback_present={report.has_readback}")
         print(f"  final transcript: {report.final_transcript!r}")
+        # #313 (Rick's review): the docstring promises the transcript is reported "next to the
+        # item's spokenReadBack-composed expected wording" -- print it so a human reviewer can
+        # actually compare them side by side.
+        print(f"  expected readback: {report.expected_readback!r}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -284,6 +399,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--subscription", help="Azure subscription id for Entra ID auth.")
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT, help=f"Per-turn timeout in seconds (default {DEFAULT_TIMEOUT}).")
     parser.add_argument("--output", type=Path, help="Write the full JSON report to this path.")
+    parser.add_argument("--save-audio", type=Path, metavar="DIR",
+                       help="Save each turn's synthesized assistant audio as a WAV file under DIR "
+                            "(one per persona/session/turn) so a human can judge pronunciation "
+                            "from the actual audio, not just its transcript.")
     args = parser.parse_args(argv)
 
     try:
@@ -304,7 +423,8 @@ def main(argv: list[str] | None = None) -> int:
     async def _run_all() -> list[SessionReport]:
         reports: list[SessionReport] = []
         for persona in personas:
-            reports += await evaluate_persona(persona, args.n, endpoint, deployment, headers, args.timeout)
+            reports += await evaluate_persona(persona, args.n, endpoint, deployment, headers,
+                                              args.timeout, args.save_audio)
         return reports
 
     try:

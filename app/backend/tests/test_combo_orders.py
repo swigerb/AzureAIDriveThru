@@ -344,8 +344,8 @@ class TestComponentUpcharge:
         assert all(item.componentUpcharges == [0.0, 0.5] for item in items)
         assert math.isclose(order_state_singleton.get_order_summary(sid).total, 21.38, rel_tol=1e-9)
         readback = order_state_singleton.get_grouped_order_for_readback(sid)
-        assert "2 SuperSONIC" in readback
-        assert "$0.50 upcharge" in readback
+        assert "two SuperSONIC" in readback
+        assert "fifty cents upcharge" in readback
 
     @patch("order_state.is_happy_hour", return_value=False)
     @pytest.mark.parametrize(
