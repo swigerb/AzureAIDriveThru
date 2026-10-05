@@ -208,16 +208,24 @@ public sealed class EntraPipelineCooldownTests
 
     /// <summary>Boots the app's own ConfigureJwtBearer/BuildAccessPolicy wiring on a TestServer
     /// (inbound: no real socket) pointed at <paramref name="server"/>'s real loopback DiscoveryUrl
-    /// (outbound: a genuine HttpClient over a real socket) -- a 500ms BackchannelTimeout keeps
-    /// Hang-mode scenarios fast instead of waiting the production 10s default. The returned
-    /// <see cref="BaseConfigurationManager"/> is the exact <c>options.ConfigurationManager</c>
-    /// instance (fix #1's <see cref="CooldownAwareConfigurationManager"/>) the real pipeline uses
-    /// -- the #226 LOW-MED-finding key-rotation test calls <c>RequestRefresh()</c> on it directly
-    /// to force an immediate, un-throttled re-fetch (IdentityModel's own first-ever-call bypass,
-    /// see <c>ConfigurationManager&lt;T&gt;.RequestRefreshBackgroundThread</c>) instead of waiting
-    /// out the real 12-hour AutomaticRefreshInterval or the 5-minute-minimum RefreshInterval.</summary>
+    /// (outbound: a genuine HttpClient over a real socket) -- a short (default 500ms)
+    /// <paramref name="backchannelTimeout"/> keeps Hang-mode scenarios fast instead of waiting the
+    /// production 10s default. Callers that never exercise Hang mode (e.g. the #226/#289
+    /// key-rotation test below) should pass a more generous value: 500ms is tight enough that a
+    /// loopback discovery/JWKS round trip can occasionally exceed it under CI load/contention even
+    /// though the fake IdP itself answers immediately, which previously surfaced as a spurious,
+    /// silently-swallowed background-refresh failure (see
+    /// <see cref="KeyRotation_RotatedOutSigningKeyIsRejectedAfterLastKnownGoodLifetimeElapses"/>'s
+    /// own remarks) rather than a genuine test bug. The returned <see cref="BaseConfigurationManager"/>
+    /// is the exact <c>options.ConfigurationManager</c> instance (fix #1's
+    /// <see cref="CooldownAwareConfigurationManager"/>) the real pipeline uses -- the #226
+    /// LOW-MED-finding key-rotation test calls <c>RequestRefresh()</c> on it directly to force an
+    /// immediate, un-throttled re-fetch (IdentityModel's own first-ever-call bypass, see
+    /// <c>ConfigurationManager&lt;T&gt;.RequestRefreshBackgroundThread</c>) instead of waiting out
+    /// the real 12-hour AutomaticRefreshInterval or the 5-minute-minimum RefreshInterval.</summary>
     private static async Task<(IHost Host, HttpClient Client, DiscoveryFailureGate Gate, BaseConfigurationManager ConfigurationManager)> StartAppAsync(
-        FakeDiscoveryServer server, FakeTimeProvider? timeProvider = null, TimeSpan? lastKnownGoodLifetime = null, CancellationToken cancellationToken = default)
+        FakeDiscoveryServer server, FakeTimeProvider? timeProvider = null, TimeSpan? lastKnownGoodLifetime = null,
+        TimeSpan? backchannelTimeout = null, CancellationToken cancellationToken = default)
     {
         var settings = SettingsFor(server);
         var gate = new DiscoveryFailureGate(timeProvider);
@@ -233,7 +241,7 @@ public sealed class EntraPipelineCooldownTests
                         .AddJwtBearer(options =>
                         {
                             EntraAuthentication.ConfigureJwtBearer(
-                                options, settings, gate, backchannelTimeout: TimeSpan.FromMilliseconds(500),
+                                options, settings, gate, backchannelTimeout: backchannelTimeout ?? TimeSpan.FromMilliseconds(500),
                                 lastKnownGoodLifetime: lastKnownGoodLifetime);
                             capturedConfigurationManager = (BaseConfigurationManager)options.ConfigurationManager!;
                         });
@@ -385,7 +393,18 @@ public sealed class EntraPipelineCooldownTests
         var lkgLifetime = TimeSpan.FromMilliseconds(300);
         await using var server = new FakeDiscoveryServer();
         await server.StartAsync();
-        var (host, client, _, configurationManager) = await StartAppAsync(server, lastKnownGoodLifetime: lkgLifetime, cancellationToken: ct);
+        // This test's fake IdP is always in ServerMode.Succeed (never Hang) -- unlike
+        // ColdOutage_AtMostOneFetchPerWindow_AndFastFailures/WarmCache_..., it has no need for the
+        // other tests' tight 500ms BackchannelTimeout, which exists only to keep Hang-mode
+        // scenarios fast. Reusing that tight timeout here bought nothing and cost determinism: a
+        // genuinely-answering-immediately loopback discovery/JWKS round trip can still occasionally
+        // exceed 500ms under CI load/contention, which silently fails the background refresh below
+        // (ConfigurationManager<T>.UpdateCurrentConfigurationAsync logs and swallows the exception,
+        // see RequestRefresh() below) with no way to retry -- RequestRefresh()'s own RefreshInterval
+        // throttle (5-minute default) blocks a second attempt long past this test's lifetime. A
+        // generous, CI-noise-tolerant timeout removes that false-failure mode entirely.
+        var (host, client, _, configurationManager) = await StartAppAsync(
+            server, lastKnownGoodLifetime: lkgLifetime, backchannelTimeout: TimeSpan.FromSeconds(5), cancellationToken: ct);
         using var disposableHost = host;
         var settings = SettingsFor(server);
 
@@ -399,6 +418,7 @@ public sealed class EntraPipelineCooldownTests
         // The IdP rotates: a brand new key/kid is now published; the OLD key/kid is retained only
         // by this test, to keep minting "stale cached client" tokens with it.
         var (oldKey, oldKid) = server.RotateKey();
+        var jwksHitsBeforeRefresh = server.JwksRequestCount;
 
         // Force the inner ConfigurationManager<T> to re-fetch immediately rather than waiting out
         // the real 12-hour AutomaticRefreshInterval -- RequestRefresh's own RefreshInterval throttle
@@ -411,13 +431,19 @@ public sealed class EntraPipelineCooldownTests
         configurationManager.RequestRefresh();
 
         // The refresh runs on a detached background Task.Run. Polling the fake IdP's HTTP request
-        // counter is NOT enough: there is a real window between the HTTP response completing and
-        // ConfigurationManager<T> actually swapping in the parsed configuration (_currentConfiguration),
-        // which under load is wide enough to race and flake this test. Instead, poll the
-        // authoritative state directly -- GetBaseConfigurationAsync's own cached result -- until it
-        // reflects the rotated key, which is also exactly what the real validation path consults.
+        // counter alone is NOT enough: there is a real window between the HTTP response completing
+        // and ConfigurationManager<T> actually swapping in the parsed configuration
+        // (_currentConfiguration), which under load is wide enough to race and flake this test. So
+        // poll the authoritative state directly -- GetBaseConfigurationAsync's own cached result --
+        // until it reflects the rotated key, which is also exactly what the real validation path
+        // consults. But also track the JWKS hit counter alongside it (the other half of "the real
+        // signal" -- not a fixed wait, and not a race against RequestRefresh's own RefreshInterval
+        // throttle): if the deadline elapses with the hit counter never having advanced, the
+        // background re-fetch never even reached the wire (a RequestRefresh-call/throttle bug),
+        // which is a different failure mode from "it fetched but didn't converge" and is called out
+        // separately below for diagnosability.
         var newKid = server.CurrentKid;
-        var deadline = DateTime.UtcNow.AddSeconds(5);
+        var deadline = DateTime.UtcNow.AddSeconds(10);
         OpenIdConnectConfiguration? refreshedConfiguration = null;
         while (DateTime.UtcNow < deadline)
         {
@@ -430,6 +456,10 @@ public sealed class EntraPipelineCooldownTests
             await Task.Delay(25, ct);
         }
 
+        Assert.True(
+            server.JwksRequestCount > jwksHitsBeforeRefresh,
+            $"expected RequestRefresh() to trigger at least one additional JWKS fetch " +
+            $"(saw {server.JwksRequestCount - jwksHitsBeforeRefresh} since rotation) -- the background refresh never reached the wire");
         Assert.True(
             refreshedConfiguration is not null && refreshedConfiguration.SigningKeys.Any(k => k.KeyId == newKid),
             "expected RequestRefresh() to converge on a configuration whose signing keys include the rotated key");
