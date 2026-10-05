@@ -324,6 +324,15 @@ public sealed class FakeRealtimeUpstreamServer : IAsyncDisposable
     /// only asserts *some* audio streamed back (not its exact content) never needs to set this.</summary>
     public byte[] NextTtsAudio { get; set; } = [1, 2, 3, 4];
 
+    /// <summary>#262: one-shot HTTP error status for the NEXT `/openai/v1/audio/speech` call --
+    /// e.g. 500, simulating a non-429 TTS failure so a cascade scenario can prove
+    /// `CascadeProcessor`'s turn-level failure handling (a `response.done{status:"failed"}` + an
+    /// `error` event, never a silently-vanishing turn) covers TTS failures the exact same way it
+    /// covers chat-completion failures. Consumed by the very next request, then reset to
+    /// <c>null</c> so every further call gets the normal <see cref="NextTtsAudio"/> response --
+    /// mirrors <see cref="FakeChatCompletionsServer.EnqueueErrorStatus"/>'s one-shot convention.</summary>
+    public int? NextSpeechErrorStatus { get; set; }
+
     /// <summary>Every `/openai/v1/audio/transcriptions` request's own `model` form field, in
     /// arrival order -- lets a test assert cascade's transcription deployment name reached this
     /// fake, the same way <see cref="FakeRealtimeConnection.ModelQueryParam"/> proves it for the
@@ -378,6 +387,17 @@ public sealed class FakeRealtimeUpstreamServer : IAsyncDisposable
         if (!CheckCascadeBearerToken(context))
         {
             context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            return;
+        }
+
+        var errorStatus = NextSpeechErrorStatus;
+        if (errorStatus is int status)
+        {
+            NextSpeechErrorStatus = null;
+            context.Response.StatusCode = status;
+            await context.Response.WriteAsync(
+                new JsonObject { ["error"] = new JsonObject { ["message"] = "fake TTS failure" } }.ToJsonString())
+                .ConfigureAwait(false);
             return;
         }
 

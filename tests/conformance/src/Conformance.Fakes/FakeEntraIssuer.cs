@@ -56,6 +56,31 @@ public sealed class FakeEntraTokenOverrides
     /// <summary>Default: now - 5 minutes (already-usable, matching a token minted moments after sign-in).</summary>
     public DateTimeOffset? Nbf { get; init; }
 
+    /// <summary>#226 Rick's review, fix #2 (MEDIUM): omit the `nbf` claim entirely instead of the
+    /// usual "already valid" default -- entra_auth.py's `jwt.decode(..., options={"require":
+    /// ["exp", "nbf"]})` 401s when `nbf` is absent, and ASP.NET Core's JwtBearer stack has no
+    /// equivalent "require nbf" built-in (IdentityModel's lifetime validation silently treats an
+    /// absent nbf as "no lower bound to check"), so this needs its own conformance row. Takes
+    /// priority over <see cref="Nbf"/> when both are set.</summary>
+    public bool OmitNbf { get; init; }
+
+    /// <summary>#226 Rick's review, fix #2 (MEDIUM): with exactly one role in <see cref="Roles"/>,
+    /// skip the usual array-shape coercion (see <see cref="FakeEntraIssuer.Mint"/>'s R4 remarks)
+    /// so <c>System.IdentityModel.Tokens.Jwt</c>'s own default claim aggregation collapses the
+    /// single `roles` claim to a bare JSON string instead of a one-element array -- a malformed
+    /// shape real Entra never actually produces, but one a validator must still guard against
+    /// (entra_auth.py's `isinstance(roles, list)` 403s on it; ASP.NET Core's single materialized
+    /// Claim can't tell a genuine one-element array from a bare value, so this must be checked
+    /// against the raw JSON payload -- see EntraAuthentication.OnTokenValidated).</summary>
+    public bool MalformedRolesShape { get; init; }
+
+    /// <summary>#226 Rick's review, fix #2 (MEDIUM): force the `scp` claim to serialize as a
+    /// one-element JSON array instead of its normal space-delimited string -- a malformed shape
+    /// real Entra never actually produces, but one a validator must still guard against
+    /// (entra_auth.py's `scp.split() if isinstance(scp, str) else []` 403s on it the same way a
+    /// missing `scp` does). Ignored when <see cref="OmitScope"/> is also set.</summary>
+    public bool MalformedScopeShape { get; init; }
+
     /// <summary>"RS256" (default), "HS256", or "none" -- row 7's three bad-signature variants.
     /// "none" signs with no credentials at all (an unsigned JWS), which <see
     /// cref="JwtSecurityTokenHandler"/> writes correctly with no extra code. "HS256" signs with a
@@ -278,11 +303,15 @@ public sealed class FakeEntraIssuer : IAsyncDisposable
                 nameof(overrides), alg, "FakeEntraTokenOverrides.Alg must be \"RS256\", \"HS256\", or \"none\"."),
         };
 
+        // #226 Rick's review, fix #2 (MEDIUM): OmitNbf needs the claim absent entirely, not
+        // merely a value -- JwtSecurityToken's notBefore parameter is nullable precisely for this
+        // (a null value skips adding the "nbf" payload claim at all), unlike every other row which
+        // always wants a concrete nbf.
         var token = new JwtSecurityToken(
             issuer: issuer,
             audience: audience,
             claims: claims,
-            notBefore: nbf.UtcDateTime,
+            notBefore: overrides.OmitNbf ? null : nbf.UtcDateTime,
             expires: exp.UtcDateTime,
             signingCredentials: signingCredentials);
 
@@ -292,9 +321,22 @@ public sealed class FakeEntraIssuer : IAsyncDisposable
         // serialization explicitly; roles.Count == 0 already leaves the key absent entirely (the
         // foreach above never added a "roles" claim in that case), matching real Entra's own
         // "omit the claim when no app roles are assigned" behaviour.
-        if (roles.Count > 0)
+        //
+        // #226 Rick's review, fix #2 (MEDIUM): MalformedRolesShape deliberately skips this
+        // coercion -- letting the single-claim collapse through unforced reproduces the exact
+        // malformed ("roles" as a bare string, not an array) shape a validator must still 403 on.
+        if (roles.Count > 0 && !overrides.MalformedRolesShape)
         {
             token.Payload["roles"] = roles.ToArray();
+        }
+
+        // #226 Rick's review, fix #2 (MEDIUM): MalformedScopeShape forces `scp` into a one-element
+        // JSON array -- a shape real Entra never produces (scp is always a single
+        // space-delimited string claim), but one entra_auth.py's `isinstance(scp, str)` guard
+        // (and this port's own JsonWebToken-payload scp-shape check) must still 403 on.
+        if (!overrides.OmitScope && overrides.MalformedScopeShape)
+        {
+            token.Payload["scp"] = new[] { overrides.Scope ?? DefaultScope };
         }
 
         // R5 (Rick's PR #158 round 1 review): only the RS256 path ever wrote a `kid` header claim

@@ -16,6 +16,7 @@ namespace Conformance.Tests.Scenarios.Auth;
 /// </summary>
 [Collection(ConformanceCollection.Name)]
 [Trait("Dotnet", "ready")]
+[AuthRowCapabilityGated]
 public sealed class AuthRowLoggingTests(ConformanceFixture fixture)
 {
     /// <summary>R6 (Rick's PR #158 round 1 review): before this fix, row 14 read
