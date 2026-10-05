@@ -501,8 +501,16 @@ function SonicApp() {
                 unmuteAudioRecording();
             }
         },
-        onReceivedExtensionMiddleTierToolResponse: ({ tool_name, tool_result }: ExtensionMiddleTierToolResponse) => {
-            assistantAudioRef.current = { ...assistantAudioRef.current, followUpExpected: true };
+        onReceivedExtensionMiddleTierToolResponse: ({ previous_item_id, tool_name, tool_result }: ExtensionMiddleTierToolResponse) => {
+            // issue 309 (R2): only a response to a REAL pending model tool call (previous_item_id set)
+            // will ever be followed by a round_trip_token that clears followUpExpected. A
+            // synthetic ticket refresh (e.g. the happy-hour mode flip push, sent with
+            // previous_item_id: null) is not a tool call completing, so it must not set this flag
+            // -- otherwise it would wedge mic/response state waiting for a round_trip_token that
+            // is never coming (Unity's issue 309 sanity-check note).
+            if (previous_item_id) {
+                assistantAudioRef.current = { ...assistantAudioRef.current, followUpExpected: true };
+            }
             if (tool_name === "update_order" || tool_name === "get_order" || tool_name === "reset_order") {
                 const orderSummary: OrderSummaryProps = JSON.parse(tool_result);
                 setOrder(orderSummary);
@@ -752,6 +760,12 @@ function SonicApp() {
             return;
         }
         realtime.startSession();
+        // issue 309 (R3): a freshly-started session opens with pack-default overrides server-side,
+        // but the Settings UI keeps showing whatever the operator had already chosen -- replay
+        // the current overrides right away so the new session's server-side state matches what
+        // the guest sees, the same place sendVerboseLogging already re-sends its own state here.
+        Object.entries(machineStatuses).forEach(([machine, status]) => realtime.setMachineStatus(machine, status));
+        realtime.setHappyHourMode(happyHourMode);
         if (verboseLogging) {
             realtime.sendVerboseLogging(true);
             if (logToFile) realtime.sendLogToFile(true);
@@ -803,6 +817,11 @@ function SonicApp() {
         await resetAudioPlayer();
 
         realtime.startSession();
+        // issue 309 (R3): see resumeConversation's identical replay above -- a fresh session (e.g.
+        // after "Start new order" ended the prior one) starts with pack-default overrides
+        // server-side, so replay whatever the operator already chose in the Settings UI.
+        Object.entries(machineStatuses).forEach(([machine, status]) => realtime.setMachineStatus(machine, status));
+        realtime.setHappyHourMode(happyHourMode);
         if (verboseLogging) {
             realtime.sendVerboseLogging(true);
             if (logToFile) {

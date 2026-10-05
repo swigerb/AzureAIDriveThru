@@ -496,6 +496,22 @@ namespace Conformance.Tests;
 /// branch tip (via `Conformance.Tests.exe -list methods -trait Dotnet=ready`, cross-checked by
 /// directly invoking this method via reflection) gives <b>351</b> (347 + 4 newly-tagged, now
 /// non-zero-row, <c>Discovered_*</c> methods), the floor asserted below.
+///
+/// Issue #309 (Beth, R4, 2026-10-05): the floor had been bumped from 351 to 359 by a prior pass
+/// without a fresh direct re-measurement (its own comment admitted "this sandbox could not
+/// re-measure the live dotnet count, so CI must verify and adjust this floor if needed" -- Rick's
+/// #309 review flagged this as the exact kind of arithmetic guess this class exists to replace
+/// with a real number). This pass actually ran the documented measurement --
+/// `Conformance.Tests.exe -list methods -trait Dotnet=ready` (361 methods), minus the 21
+/// <see cref="AuthRowCapabilityGatedAttribute"/>-gated methods that are unconditionally skipped on
+/// the dotnet leg while <see cref="AuthRowCapability.Enforces"/> is false for `"dotnet"` and the
+/// zero-row <see cref="TheoryYieldsZeroRowsWhenSkipGated"/> methods, equivalently cross-checked by
+/// directly invoking <see cref="CountFloorEligibleDotnetReadyTestMethods"/> via a temporary
+/// diagnostic Fact (removed before commit) -- and got exactly <b>359</b>, confirming the existing
+/// floor was already correct (no C# parity work landed in this project added or removed any
+/// `Dotnet=ready`-tagged Conformance method; the issue #309 R1/R2 xUnit tests live in
+/// `app/backend-dotnet/tests/Backend.Tests`, a separate assembly this floor does not cover). The
+/// floor stays at 359, now backed by a real measurement instead of an unverified carry-forward.
 /// </summary>
 [Trait("Dotnet", "n/a-harness")]
 public sealed class DotnetTraitCoverageTests
@@ -602,12 +618,11 @@ public sealed class DotnetTraitCoverageTests
             "skip-only Scenarios/Auth classes -- see this class's own doc comment; " +
             $"docs/dotnet_mapping.md), but found {count}. If a tagged scenario was removed or " +
             "renamed without a replacement, the dotnet CI leg silently lost coverage. 359 is the " +
-            "branch's current lower-bound target after issue #305's 5 new Dotnet-ready " +
-            "session-override Facts; this sandbox could not re-measure the live dotnet count, so " +
-            "CI must verify and adjust this floor if needed -- " +
-            "re-measure with `Conformance.Tests.exe -list methods -trait Dotnet=ready` minus the " +
-            "AuthRowCapabilityGated methods and any zero-row SkipTestWithoutData methods before " +
-            "raising this floor again.");
+            "branch's current lower-bound, directly re-measured and confirmed by issue #309 R4 " +
+            "(Beth, 2026-10-05) via `Conformance.Tests.exe -list methods -trait Dotnet=ready` " +
+            "(361 methods) minus the AuthRowCapabilityGated and zero-row SkipTestWithoutData " +
+            "methods -- see this class's own doc comment for the exact provenance -- " +
+            "re-measure the same way before raising this floor again.");
     }
 
 

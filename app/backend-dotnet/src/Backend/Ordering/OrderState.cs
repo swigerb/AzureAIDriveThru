@@ -179,6 +179,14 @@ public sealed class OrderState
             return false;
         }
         _happyHourMode = mode;
+        // #309 (R2): recompute `Summary` IMMEDIATELY, not only on the next (unrelated) order
+        // mutation -- mirrors order_state.py's set_happy_hour_mode -> self._update_summary()
+        // fix. `get_order` returns this cached summary verbatim while separately computing the
+        // happy-hour BANNER live (`HappyHourBanner` above) -- without this call the two could
+        // disagree (e.g. the banner says "HAPPY HOUR" but the cached total doesn't reflect the
+        // discount yet, or vice versa) until some other, unrelated order change happened to
+        // refresh the cache.
+        UpdateSummary();
         return true;
     }
 

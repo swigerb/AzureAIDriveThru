@@ -1,5 +1,6 @@
 using System.Reflection;
 using Backend.Configuration;
+using Backend.Models;
 using Backend.Personas;
 using Backend.Tests.TestSupport;
 

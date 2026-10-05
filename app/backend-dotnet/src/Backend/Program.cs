@@ -279,7 +279,7 @@ IToolExecutor BuildSessionToolExecutor(Persona sessionPersona, PromptLoader? ses
     var searchTool = new SearchTool(
         searchHttpClient, searchEndpointConfig, searchConfig, menu, sessionPromptLoader,
         sessionPersona.Search.IndexName, sessionPersona.Id, bearerTokenProvider: null, logger: logger,
-        menuMode: sessionMenuMode);
+        menuMode: sessionMenuMode, effectiveMachineStatus: orderState.EffectiveMachineStatus);
     return new SessionToolExecutor(orderTools, searchTool);
 }
 

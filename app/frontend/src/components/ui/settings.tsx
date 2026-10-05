@@ -229,8 +229,12 @@ export default function Settings({
     const voiceLabel = voiceLabelOverride ?? (roleName ? `${titleCase(roleName)} Voice` : "Voice");
     const voiceAriaLabel = roleName ? `Select ${roleName} voice` : "Select voice";
     const voiceDefaultHint = voiceLabelOverride && defaultVoiceId ? `Default: ${capitalize(defaultVoiceId)}` : undefined;
-    const [localMachineStatuses, setLocalMachineStatuses] = useState<Record<string, "up" | "down">>(() => resolveMachineStatuses(machines, machineStatuses));
-    const [localHappyHourMode, setLocalHappyHourMode] = useState<"auto" | "on" | "off">(() => happyHourMode);
+    // issue 309 (S6): Settings is a controlled component -- machineStatuses/happyHourMode come from
+    // App as props and every change is reported straight back up via onMachineStatusChange/
+    // onHappyHourModeChange, with no local mirror state to keep in sync. This is what makes R3's
+    // session-start override replay simple to get right: there is exactly one source of truth
+    // (App's own state), not a local copy that could silently drift from it.
+    const effectiveMachineStatuses = resolveMachineStatuses(machines, machineStatuses);
     const machineEntries = Object.entries(machines);
     const showStoreOperations = machineEntries.length > 0 || happyHour !== null;
 
@@ -242,15 +246,6 @@ export default function Settings({
             document.documentElement.classList.remove("dark");
         }
     }, [isDarkMode]);
-
-    useEffect(() => {
-        setLocalMachineStatuses(resolveMachineStatuses(machines, machineStatuses));
-    }, [machines, machineStatuses]);
-
-    useEffect(() => {
-        setLocalHappyHourMode(happyHourMode);
-    }, [happyHour, happyHourMode]);
-
 
     const handleDarkModeChange = (checked: boolean) => {
         setIsDarkMode(checked);
@@ -277,13 +272,10 @@ export default function Settings({
     };
 
     const handleMachineStatusChange = (machine: string, checked: boolean) => {
-        const status = checked ? "up" : "down";
-        setLocalMachineStatuses(current => ({ ...current, [machine]: status }));
-        onMachineStatusChange(machine, status);
+        onMachineStatusChange(machine, checked ? "up" : "down");
     };
 
     const handleHappyHourModeChange = (mode: "auto" | "on" | "off") => {
-        setLocalHappyHourMode(mode);
         onHappyHourModeChange(mode);
     };
 
@@ -297,7 +289,7 @@ export default function Settings({
                     </div>
                     {machineEntries.map(([machine, detail]) => {
                         const displayLabel = machineDisplayLabel(machine, detail.label);
-                        const isUp = localMachineStatuses[machine] === "up";
+                        const isUp = effectiveMachineStatuses[machine] === "up";
                         return (
                             <div key={machine} className="flex items-start justify-between">
                                 <div className="flex-1 space-y-0.5">
@@ -329,9 +321,9 @@ export default function Settings({
                                 </p>
                             </div>
                             <div className="ml-4 flex items-center gap-3 shrink-0">
-                                {renderHappyHourRadioGroup(localHappyHourMode, handleHappyHourModeChange)}
+                                {renderHappyHourRadioGroup(happyHourMode, handleHappyHourModeChange)}
                                 <span className="text-xs text-muted-foreground">
-                                    {localHappyHourMode === "auto" ? "Automatic" : capitalize(localHappyHourMode)}
+                                    {happyHourMode === "auto" ? "Automatic" : capitalize(happyHourMode)}
                                 </span>
                             </div>
                         </div>

@@ -286,6 +286,23 @@ public sealed class SessionManager
         }
     }
 
+    /// <summary>#309 (R2): best-effort read of this session's current order ticket -- the same
+    /// shape <c>get_order</c>/<c>reset_order</c> already produce (<see
+    /// cref="IOrderTicketSource.CurrentOrderSummaryJson"/>) -- so a caller can push a refreshed
+    /// ticket to the browser right after a mutation that isn't itself a tool call (e.g.
+    /// <c>extension.set_happy_hour_mode</c>). Null for an unknown session, or an executor that
+    /// doesn't implement <see cref="IOrderTicketSource"/> (mirrors <c>GetHappyHourMode</c>'s own
+    /// "session not found" fallback shape).</summary>
+    public string? GetOrderSummaryJson(string sessionId)
+    {
+        lock (_sync)
+        {
+            return _sessions.TryGetValue(sessionId, out var record) && record.ToolExecutor is IOrderTicketSource ticketSource
+                ? ticketSource.CurrentOrderSummaryJson
+                : null;
+        }
+    }
+
     /// <summary>Port of record_turn: keeps the last <see cref="SessionsConfig.HistoryTurns"/> turns
     /// ("guest"/"assistant"), each capped at <see cref="SessionsConfig.HistoryChars"/> characters,
     /// for later rehydration. A no-op once the config disables history (`history_turns &lt;=

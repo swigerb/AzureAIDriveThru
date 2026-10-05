@@ -14,6 +14,8 @@ const rt = vi.hoisted(() => ({
         sendVerboseLogging: vi.fn(),
         sendLogToFile: vi.fn(),
         sendVoiceChoice: vi.fn(),
+        setMachineStatus: vi.fn(),
+        setHappyHourMode: vi.fn(),
         endSession: vi.fn(),
         reconnect: vi.fn(async () => {}),
         cancelSwitch: vi.fn(),

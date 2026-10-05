@@ -1,24 +1,54 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 
 import Settings from "../settings";
 import { DummyDataProvider } from "@/context/dummy-data-context";
 
+// #309 (S6): Settings is now a controlled component -- machineStatuses/happyHourMode come in as
+// props and Settings itself keeps no local mirror of them, so a test harness that wants to see
+// the UI reflect a change (the same way App.tsx really drives it) must hold that state itself and
+// feed it back in, exactly like a real parent would. A onMachineStatusChange/onHappyHourModeChange
+// override is still called first so callers can assert on it directly.
+function ControlledSettings(props: Partial<React.ComponentProps<typeof Settings>>) {
+    const { machines, happyHour, onMachineStatusChange, onHappyHourModeChange, ...rest } = props;
+    const [machineStatuses, setMachineStatuses] = useState<Record<string, "up" | "down">>(
+        () => Object.fromEntries(Object.entries(machines ?? {}).map(([machine, detail]) => [machine, detail.status]))
+    );
+    const [happyHourMode, setHappyHourMode] = useState<"auto" | "on" | "off">("auto");
+
+    return (
+        <Settings
+            isMobile={false}
+            showSessionTokens={false}
+            onShowSessionTokensChange={() => {}}
+            verboseLogging={false}
+            onVerboseLoggingChange={() => {}}
+            logToFile={false}
+            onLogToFileChange={() => {}}
+            voiceChoice="marin"
+            onVoiceChoiceChange={() => {}}
+            machines={machines}
+            happyHour={happyHour}
+            machineStatuses={machineStatuses}
+            onMachineStatusChange={(machine, status) => {
+                setMachineStatuses(current => ({ ...current, [machine]: status }));
+                onMachineStatusChange?.(machine, status);
+            }}
+            happyHourMode={happyHourMode}
+            onHappyHourModeChange={mode => {
+                setHappyHourMode(mode);
+                onHappyHourModeChange?.(mode);
+            }}
+            {...rest}
+        />
+    );
+}
+
 function renderSettings(props: Partial<React.ComponentProps<typeof Settings>> = {}) {
     return render(
         <DummyDataProvider>
-            <Settings
-                isMobile={false}
-                showSessionTokens={false}
-                onShowSessionTokensChange={() => {}}
-                verboseLogging={false}
-                onVerboseLoggingChange={() => {}}
-                logToFile={false}
-                onLogToFileChange={() => {}}
-                voiceChoice="marin"
-                onVoiceChoiceChange={() => {}}
-                {...props}
-            />
+            <ControlledSettings {...props} />
         </DummyDataProvider>
     );
 }

@@ -26,7 +26,7 @@ public sealed class OrderToolExecutorMachineOverrideTests
         var executor = CreateExecutor(DeltaFixture.Load("test-alpha"), out _);
         Assert.True(executor.SetMachineOverride("soda_machine", "up"));
 
-        var result = await executor.ExecuteAsync("update_order", UpdateOrderArgs("Alpha Cola", "small"));
+        var result = await executor.ExecuteAsync("update_order", UpdateOrderArgs("Alpha Cola", "small"), TestContext.Current.CancellationToken);
 
         Assert.Equal(ToolResultDirection.ToBoth, result.Destination);
         Assert.Contains("Alpha Cola", result.ToText(), StringComparison.Ordinal);
@@ -38,7 +38,7 @@ public sealed class OrderToolExecutorMachineOverrideTests
         var executor = CreateExecutor(DeltaFixture.Load("test-beta"), out _);
         Assert.True(executor.SetMachineOverride("soda_machine", "down"));
 
-        var result = await executor.ExecuteAsync("update_order", UpdateOrderArgs("Beta Root Beer", "regular"));
+        var result = await executor.ExecuteAsync("update_order", UpdateOrderArgs("Beta Root Beer", "regular"), TestContext.Current.CancellationToken);
 
         Assert.Equal(ToolResultDirection.ToServer, result.Destination);
         var payload = JsonDocument.Parse(result.ToText()).RootElement;

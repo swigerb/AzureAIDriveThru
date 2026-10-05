@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Backend.Configuration;
 using Backend.Ordering;
+using Backend.Personas;
 using Backend.Search;
 using Backend.Tests.TestSupport;
 using Backend.Tools;
@@ -59,9 +60,9 @@ public sealed class SearchToolTests
 {
     private static SearchTool NewTool(
         HttpMessageHandler handler, string personaId = "search-tool-tests", bool useSemanticRanker = false,
-        string? menuMode = null)
+        string? menuMode = null, Persona? persona = null, Func<string, string?>? effectiveMachineStatus = null)
     {
-        var persona = DeltaFixture.Load();
+        persona ??= DeltaFixture.Load();
         var menu = PersonaOrderFactory.GetMenuCatalog(persona);
         var searchConfig = SearchConfig.FromAppConfig(AppConfig.Load());
         var endpointConfig = new SearchEndpointConfig(
@@ -78,7 +79,7 @@ public sealed class SearchToolTests
         var httpClient = new HttpClient(handler);
         return new SearchTool(
             httpClient, endpointConfig, searchConfig, menu, promptLoader: null, "test-delta-menu-items", personaId,
-            menuMode: menuMode);
+            menuMode: menuMode, effectiveMachineStatus: effectiveMachineStatus);
     }
 
     private static JsonElement QueryArgs(string query) =>
@@ -136,6 +137,116 @@ public sealed class SearchToolTests
         var second = await tool.ExecuteAsync(QueryArgs("LATTE  "), TestContext.Current.CancellationToken); // same key: trim+lower
 
         Assert.Equal(first.ToText(), second.ToText());
+        Assert.Single(handler.RequestBodies); // only ONE HTTP round trip for both calls
+    }
+
+    /// <summary>#309 (R1), C# parity for tools.py's own `search()` effective-status fix: an item
+    /// whose pack default machine status is "down" (test-delta's own delta_machine) must NOT be
+    /// tagged OOS once THIS session's own OrderState carries a per-session override bringing that
+    /// machine back "up" -- mirrors OrderToolExecutor.UpdateOrder's own
+    /// OrderState.EffectiveMachineStatus check for the exact same item/machine (Rick's review:
+    /// the two must always agree).</summary>
+    [Fact]
+    public async Task ExecuteAsync_PackDownButSessionOverridesMachineUp_ItemIsNotTaggedOos()
+    {
+        var persona = DeltaFixture.Load("test-delta");
+        var order = PersonaOrderFactory.CreateOrderState(persona);
+        Assert.True(order.SetMachineOverride("delta_machine", "up"));
+
+        var handler = new QueuedHttpHandler().Enqueue(HttpStatusCode.OK, """
+            {
+              "value": [
+                {
+                  "id": "delta-shake",
+                  "name": "Delta Shake",
+                  "category": "drinks",
+                  "sizes": "[{\"size\": \"regular\", \"price\": 2.99}]"
+                }
+              ]
+            }
+            """);
+        var tool = NewTool(
+            handler, personaId: Guid.NewGuid().ToString("n"), persona: persona,
+            effectiveMachineStatus: order.EffectiveMachineStatus);
+
+        var result = await tool.ExecuteAsync(QueryArgs("shake"), TestContext.Current.CancellationToken);
+
+        Assert.DoesNotContain("[OOS:", result.ToText(), StringComparison.Ordinal);
+    }
+
+    /// <summary>#309 (R1) counterpart: an item whose pack default machine status is "up"
+    /// (test-beta's own soda_machine) MUST be tagged OOS once this session's own OrderState
+    /// carries a per-session override taking that machine "down" -- the raw, override-blind pack
+    /// default alone must never be trusted once a session has its own override in effect.</summary>
+    [Fact]
+    public async Task ExecuteAsync_PackUpButSessionOverridesMachineDown_ItemIsTaggedOos()
+    {
+        var persona = DeltaFixture.Load("test-beta");
+        var order = PersonaOrderFactory.CreateOrderState(persona);
+        Assert.True(order.SetMachineOverride("soda_machine", "down"));
+
+        var handler = new QueuedHttpHandler().Enqueue(HttpStatusCode.OK, """
+            {
+              "value": [
+                {
+                  "id": "beta-root-beer",
+                  "name": "Beta Root Beer",
+                  "category": "drinks",
+                  "sizes": "[{\"size\": \"regular\", \"price\": 2.29}]"
+                }
+              ]
+            }
+            """);
+        var tool = NewTool(
+            handler, personaId: Guid.NewGuid().ToString("n"), persona: persona,
+            effectiveMachineStatus: order.EffectiveMachineStatus);
+
+        var result = await tool.ExecuteAsync(QueryArgs("root beer"), TestContext.Current.CancellationToken);
+
+        Assert.Contains("[OOS: Soda machine is down]", result.ToText(), StringComparison.Ordinal);
+    }
+
+    /// <summary>#309 (R1) cache-safety regression: the SAME cached query, asked by two different
+    /// sessions with DIFFERENT effective machine-status overrides in effect, must NOT share a
+    /// stale OOS tag computed under the other session's override state -- only ONE HTTP round
+    /// trip is made (the second call is a genuine cache hit on the RAW records), but each call's
+    /// own formatting reflects ITS OWN caller's current effective status. Mirrors Unity's Python
+    /// cache-safety test for `_search_cache` now storing raw records instead of a formatted
+    /// ToolResult.</summary>
+    [Fact]
+    public async Task ExecuteAsync_CacheHit_IsReformattedAgainstTheCurrentCallersOwnOverrideState()
+    {
+        var persona = DeltaFixture.Load("test-beta"); // soda_machine pack default "operational"/up
+        var personaId = Guid.NewGuid().ToString("n"); // shared cache key namespace for both calls
+        var handler = new QueuedHttpHandler().Enqueue(HttpStatusCode.OK, """
+            {
+              "value": [
+                {
+                  "id": "beta-root-beer",
+                  "name": "Beta Root Beer",
+                  "category": "drinks",
+                  "sizes": "[{\"size\": \"regular\", \"price\": 2.29}]"
+                }
+              ]
+            }
+            """);
+
+        // First caller's own session has overridden soda_machine DOWN -- this call issues the
+        // one real HTTP request and populates the cache with the RAW record.
+        var downOrder = PersonaOrderFactory.CreateOrderState(persona);
+        Assert.True(downOrder.SetMachineOverride("soda_machine", "down"));
+        var downTool = NewTool(handler, personaId: personaId, persona: persona, effectiveMachineStatus: downOrder.EffectiveMachineStatus);
+        var downResult = await downTool.ExecuteAsync(QueryArgs("root beer"), TestContext.Current.CancellationToken);
+        Assert.Contains("[OOS: Soda machine is down]", downResult.ToText(), StringComparison.Ordinal);
+
+        // Second caller's own session has NO override (pack default "up") and asks the exact
+        // same query -- served from cache (still only one HTTP request total), but reformatted
+        // fresh against THIS caller's own (un-overridden) effective status.
+        var upOrder = PersonaOrderFactory.CreateOrderState(persona);
+        var upTool = NewTool(handler, personaId: personaId, persona: persona, effectiveMachineStatus: upOrder.EffectiveMachineStatus);
+        var upResult = await upTool.ExecuteAsync(QueryArgs("root beer"), TestContext.Current.CancellationToken);
+
+        Assert.DoesNotContain("[OOS:", upResult.ToText(), StringComparison.Ordinal);
         Assert.Single(handler.RequestBodies); // only ONE HTTP round trip for both calls
     }
 
