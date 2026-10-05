@@ -481,6 +481,21 @@ namespace Conformance.Tests;
 /// real browser) as the actual verification, not a local one. A fresh
 /// <see cref="CountFloorEligibleDotnetReadyTestMethods"/> measurement on this branch tip gives
 /// <b>347</b> (338 + 1 cascade-parity + 8 browser), the floor asserted below.
+///
+/// Issue #283 (coordinator dispatch, Birdperson, 2026-10-05): added a general zero-row guard (see
+/// <see cref="TheoryYieldsZeroRowsWhenSkipGated"/>) so any <c>[Theory(SkipTestWithoutData =
+/// true)]</c> whose own <c>[MemberData]</c> source resolves to zero rows is excluded from this
+/// floor -- such a method reports SKIPPED on both conformance legs, never a real pass, so counting
+/// it toward the floor would hide the exact silent-coverage-loss gap this class exists to catch.
+/// This also added a synthetic <c>test-zeta</c> fixture pack (beside the existing
+/// <c>test-delta</c>, under <c>app/backend/tests/fixtures/personas/</c>) so
+/// <c>ComboComponentResizeConformanceTests</c>'s 4 <c>Discovered_*</c> theories -- previously
+/// tagged <c>n/a-no-matching-persona-data</c> because zero real shipped packs had an open
+/// <c>includedAnySize</c> combo slot -- now discover real fixture-backed rows and are re-tagged
+/// <c>ready</c>. A fresh <see cref="CountFloorEligibleDotnetReadyTestMethods"/> measurement on this
+/// branch tip (via `Conformance.Tests.exe -list methods -trait Dotnet=ready`, cross-checked by
+/// directly invoking this method via reflection) gives <b>351</b> (347 + 4 newly-tagged, now
+/// non-zero-row, <c>Discovered_*</c> methods), the floor asserted below.
 /// </summary>
 [Trait("Dotnet", "n/a-harness")]
 public sealed class DotnetTraitCoverageTests
@@ -563,7 +578,7 @@ public sealed class DotnetTraitCoverageTests
     }
 
     [Fact]
-    public void At_least_347_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
+    public void At_least_351_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
     {
         // Rick's PR #226 review: assert the capability directly, not just the derived count --
         // see this class's own doc comment for why a bare ">= 222" check alone can't be trusted to
@@ -577,21 +592,77 @@ public sealed class DotnetTraitCoverageTests
 
         var count = CountFloorEligibleDotnetReadyTestMethods();
 
-        Assert.True(count >= 347,
-            $"Expected at least 347 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
-            $"and not unconditionally skip-gated by AuthRowCapability (the dotnet leg's " +
-            $"`--filter \"{TraitName}={TraitValue}\"` baseline, minus the five " +
+        Assert.True(count >= 351,
+            $"Expected at least 351 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")], " +
+            $"not unconditionally skip-gated by AuthRowCapability, and (per issue #283) not a " +
+            $"[Theory(SkipTestWithoutData = true)] whose own [MemberData] source resolves to zero " +
+            $"rows (see {nameof(TheoryYieldsZeroRowsWhenSkipGated)} -- such a method is SKIPPED, " +
+            $"never PASSED, on both conformance legs, so it must not count toward this floor) -- " +
+            $"the dotnet leg's `--filter \"{TraitName}={TraitValue}\"` baseline, minus the five " +
             "skip-only Scenarios/Auth classes -- see this class's own doc comment; " +
             $"docs/dotnet_mapping.md), but found {count}. If a tagged scenario was removed or " +
-            "renamed without a replacement, the dotnet CI leg silently lost coverage. 347 is a " +
-            "FRESH count (coordinator PR #287 follow-up, Birdperson/Beth, 2026-10-05: " +
-            "CascadePersonaParityConformanceTests +1, OrderResumeBrowserTests's 5 + " +
-            "PersonaSwitchBrowserTests's 3 newly tagged ready, 338 + 9 = 347), not " +
-            "arithmetic -- re-measure with `Conformance.Tests.exe -list methods -trait " +
-            "Dotnet=ready` minus the AuthRowCapabilityGated methods before raising this floor " +
-            "again.");
+            "renamed without a replacement, the dotnet CI leg silently lost coverage. 351 is a " +
+            "FRESH count (coordinator issue #283, Birdperson, 2026-10-05: " +
+            "ComboComponentResizeConformanceTests's 4 Discovered_* theories re-tagged from " +
+            "n/a-no-matching-persona-data to ready after adding the test-zeta synthetic fixture " +
+            "pack gave each of them at least one real row, 347 + 4 = 351), not arithmetic -- " +
+            "re-measure with `Conformance.Tests.exe -list methods -trait Dotnet=ready` minus the " +
+            "AuthRowCapabilityGated methods and any zero-row SkipTestWithoutData methods before " +
+            "raising this floor again.");
     }
 
+
+    /// <summary>
+    /// Issue #283 (Rick's review): a <c>[Theory(SkipTestWithoutData = true)]</c> whose own
+    /// MemberData source resolves to zero rows reports SKIPPED, not passed -- it never produces a
+    /// real pass/fail signal on either conformance leg, exactly the gap #274 follow-up E's own
+    /// manual untag/retag dance had to work around by hand. This resolves the method's own
+    /// MemberData attribute(s) (if any; a plain <c>[Theory]</c> with only <c>[InlineData]</c> rows
+    /// always has a non-empty, statically-known row count and is never excluded here), invokes the
+    /// referenced static data-source method via reflection, and reports whether it yields zero
+    /// rows -- so <see cref="CountFloorEligibleDotnetReadyTestMethods"/> can exclude exactly the
+    /// methods that would otherwise silently inflate the floor with a SKIPPED, not PASSED, row.
+    /// </summary>
+    private static bool TheoryYieldsZeroRowsWhenSkipGated(MethodInfo method)
+    {
+        var theoryAttribute = method.GetCustomAttribute<TheoryAttribute>(inherit: true);
+        if (theoryAttribute is null || !theoryAttribute.SkipTestWithoutData)
+        {
+            return false;
+        }
+
+        var memberDataAttributes = method.GetCustomAttributes<MemberDataAttribute>(inherit: true).ToArray();
+        if (memberDataAttributes.Length == 0)
+        {
+            // No MemberData source to resolve (e.g. ClassData/InlineData) -- can't determine a
+            // dynamic row count here, so this guard has nothing to exclude; leave it counted.
+            return false;
+        }
+
+        foreach (var memberData in memberDataAttributes)
+        {
+            var declaringType = memberData.MemberType ?? method.DeclaringType!;
+            var member = declaringType.GetMethod(
+                memberData.MemberName, BindingFlags.Public | BindingFlags.Static | BindingFlags.NonPublic);
+            if (member is null)
+            {
+                // Can't resolve the data source by reflection -- don't guess; leave it counted
+                // rather than risk silently excluding a method that genuinely has rows.
+                return false;
+            }
+
+            var result = member.Invoke(null, memberData.Arguments is { Length: > 0 } args ? args : null);
+            if (result is System.Collections.IEnumerable rows && !rows.Cast<object?>().Any())
+            {
+                continue;
+            }
+
+            // This data source yielded at least one row -- the Theory runs for real.
+            return false;
+        }
+
+        return true;
+    }
 
     /// <summary>
     /// Counts every <c>[Fact]</c>/<c>[Theory]</c> test *method* (a <c>[Theory]</c> with N
@@ -604,7 +675,11 @@ public sealed class DotnetTraitCoverageTests
     /// <see cref="Conformance.Harness.AuthRowCapability.Enforces"/> resolves false for
     /// <c>"dotnet"</c>: those methods are unconditionally <c>Assert.Skip</c>'d on the dotnet leg in
     /// that state (see this class's own doc comment), so they never contribute a real pass/fail
-    /// signal and must not count toward the coverage floor.
+    /// signal and must not count toward the coverage floor. Issue #283: also excludes any method
+    /// for which <see cref="TheoryYieldsZeroRowsWhenSkipGated"/> reports true -- a
+    /// <c>[Theory(SkipTestWithoutData = true)]</c> whose own MemberData source has zero rows today
+    /// is SKIPPED, not PASSED, on both conformance legs, so it must not count toward the floor
+    /// either.
     ///
     /// Issue #143/ADR-002 (R10): abstract types are skipped outright -- xunit never discovers an
     /// abstract class as a runnable test class in its own right, only its concrete subclasses --
@@ -645,10 +720,17 @@ public sealed class DotnetTraitCoverageTests
                 }
 
                 var methodHasTrait = HasDotnetReadyTrait(method.GetCustomAttributes<TraitAttribute>(inherit: true));
-                if (classHasTrait || methodHasTrait)
+                if (!classHasTrait && !methodHasTrait)
                 {
-                    count++;
+                    continue;
                 }
+
+                if (TheoryYieldsZeroRowsWhenSkipGated(method))
+                {
+                    continue;
+                }
+
+                count++;
             }
         }
 

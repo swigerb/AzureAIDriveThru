@@ -1009,11 +1009,23 @@ Category tag but are equally harness-only on inspection: `HandlerFaultTeardownRe
 `ResponseCancelTests` (pure unit test of a harness helper), `RealtimeUriLiteralScanTests`, and
 `DotnetTraitCoverageTests` itself (a reflection probe over its own assembly).
 
-**Classified `n/a-no-matching-persona-data`**: the 4 `ComboComponentResizeConformanceTests.Discovered_*`
-`[Theory(SkipTestWithoutData = true)]` methods (issue #274 follow-up E) -- zero persona packs on
-disk today match the `includedAnySize` precondition these theories require, so they have no rows
-to run against either backend. Already had extensive inline justification; this just adds the
-explicit trait the new guard test requires.
+**Issue #283: re-classified `n/a-no-matching-persona-data` -> `ready`**: the 4
+`ComboComponentResizeConformanceTests.Discovered_*` `[Theory(SkipTestWithoutData = true)]` methods
+(previously classified under issue #274 follow-up E because zero persona packs on disk matched the
+`includedAnySize` precondition they require) now discover real rows. A new synthetic fixture pack,
+`app/backend/tests/fixtures/personas/test-zeta/` (beside the existing `test-delta`), has two
+distinctly-named bundles with genuinely open drink slots (one with an open side slot too) and two
+distinct drinks, satisfying both `Discover()`'s single-bundle case and `DiscoverTwoInstance()`'s
+two-bundle case; `DiscoveredBundleResizeCases()`/`DiscoveredTwoInstanceResizeCases()` were rewritten
+to also scan `RepoPaths.FixturePersonasDirectory()` alongside the real `personas/` root, which
+incidentally also picks up `test-delta`'s own single qualifying bundle for free. Both `test-delta`
+and `test-zeta` are excluded from the generic `TwoPersonaConformanceFixture` smoke suite (see
+`PersonaSmokeTests.FixturePersonaExclusions`) since they exist solely for this narrow conformance
+scenario. Verified green 3x locally against both `CONFORMANCE_BACKEND=python` and
+`CONFORMANCE_BACKEND=dotnet`, no divergence. `DotnetTraitCoverageTests` also gained a general
+zero-row guard (`TheoryYieldsZeroRowsWhenSkipGated`) so any `[Theory(SkipTestWithoutData = true)]`
+whose own `[MemberData]` source resolves to zero rows is excluded from the floor count going
+forward -- closing the gap that required this manual untag/retag dance in the first place.
 
 **Classified `n/a-pending-browser-verification`, then upgraded to `ready`** (8 methods):
 `OrderResumeBrowserTests`'s 5 methods and `PersonaSwitchBrowserTests`'s Case-E/E2 + reload-resume-switch
@@ -1224,6 +1236,47 @@ PR #287's own acceptance claims had two gaps caught on review:
 **Floor raised 338 -> 347** (+1 `CascadePersonaParityConformanceTests`, +8 the two Browser
 classes/methods above), re-measured fresh via `CountFloorEligibleDotnetReadyTestMethods`, not
 arithmetic.
+
+### Issue #283 (coordinator dispatch, Birdperson, 2026-10-05): synthetic `includedAnySize` fixture pack, floor raised 347 -> 351
+
+The 4 `ComboComponentResizeConformanceTests.Discovered_*` methods classified
+`n/a-no-matching-persona-data` above were re-tagged `ready` after adding a new synthetic fixture
+pack, `test-zeta` (beside the existing `test-delta`, under
+`app/backend/tests/fixtures/personas/`), with two distinctly-named bundles whose drink slots are
+genuinely left open (no `autoFill`) -- satisfying both `Discover()`'s single-bundle precondition and
+`DiscoverTwoInstance()`'s two-qualifying-bundle precondition that no real shipped pack meets today.
+`DiscoveredBundleResizeCases()`/`DiscoveredTwoInstanceResizeCases()` were rewritten to also scan
+`RepoPaths.FixturePersonasDirectory()` alongside the real `personas/` root, which incidentally also
+surfaces `test-delta`'s own single qualifying bundle (its "Delta Classic Meal" item) for free --
+`test-delta` only ever had one such bundle, so it could never satisfy `DiscoverTwoInstance()` on its
+own. Both fixture packs are excluded from the generic `TwoPersonaConformanceFixture` smoke suite
+(`PersonaSmokeTests.FixturePersonaExclusions`) since they exist solely for this narrow conformance
+scenario, following the existing `test-gamma`/`test-epsilon` precedent.
+
+A latent test-assertion gap surfaced once real rows actually ran: the `Discovered_*` theories were
+comparing a bundle case's raw menu `size` key (e.g. `"large"`, straight from menuItems.json)
+directly against an order line's own `display` text, which only happens to match on packs whose own
+menuItems.json spells its size keys in the same casing as its own persona.json `sizes.canonical`
+display label (every real shipped pack today) -- `test-delta`/`test-zeta` spell their own raw keys
+lowercase, matching every other fixture pack's own convention, so their own `"large"` raw key never
+appeared verbatim in a `"Large ..."` display string. Added
+`ComboBundleDiscovery.CanonicalSizeLabel` to resolve the raw key through the pack's own
+`sizes.canonical` map before comparing, and tightened the comparison to the full `"{label} {item
+name}"` segment (not a bare size label) so a bundle whose open side slot happens to share the
+drink's FROM size label (`test-delta`'s "Regular Delta Fries" side next to a "Regular"-sized drink)
+can no longer produce a false `DoesNotContain` failure. No backend divergence found -- verified
+green 3x locally against both `CONFORMANCE_BACKEND=python` and `CONFORMANCE_BACKEND=dotnet`.
+
+`DotnetTraitCoverageTests.CountFloorEligibleDotnetReadyTestMethods` also gained a general zero-row
+guard (`TheoryYieldsZeroRowsWhenSkipGated`): any `[Theory(SkipTestWithoutData = true)]` whose own
+`[MemberData]` source resolves to zero rows today is now excluded from the floor count, since such a
+method reports SKIPPED, not PASSED, on both conformance legs and should never have counted toward
+the floor in the first place -- closing the gap that required the #274 follow-up E / this issue's
+own manual untag/retag dance.
+
+**Floor raised 347 -> 351** (+4 newly-tagged, now non-zero-row, `Discovered_*` methods),
+re-measured fresh via `CountFloorEligibleDotnetReadyTestMethods` (cross-checked against
+`Conformance.Tests.exe -list methods -trait Dotnet=ready`), not arithmetic.
 
 ### Issue #15 (S5: C# sessions and resilience) -- session resume/rehydration, idle timeout, grace hold, nudge, 4002 supersede
 
