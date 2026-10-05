@@ -496,6 +496,26 @@ namespace Conformance.Tests;
 /// branch tip (via `Conformance.Tests.exe -list methods -trait Dotnet=ready`, cross-checked by
 /// directly invoking this method via reflection) gives <b>351</b> (347 + 4 newly-tagged, now
 /// non-zero-row, <c>Discovered_*</c> methods), the floor asserted below.
+///
+/// Issue #315 (coordinator dispatch, Birdperson): the fake realtime upstream's
+/// <c>session.update</c> handling (<see cref="GaSessionValidator"/>) did not validate
+/// <c>tools[*].parameters</c> against a JSON-Schema metaschema the way the real API does, so a
+/// malformed schema (e.g. a bare <c>false</c> literal where an object/boolean keyword is required)
+/// was silently accepted by the dotnet conformance leg instead of being rejected with
+/// <c>invalid_function_parameters</c> -- the exact gap issue #314 would have been caught by, had
+/// it existed then. Added that validation plus one new tagged <c>[Theory]</c> method,
+/// <c>PersonaSessionUpdateToolSchemaConformanceTests.Shipped_personas_bootstrap_and_client_session_update_are_accepted_by_the_stricter_fake</c>,
+/// which connects for every shipped persona pack (via <c>ConformancePersonas.DiscoverFromDisk()</c>)
+/// and asserts both the backend's bootstrap and client <c>session.update</c> frames are accepted by
+/// the now-stricter validator. Mutation-checked by temporarily swapping
+/// <c>app/backend-dotnet/src/Backend/Prompts/PromptLoader.cs</c>/<c>YamlJson.cs</c> back to their
+/// pre-#314-fix content: the new theory's 3 persona rows all failed red with the expected
+/// <c>invalid_function_parameters</c> message, then passed green again once the fix was restored.
+/// A fresh <see cref="CountFloorEligibleDotnetReadyTestMethods"/> measurement (via reflection,
+/// same technique as every prior round) gives <b>355</b> (354 + this one new tagged method; its 3
+/// persona rows count as a single Theory method declaration, not 3, consistent with how this
+/// counter has always counted method declarations rather than individual data rows). Raises the
+/// floor 354 to 355.
 /// </summary>
 [Trait("Dotnet", "n/a-harness")]
 public sealed class DotnetTraitCoverageTests
@@ -578,7 +598,7 @@ public sealed class DotnetTraitCoverageTests
     }
 
     [Fact]
-    public void At_least_354_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
+    public void At_least_355_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
     {
         // Rick's PR #226 review: assert the capability directly, not just the derived count --
         // see this class's own doc comment for why a bare ">= 222" check alone can't be trusted to
@@ -592,8 +612,8 @@ public sealed class DotnetTraitCoverageTests
 
         var count = CountFloorEligibleDotnetReadyTestMethods();
 
-        Assert.True(count >= 354,
-            $"Expected at least 354 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")], " +
+        Assert.True(count >= 355,
+            $"Expected at least 355 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")], " +
             $"not unconditionally skip-gated by AuthRowCapability, and (per issue #283) not a " +
             $"[Theory(SkipTestWithoutData = true)] whose own [MemberData] source resolves to zero " +
             $"rows (see {nameof(TheoryYieldsZeroRowsWhenSkipGated)} -- such a method is SKIPPED, " +
@@ -601,14 +621,12 @@ public sealed class DotnetTraitCoverageTests
             $"the dotnet leg's `--filter \"{TraitName}={TraitValue}\"` baseline, minus the five " +
             "skip-only Scenarios/Auth classes -- see this class's own doc comment; " +
             $"docs/dotnet_mapping.md), but found {count}. If a tagged scenario was removed or " +
-            "renamed without a replacement, the dotnet CI leg silently lost coverage. 354 is a " +
-            "FRESH count (coordinator issue #283, Birdperson, 2026-10-05: " +
-            "ComboComponentResizeConformanceTests's 4 Discovered_* theories re-tagged from " +
-            "n/a-no-matching-persona-data to ready after adding the test-zeta synthetic fixture " +
-            "pack gave each of them at least one real row, 347 + 4 = 351), not arithmetic -- " +
-            "re-measure with `Conformance.Tests.exe -list methods -trait Dotnet=ready` minus the " +
-            "AuthRowCapabilityGated methods and any zero-row SkipTestWithoutData methods before " +
-            "raising this floor again.");
+            "renamed without a replacement, the dotnet CI leg silently lost coverage. 355 is a " +
+            "FRESH count (issue #315, Birdperson: 354 + 1 for the new " +
+            "PersonaSessionUpdateToolSchemaConformanceTests tagged Theory method), not arithmetic " +
+            "projection -- re-measure with `Conformance.Tests.exe -list methods -trait " +
+            "Dotnet=ready` minus the AuthRowCapabilityGated methods and any zero-row " +
+            "SkipTestWithoutData methods before raising this floor again.");
     }
 
 
@@ -898,7 +916,7 @@ public sealed class DotnetTraitCoverageTests
     /// End-to-end mutation-check for the fail-closed guard itself (not just its resolution
     /// helper): an empty static property-backed <c>[MemberData]</c> source on a
     /// <c>[Theory(SkipTestWithoutData = true)]</c> method must be reported as yielding zero rows,
-    /// exactly the behavior <see cref="At_least_354_scenarios_are_tagged_dotnet_ready_and_not_skip_gated"/>
+    /// exactly the behavior <see cref="At_least_355_scenarios_are_tagged_dotnet_ready_and_not_skip_gated"/>
     /// relies on to exclude it from the floor. Reverting either the property-resolution branch
     /// above or this guard's own fail-closed wiring must turn this test red.
     /// </summary>
