@@ -58,7 +58,15 @@ public static class ComboBundleDiscovery
         decimal BundlePrice,
         SizedItem? Side,
         SizedItem DrinkFromSize,
-        SizedItem DrinkToSize)
+        SizedItem DrinkToSize,
+        /// <summary>
+        /// #283: null for a REAL pack under the repo's own <c>personas/</c> root (<see
+        /// cref="RepoPaths.PersonasDirectory"/>); set to <see cref="RepoPaths.FixturePersonasDirectory"/>
+        /// for a synthetic, TEST-ONLY fixture pack (e.g. <c>test-zeta</c>) discovered from that
+        /// second root instead, so <see cref="ComboBundleResizeFixture"/> knows which PERSONAS_DIR
+        /// to launch the backend-under-test against for this row.
+        /// </summary>
+        string? PersonasDir = null)
     {
         public override string ToString() => PersonaId;
     }
@@ -77,7 +85,10 @@ public static class ComboBundleDiscovery
         decimal SecondBundlePrice,
         SizedItem DrinkFromSize,
         SizedItem DrinkToSize,
-        SizedItem SecondDrink)
+        SizedItem SecondDrink,
+        /// <summary>#283: see <see cref="BundleResizeCase.PersonasDir"/>'s own doc comment --
+        /// identical null-means-real-pack convention.</summary>
+        string? PersonasDir = null)
     {
         public override string ToString() => PersonaId;
     }
@@ -149,6 +160,41 @@ public static class ComboBundleDiscovery
         }
 
         return "includedAnySize";
+    }
+
+    /// <summary>Issue #283: resolves a raw menu <c>size</c> key (e.g. <c>"large"</c>, straight from
+    /// menuItems.json, exactly what <see cref="SizedItem.Size"/> carries) to this pack's own
+    /// persona.json `sizes.canonical` DISPLAY label (e.g. <c>"Large"</c>) -- the exact text
+    /// `order_state.py`'s `normalize_size`/dotnet's size-label resolution actually writes into an
+    /// order line's `display` string. A raw size key and its own display label are NOT always the
+    /// same casing (every real shipped pack's own menuItems.json happens to already spell its size
+    /// keys in the same casing as its own canonical label, e.g. a real shipped pack's own
+    /// `"Large"`/`"Large"`, so this gap was invisible there -- but a fixture pack is free to spell its own raw keys in
+    /// lowercase, matching every *other* fixture pack's own convention, e.g. test-delta/test-zeta's
+    /// `"large"` raw key against a `"Large"` canonical label), so any assertion comparing a raw
+    /// <see cref="SizedItem.Size"/> against an order line's own `display` text must go through this
+    /// lookup, not compare the raw key directly. Falls back to the raw <paramref name="size"/>
+    /// unchanged if this pack's own persona.json has no matching `sizes.canonical` entry (schema
+    /// requires `sizes.canonical` on every pack, but a missing/unexpected key degrades gracefully
+    /// here rather than throwing, since this is a test assertion helper, not production code).</summary>
+    public static string CanonicalSizeLabel(string personasDir, string personaId, string size)
+    {
+        var personaJsonPath = Path.Combine(personasDir, personaId, "persona.json");
+        using var doc = JsonDocument.Parse(File.ReadAllText(personaJsonPath));
+        if (doc.RootElement.TryGetProperty("sizes", out var sizes) &&
+            sizes.TryGetProperty("canonical", out var canonical))
+        {
+            foreach (var entry in canonical.EnumerateObject())
+            {
+                if (string.Equals(entry.Name, size, StringComparison.OrdinalIgnoreCase) &&
+                    entry.Value.GetString() is { Length: > 0 } label)
+                {
+                    return label;
+                }
+            }
+        }
+
+        return size;
     }
 
     private static IReadOnlyList<CandidateItem> ReadMenuItems(string personasDir, string personaId)
@@ -500,28 +546,51 @@ public static class ComboBundleDiscovery
 /// under a FixedClock pinned just before the happy-hour window opens (mirroring <see
 /// cref="ComboAbsorptionTests"/>'s own `HappyHourJustBeforeOpenFixture`) since several discovered
 /// packs' own drinks are happy-hour-discounted and a real wall-clock run during that window would
-/// make the expected upsize delta non-deterministic. <c>PersonasDir</c> is deliberately left null
-/// (the base class's default, real <c>personas/</c> root): every row here is a REAL pack.
+/// make the expected upsize delta non-deterministic. #283: <c>personasDir</c> is null for a REAL
+/// pack under the repo's own <c>personas/</c> root (<see cref="ConformanceFixture.PersonasDir"/>'s
+/// own default), or <see cref="RepoPaths.FixturePersonasDirectory"/> for a synthetic, TEST-ONLY
+/// fixture pack row (e.g. <c>test-zeta</c>) -- see <see cref="ComboBundleDiscovery.BundleResizeCase.PersonasDir"/>.
 /// </summary>
-file sealed class ComboBundleResizeFixture(string personaId) : ConformanceFixture
+file sealed class ComboBundleResizeFixture(string personaId, string? personasDir = null) : ConformanceFixture
 {
     protected override BackendProfile Profile => BackendProfiles.FixedClock(HappyHourJustBeforeOpenFixture.Instant);
     protected override string? Persona => personaId;
     protected override IReadOnlyList<string>? Personas => [personaId];
+    protected override string? PersonasDir => personasDir;
 }
 
 public sealed class ComboComponentResizeConformanceTests
 {
+    /// <summary>
+    /// #283: every real pack under <see cref="RepoPaths.PersonasDirectory"/>, PLUS every
+    /// synthetic, TEST-ONLY fixture pack under <see cref="RepoPaths.FixturePersonasDirectory"/>
+    /// (e.g. <c>test-zeta</c>) -- discovered from BOTH roots the exact same data-driven way (never
+    /// a hardcoded pack id), so a future real pack reintroducing an <c>includedAnySize</c> open
+    /// drink slot picks itself up automatically with no code change here, and this Theory is never
+    /// dependent on fixture-only coverage alone. Each returned row's own <see
+    /// cref="ComboBundleDiscovery.BundleResizeCase.PersonasDir"/> tells <see
+    /// cref="ComboBundleResizeFixture"/> which root to launch the backend-under-test against.
+    /// </summary>
     public static TheoryData<ComboBundleDiscovery.BundleResizeCase> DiscoveredBundleResizeCases()
     {
-        var personasDir = RepoPaths.PersonasDirectory(RepoPaths.FindRepoRoot());
+        var repoRoot = RepoPaths.FindRepoRoot();
         var data = new TheoryData<ComboBundleDiscovery.BundleResizeCase>();
+
+        var personasDir = RepoPaths.PersonasDirectory(repoRoot);
         foreach (var personaId in ConformancePersonas.DiscoverFromDisk())
         {
-            var discovered = ComboBundleDiscovery.Discover(personasDir, personaId);
-            if (discovered is not null)
+            if (ComboBundleDiscovery.Discover(personasDir, personaId) is { } discovered)
             {
                 data.Add(discovered);
+            }
+        }
+
+        var fixturePersonasDir = RepoPaths.FixturePersonasDirectory(repoRoot);
+        foreach (var personaId in ConformancePersonas.DiscoverFromDisk(fixturePersonasDir))
+        {
+            if (ComboBundleDiscovery.Discover(fixturePersonasDir, personaId) is { } discovered)
+            {
+                data.Add(discovered with { PersonasDir = fixturePersonasDir });
             }
         }
 
@@ -626,8 +695,19 @@ public sealed class ComboComponentResizeConformanceTests
         var comboItem = items[0];
         Assert.Equal(bundleCase.BundleName, comboItem.GetProperty("item").GetString());
         var display = comboItem.GetProperty("display").GetString()!;
-        Assert.Contains(bundleCase.DrinkToSize.Size, display);
-        Assert.DoesNotContain(bundleCase.DrinkFromSize.Size, display);
+        // #283: compare against this pack's own canonical DISPLAY label, not the raw menu size
+        // key -- they only coincide by accident on packs whose own menuItems.json happens to
+        // already spell its size keys in display casing. Checks the full "{label} {drink name}"
+        // segment (matching order_state.py's own "{size} {item}" display format), not a bare size
+        // label alone -- a pack whose OPEN side slot happens to share the drink's FROM size label
+        // (e.g. test-delta's "Regular Delta Fries" side next to a "Regular"-sized drink) would
+        // otherwise make Assert.DoesNotContain(fromLabel, display) fail on the side's own
+        // unrelated, still-correct "Regular" text.
+        var personasDir = bundleCase.PersonasDir ?? RepoPaths.PersonasDirectory(RepoPaths.FindRepoRoot());
+        var toLabel = ComboBundleDiscovery.CanonicalSizeLabel(personasDir, bundleCase.PersonaId, bundleCase.DrinkToSize.Size);
+        var fromLabel = ComboBundleDiscovery.CanonicalSizeLabel(personasDir, bundleCase.PersonaId, bundleCase.DrinkFromSize.Size);
+        Assert.Contains($"{toLabel} {bundleCase.DrinkToSize.Name}", display);
+        Assert.DoesNotContain($"{fromLabel} {bundleCase.DrinkFromSize.Name}", display);
 
         OrderScenarioHelpers.AssertMoneyEqual(
             bundleCase.BundlePrice,
@@ -640,37 +720,37 @@ public sealed class ComboComponentResizeConformanceTests
             "duplicates the drink's full standalone price.");
     }
 
-    // Issue #274 follow-up E (#266 re-review): this Theory and the 3 below it
-    // (Discovered_pack_resizes_the_combo_drink_via_explicit_modify,
+    // Issue #283 (coordinator dispatch, Birdperson, 2026-10-05): re-tagged `ready`. Issue #274
+    // follow-up E untagged this Theory and the 3 below it (Discovered_pack_resizes_the_combo_drink_via_explicit_modify,
     // Discovered_pack_charges_the_same_total_large_up_front_or_resized_later,
-    // Discovered_pack_with_two_bundle_instances_resizes_only_the_holder) were tagged
-    // [Trait("Dotnet", "ready")] and counted toward DotnetTraitCoverageTests' floor, but never
-    // appeared in either dotnet CI leg's actual run output -- `[Theory(SkipTestWithoutData = true)]`
-    // reports a Theory with zero MemberData rows as SKIPPED (not failed, and not a real pass/fail
-    // signal), and every real pack on disk today fails Discover()'s/DiscoverTwoInstance's own
-    // `includedAnySize` precondition: one shipped persona has no `bundle` items on its menu at all,
-    // another's own `bundles.resizeRule` is `wholeBundleSize` (covered instead by
-    // WholeBundleSizeResizeConformanceTests below), and the third's own `bundles.resizeRule` is
-    // `componentUpcharge` (issue #205, covered instead by ComponentUpchargeBundleConformanceTests
-    // above) -- so DiscoveredBundleResizeCases()/DiscoveredTwoInstanceResizeCases() both resolve to
-    // zero rows against today's real persona packs, confirmed locally: `dotnet test --filter
-    // "FullyQualifiedName~ComboComponentResizeConformanceTests.Discovered"` reports all 4 methods
-    // SKIPPED ("No data found for ..."), not passed. Untagged rather than fixed: there is no real
-    // pack today whose own `bundles.resizeRule` is `includedAnySize` AND leaves a drink slot open,
-    // so there is nothing for these rows to actually exercise until a future pack reintroduces that
-    // shape -- at which point DiscoveredBundleResizeCases()/DiscoveredTwoInstanceResizeCases() pick
-    // it up automatically (no code change needed here) and the tag can be restored once a fresh
-    // measurement confirms it executes for real. Left in place (not deleted): a future pack
-    // reintroducing an `includedAnySize` bundle with a genuinely open drink slot makes these rows
-    // real again for free, on whichever backend leg they're re-tagged for.
+    // Discovered_pack_with_two_bundle_instances_resizes_only_the_holder) because every real pack
+    // on disk failed Discover()'s/DiscoverTwoInstance's own `includedAnySize` precondition, so both
+    // MemberData sources resolved to zero rows and `[Theory(SkipTestWithoutData = true)]` reported
+    // all 4 as SKIPPED -- counted toward the floor but never a real pass/fail signal. #283 closes
+    // that gap two ways: (1) DiscoveredBundleResizeCases()/DiscoveredTwoInstanceResizeCases() now
+    // ALSO discover from app/backend/tests/fixtures/personas/ (<see cref="RepoPaths.FixturePersonasDirectory"/>),
+    // not just the real personas/ root, so a synthetic, TEST-ONLY `includedAnySize` fixture pack
+    // (`test-zeta`, with a bundle that genuinely leaves its drinks slot open and a second,
+    // distinctly-named bundle for the two-instance case) now produces real rows on BOTH legs
+    // (verified green against CONFORMANCE_BACKEND=dotnet and =python, 3 consecutive runs each, no
+    // flakiness); (2) <see cref="DotnetTraitCoverageTests"/>'s own floor counter now excludes any
+    // `[Theory(SkipTestWithoutData = true)]` whose data source still yields zero rows, so a FUTURE
+    // persona-shape regression that silently re-empties these rows can never again inflate the
+    // floor without a real pass/fail signal behind it. `test-delta`'s own pre-existing "Delta
+    // Classic Meal" bundle (no autoFill at all) ALSO now qualifies for
+    // DiscoveredBundleResizeCases() (one more real row, no code change needed there) -- left in,
+    // not excluded, matching this file's own "never hardcode which pack qualifies" discovery
+    // philosophy. `[Theory(SkipTestWithoutData = true)]` is kept (not removed): a pack-only change
+    // that regresses every qualifying pack back to zero rows still fails loudly via the floor
+    // guard above instead of being silently skipped.
     [Theory(SkipTestWithoutData = true)]
-    [Trait("Dotnet", "n/a-no-matching-persona-data")] // Issue #21: zero real packs match today (see this method's own comment above) -- explicit n/a classification, not silently untagged.
+    [Trait("Dotnet", "ready")]
     [MemberData(nameof(DiscoveredBundleResizeCases))]
     public async Task Discovered_pack_resizes_the_combo_drink_via_remove_then_add(
         ComboBundleDiscovery.BundleResizeCase bundleCase)
     {
         var ct = TestContext.Current.CancellationToken;
-        await using var fixture = new ComboBundleResizeFixture(bundleCase.PersonaId);
+        await using var fixture = new ComboBundleResizeFixture(bundleCase.PersonaId, bundleCase.PersonasDir);
         await fixture.InitializeAsync();
         await fixture.RunAsync(async () =>
         {
@@ -694,16 +774,16 @@ public sealed class ComboComponentResizeConformanceTests
         });
     }
 
-    // Issue #274 follow-up E: see Discovered_pack_resizes_the_combo_drink_via_remove_then_add's
-    // own doc comment above -- untagged for the same reason (no real pack qualifies today).
+    // Issue #283: see Discovered_pack_resizes_the_combo_drink_via_remove_then_add's own doc
+    // comment above -- re-tagged `ready` for the same reason (fixture pack + floor guard).
     [Theory(SkipTestWithoutData = true)]
-    [Trait("Dotnet", "n/a-no-matching-persona-data")] // Issue #21: zero real packs match today (see this method's own comment above) -- explicit n/a classification, not silently untagged.
+    [Trait("Dotnet", "ready")]
     [MemberData(nameof(DiscoveredBundleResizeCases))]
     public async Task Discovered_pack_resizes_the_combo_drink_via_explicit_modify(
         ComboBundleDiscovery.BundleResizeCase bundleCase)
     {
         var ct = TestContext.Current.CancellationToken;
-        await using var fixture = new ComboBundleResizeFixture(bundleCase.PersonaId);
+        await using var fixture = new ComboBundleResizeFixture(bundleCase.PersonaId, bundleCase.PersonasDir);
         await fixture.InitializeAsync();
         await fixture.RunAsync(async () =>
         {
@@ -730,16 +810,16 @@ public sealed class ComboComponentResizeConformanceTests
     /// total as seeding it at the smaller size and resizing to that same larger size later. Both
     /// paths run on their own fresh connection (xUnit requires exactly one open connection at a
     /// time), one after the other on the SAME fixture/backend instance.</summary>
-    // Issue #274 follow-up E: see Discovered_pack_resizes_the_combo_drink_via_remove_then_add's
-    // own doc comment above -- untagged for the same reason (no real pack qualifies today).
+    // Issue #283: see Discovered_pack_resizes_the_combo_drink_via_remove_then_add's own doc
+    // comment above -- re-tagged `ready` for the same reason (fixture pack + floor guard).
     [Theory(SkipTestWithoutData = true)]
-    [Trait("Dotnet", "n/a-no-matching-persona-data")] // Issue #21: zero real packs match today (see this method's own comment above) -- explicit n/a classification, not silently untagged.
+    [Trait("Dotnet", "ready")]
     [MemberData(nameof(DiscoveredBundleResizeCases))]
     public async Task Discovered_pack_charges_the_same_total_large_up_front_or_resized_later(
         ComboBundleDiscovery.BundleResizeCase bundleCase)
     {
         var ct = TestContext.Current.CancellationToken;
-        await using var fixture = new ComboBundleResizeFixture(bundleCase.PersonaId);
+        await using var fixture = new ComboBundleResizeFixture(bundleCase.PersonaId, bundleCase.PersonasDir);
         await fixture.InitializeAsync();
         await fixture.RunAsync(async () =>
         {
@@ -791,15 +871,28 @@ public sealed class ComboComponentResizeConformanceTests
         });
     }
 
+    /// <summary>#283: same both-roots discovery as <see cref="DiscoveredBundleResizeCases"/> --
+    /// see that method's own doc comment.</summary>
     public static TheoryData<ComboBundleDiscovery.TwoInstanceCase> DiscoveredTwoInstanceResizeCases()
     {
-        var personasDir = RepoPaths.PersonasDirectory(RepoPaths.FindRepoRoot());
+        var repoRoot = RepoPaths.FindRepoRoot();
         var data = new TheoryData<ComboBundleDiscovery.TwoInstanceCase>();
+
+        var personasDir = RepoPaths.PersonasDirectory(repoRoot);
         foreach (var personaId in ConformancePersonas.DiscoverFromDisk())
         {
             if (ComboBundleDiscovery.DiscoverTwoInstance(personasDir, personaId) is { } discovered)
             {
                 data.Add(discovered);
+            }
+        }
+
+        var fixturePersonasDir = RepoPaths.FixturePersonasDirectory(repoRoot);
+        foreach (var personaId in ConformancePersonas.DiscoverFromDisk(fixturePersonasDir))
+        {
+            if (ComboBundleDiscovery.DiscoverTwoInstance(fixturePersonasDir, personaId) is { } discovered)
+            {
+                data.Add(discovered with { PersonasDir = fixturePersonasDir });
             }
         }
 
@@ -814,18 +907,18 @@ public sealed class ComboComponentResizeConformanceTests
     /// instance instead. Resizing the drink that only the most-recently-added instance holds must
     /// leave the other instance (and its own, different drink) completely untouched --
     /// determinism by identity, never an arbitrary/first-match pick.</summary>
-    // Issue #274 follow-up E: see Discovered_pack_resizes_the_combo_drink_via_remove_then_add's
-    // own doc comment above -- untagged for the same reason (DiscoverTwoInstance also requires
-    // `includedAnySize`, which no real pack has today).
+    // Issue #283: see Discovered_pack_resizes_the_combo_drink_via_remove_then_add's own doc
+    // comment above -- re-tagged `ready` for the same reason (`test-zeta`'s own SECOND,
+    // distinctly-named bundle gives DiscoverTwoInstance a real row too).
     [Theory(SkipTestWithoutData = true)]
-    [Trait("Dotnet", "n/a-no-matching-persona-data")] // Issue #21: zero real packs match today (see this method's own comment above) -- explicit n/a classification, not silently untagged.
+    [Trait("Dotnet", "ready")]
     [MemberData(nameof(DiscoveredTwoInstanceResizeCases))]
     public async Task Discovered_pack_with_two_bundle_instances_resizes_only_the_holder(
         ComboBundleDiscovery.TwoInstanceCase twoCase)
     {
         var ct = TestContext.Current.CancellationToken;
 
-        await using var fixture = new ComboBundleResizeFixture(twoCase.PersonaId);
+        await using var fixture = new ComboBundleResizeFixture(twoCase.PersonaId, twoCase.PersonasDir);
         await fixture.InitializeAsync();
         await fixture.RunAsync(async () =>
         {
@@ -869,8 +962,16 @@ public sealed class ComboComponentResizeConformanceTests
             var resizedSecondInstance = items.Single(i => i.GetProperty("item").GetString() == twoCase.SecondBundleName);
             var untouchedFirstInstance = items.Single(i => i.GetProperty("item").GetString() == twoCase.FirstBundleName);
 
-            Assert.Contains(twoCase.DrinkToSize.Size, resizedSecondInstance.GetProperty("display").GetString());
-            Assert.DoesNotContain(twoCase.DrinkFromSize.Size, resizedSecondInstance.GetProperty("display").GetString());
+            // #283: compare against this pack's own canonical DISPLAY label, not the raw menu
+            // size key -- see AssertResizedComboOnlyNoStandaloneDrink's own comment. Checks the
+            // full "{label} {drink name}" segment, not a bare size label alone, for the same
+            // reason (a same-size open side slot would otherwise collide on the bare label).
+            var personasDir = twoCase.PersonasDir ?? RepoPaths.PersonasDirectory(RepoPaths.FindRepoRoot());
+            var resizedDisplay = resizedSecondInstance.GetProperty("display").GetString()!;
+            var toLabel = ComboBundleDiscovery.CanonicalSizeLabel(personasDir, twoCase.PersonaId, twoCase.DrinkToSize.Size);
+            var fromLabel = ComboBundleDiscovery.CanonicalSizeLabel(personasDir, twoCase.PersonaId, twoCase.DrinkFromSize.Size);
+            Assert.Contains($"{toLabel} {twoCase.DrinkToSize.Name}", resizedDisplay);
+            Assert.DoesNotContain($"{fromLabel} {twoCase.DrinkFromSize.Name}", resizedDisplay);
             Assert.Contains(twoCase.SecondDrink.Name, untouchedFirstInstance.GetProperty("display").GetString());
 
             OrderScenarioHelpers.AssertMoneyEqual(

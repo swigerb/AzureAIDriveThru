@@ -1,0 +1,67 @@
+{
+  "menuItems": [
+    {
+      "category": "meals",
+      "items": [
+        {
+          "name": "Zeta Supreme Combo",
+          "sizes": [
+            { "size": "regular", "price": 5.49 },
+            { "size": "large", "price": 6.49 }
+          ],
+          "description": "Test Zeta's flagship combo -- a main plus two bundle slots with NO autoFill default, so both start vacant until a standalone side/drink is absorbed or the model explicitly picks one. #283: the open drinks slot (never autofilled) is what lets this pack qualify for ComboComponentResizeConformanceTests' Discovered_* theories, which require a real, non-wholeBundleSize, non-componentUpcharge persona whose own bundle genuinely leaves a drink slot open.",
+          "bundle": {
+            "slots": ["sides", "drinks"],
+            "defaultSize": "regular"
+          }
+        },
+        {
+          "name": "Zeta Value Combo",
+          "sizes": [
+            { "size": "regular", "price": 4.49 }
+          ],
+          "description": "Test Zeta's second, distinctly-named combo -- also a drinks-only bundle slot with NO autoFill, so a test can seed TWO separate bundle instances at once (#283, mirroring #184 round 3 item H(b)'s DiscoverTwoInstance) and verify a by-name drink resize targets only the instance holding that exact item.",
+          "bundle": {
+            "slots": ["drinks"],
+            "defaultSize": "regular"
+          }
+        }
+      ]
+    },
+    {
+      "category": "drinks",
+      "items": [
+        {
+          "name": "Zeta Cola",
+          "sizes": [
+            { "size": "regular", "price": 1.99 },
+            { "size": "large", "price": 2.49 }
+          ],
+          "description": "Test Zeta's house cola -- the fixture's only multi-size, real (non-autoFill-only) comboSlot drink, used by the combo-component-resize tests to prove resizing an included-any-size slot item never changes the bundle's own total.",
+          "comboSlot": "drinks"
+        },
+        {
+          "name": "Zeta Lemonade",
+          "sizes": [
+            { "size": "regular", "price": 1.69 }
+          ],
+          "description": "Test Zeta's lemonade -- a SECOND real, single-size comboSlot drink, distinct from Zeta Cola, so a test can seed two separate bundle instances with two distinguishable drinks and verify a by-name resize targets only the instance holding that exact item.",
+          "comboSlot": "drinks"
+        }
+      ]
+    },
+    {
+      "category": "sides",
+      "items": [
+        {
+          "name": "Zeta Fries",
+          "sizes": [
+            { "size": "regular", "price": 1.49 }
+          ],
+          "description": "Test Zeta's standalone fries -- a real side a guest can order before the combo, so bundle-pivot absorption (not autoFill, which this pack never has) fills Zeta Supreme Combo's own sides slot.",
+          "comboSlot": "sides"
+        }
+      ]
+    }
+  ]
+}
