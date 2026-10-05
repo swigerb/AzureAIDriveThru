@@ -99,8 +99,8 @@ public sealed class Issue188MenuExpansionTests : IDisposable
         Assert.Equal(2, order.Items[0].Quantity);
         Assert.Equal("25 count", order.Items[1].Size);
         Assert.Equal((2 * 3.99m) + 8.99m, order.Summary.Total);
-        Assert.Contains("Munchkins Donut Hole Treats", glazed.ToText());
-        Assert.Contains("Munchkins Donut Hole Treats", chocolate.ToText());
+        Assert.Contains("Munch-kins Donut Hole Treats", glazed.ToText());
+        Assert.Contains("Munch-kins Donut Hole Treats", chocolate.ToText());
         Assert.Contains("MUNCHKINS®", order.Items[0].Item);
         using var ticketJson = JsonDocument.Parse(chocolate.ToClientText());
         var ticketItems = ticketJson.RootElement.GetProperty("items").EnumerateArray()
@@ -109,7 +109,7 @@ public sealed class Issue188MenuExpansionTests : IDisposable
         Assert.Contains(ticketItems, item => item == "Glazed MUNCHKINS® Donut Hole Treats");
         Assert.Contains(ticketItems, item => item == "Chocolate Glazed MUNCHKINS® Donut Hole Treats");
         var readback = order.GetGroupedOrderForReadback();
-        Assert.Contains("Glazed Munchkins Donut Hole Treats", readback);
+        Assert.Contains("Glazed Munch-kins Donut Hole Treats", readback);
         Assert.DoesNotContain("MUNCHKINS", readback);
         Assert.DoesNotContain("®", readback);
     }

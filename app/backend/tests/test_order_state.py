@@ -748,5 +748,56 @@ class OrderStateTests(unittest.TestCase):
         self.assertIn(summary.finalTotalDisplay, readback_two)
 
 
+class SpokenReadBackCompositionTests(unittest.TestCase):
+    """Issue #304: ``OrderSummary.spokenReadBack`` is composed once per ``_update_summary`` call
+    by ``_compose_spoken_readback`` and must always equal what ``get_order`` returns -- these
+    tests pin down the edge cases the brief calls out directly (empty order, single item,
+    multiple items, component upcharges)."""
+
+    def setUp(self):
+        order_state_singleton.sessions = {}
+
+    def test_empty_order_readback_is_the_empty_order_sentence(self):
+        session_id = order_state_singleton.create_session()
+        summary = order_state_singleton.get_order_summary(session_id)
+        self.assertEqual(summary.spokenReadBack, "Your order is currently empty.")
+
+    def test_single_item_readback_uses_singular_one_prefix_and_includes_total(self):
+        session_id = order_state_singleton.create_session()
+        order_state_singleton.handle_order_update(session_id, "add", "Tots", "medium", 1, 2.79)
+        summary = order_state_singleton.get_order_summary(session_id)
+        self.assertIn("I have one ", summary.spokenReadBack)
+        self.assertIn(summary.finalTotalDisplay, summary.spokenReadBack)
+
+    def test_multiple_quantity_readback_uses_numeric_prefix(self):
+        session_id = order_state_singleton.create_session()
+        order_state_singleton.handle_order_update(session_id, "add", "Tots", "medium", 3, 2.79)
+        summary = order_state_singleton.get_order_summary(session_id)
+        self.assertIn("I have 3 ", summary.spokenReadBack)
+
+    def test_multiple_distinct_items_are_joined_with_an_oxford_and(self):
+        session_id = order_state_singleton.create_session()
+        order_state_singleton.handle_order_update(session_id, "add", "Tots", "medium", 1, 2.79)
+        order_state_singleton.handle_order_update(session_id, "add", "Glazed Donut", "standard", 1, 1.49)
+        summary = order_state_singleton.get_order_summary(session_id)
+        self.assertIn(", and ", summary.spokenReadBack)
+
+    def test_get_order_tool_field_matches_cached_summary_field(self):
+        """get_order's spokenReadBack and the cached OrderSummary.spokenReadBack can never drift
+        -- they're the same composed string, read once and reused."""
+        session_id = order_state_singleton.create_session()
+        order_state_singleton.handle_order_update(session_id, "add", "Tots", "medium", 2, 2.79)
+        summary = order_state_singleton.get_order_summary(session_id)
+        self.assertEqual(summary.spokenReadBack, order_state_singleton.get_grouped_order_for_readback(session_id))
+
+    def test_readback_updates_after_a_subsequent_mutation(self):
+        session_id = order_state_singleton.create_session()
+        order_state_singleton.handle_order_update(session_id, "add", "Tots", "medium", 1, 2.79)
+        first_readback = order_state_singleton.get_order_summary(session_id).spokenReadBack
+        order_state_singleton.handle_order_update(session_id, "add", "Glazed Donut", "standard", 1, 1.49)
+        second_readback = order_state_singleton.get_order_summary(session_id).spokenReadBack
+        self.assertNotEqual(first_readback, second_readback)
+
+
 if __name__ == "__main__":
     unittest.main()

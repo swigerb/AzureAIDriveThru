@@ -644,11 +644,18 @@ public sealed class CascadeProcessor : IPipelineProcessor
             var deployment = _catalog.DeploymentFor(cascadeAudio.Tts)
                 ?? throw new InvalidOperationException(
                     $"Cascade TTS model '{cascadeAudio.Tts}' has no AZURE_AI_MODEL_DEPLOYMENTS entry.");
+            // Issue #304: apply this persona's own phonetic pronunciation lexicon ONLY to the TTS
+            // input text -- never to the chat transcript/history sent to the browser (that still
+            // carries the unmodified `text`). Mirrors cascade_processor.py's
+            // `_apply_pronunciations`/`_speak`.
+            var ttsText = persona.Pronunciations is { Count: > 0 } pronunciations
+                ? MenuCatalog.ApplyLexicon(text, pronunciations)
+                : text;
             await CascadeRateLimit.WithRetryAsync(
                 _rateLimitSettings,
                 async () =>
                 {
-                    var pcm = await _audioClient.SpeakAsync(text, state.Voice, deployment, turnCt).ConfigureAwait(false);
+                    var pcm = await _audioClient.SpeakAsync(ttsText, state.Voice, deployment, turnCt).ConfigureAwait(false);
                     if (_echoCooldownSeconds > 0)
                     {
                         // #126: arm echo suppression for the GUEST'S estimated speaker playback

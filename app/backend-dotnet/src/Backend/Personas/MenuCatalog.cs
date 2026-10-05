@@ -216,6 +216,16 @@ public sealed class MenuCatalog
                         aliasMap[aliasKey] = key;
                     }
                 }
+
+                // Issue #304: merge this item's own optional spokenName override into the same
+                // spokenAs substitution table sizes.spokenAs already populates, so Spoken() below
+                // applies BOTH size-vocabulary and per-item spoken-name substitutions through the
+                // one, already-tested longest-match/word-boundary mechanism. Mirrors
+                // menu_utils.py's MenuCatalog.__init__ merge loop.
+                if (!string.IsNullOrWhiteSpace(item.SpokenName))
+                {
+                    spokenAs[item.Name] = item.SpokenName;
+                }
             }
         }
 
@@ -312,13 +322,17 @@ public sealed class MenuCatalog
         return $@"(?<![A-Za-z0-9]){Regex.Escape(raw)}(?![{rightBoundaryChars}])";
     }
 
-    /// <summary>Applies this persona's own <c>sizes.spokenAs</c> spoken-readback substitutions to a
-    /// display string (#74; Route 44 readback etc.) -- generic per-persona, never hardcoded. Longer
-    /// keys run first and matches require alphanumeric/trademark boundaries so item-name hints (for
-    /// example MUNCHKINS® -> Munchkins) cannot rewrite the middle of another token.</summary>
-    public string Spoken(string text)
+    /// <summary>Applies a raw-text -> replacement <paramref name="lexicon"/> to <paramref
+    /// name="text"/> with the same longest-match/alphanumeric-boundary-safe substitution <see
+    /// cref="Spoken"/> uses for <c>sizes.spokenAs</c>/per-item <c>spokenName</c> -- one
+    /// substitution algorithm, multiple callers. Issue #304: this is also the exact mechanism
+    /// CascadeProcessor's SpeakAsync uses to apply a persona's own <c>pronunciations</c> lexicon to
+    /// its TTS input text, so a phonetic respelling (e.g. {"Munchkins": "Munch-kins"}) can never
+    /// rewrite the middle of an unrelated word. Mirrors menu_utils.py's module-level
+    /// <c>apply_lexicon</c>.</summary>
+    public static string ApplyLexicon(string text, IReadOnlyDictionary<string, string> lexicon)
     {
-        foreach (var entry in _spokenAs.OrderByDescending(kv => kv.Key.Length))
+        foreach (var entry in lexicon.OrderByDescending(kv => kv.Key.Length))
         {
             var raw = entry.Key;
             if (string.IsNullOrEmpty(raw))
@@ -329,6 +343,12 @@ public sealed class MenuCatalog
         }
         return text;
     }
+
+    /// <summary>Applies this persona's own <c>sizes.spokenAs</c> spoken-readback substitutions to a
+    /// display string (#74; Route 44 readback etc.) -- generic per-persona, never hardcoded. Longer
+    /// keys run first and matches require alphanumeric/trademark boundaries so item-name hints (for
+    /// example MUNCHKINS® -> Munchkins) cannot rewrite the middle of another token.</summary>
+    public string Spoken(string text) => ApplyLexicon(text, _spokenAs);
 
     public string InferCategory(string itemName)
     {

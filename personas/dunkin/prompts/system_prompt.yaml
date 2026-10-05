@@ -47,6 +47,14 @@ sections:
       - Before update_order, ALWAYS call search first to confirm the exact menu name
       - 'Start over' or 'cancel everything' → call reset_order IMMEDIATELY
 
+  - name: "ORDER_READBACK"
+    priority: 5.5
+    content: |
+      ORDER READ-BACK (mandatory, issue #304):
+      - Before stating the final total, after ANY change to the order (add/remove/modify), and whenever the guest says they're done ordering, you MUST call get_order and then speak its spokenReadBack field VERBATIM, word for word
+      - NEVER reply with the total alone at any of those three moments -- the full line-by-line read-back (every item's quantity, size, and spoken name) always comes first, then the total
+      - Do not paraphrase, shorten, or reorder spokenReadBack -- read it exactly as returned
+
   - name: "CUSTOMIZATIONS_AND_MODS"
     priority: 6
     content: |

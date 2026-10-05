@@ -54,6 +54,60 @@ def is_happy_hour(session: dict | None = None) -> bool:
     return start_hour <= now.hour < end_hour
 
 
+def _compose_spoken_readback(order_items: list, menu: "MenuCatalog", final_total_display: str) -> str:
+    """Issue #304: the shared, server-composed voice read-back -- "I have ... Your total is
+    ....". Groups items with the same (spoken) display name, same exact wording
+    ``get_grouped_order_for_readback`` always returned, now the SINGLE implementation behind
+    both that method (unchanged, per-session convenience wrapper) and ``OrderSummary.spokenReadBack``
+    (``_update_summary`` below) -- the two can never drift apart because there is only ever one
+    composition. *menu* is this session's own bound persona's ``MenuCatalog`` (its ``.spoken()``
+    already folds in both ``sizes.spokenAs`` and any per-item ``spokenName`` -- see
+    ``MenuCatalog.from_persona``); *final_total_display* is the already-computed, exact
+    ``OrderSummary.finalTotalDisplay`` string -- never re-derived here (#47/PR #50 follow-up: one
+    place turns the exact Decimal total into a "$0.00" string)."""
+    if not order_items:
+        return "Your order is currently empty."
+
+    # Aggregate quantities by display name
+    counts: dict[str, int] = {}
+    order: list[str] = []
+    for oi in order_items:
+        # #74: every session is bound to a persona (the default when none was requested), so
+        # readback always speaks that persona's OWN size vocabulary (``sizes.spokenAs``) via
+        # its MenuCatalog -- there is no separate, hardcoded "RT 44"/"RT44" -> "Route 44"
+        # substitution path anymore (that substitution is now simply the default persona's own
+        # pack data, reached through the exact same ``.spoken()`` call every persona uses).
+        clean_name = menu.spoken(oi.display)
+        # Convert parenthesized mods to speech-friendly format
+        # e.g. "Sonic Cheeseburger (No Lettuce)" -> "Sonic Cheeseburger with no lettuce"
+        if "(" in clean_name and ")" in clean_name:
+            clean_name = clean_name.replace("(", "with ").replace(")", "")
+        positive_upcharges = [to_decimal(upcharge) for upcharge in oi.componentUpcharges if to_decimal(upcharge) > 0]
+        if positive_upcharges:
+            upcharge_total = sum(positive_upcharges, Decimal("0"))
+            if len(positive_upcharges) == 1:
+                clean_name = f"{clean_name} with a {format_money(upcharge_total)} upcharge"
+            else:
+                clean_name = f"{clean_name} with {format_money(upcharge_total)} in component upcharges"
+        if clean_name not in counts:
+            order.append(clean_name)
+        counts[clean_name] = counts.get(clean_name, 0) + oi.quantity
+
+    # Build the natural language string
+    parts = []
+    for display in order:
+        qty = counts[display]
+        prefix = f"{qty} " if qty > 1 else "one "
+        parts.append(f"{prefix}{display}")
+
+    if len(parts) > 1:
+        summary_str = ", ".join(parts[:-1]) + f", and {parts[-1]}"
+    else:
+        summary_str = parts[0]
+
+    return f"I have {summary_str}. Your total is {final_total_display}. "
+
+
 @dataclass
 class SessionIdentifiers:
     session_token: str
@@ -155,6 +209,7 @@ class OrderState:
             total += item_total
         tax = total * tax_rate
         finalTotal = total + tax
+        final_total_display = format_money(finalTotal)
         summary = OrderSummary(
             items=order_items,
             total=float(total),
@@ -162,7 +217,8 @@ class OrderState:
             finalTotal=float(finalTotal),
             totalDisplay=format_money(total),
             taxDisplay=format_money(tax),
-            finalTotalDisplay=format_money(finalTotal),
+            finalTotalDisplay=final_total_display,
+            spokenReadBack=_compose_spoken_readback(order_items, menu, final_total_display),
         )
         session["order_summary"] = summary
         # Cache the JSON representation to avoid repeated Pydantic serialization
@@ -234,6 +290,7 @@ class OrderState:
             totalDisplay=format_money(0),
             taxDisplay=format_money(0),
             finalTotalDisplay=format_money(0),
+            spokenReadBack="Your order is currently empty.",
         )
         happy_hour_cfg = persona.manifest.pricing.happyHour
         self.sessions[session_id] = {
@@ -1248,51 +1305,14 @@ class OrderState:
         """
         Groups items with the same display name for a natural voice read-back.
         Example: 'Two Medium Cherry Limeades and one Footlong Quarter Pound Coney.'
+
+        #304: now a thin per-session wrapper around the already-cached ``OrderSummary.
+        spokenReadBack`` (computed by ``_update_summary``'s call to the shared
+        ``_compose_spoken_readback`` -- the exact same composition, not re-derived here, so this
+        and ``get_order``'s ``spokenReadBack`` can never drift out of sync with each other.
         """
         self._check_owner(session_id)
-        session = self.sessions[session_id]
-        items = session["order_state"]
-        if not items:
-            return "Your order is currently empty."
-
-        # Aggregate quantities by display name
-        counts = {}
-        for oi in items:
-            # #74: every session is bound to a persona (the default when none was requested), so
-            # readback always speaks that persona's OWN size vocabulary (``sizes.spokenAs``) via
-            # its MenuCatalog -- there is no separate, hardcoded "RT 44"/"RT44" -> "Route 44"
-            # substitution path anymore (that substitution is now simply the default persona's own
-            # pack data, reached through the exact same ``.spoken()`` call every persona uses).
-            clean_name = session["_menu"].spoken(oi.display)
-            # Convert parenthesized mods to speech-friendly format
-            # e.g. "Sonic Cheeseburger (No Lettuce)" -> "Sonic Cheeseburger with no lettuce"
-            if "(" in clean_name and ")" in clean_name:
-                clean_name = clean_name.replace("(", "with ").replace(")", "")
-            positive_upcharges = [to_decimal(upcharge) for upcharge in oi.componentUpcharges if to_decimal(upcharge) > 0]
-            if positive_upcharges:
-                upcharge_total = sum(positive_upcharges, Decimal("0"))
-                if len(positive_upcharges) == 1:
-                    clean_name = f"{clean_name} with a {format_money(upcharge_total)} upcharge"
-                else:
-                    clean_name = f"{clean_name} with {format_money(upcharge_total)} in component upcharges"
-            counts[clean_name] = counts.get(clean_name, 0) + oi.quantity
-
-        # Build the natural language string
-        parts = []
-        for display, qty in counts.items():
-            prefix = f"{qty} " if qty > 1 else "one "
-            parts.append(f"{prefix}{display}")
-
-        if len(parts) > 1:
-            summary_str = ", ".join(parts[:-1]) + f", and {parts[-1]}"
-        else:
-            summary_str = parts[0]
-
-        # #47/PR #50 follow-up: read the already-computed finalTotalDisplay directly instead of
-        # re-deriving it with format_money(finalTotal) -- there must be exactly one place that
-        # turns the exact Decimal total into a "$0.00" string, so every spoken/displayed money
-        # surface can never drift out of sync with another.
-        return f"I have {summary_str}. Your total is {session['order_summary'].finalTotalDisplay}. "
+        return self.sessions[session_id]["order_summary"].spokenReadBack
 
     def reset_order(self, session_id: str):
         """Clears all items and per-session order state from the current session's order (#41)."""

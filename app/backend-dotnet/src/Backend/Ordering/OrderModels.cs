@@ -70,7 +70,8 @@ public sealed record OrderSummary(
     decimal FinalTotal,
     string TotalDisplay,
     string TaxDisplay,
-    string FinalTotalDisplay)
+    string FinalTotalDisplay,
+    string SpokenReadBack)
 {
     [JsonPropertyName("items")] public IReadOnlyList<OrderItem> Items { get; init; } = Items;
     [JsonPropertyName("total")] public decimal Total { get; init; } = Total;
@@ -79,14 +80,20 @@ public sealed record OrderSummary(
     [JsonPropertyName("totalDisplay")] public string TotalDisplay { get; init; } = TotalDisplay;
     [JsonPropertyName("taxDisplay")] public string TaxDisplay { get; init; } = TaxDisplay;
     [JsonPropertyName("finalTotalDisplay")] public string FinalTotalDisplay { get; init; } = FinalTotalDisplay;
+    /// <summary>Issue #304: server-composed, mandatory spoken order read-back -- every line's
+    /// quantity/size/spoken name, then "Your total is {FinalTotalDisplay}." Computed once here (by
+    /// <see cref="OrderState.UpdateSummary"/>) so the get_order tool response and this cached field
+    /// can never drift apart. Mirrors models.py's <c>OrderSummary.spokenReadBack</c>.</summary>
+    [JsonPropertyName("spokenReadBack")] public string SpokenReadBack { get; init; } = SpokenReadBack;
 
     /// <summary>Builds a summary from raw totals, filling in the three Display strings from
     /// <see cref="Money.Format"/> -- mirrors Python's <c>OrderSummary</c> model_validator default-
     /// fill behavior, except here it's the ONLY construction path (no separately-suppliable
     /// override), since nothing in this C# port ever needs to pass a display string that
     /// disagrees with its own numeric value.</summary>
-    public static OrderSummary Build(IReadOnlyList<OrderItem> items, decimal total, decimal tax, decimal finalTotal) =>
-        new(items, total, tax, finalTotal, Money.Format(total), Money.Format(tax), Money.Format(finalTotal));
+    public static OrderSummary Build(
+        IReadOnlyList<OrderItem> items, decimal total, decimal tax, decimal finalTotal, string spokenReadBack) =>
+        new(items, total, tax, finalTotal, Money.Format(total), Money.Format(tax), Money.Format(finalTotal), spokenReadBack);
 
-    public static OrderSummary Empty() => Build([], 0m, 0m, 0m);
+    public static OrderSummary Empty() => Build([], 0m, 0m, 0m, "Your order is currently empty.");
 }

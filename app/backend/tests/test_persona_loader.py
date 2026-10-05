@@ -541,6 +541,75 @@ class TestMutationSchemaViolations:
 
 
 # ===========================================================================
+# Issue #304: ``pronunciations`` -- the optional, pack-level phonetic respelling lexicon
+# consulted only by the cascade pipeline's TTS input -- must validate both its keys and its
+# values as non-empty, non-whitespace strings, same as every other pack must refuse to start
+# on a schema or model violation rather than silently loading with a degraded field.
+# ===========================================================================
+
+
+class TestPronunciationsValidation:
+    """Uses the neutral test-alpha fixture pack (not a real brand pack) for every mutation so
+    this file's own brand-word baseline never needs to grow just because pronunciations
+    validation gets dedicated coverage -- same convention as the other mutation tests above."""
+
+    def test_pack_with_no_pronunciations_field_loads_with_an_empty_dict(self, fixture_personas_copy):
+        """Pre-#304 packs (and any pack with no brand words at pronunciation risk) need no
+        persona.json change at all -- the field defaults to {}."""
+        def mutator(d):
+            d.pop("pronunciations", None)
+        _mutate_persona_json(fixture_personas_copy, "test-alpha", mutator)
+        catalog = PersonaCatalog.load(
+            personas_dir=fixture_personas_copy, enabled=["test-alpha"], default_persona_id="test-alpha")
+        assert catalog.get("test-alpha").manifest.pronunciations == {}
+
+    def test_valid_pronunciations_entry_loads(self, fixture_personas_copy):
+        def mutator(d):
+            d["pronunciations"] = {"Munchkins": "Munch-kins"}
+        _mutate_persona_json(fixture_personas_copy, "test-alpha", mutator)
+        catalog = PersonaCatalog.load(
+            personas_dir=fixture_personas_copy, enabled=["test-alpha"], default_persona_id="test-alpha")
+        assert catalog.get("test-alpha").manifest.pronunciations == {"Munchkins": "Munch-kins"}
+
+    def test_empty_string_key_refuses_to_start(self, fixture_personas_copy):
+        def mutator(d):
+            d["pronunciations"] = {"": "Munch-kins"}
+        _mutate_persona_json(fixture_personas_copy, "test-alpha", mutator)
+        with pytest.raises(PersonaValidationError, match="test-alpha"):
+            PersonaCatalog.load(personas_dir=fixture_personas_copy, enabled=["test-alpha"], default_persona_id="test-alpha")
+
+    def test_whitespace_only_key_refuses_to_start(self, fixture_personas_copy):
+        def mutator(d):
+            d["pronunciations"] = {"   ": "Munch-kins"}
+        _mutate_persona_json(fixture_personas_copy, "test-alpha", mutator)
+        with pytest.raises(PersonaValidationError, match="test-alpha"):
+            PersonaCatalog.load(personas_dir=fixture_personas_copy, enabled=["test-alpha"], default_persona_id="test-alpha")
+
+    def test_empty_string_value_refuses_to_start(self, fixture_personas_copy):
+        def mutator(d):
+            d["pronunciations"] = {"Munchkins": ""}
+        _mutate_persona_json(fixture_personas_copy, "test-alpha", mutator)
+        with pytest.raises(PersonaValidationError) as exc_info:
+            PersonaCatalog.load(personas_dir=fixture_personas_copy, enabled=["test-alpha"], default_persona_id="test-alpha")
+        assert "test-alpha" in str(exc_info.value)
+
+    def test_whitespace_only_value_refuses_to_start(self, fixture_personas_copy):
+        def mutator(d):
+            d["pronunciations"] = {"Munchkins": "   "}
+        _mutate_persona_json(fixture_personas_copy, "test-alpha", mutator)
+        with pytest.raises(PersonaValidationError) as exc_info:
+            PersonaCatalog.load(personas_dir=fixture_personas_copy, enabled=["test-alpha"], default_persona_id="test-alpha")
+        assert "test-alpha" in str(exc_info.value)
+
+    def test_non_string_value_refuses_to_start(self, fixture_personas_copy):
+        def mutator(d):
+            d["pronunciations"] = {"Munchkins": 123}
+        _mutate_persona_json(fixture_personas_copy, "test-alpha", mutator)
+        with pytest.raises(PersonaValidationError, match="test-alpha"):
+            PersonaCatalog.load(personas_dir=fixture_personas_copy, enabled=["test-alpha"], default_persona_id="test-alpha")
+
+
+# ===========================================================================
 # Issue #144 (design doc section 18.2): every file under assets/ must be
 # classifiable as anonymous-or-protected, or startup must refuse to load the pack.
 # ===========================================================================

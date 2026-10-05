@@ -55,6 +55,16 @@ class OrderSummary(BaseModel):
     totalDisplay: str = ""
     taxDisplay: str = ""
     finalTotalDisplay: str = ""
+    # #304: server-composed, voice-ready order read-back -- every line (quantity, size, and
+    # spoken item name) followed by "Your total is ...". Computed once per OrderState._update_summary
+    # call (order_state.py's `_compose_spoken_readback`) from the SAME grouping/spoken-name logic
+    # `get_grouped_order_for_readback` already used, so the two can never drift. Every persona's
+    # system prompt (#304) instructs the model to call `get_order` and speak this field VERBATIM
+    # before the final total, after any change, and when the guest says they're done -- never a
+    # total-only reply. Left as "" (never required) for the same backward-compatible reason
+    # totalDisplay/taxDisplay/finalTotalDisplay are: existing call sites that build an
+    # OrderSummary with only the numeric/display fields keep working unchanged.
+    spokenReadBack: str = ""
 
     @model_validator(mode="after")
     def _fill_display_defaults(self) -> "OrderSummary":
