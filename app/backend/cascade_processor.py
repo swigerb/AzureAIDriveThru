@@ -47,6 +47,7 @@ import time
 import wave
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import quote
 
 import aiohttp
 from aiohttp import web
@@ -214,11 +215,11 @@ def _retry_hint_of(exc: Exception) -> float | None:
 # gpt-4o-transcribe deployments (verified live 2026-10-05) even though `/openai/v1/audio/speech`
 # works, so STT uses the deployment-scoped route. Shared with scripts/smoke_realtime.py and
 # mirrored by the C# FoundryAudioClient.
-TRANSCRIPTION_API_VERSION = "2025-03-01-preview"
+TRANSCRIPTION_API_VERSION = "2024-10-21"  # GA; verified live with gpt-4o-transcribe 2026-10-05
 
 
 def transcription_url(audio_endpoint: str, deployment: str) -> str:
-    return (f"{audio_endpoint.rstrip('/')}/openai/deployments/{deployment}/audio/transcriptions"
+    return (f"{audio_endpoint.rstrip('/')}/openai/deployments/{quote(deployment, safe='')}/audio/transcriptions"
             f"?api-version={TRANSCRIPTION_API_VERSION}")
 
 def _pcm16_to_wav_bytes(pcm: bytes, sample_rate: int = _AUDIO_SAMPLE_RATE) -> bytes:

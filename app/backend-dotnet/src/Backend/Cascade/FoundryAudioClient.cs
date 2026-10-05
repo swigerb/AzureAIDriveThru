@@ -22,7 +22,7 @@ public sealed class FoundryAudioClient(HttpClient httpClient, string endpoint, I
     /// DeploymentNotFound for gpt-4o-transcribe deployments (verified live 2026-10-05) even though
     /// `/openai/v1/audio/speech` works, so STT uses the deployment-scoped route. Mirrors
     /// cascade_processor.py's <c>transcription_url</c>.</summary>
-    internal const string TranscriptionApiVersion = "2025-03-01-preview";
+    internal const string TranscriptionApiVersion = "2024-10-21"; // GA; verified live with gpt-4o-transcribe 2026-10-05
 
     internal static string TranscriptionUrl(string endpoint, string deployment) =>
         $"{endpoint.TrimEnd('/')}/openai/deployments/{Uri.EscapeDataString(deployment)}/audio/transcriptions?api-version={TranscriptionApiVersion}";
