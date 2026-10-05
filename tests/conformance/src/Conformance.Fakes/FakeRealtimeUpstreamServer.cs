@@ -340,6 +340,13 @@ public sealed class FakeRealtimeUpstreamServer : IAsyncDisposable
     public IReadOnlyList<string> TtsRequestInputs => [.. _ttsRequestInputs];
     private readonly ConcurrentQueue<string> _ttsRequestInputs = new();
 
+    /// <summary>#248: every `/openai/v1/audio/speech` request's own `voice` field, in arrival
+    /// order -- lets a test assert `CascadeProcessor`'s per-persona voice lookup
+    /// (`_resolve_persona_voice`) actually reached the wire, not just that a session's own
+    /// `_CascadeSessionState.voice` was seeded correctly in-process.</summary>
+    public IReadOnlyList<string> TtsRequestVoices => [.. _ttsRequestVoices];
+    private readonly ConcurrentQueue<string> _ttsRequestVoices = new();
+
     private bool CheckCascadeBearerToken(HttpContext context)
     {
         if (ExpectedCascadeBearerToken is null)
@@ -378,6 +385,7 @@ public sealed class FakeRealtimeUpstreamServer : IAsyncDisposable
         var root = document.RootElement;
         _ttsRequestModels.Enqueue(root.TryGetProperty("model", out var modelProp) ? modelProp.GetString() ?? "" : "");
         _ttsRequestInputs.Enqueue(root.TryGetProperty("input", out var inputProp) ? inputProp.GetString() ?? "" : "");
+        _ttsRequestVoices.Enqueue(root.TryGetProperty("voice", out var voiceProp) ? voiceProp.GetString() ?? "" : "");
 
         context.Response.ContentType = "application/octet-stream";
         await context.Response.Body.WriteAsync(NextTtsAudio).ConfigureAwait(false);
