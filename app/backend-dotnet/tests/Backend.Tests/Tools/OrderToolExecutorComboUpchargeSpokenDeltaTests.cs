@@ -1,6 +1,6 @@
 using System.Text.Json;
 using Backend.Ordering;
-using Backend.Personas;
+using Backend.Tests.TestSupport;
 using Backend.Tools;
 
 namespace Backend.Tests.Tools;
@@ -12,24 +12,19 @@ namespace Backend.Tests.Tools;
 /// on BOTH delta shapes that embed <see cref="OrderUpdateResult.ComboComponentUpchargeDisplay"/>
 /// (OrderToolExecutor's private BuildDeltaText's "absorbed" and "resized" branches): a fresh `add`
 /// that fills a still-vacant combo slot above the included size, and a later `modify`
-/// that resizes an already-absorbed component. Against the real, shipped "sonic" pack (the same
-/// persona/items <see cref="Backend.Tests.Ordering.ComponentUpchargeBundleTests"/> already uses
-/// for the equivalent OrderState-level coverage) -- no test-only fixture needed since this is
-/// pure pricing/wording behavior, not any persona-specific lexicon.
+/// that resizes an already-absorbed component. Against <see cref="EtaFixture"/>'s "test-eta"
+/// pack -- the only fixture pack declaring <c>bundles.resizeRule: "componentUpcharge"</c> -- since
+/// this is pure pricing/wording behavior, not any persona-specific lexicon, so no real persona id
+/// is needed in this file's own source.
 /// </summary>
 public sealed class OrderToolExecutorComboUpchargeSpokenDeltaTests
 {
     private const int MaxItemQuantity = 10;
     private const int MaxOrderItems = 25;
-    private const string PersonaId = "sonic";
-    private const string Bundle = "SuperSONIC® Double Cheeseburger Combo";
-    private const string Side = "Tots";
-    private const string Drink = "Cherry Limeade";
 
     private static OrderToolExecutor NewExecutor()
     {
-        var catalog = PersonaCatalog.Load(personasEnv: PersonaId, defaultPersonaEnv: PersonaId);
-        var persona = catalog.Get(PersonaId);
+        var persona = EtaFixture.Load();
         var menu = PersonaOrderFactory.GetMenuCatalog(persona);
         var order = PersonaOrderFactory.CreateOrderState(persona);
         return new OrderToolExecutor(order, menu, promptLoader: null, MaxItemQuantity, MaxOrderItems, menuMode: null);
@@ -50,10 +45,10 @@ public sealed class OrderToolExecutorComboUpchargeSpokenDeltaTests
     {
         var ct = TestContext.Current.CancellationToken;
         var executor = NewExecutor();
-        await executor.ExecuteAsync("update_order", Args("add", Bundle, "standard", 1, 10.19m), ct);
-        await executor.ExecuteAsync("update_order", Args("add", Side, "medium", 1, 2.79m), ct);
+        await executor.ExecuteAsync("update_order", Args("add", EtaFixture.Bundle, "standard", 1, 7.99m), ct);
+        await executor.ExecuteAsync("update_order", Args("add", EtaFixture.Side, "medium", 1, 2.79m), ct);
 
-        var result = await executor.ExecuteAsync("update_order", Args("add", Drink, "large", 1, 3.39m), ct);
+        var result = await executor.ExecuteAsync("update_order", Args("add", EtaFixture.Drink, "large", 1, 3.39m), ct);
 
         var text = result.ToText();
         Assert.Contains("fifty cents upcharge", text);
@@ -65,11 +60,11 @@ public sealed class OrderToolExecutorComboUpchargeSpokenDeltaTests
     {
         var ct = TestContext.Current.CancellationToken;
         var executor = NewExecutor();
-        await executor.ExecuteAsync("update_order", Args("add", Bundle, "standard", 1, 10.19m), ct);
-        await executor.ExecuteAsync("update_order", Args("add", Side, "medium", 1, 2.79m), ct);
-        await executor.ExecuteAsync("update_order", Args("add", Drink, "medium", 1, 2.89m), ct);
+        await executor.ExecuteAsync("update_order", Args("add", EtaFixture.Bundle, "standard", 1, 7.99m), ct);
+        await executor.ExecuteAsync("update_order", Args("add", EtaFixture.Side, "medium", 1, 2.79m), ct);
+        await executor.ExecuteAsync("update_order", Args("add", EtaFixture.Drink, "medium", 1, 2.89m), ct);
 
-        var result = await executor.ExecuteAsync("update_order", Args("modify", Drink, "large", 1, 3.39m), ct);
+        var result = await executor.ExecuteAsync("update_order", Args("modify", EtaFixture.Drink, "large", 1, 3.39m), ct);
 
         var text = result.ToText();
         Assert.Contains("fifty cents upcharge", text);

@@ -1,0 +1,6 @@
+upsell_hints:
+  generic:
+    trigger_categories: []
+    hint: "Ask if they'd like to add an Eta Combo!"
+system_hints: {}
+eta_templates: {}

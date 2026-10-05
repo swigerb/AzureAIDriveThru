@@ -1,0 +1,48 @@
+{
+  "menuItems": [
+    {
+      "category": "combos",
+      "items": [
+        {
+          "name": "Eta Combo",
+          "sizes": [
+            { "size": "Standard", "price": 7.99 }
+          ],
+          "description": "Test Eta's combo meal -- a main plus a side and a drink slot, both absorbing a standalone item at no extra charge up to the pack's own includedSize, then an upcharge for anything larger (#313, Rick's re-review item 2).",
+          "bundle": { "slots": ["sides", "drinks"], "defaultSize": "Standard" },
+          "comboSlot": "none",
+          "isExtra": false
+        }
+      ]
+    },
+    {
+      "category": "sides",
+      "items": [
+        {
+          "name": "Eta Fries",
+          "sizes": [
+            { "size": "Medium", "price": 2.79 }
+          ],
+          "description": "Test Eta's only side, sized at the pack's own includedSize so absorbing it into a combo never carries an upcharge.",
+          "comboSlot": "sides",
+          "isExtra": false
+        }
+      ]
+    },
+    {
+      "category": "drinks",
+      "items": [
+        {
+          "name": "Eta Cola",
+          "sizes": [
+            { "size": "Medium", "price": 2.89 },
+            { "size": "Large", "price": 3.39 }
+          ],
+          "description": "Test Eta's only drink -- Medium matches the pack's own includedSize (no upcharge); Large is fifty cents more, giving a deterministic componentUpcharge delta.",
+          "comboSlot": "drinks",
+          "isExtra": false
+        }
+      ]
+    }
+  ]
+}

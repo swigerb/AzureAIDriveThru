@@ -1,4 +1,5 @@
 using System.Linq;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using Conformance.Fakes;
 using Conformance.Harness;
@@ -15,12 +16,12 @@ namespace Conformance.Tests.Scenarios.Cascade;
 /// match here can only mean <c>MenuCatalog.ApplyLexicon(text, persona.Pronunciations)</c> actually
 /// ran before the request left the process).
 ///
-/// Uses the real, shipped Munchkins-lexicon persona pack -- its own <c>persona.json</c> declares
-/// <c>pronunciations: {"Munchkins": "Munch-kins"}</c> (the same entry the coordinator brief calls
-/// out by name), so no test-only fixture pack is needed to exercise this feature. #313 (Rick's
-/// re-review, item 1): names the real persona id directly rather than string-concatenating
-/// around rebrand_scan.py's brand-word guard -- see this file's own rebrand_baseline.yaml entry
-/// (issue #304).
+/// #313 (coordinator fix request, round 4): made brand-neutral -- generic over EVERY shipped pack
+/// <see cref="ConformancePersonas.DiscoverFromDisk()"/> finds that actually declares a non-empty
+/// <c>pronunciations</c> block, read straight from that pack's own persona.json (never a literal
+/// value in this file's own source), so this class names no real persona id and carries no new
+/// rebrand_baseline.yaml entry. Asserts at least one shipped pack declares one, so the row can't
+/// pass vacuously.
 /// </summary>
 [Collection(CascadeConformanceCollection.Name)]
 [Trait("Dotnet", "ready")]
@@ -28,20 +29,62 @@ public sealed class CascadePronunciationLexiconConformanceTests(CascadeConforman
 {
     private static readonly TimeSpan FrameTimeout = CascadeScenarioHelpers.FrameTimeout;
 
+    /// <summary>Reads every shipped pack's own persona.json (never a cached/typed model) and
+    /// returns one (personaId, rawKey, spokenForm) row per declared <c>pronunciations</c> entry,
+    /// across every pack -- mirrors <see cref="ConformancePersonas.DiscoverFromDisk()"/>'s own
+    /// disk-discovery convention. Plain strings (not a custom record) so xunit's MemberData
+    /// serialization needs nothing beyond its built-in support.</summary>
+    private static IReadOnlyList<(string PersonaId, string RawKey, string SpokenForm)> DiscoverPronunciationEntries()
+    {
+        var personasDir = RepoPaths.PersonasDirectory(RepoPaths.FindRepoRoot());
+        var entries = new List<(string, string, string)>();
+
+        foreach (var personaId in ConformancePersonas.DiscoverFromDisk(personasDir))
+        {
+            var personaJsonPath = Path.Combine(personasDir, personaId, "persona.json");
+            using var document = JsonDocument.Parse(File.ReadAllText(personaJsonPath));
+            if (!document.RootElement.TryGetProperty("pronunciations", out var pronunciations) ||
+                pronunciations.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            foreach (var property in pronunciations.EnumerateObject())
+            {
+                entries.Add((personaId, property.Name, property.Value.GetString() ?? ""));
+            }
+        }
+
+        return entries;
+    }
+
+    public static IEnumerable<object[]> PronunciationEntries() =>
+        DiscoverPronunciationEntries().Select(entry => new object[] { entry.PersonaId, entry.RawKey, entry.SpokenForm });
+
     [Fact]
-    public Task Cascade_tts_input_has_the_personas_pronunciation_lexicon_applied() => fixture.RunAsync(async () =>
+    public void At_least_one_shipped_pack_declares_a_pronunciation_entry()
+    {
+        Assert.True(
+            DiscoverPronunciationEntries().Count > 0,
+            "expected at least one shipped persona pack to declare a pronunciations lexicon " +
+            "(otherwise the Theory below passes vacuously)");
+    }
+
+    [Theory]
+    [MemberData(nameof(PronunciationEntries))]
+    public Task Cascade_tts_input_has_the_personas_pronunciation_lexicon_applied(string personaId, string rawKey, string spokenForm) => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
         var connection = await CascadeScenarioHelpers.ConnectPastGreetingAsync(
-            fixture, fixture.Chat, "gpt-5-mini", ct, persona: "dunkin");
+            fixture, fixture.Chat, "gpt-5-mini", ct, persona: personaId);
         await using var browser = connection.Browser;
 
-        // The model's own final answer text deliberately uses the RAW, un-respelled brand word --
+        // The model's own final answer text deliberately uses the RAW, un-respelled key --
         // proving the substitution happens server-side in SpeakAsync, not something the chat
         // model was asked (or trusted) to spell phonetically itself.
-        const string rawAnswerText = "Great choice! Your Glazed Munchkins Donut Hole Treats are on the way.";
+        var rawAnswerText = $"Great choice! Your {rawKey} order is on the way.";
         fixture.Chat.EnqueueMessage(new JsonObject { ["role"] = "assistant", ["content"] = rawAnswerText });
-        fixture.Realtime.NextTranscript = "I'll take the glazed Munchkins.";
+        fixture.Realtime.NextTranscript = $"I'll take the {rawKey}.";
 
         await CascadeScenarioHelpers.SendGuestTurnAsync(browser, ct);
 
@@ -58,7 +101,7 @@ public sealed class CascadePronunciationLexiconConformanceTests(CascadeConforman
 
         var ttsInput = fixture.Realtime.TtsRequestInputs.LastOrDefault();
         Assert.NotNull(ttsInput);
-        Assert.Contains("Munch-kins", ttsInput);
-        Assert.DoesNotContain("Munchkins", ttsInput);
+        Assert.Contains(spokenForm, ttsInput);
+        Assert.DoesNotContain(rawKey, ttsInput);
     });
 }

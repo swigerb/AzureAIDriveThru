@@ -78,38 +78,91 @@ public sealed class ApplyLexiconTests
     }
 }
 
-/// <summary>Exercises the real, shipped Munchkins-lexicon persona pack's ``pronunciations``
-/// entry and its menu items' ``spokenName`` overrides through the normal <see cref="MenuCatalog"/>
-/// loading path -- proving the feature works end-to-end on real pack data, not just the primitive.
-/// #313 (Rick's re-review, item 1): this class's whole point is to validate the REAL, shipped
-/// pack's own lexicon data (the synthetic test-zeta fixture has no Munchkins-equivalent
-/// ``pronunciations`` entry to exercise), so it names the real persona id directly rather than
-/// string-concatenating around rebrand_scan.py's brand-word guard -- see this file's own
-/// rebrand_baseline.yaml entry (issue #304).</summary>
-public sealed class RealPersonaPronunciationsAndSpokenNameTests
+/// <summary>Exercises EVERY shipped persona pack's own ``pronunciations`` entry and its menu
+/// items' ``spokenName`` overrides through the normal <see cref="PersonaCatalog.Load"/>
+/// discovery path and <see cref="MenuCatalog"/> loading -- proving the feature works end-to-end
+/// on whatever real pack data happens to declare it, without naming any one pack's id.
+/// #313 (coordinator fix request, round 4): made brand-neutral -- generic over every pack
+/// <see cref="PersonaCatalog.Load"/> discovers from disk, so this class carries no new
+/// rebrand_baseline.yaml entry. Anything needing a known, deterministic value uses
+/// <see cref="ZetaFixture"/> instead of a real pack.</summary>
+public sealed class ShippedPersonaPronunciationAndSpokenNameTests
 {
-    private static Persona Pack() => PersonaCatalog.Load(personasEnv: "dunkin", defaultPersonaEnv: "dunkin").Get("dunkin");
+    private static PersonaCatalog AllShippedPacks() => PersonaCatalog.Load();
 
     [Fact]
-    public void Persona_declares_the_munchkins_pronunciation()
+    public void Every_shipped_packs_pronunciation_lexicon_is_applied()
     {
-        var persona = Pack();
-        Assert.NotNull(persona.Pronunciations);
-        Assert.Equal("Munch-kins", persona.Pronunciations!["Munchkins"]);
+        var catalog = AllShippedPacks();
+        var anyPackDeclaresALexicon = false;
+
+        foreach (var id in catalog.Ids)
+        {
+            var persona = catalog.Get(id);
+            var pronunciations = persona.Pronunciations;
+            if (pronunciations is not { Count: > 0 })
+            {
+                continue;
+            }
+
+            anyPackDeclaresALexicon = true;
+            foreach (var (rawKey, spokenForm) in pronunciations)
+            {
+                var result = MenuCatalog.ApplyLexicon($"Example {rawKey} text", pronunciations);
+                Assert.True(result.Contains(spokenForm), $"{id}: {rawKey} was not respelled");
+                Assert.True(!result.Contains(rawKey), $"{id}: raw key {rawKey} survived");
+            }
+        }
+
+        Assert.True(
+            anyPackDeclaresALexicon,
+            "expected at least one shipped persona pack to declare a pronunciations lexicon " +
+            "(otherwise this test passes vacuously)");
     }
 
     [Fact]
-    public void Munchkins_item_spoken_name_is_applied_via_spoken()
+    public void Every_shipped_packs_item_spoken_name_is_applied_via_spoken()
     {
-        var menu = PersonaOrderFactory.GetMenuCatalog(Pack());
-        Assert.Equal("Glazed Munch-kins Donut Hole Treats", menu.Spoken("Glazed MUNCHKINS® Donut Hole Treats"));
+        var catalog = AllShippedPacks();
+        var anyPackDeclaresASpokenName = false;
+
+        foreach (var id in catalog.Ids)
+        {
+            var persona = catalog.Get(id);
+            var menu = PersonaOrderFactory.GetMenuCatalog(persona);
+
+            foreach (var category in persona.Menu.MenuItems)
+            {
+                foreach (var item in category.Items)
+                {
+                    if (string.IsNullOrEmpty(item.SpokenName))
+                    {
+                        continue;
+                    }
+
+                    anyPackDeclaresASpokenName = true;
+                    var result = menu.Spoken(item.Name);
+                    Assert.True(result == item.SpokenName, $"{id}: {item.Name} was not spoken as {item.SpokenName}");
+                    if (item.Name != item.SpokenName)
+                    {
+                        Assert.True(!result.Contains(item.Name), $"{id}: raw name {item.Name} survived");
+                    }
+                }
+            }
+        }
+
+        Assert.True(
+            anyPackDeclaresASpokenName,
+            "expected at least one shipped persona pack to declare an item spokenName override " +
+            "(otherwise this test passes vacuously)");
     }
 
     [Fact]
     public void Unrelated_item_is_unaffected_by_spoken_name_overrides()
     {
-        var menu = PersonaOrderFactory.GetMenuCatalog(Pack());
-        Assert.Equal("Original Blend Iced Coffee", menu.Spoken("Original Blend Iced Coffee"));
+        // test-zeta's own fixture item has no spokenName override, so Spoken() must be a no-op.
+        var menu = PersonaOrderFactory.GetMenuCatalog(ZetaFixture.Load());
+        Assert.Equal("Zeta Cola", menu.Spoken("Zeta Cola"));
     }
 }
 
