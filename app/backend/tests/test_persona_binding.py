@@ -21,11 +21,13 @@ test_app.py / test_performance.py respectively -- not duplicated here.
 """
 
 import asyncio
+import json
 import os
 import sys
 import unittest
 import urllib.parse
 from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 from zoneinfo import ZoneInfo
@@ -260,6 +262,44 @@ class OrderStatePersonaBindingTests(unittest.TestCase):
         self.assertFalse(order_state_singleton.set_happy_hour_mode(sid, "on"))
         self.assertEqual(order_state_singleton.get_happy_hour_mode(sid), "auto")
 
+    def test_set_happy_hour_mode_recomputes_order_summary_json_and_agrees_with_the_banner(self):
+        """#309 (R2): `set_happy_hour_mode` must refresh `order_summary_json` immediately --
+        `get_order` returns that CACHED json verbatim while separately computing the
+        happy-hour BANNER live (`get_happy_hour_banner_for_session`). Before this fix, only the
+        banner reacted to a mode change; the cached total/finalTotal stayed stale (whatever it
+        was before the mode flip) until some unrelated order mutation happened to refresh it --
+        so a guest could hear/see a banner claiming a discount that the total didn't reflect,
+        or vice versa."""
+        sid = self._new_session(self.alpha)
+        # Alpha Cola `requiresMachine: soda_machine`, which is "down" by alpha's own pack
+        # default -- override it Up first so the `add` below isn't itself rejected as
+        # machine_unavailable (an orthogonal concern to this test, #309 R1 above).
+        self.assertTrue(order_state_singleton.set_machine_override(sid, "soda_machine", "up"))
+        # Freeze the clock OUTSIDE alpha's happy-hour window (14-16) so "auto" mode naturally
+        # resolves to NOT-happy-hour -- isolates this test to the explicit mode toggle below,
+        # not the wall clock.
+        with patch("order_state.conformance_hooks.now", return_value=datetime(2026, 1, 1, 20, 0, tzinfo=ZoneInfo("America/Chicago"))):
+            _run(tools.update_order(
+                {"action": "add", "item_name": "Alpha Cola", "size": "small", "quantity": 1, "price": 1.99}, sid,
+            ))
+
+            # Turn happy hour ON.
+            self.assertTrue(order_state_singleton.set_happy_hour_mode(sid, "on"))
+            result_on = _run(tools.get_order({}, sid))
+            summary_on = json.loads(result_on.to_client_text())
+            # Alpha Cola is `happyHourDiscounted: true` with a 0.5 priceMultiplier (persona.json)
+            # -- the cached total must already reflect the 50%-off price, not the full price.
+            self.assertAlmostEqual(summary_on["finalTotal"], float(Decimal("1.99") * Decimal("0.5") * Decimal("1.05")), places=2)
+            self.assertIn("ALPHA HAPPY HOUR", result_on.text)
+
+            # Turn happy hour OFF -- both the cached total AND the banner must flip back
+            # together, immediately, with no other order mutation in between.
+            self.assertTrue(order_state_singleton.set_happy_hour_mode(sid, "off"))
+            result_off = _run(tools.get_order({}, sid))
+            summary_off = json.loads(result_off.to_client_text())
+            self.assertAlmostEqual(summary_off["finalTotal"], float(Decimal("1.99") * Decimal("1.05")), places=2)
+            self.assertNotIn("ALPHA HAPPY HOUR", result_off.text)
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # PER-SESSION BUSINESS RULES (Rick's PR #102 review, round 3, required item 1): every
@@ -316,6 +356,65 @@ class PersonaBusinessRuleIsolationTests(unittest.TestCase):
         ))
         self.assertIn("OOS", result_a.text)
         self.assertNotIn("OOS", result_b.text)
+
+    # ── #309 (R1): search must use effective (override-applied) machine status ──────
+
+    def test_pack_down_machine_flipped_up_by_override_is_not_flagged_oos(self):
+        """alpha's `soda_machine` is "down" by pack default -- a search for its own session,
+        after that session's operator flips it Up via `set_machine_override`, must NOT carry
+        an OOS tag. Before this fix, `search()` read `menu.machine_status(machine)` directly
+        (the raw pack default), completely ignoring the session's own override."""
+        sid = self._new_session(self.alpha)
+        self.assertTrue(order_state_singleton.set_machine_override(sid, "soda_machine", "up"))
+        menu_a = order_state_singleton.get_menu_catalog(sid)
+        result = _run(tools.search(
+            _make_mock_search_client([{"id": "1", "name": "Alpha Cola", "category": "drinks", "sizes": "N/A"}]),
+            "cfg", "id", "description", "embedding", False, {"query": "cola"}, menu=menu_a, session_id=sid,
+        ))
+        self.assertNotIn("OOS", result.text)
+
+    def test_pack_up_machine_flipped_down_by_override_is_flagged_oos(self):
+        """beta's `soda_machine` is "operational" (i.e. not down) by pack default -- a search
+        for its own session, after that session's operator flips it Down via
+        `set_machine_override`, must carry an OOS tag."""
+        sid = self._new_session(self.beta)
+        self.assertTrue(order_state_singleton.set_machine_override(sid, "soda_machine", "down"))
+        menu_b = order_state_singleton.get_menu_catalog(sid)
+        result = _run(tools.search(
+            _make_mock_search_client([{"id": "1", "name": "Beta Root Beer", "category": "drinks", "sizes": "N/A"}]),
+            "cfg", "id", "description", "embedding", False, {"query": "root beer"}, menu=menu_b, session_id=sid,
+        ))
+        self.assertIn("OOS", result.text)
+
+    def test_search_cache_hit_reflects_the_hitting_sessions_own_override_not_the_warming_calls(self):
+        """#309 (R1): the search cache is keyed by persona_id/menu_mode/query -- NOT by session
+        id or override state -- so two different sessions of the SAME persona asking the exact
+        same query must each get OOS tagging for their OWN override state, never the OTHER
+        session's (whichever one happened to warm the cache first). Before this fix, the cache
+        stored the already-formatted/OOS-tagged ToolResult, so the second session's search
+        would have silently served the FIRST session's (stale, wrong) OOS tag."""
+        sid_warm = self._new_session(self.alpha)
+        self.assertTrue(order_state_singleton.set_machine_override(sid_warm, "soda_machine", "up"))
+        menu_a = order_state_singleton.get_menu_catalog(sid_warm)
+
+        # First call (cache MISS): session has the machine overridden Up -- no OOS tag, and
+        # this is what populates _search_cache for the "cola" query.
+        result_warm = _run(tools.search(
+            _make_mock_search_client([{"id": "1", "name": "Alpha Cola", "category": "drinks", "sizes": "N/A"}]),
+            "cfg", "id", "description", "embedding", False, {"query": "cola"}, menu=menu_a, session_id=sid_warm,
+        ))
+        self.assertNotIn("OOS", result_warm.text)
+
+        # Second call (cache HIT, same persona/query): a DIFFERENT session of the SAME persona,
+        # with NO override -- the pack default (down) must apply, i.e. OOS. A naive cache that
+        # stored the formatted ToolResult itself would wrongly return the first (non-OOS)
+        # result here.
+        sid_cold = self._new_session(self.alpha)
+        result_cold = _run(tools.search(
+            _make_mock_search_client([{"id": "1", "name": "Alpha Cola", "category": "drinks", "sizes": "N/A"}]),
+            "cfg", "id", "description", "embedding", False, {"query": "cola"}, menu=menu_a, session_id=sid_cold,
+        ))
+        self.assertIn("OOS", result_cold.text)
 
     # ── extras allow/block gate ─────────────────────────────────────────────────
 

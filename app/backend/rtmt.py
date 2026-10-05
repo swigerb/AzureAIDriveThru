@@ -2783,6 +2783,20 @@ class RTMiddleTier:
                                         mode = ext_msg.get("mode")
                                         if order_state_singleton.set_happy_hour_mode(session_id, mode):
                                             logger.info("Happy-hour mode changed to %s for session %s", mode, session_id)
+                                            # #309 (R2): the mode change just recomputed
+                                            # order_summary_json (OrderState.set_happy_hour_mode
+                                            # -> _update_summary) -- push it to the browser right
+                                            # now, the same `extension.middle_tier_tool_response`
+                                            # shape a successful update_order/get_order tool call
+                                            # already pushes (see above), so the on-screen ticket
+                                            # never lags a mode change until the guest's next,
+                                            # unrelated order action.
+                                            await ws.send_json({
+                                                "type": "extension.middle_tier_tool_response",
+                                                "previous_item_id": None,
+                                                "tool_name": "get_order",
+                                                "tool_result": order_state_singleton.get_order_summary_json(session_id),
+                                            })
                                         else:
                                             _warn_dropped_frame(
                                                 drop_limiter,

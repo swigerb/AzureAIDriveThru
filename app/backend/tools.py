@@ -83,15 +83,21 @@ _SEARCH_CACHE_TTL_SEC = _cache_cfg.get("search_ttl_seconds", 60.0)
 _SEARCH_CACHE_MAX_SIZE = _cache_cfg.get("search_max_size", 128)
 
 class _SearchCache:
-    """Simple TTL cache for search results. Not thread-safe, but fine for
-    single-threaded asyncio where all access is from the event loop."""
+    """Simple TTL cache for *raw* search records. Not thread-safe, but fine for
+    single-threaded asyncio where all access is from the event loop.
+
+    #309 (R1): this caches the raw ``list[dict]`` records Azure AI Search returned, NOT a
+    formatted/OOS-tagged ``ToolResult`` -- see the comment at the cache lookup call site in
+    ``search()`` for why. A cached entry is safe to share across sessions/override states
+    because it is reformatted (including the OOS tag) fresh on every call, cache hit or not.
+    """
     __slots__ = ("_store", "_max_size")
 
     def __init__(self, max_size: int = _SEARCH_CACHE_MAX_SIZE):
-        self._store: dict[str, tuple[float, ToolResult]] = {}
+        self._store: dict[str, tuple[float, list[dict]]] = {}
         self._max_size = max_size
 
-    def get(self, key: str) -> ToolResult | None:
+    def get(self, key: str) -> list[dict] | None:
         entry = self._store.get(key)
         if entry is None:
             return None
@@ -101,7 +107,7 @@ class _SearchCache:
             return None
         return result
 
-    def put(self, key: str, result: ToolResult) -> None:
+    def put(self, key: str, result: list[dict]) -> None:
         if len(self._store) >= self._max_size:
             oldest_key = min(self._store, key=lambda k: self._store[k][0])
             del self._store[oldest_key]
@@ -223,6 +229,7 @@ async def search(
     prompt_loader=None,
     persona_id: str | None = None,
     menu_mode: str | None = None,
+    session_id: str | None = None,
 ) -> ToolResult:
     """Execute a hybrid Azure AI Search query with caching and safe fallbacks.
 
@@ -231,6 +238,12 @@ async def search(
     catalog, ``_prompt_loader``, and an unnamespaced cache) when omitted, so every existing
     direct call (e.g. in tests) keeps behaving exactly as before; ``_search_dispatch`` (used
     by the registered "search" tool) is the only caller that passes them.
+
+    *session_id* (#309, R1): this session's id, used to flag OOS items off the session's
+    *effective* machine status (``order_state_singleton.effective_machine_status`` -- the
+    pack default with the session's own operator override, if any, applied on top) instead of
+    the raw pack default. ``None`` for a direct/unbound call (e.g. tests calling ``search()``
+    straight) falls back to ``menu.machine_status(machine)`` exactly as before.
 
     *menu_mode* (#165): this session's own bound daypart (``order_state.OrderState
     .get_menu_mode``), or ``None`` for a persona with no ``features.dayparts`` (every existing
@@ -265,119 +278,135 @@ async def search(
     # Check cache first — repeated questions about the same menu item are common. Namespaced
     # by persona_id so two personas asking the same question never share a cached result from
     # each other's (potentially different) search index (#74).
+    # #309 (R1): the cache stores the RAW records returned by Azure AI Search, not the
+    # formatted/OOS-tagged ToolResult. Machine status (and therefore which items get an
+    # "[OOS: ...]" tag) is a per-session, override-sensitive property -- caching the already
+    # formatted text would let a result computed under one session's override state leak,
+    # stale, into a later call made under a *different* override state for the same query
+    # (e.g. one guest's session has the fryer overridden Up, another's does not). Formatting
+    # always happens below, AFTER the cache lookup/fetch, using THIS call's own effective
+    # status -- a cache hit still costs a tiny bit of string formatting, but never serves a
+    # stale OOS tag.
     cache_key = f"{persona_id or ''}::{menu_mode or ''}::{query.strip().lower()}"
-    cached = _search_cache.get(cache_key)
-    if cached is not None:
+    cached_records = _search_cache.get(cache_key)
+    if cached_records is not None:
         logger.debug("Search cache hit for '%s'", query)
-        return cached
+        records = cached_records
+    else:
+        records = None
 
-    vector_queries = []
-    if use_vector_query and embedding_field:
-        vector_queries.append(VectorizableTextQuery(text=query, k_nearest_neighbors=_search_cfg.get("k_nearest_neighbors", 15), fields=embedding_field))
+    if records is None:
+        vector_queries = []
+        if use_vector_query and embedding_field:
+            vector_queries.append(VectorizableTextQuery(text=query, k_nearest_neighbors=_search_cfg.get("k_nearest_neighbors", 15), fields=embedding_field))
 
-    # Only request fields we actually format into the result string
-    select_fields = [
-        identifier_field or "id",
-        "name",
-        "category",
-        "description",
-        "sizes",
-    ]
+        # Only request fields we actually format into the result string
+        select_fields = [
+            identifier_field or "id",
+            "name",
+            "category",
+            "description",
+            "sizes",
+        ]
 
-    _top = _search_cfg.get("top_results", 3)
+        _top = _search_cfg.get("top_results", 3)
 
-    # The semantic ranker is a service-level capability and is unavailable on the
-    # free search SKU. Issuing query_type="semantic" against a service without it
-    # returns HTTP 400 rather than degrading, which would fail every menu lookup,
-    # so only ask for it when the deployment actually provides it.
-    def _query_kwargs(semantic: bool) -> dict[str, Any]:
-        kwargs: dict[str, Any] = {"query_type": "semantic"} if semantic else {}
-        if semantic:
-            kwargs["semantic_configuration_name"] = semantic_configuration
-        return kwargs
+        # The semantic ranker is a service-level capability and is unavailable on the
+        # free search SKU. Issuing query_type="semantic" against a service without it
+        # returns HTTP 400 rather than degrading, which would fail every menu lookup,
+        # so only ask for it when the deployment actually provides it.
+        def _query_kwargs(semantic: bool) -> dict[str, Any]:
+            kwargs: dict[str, Any] = {"query_type": "semantic"} if semantic else {}
+            if semantic:
+                kwargs["semantic_configuration_name"] = semantic_configuration
+            return kwargs
 
-    semantic_enabled = bool(use_semantic_ranker and semantic_configuration)
+        semantic_enabled = bool(use_semantic_ranker and semantic_configuration)
 
-    # #37: azure-search-documents' async SearchClient.search(...) is lazy -- it returns an
-    # async-iterable immediately without making any HTTP request. The request (and therefore any
-    # HttpResponseError, including the "Could not find a property named" 400 the fallback below
-    # exists to catch) only happens once the results are actually iterated. So the first-page
-    # fetch has to live INSIDE the try, not just the initial `search_client.search(...)` call --
-    # otherwise a field-mismatch 400 raised during iteration propagates unhandled and tears down
-    # the whole realtime connection instead of triggering the minimal-select retry.
-    #
-    # PR #50 review (should-fix 4): `asyncio.wait_for` must wrap the ENTIRE collect -- the
-    # `await search_client.search(...)` call AND the `async for` iteration that triggers the real
-    # HTTP request -- not just the (non-blocking, no-HTTP-yet) initial call. Wrapping only the
-    # `await search_client.search(...)` bounded nothing useful, since that call does no network
-    # I/O per the comment above; the iteration below it (where the request actually happens) ran
-    # completely outside the timeout, so a slow/hanging search service could block indefinitely
-    # despite `timeout_seconds` being configured.
-    async def _fetch_records(**search_kwargs) -> list[dict]:
-        async def _search_and_collect() -> list[dict]:
-            search_results = await search_client.search(**search_kwargs)
-            return [record async for record in search_results]
+        # #37: azure-search-documents' async SearchClient.search(...) is lazy -- it returns an
+        # async-iterable immediately without making any HTTP request. The request (and therefore any
+        # HttpResponseError, including the "Could not find a property named" 400 the fallback below
+        # exists to catch) only happens once the results are actually iterated. So the first-page
+        # fetch has to live INSIDE the try, not just the initial `search_client.search(...)` call --
+        # otherwise a field-mismatch 400 raised during iteration propagates unhandled and tears down
+        # the whole realtime connection instead of triggering the minimal-select retry.
+        #
+        # PR #50 review (should-fix 4): `asyncio.wait_for` must wrap the ENTIRE collect -- the
+        # `await search_client.search(...)` call AND the `async for` iteration that triggers the real
+        # HTTP request -- not just the (non-blocking, no-HTTP-yet) initial call. Wrapping only the
+        # `await search_client.search(...)` bounded nothing useful, since that call does no network
+        # I/O per the comment above; the iteration below it (where the request actually happens) ran
+        # completely outside the timeout, so a slow/hanging search service could block indefinitely
+        # despite `timeout_seconds` being configured.
+        async def _fetch_records(**search_kwargs) -> list[dict]:
+            async def _search_and_collect() -> list[dict]:
+                search_results = await search_client.search(**search_kwargs)
+                return [record async for record in search_results]
 
-        return await asyncio.wait_for(_search_and_collect(), timeout=_search_cfg.get("timeout_seconds", 10))
+            return await asyncio.wait_for(_search_and_collect(), timeout=_search_cfg.get("timeout_seconds", 10))
 
-    try:
-        records = await _fetch_records(
-            search_text=query,
-            top=_top,
-            vector_queries=vector_queries or None,
-            select=select_fields,
-            filter=mode_filter,
-            **_query_kwargs(semantic_enabled),
-        )
-    except TimeoutError:
-        logger.error("Azure AI Search timed out for query '%s'", query)
-        _err = prompt_loader.render_error("search_service_unavailable") if prompt_loader else "I'm having trouble reaching our menu right now — could you try that again?"
-        return ToolResult(_err, ToolResultDirection.TO_SERVER)
-    except HttpResponseError as exc:
-        # Gracefully handle schema/field mismatches (e.g., invalid $select fields, or -- #165 --
-        # a `menuPeriod` filter against an index that hasn't been rebuilt with that field yet) by
-        # retrying with a minimal projection AND no filter. Dropping the mode filter here means a
-        # stale index degrades to "unfiltered search" rather than failing the lookup outright.
-        if "Could not find a property named" in str(exc):
-            logger.warning("Retrying search with minimal fields after select mismatch: %s", exc)
-            fallback_select = [identifier_field or "id", content_field or "description"]
-            try:
-                records = await _fetch_records(
-                    search_text=query,
-                    top=_top,
-                    vector_queries=vector_queries or None,
-                    select=[f for f in fallback_select if f],
-                    **_query_kwargs(semantic_enabled),
-                )
-            except Exception as exc2:
-                logger.error("Search retry with minimal select also failed: %s", exc2)
-                _err = prompt_loader.render_error("search_service_unavailable") if prompt_loader else "I'm sorry, I can't reach our menu data right now."
-                return ToolResult(_err, ToolResultDirection.TO_SERVER)
-        elif semantic_enabled and "semantic" in str(exc).lower():
-            # Belt and braces: the service rejected the semantic query even though
-            # configuration said it was available (e.g. the SKU was changed after
-            # deployment). Retry without the ranker rather than failing the lookup.
-            logger.warning("Semantic ranker unavailable, retrying without it: %s", exc)
-            try:
-                records = await _fetch_records(
-                    search_text=query,
-                    top=_top,
-                    vector_queries=vector_queries or None,
-                    select=select_fields,
-                    filter=mode_filter,
-                )
-            except Exception as exc2:
-                logger.error("Search retry without semantic ranker also failed: %s", exc2)
-                _err = prompt_loader.render_error("search_service_unavailable") if prompt_loader else "I'm sorry, I can't reach our menu data right now."
-                return ToolResult(_err, ToolResultDirection.TO_SERVER)
-        else:
-            logger.error("Azure AI Search request failed: %s", exc)
-            _err = prompt_loader.render_error("search_service_unavailable") if prompt_loader else "I'm sorry, I can't reach our menu data right now."
+        try:
+            records = await _fetch_records(
+                search_text=query,
+                top=_top,
+                vector_queries=vector_queries or None,
+                select=select_fields,
+                filter=mode_filter,
+                **_query_kwargs(semantic_enabled),
+            )
+        except TimeoutError:
+            logger.error("Azure AI Search timed out for query '%s'", query)
+            _err = prompt_loader.render_error("search_service_unavailable") if prompt_loader else "I'm having trouble reaching our menu right now — could you try that again?"
             return ToolResult(_err, ToolResultDirection.TO_SERVER)
-    except Exception as exc:
-        logger.error("Unexpected error during search for '%s': %s", query, exc)
-        _err = prompt_loader.render_error("search_service_unavailable") if prompt_loader else "I had a little glitch looking that up — could you say that again?"
-        return ToolResult(_err, ToolResultDirection.TO_SERVER)
+        except HttpResponseError as exc:
+            # Gracefully handle schema/field mismatches (e.g., invalid $select fields, or -- #165 --
+            # a `menuPeriod` filter against an index that hasn't been rebuilt with that field yet) by
+            # retrying with a minimal projection AND no filter. Dropping the mode filter here means a
+            # stale index degrades to "unfiltered search" rather than failing the lookup outright.
+            if "Could not find a property named" in str(exc):
+                logger.warning("Retrying search with minimal fields after select mismatch: %s", exc)
+                fallback_select = [identifier_field or "id", content_field or "description"]
+                try:
+                    records = await _fetch_records(
+                        search_text=query,
+                        top=_top,
+                        vector_queries=vector_queries or None,
+                        select=[f for f in fallback_select if f],
+                        **_query_kwargs(semantic_enabled),
+                    )
+                except Exception as exc2:
+                    logger.error("Search retry with minimal select also failed: %s", exc2)
+                    _err = prompt_loader.render_error("search_service_unavailable") if prompt_loader else "I'm sorry, I can't reach our menu data right now."
+                    return ToolResult(_err, ToolResultDirection.TO_SERVER)
+            elif semantic_enabled and "semantic" in str(exc).lower():
+                # Belt and braces: the service rejected the semantic query even though
+                # configuration said it was available (e.g. the SKU was changed after
+                # deployment). Retry without the ranker rather than failing the lookup.
+                logger.warning("Semantic ranker unavailable, retrying without it: %s", exc)
+                try:
+                    records = await _fetch_records(
+                        search_text=query,
+                        top=_top,
+                        vector_queries=vector_queries or None,
+                        select=select_fields,
+                        filter=mode_filter,
+                    )
+                except Exception as exc2:
+                    logger.error("Search retry without semantic ranker also failed: %s", exc2)
+                    _err = prompt_loader.render_error("search_service_unavailable") if prompt_loader else "I'm sorry, I can't reach our menu data right now."
+                    return ToolResult(_err, ToolResultDirection.TO_SERVER)
+            else:
+                logger.error("Azure AI Search request failed: %s", exc)
+                _err = prompt_loader.render_error("search_service_unavailable") if prompt_loader else "I'm sorry, I can't reach our menu data right now."
+                return ToolResult(_err, ToolResultDirection.TO_SERVER)
+        except Exception as exc:
+            logger.error("Unexpected error during search for '%s': %s", query, exc)
+            _err = prompt_loader.render_error("search_service_unavailable") if prompt_loader else "I had a little glitch looking that up — could you say that again?"
+            return ToolResult(_err, ToolResultDirection.TO_SERVER)
+
+        # Cache the RAW records (pre-formatting/pre-OOS-tagging) -- see the comment above the
+        # cache lookup for why the formatted ToolResult itself must never be cached (#309, R1).
+        _search_cache.put(cache_key, records)
 
     results = []
     for record in records:
@@ -400,9 +429,21 @@ async def search(
 
         # Flag items affected by machine outages so the AI knows not to recommend them.
         # #73: data-driven off the item's own `requiresMachine` field instead of a substring
-        # keyword list, so a real menu item is the only thing ever flagged.
+        # keyword list, so a real menu item is the only thing ever flagged. #309 (R1): routed
+        # through this session's *effective* status (pack default with the session's own
+        # operator override, if any, applied on top -- `order_state.set_machine_override`) so a
+        # guest-visible OOS tag always reflects what `update_order` (tools.py, see
+        # `effective_machine_status` there) will actually do with the same item, instead of the
+        # raw, override-blind pack default. A direct/unbound call (no *session_id*, e.g. an
+        # existing test calling `search()` straight with its own *menu*) falls back to the pack
+        # default exactly as before.
         machine = menu.requires_machine(item_name)
-        if machine and menu.machine_status(machine) == "down":
+        machine_status = (
+            order_state_singleton.effective_machine_status(session_id, machine)
+            if session_id is not None
+            else menu.machine_status(machine)
+        )
+        if machine and machine_status == "down":
             summary += f" [OOS: {menu.machine_label(machine)}]"
 
         results.append(summary)
@@ -411,9 +452,6 @@ async def search(
     logger.debug("Search results returned %d documents", len(results))
     _no_results = prompt_loader.get_error_messages().get("search_no_results", "No matching menu entries found.") if prompt_loader else "No matching menu entries found."
     result = ToolResult(joined_results or _no_results, ToolResultDirection.TO_SERVER)
-
-    # Cache the result for repeated queries
-    _search_cache.put(cache_key, result)
     return result
 
 
@@ -993,6 +1031,7 @@ async def _search_dispatch(args, session_id: str | None) -> ToolResult:
         prompt_loader=pl,
         persona_id=pid,
         menu_mode=menu_mode,
+        session_id=session_id,
     )
 
 

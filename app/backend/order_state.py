@@ -1430,6 +1430,21 @@ class OrderState:
         if session_id not in self.sessions:
             return False
         self._check_owner(session_id)
+        # #309, S5: a non-string `machine` (e.g. a malformed/malicious client frame sending
+        # `"machine": []` or `"machine": {}`) must be rejected cleanly here, BEFORE the
+        # `machine not in self._menu_for(session).machines` membership test below -- `machines`
+        # is a dict, and `in` against a dict raises TypeError ("unhashable type") for a
+        # list/dict key rather than returning False, which would otherwise propagate uncaught
+        # into rtmt.py's message-processing loop (only `(json.JSONDecodeError, KeyError)` is
+        # caught there) and crash the client relay for the whole session. Mirrors how an
+        # unknown/invalid machine name is already rejected below: log a WARNING, store nothing,
+        # return False -- never raise.
+        if not isinstance(machine, str) or not isinstance(status, str):
+            logger.warning(
+                "Dropped set_machine_override with non-string machine/status (machine=%r, status=%r) for session %s",
+                machine, status, session_id,
+            )
+            return False
         if status not in ("up", "down"):
             return False
         session = self.sessions[session_id]
@@ -1474,10 +1489,26 @@ class OrderState:
         if session_id not in self.sessions:
             return False
         self._check_owner(session_id)
+        # #309, S5: a non-string `mode` (e.g. a malformed/malicious client frame sending
+        # `"mode": []`) must be rejected exactly like any other invalid mode below -- never
+        # propagate an uncaught TypeError up into rtmt.py's message-processing loop. `mode not
+        # in ("auto", "on", "off")` below already handles this safely for a non-string (a list
+        # is simply never equal to any of the three strings), so this guard only exists to make
+        # that safety explicit and to mirror the symmetric guard in set_machine_override.
+        if not isinstance(mode, str):
+            logger.warning("Dropped set_happy_hour_mode with non-string mode %r for session %s", mode, session_id)
+            return False
         session = self.sessions[session_id]
         if session.get("_happy_hour_window") is None or mode not in ("auto", "on", "off"):
             return False
         session["_happy_hour_mode"] = mode
+        # #309 (R2): the mode change must be reflected in `order_summary_json` IMMEDIATELY, not
+        # only on the next (unrelated) order mutation. `get_order` returns this cached JSON
+        # verbatim while separately computing the happy-hour BANNER live
+        # (`get_happy_hour_banner_for_session`) -- without this call the two could disagree
+        # (e.g. banner says "HAPPY HOUR" but the cached total doesn't reflect the discount yet,
+        # or vice versa) until some other, unrelated order change happened to refresh the cache.
+        self._update_summary(session_id)
         return True
 
     def get_happy_hour_mode(self, session_id: str) -> str:
