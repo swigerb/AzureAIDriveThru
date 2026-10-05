@@ -11,11 +11,11 @@ namespace Conformance.Harness;
 /// <see cref="DotnetPlaceholderPolicy"/>'s own doc comment: testable without touching the real
 /// filesystem or environment).
 ///
-/// All three real packs (personas/sonic, personas/dunkin, personas/mcdonalds -- #78/#79 landed)
-/// exist on disk today, so <see cref="DiscoverFromDisk()"/> resolves all three as enabled with no
-/// harness code change required -- it was written to make a second/third pack "visible for free"
-/// and that is exactly what happened. <see cref="DefaultPersonaId"/> ("sonic") stays the harness's
-/// own DEFAULT_PERSONA unless a fixture explicitly overrides <see cref="ConformanceFixture.Persona"/>,
+/// All three real packs under personas/ (#78/#79 landed the second and third) exist on disk
+/// today, so <see cref="DiscoverFromDisk()"/> resolves all three as enabled with no harness code
+/// change required -- it was written to make a second/third pack "visible for free" and that is
+/// exactly what happened. <see cref="DefaultPersonaId"/> ("sonic") stays the harness's own
+/// DEFAULT_PERSONA unless a fixture explicitly overrides <see cref="ConformanceFixture.Persona"/>,
 /// matching PersonaCatalog.load()'s own "sonic wins if enabled" tie-break in
 /// <see cref="ResolveDefault"/> below.
 /// </summary>
@@ -23,8 +23,8 @@ public static class ConformancePersonas
 {
     /// <summary>The harness's own default/tie-break persona id (design doc section 8) when no
     /// explicit override names one and disk discovery finds nothing -- NOT a statement that it's
-    /// the only pack that exists; #78/#79 landed personas/dunkin and personas/mcdonalds alongside
-    /// it.</summary>
+    /// the only pack that exists; #78/#79 landed the other two real packs under personas/
+    /// alongside it.</summary>
     public const string DefaultPersonaId = "sonic";
 
     /// <summary>

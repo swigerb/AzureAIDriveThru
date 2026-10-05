@@ -460,16 +460,18 @@ namespace Conformance.Tests;
 ///
 /// Coordinator follow-up (same-day PR #287 review, Birdperson/Beth, 2026-10-05): closed the two
 /// remaining acceptance gaps. (1) The persona-pack matrix claim above ("one persona pack exists
-/// on disk today, sonic") was stale: <c>personas/dunkin</c> and <c>personas/mcdonalds</c> both
-/// ship for real, and the realtime pipeline's own `RealPack*`/`PackOwnedWholeBundleGolden*`/
-/// `ComboComponentResize*` theories already discover and run all three automatically (no code
-/// change needed there -- only the stale doc comments were wrong, fixed in
+/// on disk today") was stale: every one of the other shipped packs under <c>personas/</c> ships
+/// for real, and the realtime pipeline's own `RealPack*`/`PackOwnedWholeBundleGolden*`/
+/// `ComboComponentResize*` theories already discover and run every shipped pack automatically (no
+/// code change needed there -- only the stale doc comments were wrong, fixed in
 /// <c>docs/dotnet_mapping.md</c> and <c>ConformancePersonas.cs</c>). The cascade pipeline, however,
-/// genuinely only ever exercised `sonic` -- <c>CascadeConformanceTests</c> has no persona
-/// dimension at all -- so <c>CascadePersonaParityConformanceTests</c> (+1 new tagged Theory method,
-/// 2 rows: dunkin/mcdonalds, verified green 3x locally against CONFORMANCE_BACKEND=dotnet) closes
-/// that gap: no C# divergence found, persona-scoped menu/tax binding already threads correctly
-/// through `CascadeProcessor`. (2) The 8 `Scenarios/Browser` methods classified
+/// genuinely only ever exercised the fixture's own default pack --
+/// <c>CascadeConformanceTests</c> has no persona dimension at all -- so
+/// <c>CascadePersonaParityConformanceTests</c> (+1 new tagged Theory method, one row per
+/// non-default shipped pack discovered via <c>ConformancePersonas.DiscoverFromDisk()</c>, verified
+/// green 3x locally against CONFORMANCE_BACKEND=dotnet) closes that gap: no C# divergence found,
+/// persona-scoped menu/tax binding already threads correctly through `CascadeProcessor`. (2) The
+/// 8 `Scenarios/Browser` methods classified
 /// <c>n/a-pending-browser-verification</c> above (<c>OrderResumeBrowserTests</c>'s 5,
 /// <c>PersonaSwitchBrowserTests</c>'s Case-E/reload-resume 3) are now tagged <c>ready</c>: #15
 /// landed the resume/idle-close/supersede machinery these all depend on (re-confirmed by code

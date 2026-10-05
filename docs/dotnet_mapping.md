@@ -1054,32 +1054,33 @@ that silently hides real dotnet coverage:
   not specific to the dotnet backend. No changes were needed here.
 
 **Persona x pipeline parity (coordinator follow-up, PR #287, 2026-10-05 -- corrects the stale
-paragraph this replaces):** `ConformancePersonas.DiscoverFromDisk()` actually resolves all **three**
-real, shipped packs today -- `personas/sonic`, `personas/dunkin`, `personas/mcdonalds` (#78/#79
-landed; `tests/conformance/testdata/personas` holds only test-only fixtures like `test-alpha`,
-never a fourth real pack). The claim below that only `sonic` exists was simply wrong by the time it
-was written -- `DiscoverFromDisk()`'s own code was already correct, only its doc comments and this
-note had gone stale.
+paragraph this replaces):** `ConformancePersonas.DiscoverFromDisk()` actually resolves **every**
+real, shipped pack under `personas/` today (#78/#79 landed the second and third;
+`tests/conformance/testdata/personas` holds only test-only fixtures like `test-alpha`, never
+another real pack). The claim below that only one pack exists was simply wrong by the time it was
+written -- `DiscoverFromDisk()`'s own code was already correct, only its doc comments and this note
+had gone stale.
 
-The full 3-pack x 2-pipeline matrix, measured directly against `CONFORMANCE_BACKEND=dotnet`:
+The full matrix -- every shipped pack x both pipelines -- measured directly against
+`CONFORMANCE_BACKEND=dotnet`:
 
-| Persona     | Realtime pipeline | Cascade pipeline |
-| ----------- | ------------------ | ----------------- |
-| `sonic`     | ✅ green (`Scenarios/` ordering/auth/websocket/persona-switch/etc., `RealPack*`/`PackOwnedWholeBundleGolden*`/`ComboComponentResize*` theories) | ✅ green (`CascadeConformanceTests`, `CascadeMenuModeAndVoiceConformanceTests`/`CascadeMenuModeAndVoiceFakeResetWiringTests`) |
-| `dunkin`    | ✅ green (`RealPackMenuModeConformanceTests`/`RealPackBundleAutoFillConformanceTests`/`RealPackExtrasConformanceTests`/`RealPackHappyHourConformanceTests`/`RealPackMealNumberConformanceTests`/`PackOwnedWholeBundleGoldenConformanceTests` all discover and run it automatically via `ConformancePersonas.DiscoverFromDisk()` -- no code change needed, these theories were already pack-agnostic) | ✅ green (new `CascadePersonaParityConformanceTests`: session metadata binds to `dunkin`, menu-sourced pricing for `dunkin`'s own "Original Blend Coffee" matches its own `menu/menuItems.json`/`taxRate`) |
-| `mcdonalds` | ✅ green (same `RealPack*`/`PackOwnedWholeBundleGolden*` theories, discovered automatically) | ✅ green (new `CascadePersonaParityConformanceTests`: session metadata binds to `mcdonalds`, menu-sourced pricing for `mcdonalds`'s own "Cheeseburger" matches its own menu/tax data) |
+| Persona                          | Realtime pipeline | Cascade pipeline |
+| --------------------------------- | ------------------ | ----------------- |
+| Fixture's own default pack        | ✅ green (`Scenarios/` ordering/auth/websocket/persona-switch/etc., `RealPack*`/`PackOwnedWholeBundleGolden*`/`ComboComponentResize*` theories) | ✅ green (`CascadeConformanceTests`, `CascadeMenuModeAndVoiceConformanceTests`/`CascadeMenuModeAndVoiceFakeResetWiringTests`) |
+| Every other shipped pack under `personas/` | ✅ green (`RealPackMenuModeConformanceTests`/`RealPackBundleAutoFillConformanceTests`/`RealPackExtrasConformanceTests`/`RealPackHappyHourConformanceTests`/`RealPackMealNumberConformanceTests`/`PackOwnedWholeBundleGoldenConformanceTests` all discover and run each one automatically via `ConformancePersonas.DiscoverFromDisk()` -- no code change needed, these theories were already pack-agnostic) | ✅ green (new `CascadePersonaParityConformanceTests`: session metadata binds to each non-default pack, menu-sourced pricing for that pack's own single-size item matches its own `menu/menuItems.json`/`taxRate`) |
 
 Realtime-side per-pack coverage required no new test code: the `RealPack*`/`PackOwnedWholeBundleGolden*`/
 `ComboComponentResize*` theories already iterate every real pack `ConformancePersonas.DiscoverFromDisk()`
 finds (`DiscoveredPersonaIds()`/`DiscoveredBundleAutoFillCases()`/etc. member-data methods), so they
-silently started covering `dunkin`/`mcdonalds` the moment those packs' JSON files were added -- the
-gap was that nobody had re-run them against `CONFORMANCE_BACKEND=dotnet` and corrected this note
-since. The cascade side genuinely was sonic-only (`CascadeConformanceFixture`/`CascadeConformanceTests`
-have no persona dimension), so `CascadePersonaParityConformanceTests` was added to close it, reusing
-the same `CascadeConformanceFixture` process (it already boots with `PERSONAS=dunkin,mcdonalds,sonic`
-since it never overrides `Personas`/`Persona`) rather than starting a second backend. No C#
-divergence was found in either direction -- persona-scoped menu/tax/voice resolution already threads
-correctly through both `RealtimeProcessor`/`CascadeProcessor`.
+silently started covering the other shipped packs the moment those packs' JSON files were added --
+the gap was that nobody had re-run them against `CONFORMANCE_BACKEND=dotnet` and corrected this note
+since. The cascade side genuinely only ever exercised the fixture's own default pack
+(`CascadeConformanceFixture`/`CascadeConformanceTests` have no persona dimension), so
+`CascadePersonaParityConformanceTests` was added to close it, reusing the same
+`CascadeConformanceFixture` process (it already boots with every pack `ConformancePersonas.DiscoverFromDisk()`
+finds enabled since it never overrides `Personas`/`Persona`) rather than starting a second backend.
+No C# divergence was found in either direction -- persona-scoped menu/tax/voice resolution already
+threads correctly through both `RealtimeProcessor`/`CascadeProcessor`.
 
 The `CascadeMenuModeAndVoiceConformanceTests` menu-mode/voice rows intentionally still use the
 `test-delta` fixture pack, not a real pack: every real pack's own `voice.default` is `"marin"`
@@ -1197,19 +1198,20 @@ remaining gaps closed, floor raised 338 -> 347
 
 PR #287's own acceptance claims had two gaps caught on review:
 
-1. **Persona matrix was stale, not actually missing.** `personas/dunkin` and `personas/mcdonalds`
-   both ship for real (`#78/#79` landed before this review), but the prior pass's own doc comments
-   and `docs/dotnet_mapping.md` note still said "only sonic exists on disk today." The realtime
-   pipeline's `RealPack*`/`PackOwnedWholeBundleGolden*`/`ComboComponentResize*` theories already
-   discover every real pack automatically via `ConformancePersonas.DiscoverFromDisk()` (no code
-   change needed -- re-ran them against `CONFORMANCE_BACKEND=dotnet` and confirmed all three packs
-   green). The cascade pipeline genuinely had no persona dimension at all
-   (`CascadeConformanceTests` only ever used `sonic`), so `CascadePersonaParityConformanceTests`
-   (+1 new `[Theory]` method, `dunkin`/`mcdonalds` rows, verified green 3x locally) was added,
-   reusing the existing `CascadeConformanceFixture` process (already boots with all three real
-   packs enabled). No C# divergence found in either pipeline -- persona-scoped menu/tax/voice
-   binding already threads correctly. See "Persona x pipeline parity" above for the full 3x2
-   matrix and the stale comments that were corrected (`ConformancePersonas.cs`,
+1. **Persona matrix was stale, not actually missing.** Every other shipped pack under
+   `personas/` ships for real (`#78/#79` landed before this review), but the prior pass's own doc
+   comments and `docs/dotnet_mapping.md` note still said "only one pack exists on disk today." The
+   realtime pipeline's `RealPack*`/`PackOwnedWholeBundleGolden*`/`ComboComponentResize*` theories
+   already discover every real pack automatically via `ConformancePersonas.DiscoverFromDisk()` (no
+   code change needed -- re-ran them against `CONFORMANCE_BACKEND=dotnet` and confirmed every
+   shipped pack green). The cascade pipeline genuinely had no persona dimension at all
+   (`CascadeConformanceTests` only ever used the fixture's own default pack), so
+   `CascadePersonaParityConformanceTests` (+1 new `[Theory]` method, one row per non-default
+   shipped pack discovered via `ConformancePersonas.DiscoverFromDisk()`, verified green 3x locally)
+   was added, reusing the existing `CascadeConformanceFixture` process (already boots with every
+   shipped pack enabled). No C# divergence found in either pipeline -- persona-scoped menu/tax/voice
+   binding already threads correctly. See "Persona x pipeline parity" above for the full matrix
+   and the stale comments that were corrected (`ConformancePersonas.cs`,
    `docs/dotnet_mapping.md`).
 2. **The 8 `n/a-pending-browser-verification` Browser methods** (`OrderResumeBrowserTests`'s 5,
    `PersonaSwitchBrowserTests`'s Case-E/E2 + reload-resume-switch 3) are now tagged `ready`. This
