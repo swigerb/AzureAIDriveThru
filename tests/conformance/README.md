@@ -315,7 +315,8 @@ a correct backend in another language must reproduce all four, in this order:
    to a specific model (`order_state_singleton.get_model_reasoning(session_id)`, sourced from
    `config.yaml`'s `models.catalog`/`processors.py::ResolvedModel.reasoning`), that model's own
    static `reasoning` flag is used — but only when the switch (input 2) is `auto`/unset. This lets a
-   persona pick a non-reasoning-capable model (e.g. `gpt-realtime-mini`, `reasoning: false`) even on
+   persona pick a non-reasoning-capable realtime model, if one is ever catalogued again (issue #306
+   removed the only one, `gpt-realtime-mini`, which was never deployed), even on
    a deployment name the regex below would otherwise call reasoning-capable, and vice versa.
 4. **The deployment-name check, `auto`'s last-resort default.** Reached only when the switch is
    `auto` AND no model is bound yet. `deployment_supports_reasoning` matches the
@@ -361,12 +362,12 @@ All name/switch combinations below are covered, each pinned on its own dedicated
 `ReasoningDeploymentFixtures.cs` (a distinct deployment name and/or env var forces its own backend
 process, since `AZURE_OPENAI_REALTIME_DEPLOYMENT`/`AZURE_OPENAI_REALTIME_REASONING_MODEL` are read
 once at Python module-import time). Every fixture below binds the session to the default persona's
-own realtime default model (`gpt-realtime-2.1`, catalog `reasoning: true`) regardless of the deployment name
+own realtime default model (`gpt-realtime-2.1-mini`, catalog `reasoning: true` since issue #306) regardless of the deployment name
 override — the deployment name only changes what the fake upstream's rejection behavior does, not
 which model the session binds to — so input 3 (the catalog) is held constant at `true` in every row
-here; see `ModelSelectionConformanceTests.Reasoning_is_sent_only_for_a_catalog_reasoning_model_not_the_other_selectable_one`
-for the row that varies the catalog itself by binding a different model (`gpt-realtime-mini`,
-`reasoning: false`), with the switch left on `auto`:
+here; see `ModelSelectionConformanceTests.Reasoning_is_sent_for_both_of_sonics_selectable_realtime_models`
+for the row that proves BOTH of sonic's selectable realtime models (`gpt-realtime-2.1-mini`,
+`gpt-realtime-2.1`) send `reasoning`, with the switch left on `auto`:
 
 | Deployment name | `reasoning_model` | Expected | Fixture |
 |---|---|---|---|

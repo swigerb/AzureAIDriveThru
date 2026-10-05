@@ -55,7 +55,7 @@ _CATALOG_CFG = {
     "models": {
         "catalog": [
             {"id": "gpt-realtime-2.1", "pipeline": "realtime", "label": "GPT Realtime 2.1", "reasoning": True},
-            {"id": "gpt-realtime-mini", "pipeline": "realtime", "label": "GPT Realtime mini", "reasoning": False},
+            {"id": "gpt-realtime-2.1-mini", "pipeline": "realtime", "label": "GPT Realtime mini", "reasoning": False},
             {"id": "gpt-5-mini", "pipeline": "cascade", "label": "GPT-5 mini", "toolCalling": True},
         ]
     }
@@ -90,11 +90,11 @@ class ModelWebSocketHandlerTests(_RealtimeHarness):
         self.rtmt.persona_prompt_loaders = {}
         self.rtmt.allowed_voices = frozenset({"marin", "cedar", "shimmer"})
         # test-alpha's fixture allows gpt-realtime-2.1 (its own default) AND
-        # gpt-realtime-mini; only the latter is deployed here, so it is the one
+        # gpt-realtime-2.1-mini; only the latter is deployed here, so it is the one
         # non-default, actually-selectable model these tests exercise. gpt-realtime-2.1
         # (the default) is deliberately left undeployed too, to exercise item 1's
         # deployment-fallback branch for the default.
-        self.rtmt.model_catalog = _catalog('{"gpt-realtime-mini": "mini-deployment-42"}')
+        self.rtmt.model_catalog = _catalog('{"gpt-realtime-2.1-mini": "mini-deployment-42"}')
 
     async def test_unknown_model_is_rejected_with_404_before_the_ws_upgrade(self):
         resp = await self.client.get("/realtime", params={"model": "totally-made-up"})
@@ -124,7 +124,7 @@ class ModelWebSocketHandlerTests(_RealtimeHarness):
         map it in this test's catalog -- must still be rejected, never silently fall back
         to the default deployment."""
         self.rtmt.model_catalog = _catalog()  # no deployments at all
-        resp = await self.client.get("/realtime", params={"model": "gpt-realtime-mini"})
+        resp = await self.client.get("/realtime", params={"model": "gpt-realtime-2.1-mini"})
         self.assertEqual(resp.status, 404)
         self.assertEqual(self.rtmt._sessions.active_session_count, 0)
 
@@ -157,10 +157,10 @@ class ModelWebSocketHandlerTests(_RealtimeHarness):
         await browser.close()
 
     async def test_explicit_non_default_model_binds_the_whole_session(self):
-        browser = await self.client.ws_connect("/realtime?persona=test-alpha&model=gpt-realtime-mini")
+        browser = await self.client.ws_connect("/realtime?persona=test-alpha&model=gpt-realtime-2.1-mini")
         await self._until(lambda: self.rtmt._sessions.active_session_count >= 1)
         sid = next(iter(self.rtmt._sessions._session_map.values()))
-        self.assertEqual(order_state_singleton.get_model_id(sid), "gpt-realtime-mini")
+        self.assertEqual(order_state_singleton.get_model_id(sid), "gpt-realtime-2.1-mini")
         self.assertEqual(order_state_singleton.get_model_deployment(sid), "mini-deployment-42")
         self.assertEqual(order_state_singleton.get_model_reasoning(sid), False)
         self.assertEqual(order_state_singleton.get_model_pipeline(sid), "realtime")
@@ -170,11 +170,11 @@ class ModelWebSocketHandlerTests(_RealtimeHarness):
         """Design doc 5.2/7.5, Rick's PR #106 review item 3: extension.session_metadata
         reports the bound model AND its pipeline, alongside the persona it already
         reports."""
-        browser = await self.client.ws_connect("/realtime?persona=test-alpha&model=gpt-realtime-mini")
+        browser = await self.client.ws_connect("/realtime?persona=test-alpha&model=gpt-realtime-2.1-mini")
         await browser.send_json(BROWSER_SESSION_UPDATE)
         events = await self._browser_events(browser, duration=0.5)
         meta = next(e for e in events if e.get("type") == "extension.session_metadata")
-        self.assertEqual(meta["model"], "gpt-realtime-mini")
+        self.assertEqual(meta["model"], "gpt-realtime-2.1-mini")
         self.assertEqual(meta["persona"], "test-alpha")
         self.assertEqual(meta["pipeline"], "realtime")
         await browser.close()
@@ -191,9 +191,9 @@ class ModelWebSocketHandlerTests(_RealtimeHarness):
         """The chosen deployment must go into the upstream ?model= query param (design
         doc 7.4) -- not just session metadata. The fake GA server's own URL already
         pins "gpt-realtime-test" as the harness's configured default deployment; a
-        session bound to gpt-realtime-mini must instead connect upstream with
+        session bound to gpt-realtime-2.1-mini must instead connect upstream with
         model=mini-deployment-42."""
-        browser = await self.client.ws_connect("/realtime?persona=test-alpha&model=gpt-realtime-mini")
+        browser = await self.client.ws_connect("/realtime?persona=test-alpha&model=gpt-realtime-2.1-mini")
         await self._until(lambda: len(self.fake.connect_model_params) >= 1)
         self.assertEqual(self.fake.connect_model_params[-1], "mini-deployment-42")
         await browser.close()
@@ -201,16 +201,16 @@ class ModelWebSocketHandlerTests(_RealtimeHarness):
     async def test_reasoning_is_not_sent_for_an_explicit_non_reasoning_model(self):
         """Design doc 7.5: `reasoning` in the bootstrap session.update must be absent
         for an explicitly-selected model the catalog marks reasoning=False
-        (gpt-realtime-mini), even though it's a NON-default model for test-alpha (whose
+        (gpt-realtime-2.1-mini), even though it's a NON-default model for test-alpha (whose
         own default, gpt-realtime-2.1, is itself a reasoning model in the catalog --
         proving this isn't just "the default path never sends reasoning either")."""
         self.rtmt.model_catalog = _catalog(
-            '{"gpt-realtime-mini": "mini-deployment-42", "gpt-realtime-2.1": "reasoning-deployment"}'
+            '{"gpt-realtime-2.1-mini": "mini-deployment-42", "gpt-realtime-2.1": "reasoning-deployment"}'
         )
         # reasoning_effort configured so this actually exercises the override (=False)
         # winning over "reasoning is switched on" -- not just the effort gate itself.
         self.rtmt.reasoning_effort = "low"
-        browser = await self.client.ws_connect("/realtime?persona=test-alpha&model=gpt-realtime-mini")
+        browser = await self.client.ws_connect("/realtime?persona=test-alpha&model=gpt-realtime-2.1-mini")
         await browser.send_json(BROWSER_SESSION_UPDATE)
         await self._response_done(browser)
         bootstrap = next(u for u in self._session_updates() if "audio" in u.get("session", {}))
@@ -218,12 +218,12 @@ class ModelWebSocketHandlerTests(_RealtimeHarness):
         await browser.close()
 
     async def test_reasoning_is_sent_for_an_explicit_reasoning_model(self):
-        """The other half of the pair above: test-beta's default is gpt-realtime-mini
+        """The other half of the pair above: test-beta's default is gpt-realtime-2.1-mini
         (reasoning=False); explicitly requesting its other allowed model,
         gpt-realtime-2.1 (reasoning=True in the catalog), must carry `reasoning` in the
         bootstrap session.update."""
         self.rtmt.model_catalog = _catalog(
-            '{"gpt-realtime-mini": "mini-deployment-42", "gpt-realtime-2.1": "reasoning-deployment"}'
+            '{"gpt-realtime-2.1-mini": "mini-deployment-42", "gpt-realtime-2.1": "reasoning-deployment"}'
         )
         # reasoning_effort must be configured (as a real deployment's config.yaml
         # model.reasoning_effort would be) for `reasoning_enabled()`'s own gate to pass
@@ -336,17 +336,17 @@ class ModelResumeMismatchTests(unittest.TestCase):
 
     def test_resume_with_the_same_model_is_accepted(self):
         alpha = self.catalog.get("test-alpha")
-        sid = self.sm.create_session(_ws(), persona=alpha, model_id="gpt-realtime-mini",
+        sid = self.sm.create_session(_ws(), persona=alpha, model_id="gpt-realtime-2.1-mini",
                                       model_deployment="mini-deployment-42", model_reasoning=False)
         resume_id = self.sm.issue_resume_id(sid)
         outcome = self.sm.resume(_ws(), resume_id, requested_persona_id="test-alpha",
-                                  requested_model_id="gpt-realtime-mini")
+                                  requested_model_id="gpt-realtime-2.1-mini")
         self.assertTrue(outcome.accepted)
         self.assertEqual(outcome.session_id, sid)
 
     def test_resume_with_a_different_model_is_rejected(self):
         alpha = self.catalog.get("test-alpha")
-        sid = self.sm.create_session(_ws(), persona=alpha, model_id="gpt-realtime-mini",
+        sid = self.sm.create_session(_ws(), persona=alpha, model_id="gpt-realtime-2.1-mini",
                                       model_deployment="mini-deployment-42", model_reasoning=False)
         resume_id = self.sm.issue_resume_id(sid)
         outcome = self.sm.resume(_ws(), resume_id, requested_persona_id="test-alpha",
@@ -370,7 +370,7 @@ class ModelResumeMismatchTests(unittest.TestCase):
 
     def test_resume_with_no_model_requested_matches_a_non_default_bound_persona(self):
         """THE regression case for the bug: bound to test-beta (whose default is
-        gpt-realtime-mini, NOT test-alpha's gpt-realtime-2.1) -- an omitted
+        gpt-realtime-2.1-mini, NOT test-alpha's gpt-realtime-2.1) -- an omitted
         ?model= on resume must resolve against test-beta's OWN default, not whichever
         persona happens to be the deployment-wide default."""
         beta = self.catalog.get("test-beta")
@@ -383,7 +383,7 @@ class ModelResumeMismatchTests(unittest.TestCase):
         """requested_model_id=None resolves to the bound persona's own default model, so
         a session explicitly bound to some OTHER model is correctly rejected."""
         alpha = self.catalog.get("test-alpha")
-        sid = self.sm.create_session(_ws(), persona=alpha, model_id="gpt-realtime-mini",
+        sid = self.sm.create_session(_ws(), persona=alpha, model_id="gpt-realtime-2.1-mini",
                                       model_deployment="mini-deployment-42", model_reasoning=False)
         resume_id = self.sm.issue_resume_id(sid)
         outcome = self.sm.resume(_ws(), resume_id, requested_persona_id="test-alpha", requested_model_id=None)
@@ -416,7 +416,7 @@ class ApiPersonasModelFilteringTests(unittest.TestCase):
             self._detail_body(persona)
 
     def test_everything_is_dropped_including_the_default_when_nothing_is_deployed(self):
-        """gpt-realtime-2.1 (test-alpha's own default) and gpt-realtime-mini are both
+        """gpt-realtime-2.1 (test-alpha's own default) and gpt-realtime-2.1-mini are both
         catalogued and persona-allowed, but NEITHER is deployed here -- Rick's PR #106
         review item 1/3: the default gets NO carve-out any more, so it is dropped from
         the picker's list exactly like any other unselectable model, not "always kept"."""
@@ -425,27 +425,27 @@ class ApiPersonasModelFilteringTests(unittest.TestCase):
         self.assertEqual(detail["models"]["realtime"]["models"], [])
 
     def test_only_the_deployed_model_is_kept_even_though_the_default_is_not(self):
-        """gpt-realtime-mini is deployed here but is NOT test-alpha's default
+        """gpt-realtime-2.1-mini is deployed here but is NOT test-alpha's default
         (gpt-realtime-2.1 is); the default, still undeployed, is correctly dropped --
         proving selectability, not "is it the default", is what decides membership."""
         persona = self.catalog.get("test-alpha")
-        detail = self._detail_body(persona, _catalog('{"gpt-realtime-mini": "mini-deployment-42"}'))
+        detail = self._detail_body(persona, _catalog('{"gpt-realtime-2.1-mini": "mini-deployment-42"}'))
         self.assertEqual(
             detail["models"]["realtime"]["models"],
-            [{"id": "gpt-realtime-mini", "label": "GPT Realtime mini", "reasoning": False}],
+            [{"id": "gpt-realtime-2.1-mini", "label": "GPT Realtime mini", "reasoning": False}],
         )
 
     def test_both_models_are_kept_with_id_label_reasoning_shape_when_both_are_deployed(self):
         persona = self.catalog.get("test-alpha")
         detail = self._detail_body(
             persona,
-            _catalog('{"gpt-realtime-2.1": "prod-deployment", "gpt-realtime-mini": "mini-deployment-42"}'),
+            _catalog('{"gpt-realtime-2.1": "prod-deployment", "gpt-realtime-2.1-mini": "mini-deployment-42"}'),
         )
         self.assertEqual(
             detail["models"]["realtime"]["models"],
             [
                 {"id": "gpt-realtime-2.1", "label": "GPT Realtime 2.1", "reasoning": True},
-                {"id": "gpt-realtime-mini", "label": "GPT Realtime mini", "reasoning": False},
+                {"id": "gpt-realtime-2.1-mini", "label": "GPT Realtime mini", "reasoning": False},
             ],
         )
 

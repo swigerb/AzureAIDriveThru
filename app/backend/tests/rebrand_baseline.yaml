@@ -523,10 +523,10 @@ entries:
   increase_reason: ''
 - file: tests/conformance/README.md
   brand: sonic
-  max: 14
+  max: 15
   issue: '#78'
   reason: Harness docs reference Sonic as the only persona pack that exists today.
-  increase_reason: ''
+  increase_reason: '#306'
 - file: tests/conformance/src/Conformance.Harness/BackendContract.cs
   brand: sonic
   max: 1
@@ -871,13 +871,13 @@ entries:
   increase_reason: '#105'
 - file: tests/conformance/tests/Conformance.Tests/Scenarios/Sessions/ReasoningByDeploymentTests.cs
   brand: sonic
-  max: 4
+  max: 5
   issue: '#105'
   reason: 'Fixture/test data naming a real persona pack id (sonic/mcdonalds/dunkin)
     for conformance or unit-test coverage across all three packs -- expected, the
     same class as the #78 Python test baseline entries; remove only if the pack roster
     or its test coverage changes.'
-  increase_reason: '#105'
+  increase_reason: '#306'
 - file: tests/conformance/tests/Conformance.Tests/Scenarios/Sessions/ReasoningDeploymentFixtures.cs
   brand: sonic
   max: 1

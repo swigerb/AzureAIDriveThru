@@ -94,6 +94,8 @@ param openAiRealtimeTranscriptionModel string = ''
 param openAiServiceLocation string
 
 param realtimeDeploymentCapacity int
+@description('Scale-only override for the gpt-realtime-2.1-mini entry in infra/model-deployments.json (issue #306: the default realtime model). Same "bump a param, azd provision" flow as realtimeDeploymentCapacity above.')
+param realtime21MiniDeploymentCapacity int
 param embeddingDeploymentCapacity int
 
 // --- Persona picker (ADR-001, docs/persona-architecture.md section 10) ---
@@ -117,7 +119,7 @@ param personas string = ''
 @description('Default persona id when a session omits ?persona= (app DEFAULT_PERSONA env var). Should be one of the comma-separated ids in personas. Empty (the tracked default) means app/backend/persona_loader.py picks its own default (its first-party pack if enabled, else the first enabled id alphabetically) -- keeps tracked infra free of persona names, same as personas above.')
 param defaultPersona string = ''
 
-@description('JSON array of Foundry/Azure OpenAI model deployments to create on this environment\'s own account (section 7.2, 10.3). Each entry: catalogId (matches app/backend/config.yaml models.catalog), deploymentName, modelName, modelVersion, format (Foundry model-format id, defaults to OpenAI), skuName, capacity, isDefaultRealtime (exactly one entry should be true -- it becomes AZURE_OPENAI_REALTIME_DEPLOYMENT). realtimeDeploymentCapacity/embeddingDeploymentCapacity above still override the matching entries by catalogId, so the existing "bump a param, azd provision" scaling flow (10.3) keeps working. The tracked list lives in infra/model-deployments.json (Rick\'s review of #93): adding a #82 model is one JSON entry there, no Bicep edits.')
+@description('JSON array of Foundry/Azure OpenAI model deployments to create on this environment\'s own account (section 7.2, 10.3). Each entry: catalogId (matches app/backend/config.yaml models.catalog), deploymentName, modelName, modelVersion, format (Foundry model-format id, defaults to OpenAI), skuName, capacity, isDefaultRealtime (exactly one entry should be true -- it becomes AZURE_OPENAI_REALTIME_DEPLOYMENT). realtimeDeploymentCapacity/realtime21MiniDeploymentCapacity/embeddingDeploymentCapacity above still override the matching entries by catalogId, so the existing "bump a param, azd provision" scaling flow (10.3) keeps working. The tracked list lives in infra/model-deployments.json (Rick\'s review of #93): adding a #82 model is one JSON entry there, no Bicep edits.')
 param openAiModelDeploymentsData array = loadJsonContent('model-deployments.json')
 
 // --- C# backend (section 10.1 option A, 10.2; added by S7, #17) ---
@@ -491,13 +493,14 @@ var resolvedFoundryEndpoint = 'https://${openAiCustomSubDomainName}.services.ai.
 
 // The model deployment list (10.3, tracked in infra/model-deployments.json --
 // Rick's review of #93: adding a #82 model is one JSON entry there, no Bicep
-// edits) with the two existing scale-only params (realtimeDeploymentCapacity,
-// embeddingDeploymentCapacity) still overriding their matching entries by
-// catalogId, so "bump a param, azd provision" keeps working for the two
-// knobs the design calls out even though the list itself is data, not
-// hardcoded Bicep.
+// edits) with the three existing scale-only params (realtimeDeploymentCapacity,
+// realtime21MiniDeploymentCapacity, embeddingDeploymentCapacity) still
+// overriding their matching entries by catalogId, so "bump a param, azd
+// provision" keeps working for the knobs the design calls out even though
+// the list itself is data, not hardcoded Bicep.
 var capacityOverridesByCatalogId = {
   'gpt-realtime-2.1': realtimeDeploymentCapacity
+  'gpt-realtime-2.1-mini': realtime21MiniDeploymentCapacity
   '${embedModel}': embeddingDeploymentCapacity
 }
 var openAiModelDeployments = [for d in openAiModelDeploymentsData: union(d, {

@@ -262,10 +262,10 @@ class TestRealConfigYaml:
 
         catalog = ModelCatalog.load(config=get_config(), environ={})
         assert "gpt-realtime-2.1" in catalog
-        assert "gpt-realtime-mini" in catalog
+        assert "gpt-realtime-2.1-mini" in catalog
         assert catalog.get("gpt-realtime-2.1").pipeline == "realtime"
         assert catalog.get("gpt-realtime-2.1").reasoning is True
-        assert catalog.get("gpt-realtime-mini").reasoning is False
+        assert catalog.get("gpt-realtime-2.1-mini").reasoning is True
 
     def test_real_config_yaml_has_two_qualifying_cascade_models(self):
         """#82 acceptance: at least one OpenAI-format and one non-OpenAI-format cascade model,

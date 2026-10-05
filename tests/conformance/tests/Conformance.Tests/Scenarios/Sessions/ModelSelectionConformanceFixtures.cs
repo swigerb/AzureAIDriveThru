@@ -15,7 +15,7 @@ namespace Conformance.Tests;
 /// fixture-pack convention <see cref="PersonaConformanceFixtures"/> already established
 /// (test-alpha/test-beta) rather than touching a real pack under `personas/**` (explicitly out
 /// of scope for #75's revision) -- adds a third pack, test-gamma, whose realtime `allowed` is
-/// `["gpt-realtime-mini"]` only, deliberately excluding the real catalog's OTHER realtime model
+/// `["gpt-realtime-2.1-mini"]` only, deliberately excluding the real catalog's OTHER realtime model
 /// (`gpt-realtime-2.1`) so requesting it against test-gamma is disallowed, not merely unknown.
 /// No `AZURE_AI_MODEL_DEPLOYMENTS` override here -- the default (empty) deployment map is exactly
 /// what the "undeployed" row needs.
@@ -51,15 +51,15 @@ public sealed class ModelSelectionConformanceCollection : ICollectionFixture<Mod
 
 public sealed class ModelDeploymentMapConformanceFixture : ConformanceFixture
 {
-    public const string RealtimeDefaultDeployment = "gpt-realtime-2.1-model-map-conformance";
-    public const string RealtimeMiniDeployment = "gpt-realtime-mini-model-map-conformance";
+    public const string RealtimeDefaultDeployment = "gpt-realtime-2.1-mini-model-map-conformance";
+    public const string RealtimeAltDeployment = "gpt-realtime-2.1-model-map-conformance";
 
     protected override BackendProfile Profile { get; } = new(
         "ModelDeploymentMap",
         new Dictionary<string, string>
         {
             ["AZURE_AI_MODEL_DEPLOYMENTS"] =
-                $$"""{"gpt-realtime-2.1":"{{RealtimeDefaultDeployment}}","gpt-realtime-mini":"{{RealtimeMiniDeployment}}"}""",
+                $$"""{"gpt-realtime-2.1-mini":"{{RealtimeDefaultDeployment}}","gpt-realtime-2.1":"{{RealtimeAltDeployment}}"}""",
         });
 }
 

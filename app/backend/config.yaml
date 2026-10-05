@@ -56,7 +56,11 @@ model:
 models:
   catalog:
     - { id: gpt-realtime-2.1, pipeline: realtime, label: "GPT Realtime 2.1", reasoning: true }
-    - { id: gpt-realtime-mini, pipeline: realtime, label: "GPT Realtime mini", reasoning: false }
+    # Issue #306: the default realtime model. gpt-realtime-2.1's own deeper reasoning passes add
+    # latency that straightforward transactional intents (e.g. adding a combo meal) don't need.
+    # It's a reasoning model too (unlike the older, now-removed gpt-realtime-mini) -- it accepts
+    # the same `reasoning.effort` session field as gpt-realtime-2.1, just faster/cheaper per turn.
+    - { id: gpt-realtime-2.1-mini, pipeline: realtime, label: "GPT Realtime 2.1 mini", reasoning: true }
     - { id: gpt-5-mini, pipeline: cascade, label: "GPT-5 mini", toolCalling: true }
     - { id: phi-4, pipeline: cascade, label: "Phi-4 (Foundry)", toolCalling: true }
   # #82, design doc section 7.2/7.4: the cascade pipeline's own fixed transcription/TTS
