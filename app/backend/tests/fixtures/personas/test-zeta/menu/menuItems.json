@@ -62,6 +62,18 @@
           "comboSlot": "sides"
         }
       ]
+    },
+    {
+      "category": "treats",
+      "items": [
+        {
+          "name": "ZORBS\u00ae Bite Treats",
+          "sizes": [
+            { "size": "regular", "price": 2.99 }
+          ],
+          "description": "#325 regression fixture: a standalone, trademark-marked item (the registered-trademark symbol is stripped by this shared normalization rule the same way any other persona's own marked item name is) proving an add/modify/remove using the unmarked spelling resolves and stores this item's OWN canonical, marked name -- never whatever casing/marks the model's turn happened to use."
+        }
+      ]
     }
   ]
 }

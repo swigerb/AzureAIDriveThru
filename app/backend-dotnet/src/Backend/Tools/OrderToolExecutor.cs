@@ -91,11 +91,24 @@ public sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings
 
         if (action is "add" or "modify")
         {
-            var rejection = CheckAddOrModifyGates(action, itemName, ref size);
+            var rejection = CheckAddOrModifyGates(action, ref itemName, ref size);
             if (rejection is not null)
             {
                 return rejection;
             }
+        }
+
+        // #325: `remove` targets a line already in the order, so it never passed through
+        // CheckAddOrModifyGates above (only "add"/"modify" do). Since that line is now stored
+        // under the menu's canonical name (that gate), canonicalize a resolvable `remove`
+        // itemName the same way, so e.g. "remove the zorbs" matches a ticket line stored as
+        // "ZORBS® Bite Treats" instead of failing OrderState.HandleOrderUpdate's exact-string
+        // match. An unresolved name (e.g. an item removed from the menu after it was ordered)
+        // falls through unchanged -- removing an existing line never required it still be on
+        // the menu.
+        if (action == "remove")
+        {
+            itemName = CanonicalizeForRemove(itemName);
         }
 
         if (action == "add")
@@ -227,7 +240,7 @@ public sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings
     /// add/modify path. Also covers item_out_of_mode (issue 165, add-only), size_not_available
     /// and (modify-only) not_in_order -- same TO_SERVER structured-JSON shape for all four
     /// (Rick's PR #100 review, required item 1).</summary>
-    private ToolResult? CheckAddOrModifyGates(string action, string itemName, ref string size)
+    private ToolResult? CheckAddOrModifyGates(string action, ref string itemName, ref string size)
     {
         var menuItem = _menu.ResolveMenuItem(itemName);
         if (menuItem is null)
@@ -256,6 +269,19 @@ public sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings
             }
             return new ToolResult(rejection, ToolResultDirection.ToServer);
         }
+
+        // #325: from here on, every add/modify path (order storage, bundle-slot filling,
+        // display/spoken text, extras/machine checks, upsell category) uses the MENU's own
+        // canonical spelling -- never the model's. Two adds of the same item with different
+        // spellings/trademark marks now merge into one order line because they're matched and
+        // stored under this same canonical name (OrderState.HandleOrderUpdate's own
+        // exact-string matching is keyed on this value). ResolveMenuItem resolved against the
+        // modifier-stripped base name (MenuKeyValidator.StripModifiers), so a customized name's
+        // own "(...)" suffix -- already handled as a single trailing group by this same
+        // method's customization-validation block in UpdateOrder -- is reattached to the
+        // canonical base instead of silently dropped.
+        var openParen = itemName.IndexOf('(');
+        itemName = openParen >= 0 ? $"{menuItem.Name} {itemName[openParen..]}" : menuItem.Name;
 
         // Issue 165: this session's own bound menu-mode gate -- an item that's real and on the
         // menu, but not offered in the active daypart (e.g. a breakfast-only item add while the
@@ -332,7 +358,8 @@ public sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings
         // of the order even though it has no raw OrderItem line of its own -- the guest saying
         // "make that a large" about the drink that came with their combo. IsAbsorbedComponent is
         // the second chance before this rejects it.
-        if (action == "modify" && !_order.Items.Any(item => item.Item == itemName) && !_order.IsAbsorbedComponent(itemName))
+        var resolvedItemName = itemName;
+        if (action == "modify" && !_order.Items.Any(item => item.Item == resolvedItemName) && !_order.IsAbsorbedComponent(resolvedItemName))
         {
             var message = _promptLoader?.RenderError("item_not_in_order", Vars(("item_name", menuItem.Name)))
                 ?? $"{menuItem.Name} isn't in the order, so nothing was changed. " +
@@ -350,6 +377,21 @@ public sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings
         }
 
         return null;
+    }
+
+    /// <summary>#325: see UpdateOrder's own "remove" branch -- canonicalizes a resolvable
+    /// `remove` itemName the same way CheckAddOrModifyGates does for add/modify, so a removal
+    /// matches a line stored under the menu's canonical spelling regardless of which spelling
+    /// the model used for this particular turn.</summary>
+    private string CanonicalizeForRemove(string itemName)
+    {
+        var menuItem = _menu.ResolveMenuItem(itemName);
+        if (menuItem is null)
+        {
+            return itemName;
+        }
+        var openParen = itemName.IndexOf('(');
+        return openParen >= 0 ? $"{menuItem.Name} {itemName[openParen..]}" : menuItem.Name;
     }
 
     /// <summary>#77: add-time <c>machine_unavailable</c> -- an on-menu item that requires a

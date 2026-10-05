@@ -570,6 +570,21 @@ async def update_order(args, session_id: str) -> ToolResult:
                 )
             return ToolResult(_rejection, ToolResultDirection.TO_SERVER)
 
+        # #325: from here on, every add/modify path (order_state storage, bundle-slot filling,
+        # display/spoken text, extras/machine checks, upsell category) uses the MENU's own
+        # canonical spelling -- never the model's. Two adds of the same item with different
+        # spellings/trademark marks now merge into one order line because they're matched and
+        # stored under this same canonical name (order_state.handle_order_update's own
+        # exact-string matching is keyed on this value). resolve_menu_item resolved against the
+        # modifier-stripped base name (menu_utils.strip_modifiers/_menu_key), so a customized
+        # name's own "(...)" suffix -- already handled as a single trailing group by this same
+        # function's customization-validation block below -- is reattached to the canonical base
+        # instead of silently dropped.
+        if "(" in item_name:
+            item_name = f"{menu_item['name']} {item_name[item_name.find('('):]}"
+        else:
+            item_name = menu_item["name"]
+
         # #165: this session's own bound menu mode gate -- an item that's real and on the menu,
         # but not offered in the active daypart (e.g. a breakfast-only item add while the session
         # is bound to "lunch"). Runs for "add" only: a "modify" target is already IN the order,
@@ -673,6 +688,21 @@ async def update_order(args, session_id: str) -> ToolResult:
                 },
                 ToolResultDirection.TO_SERVER,
             )
+
+    # #325: `remove` targets a line already in the order, so it never passed through this
+    # function's own on-menu gate above (only "add"/"modify" do). Since that line is now stored
+    # under the menu's canonical name (the gate above), canonicalize a resolvable `remove`
+    # item_name the same way so "remove the zorbs" matches a ticket line stored as "ZORBS® Bite
+    # Treats" instead of failing order_state.handle_order_update's exact-string match. An
+    # unresolved name (e.g. an item removed from the menu after it was ordered) falls through
+    # unchanged -- removing an existing line never required it still be on the menu.
+    if args["action"] == "remove":
+        _remove_target = menu.resolve_menu_item(item_name)
+        if _remove_target is not None:
+            if "(" in item_name:
+                item_name = f"{_remove_target['name']} {item_name[item_name.find('('):]}"
+            else:
+                item_name = _remove_target["name"]
 
     # ── #77: add-time `machine_unavailable` structured rejection -- an on-menu item that
     # `requiresMachine` a machine this persona's OWN `machines.<key>.status` currently reports

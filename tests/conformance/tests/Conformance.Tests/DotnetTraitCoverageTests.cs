@@ -532,6 +532,17 @@ namespace Conformance.Tests;
 /// persona rows count as a single Theory method declaration, not 3, consistent with how this
 /// counter has always counted method declarations rather than individual data rows). Raises the
 /// floor 354 to 355.
+///
+/// Issue #325 (Summer/Beth dispatch, 2026-10-05): `update_order` stored the model's own raw
+/// `item_name` spelling instead of the menu's canonical name, so two spellings of the same item
+/// (e.g. "ZORBS Bite Treats" vs. "ZORBS&#174; Bite Treats") landed as two separate order lines
+/// instead of merging. Fixed in both backends; added
+/// <c>Scenarios/Ordering/CanonicalItemNameConformanceTests.cs</c>, 3 new tagged
+/// <c>[Trait("Dotnet", "ready")]</c> methods against the shared <c>test-zeta</c> fixture pack's
+/// own "ZORBS&#174; Bite Treats" item, verified green against both the Python and dotnet legs. A
+/// fresh <see cref="CountFloorEligibleDotnetReadyTestMethods"/> measurement (same
+/// temporarily-assert-then-revert technique as every prior round) gives <b>363</b> (360 + these 3
+/// new tagged methods). Raises the floor 360 to 363.
 /// </summary>
 [Trait("Dotnet", "n/a-harness")]
 public sealed class DotnetTraitCoverageTests
@@ -614,7 +625,7 @@ public sealed class DotnetTraitCoverageTests
     }
 
     [Fact]
-    public void At_least_360_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
+    public void At_least_363_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
     {
         // Rick's PR #226 review: assert the capability directly, not just the derived count --
         // see this class's own doc comment for why a bare ">= 222" check alone can't be trusted to
@@ -628,8 +639,8 @@ public sealed class DotnetTraitCoverageTests
 
         var count = CountFloorEligibleDotnetReadyTestMethods();
 
-        Assert.True(count >= 360,
-            $"Expected at least 355 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")], " +
+        Assert.True(count >= 363,
+            $"Expected at least 363 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")], " +
             $"not unconditionally skip-gated by AuthRowCapability, and (per issue #283) not a " +
             $"[Theory(SkipTestWithoutData = true)] whose own [MemberData] source resolves to zero " +
             $"rows (see {nameof(TheoryYieldsZeroRowsWhenSkipGated)} -- such a method is SKIPPED, " +
@@ -637,9 +648,9 @@ public sealed class DotnetTraitCoverageTests
             $"the dotnet leg's `--filter \"{TraitName}={TraitValue}\"` baseline, minus the five " +
             "skip-only Scenarios/Auth classes -- see this class's own doc comment; " +
             $"docs/dotnet_mapping.md), but found {count}. If a tagged scenario was removed or " +
-            "renamed without a replacement, the dotnet CI leg silently lost coverage. 360 is a " +
-            "FRESH count (issue #315, Birdperson: 354 + 1 for the new " +
-            "PersonaSessionUpdateToolSchemaConformanceTests tagged Theory method), not arithmetic " +
+            "renamed without a replacement, the dotnet CI leg silently lost coverage. 363 is a " +
+            "FRESH count (issue #325, Summer/Beth: 360 + 3 for the new " +
+            "CanonicalItemNameConformanceTests tagged methods), not arithmetic " +
             "projection -- re-measure with `Conformance.Tests.exe -list methods -trait " +
             "Dotnet=ready` minus the AuthRowCapabilityGated methods and any zero-row " +
             "SkipTestWithoutData methods before raising this floor again.");

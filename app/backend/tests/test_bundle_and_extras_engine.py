@@ -541,5 +541,81 @@ class UpdateOrderItemOutOfModeGateTests(DeltaFixtureTestCase):
             order_state_singleton.delete_session(sid)
 
 
+def _load_zeta_catalog() -> PersonaCatalog:
+    """#325 regression fixture: "test-zeta" (tests/fixtures/personas/test-zeta), the SAME
+    fixture pack the dotnet/python conformance legs both discover from (#283), carries one
+    standalone, trademark-marked item ("ZORBS\u00ae Bite Treats") specifically so this bug class
+    -- the model's own spelling/mark choice leaking into the stored ticket instead of the menu's
+    canonical name -- has a dedicated, non-brand-coupled proof independent of any real pack's own
+    marked item names)."""
+    return PersonaCatalog.load(
+        personas_dir=FIXTURES_DIR,
+        enabled=["test-zeta"],
+        default_persona_id="test-zeta",
+    )
+
+
+class CanonicalItemNameTests(unittest.TestCase):
+    """#325: ``update_order`` must store the MENU's own canonical spelling for every add/modify/
+    remove/bundle-slot path -- never whatever casing or trademark marks the model's own
+    ``item_name`` happened to use for that turn. Uses "test-zeta"'s "ZORBS\u00ae Bite Treats" (the
+    exact fixture item named in #325's own write-up) rather than a real pack's marked item, so
+    this proof is independent of any one persona's own data."""
+
+    def setUp(self):
+        self.zeta = _load_zeta_catalog().get("test-zeta")
+        self._sessions_created: list[str] = []
+        self.addCleanup(self._cleanup_sessions)
+
+    def _cleanup_sessions(self):
+        for sid in self._sessions_created:
+            order_state_singleton.delete_session(sid)
+
+    def _new_session(self) -> str:
+        sid = order_state_singleton.create_session(persona=self.zeta)
+        self._sessions_created.append(sid)
+        return sid
+
+    def test_add_with_the_unmarked_spelling_stores_the_menus_canonical_marked_name(self):
+        sid = self._new_session()
+        result = _run(tools.update_order({
+            "action": "add", "item_name": "ZORBS Bite Treats",
+            "size": "regular", "quantity": 1, "price": 2.99,
+        }, sid))
+        self.assertEqual(result.destination, ToolResultDirection.TO_BOTH)
+        items = order_state_singleton.get_order_items(sid)
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0].item, "ZORBS\u00ae Bite Treats")
+
+    def test_two_adds_with_different_spellings_merge_into_one_line(self):
+        sid = self._new_session()
+        _run(tools.update_order({
+            "action": "add", "item_name": "ZORBS\u00ae Bite Treats",
+            "size": "regular", "quantity": 1, "price": 2.99,
+        }, sid))
+        result = _run(tools.update_order({
+            "action": "add", "item_name": "ZORBS Bite Treats",
+            "size": "regular", "quantity": 1, "price": 2.99,
+        }, sid))
+        self.assertEqual(result.destination, ToolResultDirection.TO_BOTH)
+        items = order_state_singleton.get_order_items(sid)
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0].quantity, 2)
+        self.assertEqual(items[0].item, "ZORBS\u00ae Bite Treats")
+
+    def test_remove_with_the_unmarked_spelling_matches_a_line_added_with_the_marked_spelling(self):
+        sid = self._new_session()
+        _run(tools.update_order({
+            "action": "add", "item_name": "ZORBS\u00ae Bite Treats",
+            "size": "regular", "quantity": 1, "price": 2.99,
+        }, sid))
+        result = _run(tools.update_order({
+            "action": "remove", "item_name": "ZORBS Bite Treats",
+            "size": "regular", "quantity": 1,
+        }, sid))
+        self.assertEqual(result.destination, ToolResultDirection.TO_BOTH)
+        self.assertEqual(order_state_singleton.get_order_items(sid), [])
+
+
 if __name__ == "__main__":
     unittest.main()

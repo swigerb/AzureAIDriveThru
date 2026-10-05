@@ -698,6 +698,81 @@ class NotOnMenuRejectionTests(unittest.TestCase):
         self.assertEqual(result.destination, ToolResultDirection.TO_BOTH)
         self.assertNotIn("menu", result.text.lower())
 
+    def test_add_with_unmarked_name_stores_the_menus_canonical_trademarked_spelling(self):
+        """#325: the model's own spelling of an on-menu item is never trusted for storage --
+        only the menu's own canonical ``name`` is (menu_utils.MenuCatalog.resolve_menu_item).
+        "SuperSONIC Double Cheeseburger Combo" (no (R) mark, what a realtime model transcribes
+        for "SuperSONIC(R) Double Cheeseburger Combo" about as often as the marked spelling,
+        per the #18 A/B harness finding that found this bug) must resolve on-menu exactly like
+        the marked spelling (menu_utils._menu_key strips (R)/(TM)), but the TICKET must show the
+        menu's own marked name, not whatever the model said."""
+        sid = _make_session()
+        result = _run(update_order({
+            "action": "add", "item_name": "SuperSONIC Double Cheeseburger Combo",
+            "size": "standard", "quantity": 1, "price": 10.19,
+        }, sid))
+        self.assertEqual(result.destination, ToolResultDirection.TO_BOTH)
+        summary = order_state_singleton.get_order_summary(sid)
+        self.assertEqual(summary.items[0].item, "SuperSONIC\u00ae Double Cheeseburger Combo")
+        self.assertNotIn("SuperSONIC Double Cheeseburger Combo", result.text)
+
+    def test_two_adds_with_different_spellings_merge_into_one_line(self):
+        """#325: a marked-spelling add followed by an unmarked-spelling add of the SAME item and
+        size must merge into ONE order line with the summed quantity -- not two separate lines
+        that differ only by the model's own casing/trademark-mark choice for the SAME request."""
+        sid = _make_session()
+        _run(update_order({
+            "action": "add", "item_name": "SuperSONIC\u00ae Double Cheeseburger Combo",
+            "size": "standard", "quantity": 1, "price": 10.19,
+        }, sid))
+        result = _run(update_order({
+            "action": "add", "item_name": "SuperSONIC Double Cheeseburger Combo",
+            "size": "standard", "quantity": 1, "price": 10.19,
+        }, sid))
+        self.assertEqual(result.destination, ToolResultDirection.TO_BOTH)
+        summary = order_state_singleton.get_order_summary(sid)
+        self.assertEqual(len(summary.items), 1)
+        self.assertEqual(summary.items[0].quantity, 2)
+        self.assertEqual(summary.items[0].item, "SuperSONIC\u00ae Double Cheeseburger Combo")
+
+    def test_modify_with_an_alias_resolves_and_stores_the_canonical_name(self):
+        """#325: ``modify`` canonicalizes its own ``item_name`` through the same on-menu gate as
+        ``add`` -- resizing "Coke" (a real alias on the default persona's own menu data) must
+        match the "Coca-Cola(R)" line it was added as and keep storing the canonical name, not
+        revert the ticket back to the alias."""
+        sid = _make_session()
+        _run(update_order({
+            "action": "add", "item_name": "Coke",
+            "size": "medium", "quantity": 1, "price": 2.49,
+        }, sid))
+        result = _run(update_order({
+            "action": "modify", "item_name": "Coke",
+            "size": "large", "quantity": 1, "price": 2.99,
+        }, sid))
+        self.assertEqual(result.destination, ToolResultDirection.TO_BOTH)
+        summary = order_state_singleton.get_order_summary(sid)
+        self.assertEqual(len(summary.items), 1)
+        self.assertEqual(summary.items[0].item, "Coca-Cola\u00ae")
+        self.assertEqual(summary.items[0].size, "large")
+
+    def test_remove_with_unmarked_name_matches_a_line_stored_under_the_marked_name(self):
+        """#325: ``remove`` is canonicalized the same way, so a guest who adds the marked
+        spelling and later asks to remove the unmarked spelling (or vice versa -- the model's
+        own transcription is free to vary turn to turn per the #18 A/B harness finding) still
+        matches and clears the real order line instead of silently no-op'ing."""
+        sid = _make_session()
+        _run(update_order({
+            "action": "add", "item_name": "SuperSONIC\u00ae Double Cheeseburger Combo",
+            "size": "standard", "quantity": 1, "price": 10.19,
+        }, sid))
+        result = _run(update_order({
+            "action": "remove", "item_name": "SuperSONIC Double Cheeseburger Combo",
+            "size": "standard", "quantity": 1,
+        }, sid))
+        self.assertEqual(result.destination, ToolResultDirection.TO_BOTH)
+        summary = order_state_singleton.get_order_summary(sid)
+        self.assertEqual(len(summary.items), 0)
+
 
 class UpdateOrderRemoveTests(unittest.TestCase):
     """Test update_order with remove action."""

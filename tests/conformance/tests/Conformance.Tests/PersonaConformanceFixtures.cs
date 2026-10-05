@@ -84,3 +84,26 @@ public sealed class MenuModeConformanceCollection : ICollectionFixture<MenuModeC
 {
     public const string Name = "ConformanceMenuMode";
 }
+
+/// <summary>
+/// #325's own single-persona conformance leg: "test-zeta" carries a standalone, trademark-marked
+/// item ("ZORBS&#174; Bite Treats") specifically so the "model's own spelling/mark leaks into the
+/// stored order line instead of the menu's canonical name" bug class has a dedicated,
+/// non-brand-coupled proof, same precedent as <see cref="MenuModeConformanceFixture"/> and
+/// <see cref="TwoPersonaConformanceFixture"/> (shared fixture pack under
+/// <see cref="RepoPaths.FixturePersonasDirectory"/>, never a real pack's own data).
+/// </summary>
+public sealed class ZetaConformanceFixture : ConformanceFixture
+{
+    public const string PersonaId = "test-zeta";
+
+    protected override IReadOnlyList<string>? Personas => [PersonaId];
+    protected override string? Persona => PersonaId;
+    protected override string? PersonasDir => RepoPaths.FixturePersonasDirectory(RepoPaths.FindRepoRoot());
+}
+
+[CollectionDefinition(Name)]
+public sealed class ZetaConformanceCollection : ICollectionFixture<ZetaConformanceFixture>
+{
+    public const string Name = "ConformanceZeta";
+}
