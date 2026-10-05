@@ -55,6 +55,18 @@ internal sealed class RoutingFoundryHandler : HttpMessageHandler
         return this;
     }
 
+    /// <summary>#262: a non-429 chat-completion failure (e.g. a transient upstream 500) must
+    /// still close the turn with a `response.done` -- unlike <see cref="EnqueueChatRateLimited"/>,
+    /// this is never retried.</summary>
+    public RoutingFoundryHandler EnqueueChatServerError()
+    {
+        _chatResponses.Enqueue(() => new HttpResponseMessage(HttpStatusCode.InternalServerError)
+        {
+            Content = new StringContent("""{"error":"internal server error"}""", Encoding.UTF8, "application/json"),
+        });
+        return this;
+    }
+
     /// <summary>Simulates an HttpClient-internal timeout on the chat-completions call itself (as
     /// opposed to a tool call -- see <see cref="RecordingToolExecutor"/>'s own doc comment for that
     /// variant): throws a <see cref="TaskCanceledException"/> whose OWN cancellation token (not the
@@ -90,6 +102,17 @@ internal sealed class RoutingFoundryHandler : HttpMessageHandler
     public RoutingFoundryHandler EnqueueSpeech(byte[] pcmBytes)
     {
         _speakResponses.Enqueue(() => new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(pcmBytes) });
+        return this;
+    }
+
+    /// <summary>#262's TTS-failure leg: a non-429 TTS failure must also close the turn with a
+    /// failed `response.done`, not just silently log and fall through to a normal one.</summary>
+    public RoutingFoundryHandler EnqueueSpeakServerError()
+    {
+        _speakResponses.Enqueue(() => new HttpResponseMessage(HttpStatusCode.InternalServerError)
+        {
+            Content = new StringContent("""{"error":"internal server error"}""", Encoding.UTF8, "application/json"),
+        });
         return this;
     }
 
@@ -563,6 +586,86 @@ public sealed class CascadeProcessorTests
         Assert.Equal(2, types.Count(t => t == "input_audio_buffer.speech_started"));
     }
 
+    /// <summary>#247: a barge-in mid-tool-call must never leave an orphaned assistant
+    /// `tool_calls` message (no matching `tool` message for `call_1`) sitting in
+    /// <c>state.Messages</c> -- a chat API that sees that 400s the NEXT request. This drives a
+    /// REAL barge-in (same `RecordingToolExecutor` blocking-on-`turnCt` technique as
+    /// <see cref="RunSessionAsync_RealBargeInDuringToolCall_PropagatesWithoutBeingLoggedAsAToolFailure"/>)
+    /// during turn 1's tool call, then lets a SECOND guest turn run to completion, and asserts the
+    /// second turn's own chat-completion request body contains no trace of `call_1` at all --
+    /// proving the whole cancelled round was truncated out of history rather than left dangling.</summary>
+    [Fact]
+    public async Task RunSessionAsync_BargeInDuringToolCall_ThenNextTurnSucceeds_WithNoOrphanedToolCallInHistory()
+    {
+        var (persona, loader) = LoadDeltaFixture();
+        var handler = new RoutingFoundryHandler()
+            .EnqueueChatMessage("assistant", "Welcome!")
+            .EnqueueSpeech([1, 2]) // greeting TTS
+            .EnqueueTranscript("first query") // turn 1's STT
+            .EnqueueChatMessage("assistant", null, toolCalls: new JsonArray
+            {
+                new JsonObject
+                {
+                    ["id"] = "call_1",
+                    ["type"] = "function",
+                    ["function"] = new JsonObject { ["name"] = "search", ["arguments"] = "{}" },
+                },
+            }) // turn 1's tool-call round -- blocks on turnCt until the barge-in below cancels it
+            .EnqueueTranscript("second query") // turn 2's STT
+            .EnqueueChatMessage("assistant", "All set for your second query.") // turn 2 resolves with no tool call
+            .EnqueueSpeech([3, 4]); // turn 2's TTS
+
+        var toolExecutor = new RecordingToolExecutor(
+            ["search"],
+            async (_, _, toolCt) =>
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, toolCt).ConfigureAwait(false);
+                return default!;
+            });
+        var logger = new RecordingLogger();
+        var processor = NewProcessor(handler, toolExecutor, loader, logger: logger);
+        var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
+
+        var loudChunk = Pcm16(20000, count: 10);
+        var silentChunk = Pcm16(0, count: 4800);
+        var socket = new DelayedFakeWebSocket(
+            [
+                (AppendFrame(loudChunk), WebSocketMessageType.Text), // turn 1 starts
+                (AppendFrame(silentChunk), WebSocketMessageType.Text), // turn 1 spawned, blocks in the tool call
+                (AppendFrame(loudChunk), WebSocketMessageType.Text), // real barge-in: cancels turn 1 mid-tool-call, turn 2 starts
+                (AppendFrame(silentChunk), WebSocketMessageType.Text), // turn 2 spawned, runs to completion
+                ([], WebSocketMessageType.Close),
+            ],
+            ReceiveDelay);
+
+        await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "sess-orphan-truncation", TestContext.Current.CancellationToken);
+
+        Assert.DoesNotContain(logger.Entries, e => e.Level >= LogLevel.Warning);
+
+        var frames = socket.SentMessages.Where(m => m.MessageType == WebSocketMessageType.Text).Select(ParseSent).ToList();
+        var types = frames.Select(f => f["type"]!.GetValue<string>()).ToList();
+
+        // Greeting + turn 2 both completed normally; turn 1 was cut short (same as the sibling
+        // test above).
+        Assert.Equal(2, types.Count(t => t == "response.done"));
+        Assert.DoesNotContain(types, t => t == "extension.middle_tier_tool_response");
+
+        // THE mutation-test seam: turn 2's own chat-completion request is the last one sent.
+        // Reverting the truncation (dropping the `catch { ...RemoveRange...; throw; }` in
+        // RunChatToolLoopAsync, or narrowing it to `catch (Exception)`, which never catches
+        // `OperationCanceledException`) leaves turn 1's orphaned `tool_calls` message (with no
+        // matching "tool"/call_1 message) sitting in `state.Messages`, so it would still be
+        // present here.
+        var lastRequestBody = JsonNode.Parse(handler.ChatRequestBodies[^1])!.AsObject();
+        var lastMessages = lastRequestBody["messages"]!.AsArray();
+        Assert.DoesNotContain(lastMessages, m =>
+            m!["tool_calls"] is JsonArray tc && tc.Any(t => t!["id"]!.GetValue<string>() == "call_1"));
+        Assert.DoesNotContain(lastMessages, m =>
+            m!["role"]?.GetValue<string>() == "tool" && m["tool_call_id"]?.GetValue<string>() == "call_1");
+        // The two REAL turns' own content is present, proving history otherwise continued normally.
+        Assert.Contains(lastMessages, m => m!["role"]!.GetValue<string>() == "user" && m["content"]!.GetValue<string>() == "second query");
+    }
+
     /// <summary>#236 Rick re-review item 3 (LOW): the `when (turnCt.IsCancellationRequested)`
     /// guard on each `catch (OperationCanceledException)` matters because an
     /// `OperationCanceledException` can ALSO come from something unrelated to a barge-in -- e.g.
@@ -632,16 +735,17 @@ public sealed class CascadeProcessorTests
         Assert.Equal("Sorry, something went wrong.", frames.Last(f => f["type"]!.GetValue<string>() == "response.audio_transcript.delta")["delta"]!.GetValue<string>());
     }
 
-    /// <summary>Cascade follow-ups (refs #13): <c>Spawn</c>'s own outer
-    /// <c>catch (OperationCanceledException)</c> -- the wrapper around each background turn/greeting
-    /// task -- needs the same <c>when (cts.Token.IsCancellationRequested)</c> guard already applied
-    /// at the inner catches (<c>ExecuteToolCallAsync</c>/<c>TranscribeAsync</c>/<c>SpeakAsync</c>,
-    /// #236 Rick re-review item 3). Without it, an HttpClient-internal timeout from the
-    /// chat-completion call itself -- which isn't individually try/caught anywhere between
-    /// <c>RunChatToolLoopAsync</c> and <c>Spawn</c> -- is indistinguishable from a real barge-in and
-    /// gets silently swallowed: no log, no <c>response.done</c>, the turn just vanishes. This test
-    /// proves the guest turn's chat-completion call throwing a <see cref="TaskCanceledException"/>
-    /// whose OWN token (not the turn's <c>turnCt</c>) is cancelled reaches the error log instead.</summary>
+    /// <summary>#262: an `OperationCanceledException` whose OWN token is cancelled (an
+    /// HttpClient-internal timeout, unrelated to any barge-in -- `turnCt` itself stays live
+    /// throughout this test) must no longer vanish silently. Before #262's fix, this exception
+    /// propagated straight out of <c>RunTurnAndSpeakAsync</c>, through <c>ProcessTurnAsync</c>,
+    /// and was swallowed by <c>Spawn</c>'s own <c>catch (OperationCanceledException)</c> guard --
+    /// logged, but with NO `response.done` ever reaching the guest, leaving the browser stuck
+    /// thinking a response was still in progress forever. Now <c>RunTurnAndSpeakAsync</c>'s own
+    /// `catch (Exception ex)` (guarded off by the `when (turnCt.IsCancellationRequested)` clause
+    /// on the barge-in catch just above it, which this exception does NOT satisfy) intercepts it
+    /// first, logs it, and sends a terminal failed `response.done` + `error` event -- so the
+    /// exception never even reaches <c>Spawn</c>.</summary>
     [Fact]
     public async Task RunSessionAsync_ChatCompletionThrowsTimeoutUnrelatedToBargeIn_LogsInsteadOfVanishingSilently()
     {
@@ -667,20 +771,96 @@ public sealed class CascadeProcessorTests
 
         await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "sess-chat-timeout-not-bargein", TestContext.Current.CancellationToken);
 
-        // Must be logged as an error by Spawn's own catch (OperationCanceledException), labelled
-        // "turn" -- not silently swallowed as if it were a barge-in.
+        // Logged as an error by RunTurnAndSpeakAsync's own catch -- not by Spawn, and not
+        // silently swallowed as if it were a barge-in.
         Assert.Contains(logger.Entries, e => e.Level == LogLevel.Error
             && e.Exception is TaskCanceledException
-            && e.Message.Contains("'turn'", StringComparison.Ordinal));
+            && e.Message.Contains("chat completion failed", StringComparison.Ordinal));
 
-        // The guest turn's own response.created IS sent (RunTurnAndSpeakAsync sends it before
-        // starting the chat-tool loop) -- but it never reaches the matching response.done: the
-        // exception propagates straight out of RunChatToolLoopAsync before that send. So only the
-        // greeting's response.done exists, even though the guest turn's response.created is present.
+        // The guest turn's response.created IS followed by its own failed response.done now --
+        // #262's whole point: the guest turn must never be left hanging.
         var frames = socket.SentMessages.Where(m => m.MessageType == WebSocketMessageType.Text).Select(ParseSent).ToList();
         var types = frames.Select(f => f["type"]!.GetValue<string>()).ToList();
         Assert.Equal(2, types.Count(t => t == "response.created")); // greeting + guest turn
-        Assert.Equal(1, types.Count(t => t == "response.done")); // greeting only
+        Assert.Equal(2, types.Count(t => t == "response.done")); // greeting + guest turn's failed done
+        Assert.Contains(types, t => t == "error");
+        var guestDone = frames.Last(f => f["type"]!.GetValue<string>() == "response.done");
+        Assert.Equal("failed", guestDone["response"]!["status"]!.GetValue<string>());
+        Assert.Empty(guestDone["response"]!["output"]!.AsArray());
+    }
+
+    /// <summary>#262: a non-429 chat-completion failure (a real upstream 500, as opposed to the
+    /// HttpClient-internal-timeout variant above) must close the turn the same way.</summary>
+    [Fact]
+    public async Task RunSessionAsync_ChatCompletionServerError_SendsFailedResponseDone()
+    {
+        var (persona, loader) = LoadDeltaFixture();
+        var handler = new RoutingFoundryHandler()
+            .EnqueueChatMessage("assistant", "Welcome!")
+            .EnqueueSpeech([1, 2])
+            .EnqueueTranscript("hi")
+            .EnqueueChatServerError();
+        var logger = new RecordingLogger();
+        var processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader, logger: logger);
+        var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
+
+        var loudChunk = Pcm16(20000, count: 10);
+        var silentChunk = Pcm16(0, count: 4800);
+        var socket = new DelayedFakeWebSocket(
+            [
+                (AppendFrame(loudChunk), WebSocketMessageType.Text),
+                (AppendFrame(silentChunk), WebSocketMessageType.Text),
+                ([], WebSocketMessageType.Close),
+            ],
+            ReceiveDelay);
+
+        await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "sess-chat-500", TestContext.Current.CancellationToken);
+
+        var frames = socket.SentMessages.Where(m => m.MessageType == WebSocketMessageType.Text).Select(ParseSent).ToList();
+        var types = frames.Select(f => f["type"]!.GetValue<string>()).ToList();
+        Assert.Equal(2, types.Count(t => t == "response.done"));
+        Assert.Contains(types, t => t == "error");
+        var guestDone = frames.Last(f => f["type"]!.GetValue<string>() == "response.done");
+        Assert.Equal("failed", guestDone["response"]!["status"]!.GetValue<string>());
+    }
+
+    /// <summary>#262's TTS leg: a non-429 TTS failure (after a successful chat completion) must
+    /// ALSO close the turn with a failed `response.done` -- before the fix, this case just logged
+    /// a warning and fell through to a normal `response.done`, silently hiding the failure as if
+    /// the turn had succeeded with no audio.</summary>
+    [Fact]
+    public async Task RunSessionAsync_TtsServerError_SendsFailedResponseDoneInsteadOfANormalOne()
+    {
+        var (persona, loader) = LoadDeltaFixture();
+        var handler = new RoutingFoundryHandler()
+            .EnqueueChatMessage("assistant", "Welcome!")
+            .EnqueueSpeech([1, 2])
+            .EnqueueTranscript("hi")
+            .EnqueueChatMessage("assistant", "Sure, one large fries.")
+            .EnqueueSpeakServerError();
+        var logger = new RecordingLogger();
+        var processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader, logger: logger);
+        var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
+
+        var loudChunk = Pcm16(20000, count: 10);
+        var silentChunk = Pcm16(0, count: 4800);
+        var socket = new DelayedFakeWebSocket(
+            [
+                (AppendFrame(loudChunk), WebSocketMessageType.Text),
+                (AppendFrame(silentChunk), WebSocketMessageType.Text),
+                ([], WebSocketMessageType.Close),
+            ],
+            ReceiveDelay);
+
+        await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "sess-tts-500", TestContext.Current.CancellationToken);
+
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning && e.Exception is FoundryHttpException);
+
+        var frames = socket.SentMessages.Where(m => m.MessageType == WebSocketMessageType.Text).Select(ParseSent).ToList();
+        var types = frames.Select(f => f["type"]!.GetValue<string>()).ToList();
+        Assert.Equal(2, types.Count(t => t == "response.done"));
+        var guestDone = frames.Last(f => f["type"]!.GetValue<string>() == "response.done");
+        Assert.Equal("failed", guestDone["response"]!["status"]!.GetValue<string>());
     }
 
     [Fact]
