@@ -245,6 +245,26 @@ namespace Conformance.Tests;
 /// Dotnet=ready</c> lists 283 methods; minus the 18 <see cref="AuthRowGatedTypeNames"/> methods
 /// that gives <b>265</b>, the floor asserted below. Any PR still rebasing on top of this MUST
 /// re-measure fresh at its own rebase time the same way, not add a historical delta to 265 blindly.
+///
+/// Issue #274 follow-ups C and E (coordinator, 2026-10-05): two changes land together here.
+/// Follow-up C tags <see cref="Scenarios.Cascade.CascadeFakeResetWiringTests"/>'s single method
+/// <c>[Trait("Dotnet", "ready")]</c> (verified green against the C# backend across 3 consecutive
+/// local runs, no flakiness -- the wiring it proves is backend-agnostic C# harness code), +1.
+/// Follow-up E UNtags the 4 <c>Scenarios/Ordering/ComboComponentResizeConformanceTests.cs</c>
+/// <c>Discovered_*</c> methods that depend on <c>DiscoveredBundleResizeCases</c>/
+/// <c>DiscoveredTwoInstanceResizeCases</c>: every real persona pack on disk today fails
+/// <c>ComboBundleDiscovery.Discover</c>'s own <c>includedAnySize</c> precondition (`dunkin` has no
+/// bundle items at all; `mcdonalds` is `wholeBundleSize`; `sonic` is `componentUpcharge`), so both
+/// MemberData sources resolve to zero rows and `[Theory(SkipTestWithoutData = true)]` reports all
+/// 4 as SKIPPED, not passed -- they were counted toward this floor but never actually produced a
+/// pass/fail signal on the dotnet leg, exactly the gap this issue's own title describes. Net -4.
+/// A fresh <see cref="CountFloorEligibleDotnetReadyTestMethods"/> measurement on this branch tip
+/// (same temporarily-assert-then-revert technique as every prior round) gives <b>262</b> (265 + 1
+/// - 4), confirmed by direct count, not arithmetic. This LOWERS the floor 265 to 262 -- a
+/// deliberate correction, not a regression: the 4 untagged methods never contributed real dotnet
+/// coverage in the first place, so the floor now reflects exactly the coverage the dotnet CI leg
+/// genuinely exercises. The method below is renamed to match (<c>At_least_265_...</c> -&gt;
+/// <c>At_least_262_...</c>) per this same issue's own item C.
 /// </summary>
 public sealed class DotnetTraitCoverageTests
 {
@@ -267,18 +287,18 @@ public sealed class DotnetTraitCoverageTests
     };
 
     [Fact]
-    public void At_least_265_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
+    public void At_least_262_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
     {
         var count = CountFloorEligibleDotnetReadyTestMethods();
 
-        Assert.True(count >= 265,
-            $"Expected at least 265 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
+        Assert.True(count >= 262,
+            $"Expected at least 262 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
             $"and not unconditionally skip-gated by AuthRowCapability (the dotnet leg's " +
             $"`--filter \"{TraitName}={TraitValue}&Category!=Browser\"` baseline, minus the five " +
             "skip-only Scenarios/Auth classes -- see this class's own doc comment; " +
             $"docs/dotnet_mapping.md), but found {count}. If a tagged scenario was removed or " +
-            "renamed without a replacement, the dotnet CI leg silently lost coverage. 265 is a " +
-            "FRESH count (PR #266 merge with origin/dev), not " +
+            "renamed without a replacement, the dotnet CI leg silently lost coverage. 262 is a " +
+            "FRESH count (issue #274 follow-ups C and E), not " +
             "arithmetic -- re-measure with `Conformance.Tests.exe -list methods -trait " +
             "Dotnet=ready` minus the 18 AuthRowGatedTypeNames methods before raising this floor " +
             "again.");

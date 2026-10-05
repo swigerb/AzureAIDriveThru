@@ -640,8 +640,30 @@ public sealed class ComboComponentResizeConformanceTests
             "duplicates the drink's full standalone price.");
     }
 
+    // Issue #274 follow-up E (#266 re-review): this Theory and the 3 below it
+    // (Discovered_pack_resizes_the_combo_drink_via_explicit_modify,
+    // Discovered_pack_charges_the_same_total_large_up_front_or_resized_later,
+    // Discovered_pack_with_two_bundle_instances_resizes_only_the_holder) were tagged
+    // [Trait("Dotnet", "ready")] and counted toward DotnetTraitCoverageTests' floor, but never
+    // appeared in either dotnet CI leg's actual run output -- `[Theory(SkipTestWithoutData = true)]`
+    // reports a Theory with zero MemberData rows as SKIPPED (not failed, and not a real pass/fail
+    // signal), and every real pack on disk today fails Discover()'s/DiscoverTwoInstance's own
+    // `includedAnySize` precondition: `dunkin` has no `bundle` items on its menu at all,
+    // `mcdonalds`' own `bundles.resizeRule` is `wholeBundleSize` (covered instead by
+    // WholeBundleSizeResizeConformanceTests below), and `sonic`'s own `bundles.resizeRule` is
+    // `componentUpcharge` (issue #205, covered instead by ComponentUpchargeBundleConformanceTests
+    // above) -- so DiscoveredBundleResizeCases()/DiscoveredTwoInstanceResizeCases() both resolve to
+    // zero rows against today's real persona packs, confirmed locally: `dotnet test --filter
+    // "FullyQualifiedName~ComboComponentResizeConformanceTests.Discovered"` reports all 4 methods
+    // SKIPPED ("No data found for ..."), not passed. Untagged rather than fixed: there is no real
+    // pack today whose own `bundles.resizeRule` is `includedAnySize` AND leaves a drink slot open,
+    // so there is nothing for these rows to actually exercise until a future pack reintroduces that
+    // shape -- at which point DiscoveredBundleResizeCases()/DiscoveredTwoInstanceResizeCases() pick
+    // it up automatically (no code change needed here) and the tag can be restored once a fresh
+    // measurement confirms it executes for real. Left in place (not deleted): a future pack
+    // reintroducing an `includedAnySize` bundle with a genuinely open drink slot makes these rows
+    // real again for free, on whichever backend leg they're re-tagged for.
     [Theory(SkipTestWithoutData = true)]
-    [Trait("Dotnet", "ready")]
     [MemberData(nameof(DiscoveredBundleResizeCases))]
     public async Task Discovered_pack_resizes_the_combo_drink_via_remove_then_add(
         ComboBundleDiscovery.BundleResizeCase bundleCase)
@@ -671,8 +693,9 @@ public sealed class ComboComponentResizeConformanceTests
         });
     }
 
+    // Issue #274 follow-up E: see Discovered_pack_resizes_the_combo_drink_via_remove_then_add's
+    // own doc comment above -- untagged for the same reason (no real pack qualifies today).
     [Theory(SkipTestWithoutData = true)]
-    [Trait("Dotnet", "ready")]
     [MemberData(nameof(DiscoveredBundleResizeCases))]
     public async Task Discovered_pack_resizes_the_combo_drink_via_explicit_modify(
         ComboBundleDiscovery.BundleResizeCase bundleCase)
@@ -705,8 +728,9 @@ public sealed class ComboComponentResizeConformanceTests
     /// total as seeding it at the smaller size and resizing to that same larger size later. Both
     /// paths run on their own fresh connection (xUnit requires exactly one open connection at a
     /// time), one after the other on the SAME fixture/backend instance.</summary>
+    // Issue #274 follow-up E: see Discovered_pack_resizes_the_combo_drink_via_remove_then_add's
+    // own doc comment above -- untagged for the same reason (no real pack qualifies today).
     [Theory(SkipTestWithoutData = true)]
-    [Trait("Dotnet", "ready")]
     [MemberData(nameof(DiscoveredBundleResizeCases))]
     public async Task Discovered_pack_charges_the_same_total_large_up_front_or_resized_later(
         ComboBundleDiscovery.BundleResizeCase bundleCase)
@@ -787,8 +811,10 @@ public sealed class ComboComponentResizeConformanceTests
     /// instance instead. Resizing the drink that only the most-recently-added instance holds must
     /// leave the other instance (and its own, different drink) completely untouched --
     /// determinism by identity, never an arbitrary/first-match pick.</summary>
+    // Issue #274 follow-up E: see Discovered_pack_resizes_the_combo_drink_via_remove_then_add's
+    // own doc comment above -- untagged for the same reason (DiscoverTwoInstance also requires
+    // `includedAnySize`, which no real pack has today).
     [Theory(SkipTestWithoutData = true)]
-    [Trait("Dotnet", "ready")]
     [MemberData(nameof(DiscoveredTwoInstanceResizeCases))]
     public async Task Discovered_pack_with_two_bundle_instances_resizes_only_the_holder(
         ComboBundleDiscovery.TwoInstanceCase twoCase)
