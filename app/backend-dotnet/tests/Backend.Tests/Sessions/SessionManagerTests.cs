@@ -73,6 +73,51 @@ public sealed class SessionManagerTests
         Assert.Equal("verse", mgr.GetVoice("s1"));
     }
 
+    // ── Context monitor lifecycle (issue #13 tail) ────────────────────────────────────────────
+
+    [Fact]
+    public void CreateSession_AlsoCreatesAContextMonitor()
+    {
+        var mgr = NewManager(new FakeTimeProvider());
+        mgr.CreateSession("s1", NewSocket(), "p", "m", null, new FakeToolExecutor(), "alloy");
+        Assert.NotNull(mgr.GetContextMonitor("s1"));
+    }
+
+    [Fact]
+    public void GetContextMonitor_UnknownOrNullSessionId_ReturnsNull()
+    {
+        var mgr = NewManager(new FakeTimeProvider());
+        Assert.Null(mgr.GetContextMonitor("nope"));
+        Assert.Null(mgr.GetContextMonitor(null));
+    }
+
+    [Fact]
+    public void EndSession_RemovesTheContextMonitor()
+    {
+        var mgr = NewManager(new FakeTimeProvider());
+        mgr.CreateSession("s1", NewSocket(), "p", "m", null, new FakeToolExecutor(), "alloy");
+        Assert.NotNull(mgr.GetContextMonitor("s1"));
+        mgr.EndSession("s1", "test teardown");
+        Assert.Null(mgr.GetContextMonitor("s1"));
+    }
+
+    [Fact]
+    public void CreateContextMonitor_StandaloneForCascade_IsIndependentOfTheFullSessionRegistry()
+    {
+        // Mirrors cascade_processor.py's create_session's own ContextMonitor(session_id)
+        // construction: CascadeProcessor never calls SessionManager.CreateSession (see that
+        // class's own doc comment), so it creates/tears down a context monitor directly via this
+        // standalone API instead.
+        var mgr = NewManager(new FakeTimeProvider());
+        mgr.CreateContextMonitor("cascade-session");
+        var monitor = mgr.GetContextMonitor("cascade-session");
+        Assert.NotNull(monitor);
+        monitor!.AddContent("hello world");
+        Assert.True(monitor.EstimatedTokens > 0);
+        mgr.RemoveContextMonitor("cascade-session");
+        Assert.Null(mgr.GetContextMonitor("cascade-session"));
+    }
+
     // ── Resume credential: issuance, single-use, disabled ─────────────────────────────────────
 
     [Fact]

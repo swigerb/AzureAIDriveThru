@@ -36,10 +36,14 @@ namespace Backend.Sessions;
 /// buffered locally (not streamed upstream frame-by-frame) and uploaded as one WAV file once
 /// <see cref="TurnDetector"/> reports <c>speech_stopped</c>.
 ///
-/// Deliberate scope cuts from cascade_processor.py, mirroring <see cref="RealtimeProcessor"/>'s own
-/// documented cuts (docs/dotnet_mapping.md): <c>session.update</c>/<c>extension.resume</c> are
-/// explicit no-ops (v1 scope cut, same as Python), there is no context-window-monitor hook (no C#
-/// equivalent exists yet), and session resume/rehydration/idle-sweep is out of scope (issue #15).
+/// Session registry (issue #126): <see cref="RunSessionAsync"/> registers every connection with
+/// <see cref="SessionManager.CreateSession"/> (exactly like <see cref="RealtimeProcessor"/> and
+/// cascade_processor.py's own <c>create_session</c>), which also creates the session's
+/// <see cref="ContextMonitor"/>; the registry's own end-of-session path removes it. Resume
+/// (<c>extension.resume</c> via <c>NegotiateResumeAsync</c>), idle nudge and the echo-suppression
+/// cooldown mirror the realtime pipeline. <see cref="ExecuteToolCallAsync"/> tracks tool call
+/// args/result in the context monitor, mirroring cascade_processor.py's own two
+/// <c>ctx_monitor.add_content</c> call sites exactly.
 /// </summary>
 public sealed class CascadeProcessor : IPipelineProcessor
 {
@@ -365,6 +369,18 @@ public sealed class CascadeProcessor : IPipelineProcessor
                 var result = await toolExecutor.ExecuteAsync(name, argumentsDoc.RootElement.Clone(), turnCt).ConfigureAwait(false);
                 _logger?.LogInformation("Cascade tool '{ToolName}' result direction={Direction} (session={SessionId})",
                     name, result.Destination, sessionId);
+
+                // Issue #13 tail: track tool call args + result in the context window, mirroring
+                // cascade_processor.py's own ctx_monitor.add_content(tool_call.function.arguments
+                // or "") / ctx_monitor.add_content(result.to_text()) right after logging the
+                // result.
+                var ctxMonitorForTool = _sessionManager?.GetContextMonitor(sessionId);
+                if (ctxMonitorForTool is not null)
+                {
+                    ctxMonitorForTool.AddContent(argumentsJson);
+                    ctxMonitorForTool.AddContent(result.ToText());
+                }
+
                 outputText = result.Destination is ToolResultDirection.ToServer or ToolResultDirection.ToBoth
                     ? result.ToText() : "";
                 sendToClient = result.Destination is ToolResultDirection.ToClient or ToolResultDirection.ToBoth;

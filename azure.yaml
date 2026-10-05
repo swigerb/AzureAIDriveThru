@@ -26,18 +26,18 @@ services:
         - VITE_ENTRA_TENANT_ID=${ENTRA_TENANT_ID}
         - VITE_ENTRA_CLIENT_ID=${ENTRA_CLIENT_ID}
         - VITE_ENTRA_API_SCOPE=${ENTRA_API_SCOPE}
-  # S7 (#17) prep: app/backend-dotnet builds a real image (this PR), but the azure.yaml service
-  # entry itself is deliberately NOT added yet. `language: csharp` here would make azd resolve a
-  # dotnet project (editing Backend.csproj's UserSecretsId, writing outputs into dotnet
-  # user-secrets) on every provision/package/deploy, and with no matching infra/backend-dotnet
-  # resource `azd-service-name: backend-dotnet` tag, `azd deploy`/`azd up` would fail with
-  # "unable to find a resource tagged with 'azd-service-name: backend-dotnet'" in every
-  # environment that hasn't flipped DEPLOY_DOTNET_APP=true (Rick's #152 review, R1). The #17
-  # go-live PR adds this service back with `language: docker` (no csproj handling), `project:
-  # ./app`, `docker.path: ./Dockerfile.dotnet` and `docker.context: ..` (mirrors `backend` above),
-  # in the same commit that flips infra/main.bicep's deployDotnetApp to true, plus the
-  # SERVICE_BACKEND_DOTNET_RESOURCE_EXISTS mapping in infra/main.parameters.json and the
-  # 'azd-service-name': 'backend-dotnet' tag on acaBackendDotnet in infra/main.bicep.
+  # S7 (#17 go-live): the side-by-side C# container app (app/backend-dotnet, built from
+  # app/Dockerfile.dotnet) is NOT declared as a service here yet. Rick's review of #281 (R1) found
+  # that declaring it now -- while infra/main.bicep's acaBackendDotnet module and its
+  # 'azd-service-name': 'backend-dotnet' tag stay gated behind `if (deployDotnetApp)` (default
+  # false) -- breaks a bare `azd deploy`/`azd up` for every environment that has not flipped
+  # DEPLOY_DOTNET_APP=true: no resource anywhere would carry the tag this service entry expects,
+  # and azd has no service-level `condition:` (as of the pinned release) to skip it. That is not
+  # deploy-neutral, so the service entry and the bicep tag move together into the owner-gated
+  # flip commit instead (the SERVICE_BACKEND_DOTNET_RESOURCE_EXISTS mapping has already landed
+  # separately, in infra/main.parameters.json). DEPLOY.md's ".NET container app (S7, #17)"
+  # section, "Step 0", has the exact `backend-dotnet` service block (and the matching bicep tag
+  # line) to paste in at that time.
 hooks:
     postprovision:
       windows:
