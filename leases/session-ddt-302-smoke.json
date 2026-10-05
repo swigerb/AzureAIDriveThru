@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "leaseKey": "session-ddt-302-smoke",
+  "sessionId": "ddt-302-smoke",
+  "repository": "swigerb/AzureAIDriveThru",
+  "issueNumber": null,
+  "dispatchSource": "local-cli",
+  "route": "aca-job",
+  "executionMode": "aca-job",
+  "state": "claimed",
+  "attempts": 1,
+  "startedAt": "2026-10-05T12:51:59.629Z",
+  "lastHeartbeatAt": "2026-10-05T12:51:59.629Z",
+  "updatedAt": "2026-10-05T12:51:59.629Z",
+  "terminalReason": null,
+  "executionRef": null
+}
