@@ -113,6 +113,41 @@ This only changes which persona a session gets when it doesn't name one
 -- every enabled persona still gets its own index and is still
 reachable by a session that requests it explicitly.
 
+## Realtime & Cascade Smoke Checks (postdeploy, #302)
+
+The azd `postdeploy` hook (`scripts/smoke_realtime.sh` / `.ps1`) runs
+`scripts/smoke_realtime.py` once per persona (discovered live via
+`PersonaCatalog.load().ids` -- never a hardcoded brand list) for each of the
+two realtime pipelines the app supports, so a bad deployment doesn't go
+unnoticed just because the default persona happened to work:
+
+- `--pipeline realtime` (default): opens a GA Realtime API session against
+  the shared Azure OpenAI realtime deployment, asserts the `session.update`
+  shape and a transcription event, and then runs a **one-tool-call check**:
+  it sends a scripted guest turn designed to trigger the `search` function
+  tool, asserts the resulting `function_call` has a well-formed name/arguments
+  JSON/call_id, and then actually runs that query against the persona's own
+  Azure AI Search index through the same code path the backend uses
+  (`app/backend/tools.py`'s search context), so the check fails if the
+  persona's index is empty or misconfigured, not just if the realtime
+  deployment is reachable. Pass `--skip-search` to skip the Search-side half
+  (session/tool-call shape is still asserted) when running against an
+  environment with no search credential available.
+- `--pipeline cascade`: exercises the cascade (non-realtime) pipeline end to
+  end -- `gpt-4o-transcribe` for speech-to-text, the persona's configured
+  cascade chat model for the order-taking turn, and `gpt-4o-mini-tts` for the
+  spoken response -- using the same `ModelCatalog`/`PersonaCatalog`
+  configuration and Entra credential (`AsyncDefaultAzureCredential`, never an
+  API key) the backend itself uses.
+
+Both pipelines, for every persona, run serially in the wrapper script. The
+wrapper is always non-fatal: every failure is reported (`report_result` /
+`Report-Result`) but the script still exits `0`, so a smoke failure never
+blocks `azd up`/`azd deploy` from completing -- it's a signal to check
+afterward, not a deployment gate. See `app/backend/tests/test_smoke_realtime.py`
+for the fake-server-only unit coverage of both pipelines (no live Azure calls
+are made in tests).
+
 ## Entra ID Authentication (ADR-002)
 
 The app requires Microsoft Entra ID sign-in on every request, including the `/realtime` WebSocket, which
