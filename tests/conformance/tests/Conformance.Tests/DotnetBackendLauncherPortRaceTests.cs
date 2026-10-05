@@ -60,8 +60,26 @@ public sealed class DotnetBackendLauncherPortRaceTests
         {
             var contract = BackendContract.ForPort(NeverDialedRealtime, NeverDialedSearch, occupiedPort);
 
+            // #226 round 3 / #249 CI failure (run 37256187043): a bare DotnetBackendOptions() sets
+            // no AUTH_MODE and DotnetBackendEnvironment.Build pins ASPNETCORE_ENVIRONMENT/
+            // DOTNET_ENVIRONMENT to "Production" unconditionally, so the launched backend hit
+            // EntraSettings' fail-fast ("AUTH_MODE=Development (and an unset AUTH_MODE) are refused
+            // in Production") and exited with code 1 before ever reaching the retry loop this test
+            // exists to prove. Every other fixture that launches the dotnet backend goes through
+            // ConformanceFixture, which always supplies either Entra-mode env (EntraModeEnvironment)
+            // or a non-Production BackendProfile (e.g. DevelopmentPassThrough) -- this test bypasses
+            // ConformanceFixture entirely (it needs to occupy the port before the backend ever
+            // starts), so it must supply an equivalent profile itself. Reuses
+            // BackendProfiles.DevelopmentPassThrough's exact env (Not Production, AUTH_MODE
+            // unconfigured/pass-through) rather than standing up a FakeEntraIssuer, since this test
+            // only cares about proving the port-bind retry loop recovers, not about exercising auth.
+            var options = new DotnetBackendOptions
+            {
+                ExtraEnvironment = BackendProfiles.DevelopmentPassThrough.ExtraEnvironment,
+            };
+
             await using var backend = await DotnetBackendLauncher.StartAsync(
-                contract, new DotnetBackendOptions(), ct);
+                contract, options, ct);
 
             // The real backend can never have bound the port this test is still holding open --
             // proves the retry loop actually reassigned a fresh port and relaunched, not merely
@@ -114,8 +132,17 @@ public sealed class DotnetBackendLauncherPortRaceTests
         {
             var contract = BackendContract.ForPort(NeverDialedRealtime, NeverDialedSearch, occupiedPort);
 
+            // #226 round 4 / #267 CI failure: see the comment on the sibling test above
+            // (StartAsync_recovers_when_the_assigned_port_is_already_bound_by_someone_else) --
+            // this test also bypasses ConformanceFixture and must supply an equivalent
+            // non-Production profile itself, or the launched backend hits this PR's fail-fast.
+            var options = new DotnetBackendOptions
+            {
+                ExtraEnvironment = BackendProfiles.DevelopmentPassThrough.ExtraEnvironment,
+            };
+
             await using var backend = await DotnetBackendLauncher.StartAsync(
-                contract, new DotnetBackendOptions(), ct);
+                contract, options, ct);
 
             Assert.True(
                 observedPorts.Count >= 2,

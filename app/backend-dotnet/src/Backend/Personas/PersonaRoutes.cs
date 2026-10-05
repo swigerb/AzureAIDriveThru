@@ -38,7 +38,7 @@ public static class PersonaRoutes
 
     public static void Map(WebApplication app, PersonaCatalog catalog, ModelCatalog modelCatalog, AssetCacheConfig cacheConfig)
     {
-        app.MapGet("/api/personas", () => Results.Json(BuildPersonasIndexBody(catalog)));
+        app.MapGet("/api/personas", () => Results.Json(BuildPersonasIndexBody(catalog))).WithName("personas-index");
 
         app.MapGet("/api/personas/{personaId}", (string personaId) =>
         {
@@ -47,7 +47,7 @@ public static class PersonaRoutes
                 return UnknownPersonaResult(personaId);
             }
             return Results.Json(BuildPersonaDetailBody(catalog.Get(personaId), modelCatalog));
-        });
+        }).WithName("persona-detail");
 
         app.MapGet("/personas/{personaId}/menu.json", async (string personaId, HttpContext context) =>
         {
@@ -67,7 +67,7 @@ public static class PersonaRoutes
             var bytes = await File.ReadAllBytesAsync(persona.MenuPath, context.RequestAborted);
             var hash = PersonaAssetHash.ComputeHash(persona.MenuPath);
             await WriteAssetAsync(context, bytes, "application/json", hash, cacheConfig);
-        });
+        }).WithName("persona-menu");
 
         app.MapGet("/personas/{personaId}/assets/{*assetPath}", async (string personaId, string? assetPath, HttpContext context) =>
         {
@@ -91,8 +91,17 @@ public static class PersonaRoutes
             var contentType = AssetContentTypes.GetValueOrDefault(Path.GetExtension(resolved).ToLowerInvariant());
             var hash = PersonaAssetHash.ComputeHash(resolved);
             await WriteAssetAsync(context, bytes, contentType, hash, cacheConfig);
-        });
+        }).WithName(PersonaAssetRouteName);
     }
+
+    /// <summary>
+    /// app.py's 'persona-asset' route name (issue #147: the fallback authorization policy's
+    /// anonymous-extension escape hatch looks this endpoint name up via
+    /// <c>HttpContext.GetEndpoint()</c> to decide whether a given asset request is on the same
+    /// per-extension anonymous allow-list Python's `_is_anonymous` grants it, matching
+    /// entra_auth.py's PERSONA_ASSET_ROUTE_NAME/ANONYMOUS_ASSET_EXTENSIONS).
+    /// </summary>
+    public const string PersonaAssetRouteName = "persona-asset";
 
     private static IResult UnknownPersonaResult(string personaId) =>
         Results.Json(new JsonObject { ["error"] = $"Unknown or disabled persona: '{personaId}'" }, statusCode: 404);
