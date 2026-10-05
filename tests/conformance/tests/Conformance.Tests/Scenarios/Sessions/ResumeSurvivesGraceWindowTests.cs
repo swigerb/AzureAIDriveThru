@@ -53,6 +53,7 @@ public sealed class ResumeSurvivesGraceWindowTests(ResumeMarginConformanceFixtur
     private static readonly TimeSpan PastGraceMargin = TimeSpan.FromMilliseconds(6000);
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Resumed_session_survives_past_the_original_detachs_grace_window_with_a_working_tool_round_trip() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;

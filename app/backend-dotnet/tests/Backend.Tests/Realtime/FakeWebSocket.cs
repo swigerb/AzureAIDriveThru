@@ -10,11 +10,15 @@ namespace Backend.Tests.Realtime;
 internal sealed class FakeWebSocket : WebSocket
 {
     private readonly Queue<(byte[] Data, bool EndOfMessage, WebSocketMessageType MessageType)> _chunks;
+    private readonly bool _hangCloseOutputUntilCancelled;
     private WebSocketState _state = WebSocketState.Open;
 
-    public FakeWebSocket(IEnumerable<(byte[] Data, bool EndOfMessage, WebSocketMessageType MessageType)> chunks)
+    public FakeWebSocket(
+        IEnumerable<(byte[] Data, bool EndOfMessage, WebSocketMessageType MessageType)> chunks,
+        bool hangCloseOutputUntilCancelled = false)
     {
         _chunks = new(chunks);
+        _hangCloseOutputUntilCancelled = hangCloseOutputUntilCancelled;
     }
 
     public WebSocketCloseStatus? ClosedWithStatus { get; private set; }
@@ -41,6 +45,17 @@ internal sealed class FakeWebSocket : WebSocket
     public override Task CloseOutputAsync(WebSocketCloseStatus closeStatus, string? statusDescription, CancellationToken cancellationToken)
     {
         CloseOutputCalled = true;
+        // Round-2 review of #244 (issue 1): simulates a non-draining peer whose outbound send
+        // genuinely blocks -- the whole point of CloseSupersededStaleConnectionAsyncTests is to
+        // prove the caller survives this deterministically (bounded by its own timeout token)
+        // rather than hanging forever, the exact hazard Rick's probe found against a real
+        // half-open transport. Task.Delay(Timeout.Infinite, ct) never completes on its own; it
+        // only ever throws once cancellationToken fires, matching what a cancelled
+        // WebSocket.CloseOutputAsync does against a stuck write.
+        if (_hangCloseOutputUntilCancelled)
+        {
+            return Task.Delay(Timeout.Infinite, cancellationToken);
+        }
         ClosedWithStatus = closeStatus;
         ClosedWithDescription = statusDescription;
         _state = WebSocketState.CloseSent;
@@ -63,6 +78,15 @@ internal sealed class FakeWebSocket : WebSocket
     }
 
     public List<(byte[] Data, WebSocketMessageType MessageType, bool EndOfMessage)> SentMessages { get; } = [];
+
+    /// <summary>#244 round-2 re-review (CloseSupersededStaleConnectionAsync's settle-wait fix):
+    /// simulates the real-world moment a healthy peer's own answering close frame is processed by
+    /// the connection's already-pending <c>ReceiveAsync</c> -- i.e. the socket settling out of
+    /// <see cref="WebSocketState.CloseSent"/> on its own, without anyone cancelling anything. Tests
+    /// call this (typically from a short-lived background <c>Task.Run</c>) to prove the settle-wait
+    /// notices promptly and does not simply wait out its full timeout budget for a peer that was
+    /// never actually stuck.</summary>
+    public void SimulatePeerAnsweredClose() => _state = WebSocketState.Closed;
 
     /// <summary>Issue #252 (Rick's review): an optional async hook invoked -- and fully awaited --
     /// from inside <see cref="SendAsync"/> before it returns, so a test can simulate "the upstream

@@ -9,6 +9,7 @@
     <PackageReference Include="YamlDotNet" />
     <PackageReference Include="JsonSchema.Net" />
     <PackageReference Include="Azure.Identity" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
   </ItemGroup>
 
   <ItemGroup>

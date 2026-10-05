@@ -1,15 +1,17 @@
+using Conformance.Harness;
 using Xunit;
 
 namespace Conformance.Tests.Scenarios.Auth;
 
 /// <summary>
-/// Issue #143/ADR-002, persona-architecture.md 18.11 rows 1 to 8 (including 6b) on
+/// Issue #143/ADR-002, persona-architecture.md 18.11 rows 1 to 8/17 to 19 (including 6b) on
 /// <c>/realtime</c> -- the realtime half of <c>AuthRowRestTests.cs</c>'s REST coverage, sharing
 /// the exact same <see cref="AuthRowTokenCase.All"/> case table so a row's token shape and its
 /// expected outcome can never drift between the two routes.
 /// </summary>
 [Collection(ConformanceCollection.Name)]
 [Trait("Dotnet", "ready")]
+[AuthRowCapabilityGated]
 public sealed class AuthRowRealtimeTokenTests(ConformanceFixture fixture)
 {
     public static TheoryData<int> CaseIndexes()

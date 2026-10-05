@@ -48,16 +48,17 @@ public sealed class AuthRowCapabilityTests
     }
 
     /// <summary>
-    /// Issue #143's own critical acceptance criterion, pinned as a unit test: while
-    /// <see cref="AuthRowCapability.DotnetEnforcesAuth"/> is still off, every dotnet-leg row must
-    /// skip. This test itself will start failing the moment #147 flips that switch to true -- at
-    /// which point it should be updated (or removed) to match.
+    /// Issue #147's own critical acceptance criterion, pinned as a unit test: now that
+    /// <see cref="AuthRowCapability.DotnetEnforcesAuth"/> is on (app/backend-dotnet enforces
+    /// ADR-002 auth end to end), every dotnet-leg row must run (not skip) -- mirroring
+    /// <see cref="Enforces_is_true_for_python_now_that_its_switch_is_on"/>. Supersedes the old
+    /// "still off" pin this doc comment used to describe.
     /// </summary>
     [Fact]
-    public void Enforces_is_false_for_dotnet_while_its_switch_is_still_off()
+    public void Enforces_is_true_for_dotnet_now_that_its_switch_is_on()
     {
-        Assert.False(AuthRowCapability.DotnetEnforcesAuth);
-        Assert.False(AuthRowCapability.Enforces("dotnet"));
+        Assert.True(AuthRowCapability.DotnetEnforcesAuth);
+        Assert.True(AuthRowCapability.Enforces("dotnet"));
     }
 
     /// <summary>

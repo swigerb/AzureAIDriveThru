@@ -55,6 +55,7 @@ public sealed class ResumeMarginRegressionTests(ResumeMarginConformanceFixture f
     private static readonly TimeSpan SimulatedSlowPreDetachSetup = TimeSpan.FromMilliseconds(1500);
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Resumed_session_survives_a_slow_pre_detach_setup_with_real_margin() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
