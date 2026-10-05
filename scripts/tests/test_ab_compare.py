@@ -8,7 +8,10 @@ already checked into ``personas/`` (read-only). Nothing here opens a socket or s
 """
 from __future__ import annotations
 
+import asyncio
+import base64
 import json
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -152,6 +155,35 @@ class FakeWebSocket:
         return False
 
 
+class GatedFakeWebSocket(FakeWebSocket):
+    """Releases scripted frames the way the real server does: batch 0 on connect, batch 1 (the
+    greeting) after the client's session.update, and each later batch only once the guest's
+    speech is followed by trailing silence (server VAD end of turn)."""
+
+    def __init__(self, batches: list[list[dict]]):
+        super().__init__(list(batches[0]))
+        self._pending = [list(b) for b in batches[1:]]
+        self._in_speech = False
+
+    async def send_json(self, payload: dict) -> None:
+        await super().send_json(payload)
+        if payload["type"] == "session.update" and self._pending:
+            self._frames += self._pending.pop(0)
+        elif payload["type"] == "input_audio_buffer.append":
+            silent = set(base64.b64decode(payload["audio"])) <= {0}
+            if not silent:
+                self._in_speech = True
+            elif self._in_speech and self._pending:
+                self._in_speech = False
+                self._frames += self._pending.pop(0)
+
+    async def receive(self):
+        if not self._frames:
+            if self._pending:
+                await asyncio.sleep(10)  # nothing until the client speaks; caller's wait_for times out
+            return FakeMessage(type=FakeWSMsgType.CLOSED, data=None)
+        return await super().receive()
+
 class FakeHttp:
     def __init__(self, session_token: str = "sess-tok"):
         self._session_token = session_token
@@ -212,15 +244,16 @@ class RunOrderTests(unittest.IsolatedAsyncioTestCase):
             ],
             "finalTotal": 14.21,
         })
-        frames = [{"type": "extension.metadata"}]
-        for _ in abc.load_guest_lines(PERSONA_ID):
-            frames += [
+        batches = [[{"type": "extension.session_metadata"}],
+                   [{"type": "response.created"}, {"type": "response.done"}]]  # greeting
+        for _ in abc.load_guest_clip_paths(PERSONA_ID):
+            batches.append([
+                {"type": "response.created"},
                 {"type": "response.output_audio.delta", "delta": "aa"},
                 {"type": "extension.middle_tier_tool_response", "tool_name": "update_order", "tool_result": ticket_json},
                 {"type": "response.done"},
-            ]
-        fake_ws = FakeWebSocket(frames)
-
+            ])
+        fake_ws = GatedFakeWebSocket(batches)
         def fake_ws_connect(url):
             return fake_ws
 
@@ -228,22 +261,25 @@ class RunOrderTests(unittest.IsolatedAsyncioTestCase):
             FakeHttp(), fake_ws_connect,
             backend="python", base_url="https://python.example", persona_id=PERSONA_ID,
             model_id="gpt-realtime-2.1-mini", rep=0, access_token="entra-tok", timeout_s=2.0,
+            clip_loader=lambda _path: b"\x01\x00" * 4800,
         )
 
         self.assertIsNone(result.error)
         self.assertIsNotNone(result.cold_start_s)
-        self.assertEqual(len(result.turns), len(abc.load_guest_lines(PERSONA_ID)))
+        self.assertEqual(len(result.turns), len(abc.load_guest_clip_paths(PERSONA_ID)))
         self.assertTrue(all(t.first_audio_latency_s is not None for t in result.turns))
         self.assertEqual(result.ticket_total, 14.21)
         self.assertEqual(result.ticket_items, [abc.ExpectedItem(item="Test Combo Item", size="Standard", quantity=2)])
 
-        # Sent exactly one conversation.item.create + response.create pair per guest line.
+        # Browser-faithful: the frontend's session.update, then streamed audio -- never client text turns.
         sent_types = [m["type"] for m in fake_ws.sent]
-        self.assertEqual(sent_types.count("conversation.item.create"), len(abc.load_guest_lines(PERSONA_ID)))
-        self.assertEqual(sent_types.count("response.create"), len(abc.load_guest_lines(PERSONA_ID)))
+        self.assertEqual(sent_types[0], "session.update")
+        self.assertIn("input_audio_buffer.append", sent_types)
+        self.assertNotIn("conversation.item.create", sent_types)
+        self.assertNotIn("response.create", sent_types)
 
     async def test_run_order_records_error_without_raising(self):
-        fake_ws = FakeWebSocket([])  # no extension.metadata ever arrives -> timeout
+        fake_ws = FakeWebSocket([])  # no extension.session_metadata ever arrives -> timeout
 
         def fake_ws_connect(url):
             return fake_ws
@@ -281,37 +317,24 @@ class RunOrderTests(unittest.IsolatedAsyncioTestCase):
 # ── Correctness comparison (OrderRunResult.tool_correct) ────────────────────
 
 class ToolCorrectnessTests(unittest.TestCase):
-    def test_matching_ticket_is_correct(self):
-        expected = abc.load_expected_ticket(PERSONA_ID)
-        result = abc.OrderRunResult(
-            backend="python", persona_id=PERSONA_ID, model_id="gpt-realtime-2.1-mini", rep=0,
-            cold_start_s=0.1, ticket_items=list(expected.items), ticket_total=expected.total,
-        )
-        self.assertTrue(result.tool_correct)
+    def _r(self, **kw):
+        base = dict(backend="python", persona_id=PERSONA_ID, model_id="gpt-realtime-2.1-mini", rep=0, cold_start_s=0.1)
+        base.update(kw)
+        return abc.OrderRunResult(**base)
 
-    def test_wrong_total_is_incorrect(self):
-        expected = abc.load_expected_ticket(PERSONA_ID)
-        result = abc.OrderRunResult(
-            backend="python", persona_id=PERSONA_ID, model_id="gpt-realtime-2.1-mini", rep=0,
-            cold_start_s=0.1, ticket_items=list(expected.items), ticket_total=expected.total + 5.00,
-        )
-        self.assertFalse(result.tool_correct)
+    def test_priced_ticket_without_error_is_correct(self):
+        item = abc.ExpectedItem(item="Test Item", size="Standard", quantity=1)
+        self.assertTrue(self._r(ticket_items=[item], ticket_total=4.29).tool_correct)
 
-    def test_missing_item_is_incorrect(self):
-        expected = abc.load_expected_ticket(PERSONA_ID)
-        result = abc.OrderRunResult(
-            backend="python", persona_id=PERSONA_ID, model_id="gpt-realtime-2.1-mini", rep=0,
-            cold_start_s=0.1, ticket_items=list(expected.items[:-1]), ticket_total=expected.total,
-        )
-        self.assertFalse(result.tool_correct)
+    def test_empty_ticket_is_incorrect(self):
+        self.assertFalse(self._r(ticket_items=[], ticket_total=0.0).tool_correct)
+
+    def test_missing_total_is_incorrect(self):
+        item = abc.ExpectedItem(item="Test Item", size="Standard", quantity=1)
+        self.assertFalse(self._r(ticket_items=[item], ticket_total=None).tool_correct)
 
     def test_run_with_error_is_never_correct(self):
-        result = abc.OrderRunResult(
-            backend="python", persona_id=PERSONA_ID, model_id="gpt-realtime-2.1-mini", rep=0,
-            cold_start_s=None, error="boom",
-        )
-        self.assertFalse(result.tool_correct)
-
+        self.assertFalse(self._r(error="boom").tool_correct)
 
 # ── Metrics parsing (az monitor metrics list -o json) ───────────────────────
 
@@ -344,32 +367,40 @@ class MetricsParsingTests(unittest.TestCase):
             "2026-01-01T00:00:00Z", "2026-01-01T01:00:00Z", runner=fake_runner,
         )
         self.assertEqual(len(calls), 1)
-        self.assertIn("az", calls[0])
+        self.assertTrue(os.path.basename(calls[0][0]).lower().startswith("az"))
         self.assertIsNone(metrics.avg_cpu_nanocores)
 
 
 # ── Report building / rendering ──────────────────────────────────────────
 
 class ReportTests(unittest.TestCase):
-    def _result(self, backend, total, error=None):
+    def _result(self, backend, total, error=None, items=None):
         return abc.OrderRunResult(
             backend=backend, persona_id=PERSONA_ID, model_id="gpt-realtime-2.1-mini", rep=0,
             cold_start_s=0.5,
             turns=[abc.TurnResult(guest_text="hi", first_audio_latency_s=0.3, total_turn_time_s=1.2)],
-            ticket_items=list(abc.load_expected_ticket(PERSONA_ID).items),
+            ticket_items=items if items is not None else [abc.ExpectedItem(item="Test Item", size="Standard", quantity=1)],
             ticket_total=total, error=error,
         )
 
     def test_build_report_groups_by_persona_backend_model(self):
-        expected_total = abc.load_expected_ticket(PERSONA_ID).total
-        results = [self._result("python", expected_total), self._result("dotnet", expected_total + 1)]
+        results = [self._result("python", 4.29), self._result("dotnet", 4.29, error="boom")]
         report = abc.build_report(results)
         self.assertEqual(len(report["latency"]), 2)
         self.assertEqual(len(report["correctness"]), 2)
         by_backend = {row["backend"]: row for row in report["correctness"]}
         self.assertEqual(by_backend["python"]["correct"], 1)
         self.assertEqual(by_backend["dotnet"]["correct"], 0)
+        self.assertEqual(by_backend["dotnet"]["error_messages"], ["boom"])
 
+    def test_parity_matches_identical_tickets_across_backends(self):
+        report = abc.build_report([self._result("python", 4.29), self._result("dotnet", 4.29)])
+        self.assertEqual(report["parity"], [{"persona": PERSONA_ID, "model": "gpt-realtime-2.1-mini", "match": True,
+                                             "ticket_total": 4.29, "python_tickets": 1, "dotnet_tickets": 1}])
+
+    def test_parity_flags_different_tickets(self):
+        report = abc.build_report([self._result("python", 4.29), self._result("dotnet", 5.29)])
+        self.assertFalse(report["parity"][0]["match"])
     def test_render_markdown_includes_both_tables(self):
         expected_total = abc.load_expected_ticket(PERSONA_ID).total
         report = abc.build_report([self._result("python", expected_total)])

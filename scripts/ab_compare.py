@@ -68,8 +68,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import json
 import os
+import shutil
 import statistics
 import subprocess
 import sys
@@ -87,10 +89,21 @@ PERSONAS_DIR = REPO_ROOT / "personas"
 _AUDIO_DELTA_TYPES = frozenset({"response.output_audio.delta", "response.audio.delta"})
 _RESPONSE_DONE_TYPE = "response.done"
 _TOOL_RESPONSE_TYPE = "extension.middle_tier_tool_response"
-_METADATA_TYPE = "extension.metadata"
+_METADATA_TYPE = "extension.session_metadata"
 
 DEFAULT_MODELS = ("gpt-realtime-2.1-mini", "gpt-realtime-2.1")
 DEFAULT_TIMEOUT_S = 30.0
+_SAMPLE_RATE = 24000
+_CHUNK_SECONDS = 0.1
+_CHUNK_BYTES = int(_SAMPLE_RATE * _CHUNK_SECONDS) * 2
+_TRAILING_SILENCE_S = 1.2
+_TURN_SETTLE_S = float(os.environ.get("AB_COMPARE_TURN_SETTLE_S", "2.5"))
+# Mirrors useRealtime.tsx's session.update (server VAD settings).
+_FRONTEND_SESSION_UPDATE = {
+    "type": "session.update",
+    "session": {"turn_detection": {"type": "server_vad", "threshold": 0.7,
+                                   "prefix_padding_ms": 300, "silence_duration_ms": 500}},
+}
 
 
 # ── Errors ───────────────────────────────────────────────────────────────
@@ -117,6 +130,33 @@ def load_guest_lines(persona_id: str) -> list[str]:
     path = PERSONAS_DIR / persona_id / "assets" / "demo" / "guestScript.json"
     data = json.loads(path.read_text(encoding="utf-8"))
     return [line["text"] for line in data.get("lines", []) if line.get("text")]
+
+
+def _guest_script(persona_id: str) -> dict:
+    path = PERSONAS_DIR / persona_id / "assets" / "demo" / "guestScript.json"
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def load_guest_clip_paths(persona_id: str) -> list[tuple[str, Path]]:
+    """(text, audio path) for every scripted guest line that has a recorded clip."""
+    assets = PERSONAS_DIR / persona_id / "assets"
+    return [(line["text"], assets / line["audio"]) for line in _guest_script(persona_id).get("lines", [])
+            if line.get("text") and line.get("audio")]
+
+
+def load_menu_mode(persona_id: str) -> str | None:
+    """The Demo Mode script's own menu mode (e.g. a daypart), sent as ``?mode=`` like the browser."""
+    return _guest_script(persona_id).get("menuMode")
+
+
+def load_guest_clip_pcm(path: Path) -> bytes:
+    """Decodes a recorded guest clip to PCM16 mono 24 kHz (the realtime input format) with ffmpeg."""
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        raise ABCompareError("ffmpeg is required to stream the recorded guest clips")
+    out = subprocess.run([ffmpeg, "-v", "error", "-i", str(path), "-f", "s16le", "-ac", "1",
+                          "-ar", str(_SAMPLE_RATE), "-"], capture_output=True, check=True)
+    return out.stdout
 
 
 @dataclass(frozen=True)
@@ -147,6 +187,12 @@ def load_expected_ticket(persona_id: str) -> ExpectedTicket:
 
 # ── Auth (az CLI, headless MSAL -- Setup-EntraAuth.ps1's own path) ──────────
 
+def _az() -> str:
+    """Absolute path to the az CLI. On Windows it is `az.cmd`, which subprocess can't run by
+    bare name without a shell, so resolve it explicitly (same issue smoke_realtime.py handles)."""
+    return shutil.which("az") or "az"
+
+
 def get_entra_token(client_id: str, *, runner=subprocess.run) -> str:
     """A delegated Entra access token for ``api://<client_id>/access_as_user``, from
     ``az account get-access-token`` (the pre-authorized Azure CLI client, 18.1/18.11).
@@ -154,7 +200,7 @@ def get_entra_token(client_id: str, *, runner=subprocess.run) -> str:
     scope = f"api://{client_id}/access_as_user"
     try:
         result = runner(
-            ["az", "account", "get-access-token", "--scope", scope, "-o", "json"],
+            [_az(), "account", "get-access-token", "--scope", scope, "-o", "json"],
             capture_output=True, text=True, check=True,
         )
     except FileNotFoundError as exc:
@@ -181,12 +227,14 @@ async def fetch_session_token(http, base_url: str, access_token: str) -> str:
     return token
 
 
-def realtime_url(base_url: str, *, persona_id: str, model_id: str, session_token: str, access_token: str) -> str:
+def realtime_url(base_url: str, *, persona_id: str, model_id: str, session_token: str, access_token: str,
+                 menu_mode: str | None = None) -> str:
     """Mirrors ``useRealtime.tsx``'s ``getSocketUrl``: the same four query params, in Entra mode."""
     ws_base = base_url.replace("https://", "wss://").replace("http://", "ws://")
     return (
         f"{ws_base}/realtime?persona={persona_id}&model={model_id}"
         f"&token={session_token}&access_token={access_token}"
+        + (f"&mode={menu_mode}" if menu_mode else "")
     )
 
 
@@ -213,14 +261,14 @@ class OrderRunResult:
 
     @property
     def tool_correct(self) -> bool:
-        if self.error is not None or self.ticket_total is None:
-            return False
-        expected = load_expected_ticket(self.persona_id)
-        same_items = sorted((i.item, i.size, i.quantity) for i in self.ticket_items) == sorted(
-            (i.item, i.size, i.quantity) for i in expected.items
-        )
-        same_total = abs(self.ticket_total - expected.total) < 0.01
-        return same_items and same_total
+        """The run produced a priced ticket with no error. Cross-backend agreement (the real A/B
+        correctness bar) is computed in `build_report` by comparing Python vs C# tickets."""
+        return self.error is None and self.ticket_total is not None and bool(self.ticket_items)
+
+    def ticket_key(self) -> tuple | None:
+        if self.ticket_total is None:
+            return None
+        return (tuple(sorted((i.item, i.size, i.quantity) for i in self.ticket_items)), round(self.ticket_total, 2))
 
 
 def _parse_ticket(tool_result: Any) -> tuple[list[ExpectedItem], float] | None:
@@ -258,7 +306,7 @@ async def _wait_for(ws, predicate, timeout_s: float):
             return None
         try:
             msg = await asyncio.wait_for(ws.receive(), timeout=remaining)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return None
         if msg.type != aiohttp.WSMsgType.TEXT:
             if msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
@@ -280,17 +328,26 @@ async def run_order(
     rep: int,
     access_token: str,
     timeout_s: float = DEFAULT_TIMEOUT_S,
+    clip_loader=None,
 ) -> OrderRunResult:
-    """Runs *this persona*'s scripted guest order once against *base_url*, returning the
-    measured per-turn and per-order results. ``ws_connect`` is an injectable
-    ``aiohttp.ClientSession.ws_connect``-shaped callable so tests never open a real socket."""
+    """Runs *this persona*'s Demo Mode order once against *base_url*, exactly the way a browser
+    does: the frontend's own ``session.update`` (server VAD), wait for the greeting, then stream
+    each recorded guest clip as ``input_audio_buffer.append`` (PCM16 24 kHz) followed by
+    trailing silence so server VAD ends the turn. Production rejects client text turns
+    (``conversation.item.create`` is not in rtmt.py's ``_CLIENT_ALLOWED_TYPES``), so audio is the
+    only faithful path. First-audio latency is measured from the end of the guest's speech (last
+    speech chunk sent) to the first assistant audio delta; a turn ends once a ``response.done``
+    is followed by ``_TURN_SETTLE_S`` with no new ``response.created`` (tool-call rounds chain
+    several responses per guest turn). ``ws_connect``/``clip_loader`` are injectable for tests."""
     result = OrderRunResult(backend=backend, persona_id=persona_id, model_id=model_id, rep=rep, cold_start_s=None)
+    loader = clip_loader or load_guest_clip_pcm
     try:
-        lines = load_guest_lines(persona_id)
+        clips = load_guest_clip_paths(persona_id)
+        menu_mode = load_menu_mode(persona_id)
         session_token = await fetch_session_token(http, base_url, access_token)
         url = realtime_url(
             base_url, persona_id=persona_id, model_id=model_id,
-            session_token=session_token, access_token=access_token,
+            session_token=session_token, access_token=access_token, menu_mode=menu_mode,
         )
         connect_start = time.monotonic()
         async with ws_connect(url) as ws:
@@ -298,24 +355,22 @@ async def run_order(
             result.cold_start_s = time.monotonic() - connect_start
             if ready is None:
                 raise ABCompareError(f"{backend}: no {_METADATA_TYPE} frame before timeout")
+            await ws.send_json(_FRONTEND_SESSION_UPDATE)
 
             last_ticket: tuple[list[ExpectedItem], float] | None = None
-            for text in lines:
-                await ws.send_json({
-                    "type": "conversation.item.create",
-                    "item": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": text}]},
-                })
-                turn_start = time.monotonic()
-                await ws.send_json({"type": "response.create"})
 
-                first_audio_s: float | None = None
-                done = False
+            async def settle(turn_start: float | None) -> tuple[float | None, bool]:
+                nonlocal last_ticket
+                first_audio: float | None = None
+                saw_done = False
                 deadline = time.monotonic() + timeout_s
-                while not done and time.monotonic() < deadline:
-                    remaining = deadline - time.monotonic()
+                while time.monotonic() < deadline:
+                    wait = _TURN_SETTLE_S if saw_done else deadline - time.monotonic()
                     try:
-                        msg = await asyncio.wait_for(ws.receive(), timeout=max(remaining, 0))
-                    except asyncio.TimeoutError:
+                        msg = await asyncio.wait_for(ws.receive(), timeout=max(wait, 0.05))
+                    except TimeoutError:
+                        if saw_done:
+                            return first_audio, True
                         break
                     import aiohttp
                     if msg.type != aiohttp.WSMsgType.TEXT:
@@ -324,18 +379,38 @@ async def run_order(
                         continue
                     frame = json.loads(msg.data)
                     frame_type = frame.get("type")
-                    if frame_type in _AUDIO_DELTA_TYPES and first_audio_s is None:
-                        first_audio_s = time.monotonic() - turn_start
+                    if frame_type in _AUDIO_DELTA_TYPES and first_audio is None and turn_start is not None:
+                        first_audio = time.monotonic() - turn_start
                     elif frame_type == _TOOL_RESPONSE_TYPE:
                         parsed = _parse_ticket(frame.get("tool_result"))
                         if parsed is not None:
                             last_ticket = parsed
                     elif frame_type == _RESPONSE_DONE_TYPE:
-                        done = True
+                        saw_done = True
+                    elif frame_type == "response.created":
+                        saw_done = False
+                return first_audio, saw_done
 
-                total_turn_s = time.monotonic() - turn_start
+            _, greeted = await settle(None)
+            if not greeted:
+                raise ABCompareError(f"{backend}: greeting never completed")
+
+            for text, clip in clips:
+                pcm = loader(clip)
+                for offset in range(0, len(pcm), _CHUNK_BYTES):
+                    await ws.send_json({"type": "input_audio_buffer.append",
+                                       "audio": base64.b64encode(pcm[offset:offset + _CHUNK_BYTES]).decode("ascii")})
+                    await asyncio.sleep(_CHUNK_SECONDS)
+                turn_start = time.monotonic()
+                silence = b"\x00" * _CHUNK_BYTES
+                for _ in range(int(_TRAILING_SILENCE_S / _CHUNK_SECONDS)):
+                    await ws.send_json({"type": "input_audio_buffer.append",
+                                       "audio": base64.b64encode(silence).decode("ascii")})
+                    await asyncio.sleep(_CHUNK_SECONDS)
+                first_audio_s, _ = await settle(turn_start)
                 result.turns.append(TurnResult(
-                    guest_text=text, first_audio_latency_s=first_audio_s, total_turn_time_s=total_turn_s,
+                    guest_text=text, first_audio_latency_s=first_audio_s,
+                    total_turn_time_s=time.monotonic() - turn_start,
                 ))
 
             if last_ticket is not None:
@@ -343,7 +418,6 @@ async def run_order(
     except Exception as exc:  # noqa: BLE001 -- recorded per-run, never crashes the whole sweep
         result.error = f"{type(exc).__name__}: {exc}"
     return result
-
 
 # ── Azure Container App CPU/memory (az monitor metrics list) ────────────────
 
@@ -361,7 +435,7 @@ def fetch_container_app_metrics(
     try:
         result = runner(
             [
-                "az", "monitor", "metrics", "list", "--resource", resource_id,
+                _az(), "monitor", "metrics", "list", "--resource", resource_id,
                 "--metric", "UsageNanoCores,WorkingSetBytes",
                 "--aggregation", "Average",
                 "--start-time", start_iso, "--end-time", end_iso,
@@ -438,10 +512,22 @@ def build_report(
             "reps": len(group),
             "correct": sum(1 for r in group if r.tool_correct),
             "errors": sum(1 for r in group if r.error is not None),
+            "error_messages": sorted({r.error for r in group if r.error is not None}),
             "cold_start_p50_s": _percentile(cold_starts, 50),
         })
 
+    parity = []
+    for persona_id, model_id in sorted({(r.persona_id, r.model_id) for r in results}):
+        keys = {b: {r.ticket_key() for r in results if r.persona_id == persona_id and r.model_id == model_id and r.backend == b and r.tool_correct}
+                for b in ("python", "dotnet")}
+        common = keys["python"] & keys["dotnet"]
+        sample = next(iter(common), None)
+        parity.append({"persona": persona_id, "model": model_id, "match": bool(common),
+                       "ticket_total": sample[1] if sample else None,
+                       "python_tickets": len(keys["python"]), "dotnet_tickets": len(keys["dotnet"])})
+
     report: dict[str, Any] = {
+        "parity": parity,
         "latency": latency_table,
         "correctness": correctness_matrix,
     }
@@ -471,6 +557,15 @@ def render_markdown(report: dict) -> str:
             f"| {fmt(row['first_audio_p50'])} | {fmt(row['first_audio_p90'])} "
             f"| {fmt(row['total_turn_p50'])} | {fmt(row['total_turn_p90'])} |"
         )
+    lines.append("")
+
+    lines.append("## Python vs C# ticket parity (same spoken order)")
+    lines.append("")
+    lines.append("| Persona | Model | Identical ticket | Total |")
+    lines.append("| --- | --- | --- | --- |")
+    for row in report.get("parity", []):
+        total = f"${row['ticket_total']:.2f}" if row["ticket_total"] is not None else "n/a"
+        lines.append(f"| {row['persona']} | {row['model']} | {'yes' if row['match'] else 'NO'} | {total} |")
     lines.append("")
 
     lines.append("## Correctness matrix")
@@ -585,7 +680,8 @@ def main(argv: list[str] | None = None) -> int:
     out_path.with_suffix(".json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     out_path.with_suffix(".md").write_text(render_markdown(report), encoding="utf-8")
 
-    any_bad = any(r.error is not None or not r.tool_correct for r in results)
+    any_bad = any(r.error is not None or not r.tool_correct for r in results) or any(
+        not row["match"] for row in report.get("parity", []))
     return 1 if any_bad else 0
 
 
