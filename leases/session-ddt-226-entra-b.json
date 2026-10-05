@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "leaseKey": "session-ddt-226-entra-b",
+  "sessionId": "ddt-226-entra-b",
+  "repository": "swigerb/AzureAIDriveThru",
+  "issueNumber": null,
+  "dispatchSource": "local-cli",
+  "route": "aca-job",
+  "executionMode": "aca-job",
+  "state": "claimed",
+  "attempts": 1,
+  "startedAt": "2026-10-05T00:46:18.795Z",
+  "lastHeartbeatAt": "2026-10-05T00:46:18.795Z",
+  "updatedAt": "2026-10-05T00:46:18.795Z",
+  "terminalReason": null,
+  "executionRef": null
+}
