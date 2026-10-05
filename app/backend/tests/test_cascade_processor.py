@@ -54,11 +54,12 @@ from cascade_processor import (
     CascadeRateLimitExhausted,
     _CascadeSessionState,
     _pcm16_to_wav_bytes,
+    _resolve_persona_voice,
     _tool_definitions,
     _TurnDetector,
 )
 from rate_limit import RATE_LIMITED_EVENT, RateLimitSettings
-from rtmt import Tool, ToolResult, ToolResultDirection
+from rtmt import _DEFAULT_ALLOWED_VOICES, Tool, ToolResult, ToolResultDirection
 
 
 def _make_mock_ws():
@@ -566,6 +567,60 @@ class BargeInEndToEndTests(unittest.IsolatedAsyncioTestCase):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Rick's PR #253 review item 1: `extension.set_voice` must go through the SAME
+# `_sanitize_voice` gate realtime's own handler (rtmt.py) already applies -- only a value
+# present in `self.allowed_voices` may ever be adopted into `state.voice`/the session store.
+# Before this fix, `_handle_client_message` accepted ANY truthy value (an unrecognized
+# string, a dict, an int, ...) straight through, silently breaking TTS on the next turn
+# instead of being dropped with a warning like realtime does. Mutation-test seam: reverting
+# the handler back to `if voice: state.voice = voice` makes
+# `test_an_unknown_voice_string_is_dropped_not_adopted` and
+# `test_a_non_string_voice_is_dropped_not_adopted` fail (state.voice/set_voice would then
+# reflect the bad value), while `test_a_valid_allowed_voice_is_adopted` keeps passing either
+# way -- proving the gate rejects bad input without breaking the legitimate case.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class HandleClientMessageSetVoiceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_an_unknown_voice_string_is_dropped_not_adopted(self):
+        processor = _make_processor({})
+        ws = _make_mock_ws()
+        state = _CascadeSessionState(session_id="s1", persona_id="p", deployment="d", voice="marin")
+        detector = _TurnDetector(threshold=0.5, silence_duration_ms=200, sample_rate=24000)
+
+        await processor._handle_client_message(
+            ws, "s1", state, detector, {"type": "extension.set_voice", "voice": "not-a-real-voice"}, None)
+
+        self.assertEqual(state.voice, "marin")
+        processor._sessions.set_voice.assert_not_called()
+
+    async def test_a_non_string_voice_is_dropped_not_adopted(self):
+        processor = _make_processor({})
+        ws = _make_mock_ws()
+        state = _CascadeSessionState(session_id="s1", persona_id="p", deployment="d", voice="marin")
+        detector = _TurnDetector(threshold=0.5, silence_duration_ms=200, sample_rate=24000)
+
+        for bad_voice in ({"x": 1}, 42, True, ["coral"]):
+            with self.subTest(bad_voice=bad_voice):
+                await processor._handle_client_message(
+                    ws, "s1", state, detector, {"type": "extension.set_voice", "voice": bad_voice}, None)
+
+                self.assertEqual(state.voice, "marin")
+        processor._sessions.set_voice.assert_not_called()
+
+    async def test_a_valid_allowed_voice_is_adopted(self):
+        processor = _make_processor({})
+        ws = _make_mock_ws()
+        state = _CascadeSessionState(session_id="s1", persona_id="p", deployment="d", voice="marin")
+        detector = _TurnDetector(threshold=0.5, silence_duration_ms=200, sample_rate=24000)
+
+        await processor._handle_client_message(
+            ws, "s1", state, detector, {"type": "extension.set_voice", "voice": "coral"}, None)
+
+        self.assertEqual(state.voice, "coral")
+        processor._sessions.set_voice.assert_called_once_with("s1", "coral")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Rick's #118 review item 5: a 429 from chat/STT/TTS goes through the same
 # extension.rate_limited notice path as the realtime pipeline.
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -705,6 +760,104 @@ class ProcessTurnRateLimitTests(unittest.IsolatedAsyncioTestCase):
             await processor._run_turn_and_speak(ws, "s1", state)
 
         self.assertEqual(_sent_types(ws), ["response.created", RATE_LIMITED_EVENT, "response.done"])
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# #248: per-persona default voice (issue #165-sibling parity gap vs rtmt.py)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _fake_persona(voice_default, persona_id: str = "p"):
+    return SimpleNamespace(id=persona_id, manifest=SimpleNamespace(voice=SimpleNamespace(default=voice_default)))
+
+
+class ResolvePersonaVoiceTests(unittest.TestCase):
+    """`_resolve_persona_voice` is the exact port of `RTMiddleTier._forward_messages`'s own
+    `persona_voice = _sanitize_voice(bound_persona.manifest.voice.default, self.allowed_voices);
+    if persona_voice is not None: voice = persona_voice` -- see that function's own doc comment
+    for why `CascadeProcessor` never has a "persona is unbound" branch to port."""
+
+    def test_personas_own_voice_is_used_when_it_differs_from_the_deployment_default(self):
+        persona = _fake_persona("cedar")
+        voice = _resolve_persona_voice(persona, default_voice="marin", allowed_voices=_DEFAULT_ALLOWED_VOICES)
+        self.assertEqual(voice, "cedar")
+
+    def test_falls_back_to_the_deployment_default_when_the_personas_voice_is_not_allowed(self):
+        """Mutation-test seam: a persona whose configured voice was removed from
+        `model.allowed_voices` (or never existed) must not reach TTS with an invalid voice --
+        it must fall back to the deployment-wide default exactly like realtime's own
+        `_sanitize_voice` callers everywhere else."""
+        persona = _fake_persona("not-a-real-voice")
+        voice = _resolve_persona_voice(persona, default_voice="marin", allowed_voices=_DEFAULT_ALLOWED_VOICES)
+        self.assertEqual(voice, "marin")
+
+    def test_falls_back_to_the_deployment_default_when_the_persona_has_no_voice_configured(self):
+        persona = _fake_persona(None)
+        voice = _resolve_persona_voice(persona, default_voice="marin", allowed_voices=_DEFAULT_ALLOWED_VOICES)
+        self.assertEqual(voice, "marin")
+
+    def test_falls_back_to_the_deployment_default_when_the_personas_voice_matches_it_anyway(self):
+        """The common real-pack case today (every shipped persona pack currently declares "marin") --
+        proven separately so a regression that always returns the persona's own value (even
+        when it happens to equal the default) is indistinguishable from this row alone; the
+        "differs" test above is the one that actually proves per-persona lookup is happening."""
+        persona = _fake_persona("marin")
+        voice = _resolve_persona_voice(persona, default_voice="marin", allowed_voices=_DEFAULT_ALLOWED_VOICES)
+        self.assertEqual(voice, "marin")
+
+
+class RunSessionVoiceTests(unittest.IsolatedAsyncioTestCase):
+    """Proves `CascadeProcessor._run_session` actually calls `_resolve_persona_voice` (not just
+    that the helper itself is correct) and seeds `_CascadeSessionState.voice` with its result --
+    the greeting's `_speak` call (already covered by `SendGreetingTests`) reads `state.voice`, so
+    a regression that stops wiring the two together would still pass every other test in this
+    file (they all construct `_CascadeSessionState` directly with an explicit `voice=` already)."""
+
+    async def test_run_session_seeds_state_voice_from_the_bound_personas_own_voice(self):
+        processor = _make_processor({})
+        processor.default_voice = "marin"
+        processor.allowed_voices = _DEFAULT_ALLOWED_VOICES
+        processor._start_greeting = MagicMock()
+        ws = _make_mock_ws()
+        ws.__aiter__.return_value = iter([])
+        persona = _fake_persona("cedar", persona_id="test-delta")
+        resolved_model = SimpleNamespace(deployment="d")
+
+        await processor._run_session(ws, "s1", persona, resolved_model)
+
+        seeded_state = processor._start_greeting.call_args.args[2]
+        self.assertEqual(seeded_state.voice, "cedar")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# #248: RATE_LIMIT_RECOVERY_ENABLED must be read from the environment, same as rtmt.py
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class RateLimitSettingsReadsEnvironmentTests(unittest.TestCase):
+    """Summer's review note on #248: `RateLimitSettings.from_config(_config)` (no `environ`
+    argument) means `(environ or {}).get(ENABLED_ENV)` always sees `{}` -- `RATE_LIMIT_RECOVERY_
+    ENABLED` silently never reaches cascade sessions, unlike `rtmt.py:1341`'s own
+    `RateLimitSettings.from_config(_config, os.environ)`. Mutation-test proof: reverting
+    `CascadeProcessor.__init__`'s `RateLimitSettings.from_config(_config, os.environ)` back to
+    `RateLimitSettings.from_config(_config)` makes `test_env_var_override_disables_rate_limit_
+    recovery_for_a_new_processor` fail (the env var patch below would have no effect)."""
+
+    def test_env_var_override_disables_rate_limit_recovery_for_a_new_processor(self):
+        with patch.dict("os.environ", {"RATE_LIMIT_RECOVERY_ENABLED": "false"}):
+            processor = _make_processor({})
+        self.assertFalse(processor._rate_limit_settings.enabled)
+
+    def test_env_var_override_enables_rate_limit_recovery_even_if_config_disables_it(self):
+        with patch("cascade_processor._config", {"resilience": {"rate_limit": {"enabled": False}}}):
+            with patch.dict("os.environ", {"RATE_LIMIT_RECOVERY_ENABLED": "true"}):
+                processor = _make_processor({})
+        self.assertTrue(processor._rate_limit_settings.enabled)
+
+    def test_no_env_var_set_falls_back_to_config_yamls_own_default(self):
+        with patch.dict("os.environ", {}, clear=False):
+            import os as _os
+            _os.environ.pop("RATE_LIMIT_RECOVERY_ENABLED", None)
+            processor = _make_processor({})
+        self.assertTrue(processor._rate_limit_settings.enabled)  # config.yaml's default: enabled
 
 
 if __name__ == "__main__":

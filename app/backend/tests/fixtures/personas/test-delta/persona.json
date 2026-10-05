@@ -40,7 +40,8 @@
   "machines": { "delta_machine": { "status": "down", "label": "Delta machine is down" } },
 
   "models": {
-    "realtime": { "default": "gpt-realtime-2.1", "allowed": ["gpt-realtime-2.1"] }
+    "realtime": { "default": "gpt-realtime-2.1", "allowed": ["gpt-realtime-2.1"] },
+    "cascade": { "default": "gpt-5-mini", "allowed": ["gpt-5-mini"] }
   },
 
   "strategies": { "searchQueryRewrite": "meal_numbers" },
