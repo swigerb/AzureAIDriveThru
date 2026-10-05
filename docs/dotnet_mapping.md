@@ -1318,3 +1318,53 @@ before committing; confirmed via `git status --porcelain` showing zero diff. Thi
 stale comment: `RealtimeProcessor.ResolveModel` is a one-line delegation to
 `ModelDispatch.ResolveRealtimeModel`, so `ModelDispatchTests.cs` alone gives full coverage and no
 separate `RealtimeProcessorTests.cs` is needed; the comment now says so.
+
+## Issue #17 (S7: side-by-side go-live, DevOps prep) -- `azure.yaml`, `infra/`, and the Entra/smoke scripts
+
+This revision is infra/scripts/docs only -- no `app/backend-dotnet` source changed, so the
+`DotnetTraitCoverageTests` floor is unaffected. It prepares (but does not itself execute) the
+production go-live of the C# container app beside the Python one in `rg-azureaidrivethru-prod`,
+per Rick's #93 review notes on this issue and the plan already recorded in `azure.yaml`'s own `S7`
+comment. The PR this lands in stays a **draft**: `deployDotnetApp`/`DEPLOY_DOTNET_APP` still
+defaults to `false` everywhere, so no new Azure resource is actually created or billed by merging
+it alone -- see `DEPLOY.md`'s [".NET container app (S7, #17)"](../DEPLOY.md#net-container-app-s7-17)
+section for the full operator runbook this section summarizes.
+
+- **`azure.yaml`**: does **NOT** declare a `backend-dotnet` service yet. Declaring the service
+  ahead of the matching bicep tag would break a bare `azd deploy`/`azd up` for every environment
+  that has not flipped `DEPLOY_DOTNET_APP=true` (`azd` has no service-level `condition:`, as of the
+  pinned release, to skip a declared service entirely), so the service entry is deliberately held
+  back for the owner-gated flip commit -- see `DEPLOY.md`'s ".NET container app (S7, #17)" section,
+  "Step 0", for the exact patch.
+- **`infra/main.bicep`**: `acaBackendDotnet` still carries a plain `tags: tags` -- no
+  `'azd-service-name': 'backend-dotnet'` tag yet. Tagging the module without a matching
+  `azure.yaml` service entry would be harmless (the other direction, service-without-tag, is the
+  real hazard), but the tag still lands together with the service entry in the same flip commit for
+  clarity. A new `dotnetWebAppExists` param (bound to `SERVICE_BACKEND_DOTNET_RESOURCE_EXISTS`,
+  mirroring `webAppExists`/`SERVICE_BACKEND_RESOURCE_EXISTS` on the Python app) replaces the
+  hardcoded `exists: false` so a redeploy of an already-provisioned dotnet app does not fall back to
+  the helloworld placeholder image. `APP_SESSION_SECRET`, `AUTH_MODE=Entra` and the `ENTRA_*` block
+  were already byte-identical to `acaBackend` (both read the same `effectiveAppSessionSecret`/
+  `effectiveEntraTenantId` Bicep variables) -- confirmed, not re-wired, by this change.
+- **`infra/main.parameters.json`**: the `dotnetWebAppExists` -> `SERVICE_BACKEND_DOTNET_RESOURCE_EXISTS`
+  mapping has **already landed** in this PR (it does not wait for the flip commit).
+  `DEPLOY_DOTNET_APP`/`BACKEND_DOTNET_INGRESS_ENABLED` were already wired by an earlier revision.
+- **`scripts/Setup-EntraAuth.ps1`**: already added the C# app's `BACKEND_DOTNET_URI` as a second,
+  idempotent SPA redirect URI on the one Entra registration from #85 (`-FromAzdEnv`), only when
+  non-empty -- confirmed by this review, no further change needed.
+- **`scripts/Verify-ProductionAuth.ps1`**: already discovers and iterates every deployed container
+  app generically (tag first, `AZURE_CONTAINER_APP_DOTNET_NAME` as a fallback), so `backend-dotnet`
+  gets the exact same env-pin/active-revision/EasyAuth/anonymous-probe checks as `backend` with no
+  per-app special-casing. The dotnet app does **not** carry the `azd-service-name` tag yet (that
+  lands in the flip commit alongside the `azure.yaml` service entry), so the name-based
+  `AZURE_CONTAINER_APP_DOTNET_NAME` fallback is what actually resolves it today.
+- **`scripts/smoke_realtime.sh`/`.ps1`** (the azd `postdeploy` hook): run
+  `scripts/smoke_realtime.py` a single time, against the Python backend only. There is **no**
+  second pass for the dotnet app -- the check talks directly to the shared Azure OpenAI realtime
+  deployment (not either app's own HTTP endpoint) and never reads `BACKEND_DOTNET_URI`, so a second
+  invocation would just repeat the same Python-side check while burning realtime capacity guests
+  share. A real .NET realtime smoke probe is tracked as a follow-up, not yet implemented.
+- **Drift guard**: `app/backend/tests/test_azd_service_wiring.py` (pre-existing,
+  `test_bicep_service_tags_match_azure_yaml` and `test_every_containerapp_service_has_an_exists_mapping`)
+  now checks both directions (service -> tag and tag -> service) for `backend-dotnet`, and asserts
+  `deployDotnetApp` still defaults off and gates the dotnet tag once it lands.

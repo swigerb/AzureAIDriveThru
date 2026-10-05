@@ -327,12 +327,15 @@ if ([string]::IsNullOrWhiteSpace($probePersonaId)) {
     $probePersonaId = $null
 }
 
-# The dotnet app is discovered by name (not tag) because its bicep resource has no
-# `azd-service-name` tag (review item 5); it is mapped to the 'backend-dotnet' KnownServices entry.
+# The dotnet app's bicep resource does NOT yet carry the 'azd-service-name': 'backend-dotnet' tag
+# as of this PR -- the tag lands together with the matching azure.yaml service entry in the
+# owner-gated flip commit (see DEPLOY.md's ".NET container app (S7, #17)" section, "Step 0").
+# Until then, and for any environment that provisioned the dotnet app before that commit, a
+# name-based fallback is required to discover it at all.
 $script:DotnetAppName = Get-AzdEnvValue 'AZURE_CONTAINER_APP_DOTNET_NAME'
 
 # Resolves a container app's KnownServices key, safely under StrictMode: an app's `tags` may be
-# absent entirely, or present without an `azd-service-name` key (the dotnet app today).
+# absent entirely, or present without an `azd-service-name` key (an older dotnet deployment).
 function Resolve-ServiceName {
     param([Parameter(Mandatory)]$ContainerApp)
     $svc = Get-Prop (Get-Prop $ContainerApp 'tags' $null) 'azd-service-name' $null

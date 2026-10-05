@@ -121,9 +121,9 @@ param defaultPersona string = ''
 param openAiModelDeploymentsData array = loadJsonContent('model-deployments.json')
 
 // --- C# backend (section 10.1 option A, 10.2; added by S7, #17) ---
-// The module is always present so #17 only has to flip this flag, but it
-// deploys nothing until then: no app/backend-dotnet project exists yet.
-@description('Deploy the .NET container app alongside the Python one, sharing the same ACA environment, Foundry account, Search service and managed identity (10.2). Leave false until #12-#17 land a real image; the module compiles either way.')
+// The module is always present so going live (#17) is a flag flip plus the DEPLOY.md
+// Step 0 service+tag patch; it deploys nothing while the flag is false.
+@description('Deploy the .NET container app alongside the Python one, sharing the same ACA environment, Foundry account, Search service and managed identity (10.2). app/backend-dotnet and app/Dockerfile.dotnet build a real image today; leave false until the owner-gated #17 go-live (DEPLOY.md, Step 0 onward). The module compiles either way.')
 param deployDotnetApp bool = false
 
 @description('Name override for the .NET container app. Empty = derived from the environment token, matching the Python app\'s naming convention.')
@@ -146,6 +146,9 @@ param runningOnAdo string = ''
 
 @description('Used by azd for containerapps deployment')
 param webAppExists bool
+
+@description('Used by azd for containerapps deployment of the .NET app (S7, #17): maps to SERVICE_BACKEND_DOTNET_RESOURCE_EXISTS, same pattern as webAppExists/SERVICE_BACKEND_RESOURCE_EXISTS above. azd sets a SERVICE_<NAME>_RESOURCE_EXISTS env var to false for every service it finds declared in azure.yaml, regardless of that service\'s own enablement -- but azure.yaml does not declare a backend-dotnet service at all until the owner-gated flip commit (see DEPLOY.md "Step 0"), so until then azd never sets this particular var and the parameter default (false) is what applies.')
+param dotnetWebAppExists bool = false
 
 @allowed(['Consumption', 'D4', 'D8', 'D16', 'D32', 'E4', 'E8', 'E16', 'E32', 'NC24-A100', 'NC48-A100', 'NC96-A100'])
 param azureContainerAppsWorkloadProfile string
@@ -199,7 +202,7 @@ param entraAppRole string = 'DriveThru.User'
 @description('Ingress switch for the Python container app. Defaults true (its historical behavior); set false for the dark-provision step of the rollout (ADR-002 18.10). Maps to the azd env BACKEND_INGRESS_ENABLED.')
 param backendIngressEnabled bool = true
 
-@description('Ingress switch for the .NET container app. Defaults false: the C# app gets no ingress (not even environment-internal) even when deployDotnetApp is true, until #147 lands its own Entra token validation. Maps to the azd env BACKEND_DOTNET_INGRESS_ENABLED.')
+@description('Ingress switch for the .NET container app. Defaults false: the C# app gets no ingress (not even environment-internal) even when deployDotnetApp is true, until the ingress-last rollout in DEPLOY.md verifies its Entra token validation dark via Verify-ProductionAuth.ps1 -RevisionsOnly. Maps to the azd env BACKEND_DOTNET_INGRESS_ENABLED.')
 param backendDotnetIngressEnabled bool = false
 
 // Figure out if we're running as a user or service principal
@@ -357,10 +360,14 @@ module acaBackend 'core/host/container-app-upsert.bicep' = {
 }
 
 // Container App for the .NET backend (10.1 option A, 10.2). Disabled by
-// default (deployDotnetApp = false): S7 (#17) flips the flag once
-// app/backend-dotnet exists. It shares acaIdentity, so the RBAC already
-// granted below (openAiRoleBackend, searchRoleBackend) covers it too -- no
-// separate role assignments needed for a second app on the same identity.
+// default (deployDotnetApp = false, bound to DEPLOY_DOTNET_APP in
+// main.parameters.json): app/backend-dotnet exists now (S7, #17 go-live prep),
+// but its azure.yaml service entry does not land until the owner-gated flip
+// commit (Rick's review of #281, R1 -- see DEPLOY.md's "Step 0"), so this PR
+// stays cost-neutral and deploy-neutral -- deploying the live resource is
+// Brian's call, gated behind that one flag. It shares acaIdentity, so the RBAC
+// already granted below (openAiRoleBackend, searchRoleBackend) covers it too --
+// no separate role assignments needed for a second app on the same identity.
 module acaBackendDotnet 'core/host/container-app-upsert.bicep' = if (deployDotnetApp) {
   name: 'aca-web-dotnet'
   scope: resourceGroup
@@ -368,17 +375,23 @@ module acaBackendDotnet 'core/host/container-app-upsert.bicep' = if (deployDotne
     name: !empty(dotnetServiceName) ? dotnetServiceName : '${abbrs.webSitesContainerApps}backend-dotnet-${resourceToken}'
     location: location
     identityName: acaIdentityName
-    // No azure.yaml service exists for this app yet (added by the #17 go-live PR), so azd
-    // never reports an existing resource for it.
-    exists: false
+    // S7 (#17 go-live): same pattern as acaBackend's webAppExists above, so a redeploy of an
+    // already-provisioned dotnet app doesn't fall back to the helloworld placeholder image.
+    exists: dotnetWebAppExists
     workloadProfile: azureContainerAppsWorkloadProfile
     containerRegistryName: containerApps.outputs.registryName
     containerAppsEnvironmentName: containerApps.outputs.environmentName
     identityType: 'UserAssigned'
-    // No 'azd-service-name' tag yet: azure.yaml has no matching service entry until the #17
-    // go-live PR adds app/backend-dotnet, and test_azd_service_wiring.py's
-    // test_bicep_service_tags_match_azure_yaml guard requires every tag here to have one. Add
-    // both together in that PR.
+    // S7 (#17 go-live): no azd-service-name tag for this app yet. Rick's review of #281 (R1)
+    // found that tagging this module while it is still gated `if (deployDotnetApp)` (default
+    // false), with no matching azure.yaml service declared, is fine for provision but breaks
+    // nothing either way -- the real hazard was the other direction (a declared azure.yaml
+    // service with no tag anywhere to resolve). The tag moves into the owner-gated flip commit
+    // together with the azure.yaml service entry (the SERVICE_BACKEND_DOTNET_RESOURCE_EXISTS
+    // mapping has already landed separately, in infra/main.parameters.json) -- see DEPLOY.md's
+    // ".NET container app (S7, #17)" section, "Step 0", for the exact patch, and
+    // test_azd_service_wiring.py for the bidirectional drift guard that keeps the tag and
+    // service in sync once they land.
     tags: tags
     targetPort: 8000
     containerCpuCoreCount: '1.0'
@@ -438,7 +451,13 @@ module acaBackendDotnet 'core/host/container-app-upsert.bicep' = if (deployDotne
     },
     // Same "omit when empty" persona behavior as the Python app's env, above.
     empty(personas) ? {} : { PERSONAS: personas },
-    empty(defaultPersona) ? {} : { DEFAULT_PERSONA: defaultPersona })
+    empty(defaultPersona) ? {} : { DEFAULT_PERSONA: defaultPersona },
+    // Rick's review of #281 (R2): identical optional overrides to acaBackend's env above, so an
+    // environment that sets one of these runs the same realtime model/reasoning config on both
+    // apps instead of the C# app silently falling back to config.yaml's default.
+    empty(openAiRealtimeReasoningEffort) ? {} : { AZURE_OPENAI_REALTIME_REASONING_EFFORT: openAiRealtimeReasoningEffort },
+    empty(openAiRealtimeReasoningModel) ? {} : { AZURE_OPENAI_REALTIME_REASONING_MODEL: openAiRealtimeReasoningModel },
+    empty(openAiRealtimeTranscriptionModel) ? {} : { AZURE_OPENAI_REALTIME_TRANSCRIPTION_MODEL: openAiRealtimeTranscriptionModel })
   }
 }
 
