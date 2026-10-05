@@ -41,9 +41,42 @@ function Report-Result([string]$Label, [int]$Code) {
   }
 }
 
-Write-Host "Realtime smoke check (backend): running..."
-& $python (Join-Path $PSScriptRoot "smoke_realtime.py")
-Report-Result -Label "backend" -Code $LASTEXITCODE
+# #302: discover every enabled persona via the SAME PersonaCatalog the app itself uses
+# (so this never hardcodes a brand list), then run BOTH the realtime and cascade pipeline
+# smoke checks for each one. No persona packs at all (legacy/local dev) falls back to a
+# single unlabelled run of each pipeline against the default prompt/tools.
+$personaScript = @"
+import sys
+sys.path.insert(0, r'$projectRoot/app/backend')
+try:
+    from persona_loader import PersonaCatalog
+    print(' '.join(PersonaCatalog.load().ids))
+except Exception:
+    pass
+"@
+$personasOutput = (& $python -c $personaScript 2>$null)
+$personas = @()
+if ($personasOutput) {
+  $personas = ($personasOutput -split '\s+') | Where-Object { $_ -ne "" }
+}
+if ($personas.Count -eq 0) {
+  $personas = @("__default__")
+}
+
+foreach ($persona in $personas) {
+  foreach ($pipeline in @("realtime", "cascade")) {
+    if ($persona -eq "__default__") {
+      $label = $pipeline
+      $personaArgs = @()
+    } else {
+      $label = "$persona/$pipeline"
+      $personaArgs = @("--persona", $persona)
+    }
+    Write-Host "Realtime smoke check ($label): running..."
+    & $python (Join-Path $PSScriptRoot "smoke_realtime.py") --pipeline $pipeline @personaArgs
+    Report-Result -Label $label -Code $LASTEXITCODE
+  }
+}
 
 # S7 (#17 go-live): no second "backend-dotnet" pass here. smoke_realtime.py always builds the
 # Python RTMiddleTier against the shared Azure OpenAI realtime deployment -- it never reads
