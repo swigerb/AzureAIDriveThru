@@ -9,6 +9,19 @@ public interface IBackendUnderTest : IAsyncDisposable
     string DumpDiagnostics();
 
     /// <summary>
+    /// #315: same captured stdout/stderr as <see cref="DumpDiagnostics"/>, but scoped to output
+    /// captured at or after a prior <see cref="DiagnosticsWatermark"/> reading -- so a scenario can
+    /// assert a specific line (e.g. "Upstream REJECTED session.update") never appeared DURING its
+    /// own run, without a stale line from an earlier scenario sharing this collection's backend
+    /// process (still sitting in the bounded ring buffer) producing a false positive. Default-
+    /// implemented as the unscoped <see cref="DumpDiagnostics"/>, matching <see
+    /// cref="WaitForDiagnosticsAsync"/>'s own "0 = whole history" convention, so <see
+    /// cref="ExternalBackend"/> (nothing is captured there) needs no changes; only <see
+    /// cref="ProcessBackend"/> overrides this to actually scope the read.
+    /// </summary>
+    string DumpSince(int watermark) => DumpDiagnostics();
+
+    /// <summary>
     /// Count of unhandled-error incidents this backend process has logged so far (PR #22 review
     /// item N5) — a language-neutral signal scenarios can assert is zero without coupling
     /// themselves to Python's log format (previously they asserted directly on

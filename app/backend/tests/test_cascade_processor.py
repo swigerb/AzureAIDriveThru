@@ -1478,3 +1478,20 @@ class RateLimitSettingsReadsEnvironmentTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TranscriptionUrlTests(unittest.TestCase):
+    """Live 2026-10-05: Azure OpenAI's /openai/v1/audio/transcriptions returned 404
+    DeploymentNotFound for gpt-4o-transcribe; the deployment-scoped route works."""
+
+    def test_uses_deployment_scoped_route_with_api_version(self):
+        from cascade_processor import TRANSCRIPTION_API_VERSION, transcription_url
+        self.assertEqual(
+            transcription_url("https://acct.openai.azure.com/", "gpt-4o-transcribe"),
+            "https://acct.openai.azure.com/openai/deployments/gpt-4o-transcribe/audio/transcriptions"
+            f"?api-version={TRANSCRIPTION_API_VERSION}",
+        )
+
+    def test_never_uses_the_v1_transcriptions_route(self):
+        from cascade_processor import transcription_url
+        self.assertNotIn("/openai/v1/audio/transcriptions", transcription_url("https://acct.openai.azure.com", "d"))

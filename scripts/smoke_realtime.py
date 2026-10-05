@@ -74,6 +74,7 @@ sys.path.insert(0, str(BACKEND_DIR))
 import aiohttp  # noqa: E402
 from azure.core.credentials import AzureKeyCredential  # noqa: E402
 
+from cascade_processor import transcription_url  # noqa: E402
 from config_loader import get_config  # noqa: E402
 from model_catalog import ModelCatalog, ModelValidationError  # noqa: E402
 from persona_loader import Persona, PersonaCatalog, PersonaValidationError  # noqa: E402
@@ -675,11 +676,11 @@ def _pcm16_to_wav_bytes(pcm: bytes, sample_rate: int = _CASCADE_AUDIO_SAMPLE_RAT
 
 async def _cascade_transcribe(audio_endpoint: str, deployment: str, pcm: bytes, credential, timeout: float) -> str:
     """POSTs *pcm* (24kHz mono PCM16) to the cascade pipeline's own STT deployment, the exact
-    request shape ``CascadeProcessor._transcribe`` sends (a WAV-wrapped multipart upload to
-    ``/openai/v1/audio/transcriptions``), live."""
+    request shape ``CascadeProcessor._transcribe`` sends (a WAV-wrapped multipart upload to the
+    deployment-scoped ``/openai/deployments/{deployment}/audio/transcriptions`` route), live."""
     wav_bytes = _pcm16_to_wav_bytes(pcm)
     token = await _cascade_bearer_token(credential)
-    url = f"{audio_endpoint.rstrip('/')}/openai/v1/audio/transcriptions"
+    url = transcription_url(audio_endpoint, deployment)
     form = aiohttp.FormData()
     form.add_field("file", wav_bytes, filename="smoke.wav", content_type="audio/wav")
     form.add_field("model", deployment)

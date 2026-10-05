@@ -47,6 +47,7 @@ import time
 import wave
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import quote
 
 import aiohttp
 from aiohttp import web
@@ -209,6 +210,17 @@ def _retry_hint_of(exc: Exception) -> float | None:
                 pass
     return parse_retry_hint(str(exc))
 
+
+# Azure OpenAI's preview `/openai/v1/audio/transcriptions` route returns 404 DeploymentNotFound for
+# gpt-4o-transcribe deployments (verified live 2026-10-05) even though `/openai/v1/audio/speech`
+# works, so STT uses the deployment-scoped route. Shared with scripts/smoke_realtime.py and
+# mirrored by the C# FoundryAudioClient.
+TRANSCRIPTION_API_VERSION = "2024-10-21"  # GA; verified live with gpt-4o-transcribe 2026-10-05
+
+
+def transcription_url(audio_endpoint: str, deployment: str) -> str:
+    return (f"{audio_endpoint.rstrip('/')}/openai/deployments/{quote(deployment, safe='')}/audio/transcriptions"
+            f"?api-version={TRANSCRIPTION_API_VERSION}")
 
 def _pcm16_to_wav_bytes(pcm: bytes, sample_rate: int = _AUDIO_SAMPLE_RATE) -> bytes:
     """Wraps raw PCM16 mono audio in a minimal WAV container (stdlib `wave`) -- the
@@ -1109,7 +1121,7 @@ class CascadeProcessor:
         wav_bytes = _pcm16_to_wav_bytes(pcm16_bytes)
         token = await self._bearer_token()
         deployment = self.model_catalog.deployment_for(self.model_catalog.cascade_audio.transcription)
-        url = f"{self.audio_endpoint}/openai/v1/audio/transcriptions"
+        url = transcription_url(self.audio_endpoint, deployment)
         form = aiohttp.FormData()
         form.add_field("file", wav_bytes, filename="turn.wav", content_type="audio/wav")
         form.add_field("model", deployment)
