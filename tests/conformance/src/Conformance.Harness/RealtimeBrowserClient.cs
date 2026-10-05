@@ -249,6 +249,21 @@ public sealed class RealtimeBrowserClient : IAsyncDisposable
     /// </summary>
     internal void StartReaderLoopForTesting() => _readerTask = PumpReceivedFramesAsync(_readerCts.Token);
 
+    /// <summary>
+    /// Rick's #244 review (issue 4): simulates a half-open peer -- a browser tab whose process is
+    /// still technically connected at the TCP level (the socket itself is left wholly untouched:
+    /// no <see cref="WebSocket.Abort"/>, no <see cref="WebSocket.CloseOutputAsync"/>) but has
+    /// simply stopped reading, so it can never observe (let alone answer) a server-sent Close
+    /// frame. This is distinct from both <see cref="AbortAsync"/> (which actively tears the socket
+    /// down, the abrupt-drop case already covered elsewhere) and a graceful
+    /// <see cref="CloseAsync"/>: cancelling only <see cref="_readerCts"/> stops this client's own
+    /// background <see cref="PumpReceivedFramesAsync"/> loop from ever calling
+    /// <see cref="WebSocket.ReceiveAsync"/> again, which is exactly where .NET's managed WebSocket
+    /// would otherwise notice an incoming Close frame and send back the answering one -- so no
+    /// close handshake can ever complete from this side, exactly like a real stuck/hung peer.
+    /// </summary>
+    internal void StopReaderLoopForTesting() => _readerCts.Cancel();
+
     /// <summary>The exact `session.update` useRealtime.tsx's startSession() sends.</summary>
     public Task SendStartSessionAsync(bool enableInputAudioTranscription = true, CancellationToken cancellationToken = default)
     {

@@ -294,6 +294,7 @@ public sealed class ModelSelectionConformanceTests(ModelDeploymentMapConformance
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task A_resume_omitting_model_after_binding_to_a_non_default_model_is_rejected_as_model_mismatch() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -331,6 +332,7 @@ public sealed class ModelSelectionConformanceTests(ModelDeploymentMapConformance
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task A_resume_with_an_explicit_model_after_binding_to_the_default_is_rejected_as_model_mismatch() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
