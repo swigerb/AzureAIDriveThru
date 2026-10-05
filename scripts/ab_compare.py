@@ -1,14 +1,17 @@
 """Live A/B comparison harness for the Python and C# backends (issue #18).
 
 Drives the SAME scripted guest orders -- one persona's own Demo Mode script
-(``personas/<id>/assets/demo/guestScript.json``) and its expected final
-ticket (``personas/<id>/assets/demo/dummyOrder.json``) -- against both
-backends' live ``/realtime`` WebSocket, as **text** guest turns
-(``conversation.item.create`` with ``input_text``, then ``response.create``;
-no audio, no microphone). This never guesses the auth or wire contract: see
-``docs/persona-architecture.md`` section 18 (ADR-002) and ``src/`` (the
-frontend's own ``useRealtime.tsx`` / ``src/auth``) for the exact shapes this
-mirrors.
+(``personas/<id>/assets/demo/guestScript.json``) and its recorded guest audio
+clips -- against both backends' live ``/realtime`` WebSocket, **exactly the
+way the browser does**: the frontend's own ``session.update`` (server VAD),
+then each recorded clip streamed as ``input_audio_buffer.append`` (PCM16
+24 kHz) followed by trailing silence so server VAD ends the turn. Production
+rejects client text turns (``conversation.item.create``/``response.create``
+are not in ``rtmt.py``'s ``_CLIENT_ALLOWED_TYPES``), so audio is the only
+faithful path -- this never sends a text turn. This never guesses the auth or
+wire contract: see ``docs/persona-architecture.md`` section 18 (ADR-002) and
+``src/`` (the frontend's own ``useRealtime.tsx`` / ``src/auth``) for the exact
+shapes this mirrors.
 
 **Auth.** A delegated Entra token comes from
 
@@ -20,32 +23,49 @@ layered HMAC session token at ``GET /api/auth/session`` (18.3), and both are
 attached to the ``/realtime`` URL exactly as the frontend does
 (``?token=<hmac>&access_token=<entra>``, ``useRealtime.tsx`` ``getSocketUrl``).
 
-**Per-turn measurements:** first-audio latency (guest turn sent to the first
-``response.output_audio.delta``/``response.audio.delta`` frame) and total
-turn time (sent to ``response.done``).
+**Per-turn measurements:** first-audio latency (end of the guest's streamed
+speech to the first ``response.output_audio.delta``/``response.audio.delta``
+frame -- frames are read concurrently with the trailing silence being sent,
+so an audio delta that arrives during that silence is timestamped the moment
+it is read, not after the silence finishes sending) and total turn time (same
+start, through a ``response.done`` followed by ``_TURN_SETTLE_S`` with no new
+``response.created`` -- this includes the trailing-silence send and the
+settle tail, so every turn number is inflated by roughly that fixed amount).
+A turn that never sees a ``response.done`` before the per-order timeout is
+flagged (``TurnResult.timed_out``) and the whole order is recorded as an
+error, even if an earlier turn in the same order produced a ticket.
 
-**Per-order measurements:** tool correctness -- the final ticket, read from
-the ``extension.middle_tier_tool_response`` frames the backend already sends
-the browser (``rtmt.py``), compared against the persona's own
-``dummyOrder.json`` (reused as the expected item list and total, not
-hand-authored here); and cold start -- wall-clock time to a healthy
-``/health`` plus the first session's connect-to-ready time.
+**Per-order measurements:** tool correctness -- a run "produced a priced
+ticket" when the final ``extension.middle_tier_tool_response`` frame the
+backend already sends the browser (``rtmt.py``) parses into a non-empty item
+list and total with no error; this says nothing about whether that ticket
+matches the spoken order -- the real accuracy signal is cross-backend parity
+(below). Session ready -- WebSocket connect to the first
+``extension.session_metadata`` frame -- is on an already-warm container, not
+a container cold start.
+
+**Cross-backend parity:** for a given persona x model, "identical ticket"
+requires every repetition on BOTH backends to produce the exact same single
+ticket (items, sizes, quantities, total) -- a single differing repetition
+fails parity, even if most reps agree.
 
 **Per-app measurements:** CPU (``UsageNanoCores``) and memory
-(``WorkingSetBytes``) over the run window, via
-``az monitor metrics list`` against each backend's Container App.
+(``WorkingSetBytes``) over the actual wall-clock window the run took (start
+to end timestamps recorded around the sweep), via ``az monitor metrics list``
+against each backend's Container App. Backends are exercised one after
+another (never concurrently), so that window necessarily includes both.
 
 This module intentionally never hardcodes a persona or brand name: every
-persona id, display name and expected order comes from ``personas/<id>/``
-on disk, read at run time. Shared code stays brand-neutral everywhere else.
+persona id and display name comes from ``personas/<id>/`` on disk, read at
+run time. Shared code stays brand-neutral everywhere else.
 
 **This script makes live network calls (WebSocket, REST, Azure CLI) when
 run.** It is never invoked against live Azure as part of building or testing
 this harness -- see ``scripts/tests/test_ab_compare.py`` for the fake-backed
 unit tests that exercise its logic without any network or ``az`` access.
 
-Usage (from the repo root, with ``az login`` done and both backends
-deployed and reachable)::
+Usage (from the repo root, with ``az login`` done, both backends deployed
+and reachable, and ``ffmpeg`` on PATH to decode the recorded guest clips)::
 
     python scripts/ab_compare.py \\
         --python-uri https://<python-fqdn> --dotnet-uri https://<dotnet-fqdn> \\
@@ -60,9 +80,10 @@ setup and ``infra/main.bicep`` use, persona-architecture.md 18.7, #311).
 to omit the ``az monitor metrics list`` calls (no Container Apps access, or a
 non-Azure dry run against local dev servers).
 
-Exit codes: 0 = every order's ticket matched its expected total and item
-list on both backends, 1 = at least one mismatch or run error, 2 = could not
-run (missing URIs/token/az CLI).
+Exit codes: 0 = every order produced a priced ticket on both backends with no
+errors, and every persona x model combination had identical cross-backend
+tickets, 1 = at least one mismatch, timed-out turn, or run error, 2 = could
+not run (missing URIs/token/az CLI).
 """
 from __future__ import annotations
 
@@ -83,9 +104,8 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PERSONAS_DIR = REPO_ROOT / "personas"
 
-# `response.create` is the only client-originated event this harness ever sends besides
-# `conversation.item.create` -- the same text-turn pair the frontend's test/demo tooling
-# uses, never raw audio (rtmt.py `_CLIENT_TEST_ONLY_TYPES`, persona-architecture.md section 18).
+# Both event names observed in the wild across backend/model versions for an assistant audio
+# chunk -- accept either so a first-audio timestamp is never missed over a naming difference.
 _AUDIO_DELTA_TYPES = frozenset({"response.output_audio.delta", "response.audio.delta"})
 _RESPONSE_DONE_TYPE = "response.done"
 _TOOL_RESPONSE_TYPE = "extension.middle_tier_tool_response"
@@ -115,7 +135,7 @@ class ABCompareError(RuntimeError):
 # ── Persona data (read from disk -- never hardcoded, never brand-specific) ──
 
 def discover_personas() -> list[str]:
-    """Every persona id with a demo script and an expected ticket, sorted for stable output."""
+    """Every persona id with a Demo Mode script, sorted for stable output."""
     ids = []
     if not PERSONAS_DIR.is_dir():
         return ids
@@ -123,13 +143,6 @@ def discover_personas() -> list[str]:
         if (child / "assets" / "demo" / "guestScript.json").is_file():
             ids.append(child.name)
     return ids
-
-
-def load_guest_lines(persona_id: str) -> list[str]:
-    """The scripted guest turns (text only) from that persona's own Demo Mode script."""
-    path = PERSONAS_DIR / persona_id / "assets" / "demo" / "guestScript.json"
-    data = json.loads(path.read_text(encoding="utf-8"))
-    return [line["text"] for line in data.get("lines", []) if line.get("text")]
 
 
 def _guest_script(persona_id: str) -> dict:
@@ -164,25 +177,6 @@ class ExpectedItem:
     item: str
     size: str
     quantity: int
-
-
-@dataclass(frozen=True)
-class ExpectedTicket:
-    items: tuple[ExpectedItem, ...]
-    total: float
-
-
-def load_expected_ticket(persona_id: str) -> ExpectedTicket:
-    """The persona's own ``dummyOrder.json``, reused as the expected final ticket (item
-    list and pre-tax total) rather than a hand-authored duplicate (coordinator brief #18)."""
-    path = PERSONAS_DIR / persona_id / "assets" / "demo" / "dummyOrder.json"
-    rows = json.loads(path.read_text(encoding="utf-8"))
-    items = tuple(
-        ExpectedItem(item=row["item"], size=row["size"], quantity=int(row["quantity"]))
-        for row in rows
-    )
-    total = round(sum(float(row["price"]) * int(row["quantity"]) for row in rows), 2)
-    return ExpectedTicket(items=items, total=total)
 
 
 # ── Auth (az CLI, headless MSAL -- Setup-EntraAuth.ps1's own path) ──────────
@@ -245,6 +239,10 @@ class TurnResult:
     guest_text: str
     first_audio_latency_s: float | None
     total_turn_time_s: float
+    # True when this turn never saw a `response.done` before the per-order timeout -- the
+    # turn's numbers (if any) are incomplete, and the whole order is recorded as an error even
+    # if an earlier turn in the same order produced a ticket (Rick's PR #321 review, non-blocking).
+    timed_out: bool = False
 
 
 @dataclass
@@ -253,7 +251,7 @@ class OrderRunResult:
     persona_id: str
     model_id: str
     rep: int
-    cold_start_s: float | None
+    session_ready_s: float | None
     turns: list[TurnResult] = field(default_factory=list)
     ticket_items: list[ExpectedItem] = field(default_factory=list)
     ticket_total: float | None = None
@@ -261,8 +259,10 @@ class OrderRunResult:
 
     @property
     def tool_correct(self) -> bool:
-        """The run produced a priced ticket with no error. Cross-backend agreement (the real A/B
-        correctness bar) is computed in `build_report` by comparing Python vs C# tickets."""
+        """The run produced a priced ticket with no error. This is NOT an accuracy claim -- it
+        says nothing about whether the ticket matches the spoken order. Cross-backend agreement
+        (the real A/B correctness bar) is computed in `build_report` by comparing Python vs C#
+        tickets."""
         return self.error is None and self.ticket_total is not None and bool(self.ticket_items)
 
     def ticket_key(self) -> tuple | None:
@@ -336,10 +336,16 @@ async def run_order(
     trailing silence so server VAD ends the turn. Production rejects client text turns
     (``conversation.item.create`` is not in rtmt.py's ``_CLIENT_ALLOWED_TYPES``), so audio is the
     only faithful path. First-audio latency is measured from the end of the guest's speech (last
-    speech chunk sent) to the first assistant audio delta; a turn ends once a ``response.done``
-    is followed by ``_TURN_SETTLE_S`` with no new ``response.created`` (tool-call rounds chain
-    several responses per guest turn). ``ws_connect``/``clip_loader`` are injectable for tests."""
-    result = OrderRunResult(backend=backend, persona_id=persona_id, model_id=model_id, rep=rep, cold_start_s=None)
+    speech chunk sent) to the first assistant audio delta: the trailing silence is sent by a
+    concurrent task while frames are read, so a delta arriving during that silence is timestamped
+    the moment it is read rather than only once the silence finishes sending (Rick's PR #321
+    review, B2 -- the old sequential send-then-read order gave every first-audio value a floor of
+    about ``_TRAILING_SILENCE_S``). A turn ends once a ``response.done`` is followed by
+    ``_TURN_SETTLE_S`` with no new ``response.created`` (tool-call rounds chain several responses
+    per guest turn); a turn that never reaches that point before *timeout_s* is flagged
+    (``TurnResult.timed_out``) and the whole order is recorded as an error, even if an earlier
+    turn already produced a ticket. ``ws_connect``/``clip_loader`` are injectable for tests."""
+    result = OrderRunResult(backend=backend, persona_id=persona_id, model_id=model_id, rep=rep, session_ready_s=None)
     loader = clip_loader or load_guest_clip_pcm
     try:
         clips = load_guest_clip_paths(persona_id)
@@ -352,7 +358,7 @@ async def run_order(
         connect_start = time.monotonic()
         async with ws_connect(url) as ws:
             ready = await _wait_for(ws, lambda f: f.get("type") == _METADATA_TYPE, timeout_s)
-            result.cold_start_s = time.monotonic() - connect_start
+            result.session_ready_s = time.monotonic() - connect_start
             if ready is None:
                 raise ABCompareError(f"{backend}: no {_METADATA_TYPE} frame before timeout")
             await ws.send_json(_FRONTEND_SESSION_UPDATE)
@@ -391,6 +397,17 @@ async def run_order(
                         saw_done = False
                 return first_audio, saw_done
 
+            async def send_trailing_silence() -> None:
+                """Sends `_TRAILING_SILENCE_S` worth of silence so server VAD ends the turn.
+                Run concurrently with `settle()` (via `asyncio.gather`, below) so a frame that
+                arrives mid-silence is read -- and timestamped -- immediately instead of only
+                once every silence chunk has been sent (B2)."""
+                silence = b"\x00" * _CHUNK_BYTES
+                for _ in range(int(_TRAILING_SILENCE_S / _CHUNK_SECONDS)):
+                    await ws.send_json({"type": "input_audio_buffer.append",
+                                       "audio": base64.b64encode(silence).decode("ascii")})
+                    await asyncio.sleep(_CHUNK_SECONDS)
+
             _, greeted = await settle(None)
             if not greeted:
                 raise ABCompareError(f"{backend}: greeting never completed")
@@ -402,16 +419,16 @@ async def run_order(
                                        "audio": base64.b64encode(pcm[offset:offset + _CHUNK_BYTES]).decode("ascii")})
                     await asyncio.sleep(_CHUNK_SECONDS)
                 turn_start = time.monotonic()
-                silence = b"\x00" * _CHUNK_BYTES
-                for _ in range(int(_TRAILING_SILENCE_S / _CHUNK_SECONDS)):
-                    await ws.send_json({"type": "input_audio_buffer.append",
-                                       "audio": base64.b64encode(silence).decode("ascii")})
-                    await asyncio.sleep(_CHUNK_SECONDS)
-                first_audio_s, _ = await settle(turn_start)
+                (first_audio_s, saw_done), _ = await asyncio.gather(
+                    settle(turn_start), send_trailing_silence(),
+                )
                 result.turns.append(TurnResult(
                     guest_text=text, first_audio_latency_s=first_audio_s,
                     total_turn_time_s=time.monotonic() - turn_start,
+                    timed_out=not saw_done,
                 ))
+                if not saw_done and result.error is None:
+                    result.error = f"{backend}: turn timed out before response.done: {text!r}"
 
             if last_ticket is not None:
                 result.ticket_items, result.ticket_total = last_ticket
@@ -494,9 +511,14 @@ def _latency_stats(results: list[OrderRunResult]) -> dict[str, float | None]:
 def build_report(
     results: list[OrderRunResult],
     metrics: dict[str, ResourceMetrics] | None = None,
+    run_window: tuple[str, str] | None = None,
 ) -> dict:
     """A JSON-serializable report: p50/p90 latency tables per persona x backend x model, a
-    correctness matrix, cold-start timing, and (when supplied) per-app CPU/memory averages."""
+    correctness matrix ("produced a priced ticket", not a spoken-order accuracy check), a
+    cross-backend ticket-parity table, session-ready timing, and (when supplied) per-app
+    CPU/memory averages plus the wall-clock *run_window* (start, end ISO timestamps) those
+    averages were queried over -- backends are exercised one after another, never
+    concurrently, so that window necessarily covers both (B3, Rick's PR #321 review)."""
     groups: dict[tuple[str, str, str], list[OrderRunResult]] = {}
     for r in results:
         groups.setdefault((r.persona_id, r.backend, r.model_id), []).append(r)
@@ -506,23 +528,36 @@ def build_report(
     for (persona_id, backend, model_id), group in sorted(groups.items()):
         stats = _latency_stats(group)
         latency_table.append({"persona": persona_id, "backend": backend, "model": model_id, **stats})
-        cold_starts = [r.cold_start_s for r in group if r.cold_start_s is not None]
+        session_ready_times = [r.session_ready_s for r in group if r.session_ready_s is not None]
         correctness_matrix.append({
             "persona": persona_id, "backend": backend, "model": model_id,
             "reps": len(group),
             "correct": sum(1 for r in group if r.tool_correct),
             "errors": sum(1 for r in group if r.error is not None),
             "error_messages": sorted({r.error for r in group if r.error is not None}),
-            "cold_start_p50_s": _percentile(cold_starts, 50),
+            "session_ready_p50_s": _percentile(session_ready_times, 50),
         })
 
     parity = []
     for persona_id, model_id in sorted({(r.persona_id, r.model_id) for r in results}):
-        keys = {b: {r.ticket_key() for r in results if r.persona_id == persona_id and r.model_id == model_id and r.backend == b and r.tool_correct}
-                for b in ("python", "dotnet")}
+        group = [r for r in results if r.persona_id == persona_id and r.model_id == model_id]
+        by_backend = {b: [r for r in group if r.backend == b] for b in ("python", "dotnet")}
+        keys = {b: {r.ticket_key() for r in rs if r.tool_correct} for b, rs in by_backend.items()}
+        # "Identical ticket" requires EVERY rep on BOTH backends to produce the exact same
+        # single ticket -- a single differing (or missing/erroring) rep fails parity, even if
+        # most reps agree (B4, Rick's PR #321 review: the old rule only checked that the two
+        # backends' ticket SETS intersected, so a partial overlap still said "yes").
+        all_match = (
+            bool(by_backend["python"]) and bool(by_backend["dotnet"])
+            and all(r.tool_correct for r in by_backend["python"])
+            and all(r.tool_correct for r in by_backend["dotnet"])
+            and len(keys["python"]) == 1
+            and len(keys["dotnet"]) == 1
+            and keys["python"] == keys["dotnet"]
+        )
         common = keys["python"] & keys["dotnet"]
         sample = next(iter(common), None)
-        parity.append({"persona": persona_id, "model": model_id, "match": bool(common),
+        parity.append({"persona": persona_id, "model": model_id, "match": all_match,
                        "ticket_total": sample[1] if sample else None,
                        "python_tickets": len(keys["python"]), "dotnet_tickets": len(keys["dotnet"])})
 
@@ -539,6 +574,8 @@ def build_report(
             }
             for backend, m in metrics.items()
         }
+        if run_window:
+            report["resource_usage_window"] = {"start": run_window[0], "end": run_window[1]}
     return report
 
 
@@ -561,29 +598,42 @@ def render_markdown(report: dict) -> str:
 
     lines.append("## Python vs C# ticket parity (same spoken order)")
     lines.append("")
-    lines.append("| Persona | Model | Identical ticket | Total |")
-    lines.append("| --- | --- | --- | --- |")
+    lines.append("| Persona | Model | Identical ticket | Python tickets | Dotnet tickets | Total |")
+    lines.append("| --- | --- | --- | --- | --- | --- |")
     for row in report.get("parity", []):
         total = f"${row['ticket_total']:.2f}" if row["ticket_total"] is not None else "n/a"
-        lines.append(f"| {row['persona']} | {row['model']} | {'yes' if row['match'] else 'NO'} | {total} |")
+        lines.append(
+            f"| {row['persona']} | {row['model']} | {'yes' if row['match'] else 'NO'} "
+            f"| {row['python_tickets']} | {row['dotnet_tickets']} | {total} |"
+        )
     lines.append("")
 
     lines.append("## Correctness matrix")
     lines.append("")
-    lines.append("| Persona | Backend | Model | Reps | Correct | Errors | Cold start p50 (s) |")
+    lines.append(
+        "| Persona | Backend | Model | Reps | Produced ticket | Errors | Session ready p50 (s) |"
+    )
     lines.append("| --- | --- | --- | --- | --- | --- | --- |")
     for row in report.get("correctness", []):
-        cold = row["cold_start_p50_s"]
-        cold_str = f"{cold:.3f}" if cold is not None else "n/a"
+        ready = row["session_ready_p50_s"]
+        ready_str = f"{ready:.3f}" if ready is not None else "n/a"
         lines.append(
             f"| {row['persona']} | {row['backend']} | {row['model']} "
-            f"| {row['reps']} | {row['correct']}/{row['reps']} | {row['errors']} | {cold_str} |"
+            f"| {row['reps']} | {row['correct']}/{row['reps']} | {row['errors']} | {ready_str} |"
         )
     lines.append("")
 
     if "resource_usage" in report:
         lines.append("## Resource usage (run average)")
         lines.append("")
+        window = report.get("resource_usage_window")
+        if window:
+            lines.append(
+                f"Measured over the actual run window ({window['start']} to {window['end']}). "
+                "Backends are exercised one after another, never concurrently, so this window "
+                "covers both."
+            )
+            lines.append("")
         lines.append("| Backend | Avg CPU (nanocores) | Avg memory (bytes) |")
         lines.append("| --- | --- | --- |")
         for backend, usage in sorted(report["resource_usage"].items()):
@@ -655,27 +705,31 @@ async def _run_all(args: argparse.Namespace) -> list[OrderRunResult]:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
+    # Real wall-clock start/end around the sweep, not a fixed trailing hour taken afterwards
+    # (B3, Rick's PR #321 review: a fixed `now() - 3600` window can include idle time before
+    # the run, miss the start of a run longer than an hour, and always covers the period when
+    # the OTHER backend was being exercised, since backends run one after another below).
+    run_start = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     try:
         results = asyncio.run(_run_all(args))
     except ABCompareError as exc:
         print(f"ab_compare: {exc}", file=sys.stderr)
         return 2
+    run_end = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
     metrics = None
     if not args.skip_metrics and (args.python_resource_id or args.dotnet_resource_id):
-        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        start = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 3600))
         metrics = {}
         try:
             if args.python_resource_id:
-                metrics["python"] = fetch_container_app_metrics(args.python_resource_id, start, now)
+                metrics["python"] = fetch_container_app_metrics(args.python_resource_id, run_start, run_end)
             if args.dotnet_resource_id:
-                metrics["dotnet"] = fetch_container_app_metrics(args.dotnet_resource_id, start, now)
+                metrics["dotnet"] = fetch_container_app_metrics(args.dotnet_resource_id, run_start, run_end)
         except ABCompareError as exc:
             print(f"ab_compare: metrics skipped: {exc}", file=sys.stderr)
             metrics = None
 
-    report = build_report(results, metrics)
+    report = build_report(results, metrics, run_window=(run_start, run_end))
     out_path = Path(args.out)
     out_path.with_suffix(".json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     out_path.with_suffix(".md").write_text(render_markdown(report), encoding="utf-8")

@@ -141,6 +141,10 @@ def _is_cross_brand_doc(rel_posix: str) -> bool:
             "README.md",
             "docs/DEMO_SCRIPT.md",
             "docs/persona-architecture.md",
+            # The A/B comparison report (issue #18) compares all shipped personas side by
+            # side by design -- same rationale as DEMO_SCRIPT.md/persona-architecture.md
+            # (Rick's PR #321 review, B1).
+            "docs/ab-report.md",
         }
         or rel_posix.startswith("docs/adr/")
     )

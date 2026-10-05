@@ -143,15 +143,15 @@ move between them without losing their persona or model choice:
 
 - **Python** deploys by default on every `azd up` -- see [Deploy with `azd`](#deploy-with-azd)
   above.
-- **C#** is opt-in per environment via `DEPLOY_DOTNET_APP`/`deployDotnetApp`, off everywhere by
-  default (including the owner's production environment): see
+- **C#** is opt-in per environment via `DEPLOY_DOTNET_APP`/`deployDotnetApp`, off by default: see
   [DEPLOY.md's ".NET container app" section](DEPLOY.md#net-container-app-s7-17) for the
-  `azd env set` steps, the ingress-last rollout, and rollback.
+  `azd env set` steps, the ingress-last rollout, and rollback. The owner's production
+  environment has it enabled as of 2026-10-05.
 
 **Live comparison.** `scripts/ab_compare.py` drives the same scripted orders against both
-backends' live `/realtime` endpoint and measures per-turn latency, tool correctness, cold start,
-and container CPU/memory; see its own `--help` for usage. The latest run's results are in
-[docs/ab-report.md](docs/ab-report.md).
+backends' live `/realtime` endpoint and measures per-turn latency, tool correctness, session
+ready time, and container CPU/memory; see its own `--help` for usage. The latest run's results
+are in [docs/ab-report.md](docs/ab-report.md).
 
 ## Repository layout
 

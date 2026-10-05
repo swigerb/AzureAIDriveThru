@@ -59,6 +59,7 @@ from rebrand_scan import (  # noqa: E402
     _collect_source_files as _collect_brand_scan_files,  # noqa: E402
     _conformance_testdata_pack_id,
     _count_brand_occurrences,
+    _is_cross_brand_doc,
     _load_baseline,
     _persona_pack_id,
     _relative_posix,
@@ -315,11 +316,19 @@ class TestRebrandVerification(unittest.TestCase):
             PROJECT_ROOT / "README.md",
             PROJECT_ROOT / "docs" / "DEMO_SCRIPT.md",
             PROJECT_ROOT / "docs" / "persona-architecture.md",
+            PROJECT_ROOT / "docs" / "ab-report.md",
         ]:
             self.assertTrue(doc_path.exists(), f"{doc_path} not found")
             rel_posix = _relative_posix(doc_path)
             for brand in BRAND_PATTERNS:
                 self.assertIsNone(_classify_hit(rel_posix, brand, 1, {}))
+
+    def test_ab_report_is_a_cross_brand_doc(self):
+        """Regression for Rick's PR #321 review (B1): docs/ab-report.md compares every shipped
+        persona's backend/model results side by side by design, same as DEMO_SCRIPT.md --
+        without this, the rebrand ratchet fails CI the moment the report names more than one
+        brand (it previously had no BASELINE entry and broke the build)."""
+        self.assertTrue(_is_cross_brand_doc("docs/ab-report.md"))
 
     def test_a_foreign_brand_word_inside_a_persona_pack_is_forbidden(self):
         """Mutation-style unit check (no real file touched): 'dunkin' inside personas/sonic/**

@@ -36,21 +36,11 @@ class PersonaDataTests(unittest.TestCase):
         self.assertIn(PERSONA_ID, personas)
         self.assertEqual(personas, sorted(personas))
 
-    def test_load_guest_lines_returns_only_text_turns(self):
-        lines = abc.load_guest_lines(PERSONA_ID)
-        self.assertTrue(lines)
-        self.assertTrue(all(isinstance(line, str) and line for line in lines))
-
-    def test_load_expected_ticket_matches_dummy_order_total(self):
-        ticket = abc.load_expected_ticket(PERSONA_ID)
-        raw = json.loads((REPO_ROOT / "personas" / PERSONA_ID / "assets" / "demo" / "dummyOrder.json").read_text())
-        expected_total = round(sum(row["price"] * row["quantity"] for row in raw), 2)
-        self.assertAlmostEqual(ticket.total, expected_total, places=2)
-        self.assertEqual(len(ticket.items), len(raw))
-
-    def test_load_expected_ticket_unknown_persona_raises(self):
-        with self.assertRaises(FileNotFoundError):
-            abc.load_expected_ticket("not-a-real-persona")
+    def test_load_guest_clip_paths_returns_text_and_audio_pairs(self):
+        clips = abc.load_guest_clip_paths(PERSONA_ID)
+        self.assertTrue(clips)
+        self.assertTrue(all(isinstance(text, str) and text for text, _ in clips))
+        self.assertTrue(all(isinstance(path, Path) for _, path in clips))
 
 
 # ── Entra token acquisition (fake subprocess) ───────────────────────────────
@@ -164,11 +154,22 @@ class GatedFakeWebSocket(FakeWebSocket):
         super().__init__(list(batches[0]))
         self._pending = [list(b) for b in batches[1:]]
         self._in_speech = False
+        # Woken whenever a batch is released, so a concurrent `receive()` call already
+        # blocked waiting for frames notices immediately -- a real socket reader would never
+        # miss a frame that arrives while it's parked in a read; `asyncio.sleep(10)` alone
+        # would (B2 test support, Rick's PR #321 review: without this, a receive() call that
+        # started polling before the trailing-silence sender released the next batch could
+        # sleep right past it and only wake up on its caller's outer timeout).
+        self._frame_available = asyncio.Event()
+        if self._frames:
+            self._frame_available.set()
 
     async def send_json(self, payload: dict) -> None:
         await super().send_json(payload)
+        released = False
         if payload["type"] == "session.update" and self._pending:
             self._frames += self._pending.pop(0)
+            released = True
         elif payload["type"] == "input_audio_buffer.append":
             silent = set(base64.b64decode(payload["audio"])) <= {0}
             if not silent:
@@ -176,12 +177,19 @@ class GatedFakeWebSocket(FakeWebSocket):
             elif self._in_speech and self._pending:
                 self._in_speech = False
                 self._frames += self._pending.pop(0)
+                released = True
+        if released:
+            self._frame_available.set()
 
     async def receive(self):
         if not self._frames:
             if self._pending:
-                await asyncio.sleep(10)  # nothing until the client speaks; caller's wait_for times out
-            return FakeMessage(type=FakeWSMsgType.CLOSED, data=None)
+                self._frame_available.clear()
+                await self._frame_available.wait()
+                if not self._frames:
+                    return FakeMessage(type=FakeWSMsgType.CLOSED, data=None)
+            else:
+                return FakeMessage(type=FakeWSMsgType.CLOSED, data=None)
         return await super().receive()
 
 class FakeHttp:
@@ -265,7 +273,7 @@ class RunOrderTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertIsNone(result.error)
-        self.assertIsNotNone(result.cold_start_s)
+        self.assertIsNotNone(result.session_ready_s)
         self.assertEqual(len(result.turns), len(abc.load_guest_clip_paths(PERSONA_ID)))
         self.assertTrue(all(t.first_audio_latency_s is not None for t in result.turns))
         self.assertEqual(result.ticket_total, 14.21)
@@ -277,6 +285,80 @@ class RunOrderTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("input_audio_buffer.append", sent_types)
         self.assertNotIn("conversation.item.create", sent_types)
         self.assertNotIn("response.create", sent_types)
+
+    async def test_run_order_reads_audio_delta_during_trailing_silence_without_old_floor(self):
+        """B2 regression (Rick's PR #321 review): the old code sent every trailing-silence
+        chunk (with a real `asyncio.sleep` between each) BEFORE it ever read a frame, so an
+        audio delta that was already available was only timestamped once all of
+        `_TRAILING_SILENCE_S` had elapsed -- a floor of about 1.2s on every first-audio value.
+        Frames are now read concurrently with the silence being sent, so an audio delta
+        available (as scripted here) as soon as the first silent chunk goes out must be
+        timestamped near-instantly, not after the full silence window."""
+        batches = [[{"type": "extension.session_metadata"}],
+                   [{"type": "response.created"}, {"type": "response.done"}]]  # greeting
+        for _ in abc.load_guest_clip_paths(PERSONA_ID):
+            batches.append([
+                {"type": "response.created"},
+                {"type": "response.output_audio.delta", "delta": "aa"},
+                {"type": "response.done"},
+            ])
+        fake_ws = GatedFakeWebSocket(batches)
+
+        def fake_ws_connect(url):
+            return fake_ws
+
+        result = await abc.run_order(
+            FakeHttp(), fake_ws_connect,
+            backend="python", base_url="https://python.example", persona_id=PERSONA_ID,
+            model_id="gpt-realtime-2.1-mini", rep=0, access_token="entra-tok", timeout_s=2.0,
+            clip_loader=lambda _path: b"\x01\x00" * 4800,
+        )
+
+        self.assertIsNone(result.error)
+        self.assertTrue(result.turns)
+        for turn in result.turns:
+            self.assertIsNotNone(turn.first_audio_latency_s)
+            self.assertLess(turn.first_audio_latency_s, abc._TRAILING_SILENCE_S / 2)
+
+    async def test_run_order_flags_a_turn_that_times_out_before_response_done(self):
+        """Non-blocking item (Rick's PR #321 review): a turn that never reaches
+        `response.done` must be flagged, not silently recorded as if it completed -- otherwise
+        a run can read as having produced a ticket even though a later turn never finished."""
+        ticket_json = json.dumps({
+            "items": [{"item": "Test Item", "size": "Standard", "quantity": 1,
+                       "price": 4.29, "display": "Test Item"}],
+            "finalTotal": 4.29,
+        })
+        clips = abc.load_guest_clip_paths(PERSONA_ID)
+        self.assertGreater(len(clips), 1, "fixture persona needs 2+ guest clips for this test")
+        batches = [[{"type": "extension.session_metadata"}],
+                   [{"type": "response.created"}, {"type": "response.done"}]]  # greeting
+        # First turn completes normally and produces a ticket...
+        batches.append([
+            {"type": "response.created"},
+            {"type": "extension.middle_tier_tool_response", "tool_name": "update_order", "tool_result": ticket_json},
+            {"type": "response.done"},
+        ])
+        # ...every later turn never reaches response.done.
+        for _ in clips[1:]:
+            batches.append([{"type": "response.created"}])
+        fake_ws = GatedFakeWebSocket(batches)
+
+        def fake_ws_connect(url):
+            return fake_ws
+
+        result = await abc.run_order(
+            FakeHttp(), fake_ws_connect,
+            backend="python", base_url="https://python.example", persona_id=PERSONA_ID,
+            model_id="gpt-realtime-2.1-mini", rep=0, access_token="entra-tok", timeout_s=0.3,
+            clip_loader=lambda _path: b"\x01\x00" * 4800,
+        )
+
+        self.assertIsNotNone(result.error)
+        self.assertFalse(result.tool_correct)
+        self.assertEqual(result.ticket_total, 4.29)  # the earlier ticket is still recorded...
+        self.assertFalse(result.turns[0].timed_out)
+        self.assertTrue(any(t.timed_out for t in result.turns[1:]))
 
     async def test_run_order_records_error_without_raising(self):
         fake_ws = FakeWebSocket([])  # no extension.session_metadata ever arrives -> timeout
@@ -318,7 +400,7 @@ class RunOrderTests(unittest.IsolatedAsyncioTestCase):
 
 class ToolCorrectnessTests(unittest.TestCase):
     def _r(self, **kw):
-        base = dict(backend="python", persona_id=PERSONA_ID, model_id="gpt-realtime-2.1-mini", rep=0, cold_start_s=0.1)
+        base = dict(backend="python", persona_id=PERSONA_ID, model_id="gpt-realtime-2.1-mini", rep=0, session_ready_s=0.1)
         base.update(kw)
         return abc.OrderRunResult(**base)
 
@@ -374,10 +456,10 @@ class MetricsParsingTests(unittest.TestCase):
 # ── Report building / rendering ──────────────────────────────────────────
 
 class ReportTests(unittest.TestCase):
-    def _result(self, backend, total, error=None, items=None):
+    def _result(self, backend, total, error=None, items=None, rep=0):
         return abc.OrderRunResult(
-            backend=backend, persona_id=PERSONA_ID, model_id="gpt-realtime-2.1-mini", rep=0,
-            cold_start_s=0.5,
+            backend=backend, persona_id=PERSONA_ID, model_id="gpt-realtime-2.1-mini", rep=rep,
+            session_ready_s=0.5,
             turns=[abc.TurnResult(guest_text="hi", first_audio_latency_s=0.3, total_turn_time_s=1.2)],
             ticket_items=items if items is not None else [abc.ExpectedItem(item="Test Item", size="Standard", quantity=1)],
             ticket_total=total, error=error,
@@ -401,24 +483,105 @@ class ReportTests(unittest.TestCase):
     def test_parity_flags_different_tickets(self):
         report = abc.build_report([self._result("python", 4.29), self._result("dotnet", 5.29)])
         self.assertFalse(report["parity"][0]["match"])
+
+    def test_parity_requires_every_rep_on_both_backends_to_match(self):
+        """B4 regression (Rick's PR #321 review): the old rule only checked that the two
+        backends' ticket SETS intersected, so one rep differing from an otherwise-identical
+        majority still reported "yes". Parity must fail the moment any single rep, on either
+        backend, produces a different ticket."""
+        results = [
+            self._result("python", 4.29, rep=0),
+            self._result("python", 4.29, rep=1),
+            self._result("python", 4.29, rep=2),
+            self._result("dotnet", 4.29, rep=0),
+            self._result("dotnet", 4.29, rep=1),
+            self._result("dotnet", 5.29, rep=2),  # the one differing rep
+        ]
+        report = abc.build_report(results)
+        row = report["parity"][0]
+        self.assertFalse(row["match"])
+        self.assertEqual(row["python_tickets"], 1)
+        self.assertEqual(row["dotnet_tickets"], 2)
+
+    def test_parity_fails_when_a_rep_errored_even_if_tickets_match(self):
+        """A rep that never produced a ticket (error or empty) must also break parity -- "every
+        rep on both backends" includes reps that didn't produce a ticket at all."""
+        results = [
+            self._result("python", 4.29, rep=0),
+            self._result("python", None, rep=1, error="boom", items=[]),
+            self._result("dotnet", 4.29, rep=0),
+            self._result("dotnet", 4.29, rep=1),
+        ]
+        report = abc.build_report(results)
+        self.assertFalse(report["parity"][0]["match"])
+
     def test_render_markdown_includes_both_tables(self):
-        expected_total = abc.load_expected_ticket(PERSONA_ID).total
-        report = abc.build_report([self._result("python", expected_total)])
+        report = abc.build_report([self._result("python", 4.29)])
         md = abc.render_markdown(report)
         self.assertIn("## Latency", md)
         self.assertIn("## Correctness matrix", md)
         self.assertIn(PERSONA_ID, md)
 
+    def test_render_markdown_correctness_matrix_says_produced_ticket_not_correct(self):
+        """B4 wording fix (Rick's PR #321 review): `tool_correct`/`correct` only means "produced
+        a priced ticket with no error", not that the ticket matches the spoken order -- the
+        rendered column header must not read as an accuracy claim."""
+        report = abc.build_report([self._result("python", 4.29)])
+        md = abc.render_markdown(report)
+        self.assertIn("Produced ticket", md)
+        header_line = next(line for line in md.splitlines() if line.startswith("| Persona | Backend"))
+        self.assertNotIn("Correct", header_line)
+
+    def test_render_markdown_uses_session_ready_not_cold_start(self):
+        """B4 wording fix: "cold start" is WebSocket connect to session_metadata on an
+        already-warm container, not a container cold start -- rename everywhere, including the
+        correctness matrix column header."""
+        report = abc.build_report([self._result("python", 4.29)])
+        md = abc.render_markdown(report)
+        self.assertIn("Session ready", md)
+        self.assertNotIn("Cold start", md)
+        self.assertNotIn("cold start", md.lower())
+
+    def test_render_markdown_parity_table_shows_distinct_ticket_counts(self):
+        """B4 (Rick's PR #321 review): the JSON's python_tickets/dotnet_tickets counts weren't
+        in the markdown, so a reader of the report alone could not see a partial overlap."""
+        results = [
+            self._result("python", 4.29, rep=0),
+            self._result("python", 4.29, rep=1),
+            self._result("dotnet", 4.29, rep=0),
+            self._result("dotnet", 5.29, rep=1),
+        ]
+        report = abc.build_report(results)
+        md = abc.render_markdown(report)
+        parity_lines = md.splitlines()[md.splitlines().index("## Python vs C# ticket parity (same spoken order)"):]
+        self.assertIn("Python tickets", parity_lines[2])
+        self.assertIn("Dotnet tickets", parity_lines[2])
+        data_row = next(line for line in parity_lines if line.startswith(f"| {PERSONA_ID} |"))
+        self.assertIn("| 1 | 2 |", data_row)
+
     def test_render_markdown_includes_resource_usage_when_present(self):
-        expected_total = abc.load_expected_ticket(PERSONA_ID).total
         report = abc.build_report(
-            [self._result("python", expected_total)],
+            [self._result("python", 4.29)],
             metrics={"python": abc.ResourceMetrics(avg_cpu_nanocores=250_000_000.0, avg_memory_bytes=1.5e8)},
         )
         md = abc.render_markdown(report)
         self.assertIn("## Resource usage", md)
         self.assertIn("python", md)
 
+    def test_render_markdown_resource_usage_notes_the_run_window_and_sequential_backends(self):
+        """B3 (Rick's PR #321 review): CPU/memory is measured over the real run window, and
+        backends are exercised sequentially -- the report must say so, not just show numbers."""
+        report = abc.build_report(
+            [self._result("python", 4.29)],
+            metrics={"python": abc.ResourceMetrics(avg_cpu_nanocores=250_000_000.0, avg_memory_bytes=1.5e8)},
+            run_window=("2026-10-05T10:00:00Z", "2026-10-05T10:05:00Z"),
+        )
+        md = abc.render_markdown(report)
+        self.assertIn("2026-10-05T10:00:00Z", md)
+        self.assertIn("2026-10-05T10:05:00Z", md)
+        self.assertIn("one after another", md)
+
 
 if __name__ == "__main__":
     unittest.main()
+
