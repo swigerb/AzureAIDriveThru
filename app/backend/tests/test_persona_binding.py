@@ -675,7 +675,7 @@ class ApiPersonasResponseShapeTests(unittest.TestCase):
         # Rick's PR #102 review item 2: same content-hash versioning as logoUrl above.
         expected_hash = _content_hash(persona.menu_path)
         self.assertEqual(detail["menuUrl"], f"/personas/test-beta/menu.json?v={expected_hash}")
-        self.assertEqual(detail["models"]["realtime"]["default"], "gpt-realtime-mini")
+        self.assertEqual(detail["models"]["realtime"]["default"], "gpt-realtime-2.1-mini")
         self.assertNotIn("cascade", detail["models"])
         self.assertNotIn("local", detail["models"])
 

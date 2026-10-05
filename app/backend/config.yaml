@@ -28,6 +28,13 @@ model:
   # included. See scripts/benchmark_reasoning.py.
   # Env override: AZURE_OPENAI_REALTIME_REASONING_EFFORT ("off" disables).
   # "low": 30/30 correct, best TTFA p90 (0.98s/1.57s) on 2.1; none/minimal skip the spoken preamble (docs/customizing_deploy.md).
+  # Rick's PR #308 review item 6 (#306): this "low" value is carried over unchanged from
+  # the 2.1 benchmark above. It has NOT been separately measured on gpt-realtime-2.1-mini,
+  # which is now the default. The accepted-effort set and the "lowest effort != lowest
+  # latency for this tool-heavy prompt" finding were both probed on 2.1 only. A follow-up
+  # must run scripts/smoke_realtime.py --model gpt-realtime-2.1-mini and
+  # scripts/benchmark_reasoning.py against the 2.1-mini deployment once it's provisioned,
+  # and only change the default effort (or split it per-catalog-id) on that data.
   reasoning_effort: "low"
   # Is the deployment a reasoning model? true | false | auto. "auto" infers it
   # from the deployment name (gpt-realtime-1.5, gpt-realtime, gpt-realtime-mini,
@@ -56,7 +63,11 @@ model:
 models:
   catalog:
     - { id: gpt-realtime-2.1, pipeline: realtime, label: "GPT Realtime 2.1", reasoning: true }
-    - { id: gpt-realtime-mini, pipeline: realtime, label: "GPT Realtime mini", reasoning: false }
+    # Issue #306: the default realtime model. gpt-realtime-2.1's own deeper reasoning passes add
+    # latency that straightforward transactional intents (e.g. adding a combo meal) don't need.
+    # It's a reasoning model too (unlike the older, now-removed gpt-realtime-mini) -- it accepts
+    # the same `reasoning.effort` session field as gpt-realtime-2.1, just faster/cheaper per turn.
+    - { id: gpt-realtime-2.1-mini, pipeline: realtime, label: "GPT Realtime 2.1 mini", reasoning: true }
     - { id: gpt-5-mini, pipeline: cascade, label: "GPT-5 mini", toolCalling: true }
     - { id: phi-4, pipeline: cascade, label: "Phi-4 (Foundry)", toolCalling: true }
   # #82, design doc section 7.2/7.4: the cascade pipeline's own fixed transcription/TTS

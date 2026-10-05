@@ -24,7 +24,7 @@ Usage (from the repo root, with `az login` / `azd auth login` done):
     python scripts/smoke_realtime.py                       # uses azd env / env vars
     python scripts/smoke_realtime.py --deployment gpt-realtime-1.5
     python scripts/smoke_realtime.py --endpoint https://<aoai>.openai.azure.com/ --deployment gpt-realtime-2.1
-    python scripts/smoke_realtime.py --persona <persona-id> --model gpt-realtime-mini
+    python scripts/smoke_realtime.py --persona <persona-id> --model gpt-realtime-2.1-mini
 
     python scripts/smoke_realtime.py --tenant <tenant-id> --subscription <subscription-id>
 

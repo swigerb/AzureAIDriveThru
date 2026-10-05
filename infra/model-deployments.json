@@ -7,6 +7,17 @@
     "format": "OpenAI",
     "skuName": "GlobalStandard",
     "capacity": 10,
+    "isDefaultRealtime": false
+  },
+  {
+    "catalogId": "gpt-realtime-2.1-mini",
+    "deploymentName": "gpt-realtime-2.1-mini",
+    "modelName": "gpt-realtime-2.1-mini",
+    "_comment": "Issue #306: default realtime model -- gpt-realtime-2.1 defaults to deeper reasoning passes, which adds latency straightforward transactional intents (e.g. adding a combo meal) don't need. Verified read-only 2026-10-05 on cog-pwvzk3t22wttm (eastus2): version 2026-07-07 is available as GlobalStandard with 10 units of quota unused (gpt-realtime-2.1's own quota on this account is 46/46 used, 36 of it by the old cog-axgpampkq3yfa that #88 deletes).",
+    "modelVersion": "2026-07-07",
+    "format": "OpenAI",
+    "skuName": "GlobalStandard",
+    "capacity": 10,
     "isDefaultRealtime": true
   },
   {
