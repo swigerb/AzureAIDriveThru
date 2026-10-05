@@ -134,6 +134,9 @@ public sealed class CascadeProcessor : IPipelineProcessor
         public List<JsonObject> Messages { get; } = [];
         public Task? CurrentTurnTask { get; set; }
         public CancellationTokenSource? CurrentTurnCts { get; set; }
+        // Completes once the most recent barge-in's cancelled turn has fully stopped and its
+        // speech_started frame has been sent -- see RunSessionAsync's BargeIn helper.
+        public Task? BargeInTail { get; set; }
 
         // #126 one-shot resume nudge (mirrors rtmt.py's/RealtimeProcessor's own
         // NudgeScheduler-arming pair, kept as plain fields here -- not a NudgeScheduler instance --
@@ -255,6 +258,74 @@ public sealed class CascadeProcessor : IPipelineProcessor
             cts?.Dispose();
         }
 
+        // #126/PR #290: barge-in must NEVER block the browser receive loop. It used to call
+        // CancelCurrentTurnAsync (cancel + AWAIT the turn task) inline from HandleClientMessageAsync,
+        // then send speech_started inline too. But a cancelled turn can only stop once its
+        // in-flight browser SendAsync finishes (SendTextAsync deliberately never hands turnCt to the
+        // real write -- see its #236 doc comment), and that write only finishes once the browser
+        // reads. If the browser is itself blocked WRITING to us (e.g. streaming more mic audio
+        // while our TTS reply has filled the socket), both peers sit in a write that the other
+        // never reads: a hard deadlock that stalls the session until teardown. So the receive loop
+        // only cancels and detaches the turn here, then keeps reading; a chained "barge-in tail"
+        // waits for the cancelled turn to really stop and only then sends speech_started (so no
+        // stale audio from the cut-off reply can follow it), and the next turn waits for that tail
+        // before it starts (so its frames always follow speech_started, and it never mutates
+        // state.Messages concurrently with the cancelled turn's own cleanup).
+        void BargeIn()
+        {
+            var task = state.CurrentTurnTask;
+            var cts = state.CurrentTurnCts;
+            state.CurrentTurnTask = null;
+            state.CurrentTurnCts = null;
+            var wasInFlight = task is { IsCompleted: false };
+            cts?.Cancel();
+            var previousTail = state.BargeInTail;
+            state.BargeInTail = Task.Run(async () =>
+            {
+                await AwaitQuietlyAsync(previousTail).ConfigureAwait(false);
+                await AwaitQuietlyAsync(task).ConfigureAwait(false);
+                cts?.Dispose();
+                if (wasInFlight)
+                {
+                    _logger?.LogInformation("Cancelled in-flight cascade turn: {Reason} (session={SessionId})",
+                        "guest started speaking (barge-in)", sessionId);
+                }
+                try
+                {
+                    await SendTextAsync(browserSocket, """{"type":"input_audio_buffer.speech_started"}""", ct, ct)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is OperationCanceledException or WebSocketException)
+                {
+                    // Session is shutting down or the socket is gone -- nothing left to notify.
+                }
+                catch (Exception ex)
+                {
+                    _logger?.LogWarning(ex, "Could not send speech_started after a barge-in (session={SessionId})", sessionId);
+                }
+            });
+        }
+
+        async Task AwaitQuietlyAsync(Task? t)
+        {
+            if (t is null)
+            {
+                return;
+            }
+            try
+            {
+                await t.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected -- that's what cancelling the turn is for.
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "Cascade turn ended with an unexpected exception while cancelling it (session={SessionId})", sessionId);
+            }
+        }
+
         (CancellationTokenSource Cts, Task Task) Spawn(Func<CancellationToken, Task> body, string label)
         {
             var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -302,7 +373,8 @@ public sealed class CascadeProcessor : IPipelineProcessor
                 await Task.Delay(TimeSpan.FromSeconds(_sessionManager!.Config.NudgeAfterSeconds), _timeProvider, nudgeCt)
                     .ConfigureAwait(false);
                 var inFlight = state.CurrentTurnTask;
-                if (inFlight is not null && !inFlight.IsCompleted)
+                // A barged-in turn still winding down (BargeInTail) counts as in flight too.
+                if ((inFlight is not null && !inFlight.IsCompleted) || state.BargeInTail is { IsCompleted: false })
                 {
                     // Mid-turn, or the assistant is already speaking -- never stack a nudge on
                     // top of a real turn. One-shot: a skipped nudge is not rescheduled.
@@ -394,7 +466,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
                 // `OperationCanceledException` DOES derive from `Exception`, so without this
                 // clause a guest barging in mid-tool-call would get logged as a tool failure and
                 // a synthetic "something went wrong" error message appended to history, instead
-                // of the turn just quietly ending the way `CancelCurrentTurnAsync` expects.
+                // of the turn just quietly ending the way barge-in (`BargeIn`) expects.
                 //
                 // #236 Rick re-review item 3 (LOW): the `when` guard matters -- an
                 // `OperationCanceledException` can also come from an HttpClient-internal timeout
@@ -616,7 +688,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
             }
             catch (OperationCanceledException) when (turnCt.IsCancellationRequested)
             {
-                // Barge-in: `CancelCurrentTurnAsync` owns this turn's cleanup, not us.
+                // Barge-in: `BargeIn` owns this turn's cleanup, not us.
                 throw;
             }
             catch (Exception ex)
@@ -811,20 +883,27 @@ public sealed class CascadeProcessor : IPipelineProcessor
                     var vadEvent = detector.Feed(pcm, NowSeconds());
                     if (vadEvent == "speech_started")
                     {
-                        await CancelCurrentTurnAsync("guest started speaking (barge-in)").ConfigureAwait(false);
+                        BargeIn();
                         // #126: real guest activity -- reset (cancel, never reschedule) any
                         // pending resume nudge, same one-shot semantics as rtmt.py's own
                         // `cancel_nudge`.
                         CancelNudge("guest started speaking");
-                        await SendTextAsync(browserSocket, """{"type":"input_audio_buffer.speech_started"}""", ct, ct)
-                            .ConfigureAwait(false);
                     }
                     else if (vadEvent == "speech_stopped")
                     {
                         CancelNudge("guest turn started");
                         var turnAudio = detector.TakeBuffer();
                         detector.Reset();
-                        var (cts, task) = Spawn(turnCt => ProcessTurnAsync(turnAudio, turnCt), "turn");
+                        var bargeInTail = state.BargeInTail;
+                        var (cts, task) = Spawn(async turnCt =>
+                        {
+                            // Never overlap the turn a barge-in just cut off (see BargeIn).
+                            if (bargeInTail is not null)
+                            {
+                                await bargeInTail.WaitAsync(turnCt).ConfigureAwait(false);
+                            }
+                            await ProcessTurnAsync(turnAudio, turnCt).ConfigureAwait(false);
+                        }, "turn");
                         state.CurrentTurnCts = cts;
                         state.CurrentTurnTask = task;
                     }
@@ -1136,7 +1215,10 @@ public sealed class CascadeProcessor : IPipelineProcessor
         }
         finally
         {
+            // Teardown still waits for everything: the current turn (cancelled) and any
+            // barge-in tail still waiting on an earlier cancelled turn.
             await CancelCurrentTurnAsync("connection closing").ConfigureAwait(false);
+            await AwaitQuietlyAsync(state.BargeInTail).ConfigureAwait(false);
             CancelNudge("connection closing");
             _sessionManager?.Detach(browserSocket, sessionId, "socket closed");
         }
@@ -1153,7 +1235,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
     /// implementation behind both Kestrel's server-side <see cref="WebSocket"/> and
     /// <see cref="WebSocket.CreateFromStream"/>) treats a cancelled in-flight <c>SendAsync</c> as a
     /// fatal, unrecoverable transport error: cancelling it mid-write aborts the ENTIRE socket, not
-    /// just that one call. <c>CancelCurrentTurnAsync</c> cancels a turn's own
+    /// just that one call. <c>BargeIn</c> cancels a turn's own
     /// <c>CurrentTurnCts</c>/<c>turnCt</c> on barge-in while the SESSION (and its socket) must keep
     /// running for the next turn -- so passing <c>turnCt</c> straight into
     /// <c>browserSocket.SendAsync</c> (as every call site here used to) meant a barge-in landing

@@ -516,7 +516,7 @@ public sealed class CascadeProcessorTests
     /// ahead of it (same fix applied to the TTS and transcription catches) -- otherwise a guest
     /// barging in mid-tool-call got logged as an unhandled tool failure AND a synthetic "something
     /// went wrong" error appended to history, instead of the turn just quietly ending the way a
-    /// real barge-in's <c>CancelCurrentTurnAsync</c>/<c>Spawn</c> machinery expects (and silently
+    /// real barge-in's <c>BargeIn</c>/<c>Spawn</c> machinery expects (and silently
     /// swallows, by design -- see <c>Spawn</c>'s own doc comment).
     ///
     /// Rick's re-review flagged the ORIGINAL version of this test (which had the tool executor
@@ -527,7 +527,7 @@ public sealed class CascadeProcessorTests
     /// version drives a REAL barge-in instead: the tool executor blocks on the genuine `turnCt`
     /// <see cref="IToolExecutor.ExecuteAsync"/> receives, and only a second
     /// <c>input_audio_buffer.append</c> frame carrying loud audio -- processed by the real VAD
-    /// detector and routed through the real <c>CancelCurrentTurnAsync</c> -- unblocks it, exactly
+    /// detector and routed through the real <c>BargeIn</c> -- unblocks it, exactly
     /// as a guest's spoken interruption would in production.</summary>
     [Fact]
     public async Task RunSessionAsync_RealBargeInDuringToolCall_PropagatesWithoutBeingLoggedAsAToolFailure()
@@ -555,7 +555,7 @@ public sealed class CascadeProcessorTests
             {
                 // Blocks on the REAL per-turn token ExecuteToolCallAsync passes through --
                 // unlike the previous version of this test, only a genuine
-                // CancelCurrentTurnAsync (triggered by the second loud-audio frame below) can
+                // BargeIn (triggered by the second loud-audio frame below) can
                 // unblock this.
                 await Task.Delay(Timeout.InfiniteTimeSpan, toolCt).ConfigureAwait(false);
                 return default!;

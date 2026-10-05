@@ -87,22 +87,33 @@ public sealed class BrowserSocketCancellationTests
     /// backpressures if the guest side stops reading.</summary>
     private static async Task<(WebSocket BrowserSocket, WebSocket GuestSocket, TcpClient ServerTcp, TcpClient ClientTcp)> OpenLoopbackWebSocketPairAsync()
     {
+        const int TinyBufferBytes = 512;
+        // Sized BEFORE the TCP handshake (the listener's buffers are inherited by the accepted
+        // socket; the client's are set before ConnectAsync), never after: TCP never shrinks a
+        // receive window it has already advertised, so shrinking SO_RCVBUF on an established
+        // connection leaves the peer free to send in-window data the receiver must then drop.
+        // That turned this harness into a TCP retransmit-timeout crawl (Linux: TCPZeroWindowDrop/
+        // RcvPruned/TCPTimeouts, ~2.3KB delivered per exponentially-backed-off RTO), which stalled
+        // the test for reasons unrelated to CascadeProcessor -- and, by letting the guest's
+        // follow-up mic frame slip into the stale oversized window, hid the real barge-in
+        // write/write deadlock this test now also guards against (see the test's own doc comment).
         var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Server.SendBufferSize = TinyBufferBytes;
+        listener.Server.ReceiveBufferSize = TinyBufferBytes;
         listener.Start();
         try
         {
             var acceptTask = listener.AcceptTcpClientAsync();
             var clientTcp = new TcpClient();
+            clientTcp.Client.SendBufferSize = TinyBufferBytes;
+            clientTcp.Client.ReceiveBufferSize = TinyBufferBytes;
             await clientTcp.ConnectAsync(IPAddress.Loopback, ((IPEndPoint)listener.LocalEndpoint).Port).ConfigureAwait(false);
             var serverTcp = await acceptTask.ConfigureAwait(false);
 
             // Deliberately tiny: makes a multi-chunk TTS reply back up almost immediately once the
             // guest side stops draining, without needing a multi-megabyte payload to force it.
-            const int TinyBufferBytes = 512;
             serverTcp.Client.SendBufferSize = TinyBufferBytes;
             serverTcp.Client.ReceiveBufferSize = TinyBufferBytes;
-            clientTcp.Client.SendBufferSize = TinyBufferBytes;
-            clientTcp.Client.ReceiveBufferSize = TinyBufferBytes;
 
             var browserSocket = WebSocket.CreateFromStream(
                 serverTcp.GetStream(), isServer: true, subProtocol: null, keepAliveInterval: Timeout.InfiniteTimeSpan);
@@ -145,7 +156,14 @@ public sealed class BrowserSocketCancellationTests
     /// would have failed against that code: reverting the fix (passing <c>turnCt</c> instead of
     /// the session-level <c>ct</c> to the actual <c>socket.SendAsync</c> call) makes the socket
     /// abort here and the second guest turn below never completes -- see the mutation-check note
-    /// in the PR body.</summary>
+    /// in the PR body.
+    ///
+    /// #126/PR #290: it also guards against a barge-in write/write deadlock. Step 4 below has the
+    /// guest WRITE another mic frame (~12.8KB) before it resumes reading, exactly like a real
+    /// browser that keeps streaming mic audio while the assistant's reply backs up. If barge-in
+    /// handling awaits the cancelled turn inline on the receive loop, the server stops reading
+    /// while its own turn's write waits on the guest, and the guest's write waits on the server:
+    /// neither side ever reads again.</summary>
     [Fact]
     public async Task RunSessionAsync_BargeInDuringABackpressuredTtsWrite_DoesNotAbortTheBrowserSocket()
     {
@@ -195,16 +213,18 @@ public sealed class BrowserSocketCancellationTests
         //    genuinely blocked on backpressure.
         await guestSocket.SendAsync(AppendFrame(loudChunk), WebSocketMessageType.Text, true, ct);
 
-        // Let CancelCurrentTurnAsync's cancel-and-await-the-turn-task sequence settle.
+        // Let the barge-in's turn cancellation settle (the cancelled turn itself can't finish
+        // until its in-flight write drains, which is fine: the receive loop must keep reading).
         await Task.Delay(TimeSpan.FromMilliseconds(500), ct);
 
         // The core assertion: the socket we handed to CascadeProcessor must still be Open, not
         // Aborted, even though a send was genuinely in flight when the barge-in's cancellation fired.
         Assert.Equal(WebSocketState.Open, browserSocket.State);
 
-        // 4) Resume draining (flushes whatever was left of turn 1's cut-short reply, harmlessly),
-        //    then prove the socket is still fully functional: a fresh guest turn must complete
-        //    end-to-end (STT -> chat -> TTS -> response.done -> round trip).
+        // 4) Keep streaming mic audio (BEFORE reading anything -- see the write/write deadlock note
+        //    in this test's doc comment), then resume draining (flushes whatever was left of turn
+        //    1's cut-short reply, harmlessly), and prove the socket is still fully functional: a
+        //    fresh guest turn must complete end-to-end (STT -> chat -> TTS -> response.done -> round trip).
         var silentChunk2 = Pcm16(0, count: 4800);
         await guestSocket.SendAsync(AppendFrame(silentChunk2), WebSocketMessageType.Text, true, ct);
 
