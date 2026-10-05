@@ -132,8 +132,17 @@ public sealed class DotnetBackendLauncherPortRaceTests
         {
             var contract = BackendContract.ForPort(NeverDialedRealtime, NeverDialedSearch, occupiedPort);
 
+            // #226 round 4 / #267 CI failure: see the comment on the sibling test above
+            // (StartAsync_recovers_when_the_assigned_port_is_already_bound_by_someone_else) --
+            // this test also bypasses ConformanceFixture and must supply an equivalent
+            // non-Production profile itself, or the launched backend hits this PR's fail-fast.
+            var options = new DotnetBackendOptions
+            {
+                ExtraEnvironment = BackendProfiles.DevelopmentPassThrough.ExtraEnvironment,
+            };
+
             await using var backend = await DotnetBackendLauncher.StartAsync(
-                contract, new DotnetBackendOptions(), ct);
+                contract, options, ct);
 
             Assert.True(
                 observedPorts.Count >= 2,
