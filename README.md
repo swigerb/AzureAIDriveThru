@@ -101,6 +101,58 @@ Once the app has a public URL, re-run `./scripts/Setup-EntraAuth.ps1 -TenantId <
 
 See [DEPLOY.md](DEPLOY.md) and [docs/customizing_deploy.md](docs/customizing_deploy.md) for deployment options.
 
+## Choose your backend
+
+The app has two feature-equivalent backends behind the same frontend and the same `/realtime` wire
+contract: `app/backend` (Python, aiohttp -- the reference implementation) and
+`app/backend-dotnet` (C#, .NET 11, ASP.NET Core -- an in-progress port). Both can run side by side
+in the same environment, sharing the same Foundry account, Azure AI Search service, and managed
+identity (`docs/persona-architecture.md` section 14).
+
+**When to pick which:**
+
+- **Python** is the reference backend: it lands new features first and is the one to use if you
+  only need one backend running.
+- **C#** is for .NET-first teams, or once you want to validate both legs for a release -- it's
+  feature-equivalent once the conformance suite is green on both (see below), not before.
+
+**What parity means.** "Feature-equivalent" is enforced, not assumed: the shared, language-neutral
+conformance harness at `tests/conformance/` drives both backends' `/realtime` WebSocket and REST
+surface through the same black-box scenarios (ordering rules, persona switching, auth, resume,
+rate-limit recovery, and more) and pins the two backends to identical responses. `dev` only merges
+to `main` after the full validation plan in `docs/persona-architecture.md` section 12 is green,
+which requires the conformance suite passing on both backends. Run it with:
+
+```bash
+dotnet test tests/conformance/Conformance.slnx
+```
+
+**How to switch.** Both backends can be deployed at once behind one frontend build, and a guest can
+move between them without losing their persona or model choice:
+
+- In a running app with both backends deployed, the header's Python / C# (.NET) picker
+  (`app/frontend/src/components/ui/backend-picker.tsx`) is a real navigation between each backend's
+  own hostname -- there's no proxy -- that carries the current `persona`/`model` selection across
+  the hop.
+- The picker itself is driven by `/api/personas`' `backends[]` list, which the frontend reads to
+  decide whether to show it at all: a single-backend deployment (only `BACKEND_URI` set, no
+  `BACKEND_DOTNET_URI`) never shows the picker, since there's nothing to switch to.
+
+**How to deploy each.** Both backends deploy from the same `azd` environment, the same
+`infra/main.bicep`, and the same Entra app registration:
+
+- **Python** deploys by default on every `azd up` -- see [Deploy with `azd`](#deploy-with-azd)
+  above.
+- **C#** is opt-in per environment via `DEPLOY_DOTNET_APP`/`deployDotnetApp`, off everywhere by
+  default (including the owner's production environment): see
+  [DEPLOY.md's ".NET container app" section](DEPLOY.md#net-container-app-s7-17) for the
+  `azd env set` steps, the ingress-last rollout, and rollback.
+
+**Live comparison.** `scripts/ab_compare.py` drives the same scripted orders against both
+backends' live `/realtime` endpoint and measures per-turn latency, tool correctness, cold start,
+and container CPU/memory; see its own `--help` for usage. The latest run's results are in
+[docs/ab-report.md](docs/ab-report.md).
+
 ## Repository layout
 
 ```text
@@ -109,7 +161,7 @@ app/backend-dotnet/   C# .NET 11 parity backend
 app/frontend/         React and TypeScript frontend
 personas/             Persona data, menus, prompts, assets, and themes
 infra/                Bicep modules and model deployment data
-scripts/              azd hooks, search indexing, auth setup, smoke checks
+scripts/              azd hooks, search indexing, auth setup, smoke checks, live A/B comparison
 tests/conformance/    Black-box conformance suite for backend parity
 docs/                 Architecture, ADRs, operations docs, and demo script
 ```
@@ -121,6 +173,9 @@ Use the smallest check that covers your change. Common checks are:
 ```powershell
 # Python backend targeted tests
 python -m pytest app/backend/tests/test_rebrand_verification.py app/backend/tests/test_tools_attach.py
+
+# ab_compare.py's own unit tests (fakes only -- no live Azure, no network)
+python -m pytest scripts/tests/test_ab_compare.py
 
 # .NET backend unit tests, requires .NET 11 SDK
 dotnet test app/backend-dotnet/Backend.slnx
@@ -143,5 +198,6 @@ The CI rebrand ratchet scans tracked source and Markdown files for brand-word dr
 - [Persona architecture](docs/persona-architecture.md)
 - [Order resume](docs/order_resume.md)
 - [Rate-limit recovery](docs/rate_limit_recovery.md)
+- [A/B comparison report](docs/ab-report.md)
 - [ADR-001: persona architecture](docs/adr/ADR-001-persona-architecture.md)
 - [ADR-002: Entra authentication](docs/adr/ADR-002-entra-authentication.md)
