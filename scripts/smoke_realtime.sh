@@ -49,22 +49,13 @@ echo "Realtime smoke check (backend): running..."
 "$PYTHON" "$SCRIPT_DIR/smoke_realtime.py"
 report_result "backend" "$?"
 
-# S7 (#17 go-live): once BACKEND_DOTNET_URI is populated (deployDotnetApp=true, infra/main.bicep),
-# re-run the SAME check a second time so a postdeploy against the .NET app's rollout also gets a
-# fresh realtime-session verification, not just whatever the Python app's last run happened to
-# confirm. This talks directly to the shared Azure OpenAI realtime deployment (not either app's own
-# HTTP endpoint -- see the module doc in smoke_realtime.py), which is why the two runs MUST be
-# serial, never concurrent: the realtime deployment's capacity may be provisioned as low as 10
-# concurrent sessions (AZURE_OPENAI_REALTIME_DEPLOYMENT_CAPACITY), and this hook already competes
-# with real guest traffic for that same quota.
-dotnet_uri="$(azd env get-value BACKEND_DOTNET_URI 2>/dev/null || true)"
-if [ -n "$dotnet_uri" ]; then
-  echo ""
-  echo "Realtime smoke check (backend-dotnet): BACKEND_DOTNET_URI is set -- running a second, serial pass..."
-  "$PYTHON" "$SCRIPT_DIR/smoke_realtime.py"
-  report_result "backend-dotnet" "$?"
-else
-  echo "Realtime smoke check (backend-dotnet): BACKEND_DOTNET_URI is empty -- skipping (the .NET app is not deployed, #17)."
-fi
+# S7 (#17 go-live): no second "backend-dotnet" pass here. smoke_realtime.py always builds the
+# Python RTMiddleTier against the shared Azure OpenAI realtime deployment -- it never reads
+# BACKEND_DOTNET_URI or talks to the .NET app at all, so re-running it a second time would just be
+# the same Python-side check twice (burning realtime capacity guests share for zero extra signal).
+# The real C# check is `Verify-ProductionAuth.ps1 -Authenticated` against BACKEND_DOTNET_URI in the
+# ".NET container app (S7, #17)" rollout in DEPLOY.md. A real .NET realtime smoke probe (a script
+# that opens a realtime session against the C# app's own endpoint) is tracked as a follow-up, not
+# yet implemented.
 
 exit 0
