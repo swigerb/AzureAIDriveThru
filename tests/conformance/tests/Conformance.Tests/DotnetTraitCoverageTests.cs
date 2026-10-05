@@ -619,9 +619,21 @@ public sealed class DotnetTraitCoverageTests
     /// manual untag/retag dance had to work around by hand. This resolves the method's own
     /// MemberData attribute(s) (if any; a plain <c>[Theory]</c> with only <c>[InlineData]</c> rows
     /// always has a non-empty, statically-known row count and is never excluded here), invokes the
-    /// referenced static data-source method via reflection, and reports whether it yields zero
+    /// referenced static data-source member via reflection, and reports whether it yields zero
     /// rows -- so <see cref="CountFloorEligibleDotnetReadyTestMethods"/> can exclude exactly the
     /// methods that would otherwise silently inflate the floor with a SKIPPED, not PASSED, row.
+    ///
+    /// Issue #296 follow-up 1 (Rick's review of #295): a static property- or field-backed
+    /// <c>[MemberData]</c> source (xunit supports both, not just methods) used to fall through
+    /// <see cref="TryResolveMemberDataRows"/>'s method-only lookup, resolve to <c>null</c>, and be
+    /// counted toward the floor as if it had rows -- the exact "fails open" gap this follow-up
+    /// closes. <see cref="TryResolveMemberDataRows"/> now also tries <c>GetProperty</c>/
+    /// <c>GetField</c>, and when a source can't be resolved as a method, property, OR field at
+    /// all, this method now fails CLOSED: it excludes the method from the floor (returns
+    /// <c>true</c>) rather than leaving it counted. That silent exclusion is paired with
+    /// <see cref="SkipTestWithoutData_MemberData_sources_are_all_resolvable"/>, a loud guard Fact
+    /// that fails with an explicit message naming every unresolvable source, so an unresolvable
+    /// reference is never silently swallowed in either direction.
     /// </summary>
     private static bool TheoryYieldsZeroRowsWhenSkipGated(MethodInfo method)
     {
@@ -642,26 +654,305 @@ public sealed class DotnetTraitCoverageTests
         foreach (var memberData in memberDataAttributes)
         {
             var declaringType = memberData.MemberType ?? method.DeclaringType!;
-            var member = declaringType.GetMethod(
-                memberData.MemberName, BindingFlags.Public | BindingFlags.Static | BindingFlags.NonPublic);
-            if (member is null)
+            if (!TryResolveMemberDataRows(declaringType, memberData, out var rows))
             {
-                // Can't resolve the data source by reflection -- don't guess; leave it counted
-                // rather than risk silently excluding a method that genuinely has rows.
-                return false;
+                // Can't resolve this source as a method, property, or field -- fail CLOSED:
+                // exclude it from the floor rather than risk silently counting a SKIPPED row.
+                // SkipTestWithoutData_MemberData_sources_are_all_resolvable asserts loudly (with
+                // an explicit message naming the method and source) if this ever actually fires.
+                return true;
             }
 
-            var result = member.Invoke(null, memberData.Arguments is { Length: > 0 } args ? args : null);
-            if (result is System.Collections.IEnumerable rows && !rows.Cast<object?>().Any())
+            if (rows is null || rows.Any())
+            {
+                // Not enumerable (can't say it's zero rows), or yielded at least one row -- the
+                // Theory runs for real.
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Resolves a <c>[MemberData]</c> source as a static method, property, or field (in that
+    /// order -- xunit itself supports all three) and invokes/reads it, returning its rows. Issue
+    /// #296 follow-up 1: previously only <c>GetMethod</c> was tried, so a property- or
+    /// field-backed source (e.g. <c>public static IEnumerable&lt;object[]&gt; Cases { get; }</c>)
+    /// silently failed to resolve and was treated as "can't determine, leave it counted" by the
+    /// caller -- exactly backwards for a genuinely empty property/field source. Returns
+    /// <c>false</c> (with <paramref name="rows"/> <c>null</c>) only when none of the three member
+    /// kinds resolve at all.
+    /// </summary>
+    private static bool TryResolveMemberDataRows(
+        Type declaringType, MemberDataAttribute memberData, out IEnumerable<object?>? rows)
+    {
+        const BindingFlags flags = BindingFlags.Public | BindingFlags.Static | BindingFlags.NonPublic;
+        var arguments = memberData.Arguments is { Length: > 0 } args ? args : null;
+
+        var methodSource = declaringType.GetMethod(memberData.MemberName, flags);
+        if (methodSource is not null)
+        {
+            rows = (methodSource.Invoke(null, arguments) as System.Collections.IEnumerable)?.Cast<object?>();
+            return true;
+        }
+
+        var propertySource = declaringType.GetProperty(memberData.MemberName, flags);
+        if (propertySource is not null)
+        {
+            rows = (propertySource.GetValue(null) as System.Collections.IEnumerable)?.Cast<object?>();
+            return true;
+        }
+
+        var fieldSource = declaringType.GetField(memberData.MemberName, flags);
+        if (fieldSource is not null)
+        {
+            rows = (fieldSource.GetValue(null) as System.Collections.IEnumerable)?.Cast<object?>();
+            return true;
+        }
+
+        rows = null;
+        return false;
+    }
+
+    /// <summary>
+    /// Issue #296 follow-up 1: the loud counterpart to <see cref="TheoryYieldsZeroRowsWhenSkipGated"/>'s
+    /// new fail-closed behavior. An unresolvable <c>[MemberData]</c> source on a
+    /// <c>[Theory(SkipTestWithoutData = true)]</c> method is now silently excluded from the
+    /// coverage floor (fail closed) rather than silently counted (the old fail-open bug) -- but
+    /// "silently" should never apply to both directions at once, so this Fact scans the same
+    /// surface and fails loudly, naming every method/source pair that couldn't be resolved as a
+    /// method, property, or field, if that ever actually happens.
+    /// </summary>
+    [Fact]
+    public void SkipTestWithoutData_MemberData_sources_are_all_resolvable()
+    {
+        var assembly = typeof(DotnetTraitCoverageTests).Assembly;
+        var violations = new List<string>();
+
+        foreach (var type in assembly.GetTypes())
+        {
+            if (type.IsAbstract)
             {
                 continue;
             }
 
-            // This data source yielded at least one row -- the Theory runs for real.
-            return false;
+            foreach (var method in type.GetMethods(
+                BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static))
+            {
+                var theoryAttribute = method.GetCustomAttribute<TheoryAttribute>(inherit: true);
+                if (theoryAttribute is null || !theoryAttribute.SkipTestWithoutData)
+                {
+                    continue;
+                }
+
+                foreach (var memberData in method.GetCustomAttributes<MemberDataAttribute>(inherit: true))
+                {
+                    var declaringType = memberData.MemberType ?? method.DeclaringType!;
+                    if (!TryResolveMemberDataRows(declaringType, memberData, out _))
+                    {
+                        violations.Add($"{type.FullName}.{method.Name}: [MemberData(\"{memberData.MemberName}\")] " +
+                            $"could not be resolved as a static method, property, or field on " +
+                            $"{declaringType.FullName}.");
+                    }
+                }
+            }
         }
 
-        return true;
+        Assert.True(violations.Count == 0,
+            "Every [MemberData] source referenced by a [Theory(SkipTestWithoutData = true)] method " +
+            $"must resolve as a static method, property, or field (see issue #296); an unresolvable " +
+            $"source is excluded from the coverage floor (fail closed) but should never happen " +
+            $"silently. Violations:\n{string.Join("\n", violations)}");
+    }
+
+    /// <summary>
+    /// PR #297 (Rick's review of #296 follow-up 1): synthetic fixtures for the regression tests
+    /// below, which prove the property/field-backed <see cref="TryResolveMemberDataRows"/> lookup
+    /// and the fail-closed branch of <see cref="TheoryYieldsZeroRowsWhenSkipGated"/> actually work
+    /// against a genuine property- and field-backed <c>[MemberData]</c> source -- every real
+    /// <c>[MemberData]</c> call site in this assembly happens to be method-backed today, so
+    /// without this type the exact bug those two follow-ups fixed could regress without any test
+    /// going red. This type is deliberately <c>private</c> and <c>abstract</c> -- both are
+    /// independently sufficient to keep xunit from ever discovering it as a real test class (see
+    /// <see cref="CountFloorEligibleDotnetReadyTestMethods"/>'s own abstract-type skip and its
+    /// doc comment on non-public types never being enumerable by <c>Assembly.GetTypes()</c>'s
+    /// public surface), so it can never itself contribute to the 351 floor. None of its methods
+    /// carry a <c>[Trait("Dotnet", "ready")]</c> either, which would exclude them from the floor
+    /// even if discovery somehow changed.
+    /// </summary>
+    // These fixture methods are never actually run by xunit (the enclosing type is non-public and
+    // abstract, so it's never discovered as a real test class) -- they exist only to be inspected
+    // via reflection by the regression tests below. The xunit analyzers don't know that, so their
+    // "test classes must be public" / "unresolvable MemberData" / "unused Theory parameter" rules
+    // would otherwise flag this intentionally-inert fixture as a build error.
+#pragma warning disable xUnit1000 // test class must be public -- intentionally non-public, see above
+#pragma warning disable xUnit1026 // unused Theory parameter -- the parameter is never bound, see above
+#pragma warning disable xUnit1015 // MemberData must reference an existing member -- that's the point of UnresolvableSource
+    private abstract class ZeroRowGuardFixtures
+    {
+        public static IEnumerable<object[]> EmptyProperty => Array.Empty<object[]>();
+
+        public static readonly IEnumerable<object[]> EmptyField = Array.Empty<object[]>();
+
+        public static IEnumerable<object[]> NonEmptyProperty => new[] { new object[] { 1 } };
+
+        [Theory(SkipTestWithoutData = true)]
+        [MemberData(nameof(EmptyProperty))]
+        public void EmptyPropertySource(int value) { }
+
+        [Theory(SkipTestWithoutData = true)]
+        [MemberData(nameof(EmptyField))]
+        public void EmptyFieldSource(int value) { }
+
+        [Theory(SkipTestWithoutData = true)]
+        [MemberData(nameof(NonEmptyProperty))]
+        public void NonEmptyPropertySource(int value) { }
+
+        [Theory(SkipTestWithoutData = true)]
+        [MemberData("DoesNotExist")]
+        public void UnresolvableSource(int value) { }
+    }
+#pragma warning restore xUnit1015
+#pragma warning restore xUnit1026
+#pragma warning restore xUnit1000
+
+    private static MethodInfo GetFixtureMethod(string name) =>
+        typeof(ZeroRowGuardFixtures).GetMethod(name, BindingFlags.Public | BindingFlags.Instance)
+            ?? throw new InvalidOperationException($"{nameof(ZeroRowGuardFixtures)}.{name} not found.");
+
+    /// <summary>
+    /// Mutation-check for <see cref="TryResolveMemberDataRows"/>'s <c>GetProperty</c> branch: calls
+    /// the helper directly (not through the Theory machinery, so it can't be silently skipped)
+    /// against <see cref="ZeroRowGuardFixtures.EmptyProperty"/>. Reverting the property lookup
+    /// must turn this test red (resolution would fail entirely, since no method or field named
+    /// <c>EmptyProperty</c> exists either).
+    /// </summary>
+    [Fact]
+    public void TryResolveMemberDataRows_resolves_empty_property_backed_source()
+    {
+        var method = GetFixtureMethod(nameof(ZeroRowGuardFixtures.EmptyPropertySource));
+        var memberData = method.GetCustomAttribute<MemberDataAttribute>(inherit: true)!;
+
+        var resolved = TryResolveMemberDataRows(typeof(ZeroRowGuardFixtures), memberData, out var rows);
+
+        Assert.True(resolved, "A static property-backed [MemberData] source must resolve.");
+        Assert.NotNull(rows);
+        Assert.Empty(rows!);
+    }
+
+    /// <summary>
+    /// Mutation-check for <see cref="TryResolveMemberDataRows"/>'s <c>GetField</c> branch: calls
+    /// the helper directly against <see cref="ZeroRowGuardFixtures.EmptyField"/>. Reverting the
+    /// field lookup must turn this test red.
+    /// </summary>
+    [Fact]
+    public void TryResolveMemberDataRows_resolves_empty_field_backed_source()
+    {
+        var method = GetFixtureMethod(nameof(ZeroRowGuardFixtures.EmptyFieldSource));
+        var memberData = method.GetCustomAttribute<MemberDataAttribute>(inherit: true)!;
+
+        var resolved = TryResolveMemberDataRows(typeof(ZeroRowGuardFixtures), memberData, out var rows);
+
+        Assert.True(resolved, "A static field-backed [MemberData] source must resolve.");
+        Assert.NotNull(rows);
+        Assert.Empty(rows!);
+    }
+
+    /// <summary>
+    /// Proves a non-empty property-backed source still resolves with its real rows intact (not
+    /// just "resolved to something falsy") -- guards against a fix that resolves properties but
+    /// discards their actual contents.
+    /// </summary>
+    [Fact]
+    public void TryResolveMemberDataRows_resolves_non_empty_property_backed_source_with_rows()
+    {
+        var method = GetFixtureMethod(nameof(ZeroRowGuardFixtures.NonEmptyPropertySource));
+        var memberData = method.GetCustomAttribute<MemberDataAttribute>(inherit: true)!;
+
+        var resolved = TryResolveMemberDataRows(typeof(ZeroRowGuardFixtures), memberData, out var rows);
+
+        Assert.True(resolved);
+        Assert.NotNull(rows);
+        Assert.NotEmpty(rows!);
+    }
+
+    /// <summary>
+    /// A source that resolves as neither a method, property, nor field must report
+    /// <c>false</c>/<c>null</c> from <see cref="TryResolveMemberDataRows"/> itself, independent of
+    /// how the caller chooses to fail.
+    /// </summary>
+    [Fact]
+    public void TryResolveMemberDataRows_fails_for_unresolvable_source()
+    {
+        var method = GetFixtureMethod(nameof(ZeroRowGuardFixtures.UnresolvableSource));
+        var memberData = method.GetCustomAttribute<MemberDataAttribute>(inherit: true)!;
+
+        var resolved = TryResolveMemberDataRows(typeof(ZeroRowGuardFixtures), memberData, out var rows);
+
+        Assert.False(resolved);
+        Assert.Null(rows);
+    }
+
+    /// <summary>
+    /// End-to-end mutation-check for the fail-closed guard itself (not just its resolution
+    /// helper): an empty static property-backed <c>[MemberData]</c> source on a
+    /// <c>[Theory(SkipTestWithoutData = true)]</c> method must be reported as yielding zero rows,
+    /// exactly the behavior <see cref="At_least_351_scenarios_are_tagged_dotnet_ready_and_not_skip_gated"/>
+    /// relies on to exclude it from the floor. Reverting either the property-resolution branch
+    /// above or this guard's own fail-closed wiring must turn this test red.
+    /// </summary>
+    [Fact]
+    public void TheoryYieldsZeroRowsWhenSkipGated_excludes_empty_property_backed_MemberData()
+    {
+        var method = GetFixtureMethod(nameof(ZeroRowGuardFixtures.EmptyPropertySource));
+
+        Assert.True(TheoryYieldsZeroRowsWhenSkipGated(method),
+            "An empty static property-backed [MemberData] source must be excluded (treated as " +
+            "zero rows) by the coverage-floor guard.");
+    }
+
+    /// <summary>
+    /// Field-backed counterpart of the property test above.
+    /// </summary>
+    [Fact]
+    public void TheoryYieldsZeroRowsWhenSkipGated_excludes_empty_field_backed_MemberData()
+    {
+        var method = GetFixtureMethod(nameof(ZeroRowGuardFixtures.EmptyFieldSource));
+
+        Assert.True(TheoryYieldsZeroRowsWhenSkipGated(method),
+            "An empty static field-backed [MemberData] source must be excluded (treated as zero " +
+            "rows) by the coverage-floor guard.");
+    }
+
+    /// <summary>
+    /// A non-empty property-backed source must NOT be excluded -- proves the new property/field
+    /// resolution path doesn't over-eagerly swallow real rows along with the zero-row case above.
+    /// </summary>
+    [Fact]
+    public void TheoryYieldsZeroRowsWhenSkipGated_counts_non_empty_property_backed_MemberData()
+    {
+        var method = GetFixtureMethod(nameof(ZeroRowGuardFixtures.NonEmptyPropertySource));
+
+        Assert.False(TheoryYieldsZeroRowsWhenSkipGated(method),
+            "A non-empty static property-backed [MemberData] source must still count toward the " +
+            "floor, not be excluded.");
+    }
+
+    /// <summary>
+    /// Mutation-check for the fail-closed <c>return true</c> inside
+    /// <see cref="TheoryYieldsZeroRowsWhenSkipGated"/> itself: an unresolvable source must be
+    /// excluded from the floor (reported as "yields zero rows"). Flipping that fail-closed branch
+    /// to fail OPEN (counted) must turn this test red.
+    /// </summary>
+    [Fact]
+    public void TheoryYieldsZeroRowsWhenSkipGated_fails_closed_for_unresolvable_MemberData()
+    {
+        var method = GetFixtureMethod(nameof(ZeroRowGuardFixtures.UnresolvableSource));
+
+        Assert.True(TheoryYieldsZeroRowsWhenSkipGated(method),
+            "A [MemberData] source that resolves as neither a method, property, nor field must " +
+            "fail CLOSED (excluded from the floor), never silently counted.");
     }
 
     /// <summary>

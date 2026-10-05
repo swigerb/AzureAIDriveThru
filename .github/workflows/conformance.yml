@@ -369,15 +369,19 @@ jobs:
   #
   # Backend axis: "python" runs the full suite (matching PythonBackendLauncher's real relay/order
   # pipeline). #76 added "dotnet" here once the C# skeleton (issue #12 S2) had a health/config/
-  # persona-pack/static-files surface worth gating on -- it deliberately does NOT run the full
-  # suite (the skeleton has no realtime relay or order pipeline yet), only the scenarios tagged
-  # `[Trait("Dotnet", "ready")]` (docs/dotnet_mapping.md: 11 scenarios today, grown by a
-  # `DotnetTraitCoverageTests` floor of >= 11 so the count can't silently shrink). Before this,
-  # CONFORMANCE_BACKEND=dotnet FAILED the suite by default in CI on purpose (PR #22 review item
-  # 15 -- DotnetPlaceholderPolicy/CiEnvironment.IsCi always ignore the CONFORMANCE_ALLOW_SKIP=1
-  # opt-in when GITHUB_ACTIONS=true), precisely so CI could never silently report green with zero
-  # real backend coverage; the dotnet leg below now gets real (if partial) coverage instead of
-  # being skipped.
+  # persona-pack/static-files surface worth gating on; per issue #21, every test class/method in
+  # the assembly is now explicitly classified (`[Trait("Dotnet", "ready")]` for a scenario verified
+  # green against the C# backend, or `[Trait("Dotnet", "n/a-<reason>")]` for a backend-agnostic
+  # harness self-test or a scenario genuinely out of scope today), so the dotnet leg's
+  # `--filter "Dotnet=ready&Category!=Browser"` below runs exactly -- and only -- the scenarios
+  # that classification says are ready (docs/dotnet_mapping.md: 351+ scenarios as of issue #296,
+  # floor-checked by `DotnetTraitCoverageTests`'s `At_least_351_...` test so the count can't
+  # silently shrink). Before this, CONFORMANCE_BACKEND=dotnet FAILED the suite by default in CI on
+  # purpose (PR #22 review item 15 -- DotnetPlaceholderPolicy/CiEnvironment.IsCi always ignore the
+  # CONFORMANCE_ALLOW_SKIP=1 opt-in when GITHUB_ACTIONS=true), precisely so CI could never silently
+  # report green with zero real backend coverage; the dotnet leg below now gets real (and, per
+  # docs/dotnet_mapping.md's own intro, no longer deliberately partial) coverage instead of being
+  # skipped.
   #
   # Persona axis: intentionally not a matrix axis. CONFORMANCE_PERSONAS is left unset, so
   # ConformancePersonas' own disk discovery enables every pack under personas/ that exists on
@@ -495,14 +499,16 @@ jobs:
           set -o pipefail
           if [ "${{ matrix.backend }}" = "dotnet" ]; then
             # #76 (Rick's PR #101 review item 1): only the scenarios tagged
-            # [Trait("Dotnet", "ready")] -- exactly the set docs/dotnet_mapping.md documents as
-            # green against the C# skeleton (health/auth-token/static-index/origin-validation
-            # subset; 11 scenarios today, floor-checked by DotnetTraitCoverageTests) -- the
-            # skeleton has no realtime relay or order pipeline yet (issue #12 S2 scope), so the
-            # full suite's remaining scenarios would fail for a reason unrelated to this leg's
-            # actual purpose. Growing dotnet coverage (C# PRs #13-#16) means adding the trait in
-            # the test files themselves; this filter and DotnetTraitCoverageTests' floor both pick
-            # up a newly tagged scenario automatically, with no workflow edit.
+            # [Trait("Dotnet", "ready")] -- per issue #21, every test class/method in the assembly
+            # now carries an explicit Dotnet classification ("ready" for a scenario verified green
+            # against the C# backend, or "n/a-<reason>" for a backend-agnostic harness self-test or
+            # a scenario genuinely out of scope today), guarded by its own
+            # Every_test_class_in_the_assembly_carries_an_explicit_dotnet_classification Fact, so
+            # this filter can never silently miss a newly added class. 351+ scenarios as of issue
+            # #296, floor-checked by DotnetTraitCoverageTests' At_least_351_... test. Growing
+            # dotnet coverage means adding/retagging the trait in the test files themselves; this
+            # filter and DotnetTraitCoverageTests' floor both pick up a newly tagged scenario
+            # automatically, with no workflow edit.
             FILTER='Dotnet=ready&Category!=Browser'
           else
             FILTER='Category!=Browser'
