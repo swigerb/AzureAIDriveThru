@@ -96,9 +96,8 @@ public sealed class SessionManager
     private readonly LinkedList<string> _detachedLru = new(); // oldest first
     private readonly Dictionary<string, LinkedListNode<string>> _detachedNodes = new();
     /// <summary>Port of session_manager.py's `self._context_monitors` dict. Kept independent of
-    /// <see cref="_sessions"/> (rather than a field on <see cref="SessionRecord"/>) so a pipeline
-    /// that doesn't yet register a full session record with this manager -- see
-    /// <see cref="CreateContextMonitor"/>'s own doc comment -- can still get one.</summary>
+    /// <see cref="_sessions"/> (rather than a field on <see cref="SessionRecord"/>), mirroring
+    /// Python. Created in <see cref="CreateSession"/>, removed in <see cref="EndSession"/>.</summary>
     private readonly Dictionary<string, ContextMonitor> _contextMonitors = new();
 
     public SessionManager(SessionsConfig? config = null, TimeProvider? timeProvider = null, ILogger? logger = null)
@@ -159,7 +158,7 @@ public sealed class SessionManager
 
     /// <summary>Registers a brand-new (provisional, per rtmt.py's own terminology) session for a
     /// just-accepted browser socket -- called once at the very top of
-    /// <c>RealtimeProcessor.RunSessionAsync</c>, before the resume handshake on the first client
+    /// <c>RealtimeProcessor.RunSessionAsync</c> and <c>CascadeProcessor.RunSessionAsync</c>, before the resume handshake on the first client
     /// frame decides whether this provisional session survives or is replaced by a resumed
     /// one.</summary>
     public void CreateSession(string sessionId, WebSocket ws, string personaId, string modelId, string? menuMode,
@@ -186,23 +185,6 @@ public sealed class SessionManager
         }
     }
 
-    /// <summary>Port of session_manager.py's `self._context_monitors[session_id] =
-    /// ContextMonitor(session_id)` line inside `create_session` -- standalone (not folded into
-    /// <see cref="CreateSession"/> itself) so <see cref="Backend.Sessions.CascadeProcessor"/>,
-    /// which does not yet register a full <see cref="SessionRecord"/> with this manager (issue
-    /// #15's resume/rehydration machinery is realtime-only so far), can still get a
-    /// per-session <see cref="ContextMonitor"/> the same way Python's cascade_processor.py does
-    /// (it calls the SAME shared `self._sessions.create_session`, full session record included).
-    /// Safe to call even when a full session record already exists for this id (overwrites, same
-    /// as Python re-running `create_session` would).</summary>
-    public void CreateContextMonitor(string sessionId)
-    {
-        lock (_sync)
-        {
-            _contextMonitors[sessionId] = CreateContextMonitorLocked(sessionId);
-        }
-    }
-
     private ContextMonitor CreateContextMonitorLocked(string sessionId) =>
         new(sessionId, _config.ContextMaxTokens, _config.ContextWarningThresholdPct,
             _config.ContextCriticalThresholdPct, _logger);
@@ -218,18 +200,6 @@ public sealed class SessionManager
         lock (_sync)
         {
             return _contextMonitors.GetValueOrDefault(sessionId);
-        }
-    }
-
-    /// <summary>Removes this session's <see cref="ContextMonitor"/> without touching any other
-    /// session state -- the cascade-only counterpart to <see cref="EndSessionLocked"/>'s own
-    /// `_contextMonitors.Remove`, for a pipeline (cascade) that doesn't go through
-    /// <see cref="EndSession"/> yet.</summary>
-    public void RemoveContextMonitor(string sessionId)
-    {
-        lock (_sync)
-        {
-            _contextMonitors.Remove(sessionId);
         }
     }
 

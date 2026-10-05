@@ -78,6 +78,7 @@ from rtmt import (
     Tool,
     ToolResult,
     ToolResultDirection,
+    _close_superseded,
     _extract_raw_mode_param,
     _sanitize_voice,
     _truncate_for_log,
@@ -89,9 +90,29 @@ logger = logging.getLogger(__name__)
 _config = get_config()
 _conn_cfg = _config.get("connection", {})
 _vad_cfg = _config.get("vad", {})
+_audio_cfg = _config.get("audio", {})
 
 _WS_HEARTBEAT_SEC = _conn_cfg.get("ws_heartbeat_seconds", 15.0)
 _WS_COMPRESS = bool(_conn_cfg.get("ws_compression", False))
+
+# #126: echo suppression, armed in `_speak` after every TTS turn so a guest's own speaker
+# playback (picked back up by their mic) isn't mistaken for barge-in by `_TurnDetector`.
+# Semantics (identical in the .NET backend): mic audio is dropped -- never buffered, so it can't
+# reach STT -- only for the ESTIMATED PLAYBACK duration plus a short acoustic tail. After that,
+# guest audio is accepted immediately, matching the realtime pipeline's #187/#190 behaviour (short
+# replies right after playback are never swallowed). The tail is `audio.echo_cooldown_seconds`
+# capped at 300ms (decisions.md: appropriate for 50-200ms speaker-to-mic latency); the realtime
+# default of 1.5s only drives a delayed buffer clear there, so it can't be a hard-mute here.
+# `echo_cooldown_seconds: 0` DISABLES cascade echo suppression entirely (headset / no-echo
+# setups; same in both backends) -- it is not "playback-only".
+_ECHO_TAIL_MAX_SECONDS = 0.3
+
+
+def _echo_tail_seconds(configured: Any) -> float:
+    return max(0.0, min(float(configured), _ECHO_TAIL_MAX_SECONDS))
+
+
+_ECHO_COOLDOWN_SECONDS = _echo_tail_seconds(_audio_cfg.get("echo_cooldown_seconds", 1.5))
 
 _AUDIO_SAMPLE_RATE = 24000
 _AUDIO_SAMPLE_WIDTH = 2  # PCM16, matches both mic input and speaker output (confirmed against
@@ -221,6 +242,10 @@ class _TurnDetector:
         self._speaking = False
         self._silence_run = 0
         self._buffer = bytearray()
+        # #126: echo suppression -- a monotonic deadline (`time.monotonic()`-comparable) up to
+        # which loud audio is treated as the assistant's own TTS bleeding back into the guest's
+        # mic, not real barge-in. 0.0 (the default) means "no cooldown in effect".
+        self._echo_cooldown_until = 0.0
 
     @property
     def is_speaking(self) -> bool:
@@ -236,12 +261,32 @@ class _TurnDetector:
         self._buffer.clear()
         return data
 
-    def feed(self, pcm16_bytes: bytes) -> str | None:
+    def start_echo_cooldown(self, duration_seconds: float, now: float | None = None) -> None:
+        """Arms (or extends) the echo-suppression window from *now* for *duration_seconds*
+        (#126). `max()` with any existing deadline so a new, shorter TTS turn can never
+        shrink -- only extend -- a cooldown another still-in-flight `_speak` call already armed
+        (speak calls are sequenced per turn, but this keeps the method safe to call more than
+        once without ever regressing the window)."""
+        if now is None:
+            now = time.monotonic()
+        self._echo_cooldown_until = max(self._echo_cooldown_until, now + duration_seconds)
+
+    def feed(self, pcm16_bytes: bytes, now: float | None = None) -> str | None:
         """Feed one chunk of raw PCM16 mono audio. Returns "speech_started" the first time this
         turn crosses the energy threshold, "speech_stopped" once enough trailing silence has
-        elapsed after speech was detected, or None otherwise. Always buffers the raw audio (even
+        elapsed after speech was detected, or None otherwise. Buffers the raw audio (even
         pre-threshold, so a turn's very first word isn't clipped) for the eventual transcription
-        upload."""
+        upload.
+
+        #126 echo suppression: while *now* is inside the armed window (`start_echo_cooldown`:
+        estimated playback + short tail) and the guest isn't already mid-utterance, the frame is
+        DROPPED -- not buffered, no state change, no "speech_started" -- so the assistant's own
+        TTS picked up by the mic is never barge-in and never reaches STT. Audio at/after the
+        deadline is accepted immediately."""
+        if now is not None and not self._speaking and now < self._echo_cooldown_until:
+            # Suppressed (estimated playback + acoustic tail): drop the frame outright so the
+            # assistant's own echo can never end up in the next STT upload.
+            return None
         self._buffer.extend(pcm16_bytes)
         usable_len = len(pcm16_bytes) - (len(pcm16_bytes) % 2)
         if usable_len <= 0:
@@ -280,6 +325,21 @@ class _CascadeSessionState:
     # `CascadeProcessor._start_turn`/`_send_greeting`, cancelled by `_cancel_current_turn` on a
     # new `speech_started` (barge-in, Rick's #118 review item 5).
     current_turn_task: asyncio.Task | None = None
+    # #126: this connection's own local VAD -- lives on the state (not a bare `_run_session`
+    # local) so `_speak` can reach it to arm the echo-suppression cooldown after every TTS turn.
+    detector: _TurnDetector | None = None
+    # #126: the bound persona's own roleName, captured once so nudge text can be built from
+    # deep inside `_handle_client_message`/the nudge task without threading `persona` itself
+    # through every call site that might need to fire a nudge.
+    role_name: str | None = None
+    # #126 one-shot resume nudge (mirrors rtmt.py's own `nudge_awaiting_client_live`/`nudge_task`
+    # pair): `nudge_eligible` is set True only by a mid-conversation resume with
+    # `nudge_after_seconds > 0`; `nudge_armed` latches once the nudge timer has actually been
+    # scheduled (on this socket's own first proof of guest "liveness" -- its first streamed mic
+    # chunk), so it is never armed twice for the same connection.
+    nudge_eligible: bool = False
+    nudge_armed: bool = False
+    nudge_task: asyncio.Task | None = None
 
 
 def _resolve_persona_voice(persona, default_voice: str, allowed_voices: frozenset[str]) -> str:
@@ -383,12 +443,12 @@ class CascadeProcessor:
 
     async def handle(self, request: web.Request, persona, resolved_model: ResolvedModel) -> web.StreamResponse:
         """`processors.PipelineProcessor`'s other required method (#75/PR #106 review item 5).
-        Owns this connection's entire lifetime: the WebSocket upgrade, session creation, this
-        pipeline's own relay loop, and teardown -- mirroring `RTMiddleTier.handle`'s own
-        prepare -> create_session -> loop -> detach shape verbatim, just with a cascade-specific
-        loop instead of a realtime-relay one. Reached only through
-        `RTMiddleTier._websocket_handler`'s dispatch seam, once `dispatch_processor` has picked
-        `self` for `resolved_model`'s own pipeline."""
+        Owns this connection's entire lifetime: the WebSocket upgrade, this socket's own
+        resume-or-fresh negotiation (#126), this pipeline's own relay loop, and teardown --
+        mirroring `RTMiddleTier.handle`'s own prepare -> resume-or-create -> loop -> detach shape
+        verbatim, just with a cascade-specific loop instead of a realtime-relay one. Reached only
+        through `RTMiddleTier._websocket_handler`'s dispatch seam, once `dispatch_processor` has
+        picked `self` for `resolved_model`'s own pipeline."""
         ws = web.WebSocketResponse(
             heartbeat=_WS_HEARTBEAT_SEC,
             autoping=True,
@@ -408,15 +468,12 @@ class CascadeProcessor:
         # menu mode" (unfiltered menu) exactly like realtime already does for the same persona.
         requested_menu_mode = _extract_raw_mode_param(request) if persona.manifest.features.dayparts else None
 
-        session_id = self._sessions.create_session(
-            ws, persona=persona, model_id=resolved_model.id,
-            model_deployment=resolved_model.deployment, model_reasoning=resolved_model.reasoning,
-            model_pipeline=resolved_model.pipeline, menu_mode=requested_menu_mode,
+        session_id, resumed_state, leftover_msg = await self._negotiate_session(
+            ws, persona, resolved_model, requested_menu_mode
         )
         try:
-            identifiers = order_state_singleton.get_session_identifiers(session_id)
-            await self._sessions.emit_session_identifiers(ws, "extension.session_metadata", identifiers)
-            await self._run_session(ws, session_id, persona, resolved_model)
+            await self._run_session(ws, session_id, persona, resolved_model,
+                                     resumed_state=resumed_state, leftover_msg=leftover_msg)
         finally:
             # Covers an upstream (transcription/chat/TTS) connect failure the same way
             # RTMiddleTier.handle's own finally does -- a no-op if the loop's own exit already
@@ -425,25 +482,156 @@ class CascadeProcessor:
                                           reason=f"handler exit code={ws.close_code}")
         return ws
 
-    async def _run_session(self, ws: web.WebSocketResponse, session_id: str, persona, resolved_model: ResolvedModel) -> None:
-        prompt_loader = self.persona_prompt_loaders.get(persona.id)
-        # #248: per-persona default voice -- see `_resolve_persona_voice`'s own doc comment.
-        voice = _resolve_persona_voice(persona, self.default_voice, self.allowed_voices)
-        state = _CascadeSessionState(
-            session_id=session_id,
-            persona_id=persona.id,
-            deployment=resolved_model.deployment,
-            voice=voice,
-        )
-        if prompt_loader is not None:
-            state.messages.append(SystemMessage(content=prompt_loader.get_system_prompt()))
-        detector = _TurnDetector(threshold=self._vad_threshold, silence_duration_ms=self._vad_silence_ms)
+    async def _negotiate_session(
+        self, ws: web.WebSocketResponse, persona, resolved_model: ResolvedModel, requested_menu_mode: str | None,
+    ) -> tuple[str, _CascadeSessionState | None, web.WSMessage | None]:
+        """Issue #126: cascade's own resume handshake, through the SAME
+        `SessionManager.resume`/grace-held order state/4002-supersede semantics
+        (`session_manager.py`, #15) the realtime pipeline already uses -- a resume is honoured
+        ONLY as this socket's literal first client frame, exactly like rtmt.py's own
+        `handle_resume`/`reject_late_resume` pair. Unlike rtmt.py (which races a continuous
+        upstream relay against the first-frame decision via a `TaskCompletionSource`-shaped
+        `asyncio.Event`), cascade has no upstream connection to race against: it can simply read
+        one frame, with a timeout, before doing anything else.
 
-        # Rick's #118 review item 5 (greeting on connect, design 7.1): spawned as a background
-        # task -- like every other turn below -- rather than awaited inline, so the WS loop
-        # starts consuming audio frames immediately and a guest who starts talking over the
-        # greeting can still barge in on it via the SAME cancellation path as any other turn.
-        self._start_greeting(ws, session_id, state, prompt_loader)
+        Returns ``(session_id, resumed_state, leftover_msg)``: *resumed_state* is a fully
+        rehydrated `_CascadeSessionState` for `_run_session` to continue from when a resume is
+        accepted (no greeting, no replay of the in-flight turn -- #247 parity); `None` for a
+        fresh session (`_run_session` builds its own state and starts the greeting). *leftover_msg*
+        is a real (non-resume) first client frame consumed while peeking for a resume attempt --
+        e.g. `extension.set_voice` sent before any resume id exists -- that `_run_session` must
+        replay into its own message loop so it is never silently dropped; `None` when the peeked
+        frame WAS the resume attempt (always fully consumed, accepted or not)."""
+        first_msg: web.WSMessage | None = None
+        timeout = self._sessions.first_frame_timeout_seconds
+        if timeout and timeout > 0:
+            try:
+                first_msg = await asyncio.wait_for(ws.receive(), timeout=timeout)
+            except TimeoutError:
+                first_msg = None
+            except Exception:
+                logger.debug("Cascade: error peeking the first client frame; treating as fresh", exc_info=True)
+                first_msg = None
+
+        resume_data = None
+        if first_msg is not None and first_msg.type == web.WSMsgType.TEXT:
+            try:
+                parsed = json.loads(first_msg.data)
+            except (ValueError, TypeError):
+                parsed = None
+            if isinstance(parsed, dict) and parsed.get("type") == "extension.resume":
+                resume_data = parsed
+                first_msg = None  # the resume frame is fully consumed either way, never replayed
+
+        if resume_data is not None:
+            outcome = self._sessions.resume(
+                ws, resume_data.get("resume_id"), requested_persona_id=persona.id,
+                requested_model_id=resolved_model.id, requested_menu_mode=requested_menu_mode,
+            )
+            if outcome.accepted:
+                session_id = outcome.session_id
+                if outcome.stale_ws is not None:
+                    _spawn(_close_superseded(outcome.stale_ws))
+                identifiers = order_state_singleton.get_session_identifiers(session_id)
+                await ws.send_json({
+                    "type": "extension.session_resumed",
+                    "order_summary": json.loads(order_state_singleton.get_order_summary_json(session_id)),
+                    "session_token": identifiers.session_token,
+                    "round_trip_index": identifiers.round_trip_index,
+                    "round_trip_token": identifiers.round_trip_token,
+                    "resume_id": outcome.resume_id,
+                })
+                prompt_loader = self.persona_prompt_loaders.get(persona.id)
+                # #43/#248 parity: restore THIS session's own previously-picked voice, if any,
+                # rather than re-defaulting to the persona's voice on every reconnect.
+                voice = self._sessions.get_voice(session_id) or _resolve_persona_voice(
+                    persona, self.default_voice, self.allowed_voices)
+                state = _CascadeSessionState(
+                    session_id=session_id, persona_id=persona.id, deployment=resolved_model.deployment,
+                    voice=voice, role_name=getattr(persona.manifest, "roleName", None),
+                )
+                if prompt_loader is not None:
+                    state.messages.append(SystemMessage(content=prompt_loader.get_system_prompt()))
+                state.detector = _TurnDetector(threshold=self._vad_threshold, silence_duration_ms=self._vad_silence_ms)
+                if outcome.conversation_started:
+                    # #247/#126: never replay an in-flight turn, never re-greet. Brief the new
+                    # connection with the order + recent transcript, then stay silent until the
+                    # guest speaks, exactly like the realtime pipeline's own mid-conversation
+                    # resume.
+                    state.messages.append(SystemMessage(
+                        content=self._sessions.rehydration_text(session_id, role_name=getattr(persona.manifest, "roleName", None))))
+                    if self._sessions.nudge_after_seconds > 0:
+                        state.nudge_eligible = True
+                    logger.info("Cascade: resumed session %s rehydrated (%d recent turns); greeting suppressed",
+                                session_id, len(self._sessions.recent_turns(session_id)))
+                else:
+                    self._start_greeting(ws, session_id, state, prompt_loader)
+                return session_id, state, None
+            logger.info("Cascade: resume rejected (reason=%s); starting fresh session", outcome.reason)
+            await ws.send_json({"type": "extension.resume_rejected", "reason": outcome.reason})
+            # Falls through to the fresh path below -- the resume frame is fully consumed
+            # either way, accepted or rejected.
+
+        session_id = self._sessions.create_session(
+            ws, persona=persona, model_id=resolved_model.id,
+            model_deployment=resolved_model.deployment, model_reasoning=resolved_model.reasoning,
+            model_pipeline=resolved_model.pipeline, menu_mode=requested_menu_mode,
+        )
+        identifiers = order_state_singleton.get_session_identifiers(session_id)
+        resume_id = self._sessions.issue_resume_id(session_id)
+        await self._sessions.emit_session_identifiers(
+            ws, "extension.session_metadata", identifiers,
+            extra={"resumeId": resume_id} if resume_id else None)
+        return session_id, None, first_msg
+
+    async def _run_session(
+        self, ws: web.WebSocketResponse, session_id: str, persona, resolved_model: ResolvedModel, *,
+        resumed_state: _CascadeSessionState | None = None, leftover_msg: web.WSMessage | None = None,
+    ) -> None:
+        prompt_loader = self.persona_prompt_loaders.get(persona.id)
+        if resumed_state is not None:
+            # #126: `_negotiate_session` already built this connection's state (rehydrated or
+            # not) and started the greeting if one was needed -- nothing left to do here but
+            # join its own message loop below.
+            state = resumed_state
+        else:
+            # #248: per-persona default voice -- see `_resolve_persona_voice`'s own doc comment.
+            voice = _resolve_persona_voice(persona, self.default_voice, self.allowed_voices)
+            state = _CascadeSessionState(
+                session_id=session_id,
+                persona_id=persona.id,
+                deployment=resolved_model.deployment,
+                voice=voice,
+                role_name=getattr(persona.manifest, "roleName", None),
+            )
+            if prompt_loader is not None:
+                state.messages.append(SystemMessage(content=prompt_loader.get_system_prompt()))
+            state.detector = _TurnDetector(threshold=self._vad_threshold, silence_duration_ms=self._vad_silence_ms)
+
+            # Rick's #118 review item 5 (greeting on connect, design 7.1): spawned as a
+            # background task -- like every other turn below -- rather than awaited inline, so
+            # the WS loop starts consuming audio frames immediately and a guest who starts
+            # talking over the greeting can still barge in on it via the SAME cancellation path
+            # as any other turn.
+            self._start_greeting(ws, session_id, state, prompt_loader)
+
+        detector = state.detector
+
+        if leftover_msg is not None and leftover_msg.type == web.WSMsgType.TEXT:
+            # #126: a real (non-resume) first frame `_negotiate_session` had to consume while
+            # peeking for a resume attempt (e.g. `extension.set_voice` sent with no stored
+            # resume id yet) -- replayed here, before the main loop below, so it's never
+            # silently dropped.
+            try:
+                leftover_data = json.loads(leftover_msg.data)
+            except (ValueError, TypeError):
+                leftover_data = None
+            if leftover_data is not None:
+                try:
+                    await self._handle_client_message(ws, session_id, state, detector, leftover_data, prompt_loader)
+                except Exception:
+                    logger.exception("Cascade: unhandled error replaying the connection's first message (session=%s)",
+                                      session_id)
 
         async for msg in ws:
             if msg.type == web.WSMsgType.TEXT:
@@ -462,6 +650,7 @@ class CascadeProcessor:
             elif msg.type in (web.WSMsgType.ERROR, web.WSMsgType.CLOSE, web.WSMsgType.CLOSING):
                 break
         await self._cancel_current_turn(state, "connection closing")
+        self._cancel_nudge(state, "connection closing")
 
     async def _handle_client_message(self, ws, session_id, state, detector, data, prompt_loader) -> None:
         msg_type = data.get("type")
@@ -470,7 +659,15 @@ class CascadeProcessor:
                 pcm = base64.b64decode(data.get("audio", ""))
             except (ValueError, TypeError):
                 return
-            event = detector.feed(pcm)
+            if state.nudge_eligible and not state.nudge_armed:
+                # #126 (mirrors rtmt.py's `nudge_awaiting_client_live` gate): arm the one-shot
+                # resume nudge the first time THIS socket's guest proves the conversation is
+                # live -- its own first streamed mic chunk -- never merely because the resume
+                # handshake itself succeeded. Latched so this only ever fires once per
+                # connection.
+                state.nudge_armed = True
+                self._schedule_nudge(ws, session_id, state)
+            event = detector.feed(pcm, now=time.monotonic())
             if event == "speech_started":
                 # Barge-in (Rick's #118 review item 5): cancel whatever turn (guest turn OR
                 # greeting) is still in flight BEFORE telling the client speech started, so no
@@ -478,8 +675,12 @@ class CascadeProcessor:
                 # past this point -- useRealtime.tsx already stops playback purely reactively on
                 # this same event, so no new wire-protocol event is needed on top of it.
                 await self._cancel_current_turn(state, "guest started speaking (barge-in)")
+                # #126: real guest activity -- reset (cancel, never reschedule) any pending
+                # resume nudge, same one-shot semantics as rtmt.py's own `cancel_nudge`.
+                self._cancel_nudge(state, "guest started speaking")
                 await ws.send_json({"type": "input_audio_buffer.speech_started"})
             elif event == "speech_stopped":
+                self._cancel_nudge(state, "guest turn started")
                 turn_audio = detector.take_buffer()
                 detector.reset()
                 self._start_turn(ws, session_id, state, turn_audio)
@@ -499,9 +700,16 @@ class CascadeProcessor:
             else:
                 state.voice = new_voice
                 self._sessions.set_voice(session_id, new_voice)
-        # session.update / extension.resume / anything else not listed above: a documented,
-        # explicit scope cut for this issue's v1 (see the decision note) -- no-op rather than an
-        # error, so an unrecognized/unused message never disrupts the session.
+        elif msg_type == "extension.resume":
+            # #126: a resume is honoured ONLY as this socket's literal first client frame
+            # (`_negotiate_session` owns that path) -- any later one is a stale/duplicate
+            # attempt (e.g. a second tab, or a client retry race), rejected exactly like
+            # rtmt.py's own `reject_late_resume`, with the connection continuing unaffected.
+            logger.info("Cascade: resume rejected (reason=not_first_frame); session %s continues", session_id)
+            await ws.send_json({"type": "extension.resume_rejected", "reason": "not_first_frame"})
+        # session.update / anything else not listed above: a documented, explicit scope cut for
+        # this issue's v1 (see the decision note) -- no-op rather than an error, so an
+        # unrecognized/unused message never disrupts the session.
 
     def _start_turn(self, ws: web.WebSocketResponse, session_id: str, state: _CascadeSessionState, turn_audio: bytes) -> None:
         """Spawns `_process_turn` as a background task (Rick's #118 review item 5) instead of
@@ -546,6 +754,57 @@ class CascadeProcessor:
         logger.info("Cascade: cancelled in-flight turn: %s (session=%s)", reason, state.session_id)
         state.current_turn_task = None
 
+    def _schedule_nudge(self, ws: web.WebSocketResponse, session_id: str, state: _CascadeSessionState) -> None:
+        """#126, mirrors rtmt.py's own `nudge_after_silence`: a ONE-SHOT timer, armed at most
+        once per connection (`_handle_client_message`'s own `nudge_armed` latch). If the guest
+        stays silent for `nudge_after_seconds`, and no turn is in flight (mid-turn/mid-greeting,
+        or the assistant is already speaking), nudge once through this pipeline's own normal
+        chat-tool-loop + TTS turn machinery -- never stacked on top of a turn, never
+        rescheduled."""
+        async def _run() -> None:
+            try:
+                await asyncio.sleep(self._sessions.nudge_after_seconds)
+            except asyncio.CancelledError:
+                return
+            task = state.current_turn_task
+            if task is not None and not task.done():
+                # Mid-turn, or the assistant is already speaking -- never stack a nudge on top
+                # of a real turn. One-shot: a skipped nudge is not rescheduled, same as rtmt.py's
+                # own `recovery.busy` skip in `nudge_after_silence`.
+                logger.info("Cascade: resume nudge skipped, a turn is in flight (session=%s)", session_id)
+                return
+            # The nudge is now a real turn: register it as the current turn (and drop it from
+            # `nudge_task`, so `_cancel_nudge` no longer touches it) so barge-in and teardown
+            # cancel AND await it via `_cancel_current_turn`, like any other turn.
+            state.current_turn_task = asyncio.current_task()
+            state.nudge_task = None
+            try:
+                await self._send_nudge(ws, session_id, state)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Cascade: resume nudge failed (session=%s)", session_id)
+        state.nudge_task = _spawn(_run())
+
+    def _cancel_nudge(self, state: _CascadeSessionState, reason: str) -> None:
+        """#126, mirrors rtmt.py's own `cancel_nudge`: cancels a still-pending nudge timer. A
+        no-op if none is pending (e.g. this connection was never nudge-eligible, or the nudge
+        already fired)."""
+        task = state.nudge_task
+        if task is not None and not task.done():
+            task.cancel()
+            logger.info("Cascade: resume nudge cancelled: %s (session=%s)", reason, state.session_id)
+        state.nudge_task = None
+
+    async def _send_nudge(self, ws: web.WebSocketResponse, session_id: str, state: _CascadeSessionState) -> None:
+        """#126: the nudge's own turn -- feeds `SessionManager.nudge_text` (the SAME wording the
+        realtime pipeline's `build_nudge_item` uses, #74) into this pipeline's own normal
+        chat-tool-loop + TTS machinery, exactly like `_send_greeting` does for the greeting."""
+        logger.info("Cascade: guest silent %.0fs after resume; nudging (session=%s)",
+                    self._sessions.nudge_after_seconds, session_id)
+        state.messages.append(UserMessage(content=self._sessions.nudge_text(state.role_name)))
+        await self._run_turn_and_speak(ws, session_id, state)
+
     async def _process_turn(self, ws: web.WebSocketResponse, session_id: str, state: _CascadeSessionState, turn_audio: bytes) -> None:
         if not turn_audio:
             return
@@ -563,6 +822,11 @@ class CascadeProcessor:
             "transcript": transcript,
         })
         state.messages.append(UserMessage(content=transcript))
+        # #126: feeds this session's own rehydration/resume history -- see
+        # `SessionManager.rehydration_text`/`recent_turns`. Never called before this issue (a
+        # cascade session's `recent_turns()` was always empty), so a resumed cascade session had
+        # nothing real to rehydrate with.
+        self._sessions.record_turn(session_id, "guest", transcript)
         await self._run_turn_and_speak(ws, session_id, state)
 
     async def _send_greeting(self, ws: web.WebSocketResponse, session_id: str, state: _CascadeSessionState, prompt_loader) -> None:
@@ -584,6 +848,13 @@ class CascadeProcessor:
                             session_id)
             return
         state.messages.append(UserMessage(content=text))
+        # #126: mark as soon as the greeting STARTS (not when it finishes speaking) -- mirrors
+        # rtmt.py's own `send_greeting_once` -- so a connection dropped mid-greeting still
+        # resumes silently (rehydrated, no second greeting) rather than being treated as
+        # "never greeted" and re-greeted on reconnect. Before this issue, cascade never called
+        # this at all, so `ResumeOutcome.conversation_started` was always False for a cascade
+        # session.
+        self._sessions.mark_greeting_sent(session_id)
         await self._run_turn_and_speak(ws, session_id, state)
 
     async def _send_failed_response_done(self, ws: web.WebSocketResponse, response_id: str, message: str) -> None:
@@ -645,8 +916,11 @@ class CascadeProcessor:
 
         if final_text:
             await ws.send_json({"type": "response.audio_transcript.delta", "delta": final_text})
+            # #126: feeds this session's own rehydration/resume history -- see
+            # `_process_turn`'s matching guest-side `record_turn` call for why.
+            self._sessions.record_turn(session_id, "assistant", final_text)
             try:
-                await self._with_rate_limit_retry(ws, session_id, lambda: self._speak(ws, final_text, state.voice), "text-to-speech")
+                await self._with_rate_limit_retry(ws, session_id, lambda: self._speak(ws, final_text, state), "text-to-speech")
             except CascadeRateLimitExhausted:
                 pass
             except asyncio.CancelledError:
@@ -845,15 +1119,24 @@ class CascadeProcessor:
                 payload = await resp.json()
         return payload.get("text", "")
 
-    async def _speak(self, ws: web.WebSocketResponse, text: str, voice: str) -> None:
+    async def _speak(self, ws: web.WebSocketResponse, text: str, state: _CascadeSessionState) -> None:
         token = await self._bearer_token()
         deployment = self.model_catalog.deployment_for(self.model_catalog.cascade_audio.tts)
         url = f"{self.audio_endpoint}/openai/v1/audio/speech"
-        body = {"model": deployment, "input": text, "voice": voice, "response_format": "pcm"}
+        body = {"model": deployment, "input": text, "voice": state.voice, "response_format": "pcm"}
         async with aiohttp.ClientSession() as http:
             async with http.post(url, json=body, headers={"Authorization": f"Bearer {token}"}) as resp:
                 resp.raise_for_status()
                 audio_bytes = await resp.read()
+        if state.detector is not None and _ECHO_COOLDOWN_SECONDS > 0:
+            # #126 echo suppression: arms the cooldown for roughly the GUEST'S actual speaker
+            # playback time (`len(audio_bytes)` is PCM16 mono at `_AUDIO_SAMPLE_RATE`), not this
+            # loop's own send time below (which streams every `response.audio.delta` chunk
+            # back-to-back, far faster than real-time) -- plus the `_ECHO_COOLDOWN_SECONDS` acoustic
+            # tail (<=300ms) for network/speaker/mic latency. Armed before the first chunk is sent, since the
+            # guest's speaker starts playing from that first delta frame.
+            duration_seconds = len(audio_bytes) / (_AUDIO_SAMPLE_RATE * _AUDIO_SAMPLE_WIDTH)
+            state.detector.start_echo_cooldown(duration_seconds + _ECHO_COOLDOWN_SECONDS)
         chunk_size = 24000  # ~0.5s of 24kHz mono PCM16 per delta frame -- an arbitrary but
                             # reasonable chunk size for smooth client-side streamed playback.
         for i in range(0, len(audio_bytes), chunk_size):

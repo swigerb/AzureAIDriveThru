@@ -87,6 +87,8 @@ cache:
   search_max_size: 128
 
 audio:
+  # Realtime: delay before the post-playback buffer clear. Cascade: acoustic tail after estimated
+  # playback, capped at 0.3s; 0 disables cascade echo suppression (see docs/persona-architecture.md 7.1).
   echo_cooldown_seconds: 1.5
 
 search:

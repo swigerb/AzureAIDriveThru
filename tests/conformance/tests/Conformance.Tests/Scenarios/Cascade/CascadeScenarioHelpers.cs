@@ -27,6 +27,10 @@ public static class CascadeScenarioHelpers
 {
     public static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
 
+    // #126: cascade's 300ms acoustic tail after estimated playback (audio.echo_cooldown_seconds
+    // capped at 300ms) plus a little scheduling jitter. Replaces the old blanket 1.8s wait.
+    public static readonly TimeSpan AcousticTailClearDelay = TimeSpan.FromMilliseconds(400);
+
     // Mirrors cascade_processor.py's _AUDIO_SAMPLE_RATE (24 kHz mono PCM16, matching the
     // realtime pipeline's own wire format so both pipelines sound identical to a guest).
     private const int SampleRate = 24000;
@@ -53,10 +57,16 @@ public static class CascadeScenarioHelpers
     /// Enqueues a harmless, fixed greeting reply onto <paramref name="chat"/> BEFORE connecting so
     /// the greeting's own completions call can never dequeue a message a test scripts afterward
     /// for its own guest turn.
+    ///
+    /// #126: the greeting's fake TTS clip is a few bytes (negligible estimated playback), but
+    /// cascade still drops mic audio for a 300ms acoustic tail after playback, so by default this
+    /// waits out just that tail (<see cref="AcousticTailClearDelay"/>) -- NOT realtime's 1.5s
+    /// cooldown. A row that probes the suppression window itself passes
+    /// <paramref name="waitOutAcousticTail"/>: false and scripts its own <c>NextTtsAudio</c>.
     /// </summary>
     public static async Task<CascadeConnection> ConnectPastGreetingAsync(
         ConformanceFixture fixture, FakeChatCompletionsServer chat, string model, CancellationToken ct,
-        string? persona = null, string? mode = null)
+        string? persona = null, string? mode = null, bool waitOutAcousticTail = true)
     {
         chat.EnqueueMessage(new JsonObject { ["role"] = "assistant", ["content"] = "Welcome to the drive-thru!" });
         var browser = await ConnectAsync(fixture, model, ct, persona, mode).ConfigureAwait(false);
@@ -88,6 +98,11 @@ public static class CascadeScenarioHelpers
             {
                 throw new InvalidOperationException(
                     $"Expected the connect-time greeting's own extension.round_trip_token within {FrameTimeout}.");
+            }
+
+            if (waitOutAcousticTail)
+            {
+                await Task.Delay(AcousticTailClearDelay, ct).ConfigureAwait(false);
             }
 
             return new CascadeConnection(browser, greetingRoundTrip.Sequence);

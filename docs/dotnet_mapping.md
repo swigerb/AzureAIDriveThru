@@ -11,11 +11,17 @@ order engine, search tool, prompt rendering, tool dispatch, the full rate-limit 
 consecutive tool-failure cap, session resume/rehydration/idle-timeout/grace-hold/nudge (issue #15),
 context-window monitoring, websocket heartbeat/connect-timeout, the best-effort startup
 connectivity check, ADR-002 Entra JwtBearer auth (issue #147), and the shared conformance dotnet
-leg. Guest/assistant turn recording (`SessionManager.RecordTurn`) has real production call sites
-(upstream `conversation.item.input_audio_transcription.completed` for the guest, a non-tool
-`response.done` for the assistant), feeding rehydration text on resume. No deliberate
-middle-tier gap versus Python remains; the notes below are implementation context, not a parity
-exception list.
+leg. Guest/assistant turn recording (`SessionManager.RecordTurn`) has real production call sites for
+both pipelines (`realtime`'s upstream `conversation.item.input_audio_transcription.completed` for
+the guest and a non-tool `response.done` for the assistant; `cascade`'s own transcription and
+chat-completion turns), feeding rehydration text on resume. Issue #126 extended the same
+`SessionManager`-backed resume/rehydration, idle nudge, and echo suppression to `cascade` (see
+`CascadeProcessor.cs`'s `NegotiateResumeAsync`/`ScheduleNudge`/`CancelNudge` and
+`TurnDetector.StartEchoCooldown`), so both pipelines share one `SessionManager` instance and one
+echo-suppression *semantic* end to end (identical in both backends: drop mic audio during estimated
+playback plus a tail of `min(audio.echo_cooldown_seconds, 300ms)`, never buffering dropped frames;
+`0` disables it). No deliberate middle-tier gap versus Python remains; the notes below are
+implementation context, not a parity exception list.
 
 ## Module mapping
 

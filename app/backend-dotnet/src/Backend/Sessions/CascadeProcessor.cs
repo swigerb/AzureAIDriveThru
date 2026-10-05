@@ -36,18 +36,14 @@ namespace Backend.Sessions;
 /// buffered locally (not streamed upstream frame-by-frame) and uploaded as one WAV file once
 /// <see cref="TurnDetector"/> reports <c>speech_stopped</c>.
 ///
-/// Deliberate scope cuts from cascade_processor.py, mirroring <see cref="RealtimeProcessor"/>'s own
-/// documented cuts (docs/dotnet_mapping.md): <c>session.update</c>/<c>extension.resume</c> are
-/// explicit no-ops (v1 scope cut, same as Python), and session resume/rehydration/idle-sweep is
-/// out of scope (issue #15). Context-window monitoring landed in the issue #13 tail: since this
-/// class doesn't call <see cref="SessionManager.CreateSession"/> (full resume/registry
-/// integration remains out of scope), <see cref="RunSessionAsync"/> creates/tears down its own
-/// <see cref="ContextMonitor"/> directly via <see cref="SessionManager.CreateContextMonitor"/>/
-/// <see cref="SessionManager.RemoveContextMonitor"/>, and <see cref="ExecuteToolCallAsync"/> tracks
-/// tool call args/result in it -- mirroring cascade_processor.py's own two
-/// <c>ctx_monitor.add_content</c> call sites exactly (cascade has no session.update/greeting/nudge/
-/// rehydration tracking sites of its own to port, since those features are themselves still
-/// out of scope here).
+/// Session registry (issue #126): <see cref="RunSessionAsync"/> registers every connection with
+/// <see cref="SessionManager.CreateSession"/> (exactly like <see cref="RealtimeProcessor"/> and
+/// cascade_processor.py's own <c>create_session</c>), which also creates the session's
+/// <see cref="ContextMonitor"/>; the registry's own end-of-session path removes it. Resume
+/// (<c>extension.resume</c> via <c>NegotiateResumeAsync</c>), idle nudge and the echo-suppression
+/// cooldown mirror the realtime pipeline. <see cref="ExecuteToolCallAsync"/> tracks tool call
+/// args/result in the context monitor, mirroring cascade_processor.py's own two
+/// <c>ctx_monitor.add_content</c> call sites exactly.
 /// </summary>
 public sealed class CascadeProcessor : IPipelineProcessor
 {
@@ -67,6 +63,21 @@ public sealed class CascadeProcessor : IPipelineProcessor
     private readonly string _defaultVoice;
     private readonly ILogger? _logger;
     private readonly TimeProvider _timeProvider;
+    // #126: acoustic tail after estimated playback during which mic audio is still dropped.
+    // Derived from the same `audio.echo_cooldown_seconds` the realtime pipeline uses, but capped
+    // at 300ms: realtime's 1.5s only delays a buffer clear (#187/#190), whereas cascade's
+    // suppression is a hard drop, so a long value would swallow short guest replies. 0 =>
+    // echo suppression disabled entirely. Identical to cascade_processor.py's `_echo_tail_seconds`.
+    private readonly double _echoCooldownSeconds;
+    internal const double EchoTailMaxSeconds = 0.3;
+
+    internal static double EchoTailSeconds(double configured) =>
+        Math.Max(0.0, Math.Min(configured, EchoTailMaxSeconds));
+    // #126: the session registry (resume/rehydration/idle/grace/nudge) -- mirrors
+    // RealtimeProcessor's own `_sessionManager` field exactly, including its null-is-inert
+    // convention: every pre-#126 caller/test that constructs a CascadeProcessor without passing
+    // one keeps today's exact behaviour (immediate extension.session_metadata, immediate
+    // greeting, no resume handshake, extension.resume silently ignored).
     private readonly SessionManager? _sessionManager;
 
     public CascadeProcessor(
@@ -83,6 +94,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
         IUpstreamBearerTokenProvider? bearerTokenProvider = null,
         Func<Persona, PromptLoader?, string?, IToolExecutor>? toolExecutorFactory = null,
         TimeProvider? timeProvider = null,
+        double echoCooldownSeconds = 1.5,
         SessionManager? sessionManager = null)
     {
         _catalog = catalog;
@@ -102,11 +114,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
         // clock, so a test can swap in a FakeTimeProvider instead of waiting on the real 0.5-8s
         // delays. Defaults to TimeProvider.System in production.
         _timeProvider = timeProvider ?? TimeProvider.System;
-        // Issue #13 tail: cascade doesn't call SessionManager.CreateSession (full resume/registry
-        // integration is out of scope here, see this class's own doc comment above), so unlike
-        // RealtimeProcessor it manages its context monitor's lifecycle directly via
-        // CreateContextMonitor/RemoveContextMonitor in RunSessionAsync instead of getting one for
-        // free from CreateSession.
+        _echoCooldownSeconds = EchoTailSeconds(echoCooldownSeconds);
         _sessionManager = sessionManager;
     }
 
@@ -130,6 +138,27 @@ public sealed class CascadeProcessor : IPipelineProcessor
         public List<JsonObject> Messages { get; } = [];
         public Task? CurrentTurnTask { get; set; }
         public CancellationTokenSource? CurrentTurnCts { get; set; }
+        // Completes once the most recent barge-in's cancelled turn has fully stopped and its
+        // speech_started frame has been sent -- see RunSessionAsync's BargeIn helper.
+        public Task? BargeInTail { get; set; }
+
+        // #126 one-shot resume nudge (mirrors rtmt.py's/RealtimeProcessor's own
+        // NudgeScheduler-arming pair, kept as plain fields here -- not a NudgeScheduler instance --
+        // since cascade has no upstream `session.update`/rate-limit-busy gate to wait on; its own
+        // "skip if a turn is in flight" check is just CurrentTurnTask, already on this object).
+        // NudgeEligible is set True only by a mid-conversation resume with `nudge_after_seconds >
+        // 0`; NudgeArmed latches once the nudge timer has actually been scheduled (this socket's
+        // own first proof of liveness -- its first streamed mic chunk), so arming can only ever
+        // happen once per connection.
+        public bool NudgeEligible { get; set; }
+        public bool NudgeArmed { get; set; }
+        public Task? NudgeTask { get; set; }
+        public CancellationTokenSource? NudgeCts { get; set; }
+
+        /// <summary>This connection's own bound persona's role label (e.g. "carhop") -- needed by
+        /// <see cref="SessionManager.BuildRehydrationText"/>/<see cref="SessionManager.BuildNudgeText"/>,
+        /// both of which address the guest in-persona.</summary>
+        public string RoleName { get; set; } = "team member";
     }
 
     /// <summary>
@@ -165,6 +194,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
             SessionId = sessionId,
             Deployment = resolvedModel.Deployment,
             Voice = voice,
+            RoleName = persona.RoleName,
         };
         if (promptLoader is not null)
         {
@@ -172,11 +202,19 @@ public sealed class CascadeProcessor : IPipelineProcessor
         }
         var detector = new TurnDetector(_vadConfig.Threshold, _vadConfig.SilenceDurationMs, AudioSampleRate);
 
-        // Issue #13 tail: mirrors cascade_processor.py's create_session's own
-        // ContextMonitor(session_id) construction -- cascade doesn't call
-        // SessionManager.CreateSession (see this class's doc comment above), so it creates/tears
-        // down its context monitor directly instead of getting one for free from that call.
-        _sessionManager?.CreateContextMonitor(sessionId);
+        // #126 fix: set by NegotiateResumeAsync when its first-frame timer wins the race against
+        // the in-flight ReadMessageAsync call (see that method's own doc comment for why this
+        // read is never cancelled) -- the main receive loop below must await this instead of
+        // issuing a second, concurrent ReadMessageAsync on the same socket.
+        Task<WebSocketFrame?>? pendingFirstFrameTask = null;
+
+        // #126: register this connection with the session registry up front, mirroring
+        // RealtimeProcessor.RunSessionAsync's own create_session(...) call before its relay loop
+        // starts -- entirely inert when no SessionManager was injected (see that field's own doc
+        // comment), so every pre-#126 caller/test keeps today's exact behaviour.
+        _sessionManager?.CreateSession(
+            sessionId, browserSocket, persona.Id, resolvedModel.Id, menuMode, toolExecutor, voice,
+            attachedCts: linkedCts, identifiers: identifiers);
 
         // ── Local helpers (closures over browserSocket/state/toolDefinitions/toolExecutor/...) ──
         // Mirrors RealtimeProcessor.RunSessionAsync's own nested-function style (and
@@ -185,10 +223,24 @@ public sealed class CascadeProcessor : IPipelineProcessor
         Task NotifyClientAsync(JsonObject frame, CancellationToken notifyCt) =>
             SendTextAsync(browserSocket, frame.ToJsonString(), notifyCt, ct);
 
+        // #126: a monotonic-comparable clock reading for TurnDetector's echo-cooldown deadline
+        // math, driven off `_timeProvider` (so a FakeTimeProvider-based test can control it)
+        // rather than `DateTime.UtcNow` directly.
+        // Guards the CurrentTurn*/Nudge* registry: a firing nudge hands itself over to
+        // CurrentTurnTask from a pool thread while the receive loop may be in BargeIn/CancelNudge.
+        var turnRegistryLock = new object();
+
+        double NowSeconds() => _timeProvider.GetUtcNow().ToUnixTimeMilliseconds() / 1000.0;
+
         async Task CancelCurrentTurnAsync(string reason)
         {
-            var task = state.CurrentTurnTask;
-            var cts = state.CurrentTurnCts;
+            Task? task;
+            CancellationTokenSource? cts;
+            lock (turnRegistryLock)
+            {
+                task = state.CurrentTurnTask;
+                cts = state.CurrentTurnCts;
+            }
             if (task is null)
             {
                 return;
@@ -217,6 +269,79 @@ public sealed class CascadeProcessor : IPipelineProcessor
             state.CurrentTurnTask = null;
             state.CurrentTurnCts = null;
             cts?.Dispose();
+        }
+
+        // #126/PR #290: barge-in must NEVER block the browser receive loop. It used to call
+        // CancelCurrentTurnAsync (cancel + AWAIT the turn task) inline from HandleClientMessageAsync,
+        // then send speech_started inline too. But a cancelled turn can only stop once its
+        // in-flight browser SendAsync finishes (SendTextAsync deliberately never hands turnCt to the
+        // real write -- see its #236 doc comment), and that write only finishes once the browser
+        // reads. If the browser is itself blocked WRITING to us (e.g. streaming more mic audio
+        // while our TTS reply has filled the socket), both peers sit in a write that the other
+        // never reads: a hard deadlock that stalls the session until teardown. So the receive loop
+        // only cancels and detaches the turn here, then keeps reading; a chained "barge-in tail"
+        // waits for the cancelled turn to really stop and only then sends speech_started (so no
+        // stale audio from the cut-off reply can follow it), and the next turn waits for that tail
+        // before it starts (so its frames always follow speech_started, and it never mutates
+        // state.Messages concurrently with the cancelled turn's own cleanup).
+        void BargeIn()
+        {
+            Task? task;
+            CancellationTokenSource? cts;
+            lock (turnRegistryLock)
+            {
+                task = state.CurrentTurnTask;
+                cts = state.CurrentTurnCts;
+                state.CurrentTurnTask = null;
+                state.CurrentTurnCts = null;
+            }
+            var wasInFlight = task is { IsCompleted: false };
+            cts?.Cancel();
+            var previousTail = state.BargeInTail;
+            state.BargeInTail = Task.Run(async () =>
+            {
+                await AwaitQuietlyAsync(previousTail).ConfigureAwait(false);
+                await AwaitQuietlyAsync(task).ConfigureAwait(false);
+                cts?.Dispose();
+                if (wasInFlight)
+                {
+                    _logger?.LogInformation("Cancelled in-flight cascade turn: {Reason} (session={SessionId})",
+                        "guest started speaking (barge-in)", sessionId);
+                }
+                try
+                {
+                    await SendTextAsync(browserSocket, """{"type":"input_audio_buffer.speech_started"}""", ct, ct)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is OperationCanceledException or WebSocketException)
+                {
+                    // Session is shutting down or the socket is gone -- nothing left to notify.
+                }
+                catch (Exception ex)
+                {
+                    _logger?.LogWarning(ex, "Could not send speech_started after a barge-in (session={SessionId})", sessionId);
+                }
+            });
+        }
+
+        async Task AwaitQuietlyAsync(Task? t)
+        {
+            if (t is null)
+            {
+                return;
+            }
+            try
+            {
+                await t.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected -- that's what cancelling the turn is for.
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "Cascade turn ended with an unexpected exception while cancelling it (session={SessionId})", sessionId);
+            }
         }
 
         (CancellationTokenSource Cts, Task Task) Spawn(Func<CancellationToken, Task> body, string label)
@@ -251,6 +376,80 @@ public sealed class CascadeProcessor : IPipelineProcessor
                 }
             });
             return (cts, task);
+        }
+
+        // #126, mirrors rtmt.py's own nudge_after_silence/cancel_nudge: a ONE-SHOT timer, armed
+        // at most once per connection (HandleClientMessageAsync's own NudgeArmed latch below). If
+        // the guest stays silent for `nudge_after_seconds` and no turn is in flight (mid-turn,
+        // mid-greeting, or the assistant is already speaking), nudge once through this pipeline's
+        // own normal chat-tool-loop + TTS turn machinery -- never stacked on top of a turn, never
+        // rescheduled.
+        void ScheduleNudge()
+        {
+            var (cts, task) = Spawn(async nudgeCt =>
+            {
+                await Task.Delay(TimeSpan.FromSeconds(_sessionManager!.Config.NudgeAfterSeconds), _timeProvider, nudgeCt)
+                    .ConfigureAwait(false);
+                bool skipped;
+                lock (turnRegistryLock)
+                {
+                    if (nudgeCt.IsCancellationRequested)
+                    {
+                        return;
+                    }
+                    var inFlight = state.CurrentTurnTask;
+                    // A barged-in turn still winding down (BargeInTail) counts as in flight too.
+                    skipped = (inFlight is not null && !inFlight.IsCompleted) || state.BargeInTail is { IsCompleted: false };
+                    if (!skipped)
+                    {
+                        // The firing nudge becomes a real turn: BargeIn and teardown cancel AND
+                        // await it via CurrentTurnTask/CurrentTurnCts like any other turn, so no
+                        // audio follows speech_started and its Messages cleanup never races the
+                        // next turn. NudgeTask/NudgeCts hand over ownership (CancelNudge is then
+                        // a no-op for it).
+                        state.CurrentTurnTask = state.NudgeTask;
+                        state.CurrentTurnCts = state.NudgeCts;
+                        state.NudgeTask = null;
+                        state.NudgeCts = null;
+                    }
+                }
+                if (skipped)
+                {
+                    // Mid-turn, or the assistant is already speaking -- never stack a nudge on
+                    // top of a real turn. One-shot: a skipped nudge is not rescheduled.
+                    _logger?.LogInformation("Cascade: resume nudge skipped, a turn is in flight (session={SessionId})", sessionId);
+                    return;
+                }
+                _logger?.LogInformation(
+                    "Cascade: guest silent {Seconds}s after resume; nudging (session={SessionId})",
+                    _sessionManager!.Config.NudgeAfterSeconds, sessionId);
+                state.Messages.Add(CascadeChatMessage.User(SessionManager.BuildNudgeText(state.RoleName)));
+                await RunTurnAndSpeakAsync(nudgeCt).ConfigureAwait(false);
+            }, "nudge");
+            state.NudgeCts = cts;
+            state.NudgeTask = task;
+        }
+
+        // #126, mirrors rtmt.py's own cancel_nudge: cancels a still-pending nudge timer. A no-op
+        // if none is pending (e.g. this connection was never nudge-eligible, or the nudge already
+        // fired).
+        void CancelNudge(string reason)
+        {
+            Task? task;
+            CancellationTokenSource? cts;
+            lock (turnRegistryLock)
+            {
+                task = state.NudgeTask;
+                cts = state.NudgeCts;
+                state.NudgeTask = null;
+                state.NudgeCts = null;
+                if (task is not null && !task.IsCompleted)
+                {
+                    cts?.Cancel();
+                    _logger?.LogInformation("Cascade: resume nudge cancelled: {Reason} (session={SessionId})", reason, sessionId);
+                }
+            }
+            cts?.Dispose();
         }
 
         async Task<JsonObject> CallChatCompletionAsync(CancellationToken turnCt) =>
@@ -312,7 +511,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
                 // `OperationCanceledException` DOES derive from `Exception`, so without this
                 // clause a guest barging in mid-tool-call would get logged as a tool failure and
                 // a synthetic "something went wrong" error message appended to history, instead
-                // of the turn just quietly ending the way `CancelCurrentTurnAsync` expects.
+                // of the turn just quietly ending the way barge-in (`BargeIn`) expects.
                 //
                 // #236 Rick re-review item 3 (LOW): the `when` guard matters -- an
                 // `OperationCanceledException` can also come from an HttpClient-internal timeout
@@ -450,6 +649,16 @@ public sealed class CascadeProcessor : IPipelineProcessor
                 async () =>
                 {
                     var pcm = await _audioClient.SpeakAsync(text, state.Voice, deployment, turnCt).ConfigureAwait(false);
+                    if (_echoCooldownSeconds > 0)
+                    {
+                        // #126: arm echo suppression for the GUEST'S estimated speaker playback
+                        // of this reply (not this loop's own fast send time) plus a short acoustic
+                        // tail (`_echoCooldownSeconds`, capped at 300ms in the constructor).
+                        // 0 disables suppression entirely, identically to cascade_processor.py's
+                        // `_speak`. PCM16 mono => 2 bytes/sample.
+                        var durationSeconds = pcm.Length / (double)(AudioSampleRate * 2);
+                        detector.StartEchoCooldown(durationSeconds + _echoCooldownSeconds, NowSeconds());
+                    }
                     for (var offset = 0; offset < pcm.Length; offset += TtsChunkBytes)
                     {
                         var chunkLength = Math.Min(TtsChunkBytes, pcm.Length - offset);
@@ -521,7 +730,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
             }
             catch (OperationCanceledException) when (turnCt.IsCancellationRequested)
             {
-                // Barge-in: `CancelCurrentTurnAsync` owns this turn's cleanup, not us.
+                // Barge-in: `BargeIn` owns this turn's cleanup, not us.
                 throw;
             }
             catch (Exception ex)
@@ -548,6 +757,10 @@ public sealed class CascadeProcessor : IPipelineProcessor
                     ["type"] = "response.audio_transcript.delta",
                     ["delta"] = finalText,
                 }.ToJsonString(), turnCt, ct).ConfigureAwait(false);
+
+                // #126: feeds this session's own rehydration/resume history -- see
+                // ProcessTurnAsync's matching guest-side RecordTurn call for why.
+                _sessionManager?.RecordTurn(sessionId, "assistant", finalText);
 
                 try
                 {
@@ -633,6 +846,11 @@ public sealed class CascadeProcessor : IPipelineProcessor
                 ["transcript"] = transcript,
             }.ToJsonString(), turnCt, ct).ConfigureAwait(false);
             state.Messages.Add(CascadeChatMessage.User(transcript));
+            // #126: feeds this session's own rehydration/resume history -- see
+            // SessionManager.BuildRehydrationText/RecentTurns. Never called before this issue (a
+            // cascade session's recent-turns list was always empty), so a resumed cascade session
+            // had nothing real to rehydrate with.
+            _sessionManager?.RecordTurn(sessionId, "guest", transcript);
             await RunTurnAndSpeakAsync(turnCt).ConfigureAwait(false);
         }
 
@@ -663,6 +881,13 @@ public sealed class CascadeProcessor : IPipelineProcessor
             }
 
             state.Messages.Add(CascadeChatMessage.User(text));
+            // #126: mark as soon as the greeting STARTS (not when it finishes speaking) --
+            // mirrors rtmt.py's own send_greeting_once -- so a connection dropped mid-greeting
+            // still resumes silently (rehydrated, no second greeting) rather than being treated
+            // as "never greeted" and re-greeted on reconnect. Before this issue, cascade never
+            // called this at all, so ResumeOutcome.ConversationStarted was always false for a
+            // cascade session.
+            _sessionManager?.MarkConversationStarted(sessionId);
             await RunTurnAndSpeakAsync(turnCt).ConfigureAwait(false);
         }
 
@@ -687,18 +912,42 @@ public sealed class CascadeProcessor : IPipelineProcessor
                     {
                         return;
                     }
-                    var vadEvent = detector.Feed(pcm);
+                    if (state.NudgeEligible && !state.NudgeArmed)
+                    {
+                        // #126 (mirrors rtmt.py's `nudge_awaiting_client_live` gate): arm the
+                        // one-shot resume nudge the first time THIS socket's guest proves the
+                        // conversation is live -- its own first streamed mic chunk -- never
+                        // merely because the resume handshake itself succeeded. Latched so this
+                        // only ever fires once per connection.
+                        state.NudgeArmed = true;
+                        ScheduleNudge();
+                    }
+                    var vadEvent = detector.Feed(pcm, NowSeconds());
                     if (vadEvent == "speech_started")
                     {
-                        await CancelCurrentTurnAsync("guest started speaking (barge-in)").ConfigureAwait(false);
-                        await SendTextAsync(browserSocket, """{"type":"input_audio_buffer.speech_started"}""", ct, ct)
-                            .ConfigureAwait(false);
+                        // #126: real guest activity -- reset (cancel, never reschedule) any
+                        // pending resume nudge, same one-shot semantics as rtmt.py's own
+                        // `cancel_nudge`. Runs BEFORE BargeIn: a pending nudge is cancelled
+                        // under the registry lock, and one that already fired is a
+                        // CurrentTurnTask that BargeIn then cancels like any other turn.
+                        CancelNudge("guest started speaking");
+                        BargeIn();
                     }
                     else if (vadEvent == "speech_stopped")
                     {
+                        CancelNudge("guest turn started");
                         var turnAudio = detector.TakeBuffer();
                         detector.Reset();
-                        var (cts, task) = Spawn(turnCt => ProcessTurnAsync(turnAudio, turnCt), "turn");
+                        var bargeInTail = state.BargeInTail;
+                        var (cts, task) = Spawn(async turnCt =>
+                        {
+                            // Never overlap the turn a barge-in just cut off (see BargeIn).
+                            if (bargeInTail is not null)
+                            {
+                                await bargeInTail.WaitAsync(turnCt).ConfigureAwait(false);
+                            }
+                            await ProcessTurnAsync(turnAudio, turnCt).ConfigureAwait(false);
+                        }, "turn");
                         state.CurrentTurnCts = cts;
                         state.CurrentTurnTask = task;
                     }
@@ -725,26 +974,247 @@ public sealed class CascadeProcessor : IPipelineProcessor
                     state.Voice = newVoice;
                     break;
                 }
-                default:
-                    // session.update / extension.resume / anything unrecognized: explicit v1 scope
-                    // cut, mirroring cascade_processor.py's own _handle_client_message.
+                case "extension.resume":
+                    // #126: this connection's own first frame was ALREADY consumed (and, if it
+                    // looked like a resume attempt, already decided) by the pre-loop negotiation
+                    // below -- mirrors cascade_processor.py's/RealtimeProcessor's own
+                    // reject_late_resume: a SECOND extension.resume on an already-running
+                    // connection can never legitimately win (this socket already has its own
+                    // session identity), so it is rejected rather than silently ignored or
+                    // treated as if it could still replace this connection's identity.
+                    await NotifyClientAsync(new JsonObject
+                    {
+                        ["type"] = "extension.resume_rejected",
+                        ["reason"] = "not_first_frame",
+                    }, ct).ConfigureAwait(false);
                     break;
+                default:
+                    // session.update / anything unrecognized: explicit v1 scope cut, mirroring
+                    // cascade_processor.py's own _handle_client_message.
+                    break;
+
             }
         }
 
-        // ── Session start ────────────────────────────────────────────────────────────────────────
-        await SendTextAsync(browserSocket, identifiers.ToFrame("extension.session_metadata").ToJsonString(), ct, ct)
-            .ConfigureAwait(false);
+        string SafeOrderSummaryJson(IOrderTicketSource source)
+        {
+            try
+            {
+                return source.CurrentOrderSummaryJson;
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex,
+                    "Could not read order state while building a session-resumed announcement (session={SessionId})",
+                    sessionId);
+                return "{}";
+            }
+        }
 
-        var (greetingCts, greetingTask) = Spawn(SendGreetingAsync, "greeting");
-        state.CurrentTurnCts = greetingCts;
-        state.CurrentTurnTask = greetingTask;
+        // #126: cascade's own resume handshake, through the SAME SessionManager.TryResume/
+        // grace-held order state/4002-supersede semantics the realtime pipeline already uses --
+        // a resume is honoured ONLY as this socket's literal first client frame, mirroring
+        // RealtimeProcessor's own HandleResumeFirstFrameAsync/reject_late_resume pair.
+        //
+        // #126 follow-up fix: this MUST NOT implement the timeout by cancelling the
+        // WebSocketFrameReader.ReadMessageAsync call itself -- a minimal repro confirmed that
+        // cancelling a .NET WebSocket's ReceiveAsync aborts the socket (State -> Aborted) as a
+        // side effect, after which every subsequent SendAsync throws WebSocketException. That
+        // silently broke EVERY cascade connection (not just resume attempts) once Program.cs
+        // started always wiring a real SessionManager in -- the session_metadata frame below
+        // would throw, the exception propagated unhandled out of RunSessionAsync, and the
+        // registered session just sat there until SessionManager's own idle sweep eventually
+        // closed it 45s later. Mirrors RealtimeProcessor's own first-frame race instead
+        // (FirstFrameDecision/Task.Delay(...).ContinueWith(TrySetResult)): the read is started
+        // once, against the SESSION's own cancellation token (never a separate timeout token),
+        // and is simply raced against a timer via Task.WhenAny. If the timer wins, the read is
+        // left running rather than cancelled -- its eventual result is consumed as this
+        // connection's first real message by the main loop below (pendingFirstFrameTask)
+        // instead of a second, illegal, concurrent ReadMessageAsync call on the same socket.
+        // Entirely inert when no SessionManager was injected (see that field's own doc comment).
+        async Task<JsonObject?> NegotiateResumeAsync()
+        {
+            WebSocketFrame? firstFrame = null;
+            var timeoutSeconds = _sessionManager!.Config.FirstFrameTimeoutSeconds;
+            if (timeoutSeconds > 0)
+            {
+                pendingFirstFrameTask = WebSocketFrameReader.ReadMessageAsync(browserSocket, ct);
+                var winner = await Task.WhenAny(
+                        pendingFirstFrameTask, Task.Delay(TimeSpan.FromSeconds(timeoutSeconds), _timeProvider, ct))
+                    .ConfigureAwait(false);
+                if (winner == pendingFirstFrameTask)
+                {
+                    firstFrame = await pendingFirstFrameTask.ConfigureAwait(false);
+                    pendingFirstFrameTask = null;
+                }
+                // else: the timer won -- pendingFirstFrameTask is left set (still in-flight) for
+                // the main loop's first iteration to await, exactly like "no resume attempt",
+                // mirroring cascade_processor.py's own asyncio.wait_for TimeoutError catch.
+            }
+
+            JsonObject? resumeData = null;
+            JsonObject? leftover = null;
+            if (firstFrame is { MessageType: WebSocketMessageType.Text })
+            {
+                JsonObject? parsed;
+                try
+                {
+                    parsed = JsonNode.Parse(firstFrame.Payload) as JsonObject;
+                }
+                catch (JsonException)
+                {
+                    parsed = null;
+                }
+                if (parsed is not null && GetString(parsed, "type") == "extension.resume")
+                {
+                    resumeData = parsed;
+                }
+                else
+                {
+                    // A real (non-resume) first frame consumed while peeking -- e.g.
+                    // extension.set_voice sent with no stored resume id yet -- replayed into the
+                    // main loop below so it is never silently dropped.
+                    leftover = parsed;
+                }
+            }
+
+            if (resumeData is not null)
+            {
+                var presentedId = GetString(resumeData, "resume_id");
+                var outcome = _sessionManager.TryResume(
+                    browserSocket, presentedId, persona.Id, resolvedModel.Id, menuMode, sessionId, linkedCts);
+                if (outcome.Accepted)
+                {
+                    sessionId = outcome.SessionId!;
+                    toolExecutor = outcome.ToolExecutor!;
+                    state.Voice = outcome.Voice!;
+                    // Adopt the ORIGINAL session's identifiers object (same reference, so its
+                    // RoundTripIndex keeps counting up from where the prior connection left off)
+                    // instead of leaving this connection's brand-new one bound.
+                    if (outcome.Identifiers is { } originalIdentifiers)
+                    {
+                        identifiers = originalIdentifiers;
+                    }
+                    if (outcome.StaleWs is { } staleWs)
+                    {
+                        _ = Task.Run(
+                            () => RealtimeProcessor.CloseSupersededStaleConnectionAsync(
+                                staleWs, outcome.StaleCts, RealtimeProcessor.SupersededCloseTimeout, _logger),
+                            CancellationToken.None);
+                    }
+                    var orderSummaryJson = toolExecutor is IOrderTicketSource ticketSource
+                        ? SafeOrderSummaryJson(ticketSource)
+                        : "{}";
+                    await SendTextAsync(browserSocket, new JsonObject
+                    {
+                        ["type"] = "extension.session_resumed",
+                        ["order_summary"] = JsonNode.Parse(orderSummaryJson) ?? new JsonObject(),
+                        ["session_token"] = identifiers.SessionToken,
+                        ["round_trip_index"] = identifiers.RoundTripIndex,
+                        ["round_trip_token"] = identifiers.RoundTripToken,
+                        ["resume_id"] = outcome.ResumeId,
+                    }.ToJsonString(), ct, ct).ConfigureAwait(false);
+
+                    if (outcome.ConversationStarted)
+                    {
+                        // #126/#247 parity: never replay an in-flight turn, never re-greet --
+                        // brief the new connection with the order + recent transcript, then stay
+                        // silent until the guest speaks.
+                        state.Messages.Add(CascadeChatMessage.System(SessionManager.BuildRehydrationText(
+                            orderSummaryJson, outcome.RecentTurns ?? Array.Empty<(string Role, string Text)>(),
+                            state.RoleName)));
+                        if (_sessionManager.Config.NudgeAfterSeconds > 0)
+                        {
+                            state.NudgeEligible = true;
+                        }
+                        _logger?.LogInformation(
+                            "Cascade: resumed session {SessionId} rehydrated ({Count} recent turns); greeting suppressed",
+                            sessionId, outcome.RecentTurns?.Count ?? 0);
+                    }
+                    else
+                    {
+                        var (greetingCts, greetingTask) = Spawn(SendGreetingAsync, "greeting");
+                        state.CurrentTurnCts = greetingCts;
+                        state.CurrentTurnTask = greetingTask;
+                    }
+                    return null; // the resume frame itself is fully consumed either way, never replayed
+                }
+
+                _logger?.LogInformation(
+                    "Cascade: resume rejected (reason={Reason}); starting fresh session (session={SessionId})",
+                    outcome.Reason, sessionId);
+                await SendTextAsync(browserSocket, new JsonObject
+                {
+                    ["type"] = "extension.resume_rejected",
+                    ["reason"] = outcome.Reason,
+                }.ToJsonString(), ct, ct).ConfigureAwait(false);
+                // Falls through to the fresh path below -- the resume frame is fully consumed
+                // either way, accepted or rejected.
+            }
+
+            // Fresh path (no resume attempted, or one was attempted and rejected): announce this
+            // connection's own identity and start the greeting -- the exact pre-#126
+            // unconditional behaviour.
+            var resumeId = _sessionManager.IssueResumeId(sessionId);
+            var metadataFrame = identifiers.ToFrame("extension.session_metadata");
+            if (resumeId is not null)
+            {
+                metadataFrame["resumeId"] = resumeId;
+            }
+            await SendTextAsync(browserSocket, metadataFrame.ToJsonString(), ct, ct).ConfigureAwait(false);
+            var (freshGreetingCts, freshGreetingTask) = Spawn(SendGreetingAsync, "greeting");
+            state.CurrentTurnCts = freshGreetingCts;
+            state.CurrentTurnTask = freshGreetingTask;
+
+            return leftover;
+        }
+
+        // ── Session start ────────────────────────────────────────────────────────────────────────
+        JsonObject? leftoverFirstFrame = null;
+        if (_sessionManager is null)
+        {
+            await SendTextAsync(browserSocket, identifiers.ToFrame("extension.session_metadata").ToJsonString(), ct, ct)
+                .ConfigureAwait(false);
+
+            var (greetingCts, greetingTask) = Spawn(SendGreetingAsync, "greeting");
+            state.CurrentTurnCts = greetingCts;
+            state.CurrentTurnTask = greetingTask;
+        }
+        else
+        {
+            leftoverFirstFrame = await NegotiateResumeAsync().ConfigureAwait(false);
+        }
+
+        if (leftoverFirstFrame is not null)
+        {
+            try
+            {
+                await HandleClientMessageAsync(leftoverFirstFrame).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError(ex, "Error handling cascade client's replayed first message (session={SessionId})", sessionId);
+            }
+        }
 
         try
         {
             while (browserSocket.State == WebSocketState.Open)
             {
-                var frame = await WebSocketFrameReader.ReadMessageAsync(browserSocket, ct).ConfigureAwait(false);
+                // #126 fix: if NegotiateResumeAsync's first-frame timer won the race, its
+                // ReadMessageAsync call is still in flight on this socket -- must be awaited
+                // here rather than starting a second, concurrent ReadMessageAsync (illegal on
+                // one WebSocket) or abandoning its eventual result.
+                WebSocketFrame? frame;
+                if (pendingFirstFrameTask is { } pending)
+                {
+                    pendingFirstFrameTask = null;
+                    frame = await pending.ConfigureAwait(false);
+                }
+                else
+                {
+                    frame = await WebSocketFrameReader.ReadMessageAsync(browserSocket, ct).ConfigureAwait(false);
+                }
                 if (frame is null)
                 {
                     break;
@@ -789,13 +1259,15 @@ public sealed class CascadeProcessor : IPipelineProcessor
         }
         finally
         {
+            // Teardown still waits for everything: the current turn (cancelled) and any
+            // barge-in tail still waiting on an earlier cancelled turn.
+            CancelNudge("connection closing");
             await CancelCurrentTurnAsync("connection closing").ConfigureAwait(false);
-            // Issue #13 tail: tears down the context monitor this RunSessionAsync call created
-            // above -- the cascade equivalent of SessionManager.EndSessionLocked's own
-            // RemoveContextMonitor call.
-            _sessionManager?.RemoveContextMonitor(sessionId);
+            await AwaitQuietlyAsync(state.BargeInTail).ConfigureAwait(false);
+            _sessionManager?.Detach(browserSocket, sessionId, "socket closed");
         }
     }
+
 
     /// <summary>
     /// Sends one text frame to the browser socket. <paramref name="turnCt"/> is only ever used to
@@ -807,7 +1279,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
     /// implementation behind both Kestrel's server-side <see cref="WebSocket"/> and
     /// <see cref="WebSocket.CreateFromStream"/>) treats a cancelled in-flight <c>SendAsync</c> as a
     /// fatal, unrecoverable transport error: cancelling it mid-write aborts the ENTIRE socket, not
-    /// just that one call. <c>CancelCurrentTurnAsync</c> cancels a turn's own
+    /// just that one call. <c>BargeIn</c> cancels a turn's own
     /// <c>CurrentTurnCts</c>/<c>turnCt</c> on barge-in while the SESSION (and its socket) must keep
     /// running for the next turn -- so passing <c>turnCt</c> straight into
     /// <c>browserSocket.SendAsync</c> (as every call site here used to) meant a barge-in landing

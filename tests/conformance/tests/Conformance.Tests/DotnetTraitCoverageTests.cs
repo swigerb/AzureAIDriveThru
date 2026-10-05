@@ -578,7 +578,7 @@ public sealed class DotnetTraitCoverageTests
     }
 
     [Fact]
-    public void At_least_351_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
+    public void At_least_354_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
     {
         // Rick's PR #226 review: assert the capability directly, not just the derived count --
         // see this class's own doc comment for why a bare ">= 222" check alone can't be trusted to
@@ -592,8 +592,8 @@ public sealed class DotnetTraitCoverageTests
 
         var count = CountFloorEligibleDotnetReadyTestMethods();
 
-        Assert.True(count >= 351,
-            $"Expected at least 351 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")], " +
+        Assert.True(count >= 354,
+            $"Expected at least 354 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")], " +
             $"not unconditionally skip-gated by AuthRowCapability, and (per issue #283) not a " +
             $"[Theory(SkipTestWithoutData = true)] whose own [MemberData] source resolves to zero " +
             $"rows (see {nameof(TheoryYieldsZeroRowsWhenSkipGated)} -- such a method is SKIPPED, " +
@@ -601,7 +601,7 @@ public sealed class DotnetTraitCoverageTests
             $"the dotnet leg's `--filter \"{TraitName}={TraitValue}\"` baseline, minus the five " +
             "skip-only Scenarios/Auth classes -- see this class's own doc comment; " +
             $"docs/dotnet_mapping.md), but found {count}. If a tagged scenario was removed or " +
-            "renamed without a replacement, the dotnet CI leg silently lost coverage. 351 is a " +
+            "renamed without a replacement, the dotnet CI leg silently lost coverage. 354 is a " +
             "FRESH count (coordinator issue #283, Birdperson, 2026-10-05: " +
             "ComboComponentResizeConformanceTests's 4 Discovered_* theories re-tagged from " +
             "n/a-no-matching-persona-data to ready after adding the test-zeta synthetic fixture " +
@@ -898,7 +898,7 @@ public sealed class DotnetTraitCoverageTests
     /// End-to-end mutation-check for the fail-closed guard itself (not just its resolution
     /// helper): an empty static property-backed <c>[MemberData]</c> source on a
     /// <c>[Theory(SkipTestWithoutData = true)]</c> method must be reported as yielding zero rows,
-    /// exactly the behavior <see cref="At_least_351_scenarios_are_tagged_dotnet_ready_and_not_skip_gated"/>
+    /// exactly the behavior <see cref="At_least_354_scenarios_are_tagged_dotnet_ready_and_not_skip_gated"/>
     /// relies on to exclude it from the floor. Reverting either the property-resolution branch
     /// above or this guard's own fail-closed wiring must turn this test red.
     /// </summary>

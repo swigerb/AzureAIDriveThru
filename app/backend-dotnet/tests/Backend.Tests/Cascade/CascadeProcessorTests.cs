@@ -300,7 +300,7 @@ public sealed class CascadeProcessorTests
 
     private static CascadeProcessor NewProcessor(
         RoutingFoundryHandler handler, IToolExecutor toolExecutor, PromptLoader loader, TimeProvider? timeProvider = null,
-        ILogger? logger = null) =>
+        ILogger? logger = null, double echoCooldownSeconds = 0, SessionManager? sessionManager = null) =>
         new(
             NewCatalog(), Endpoint, Endpoint, AppConfig.Load(),
             promptLoaders: new Dictionary<string, PromptLoader> { ["test-delta"] = loader },
@@ -308,7 +308,15 @@ public sealed class CascadeProcessorTests
             httpClient: new HttpClient(handler),
             bearerTokenProvider: new StaticBearerTokenProvider("fake-token"),
             timeProvider: timeProvider,
-            logger: logger);
+            logger: logger,
+            // #126: every PRE-existing test in this file predates cascade's own echo-suppression
+            // feature and exercises fast, back-to-back turns (a greeting's TTS immediately
+            // followed by a guest's own mic audio, well within what would be a real 1.5s
+            // cooldown) with no intention of exercising echo suppression at all -- defaulting to
+            // 0 here keeps every one of them passing unmodified. Only the echo-suppression-
+            // specific tests below pass a real value explicitly.
+            echoCooldownSeconds: echoCooldownSeconds,
+            sessionManager: sessionManager);
 
     private static byte[] Pcm16(short sampleValue, int count)
     {
@@ -508,7 +516,7 @@ public sealed class CascadeProcessorTests
     /// ahead of it (same fix applied to the TTS and transcription catches) -- otherwise a guest
     /// barging in mid-tool-call got logged as an unhandled tool failure AND a synthetic "something
     /// went wrong" error appended to history, instead of the turn just quietly ending the way a
-    /// real barge-in's <c>CancelCurrentTurnAsync</c>/<c>Spawn</c> machinery expects (and silently
+    /// real barge-in's <c>BargeIn</c>/<c>Spawn</c> machinery expects (and silently
     /// swallows, by design -- see <c>Spawn</c>'s own doc comment).
     ///
     /// Rick's re-review flagged the ORIGINAL version of this test (which had the tool executor
@@ -519,7 +527,7 @@ public sealed class CascadeProcessorTests
     /// version drives a REAL barge-in instead: the tool executor blocks on the genuine `turnCt`
     /// <see cref="IToolExecutor.ExecuteAsync"/> receives, and only a second
     /// <c>input_audio_buffer.append</c> frame carrying loud audio -- processed by the real VAD
-    /// detector and routed through the real <c>CancelCurrentTurnAsync</c> -- unblocks it, exactly
+    /// detector and routed through the real <c>BargeIn</c> -- unblocks it, exactly
     /// as a guest's spoken interruption would in production.</summary>
     [Fact]
     public async Task RunSessionAsync_RealBargeInDuringToolCall_PropagatesWithoutBeingLoggedAsAToolFailure()
@@ -547,7 +555,7 @@ public sealed class CascadeProcessorTests
             {
                 // Blocks on the REAL per-turn token ExecuteToolCallAsync passes through --
                 // unlike the previous version of this test, only a genuine
-                // CancelCurrentTurnAsync (triggered by the second loud-audio frame below) can
+                // BargeIn (triggered by the second loud-audio frame below) can
                 // unblock this.
                 await Task.Delay(Timeout.InfiniteTimeSpan, toolCt).ConfigureAwait(false);
                 return default!;
@@ -1005,4 +1013,476 @@ public sealed class CascadeProcessorTests
         Assert.NotEqual("not-a-real-voice", guestTurnTtsRequest["voice"]!.GetValue<string>());
         Assert.Equal(greetingTtsRequest["voice"]!.GetValue<string>(), guestTurnTtsRequest["voice"]!.GetValue<string>());
     }
+
+    // ── #126: resume / nudge / echo-suppression ─────────────────────────────────────────────────
+
+    private static byte[] ResumeFrame(string? resumeId) =>
+        Encoding.UTF8.GetBytes(new JsonObject
+        {
+            ["type"] = "extension.resume",
+            ["resume_id"] = resumeId,
+        }.ToJsonString());
+
+    private static SessionManager NewSessionManager(
+        FakeTimeProvider time, double nudgeAfterSeconds = 30, double firstFrameTimeoutSeconds = 2.0) =>
+        new(new SessionsConfig(nudgeAfterSeconds: nudgeAfterSeconds, firstFrameTimeoutSeconds: firstFrameTimeoutSeconds), time);
+
+    /// <summary>Seeds a prior, already-detached session (conversation already under way) that a
+    /// new connection can resume -- mirrors Python's own
+    /// <c>RehydrationAndNudgeTests</c> setup (manager.create_session + mark_conversation_started +
+    /// record_turn + issue_resume_id + detach).</summary>
+    private static string SeedDetachedResumableSession(
+        SessionManager sessionManager, string priorSessionId, Persona persona, string modelId,
+        bool conversationStarted = true, IToolExecutor? toolExecutor = null)
+    {
+        var priorSocket = new DelayedFakeWebSocket([], ReceiveDelay);
+        sessionManager.CreateSession(priorSessionId, priorSocket, persona.Id, modelId, null, toolExecutor ?? new StubToolExecutor(["search"]), "marin");
+        if (conversationStarted)
+        {
+            sessionManager.MarkConversationStarted(priorSessionId);
+            sessionManager.RecordTurn(priorSessionId, "guest", "I'd like fries");
+            sessionManager.RecordTurn(priorSessionId, "assistant", "Sure thing!");
+        }
+        var resumeId = sessionManager.IssueResumeId(priorSessionId)!;
+        sessionManager.Detach(priorSocket, priorSessionId, "test setup");
+        return resumeId;
+    }
+
+    [Fact]
+    public async Task RunSessionAsync_ResumeAcceptedMidConversation_RehydratesAndSuppressesTheGreeting()
+    {
+        var (persona, loader) = LoadDeltaFixture();
+        var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
+        var fakeTime = new FakeTimeProvider();
+        var sessionManager = NewSessionManager(fakeTime);
+        var resumeId = SeedDetachedResumableSession(sessionManager, "prior-sess", persona, resolvedModel.Id);
+
+        var handler = new RoutingFoundryHandler()
+            // No greeting chat-completion is enqueued: a resumed, already-started conversation
+            // must never re-greet -- only the guest's own next turn calls the model.
+            .EnqueueTranscript("more fries please")
+            .EnqueueChatMessage("assistant", "Adding more fries!")
+            .EnqueueSpeech([1, 2, 3]);
+
+        var processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader, timeProvider: fakeTime, sessionManager: sessionManager);
+
+        var loudChunk = Pcm16(20000, count: 10);
+        var silentChunk = Pcm16(0, count: 4800);
+        var socket = new DelayedFakeWebSocket(
+            [
+                (ResumeFrame(resumeId), WebSocketMessageType.Text),
+                (AppendFrame(loudChunk), WebSocketMessageType.Text),
+                (AppendFrame(silentChunk), WebSocketMessageType.Text),
+                ([], WebSocketMessageType.Close),
+            ],
+            ReceiveDelay);
+
+        await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "new-conn-sess", TestContext.Current.CancellationToken);
+
+        var frames = socket.SentMessages.Where(m => m.MessageType == WebSocketMessageType.Text).Select(ParseSent).ToList();
+        var types = frames.Select(f => f["type"]!.GetValue<string>()).ToList();
+
+        Assert.Equal("extension.session_resumed", types[0]);
+        // A fresh resume credential is rotated in on every successful resume (single-use) --
+        // never the one just presented/consumed.
+        Assert.NotEqual(resumeId, frames[0]["resume_id"]!.GetValue<string>());
+        Assert.DoesNotContain("extension.session_metadata", types);
+
+        // Exactly one spoken turn (the guest's "more fries" answer) -- no greeting was spoken.
+        var transcripts = frames.Where(f => f["type"]!.GetValue<string>() == "response.audio_transcript.delta").ToList();
+        Assert.Single(transcripts);
+        Assert.Equal("Adding more fries!", transcripts[0]["delta"]!.GetValue<string>());
+        Assert.Single(handler.ChatRequestBodies);
+
+        // The guest turn's own chat request must carry the rehydration system message with the
+        // prior conversation's recorded turns folded in.
+        var requestBody = JsonNode.Parse(handler.ChatRequestBodies[0])!.AsObject();
+        var messages = requestBody["messages"]!.AsArray();
+        Assert.Contains(messages, m => m!["role"]!.GetValue<string>() == "system"
+            && m["content"]!.GetValue<string>().Contains("I'd like fries")
+            && m["content"]!.GetValue<string>().Contains("Sure thing!"));
+
+        // The provisional connection created at accept-time is ended inside TryResume, while the
+        // resumed/original session survives this socket close only until its normal grace sweep.
+        Assert.Null(sessionManager.GetContextMonitor("new-conn-sess"));
+        Assert.NotNull(sessionManager.GetContextMonitor("prior-sess"));
+        fakeTime.Advance(TimeSpan.FromSeconds(sessionManager.Config.GraceSeconds + 1));
+        Assert.Equal(1, sessionManager.SweepDetached());
+        Assert.Null(sessionManager.GetContextMonitor("prior-sess"));
+    }
+
+    [Fact]
+    public async Task RunSessionAsync_ResumeAcceptedBeforeGreeting_StillGreets()
+    {
+        var (persona, loader) = LoadDeltaFixture();
+        var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
+        var fakeTime = new FakeTimeProvider();
+        var sessionManager = NewSessionManager(fakeTime);
+        // conversationStarted: false -- the prior connection dropped before its own greeting ever
+        // went out, so the resumed connection must greet exactly as a fresh session would.
+        var resumeId = SeedDetachedResumableSession(sessionManager, "prior-sess-2", persona, resolvedModel.Id, conversationStarted: false);
+
+        var handler = new RoutingFoundryHandler()
+            .EnqueueChatMessage("assistant", "Welcome to Test Delta Meal Co.! What can I get started for you?")
+            .EnqueueSpeech([1, 2]);
+
+        var processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader, timeProvider: fakeTime, sessionManager: sessionManager);
+
+        var socket = new DelayedFakeWebSocket(
+            [
+                (ResumeFrame(resumeId), WebSocketMessageType.Text),
+                ([], WebSocketMessageType.Close),
+            ],
+            ReceiveDelay);
+
+        await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "new-conn-sess-2", TestContext.Current.CancellationToken);
+
+        var frames = socket.SentMessages.Where(m => m.MessageType == WebSocketMessageType.Text).Select(ParseSent).ToList();
+        var types = frames.Select(f => f["type"]!.GetValue<string>()).ToList();
+
+        Assert.Equal("extension.session_resumed", types[0]);
+        var greetingTranscript = frames.Single(f => f["type"]!.GetValue<string>() == "response.audio_transcript.delta");
+        Assert.Equal("Welcome to Test Delta Meal Co.! What can I get started for you?", greetingTranscript["delta"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task RunSessionAsync_ResumeRejectedUnknownId_FallsThroughToAFreshSession()
+    {
+        var (persona, loader) = LoadDeltaFixture();
+        var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
+        var fakeTime = new FakeTimeProvider();
+        var sessionManager = NewSessionManager(fakeTime);
+
+        var handler = new RoutingFoundryHandler()
+            .EnqueueChatMessage("assistant", "Welcome to Test Delta Meal Co.! What can I get started for you?")
+            .EnqueueSpeech([1, 2]);
+
+        var processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader, timeProvider: fakeTime, sessionManager: sessionManager);
+
+        // A well-formed (64 hex chars) but never-issued resume id -- TryResume rejects as "unknown".
+        var unknownButWellFormed = new string('a', 64);
+        var socket = new DelayedFakeWebSocket(
+            [
+                (ResumeFrame(unknownButWellFormed), WebSocketMessageType.Text),
+                ([], WebSocketMessageType.Close),
+            ],
+            ReceiveDelay);
+
+        await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "fresh-sess", TestContext.Current.CancellationToken);
+
+        var frames = socket.SentMessages.Where(m => m.MessageType == WebSocketMessageType.Text).Select(ParseSent).ToList();
+        var types = frames.Select(f => f["type"]!.GetValue<string>()).ToList();
+
+        Assert.Equal("extension.resume_rejected", types[0]);
+        Assert.Equal("unknown", frames[0]["reason"]!.GetValue<string>());
+        Assert.Equal("extension.session_metadata", types[1]);
+        Assert.Contains(types, t => t == "response.audio_transcript.delta");
+    }
+
+    [Fact]
+    public async Task RunSessionAsync_LateResumeAfterTheFirstFrame_IsRejectedAsNotFirstFrame()
+    {
+        var (persona, loader) = LoadDeltaFixture();
+        var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
+        var fakeTime = new FakeTimeProvider();
+        var sessionManager = NewSessionManager(fakeTime);
+        var resumeId = SeedDetachedResumableSession(sessionManager, "prior-sess-3", persona, resolvedModel.Id);
+
+        var handler = new RoutingFoundryHandler()
+            .EnqueueChatMessage("assistant", "Welcome to Test Delta Meal Co.! What can I get started for you?")
+            .EnqueueSpeech([1, 2]);
+
+        var processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader, timeProvider: fakeTime, sessionManager: sessionManager);
+
+        var socket = new DelayedFakeWebSocket(
+            [
+                (SetVoiceFrame("echo"), WebSocketMessageType.Text), // real first frame -- not a resume
+                (ResumeFrame(resumeId), WebSocketMessageType.Text), // a SECOND, late resume attempt
+                ([], WebSocketMessageType.Close),
+            ],
+            ReceiveDelay);
+
+        await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "fresh-sess-2", TestContext.Current.CancellationToken);
+
+        var frames = socket.SentMessages.Where(m => m.MessageType == WebSocketMessageType.Text).Select(ParseSent).ToList();
+        var rejection = frames.Single(f => f["type"]!.GetValue<string>() == "extension.resume_rejected");
+        Assert.Equal("not_first_frame", rejection["reason"]!.GetValue<string>());
+
+        // The prior session must remain untouched (still resumable) -- the late attempt was fully
+        // rejected without disturbing it.
+        var stillResumable = sessionManager.TryResume(
+            new DelayedFakeWebSocket([], ReceiveDelay), resumeId, persona.Id, resolvedModel.Id, null, "another-provisional");
+        Assert.True(stillResumable.Accepted);
+    }
+
+    [Fact]
+    public async Task RunSessionAsync_NudgeFiresAfterSilenceFollowingAResumedRehydration()
+    {
+        var (persona, loader) = LoadDeltaFixture();
+        var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
+        var fakeTime = new FakeTimeProvider();
+        var sessionManager = NewSessionManager(fakeTime, nudgeAfterSeconds: 5);
+        var resumeId = SeedDetachedResumableSession(sessionManager, "prior-sess-4", persona, resolvedModel.Id);
+
+        var handler = new RoutingFoundryHandler()
+            // No greeting -- rehydrated. The nudge itself is the only turn: it is driven purely by
+            // the elapsed-silence timer, never by the guest's own mic audio.
+            .EnqueueChatMessage("assistant", "Still there? Would you like anything else?")
+            .EnqueueSpeech([1, 2]);
+
+        var processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader, timeProvider: fakeTime, sessionManager: sessionManager);
+
+        // One silent mic chunk arms the nudge (first-chunk eligibility) without ever triggering a
+        // real turn (RMS below the speech-start cutoff). The socket's own receive loop is slowed
+        // down (500ms/frame, well above the 400ms this test's own real-time Task.Delay below
+        // leaves before advancing the fake clock) so the nudge's entire turn -- driven purely by
+        // the fake clock, never by socket traffic -- has run to completion before the queued close
+        // frame is ever read, with no dependency on wall-clock races.
+        var silentChunk = Pcm16(0, count: 10);
+        var slowDelay = TimeSpan.FromMilliseconds(500);
+        var socket = new DelayedFakeWebSocket(
+            [
+                (ResumeFrame(resumeId), WebSocketMessageType.Text),
+                (AppendFrame(silentChunk), WebSocketMessageType.Text),
+                ([], WebSocketMessageType.Close),
+            ],
+            slowDelay);
+
+        var runTask = processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "nudge-sess", TestContext.Current.CancellationToken);
+
+        // Give the resume + mic-append frames time to be read (arming the nudge) -- that is two
+        // 500ms receives, ~1000ms -- before the fake clock is advanced past the 5s nudge
+        // threshold; the close frame (the 3rd queued message) isn't read until ~1500ms, leaving a
+        // comfortable margin for the nudge's own turn to finish first.
+        await Task.Delay(TimeSpan.FromMilliseconds(1100), TestContext.Current.CancellationToken);
+        fakeTime.Advance(TimeSpan.FromSeconds(5));
+
+        await runTask;
+
+        var frames = socket.SentMessages.Where(m => m.MessageType == WebSocketMessageType.Text).Select(ParseSent).ToList();
+        var transcript = frames.Single(f => f["type"]!.GetValue<string>() == "response.audio_transcript.delta");
+        Assert.Equal("Still there? Would you like anything else?", transcript["delta"]!.GetValue<string>());
+
+        var requestBody = JsonNode.Parse(handler.ChatRequestBodies.Single())!.AsObject();
+        var messages = requestBody["messages"]!.AsArray();
+        Assert.Contains(messages, m => m!["role"]!.GetValue<string>() == "user"
+            && m["content"]!.GetValue<string>() == SessionManager.BuildNudgeText("delta-runner"));
+    }
+
+    [Fact]
+    public async Task RunSessionAsync_NudgeIsCancelledWhenTheGuestBargesInBeforeItFires()
+    {
+        var (persona, loader) = LoadDeltaFixture();
+        var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
+        var fakeTime = new FakeTimeProvider();
+        var sessionManager = NewSessionManager(fakeTime, nudgeAfterSeconds: 5);
+        var resumeId = SeedDetachedResumableSession(sessionManager, "prior-sess-5", persona, resolvedModel.Id);
+
+        var handler = new RoutingFoundryHandler()
+            .EnqueueTranscript("actually, add a shake")
+            .EnqueueChatMessage("assistant", "One shake, coming up!")
+            .EnqueueSpeech([1, 2]);
+
+        var processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader, timeProvider: fakeTime, sessionManager: sessionManager);
+
+        var loudChunk = Pcm16(20000, count: 10);
+        var silentChunk = Pcm16(0, count: 4800);
+        var socket = new DelayedFakeWebSocket(
+            [
+                (ResumeFrame(resumeId), WebSocketMessageType.Text),
+                (AppendFrame(loudChunk), WebSocketMessageType.Text), // barge-in: cancels the armed nudge
+                (AppendFrame(silentChunk), WebSocketMessageType.Text),
+                ([], WebSocketMessageType.Close),
+            ],
+            ReceiveDelay);
+
+        await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "nudge-cancel-sess", TestContext.Current.CancellationToken);
+
+        // Advancing well past the nudge threshold after the run has already completed must not
+        // throw/fire anything further -- the cancelled nudge task is already gone.
+        fakeTime.Advance(TimeSpan.FromSeconds(30));
+
+        var frames = socket.SentMessages.Where(m => m.MessageType == WebSocketMessageType.Text).Select(ParseSent).ToList();
+        var transcripts = frames.Where(f => f["type"]!.GetValue<string>() == "response.audio_transcript.delta").ToList();
+        Assert.Single(transcripts); // only the guest's own real turn -- no nudge text was ever spoken
+        Assert.Equal("One shake, coming up!", transcripts[0]["delta"]!.GetValue<string>());
+        Assert.Single(handler.ChatRequestBodies);
+        var requestBody = JsonNode.Parse(handler.ChatRequestBodies.Single())!.AsObject();
+        Assert.DoesNotContain(
+            requestBody["messages"]!.AsArray(),
+            m => m!["role"]!.GetValue<string>() == "user" && m["content"]!.GetValue<string>() == SessionManager.BuildNudgeText("delta-runner"));
+    }
+
+    [Theory]
+    [InlineData(1.5, 0.3)]
+    [InlineData(0.1, 0.1)]
+    [InlineData(0.0, 0.0)]
+    [InlineData(-1.0, 0.0)]
+    public void EchoTailSeconds_IsCappedAt300ms_AndZeroStaysZeroMeaningDisabled(double configured, double expected) =>
+        Assert.Equal(expected, CascadeProcessor.EchoTailSeconds(configured));
+
+    [Fact]
+    public async Task RunSessionAsync_ZeroEchoCooldown_DisablesSuppression_SoImmediateGuestAudioIsDetected()
+    {
+        var (persona, loader) = LoadDeltaFixture();
+        var handler = new RoutingFoundryHandler()
+            .EnqueueChatMessage("assistant", "Welcome to Test Delta Meal Co.! What can I get started for you?")
+            .EnqueueSpeech([1, 2, 3, 4]);
+        var processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader, echoCooldownSeconds: 0);
+        var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
+        var socket = new DelayedFakeWebSocket(
+            [
+                (AppendFrame(Pcm16(20000, count: 10)), WebSocketMessageType.Text),
+                ([], WebSocketMessageType.Close),
+            ],
+            ReceiveDelay);
+
+        await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "echo-zero-sess", TestContext.Current.CancellationToken);
+
+        var types = socket.SentMessages.Where(m => m.MessageType == WebSocketMessageType.Text)
+            .Select(ParseSent).Select(f => f["type"]!.GetValue<string>()).ToList();
+        Assert.Contains("input_audio_buffer.speech_started", types);
+    }
+
+    [Fact]
+    public async Task RunSessionAsync_BargeInDuringANudgeMidToolRound_WaitsForTheNudgeBeforeSpeechStartedAndNextTurn()
+    {
+        var (persona, loader) = LoadDeltaFixture();
+        var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
+        var fakeTime = new FakeTimeProvider();
+        var sessionManager = NewSessionManager(fakeTime, nudgeAfterSeconds: 5);
+
+        var handler = new RoutingFoundryHandler()
+            .EnqueueChatMessage("assistant", null, toolCalls: new JsonArray
+            {
+                new JsonObject
+                {
+                    ["id"] = "nudge_call_1",
+                    ["type"] = "function",
+                    ["function"] = new JsonObject { ["name"] = "search", ["arguments"] = "{}" },
+                },
+            }) // the nudge's tool round -- blocks until the barge-in cancels it
+            .EnqueueTranscript("second query")
+            .EnqueueChatMessage("assistant", "All set for your second query.")
+            .EnqueueSpeech([3, 4]);
+
+        DelayedFakeWebSocket? socket = null;
+        var speechStartedSeenWhenNudgeToolExited = -1;
+        var toolExecutor = new RecordingToolExecutor(
+            ["search"],
+            async (_, _, toolCt) =>
+            {
+                try
+                {
+                    await Task.Delay(Timeout.InfiniteTimeSpan, toolCt).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    // Slow cleanup: if barge-in does not wait for the nudge, speech_started (and
+                    // the next turn) would race ahead of this.
+                    await Task.Delay(300, CancellationToken.None).ConfigureAwait(false);
+                    speechStartedSeenWhenNudgeToolExited = socket!.SentMessages
+                        .Where(m => m.MessageType == WebSocketMessageType.Text)
+                        .Count(m => ParseSent(m)["type"]!.GetValue<string>() == "input_audio_buffer.speech_started");
+                    throw;
+                }
+                return default!;
+            });
+        var resumeId = SeedDetachedResumableSession(sessionManager, "prior-sess-6", persona, resolvedModel.Id, toolExecutor: toolExecutor);
+        var logger = new RecordingLogger();
+        var processor = NewProcessor(handler, toolExecutor, loader, logger: logger, timeProvider: fakeTime, sessionManager: sessionManager);
+
+        var loudChunk = Pcm16(20000, count: 10);
+        var silentChunk = Pcm16(0, count: 4800);
+        socket = new DelayedFakeWebSocket(
+            [
+                (ResumeFrame(resumeId), WebSocketMessageType.Text),
+                (AppendFrame(Pcm16(0, count: 10)), WebSocketMessageType.Text), // arms the nudge
+                (AppendFrame(loudChunk), WebSocketMessageType.Text), // barge-in mid nudge tool round
+                (AppendFrame(silentChunk), WebSocketMessageType.Text), // next turn
+                ([], WebSocketMessageType.Close),
+            ],
+            TimeSpan.FromMilliseconds(500));
+
+        var runTask = processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "nudge-bargein-sess", TestContext.Current.CancellationToken);
+        await Task.Delay(TimeSpan.FromMilliseconds(1100), TestContext.Current.CancellationToken);
+        fakeTime.Advance(TimeSpan.FromSeconds(5)); // nudge fires, enters its tool round
+        await runTask;
+
+        Assert.Equal(0, speechStartedSeenWhenNudgeToolExited);
+        Assert.DoesNotContain(logger.Entries, e => e.Level >= LogLevel.Warning);
+        var types = socket.SentMessages.Where(m => m.MessageType == WebSocketMessageType.Text)
+            .Select(ParseSent).Select(f => f["type"]!.GetValue<string>()).ToList();
+        Assert.Contains("input_audio_buffer.speech_started", types);
+        Assert.DoesNotContain("response.audio.delta", types.Take(types.IndexOf("input_audio_buffer.speech_started")));
+
+        var lastMessages = JsonNode.Parse(handler.ChatRequestBodies[^1])!.AsObject()["messages"]!.AsArray();
+        Assert.DoesNotContain(lastMessages, m =>
+            m!["tool_calls"] is JsonArray tc && tc.Any(t => t!["id"]!.GetValue<string>() == "nudge_call_1"));
+        Assert.Contains(lastMessages, m => m!["role"]!.GetValue<string>() == "user" && m["content"]!.GetValue<string>() == "second query");
+    }
+
+    [Fact]
+    public async Task RunSessionAsync_SpeakArmsAnEchoCooldownThatSwallowsTheGuestsImmediateEcho()
+    {
+        var (persona, loader) = LoadDeltaFixture();
+        var handler = new RoutingFoundryHandler()
+            .EnqueueChatMessage("assistant", "Welcome to Test Delta Meal Co.! What can I get started for you?")
+            .EnqueueSpeech([1, 2, 3, 4]); // ~2ms of 16-bit mono PCM @ 24kHz -- a tiny, fast-to-finish clip.
+
+        // A real (nonzero) echo cooldown, unlike every pre-#126 test in this file (which defaults
+        // to 0 via NewProcessor so they stay unaffected by this feature).
+        var processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader, echoCooldownSeconds: 10);
+        var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
+
+        // Loud audio arriving immediately after the greeting's own (near-instant) TTS -- well
+        // inside the 10s cooldown floor -- must be swallowed as echo (no speech_started, no
+        // transcription turn), then real silence lets the connection close cleanly.
+        var loudChunk = Pcm16(20000, count: 10);
+        var silentChunk = Pcm16(0, count: 4800);
+        var socket = new DelayedFakeWebSocket(
+            [
+                (AppendFrame(loudChunk), WebSocketMessageType.Text),
+                (AppendFrame(silentChunk), WebSocketMessageType.Text),
+                ([], WebSocketMessageType.Close),
+            ],
+            ReceiveDelay);
+
+        await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "echo-sess", TestContext.Current.CancellationToken);
+
+        var frames = socket.SentMessages.Where(m => m.MessageType == WebSocketMessageType.Text).Select(ParseSent).ToList();
+        var types = frames.Select(f => f["type"]!.GetValue<string>()).ToList();
+
+        Assert.DoesNotContain("input_audio_buffer.speech_started", types);
+        Assert.Single(handler.ChatRequestBodies); // only the greeting -- no guest turn was ever started
+        Assert.Equal(0, handler.TranscribeRequestCount);
+    }
+
+    [Fact]
+    public async Task RunSessionAsync_SocketCloseDetachesCascadeSession_AndGraceSweepRemovesItsContextMonitor()
+    {
+        var (persona, loader) = LoadDeltaFixture();
+        var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
+        var fakeTime = new FakeTimeProvider();
+        var sessionManager = NewSessionManager(fakeTime);
+        var handler = new RoutingFoundryHandler()
+            .EnqueueChatMessage("assistant", "Welcome to Test Delta Meal Co.! What can I get started for you?")
+            .EnqueueSpeech([1, 2]);
+        var processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader, timeProvider: fakeTime, sessionManager: sessionManager);
+
+        var socket = new DelayedFakeWebSocket(
+            [
+                ([], WebSocketMessageType.Close),
+                ([], WebSocketMessageType.Close),
+            ],
+            ReceiveDelay);
+
+        await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "cascade-grace-sess", TestContext.Current.CancellationToken);
+
+        Assert.NotNull(sessionManager.GetContextMonitor("cascade-grace-sess"));
+        fakeTime.Advance(TimeSpan.FromSeconds(sessionManager.Config.GraceSeconds + 1));
+        Assert.Equal(1, sessionManager.SweepDetached());
+        Assert.Null(sessionManager.GetContextMonitor("cascade-grace-sess"));
+    }
+
 }

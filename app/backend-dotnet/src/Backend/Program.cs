@@ -381,7 +381,14 @@ var cascadeProcessor = new CascadeProcessor(
     bearerTokenProvider: cascadeBearerTokenProvider,
     toolExecutorFactory: BuildSessionToolExecutor,
     timeProvider: timeProvider,
+    // #126: the SAME echo-suppression cooldown and session registry (resume/rehydration/
+    // idle/grace/nudge) RealtimeProcessor already uses above -- echo is a physical/acoustic
+    // property of the room and device, not something that differs by which pipeline answered
+    // the turn, and a resumed/rehydrated/nudged session must behave identically regardless of
+    // which pipeline the guest's persona happens to route through.
+    echoCooldownSeconds: echoCooldownSeconds,
     sessionManager: sessionManager);
+
 processorRegistry.Register(cascadeProcessor);
 
 var assetCacheConfig = AssetCacheConfig.FromConfig(appConfig);
