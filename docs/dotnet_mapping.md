@@ -8,9 +8,12 @@ deliberately deferred or reduced in the C# port is written down instead of disco
 The C# backend now has the host/config/persona foundation, persona HTTP surface, model catalog,
 pre-upgrade `/realtime` auth and persona/model/mode binding, the Azure OpenAI realtime relay,
 order engine, search tool, prompt rendering, tool dispatch, the full rate-limit retry ladder, the
-consecutive tool-failure cap, and the shared conformance dotnet leg. The remaining deliberate gaps
-versus Python are tracked below: session resume/rehydration, context-window monitoring/turn
-recording, and Entra auth-row execution on the dotnet leg until issue #147 flips that capability.
+consecutive tool-failure cap, session resume/rehydration/idle-timeout/grace-hold/nudge (issue #15),
+and the shared conformance dotnet leg. Guest/assistant turn recording (`SessionManager.RecordTurn`)
+now has real production call sites (upstream `conversation.item.input_audio_transcription.completed`
+for the guest, a non-tool `response.done` for the assistant), feeding rehydration text on resume.
+The remaining deliberate gaps versus Python are tracked below: context-window monitoring, and Entra
+auth-row execution on the dotnet leg until issue #147 flips that capability.
 
 ## Module mapping
 
@@ -31,7 +34,7 @@ recording, and Entra auth-row execution on the dotnet leg until issue #147 flips
 | `rtmt.py`'s `_origin_matches_host` | `Realtime/OriginValidator.cs` | Exact, case-insensitive match only (never a suffix/substring match) of the raw `netloc` exactly as `urllib.parse.urlsplit(origin).netloc` would extract it -- preserving any userinfo prefix and an explicit port even when it equals the scheme's own default. PR #230 round-2 review (Rick's item 3): an earlier version compared `Uri.Authority`, which silently drops BOTH of those, over-permissively accepting an Origin Python rejects; fixed by a manual scheme-prefix-then-`//`-prefix netloc extraction (see the class's own doc comment), covered by new unit tests (`OriginValidatorTests`) and new tagged conformance rows (`OriginValidationTests.Origin_with_userinfo_is_rejected_with_403`, `.Origin_with_explicit_default_port_is_rejected_against_a_portless_host`). |
 | `rtmt.py`'s `_websocket_handler`'s pre-upgrade Origin + token checks ("Task 3"/"Task 4") | `Realtime/RealtimeAuthGate.cs` | PR #96 review, required item 1 -- see "`/realtime` auth enforcement (PR #96)" below for the full decision record. |
 | (module-level `_startup_checks` dict + `/health` handler) | `Health/StartupChecks.cs`, `Health/HealthEndpoint.cs` | Same JSON shape: `{status, version, checks, personas}`, 200 if every check passed else 503. |
-| (aiohttp route table's WebSocket handler + per-session state) | `Sessions/RealtimeProcessor.cs`, `Sessions/SessionActor.cs`, `Sessions/SessionRegistry.cs`, `Sessions/IPipelineProcessor.cs` | `RealtimeProcessor.RunSessionAsync` owns the accepted WebSocket and upstream relay for the `realtime` pipeline: bootstrap, greeting gate, bidirectional frame loops, echo suppression/barge-in, session echoes, round-trip tokens and tool calls. `SessionActor`/`SessionRegistry` still exist as the generic session seam, but session resume and 4002 supersede handling remain a documented gap. |
+| (aiohttp route table's WebSocket handler + per-session state) | `Sessions/RealtimeProcessor.cs`, `Sessions/SessionActor.cs`, `Sessions/SessionRegistry.cs`, `Sessions/SessionManager.cs`, `Realtime/NudgeScheduler.cs`, `Sessions/IPipelineProcessor.cs` | `RealtimeProcessor.RunSessionAsync` owns the accepted WebSocket and upstream relay for the `realtime` pipeline: bootstrap, greeting gate, bidirectional frame loops, echo suppression/barge-in, session echoes, round-trip tokens and tool calls. `SessionManager` (issue #15) owns resume-id issuance/consumption, the grace-window detach hold, idle-timeout close (4000), and 4002 supersede; `NudgeScheduler` owns the silent-guest nudge, armed only after the resumed socket's own `session.update` per #181. Both are driven by the injected `TimeProvider`. |
 | (repo-relative path resolution, implicit via `os.path` calls) | `RepoRootLocator.cs` | Walks up from the running assembly looking for a directory containing both `personas/` and `azure.yaml`. A dev/CI convenience only -- production containers are expected to set `PERSONAS_DIR`, `CONFIG_PATH`, and `STATIC_FILES_DIR` explicitly. |
 | `money_utils.py` | `Ordering/Money.cs` | Same `decimal`-based rounding (`ROUND_HALF_UP` equivalent) and `$X.XX` formatting; ports `format_money` 1:1 (see `Ordering/MoneyTests.cs`). |
 | `menu_utils.py`'s `MenuCatalog` (`_menu_key`/`strip_modifiers`, size/alias/category maps, machine status, happy-hour eligibility, combo-slot inference) | `Personas/MenuCatalog.cs` | One instance built once per persona and cached (`PersonaOrderFactory.GetMenuCatalog`), same data-driven-only classification contract as #73/#74 (no keyword fallback). `MenuKeyValidator.MenuKey`/`StripModifiers` (issue #128/#137) is the exact `_menu_key`/`strip_modifiers` port; both backends now assert against the SAME shared golden vector file -- see "Shared menu-key golden vectors (#137)" below. |
@@ -594,6 +597,78 @@ idle-timeout machinery, not yet ported. The **#17 go-live blocker** tag on the l
 this change. A handful of failures (`CapturedProcessOutputTests`, `CapturedProcessOutputWaitTests`,
 `WindowsJobObjectTests`) are pre-existing harness self-tests unrelated to `CONFORMANCE_BACKEND` and
 out of scope.
+
+### Issue #15 (S5: C# sessions and resilience) -- session resume/rehydration, idle timeout, grace hold, nudge, 4002 supersede
+
+Closes the gap this document previously tracked throughout the paragraphs above as "still #15" /
+"believed to depend on #15". Ported `session_manager.py`'s resume-token issuance/consumption,
+grace-window detach hold, idle-timeout close, rehydration-text generation, and the silent-guest nudge
+(including #181's "arm only after the resumed socket's own `client`/`session.update`" rule) into new
+`Sessions/SessionManager.cs` and `Realtime/NudgeScheduler.cs`, both driven by the injected
+`TimeProvider` and using the same CTS-identity/generation-counter pattern from the #235 rate-limit
+race fix for every scheduled timer, so no stale continuation can fire after cancellation. The
+single-use *resume id* itself (the opaque baton handed out in `extension.session_metadata`/
+`extension.session_resumed` that a reconnecting socket presents) always rotates on every hand-off --
+no row anywhere asserts resume-id *content* continuity, and a used resume id is immediately unknown
+(see `ResumeHandshakeTests`'s single-use and stray-late-resume rows). The underlying
+`SessionIdentifiers` (`session_token`/`round_trip_index`/`round_trip_token`), by contrast, **do**
+carry over from the original session on every successful resume (`RealtimeProcessor.cs` assigns
+`state.Identifiers = outcome.Identifiers` from the resumed-from session) -- matching Python's own
+continuity contract, and asserted directly by
+`ResumeHandshakeTests.Resuming_carries_over_the_original_sessions_token_and_round_trip_state`.
+Rehydration itself is carried via the server-held `SessionManager` state (transcript history -- now
+populated by real `RecordTurn` call sites on both the guest and assistant turn-completion paths, see
+above -- and voice/model bindings). Tool-failure
+and rate-limit ladder state is deliberately **not** carried across a resume: a resumed connection
+starts both trackers fresh, matching every scenario's observable behaviour (no row asserts ladder
+state surviving a resume).
+
+All target rows now pass against the real C# backend (confirmed 3+ clean runs) and are tagged
+`Dotnet=ready`: the remaining `ResumeHandshakeTests` methods, all of
+`ResumeRehydrationAndNudgeTests`, `ResumeSurvivesGraceWindowTests`, `IdleTimeoutTests` (including
+`IdleCloseCodeTests`'s 4000 row and `CloseCodeTests`'s 4002-supersede row), the `VoicePickerTests`
+and `ModelSelectionConformanceTests` resume rows, `ResumeRehydrationClientVisibilityTests`,
+`ResumeMarginRegressionTests`, `WholeSessionLeakTests`, and `RateLimitIdleInteractionTests` (closing
+the dependency called out two paragraphs above), plus five additional tests closing gaps from
+Rick's #244 review (guest-speech idle activity, late-resume-after-timeout rejection, rehydrated
+turn-text content, a stuck/never-acking peer during supersede, and `session_token`/round-trip
+continuity across resume -- see this section's own notes above). `DotnetTraitCoverageTests`'s floor
+raised 239 to 275 (a fresh reflection-based recount at this PR's own rebase point, not a projected
+arithmetic delta -- see that file's own doc comment).
+
+**Bug found and fixed via the conformance sweep (and self-corrected after an initial wrong fix)**:
+`rtmt.py`'s `reject_late_resume()` re-announces fresh `extension.session_metadata` (with a newly
+rotated resume id) after rejecting a late `extension.resume`, gated on the nonlocal `announced`
+flag. A first reading of `rtmt.py` found only `announce_fresh()` (the fresh-connection path) setting
+`announced = True` and concluded a resumed connection never sets it -- so the first C# fix gated the
+re-announce on `MetadataAnnounced` being set *only* by the fresh-connection branch, and a new
+conformance test was written asserting a resumed connection's stray late resume gets **no**
+re-announce. That test passed against the C# backend but **failed when the same PR's CI ran it
+against the real Python backend** (`CONFORMANCE_BACKEND=python`), because `handle_resume()`'s
+*success* path (sending `extension.session_resumed`) also sets `announced = True`, immediately
+before that send -- a line missed on the first read. So Python's `announced` doesn't distinguish
+fresh vs. resumed; it tracks "has this socket's first-frame decision completed and a resume-id
+baton been handed out," true on either path. `reject_late_resume()` therefore re-announces (with a
+rotated id) for **any** connection already holding a baton, fresh or resumed alike -- it only stays
+silent for a connection torn down before its first-frame decision ever completed. Corrected the C#
+port: `RealtimeSessionState.MetadataAnnounced` is now also set `true` in the resumed branch of
+`AnnounceAfterFirstFrameDecisionAsync`, right before sending `extension.session_resumed`, mirroring
+`handle_resume()` exactly.
+
+**Coverage gap found via mutation testing, closed with a corrected test (validated against both
+backends)**: removing the `MetadataAnnounced` guard entirely (always re-announcing unconditionally)
+did not fail any of the 42 rows above -- no existing scenario exercised a stray late resume *on an
+already-resumed connection* specifically (the existing
+`A_late_resume_attempt_is_rejected_and_the_session_continues` only covers the fresh-connection
+case). Added (then corrected, per the paragraph above)
+`ResumeHandshakeTests.A_stray_late_resume_on_an_already_resumed_connection_still_gets_a_rotated_re_announce`,
+which performs a real resume, sends a second stray `extension.resume` on the resumed socket, asserts
+the rejection still arrives, asserts a fresh `extension.session_metadata` frame **does** follow with
+a rotated resume id different from the one issued at resume time, and that the socket stays open.
+Confirmed this test fails when the `MetadataAnnounced` guard is removed entirely (mutation check)
+and passes with it restored, against **both** backends: C# (3 clean full-suite runs of all 44 target
+rows) and the real Python reference (44/44, including this test, run locally with
+`CONFORMANCE_BACKEND=python`) -- closing the loop that the first (wrong) fix attempt had skipped.
 
 ADR-002 (ready, dev 96b6f6f) adds Entra auth in front of `/realtime`; that's issue #147 (after #13)
 and was explicitly out of scope this revision, but the WebSocket upgrade handler in
