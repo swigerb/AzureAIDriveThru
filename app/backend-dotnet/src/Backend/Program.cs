@@ -303,8 +303,8 @@ var rateLimitSettings = RateLimitSettings.FromAppConfig(appConfig);
 var sessionsConfig = SessionsConfig.FromConfig(appConfig);
 var sessionManager = new SessionManager(sessionsConfig, timeProvider, logger);
 // Issue #13 tail: config.yaml's `connection` section (ws_heartbeat_seconds/ws_compression/
-// ws_connect_timeout_total) -- shared by the browser-facing UseWebSockets() call below and
-// RealtimeProcessor's own upstream ClientWebSocket connect.
+// ws_connect_timeout_total/ws_connect_timeout_connect) -- shared by the browser-facing
+// UseWebSockets() call below and RealtimeProcessor's own upstream ClientWebSocket connect.
 var connectionConfig = ConnectionConfig.FromConfig(appConfig);
 
 // ── 6. Processor registry (issue #75, design doc section 7.4): only "realtime" is registered

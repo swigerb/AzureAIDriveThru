@@ -158,8 +158,8 @@ public sealed class RealtimeProcessor : IPipelineProcessor
         // this constructor before #15 changes behaviour.
         _sessionManager = sessionManager;
         // Issue #13 tail: config.yaml's `connection` section (ws_heartbeat_seconds/
-        // ws_connect_timeout_total) -- see ConnectionConfig's own doc comment for the full
-        // heartbeat/connect-timeout mapping and the documented .NET-vs-aiohttp differences.
+        // ws_connect_timeout_total/ws_connect_timeout_connect) -- see ConnectionConfig's own doc
+        // comment for the full heartbeat/connect-timeout mapping.
         _connectionConfig = connectionConfig ?? new Configuration.ConnectionConfig();
     }
 
