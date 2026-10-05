@@ -2,8 +2,8 @@
 
 This document tracks how `app/backend-dotnet` (C#, .NET 11) maps to `app/backend` (Python), the
 reference implementation, per ADR-001's "one contract, two backends" decision. It exists so a
-change to one backend has an obvious place to look for its counterpart in the other, and so scope
-deliberately deferred or reduced in the C# port is written down instead of discovered by surprise.
+change to one backend has an obvious place to look for its counterpart in the other, and so
+backend-specific notes or follow-on work are written down instead of rediscovered by surprise.
 
 The C# backend now has the host/config/persona foundation, persona HTTP surface, model catalog,
 pre-upgrade `/realtime` auth and persona/model/mode binding, the Azure OpenAI realtime relay,
@@ -15,12 +15,13 @@ leg. Guest/assistant turn recording (`SessionManager.RecordTurn`) has real produ
 both pipelines (`realtime`'s upstream `conversation.item.input_audio_transcription.completed` for
 the guest and a non-tool `response.done` for the assistant; `cascade`'s own transcription and
 chat-completion turns), feeding rehydration text on resume. Issue #126 extended the same
-`SessionManager`-backed resume/rehydration, idle nudge, and a new echo-suppression cooldown to
-`cascade` (see `CascadeProcessor.cs`'s `NegotiateResumeAsync`/`ScheduleNudge`/`CancelNudge` and
+`SessionManager`-backed resume/rehydration, idle nudge, and echo suppression to `cascade` (see
+`CascadeProcessor.cs`'s `NegotiateResumeAsync`/`ScheduleNudge`/`CancelNudge` and
 `TurnDetector.StartEchoCooldown`), so both pipelines share one `SessionManager` instance and one
-echo-suppression *semantic* end to end (identical in both backends: drop mic audio during estimated playback plus
-a tail of `min(audio.echo_cooldown_seconds, 300ms)`, never buffering dropped frames; `0` disables it). No deliberate middle-tier gap versus Python remains; see the
-deferred list below for what is still out of scope.
+echo-suppression *semantic* end to end (identical in both backends: drop mic audio during estimated
+playback plus a tail of `min(audio.echo_cooldown_seconds, 300ms)`, never buffering dropped frames;
+`0` disables it). No deliberate middle-tier gap versus Python remains; the notes below are
+implementation context, not a parity exception list.
 
 ## Module mapping
 
@@ -34,8 +35,8 @@ deferred list below for what is still out of scope.
 | `config_loader.py` | `Configuration/AppConfig.cs` | Both backends load the SAME `app/backend/config.yaml` (not duplicated). Exposes the raw parsed sections (`IReadOnlyDictionary<string, object?>`) rather than a fully strongly-typed model of every field -- later waves can bind specific sections (`audio`, `business_rules`, ...) as they need them. |
 | `model_catalog.py`'s `ModelCatalog` (issue #75) | `Models/ModelCatalog.cs`, `Models/ModelEntry.cs`, `Models/ResolvedModel.cs`, `Models/ModelDispatch.cs` | Parses `config.yaml`'s `models.catalog` list (`id`, `pipeline`, `label`, `reasoning`/`toolCalling`/`runtime` flags) plus `AZURE_AI_MODEL_DEPLOYMENTS` (a JSON object mapping model id -> deployment name; a catalogued model with no entry there is "not deployed"). `ModelDispatch.DispatchProcessor`/`ResolveRealtimeModel` port `processors.py`'s free functions of the same name -- see "Known ambiguity" below for the now-resolved `models.catalog` shape question. |
 | `persona_loader.py`/`app.py`'s persona+asset+menu HTTP routes (issue #74, design doc section 5.2) | `Personas/PersonaRoutes.cs`, `Personas/PersonaAssetResolver.cs`, `Personas/PersonaAssetHash.cs`, `Configuration/AssetCacheConfig.cs` | `GET /api/personas`, `GET /api/personas/{id}`, `GET /personas/{id}/menu.json`, `GET /personas/{id}/assets/{*assetPath}`. `PersonaAssetResolver.Resolve` mirrors `_resolve_persona_asset_path`'s structural (not string-matching) traversal defense: segment-reject `.`/`..`/empty/drive-letter, THEN join, THEN re-verify containment after `Path.GetFullPath`. Rick's PR #122 review item 3: containment is walked one path component at a time (`ResolveRealPath`), resolving any symlink encountered at ANY component -- not just the final leaf -- and re-checking it stays under the pack's assets root after each hop, same as Python's `os.path.realpath` on the full joined path; see "Symlink containment mutation-test note" below. `PersonaAssetHash` mirrors `_content_hash` for the `?v=` query param; a matching `?v=` gets a year-long immutable cache header, everything else gets a short one. |
-| `processors.py`'s `ProcessorRegistry` (issue #75, design doc section 7.4) | `Sessions/ProcessorRegistry.cs`, `Sessions/IPipelineProcessor.cs`, `Sessions/RealtimeProcessor.cs` | Maps a pipeline name (`realtime`\|`cascade`) to the single `IPipelineProcessor` that owns every session bound to it. (The `local` pipeline existed here until #155 dropped it entirely, 2026-09-28 -- Microsoft Foundry only from that point on.) `RealtimeProcessor` is registered for `"realtime"` and owns the bidirectional Azure OpenAI Realtime GA relay directly through `RunSessionAsync`; its mailbox-shaped `ProcessAsync` remains a no-op because `Program.cs` hands accepted WebSockets straight to the relay. No processor is registered for `cascade` yet, so dispatching to it 404s at `/realtime` today (same observable shape as an unimplemented pipeline in Python). |
-| `prompt_loader.py` | `Prompts/PromptLoader.cs` | Loads/validates `system_prompt.yaml`, `greeting.yaml`, `tool_schemas.yaml`, `error_messages.yaml`, `hints.yaml` for one persona. See "Deliberate scope reductions" below for what's excluded. |
+| `processors.py`'s `ProcessorRegistry` (issue #75, design doc section 7.4) | `Sessions/ProcessorRegistry.cs`, `Sessions/IPipelineProcessor.cs`, `Sessions/RealtimeProcessor.cs`, `Sessions/CascadeProcessor.cs` | Maps a pipeline name (`realtime`\|`cascade`) to the single `IPipelineProcessor` that owns every session bound to it. (The `local` pipeline existed here until #155 dropped it entirely, 2026-09-28 -- Microsoft Foundry only from that point on.) `RealtimeProcessor` is registered for `"realtime"` and owns the bidirectional Azure OpenAI Realtime GA relay directly through `RunSessionAsync`; `CascadeProcessor` is registered for `"cascade"` and owns the chat+speech cascade path behind the same `/realtime` entrypoint, matching Python's pipeline split. |
+| `prompt_loader.py` | `Prompts/PromptLoader.cs` | Loads/validates `system_prompt.yaml`, `greeting.yaml`, `tool_schemas.yaml`, `error_messages.yaml`, `hints.yaml` for one persona. See the DEV_MODE hot-reload bullet in the "Conformance tagging" section below for what's excluded. |
 | `rtmt.py`'s `create_hmac_token` / `validate_hmac_token` | `Auth/SessionTokenService.cs` | Byte-for-byte compatible: same payload JSON spacing (`{"exp": N}`), same URL-safe base64 (padding kept), same HMAC-SHA256-as-lowercase-hex signature, same "split on the last `.`" framing, constant-time signature comparison. See spike #44. PR #96 review nit: an earlier draft lowercased the *presented* signature before comparing, silently accepting uppercase hex that Python's `hmac.compare_digest` rejects -- fixed, covered by `Validate_RejectsUppercaseSignature`. |
 | `app.py`'s `load_app_secret()` | `Auth/AppSecretProvider.cs` | Reads `APP_SESSION_SECRET`; warns if short; generates a random 32-byte secret if unset (warning only when running in production). |
 | `config.yaml`'s `security` section (rtmt.py's module-level `_security_cfg`) | `Configuration/SecurityConfig.cs` | Typed, tolerant view of `security.allowed_origins` (list, default `[]`) and `security.require_session_token` (bool, default `false`) -- handles the YamlDotNet string-scalar gotcha below the same way `PromptLoader.ParsePriority` does. |
@@ -262,7 +263,8 @@ the Browser conformance leg) rather than projecting by historical delta -- see "
 arithmetic.
 
 - **DEV_MODE hot-reload** (`prompt_loader.py`'s file-watching reload behaviour) is explicitly
-  marked not required in C# by the design doc's per-backend loading table. Not ported.
+  marked not required in C# by the design doc's per-backend loading table -- a dev-only
+  convenience the design doc itself scopes out, not a parity gap, so it's deliberately not ported.
 - **Jinja2-style template rendering** is implemented for the templates this repo actually ships:
   `PromptLoader.RenderError`, `RenderTemplate`, `GetDeltaTemplate` and `GetUpsellHint` support
   plain `{{ variable }}` interpolation and raw-template fallback for missing variables, and
@@ -978,7 +980,133 @@ satisfy it) and this file was not edited for this round, per the floor-coordinat
 actually mirror the matrix leg's filter, or accept that Browser rows are double-counted against a
 floor they don't contribute to in the job that floor describes.
 
-## Issue #13 (S3): `RealtimeProcessor` browser&lt;-&gt;Azure OpenAI Realtime GA relay
+### Issue #21 acceptance (coordinator dispatch, Birdperson/Beth): every backend-applicable
+scenario explicitly classified, floor raised 323 -> 338
+
+Closed out #21's acceptance bar: every test class in `Conformance.Tests` now carries an explicit
+`Dotnet` classification (either `ready` or an `n/a-*` reason), enforced going forward by a new
+guard test (`DotnetTraitCoverageTests.Every_test_class_in_the_assembly_carries_an_explicit_dotnet_classification`)
+that fails the build the moment any future class/method is added without one.
+
+**Newly tagged `ready`** (all verified green 3x locally against `CONFORMANCE_BACKEND=dotnet`
+before tagging; floor 323 -> 338, +15):
+- `WebSocketCompressionTests` (+1) -- real backend-applicable scenario, was simply never tagged.
+- `PersonaMismatchConformanceTests` (+1) -- its own "deliberately UNTAGGED, same reasoning as
+  `PersonaDiscoveryConformanceTests`" comment was stale: that referenced class had already been
+  tagged `ready` itself in an earlier wave.
+- `BrowserClientLifecycleTests` (+12, full class) -- despite the name, exercises
+  `RealtimeBrowserClient`/`ConformanceFixture.Backend` directly, never a real browser; all 12
+  close/abort/dispose methods pass 12/12 on 3 consecutive runs.
+- `CascadeMenuModeAndVoiceFakeResetWiringTests` (+1) -- sibling of the already-`ready`
+  `CascadeFakeResetWiringTests` (issue #274 follow-up C precedent); same reasoning applies.
+
+**Classified `n/a-harness`** (~32 classes): every pure harness self-test that never starts a real
+backend process -- the ~30 classes already carrying `[Trait("Category","Harness")]`
+(`AuthRowCapabilityTests`, `BackendExitCodeParserTests`, `CapturedProcessOutput*Tests`,
+`DotnetBackendBuildGateTests`, `DotnetBackendLauncherPortRaceTests`,
+`DotnetBackendLauncherStartInfoTests`, `DotnetPlaceholderPolicyTests`, `ExternalMode*PolicyTests`,
+`FakeChatCompletionsServerTests`, `FakeEntraIssuer*ValidationTests`, `FakeFixedPortBindingTests`,
+`FakeRealtimeScripting*Tests`, `InheritedEnvironmentFilterTests`, `MenuIndexResolveIndexPathsTests`,
+`OutputDrainAfterExitTests`, `PortRaceDetectionTests`, `PyJwtInteropPolicyTests`,
+`PythonBackendLauncherPortRaceTests`, `RealtimeUriLiteralScannerTests`, `RepoPathsTests`,
+`ScenarioErrorAttributionTests`, `WindowsJobObjectTests`, etc.), plus four more that lacked that
+Category tag but are equally harness-only on inspection: `HandlerFaultTeardownRegressionTests`
+(exercises `FakeRealtimeUpstreamServer` directly), `PersonaSmokeCoverageTests` and
+`ConformancePersonasTests` (disk/reflection discovery of persona packs, no backend involved),
+`ResponseCancelTests` (pure unit test of a harness helper), `RealtimeUriLiteralScanTests`, and
+`DotnetTraitCoverageTests` itself (a reflection probe over its own assembly).
+
+**Issue #283: re-classified `n/a-no-matching-persona-data` -> `ready`**: the 4
+`ComboComponentResizeConformanceTests.Discovered_*` `[Theory(SkipTestWithoutData = true)]` methods
+(previously classified under issue #274 follow-up E because zero persona packs on disk matched the
+`includedAnySize` precondition they require) now discover real rows. A new synthetic fixture pack,
+`app/backend/tests/fixtures/personas/test-zeta/` (beside the existing `test-delta`), has two
+distinctly-named bundles with genuinely open drink slots (one with an open side slot too) and two
+distinct drinks, satisfying both `Discover()`'s single-bundle case and `DiscoverTwoInstance()`'s
+two-bundle case; `DiscoveredBundleResizeCases()`/`DiscoveredTwoInstanceResizeCases()` were rewritten
+to also scan `RepoPaths.FixturePersonasDirectory()` alongside the real `personas/` root, which
+incidentally also picks up `test-delta`'s own single qualifying bundle for free. Both `test-delta`
+and `test-zeta` are excluded from the generic `TwoPersonaConformanceFixture` smoke suite (see
+`PersonaSmokeTests.FixturePersonaExclusions`) since they exist solely for this narrow conformance
+scenario. Verified green 3x locally against both `CONFORMANCE_BACKEND=python` and
+`CONFORMANCE_BACKEND=dotnet`, no divergence. `DotnetTraitCoverageTests` also gained a general
+zero-row guard (`TheoryYieldsZeroRowsWhenSkipGated`) so any `[Theory(SkipTestWithoutData = true)]`
+whose own `[MemberData]` source resolves to zero rows is excluded from the floor count going
+forward -- closing the gap that required this manual untag/retag dance in the first place.
+
+**Classified `n/a-pending-browser-verification`, then upgraded to `ready`** (8 methods):
+`OrderResumeBrowserTests`'s 5 methods and `PersonaSwitchBrowserTests`'s Case-E/E2 + reload-resume-switch
+3 methods. Their own prior doc comments (and `RealtimeProcessor.cs`'s class-level doc comment, also
+fixed in an earlier pass) cited issue #15 (session resume/rehydration, the 4002 supersede-close, the 4000
+idle-timeout close) as a still-pending capability gap blocking these scenarios on C#. Code
+inspection confirms **#15 has actually landed** (PR #244: `extension.resume` handling and
+`IdleCloseCode = 4000` idle-deadline logic are both fully implemented in `RealtimeProcessor.cs` /
+`SessionManager.cs`) -- the stale "deferred to #15" comments had simply never been updated.
+
+Coordinator follow-up (same-day PR #287 review, 2026-10-05): this sandbox still has no
+`google-chrome`/`microsoft-edge` binary reachable via `BrowserChannelPolicy`'s hardcoded probe paths
+and no root access to install one, so these 8 methods still could not be empirically re-run against
+a real browser + the C# backend here. Per explicit instruction, they are now tagged `ready` rather
+than left `n/a-pending-browser-verification` -- CI's `conformance-browser-dotnet` job (a real
+browser) is the actual verification, re-run 3x by name to confirm before #21 is considered fully
+closed. **If any of the 8 comes back red there, the fix belongs in the C# backend
+(`RealtimeProcessor.cs`/`SessionManager.cs`), not a revert of this trait back to pending.**
+
+
+**C#-only skips (brief item 3):** grepped the whole suite for `Assert.Skip`/conditional-skip call
+sites keyed on the dotnet backend, `AuthRowCapability`, or `DotnetPlaceholder`. Found no live skip
+that silently hides real dotnet coverage:
+- The `AuthRowCapability.ShouldSkipCurrentBackend()` gate (`ConformanceFixture.RunAuthRowAsync`,
+  `AuthModeLaunchTests`) is the already-documented, intentional mechanism from issues #144/#147 --
+  with `DotnetEnforcesAuth` now `true` (#226), it no longer skips on the dotnet leg at all, and
+  `AuthRowCapabilityGated` classes are already correctly excluded from the floor count.
+- `DotnetPlaceholderPolicy`/`ConformanceFixture.SkipReason` (PR #22 review item 15, "S2 placeholder
+  for issue #7") is legacy: `BackendLauncherFactory` always starts the real C# backend now and
+  never consults this policy for gating; it only fires if a caller explicitly sets
+  `CONFORMANCE_ALLOW_SKIP=1`, which nothing in CI or this suite's own test bodies does. Its own
+  unit tests (`DotnetPlaceholderPolicyTests`) are classified `n/a-harness` above. No live scenario
+  skip depends on it.
+- The remaining `Assert.Skip` sites (`WindowsJobObjectTests` -- OS-gated, not backend-gated;
+  `FakeEntraIssuerPyJwtValidationTests`/`PyJwtInteropPolicyTests` -- gated on local Python
+  interpreter availability for a harness self-test, unrelated to which conformance backend is under
+  test; the two `Scenarios/Browser` fixtures' `Assert.Skip(_browserSkipReason)` -- gated on browser
+  channel availability, identical on both backends) are all pre-existing, already-justified, and
+  not specific to the dotnet backend. No changes were needed here.
+
+**Persona x pipeline parity (coordinator follow-up, PR #287, 2026-10-05 -- corrects the stale
+paragraph this replaces):** `ConformancePersonas.DiscoverFromDisk()` actually resolves **every**
+real, shipped pack under `personas/` today (#78/#79 landed the second and third;
+`tests/conformance/testdata/personas` holds only test-only fixtures like `test-alpha`, never
+another real pack). The claim below that only one pack exists was simply wrong by the time it was
+written -- `DiscoverFromDisk()`'s own code was already correct, only its doc comments and this note
+had gone stale.
+
+The full matrix -- every shipped pack x both pipelines -- measured directly against
+`CONFORMANCE_BACKEND=dotnet`:
+
+| Persona                          | Realtime pipeline | Cascade pipeline |
+| --------------------------------- | ------------------ | ----------------- |
+| Fixture's own default pack        | ✅ green (`Scenarios/` ordering/auth/websocket/persona-switch/etc., `RealPack*`/`PackOwnedWholeBundleGolden*`/`ComboComponentResize*` theories) | ✅ green (`CascadeConformanceTests`, `CascadeMenuModeAndVoiceConformanceTests`/`CascadeMenuModeAndVoiceFakeResetWiringTests`) |
+| Every other shipped pack under `personas/` | ✅ green (`RealPackMenuModeConformanceTests`/`RealPackBundleAutoFillConformanceTests`/`RealPackExtrasConformanceTests`/`RealPackHappyHourConformanceTests`/`RealPackMealNumberConformanceTests`/`PackOwnedWholeBundleGoldenConformanceTests` all discover and run each one automatically via `ConformancePersonas.DiscoverFromDisk()` -- no code change needed, these theories were already pack-agnostic) | ✅ green (new `CascadePersonaParityConformanceTests`: session metadata binds to each non-default pack, menu-sourced pricing for that pack's own single-size item matches its own `menu/menuItems.json`/`taxRate`) |
+
+Realtime-side per-pack coverage required no new test code: the `RealPack*`/`PackOwnedWholeBundleGolden*`/
+`ComboComponentResize*` theories already iterate every real pack `ConformancePersonas.DiscoverFromDisk()`
+finds (`DiscoveredPersonaIds()`/`DiscoveredBundleAutoFillCases()`/etc. member-data methods), so they
+silently started covering the other shipped packs the moment those packs' JSON files were added --
+the gap was that nobody had re-run them against `CONFORMANCE_BACKEND=dotnet` and corrected this note
+since. The cascade side genuinely only ever exercised the fixture's own default pack
+(`CascadeConformanceFixture`/`CascadeConformanceTests` have no persona dimension), so
+`CascadePersonaParityConformanceTests` was added to close it, reusing the same
+`CascadeConformanceFixture` process (it already boots with every pack `ConformancePersonas.DiscoverFromDisk()`
+finds enabled since it never overrides `Personas`/`Persona`) rather than starting a second backend.
+No C# divergence was found in either direction -- persona-scoped menu/tax/voice resolution already
+threads correctly through both `RealtimeProcessor`/`CascadeProcessor`.
+
+The `CascadeMenuModeAndVoiceConformanceTests` menu-mode/voice rows intentionally still use the
+`test-delta` fixture pack, not a real pack: every real pack's own `voice.default` is `"marin"`
+(identical across all three, see each pack's `persona.json`) and none declares `features.dayparts`,
+so a real pack cannot exercise per-persona voice/mode resolution as a cross-check -- this is a
+documented, deliberate design choice (see that fixture's own class doc comment), not a gap.
 
 `RealtimeProcessor.ProcessAsync` is no longer a no-op stub: it dials the upstream Azure OpenAI
 Realtime GA WebSocket, bootstraps the session (persona instructions/voice/tools, catalog-resolved
@@ -1084,6 +1212,78 @@ idle-timeout machinery, not yet ported. The **#17 go-live blocker** tag on the l
 this change. A handful of failures (`CapturedProcessOutputTests`, `CapturedProcessOutputWaitTests`,
 `WindowsJobObjectTests`) are pre-existing harness self-tests unrelated to `CONFORMANCE_BACKEND` and
 out of scope.
+
+### Issue #21 follow-up (coordinator review of PR #287, Birdperson/Beth, same day): the two
+remaining gaps closed, floor raised 338 -> 347
+
+PR #287's own acceptance claims had two gaps caught on review:
+
+1. **Persona matrix was stale, not actually missing.** Every other shipped pack under
+   `personas/` ships for real (`#78/#79` landed before this review), but the prior pass's own doc
+   comments and `docs/dotnet_mapping.md` note still said "only one pack exists on disk today." The
+   realtime pipeline's `RealPack*`/`PackOwnedWholeBundleGolden*`/`ComboComponentResize*` theories
+   already discover every real pack automatically via `ConformancePersonas.DiscoverFromDisk()` (no
+   code change needed -- re-ran them against `CONFORMANCE_BACKEND=dotnet` and confirmed every
+   shipped pack green). The cascade pipeline genuinely had no persona dimension at all
+   (`CascadeConformanceTests` only ever used the fixture's own default pack), so
+   `CascadePersonaParityConformanceTests` (+1 new `[Theory]` method, one row per non-default
+   shipped pack discovered via `ConformancePersonas.DiscoverFromDisk()`, verified green 3x locally)
+   was added, reusing the existing `CascadeConformanceFixture` process (already boots with every
+   shipped pack enabled). No C# divergence found in either pipeline -- persona-scoped menu/tax/voice
+   binding already threads correctly. See "Persona x pipeline parity" above for the full matrix
+   and the stale comments that were corrected (`ConformancePersonas.cs`,
+   `docs/dotnet_mapping.md`).
+2. **The 8 `n/a-pending-browser-verification` Browser methods** (`OrderResumeBrowserTests`'s 5,
+   `PersonaSwitchBrowserTests`'s Case-E/E2 + reload-resume-switch 3) are now tagged `ready`. This
+   sandbox still has no msedge/chrome binary and no root to install one, so CI's
+   `conformance-browser-dotnet` job (a real browser) is the actual verification -- re-confirmed by
+   code inspection that #15's resume/idle-close/supersede machinery these depend on is fully
+   implemented in `SessionManager.cs`/`RealtimeProcessor.cs`.
+
+**Floor raised 338 -> 347** (+1 `CascadePersonaParityConformanceTests`, +8 the two Browser
+classes/methods above), re-measured fresh via `CountFloorEligibleDotnetReadyTestMethods`, not
+arithmetic.
+
+### Issue #283 (coordinator dispatch, Birdperson, 2026-10-05): synthetic `includedAnySize` fixture pack, floor raised 347 -> 351
+
+The 4 `ComboComponentResizeConformanceTests.Discovered_*` methods classified
+`n/a-no-matching-persona-data` above were re-tagged `ready` after adding a new synthetic fixture
+pack, `test-zeta` (beside the existing `test-delta`, under
+`app/backend/tests/fixtures/personas/`), with two distinctly-named bundles whose drink slots are
+genuinely left open (no `autoFill`) -- satisfying both `Discover()`'s single-bundle precondition and
+`DiscoverTwoInstance()`'s two-qualifying-bundle precondition that no real shipped pack meets today.
+`DiscoveredBundleResizeCases()`/`DiscoveredTwoInstanceResizeCases()` were rewritten to also scan
+`RepoPaths.FixturePersonasDirectory()` alongside the real `personas/` root, which incidentally also
+surfaces `test-delta`'s own single qualifying bundle (its "Delta Classic Meal" item) for free --
+`test-delta` only ever had one such bundle, so it could never satisfy `DiscoverTwoInstance()` on its
+own. Both fixture packs are excluded from the generic `TwoPersonaConformanceFixture` smoke suite
+(`PersonaSmokeTests.FixturePersonaExclusions`) since they exist solely for this narrow conformance
+scenario, following the existing `test-gamma`/`test-epsilon` precedent.
+
+A latent test-assertion gap surfaced once real rows actually ran: the `Discovered_*` theories were
+comparing a bundle case's raw menu `size` key (e.g. `"large"`, straight from menuItems.json)
+directly against an order line's own `display` text, which only happens to match on packs whose own
+menuItems.json spells its size keys in the same casing as its own persona.json `sizes.canonical`
+display label (every real shipped pack today) -- `test-delta`/`test-zeta` spell their own raw keys
+lowercase, matching every other fixture pack's own convention, so their own `"large"` raw key never
+appeared verbatim in a `"Large ..."` display string. Added
+`ComboBundleDiscovery.CanonicalSizeLabel` to resolve the raw key through the pack's own
+`sizes.canonical` map before comparing, and tightened the comparison to the full `"{label} {item
+name}"` segment (not a bare size label) so a bundle whose open side slot happens to share the
+drink's FROM size label (`test-delta`'s "Regular Delta Fries" side next to a "Regular"-sized drink)
+can no longer produce a false `DoesNotContain` failure. No backend divergence found -- verified
+green 3x locally against both `CONFORMANCE_BACKEND=python` and `CONFORMANCE_BACKEND=dotnet`.
+
+`DotnetTraitCoverageTests.CountFloorEligibleDotnetReadyTestMethods` also gained a general zero-row
+guard (`TheoryYieldsZeroRowsWhenSkipGated`): any `[Theory(SkipTestWithoutData = true)]` whose own
+`[MemberData]` source resolves to zero rows today is now excluded from the floor count, since such a
+method reports SKIPPED, not PASSED, on both conformance legs and should never have counted toward
+the floor in the first place -- closing the gap that required the #274 follow-up E / this issue's
+own manual untag/retag dance.
+
+**Floor raised 347 -> 351** (+4 newly-tagged, now non-zero-row, `Discovered_*` methods),
+re-measured fresh via `CountFloorEligibleDotnetReadyTestMethods` (cross-checked against
+`Conformance.Tests.exe -list methods -trait Dotnet=ready`), not arithmetic.
 
 ### Issue #15 (S5: C# sessions and resilience) -- session resume/rehydration, idle timeout, grace hold, nudge, 4002 supersede
 

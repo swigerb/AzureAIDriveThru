@@ -14,6 +14,7 @@ namespace Conformance.Tests;
 /// shared <see cref="ConformanceFixture"/>'s single Python connection allows.
 /// </summary>
 [Trait("Category", "Harness")]
+[Trait("Dotnet", "n/a-harness")] // Issue #21: backend-agnostic harness self-test, never exercises app/backend or app/backend-dotnet.
 public sealed class FakeRealtimeScriptingTests
 {
     private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(10);

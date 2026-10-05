@@ -22,6 +22,7 @@ namespace Conformance.Tests;
 /// still ran still passes) while this test fails, because its own expected set comes from
 /// independently re-scanning disk, not from calling into the Theory's data source and trusting it.
 /// </summary>
+[Trait("Dotnet", "n/a-harness")] // Issue #21: pure disk-discovery/reflection coverage guard, never exercises app/backend or app/backend-dotnet.
 public sealed class PersonaSmokeCoverageTests
 {
     [Fact]

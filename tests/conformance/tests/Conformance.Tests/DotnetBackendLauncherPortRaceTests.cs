@@ -32,6 +32,7 @@ namespace Conformance.Tests;
 /// scenario floor <see cref="DotnetTraitCoverageTests"/> enforces.
 /// </summary>
 [Trait("Category", "Harness")]
+[Trait("Dotnet", "n/a-harness")] // Issue #21: backend-agnostic harness self-test, never exercises app/backend or app/backend-dotnet.
 public sealed class DotnetBackendLauncherPortRaceTests
 {
     // Never-dialled: HealthEndpoint/StartupChecks (app/backend-dotnet/src/Backend/Health/*) only

@@ -243,15 +243,28 @@ public sealed class FixturePackPersonaSmokeTests(TwoPersonaConformanceFixture fi
                 "ModelSelectionConformanceFixtures.cs) -- it is not part of " +
                 "TwoPersonaConformanceFixture (test-alpha/test-beta) and doesn't need its own " +
                 "generic greeting/search/order/happy-hour smoke coverage.",
-            ["test-delta"] = "Refs #77: a narrow bundle/extras-engine fixture pack exercised only " +
-                "by app/backend/tests/test_bundle_and_extras_engine.py (Python unit tests) -- it " +
-                "is not part of TwoPersonaConformanceFixture (test-alpha/test-beta) or any C# " +
-                "conformance fixture, and doesn't need its own generic greeting/search/order/" +
-                "happy-hour smoke coverage.",
+            ["test-delta"] = "Refs #77, #283: a narrow bundle/extras-engine fixture pack exercised " +
+                "by app/backend/tests/test_bundle_and_extras_engine.py (Python unit tests) and, " +
+                "since #283, also discovered automatically by " +
+                "Scenarios/Ordering/ComboComponentResizeConformanceTests.cs's own " +
+                "DiscoveredBundleResizeCases() (its 'Delta Classic Meal' bundle genuinely leaves " +
+                "a drink slot open) -- it is still not part of TwoPersonaConformanceFixture " +
+                "(test-alpha/test-beta) and doesn't need its own generic greeting/search/order/" +
+                "happy-hour smoke coverage; the combo-resize Theory in " +
+                "Scenarios/Ordering/ComboComponentResizeConformanceTests.cs already covers it.",
             ["test-epsilon"] = "Refs #179/#184: a narrow wholeBundleSize plus happy-hour fixture " +
                 "pack exercised by backend unit tests only -- it is not part of " +
                 "TwoPersonaConformanceFixture (test-alpha/test-beta) and doesn't need generic " +
                 "greeting/search/order smoke coverage.",
+            ["test-zeta"] = "Refs #283: a narrow, TEST-ONLY `includedAnySize` combo fixture pack " +
+                "(two distinctly-named bundles, each with a genuinely open drinks slot) added so " +
+                "Scenarios/Ordering/ComboComponentResizeConformanceTests.cs's Discovered_* theories " +
+                "-- which need a real `includedAnySize` pack with an open drink slot, something no " +
+                "shipped persona/ pack has today -- produce real rows on both conformance legs " +
+                "instead of permanently SKIPPING via [Theory(SkipTestWithoutData = true)]. Not " +
+                "part of TwoPersonaConformanceFixture (test-alpha/test-beta) and doesn't need its " +
+                "own generic greeting/search/order/happy-hour smoke coverage; the combo-resize " +
+                "Theory above already covers it end to end.",
         };
 
     [Theory]

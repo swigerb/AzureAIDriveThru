@@ -26,6 +26,7 @@ namespace Conformance.Tests.Scenarios.Cascade;
 /// coverage.
 /// </summary>
 [Collection(CascadeConformanceCollection.Name)]
+[Trait("Dotnet", "ready")]
 public sealed class CascadeResumeRehydrationAndNudgeTests(CascadeConformanceFixture fixture)
 {
     private static readonly TimeSpan FrameTimeout = CascadeScenarioHelpers.FrameTimeout;

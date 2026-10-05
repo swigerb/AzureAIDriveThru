@@ -552,28 +552,22 @@ entries:
     for the harness to exercise (#76).
   increase_reason: '#105'
 - file: tests/conformance/src/Conformance.Harness/ConformancePersonas.cs
-  brand: dunkin
-  max: 1
-  issue: '#105'
-  reason: Doc-comment/example text illustrating the harness against the repo's only
-    real pack today (sonic); not a runtime default -- update once other packs exist
-    for the harness to exercise (#76).
-  increase_reason: '#105'
-- file: tests/conformance/src/Conformance.Harness/ConformancePersonas.cs
   brand: mcdonalds
-  max: 3
+  max: 2
   issue: '#105'
-  reason: Doc-comment/example text illustrating the harness against the repo's only
-    real pack today (sonic); not a runtime default -- update once other packs exist
-    for the harness to exercise (#76).
+  reason: Doc-comment/example text illustrating the harness's own default-pack
+    tie-break (sonic); every other shipped pack under personas/ now exists for
+    real too (#78/#79), so this is no longer "the repo's only real pack" (#287
+    follow-up).
   increase_reason: '#105'
 - file: tests/conformance/src/Conformance.Harness/ConformancePersonas.cs
   brand: sonic
-  max: 7
+  max: 6
   issue: '#105'
-  reason: Doc-comment/example text illustrating the harness against the repo's only
-    real pack today (sonic); not a runtime default -- update once other packs exist
-    for the harness to exercise (#76).
+  reason: Doc-comment/example text illustrating the harness's own default-pack
+    tie-break (sonic); every other shipped pack under personas/ now exists for
+    real too (#78/#79), so this is no longer "the repo's only real pack" (#287
+    follow-up).
   increase_reason: '#105'
 - file: tests/conformance/src/Conformance.Harness/DotnetBackendLauncher.cs
   brand: sonic

@@ -423,14 +423,162 @@ namespace Conformance.Tests;
 /// Issue #274 merge with origin/dev after #226/#279 (coordinator, 2026-10-05): with
 /// DotnetEnforcesAuth true every Dotnet=ready method counts; a fresh listing on the merged tip
 /// gives <b>323</b> (dev's 326, follow-up C +1, follow-up E -4), the floor asserted below.
+///
+/// Issue #21 acceptance (coordinator dispatch, Birdperson/Beth, 2026-10-05): closes out #21's
+/// acceptance bar. Classified every remaining untagged class explicitly: 30 real harness
+/// self-tests (<c>AuthRowCapabilityTests</c>, <c>BackendExitCodeParserTests</c>,
+/// <c>CapturedProcessOutput*</c>, <c>ConformancePersonasTests</c>, <c>DotnetBackendBuildGateTests</c>,
+/// <c>DotnetBackendLauncherPortRaceTests</c>, <c>DotnetBackendLauncherStartInfoTests</c>,
+/// <c>DotnetPlaceholderPolicyTests</c>, <c>ExternalMode*PolicyTests</c>,
+/// <c>FakeChatCompletionsServerTests</c>, <c>FakeEntraIssuer*ValidationTests</c>,
+/// <c>FakeFixedPortBindingTests</c>, <c>FakeRealtimeScripting*Tests</c>,
+/// <c>HandlerFaultTeardownRegressionTests</c>, <c>InheritedEnvironmentFilterTests</c>,
+/// <c>MenuIndexResolveIndexPathsTests</c>, <c>OutputDrainAfterExitTests</c>,
+/// <c>PortRaceDetectionTests</c>, <c>PyJwtInteropPolicyTests</c>,
+/// <c>PythonBackendLauncherPortRaceTests</c>, <c>RealtimeUriLiteralScan(ner)?Tests</c>,
+/// <c>RepoPathsTests</c>, <c>ResponseCancelTests</c>, <c>ScenarioErrorAttributionTests</c>,
+/// <c>WindowsJobObjectTests</c>, <c>PersonaSmokeCoverageTests</c>, and this very class) now carry
+/// <c>[Trait("Dotnet", "n/a-harness")]</c>; 8 real <c>Scenarios/Browser</c> methods
+/// (<c>OrderResumeBrowserTests</c>'s 5, <c>PersonaSwitchBrowserTests</c>'s Case-E/reload-resume 3)
+/// whose own prior comments cited #15 as a blocking scope cut -- #15 landed (PR #244) but this
+/// dispatch's sandbox had no msedge/chrome binary and no root to install one, so they were
+/// classified <c>n/a-pending-browser-verification</c> (not silently left untagged, not guessed
+/// ready) pending a re-run with a real browser; and the 4
+/// <c>ComboComponentResizeConformanceTests.Discovered_*</c> methods already documented as
+/// permanently data-empty today got an explicit <c>n/a-no-matching-persona-data</c>. A new guard
+/// Fact (<see cref="Every_test_class_in_the_assembly_carries_an_explicit_dotnet_classification"/>)
+/// now fails if any FUTURE class/method joins this assembly with no Dotnet trait at all. Four
+/// classes were verified green against CONFORMANCE_BACKEND=dotnet across 3 consecutive local runs
+/// and newly tagged <c>ready</c>: <c>WebSocketCompressionTests</c> (+1),
+/// <c>PersonaMismatchConformanceTests</c> (+1, its own prior "deliberately UNTAGGED" comment was
+/// stale -- the class it deferred to, <c>PersonaDiscoveryConformanceTests</c>, had since been
+/// tagged itself), <c>BrowserClientLifecycleTests</c> (+12, a real-connection close/abort/dispose
+/// suite, never a real browser despite its name), and
+/// <c>CascadeMenuModeAndVoiceFakeResetWiringTests</c> (+1, same precedent as the already-tagged
+/// <c>CascadeFakeResetWiringTests</c>). A fresh <c>Conformance.Tests -list tests -trait
+/// Dotnet=ready</c> measurement on this branch tip gives <b>338</b> (323 + 15).
+///
+/// Coordinator follow-up (same-day PR #287 review, Birdperson/Beth, 2026-10-05): closed the two
+/// remaining acceptance gaps. (1) The persona-pack matrix claim above ("one persona pack exists
+/// on disk today") was stale: every one of the other shipped packs under <c>personas/</c> ships
+/// for real, and the realtime pipeline's own `RealPack*`/`PackOwnedWholeBundleGolden*`/
+/// `ComboComponentResize*` theories already discover and run every shipped pack automatically (no
+/// code change needed there -- only the stale doc comments were wrong, fixed in
+/// <c>docs/dotnet_mapping.md</c> and <c>ConformancePersonas.cs</c>). The cascade pipeline, however,
+/// genuinely only ever exercised the fixture's own default pack --
+/// <c>CascadeConformanceTests</c> has no persona dimension at all -- so
+/// <c>CascadePersonaParityConformanceTests</c> (+1 new tagged Theory method, one row per
+/// non-default shipped pack discovered via <c>ConformancePersonas.DiscoverFromDisk()</c>, verified
+/// green 3x locally against CONFORMANCE_BACKEND=dotnet) closes that gap: no C# divergence found,
+/// persona-scoped menu/tax binding already threads correctly through `CascadeProcessor`. (2) The
+/// 8 `Scenarios/Browser` methods classified
+/// <c>n/a-pending-browser-verification</c> above (<c>OrderResumeBrowserTests</c>'s 5,
+/// <c>PersonaSwitchBrowserTests</c>'s Case-E/reload-resume 3) are now tagged <c>ready</c>: #15
+/// landed the resume/idle-close/supersede machinery these all depend on (re-confirmed by code
+/// inspection of <c>SessionManager.cs</c>/<c>RealtimeProcessor.cs</c>), and this sandbox still has
+/// no msedge/chrome binary and no root to install one, so per explicit instruction these are
+/// tagged ready now with CI's own `Conformance suite (backend=dotnet, Category=Browser)` job (a
+/// real browser) as the actual verification, not a local one. A fresh
+/// <see cref="CountFloorEligibleDotnetReadyTestMethods"/> measurement on this branch tip gives
+/// <b>347</b> (338 + 1 cascade-parity + 8 browser), the floor asserted below.
+///
+/// Issue #283 (coordinator dispatch, Birdperson, 2026-10-05): added a general zero-row guard (see
+/// <see cref="TheoryYieldsZeroRowsWhenSkipGated"/>) so any <c>[Theory(SkipTestWithoutData =
+/// true)]</c> whose own <c>[MemberData]</c> source resolves to zero rows is excluded from this
+/// floor -- such a method reports SKIPPED on both conformance legs, never a real pass, so counting
+/// it toward the floor would hide the exact silent-coverage-loss gap this class exists to catch.
+/// This also added a synthetic <c>test-zeta</c> fixture pack (beside the existing
+/// <c>test-delta</c>, under <c>app/backend/tests/fixtures/personas/</c>) so
+/// <c>ComboComponentResizeConformanceTests</c>'s 4 <c>Discovered_*</c> theories -- previously
+/// tagged <c>n/a-no-matching-persona-data</c> because zero real shipped packs had an open
+/// <c>includedAnySize</c> combo slot -- now discover real fixture-backed rows and are re-tagged
+/// <c>ready</c>. A fresh <see cref="CountFloorEligibleDotnetReadyTestMethods"/> measurement on this
+/// branch tip (via `Conformance.Tests.exe -list methods -trait Dotnet=ready`, cross-checked by
+/// directly invoking this method via reflection) gives <b>351</b> (347 + 4 newly-tagged, now
+/// non-zero-row, <c>Discovered_*</c> methods), the floor asserted below.
 /// </summary>
+[Trait("Dotnet", "n/a-harness")]
 public sealed class DotnetTraitCoverageTests
 {
     private const string TraitName = "Dotnet";
     private const string TraitValue = "ready";
 
+    /// <summary>
+    /// Issue #21 (coordinator dispatch, item 2): guards against a test class being added to this
+    /// assembly with NO <c>Dotnet</c> trait at all -- neither <c>ready</c> (a real, verified-green
+    /// dotnet-leg scenario) nor an explicit <c>n/a-*</c> classification (a backend-agnostic harness
+    /// self-test, with its own one-line reason in a comment next to the attribute). Before this
+    /// guard, 39 real classes (<see cref="DotnetTraitCoverageTests"/> itself, every
+    /// <c>Scenarios/Auth</c>-adjacent harness class, <c>FakeRealtimeScripting*</c>,
+    /// <c>CapturedProcessOutput*</c>, <c>*PortRace*</c>, <c>ExternalMode*Policy</c>, and others)
+    /// carried no Dotnet trait whatsoever and were silently excluded from
+    /// <see cref="CountFloorEligibleDotnetReadyTestMethods"/>'s floor with no test failing to call
+    /// that out -- a newly added class could join that same silent blind spot forever. Every
+    /// concrete, non-abstract class declaring at least one <c>[Fact]</c>/<c>[Theory]</c> method
+    /// must now resolve, for EVERY one of its own test methods (combining class-level and
+    /// method-level <c>[Trait]</c> attributes exactly like <see cref="HasDotnetReadyTrait"/>/xUnit's
+    /// own trait-based filtering do), to a non-empty set of <c>Dotnet</c> trait values where every
+    /// value is either exactly <c>"ready"</c> or starts with <c>"n/a-"</c> -- catching both a
+    /// missing trait and a typo'd/unrecognized one.
+    /// </summary>
     [Fact]
-    public void At_least_323_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
+    public void Every_test_class_in_the_assembly_carries_an_explicit_dotnet_classification()
+    {
+        var assembly = typeof(DotnetTraitCoverageTests).Assembly;
+        var violations = new List<string>();
+
+        foreach (var type in assembly.GetTypes())
+        {
+            if (type.IsAbstract)
+            {
+                continue;
+            }
+
+            var classValues = type.GetCustomAttributes<TraitAttribute>(inherit: true)
+                .Where(t => t.Name == TraitName)
+                .Select(t => t.Value)
+                .ToArray();
+
+            foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static))
+            {
+                if (!method.IsDefined(typeof(FactAttribute), inherit: true))
+                {
+                    continue;
+                }
+
+                var methodValues = method.GetCustomAttributes<TraitAttribute>(inherit: true)
+                    .Where(t => t.Name == TraitName)
+                    .Select(t => t.Value)
+                    .ToArray();
+
+                var effective = classValues.Concat(methodValues).Distinct().ToArray();
+
+                if (effective.Length == 0)
+                {
+                    violations.Add($"{type.FullName}.{method.Name}: no [Trait(\"Dotnet\", ...)] at all " +
+                        "(neither class- nor method-level) -- tag [Trait(\"Dotnet\", \"ready\")] if this " +
+                        "scenario is verified green against the C# backend, or " +
+                        "[Trait(\"Dotnet\", \"n/a-<reason>\")] (e.g. \"n/a-harness\") with a one-line " +
+                        "reason comment if it's backend-agnostic.");
+                    continue;
+                }
+
+                var invalid = effective.Where(v => v != "ready" && !v.StartsWith("n/a-", StringComparison.Ordinal)).ToArray();
+                if (invalid.Length > 0)
+                {
+                    violations.Add($"{type.FullName}.{method.Name}: unrecognized Dotnet trait value(s) " +
+                        $"[{string.Join(", ", invalid)}] -- expected \"ready\" or an \"n/a-*\" classification.");
+                }
+            }
+        }
+
+        Assert.True(violations.Count == 0,
+            "Every test class/method must carry an explicit Dotnet classification (\"ready\" or " +
+            $"\"n/a-*\"); see issue #21. Violations:\n{string.Join("\n", violations)}");
+    }
+
+    [Fact]
+    public void At_least_354_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
     {
         // Rick's PR #226 review: assert the capability directly, not just the derived count --
         // see this class's own doc comment for why a bare ">= 222" check alone can't be trusted to
@@ -444,19 +592,368 @@ public sealed class DotnetTraitCoverageTests
 
         var count = CountFloorEligibleDotnetReadyTestMethods();
 
-        Assert.True(count >= 323,
-            $"Expected at least 323 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
-            $"and not unconditionally skip-gated by AuthRowCapability (the dotnet leg's " +
-            $"`--filter \"{TraitName}={TraitValue}&Category!=Browser\"` baseline, minus the five " +
+        Assert.True(count >= 354,
+            $"Expected at least 354 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")], " +
+            $"not unconditionally skip-gated by AuthRowCapability, and (per issue #283) not a " +
+            $"[Theory(SkipTestWithoutData = true)] whose own [MemberData] source resolves to zero " +
+            $"rows (see {nameof(TheoryYieldsZeroRowsWhenSkipGated)} -- such a method is SKIPPED, " +
+            $"never PASSED, on both conformance legs, so it must not count toward this floor) -- " +
+            $"the dotnet leg's `--filter \"{TraitName}={TraitValue}\"` baseline, minus the five " +
             "skip-only Scenarios/Auth classes -- see this class's own doc comment; " +
             $"docs/dotnet_mapping.md), but found {count}. If a tagged scenario was removed or " +
-            "renamed without a replacement, the dotnet CI leg silently lost coverage. 323 is a " +
-            "FRESH count (#274 C/E merged with origin/dev after #279, coordinator 2026-10-05), not " +
-            "arithmetic -- re-measure with `Conformance.Tests.exe -list methods -trait " +
-            "Dotnet=ready` minus the AuthRowCapabilityGated methods before raising this floor " +
-            "again.");
+            "renamed without a replacement, the dotnet CI leg silently lost coverage. 354 is a " +
+            "FRESH count (coordinator issue #283, Birdperson, 2026-10-05: " +
+            "ComboComponentResizeConformanceTests's 4 Discovered_* theories re-tagged from " +
+            "n/a-no-matching-persona-data to ready after adding the test-zeta synthetic fixture " +
+            "pack gave each of them at least one real row, 347 + 4 = 351), not arithmetic -- " +
+            "re-measure with `Conformance.Tests.exe -list methods -trait Dotnet=ready` minus the " +
+            "AuthRowCapabilityGated methods and any zero-row SkipTestWithoutData methods before " +
+            "raising this floor again.");
     }
 
+
+    /// <summary>
+    /// Issue #283 (Rick's review): a <c>[Theory(SkipTestWithoutData = true)]</c> whose own
+    /// MemberData source resolves to zero rows reports SKIPPED, not passed -- it never produces a
+    /// real pass/fail signal on either conformance leg, exactly the gap #274 follow-up E's own
+    /// manual untag/retag dance had to work around by hand. This resolves the method's own
+    /// MemberData attribute(s) (if any; a plain <c>[Theory]</c> with only <c>[InlineData]</c> rows
+    /// always has a non-empty, statically-known row count and is never excluded here), invokes the
+    /// referenced static data-source member via reflection, and reports whether it yields zero
+    /// rows -- so <see cref="CountFloorEligibleDotnetReadyTestMethods"/> can exclude exactly the
+    /// methods that would otherwise silently inflate the floor with a SKIPPED, not PASSED, row.
+    ///
+    /// Issue #296 follow-up 1 (Rick's review of #295): a static property- or field-backed
+    /// <c>[MemberData]</c> source (xunit supports both, not just methods) used to fall through
+    /// <see cref="TryResolveMemberDataRows"/>'s method-only lookup, resolve to <c>null</c>, and be
+    /// counted toward the floor as if it had rows -- the exact "fails open" gap this follow-up
+    /// closes. <see cref="TryResolveMemberDataRows"/> now also tries <c>GetProperty</c>/
+    /// <c>GetField</c>, and when a source can't be resolved as a method, property, OR field at
+    /// all, this method now fails CLOSED: it excludes the method from the floor (returns
+    /// <c>true</c>) rather than leaving it counted. That silent exclusion is paired with
+    /// <see cref="SkipTestWithoutData_MemberData_sources_are_all_resolvable"/>, a loud guard Fact
+    /// that fails with an explicit message naming every unresolvable source, so an unresolvable
+    /// reference is never silently swallowed in either direction.
+    /// </summary>
+    private static bool TheoryYieldsZeroRowsWhenSkipGated(MethodInfo method)
+    {
+        var theoryAttribute = method.GetCustomAttribute<TheoryAttribute>(inherit: true);
+        if (theoryAttribute is null || !theoryAttribute.SkipTestWithoutData)
+        {
+            return false;
+        }
+
+        var memberDataAttributes = method.GetCustomAttributes<MemberDataAttribute>(inherit: true).ToArray();
+        if (memberDataAttributes.Length == 0)
+        {
+            // No MemberData source to resolve (e.g. ClassData/InlineData) -- can't determine a
+            // dynamic row count here, so this guard has nothing to exclude; leave it counted.
+            return false;
+        }
+
+        foreach (var memberData in memberDataAttributes)
+        {
+            var declaringType = memberData.MemberType ?? method.DeclaringType!;
+            if (!TryResolveMemberDataRows(declaringType, memberData, out var rows))
+            {
+                // Can't resolve this source as a method, property, or field -- fail CLOSED:
+                // exclude it from the floor rather than risk silently counting a SKIPPED row.
+                // SkipTestWithoutData_MemberData_sources_are_all_resolvable asserts loudly (with
+                // an explicit message naming the method and source) if this ever actually fires.
+                return true;
+            }
+
+            if (rows is null || rows.Any())
+            {
+                // Not enumerable (can't say it's zero rows), or yielded at least one row -- the
+                // Theory runs for real.
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Resolves a <c>[MemberData]</c> source as a static method, property, or field (in that
+    /// order -- xunit itself supports all three) and invokes/reads it, returning its rows. Issue
+    /// #296 follow-up 1: previously only <c>GetMethod</c> was tried, so a property- or
+    /// field-backed source (e.g. <c>public static IEnumerable&lt;object[]&gt; Cases { get; }</c>)
+    /// silently failed to resolve and was treated as "can't determine, leave it counted" by the
+    /// caller -- exactly backwards for a genuinely empty property/field source. Returns
+    /// <c>false</c> (with <paramref name="rows"/> <c>null</c>) only when none of the three member
+    /// kinds resolve at all.
+    /// </summary>
+    private static bool TryResolveMemberDataRows(
+        Type declaringType, MemberDataAttribute memberData, out IEnumerable<object?>? rows)
+    {
+        const BindingFlags flags = BindingFlags.Public | BindingFlags.Static | BindingFlags.NonPublic;
+        var arguments = memberData.Arguments is { Length: > 0 } args ? args : null;
+
+        var methodSource = declaringType.GetMethod(memberData.MemberName, flags);
+        if (methodSource is not null)
+        {
+            rows = (methodSource.Invoke(null, arguments) as System.Collections.IEnumerable)?.Cast<object?>();
+            return true;
+        }
+
+        var propertySource = declaringType.GetProperty(memberData.MemberName, flags);
+        if (propertySource is not null)
+        {
+            rows = (propertySource.GetValue(null) as System.Collections.IEnumerable)?.Cast<object?>();
+            return true;
+        }
+
+        var fieldSource = declaringType.GetField(memberData.MemberName, flags);
+        if (fieldSource is not null)
+        {
+            rows = (fieldSource.GetValue(null) as System.Collections.IEnumerable)?.Cast<object?>();
+            return true;
+        }
+
+        rows = null;
+        return false;
+    }
+
+    /// <summary>
+    /// Issue #296 follow-up 1: the loud counterpart to <see cref="TheoryYieldsZeroRowsWhenSkipGated"/>'s
+    /// new fail-closed behavior. An unresolvable <c>[MemberData]</c> source on a
+    /// <c>[Theory(SkipTestWithoutData = true)]</c> method is now silently excluded from the
+    /// coverage floor (fail closed) rather than silently counted (the old fail-open bug) -- but
+    /// "silently" should never apply to both directions at once, so this Fact scans the same
+    /// surface and fails loudly, naming every method/source pair that couldn't be resolved as a
+    /// method, property, or field, if that ever actually happens.
+    /// </summary>
+    [Fact]
+    public void SkipTestWithoutData_MemberData_sources_are_all_resolvable()
+    {
+        var assembly = typeof(DotnetTraitCoverageTests).Assembly;
+        var violations = new List<string>();
+
+        foreach (var type in assembly.GetTypes())
+        {
+            if (type.IsAbstract)
+            {
+                continue;
+            }
+
+            foreach (var method in type.GetMethods(
+                BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static))
+            {
+                var theoryAttribute = method.GetCustomAttribute<TheoryAttribute>(inherit: true);
+                if (theoryAttribute is null || !theoryAttribute.SkipTestWithoutData)
+                {
+                    continue;
+                }
+
+                foreach (var memberData in method.GetCustomAttributes<MemberDataAttribute>(inherit: true))
+                {
+                    var declaringType = memberData.MemberType ?? method.DeclaringType!;
+                    if (!TryResolveMemberDataRows(declaringType, memberData, out _))
+                    {
+                        violations.Add($"{type.FullName}.{method.Name}: [MemberData(\"{memberData.MemberName}\")] " +
+                            $"could not be resolved as a static method, property, or field on " +
+                            $"{declaringType.FullName}.");
+                    }
+                }
+            }
+        }
+
+        Assert.True(violations.Count == 0,
+            "Every [MemberData] source referenced by a [Theory(SkipTestWithoutData = true)] method " +
+            $"must resolve as a static method, property, or field (see issue #296); an unresolvable " +
+            $"source is excluded from the coverage floor (fail closed) but should never happen " +
+            $"silently. Violations:\n{string.Join("\n", violations)}");
+    }
+
+    /// <summary>
+    /// PR #297 (Rick's review of #296 follow-up 1): synthetic fixtures for the regression tests
+    /// below, which prove the property/field-backed <see cref="TryResolveMemberDataRows"/> lookup
+    /// and the fail-closed branch of <see cref="TheoryYieldsZeroRowsWhenSkipGated"/> actually work
+    /// against a genuine property- and field-backed <c>[MemberData]</c> source -- every real
+    /// <c>[MemberData]</c> call site in this assembly happens to be method-backed today, so
+    /// without this type the exact bug those two follow-ups fixed could regress without any test
+    /// going red. This type is deliberately <c>private</c> and <c>abstract</c> -- both are
+    /// independently sufficient to keep xunit from ever discovering it as a real test class (see
+    /// <see cref="CountFloorEligibleDotnetReadyTestMethods"/>'s own abstract-type skip and its
+    /// doc comment on non-public types never being enumerable by <c>Assembly.GetTypes()</c>'s
+    /// public surface), so it can never itself contribute to the 351 floor. None of its methods
+    /// carry a <c>[Trait("Dotnet", "ready")]</c> either, which would exclude them from the floor
+    /// even if discovery somehow changed.
+    /// </summary>
+    // These fixture methods are never actually run by xunit (the enclosing type is non-public and
+    // abstract, so it's never discovered as a real test class) -- they exist only to be inspected
+    // via reflection by the regression tests below. The xunit analyzers don't know that, so their
+    // "test classes must be public" / "unresolvable MemberData" / "unused Theory parameter" rules
+    // would otherwise flag this intentionally-inert fixture as a build error.
+#pragma warning disable xUnit1000 // test class must be public -- intentionally non-public, see above
+#pragma warning disable xUnit1026 // unused Theory parameter -- the parameter is never bound, see above
+#pragma warning disable xUnit1015 // MemberData must reference an existing member -- that's the point of UnresolvableSource
+    private abstract class ZeroRowGuardFixtures
+    {
+        public static IEnumerable<object[]> EmptyProperty => Array.Empty<object[]>();
+
+        public static readonly IEnumerable<object[]> EmptyField = Array.Empty<object[]>();
+
+        public static IEnumerable<object[]> NonEmptyProperty => new[] { new object[] { 1 } };
+
+        [Theory(SkipTestWithoutData = true)]
+        [MemberData(nameof(EmptyProperty))]
+        public void EmptyPropertySource(int value) { }
+
+        [Theory(SkipTestWithoutData = true)]
+        [MemberData(nameof(EmptyField))]
+        public void EmptyFieldSource(int value) { }
+
+        [Theory(SkipTestWithoutData = true)]
+        [MemberData(nameof(NonEmptyProperty))]
+        public void NonEmptyPropertySource(int value) { }
+
+        [Theory(SkipTestWithoutData = true)]
+        [MemberData("DoesNotExist")]
+        public void UnresolvableSource(int value) { }
+    }
+#pragma warning restore xUnit1015
+#pragma warning restore xUnit1026
+#pragma warning restore xUnit1000
+
+    private static MethodInfo GetFixtureMethod(string name) =>
+        typeof(ZeroRowGuardFixtures).GetMethod(name, BindingFlags.Public | BindingFlags.Instance)
+            ?? throw new InvalidOperationException($"{nameof(ZeroRowGuardFixtures)}.{name} not found.");
+
+    /// <summary>
+    /// Mutation-check for <see cref="TryResolveMemberDataRows"/>'s <c>GetProperty</c> branch: calls
+    /// the helper directly (not through the Theory machinery, so it can't be silently skipped)
+    /// against <see cref="ZeroRowGuardFixtures.EmptyProperty"/>. Reverting the property lookup
+    /// must turn this test red (resolution would fail entirely, since no method or field named
+    /// <c>EmptyProperty</c> exists either).
+    /// </summary>
+    [Fact]
+    public void TryResolveMemberDataRows_resolves_empty_property_backed_source()
+    {
+        var method = GetFixtureMethod(nameof(ZeroRowGuardFixtures.EmptyPropertySource));
+        var memberData = method.GetCustomAttribute<MemberDataAttribute>(inherit: true)!;
+
+        var resolved = TryResolveMemberDataRows(typeof(ZeroRowGuardFixtures), memberData, out var rows);
+
+        Assert.True(resolved, "A static property-backed [MemberData] source must resolve.");
+        Assert.NotNull(rows);
+        Assert.Empty(rows!);
+    }
+
+    /// <summary>
+    /// Mutation-check for <see cref="TryResolveMemberDataRows"/>'s <c>GetField</c> branch: calls
+    /// the helper directly against <see cref="ZeroRowGuardFixtures.EmptyField"/>. Reverting the
+    /// field lookup must turn this test red.
+    /// </summary>
+    [Fact]
+    public void TryResolveMemberDataRows_resolves_empty_field_backed_source()
+    {
+        var method = GetFixtureMethod(nameof(ZeroRowGuardFixtures.EmptyFieldSource));
+        var memberData = method.GetCustomAttribute<MemberDataAttribute>(inherit: true)!;
+
+        var resolved = TryResolveMemberDataRows(typeof(ZeroRowGuardFixtures), memberData, out var rows);
+
+        Assert.True(resolved, "A static field-backed [MemberData] source must resolve.");
+        Assert.NotNull(rows);
+        Assert.Empty(rows!);
+    }
+
+    /// <summary>
+    /// Proves a non-empty property-backed source still resolves with its real rows intact (not
+    /// just "resolved to something falsy") -- guards against a fix that resolves properties but
+    /// discards their actual contents.
+    /// </summary>
+    [Fact]
+    public void TryResolveMemberDataRows_resolves_non_empty_property_backed_source_with_rows()
+    {
+        var method = GetFixtureMethod(nameof(ZeroRowGuardFixtures.NonEmptyPropertySource));
+        var memberData = method.GetCustomAttribute<MemberDataAttribute>(inherit: true)!;
+
+        var resolved = TryResolveMemberDataRows(typeof(ZeroRowGuardFixtures), memberData, out var rows);
+
+        Assert.True(resolved);
+        Assert.NotNull(rows);
+        Assert.NotEmpty(rows!);
+    }
+
+    /// <summary>
+    /// A source that resolves as neither a method, property, nor field must report
+    /// <c>false</c>/<c>null</c> from <see cref="TryResolveMemberDataRows"/> itself, independent of
+    /// how the caller chooses to fail.
+    /// </summary>
+    [Fact]
+    public void TryResolveMemberDataRows_fails_for_unresolvable_source()
+    {
+        var method = GetFixtureMethod(nameof(ZeroRowGuardFixtures.UnresolvableSource));
+        var memberData = method.GetCustomAttribute<MemberDataAttribute>(inherit: true)!;
+
+        var resolved = TryResolveMemberDataRows(typeof(ZeroRowGuardFixtures), memberData, out var rows);
+
+        Assert.False(resolved);
+        Assert.Null(rows);
+    }
+
+    /// <summary>
+    /// End-to-end mutation-check for the fail-closed guard itself (not just its resolution
+    /// helper): an empty static property-backed <c>[MemberData]</c> source on a
+    /// <c>[Theory(SkipTestWithoutData = true)]</c> method must be reported as yielding zero rows,
+    /// exactly the behavior <see cref="At_least_354_scenarios_are_tagged_dotnet_ready_and_not_skip_gated"/>
+    /// relies on to exclude it from the floor. Reverting either the property-resolution branch
+    /// above or this guard's own fail-closed wiring must turn this test red.
+    /// </summary>
+    [Fact]
+    public void TheoryYieldsZeroRowsWhenSkipGated_excludes_empty_property_backed_MemberData()
+    {
+        var method = GetFixtureMethod(nameof(ZeroRowGuardFixtures.EmptyPropertySource));
+
+        Assert.True(TheoryYieldsZeroRowsWhenSkipGated(method),
+            "An empty static property-backed [MemberData] source must be excluded (treated as " +
+            "zero rows) by the coverage-floor guard.");
+    }
+
+    /// <summary>
+    /// Field-backed counterpart of the property test above.
+    /// </summary>
+    [Fact]
+    public void TheoryYieldsZeroRowsWhenSkipGated_excludes_empty_field_backed_MemberData()
+    {
+        var method = GetFixtureMethod(nameof(ZeroRowGuardFixtures.EmptyFieldSource));
+
+        Assert.True(TheoryYieldsZeroRowsWhenSkipGated(method),
+            "An empty static field-backed [MemberData] source must be excluded (treated as zero " +
+            "rows) by the coverage-floor guard.");
+    }
+
+    /// <summary>
+    /// A non-empty property-backed source must NOT be excluded -- proves the new property/field
+    /// resolution path doesn't over-eagerly swallow real rows along with the zero-row case above.
+    /// </summary>
+    [Fact]
+    public void TheoryYieldsZeroRowsWhenSkipGated_counts_non_empty_property_backed_MemberData()
+    {
+        var method = GetFixtureMethod(nameof(ZeroRowGuardFixtures.NonEmptyPropertySource));
+
+        Assert.False(TheoryYieldsZeroRowsWhenSkipGated(method),
+            "A non-empty static property-backed [MemberData] source must still count toward the " +
+            "floor, not be excluded.");
+    }
+
+    /// <summary>
+    /// Mutation-check for the fail-closed <c>return true</c> inside
+    /// <see cref="TheoryYieldsZeroRowsWhenSkipGated"/> itself: an unresolvable source must be
+    /// excluded from the floor (reported as "yields zero rows"). Flipping that fail-closed branch
+    /// to fail OPEN (counted) must turn this test red.
+    /// </summary>
+    [Fact]
+    public void TheoryYieldsZeroRowsWhenSkipGated_fails_closed_for_unresolvable_MemberData()
+    {
+        var method = GetFixtureMethod(nameof(ZeroRowGuardFixtures.UnresolvableSource));
+
+        Assert.True(TheoryYieldsZeroRowsWhenSkipGated(method),
+            "A [MemberData] source that resolves as neither a method, property, nor field must " +
+            "fail CLOSED (excluded from the floor), never silently counted.");
+    }
 
     /// <summary>
     /// Counts every <c>[Fact]</c>/<c>[Theory]</c> test *method* (a <c>[Theory]</c> with N
@@ -469,7 +966,11 @@ public sealed class DotnetTraitCoverageTests
     /// <see cref="Conformance.Harness.AuthRowCapability.Enforces"/> resolves false for
     /// <c>"dotnet"</c>: those methods are unconditionally <c>Assert.Skip</c>'d on the dotnet leg in
     /// that state (see this class's own doc comment), so they never contribute a real pass/fail
-    /// signal and must not count toward the coverage floor.
+    /// signal and must not count toward the coverage floor. Issue #283: also excludes any method
+    /// for which <see cref="TheoryYieldsZeroRowsWhenSkipGated"/> reports true -- a
+    /// <c>[Theory(SkipTestWithoutData = true)]</c> whose own MemberData source has zero rows today
+    /// is SKIPPED, not PASSED, on both conformance legs, so it must not count toward the floor
+    /// either.
     ///
     /// Issue #143/ADR-002 (R10): abstract types are skipped outright -- xunit never discovers an
     /// abstract class as a runnable test class in its own right, only its concrete subclasses --
@@ -510,10 +1011,17 @@ public sealed class DotnetTraitCoverageTests
                 }
 
                 var methodHasTrait = HasDotnetReadyTrait(method.GetCustomAttributes<TraitAttribute>(inherit: true));
-                if (classHasTrait || methodHasTrait)
+                if (!classHasTrait && !methodHasTrait)
                 {
-                    count++;
+                    continue;
                 }
+
+                if (TheoryYieldsZeroRowsWhenSkipGated(method))
+                {
+                    continue;
+                }
+
+                count++;
             }
         }
 

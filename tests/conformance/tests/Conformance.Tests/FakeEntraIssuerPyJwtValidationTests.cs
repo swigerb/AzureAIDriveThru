@@ -33,6 +33,7 @@ namespace Conformance.Tests;
 /// loudly instead (R11, Rick's PR #158 round 2 review).
 /// </summary>
 [Trait("Category", "Harness")]
+[Trait("Dotnet", "n/a-harness")] // Issue #21: backend-agnostic harness self-test, never exercises app/backend or app/backend-dotnet.
 public sealed class FakeEntraIssuerPyJwtValidationTests
 {
     private static readonly string ScriptPath = Path.Combine(

@@ -1,4 +1,6 @@
 // Renders arch.html to ../../azure-ai-drive-thru-architecture.png (3840x2160).
+// Render on a machine with the Segoe UI font installed (Windows): Linux fallback fonts are wider
+// and reflow or clip labels.
 // Usage from this folder: npm i -D playwright && npx playwright install chromium && node render.mjs
 import { chromium } from 'playwright';
 import { fileURLToPath, pathToFileURL } from 'node:url';

@@ -18,6 +18,7 @@ namespace Conformance.Tests;
 /// end-to-end without needing to spin up a real backend process per test.
 /// </summary>
 [Trait("Category", "Harness")]
+[Trait("Dotnet", "n/a-harness")] // Issue #21: backend-agnostic harness self-test, never exercises app/backend or app/backend-dotnet.
 public sealed class FakeChatCompletionsServerTests
 {
     private static JsonObject FinalMessage(string content) => new()

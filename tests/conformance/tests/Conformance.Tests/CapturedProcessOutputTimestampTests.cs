@@ -25,6 +25,7 @@ namespace Conformance.Tests;
 /// both fail.
 /// </summary>
 [Trait("Category", "Harness")]
+[Trait("Dotnet", "n/a-harness")] // Issue #21: backend-agnostic harness self-test, never exercises app/backend or app/backend-dotnet.
 public sealed class CapturedProcessOutputTimestampTests
 {
     [Fact]

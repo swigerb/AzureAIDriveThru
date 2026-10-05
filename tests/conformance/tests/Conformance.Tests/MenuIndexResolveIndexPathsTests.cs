@@ -10,6 +10,7 @@ namespace Conformance.Tests;
 /// depend on how many real packs currently exist on disk.
 /// </summary>
 [Trait("Category", "Harness")]
+[Trait("Dotnet", "n/a-harness")] // Issue #21: backend-agnostic harness self-test, never exercises app/backend or app/backend-dotnet.
 public sealed class MenuIndexResolveIndexPathsTests
 {
     private static string CreatePersona(string root, string personaId, string indexName)

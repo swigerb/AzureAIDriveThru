@@ -32,18 +32,18 @@ namespace Backend.Sessions;
 /// nothing posts to this processor's mailbox for the "realtime" pipeline any more.
 ///
 /// Deliberate scope cuts from rtmt.py, documented in docs/dotnet_mapping.md: the tool
-/// failure-cap ladder (`_ToolFailureTracker`), session resume/rehydration itself --
-/// `extension.resume`, the 4002 supersede-close, and the 4000 idle-timeout close all need a real
-/// session registry and land with #15 -- turn recording, and the fast-path regex/marker-substring
-/// optimisations (every frame is fully JSON-parsed instead). Context-window monitoring
-/// (<see cref="ContextMonitor"/>) landed in the issue #13 tail: every `ctx_monitor.add_content`
-/// call site in rtmt.py (session.update instructions/tools, tool call args/result, response
-/// output text/transcript, greeting, resume-nudge, and rehydration text) has a matching
-/// <see cref="SessionManager.GetContextMonitor"/> call here, with the sole exception of the
-/// verbose-only user-transcript tracking site, which is intentionally not ported since it only
-/// ever fires in Python when verbose debug logging -- itself a separate, still-deferred scope
-/// cut -- is enabled (see the `conversation.item.input_audio_transcription.completed` case below
-/// for the full reasoning).
+/// failure-cap ladder (`_ToolFailureTracker`), turn recording, and the fast-path regex/marker-substring
+/// optimisations (every frame is fully JSON-parsed instead). Session resume/rehydration itself --
+/// `extension.resume`, the 4002 supersede-close, and the 4000 idle-timeout close -- needed a real
+/// session registry and landed with #15 (PR #244); this class and <see cref="SessionManager"/> now
+/// implement all three. Context-window monitoring (<see cref="ContextMonitor"/>) landed in the
+/// issue #13 tail: every `ctx_monitor.add_content` call site in rtmt.py (session.update
+/// instructions/tools, tool call args/result, response output text/transcript, greeting,
+/// resume-nudge, and rehydration text) has a matching <see cref="SessionManager.GetContextMonitor"/>
+/// call here, with the sole exception of the verbose-only user-transcript tracking site, which is
+/// intentionally not ported since it only ever fires in Python when verbose debug logging -- itself
+/// a separate, still-deferred scope cut -- is enabled (see the
+/// `conversation.item.input_audio_transcription.completed` case below for the full reasoning).
 /// Issue #13 Wave 4 closed the rate-limit retry ladder scope cut: `rate_limit.py`'s
 /// `RateLimitRecovery` is now ported verbatim as <see cref="RateLimitRecovery"/>, wired at the
 /// same seams as Python (response.created/response.done/error/guest-speech/external

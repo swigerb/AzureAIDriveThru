@@ -18,7 +18,10 @@ namespace Conformance.Tests;
 /// "unknown"/"expired"/"malformed" (which don't apply here: the id is genuinely valid, just for a
 /// different persona).
 ///
-/// Deliberately UNTAGGED, same reasoning as <see cref="PersonaDiscoveryConformanceTests"/>.
+/// Issue #21 (coordinator dispatch, 2026-10-05): the "same reasoning as
+/// <see cref="PersonaDiscoveryConformanceTests"/>" this class used to defer to no longer applies --
+/// that class has since been tagged <c>[Trait("Dotnet", "ready")]</c> itself. Verified green
+/// against CONFORMANCE_BACKEND=dotnet across 3 consecutive local runs.
 /// </summary>
 [Collection(TwoPersonaConformanceCollection.Name)]
 public sealed class PersonaMismatchConformanceTests(TwoPersonaConformanceFixture fixture)
@@ -26,6 +29,7 @@ public sealed class PersonaMismatchConformanceTests(TwoPersonaConformanceFixture
     private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task A_resume_id_issued_under_one_persona_is_rejected_as_persona_mismatch_under_another() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
