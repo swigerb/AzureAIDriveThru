@@ -27,17 +27,27 @@ services:
         - VITE_ENTRA_CLIENT_ID=${ENTRA_CLIENT_ID}
         - VITE_ENTRA_API_SCOPE=${ENTRA_API_SCOPE}
   # S7 (#17 go-live): the side-by-side C# container app (app/backend-dotnet, built from
-  # app/Dockerfile.dotnet) is NOT declared as a service here yet. Rick's review of #281 (R1) found
-  # that declaring it now -- while infra/main.bicep's acaBackendDotnet module and its
-  # 'azd-service-name': 'backend-dotnet' tag stay gated behind `if (deployDotnetApp)` (default
-  # false) -- breaks a bare `azd deploy`/`azd up` for every environment that has not flipped
-  # DEPLOY_DOTNET_APP=true: no resource anywhere would carry the tag this service entry expects,
-  # and azd has no service-level `condition:` (as of the pinned release) to skip it. That is not
-  # deploy-neutral, so the service entry and the bicep tag move together into the owner-gated
-  # flip commit instead (the SERVICE_BACKEND_DOTNET_RESOURCE_EXISTS mapping has already landed
-  # separately, in infra/main.parameters.json). DEPLOY.md's ".NET container app (S7, #17)"
-  # section, "Step 0", has the exact `backend-dotnet` service block (and the matching bicep tag
-  # line) to paste in at that time.
+  # app/Dockerfile.dotnet). The flip commit landed this service entry together with
+  # infra/main.bicep's 'azd-service-name': 'backend-dotnet' tag on acaBackendDotnet (gated behind
+  # `if (deployDotnetApp)`, default false) -- see DEPLOY.md's ".NET container app (S7, #17)"
+  # section, "Step 0". Every environment that has NOT flipped DEPLOY_DOTNET_APP=true must scope
+  # deploys explicitly (`azd deploy backend`, not a bare `azd deploy`/`azd up`), because azd has
+  # no service-level `condition:` (as of the pinned release) to skip a declared service entirely.
+  # Once DEPLOY_DOTNET_APP=true for a given environment, `azd deploy`/`azd deploy backend-dotnet`
+  # both work normally, because the tagged resource now exists.
+  backend-dotnet:
+    project: ./app
+    language: docker
+    host: containerapp
+    docker:
+      path: ./Dockerfile.dotnet
+      context: ..
+      remoteBuild: true
+      buildArgs:
+        - VITE_AUTH_MODE=Entra
+        - VITE_ENTRA_TENANT_ID=${ENTRA_TENANT_ID}
+        - VITE_ENTRA_CLIENT_ID=${ENTRA_CLIENT_ID}
+        - VITE_ENTRA_API_SCOPE=${ENTRA_API_SCOPE}
 hooks:
     postprovision:
       windows:
