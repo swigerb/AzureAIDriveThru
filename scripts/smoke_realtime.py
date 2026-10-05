@@ -712,7 +712,10 @@ def _cascade_tool_definitions(tool_schemas: list[dict]):
     this standalone script never imports ``cascade_processor`` itself (which pulls in
     ``aiohttp.web``/``session_manager``/the whole processor machinery for a single pure
     function)."""
-    from azure.ai.inference.models import ChatCompletionsToolDefinition, FunctionDefinition
+    from azure.ai.inference.models import (
+        ChatCompletionsToolDefinition,
+        FunctionDefinition,
+    )
     return [
         ChatCompletionsToolDefinition(function=FunctionDefinition(
             name=schema["name"], description=schema.get("description", ""), parameters=schema.get("parameters", {})))
