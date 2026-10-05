@@ -26,6 +26,13 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="SearchIndexRequestBuilder.Tests" />
+    <!--
+      Fix #16: SearchIndexIngestor (the orchestration port) reuses this project's internal
+      request-body builders/persona discovery/settings resolvers via a project reference rather
+      than duplicating them - see SearchIndexIngestor.csproj's own remarks.
+    -->
+    <InternalsVisibleTo Include="SearchIndexIngestor" />
+    <InternalsVisibleTo Include="SearchIndexIngestor.Tests" />
   </ItemGroup>
 
 </Project>

@@ -21,5 +21,12 @@
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.10.0" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="4.0.0" />
     <PackageVersion Include="xunit.v3.mtp-off" Version="4.0.1" />
+    <!--
+      Fix #16: SearchIndexIngestor's one new dependency - DefaultAzureCredential bearer tokens for
+      its raw-HttpClient Azure AI Search/Azure OpenAI REST calls. Pinned to the SAME version
+      app/backend-dotnet/Directory.Packages.props already uses, not a second, independently-chosen
+      one.
+    -->
+    <PackageVersion Include="Azure.Identity" Version="1.13.2" />
   </ItemGroup>
 </Project>
