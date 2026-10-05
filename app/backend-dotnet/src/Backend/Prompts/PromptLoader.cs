@@ -23,7 +23,14 @@ public sealed class PromptLoadException(string message) : Exception(message);
 /// </summary>
 public sealed class PromptLoader
 {
-    private readonly IDeserializer _yaml = new DeserializerBuilder().Build();
+    // Plain (unquoted) scalars are typed per YAML's core schema -- `false` -> bool, `3` -> int --
+// exactly as PyYAML's safe_load does for the Python backend. Without this, tool_schemas.yaml's
+// `additionalProperties: false` reached the realtime API as the STRING "false", which rejects the
+// whole session.update (invalid_function_parameters), leaving the session with no tools and no
+// instructions. Quoted scalars ('false', "10") stay strings.
+    private readonly IDeserializer _yaml = new DeserializerBuilder()
+        .WithAttemptingUnquotedStringTypeDeserialization()
+        .Build();
 
     /// <summary>Required rejection-message keys (#125, fail-fast follow-up to #116): every
     /// structured rejection app/backend/tools.py's update_order/modify path can return renders one
@@ -249,8 +256,7 @@ public sealed class PromptLoader
     /// shapes so this sort works regardless of that deserializer detail.</summary>
     private static int ParsePriority(object? value) => value switch
     {
-        int i => i,
-        long l => (int)l,
+        byte or sbyte or short or ushort or int or uint or long => Convert.ToInt32(value, CultureInfo.InvariantCulture),
         string s when int.TryParse(s, out var parsed) => parsed,
         _ => 999,
     };
