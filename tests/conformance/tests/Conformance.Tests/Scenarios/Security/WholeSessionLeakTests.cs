@@ -78,6 +78,7 @@ public sealed class WholeSessionLeakTests(ResumeMarginConformanceFixture fixture
     private const int MinLeakSubstringLength = 32;
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Browser_never_receives_any_substring_of_operator_only_text_across_the_whole_session() =>
         fixture.RunAsync(async () =>
     {

@@ -21,6 +21,7 @@ public sealed class IdleTimeoutTests(ShortTimersConformanceFixture fixture)
     private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Attached_session_is_closed_with_4000_after_the_idle_budget() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -44,6 +45,7 @@ public sealed class IdleTimeoutTests(ShortTimersConformanceFixture fixture)
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Idle_closed_session_cannot_be_resumed_the_credential_is_gone() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -91,6 +93,7 @@ public sealed class IdleTimeoutTests(ShortTimersConformanceFixture fixture)
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task A_drop_close_to_the_idle_boundary_does_not_buy_a_full_fresh_grace_period() => fixture.RunAsync(async () =>
     {
         // Named for the invariant under test (the idle clock isn't reset by a drop), not for the

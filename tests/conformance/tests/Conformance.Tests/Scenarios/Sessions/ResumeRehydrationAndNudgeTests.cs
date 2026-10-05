@@ -121,6 +121,7 @@ public sealed class ResumeRehydrationAndNudgeTests(ResumeTimersConformanceFixtur
     }
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Resuming_mid_conversation_rehydrates_the_order_with_no_greeting() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -197,6 +198,73 @@ public sealed class ResumeRehydrationAndNudgeTests(ResumeTimersConformanceFixtur
     });
 
     /// <summary>
+    /// Rick's #244 review (issue 3): RecordTurn (SessionManager.cs) had no production callers --
+    /// record.Transcript, and therefore RecentTurnsLocked/BuildRehydrationText's "Recent
+    /// conversation" section, was always empty ("(none recorded)"), identically to before this
+    /// fix. This proves the new guest-side call site (RealtimeProcessor.cs's
+    /// conversation.item.input_audio_transcription.completed case, record_turn("guest", ...) in
+    /// rtmt.py) actually reaches the rehydration item's text on a real resume. The transcript is
+    /// injected directly as an upstream frame (rather than relying on WithVadDefaults, whose
+    /// auto-generated transcript is always "") so the test controls distinctive, assertable
+    /// guest-turn content. The assistant-turn call site (non-tool response.done) shares the exact
+    /// same RecordTurn/RecentTurnsLocked/BuildRehydrationText path, differing only in the "guest"
+    /// vs role-name label passed in -- not a separate code path -- so this single test is
+    /// sufficient proof that RecordTurn's wiring, as a whole, is correct.
+    /// </summary>
+    [Fact]
+    [Trait("Dotnet", "ready")]
+    public Task Resuming_mid_conversation_rehydrates_the_recorded_guest_transcript() => fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var (oldBrowser, oldConnection, resumeId) = await ConnectPastGreetingWithResumeIdAsync(ct);
+
+        const string guestTranscript = "I would like a large iced coffee with oat milk please";
+        await oldConnection.SendAsync(new System.Text.Json.Nodes.JsonObject
+        {
+            ["type"] = "conversation.item.input_audio_transcription.completed",
+            ["event_id"] = $"evt_{Guid.NewGuid():N}",
+            ["item_id"] = "item_rehydrate_transcript_1",
+            ["transcript"] = guestTranscript,
+        }, ct);
+
+        // RecordTurn (RealtimeProcessor's guest-transcription case) runs synchronously before
+        // this same event type falls through DispatchServerMessageAsync's default case and is
+        // forwarded unchanged to the browser -- waiting for the OLD browser to actually receive
+        // this echoed frame is therefore a deterministic proof that RecordTurn has already run,
+        // instead of racing the drop/resume against the processor's own async frame handling
+        // (observed flaky under CI load: the drop could win the race, landing on a resumed
+        // session whose Transcript was still empty).
+        var echoed = await oldBrowser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "conversation.item.input_audio_transcription.completed", FrameTimeout, ct);
+        Assert.True(echoed is not null,
+            "Expected the injected transcription-completed event to be echoed back to the browser " +
+            "(proving the processor has processed it, including RecordTurn) before resuming.");
+
+        var (newBrowser, newConnection) = await DropAndResumeAsync(oldBrowser, resumeId, ct);
+        await using var _ = newBrowser;
+        await newBrowser.SendStartSessionAsync(cancellationToken: ct);
+
+        var resumed = await newBrowser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.session_resumed", FrameTimeout, ct);
+        Assert.True(resumed is not null, "Expected extension.session_resumed after a valid mid-conversation resume.");
+
+        var bootstrap = await newConnection.ReceivedFrames.WaitForAsync(
+            f => f.Type == "session.update", FrameTimeout, ct);
+        Assert.True(bootstrap is not null, "Expected a bootstrap session.update on the new upstream connection.");
+
+        var rehydration = await newConnection.ReceivedFrames.WaitForAsync(
+            f => IsSystemMessageItem(f) && f.Sequence > bootstrap!.Sequence,
+            FrameTimeout, ct);
+        Assert.True(rehydration is not null,
+            "Expected the rehydration conversation.item.create (system-role message) on the new upstream connection.");
+
+        var content = rehydration!.Json.GetProperty("item").GetProperty("content")[0].GetProperty("text").GetString();
+        Assert.True(content is not null && content.Contains(guestTranscript),
+            $"Expected the rehydration item's text to contain the recorded guest transcript '{guestTranscript}', " +
+            $"proving RecordTurn's guest call site actually reaches rehydration. Got: {content}");
+    });
+
+    /// <summary>
     /// PR #52 review ("F1"): every other resume scenario in this file drops the old connection
     /// gracefully (<see cref="DropAndResumeAsync"/>). A real Wi-Fi blip never sends a Close
     /// frame at all -- <see cref="AbortAndResumeAsync"/> reproduces that with
@@ -211,6 +279,7 @@ public sealed class ResumeRehydrationAndNudgeTests(ResumeTimersConformanceFixtur
     /// `end_session` instead turns this red.
     /// </summary>
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Resuming_after_an_abrupt_abort_with_no_close_frame_restores_the_order_with_no_greeting() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -272,6 +341,7 @@ public sealed class ResumeRehydrationAndNudgeTests(ResumeTimersConformanceFixtur
     /// before the fix.
     /// </summary>
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task A_silent_guest_gets_nudged_exactly_once_after_the_resume() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -322,6 +392,7 @@ public sealed class ResumeRehydrationAndNudgeTests(ResumeTimersConformanceFixtur
     /// appear, even generously past nudge_after_seconds.
     /// </summary>
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task A_resume_without_a_client_session_update_never_nudges_or_responds() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -353,6 +424,7 @@ public sealed class ResumeRehydrationAndNudgeTests(ResumeTimersConformanceFixtur
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task The_nudge_is_cancelled_by_guest_speech() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
@@ -383,6 +455,7 @@ public sealed class ResumeRehydrationAndNudgeTests(ResumeTimersConformanceFixtur
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task The_nudge_never_fires_without_session_updated_confirming_the_resumed_connection() => fixture.RunAsync(async () =>
     {
         // PR #54 review: a mutation removing rtmt.py's nudge_after_silence() `await
@@ -445,6 +518,7 @@ public sealed class ResumeRehydrationAndNudgeTests(ResumeTimersConformanceFixtur
     });
 
     [Fact]
+    [Trait("Dotnet", "ready")]
     public Task Ending_the_session_closes_with_1000_and_the_order_and_credential_are_gone() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;

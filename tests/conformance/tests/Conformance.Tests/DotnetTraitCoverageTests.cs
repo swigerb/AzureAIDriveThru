@@ -229,6 +229,59 @@ namespace Conformance.Tests;
 /// -trait Dotnet=ready</c> (279 methods) minus the 18 <see cref="AuthRowGatedTypeNames"/> methods
 /// -- a fresh reflection count, never arithmetic.
 ///
+/// Issue #15 (PR #244, C# sessions/resilience, rebased on top of #237's 239 baseline): Rick's #244
+/// review added five new tagged, ungated scenarios closing gaps his own review found --
+/// <c>RateLimitIdleInteractionTests.Repeated_guest_speech_keeps_the_session_alive_past_idle_timeout_seconds</c>
+/// (issue 1, guest-speech activity, mutation-checked), <c>ResumeHandshakeTests.A_resume_sent_after_the_first_frame_timeout_fallback_is_rejected_as_late</c>
+/// (issue 2, late-resume-after-timeout, mutation-checked),
+/// <c>ResumeRehydrationAndNudgeTests.Resuming_mid_conversation_rehydrates_the_recorded_guest_transcript</c>
+/// (issue 3, RecordTurn wiring), <c>CloseCodeTests.Superseding_a_stuck_peer_that_never_acks_the_close_still_completes_promptly</c>
+/// (issue 4, supersede-close ordering -- also caught and fixed a real pre-existing regression this
+/// same work introduced, see <c>ResumeHandshakeTests.Resuming_from_a_still_attached_socket_supersedes_it_with_4002</c>),
+/// and <c>ResumeHandshakeTests.Resuming_carries_over_the_original_sessions_token_and_round_trip_state</c>
+/// (issue 5, session_token/round_trip_index/round_trip_token continuity). Measured directly the
+/// same way (temporarily asserting on <see cref="CountFloorEligibleDotnetReadyTestMethods"/>'s
+/// actual value at rebase time, not projected by arithmetic) -- **275**, reflecting whatever
+/// else had also landed on dev in the meantime on top of #237's 239. Raises the floor 239 to 275.
+///
+/// Issue #15 (PR #244, Rick's round-2 re-review): the supersede-close race fix (background close
+/// with a short timeout + a synchronous <c>SupersededFlag</c> gating tool dispatch, replacing the
+/// prior round's awaited-inline close that could still block the NEW connection's own forwarding
+/// against a non-draining stale peer) adds one new tagged scenario,
+/// <c>ResumeHandshakeTests.Resuming_from_a_still_attached_socket_whose_transport_cannot_drain_still_forwards_the_new_sockets_own_session_update_promptly</c>,
+/// alongside the pre-existing <c>Resuming_from_a_still_attached_socket_supersedes_it_with_4002</c>
+/// (kept as the simple well-behaved-peer baseline rather than overwritten, so 4002/CloseStatus
+/// coverage isn't lost). Measured directly the same way -- **276**. Raises the floor 275 to 276.
+///
+/// Rebase of #244 onto a since-advanced origin/dev (5 commits: the Browser conformance leg, a
+/// port-bind-race retry fix, the search-index C# port, an i18n deflake, and others) brought in
+/// other PRs' own newly-tagged <c>Dotnet=ready</c> rows on top of this branch's 276. Measured
+/// directly the same way (not projected by arithmetic) immediately after the rebase -- **286**.
+/// Raises the floor 276 to 286; this PR adds no new tagged rows of its own in this step, it is
+/// purely absorbing what had already landed on dev.
+///
+/// Issue #15 (PR #244, Rick's round-2 re-review, follow-up): CI run 37210749254 caught the
+/// background supersede-close itself racing a healthy stale peer -- the unconditional
+/// <c>staleCts?.Cancel()</c> in its <c>finally</c> block fired immediately after the 4002 close
+/// frame was sent, and .NET's <see cref="System.Net.WebSockets.WebSocket"/> cancellation semantics
+/// abort the *whole* socket (not just the pending call) when a token tied to an in-flight
+/// <c>ReceiveAsync</c> fires, so under real CPU scheduling pressure the cancel could occasionally
+/// win the race against the stale socket's own <c>ReceiveAsync</c> observing its peer's close
+/// handshake, leaving <c>CloseStatus</c> null instead of 4002. Fixed by waiting for the stale
+/// socket's <see cref="System.Net.WebSockets.WebSocket.State"/> to leave
+/// <c>Open</c>/<c>CloseSent</c> (bounded by the same close-timeout budget already used for the
+/// send) before ever cancelling its CTS -- the winner's own forwarding path is untouched and never
+/// waits on the loser, so widening <c>SupersededCloseTimeout</c> to 10s earlier does not reintroduce
+/// a stall. Reproduced the original race under genuine 24-core CPU saturation with the fix reverted
+/// (confirming the diagnosis), then confirmed 10/10 clean runs under the same load with the fix
+/// restored. This is a Backend.Tests-only unit-level fix (new coverage lives in
+/// <c>CloseSupersededStaleConnectionAsyncTests.Does_not_cancel_the_stale_cts_until_the_socket_settles_or_the_timeout_elapses</c>,
+/// not a Conformance scenario) and adds no new <c>Dotnet=ready</c>-tagged conformance rows of its
+/// own. Rebasing this step onto the latest origin/dev (dd06d562, bringing in #236's CASCADE
+/// processor, #234's frame dispatch, #233's log self-timestamping, and other PRs' own newly-tagged
+/// rows merged ahead of this branch) measured directly, not projected -- **293**. Raises the floor
+/// 286 to 293.
+///
 /// PR #253 review item 3 (rebasing onto the 256 baseline above, which already includes #236/#261/
 /// #263/#264): now that dev's own C# <c>CascadeProcessor</c> sanitizes <c>extension.set_voice</c>
 /// (#236's own review fix), the 4 <c>Scenarios/Cascade/CascadeMenuModeAndVoiceConformanceTests</c>
@@ -239,6 +292,18 @@ namespace Conformance.Tests;
 /// temporarily-assert-then-revert measurement technique as every prior round) gives **260**
 /// (256 + these 4), confirming the delta by direct count rather than arithmetic. This raises the
 /// floor 256 to 260.
+///
+/// Issue #15 (PR #244, merge reconciliation): the coordinator's merge of <c>origin/dev</c> into
+/// this branch (bringing in #253's 260-floor paragraph above alongside this branch's own
+/// pre-merge 293-floor paragraph further up) left the test method named
+/// <c>At_least_293_scenarios...</c> while asserting <c>count &gt;= 260</c> -- an interim
+/// placeholder the coordinator deliberately left for this session to correct by direct
+/// measurement rather than arithmetic. A fresh run of
+/// <see cref="CountFloorEligibleDotnetReadyTestMethods"/> on this branch tip, post-merge (same
+/// temporarily-assert-then-revert technique as every prior round), gives **297**, reflecting both
+/// this PR's own five #244-review rows and #253's four cascade rows landing on top of whatever
+/// else had merged to dev in the meantime. Raises the floor 260 to 297; test method and assertion
+/// renamed/updated to match.
 ///
 /// PR #266 merge with origin/dev (coordinator, 2026-10-05): with both #253's 4 cascade rows and
 /// this PR's auto-fill rows present, a fresh <c>Conformance.Tests.exe -list methods -trait
@@ -265,6 +330,10 @@ namespace Conformance.Tests;
 /// coverage in the first place, so the floor now reflects exactly the coverage the dotnet CI leg
 /// genuinely exercises. The method below is renamed to match (<c>At_least_265_...</c> -&gt;
 /// <c>At_least_262_...</c>) per this same issue's own item C.
+/// Issue #274 merge with origin/dev (coordinator, 2026-10-05): after #244 landed on dev (floor
+/// 302), a fresh <c>Conformance.Tests.exe -list methods -trait Dotnet=ready</c> on the merged tip
+/// lists 317 methods; minus the 18 <see cref="AuthRowGatedTypeNames"/> methods that gives <b>299</b>
+/// (follow-up C +1, follow-up E -4), the floor asserted below.
 /// </summary>
 public sealed class DotnetTraitCoverageTests
 {
@@ -287,18 +356,18 @@ public sealed class DotnetTraitCoverageTests
     };
 
     [Fact]
-    public void At_least_262_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
+    public void At_least_299_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
     {
         var count = CountFloorEligibleDotnetReadyTestMethods();
 
-        Assert.True(count >= 262,
-            $"Expected at least 262 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
+        Assert.True(count >= 299,
+            $"Expected at least 299 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
             $"and not unconditionally skip-gated by AuthRowCapability (the dotnet leg's " +
             $"`--filter \"{TraitName}={TraitValue}&Category!=Browser\"` baseline, minus the five " +
             "skip-only Scenarios/Auth classes -- see this class's own doc comment; " +
             $"docs/dotnet_mapping.md), but found {count}. If a tagged scenario was removed or " +
-            "renamed without a replacement, the dotnet CI leg silently lost coverage. 262 is a " +
-            "FRESH count (issue #274 follow-ups C and E), not " +
+            "renamed without a replacement, the dotnet CI leg silently lost coverage. 299 is a " +
+            "FRESH count (issue #274 C/E merged with origin/dev after #244, coordinator 2026-10-05), not " +
             "arithmetic -- re-measure with `Conformance.Tests.exe -list methods -trait " +
             "Dotnet=ready` minus the 18 AuthRowGatedTypeNames methods before raising this floor " +
             "again.");
