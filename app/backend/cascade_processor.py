@@ -586,6 +586,30 @@ class CascadeProcessor:
         state.messages.append(UserMessage(content=text))
         await self._run_turn_and_speak(ws, session_id, state)
 
+    async def _send_failed_response_done(self, ws: web.WebSocketResponse, response_id: str, message: str) -> None:
+        """#262: closes out a turn that failed (non-429) after `response.created` was already
+        sent, so the browser is never left thinking a response is still in progress. Shape
+        mirrors the Realtime API's own failed-response `response.done`
+        (`response.status == "failed"`, `response.status_details.error`) -- see rtmt.py's
+        `case "response.done":`, which only ever forwards upstream's own event verbatim and so
+        never needs to construct this shape itself -- so `useRealtime.tsx`'s shared
+        `onReceivedResponseDone` handler needs no cascade-specific branch, just a `status` check.
+        The plain `error` event mirrors rtmt.py's own `case "error":` passthrough (upstream
+        protocol errors reach the browser the same way)."""
+        await ws.send_json({
+            "type": "error",
+            "error": {"type": "server_error", "message": message},
+        })
+        await ws.send_json({
+            "type": "response.done",
+            "response": {
+                "id": response_id,
+                "status": "failed",
+                "status_details": {"type": "failed", "error": {"type": "server_error", "message": message}},
+                "output": [],
+            },
+        })
+
     async def _run_turn_and_speak(self, ws: web.WebSocketResponse, session_id: str, state: _CascadeSessionState) -> None:
         """Shared tail of both a guest turn and the connect-time greeting: run the chat-tool
         loop against whatever's already in `state.messages`, then speak the final answer.
@@ -599,6 +623,25 @@ class CascadeProcessor:
         except CascadeRateLimitExhausted:
             await ws.send_json({"type": "response.done", "response": {"id": response_id}})
             return
+        except asyncio.CancelledError:
+            raise  # barge-in: `_cancel_current_turn` owns this turn's cleanup, not us.
+        except Exception:
+            # #262: a non-429 chat-completion failure (e.g. a transient 500) used to propagate
+            # straight out of this method, through `_process_turn`/`_send_greeting`, into
+            # `_start_turn`/`_start_greeting`'s own `except Exception: logger.exception(...)` --
+            # which swallows it with NO `response.done` ever reaching the browser. The frontend
+            # had already flipped to "response in progress" on `response.created` above, with
+            # nothing left to ever flip it back: the mic stayed muted and the UI stuck, forever,
+            # on a turn that will never continue. Send a terminal `response.done` (same
+            # `status: "failed"` shape the Realtime API itself uses -- see rtmt.py's own
+            # passthrough of upstream's `response.done.response.status` -- so `useRealtime.tsx`'s
+            # shared handler needs no cascade-specific branch) plus a best-effort `error` event
+            # (mirrors rtmt.py's `case "error":` passthrough) for visibility. The 429 path (just
+            # above) and barge-in (just above) are both unaffected -- this `except` only ever
+            # reaches OTHER failures.
+            logger.exception("Cascade chat completion failed (session=%s)", session_id)
+            await self._send_failed_response_done(ws, response_id, "chat completion failed")
+            return
 
         if final_text:
             await ws.send_json({"type": "response.audio_transcript.delta", "delta": final_text})
@@ -606,8 +649,18 @@ class CascadeProcessor:
                 await self._with_rate_limit_retry(ws, session_id, lambda: self._speak(ws, final_text, state.voice), "text-to-speech")
             except CascadeRateLimitExhausted:
                 pass
+            except asyncio.CancelledError:
+                raise  # barge-in: same as above, `_cancel_current_turn` owns the cleanup.
             except Exception:
+                # #262: same gap as the chat-completion path above, for TTS -- previously this
+                # just logged and fell through to a NORMAL `response.done` below (no status, no
+                # error event), which happened to not hang the browser (the turn still formally
+                # ended) but silently hid a real TTS failure from the guest/frontend as if the
+                # turn had succeeded with no audio. Report it the same way chat-completion
+                # failures are now reported, instead of a quiet, misleading "success".
                 logger.exception("Cascade TTS failed (session=%s)", session_id)
+                await self._send_failed_response_done(ws, response_id, "text-to-speech failed")
+                return
 
         await ws.send_json({"type": "response.done", "response": {"id": response_id}})
 
@@ -680,10 +733,29 @@ class CascadeProcessor:
                 state.messages.append(AssistantMessage(content=content))
                 return content
 
+            pre_round_start = len(state.messages)
             state.messages.append(AssistantMessage(content=message.content, tool_calls=tool_calls))
             previous_item_id = new_middle_tier_item_id()
-            for tool_call in tool_calls:
-                await self._execute_tool_call(ws, session_id, state, tool_call, previous_item_id)
+            try:
+                for tool_call in tool_calls:
+                    await self._execute_tool_call(ws, session_id, state, tool_call, previous_item_id)
+            except BaseException:
+                # #247: a barge-in (`asyncio.CancelledError`, a `BaseException` -- never caught
+                # by `_execute_tool_call`'s own `except Exception`) or any other failure mid-round
+                # can leave some of this round's `tool_calls` ids answered (a `ToolMessage`
+                # appended) and others not. A chat API that sees an assistant `tool_calls` message
+                # without a matching `tool` message for EVERY id 400s the next request (this is
+                # exactly what the fake chat server in the conformance scenario enforces). Rather
+                # than (b) appending neutral placeholder `ToolMessage`s for the unanswered ids,
+                # truncate the whole round back out of history: (a) keeps the history simple --
+                # always either "fully pre-round" or "fully post-round", never partially
+                # answered -- and the next turn's model can always re-discover real-world state
+                # via `get_order` (the same tool-failure-recovery instruction `_execute_tool_call`
+                # already gives it), so nothing is actually lost. A tool that already mutated the
+                # order (e.g. `update_order`) keeps its real-world effect: `order_state_singleton`
+                # is a separate, session-scoped store untouched by this truncation.
+                del state.messages[pre_round_start:]
+                raise
 
         logger.warning("Cascade tool-call loop hit the %d-round cap without a final answer (session=%s)",
                         self._MAX_TOOL_ROUNDS, session_id)

@@ -22,6 +22,12 @@
          configured (docs/dotnet_mapping.md: azure-identity's DefaultAzureCredential ->
          Azure.Identity's DefaultAzureCredential, the same package family rtmt.py uses). -->
     <PackageVersion Include="Azure.Identity" Version="1.13.2" />
+    <!-- Issue #147 (ADR-002): Entra JwtBearer parity for app/backend-dotnet, matching
+         entra_auth.py's PyJWT/PyJWKClient-based validation (docs/dotnet_mapping.md). Version
+         pinned to the exact build already proven to restore/run against net11.0 in this
+         environment: see tests/conformance/Directory.Packages.props, where the same version
+         already validates against FakeEntraIssuer in FakeEntraIssuerJwtBearerValidationTests. -->
+    <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="11.0.0-rc.1.26425.128" />
     <!-- Test projects -->
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.10.0" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="4.0.0" />

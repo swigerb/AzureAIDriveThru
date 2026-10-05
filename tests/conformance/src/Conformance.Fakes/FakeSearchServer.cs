@@ -35,6 +35,23 @@ public sealed class FakeSearchServer : IAsyncDisposable
 
     public string? LastApiKeyHeader { get; private set; }
 
+    /// <summary>#247 conformance row: holds the NEXT `/indexes(...)/docs/search.post.search`
+    /// request's response until <see cref="ResponseGate.Release"/> is called -- same
+    /// event-driven gate idiom as <see cref="FakeChatCompletionsServer.HoldNextResponse"/>,
+    /// needed to simulate a `search` tool call that is still genuinely in flight when a real
+    /// barge-in lands mid-tool-execution-round (the actual #247 window: SOME of a round's tool
+    /// calls already answered, one still pending). If the client aborts the connection first
+    /// (a barge-in cancelling the awaiting call), the response is never written at all --
+    /// consumed by whichever request arrives next, one-shot.</summary>
+    public ResponseGate HoldNextResponse()
+    {
+        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Interlocked.Exchange(ref _pendingResponseGate, tcs);
+        return new ResponseGate(tcs);
+    }
+
+    private TaskCompletionSource? _pendingResponseGate;
+
     /// <summary>
     /// Issue #9 / harness follow-up #23: opt-in, one-shot field-name-mismatch simulation. When
     /// set to a field name (e.g. "sizes"), the *next* request whose `select` list contains that
@@ -73,6 +90,13 @@ public sealed class FakeSearchServer : IAsyncDisposable
     /// <see cref="RejectSelectFieldOnce"/> but it was never consumed by a matching request.</exception>
     public void AssertNoPendingOneShotSwitches()
     {
+        // Releases (not throws on) any gate a previous scenario armed via HoldNextResponse() and
+        // then never claimed with a matching request (e.g. it threw/asserted first) -- mirrors
+        // FakeChatCompletionsServer.Drain()'s own dangling-gate release, so a stale gate can never
+        // suspend an unrelated LATER scenario's own search request on a TaskCompletionSource
+        // nobody will ever release.
+        Interlocked.Exchange(ref _pendingResponseGate, null)?.TrySetResult();
+
         var pending = Volatile.Read(ref _rejectSelectFieldOnce);
         if (pending is not null)
         {
@@ -184,6 +208,19 @@ public sealed class FakeSearchServer : IAsyncDisposable
             };
             await context.Response.WriteAsync(errorBody.ToJsonString(), context.RequestAborted).ConfigureAwait(false);
             return;
+        }
+
+        var gate = Interlocked.Exchange(ref _pendingResponseGate, null);
+        if (gate is not null)
+        {
+            try
+            {
+                await gate.Task.WaitAsync(context.RequestAborted).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                return; // Client aborted (barge-in) before this held response was ever sent.
+            }
         }
 
         var matches = Filter(documents, searchText).Take(top);

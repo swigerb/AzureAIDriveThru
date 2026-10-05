@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using Conformance.Harness;
 using Xunit;
 
 namespace Conformance.Tests;
@@ -229,6 +230,58 @@ namespace Conformance.Tests;
 /// -trait Dotnet=ready</c> (279 methods) minus the 18 <see cref="AuthRowGatedTypeNames"/> methods
 /// -- a fresh reflection count, never arithmetic.
 ///
+/// Issue #147 (ADR-002, PR #226): app/backend-dotnet now enforces Entra JwtBearer authentication
+/// end to end (JwtBearer validation as a fallback authorization policy, the anonymous allow-list,
+/// `?access_token=` on `/realtime` only, and the layered session token's oid binding), so
+/// <see cref="Conformance.Harness.AuthRowCapability.DotnetEnforcesAuth"/> flips to true. Every
+/// method in the five previously skip-gated <c>Scenarios/Auth</c> classes (<c>AuthModeLaunchTests</c>,
+/// <c>AuthRowLoggingTests</c>, <c>AuthRowRealtimeTokenTests</c>, <c>AuthRowRestTokenTests</c>,
+/// <c>AuthRowSpecialCaseTests</c> -- 18 methods as of this PR's first commit) now produce a real
+/// pass/fail signal on the dotnet leg too (they already did on the python leg), so these methods
+/// count toward the floor for the first time -- see "Issue #147 round 4" below for the exact
+/// final count once this PR's own follow-up rounds (which add 3 more tagged, ungated rows to these
+/// same five classes) and the rebase onto PR #230's floor are both accounted for.
+///
+/// Issue #147 round 2 (coordinator note citing Rick's PR #226 review): the hard-coded
+/// <c>AuthRowGatedTypeNames</c> type-name exclusion list this class used to carry (removed by this
+/// round) required a human to remember to add/remove entries every time
+/// <see cref="Conformance.Harness.AuthRowCapability.DotnetEnforcesAuth"/> changed -- and nothing
+/// would fail loudly if they forgot, since this floor is only ever a lower bound: if that flag
+/// ever flipped back to false, these methods would silently start reporting Skipped again, and
+/// the raw count could still clear the (by-then-stale) floor purely from unrelated growth
+/// elsewhere, hiding the regression completely. Replaced with
+/// <see cref="Conformance.Harness.AuthRowCapabilityGatedAttribute"/>, declared directly on the five
+/// classes above: <see cref="CountFloorEligibleDotnetReadyTestMethods"/> now excludes a
+/// attribute-carrying class's methods only while
+/// <see cref="Conformance.Harness.AuthRowCapability.Enforces"/> actually resolves false for
+/// <c>"dotnet"</c> -- no separate list to keep in sync -- and the floor Fact additionally
+/// asserts <c>AuthRowCapability.Enforces("dotnet")</c> directly, so a regression on that one flag
+/// fails this test immediately and unambiguously, independent of how much slack the raw count
+/// happens to have from unrelated scenario growth.
+///
+/// Issue #147 round 4 (coordinator-directed rebase onto PR #230/#21's merged floor of 222): PR
+/// #230 and its round-2 follow-up landed first (see the two "Issue #21" paragraphs above), raising
+/// dev's own floor 204 -> 222 before this PR merged. Rebasing this PR's seven commits onto that
+/// base and re-running <see cref="CountFloorEligibleDotnetReadyTestMethods"/> (per the
+/// coordinator's explicit instruction to measure, not hand-compute) gives 248, not the naively
+/// expected 222 + 18 = 240, because of two compounding factors: (1) this PR's own two follow-up
+/// rounds (mirroring Python PR #222/#163's case-insensitive Bearer-scheme row, and PR #225/#223's
+/// two Row-12 case-insensitive-extension/dotfile-suffix rows) each already added their own tagged,
+/// ungated conformance methods to the same five previously-gated classes, raising their total from
+/// 18 to 21 (7+1+1+2+10 across <c>AuthModeLaunchTests</c>/<c>AuthRowLoggingTests</c>/
+/// <c>AuthRowRealtimeTokenTests</c>/<c>AuthRowRestTokenTests</c>/<c>AuthRowSpecialCaseTests</c>);
+/// and (2) dev's own non-Auth tagged-method count had already organically drifted 5 rows ahead of
+/// its own stated 222 floor by the time this PR rebased onto it (227, not 222) -- the exact same
+/// "floor is a lower bound, the real count can run ahead of it between raises" shape documented by
+/// the "Issue #21 'flip candidates to check early'" paragraph above (204 floor, 208 actual). So:
+/// 227 (dev's actual non-Auth count) + 21 (now-countable Auth rows) = 248, and the floor is set to
+/// that exact measured number, consistent with every prior raise in this class's history.
+///
+/// Per the "Issue #13 Wave 4/4b" note above, this PR re-measures the floor fresh at its own
+/// rebase time (onto the post-#241 `origin/dev`, which also enables the Browser conformance leg)
+/// rather than projecting by historical delta -- see "Issue #147 round 5 (Rick's security
+/// re-review, rebase onto #241)" below for the exact final measured count and its arithmetic.
+///
 /// Issue #15 (PR #244, C# sessions/resilience, rebased on top of #237's 239 baseline): Rick's #244
 /// review added five new tagged, ungated scenarios closing gaps his own review found --
 /// <c>RateLimitIdleInteractionTests.Repeated_guest_speech_keeps_the_session_alive_past_idle_timeout_seconds</c>
@@ -293,6 +346,29 @@ namespace Conformance.Tests;
 /// (256 + these 4), confirming the delta by direct count rather than arithmetic. This raises the
 /// floor 256 to 260.
 ///
+/// Issue #147 round 5 (Rick's security re-review of PR #226, 3 findings fixed): findings #2's
+/// FakeEntraIssuer/AuthRowCases additions (missing-nbf row, malformed-roles-shape row,
+/// malformed-scp-shape row -- 3 new <c>AuthRowTokenCase.All</c> entries, each run through
+/// <c>AuthRowRestTokenTests.Row_asserts_on_every_REST_path</c> and
+/// <c>AuthRowRealtimeTokenTests.Row_asserts_on_realtime</c>, i.e. 2 tagged methods x 3 new cases =
+/// 6, plus the existing per-row `Theory` methods now enumerating 3 more cases each counts those
+/// extra Theory instances individually since <see cref="CountFloorEligibleDotnetReadyTestMethods"/>
+/// counts distinct test cases, not just method declarations) plus unrelated organic growth
+/// elsewhere on `origin/dev` since the 260 measurement account for the remainder. Findings #1 and
+/// #3 (the JWKS/OIDC cooldown decorator and the LastKnownGoodLifetime shrink) are both covered at
+/// the Backend.Tests pipeline-integration level (<c>EntraPipelineCooldownTests</c>'s three
+/// scenarios: cold outage, warm-cache+forged-kid-flood, and key-rotation-after-LKG-expiry) rather
+/// than at this conformance level -- both require either a real 30s (finding #1) or real 300s
+/// (finding #3) wall-clock wait to observe the cooldown/LKG-expiry boundary for real against an
+/// external process's unmodifiable production `TimeSpan.FromSeconds(300)`/cooldown window, which
+/// is impractical for a CI-speed conformance suite; Backend.Tests can shrink both windows via an
+/// injectable <c>FakeTimeProvider</c>/constructor parameter instead. This mirrors the precedent
+/// already set for the cooldown gate itself when #223 first landed it. A fresh run of
+/// <see cref="CountFloorEligibleDotnetReadyTestMethods"/> on this branch tip (same
+/// temporarily-assert-then-revert measurement technique as every prior round -- assert/raise to an
+/// unreachable bound, read the actual count off the failure message, then set the real value)
+/// gives **281**. This raises the floor 260 to 281.
+///
 /// Issue #15 (PR #244, merge reconciliation): the coordinator's merge of <c>origin/dev</c> into
 /// this branch (bringing in #253's 260-floor paragraph above alongside this branch's own
 /// pre-merge 293-floor paragraph further up) left the test method named
@@ -310,42 +386,46 @@ namespace Conformance.Tests;
 /// Dotnet=ready</c> lists 283 methods; minus the 18 <see cref="AuthRowGatedTypeNames"/> methods
 /// that gives <b>265</b>, the floor asserted below. Any PR still rebasing on top of this MUST
 /// re-measure fresh at its own rebase time the same way, not add a historical delta to 265 blindly.
+///
+/// Issues #247/#262 (Summer, 2026-10-05): <c>CascadeConformanceTests</c> (already class-level
+/// <c>[Trait("Dotnet", "ready")]</c>) gained 3 new rows covering the barge-in-mid-tool-call-round
+/// truncation fix (#247) and the non-429 chat-completion/TTS failure-to-`response.done` fix
+/// (#262) -- verified green against the C# backend across 3 consecutive local runs with no
+/// flakiness (and against the Python backend the same way). A fresh <c>Conformance.Tests.exe
+/// -list methods -trait Dotnet=ready</c> lists 286 methods; minus the same 18 <see
+/// cref="AuthRowGatedTypeNames"/> methods gives <b>268</b>, the floor asserted below. This raises
+/// the floor 265 to 268.
 /// </summary>
 public sealed class DotnetTraitCoverageTests
 {
     private const string TraitName = "Dotnet";
     private const string TraitValue = "ready";
 
-    /// <summary>
-    /// Full names of the <c>Scenarios/Auth</c> test classes whose methods are unconditionally
-    /// skip-gated (see the class doc above) -- excluded from <see cref="CountFloorEligibleDotnetReadyTestMethods"/>
-    /// so this floor only ever counts methods that produce a real pass/fail signal on the dotnet
-    /// leg today.
-    /// </summary>
-    private static readonly HashSet<string> AuthRowGatedTypeNames = new(StringComparer.Ordinal)
-    {
-        "Conformance.Tests.Scenarios.Auth.AuthModeLaunchTests",
-        "Conformance.Tests.Scenarios.Auth.AuthRowLoggingTests",
-        "Conformance.Tests.Scenarios.Auth.AuthRowRealtimeTokenTests",
-        "Conformance.Tests.Scenarios.Auth.AuthRowRestTokenTests",
-        "Conformance.Tests.Scenarios.Auth.AuthRowSpecialCaseTests",
-    };
-
     [Fact]
-    public void At_least_302_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
+    public void At_least_326_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
     {
+        // Rick's PR #226 review: assert the capability directly, not just the derived count --
+        // see this class's own doc comment for why a bare ">= 222" check alone can't be trusted to
+        // catch this specific regression.
+        Assert.True(AuthRowCapability.Enforces("dotnet"),
+            "AuthRowCapability.Enforces(\"dotnet\") must stay true: flipping it back to false " +
+            "would silently move the 21 AuthRowCapabilityGated Scenarios/Auth test methods from " +
+            "Passed back to Skipped on the dotnet leg, and this floor's own count (which excludes " +
+            "AuthRowCapabilityGated classes whenever Enforces(\"dotnet\") is false) could still " +
+            "clear its lower bound from unrelated growth elsewhere, hiding the regression.");
+
         var count = CountFloorEligibleDotnetReadyTestMethods();
 
-        Assert.True(count >= 302,
-            $"Expected at least 302 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
+        Assert.True(count >= 326,
+            $"Expected at least 326 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
             $"and not unconditionally skip-gated by AuthRowCapability (the dotnet leg's " +
             $"`--filter \"{TraitName}={TraitValue}&Category!=Browser\"` baseline, minus the five " +
             "skip-only Scenarios/Auth classes -- see this class's own doc comment; " +
             $"docs/dotnet_mapping.md), but found {count}. If a tagged scenario was removed or " +
-            "renamed without a replacement, the dotnet CI leg silently lost coverage. 302 is a " +
-            "FRESH count (PR #244 merge with origin/dev after #266, coordinator 2026-10-05), not " +
+            "renamed without a replacement, the dotnet CI leg silently lost coverage. 326 is a " +
+            "FRESH count (#247/#262 merged with origin/dev after #226, coordinator 2026-10-05), not " +
             "arithmetic -- re-measure with `Conformance.Tests.exe -list methods -trait " +
-            "Dotnet=ready` minus the 18 AuthRowGatedTypeNames methods before raising this floor " +
+            "Dotnet=ready` minus the AuthRowCapabilityGated methods before raising this floor " +
             "again.");
     }
 
@@ -357,9 +437,11 @@ public sealed class DotnetTraitCoverageTests
     /// distinct data rows) whose effective Dotnet trait is "ready", combining method-level and
     /// class-level <c>[Trait]</c> attributes the same way xunit's own trait-based filtering does:
     /// a class-level trait applies to every test method declared in that class. Excludes any type
-    /// listed in <see cref="AuthRowGatedTypeNames"/>: those methods are unconditionally
-    /// <c>Assert.Skip</c>'d on the dotnet leg today (see this class's own doc comment), so they
-    /// never contribute a real pass/fail signal and must not count toward the coverage floor.
+    /// carrying <see cref="Conformance.Harness.AuthRowCapabilityGatedAttribute"/> while
+    /// <see cref="Conformance.Harness.AuthRowCapability.Enforces"/> resolves false for
+    /// <c>"dotnet"</c>: those methods are unconditionally <c>Assert.Skip</c>'d on the dotnet leg in
+    /// that state (see this class's own doc comment), so they never contribute a real pass/fail
+    /// signal and must not count toward the coverage floor.
     ///
     /// Issue #143/ADR-002 (R10): abstract types are skipped outright -- xunit never discovers an
     /// abstract class as a runnable test class in its own right, only its concrete subclasses --
@@ -378,7 +460,13 @@ public sealed class DotnetTraitCoverageTests
 
         foreach (var type in assembly.GetTypes())
         {
-            if (type.IsAbstract || (type.FullName is not null && AuthRowGatedTypeNames.Contains(type.FullName)))
+            if (type.IsAbstract)
+            {
+                continue;
+            }
+
+            if (type.IsDefined(typeof(AuthRowCapabilityGatedAttribute), inherit: true)
+                && !AuthRowCapability.Enforces("dotnet"))
             {
                 continue;
             }

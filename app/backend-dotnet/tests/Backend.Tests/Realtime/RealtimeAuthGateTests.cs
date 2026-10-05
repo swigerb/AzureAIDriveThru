@@ -127,6 +127,117 @@ public sealed class RealtimeAuthGateTests
         await AssertResponse(result!, StatusCodes.Status403Forbidden, "Origin not allowed");
     }
 
+    // ── Issue #147 (ADR-002): entra_mode forces the session-token check on, and additionally
+    // binds the token's oid to the Entra-validated principal's own oid. ─────────────────────────
+
+    [Fact]
+    public void Check_EntraMode_SessionTokenForced_EvenWhenConfigDisablesIt()
+    {
+        var security = SecurityConfigFor(allowedOrigins: [], requireSessionToken: false);
+
+        var result = RealtimeAuthGate.Check(
+            origin: string.Empty, host: Host, token: null,
+            security, tokenService: NewTokenService(), NullLogger.Instance, entraMode: true, principalOid: "oid-1");
+
+        Assert.NotNull(result);
+    }
+
+    [Fact]
+    public void Check_EntraMode_MatchingOid_Allows()
+    {
+        var security = SecurityConfigFor(allowedOrigins: [], requireSessionToken: false);
+        var tokenService = NewTokenService();
+        var token = tokenService.Create(oid: "33333333-3333-3333-3333-333333333333");
+
+        var result = RealtimeAuthGate.Check(
+            origin: string.Empty, host: Host, token,
+            security, tokenService, NullLogger.Instance,
+            entraMode: true, principalOid: "33333333-3333-3333-3333-333333333333");
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task Check_EntraMode_MismatchedOid_Returns401()
+    {
+        var security = SecurityConfigFor(allowedOrigins: [], requireSessionToken: false);
+        var tokenService = NewTokenService();
+        var token = tokenService.Create(oid: "33333333-3333-3333-3333-333333333333");
+
+        var result = RealtimeAuthGate.Check(
+            origin: string.Empty, host: Host, token,
+            security, tokenService, NullLogger.Instance,
+            entraMode: true, principalOid: "44444444-4444-4444-4444-444444444444");
+
+        Assert.NotNull(result);
+        await AssertResponse(result!, StatusCodes.Status401Unauthorized, "Invalid or expired token");
+    }
+
+    [Fact]
+    public async Task Check_EntraMode_TokenWithNoOid_Returns401()
+    {
+        // A token minted without an oid (e.g. pre-#147) must not satisfy the Entra-mode binding
+        // check even though it is otherwise structurally valid.
+        var security = SecurityConfigFor(allowedOrigins: [], requireSessionToken: false);
+        var tokenService = NewTokenService();
+        var token = tokenService.Create();
+
+        var result = RealtimeAuthGate.Check(
+            origin: string.Empty, host: Host, token,
+            security, tokenService, NullLogger.Instance,
+            entraMode: true, principalOid: "33333333-3333-3333-3333-333333333333");
+
+        Assert.NotNull(result);
+        await AssertResponse(result!, StatusCodes.Status401Unauthorized, "Invalid or expired token");
+    }
+
+    [Fact]
+    public void Check_DevelopmentMode_OidBindingNotEnforced()
+    {
+        // entraMode defaults to false (Development pass-through) -- the oid check must not run
+        // even if a principalOid happened to be passed in.
+        var security = SecurityConfigFor(allowedOrigins: [], requireSessionToken: false);
+        var tokenService = NewTokenService();
+        var token = tokenService.Create();
+
+        var result = RealtimeAuthGate.Check(
+            origin: string.Empty, host: Host, token,
+            security, tokenService, NullLogger.Instance, entraMode: false, principalOid: null);
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task Check_TokenRequired_MissingToken_SetsWwwAuthenticateBearerHeader()
+    {
+        // The pre-#147 implementation was missing this header on both the missing-token and
+        // oid-mismatch 401s; rtmt.py's _websocket_handler sets it on every 401 this gate raises.
+        var security = SecurityConfigFor(allowedOrigins: [], requireSessionToken: true);
+
+        var result = RealtimeAuthGate.Check(
+            origin: string.Empty, host: Host, token: null,
+            security, tokenService: NewTokenService(), NullLogger.Instance);
+
+        Assert.NotNull(result);
+        await AssertWwwAuthenticateBearer(result!);
+    }
+
+    [Fact]
+    public async Task Check_EntraMode_MismatchedOid_SetsWwwAuthenticateBearerHeader()
+    {
+        var security = SecurityConfigFor(allowedOrigins: [], requireSessionToken: false);
+        var tokenService = NewTokenService();
+        var token = tokenService.Create(oid: "33333333-3333-3333-3333-333333333333");
+
+        var result = RealtimeAuthGate.Check(
+            origin: string.Empty, host: Host, token,
+            security, tokenService, NullLogger.Instance,
+            entraMode: true, principalOid: "44444444-4444-4444-4444-444444444444");
+
+        Assert.NotNull(result);
+        await AssertWwwAuthenticateBearer(result!);
+    }
+
     private static SessionTokenService NewTokenService() => new(Secret);
 
     private static SecurityConfig NoAuthRequired() => SecurityConfigFor(allowedOrigins: [], requireSessionToken: false);
@@ -175,5 +286,20 @@ public sealed class RealtimeAuthGateTests
         context.Response.Body.Seek(0, SeekOrigin.Begin);
         using var reader = new StreamReader(context.Response.Body);
         Assert.Equal(expectedBody, await reader.ReadToEndAsync());
+    }
+
+    private static async Task AssertWwwAuthenticateBearer(IResult result)
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        var context = new DefaultHttpContext
+        {
+            RequestServices = services.BuildServiceProvider(),
+        };
+        context.Response.Body = new MemoryStream();
+
+        await result.ExecuteAsync(context);
+
+        Assert.Equal("Bearer", context.Response.Headers.WWWAuthenticate.ToString());
     }
 }
