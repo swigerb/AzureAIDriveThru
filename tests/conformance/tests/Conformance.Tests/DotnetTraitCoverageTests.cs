@@ -215,8 +215,20 @@ namespace Conformance.Tests;
 /// count, then reverting -- **256**. This matches the "+#226 = 256" projection from Rick's own
 /// earlier review round (#226's 18 Auth methods landing on top of the 238 baseline that included
 /// #235), now confirmed by direct measurement rather than arithmetic. This raises the floor 239 to
-/// 256. Any PR still rebasing on top of this MUST re-measure fresh at its own rebase time the same
-/// way, not add a historical delta to 256 blindly.
+/// 256.
+///
+/// Refs #76 remaining scope: adding <c>RealPackBundleAutoFillConformanceTests</c>'s three new
+/// tagged Theory methods plus <c>RealPackCapabilityCoverageTests</c>' three tagged Facts raises the
+/// fresh reflection count to 262. Any PR still rebasing on top of this MUST re-measure fresh at its
+/// own rebase time the same way, not add a historical delta to 262 blindly.
+///
+/// Rick's PR #266 review item 2 (required before approval): the duplicate
+/// <c>Every_real_pack_with_an_extra_item_has_an_extras_theory_row</c> Fact in
+/// <c>RealPackCapabilityCoverageTests</c> was removed (it verbatim-duplicated the Fact already
+/// owned by <c>RealPackExtrasCoverageTests</c>), dropping the floor-eligible count by exactly one
+/// method, 262 to <b>261</b>. Re-measured directly with <c>Conformance.Tests.exe -list methods
+/// -trait Dotnet=ready</c> (279 methods) minus the 18 <see cref="AuthRowGatedTypeNames"/> methods
+/// -- a fresh reflection count, never arithmetic.
 ///
 /// Issue #147 (ADR-002, PR #226): app/backend-dotnet now enforces Entra JwtBearer authentication
 /// end to end (JwtBearer validation as a fallback authorization policy, the anonymous allow-list,
@@ -303,6 +315,12 @@ namespace Conformance.Tests;
 /// temporarily-assert-then-revert measurement technique as every prior round -- assert/raise to an
 /// unreachable bound, read the actual count off the failure message, then set the real value)
 /// gives **281**. This raises the floor 260 to 281.
+///
+/// PR #266 merge with origin/dev (coordinator, 2026-10-05): with both #253's 4 cascade rows and
+/// this PR's auto-fill rows present, a fresh <c>Conformance.Tests.exe -list methods -trait
+/// Dotnet=ready</c> lists 283 methods; minus the 18 <see cref="AuthRowGatedTypeNames"/> methods
+/// that gives <b>265</b>, the floor asserted below. Any PR still rebasing on top of this MUST
+/// re-measure fresh at its own rebase time the same way, not add a historical delta to 265 blindly.
 /// </summary>
 public sealed class DotnetTraitCoverageTests
 {
@@ -310,7 +328,7 @@ public sealed class DotnetTraitCoverageTests
     private const string TraitValue = "ready";
 
     [Fact]
-    public void At_least_248_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
+    public void At_least_286_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
     {
         // Rick's PR #226 review: assert the capability directly, not just the derived count --
         // see this class's own doc comment for why a bare ">= 222" check alone can't be trusted to
@@ -324,14 +342,14 @@ public sealed class DotnetTraitCoverageTests
 
         var count = CountFloorEligibleDotnetReadyTestMethods();
 
-        Assert.True(count >= 281,
-            $"Expected at least 281 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
+        Assert.True(count >= 286,
+            $"Expected at least 286 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
             $"and not unconditionally skip-gated by AuthRowCapability (the dotnet leg's " +
             $"`--filter \"{TraitName}={TraitValue}&Category!=Browser\"` baseline, minus the five " +
             "skip-only Scenarios/Auth classes -- see this class's own doc comment; " +
             $"docs/dotnet_mapping.md), but found {count}. If a tagged scenario was removed or " +
-            "renamed without a replacement, the dotnet CI leg silently lost coverage. 281 is a " +
-            "FRESH count (Issue #147 round 5, Rick's security re-review fixes 1/2/3), not " +
+            "renamed without a replacement, the dotnet CI leg silently lost coverage. 286 is a " +
+            "FRESH count (merge with origin/dev after #266, coordinator 2026-10-05), not " +
             "arithmetic -- re-measure with `Conformance.Tests.exe -list methods -trait " +
             "Dotnet=ready` minus the AuthRowCapabilityGated methods before raising this floor " +
             "again.");

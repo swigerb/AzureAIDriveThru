@@ -11,7 +11,6 @@
   "policy": {
     "rejectForbidden": true,
     "rejectTransientDurableWrites": true,
-    "auditContent": false,
-    "auditMaxBytes": 0
+    "auditContent": false
   }
 }
