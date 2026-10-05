@@ -252,6 +252,10 @@ def _persona_detail_body(persona: Persona, model_catalog: ModelCatalog) -> dict:
     so the ticket can render "Tax (N%)" -- it was previously never exposed on this endpoint at
     all (only consumed server-side, in `tools.py`'s order math)."""
     manifest = persona.manifest
+
+    def _api_machine_status(status: str) -> str:
+        return "down" if status == "down" else "up"
+
     return {
         "id": persona.id,
         "roleName": manifest.roleName,
@@ -262,6 +266,11 @@ def _persona_detail_body(persona: Persona, model_catalog: ModelCatalog) -> dict:
         "menuUrl": _persona_menu_url(persona),
         "models": _model_pipelines_body(manifest.models, model_catalog),
         "taxRate": manifest.pricing.taxRate,
+        "machines": {key: {"status": _api_machine_status(m.status), "label": m.label} for key, m in manifest.machines.items()},
+        "happyHour": (
+            {"startHour": hh.startHour, "endHour": hh.endHour}
+            if (hh := manifest.pricing.happyHour) is not None else None
+        ),
     }
 
 

@@ -1,8 +1,11 @@
 using System.Net.WebSockets;
 using System.Text.Json;
 using Backend.Configuration;
+using Backend.Ordering;
+using Backend.Personas;
 using Backend.Sessions;
 using Backend.Tests.Realtime;
+using Backend.Tests.TestSupport;
 using Backend.Tools;
 using Microsoft.Extensions.Time.Testing;
 
@@ -71,6 +74,27 @@ public sealed class SessionManagerTests
         mgr.CreateSession("s1", NewSocket(), "persona-a", "model-a", null, new FakeToolExecutor(), "alloy");
         mgr.SetVoice("s1", "verse");
         Assert.Equal("verse", mgr.GetVoice("s1"));
+    }
+
+    [Fact]
+    public void SetMachineStatus_and_SetHappyHourMode_delegate_to_the_sessions_order_state()
+    {
+        var time = new FakeTimeProvider();
+        var mgr = NewManager(time);
+        var persona = DeltaFixture.Load("test-alpha");
+        var toolExecutor = new OrderToolExecutor(
+            PersonaOrderFactory.CreateOrderState(persona),
+            PersonaOrderFactory.GetMenuCatalog(persona),
+            promptLoader: null,
+            maxItemQuantity: 10,
+            maxOrderItems: 25);
+
+        mgr.CreateSession("s1", NewSocket(), persona.Id, persona.Models.Realtime.Default, null, toolExecutor, persona.Voice.Default);
+
+        Assert.True(mgr.SetMachineStatus("s1", "soda_machine", "up"));
+        Assert.Equal("up", mgr.GetMachineOverrides("s1")["soda_machine"]);
+        Assert.True(mgr.SetHappyHourMode("s1", "on"));
+        Assert.Equal("on", mgr.GetHappyHourMode("s1"));
     }
 
     // ── Context monitor lifecycle (issue #13 tail) ────────────────────────────────────────────

@@ -38,7 +38,7 @@ import { loadDemoGuestScript } from "@/lib/demo/guestScript";
 import { browserDemoClock, runDemoScenes } from "@/lib/demo/demoRunner";
 import type { AssistantAudioState, DemoGuestLine, DemoGuestScript, DemoScene, DemoStatus, GuestTranscriptState } from "@/lib/demo/demoRunner";
 import { SyntheticGuestAudio } from "@/lib/demo/syntheticGuestAudio";
-import type { PersonaDetail, PersonaHeroSpotlight, PersonaTextRoles } from "@/types/persona";
+import type { PersonaDetail, PersonaHeroSpotlight, PersonaMachine, PersonaTextRoles } from "@/types/persona";
 
 import azureLogo from "@/assets/azurelogo.svg";
 
@@ -103,6 +103,10 @@ function useDemoData(personaId: string, enabled: boolean) {
 
 const DEMO_MODE_STORAGE_KEY = "demoModeEnabled";
 const RESUME_STORAGE_KEY_PREFIX = "drivethru.resumeId.";
+
+function resolveMachineStatuses(machines?: Record<string, PersonaMachine>) {
+    return Object.fromEntries(Object.entries(machines ?? {}).map(([machine, detail]) => [machine, detail.status])) as Record<string, "up" | "down">;
+}
 
 function demoResumeStorageKey(personaId?: string): string {
     return `${RESUME_STORAGE_KEY_PREFIX}${personaId ?? "default"}`;
@@ -250,6 +254,8 @@ function SonicApp() {
     const [demoModeEnabled, setDemoModeEnabled] = useState<boolean>(() => {
         return localStorage.getItem(DEMO_MODE_STORAGE_KEY) === "true";
     });
+    const [machineStatuses, setMachineStatuses] = useState<Record<string, "up" | "down">>(() => resolveMachineStatuses(current.machines));
+    const [happyHourMode, setHappyHourMode] = useState<"auto" | "on" | "off">(() => "auto");
     const [currentDemoScript, setCurrentDemoScript] = useState<DemoGuestScript | null>(null);
     const [demoUi, setDemoUi] = useState<DemoUiState>(IDLE_DEMO_UI);
     const demoAbortRef = useRef<AbortController | null>(null);
@@ -364,6 +370,11 @@ function SonicApp() {
         setMenuMode(resolved);
         localStorage.setItem(menuModeStorageKey(current.id), resolved);
     }, [current.id, current.features.dayparts]);
+
+    useEffect(() => {
+        setMachineStatuses(resolveMachineStatuses(current.machines));
+        setHappyHourMode("auto");
+    }, [current.id, current.machines, current.happyHour]);
 
     useEffect(() => {
         const controller = new AbortController();
@@ -501,8 +512,16 @@ function SonicApp() {
                 unmuteAudioRecording();
             }
         },
-        onReceivedExtensionMiddleTierToolResponse: ({ tool_name, tool_result }: ExtensionMiddleTierToolResponse) => {
-            assistantAudioRef.current = { ...assistantAudioRef.current, followUpExpected: true };
+        onReceivedExtensionMiddleTierToolResponse: ({ previous_item_id, tool_name, tool_result }: ExtensionMiddleTierToolResponse) => {
+            // issue 309 (R2): only a response to a REAL pending model tool call (previous_item_id set)
+            // will ever be followed by a round_trip_token that clears followUpExpected. A
+            // synthetic ticket refresh (e.g. the happy-hour mode flip push, sent with
+            // previous_item_id: null) is not a tool call completing, so it must not set this flag
+            // -- otherwise it would wedge mic/response state waiting for a round_trip_token that
+            // is never coming (Unity's issue 309 sanity-check note).
+            if (previous_item_id) {
+                assistantAudioRef.current = { ...assistantAudioRef.current, followUpExpected: true };
+            }
             if (tool_name === "update_order" || tool_name === "get_order" || tool_name === "reset_order") {
                 const orderSummary: OrderSummaryProps = JSON.parse(tool_result);
                 setOrder(orderSummary);
@@ -752,6 +771,12 @@ function SonicApp() {
             return;
         }
         realtime.startSession();
+        // issue 309 (R3): a freshly-started session opens with pack-default overrides server-side,
+        // but the Settings UI keeps showing whatever the operator had already chosen -- replay
+        // the current overrides right away so the new session's server-side state matches what
+        // the guest sees, the same place sendVerboseLogging already re-sends its own state here.
+        Object.entries(machineStatuses).forEach(([machine, status]) => realtime.setMachineStatus(machine, status));
+        realtime.setHappyHourMode(happyHourMode);
         if (verboseLogging) {
             realtime.sendVerboseLogging(true);
             if (logToFile) realtime.sendLogToFile(true);
@@ -803,6 +828,11 @@ function SonicApp() {
         await resetAudioPlayer();
 
         realtime.startSession();
+        // issue 309 (R3): see resumeConversation's identical replay above -- a fresh session (e.g.
+        // after "Start new order" ended the prior one) starts with pack-default overrides
+        // server-side, so replay whatever the operator already chose in the Settings UI.
+        Object.entries(machineStatuses).forEach(([machine, status]) => realtime.setMachineStatus(machine, status));
+        realtime.setHappyHourMode(happyHourMode);
         if (verboseLogging) {
             realtime.sendVerboseLogging(true);
             if (logToFile) {
@@ -1000,6 +1030,16 @@ function SonicApp() {
     const handleMenuModeChange = (mode: string) => {
         setMenuMode(mode);
         localStorage.setItem(menuModeStorageKey(current.id), mode);
+    };
+
+    const handleMachineStatusChange = (machine: string, status: "up" | "down") => {
+        setMachineStatuses(current => ({ ...current, [machine]: status }));
+        realtime.setMachineStatus(machine, status);
+    };
+
+    const handleHappyHourModeChange = (mode: "auto" | "on" | "off") => {
+        setHappyHourMode(mode);
+        realtime.setHappyHourMode(mode);
     };
 
     const ensureDemoAudio = () => {
@@ -1204,6 +1244,12 @@ function SonicApp() {
                                 modelId={modelId}
                                 onModelChange={handleModelChange}
                                 modelDisabled={isRecording || order.items.length > 0}
+                                machines={current.machines ?? {}}
+                                machineStatuses={machineStatuses}
+                                onMachineStatusChange={handleMachineStatusChange}
+                                happyHour={current.happyHour ?? null}
+                                happyHourMode={happyHourMode}
+                                onHappyHourModeChange={handleHappyHourModeChange}
                                 menuModeEnabled={current.features.dayparts}
                                 menuMode={menuMode}
                                 onMenuModeChange={handleMenuModeChange}

@@ -562,6 +562,11 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                 return;
             }
 
+            if (await TryHandleSessionOverrideExtensionMessageAsync(msgType, message, state.EffectiveSessionId, browserSocket, ct).ConfigureAwait(false))
+            {
+                return;
+            }
+
             if (msgType != "extension.set_voice")
             {
                 // set_verbose_logging/set_log_to_file (#13 scope cuts, see class doc) -- consumed
@@ -2113,6 +2118,98 @@ public sealed class RealtimeProcessor : IPipelineProcessor
 
     private static string? GetString(JsonObject? obj, string key) =>
         obj?[key] is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
+
+    /// <summary>Consumes extension messages that mutate only this session's own order settings
+    /// (machine/happy-hour overrides), never forwarding anything upstream to Azure OpenAI. Internal
+    /// so tests can exercise the exact drop/apply behaviour without a live websocket relay.
+    /// <paramref name="browserSocket"/> is optional (tests that don't care about the ticket push
+    /// pass none) -- production call sites always pass the live connection's own socket.</summary>
+    internal async Task<bool> TryHandleSessionOverrideExtensionMessageAsync(
+        string msgType, JsonObject message, string effectiveSessionId, WebSocket? browserSocket = null, CancellationToken ct = default)
+    {
+        if (_sessionManager is null)
+        {
+            return msgType is "extension.set_machine_status" or "extension.set_happy_hour_mode";
+        }
+
+        if (msgType == "extension.set_machine_status")
+        {
+            var machine = GetString(message, "machine");
+            var candidateStatus = GetString(message, "status");
+            var status = ClientServerFilter.SanitizeMachineStatus(candidateStatus);
+            if (string.IsNullOrEmpty(machine) || status is null
+                || !_sessionManager.SetMachineStatus(effectiveSessionId, machine, status))
+            {
+                _logger?.LogWarning(
+                    "Dropped extension.set_machine_status with unknown/invalid machine or status (machine={Machine}, status={Status}, session={SessionId})",
+                    machine, candidateStatus, effectiveSessionId);
+                return true;
+            }
+
+            _logger?.LogInformation(
+                "Applied extension.set_machine_status machine={Machine} status={Status} (session={SessionId})",
+                machine, status, effectiveSessionId);
+            return true;
+        }
+
+        if (msgType == "extension.set_happy_hour_mode")
+        {
+            var candidateMode = GetString(message, "mode");
+            var mode = ClientServerFilter.SanitizeHappyHourMode(candidateMode);
+            if (mode is null || !_sessionManager.SetHappyHourMode(effectiveSessionId, mode))
+            {
+                _logger?.LogWarning(
+                    "Dropped extension.set_happy_hour_mode with an invalid mode or unsupported persona (mode={Mode}, session={SessionId})",
+                    candidateMode, effectiveSessionId);
+                return true;
+            }
+
+            _logger?.LogInformation(
+                "Applied extension.set_happy_hour_mode mode={Mode} (session={SessionId})",
+                mode, effectiveSessionId);
+
+            // #309 (R2): the mode change just recomputed OrderState.Summary
+            // (OrderState.SetHappyHourMode -> UpdateSummary) -- push it to the browser right now,
+            // the same extension.middle_tier_tool_response shape a successful update_order/
+            // get_order tool call already pushes, so the on-screen ticket never lags a mode
+            // change until the guest's next, unrelated order action. previous_item_id is null
+            // (unlike every REAL tool-call push, which always carries the actual pending call's
+            // item id) because this isn't answering any model tool call at all -- the frontend's
+            // onReceivedExtensionMiddleTierToolResponse only arms the "a spoken follow-up is
+            // coming" flag when previous_item_id is present, specifically so this synthetic push
+            // can't wedge mic/response state waiting for a round_trip_token that will never
+            // arrive for it (Unity's #309 review note).
+            if (browserSocket is not null)
+            {
+                string? ticketJson = null;
+                try
+                {
+                    ticketJson = _sessionManager.GetOrderSummaryJson(effectiveSessionId);
+                }
+                catch (Exception ex)
+                {
+                    _logger?.LogWarning(ex,
+                        "Could not read order state to push a refreshed ticket after extension.set_happy_hour_mode (session={SessionId})",
+                        effectiveSessionId);
+                }
+
+                if (ticketJson is not null)
+                {
+                    await SendTextAsync(browserSocket, new JsonObject
+                    {
+                        ["type"] = "extension.middle_tier_tool_response",
+                        ["previous_item_id"] = null,
+                        ["tool_name"] = "get_order",
+                        ["tool_result"] = ticketJson,
+                    }.ToJsonString(), ct).ConfigureAwait(false);
+                }
+            }
+
+            return true;
+        }
+
+        return false;
+    }
 
     /// <summary>Monotonic "loop time" in seconds, mirroring Python's
     /// <c>asyncio.AbstractEventLoop.time()</c> -- immune to system clock adjustments. Issue #13

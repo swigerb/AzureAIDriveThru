@@ -519,6 +519,48 @@ class UpdateOrderAddTests(unittest.TestCase):
         self.assertEqual(len(summary.items), 0)
 
 
+class SessionMachineOverrideRejectionTests(unittest.TestCase):
+    def setUp(self):
+        self.catalog = PersonaCatalog.load(
+            personas_dir=FIXTURES_DIR,
+            enabled=["test-alpha", "test-beta"],
+            default_persona_id="test-alpha",
+        )
+        self._sessions_created: list[str] = []
+        self._happy_hour = patch("order_state.is_happy_hour", return_value=False)
+        self._happy_hour.start()
+        self.addCleanup(self._happy_hour.stop)
+        self.addCleanup(self._cleanup_sessions)
+
+    def _cleanup_sessions(self):
+        for sid in self._sessions_created:
+            order_state_singleton.delete_session(sid)
+
+    def _new_session(self, persona_id: str) -> str:
+        sid = order_state_singleton.create_session(persona=self.catalog.get(persona_id))
+        self._sessions_created.append(sid)
+        return sid
+
+    def test_down_pack_default_can_be_overridden_up_for_this_session(self):
+        sid = self._new_session("test-alpha")
+        self.assertTrue(order_state_singleton.set_machine_override(sid, "soda_machine", "up"))
+        result = _run(update_order({
+            "action": "add", "item_name": "Alpha Cola", "size": "small", "quantity": 1, "price": 1.99,
+        }, sid))
+        self.assertEqual(result.destination, ToolResultDirection.TO_BOTH)
+        self.assertEqual([item.item for item in order_state_singleton.get_order_items(sid)], ["Alpha Cola"])
+
+    def test_up_pack_default_can_be_overridden_down_for_this_session(self):
+        sid = self._new_session("test-beta")
+        self.assertTrue(order_state_singleton.set_machine_override(sid, "soda_machine", "down"))
+        result = _run(update_order({
+            "action": "add", "item_name": "Beta Root Beer", "size": "regular", "quantity": 1, "price": 2.29,
+        }, sid))
+        self.assertEqual(result.destination, ToolResultDirection.TO_SERVER)
+        self.assertEqual(result.text["reason"], "machine_unavailable")
+        self.assertEqual(order_state_singleton.get_order_items(sid), [])
+
+
 class NotOnMenuRejectionTests(unittest.TestCase):
     """#73 (ADR-001 decision 4: "No off-menu. If it's not on the menu in our source data, you
     cannot order it."). update_order's add path resolves item_name through the exact same

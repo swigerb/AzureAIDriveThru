@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using Conformance.Fakes;
 using Conformance.Harness;
 using Conformance.Tests.Scenarios.Ordering;
@@ -17,18 +19,14 @@ namespace Conformance.Tests;
 /// the bound session's own persona, not a shared module-level allow/block list, end to end
 /// through rtmt.py's real tool-call plumbing (not just the Python function called directly).
 ///
-/// Only this one row was added, not the full five-behavior matrix the Python test covers: the
-/// machine-OOS/search scenario would additionally need FakeSearchServer's fixed, Sonic-only
-/// MenuIndex.cs (personas/sonic/menu/menuItems.json, see RepoPaths.MenuItemsJsonPath) taught to
-/// seed per-persona documents for test-alpha/test-beta -- genuinely new harness infrastructure,
-/// not a "cheap" addition -- and greeting/nudge/role-name text has no wire-level surface distinct
-/// from what PersonaDiscoveryConformanceTests/ResumeRehydrationAndNudgeTests already cover
-/// structurally. invalid_modifiers is exercised the same way update_order's on-menu gate already
-/// is elsewhere in this suite and adds no new plumbing risk beyond what this row already proves.
-///
-/// Deliberately UNTAGGED, same reasoning as <see cref="PersonaDiscoveryConformanceTests"/> and
-/// <see cref="PersonaMismatchConformanceTests"/>: the dotnet backend skeleton doesn't implement
-/// the persona catalog yet.
+/// This file now covers the cheap wire-level rows from the Python isolation suite: extras gating
+/// plus the new session-scoped machine-override add-time behavior. It still does NOT duplicate the
+/// whole Python matrix: search-time machine OOS annotation would need FakeSearchServer's
+/// fixed-Sonic MenuIndex.cs taught to seed per-persona documents for test-alpha/test-beta, and the
+/// greeting/nudge/role-name checks have no distinct wire surface beyond what
+/// PersonaDiscoveryConformanceTests/ResumeRehydrationAndNudgeTests already cover structurally.
+/// invalid_modifiers is exercised the same way update_order's on-menu gate already is elsewhere in
+/// this suite and adds no new plumbing risk beyond what these rows already prove.
 /// </summary>
 [Collection(TwoPersonaConformanceCollection.Name)]
 public sealed class PersonaBusinessRuleConformanceTests(TwoPersonaConformanceFixture fixture)
@@ -50,6 +48,14 @@ public sealed class PersonaBusinessRuleConformanceTests(TwoPersonaConformanceFix
 
         return (browser, connection!, greetingRoundTrip!.Json.GetProperty("roundTripIndex").GetInt32());
     }
+
+    private static Task SendMachineStatusAsync(RealtimeBrowserClient browser, string machine, string status, CancellationToken ct) =>
+        browser.SendAsync(new JsonObject
+        {
+            ["type"] = "extension.set_machine_status",
+            ["machine"] = machine,
+            ["status"] = status,
+        }, ct);
 
     [Fact]
     [Trait("Dotnet", "ready")]
@@ -95,5 +101,39 @@ public sealed class PersonaBusinessRuleConformanceTests(TwoPersonaConformanceFix
             "call_beta_extra", addBase.RoundTripIndex, ct);
 
         Assert.Contains("Beta Cheese Sauce", acceptedExtra.ToolResultJson ?? "");
+    });
+
+    [Fact]
+    [Trait("Dotnet", "ready")]
+    public Task Machine_override_up_allows_a_pack_down_machine_item_to_be_added() => fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var (browser, connection, roundTripIndex) = await ConnectAndGreetAsPersonaAsync(fixture, TwoPersonaConformanceFixture.PersonaA, ct);
+        await using var _ = browser;
+
+        await SendMachineStatusAsync(browser, "soda_machine", "up", ct);
+        var accepted = await OrderScenarioHelpers.RunOrderStepsAsync(
+            connection, browser, [("add", "Alpha Cola", "small", 1, 1.99m)], roundTripIndex, ct, "call_alpha_machine_up");
+
+        Assert.Contains("Alpha Cola", accepted.ToolResultJson ?? "");
+    });
+
+    [Fact]
+    [Trait("Dotnet", "ready")]
+    public Task Machine_override_down_rejects_a_pack_up_machine_item_with_machine_unavailable() => fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var (browser, connection, roundTripIndex) = await ConnectAndGreetAsPersonaAsync(fixture, TwoPersonaConformanceFixture.PersonaB, ct);
+        await using var _ = browser;
+
+        await SendMachineStatusAsync(browser, "soda_machine", "down", ct);
+        var rejected = await OrderScenarioHelpers.CallToolAsync(
+            connection, browser, "update_order",
+            """{"action":"add","item_name":"Beta Root Beer","size":"regular","quantity":1,"price":2.29}""",
+            "call_beta_machine_down", roundTripIndex, ct, toClient: false);
+
+        var payload = JsonDocument.Parse(rejected.FunctionCallOutputText).RootElement;
+        Assert.Equal("machine_unavailable", payload.GetProperty("reason").GetString());
+        Assert.Equal("Beta Root Beer", payload.GetProperty("item_name").GetString());
     });
 }

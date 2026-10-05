@@ -62,7 +62,9 @@ const NEUTRAL_DETAIL: PersonaDetail = {
     // Issue 306: the default realtime model is gpt-realtime-2.1-mini, not gpt-realtime-2.1 --
     // this is only a brief placeholder shown before the real `/api/personas/{id}` detail loads.
     models: { realtime: { default: "gpt-realtime-2.1-mini", models: [{ id: "gpt-realtime-2.1-mini", label: "GPT Realtime 2.1 mini", reasoning: true }] } },
-    taxRate: "0"
+    taxRate: "0",
+    machines: {},
+    happyHour: null
 };
 
 interface PersonaContextValue {

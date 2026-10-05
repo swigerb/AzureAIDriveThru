@@ -52,6 +52,21 @@ export interface PersonaModels {
     cascade?: PersonaModelPipeline;
 }
 
+/** `GET /api/personas/{id}`'s `machines.<key>` entry. The backend normalizes pack-authored machine
+ * states to the public UI wire contract: `"down"` stays `"down"` and `"operational"` becomes
+ * `"up"`. */
+export interface PersonaMachine {
+    status: "up" | "down";
+    label: string;
+}
+
+/** `GET /api/personas/{id}`'s `happyHour`, mirroring `app/backend/persona_loader.py`'s
+ * `_HappyHour` pydantic model's public hour window fields. */
+export interface PersonaHappyHour {
+    startHour: number;
+    endHour: number;
+}
+
 /** `GET /api/personas/{id}` response body: the pack's raw `ui` block (theme/assets/strings/hero/
  * legal/title), spread flat, plus `voice`/`locales`/`features`/`menuUrl`/`models`. Asset paths
  * here (`assets.logo`/`assets.favicon`/`assets.apologyClip`) are the pack-relative, UNVERSIONED
@@ -85,6 +100,12 @@ export interface PersonaDetail {
     /** Issue 164 E2: the pack's own `pricing.taxRate` (e.g. "0.08"), forwarded here so the
      * ticket can render "Tax (N%)" instead of a bare "Tax". */
     taxRate: string;
+    /** Issue 305: pack-declared machine availability, normalized to the public `"up"`/`"down"`
+     * wire contract. Empty when the persona declares no machine-specific operational toggles. */
+    machines: Record<string, PersonaMachine>;
+    /** Issue 305: optional happy-hour window from `app/backend/persona_loader.py`'s
+     * `_HappyHour` (`pricing.happyHour`); `null` means this pack has no happy-hour control. */
+    happyHour: PersonaHappyHour | null;
     /** Issue 164 C3/E4: 'plain' (default when omitted) is the mono session-token bar most
      * originals used; 'chips' is one original's colored pill-chip bar that always stays
      * on its light background regardless of page theme. */

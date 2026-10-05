@@ -13,7 +13,7 @@ namespace Backend.Tools;
 /// "search" -- see <c>SearchTool</c>/whatever composes both into one <see cref="IToolExecutor"/>
 /// for a session's full tool set.
 /// </summary>
-public sealed class OrderToolExecutor : IToolExecutor
+public sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings
 {
     private readonly Ordering.OrderState _order;
     private readonly MenuCatalog _menu;
@@ -42,6 +42,16 @@ public sealed class OrderToolExecutor : IToolExecutor
     }
 
     public IReadOnlyList<string> ToolNames { get; } = ["update_order", "get_order", "reset_order"];
+
+    public bool SetMachineOverride(string machine, string status) => _order.SetMachineOverride(machine, status);
+
+    public IReadOnlyDictionary<string, string> GetMachineOverrides() => _order.GetMachineOverrides();
+
+    public string? EffectiveMachineStatus(string machine) => _order.EffectiveMachineStatus(machine);
+
+    public bool SetHappyHourMode(string mode) => _order.SetHappyHourMode(mode);
+
+    public string GetHappyHourMode() => _order.GetHappyHourMode();
 
     /// <summary>Issue #14, Rick's PR #149 R4 review: the current order summary, serialized the
     /// same way <c>get_order</c>/<c>reset_order</c> already do (<see cref="OrderSummaryJson"/>),
@@ -348,7 +358,7 @@ public sealed class OrderToolExecutor : IToolExecutor
     private ToolResult? CheckMachineAvailability(string itemName)
     {
         var machine = _menu.RequiresMachine(itemName);
-        if (string.IsNullOrEmpty(machine) || _menu.MachineStatus(machine) != "down")
+        if (string.IsNullOrEmpty(machine) || _order.EffectiveMachineStatus(machine) != "down")
         {
             return null;
         }

@@ -497,6 +497,22 @@ namespace Conformance.Tests;
 /// directly invoking this method via reflection) gives <b>351</b> (347 + 4 newly-tagged, now
 /// non-zero-row, <c>Discovered_*</c> methods), the floor asserted below.
 ///
+/// Issue #309 (Beth, R4, 2026-10-05): the floor had been bumped from 351 to 359 by a prior pass
+/// without a fresh direct re-measurement (its own comment admitted "this sandbox could not
+/// re-measure the live dotnet count, so CI must verify and adjust this floor if needed" -- Rick's
+/// #309 review flagged this as the exact kind of arithmetic guess this class exists to replace
+/// with a real number). This pass actually ran the documented measurement --
+/// `Conformance.Tests.exe -list methods -trait Dotnet=ready` (361 methods), minus the 21
+/// <see cref="AuthRowCapabilityGatedAttribute"/>-gated methods that are unconditionally skipped on
+/// the dotnet leg while <see cref="AuthRowCapability.Enforces"/> is false for `"dotnet"` and the
+/// zero-row <see cref="TheoryYieldsZeroRowsWhenSkipGated"/> methods, equivalently cross-checked by
+/// directly invoking <see cref="CountFloorEligibleDotnetReadyTestMethods"/> via a temporary
+/// diagnostic Fact (removed before commit) -- and got exactly <b>359</b>, confirming the existing
+/// floor was already correct (no C# parity work landed in this project added or removed any
+/// `Dotnet=ready`-tagged Conformance method; the issue #309 R1/R2 xUnit tests live in
+/// `app/backend-dotnet/tests/Backend.Tests`, a separate assembly this floor does not cover). The
+/// floor stays at 359, now backed by a real measurement instead of an unverified carry-forward.
+///
 /// Issue #315 (coordinator dispatch, Birdperson): the fake realtime upstream's
 /// <c>session.update</c> handling (<see cref="GaSessionValidator"/>) did not validate
 /// <c>tools[*].parameters</c> against a JSON-Schema metaschema the way the real API does, so a
@@ -598,7 +614,7 @@ public sealed class DotnetTraitCoverageTests
     }
 
     [Fact]
-    public void At_least_355_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
+    public void At_least_360_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
     {
         // Rick's PR #226 review: assert the capability directly, not just the derived count --
         // see this class's own doc comment for why a bare ">= 222" check alone can't be trusted to
@@ -612,7 +628,7 @@ public sealed class DotnetTraitCoverageTests
 
         var count = CountFloorEligibleDotnetReadyTestMethods();
 
-        Assert.True(count >= 355,
+        Assert.True(count >= 360,
             $"Expected at least 355 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")], " +
             $"not unconditionally skip-gated by AuthRowCapability, and (per issue #283) not a " +
             $"[Theory(SkipTestWithoutData = true)] whose own [MemberData] source resolves to zero " +
@@ -621,7 +637,7 @@ public sealed class DotnetTraitCoverageTests
             $"the dotnet leg's `--filter \"{TraitName}={TraitValue}\"` baseline, minus the five " +
             "skip-only Scenarios/Auth classes -- see this class's own doc comment; " +
             $"docs/dotnet_mapping.md), but found {count}. If a tagged scenario was removed or " +
-            "renamed without a replacement, the dotnet CI leg silently lost coverage. 355 is a " +
+            "renamed without a replacement, the dotnet CI leg silently lost coverage. 360 is a " +
             "FRESH count (issue #315, Birdperson: 354 + 1 for the new " +
             "PersonaSessionUpdateToolSchemaConformanceTests tagged Theory method), not arithmetic " +
             "projection -- re-measure with `Conformance.Tests.exe -list methods -trait " +
@@ -916,7 +932,7 @@ public sealed class DotnetTraitCoverageTests
     /// End-to-end mutation-check for the fail-closed guard itself (not just its resolution
     /// helper): an empty static property-backed <c>[MemberData]</c> source on a
     /// <c>[Theory(SkipTestWithoutData = true)]</c> method must be reported as yielding zero rows,
-    /// exactly the behavior <see cref="At_least_355_scenarios_are_tagged_dotnet_ready_and_not_skip_gated"/>
+    /// exactly the behavior <see cref="At_least_360_scenarios_are_tagged_dotnet_ready_and_not_skip_gated"/>
     /// relies on to exclude it from the floor. Reverting either the property-resolution branch
     /// above or this guard's own fail-closed wiring must turn this test red.
     /// </summary>

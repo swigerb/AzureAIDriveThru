@@ -77,6 +77,8 @@ public sealed class OrderState
     private readonly decimal _taxRate;
     private readonly bool _happyHourAnnounce;
     private readonly string _happyHourBanner;
+    private readonly Dictionary<string, string> _machineOverrides = new(StringComparer.Ordinal);
+    private string _happyHourMode = "auto";
 
     public OrderSummary Summary { get; private set; } = OrderSummary.Empty();
 
@@ -127,6 +129,13 @@ public sealed class OrderState
     /// in Python.</summary>
     public bool IsHappyHour()
     {
+        switch (_happyHourMode)
+        {
+            case "on":
+                return true;
+            case "off":
+                return false;
+        }
         if (_happyHourWindow is not { } window)
         {
             return false;
@@ -134,6 +143,54 @@ public sealed class OrderState
         var now = ConformanceHooks.Now(_timeZone);
         return window.StartHour <= now.Hour && now.Hour < window.EndHour;
     }
+
+    /// <summary>Adopts a per-session machine override for one of THIS persona's own declared
+    /// machine keys. Mirrors Python's session-scoped override store: unknown keys and statuses
+    /// outside the exact wire contract ("up"/"down") are rejected with no mutation.</summary>
+    public bool SetMachineOverride(string machine, string status)
+    {
+        if (_menu.MachineStatusOrNull(machine) is null || status is not ("up" or "down"))
+        {
+            return false;
+        }
+        _machineOverrides[machine] = status;
+        return true;
+    }
+
+    /// <summary>Returns the machine status this session should observe RIGHT NOW: the per-session
+    /// override if present, else the persona pack's own static machine status, else null for an
+    /// unknown machine key.</summary>
+    public string? EffectiveMachineStatus(string machine) =>
+        _machineOverrides.TryGetValue(machine, out var overrideStatus)
+            ? overrideStatus
+            : _menu.MachineStatusOrNull(machine);
+
+    /// <summary>Returns a defensive copy of this session's machine overrides for callers that need
+    /// session-id keyed reads without access to the session-owned <see cref="OrderState"/>.</summary>
+    public IReadOnlyDictionary<string, string> GetMachineOverrides() =>
+        new Dictionary<string, string>(_machineOverrides, StringComparer.Ordinal);
+
+    /// <summary>Adopts the happy-hour mode override for this session. A persona with no
+    /// configured happy hour can never accept one, matching Python's guard.</summary>
+    public bool SetHappyHourMode(string mode)
+    {
+        if (_happyHourWindow is null || mode is not ("auto" or "on" or "off"))
+        {
+            return false;
+        }
+        _happyHourMode = mode;
+        // #309 (R2): recompute `Summary` IMMEDIATELY, not only on the next (unrelated) order
+        // mutation -- mirrors order_state.py's set_happy_hour_mode -> self._update_summary()
+        // fix. `get_order` returns this cached summary verbatim while separately computing the
+        // happy-hour BANNER live (`HappyHourBanner` above) -- without this call the two could
+        // disagree (e.g. the banner says "HAPPY HOUR" but the cached total doesn't reflect the
+        // discount yet, or vice versa) until some other, unrelated order change happened to
+        // refresh the cache.
+        UpdateSummary();
+        return true;
+    }
+
+    public string GetHappyHourMode() => _happyHourMode;
 
     /// <summary>The happy-hour note tools/get_order should append for this session. It is present
     /// only when this persona announces happy hour, the window is active, and at least one current

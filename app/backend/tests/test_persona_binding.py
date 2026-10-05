@@ -21,11 +21,13 @@ test_app.py / test_performance.py respectively -- not duplicated here.
 """
 
 import asyncio
+import json
 import os
 import sys
 import unittest
 import urllib.parse
 from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 from zoneinfo import ZoneInfo
@@ -219,6 +221,85 @@ class OrderStatePersonaBindingTests(unittest.TestCase):
             default_persona.get_default_persona().id,
         )
 
+    def test_machine_override_accepts_a_known_machine_and_applies_immediately(self):
+        sid = self._new_session(self.alpha)
+        self.assertEqual(order_state_singleton.effective_machine_status(sid, "soda_machine"), "down")
+        self.assertTrue(order_state_singleton.set_machine_override(sid, "soda_machine", "up"))
+        self.assertEqual(order_state_singleton.effective_machine_status(sid, "soda_machine"), "up")
+
+    def test_machine_override_rejects_an_unknown_machine_without_mutating_state(self):
+        sid = self._new_session(self.alpha)
+        self.assertFalse(order_state_singleton.set_machine_override(sid, "does_not_exist", "down"))
+        self.assertEqual(order_state_singleton.sessions[sid]["_machine_overrides"], {})
+        self.assertEqual(order_state_singleton.effective_machine_status(sid, "soda_machine"), "down")
+
+    def test_machine_override_rejects_an_invalid_status_without_mutating_state(self):
+        sid = self._new_session(self.beta)
+        self.assertFalse(order_state_singleton.set_machine_override(sid, "soda_machine", "operational"))
+        self.assertEqual(order_state_singleton.sessions[sid]["_machine_overrides"], {})
+        self.assertEqual(order_state_singleton.effective_machine_status(sid, "soda_machine"), "operational")
+
+    def test_happy_hour_mode_defaults_to_auto_and_honours_on_off_overrides(self):
+        sid = self._new_session(self.alpha)
+        self.assertEqual(order_state_singleton.get_happy_hour_mode(sid), "auto")
+        with patch("order_state.conformance_hooks.now", return_value=datetime(2026, 1, 1, 20, 0, tzinfo=ZoneInfo("America/Chicago"))):
+            self.assertFalse(order_state_singleton.is_happy_hour_for_session(sid))
+        self.assertTrue(order_state_singleton.set_happy_hour_mode(sid, "on"))
+        self.assertEqual(order_state_singleton.get_happy_hour_mode(sid), "on")
+        with patch("order_state.conformance_hooks.now", return_value=datetime(2026, 1, 1, 20, 0, tzinfo=ZoneInfo("America/Chicago"))):
+            self.assertTrue(order_state_singleton.is_happy_hour_for_session(sid))
+        self.assertTrue(order_state_singleton.set_happy_hour_mode(sid, "off"))
+        self.assertEqual(order_state_singleton.get_happy_hour_mode(sid), "off")
+        with patch("order_state.conformance_hooks.now", return_value=datetime(2026, 1, 1, 15, 0, tzinfo=ZoneInfo("America/Chicago"))):
+            self.assertFalse(order_state_singleton.is_happy_hour_for_session(sid))
+        self.assertTrue(order_state_singleton.set_happy_hour_mode(sid, "auto"))
+        self.assertEqual(order_state_singleton.get_happy_hour_mode(sid), "auto")
+        with patch("order_state.conformance_hooks.now", return_value=datetime(2026, 1, 1, 15, 0, tzinfo=ZoneInfo("America/Chicago"))):
+            self.assertTrue(order_state_singleton.is_happy_hour_for_session(sid))
+
+    def test_happy_hour_mode_is_rejected_for_a_persona_with_no_happy_hour(self):
+        sid = self._new_session(self.beta)
+        self.assertFalse(order_state_singleton.set_happy_hour_mode(sid, "on"))
+        self.assertEqual(order_state_singleton.get_happy_hour_mode(sid), "auto")
+
+    def test_set_happy_hour_mode_recomputes_order_summary_json_and_agrees_with_the_banner(self):
+        """#309 (R2): `set_happy_hour_mode` must refresh `order_summary_json` immediately --
+        `get_order` returns that CACHED json verbatim while separately computing the
+        happy-hour BANNER live (`get_happy_hour_banner_for_session`). Before this fix, only the
+        banner reacted to a mode change; the cached total/finalTotal stayed stale (whatever it
+        was before the mode flip) until some unrelated order mutation happened to refresh it --
+        so a guest could hear/see a banner claiming a discount that the total didn't reflect,
+        or vice versa."""
+        sid = self._new_session(self.alpha)
+        # Alpha Cola `requiresMachine: soda_machine`, which is "down" by alpha's own pack
+        # default -- override it Up first so the `add` below isn't itself rejected as
+        # machine_unavailable (an orthogonal concern to this test, #309 R1 above).
+        self.assertTrue(order_state_singleton.set_machine_override(sid, "soda_machine", "up"))
+        # Freeze the clock OUTSIDE alpha's happy-hour window (14-16) so "auto" mode naturally
+        # resolves to NOT-happy-hour -- isolates this test to the explicit mode toggle below,
+        # not the wall clock.
+        with patch("order_state.conformance_hooks.now", return_value=datetime(2026, 1, 1, 20, 0, tzinfo=ZoneInfo("America/Chicago"))):
+            _run(tools.update_order(
+                {"action": "add", "item_name": "Alpha Cola", "size": "small", "quantity": 1, "price": 1.99}, sid,
+            ))
+
+            # Turn happy hour ON.
+            self.assertTrue(order_state_singleton.set_happy_hour_mode(sid, "on"))
+            result_on = _run(tools.get_order({}, sid))
+            summary_on = json.loads(result_on.to_client_text())
+            # Alpha Cola is `happyHourDiscounted: true` with a 0.5 priceMultiplier (persona.json)
+            # -- the cached total must already reflect the 50%-off price, not the full price.
+            self.assertAlmostEqual(summary_on["finalTotal"], float(Decimal("1.99") * Decimal("0.5") * Decimal("1.05")), places=2)
+            self.assertIn("ALPHA HAPPY HOUR", result_on.text)
+
+            # Turn happy hour OFF -- both the cached total AND the banner must flip back
+            # together, immediately, with no other order mutation in between.
+            self.assertTrue(order_state_singleton.set_happy_hour_mode(sid, "off"))
+            result_off = _run(tools.get_order({}, sid))
+            summary_off = json.loads(result_off.to_client_text())
+            self.assertAlmostEqual(summary_off["finalTotal"], float(Decimal("1.99") * Decimal("1.05")), places=2)
+            self.assertNotIn("ALPHA HAPPY HOUR", result_off.text)
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # PER-SESSION BUSINESS RULES (Rick's PR #102 review, round 3, required item 1): every
@@ -275,6 +356,65 @@ class PersonaBusinessRuleIsolationTests(unittest.TestCase):
         ))
         self.assertIn("OOS", result_a.text)
         self.assertNotIn("OOS", result_b.text)
+
+    # ── #309 (R1): search must use effective (override-applied) machine status ──────
+
+    def test_pack_down_machine_flipped_up_by_override_is_not_flagged_oos(self):
+        """alpha's `soda_machine` is "down" by pack default -- a search for its own session,
+        after that session's operator flips it Up via `set_machine_override`, must NOT carry
+        an OOS tag. Before this fix, `search()` read `menu.machine_status(machine)` directly
+        (the raw pack default), completely ignoring the session's own override."""
+        sid = self._new_session(self.alpha)
+        self.assertTrue(order_state_singleton.set_machine_override(sid, "soda_machine", "up"))
+        menu_a = order_state_singleton.get_menu_catalog(sid)
+        result = _run(tools.search(
+            _make_mock_search_client([{"id": "1", "name": "Alpha Cola", "category": "drinks", "sizes": "N/A"}]),
+            "cfg", "id", "description", "embedding", False, {"query": "cola"}, menu=menu_a, session_id=sid,
+        ))
+        self.assertNotIn("OOS", result.text)
+
+    def test_pack_up_machine_flipped_down_by_override_is_flagged_oos(self):
+        """beta's `soda_machine` is "operational" (i.e. not down) by pack default -- a search
+        for its own session, after that session's operator flips it Down via
+        `set_machine_override`, must carry an OOS tag."""
+        sid = self._new_session(self.beta)
+        self.assertTrue(order_state_singleton.set_machine_override(sid, "soda_machine", "down"))
+        menu_b = order_state_singleton.get_menu_catalog(sid)
+        result = _run(tools.search(
+            _make_mock_search_client([{"id": "1", "name": "Beta Root Beer", "category": "drinks", "sizes": "N/A"}]),
+            "cfg", "id", "description", "embedding", False, {"query": "root beer"}, menu=menu_b, session_id=sid,
+        ))
+        self.assertIn("OOS", result.text)
+
+    def test_search_cache_hit_reflects_the_hitting_sessions_own_override_not_the_warming_calls(self):
+        """#309 (R1): the search cache is keyed by persona_id/menu_mode/query -- NOT by session
+        id or override state -- so two different sessions of the SAME persona asking the exact
+        same query must each get OOS tagging for their OWN override state, never the OTHER
+        session's (whichever one happened to warm the cache first). Before this fix, the cache
+        stored the already-formatted/OOS-tagged ToolResult, so the second session's search
+        would have silently served the FIRST session's (stale, wrong) OOS tag."""
+        sid_warm = self._new_session(self.alpha)
+        self.assertTrue(order_state_singleton.set_machine_override(sid_warm, "soda_machine", "up"))
+        menu_a = order_state_singleton.get_menu_catalog(sid_warm)
+
+        # First call (cache MISS): session has the machine overridden Up -- no OOS tag, and
+        # this is what populates _search_cache for the "cola" query.
+        result_warm = _run(tools.search(
+            _make_mock_search_client([{"id": "1", "name": "Alpha Cola", "category": "drinks", "sizes": "N/A"}]),
+            "cfg", "id", "description", "embedding", False, {"query": "cola"}, menu=menu_a, session_id=sid_warm,
+        ))
+        self.assertNotIn("OOS", result_warm.text)
+
+        # Second call (cache HIT, same persona/query): a DIFFERENT session of the SAME persona,
+        # with NO override -- the pack default (down) must apply, i.e. OOS. A naive cache that
+        # stored the formatted ToolResult itself would wrongly return the first (non-OOS)
+        # result here.
+        sid_cold = self._new_session(self.alpha)
+        result_cold = _run(tools.search(
+            _make_mock_search_client([{"id": "1", "name": "Alpha Cola", "category": "drinks", "sizes": "N/A"}]),
+            "cfg", "id", "description", "embedding", False, {"query": "cola"}, menu=menu_a, session_id=sid_cold,
+        ))
+        self.assertIn("OOS", result_cold.text)
 
     # ── extras allow/block gate ─────────────────────────────────────────────────
 
@@ -679,6 +819,34 @@ class ApiPersonasResponseShapeTests(unittest.TestCase):
         self.assertNotIn("cascade", detail["models"])
         self.assertNotIn("local", detail["models"])
 
+    def test_persona_detail_includes_machines_and_happy_hour_fields(self):
+        alpha = self.catalog.get("test-alpha")
+        detail = self._detail_body(alpha)
+        self.assertEqual(
+            detail["machines"],
+            {"soda_machine": {"status": "down", "label": "Soda machine is down"}},
+        )
+        self.assertEqual(detail["happyHour"], {"startHour": 14, "endHour": 16})
+
+    def test_persona_detail_normalizes_operational_machine_status_to_up(self):
+        beta = self.catalog.get("test-beta")
+        detail = self._detail_body(beta)
+        self.assertEqual(
+            detail["machines"],
+            {"soda_machine": {"status": "up", "label": "Soda machine is down"}},
+        )
+        self.assertIsNone(detail["happyHour"])
+
+    def test_persona_detail_reports_empty_machines_and_null_happy_hour_when_absent(self):
+        zeta_catalog = PersonaCatalog.load(
+            personas_dir=FIXTURES_DIR,
+            enabled=["test-zeta"],
+            default_persona_id="test-zeta",
+        )
+        detail = self._detail_body(zeta_catalog.get("test-zeta"))
+        self.assertEqual(detail["machines"], {})
+        self.assertIsNone(detail["happyHour"])
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # PERSONA ASSET + MENU.JSON ROUTES (issue #74, design doc section 5.2, Rick's PR #102
@@ -974,6 +1142,74 @@ class PersonaWebSocketHandlerTests(_RealtimeHarness):
         self.assertEqual(persona_ids, {"test-alpha", "test-beta"})
         await browser_a.close()
         await browser_b.close()
+
+    async def test_machine_status_extension_updates_only_this_sessions_override(self):
+        browser = await self.client.ws_connect("/realtime?persona=test-alpha")
+        await self._until(lambda: self.rtmt._sessions.active_session_count >= 1)
+        await self._until(lambda: len(self._session_updates()) >= 1)
+        sid = next(iter(self.rtmt._sessions._session_map.values()))
+        before = len(self._session_updates())
+        await browser.send_json({"type": "extension.set_machine_status", "machine": "soda_machine", "status": "up"})
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(self._session_updates()), before)
+        self.assertEqual(order_state_singleton.effective_machine_status(sid, "soda_machine"), "up")
+        await browser.close()
+
+    async def test_unknown_machine_override_is_dropped_with_a_warning(self):
+        browser = await self.client.ws_connect("/realtime?persona=test-alpha")
+        await self._until(lambda: self.rtmt._sessions.active_session_count >= 1)
+        sid = next(iter(self.rtmt._sessions._session_map.values()))
+        with self.assertLogs(rtmt.logger, level="WARNING") as logs:
+            await browser.send_json({"type": "extension.set_machine_status", "machine": "unknown_machine", "status": "up"})
+            await asyncio.sleep(0.1)
+        self.assertTrue(any("extension.set_machine_status" in line for line in logs.output))
+        self.assertEqual(order_state_singleton.sessions[sid]["_machine_overrides"], {})
+        await browser.close()
+
+    async def test_invalid_machine_status_override_is_dropped_with_a_warning(self):
+        browser = await self.client.ws_connect("/realtime?persona=test-alpha")
+        await self._until(lambda: self.rtmt._sessions.active_session_count >= 1)
+        sid = next(iter(self.rtmt._sessions._session_map.values()))
+        with self.assertLogs(rtmt.logger, level="WARNING") as logs:
+            await browser.send_json({"type": "extension.set_machine_status", "machine": "soda_machine", "status": "broken"})
+            await asyncio.sleep(0.1)
+        self.assertTrue(any("extension.set_machine_status" in line for line in logs.output))
+        self.assertEqual(order_state_singleton.sessions[sid]["_machine_overrides"], {})
+        await browser.close()
+
+    async def test_happy_hour_mode_extension_updates_only_this_sessions_mode(self):
+        browser = await self.client.ws_connect("/realtime?persona=test-alpha")
+        await self._until(lambda: self.rtmt._sessions.active_session_count >= 1)
+        await self._until(lambda: len(self._session_updates()) >= 1)
+        sid = next(iter(self.rtmt._sessions._session_map.values()))
+        before = len(self._session_updates())
+        await browser.send_json({"type": "extension.set_happy_hour_mode", "mode": "on"})
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(self._session_updates()), before)
+        self.assertEqual(order_state_singleton.get_happy_hour_mode(sid), "on")
+        await browser.close()
+
+    async def test_invalid_happy_hour_mode_is_dropped_with_a_warning(self):
+        browser = await self.client.ws_connect("/realtime?persona=test-alpha")
+        await self._until(lambda: self.rtmt._sessions.active_session_count >= 1)
+        sid = next(iter(self.rtmt._sessions._session_map.values()))
+        with self.assertLogs(rtmt.logger, level="WARNING") as logs:
+            await browser.send_json({"type": "extension.set_happy_hour_mode", "mode": "maybe"})
+            await asyncio.sleep(0.1)
+        self.assertTrue(any("extension.set_happy_hour_mode" in line for line in logs.output))
+        self.assertEqual(order_state_singleton.get_happy_hour_mode(sid), "auto")
+        await browser.close()
+
+    async def test_happy_hour_mode_is_rejected_for_a_persona_without_happy_hour(self):
+        browser = await self.client.ws_connect("/realtime?persona=test-beta")
+        await self._until(lambda: self.rtmt._sessions.active_session_count >= 1)
+        sid = next(iter(self.rtmt._sessions._session_map.values()))
+        with self.assertLogs(rtmt.logger, level="WARNING") as logs:
+            await browser.send_json({"type": "extension.set_happy_hour_mode", "mode": "on"})
+            await asyncio.sleep(0.1)
+        self.assertTrue(any("extension.set_happy_hour_mode" in line for line in logs.output))
+        self.assertEqual(order_state_singleton.get_happy_hour_mode(sid), "auto")
+        await browser.close()
 
 
 class MenuModeWebSocketHandlerTests(_RealtimeHarness):

@@ -85,7 +85,11 @@ export type ResponseDone = {
 // Represents a response from an extension middle tier tool
 export type ExtensionMiddleTierToolResponse = {
     type: "extension.middle_tier_tool_response";
-    previous_item_id: string;
+    // issue 309 (R2): null for a synthetic ticket refresh pushed by the backend after something other
+    // than a real pending tool call (e.g. a happy-hour mode flip) -- there is no previous model
+    // item to anchor to, and no round_trip_token will ever follow to clear followUpExpected, so
+    // callers must not treat a null previous_item_id as "a response is still expected".
+    previous_item_id: string | null;
     tool_name: string;
     tool_result: string; // JSON string that needs to be parsed into ToolResult
 };
