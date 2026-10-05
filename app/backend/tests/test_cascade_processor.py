@@ -973,6 +973,26 @@ class EchoCooldownTests(unittest.TestCase):
         self.assertIsNone(event)
         self.assertFalse(detector.is_speaking)
 
+    def test_suppressed_audio_is_dropped_and_never_reaches_the_stt_buffer(self):
+        detector = _TurnDetector(threshold=0.5, silence_duration_ms=200, sample_rate=24000)
+        detector.start_echo_cooldown(1.0, now=0.0)
+        detector.feed(_loud_tone(2400), now=0.5)
+        detector.feed(_silence(2400), now=0.9)
+        self.assertEqual(detector.take_buffer(), b"")
+        self.assertEqual(detector.feed(_loud_tone(2400), now=1.0), "speech_started")
+        self.assertEqual(len(detector.take_buffer()), 2400 * 2)
+
+    def test_guest_reply_right_after_playback_plus_tail_is_accepted(self):
+        detector = _TurnDetector(threshold=0.5, silence_duration_ms=200, sample_rate=24000)
+        detector.start_echo_cooldown(2.0 + 0.3, now=0.0)
+        self.assertEqual(detector.feed(_loud_tone(2400), now=2.5), "speech_started")
+
+    def test_echo_tail_is_capped_at_300ms_and_zero_is_passed_through_as_disabled(self):
+        from cascade_processor import _echo_tail_seconds
+        self.assertEqual(_echo_tail_seconds(1.5), 0.3)
+        self.assertEqual(_echo_tail_seconds(0.1), 0.1)
+        self.assertEqual(_echo_tail_seconds(0), 0.0)
+
     def test_real_barge_in_is_still_detected_once_the_cooldown_window_ends(self):
         detector = _TurnDetector(threshold=0.5, silence_duration_ms=200, sample_rate=24000)
         detector.start_echo_cooldown(1.0, now=0.0)
@@ -1028,13 +1048,37 @@ class SpeakArmsEchoCooldownTests(unittest.IsolatedAsyncioTestCase):
         state.detector = _TurnDetector(threshold=0.5, silence_duration_ms=200, sample_rate=24000)
 
         with patch("cascade_processor.aiohttp.ClientSession", return_value=fake_session_cm), \
-             patch("cascade_processor._ECHO_COOLDOWN_SECONDS", 1.5):
+             patch("cascade_processor._ECHO_COOLDOWN_SECONDS", 0.3):
             with patch.object(state.detector, "start_echo_cooldown") as mock_start:
                 await processor._speak(ws, "hello", state)
 
         mock_start.assert_called_once()
         (duration_seconds,), _ = mock_start.call_args
-        self.assertAlmostEqual(duration_seconds, 1.0 + 1.5)
+        self.assertAlmostEqual(duration_seconds, 1.0 + 0.3)
+
+    async def test_speak_with_zero_configured_cooldown_never_arms_suppression(self):
+        processor = _make_processor({})
+        processor.model_catalog.deployment_for.return_value = "tts-deploy"
+        processor._bearer_token = AsyncMock(return_value="tok")
+        fake_resp = MagicMock()
+        fake_resp.raise_for_status = MagicMock()
+        fake_resp.read = AsyncMock(return_value=b"\x00\x00" * _AUDIO_SAMPLE_RATE)
+        fake_post_cm = MagicMock()
+        fake_post_cm.__aenter__ = AsyncMock(return_value=fake_resp)
+        fake_post_cm.__aexit__ = AsyncMock(return_value=False)
+        fake_http = MagicMock()
+        fake_http.post = MagicMock(return_value=fake_post_cm)
+        fake_session_cm = MagicMock()
+        fake_session_cm.__aenter__ = AsyncMock(return_value=fake_http)
+        fake_session_cm.__aexit__ = AsyncMock(return_value=False)
+        ws = _make_mock_ws()
+        state = _CascadeSessionState(session_id="s1", persona_id="p", deployment="d", voice="marin")
+        state.detector = _TurnDetector(threshold=0.5, silence_duration_ms=200, sample_rate=24000)
+        with patch("cascade_processor.aiohttp.ClientSession", return_value=fake_session_cm), \
+             patch("cascade_processor._ECHO_COOLDOWN_SECONDS", 0.0):
+            with patch.object(state.detector, "start_echo_cooldown") as mock_start:
+                await processor._speak(ws, "hello", state)
+        mock_start.assert_not_called()
 
     async def test_speak_is_a_noop_on_the_cooldown_when_state_has_no_detector(self):
         """`_run_turn_and_speak` is also reachable from a code path with no detector attached
@@ -1355,6 +1399,35 @@ class NudgeSchedulingTests(unittest.IsolatedAsyncioTestCase):
 
         processor._run_turn_and_speak.assert_awaited_once_with(ws, "s1", state)
         self.assertEqual(state.messages[-1].content, "ask if they need anything else")
+
+    async def test_a_firing_nudge_is_tracked_as_the_current_turn_so_barge_in_cancels_and_awaits_it(self):
+        processor = _make_processor({})
+        processor._sessions.nudge_after_seconds = 0.01
+        processor._sessions.nudge_text.return_value = "anything else?"
+        started = asyncio.Event()
+        cancelled = []
+
+        async def slow_turn(*_a):
+            started.set()
+            try:
+                await asyncio.sleep(100)
+            except asyncio.CancelledError:
+                cancelled.append(True)
+                raise
+
+        processor._run_turn_and_speak = slow_turn
+        ws = _make_mock_ws()
+        state = _CascadeSessionState(session_id="s1", persona_id="p", deployment="d", voice="marin")
+        processor._schedule_nudge(ws, "s1", state)
+        nudge = state.nudge_task
+        await started.wait()
+        self.assertIs(state.current_turn_task, nudge)
+        self.assertIsNone(state.nudge_task)
+
+        await processor._cancel_current_turn(state, "barge-in")
+
+        self.assertTrue(nudge.done())
+        self.assertEqual(cancelled, [True])
 
     async def test_nudge_skips_firing_when_a_turn_is_still_in_flight(self):
         processor = _make_processor({})

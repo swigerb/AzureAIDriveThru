@@ -667,18 +667,18 @@ matches `realtime`'s observable behavior where the demo needs it:
 | Behavior | `realtime` | `cascade` |
 | --- | --- | --- |
 | Greeting on connect: the persona's `greeting.yaml`, spoken, with the same `response.*` frames | yes | yes |
-| Barge-in: a `speech_started` cancels the in-flight model call and speech; nothing more is sent for the cancelled turn | yes (upstream VAD) | yes (local VAD) |
+| Barge-in: a `speech_started` cancels the in-flight model call and speech; nothing more is sent for the cancelled turn | yes (upstream VAD) | yes (local VAD; mic audio is dropped only during the *estimated playback* of the assistant's own reply plus a 300ms tail, same as `realtime`'s `should_suppress_audio` while `ai_speaking`) |
 | Upstream failure is never silent | rate limit: `extension.rate_limited` | a 429 from chat, transcription or TTS: the same `extension.rate_limited` path |
 | Resume (grace hold, rehydration) | yes | yes (#126) |
 | Idle nudge | yes | yes (#126) |
-| Echo suppression after playback | yes | yes (#126) |
+| Echo suppression after playback | yes (delayed buffer clear; first guest frame after completion is forwarded, #187/#190) | yes (#126; same observable result, different mechanism -- see below) |
 
 Each "yes" on `cascade` has a conformance row (`tests/conformance/.../Scenarios/Cascade/`).
 
 **#126 landed:** `cascade` now shares `SessionManager`'s resume handshake (grace hold + rehydration), idle
 nudge, and echo-suppression cooldown with `realtime`, through the same injected `SessionManager` instance
-(and, on the .NET side, the same echo-cooldown duration) rather than a `cascade`-specific reimplementation.
-Both backends mirror `realtime`'s own semantics exactly:
+(and the same `audio.echo_cooldown_seconds` key) rather than a `cascade`-specific reimplementation.
+Both backends implement identical `cascade` semantics, and match `realtime`'s *observable* behaviour for resume and nudge; echo suppression matches its observable behaviour but not its mechanism (below):
 
 - **Resume** is honoured only as a connection's literal first client frame (a late `extension.resume` is
   rejected with `reason: "not_first_frame"`, mirroring `realtime`'s own `reject_late_resume`). A resume that
@@ -691,11 +691,24 @@ Both backends mirror `realtime`'s own semantics exactly:
   first `input_audio_buffer.append`/mic-restart after rehydration), fires once `nudge_after_seconds` later if
   the guest still hasn't spoken, and is cancelled by any barge-in or turn start -- same one-shot semantics as
   `realtime`'s `NudgeScheduler`, just driven by cascade's own turn-taking loop instead of an upstream relay.
-- **Echo suppression** arms a cooldown window (`echo_cooldown_seconds` beyond the TTS clip's own playback
-  duration) after every spoken turn -- greeting included -- so the guest's own device audio echoing the
-  carhop's voice back is swallowed as silence rather than mistaken for a fresh turn. This is unconditional
-  (not gated behind resume being enabled), matching the stated rationale that echo is a room/device-acoustic
-  property independent of which pipeline answered.
+- **Echo suppression** (Rick's PR #290 review, items 1/3/5) drops the guest's mic audio only while the reply is
+  *estimated* to be playing on the guest's speaker (`len(pcm) / (24000 * 2)` seconds from when the TTS audio
+  arrives, greeting included) plus an acoustic tail of `min(audio.echo_cooldown_seconds, 0.3)` seconds (300ms: the
+  50-200ms speaker-to-mic latency decision recorded for realtime). Dropped means *dropped*: those frames never
+  enter `TurnDetector`'s STT buffer and never fire `speech_started`, so the assistant's own echo is never
+  uploaded to transcription. Guest audio at or after the deadline is accepted immediately, matching
+  `realtime`'s #187/#190 behaviour (a short "yes"/"no thanks" right after playback is never swallowed).
+  `realtime`'s default 1.5s is *not* used as a hard mute here: there it only delays an upstream buffer clear,
+  whereas cascade has no upstream buffer, so a 1.5s hard mute would reintroduce #187. **Zero cooldown:**
+  `audio.echo_cooldown_seconds: 0` disables cascade echo suppression entirely (no playback window and no tail) in
+  *both* backends, so the same config value gives the same behaviour. It applies to every spoken turn and is
+  not gated behind resume being enabled.
+- **Barge-in ordering** is identical on the wire in both backends: the in-flight turn (including a fired resume
+  nudge, which is registered as the current turn) is cancelled and fully drained *before* `speech_started` is
+  sent, so no stale audio follows it, and the guest's next turn only starts after that drain. On .NET (PR #290,
+  `507e2c1`) this is non-blocking: the receive loop detaches and cancels the turn synchronously and keeps
+  reading, and a chained tail sends `speech_started` after the cancelled turn drains (avoiding a write/write
+  deadlock with a backpressured browser); Python's single-threaded asyncio awaits the cancelled task inline.
 
 Python: `cascade_processor.py`'s `_negotiate_session`/`_schedule_nudge`/`_cancel_nudge`/`_send_nudge`, and
 `_TurnDetector`'s cooldown. .NET: `CascadeProcessor.cs`'s `NegotiateResumeAsync`/`ScheduleNudge`/`CancelNudge`

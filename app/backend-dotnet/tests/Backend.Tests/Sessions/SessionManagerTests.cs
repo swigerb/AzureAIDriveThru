@@ -101,21 +101,6 @@ public sealed class SessionManagerTests
         Assert.Null(mgr.GetContextMonitor("s1"));
     }
 
-    [Fact]
-    public void CreateContextMonitor_StandaloneForCascade_IsIndependentOfTheFullSessionRegistry()
-    {
-        // The standalone API remains valid for any caller that wants a ContextMonitor without a
-        // full SessionRecord; it should stay independent of CreateSession/EndSession.
-        var mgr = NewManager(new FakeTimeProvider());
-        mgr.CreateContextMonitor("cascade-session");
-        var monitor = mgr.GetContextMonitor("cascade-session");
-        Assert.NotNull(monitor);
-        monitor!.AddContent("hello world");
-        Assert.True(monitor.EstimatedTokens > 0);
-        mgr.RemoveContextMonitor("cascade-session");
-        Assert.Null(mgr.GetContextMonitor("cascade-session"));
-    }
-
     // ── Resume credential: issuance, single-use, disabled ─────────────────────────────────────
 
     [Fact]

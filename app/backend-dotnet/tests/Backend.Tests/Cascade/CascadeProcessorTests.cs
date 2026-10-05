@@ -1033,10 +1033,10 @@ public sealed class CascadeProcessorTests
     /// record_turn + issue_resume_id + detach).</summary>
     private static string SeedDetachedResumableSession(
         SessionManager sessionManager, string priorSessionId, Persona persona, string modelId,
-        bool conversationStarted = true)
+        bool conversationStarted = true, IToolExecutor? toolExecutor = null)
     {
         var priorSocket = new DelayedFakeWebSocket([], ReceiveDelay);
-        sessionManager.CreateSession(priorSessionId, priorSocket, persona.Id, modelId, null, new StubToolExecutor(["search"]), "marin");
+        sessionManager.CreateSession(priorSessionId, priorSocket, persona.Id, modelId, null, toolExecutor ?? new StubToolExecutor(["search"]), "marin");
         if (conversationStarted)
         {
             sessionManager.MarkConversationStarted(priorSessionId);
@@ -1311,6 +1311,115 @@ public sealed class CascadeProcessorTests
         Assert.DoesNotContain(
             requestBody["messages"]!.AsArray(),
             m => m!["role"]!.GetValue<string>() == "user" && m["content"]!.GetValue<string>() == SessionManager.BuildNudgeText("delta-runner"));
+    }
+
+    [Theory]
+    [InlineData(1.5, 0.3)]
+    [InlineData(0.1, 0.1)]
+    [InlineData(0.0, 0.0)]
+    [InlineData(-1.0, 0.0)]
+    public void EchoTailSeconds_IsCappedAt300ms_AndZeroStaysZeroMeaningDisabled(double configured, double expected) =>
+        Assert.Equal(expected, CascadeProcessor.EchoTailSeconds(configured));
+
+    [Fact]
+    public async Task RunSessionAsync_ZeroEchoCooldown_DisablesSuppression_SoImmediateGuestAudioIsDetected()
+    {
+        var (persona, loader) = LoadDeltaFixture();
+        var handler = new RoutingFoundryHandler()
+            .EnqueueChatMessage("assistant", "Welcome to Test Delta Meal Co.! What can I get started for you?")
+            .EnqueueSpeech([1, 2, 3, 4]);
+        var processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader, echoCooldownSeconds: 0);
+        var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
+        var socket = new DelayedFakeWebSocket(
+            [
+                (AppendFrame(Pcm16(20000, count: 10)), WebSocketMessageType.Text),
+                ([], WebSocketMessageType.Close),
+            ],
+            ReceiveDelay);
+
+        await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "echo-zero-sess", TestContext.Current.CancellationToken);
+
+        var types = socket.SentMessages.Where(m => m.MessageType == WebSocketMessageType.Text)
+            .Select(ParseSent).Select(f => f["type"]!.GetValue<string>()).ToList();
+        Assert.Contains("input_audio_buffer.speech_started", types);
+    }
+
+    [Fact]
+    public async Task RunSessionAsync_BargeInDuringANudgeMidToolRound_WaitsForTheNudgeBeforeSpeechStartedAndNextTurn()
+    {
+        var (persona, loader) = LoadDeltaFixture();
+        var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
+        var fakeTime = new FakeTimeProvider();
+        var sessionManager = NewSessionManager(fakeTime, nudgeAfterSeconds: 5);
+
+        var handler = new RoutingFoundryHandler()
+            .EnqueueChatMessage("assistant", null, toolCalls: new JsonArray
+            {
+                new JsonObject
+                {
+                    ["id"] = "nudge_call_1",
+                    ["type"] = "function",
+                    ["function"] = new JsonObject { ["name"] = "search", ["arguments"] = "{}" },
+                },
+            }) // the nudge's tool round -- blocks until the barge-in cancels it
+            .EnqueueTranscript("second query")
+            .EnqueueChatMessage("assistant", "All set for your second query.")
+            .EnqueueSpeech([3, 4]);
+
+        DelayedFakeWebSocket? socket = null;
+        var speechStartedSeenWhenNudgeToolExited = -1;
+        var toolExecutor = new RecordingToolExecutor(
+            ["search"],
+            async (_, _, toolCt) =>
+            {
+                try
+                {
+                    await Task.Delay(Timeout.InfiniteTimeSpan, toolCt).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    // Slow cleanup: if barge-in does not wait for the nudge, speech_started (and
+                    // the next turn) would race ahead of this.
+                    await Task.Delay(300, CancellationToken.None).ConfigureAwait(false);
+                    speechStartedSeenWhenNudgeToolExited = socket!.SentMessages
+                        .Where(m => m.MessageType == WebSocketMessageType.Text)
+                        .Count(m => ParseSent(m)["type"]!.GetValue<string>() == "input_audio_buffer.speech_started");
+                    throw;
+                }
+                return default!;
+            });
+        var resumeId = SeedDetachedResumableSession(sessionManager, "prior-sess-6", persona, resolvedModel.Id, toolExecutor: toolExecutor);
+        var logger = new RecordingLogger();
+        var processor = NewProcessor(handler, toolExecutor, loader, logger: logger, timeProvider: fakeTime, sessionManager: sessionManager);
+
+        var loudChunk = Pcm16(20000, count: 10);
+        var silentChunk = Pcm16(0, count: 4800);
+        socket = new DelayedFakeWebSocket(
+            [
+                (ResumeFrame(resumeId), WebSocketMessageType.Text),
+                (AppendFrame(Pcm16(0, count: 10)), WebSocketMessageType.Text), // arms the nudge
+                (AppendFrame(loudChunk), WebSocketMessageType.Text), // barge-in mid nudge tool round
+                (AppendFrame(silentChunk), WebSocketMessageType.Text), // next turn
+                ([], WebSocketMessageType.Close),
+            ],
+            TimeSpan.FromMilliseconds(500));
+
+        var runTask = processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "nudge-bargein-sess", TestContext.Current.CancellationToken);
+        await Task.Delay(TimeSpan.FromMilliseconds(1100), TestContext.Current.CancellationToken);
+        fakeTime.Advance(TimeSpan.FromSeconds(5)); // nudge fires, enters its tool round
+        await runTask;
+
+        Assert.Equal(0, speechStartedSeenWhenNudgeToolExited);
+        Assert.DoesNotContain(logger.Entries, e => e.Level >= LogLevel.Warning);
+        var types = socket.SentMessages.Where(m => m.MessageType == WebSocketMessageType.Text)
+            .Select(ParseSent).Select(f => f["type"]!.GetValue<string>()).ToList();
+        Assert.Contains("input_audio_buffer.speech_started", types);
+        Assert.DoesNotContain("response.audio.delta", types.Take(types.IndexOf("input_audio_buffer.speech_started")));
+
+        var lastMessages = JsonNode.Parse(handler.ChatRequestBodies[^1])!.AsObject()["messages"]!.AsArray();
+        Assert.DoesNotContain(lastMessages, m =>
+            m!["tool_calls"] is JsonArray tc && tc.Any(t => t!["id"]!.GetValue<string>() == "nudge_call_1"));
+        Assert.Contains(lastMessages, m => m!["role"]!.GetValue<string>() == "user" && m["content"]!.GetValue<string>() == "second query");
     }
 
     [Fact]

@@ -83,31 +83,55 @@ public sealed class CascadeResumeRehydrationAndNudgeTests(CascadeConformanceFixt
         Assert.Equal("Adding fries to your burger order!", secondAnswer!.Json.GetProperty("delta").GetString());
     });
 
+    // 1.5s of 24kHz mono PCM16, so the greeting's estimated playback is long enough to probe.
+    private static byte[] PlaybackClip(double seconds) => new byte[(int)(seconds * 24000) * 2];
+
     [Fact]
-    public Task Cascade_speaking_arms_an_echo_cooldown_that_swallows_the_guests_immediate_echo() => fixture.RunAsync(async () =>
+    public Task Cascade_echo_sent_during_estimated_playback_is_dropped_and_never_reaches_stt() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;
-        var connection = await CascadeScenarioHelpers.ConnectPastGreetingAsync(
-            fixture, fixture.Chat, "gpt-5-mini", ct, skipEchoCooldownWait: true);
+        fixture.Realtime.NextTtsAudio = PlaybackClip(1.5);
+        var connection = await CascadeScenarioHelpers.ConnectPastGreetingAsync(fixture, fixture.Chat, "gpt-5-mini", ct, waitOutAcousticTail: false);
         await using var browser = connection.Browser;
+        fixture.Realtime.NextTtsAudio = [1, 2, 3, 4];
 
-        // Immediately after the greeting's own TTS, "echo" audio arrives well inside
-        // config.yaml's audio.echo_cooldown_seconds (1.5s) floor -- #126's echo suppression must
-        // swallow it as silence: no speech_started, no transcription, no second turn at all.
-        await CascadeScenarioHelpers.SendGuestTurnAsync(connection.Browser, ct);
+        // "Echo" arrives DURING the greeting's estimated playback: no speech_started, no turn.
+        await CascadeScenarioHelpers.SendGuestTurnAsync(browser, ct);
         await Task.Delay(TimeSpan.FromMilliseconds(500), ct);
-        Assert.DoesNotContain(
-            connection.Browser.ReceivedFrames.Snapshot(), f => f.Type == "input_audio_buffer.speech_started");
+        Assert.DoesNotContain(browser.ReceivedFrames.Snapshot(), f => f.Type == "input_audio_buffer.speech_started");
 
-        // Once the cooldown has elapsed, a genuine guest turn must still work normally.
+        // After playback + the 300ms tail, a genuine guest turn works normally.
         fixture.Chat.EnqueueMessage(new() { ["role"] = "assistant", ["content"] = "Sure, one burger coming up!" });
         fixture.Realtime.NextTranscript = "I'd like a burger";
-        await Task.Delay(TimeSpan.FromSeconds(2), ct);
-        await CascadeScenarioHelpers.SendGuestTurnAsync(connection.Browser, ct);
+        await Task.Delay(TimeSpan.FromSeconds(1.8), ct);
+        await CascadeScenarioHelpers.SendGuestTurnAsync(browser, ct);
 
-        var answer = await connection.Browser.ReceivedFrames.WaitForAsync(
+        var answer = await browser.ReceivedFrames.WaitForAsync(
             f => f.Sequence > connection.GreetingWatermark && f.Type == "response.audio_transcript.delta", FrameTimeout, ct);
-        Assert.True(answer is not null, $"Expected the guest turn's own answer once the echo cooldown had elapsed, within {FrameTimeout}.");
+        Assert.True(answer is not null, $"Expected the guest turn's own answer after playback ended, within {FrameTimeout}.");
         Assert.Equal("Sure, one burger coming up!", answer!.Json.GetProperty("delta").GetString());
+        Assert.Single(browser.ReceivedFrames.Snapshot(), f => f.Type == "input_audio_buffer.speech_started");
+    });
+
+    [Fact]
+    public Task Cascade_short_guest_reply_shortly_after_playback_and_tail_is_answered() => fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+        fixture.Realtime.NextTtsAudio = PlaybackClip(0.5);
+        var connection = await CascadeScenarioHelpers.ConnectPastGreetingAsync(fixture, fixture.Chat, "gpt-5-mini", ct, waitOutAcousticTail: false);
+        await using var browser = connection.Browser;
+        fixture.Realtime.NextTtsAudio = [1, 2, 3, 4];
+
+        // Playback is ~0.5s and the acoustic tail 300ms; reply ~200ms after that window closes
+        // (#187/#190: a quick "yes"/"no thanks" must never be swallowed by a long deaf window).
+        fixture.Chat.EnqueueMessage(new() { ["role"] = "assistant", ["content"] = "Great, anything else?" });
+        fixture.Realtime.NextTranscript = "yes";
+        await Task.Delay(TimeSpan.FromMilliseconds(1000), ct);
+        await CascadeScenarioHelpers.SendGuestTurnAsync(browser, ct);
+
+        var answer = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Sequence > connection.GreetingWatermark && f.Type == "response.audio_transcript.delta", FrameTimeout, ct);
+        Assert.True(answer is not null, $"Expected the quick guest reply to be answered within {FrameTimeout}.");
+        Assert.Equal("Great, anything else?", answer!.Json.GetProperty("delta").GetString());
     });
 }

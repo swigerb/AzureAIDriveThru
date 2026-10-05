@@ -143,6 +143,30 @@ public sealed class TurnDetectorTests
     }
 
     [Fact]
+    public void Feed_DropsSuppressedAudio_SoItNeverReachesTheSttBuffer()
+    {
+        var detector = NewDetector();
+        detector.StartEchoCooldown(durationSeconds: 1.0, now: 100.0);
+
+        Assert.Null(detector.Feed(LoudChunk, now: 100.5));
+        Assert.Null(detector.Feed(SilentChunk, now: 100.9));
+        Assert.Empty(detector.TakeBuffer());
+
+        Assert.Equal("speech_started", detector.Feed(LoudChunk, now: 101.0));
+        Assert.Equal(LoudChunk, detector.TakeBuffer());
+    }
+
+    [Fact]
+    public void Feed_AcceptsAGuestReplyImmediately_OncePlaybackPlusTailHasElapsed()
+    {
+        var detector = NewDetector();
+        detector.StartEchoCooldown(durationSeconds: 2.0 + 0.3, now: 100.0);
+
+        // ~200ms after the 300ms tail ends (#187/#190: short replies are never swallowed).
+        Assert.Equal("speech_started", detector.Feed(LoudChunk, now: 102.5));
+    }
+
+    [Fact]
     public void Feed_FiresSpeechStarted_OnceNowHasMovedPastTheEchoCooldownDeadline()
     {
         var detector = NewDetector();

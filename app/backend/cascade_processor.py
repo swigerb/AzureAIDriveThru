@@ -95,14 +95,24 @@ _audio_cfg = _config.get("audio", {})
 _WS_HEARTBEAT_SEC = _conn_cfg.get("ws_heartbeat_seconds", 15.0)
 _WS_COMPRESS = bool(_conn_cfg.get("ws_compression", False))
 
-# #126: echo suppression cooldown, armed in `_speak` after every TTS turn so a guest's own
-# speaker playback (picked back up by their mic) isn't mistaken for barge-in by `_TurnDetector`.
-# Shares `audio.echo_cooldown_seconds` verbatim with the realtime pipeline's own
-# `audio_pipeline.EchoSuppressor` -- a deliberate choice, not an oversight: mic-picks-up-speaker
-# echo is a physical/acoustic property of the guest's own hardware, identical regardless of
-# which backend pipeline is answering, so there is no cascade-specific STT-latency reason to
-# diverge from realtime's already-tuned default (see docs/persona-architecture.md section 7.1).
-_ECHO_COOLDOWN_SECONDS = _audio_cfg.get("echo_cooldown_seconds", 1.5)
+# #126: echo suppression, armed in `_speak` after every TTS turn so a guest's own speaker
+# playback (picked back up by their mic) isn't mistaken for barge-in by `_TurnDetector`.
+# Semantics (identical in the .NET backend): mic audio is dropped -- never buffered, so it can't
+# reach STT -- only for the ESTIMATED PLAYBACK duration plus a short acoustic tail. After that,
+# guest audio is accepted immediately, matching the realtime pipeline's #187/#190 behaviour (short
+# replies right after playback are never swallowed). The tail is `audio.echo_cooldown_seconds`
+# capped at 300ms (decisions.md: appropriate for 50-200ms speaker-to-mic latency); the realtime
+# default of 1.5s only drives a delayed buffer clear there, so it can't be a hard-mute here.
+# `echo_cooldown_seconds: 0` DISABLES cascade echo suppression entirely (headset / no-echo
+# setups; same in both backends) -- it is not "playback-only".
+_ECHO_TAIL_MAX_SECONDS = 0.3
+
+
+def _echo_tail_seconds(configured: Any) -> float:
+    return max(0.0, min(float(configured), _ECHO_TAIL_MAX_SECONDS))
+
+
+_ECHO_COOLDOWN_SECONDS = _echo_tail_seconds(_audio_cfg.get("echo_cooldown_seconds", 1.5))
 
 _AUDIO_SAMPLE_RATE = 24000
 _AUDIO_SAMPLE_WIDTH = 2  # PCM16, matches both mic input and speaker output (confirmed against
@@ -264,18 +274,19 @@ class _TurnDetector:
     def feed(self, pcm16_bytes: bytes, now: float | None = None) -> str | None:
         """Feed one chunk of raw PCM16 mono audio. Returns "speech_started" the first time this
         turn crosses the energy threshold, "speech_stopped" once enough trailing silence has
-        elapsed after speech was detected, or None otherwise. Always buffers the raw audio (even
+        elapsed after speech was detected, or None otherwise. Buffers the raw audio (even
         pre-threshold, so a turn's very first word isn't clipped) for the eventual transcription
         upload.
 
-        #126 echo suppression: while *now* is still inside the armed cooldown window
-        (`start_echo_cooldown`), loud audio is treated exactly like silence -- `_speaking`/
-        `_silence_run` are left untouched and no "speech_started" fires -- so the assistant's
-        own TTS being picked back up by the guest's mic right after it starts speaking is never
-        mistaken for barge-in. Real barge-in (the guest actually talking over the assistant)
-        keeps re-arriving past the cooldown's end, since nothing here suppresses audio once
-        *now* has moved past `_echo_cooldown_until` -- it only ever delays detection, never
-        blocks it outright."""
+        #126 echo suppression: while *now* is inside the armed window (`start_echo_cooldown`:
+        estimated playback + short tail) and the guest isn't already mid-utterance, the frame is
+        DROPPED -- not buffered, no state change, no "speech_started" -- so the assistant's own
+        TTS picked up by the mic is never barge-in and never reaches STT. Audio at/after the
+        deadline is accepted immediately."""
+        if now is not None and not self._speaking and now < self._echo_cooldown_until:
+            # Suppressed (estimated playback + acoustic tail): drop the frame outright so the
+            # assistant's own echo can never end up in the next STT upload.
+            return None
         self._buffer.extend(pcm16_bytes)
         usable_len = len(pcm16_bytes) - (len(pcm16_bytes) % 2)
         if usable_len <= 0:
@@ -285,8 +296,6 @@ class _TurnDetector:
         if not samples:
             return None
         rms = (sum(s * s for s in samples) / len(samples)) ** 0.5
-        if rms >= self._cutoff and not self._speaking and now is not None and now < self._echo_cooldown_until:
-            return None
         event = None
         if rms >= self._cutoff:
             if not self._speaking:
@@ -764,8 +773,15 @@ class CascadeProcessor:
                 # own `recovery.busy` skip in `nudge_after_silence`.
                 logger.info("Cascade: resume nudge skipped, a turn is in flight (session=%s)", session_id)
                 return
+            # The nudge is now a real turn: register it as the current turn (and drop it from
+            # `nudge_task`, so `_cancel_nudge` no longer touches it) so barge-in and teardown
+            # cancel AND await it via `_cancel_current_turn`, like any other turn.
+            state.current_turn_task = asyncio.current_task()
+            state.nudge_task = None
             try:
                 await self._send_nudge(ws, session_id, state)
+            except asyncio.CancelledError:
+                raise
             except Exception:
                 logger.exception("Cascade: resume nudge failed (session=%s)", session_id)
         state.nudge_task = _spawn(_run())
@@ -1112,12 +1128,12 @@ class CascadeProcessor:
             async with http.post(url, json=body, headers={"Authorization": f"Bearer {token}"}) as resp:
                 resp.raise_for_status()
                 audio_bytes = await resp.read()
-        if state.detector is not None:
+        if state.detector is not None and _ECHO_COOLDOWN_SECONDS > 0:
             # #126 echo suppression: arms the cooldown for roughly the GUEST'S actual speaker
             # playback time (`len(audio_bytes)` is PCM16 mono at `_AUDIO_SAMPLE_RATE`), not this
             # loop's own send time below (which streams every `response.audio.delta` chunk
-            # back-to-back, far faster than real-time) -- plus `_ECHO_COOLDOWN_SECONDS` buffer
-            # for network/speaker/mic latency. Armed before the first chunk is sent, since the
+            # back-to-back, far faster than real-time) -- plus the `_ECHO_COOLDOWN_SECONDS` acoustic
+            # tail (<=300ms) for network/speaker/mic latency. Armed before the first chunk is sent, since the
             # guest's speaker starts playing from that first delta frame.
             duration_seconds = len(audio_bytes) / (_AUDIO_SAMPLE_RATE * _AUDIO_SAMPLE_WIDTH)
             state.detector.start_echo_cooldown(duration_seconds + _ECHO_COOLDOWN_SECONDS)

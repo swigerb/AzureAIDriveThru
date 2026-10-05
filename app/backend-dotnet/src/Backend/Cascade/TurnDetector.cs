@@ -61,22 +61,24 @@ public sealed class TurnDetector
 
     /// <summary>Feed one chunk of raw PCM16 mono audio. Returns "speech_started" the first time
     /// this turn crosses the energy threshold, "speech_stopped" once enough trailing silence has
-    /// elapsed after speech was detected, or null otherwise. Always buffers the raw audio (even
+    /// elapsed after speech was detected, or null otherwise. Buffers the raw audio (even
     /// pre-threshold, so a turn's very first word isn't clipped) for the eventual transcription
     /// upload.
     ///
-    /// #126 echo suppression: while <paramref name="now"/> is still inside the armed cooldown
-    /// window (<see cref="StartEchoCooldown"/>), loud audio is treated exactly like silence --
-    /// <see cref="IsSpeaking"/>/the trailing-silence run are left untouched and no
-    /// "speech_started" fires -- so the assistant's own TTS being picked back up by the guest's
-    /// mic right after it starts speaking is never mistaken for barge-in. Real barge-in (the
-    /// guest actually talking over the assistant) still fires once <paramref name="now"/> has
-    /// moved past the cooldown deadline -- this only ever delays detection, never blocks it
-    /// outright. A null <paramref name="now"/> (the default -- every existing production/test
-    /// caller before #126) never applies a cooldown, matching cascade_processor.py's own
-    /// contract.</summary>
+    /// #126 echo suppression: while <paramref name="now"/> is inside the armed window
+    /// (<see cref="StartEchoCooldown"/>: estimated playback + short tail) and the guest isn't
+    /// already mid-utterance, the frame is DROPPED -- not buffered, no state change, no
+    /// "speech_started" -- so the assistant's own TTS picked up by the mic is never barge-in and
+    /// never reaches STT. Audio at/after the deadline is accepted immediately. A null
+    /// <paramref name="now"/> never applies a cooldown.</summary>
     public string? Feed(byte[] pcm16Bytes, double? now = null)
     {
+        if (now is { } n && !IsSpeaking && n < _echoCooldownUntil)
+        {
+            // Suppressed (estimated playback + acoustic tail): drop the frame outright so the
+            // assistant's own echo can never end up in the next STT upload.
+            return null;
+        }
         _buffer.AddRange(pcm16Bytes);
         var usableLen = pcm16Bytes.Length - (pcm16Bytes.Length % 2);
         if (usableLen <= 0)
@@ -96,11 +98,6 @@ public sealed class TurnDetector
             return null;
         }
         var rms = Math.Sqrt(sumSquares / sampleCount);
-
-        if (rms >= _cutoff && !IsSpeaking && now is { } n && n < _echoCooldownUntil)
-        {
-            return null;
-        }
 
         string? result = null;
         if (rms >= _cutoff)

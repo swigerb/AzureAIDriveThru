@@ -18,7 +18,8 @@ chat-completion turns), feeding rehydration text on resume. Issue #126 extended 
 `SessionManager`-backed resume/rehydration, idle nudge, and a new echo-suppression cooldown to
 `cascade` (see `CascadeProcessor.cs`'s `NegotiateResumeAsync`/`ScheduleNudge`/`CancelNudge` and
 `TurnDetector.StartEchoCooldown`), so both pipelines share one `SessionManager` instance and one
-echo-cooldown duration end to end. No deliberate middle-tier gap versus Python remains; see the
+echo-suppression *semantic* end to end (identical in both backends: drop mic audio during estimated playback plus
+a tail of `min(audio.echo_cooldown_seconds, 300ms)`, never buffering dropped frames; `0` disables it). No deliberate middle-tier gap versus Python remains; see the
 deferred list below for what is still out of scope.
 
 ## Module mapping

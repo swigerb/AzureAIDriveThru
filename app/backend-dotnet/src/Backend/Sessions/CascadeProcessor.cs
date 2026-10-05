@@ -63,12 +63,16 @@ public sealed class CascadeProcessor : IPipelineProcessor
     private readonly string _defaultVoice;
     private readonly ILogger? _logger;
     private readonly TimeProvider _timeProvider;
-    // #126: deliberately the SAME echo-suppression cooldown config.yaml's `audio.echo_cooldown_seconds`
-    // already drives for the realtime pipeline (Program.cs's own `echoCooldownSeconds` local) --
-    // NOT re-read independently here. Echo (the assistant's own TTS bleeding back into the
-    // guest's mic) is a physical/acoustic property of the room and device, not something that
-    // differs by which pipeline answered the turn, so both pipelines share one config value.
+    // #126: acoustic tail after estimated playback during which mic audio is still dropped.
+    // Derived from the same `audio.echo_cooldown_seconds` the realtime pipeline uses, but capped
+    // at 300ms: realtime's 1.5s only delays a buffer clear (#187/#190), whereas cascade's
+    // suppression is a hard drop, so a long value would swallow short guest replies. 0 =>
+    // echo suppression disabled entirely. Identical to cascade_processor.py's `_echo_tail_seconds`.
     private readonly double _echoCooldownSeconds;
+    internal const double EchoTailMaxSeconds = 0.3;
+
+    internal static double EchoTailSeconds(double configured) =>
+        Math.Max(0.0, Math.Min(configured, EchoTailMaxSeconds));
     // #126: the session registry (resume/rehydration/idle/grace/nudge) -- mirrors
     // RealtimeProcessor's own `_sessionManager` field exactly, including its null-is-inert
     // convention: every pre-#126 caller/test that constructs a CascadeProcessor without passing
@@ -110,7 +114,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
         // clock, so a test can swap in a FakeTimeProvider instead of waiting on the real 0.5-8s
         // delays. Defaults to TimeProvider.System in production.
         _timeProvider = timeProvider ?? TimeProvider.System;
-        _echoCooldownSeconds = echoCooldownSeconds;
+        _echoCooldownSeconds = EchoTailSeconds(echoCooldownSeconds);
         _sessionManager = sessionManager;
     }
 
@@ -222,12 +226,21 @@ public sealed class CascadeProcessor : IPipelineProcessor
         // #126: a monotonic-comparable clock reading for TurnDetector's echo-cooldown deadline
         // math, driven off `_timeProvider` (so a FakeTimeProvider-based test can control it)
         // rather than `DateTime.UtcNow` directly.
+        // Guards the CurrentTurn*/Nudge* registry: a firing nudge hands itself over to
+        // CurrentTurnTask from a pool thread while the receive loop may be in BargeIn/CancelNudge.
+        var turnRegistryLock = new object();
+
         double NowSeconds() => _timeProvider.GetUtcNow().ToUnixTimeMilliseconds() / 1000.0;
 
         async Task CancelCurrentTurnAsync(string reason)
         {
-            var task = state.CurrentTurnTask;
-            var cts = state.CurrentTurnCts;
+            Task? task;
+            CancellationTokenSource? cts;
+            lock (turnRegistryLock)
+            {
+                task = state.CurrentTurnTask;
+                cts = state.CurrentTurnCts;
+            }
             if (task is null)
             {
                 return;
@@ -273,10 +286,15 @@ public sealed class CascadeProcessor : IPipelineProcessor
         // state.Messages concurrently with the cancelled turn's own cleanup).
         void BargeIn()
         {
-            var task = state.CurrentTurnTask;
-            var cts = state.CurrentTurnCts;
-            state.CurrentTurnTask = null;
-            state.CurrentTurnCts = null;
+            Task? task;
+            CancellationTokenSource? cts;
+            lock (turnRegistryLock)
+            {
+                task = state.CurrentTurnTask;
+                cts = state.CurrentTurnCts;
+                state.CurrentTurnTask = null;
+                state.CurrentTurnCts = null;
+            }
             var wasInFlight = task is { IsCompleted: false };
             cts?.Cancel();
             var previousTail = state.BargeInTail;
@@ -372,9 +390,30 @@ public sealed class CascadeProcessor : IPipelineProcessor
             {
                 await Task.Delay(TimeSpan.FromSeconds(_sessionManager!.Config.NudgeAfterSeconds), _timeProvider, nudgeCt)
                     .ConfigureAwait(false);
-                var inFlight = state.CurrentTurnTask;
-                // A barged-in turn still winding down (BargeInTail) counts as in flight too.
-                if ((inFlight is not null && !inFlight.IsCompleted) || state.BargeInTail is { IsCompleted: false })
+                bool skipped;
+                lock (turnRegistryLock)
+                {
+                    if (nudgeCt.IsCancellationRequested)
+                    {
+                        return;
+                    }
+                    var inFlight = state.CurrentTurnTask;
+                    // A barged-in turn still winding down (BargeInTail) counts as in flight too.
+                    skipped = (inFlight is not null && !inFlight.IsCompleted) || state.BargeInTail is { IsCompleted: false };
+                    if (!skipped)
+                    {
+                        // The firing nudge becomes a real turn: BargeIn and teardown cancel AND
+                        // await it via CurrentTurnTask/CurrentTurnCts like any other turn, so no
+                        // audio follows speech_started and its Messages cleanup never races the
+                        // next turn. NudgeTask/NudgeCts hand over ownership (CancelNudge is then
+                        // a no-op for it).
+                        state.CurrentTurnTask = state.NudgeTask;
+                        state.CurrentTurnCts = state.NudgeCts;
+                        state.NudgeTask = null;
+                        state.NudgeCts = null;
+                    }
+                }
+                if (skipped)
                 {
                     // Mid-turn, or the assistant is already speaking -- never stack a nudge on
                     // top of a real turn. One-shot: a skipped nudge is not rescheduled.
@@ -396,15 +435,21 @@ public sealed class CascadeProcessor : IPipelineProcessor
         // fired).
         void CancelNudge(string reason)
         {
-            var task = state.NudgeTask;
-            if (task is not null && !task.IsCompleted)
+            Task? task;
+            CancellationTokenSource? cts;
+            lock (turnRegistryLock)
             {
-                state.NudgeCts?.Cancel();
-                _logger?.LogInformation("Cascade: resume nudge cancelled: {Reason} (session={SessionId})", reason, sessionId);
+                task = state.NudgeTask;
+                cts = state.NudgeCts;
+                state.NudgeTask = null;
+                state.NudgeCts = null;
+                if (task is not null && !task.IsCompleted)
+                {
+                    cts?.Cancel();
+                    _logger?.LogInformation("Cascade: resume nudge cancelled: {Reason} (session={SessionId})", reason, sessionId);
+                }
             }
-            state.NudgeTask = null;
-            state.NudgeCts?.Dispose();
-            state.NudgeCts = null;
+            cts?.Dispose();
         }
 
         async Task<JsonObject> CallChatCompletionAsync(CancellationToken turnCt) =>
@@ -606,14 +651,11 @@ public sealed class CascadeProcessor : IPipelineProcessor
                     var pcm = await _audioClient.SpeakAsync(text, state.Voice, deployment, turnCt).ConfigureAwait(false);
                     if (_echoCooldownSeconds > 0)
                     {
-                        // #126: a non-positive configured buffer disables cascade's local
-                        // echo-suppression cooldown entirely, preserving the pre-#126
-                        // immediate-barge-in behaviour older tests (and explicit 0 overrides)
-                        // rely on. When enabled, arm the cooldown for roughly the GUEST'S actual
-                        // speaker playback duration of this reply (not this loop's own fast send
-                        // time) plus `_echoCooldownSeconds` -- mirrors cascade_processor.py's own
-                        // `_speak`, which computes `len(audio_bytes) / (sample_rate * sample_width)`.
-                        // PCM16 mono => 2 bytes/sample.
+                        // #126: arm echo suppression for the GUEST'S estimated speaker playback
+                        // of this reply (not this loop's own fast send time) plus a short acoustic
+                        // tail (`_echoCooldownSeconds`, capped at 300ms in the constructor).
+                        // 0 disables suppression entirely, identically to cascade_processor.py's
+                        // `_speak`. PCM16 mono => 2 bytes/sample.
                         var durationSeconds = pcm.Length / (double)(AudioSampleRate * 2);
                         detector.StartEchoCooldown(durationSeconds + _echoCooldownSeconds, NowSeconds());
                     }
@@ -883,11 +925,13 @@ public sealed class CascadeProcessor : IPipelineProcessor
                     var vadEvent = detector.Feed(pcm, NowSeconds());
                     if (vadEvent == "speech_started")
                     {
-                        BargeIn();
                         // #126: real guest activity -- reset (cancel, never reschedule) any
                         // pending resume nudge, same one-shot semantics as rtmt.py's own
-                        // `cancel_nudge`.
+                        // `cancel_nudge`. Runs BEFORE BargeIn: a pending nudge is cancelled
+                        // under the registry lock, and one that already fired is a
+                        // CurrentTurnTask that BargeIn then cancels like any other turn.
                         CancelNudge("guest started speaking");
+                        BargeIn();
                     }
                     else if (vadEvent == "speech_stopped")
                     {
@@ -1217,9 +1261,9 @@ public sealed class CascadeProcessor : IPipelineProcessor
         {
             // Teardown still waits for everything: the current turn (cancelled) and any
             // barge-in tail still waiting on an earlier cancelled turn.
+            CancelNudge("connection closing");
             await CancelCurrentTurnAsync("connection closing").ConfigureAwait(false);
             await AwaitQuietlyAsync(state.BargeInTail).ConfigureAwait(false);
-            CancelNudge("connection closing");
             _sessionManager?.Detach(browserSocket, sessionId, "socket closed");
         }
     }

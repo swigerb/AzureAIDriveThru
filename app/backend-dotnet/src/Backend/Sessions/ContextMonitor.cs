@@ -7,8 +7,8 @@ namespace Backend.Sessions;
 /// token usage in the conversation context window and logs warnings using a simple
 /// character-based heuristic (~4 chars/token) -- not exact, but sufficient for warning when a
 /// session is approaching the context limit. One instance per session, owned by
-/// <see cref="SessionManager"/> (created in <see cref="SessionManager.CreateSession"/>/
-/// <see cref="SessionManager.CreateContextMonitor"/>, removed on session end), same lifetime as
+/// <see cref="SessionManager"/> (created in <see cref="SessionManager.CreateSession"/>, removed in
+/// <see cref="SessionManager.EndSession"/>), same lifetime as
 /// Python's own <c>self._context_monitors</c> dict.
 /// </summary>
 public sealed class ContextMonitor
