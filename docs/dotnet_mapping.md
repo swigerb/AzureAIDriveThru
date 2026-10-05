@@ -2,8 +2,8 @@
 
 This document tracks how `app/backend-dotnet` (C#, .NET 11) maps to `app/backend` (Python), the
 reference implementation, per ADR-001's "one contract, two backends" decision. It exists so a
-change to one backend has an obvious place to look for its counterpart in the other, and so scope
-deliberately deferred or reduced in the C# port is written down instead of discovered by surprise.
+change to one backend has an obvious place to look for its counterpart in the other, and so
+backend-specific notes or follow-on work are written down instead of rediscovered by surprise.
 
 The C# backend now has the host/config/persona foundation, persona HTTP surface, model catalog,
 pre-upgrade `/realtime` auth and persona/model/mode binding, the Azure OpenAI realtime relay,
@@ -14,7 +14,8 @@ connectivity check, ADR-002 Entra JwtBearer auth (issue #147), and the shared co
 leg. Guest/assistant turn recording (`SessionManager.RecordTurn`) has real production call sites
 (upstream `conversation.item.input_audio_transcription.completed` for the guest, a non-tool
 `response.done` for the assistant), feeding rehydration text on resume. No deliberate
-middle-tier gap versus Python remains; see the deferred list below for what is still out of scope.
+middle-tier gap versus Python remains; the notes below are implementation context, not a parity
+exception list.
 
 ## Module mapping
 
