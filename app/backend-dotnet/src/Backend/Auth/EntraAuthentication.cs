@@ -308,25 +308,35 @@ public static class EntraAuthentication
                     return Task.CompletedTask;
                 }
 
-                // #226 Rick's review, fix #2 (MEDIUM): a single materialized Claim can't
-                // distinguish a genuine one-element JSON array from a malformed bare value (both
-                // become one Claim with the same string value), so malformed-SHAPE `roles`/`scp`
-                // claims must be inspected here, against the raw JSON payload, exactly like
-                // entra_auth.py's TokenValidator does in the same function as its missing-role/
-                // missing-scope checks: `roles = claims.get("roles") or []` (then requires a
-                // list); `scp = claims.get("scp"); scopes = scp.split() if isinstance(scp, str)
-                // else []` (a non-string scp simply yields no scopes, same as if it were absent).
-                // ASP.NET Core's context.Fail() here always resolves to a 401 Challenge, never a
-                // 403 Forbid (see ClaimShapeViolationKey's doc comment), so the shape-violation
-                // VERDICT is relayed via HttpContext.Items for EntraAccessRequirementHandler --
-                // the authorization layer that already produces the matching 403 for a missing
-                // role/scope VALUE -- to fold into its own decision. A claim that is absent,
-                // explicit JSON null, or (for roles) a JSON array, or (for scp) a JSON string is
-                // shape-OK -- these are the same "no shape problem, possibly still no match"
-                // shapes Python's own `or []` / `isinstance` checks let through unharmed.
-                var rolesShapeOk = !jsonWebToken.TryGetPayloadValue<JsonElement>("roles", out var rolesElement) ||
+                // #226 Rick's review, fix #2 (MEDIUM) follow-up (post-merge conformance failure,
+                // Row 18 "malformed roles shape" returning 200 instead of 403): a single
+                // materialized Claim can't distinguish a genuine one-element JSON array from a
+                // malformed bare value (both become one Claim with the same string value), so
+                // malformed-SHAPE `roles`/`scp` claims must be inspected here, against the raw
+                // JSON payload, exactly like entra_auth.py's TokenValidator does in the same
+                // function as its missing-role/missing-scope checks: `roles = claims.get("roles")
+                // or []` (then requires a list); `scp = claims.get("scp"); scopes = scp.split() if
+                // isinstance(scp, str) else []` (a non-string scp simply yields no scopes, same as
+                // if it were absent).
+                //
+                // JsonWebToken.TryGetPayloadValue&lt;JsonElement&gt; is NOT a reliable way to read
+                // an arbitrary claim's raw shape: IdentityModel stores a payload value as its
+                // natively-mapped CLR type (string/long/bool) whenever the JSON value is a scalar,
+                // and only stores an actual System.Text.Json.JsonElement for array/object values --
+                // TryGetPayloadValue&lt;JsonElement&gt; silently returns false (not an exception) for
+                // any claim whose underlying value is a plain scalar, which this code's first cut
+                // misread as "claim absent, shape OK". A malformed `roles: "DriveThru.User"` (a
+                // bare JSON string, the exact shape this check exists to catch) therefore always
+                // produced rolesFound=false here -- a verified, reproducible false negative that
+                // let Row 18's malformed-roles token sail through as shape-OK. Parsing
+                // <see cref="JsonWebToken.EncodedPayload"/> (the base64url payload segment)
+                // ourselves with <see cref="JsonDocument"/> reads the TRUE raw JSON shape
+                // regardless of which CLR type IdentityModel happened to map it to, matching
+                // Python's own `claims.get(...)`/`isinstance` checks against the real parsed JSON.
+                using var rawPayload = ParseRawPayload(jsonWebToken);
+                var rolesShapeOk = !rawPayload.RootElement.TryGetProperty("roles", out var rolesElement) ||
                     rolesElement.ValueKind is JsonValueKind.Array or JsonValueKind.Null;
-                var scpShapeOk = !jsonWebToken.TryGetPayloadValue<JsonElement>("scp", out var scpElement) ||
+                var scpShapeOk = !rawPayload.RootElement.TryGetProperty("scp", out var scpElement) ||
                     scpElement.ValueKind is JsonValueKind.String or JsonValueKind.Null;
                 if (!rolesShapeOk || !scpShapeOk)
                 {
@@ -380,6 +390,28 @@ public static class EntraAuthentication
             }
         }
         return false;
+    }
+
+    /// <summary>
+    /// #226 Rick's review, fix #2 (MEDIUM) follow-up: decodes a <see cref="JsonWebToken"/>'s
+    /// base64url <see cref="JsonWebToken.EncodedPayload"/> segment and parses it as a
+    /// <see cref="JsonDocument"/> -- the one reliable way to inspect a claim's TRUE raw JSON shape
+    /// (string vs. array vs. object vs. null), independent of whichever CLR type IdentityModel's
+    /// own <c>TryGetPayloadValue&lt;T&gt;</c> happens to have mapped that value to internally. See
+    /// <c>ConfigureJwtBearer</c>'s <c>OnTokenValidated</c> remarks for the specific bug this
+    /// replaced (<c>TryGetPayloadValue&lt;JsonElement&gt;</c> silently returning false, not an
+    /// exception, for any scalar-valued claim).
+    /// </summary>
+    internal static JsonDocument ParseRawPayload(JsonWebToken jsonWebToken)
+    {
+        var payload = jsonWebToken.EncodedPayload;
+        var base64 = payload.Replace('-', '+').Replace('_', '/');
+        switch (base64.Length % 4)
+        {
+            case 2: base64 += "=="; break;
+            case 3: base64 += "="; break;
+        }
+        return JsonDocument.Parse(Convert.FromBase64String(base64));
     }
 
     /// <summary>

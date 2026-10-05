@@ -280,6 +280,29 @@ namespace Conformance.Tests;
 /// temporarily-assert-then-revert measurement technique as every prior round) gives **260**
 /// (256 + these 4), confirming the delta by direct count rather than arithmetic. This raises the
 /// floor 256 to 260.
+///
+/// Issue #147 round 5 (Rick's security re-review of PR #226, 3 findings fixed): findings #2's
+/// FakeEntraIssuer/AuthRowCases additions (missing-nbf row, malformed-roles-shape row,
+/// malformed-scp-shape row -- 3 new <c>AuthRowTokenCase.All</c> entries, each run through
+/// <c>AuthRowRestTokenTests.Row_asserts_on_every_REST_path</c> and
+/// <c>AuthRowRealtimeTokenTests.Row_asserts_on_realtime</c>, i.e. 2 tagged methods x 3 new cases =
+/// 6, plus the existing per-row `Theory` methods now enumerating 3 more cases each counts those
+/// extra Theory instances individually since <see cref="CountFloorEligibleDotnetReadyTestMethods"/>
+/// counts distinct test cases, not just method declarations) plus unrelated organic growth
+/// elsewhere on `origin/dev` since the 260 measurement account for the remainder. Findings #1 and
+/// #3 (the JWKS/OIDC cooldown decorator and the LastKnownGoodLifetime shrink) are both covered at
+/// the Backend.Tests pipeline-integration level (<c>EntraPipelineCooldownTests</c>'s three
+/// scenarios: cold outage, warm-cache+forged-kid-flood, and key-rotation-after-LKG-expiry) rather
+/// than at this conformance level -- both require either a real 30s (finding #1) or real 300s
+/// (finding #3) wall-clock wait to observe the cooldown/LKG-expiry boundary for real against an
+/// external process's unmodifiable production `TimeSpan.FromSeconds(300)`/cooldown window, which
+/// is impractical for a CI-speed conformance suite; Backend.Tests can shrink both windows via an
+/// injectable <c>FakeTimeProvider</c>/constructor parameter instead. This mirrors the precedent
+/// already set for the cooldown gate itself when #223 first landed it. A fresh run of
+/// <see cref="CountFloorEligibleDotnetReadyTestMethods"/> on this branch tip (same
+/// temporarily-assert-then-revert measurement technique as every prior round -- assert/raise to an
+/// unreachable bound, read the actual count off the failure message, then set the real value)
+/// gives **281**. This raises the floor 260 to 281.
 /// </summary>
 public sealed class DotnetTraitCoverageTests
 {
@@ -301,14 +324,14 @@ public sealed class DotnetTraitCoverageTests
 
         var count = CountFloorEligibleDotnetReadyTestMethods();
 
-        Assert.True(count >= 260,
-            $"Expected at least 260 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
+        Assert.True(count >= 281,
+            $"Expected at least 281 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")] " +
             $"and not unconditionally skip-gated by AuthRowCapability (the dotnet leg's " +
             $"`--filter \"{TraitName}={TraitValue}&Category!=Browser\"` baseline, minus the five " +
             "skip-only Scenarios/Auth classes -- see this class's own doc comment; " +
             $"docs/dotnet_mapping.md), but found {count}. If a tagged scenario was removed or " +
-            "renamed without a replacement, the dotnet CI leg silently lost coverage. 260 is a " +
-            "FRESH count (PR #253 review item 3, taken post-rebase onto origin/dev), not " +
+            "renamed without a replacement, the dotnet CI leg silently lost coverage. 281 is a " +
+            "FRESH count (Issue #147 round 5, Rick's security re-review fixes 1/2/3), not " +
             "arithmetic -- re-measure with `Conformance.Tests.exe -list methods -trait " +
             "Dotnet=ready` minus the AuthRowCapabilityGated methods before raising this floor " +
             "again.");

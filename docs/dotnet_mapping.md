@@ -644,6 +644,129 @@ changed, only test/doc files) -- still 496/496 passing. Conformance suite rebuil
 `Enforces_is_true_for_dotnet_now_that_its_switch_is_on` Fact. Pushed with `--force-with-lease`
 (rewriting history via the rebase); CI reconfirmed green on the rebased tip.
 
+### Issue #147 round 5 (rebase onto #241, Rick's security re-review): fixing the 3 outstanding findings
+
+Rick's PR #226 security re-review passed the core model outright (startup fail-fast, alg/issuer/
+audience/tid/300s skew, the anonymous allow-list including encoding tricks, `?access_token` only on
+`/realtime`, session-token oid binding, the CI Docker step, the package) and flagged 3 remaining
+findings. A prior, cancelled session had already landed most of the fix for all 3 (the cooldown
+decorator, the claim-shape checks, and the `LastKnownGoodLifetime` shrink) but left one genuine
+regression undiscovered and the doc/floor bookkeeping unfinished; this round finished that work.
+
+**Finding #1 (HIGH, JWKS/OIDC outage cooldown never arms on the real pipeline):** already correctly
+implemented by the prior session in `Auth/CooldownAwareConfigurationManager.cs` -- a decorator
+around the inner `ConfigurationManager<OpenIdConnectConfiguration>` whose `GetBaseConfigurationAsync`
+records a failure via `DiscoveryFailureGate.RecordFailure()` only inside the `catch` for a fetch the
+request actually awaited, and only when `_hasConfiguration` is false (never from a background
+`RequestRefresh`, which never throws through this code path at all, and never merely because
+`IsLastKnownGoodValid` happens to be false). `Auth/DiscoveryFailureGate.cs` is the thread-safe
+30-second cooldown tracker consulted by `ConfigureJwtBearer`'s `OnMessageReceived` to fail fast
+(401, no fetch attempted) while in cooldown and no configuration is held. No changes needed here
+this round; verified via a fresh read of both files plus a mutation check (see below).
+
+**Finding #2 (MEDIUM, claim-shape parity with Python) -- found and fixed a genuine pipeline bug:**
+the prior session's `nbf`-missing and `roles`/`scp`-shape checks in `EntraAuthentication.cs`'s
+`OnTokenValidated`, and the matching `AuthRowCases.cs` rows (17: missing nbf, 18: malformed roles
+shape, 19: malformed scp shape) plus `FakeEntraIssuer.cs`'s `OmitNbf`/`MalformedRolesShape`/
+`MalformedScopeShape` overrides, were all already in place and unit-tested
+(`EntraAccessRequirementHandlerTests`) -- but running the conformance suite against the real
+pipeline for the first time this round (`CONFORMANCE_BACKEND=dotnet`, `Scenarios.Auth`) surfaced
+Row 18 (malformed `roles` shape: a bare JSON string, not an array) returning 200 instead of 403 on
+both `AuthRowRestTokenTests` and `AuthRowRealtimeTokenTests`. Root-caused with an isolated
+`JsonWebTokenHandler.ValidateTokenAsync` scratch test: the implementation's
+`JsonWebToken.TryGetPayloadValue<JsonElement>("roles", out ...)` silently returns `false` -- not an
+exception, a false negative -- for ANY claim whose underlying JSON value is a scalar (string, in
+this case), because IdentityModel's `JsonWebToken` only stores a genuine `JsonElement` internally
+for array/object-valued claims; scalar-valued claims are stored as their natively-mapped CLR type
+(`string` here, confirmed via `TryGetPayloadValue<string>` succeeding on the exact same claim in the
+exact same scratch test). The code's first cut misread "TryGetPayloadValue returned false" as
+"claim absent, shape OK," so a bare-string `roles` claim always sailed through unflagged. Fixed by
+replacing the `TryGetPayloadValue<JsonElement>` calls for `roles`/`scp` with a new
+`EntraAuthentication.ParseRawPayload(JsonWebToken)` helper that base64url-decodes
+`JsonWebToken.EncodedPayload` and parses it directly as a `System.Text.Json.JsonDocument`, then uses
+`JsonElement.TryGetProperty` -- reading the TRUE raw JSON shape regardless of which CLR type
+IdentityModel happened to map a given value to, matching Python's own `claims.get(...)`/
+`isinstance(...)` checks against the real parsed JSON payload. `jwt.TryGetPayloadValue<long>` for
+`nbf` is unaffected (numeric claims DO round-trip through IdentityModel's native-type path
+correctly; only the `JsonElement`-typed generic accessor has this gap), confirmed because Row 17
+(missing nbf) was never among the conformance failures. `TryAllIssuerSigningKeys = false` (so an
+unknown kid -> 401) was already set correctly by the prior session; re-verified unchanged this
+round. Files touched: `Auth/EntraAuthentication.cs` only (the `OnTokenValidated` shape-check block
+and the new `ParseRawPayload` helper); no test files needed changes since the existing Row 17/18/19
+conformance rows already existed and now genuinely pass end to end.
+
+**Finding #3 (LOW-MED, rotated-out signing keys stay valid up to 1h):** already correctly fixed by
+the prior session -- `ConfigureJwtBearer` constructs its own `CooldownAwareConfigurationManager`
+wrapping a `ConfigurationManager<OpenIdConnectConfiguration>` with
+`LastKnownGoodLifetime = lastKnownGoodLifetime ?? TimeSpan.FromSeconds(300)` (an optional parameter
+defaulting to the production 300s, overridable only by tests), replacing IdentityModel's 1-hour
+default while keeping warm-outage resilience (the LKG fallback itself is not disabled, just bounded
+to a much shorter grace period). No changes needed; verified via a mutation check (see below). No
+conformance-level key-rotation row was added -- see "Known gaps" below for why.
+
+**Validation performed this round:**
+- `Backend.slnx` builds clean (0 warnings, 0 errors) after the finding-#2 fix.
+- `Backend.Tests`, `FullyQualifiedName~Backend.Tests.Auth`: 126/126 passing (includes the 3
+  pipeline-level `EntraPipelineCooldownTests` scenarios for findings #1/#3, and
+  `CooldownAwareConfigurationManagerTests.ConfigureJwtBearer_DefaultsLastKnownGoodLifetimeTo300Seconds`
+  pinning finding #3's production default).
+- `Backend.Tests`, full suite: 672/674 (later re-run) / 673/674 (earlier re-run) passing -- the one
+  consistently-failing test, `Backend.Tests.Cascade.BrowserSocketCancellationTests.RunSessionAsync_
+  BargeInDuringABackpressuredTtsWrite_DoesNotAbortTheBrowserSocket`, reproduces identically in
+  isolation and on a clean `git stash` of this round's entire diff (confirmed by re-running it
+  against the pristine pre-round working tree) -- a pre-existing, unrelated WebSocket-timing/
+  Cascade test, not a regression from this round's auth work.
+- Conformance, `CONFORMANCE_BACKEND=dotnet`, `Scenarios.Auth`: 87/87 passing (confirms Row 18 fix
+  end to end, plus Rows 17/19 and everything else in the Auth scenario tree).
+- Conformance, `CONFORMANCE_BACKEND=dotnet`, full CI filter (`Dotnet=ready&Category!=Browser`):
+  627/627 passing.
+- Conformance, `CONFORMANCE_BACKEND=python`, `Category!=Browser` (full suite, both tagged and
+  untagged): 911/918 passing, 6 skipped, 1 failed
+  (`DotnetBackendLauncherPortRaceTests.StartAsync_recovers_when_the_assigned_port_is_already_bound_
+  by_someone_else`) -- this test launches a real dotnet-leg backend process regardless of
+  `CONFORMANCE_BACKEND`, and fails identically (same `AUTH_MODE=Development ... refused in
+  Production` fatal) on a clean `git stash` of this round's entire diff, i.e. it was already broken
+  before this round started and is unrelated to findings #1/#2/#3 or auth claim-shape handling; not
+  fixed here as it is out of this round's scope (harness/launcher config, not `Auth/*` production
+  code), but flagged honestly as a pre-existing gap.
+- `DotnetTraitCoverageTests`'s floor was re-measured fresh (temporarily raised to an unreachable
+  bound, actual count read off the assertion-failure message, then set to the real value, per the
+  coordinator's explicit "measure, don't compute" instruction): **281** (up from 260). The ~21-count
+  rise is explained by the finding-#2 conformance rows (17/18/19) each being exercised by both
+  `AuthRowRestTokenTests.Row_asserts_on_every_REST_path` and
+  `AuthRowRealtimeTokenTests.Row_asserts_on_realtime` as individual `[Theory]` cases, which
+  `CountFloorEligibleDotnetReadyTestMethods` counts as distinct cases, plus unrelated organic growth
+  elsewhere on `origin/dev` since the round-4/PR#253 260 measurement.
+- **Mutation checks (temporarily break, confirm red, revert, confirm green) for all 3 findings:**
+  1. Finding #1: commented out `CooldownAwareConfigurationManager.GetBaseConfigurationAsync`'s
+     `_gate.RecordFailure()` call -- `EntraPipelineCooldownTests.ColdOutage_AtMostOneFetchPerWindow_
+     AndFastFailures` (and 7 other cases in the same filtered run) went red
+     (`Assert.True() Failure: Expected True, Actual False`); reverted; full 18/18 green again.
+  2. Finding #2: widened the mutated `rolesShapeOk` check to also accept `JsonValueKind.String`
+     (restoring the exact shape of the original bug class) -- `AuthRowRestTokenTests.Row_asserts_on_
+     every_REST_path(caseIndex: 21)` and `AuthRowRealtimeTokenTests.Row_asserts_on_realtime
+     (caseIndex: 21)` (Row 18) both went red (2/51 failed); reverted; full 51/51 green again.
+  3. Finding #3: changed the production default back to IdentityModel's
+     `LastKnownGoodLifetime = lastKnownGoodLifetime ?? TimeSpan.FromHours(1)` --
+     `CooldownAwareConfigurationManagerTests.ConfigureJwtBearer_DefaultsLastKnownGoodLifetimeTo300Seconds`
+     went red (`Expected: 00:05:00, Actual: 01:00:00`); reverted; green again.
+
+**Known gaps (honest, not glossed over):**
+- No conformance-level key-rotation row for finding #3. `EntraPipelineCooldownTests.KeyRotation_
+  RotatedOutSigningKeyIsRejectedAfterLastKnownGoodLifetimeElapses` proves the mechanism pipeline-
+  wide, but it does so only by constructing the host in-process with a test-shrunk
+  `lastKnownGoodLifetime` parameter (300ms instead of 300s) passed directly to
+  `ConfigureJwtBearer`. The conformance suite launches the real, external dotnet backend process
+  with no such override hook in its production startup path (`lastKnownGoodLifetime` is an optional
+  parameter used only by tests that call `ConfigureJwtBearer` directly) -- a true black-box
+  conformance row would need to wait out the real 300-second production window, impractical for a
+  CI-speed suite. This mirrors the precedent already set for finding #1's own cooldown window when
+  #223 first landed it (also Backend.Tests-only, for the same 30-second-real-wait reason).
+- The pre-existing `DotnetBackendLauncherPortRaceTests` and `BrowserSocketCancellationTests`
+  failures noted above were confirmed unrelated to this round's changes (reproduce identically with
+  this round's diff stashed out) but were not investigated further or fixed, being out of this
+  round's stated scope (C# backend auth + its tests + conformance + this doc only).
+
 ## `models.catalog` (resolved this revision)
 
 The design doc (section 7) said the shared model catalog lives in `config.yaml` under
