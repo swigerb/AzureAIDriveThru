@@ -6,7 +6,7 @@
 2. Start with Dunkin'. Say: "I need a large hot regular coffee and a 25 count MUNCHKINS with glazed, chocolate glazed, and jelly." Point out that regular coffee becomes cream and sugar, MUNCHKINS are captured by flavor and count, and the ticket is priced server-side.
 3. Switch to Sonic. Confirm the switch. Say: "Make a SuperSONIC Double Cheeseburger Combo with tots and a medium Cherry Limeade, then make the drink large." Point out combo slots, drink resize, and the upcharge when the combo drink is larger than the included Medium.
 4. Switch to McDonald's. Say: "I want a Big Mac Meal, large, with fries and a Diet Coke. Actually make the whole meal medium." Point out whole-meal resizing and off-menu rejection by asking for a Whopper.
-5. Open Settings. Show Demo Mode, the model picker grouped by Realtime and Cascade, the voice picker, and breakfast or lunch menu mode for daypart personas. Explain that realtime uses `gpt-realtime-2.1`, while cascade uses STT, a reasoning model, and TTS.
+5. Open Settings. Show Demo Mode, the model picker grouped by Realtime and Cascade, the voice picker, and breakfast or lunch menu mode for daypart personas. Explain that realtime defaults to `gpt-realtime-2.1-mini` for low-latency ordering, with `gpt-realtime-2.1` selectable for deeper reasoning, while cascade uses STT, a reasoning model, and TTS.
 
 ## Setup checklist
 
@@ -123,14 +123,14 @@ Point out:
 - Persona switching is runtime only. The URL can also deep link with `?persona=sonic`, `?persona=dunkin`, or `?persona=mcdonalds`.
 - If an order or conversation is active, the app shows a confirm dialog before switching.
 - The model picker groups choices by pipeline.
-- Realtime is the lowest-latency voice-to-voice path: `gpt-realtime-2.1`, voice `marin`, and `whisper-1` transcription by default.
+- Realtime is the lowest-latency voice-to-voice path: `gpt-realtime-2.1-mini`, voice `marin`, and `whisper-1` transcription by default. `gpt-realtime-2.1` stays selectable for deeper reasoning.
 - Cascade uses `gpt-4o-transcribe`, `gpt-5-mini` reasoning for current persona allow-lists, and `gpt-4o-mini-tts`.
 
 ## Azure views to show
 
 In Azure Portal or CLI, show read-only views only.
 
-- Foundry deployments: `gpt-realtime-2.1`, `text-embedding-3-large`, `gpt-5-mini`, `phi-4`, `gpt-4o-transcribe`, and `gpt-4o-mini-tts`.
+- Foundry deployments: `gpt-realtime-2.1`, `gpt-realtime-2.1-mini`, `text-embedding-3-large`, `gpt-5-mini`, `phi-4`, `gpt-4o-transcribe`, and `gpt-4o-mini-tts`.
 - Azure AI Search indexes: `sonic-menu-items`, `dunkin-menu-items`, and `mcdonalds-menu-items`.
 - Azure Container Apps: one public app serving the frontend and Python backend.
 - Log Analytics: backend logs, session ids, tool calls, rate-limit recovery, and auth posture checks.

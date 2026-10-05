@@ -73,7 +73,7 @@
   },
 
   "models": {
-    "realtime": { "default": "gpt-realtime-2.1", "allowed": ["gpt-realtime-2.1", "gpt-realtime-mini"] },
+    "realtime": { "default": "gpt-realtime-2.1-mini", "allowed": ["gpt-realtime-2.1", "gpt-realtime-2.1-mini"] },
     "cascade": { "default": "gpt-5-mini", "allowed": ["gpt-5-mini"] }
   },
 

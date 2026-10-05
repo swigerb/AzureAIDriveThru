@@ -253,7 +253,7 @@ All money values are quoted decimal strings, so C# reads them as `decimal` witho
   },
 
   "models": {
-    "realtime": { "default": "gpt-realtime-2.1", "allowed": ["gpt-realtime-2.1", "gpt-realtime-mini"] },
+    "realtime": { "default": "gpt-realtime-2.1-mini", "allowed": ["gpt-realtime-2.1", "gpt-realtime-2.1-mini"] },
     "cascade":  { "default": "gpt-5-mini", "allowed": ["gpt-5-mini", "phi-4"] }
   },
 
@@ -740,7 +740,7 @@ There are three layers, each owned by one team:
    models:
      catalog:
        - { id: gpt-realtime-2.1, pipeline: realtime, label: "GPT Realtime 2.1", reasoning: true }
-       - { id: gpt-realtime-mini, pipeline: realtime, label: "GPT Realtime mini", reasoning: false }
+       - { id: gpt-realtime-2.1-mini, pipeline: realtime, label: "GPT Realtime 2.1 mini", reasoning: true }
        - { id: gpt-5-mini, pipeline: cascade, label: "GPT-5 mini", toolCalling: true }
        - { id: phi-4, pipeline: cascade, label: "Phi-4 (Foundry)", toolCalling: true }
      cascade:
@@ -908,8 +908,8 @@ small and scales after cutover.
 
 | Deployment | SKU | Stand-up capacity | After cutover | Notes |
 | --- | --- | --- | --- | --- |
-| `gpt-realtime-2.1` (realtime default) | GlobalStandard | **10 or less** | Scale up (for example to 40) once #88 deletes `cog-axgpampkq3yfa` | Bicep param `realtimeDeploymentCapacity`; scaling is a param change plus `azd provision`, then the smoke again |
-| One alternative realtime model (for example `gpt-realtime-mini`) | GlobalStandard | Small | Unchanged | Separate quota bucket with headroom; proves the model picker live |
+| `gpt-realtime-2.1` (realtime, selectable for deeper reasoning) | GlobalStandard | **10 or less** | Scale up (for example to 40) once #88 deletes `cog-axgpampkq3yfa` | Bicep param `realtimeDeploymentCapacity`; scaling is a param change plus `azd provision`, then the smoke again |
+| `gpt-realtime-2.1-mini` (realtime default, issue #306) | GlobalStandard | **10 or less** | Unchanged | Separate quota bucket; Bicep param `realtime21MiniDeploymentCapacity`; proves the model picker live |
 | `gpt-5-mini` (cascade chat, OpenAI) | GlobalStandard | **50** | Unchanged | Version `2025-08-07` (`2026-08-07` doesn't exist in eastus2, verified read-only). 1 unit is ~1K TPM; a cascade turn (~2.5K-token system prompt plus tool schemas and history) needs more than 1. `OpenAI.GlobalStandard.gpt-5-mini` usage was 170/1000 at review time, so 50 fits with headroom (#118 review item 3) |
 | `Phi-4` (cascade chat, non-OpenAI) | GlobalStandard | **20** | Unchanged | Version `7` (`1` doesn't exist; versions 2-7 are listed). Catalog-only until Unity's live tool-calling qualification in #87 passes (the eastus2 listing shows only `chatCompletion`, not `assistants`/`agentsV2`) -- removed from every persona's `models.cascade.allowed` until then. `AIServices.GlobalStandard.Phi-4` usage was 0/1000 at review time |
 | `gpt-4o-transcribe` (cascade transcription) | GlobalStandard | **10** | Unchanged | Version `2025-03-20`, confirmed listed (`audioTranscriptions`). `OpenAI.GlobalStandard.gpt-4o-transcribe` usage was 0/400 at review time |
@@ -952,7 +952,7 @@ Dunkin's Azure Local edge stack was never deployed, so its removal is code-only 
 | Unit | pytest (backend), vitest (frontend), xUnit (C# backend, from S2), harness unit tests; every new behavior mutation-checked | CI on every PR | `conformance-gate` plus the unit jobs |
 | Functional conformance | The black-box suite: **persona x backend x pipeline**, with a model-selection subset (section 8) | CI on every PR (fakes only) | Every leg of the matrix |
 | UX, automated | Playwright per persona **x backend**: theme, menu (daypart for McDonald's), one voice order through the fake upstream, persona switch, model switch, backend switch, resume after a dropped socket, rate-limit clip | CI (browser job) | Required |
-| Live Azure smoke | `smoke_realtime.py --persona --model` (and a cascade smoke) **per persona x backend x enabled model**: session config accepted, tools registered, transcription echo, one tool call, and a Search query against that persona's index | azd `postdeploy` on `azureaidrivethru-prod`; again after the Day 0 scale-up | Deploy is red if any fails |
+| Live Azure smoke | `smoke_realtime.py --pipeline realtime\|cascade --persona` **per persona x both pipelines** (#302, implemented): session config accepted, tools registered, transcription echo, a one-tool-call check (scripted guest turn asserts a well-formed `search` function_call, then runs that query for real against the persona's own Search index via the backend's own code path), and a cascade pass (`gpt-4o-transcribe` -> cascade chat model -> `gpt-4o-mini-tts`) | azd `postdeploy` on `azureaidrivethru-prod` via `scripts/smoke_realtime.sh`/`.ps1` (loops every persona from `PersonaCatalog`, never fatal); again after the Day 0 scale-up | Non-fatal by design -- failures are reported, not gating; see Zero-dependency check row below for the hard gate |
 | Zero-dependency check | Every app setting, role assignment and hook output of the new environment resolves only to resources in `rg-azureaidrivethru-prod` (a script over `azd env get-values` and `az role assignment list`). Re-run after Day 0: the live smoke must still pass with the old AOAI deleted | #87, then #88 | Required before Brian's teardown confirmation |
 | UX, manual checklist | Per persona on the live URL: greeting, a three-item order with the brand rule (Route 44; a meal with auto-filled fries; a latte with extras), happy hour announced on Sonic and Dunkin and absent on McDonald's (fixed-clock build or a live window), off-menu rejection, barge-in, resume, backend and model switch. Unity records it | New environment, before Day 0 and before release | Brian's sign-off |
 | Live A/B (S8) | Scripted orders against both backends, per persona: first-audio latency, tool correctness, CPU and memory per session, cold start | New environment | S8 report |

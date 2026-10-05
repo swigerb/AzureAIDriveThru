@@ -330,11 +330,22 @@ function SonicApp() {
     // `current` swapped to that persona (both effects run, in order, on the render where
     // `current.id` changed), briefly leaving the new persona's key holding the OLD persona's model
     // id. The only other write site is `onModelChange` below (an explicit user choice).
+    //
+    // Rick's PR 308 review item 2 (issue 306): only persists when `fromQuery` carried an explicit
+    // `?model=` (a deliberate choice, e.g. a backend hop via `lib/backends.ts`) -- never the bare
+    // "nothing stored/stale, fell through to the persona's current default" case. Writing the
+    // resolved default back unconditionally is what let a returning browser's OLD explicit pick
+    // silently re-pin itself forever even after the persona's default model changed (the id was
+    // still valid/selectable, just no longer the intended default) -- it also means a FUTURE
+    // default change reaches every browser that never made an explicit pick, with no key bump
+    // required next time.
     useEffect(() => {
         const fromQuery = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("model") : null;
         const resolved = resolveModelId(fromQuery ?? localStorage.getItem(modelStorageKey(current.id)), current.models);
         setModelId(resolved);
-        localStorage.setItem(modelStorageKey(current.id), resolved);
+        if (fromQuery !== null) {
+            localStorage.setItem(modelStorageKey(current.id), resolved);
+        }
         if (fromQuery !== null && typeof window !== "undefined") {
             const url = new URL(window.location.href);
             url.searchParams.delete("model");

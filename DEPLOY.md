@@ -49,18 +49,33 @@ The tracked default leaves `DEFAULT_PERSONA` empty. When no query string is supp
 |---|---|---|---|
 | `personas` | `PERSONAS` | *(empty)* | Comma list; the app parses this to its own allow-list. Empty (the tracked default) means "every persona found under `PERSONAS_DIR`" (`app/backend/persona_loader.py`), so all personas are served without naming any of them in tracked infra. The container app omits the `PERSONAS` env var entirely when this is empty, so the loader's own default applies. Override with `azd env set PERSONAS=...` only to restrict an environment to a subset of personas. |
 | `defaultPersona` | `DEFAULT_PERSONA` | *(empty)* | Persona selected when a request doesn't specify one. Empty (the tracked default) means the container app omits `DEFAULT_PERSONA` entirely, so `app/backend/persona_loader.py` picks its own default (its sonic persona if enabled, else the first enabled id alphabetically) -- same "don't name a brand in tracked infra" treatment as `personas` above. |
-| `openAiModelDeployments` | *(not wired to an env var)* | `infra/model-deployments.json` (loaded via `loadJsonContent()`): `gpt-realtime-2.1`, `text-embedding-3-large`, `gpt-5-mini`, `phi-4`, `gpt-4o-transcribe`, and `gpt-4o-mini-tts` | Each entry is `{catalogId, deploymentName, modelName, modelVersion, format, skuName, capacity, isDefaultRealtime}` (`format` is the Foundry model-format id, defaults to `OpenAI` when omitted). `AZURE_AI_MODEL_DEPLOYMENTS` output/env exposes the catalogId-to-deploymentName map for the model catalog in `app/backend/config.yaml`. Adding a model deployment is one new entry in `infra/model-deployments.json`, no Bicep edits. |
+| `openAiModelDeployments` | *(not wired to an env var)* | `infra/model-deployments.json` (loaded via `loadJsonContent()`): `gpt-realtime-2.1`, `gpt-realtime-2.1-mini`, `text-embedding-3-large`, `gpt-5-mini`, `phi-4`, `gpt-4o-transcribe`, and `gpt-4o-mini-tts` | Each entry is `{catalogId, deploymentName, modelName, modelVersion, format, skuName, capacity, isDefaultRealtime}` (`format` is the Foundry model-format id, defaults to `OpenAI` when omitted). `AZURE_AI_MODEL_DEPLOYMENTS` output/env exposes the catalogId-to-deploymentName map for the model catalog in `app/backend/config.yaml`. Adding a model deployment is one new entry in `infra/model-deployments.json`, no Bicep edits. `gpt-realtime-2.1-mini` is `isDefaultRealtime` (issue #306); a Grok voice/realtime model is deferred -- none exists in Foundry for this subscription yet. |
 | `realtimeDeploymentCapacity` | `AZURE_OPENAI_REALTIME_DEPLOYMENT_CAPACITY` | `10` | Scale-only override for the `gpt-realtime-2.1` entry above (section 10.3): bump the param, then `azd provision`. |
+| `realtime21MiniDeploymentCapacity` | `AZURE_OPENAI_REALTIME_21_MINI_DEPLOYMENT_CAPACITY` | `10` | Scale-only override for the `gpt-realtime-2.1-mini` entry above (issue #306, the default realtime model): bump the param, then `azd provision`. |
 | `searchServiceSkuName` | `AZURE_SEARCH_SERVICE_SKU` | `basic` | Paid tier for a clean-clone `azd up` (design section 10.2): Basic removes the free tier's 3-index cap at roughly a third of Standard's cost. |
 | `searchServiceLocation` | `AZURE_SEARCH_SERVICE_LOCATION` | *(empty -- falls back to `location`)* | Independent region override for the Search module only (same pattern as `openAiServiceLocation`/`AZURE_OPENAI_SERVICE_LOCATION`). Set this when the main `location` has no Basic-SKU Search capacity. |
-| `deployDotnetApp` | `DEPLOY_DOTNET_APP` | `false` | Deploys the optional `acaBackendDotnet` Container App module. Flipping this to `true` is a real spend decision (a second always-on Container App) that also requires landing azd's `backend-dotnet` deploy target in `azure.yaml` and the matching bicep tag in the SAME flip commit -- see [".NET container app (S7, #17)"](#net-container-app-s7-17) below, "Step 0", for the exact patch and the full rollout. |
-| `dotnetServiceName` | `AZURE_CONTAINER_APP_DOTNET_NAME` | *(auto-generated)* | Only used when `deployDotnetApp` is `true`. |
+| `deployDotnetApp` | `DEPLOY_DOTNET_APP` | `false` | Deploys the optional `acaBackendDotnet` Container App module. The azd `backend-dotnet` deploy target in `azure.yaml` and the matching bicep tag have already landed (the flip commit, [".NET container app (S7, #17)"](#net-container-app-s7-17) below, "Step 0"); flipping this param per environment is still a real, owner-gated spend decision (a second always-on Container App) -- see "Turning it on" below for the `azd env set` steps and the full ingress-last rollout. |
+| `dotnetServiceName` | `AZURE_CONTAINER_APP_DOTNET_NAME` | *(auto-generated: `capps-dotnet-<resourceToken>`)* | Only used when `deployDotnetApp` is `true`. The auto-generated default is shaped to fit the Container Apps 32-char name limit (`capps-dotnet-` + the 13-char `resourceToken` = 26 chars); production pins `AZURE_CONTAINER_APP_DOTNET_NAME=capps-dotnet-pwvzk3t22wttm` (#311), which is exactly what the default produces for that environment's token, so the override keeps working unchanged. |
 | `backendDotnetIngressEnabled` | `BACKEND_DOTNET_INGRESS_ENABLED` | `false` | Same ingress-last pattern as `backendIngressEnabled` below, independent per app. Flip only after #147's Entra parity work has been verified dark on the dotnet app. |
 
 Search index names are not tracked in infra at all: each persona's own
 `persona.json` `search.indexName` (design section 4.2) is the one source of
 truth, read by the #84 ingestion hook and by the app itself. An infra-level
 index-name map would be a second source of truth for the same data.
+
+### `BACKEND_URI` / `BACKEND_DOTNET_URI` container env vars (#311)
+
+Both container apps' own env blocks (not just the azd output/`.env` file -- see
+"Entra redirect URIs" below) now carry `BACKEND_URI` and, once the dotnet app is deployed with
+ingress on, `BACKEND_DOTNET_URI`: each is the running app's (or sibling app's) own public HTTPS
+origin, so either backend can address the other (e.g. a future cross-backend health check or
+redirect) without a hardcoded hostname. Each is computed deterministically as
+`https://<app-name>.<ACA environment defaultDomain>` -- from the app's own name and the shared ACA
+environment's `defaultDomain` output, not from the *other* app's module output -- so neither
+container app module depends on the other's deployment finishing first. Each var is included only
+when the app it names actually has public ingress: `BACKEND_URI` requires `backendIngressEnabled`;
+`BACKEND_DOTNET_URI` requires both `deployDotnetApp` and `backendDotnetIngressEnabled`. An app with
+ingress off is omitted entirely rather than injecting a URL nothing can reach.
 
 All resources use only user-assigned managed identity for authentication
 (`AZURE_CLIENT_ID` env var); no Azure OpenAI or Search keys are issued or
@@ -112,6 +127,41 @@ This only changes which persona a session gets when it doesn't name one
 (`app/backend/persona_loader.py`'s fallback); it does not restrict `PERSONAS`
 -- every enabled persona still gets its own index and is still
 reachable by a session that requests it explicitly.
+
+## Realtime & Cascade Smoke Checks (postdeploy, #302)
+
+The azd `postdeploy` hook (`scripts/smoke_realtime.sh` / `.ps1`) runs
+`scripts/smoke_realtime.py` once per persona (discovered live via
+`PersonaCatalog.load().ids` -- never a hardcoded brand list) for each of the
+two realtime pipelines the app supports, so a bad deployment doesn't go
+unnoticed just because the default persona happened to work:
+
+- `--pipeline realtime` (default): opens a GA Realtime API session against
+  the shared Azure OpenAI realtime deployment, asserts the `session.update`
+  shape and a transcription event, and then runs a **one-tool-call check**:
+  it sends a scripted guest turn designed to trigger the `search` function
+  tool, asserts the resulting `function_call` has a well-formed name/arguments
+  JSON/call_id, and then actually runs that query against the persona's own
+  Azure AI Search index through the same code path the backend uses
+  (`app/backend/tools.py`'s search context), so the check fails if the
+  persona's index is empty or misconfigured, not just if the realtime
+  deployment is reachable. Pass `--skip-search` to skip the Search-side half
+  (session/tool-call shape is still asserted) when running against an
+  environment with no search credential available.
+- `--pipeline cascade`: exercises the cascade (non-realtime) pipeline end to
+  end -- `gpt-4o-transcribe` for speech-to-text, the persona's configured
+  cascade chat model for the order-taking turn, and `gpt-4o-mini-tts` for the
+  spoken response -- using the same `ModelCatalog`/`PersonaCatalog`
+  configuration and Entra credential (`AsyncDefaultAzureCredential`, never an
+  API key) the backend itself uses.
+
+Both pipelines, for every persona, run serially in the wrapper script. The
+wrapper is always non-fatal: every failure is reported (`report_result` /
+`Report-Result`) but the script still exits `0`, so a smoke failure never
+blocks `azd up`/`azd deploy` from completing -- it's a signal to check
+afterward, not a deployment gate. See `app/backend/tests/test_smoke_realtime.py`
+for the fake-server-only unit coverage of both pipelines (no live Azure calls
+are made in tests).
 
 ## Entra ID Authentication (ADR-002)
 
@@ -296,31 +346,35 @@ gates the whole `acaBackendDotnet` Container App module (`infra/main.bicep`) and
 automatic one.** Flipping it on provisions a second always-on Container App (real cost); get
 Brian's sign-off first.
 
-As of this PR, `azure.yaml` does NOT declare a `backend-dotnet` service, and `infra/main.bicep`'s
-`acaBackendDotnet` module carries no `azd-service-name` tag either (Rick's review of #281, R1):
-declaring the service ahead of the tag -- while `DEPLOY_DOTNET_APP` stays `false` -- would break a
-bare `azd deploy`/`azd up` for every environment that has not flipped the flag, because azd has no
-service-level `condition:` (as of the pinned release, <https://aka.ms/azure.yaml.json>) to skip a
-service entirely. The other direction (the tag ahead of the service) is harmless -- a tagged
-resource with no declared service for azd to resolve breaks nothing. That's why the service and the
-tag land together in the same owner-gated flip commit below, rather than independently. That means
-today:
+As of this PR, `azure.yaml` declares the `backend-dotnet` service, and `infra/main.bicep`'s
+`acaBackendDotnet` module carries the matching `'azd-service-name': 'backend-dotnet'` tag, gated
+inside the module's `if (deployDotnetApp)` condition (Rick's review of #281, R1): the service and
+the tag landed together in the same owner-gated flip commit, so there was never a window where one
+existed without the other -- declaring the service ahead of the tag would have broken a bare `azd
+deploy`/`azd up` for every environment that has not flipped `DEPLOY_DOTNET_APP=true`, because azd
+has no service-level `condition:` (as of the pinned release, <https://aka.ms/azure.yaml.json>) to
+skip a declared service entirely. `DEPLOY_DOTNET_APP` itself still defaults to `false` everywhere,
+including `rg-azureaidrivethru-prod` -- landing the service and the tag is cost-neutral by itself;
+turning the Container App on is still the separate, owner-gated `azd env set` step below. That
+means today:
 
-- `azd provision` works normally and creates nothing new for the dotnet app (the module is
-  disabled).
-- A bare `azd deploy` or `azd up` also works normally, because `backend-dotnet` isn't a service at
-  all yet -- there's nothing for it to fail resolving.
+- `azd provision` works normally and creates nothing new for the dotnet app in an environment that
+  has not flipped the flag (the module is disabled).
+- A bare `azd deploy` or `azd up` now resolves `backend-dotnet` against the tagged
+  `acaBackendDotnet` resource once `DEPLOY_DOTNET_APP=true`; until then, every environment must
+  scope deploys explicitly (see below), because the tagged resource doesn't exist yet in that
+  environment.
 - `app/backend-dotnet`, `app/Dockerfile.dotnet`, `dotnetWebAppExists` and its
   `SERVICE_BACKEND_DOTNET_RESOURCE_EXISTS` mapping, the smoke-script wiring and this whole runbook
-  all exist and are ready; only the azure.yaml service entry and the bicep tag are deliberately held
-  back for the flip commit below (`test_azd_service_wiring.py` guards both directions and the gate).
+  all exist and are ready. `test_azd_service_wiring.py` guards both directions (every
+  `host: containerapp` service has a tag, every tag has a service) and the gate
+  (`deployDotnetApp` must still default `false` and the tag must stay inside its `if`).
 
 ### Step 0: land the service and the tag (the flip commit)
 
-When Brian signs off on the go-live, the flip commit adds BOTH of these together, then follows
-"Turning it on" below:
+The flip commit added BOTH of these together:
 
-**1. Add this service block to `azure.yaml`**, alongside `backend`:
+**1. The `backend-dotnet` service block in `azure.yaml`**, alongside `backend`:
 
 ```yaml
   backend-dotnet:
@@ -338,22 +392,21 @@ When Brian signs off on the go-live, the flip commit adds BOTH of these together
         - VITE_ENTRA_API_SCOPE=${ENTRA_API_SCOPE}
 ```
 
-**2. Add the matching tag to `acaBackendDotnet`'s `tags:` in `infra/main.bicep`** (replacing the
-plain `tags: tags` the module carries while this is pending):
+**2. The matching tag on `acaBackendDotnet`'s `tags:` in `infra/main.bicep`** (replacing the
+plain `tags: tags` the module carried while this was pending):
 
 ```bicep
     tags: union(tags, { 'azd-service-name': 'backend-dotnet' })
 ```
 
-**3. Update the S7 comment block above the `backend-dotnet` service in `azure.yaml`** (it currently
-says the service isn't declared yet -- once it is, replace that note with the usual "every
-environment that has not flipped `DEPLOY_DOTNET_APP=true` must scope deploys to `azd deploy
-backend`" operator note, matching the module's own comment in `main.bicep`).
+**3. The S7 comment block above the `backend-dotnet` service in `azure.yaml`** now describes the
+live state instead of saying the service isn't declared yet, matching the module's own comment in
+`main.bicep`.
 
-Once both land in the same commit, `test_azd_service_wiring.py`'s bidirectional checks (every
+With both landed in the same commit, `test_azd_service_wiring.py`'s bidirectional checks (every
 `host: containerapp` service has a tag, every tag has a service) and its gating assertion (the
 `backend-dotnet` tag must sit inside `if (deployDotnetApp)`, and `deployDotnetApp` must still map
-to `${DEPLOY_DOTNET_APP=false}`) all stay green. From that commit on, every environment that has
+to `${DEPLOY_DOTNET_APP=false}`) all stay green. From this commit on, every environment that has
 NOT flipped `DEPLOY_DOTNET_APP=true` must scope deploys explicitly:
 
 ```bash

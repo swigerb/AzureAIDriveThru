@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import RootApp from "../App";
+import { modelStorageKey } from "@/lib/models";
 
 // Issue #80 F10/F11, exercised end-to-end through the real App() wiring (the way
 // `App.personaSwitch.test.tsx` covers F7): F10's model choice is (a) grouped by pipeline in the
@@ -134,13 +135,13 @@ describe("model picker persistence and reset (issue #80 F10)", () => {
 
         await userEvent.selectOptions(screen.getByLabelText("Select model"), "gpt-5-mini");
 
-        await waitFor(() => expect(localStorage.getItem("modelChoice.test-alpha")).toBe("gpt-5-mini"));
-        expect(localStorage.getItem("modelChoice.test-beta")).toBeNull();
+        await waitFor(() => expect(localStorage.getItem(modelStorageKey("test-alpha"))).toBe("gpt-5-mini"));
+        expect(localStorage.getItem(modelStorageKey("test-beta"))).toBeNull();
         await waitFor(() => expect(rt.params.modelId).toBe("gpt-5-mini"));
     });
 
     it("resets to the new persona's own default on a persona switch, rather than carrying over the old choice", async () => {
-        localStorage.setItem("modelChoice.test-alpha", "gpt-5-mini");
+        localStorage.setItem(modelStorageKey("test-alpha"), "gpt-5-mini");
         render(<RootApp />);
         await waitFor(() => expect(rt.params.modelId).toBe("gpt-5-mini"));
 
@@ -150,7 +151,7 @@ describe("model picker persistence and reset (issue #80 F10)", () => {
     });
 
     it("recalls a persona's previously-stored model choice when switching back to it", async () => {
-        localStorage.setItem("modelChoice.test-beta", "gpt-5-mini");
+        localStorage.setItem(modelStorageKey("test-beta"), "gpt-5-mini");
         render(<RootApp />);
         await waitFor(() => expect(rt.params.modelId).toBe("gpt-realtime-2.1"));
 
@@ -183,7 +184,7 @@ describe("model picker persistence and reset (issue #80 F10)", () => {
             await screen.findByLabelText("Select persona");
 
             await waitFor(() => expect(rt.params.modelId).toBe("gpt-5-mini"));
-            expect(localStorage.getItem("modelChoice.test-alpha")).toBe("gpt-5-mini");
+            expect(localStorage.getItem(modelStorageKey("test-alpha"))).toBe("gpt-5-mini");
             expect(new URLSearchParams(window.location.search).has("model")).toBe(false);
         });
 
@@ -207,13 +208,13 @@ describe("model picker persistence and reset (issue #80 F10)", () => {
         });
 
         it("takes ?model= over a persona's own stored choice", async () => {
-            localStorage.setItem("modelChoice.test-alpha", "gpt-realtime-mini");
+            localStorage.setItem(modelStorageKey("test-alpha"), "gpt-realtime-mini");
             window.history.pushState({}, "", "/?model=gpt-5-mini");
             render(<RootApp />);
             await screen.findByLabelText("Select persona");
 
             await waitFor(() => expect(rt.params.modelId).toBe("gpt-5-mini"));
-            expect(localStorage.getItem("modelChoice.test-alpha")).toBe("gpt-5-mini");
+            expect(localStorage.getItem(modelStorageKey("test-alpha"))).toBe("gpt-5-mini");
         });
     });
 
@@ -225,7 +226,7 @@ describe("model picker persistence and reset (issue #80 F10)", () => {
     // itself (and the explicit `onModelChange` handler) closes that window.
     describe("no stale-model race on persona switch (issue #80, Rick's PR 134 review item 4)", () => {
         it("never persists the old persona's model under the new persona's storage key", async () => {
-            localStorage.setItem("modelChoice.test-alpha", "gpt-5-mini");
+            localStorage.setItem(modelStorageKey("test-alpha"), "gpt-5-mini");
             render(<RootApp />);
             await waitFor(() => expect(rt.params.modelId).toBe("gpt-5-mini"));
 
@@ -233,13 +234,15 @@ describe("model picker persistence and reset (issue #80 F10)", () => {
 
             await waitFor(() => expect(rt.params.modelId).toBe("gpt-realtime-2.1"));
             // "gpt-5-mini" (test-alpha's model) must never have been written under test-beta's key,
-            // not even transiently -- assert on the final value, which is all a stale-write bug
-            // would have corrupted since nothing else writes this key on a persona switch.
-            expect(localStorage.getItem("modelChoice.test-beta")).toBe("gpt-realtime-2.1");
+            // not even transiently. Rick's PR #308 review item 2 (#306): a locally-resolved default
+            // is no longer persisted at all (see the "only persists explicit picks" describe block
+            // below), so test-beta's key stays unset here -- it is NOT expected to hold the
+            // resolved default either.
+            expect(localStorage.getItem(modelStorageKey("test-beta"))).toBeNull();
         });
 
         it("never writes the old persona's model to the new persona's storage key, not even transiently", async () => {
-            localStorage.setItem("modelChoice.test-alpha", "gpt-5-mini");
+            localStorage.setItem(modelStorageKey("test-alpha"), "gpt-5-mini");
             render(<RootApp />);
             await waitFor(() => expect(rt.params.modelId).toBe("gpt-5-mini"));
 
@@ -247,13 +250,66 @@ describe("model picker persistence and reset (issue #80 F10)", () => {
             await switchTo("test-beta");
             await waitFor(() => expect(rt.params.modelId).toBe("gpt-realtime-2.1"));
 
-            // Every write App.tsx makes to test-beta's own key during the switch, in order -- a
-            // stale-write bug would show "gpt-5-mini" (test-alpha's model) written here before the
-            // correct default, since the old two-effect split persisted whatever `modelId` last
-            // was under the persona that had JUST become `current` on the very same commit.
-            const betaWrites = setItemSpy.mock.calls.filter(([key]) => key === "modelChoice.test-beta").map(([, value]) => value);
-            expect(betaWrites).not.toContain("gpt-5-mini");
+            // Rick's PR #308 review item 2 (#306): a plain persona switch with no explicit `?model=`
+            // no longer writes to test-beta's key AT ALL (only an explicit pick does) -- a
+            // stale-write bug would still show "gpt-5-mini" (test-alpha's model) written here.
+            const betaWrites = setItemSpy.mock.calls.filter(([key]) => key === modelStorageKey("test-beta")).map(([, value]) => value);
+            expect(betaWrites).toEqual([]);
             setItemSpy.mockRestore();
+        });
+    });
+
+    // Rick's PR #308 review item 2 (#306): `?model=`/the picker's explicit `onModelChange` are the
+    // ONLY sites that persist a model choice now. A bare "nothing stored (or stale), resolved to
+    // the persona's current default" pass through the same effect must leave localStorage alone --
+    // writing the resolved default back unconditionally (the pre-#306 behavior) is what let a
+    // returning browser's old explicit pick re-pin itself forever even once it stopped being the
+    // persona's own default, since the id was still valid/selectable, just no longer intended.
+    describe("only persists explicit picks, never a locally-resolved default (issue #80, Rick's PR #308 review item 2)", () => {
+        it("does not persist anything on first load when nothing was stored and the persona default is used", async () => {
+            render(<RootApp />);
+            await screen.findByLabelText("Select persona");
+
+            await waitFor(() => expect(rt.params.modelId).toBe("gpt-realtime-2.1"));
+            expect(localStorage.getItem(modelStorageKey("test-alpha"))).toBeNull();
+        });
+
+        it("does not persist anything when a persona switch resolves to the new persona's default", async () => {
+            render(<RootApp />);
+            await screen.findByLabelText("Select persona");
+            await waitFor(() => expect(rt.params.modelId).toBe("gpt-realtime-2.1"));
+
+            await switchTo("test-beta");
+
+            await waitFor(() => expect(rt.params.modelId).toBe("gpt-realtime-2.1"));
+            expect(localStorage.getItem(modelStorageKey("test-beta"))).toBeNull();
+        });
+
+        it("DOES persist an explicit ?model= pick (still an explicit choice, just made via the URL)", async () => {
+            window.history.pushState({}, "", "/?model=gpt-5-mini");
+            render(<RootApp />);
+            await screen.findByLabelText("Select persona");
+
+            await waitFor(() => expect(rt.params.modelId).toBe("gpt-5-mini"));
+            expect(localStorage.getItem(modelStorageKey("test-alpha"))).toBe("gpt-5-mini");
+        });
+    });
+
+    // Rick's PR #308 review item 2 (#306): a browser that visited before #306 shipped has
+    // `gpt-realtime-2.1` written under the OLD, unversioned `modelChoice.<persona>` key -- still a
+    // valid/listed id today, so without the `v2.` bump `resolveModelId` would keep honoring it
+    // forever and the new default would never reach that browser.
+    describe("returning browsers with a pre-#306 unversioned stored value (issue #80, Rick's PR #308 review item 2)", () => {
+        it("ignores a value stored under the old unversioned key and resolves to the current default instead", async () => {
+            localStorage.setItem("modelChoice.test-alpha", "gpt-realtime-2.1");
+            render(<RootApp />);
+            await screen.findByLabelText("Select persona");
+
+            await waitFor(() => expect(rt.params.modelId).toBe("gpt-realtime-2.1"));
+            // Reads/writes only ever touch the versioned key -- the stale unversioned entry is
+            // left completely alone, never migrated or cleared.
+            expect(localStorage.getItem("modelChoice.test-alpha")).toBe("gpt-realtime-2.1");
+            expect(localStorage.getItem(modelStorageKey("test-alpha"))).toBeNull();
         });
     });
 });

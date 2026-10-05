@@ -124,7 +124,15 @@ describe("resolveModelId", () => {
 
 describe("modelStorageKey", () => {
     it("namespaces the localStorage key by persona id (unlike the un-namespaced voiceChoice key)", () => {
-        expect(modelStorageKey("test-alpha")).toBe("modelChoice.test-alpha");
-        expect(modelStorageKey("test-beta")).toBe("modelChoice.test-beta");
+        expect(modelStorageKey("test-alpha")).toBe("modelChoice.v2.test-alpha");
+        expect(modelStorageKey("test-beta")).toBe("modelChoice.v2.test-beta");
+    });
+
+    // Rick's PR #308 review item 2 (#306): the `v2.` bump makes every pre-#306 stored value
+    // (written under the unversioned `modelChoice.<persona>` key, back when gpt-realtime-2.1 was
+    // the only selectable realtime model) a clean cache-miss, so a returning browser's old default
+    // pick can't keep shadowing the persona's new default forever.
+    it("no longer matches the pre-#306 unversioned key", () => {
+        expect(modelStorageKey("test-alpha")).not.toBe("modelChoice.test-alpha");
     });
 });

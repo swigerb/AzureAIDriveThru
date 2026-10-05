@@ -17,6 +17,7 @@ The standard deployment expects the catalog ids in `app/backend/config.yaml` to 
 The current standard deployment names are:
 
 - `gpt-realtime-2.1`
+- `gpt-realtime-2.1-mini`
 - `text-embedding-3-large`
 - `gpt-5-mini`
 - `phi-4`
@@ -52,9 +53,9 @@ For local runs, create `app/backend/.env` or run `scripts/write_env.ps1` after s
 ```bash
 AZURE_TENANT_ID=<tenant-id>
 AZURE_OPENAI_EASTUS2_ENDPOINT=https://<foundry-subdomain>.openai.azure.com
-AZURE_OPENAI_REALTIME_DEPLOYMENT=gpt-realtime-2.1
+AZURE_OPENAI_REALTIME_DEPLOYMENT=gpt-realtime-2.1-mini
 AZURE_AI_FOUNDRY_ENDPOINT=https://<foundry-subdomain>.services.ai.azure.com/models
-AZURE_AI_MODEL_DEPLOYMENTS={"gpt-realtime-2.1":"gpt-realtime-2.1","text-embedding-3-large":"text-embedding-3-large","gpt-5-mini":"gpt-5-mini","phi-4":"phi-4","gpt-4o-transcribe":"gpt-4o-transcribe","gpt-4o-mini-tts":"gpt-4o-mini-tts"}
+AZURE_AI_MODEL_DEPLOYMENTS={"gpt-realtime-2.1":"gpt-realtime-2.1","gpt-realtime-2.1-mini":"gpt-realtime-2.1-mini","text-embedding-3-large":"text-embedding-3-large","gpt-5-mini":"gpt-5-mini","phi-4":"phi-4","gpt-4o-transcribe":"gpt-4o-transcribe","gpt-4o-mini-tts":"gpt-4o-mini-tts"}
 AZURE_OPENAI_REALTIME_VOICE_CHOICE=marin
 AZURE_SEARCH_ENDPOINT=https://<search-service>.search.windows.net
 AZURE_SEARCH_SEMANTIC_CONFIGURATION=menuSemanticConfig
