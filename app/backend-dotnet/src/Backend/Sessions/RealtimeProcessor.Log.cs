@@ -126,14 +126,9 @@ internal static partial class Log
     [LoggerMessage(EventId = 1037, Level = LogLevel.Error, Message = "Unexpected error in realtime relay (session={SessionId})")]
     public static partial void UnexpectedRelayError(this ILogger logger, Exception ex, string sessionId);
 
-    [LoggerMessage(EventId = 1038, Level = LogLevel.Error, Message = "Unhandled exception draining a realtime relay loop")]
-    public static partial void UnhandledRelayDrainException(this ILogger logger, Exception ex);
-
-    [LoggerMessage(EventId = 1039, Level = LogLevel.Warning, Message = "Error forwarding fast-path audio append frame (session={SessionId})")]
-    public static partial void FastPathAudioForwardFailed(this ILogger logger, Exception ex, string sessionId);
-
-    [LoggerMessage(EventId = 1040, Level = LogLevel.Warning, Message = "Unexpected failure closing a superseded stale connection's output")]
-    public static partial void SupersededCloseFailed(this ILogger logger, Exception ex);
+    // EventIds 1038-1040 moved to FramePump.Log.cs with issue #338's FramePump extraction --
+    // same EventIds, same templates, same levels, just a new home alongside the code that logs
+    // them now.
 
     [LoggerMessage(EventId = 1041, Level = LogLevel.Warning, Message = "Dropped extension.set_machine_status with unknown/invalid machine or status (machine={Machine}, status={Status}, session={SessionId})")]
     public static partial void DroppedSetMachineStatus(this ILogger logger, string? machine, string? status, string sessionId);

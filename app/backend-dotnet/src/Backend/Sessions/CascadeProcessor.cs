@@ -1082,9 +1082,9 @@ internal sealed class CascadeProcessor : IPipelineProcessor
                     if (outcome.StaleWs is { } staleWs)
                     {
                         Task.Run(
-                            () => RealtimeProcessor.CloseSupersededStaleConnectionAsync(
-                                staleWs, outcome.StaleCts, RealtimeProcessor.SupersededCloseTimeout, _logger),
-                            CancellationToken.None).FireAndForget(_logger, nameof(RealtimeProcessor.CloseSupersededStaleConnectionAsync));
+                            () => FramePump.CloseSupersededStaleConnectionAsync(
+                                staleWs, outcome.StaleCts, FramePump.SupersededCloseTimeout, _logger),
+                            CancellationToken.None).FireAndForget(_logger, nameof(FramePump.CloseSupersededStaleConnectionAsync));
                     }
                     var orderSummaryJson = toolExecutor is IOrderTicketSource ticketSource
                         ? SafeOrderSummaryJson(ticketSource)
