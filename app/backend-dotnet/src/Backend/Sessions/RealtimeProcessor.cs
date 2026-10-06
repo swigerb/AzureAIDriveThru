@@ -143,7 +143,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
     /// <summary>Per-connection mutable state -- the C# equivalent of the local variables
     /// rtmt.py's <c>_forward_messages</c> closes over (<c>voice</c>, <c>assistant_audio_seen</c>,
     /// <c>greeting_sent</c>, <c>tools_pending</c>, <c>session_configured</c>, ...).</summary>
-    private sealed class RealtimeSessionState
+    internal sealed class RealtimeSessionState
     {
         public required string SessionId { get; init; }
         public required string Voice { get; set; }
@@ -400,73 +400,11 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
         // etc. are themselves local closures there too), kept as one method for the same reason:
         // the whole relay is one session's worth of tightly-coupled sequential state.
 
-        double ParseGreetingTimeoutSeconds()
-        {
-            var raw = BackendEnvironment.Get("CONFORMANCE_GREETING_TIMEOUT_SECONDS");
-            return double.TryParse(raw, System.Globalization.CultureInfo.InvariantCulture, out var seconds) && seconds > 0
-                ? seconds
-                : _greetingTimeoutSeconds;
-        }
-
-        JsonObject BuildGreetingFrame()
-        {
-            JsonObject greeting = promptLoader is not null
-                ? (JsonObject)YamlJson.ToJsonNode((IDictionary<object, object>)promptLoader.Greeting)!
-                : new JsonObject
-                {
-                    ["type"] = "conversation.item.create",
-                    ["item"] = new JsonObject
-                    {
-                        ["type"] = "message",
-                        ["role"] = "user",
-                        ["content"] = new JsonArray(new JsonObject { ["type"] = "input_text", ["text"] = "Hello!" }),
-                    },
-                };
-            if (greeting["item"] is JsonObject item)
-            {
-                item["id"] = MiddleTierItemIds.NewId();
-            }
-            return greeting;
-        }
-
-        async Task SendGreetingOnceAsync(string trigger)
-        {
-            if (state.GreetingSent)
-            {
-                return;
-            }
-            var timeoutSeconds = ParseGreetingTimeoutSeconds();
-            try
-            {
-                await state.SessionConfigured.Task.WaitAsync(TimeSpan.FromSeconds(timeoutSeconds), _timeProvider, ct).ConfigureAwait(false);
-            }
-            catch (TimeoutException)
-            {
-                _logger?.NoSessionUpdatedBeforeGreeting(timeoutSeconds, sessionId);
-            }
-            if (state.GreetingSent)
-            {
-                return;
-            }
-            state.GreetingSent = true;
-            state.Echo.StartGreetingSuppression();
-            _logger?.SendingGreeting(trigger, sessionId);
-            var greetingFrameJson = BuildGreetingFrame().ToJsonString();
-            await SendTextAsync(upstream, """{"type":"input_audio_buffer.clear"}""", ct).ConfigureAwait(false);
-            await SendTextAsync(upstream, greetingFrameJson, ct).ConfigureAwait(false);
-            await SendTextAsync(upstream, """{"type":"response.create"}""", ct).ConfigureAwait(false);
-            // Issue #13 tail: track the greeting in the context window, mirroring rtmt.py's
-            // ctx_monitor.add_content(greeting_msg) right after the greeting is sent.
-            _sessionManager?.GetContextMonitor(state.EffectiveSessionId)?.AddContent(greetingFrameJson);
-            // Rick's #244 review (issue 5): rtmt.py's send_greeting_once marks
-            // conversation_started immediately after sending the greeting's response.create
-            // (mark_greeting_sent), NOT after the greeting's response.done later arrives -- a
-            // connection drop between those two points must still resume silently (rehydrating,
-            // no re-greet), not fall back to greeting again, since the guest already heard it
-            // start. Previously this port only marked it at the first non-tool-call response.done,
-            // which is wrong specifically for that drop-during-the-greeting window.
-            _sessionManager?.MarkConversationStarted(state.EffectiveSessionId);
-        }
+        // Issue #338: the greeting gate itself is its own collaborator now (GreetingGate.cs) --
+        // same logic, same log templates/EventIds, just constructed here with this connection's
+        // own upstream/promptLoader/state/timing so SendOnceAsync below is a pure delegate.
+        var greetingGate = new GreetingGate(
+            upstream, promptLoader, state, _sessionManager, _timeProvider, _greetingTimeoutSeconds, sessionId, _logger!, ct);
 
         JsonObject BuildVoiceUpdateFrame(string newVoice) => new()
         {
@@ -600,7 +538,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
                 state.Identifiers = originalIdentifiers;
             }
             // Issue #181: conversation_started gates whether this resume rehydrates silently
-            // (greeting already happened -- GreetingSent=true suppresses SendGreetingOnceAsync
+            // (greeting already happened -- GreetingSent=true suppresses GreetingGate.SendOnceAsync
             // entirely) or re-greets as if fresh. Only a rehydrating resume is nudge-eligible; a
             // resume before the greeting ever fired still greets normally and must not nudge on
             // top of that.
@@ -898,7 +836,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
 
                     if (!state.GreetingSent && sentType == "session.update")
                     {
-                        await SendGreetingOnceAsync("client-session.update").ConfigureAwait(false);
+                        await greetingGate.SendOnceAsync("client-session.update").ConfigureAwait(false);
                     }
 
                     // Issue #181: a resumed connection only arms its nudge once ITS OWN

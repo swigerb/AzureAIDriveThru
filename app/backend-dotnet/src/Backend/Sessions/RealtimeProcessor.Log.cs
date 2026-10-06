@@ -15,11 +15,9 @@ internal static partial class Log
     [LoggerMessage(EventId = 1000, Level = LogLevel.Error, Message = "Failed to connect to upstream realtime endpoint for deployment {Deployment} (session={SessionId})")]
     public static partial void UpstreamConnectFailed(this ILogger logger, Exception ex, string deployment, string sessionId);
 
-    [LoggerMessage(EventId = 1001, Level = LogLevel.Warning, Message = "No session.updated within {Timeout}s; sending greeting anyway (session={SessionId})")]
-    public static partial void NoSessionUpdatedBeforeGreeting(this ILogger logger, double timeout, string sessionId);
-
-    [LoggerMessage(EventId = 1002, Level = LogLevel.Information, Message = "Sending greeting (trigger={Trigger}, session={SessionId})")]
-    public static partial void SendingGreeting(this ILogger logger, string trigger, string sessionId);
+    // EventIds 1001-1002 moved to GreetingGate.Log.cs with issue #338's GreetingGate
+    // extraction -- same EventIds, same templates, same levels, just a new home alongside the
+    // code that logs them now.
 
     [LoggerMessage(EventId = 1003, Level = LogLevel.Warning, Message = "Dropped extension.resume arriving after the first-frame decision ({Reason}, session={SessionId})")]
     public static partial void DroppedLateResume(this ILogger logger, string reason, string sessionId);
