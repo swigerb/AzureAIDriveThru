@@ -19,8 +19,8 @@ internal static partial class Log
     // extraction -- same EventIds, same templates, same levels, just a new home alongside the
     // code that logs them now.
 
-    [LoggerMessage(EventId = 1003, Level = LogLevel.Warning, Message = "Dropped extension.resume arriving after the first-frame decision ({Reason}, session={SessionId})")]
-    public static partial void DroppedLateResume(this ILogger logger, string reason, string sessionId);
+    // EventId 1003 (DroppedLateResume) moved to ResumeCoordinator.Log.cs with issue #338's
+    // ResumeCoordinator extraction -- same EventId, template and level.
 
     [LoggerMessage(EventId = 1004, Level = LogLevel.Warning, Message = "Dropped extension.set_voice with an unknown/invalid voice {Voice} (session={SessionId})")]
     public static partial void DroppedSetVoice(this ILogger logger, string? voice, string sessionId);
@@ -28,11 +28,9 @@ internal static partial class Log
     [LoggerMessage(EventId = 1005, Level = LogLevel.Information, Message = "Assistant audio already present -- voice {Voice} applies from the next conversation (session={SessionId})")]
     public static partial void VoiceDeferredToNextConversation(this ILogger logger, string voice, string sessionId);
 
-    [LoggerMessage(EventId = 1006, Level = LogLevel.Information, Message = "extension.resume rejected (reason={Reason}, session={SessionId})")]
-    public static partial void ExtensionResumeRejected(this ILogger logger, string? reason, string sessionId);
-
-    [LoggerMessage(EventId = 1007, Level = LogLevel.Information, Message = "Session resumed (resumedSessionId={ResumedSessionId}, session={SessionId})")]
-    public static partial void SessionResumedWithId(this ILogger logger, string? resumedSessionId, string sessionId);
+    // EventIds 1006-1007 (ExtensionResumeRejected, SessionResumedWithId) moved to
+    // ResumeCoordinator.Log.cs alongside issue #338's ResumeCoordinator extraction -- same
+    // EventIds, templates and levels.
 
     [LoggerMessage(EventId = 1008, Level = LogLevel.Warning, Message = "Browser WebSocket error (session={SessionId})")]
     public static partial void BrowserWebSocketError(this ILogger logger, Exception ex, string sessionId);
@@ -80,8 +78,8 @@ internal static partial class Log
     [LoggerMessage(EventId = 1028, Level = LogLevel.Information, Message = "Response contained {Count} tool call(s): {Names} (session={SessionId})")]
     public static partial void ResponseContainedToolCalls(this ILogger logger, int count, string names, string sessionId);
 
-    [LoggerMessage(EventId = 1029, Level = LogLevel.Warning, Message = "Could not read order state while building a session-resumed announcement (session={SessionId})")]
-    public static partial void OrderStateReadForAnnouncementFailed(this ILogger logger, Exception ex, string sessionId);
+    // EventId 1029 (OrderStateReadForAnnouncementFailed) moved to ResumeCoordinator.Log.cs
+    // alongside issue #338's ResumeCoordinator extraction -- same EventId, template and level.
 
     [LoggerMessage(EventId = 1030, Level = LogLevel.Error, Message = "Input audio transcription failed (model={Model}): {Error} (session={SessionId})")]
     public static partial void InputAudioTranscriptionFailed(this ILogger logger, string? model, string? error, string sessionId);
