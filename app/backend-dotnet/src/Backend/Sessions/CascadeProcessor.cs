@@ -48,8 +48,8 @@ namespace Backend.Sessions;
 internal sealed class CascadeProcessor : IPipelineProcessor
 {
     internal const int MaxToolRounds = 8;
-    private const int AudioSampleRate = 24000;
-    private const int TtsChunkBytes = 24000;
+    internal const int AudioSampleRate = 24000;
+    internal const int TtsChunkBytes = 24000;
 
     private readonly ModelCatalog _catalog;
     private readonly FoundryChatClient _chatClient;
@@ -229,6 +229,14 @@ internal sealed class CascadeProcessor : IPipelineProcessor
         var turnRegistryLock = new object();
 
         double NowSeconds() => _timeProvider.GetUtcNow().ToUnixTimeMilliseconds() / 1000.0;
+
+        // Issue #338: transcription/TTS-playback/failed-turn-teardown is its own collaborator now
+        // (CascadeAudioTurnPipeline.cs) -- same logic, constructed here with this connection's own
+        // detector/state/persona so the call sites below are pure delegates. NotifyClientAsync and
+        // NowSeconds stay delegates onto the local functions above rather than being duplicated.
+        var audioTurnPipeline = new CascadeAudioTurnPipeline(
+            browserSocket, persona, state, detector, _catalog, _audioClient, _rateLimitSettings,
+            _echoCooldownSeconds, sessionId, _timeProvider, NotifyClientAsync, NowSeconds, _logger!, ct);
 
         async Task CancelCurrentTurnAsync(string reason)
         {
@@ -447,94 +455,6 @@ internal sealed class CascadeProcessor : IPipelineProcessor
             cts?.Dispose();
         }
 
-        async Task<string> TranscribeAsync(byte[] turnAudio, CancellationToken turnCt)
-        {
-            var cascadeAudio = _catalog.CascadeAudio
-                ?? throw new InvalidOperationException("config.yaml has no models.cascade transcription/tts configured.");
-            var deployment = _catalog.DeploymentFor(cascadeAudio.Transcription)
-                ?? throw new InvalidOperationException(
-                    $"Cascade transcription model '{cascadeAudio.Transcription}' has no AZURE_AI_MODEL_DEPLOYMENTS entry.");
-            return await CascadeRateLimit.WithRetryAsync(
-                _rateLimitSettings,
-                () => _audioClient.TranscribeAsync(turnAudio, deployment, AudioSampleRate, turnCt),
-                "transcription", NotifyClientAsync, sessionId, _logger, turnCt, _timeProvider).ConfigureAwait(false);
-        }
-
-        async Task SpeakAsync(string text, CancellationToken turnCt)
-        {
-            var cascadeAudio = _catalog.CascadeAudio
-                ?? throw new InvalidOperationException("config.yaml has no models.cascade transcription/tts configured.");
-            var deployment = _catalog.DeploymentFor(cascadeAudio.Tts)
-                ?? throw new InvalidOperationException(
-                    $"Cascade TTS model '{cascadeAudio.Tts}' has no AZURE_AI_MODEL_DEPLOYMENTS entry.");
-            // Issue #304: apply this persona's own phonetic pronunciation lexicon ONLY to the TTS
-            // input text -- never to the chat transcript/history sent to the browser (that still
-            // carries the unmodified `text`). Mirrors cascade_processor.py's
-            // `_apply_pronunciations`/`_speak`.
-            var ttsText = persona.Pronunciations is { Count: > 0 } pronunciations
-                ? MenuCatalog.ApplyLexicon(text, pronunciations)
-                : text;
-            await CascadeRateLimit.WithRetryAsync(
-                _rateLimitSettings,
-                async () =>
-                {
-                    var pcm = await _audioClient.SpeakAsync(ttsText, state.Voice, deployment, turnCt).ConfigureAwait(false);
-                    if (_echoCooldownSeconds > 0)
-                    {
-                        // #126: arm echo suppression for the GUEST'S estimated speaker playback
-                        // of this reply (not this loop's own fast send time) plus a short acoustic
-                        // tail (`_echoCooldownSeconds`, capped at 300ms in the constructor).
-                        // 0 disables suppression entirely, identically to cascade_processor.py's
-                        // `_speak`. PCM16 mono => 2 bytes/sample.
-                        var durationSeconds = pcm.Length / (double)(AudioSampleRate * 2);
-                        detector.StartEchoCooldown(durationSeconds + _echoCooldownSeconds, NowSeconds());
-                    }
-                    for (var offset = 0; offset < pcm.Length; offset += TtsChunkBytes)
-                    {
-                        var chunkLength = Math.Min(TtsChunkBytes, pcm.Length - offset);
-                        var chunk = pcm.AsSpan(offset, chunkLength).ToArray();
-                        await SendTextAsync(browserSocket, new JsonObject
-                        {
-                            ["type"] = "response.audio.delta",
-                            ["delta"] = Convert.ToBase64String(chunk),
-                        }.ToJsonString(), turnCt, ct).ConfigureAwait(false);
-                    }
-                },
-                "text-to-speech", NotifyClientAsync, sessionId, _logger, turnCt, _timeProvider).ConfigureAwait(false);
-        }
-
-        async Task SendFailedResponseDoneAsync(string responseId, string message, CancellationToken turnCt)
-        {
-            // #262: closes out a turn that failed (non-429) after `response.created` was already
-            // sent, so the browser is never left thinking a response is still in progress. Shape
-            // mirrors the Realtime API's own failed-response `response.done` (`status: "failed"`,
-            // `status_details.error`) -- see RealtimeProcessor's own passthrough of upstream's
-            // `response.done`, which never needs to construct this shape itself -- so the
-            // frontend's shared `onReceivedResponseDone` handler needs no cascade-specific
-            // branch, just a `status` check. The plain `error` event mirrors the Realtime API's
-            // own `error` passthrough (upstream protocol errors reach the browser the same way).
-            await SendTextAsync(browserSocket, new JsonObject
-            {
-                ["type"] = "error",
-                ["error"] = new JsonObject { ["type"] = "server_error", ["message"] = message },
-            }.ToJsonString(), turnCt, ct).ConfigureAwait(false);
-            await SendTextAsync(browserSocket, new JsonObject
-            {
-                ["type"] = "response.done",
-                ["response"] = new JsonObject
-                {
-                    ["id"] = responseId,
-                    ["status"] = "failed",
-                    ["status_details"] = new JsonObject
-                    {
-                        ["type"] = "failed",
-                        ["error"] = new JsonObject { ["type"] = "server_error", ["message"] = message },
-                    },
-                    ["output"] = new JsonArray(),
-                },
-            }.ToJsonString(), turnCt, ct).ConfigureAwait(false);
-        }
-
         async Task RunTurnAndSpeakAsync(CancellationToken turnCt)
         {
             var responseId = MiddleTierItemIds.NewId();
@@ -576,7 +496,7 @@ internal sealed class CascadeProcessor : IPipelineProcessor
                 // event instead. The 429 path and barge-in (both just above) are unaffected --
                 // this `catch` only ever reaches OTHER failures.
                 _logger?.CascadeChatCompletionFailed(ex, sessionId);
-                await SendFailedResponseDoneAsync(responseId, "chat completion failed", turnCt).ConfigureAwait(false);
+                await audioTurnPipeline.SendFailedResponseDoneAsync(responseId, "chat completion failed", turnCt).ConfigureAwait(false);
                 return;
             }
 
@@ -594,7 +514,7 @@ internal sealed class CascadeProcessor : IPipelineProcessor
 
                 try
                 {
-                    await SpeakAsync(finalText, turnCt).ConfigureAwait(false);
+                    await audioTurnPipeline.SpeakAsync(finalText, turnCt).ConfigureAwait(false);
                 }
                 catch (CascadeRateLimitExhaustedException)
                 {
@@ -620,7 +540,7 @@ internal sealed class CascadeProcessor : IPipelineProcessor
                     // chat-completion failures are now reported, instead of a quiet, misleading
                     // "success".
                     _logger?.CascadeTtsFailed(ex, sessionId);
-                    await SendFailedResponseDoneAsync(responseId, "text-to-speech failed", turnCt).ConfigureAwait(false);
+                    await audioTurnPipeline.SendFailedResponseDoneAsync(responseId, "text-to-speech failed", turnCt).ConfigureAwait(false);
                     return;
                 }
             }
@@ -645,7 +565,7 @@ internal sealed class CascadeProcessor : IPipelineProcessor
             string transcript;
             try
             {
-                transcript = await TranscribeAsync(turnAudio, turnCt).ConfigureAwait(false);
+                transcript = await audioTurnPipeline.TranscribeAsync(turnAudio, turnCt).ConfigureAwait(false);
             }
             catch (CascadeRateLimitExhaustedException)
             {
