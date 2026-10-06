@@ -76,6 +76,14 @@
           "comboSlot": "none",
           "aliases": ["ZORBS Bite Treats", "Zorbs"],
           "spokenName": "Zorb Bite Treats"
+        },
+        {
+          "name": "Zeta Snack Mix (Family Size)",
+          "sizes": [
+            { "size": "regular", "price": 3.49 }
+          ],
+          "description": "#325 B2 regression fixture (Rick's PR #326 review): a standalone item whose OWN canonical name contains a paren group -- mirrors a real pack's own data (e.g. a shipped pack's real \"Milk Jug (1%) - White\") -- so update_order's add/modify/remove canonicalization can be proven NOT to duplicate the canonical name's own \"(...)\" group when the model echoes it back verbatim, NOT to lose the merge guarantee when the model omits it, and to still correctly stack a GENUINE guest-added customization group on top without reading the canonical name's own parens as that customization.",
+          "comboSlot": "none"
         }
       ]
     }
