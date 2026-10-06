@@ -47,11 +47,9 @@ internal sealed class ResumeCoordinator(
     public async Task RejectLateResumeAsync(string logReason)
     {
         logger?.DroppedLateResume(logReason, sessionId);
-        await FramePump.SendTextAsync(browserSocket, new JsonObject
-        {
-            ["type"] = "extension.resume_rejected",
-            ["reason"] = "not_first_frame",
-        }.ToJsonString(), ct).ConfigureAwait(false);
+        await FramePump.SendTextAsync(
+            browserSocket, ResumeEnvelope.BuildResumeRejectedFrame("not_first_frame").ToJsonString(), ct)
+            .ConfigureAwait(false);
 
         // rtmt.py's reject_late_resume: the browser drops its stored id on ANY
         // rejection, so re-announce this socket's own session (with a rotated id) --
@@ -86,11 +84,9 @@ internal sealed class ResumeCoordinator(
         if (!outcome.Accepted)
         {
             logger?.ExtensionResumeRejected(outcome.Reason, sessionId);
-            await FramePump.SendTextAsync(browserSocket, new JsonObject
-            {
-                ["type"] = "extension.resume_rejected",
-                ["reason"] = outcome.Reason,
-            }.ToJsonString(), ct).ConfigureAwait(false);
+            await FramePump.SendTextAsync(
+                browserSocket, ResumeEnvelope.BuildResumeRejectedFrame(outcome.Reason).ToJsonString(), ct)
+                .ConfigureAwait(false);
             state.FirstFrameDecision.TrySetResult(false);
             return;
         }
@@ -194,20 +190,8 @@ internal sealed class ResumeCoordinator(
                 var orderSummaryJson = outcome.ToolExecutor is IOrderTicketSource ticketSource
                     ? SafeOrderSummaryJson(ticketSource)
                     : "{}";
-                var resumedFrame = new JsonObject
-                {
-                    ["type"] = "extension.session_resumed",
-                    ["order_summary"] = JsonNode.Parse(orderSummaryJson) ?? new JsonObject(),
-                    ["session_token"] = state.Identifiers.SessionToken,
-                    ["round_trip_index"] = state.Identifiers.RoundTripIndex,
-                    // Rick's #244 review (issue 5): rtmt.py's handle_resume always includes
-                    // round_trip_token alongside round_trip_index in this frame (App.tsx's own
-                    // resume handling reads it, per types.ts's SessionResumedMessage) -- it was
-                    // simply missing here even though SessionIdentifiers.RoundTripToken already
-                    // exists as a computed property.
-                    ["round_trip_token"] = state.Identifiers.RoundTripToken,
-                    ["resume_id"] = outcome.ResumeId,
-                };
+                var resumedFrame = ResumeEnvelope.BuildSessionResumedFrame(
+                    state.Identifiers, orderSummaryJson, outcome.ResumeId);
                 // Parity with rtmt.py's handle_resume (sets `announced = True` right before sending
                 // extension.session_resumed): a successfully resumed connection holds a baton (its
                 // own resume id) exactly like a fresh connection does, so if a later stray
@@ -275,11 +259,7 @@ internal sealed class ResumeCoordinator(
     private async Task SendFreshSessionMetadataAsync()
     {
         var resumeId = sessionManager!.IssueResumeId(state.EffectiveSessionId);
-        var metadataFrame = state.Identifiers.ToFrame("extension.session_metadata");
-        if (resumeId is not null)
-        {
-            metadataFrame["resumeId"] = resumeId;
-        }
+        var metadataFrame = ResumeEnvelope.BuildSessionMetadataFrame(state.Identifiers, resumeId);
         state.MetadataAnnounced = true;
         await FramePump.SendTextAsync(browserSocket, metadataFrame.ToJsonString(), ct).ConfigureAwait(false);
     }

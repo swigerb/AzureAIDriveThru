@@ -1089,15 +1089,10 @@ internal sealed class CascadeProcessor : IPipelineProcessor
                     var orderSummaryJson = toolExecutor is IOrderTicketSource ticketSource
                         ? SafeOrderSummaryJson(ticketSource)
                         : "{}";
-                    await SendTextAsync(browserSocket, new JsonObject
-                    {
-                        ["type"] = "extension.session_resumed",
-                        ["order_summary"] = JsonNode.Parse(orderSummaryJson) ?? new JsonObject(),
-                        ["session_token"] = identifiers.SessionToken,
-                        ["round_trip_index"] = identifiers.RoundTripIndex,
-                        ["round_trip_token"] = identifiers.RoundTripToken,
-                        ["resume_id"] = outcome.ResumeId,
-                    }.ToJsonString(), ct, ct).ConfigureAwait(false);
+                    await SendTextAsync(
+                        browserSocket,
+                        ResumeEnvelope.BuildSessionResumedFrame(identifiers, orderSummaryJson, outcome.ResumeId).ToJsonString(),
+                        ct, ct).ConfigureAwait(false);
 
                     if (outcome.ConversationStarted)
                     {
@@ -1123,11 +1118,9 @@ internal sealed class CascadeProcessor : IPipelineProcessor
                 }
 
                 _logger?.CascadeResumeRejected(outcome.Reason, sessionId);
-                await SendTextAsync(browserSocket, new JsonObject
-                {
-                    ["type"] = "extension.resume_rejected",
-                    ["reason"] = outcome.Reason,
-                }.ToJsonString(), ct, ct).ConfigureAwait(false);
+                await SendTextAsync(
+                    browserSocket, ResumeEnvelope.BuildResumeRejectedFrame(outcome.Reason).ToJsonString(), ct, ct)
+                    .ConfigureAwait(false);
                 // Falls through to the fresh path below -- the resume frame is fully consumed
                 // either way, accepted or rejected.
             }
@@ -1136,11 +1129,7 @@ internal sealed class CascadeProcessor : IPipelineProcessor
             // connection's own identity and start the greeting -- the exact pre-#126
             // unconditional behaviour.
             var resumeId = _sessionManager.IssueResumeId(sessionId);
-            var metadataFrame = identifiers.ToFrame("extension.session_metadata");
-            if (resumeId is not null)
-            {
-                metadataFrame["resumeId"] = resumeId;
-            }
+            var metadataFrame = ResumeEnvelope.BuildSessionMetadataFrame(identifiers, resumeId);
             await SendTextAsync(browserSocket, metadataFrame.ToJsonString(), ct, ct).ConfigureAwait(false);
             var (freshGreetingCts, freshGreetingTask) = Spawn(SendGreetingAsync, "greeting");
             state.CurrentTurnCts = freshGreetingCts;
