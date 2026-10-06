@@ -33,7 +33,7 @@ public sealed class ToolCallDispatcherTests
             NullLogger<RateLimitRecovery>.Instance),
         ToolFailures = new ToolFailureTracker(),
         Guard = new SessionUpdateGuard(),
-        Identifiers = new SessionIdentifiers("sonic", "gpt-realtime"),
+        Identifiers = new SessionIdentifiers("test-persona", "gpt-realtime"),
         ToolExecutor = executor,
     };
 

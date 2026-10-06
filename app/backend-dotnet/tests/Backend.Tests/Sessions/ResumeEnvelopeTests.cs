@@ -14,7 +14,7 @@ public sealed class ResumeEnvelopeTests
     [Fact]
     public void BuildSessionResumedFrame_IncludesOrderSummaryAndIdentifiers()
     {
-        var identifiers = new SessionIdentifiers("sonic", "gpt-realtime", sessionToken: "tok-1");
+        var identifiers = new SessionIdentifiers("test-persona", "gpt-realtime", sessionToken: "tok-1");
         identifiers.AdvanceRoundTrip();
 
         var frame = ResumeEnvelope.BuildSessionResumedFrame(identifiers, """{"items":[]}""", "resume-42");
@@ -30,7 +30,7 @@ public sealed class ResumeEnvelopeTests
     [Fact]
     public void BuildSessionResumedFrame_WithoutResumeId_OmitsItButKeepsKey()
     {
-        var identifiers = new SessionIdentifiers("sonic", "gpt-realtime", sessionToken: "tok-2");
+        var identifiers = new SessionIdentifiers("test-persona", "gpt-realtime", sessionToken: "tok-2");
 
         var frame = ResumeEnvelope.BuildSessionResumedFrame(identifiers, "{}", resumeId: null);
 
@@ -60,7 +60,7 @@ public sealed class ResumeEnvelopeTests
     [Fact]
     public void BuildSessionMetadataFrame_WithResumeId_AddsResumeIdOnTopOfToFrame()
     {
-        var identifiers = new SessionIdentifiers("sonic", "gpt-realtime", sessionToken: "tok-3");
+        var identifiers = new SessionIdentifiers("test-persona", "gpt-realtime", sessionToken: "tok-3");
 
         var frame = ResumeEnvelope.BuildSessionMetadataFrame(identifiers, "resume-7");
 
@@ -72,7 +72,7 @@ public sealed class ResumeEnvelopeTests
     [Fact]
     public void BuildSessionMetadataFrame_WithoutResumeId_OmitsResumeIdKeyEntirely()
     {
-        var identifiers = new SessionIdentifiers("sonic", "gpt-realtime", sessionToken: "tok-4");
+        var identifiers = new SessionIdentifiers("test-persona", "gpt-realtime", sessionToken: "tok-4");
 
         var frame = ResumeEnvelope.BuildSessionMetadataFrame(identifiers, resumeId: null);
 

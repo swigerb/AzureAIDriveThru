@@ -34,7 +34,7 @@ public sealed class ResumeCoordinatorTests
             NullLogger<RateLimitRecovery>.Instance),
         ToolFailures = new ToolFailureTracker(),
         Guard = new SessionUpdateGuard(),
-        Identifiers = new SessionIdentifiers("sonic", "gpt-realtime"),
+        Identifiers = new SessionIdentifiers("test-persona", "gpt-realtime"),
         ToolExecutor = new StubToolExecutor([]),
     };
 
