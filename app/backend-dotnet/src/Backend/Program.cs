@@ -11,6 +11,7 @@ using Backend.Realtime;
 using Backend.Search;
 using Backend.Sessions;
 using Backend.Tools;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
 
 // Host wiring (issue #12 S2): config, persona-pack loading, health, auth token endpoint, static
@@ -73,8 +74,40 @@ else
     builder.Services.AddAuthorization();
 }
 
+// C# review #335: named HttpClients from IHttpClientFactory, registered here (service
+// registration is a build-time call, so it must happen before Build() below) and resolved via
+// CreateClient() further down once app.Services exists. Search, cascade, and the one-shot startup
+// connectivity probe each get their own name so their connection pools stay isolated from each
+// other, matching how they were three independent `new HttpClient()` instances before. Every
+// client shares the same SocketsHttpHandler.PooledConnectionLifetime: these clients live for the
+// whole process, and without a bound on pooled-connection reuse there would be no reason for a
+// long-running client to ever re-resolve DNS after an Azure endpoint's address changes (failover,
+// scale-in/out). 10 minutes keeps normal connection reuse while staying comfortably inside typical
+// Azure DNS TTLs.
+const string SearchHttpClientName = "search-endpoint";
+const string CascadeHttpClientName = "cascade-endpoint";
+const string ConnectivityCheckHttpClientName = "connectivity-check";
+var pooledConnectionLifetime = TimeSpan.FromMinutes(10);
+foreach (var clientName in new[] { SearchHttpClientName, CascadeHttpClientName, ConnectivityCheckHttpClientName })
+{
+    builder.Services.AddHttpClient(clientName)
+        .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { PooledConnectionLifetime = pooledConnectionLifetime });
+}
+
+// Issue #15 follow-up (#335): the idle-close/grace-eviction sweep now runs as a real
+// BackgroundService (SessionSweepService, registered below) instead of a raw `_ = Task.Run(...)`.
+// AddHostedService must also be called before Build(), but `sessionManager` itself isn't
+// constructed until later -- same place it always was, since it depends on `sessionsConfig`/
+// `timeProvider`/`logger`, all only available after this file's own fail-fast startup checks run
+// (see the Entra authentication comment above for why those run after Build()). The factory below
+// closes over the `sessionManager` local; it is only ever invoked by the host's DI container when
+// it starts the hosted service inside app.Run(), well after the assignment further down has run.
+SessionManager? sessionManager = null;
+builder.Services.AddHostedService(_ => new SessionSweepService(sessionManager!));
+
 var app = builder.Build();
 var logger = app.Logger;
+var httpClientFactory = app.Services.GetRequiredService<IHttpClientFactory>();
 
 if (entraSettings.Mode == EntraMode.Development)
 {
@@ -152,7 +185,7 @@ startupChecks.Pass("prompts_loaded");
 // prompts_loaded) -- best-effort GET pings to AZURE_OPENAI_EASTUS2_ENDPOINT/
 // AZURE_SEARCH_ENDPOINT with a 5s total timeout, logs only, NEVER gates /health or fails
 // startup. See CheckServiceConnectivityAsync below for the full per-endpoint behaviour. ──────
-await CheckServiceConnectivityAsync(logger).ConfigureAwait(false);
+await CheckServiceConnectivityAsync(logger, httpClientFactory).ConfigureAwait(false);
 
 // ── 5. Model catalog (issue #75, design doc section 7.2): config.yaml's models.catalog +
 // AZURE_AI_MODEL_DEPLOYMENTS. Fail-fast if any enabled persona's own pipeline default isn't
@@ -266,7 +299,7 @@ var toolExecutor = new StubToolExecutor(allToolNames);
 var businessRulesConfig = BusinessRulesConfig.FromAppConfig(appConfig);
 var searchConfig = SearchConfig.FromAppConfig(appConfig);
 var searchEndpointConfig = SearchEndpointConfig.FromEnvironment();
-var searchHttpClient = new HttpClient();
+var searchHttpClient = httpClientFactory.CreateClient(SearchHttpClientName);
 
 IToolExecutor BuildSessionToolExecutor(Persona sessionPersona, PromptLoader? sessionPromptLoader, string? sessionMenuMode)
 {
@@ -296,11 +329,11 @@ var timeProvider = TimeProvider.System;
 // below.
 var rateLimitSettings = RateLimitSettings.FromAppConfig(appConfig);
 // Issue #15: the session registry (resume/rehydration/idle/grace/nudge) -- one process-wide
-// singleton, same lifetime/shape as rateLimitSettings above. RunSweepLoopAsync is started once,
-// right after realtimeProcessor is constructed below, tied to the host's own shutdown token so it
-// stops cleanly instead of leaking a background loop past app shutdown.
+// singleton, same lifetime/shape as rateLimitSettings above. Its sweep loop runs as
+// SessionSweepService (registered as a BackgroundService before Build() above), so it starts and
+// stops with the rest of the host instead of a hand-wired Task.Run.
 var sessionsConfig = SessionsConfig.FromConfig(appConfig);
-var sessionManager = new SessionManager(sessionsConfig, timeProvider, logger);
+sessionManager = new SessionManager(sessionsConfig, timeProvider, logger);
 // Issue #13 tail: config.yaml's `connection` section (ws_heartbeat_seconds/ws_compression/
 // ws_connect_timeout_total/ws_connect_timeout_connect) -- shared by the browser-facing
 // UseWebSockets() call below and RealtimeProcessor's own upstream ClientWebSocket connect.
@@ -330,10 +363,6 @@ var realtimeProcessor = new RealtimeProcessor(
     rateLimitSettings: rateLimitSettings,
     sessionManager: sessionManager,
     connectionConfig: connectionConfig);
-// Issue #15: the idle-close/grace-eviction sweep -- mirrors rtmt.py's own background
-// _idle_check_loop task. Runs for the whole app lifetime, stopping only when the host itself
-// shuts down (no separate IHostedService registration needed for one background loop).
-_ = Task.Run(() => sessionManager.RunSweepLoopAsync(app.Lifetime.ApplicationStopping));
 // PR #140 R5: bearerTokenProvider is left at its default (null) here deliberately --
 // RealtimeProcessor.ResolveUpstreamAuthHeaderAsync falls back to the lazily-constructed real
 // DefaultAzureCredentialTokenProvider itself, so a DefaultAzureCredential (which probes several
@@ -356,7 +385,7 @@ processorRegistry.Register(realtimeProcessor);
 // `AZURE_OPENAI_REALTIME_VOICE_CHOICE` override or `model.default_voice`) -- one voice default for
 // both pipelines. A dedicated HttpClient (not the shared `searchHttpClient`) keeps cascade's own
 // outbound REST calls (chat/STT/TTS) isolated from search's.
-var cascadeHttpClient = new HttpClient();
+var cascadeHttpClient = httpClientFactory.CreateClient(CascadeHttpClientName);
 // Mirrors app.py's own `conformance_hooks.cascade_credential() or AsyncDefaultAzureCredential()`:
 // a non-null ConformanceHooks.CascadeFakeToken (CONFORMANCE_TEST_HOOKS=1 AND
 // CONFORMANCE_CASCADE_FAKE_TOKEN set) substitutes the fixed-token StaticBearerTokenProvider so
@@ -702,7 +731,7 @@ static bool ParseBool(string? value) =>
 // on to the next endpoint, while a failure constructing the HttpClient/session itself (the outer
 // try) logs once and skips every endpoint -- neither path ever throws out of this function, so it
 // can never fail startup or gate /health, exactly like Python's version.
-static async Task CheckServiceConnectivityAsync(ILogger logger)
+static async Task CheckServiceConnectivityAsync(ILogger logger, IHttpClientFactory httpClientFactory)
 {
     var endpoints = new (string Name, string? Url)[]
     {
@@ -711,7 +740,8 @@ static async Task CheckServiceConnectivityAsync(ILogger logger)
     };
     try
     {
-        using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+        using var httpClient = httpClientFactory.CreateClient(ConnectivityCheckHttpClientName);
+        httpClient.Timeout = TimeSpan.FromSeconds(5);
         foreach (var (name, url) in endpoints)
         {
             if (string.IsNullOrEmpty(url))

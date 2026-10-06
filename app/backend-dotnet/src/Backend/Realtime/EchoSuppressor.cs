@@ -1,3 +1,5 @@
+using Backend.Shared;
+
 namespace Backend.Realtime;
 
 /// <summary>
@@ -146,7 +148,7 @@ internal sealed class EchoSuppressor : IDisposable
                 {
                     if (!t.IsCanceled)
                     {
-                        _ = FlushIfStillPendingAsync(cts);
+                        FlushIfStillPendingAsync(cts).FireAndForget(logger: null, nameof(FlushIfStillPendingAsync));
                     }
                 },
                 CancellationToken.None,
@@ -160,7 +162,7 @@ internal sealed class EchoSuppressor : IDisposable
         // Flush any echoed audio that leaked into OpenAI's buffer, best-effort (fire-and-forget).
         // Invoked outside the lock: the send may await, and nothing here needs to hold _sync while
         // that happens.
-        _ = BestEffortSend();
+        BestEffortSend().FireAndForget(logger: null, nameof(BestEffortSend));
     }
 
     /// <summary>Cancels any delayed echo flush still pending, and becomes terminal -- called from

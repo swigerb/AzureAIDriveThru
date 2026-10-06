@@ -6,6 +6,7 @@ using Backend.Models;
 using Backend.Personas;
 using Backend.Prompts;
 using Backend.Realtime;
+using Backend.Shared;
 using Backend.Tools;
 
 namespace Backend.Sessions;
@@ -679,9 +680,9 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
                 // tool, because OrderToolExecutor.ExecuteAsync is synchronous, ignores its own
                 // CancellationToken, and mutates OrderState, which isn't thread-safe -- a promptly
                 // cancelled StaleCts alone was never enough to stop an already-started dispatch.
-                _ = Task.Run(
+                Task.Run(
                     () => CloseSupersededStaleConnectionAsync(staleWs, outcome.StaleCts, SupersededCloseTimeout, _logger),
-                    CancellationToken.None);
+                    CancellationToken.None).FireAndForget(_logger, nameof(CloseSupersededStaleConnectionAsync));
             }
         }
 
@@ -1475,7 +1476,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
                                 // first-frame-timeout fallback elapses) -- see
                                 // HandleResumeFirstFrameAsync/RelayBrowserToUpstreamAsync. Fire-and-forget
                                 // here (not awaited): session.created's own caller must not block on it.
-                                _ = AnnounceAfterFirstFrameDecisionAsync();
+                                AnnounceAfterFirstFrameDecisionAsync().FireAndForget(_logger, nameof(AnnounceAfterFirstFrameDecisionAsync));
                             }
                             else
                             {

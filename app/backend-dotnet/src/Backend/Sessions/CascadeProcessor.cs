@@ -8,6 +8,7 @@ using Backend.Models;
 using Backend.Personas;
 using Backend.Prompts;
 using Backend.Realtime;
+using Backend.Shared;
 using Backend.Tools;
 
 namespace Backend.Sessions;
@@ -1103,10 +1104,10 @@ internal sealed class CascadeProcessor : IPipelineProcessor
                     }
                     if (outcome.StaleWs is { } staleWs)
                     {
-                        _ = Task.Run(
+                        Task.Run(
                             () => RealtimeProcessor.CloseSupersededStaleConnectionAsync(
                                 staleWs, outcome.StaleCts, RealtimeProcessor.SupersededCloseTimeout, _logger),
-                            CancellationToken.None);
+                            CancellationToken.None).FireAndForget(_logger, nameof(RealtimeProcessor.CloseSupersededStaleConnectionAsync));
                     }
                     var orderSummaryJson = toolExecutor is IOrderTicketSource ticketSource
                         ? SafeOrderSummaryJson(ticketSource)

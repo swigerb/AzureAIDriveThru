@@ -1,3 +1,5 @@
+using Backend.Shared;
+
 namespace Backend.Realtime;
 
 /// <summary>
@@ -100,7 +102,7 @@ internal sealed class NudgeScheduler
             {
                 if (!t.IsCanceled)
                 {
-                    _ = RunNudgeAsync(cts);
+                    RunNudgeAsync(cts).FireAndForget(_logger, nameof(RunNudgeAsync));
                 }
             },
             CancellationToken.None,
