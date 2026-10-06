@@ -3,10 +3,10 @@ using Microsoft.Extensions.Logging;
 namespace Backend.Realtime;
 
 /// <summary>
-/// Source-generated <see cref="ILogger"/> extension methods for <see cref="RealtimeAuthGate"/>
-/// (issue #336: CA1848/CA1873 on hot `/realtime` handshake paths). EventIds 7000-7999 are
+/// Source-generated <see cref="ILogger"/> extension methods for <see cref="RealtimeAuthGate"/>,
+/// avoiding CA1848/CA1873 allocations on hot `/realtime` handshake paths. EventIds 7000-7999 are
 /// reserved for this file; message templates, levels and placeholder names are copied verbatim
-/// from the call sites they replace -- the conformance suite and ops dashboards match on log
+/// from the call sites they replace -- the conformance suite matches on log
 /// text, so none of that may change.
 /// </summary>
 internal static partial class Log

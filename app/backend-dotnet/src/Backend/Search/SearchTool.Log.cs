@@ -3,10 +3,10 @@ using Microsoft.Extensions.Logging;
 namespace Backend.Search;
 
 /// <summary>
-/// Source-generated <see cref="ILogger"/> partial methods for <see cref="SearchTool"/> (issue
-/// #336: CA1848/CA1873 on hot paths). EventIds 4000-4999 are reserved for this file; message
+/// Source-generated <see cref="ILogger"/> partial methods for <see cref="SearchTool"/>, avoiding
+/// CA1848/CA1873 allocations on hot paths. EventIds 4000-4999 are reserved for this file; message
 /// templates, levels and placeholder names are copied verbatim from the call sites they replace --
-/// the conformance suite and ops dashboards match on log text, so none of that may change.
+/// the conformance suite matches on log text, so none of that may change.
 /// </summary>
 internal static partial class Log
 {

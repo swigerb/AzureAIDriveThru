@@ -3,10 +3,10 @@ using Microsoft.Extensions.Logging;
 namespace Backend.Realtime;
 
 /// <summary>
-/// Source-generated <see cref="ILogger"/> partial methods for <see cref="RateLimitRecovery"/>
-/// (issue #336: CA1848/CA1873 on hot paths). EventIds 6000-6999 are reserved for this file;
+/// Source-generated <see cref="ILogger"/> partial methods for <see cref="RateLimitRecovery"/>,
+/// avoiding CA1848/CA1873 allocations on hot paths. EventIds 6000-6999 are reserved for this file;
 /// message templates, levels and placeholder names are copied verbatim from the call sites they
-/// replace -- the conformance suite and ops dashboards match on log text, so none of that may
+/// replace -- the conformance suite matches on log text, so none of that may
 /// change.
 /// </summary>
 internal static partial class Log
