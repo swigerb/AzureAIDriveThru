@@ -115,7 +115,7 @@ internal sealed class PromptLoader
     /// <c>{{token}}</c> it contains has no matching entry in <paramref name="variables"/> (Python's
     /// <c>StrictUndefined</c>-triggered exception fallback), rather than partially substituting or
     /// throwing.</summary>
-    public string RenderTemplate(string template, IReadOnlyDictionary<string, object?>? variables = null)
+    public static string RenderTemplate(string template, IReadOnlyDictionary<string, object?>? variables = null)
     {
         variables ??= new Dictionary<string, object?>();
         var missing = TemplateToken.Matches(template)

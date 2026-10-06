@@ -671,7 +671,7 @@ internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings
         if (_promptLoader is { } pl)
         {
             var tpl = pl.GetDeltaTemplate(action);
-            return pl.RenderTemplate(tpl, Vars(
+            return PromptLoader.RenderTemplate(tpl, Vars(
                 ("quantity", Ordering.Money.NumberToWords(quantity)), ("display_name", spokenDisplayName), ("total", summary.FinalTotalSpoken)));
         }
         return action switch
