@@ -118,8 +118,7 @@ internal sealed class NudgeScheduler
                 // continuation acquiring the lock -- see this class's own doc comment. Cancel()
                 // already did everything needed; touching _pendingCts here would wipe out
                 // whatever it already cleared.
-                _logger?.LogInformation(
-                    "Resume nudge timer fired but was already cancelled (session={SessionId})", _sessionId);
+                _logger?.NudgeTimerFiredAfterCancel(_sessionId);
                 return;
             }
             _pendingCts = null;
@@ -133,13 +132,11 @@ internal sealed class NudgeScheduler
         {
             // The assistant is already retrying a rate-limited response; a nudge now would stack
             // a second response on top of it.
-            _logger?.LogInformation(
-                "Resume nudge skipped: a rate-limit retry is in progress (session={SessionId})", _sessionId);
+            _logger?.NudgeSkippedRateLimitBusy(_sessionId);
             return;
         }
 
-        _logger?.LogInformation(
-            "Guest silent {Seconds}s after resume; nudging (session={SessionId})", _nudgeAfterSeconds, _sessionId);
+        _logger?.NudgeFiring(_nudgeAfterSeconds, _sessionId);
         try
         {
             // CancellationToken.None: a closing socket must not crash this fire-and-forget
@@ -148,7 +145,7 @@ internal sealed class NudgeScheduler
         }
         catch (Exception ex)
         {
-            _logger?.LogInformation(ex, "Resume nudge not sent: {Message} (session={SessionId})", ex.Message, _sessionId);
+            _logger?.NudgeSendFailed(ex, ex.Message, _sessionId);
         }
     }
 
@@ -165,7 +162,7 @@ internal sealed class NudgeScheduler
             _pendingCts.Cancel();
             _pendingCts.Dispose();
             _pendingCts = null;
-            _logger?.LogInformation("Resume nudge cancelled: {Reason} (session={SessionId})", reason, _sessionId);
+            _logger?.NudgeCancelled(reason, _sessionId);
         }
     }
 }

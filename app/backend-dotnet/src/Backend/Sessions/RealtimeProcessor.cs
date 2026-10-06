@@ -309,9 +309,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
         }
         catch (Exception ex)
         {
-            _logger?.LogError(ex,
-                "Failed to connect to upstream realtime endpoint for deployment {Deployment} (session={SessionId})",
-                deployment, sessionId);
+            _logger?.UpstreamConnectFailed(ex, deployment, sessionId);
             await CloseIfOpenAsync(browserSocket, WebSocketCloseStatus.InternalServerError, "Upstream connection failed")
                 .ConfigureAwait(false);
             return;
@@ -474,9 +472,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
             }
             catch (TimeoutException)
             {
-                _logger?.LogWarning(
-                    "No session.updated within {Timeout}s; sending greeting anyway (session={SessionId})",
-                    timeoutSeconds, sessionId);
+                _logger?.NoSessionUpdatedBeforeGreeting(timeoutSeconds, sessionId);
             }
             if (state.GreetingSent)
             {
@@ -484,7 +480,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
             }
             state.GreetingSent = true;
             state.Echo.StartGreetingSuppression();
-            _logger?.LogInformation("Sending greeting (trigger={Trigger}, session={SessionId})", trigger, sessionId);
+            _logger?.SendingGreeting(trigger, sessionId);
             var greetingFrameJson = BuildGreetingFrame().ToJsonString();
             await SendTextAsync(upstream, """{"type":"input_audio_buffer.clear"}""", ct).ConfigureAwait(false);
             await SendTextAsync(upstream, greetingFrameJson, ct).ConfigureAwait(false);
@@ -520,9 +516,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
         // (registry-mutating) resume logic.
         async Task RejectLateResumeAsync(string logReason)
         {
-            _logger?.LogWarning(
-                "Dropped extension.resume arriving after the first-frame decision ({Reason}, session={SessionId})",
-                logReason, sessionId);
+            _logger?.DroppedLateResume(logReason, sessionId);
             await SendTextAsync(browserSocket, new JsonObject
             {
                 ["type"] = "extension.resume_rejected",
@@ -577,9 +571,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
             var newVoice = ClientServerFilter.SanitizeVoice(candidate, _allowedVoices);
             if (newVoice is null)
             {
-                _logger?.LogWarning(
-                    "Dropped extension.set_voice with an unknown/invalid voice {Voice} (session={SessionId})",
-                    candidate, sessionId);
+                _logger?.DroppedSetVoice(candidate, sessionId);
                 return;
             }
             state.Voice = newVoice;
@@ -588,9 +580,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
             {
                 // GA would reject this outright (cannot_update_voice) and take tools/instructions
                 // down with it -- defer to the next unlocked session.update, same as Python.
-                _logger?.LogInformation(
-                    "Assistant audio already present -- voice {Voice} applies from the next conversation (session={SessionId})",
-                    newVoice, sessionId);
+                _logger?.VoiceDeferredToNextConversation(newVoice, sessionId);
                 return;
             }
             var voiceUpdate = state.Guard.Track(BuildVoiceUpdateFrame(newVoice).ToJsonString());
@@ -617,8 +607,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
                 attachedSupersededFlag: state.Superseded);
             if (!outcome.Accepted)
             {
-                _logger?.LogInformation(
-                    "extension.resume rejected (reason={Reason}, session={SessionId})", outcome.Reason, sessionId);
+                _logger?.ExtensionResumeRejected(outcome.Reason, sessionId);
                 await SendTextAsync(browserSocket, new JsonObject
                 {
                     ["type"] = "extension.resume_rejected",
@@ -628,8 +617,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
                 return;
             }
 
-            _logger?.LogInformation(
-                "Session resumed (resumedSessionId={ResumedSessionId}, session={SessionId})", outcome.SessionId, sessionId);
+            _logger?.SessionResumedWithId(outcome.SessionId, sessionId);
             state.EffectiveSessionId = outcome.SessionId!;
             state.ToolExecutor = outcome.ToolExecutor!;
             state.Voice = outcome.Voice!;
@@ -762,7 +750,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
                 }
                 catch (WebSocketException ex)
                 {
-                    _logger?.LogWarning(ex, "Browser WebSocket error (session={SessionId})", sessionId);
+                    _logger?.BrowserWebSocketError(ex, sessionId);
                     break;
                 }
                 if (frame is null)
@@ -813,7 +801,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
                 }
                 catch (Exception ex) when (ex is JsonException or ArgumentException)
                 {
-                    _logger?.LogWarning("Dropped malformed/non-object client→server frame (session={SessionId})", sessionId);
+                    _logger?.DroppedMalformedClientFrame(sessionId);
                     if (checkingFirstFrame)
                     {
                         state.FirstFrameDecision.TrySetResult(false);
@@ -848,7 +836,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
                         }
                         catch (Exception ex) when (ex is not OperationCanceledException)
                         {
-                            _logger?.LogWarning(ex, "Error processing extension.resume (session={SessionId})", sessionId);
+                            _logger?.ErrorProcessingExtensionResume(ex, sessionId);
                             state.FirstFrameDecision.TrySetResult(false);
                         }
                         continue;
@@ -866,7 +854,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
                 {
                     if (msgType.Length == 0)
                     {
-                        _logger?.LogWarning("Dropped client→server frame with a missing/non-string type (session={SessionId})", sessionId);
+                        _logger?.DroppedClientFrameMissingType(sessionId);
                         continue;
                     }
 
@@ -879,7 +867,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
                         // detaching it with a grace window -- mirrors session_manager.py's own
                         // end_session() semantics: the same resume id must come back "unknown",
                         // never "expired", after this.
-                        _logger?.LogInformation("Guest ended session (session={SessionId})", sessionId);
+                        _logger?.GuestEndedSession(sessionId);
                         _sessionManager?.EndSession(state.EffectiveSessionId, SessionEndedCloseReason);
                         await CloseIfOpenAsync(browserSocket, WebSocketCloseStatus.NormalClosure, SessionEndedCloseReason)
                             .ConfigureAwait(false);
@@ -958,7 +946,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
                     // R3: any per-frame processing/send failure must not fault this loop and end
                     // the session silently -- log with the session id (never the payload, which
                     // may carry guest PII/order details) and move on to the next frame.
-                    _logger?.LogWarning(ex, "Error processing client→server frame (session={SessionId})", sessionId);
+                    _logger?.ErrorProcessingClientFrame(ex, sessionId);
                 }
             }
         }
@@ -988,15 +976,11 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
                 var original = state.Guard.OriginalOf(rejectedEventId);
                 if (original is not null || !state.Guard.ClaimFallback(rejectedEventId))
                 {
-                    _logger?.LogError(
-                        "Fallback session.update {EventId} (for {Original}) was ALSO rejected: code={Code} param={Param} " +
-                        "message={Message} -- tools may NOT be registered for this conversation (session={SessionId})",
+                    _logger?.FallbackSessionUpdateAlsoRejected(
                         rejectedEventId, original, GetString(err, "code"), GetString(err, "param"), GetString(err, "message"), sessionId);
                     return message;
                 }
-                _logger?.LogError(
-                    "Upstream REJECTED session.update {EventId}: code={Code} param={Param} message={Message} -- resending a " +
-                    "minimal session.update (instructions + tools only) so the tools survive (session={SessionId})",
+                _logger?.SessionUpdateRejected(
                     rejectedEventId, GetString(err, "code"), GetString(err, "param"), GetString(err, "message"), sessionId);
 
                 var rejectedPayload = state.Guard.PayloadOf(rejectedEventId);
@@ -1007,10 +991,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
                         || param.StartsWith("session.parallel_tool_calls", StringComparison.Ordinal)))
                 {
                     _sessionConfig.ReasoningRejected = true;
-                    _logger?.LogError(
-                        "Deployment {Deployment} rejected reasoning-model options; no longer sending `reasoning` / " +
-                        "`parallel_tool_calls` from this process. Set model.reasoning_effort to \"\" for this deployment.",
-                        _sessionConfig.Deployment ?? "?");
+                    _logger?.ReasoningOptionsRejected(_sessionConfig.Deployment ?? "?");
                 }
 
                 var fallback = RealtimeSessionBuilder.BuildFallbackSessionUpdate(
@@ -1028,12 +1009,17 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
 
             if (GetString(err, "code") == "response_cancel_not_active")
             {
-                _logger?.LogInformation(
-                    "OpenAI Realtime API error (benign -- response already finished): {Error}", message.ToJsonString());
+                if (_logger is { } benignLogger && benignLogger.IsEnabled(LogLevel.Information))
+                {
+                    benignLogger.RealtimeApiErrorBenign(message.ToJsonString());
+                }
                 return message;
             }
 
-            _logger?.LogError("OpenAI Realtime API error: {Error}", message.ToJsonString());
+            if (_logger is { } errorLogger && errorLogger.IsEnabled(LogLevel.Error))
+            {
+                errorLogger.RealtimeApiError(message.ToJsonString());
+            }
             return message;
         }
 
@@ -1042,13 +1028,13 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
             var callId = GetString(item, "call_id");
             if (callId is null || !state.ToolsPending.TryGetValue(callId, out var previousItemId))
             {
-                _logger?.LogWarning("Tool call {CallId} not found in pending tools (session={SessionId})", callId, sessionId);
+                _logger?.ToolCallNotFoundInPending(callId, sessionId);
                 return;
             }
             var toolName = GetString(item, "name") ?? "";
             if (!state.ToolExecutor.ToolNames.Contains(toolName))
             {
-                _logger?.LogError("Unknown tool requested: {ToolName} (session={SessionId})", toolName, sessionId);
+                _logger?.UnknownToolRequested(toolName, sessionId);
                 return;
             }
 
@@ -1065,9 +1051,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
             // full reasoning), so it is safe to trust here with no further synchronization.
             if (state.Superseded.IsSuperseded)
             {
-                _logger?.LogInformation(
-                    "Dropping tool call '{ToolName}' for call_id={CallId}: this connection was superseded by a " +
-                    "resume elsewhere (session={SessionId})", toolName, callId, sessionId);
+                _logger?.ToolCallDroppedSuperseded(toolName, callId, sessionId);
                 return;
             }
 
@@ -1078,11 +1062,10 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
             {
                 var argumentsJson = GetString(item, "arguments") ?? "{}";
                 using var argumentsDoc = JsonDocument.Parse(argumentsJson);
-                _logger?.LogInformation("Executing tool '{ToolName}' (session={SessionId})", toolName, sessionId);
+                _logger?.ExecutingTool(toolName, sessionId);
                 var result = await state.ToolExecutor.ExecuteAsync(toolName, argumentsDoc.RootElement.Clone(), ct)
                     .ConfigureAwait(false);
-                _logger?.LogInformation("Tool '{ToolName}' result direction={Direction} (session={SessionId})",
-                    toolName, result.Destination, sessionId);
+                _logger?.ToolResultDirectionLogged(toolName, result.Destination, sessionId);
                 outputText = result.Destination is ToolResultDirection.ToServer or ToolResultDirection.ToBoth
                     ? result.ToText() : "";
                 sendToClient = result.Destination is ToolResultDirection.ToClient or ToolResultDirection.ToBoth;
@@ -1100,7 +1083,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
             }
             catch (Exception ex)
             {
-                _logger?.LogError(ex, "Tool '{ToolName}' raised an unhandled exception (session={SessionId})", toolName, sessionId);
+                _logger?.ToolUnhandledException(ex, toolName, sessionId);
                 outputText = "Something went wrong with that action and it did not complete. Don't retry it yet -- " +
                     "call get_order to confirm the order's current state, then ask the guest to repeat what they'd like.";
                 sendToClient = false;
@@ -1123,9 +1106,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
                     }
                     catch (Exception ticketEx)
                     {
-                        _logger?.LogWarning(ticketEx,
-                            "Could not read order state to refresh the ticket after a tool failure (session={SessionId})",
-                            sessionId);
+                        _logger?.TicketRefreshAfterToolFailureFailed(ticketEx, sessionId);
                     }
 
                     if (ticketJson is not null)
@@ -1201,19 +1182,13 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
                     // ladder of one-more-apology responses with zero guest input.
                     if (state.ToolFailures.ConsumeCapNotice())
                     {
-                        _logger?.LogWarning(
-                            "Capping auto response.create with tool_choice=none after {Count} " +
-                            "consecutive failed tool round(s) (session={SessionId})",
-                            state.ToolFailures.Count, sessionId);
+                        _logger?.CappingAutoResponseCreate(state.ToolFailures.Count, sessionId);
                         await SendTextAsync(upstream, ToolFailureCapNotice.BuildMessage(promptLoader), ct)
                             .ConfigureAwait(false);
                     }
                     else
                     {
-                        _logger?.LogWarning(
-                            "Suppressing auto response.create -- still at the {Count}-round cap " +
-                            "with no guest turn since the apology (session={SessionId})",
-                            state.ToolFailures.Count, sessionId);
+                        _logger?.SuppressingAutoResponseCreate(state.ToolFailures.Count, sessionId);
                     }
                 }
                 else
@@ -1268,10 +1243,9 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
                 {
                     response["output"] = filtered;
                 }
-                if (isToolCallResponse)
+                if (isToolCallResponse && _logger is { } toolCallLogger && toolCallLogger.IsEnabled(LogLevel.Information))
                 {
-                    _logger?.LogInformation("Response contained {Count} tool call(s): {Names} (session={SessionId})",
-                        toolCallNames.Count, string.Join(", ", toolCallNames), sessionId);
+                    toolCallLogger.ResponseContainedToolCalls(toolCallNames.Count, string.Join(", ", toolCallNames), sessionId);
                 }
 
                 // Issue #13 tail: track response output content in the context window -- mirrors
@@ -1336,9 +1310,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
             }
             catch (Exception ex)
             {
-                _logger?.LogWarning(ex,
-                    "Could not read order state while building a session-resumed announcement (session={SessionId})",
-                    sessionId);
+                _logger?.OrderStateReadForAnnouncementFailed(ex, sessionId);
                 return "{}";
             }
         }
@@ -1457,9 +1429,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
                     return await HandleErrorAsync(message).ConfigureAwait(false);
 
                 case "conversation.item.input_audio_transcription.failed":
-                    _logger?.LogError(
-                        "Input audio transcription failed (model={Model}): {Error} (session={SessionId})",
-                        _sessionConfig.TranscriptionModel, message["error"]?.ToJsonString(), sessionId);
+                    _logger?.InputAudioTranscriptionFailed(_sessionConfig.TranscriptionModel, message["error"]?.ToJsonString(), sessionId);
                     return message;
 
                 case "session.created":
@@ -1490,8 +1460,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
                     state.Guard.OnSessionUpdated();
                     if (!state.SessionConfigured.Task.IsCompleted)
                     {
-                        _logger?.LogInformation(
-                            "session.updated received -- tools are configured (session={SessionId})", sessionId);
+                        _logger?.SessionUpdatedToolsConfigured(sessionId);
                         state.SessionConfigured.TrySetResult(true);
                     }
                     return message["session"] is JsonObject ? BuildClientSessionEcho(message) : message;
@@ -1503,9 +1472,10 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
                             var callId = GetString(item, "call_id");
                             if (!string.IsNullOrEmpty(callId) && !state.ToolsPending.ContainsKey(callId))
                             {
-                                _logger?.LogInformation(
-                                    "Tool call received: name={ToolName}, call_id={CallId} (session={SessionId})",
-                                    GetString(item, "name"), callId, sessionId);
+                                if (_logger is { } toolReceivedLogger && toolReceivedLogger.IsEnabled(LogLevel.Information))
+                                {
+                                    toolReceivedLogger.ToolCallReceived(GetString(item, "name"), callId, sessionId);
+                                }
                                 state.ToolsPending[callId] = "";
                             }
                             return null;
@@ -1579,7 +1549,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
                 }
                 catch (WebSocketException ex)
                 {
-                    _logger?.LogWarning(ex, "Upstream WebSocket error (session={SessionId})", sessionId);
+                    _logger?.UpstreamWebSocketError(ex, sessionId);
                     break;
                 }
                 if (frame is null)
@@ -1604,7 +1574,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
                 }
                 catch (Exception ex) when (ex is JsonException or ArgumentException)
                 {
-                    _logger?.LogWarning("Dropped malformed/non-object server→client frame (session={SessionId})", sessionId);
+                    _logger?.DroppedMalformedServerFrame(sessionId);
                     continue;
                 }
 
@@ -1719,7 +1689,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
                     // R3: any per-frame processing/send failure must not fault this loop and end
                     // the session silently -- log with the session id (never the payload, which
                     // may carry guest PII/order details) and move on to the next frame.
-                    _logger?.LogWarning(ex, "Error processing server→client frame (session={SessionId})", sessionId);
+                    _logger?.ErrorProcessingServerFrame(ex, sessionId);
                 }
             }
         }
@@ -1732,9 +1702,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
                 systemMessage: Overridable.Of<string?>(systemMessage),
                 reasoningOverride: reasoningOverride));
             await SendTextAsync(upstream, bootstrap.ToJsonString(), ct).ConfigureAwait(false);
-            _logger?.LogInformation(
-                "Upstream session bootstrapped with {ToolCount} tool(s) before relaying client traffic (session={SessionId})",
-                toolSchemas.Count, sessionId);
+            _logger?.UpstreamSessionBootstrapped(toolSchemas.Count, sessionId);
 
             var browserToUpstream = RelayBrowserToUpstreamAsync();
             var upstreamToBrowser = RelayUpstreamToBrowserAsync();
@@ -1757,7 +1725,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
         }
         catch (Exception ex)
         {
-            _logger?.LogError(ex, "Unexpected error in realtime relay (session={SessionId})", sessionId);
+            _logger?.UnexpectedRelayError(ex, sessionId);
         }
         finally
         {
@@ -1800,7 +1768,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
             // and log their own per-frame failures, so reaching here at all means something above
             // the per-frame try/catch faulted (e.g. the loop's own setup) -- log it at Error so a
             // silently-ended session always leaves a trace.
-            _logger?.LogError(ex, "Unhandled exception draining a realtime relay loop");
+            _logger?.UnhandledRelayDrainException(ex);
         }
     }
 
@@ -1909,7 +1877,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
             // expected failures/timeouts; this guards the Task.Run itself (e.g. the
             // CancellationTokenSource construction) so a stray exception here can never prevent the
             // finally below from running.
-            logger?.LogWarning(ex, "Unexpected failure closing a superseded stale connection's output");
+            logger?.SupersededCloseFailed(ex);
         }
         finally
         {
@@ -2012,7 +1980,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _logger?.LogWarning(ex, "Error forwarding fast-path audio append frame (session={SessionId})", sessionId);
+            _logger?.FastPathAudioForwardFailed(ex, sessionId);
         }
     }
 
@@ -2138,15 +2106,11 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
             if (string.IsNullOrEmpty(machine) || status is null
                 || !_sessionManager.SetMachineStatus(effectiveSessionId, machine, status))
             {
-                _logger?.LogWarning(
-                    "Dropped extension.set_machine_status with unknown/invalid machine or status (machine={Machine}, status={Status}, session={SessionId})",
-                    machine, candidateStatus, effectiveSessionId);
+                _logger?.DroppedSetMachineStatus(machine, candidateStatus, effectiveSessionId);
                 return true;
             }
 
-            _logger?.LogInformation(
-                "Applied extension.set_machine_status machine={Machine} status={Status} (session={SessionId})",
-                machine, status, effectiveSessionId);
+            _logger?.AppliedSetMachineStatus(machine, status, effectiveSessionId);
             return true;
         }
 
@@ -2156,15 +2120,11 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
             var mode = ClientServerFilter.SanitizeHappyHourMode(candidateMode);
             if (mode is null || !_sessionManager.SetHappyHourMode(effectiveSessionId, mode))
             {
-                _logger?.LogWarning(
-                    "Dropped extension.set_happy_hour_mode with an invalid mode or unsupported persona (mode={Mode}, session={SessionId})",
-                    candidateMode, effectiveSessionId);
+                _logger?.DroppedSetHappyHourMode(candidateMode, effectiveSessionId);
                 return true;
             }
 
-            _logger?.LogInformation(
-                "Applied extension.set_happy_hour_mode mode={Mode} (session={SessionId})",
-                mode, effectiveSessionId);
+            _logger?.AppliedSetHappyHourMode(mode, effectiveSessionId);
 
             // #309 (R2): the mode change just recomputed OrderState.Summary
             // (OrderState.SetHappyHourMode -> UpdateSummary) -- push it to the browser right now,
@@ -2186,9 +2146,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
                 }
                 catch (Exception ex)
                 {
-                    _logger?.LogWarning(ex,
-                        "Could not read order state to push a refreshed ticket after extension.set_happy_hour_mode (session={SessionId})",
-                        effectiveSessionId);
+                    _logger?.TicketRefreshAfterHappyHourModeFailed(ex, effectiveSessionId);
                 }
 
                 if (ticketJson is not null)
