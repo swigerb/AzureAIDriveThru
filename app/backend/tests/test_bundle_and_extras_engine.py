@@ -541,5 +541,136 @@ class UpdateOrderItemOutOfModeGateTests(DeltaFixtureTestCase):
             order_state_singleton.delete_session(sid)
 
 
+def _load_zeta_catalog() -> PersonaCatalog:
+    """#325 regression fixture: "test-zeta" (tests/fixtures/personas/test-zeta), the SAME
+    fixture pack the dotnet/python conformance legs both discover from (#283), carries one
+    standalone, trademark-marked item ("ZORBS\u00ae Bite Treats") and one standalone item whose
+    OWN canonical name contains a paren group ("Zeta Snack Mix (Family Size)", B2) specifically so
+    this bug class -- the model's own spelling/mark/paren choice leaking into the stored ticket
+    instead of the menu's canonical name -- has a dedicated, non-brand-coupled proof independent
+    of any real pack's own marked item names."""
+    return PersonaCatalog.load(
+        personas_dir=FIXTURES_DIR,
+        enabled=["test-zeta"],
+        default_persona_id="test-zeta",
+    )
+
+
+class CanonicalItemNameTests(unittest.TestCase):
+    """#325: ``update_order`` must store the MENU's own canonical spelling for every add/modify/
+    remove/bundle-slot path -- never whatever casing or trademark marks the model's own
+    ``item_name`` happened to use for that turn. Uses "test-zeta"'s "ZORBS\u00ae Bite Treats" (the
+    exact fixture item named in #325's own write-up) rather than a real pack's marked item, so
+    this proof is independent of any one persona's own data."""
+
+    def setUp(self):
+        self.zeta = _load_zeta_catalog().get("test-zeta")
+        self._sessions_created: list[str] = []
+        self.addCleanup(self._cleanup_sessions)
+
+    def _cleanup_sessions(self):
+        for sid in self._sessions_created:
+            order_state_singleton.delete_session(sid)
+
+    def _new_session(self) -> str:
+        sid = order_state_singleton.create_session(persona=self.zeta)
+        self._sessions_created.append(sid)
+        return sid
+
+    def test_add_with_the_unmarked_spelling_stores_the_menus_canonical_marked_name(self):
+        sid = self._new_session()
+        result = _run(tools.update_order({
+            "action": "add", "item_name": "ZORBS Bite Treats",
+            "size": "10 count", "quantity": 1, "price": 3.99,
+        }, sid))
+        self.assertEqual(result.destination, ToolResultDirection.TO_BOTH)
+        items = order_state_singleton.get_order_items(sid)
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0].item, "ZORBS\u00ae Bite Treats")
+
+    def test_two_adds_with_different_spellings_merge_into_one_line(self):
+        sid = self._new_session()
+        _run(tools.update_order({
+            "action": "add", "item_name": "ZORBS\u00ae Bite Treats",
+            "size": "10 count", "quantity": 1, "price": 3.99,
+        }, sid))
+        result = _run(tools.update_order({
+            "action": "add", "item_name": "ZORBS Bite Treats",
+            "size": "10 count", "quantity": 1, "price": 3.99,
+        }, sid))
+        self.assertEqual(result.destination, ToolResultDirection.TO_BOTH)
+        items = order_state_singleton.get_order_items(sid)
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0].quantity, 2)
+        self.assertEqual(items[0].item, "ZORBS\u00ae Bite Treats")
+
+    def test_remove_with_the_unmarked_spelling_matches_a_line_added_with_the_marked_spelling(self):
+        sid = self._new_session()
+        _run(tools.update_order({
+            "action": "add", "item_name": "ZORBS\u00ae Bite Treats",
+            "size": "10 count", "quantity": 1, "price": 3.99,
+        }, sid))
+        result = _run(tools.update_order({
+            "action": "remove", "item_name": "ZORBS Bite Treats",
+            "size": "10 count", "quantity": 1,
+        }, sid))
+        self.assertEqual(result.destination, ToolResultDirection.TO_BOTH)
+        self.assertEqual(order_state_singleton.get_order_items(sid), [])
+
+    # ── B2 (Rick's PR #326 review): a canonical name that ITSELF contains a paren group ──
+
+    def test_add_with_the_exact_canonical_paren_name_stores_it_unchanged_not_duplicated(self):
+        """The model echoing the canonical name back verbatim -- including its own "(Family
+        Size)" group -- must store that EXACT name, not "Zeta Snack Mix (Family Size) (Family
+        Size)" (the duplication bug: the old code blindly reattached everything from the
+        model's own first "(" onward, even when that text was just the canonical name's own
+        paren group, not a guest customization)."""
+        sid = self._new_session()
+        result = _run(tools.update_order({
+            "action": "add", "item_name": "Zeta Snack Mix (Family Size)",
+            "size": "regular", "quantity": 1, "price": 3.49,
+        }, sid))
+        self.assertEqual(result.destination, ToolResultDirection.TO_BOTH)
+        items = order_state_singleton.get_order_items(sid)
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0].item, "Zeta Snack Mix (Family Size)")
+
+    def test_add_with_the_paren_less_spelling_merges_into_the_same_line(self):
+        """The model omitting the canonical name's own paren group entirely ("Zeta Snack Mix",
+        no "(Family Size)") still resolves on-menu (menu_utils._menu_key strips modifiers for
+        lookup) and must merge into the SAME line as the full canonical spelling -- not two
+        separate lines that differ only by whether the model happened to say the item's own
+        paren group."""
+        sid = self._new_session()
+        _run(tools.update_order({
+            "action": "add", "item_name": "Zeta Snack Mix (Family Size)",
+            "size": "regular", "quantity": 1, "price": 3.49,
+        }, sid))
+        result = _run(tools.update_order({
+            "action": "add", "item_name": "Zeta Snack Mix",
+            "size": "regular", "quantity": 1, "price": 3.49,
+        }, sid))
+        self.assertEqual(result.destination, ToolResultDirection.TO_BOTH)
+        items = order_state_singleton.get_order_items(sid)
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0].quantity, 2)
+        self.assertEqual(items[0].item, "Zeta Snack Mix (Family Size)")
+
+    def test_a_genuine_customization_stacks_on_top_of_the_canonical_paren_name(self):
+        """A REAL guest-added modifier group beyond the canonical name's own "(Family Size)" --
+        e.g. "(Extra Spicy)" -- must be reattached on top of the canonical spelling, and must
+        NOT be misread as the item's own "(Family Size)" group re-appearing: the stored name is
+        the canonical name plus ONLY the genuinely new group, once."""
+        sid = self._new_session()
+        result = _run(tools.update_order({
+            "action": "add", "item_name": "Zeta Snack Mix (Family Size) (Extra Spicy)",
+            "size": "regular", "quantity": 1, "price": 3.49,
+        }, sid))
+        self.assertEqual(result.destination, ToolResultDirection.TO_BOTH)
+        items = order_state_singleton.get_order_items(sid)
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0].item, "Zeta Snack Mix (Family Size) (Extra Spicy)")
+
+
 if __name__ == "__main__":
     unittest.main()

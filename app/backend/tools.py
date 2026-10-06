@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import re
 import time
 from typing import Any
 
@@ -160,6 +161,44 @@ MAX_TOTAL_ITEMS = _biz_cfg.get("max_order_items", 25)
 # `menu.allowed_extra_categories`/`menu.blocked_extra_categories`/`menu.invalid_modifiers`) --
 # never a module-level global. See update_order()'s extras check and validate_customization()
 # below.
+
+
+# #325: one shared helper for the add/modify gate AND the remove path (Rick's PR #326 review,
+# B2) -- previously each site re-derived the guest's "(modifiers)" suffix with
+# ``item_name[item_name.find("("):]``, which blindly grabbed EVERYTHING from the first "(" in the
+# MODEL's own string. That's wrong whenever the menu's own canonical name itself contains a
+# paren group (e.g. Sonic's real "Milk Jug (1%) - White"): a model that echoed the exact
+# canonical spelling got back "Milk Jug (1%) - White (1%) - White" (the canonical name's own
+# "(1%)" duplicated), and a plain, paren-less "Milk Jug - White" add stored a DIFFERENT string
+# ("Milk Jug (1%) - White" with no trailing space artifact, which is actually fine -- but the
+# model's various `Milk Jug (1%) - White (no ice)` phrasing isn't). A multiset difference of the
+# paren groups (``\([^)]*\)``) in the model's raw string vs. the canonical name's OWN groups
+# fixes both: any canonical-name group the model also said is consumed and never re-appended, so
+# only a GENUINE guest-added modifier group (one the canonical name doesn't already have) is
+# reattached. Returns ``(new_item_name, guest_modifier_suffix)`` -- the second value is "" unless
+# the guest actually added a NEW modifier group beyond the canonical name's own, so the
+# unconditional customization-validation block below can tell "Milk Jug (1%) - White" (the
+# canonical name's own parens, not a guest modifier) apart from "Milk Jug (1%) - White (no ice)"
+# (a genuine customization) instead of misreading the menu's own "(1%)" as a guest modifier.
+_PAREN_GROUP_RE = re.compile(r"\([^)]*\)")
+
+
+def _reattach_customization_suffix(raw_item_name: str, canonical_name: str) -> tuple[str, str]:
+    """See the module comment above. *raw_item_name* is the model's own (pre-canonicalization)
+    ``item_name``; *canonical_name* is the resolved menu item's own ``name``. Returns the new,
+    canonical ``item_name`` (with any genuine guest-added modifier group(s) reattached) and the
+    guest modifier suffix text alone (empty when the guest didn't add anything beyond the
+    canonical name's own parens)."""
+    raw_groups = _PAREN_GROUP_RE.findall(raw_item_name or "")
+    canonical_groups = _PAREN_GROUP_RE.findall(canonical_name or "")
+    remaining = list(raw_groups)
+    for group in canonical_groups:
+        if group in remaining:
+            remaining.remove(group)
+    if not remaining:
+        return canonical_name, ""
+    suffix = " ".join(remaining)
+    return f"{canonical_name} {suffix}", suffix
 
 
 def validate_customization(item_name: str, mods_string: str, prompt_loader=None, menu=None) -> str | None:
@@ -530,6 +569,11 @@ async def update_order(args, session_id: str) -> ToolResult:
 
     item_name = args["item_name"]
     size = args["size"]
+    # #325 B2: the guest's own genuine modifier-group text, if any -- set by
+    # ``_reattach_customization_suffix`` below for add/modify/remove, so the customization-
+    # validation block further down can tell a real guest customization apart from the menu's
+    # own canonical name happening to contain parens (e.g. "Milk Jug (1%) - White").
+    _customization_suffix = ""
 
     # ── #73 (ADR-001 decision 4: "No off-menu"): the on-menu gate, first thing in the add path,
     # before any other validation (customization, price, extras, quantity limits). An item is
@@ -578,6 +622,19 @@ async def update_order(args, session_id: str) -> ToolResult:
                     item_name, base_name, extra_name, session_id,
                 )
             return ToolResult(_rejection, ToolResultDirection.TO_SERVER)
+
+        # #325: from here on, every add/modify path (order_state storage, bundle-slot filling,
+        # display/spoken text, extras/machine checks, upsell category) uses the MENU's own
+        # canonical spelling -- never the model's. Two adds of the same item with different
+        # spellings/trademark marks now merge into one order line because they're matched and
+        # stored under this same canonical name (order_state.handle_order_update's own
+        # exact-string matching is keyed on this value). resolve_menu_item resolved against the
+        # modifier-stripped base name (menu_utils.strip_modifiers/_menu_key), so a customized
+        # name's own "(...)" suffix is reattached via ``_reattach_customization_suffix`` (B2 fix,
+        # Rick's PR #326 review) -- a multiset difference against the canonical name's OWN paren
+        # groups, so a canonical name that itself contains parens (e.g. "Milk Jug (1%) - White")
+        # is never duplicated, and only a genuine guest-added modifier group is reattached.
+        item_name, _customization_suffix = _reattach_customization_suffix(item_name, menu_item["name"])
 
         # #165: this session's own bound menu mode gate -- an item that's real and on the menu,
         # but not offered in the active daypart (e.g. a breakfast-only item add while the session
@@ -683,6 +740,18 @@ async def update_order(args, session_id: str) -> ToolResult:
                 ToolResultDirection.TO_SERVER,
             )
 
+    # #325: `remove` targets a line already in the order, so it never passed through this
+    # function's own on-menu gate above (only "add"/"modify" do). Since that line is now stored
+    # under the menu's canonical name (the gate above), canonicalize a resolvable `remove`
+    # item_name the same way so "remove the zorbs" matches a ticket line stored as "ZORBS® Bite
+    # Treats" instead of failing order_state.handle_order_update's exact-string match. An
+    # unresolved name (e.g. an item removed from the menu after it was ordered) falls through
+    # unchanged -- removing an existing line never required it still be on the menu.
+    if args["action"] == "remove":
+        _remove_target = menu.resolve_menu_item(item_name)
+        if _remove_target is not None:
+            item_name, _customization_suffix = _reattach_customization_suffix(item_name, _remove_target["name"])
+
     # ── #77: add-time `machine_unavailable` structured rejection -- an on-menu item that
     # `requiresMachine` a machine this persona's OWN `machines.<key>.status` currently reports
     # "down". Same TO_SERVER structured-JSON shape as not_on_menu/size_not_available above (Rick's
@@ -715,8 +784,13 @@ async def update_order(args, session_id: str) -> ToolResult:
             )
 
     # ── Customization validation (reject nonsensical mods) ──
-    if "(" in item_name:
-        mods_content = item_name[item_name.find("(")+1:item_name.find(")")]
+    # #325 (B2 side effect, Rick's PR #326 review): gate on ``_customization_suffix`` -- the
+    # guest's own genuine modifier group(s), set above by ``_reattach_customization_suffix`` --
+    # rather than a bare "(" in item_name check. item_name is now the MENU's canonical spelling,
+    # which can itself contain parens (e.g. "Milk Jug (1%) - White"); without this, the menu's
+    # own "(1%)" would be misread as a guest-added modifier on a plain, uncustomized add.
+    if _customization_suffix:
+        mods_content = _customization_suffix[_customization_suffix.find("(")+1:_customization_suffix.find(")")]
         error = validate_customization(item_name, mods_content, prompt_loader=pl, menu=menu)
         if error:
             return ToolResult(error, ToolResultDirection.TO_SERVER)

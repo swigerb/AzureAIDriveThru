@@ -512,7 +512,7 @@ namespace Conformance.Tests;
 /// Brian's exact modify-then-readback bug row. Coordinator fix-up round (item 5, this
 /// re-review): re-measured FRESH at this branch's final head -- not by arithmetic on Rick's
 /// 356 -- via a temporary local <c>Assert.Fail($"MEASURED_COUNT={count}")</c> swapped into
-/// <see cref="At_least_366_scenarios_are_tagged_dotnet_ready_and_not_skip_gated"/> (reverted,
+/// <see cref="At_least_373_scenarios_are_tagged_dotnet_ready_and_not_skip_gated"/> (reverted,
 /// never committed), giving <b>MEASURED=359</b>, the floor asserted below.</para>
 ///
 /// Issue #309 (Beth, R4, 2026-10-05): the floor had been bumped from 351 to 359 by a prior pass
@@ -555,7 +555,7 @@ namespace Conformance.Tests;
 /// measured fresh again via a temporary <c>Assert.True(count &gt;= 100000, $"...but found
 /// {count}")</c> (deliberately an impossible floor so the assertion failure message's "but found
 /// N" is the only way to read the real count back out) swapped into
-/// <see cref="At_least_366_scenarios_are_tagged_dotnet_ready_and_not_skip_gated"/> (reverted, never
+/// <see cref="At_least_373_scenarios_are_tagged_dotnet_ready_and_not_skip_gated"/> (reverted, never
 /// committed) -- gave <b>365</b>, the floor this class already asserted going into this fix-up
 /// round. The assert's own numeric bound was correctly bumped to 365 at that time; only its
 /// failure message and the "365 is a FRESH count" provenance text had drifted out of sync with it
@@ -580,6 +580,21 @@ namespace Conformance.Tests;
 /// round's own admissions above) -- gives <b>366</b> (365 + 1 new method). CI's real dotnet run is
 /// the actual gate for this number; correct it there if a live measurement disagrees with this
 /// manual count.</para>
+///
+/// <para>#325 reapply + Rick's PR #326 review fix-up round (B1 "re-measure the floor fresh on
+/// that tree" instruction, Summer+Beth): this round found the checked-in floor (366, per the
+/// doc comment above) was already one behind the actual `dev` baseline -- a real `dotnet test
+/// --filter "FullyQualifiedName~At_least_"` run against `dev` HEAD (with the assert temporarily
+/// bumped to <c>&gt;= 100000</c>) gave <b>367</b>, not 366, for reasons unrelated to this round
+/// (an intervening merge added one tagged method without updating this floor/doc comment). This
+/// round's own new coverage is entirely in the new
+/// <c>Scenarios/Ordering/CanonicalItemNameConformanceTests.cs</c> file (6 new tagged methods: 5
+/// in <c>CanonicalItemNameConformanceTests</c> -- the test-zeta "ZORBS&#174; Bite Treats"
+/// add-unmarked/merge/remove rows plus the two new B2 paren-group rows -- and 1 in
+/// <c>CanonicalItemNameModifyConformanceTests</c>, covering the B3 modify-with-alias-and-size-
+/// change row against the real default "sonic" persona). A second real measurement after adding
+/// these (same temporarily-bumped-assert technique) gave <b>373</b> (367 + 6 new methods) -- a
+/// genuine fresh measurement both times, not arithmetic projection carried forward by hand.</para>
 /// </summary>
 [Trait("Dotnet", "n/a-harness")]
 public sealed class DotnetTraitCoverageTests
@@ -662,7 +677,7 @@ public sealed class DotnetTraitCoverageTests
     }
 
     [Fact]
-    public void At_least_366_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
+    public void At_least_373_scenarios_are_tagged_dotnet_ready_and_not_skip_gated()
     {
         // Rick's PR #226 review: assert the capability directly, not just the derived count --
         // see this class's own doc comment for why a bare ">= 222" check alone can't be trusted to
@@ -676,8 +691,8 @@ public sealed class DotnetTraitCoverageTests
 
         var count = CountFloorEligibleDotnetReadyTestMethods();
 
-        Assert.True(count >= 366,
-            $"Expected at least 366 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")], " +
+        Assert.True(count >= 373,
+            $"Expected at least 373 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")], " +
             $"not unconditionally skip-gated by AuthRowCapability, and (per issue #283) not a " +
             $"[Theory(SkipTestWithoutData = true)] whose own [MemberData] source resolves to zero " +
             $"rows (see {nameof(TheoryYieldsZeroRowsWhenSkipGated)} -- such a method is SKIPPED, " +
@@ -685,12 +700,15 @@ public sealed class DotnetTraitCoverageTests
             $"the dotnet leg's `--filter \"{TraitName}={TraitValue}\"` baseline, minus the five " +
             "skip-only Scenarios/Auth classes -- see this class's own doc comment; " +
             $"docs/dotnet_mapping.md), but found {count}. If a tagged scenario was removed or " +
-            "renamed without a replacement, the dotnet CI leg silently lost coverage. 366 is a " +
-            "FRESH count (coordinator post-merge #309/#316/#318 measured 365 via a temporary " +
-            "`>= 100000` assert reporting \"but found 365\", reverted; this PR's re-review fix-up " +
-            "round then added exactly one more tagged method, " +
-            "SearchToolSpokenNameSayHintConformanceTests's real-search \"(say: ...)\" test, giving " +
-            "366), not arithmetic projection carried forward by hand -- re-measure with " +
+            "renamed without a replacement, the dotnet CI leg silently lost coverage. 373 is a " +
+            "FRESH count (#325 reapply + Rick's PR #326 review fix-up round, Summer+Beth: a real " +
+            "`dotnet test --filter \"FullyQualifiedName~At_least_\"` run against `dev` HEAD with " +
+            "the assert temporarily bumped to `>= 100000` found the checked-in floor was already " +
+            "one behind reality -- 367, not the previously-documented 366 -- before this round " +
+            "added its own 6 new tagged methods (CanonicalItemNameConformanceTests.cs's B1/B2/B3 " +
+            "canonical-item-name rows), giving 367 + 6 = 373, confirmed by a second real run " +
+            "with the same temporarily-bumped assert), not arithmetic projection carried forward " +
+            "by hand -- re-measure with " +
             "`Conformance.Tests.exe -list methods -trait Dotnet=ready` minus the " +
             "AuthRowCapabilityGated methods and any zero-row SkipTestWithoutData methods before " +
             "raising this floor again.");
@@ -983,7 +1001,7 @@ public sealed class DotnetTraitCoverageTests
     /// End-to-end mutation-check for the fail-closed guard itself (not just its resolution
     /// helper): an empty static property-backed <c>[MemberData]</c> source on a
     /// <c>[Theory(SkipTestWithoutData = true)]</c> method must be reported as yielding zero rows,
-    /// exactly the behavior <see cref="At_least_366_scenarios_are_tagged_dotnet_ready_and_not_skip_gated"/>
+    /// exactly the behavior <see cref="At_least_373_scenarios_are_tagged_dotnet_ready_and_not_skip_gated"/>
     /// relies on to exclude it from the floor. Reverting either the property-resolution branch
     /// above or this guard's own fail-closed wiring must turn this test red.
     /// </summary>
