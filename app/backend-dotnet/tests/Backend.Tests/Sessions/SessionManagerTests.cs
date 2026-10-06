@@ -2,7 +2,6 @@ using System.Net.WebSockets;
 using System.Text.Json;
 using Backend.Configuration;
 using Backend.Ordering;
-using Backend.Personas;
 using Backend.Sessions;
 using Backend.Tests.Realtime;
 using Backend.Tests.TestSupport;

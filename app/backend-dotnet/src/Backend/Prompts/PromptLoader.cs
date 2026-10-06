@@ -24,10 +24,10 @@ public sealed class PromptLoadException(string message) : Exception(message);
 public sealed class PromptLoader
 {
     // Plain (unquoted) scalars are typed per YAML's core schema -- `false` -> bool, `3` -> int --
-// exactly as PyYAML's safe_load does for the Python backend. Without this, tool_schemas.yaml's
-// `additionalProperties: false` reached the realtime API as the STRING "false", which rejects the
-// whole session.update (invalid_function_parameters), leaving the session with no tools and no
-// instructions. Quoted scalars ('false', "10") stay strings.
+    // exactly as PyYAML's safe_load does for the Python backend. Without this, tool_schemas.yaml's
+    // `additionalProperties: false` reached the realtime API as the STRING "false", which rejects the
+    // whole session.update (invalid_function_parameters), leaving the session with no tools and no
+    // instructions. Quoted scalars ('false', "10") stay strings.
     private readonly IDeserializer _yaml = new DeserializerBuilder()
         .WithAttemptingUnquotedStringTypeDeserialization()
         .Build();

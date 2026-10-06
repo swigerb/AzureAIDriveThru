@@ -1,5 +1,4 @@
 using Backend.Personas;
-using Microsoft.Extensions.Logging;
 
 namespace Backend.Models;
 

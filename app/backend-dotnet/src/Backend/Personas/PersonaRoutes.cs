@@ -3,7 +3,6 @@ using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using Backend.Configuration;
 using Backend.Models;
-using Microsoft.AspNetCore.Http;
 
 namespace Backend.Personas;
 

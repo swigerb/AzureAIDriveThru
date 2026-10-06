@@ -12,7 +12,6 @@ using Backend.Search;
 using Backend.Sessions;
 using Backend.Tools;
 using Microsoft.Extensions.FileProviders;
-using Microsoft.Extensions.Logging.Console;
 
 // Host wiring (issue #12 S2): config, persona-pack loading, health, auth token endpoint, static
 // files, one event loop per session -- mirrors app/backend/app.py's create_app() startup sequence

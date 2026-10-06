@@ -6,7 +6,6 @@ using Backend.Prompts;
 using Backend.Realtime;
 using Backend.Sessions;
 using Backend.Tools;
-using Xunit;
 
 namespace Backend.Tests.Realtime;
 

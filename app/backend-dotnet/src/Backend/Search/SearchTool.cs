@@ -1,10 +1,8 @@
-using System.Net.Http.Json;
 using System.Text.Json;
 using Backend.Configuration;
 using Backend.Personas;
 using Backend.Prompts;
 using Backend.Tools;
-using Microsoft.Extensions.Logging;
 
 namespace Backend.Search;
 

@@ -1,4 +1,3 @@
-using System.Net.Http;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
@@ -8,7 +7,6 @@ using Backend.Personas;
 using Backend.Prompts;
 using Backend.Realtime;
 using Backend.Tools;
-using Microsoft.Extensions.Logging;
 
 namespace Backend.Sessions;
 
@@ -1465,28 +1463,28 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                     return message;
 
                 case "session.created":
-                {
-                    var echo = BuildClientSessionEcho(message);
-                    if (!state.SessionMetadataSent)
                     {
-                        state.SessionMetadataSent = true;
-                        if (_sessionManager is not null)
+                        var echo = BuildClientSessionEcho(message);
+                        if (!state.SessionMetadataSent)
                         {
-                            // Deferred: the browser doesn't learn whether this connection is fresh
-                            // or a resume until its own first frame has been processed (or the
-                            // first-frame-timeout fallback elapses) -- see
-                            // HandleResumeFirstFrameAsync/RelayBrowserToUpstreamAsync. Fire-and-forget
-                            // here (not awaited): session.created's own caller must not block on it.
-                            _ = AnnounceAfterFirstFrameDecisionAsync();
+                            state.SessionMetadataSent = true;
+                            if (_sessionManager is not null)
+                            {
+                                // Deferred: the browser doesn't learn whether this connection is fresh
+                                // or a resume until its own first frame has been processed (or the
+                                // first-frame-timeout fallback elapses) -- see
+                                // HandleResumeFirstFrameAsync/RelayBrowserToUpstreamAsync. Fire-and-forget
+                                // here (not awaited): session.created's own caller must not block on it.
+                                _ = AnnounceAfterFirstFrameDecisionAsync();
+                            }
+                            else
+                            {
+                                await SendTextAsync(browserSocket,
+                                    state.Identifiers.ToFrame("extension.session_metadata").ToJsonString(), ct).ConfigureAwait(false);
+                            }
                         }
-                        else
-                        {
-                            await SendTextAsync(browserSocket,
-                                state.Identifiers.ToFrame("extension.session_metadata").ToJsonString(), ct).ConfigureAwait(false);
-                        }
+                        return echo;
                     }
-                    return echo;
-                }
 
                 case "session.updated":
                     state.Guard.OnSessionUpdated();
@@ -1499,40 +1497,40 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                     return message["session"] is JsonObject ? BuildClientSessionEcho(message) : message;
 
                 case "response.output_item.added":
-                {
-                    if (message["item"] is JsonObject item && GetString(item, "type") == "function_call")
                     {
-                        var callId = GetString(item, "call_id");
-                        if (!string.IsNullOrEmpty(callId) && !state.ToolsPending.ContainsKey(callId))
+                        if (message["item"] is JsonObject item && GetString(item, "type") == "function_call")
                         {
-                            _logger?.LogInformation(
-                                "Tool call received: name={ToolName}, call_id={CallId} (session={SessionId})",
-                                GetString(item, "name"), callId, sessionId);
-                            state.ToolsPending[callId] = "";
+                            var callId = GetString(item, "call_id");
+                            if (!string.IsNullOrEmpty(callId) && !state.ToolsPending.ContainsKey(callId))
+                            {
+                                _logger?.LogInformation(
+                                    "Tool call received: name={ToolName}, call_id={CallId} (session={SessionId})",
+                                    GetString(item, "name"), callId, sessionId);
+                                state.ToolsPending[callId] = "";
+                            }
+                            return null;
                         }
-                        return null;
+                        return message;
                     }
-                    return message;
-                }
 
                 case "conversation.item.created":
                 case "conversation.item.added":
-                {
-                    if (message["item"] is JsonObject item)
                     {
-                        if (GetString(item, "type") == "function_call")
+                        if (message["item"] is JsonObject item)
                         {
-                            var callId = GetString(item, "call_id") ?? "";
-                            state.ToolsPending[callId] = GetString(message, "previous_item_id") ?? "";
-                            return null;
+                            if (GetString(item, "type") == "function_call")
+                            {
+                                var callId = GetString(item, "call_id") ?? "";
+                                state.ToolsPending[callId] = GetString(message, "previous_item_id") ?? "";
+                                return null;
+                            }
+                            if (ClientServerFilter.DropFromClient(item))
+                            {
+                                return null;
+                            }
                         }
-                        if (ClientServerFilter.DropFromClient(item))
-                        {
-                            return null;
-                        }
+                        return message;
                     }
-                    return message;
-                }
 
                 case "conversation.item.done":
                 case "conversation.item.retrieved":

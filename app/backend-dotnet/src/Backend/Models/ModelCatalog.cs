@@ -2,7 +2,6 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Backend.Configuration;
 using Backend.Personas;
-using Microsoft.Extensions.Logging;
 
 namespace Backend.Models;
 

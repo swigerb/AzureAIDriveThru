@@ -6,7 +6,6 @@
 global using RateLimitSettings = Backend.Shared.RateLimitSettings;
 
 using System.Text.Json.Nodes;
-using Microsoft.Extensions.Logging;
 
 namespace Backend.Realtime;
 

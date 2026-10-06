@@ -1,5 +1,3 @@
-using Microsoft.Extensions.Logging;
-
 namespace Backend.Realtime;
 
 /// <summary>

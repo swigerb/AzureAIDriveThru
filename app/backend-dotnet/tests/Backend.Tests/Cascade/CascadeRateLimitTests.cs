@@ -2,7 +2,6 @@ using System.Text.Json.Nodes;
 using Backend.Cascade;
 using Backend.Configuration;
 using Microsoft.Extensions.Time.Testing;
-using Xunit;
 
 namespace Backend.Tests.Cascade;
 

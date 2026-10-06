@@ -11,7 +11,6 @@ using Backend.Realtime;
 using Backend.Sessions;
 using Backend.Tests.TestSupport;
 using Backend.Tools;
-using Xunit;
 
 namespace Backend.Tests.Cascade;
 

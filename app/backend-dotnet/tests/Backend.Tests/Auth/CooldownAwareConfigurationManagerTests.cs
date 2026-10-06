@@ -1,4 +1,3 @@
-using System.Net.Http;
 using System.Text.Json;
 using Backend.Auth;
 using Microsoft.IdentityModel.Protocols;

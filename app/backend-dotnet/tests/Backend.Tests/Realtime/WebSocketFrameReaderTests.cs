@@ -1,7 +1,6 @@
 using System.Net.WebSockets;
 using System.Text;
 using Backend.Realtime;
-using Xunit;
 
 namespace Backend.Tests.Realtime;
 

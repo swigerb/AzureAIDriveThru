@@ -1,11 +1,9 @@
 using System.Net;
-using System.Net.Http;
 using Backend.Configuration;
 using Backend.Ordering;
 using Backend.Search;
 using Backend.Tests.TestSupport;
 using Microsoft.Extensions.Logging;
-using Xunit;
 
 namespace Backend.Tests.Search;
 

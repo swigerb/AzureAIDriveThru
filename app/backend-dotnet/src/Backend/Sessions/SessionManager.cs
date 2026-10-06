@@ -4,7 +4,6 @@ using System.Text;
 using Backend.Configuration;
 using Backend.Realtime;
 using Backend.Tools;
-using Microsoft.Extensions.Logging;
 
 namespace Backend.Sessions;
 
