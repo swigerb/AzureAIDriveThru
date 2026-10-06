@@ -4,7 +4,7 @@ using System.Net.WebSockets;
 namespace Backend.Realtime;
 
 /// <summary>One fully-reassembled WebSocket message (text or binary), never a partial frame.</summary>
-public sealed record WebSocketFrame(byte[] Payload, WebSocketMessageType MessageType);
+internal sealed record WebSocketFrame(byte[] Payload, WebSocketMessageType MessageType);
 
 /// <summary>
 /// Issue #13 (Rick's #12 review note): reads ONE complete WebSocket message off a socket,
@@ -23,7 +23,7 @@ public sealed record WebSocketFrame(byte[] Payload, WebSocketMessageType Message
 /// closes the socket with <see cref="WebSocketCloseStatus.MessageTooBig"/> (1009) instead of
 /// growing the buffer without bound.
 /// </summary>
-public static class WebSocketFrameReader
+internal static class WebSocketFrameReader
 {
     private const int ChunkSize = 8192;
 

@@ -13,7 +13,7 @@ namespace Backend.Realtime;
 /// is just the identifier-minting half, scoped to one <see cref="Backend.Sessions.RealtimeProcessor"/>
 /// session's lifetime.
 /// </summary>
-public sealed class SessionIdentifiers
+internal sealed class SessionIdentifiers
 {
     public string SessionToken { get; }
     public int RoundTripIndex { get; private set; }

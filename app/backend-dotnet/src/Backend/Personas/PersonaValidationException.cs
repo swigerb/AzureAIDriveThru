@@ -8,4 +8,4 @@ namespace Backend.Personas;
 /// the process exits non-zero and never serves traffic with a partially/invalidly loaded catalog
 /// (ADR-001 decision 2, "fail fast on an invalid pack").
 /// </summary>
-public sealed class PersonaValidationException(string message) : Exception(message);
+internal sealed class PersonaValidationException(string message) : Exception(message);

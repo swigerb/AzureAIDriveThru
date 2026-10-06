@@ -1,10 +1,8 @@
-using System.Net.Http.Json;
 using System.Text.Json;
 using Backend.Configuration;
 using Backend.Personas;
 using Backend.Prompts;
 using Backend.Tools;
-using Microsoft.Extensions.Logging;
 
 namespace Backend.Search;
 
@@ -27,7 +25,7 @@ namespace Backend.Search;
 /// by persona id so two personas asking the same question never share a cached result from each
 /// other's (potentially different) search index.</para>
 /// </summary>
-public sealed class SearchTool
+internal sealed class SearchTool
 {
     private static readonly SearchResultCache Cache = new();
 

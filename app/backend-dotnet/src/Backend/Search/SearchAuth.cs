@@ -15,7 +15,7 @@ namespace Backend.Search;
 /// cref="SearchTool"/>'s header-selection logic can be unit tested without a real Azure credential
 /// (a fake substitutes it in tests).
 /// </summary>
-public interface ISearchBearerTokenProvider
+internal interface ISearchBearerTokenProvider
 {
     Task<string> GetTokenAsync(CancellationToken cancellationToken);
 }
@@ -23,7 +23,7 @@ public interface ISearchBearerTokenProvider
 /// <summary>Production implementation: wraps a <see cref="TokenCredential"/> (a real
 /// <see cref="DefaultAzureCredential"/> by default) and requests the Azure AI Search data-plane
 /// scope.</summary>
-public sealed class DefaultAzureCredentialSearchTokenProvider : ISearchBearerTokenProvider
+internal sealed class DefaultAzureCredentialSearchTokenProvider : ISearchBearerTokenProvider
 {
     // Azure AI Search's own data-plane scope -- the search equivalent of PR #140 R5's
     // "https://cognitiveservices.azure.com/.default" for the realtime upstream connect.

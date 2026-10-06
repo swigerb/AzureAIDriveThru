@@ -13,7 +13,7 @@ namespace Backend.Configuration;
 /// can bind whichever specific sections they need (audio, business_rules, ...) without this class
 /// having to know about every field up front.
 /// </summary>
-public sealed class AppConfig
+internal sealed class AppConfig
 {
     /// <summary>Every config.yaml section config_loader.py's own _load() requires today.</summary>
     public static readonly IReadOnlyList<string> RequiredTopLevelSections =

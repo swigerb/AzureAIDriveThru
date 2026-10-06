@@ -18,9 +18,9 @@ namespace Backend.Realtime;
 /// <see cref="TimeProvider"/> instead (issue #13 Wave 2), so a test can swap in a
 /// <c>FakeTimeProvider</c> and advance it instead of waiting on a real delay.
 /// </summary>
-public sealed class EchoSuppressor : IDisposable
+internal sealed class EchoSuppressor : IDisposable
 {
-    private readonly object _sync = new();
+    private readonly Lock _sync = new();
     private readonly double _cooldownSeconds;
     private readonly Func<CancellationToken, Task> _flushSendAsync;
     private readonly TimeProvider _timeProvider;

@@ -11,7 +11,7 @@ namespace Backend.Tools;
 /// comment points at. Like both of the tools it wraps, one instance is owned by exactly one
 /// session's actor; it holds no state of its own beyond the two composed tools.
 /// </summary>
-public sealed class SessionToolExecutor : IToolExecutor, IOrderTicketSource, IOrderSessionSettings
+internal sealed class SessionToolExecutor : IToolExecutor, IOrderTicketSource, IOrderSessionSettings
 {
     private readonly OrderToolExecutor _orderTools;
     private readonly SearchTool _search;

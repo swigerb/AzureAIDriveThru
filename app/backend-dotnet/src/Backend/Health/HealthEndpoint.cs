@@ -5,7 +5,7 @@ namespace Backend.Health;
 /// <summary>Port of app/backend/app.py's _health_handler. Same JSON shape: {status, version,
 /// checks, personas} with personas additive once the catalog has loaded (issue #70), 200 if every
 /// check passed else 503.</summary>
-public static class HealthEndpoint
+internal static class HealthEndpoint
 {
     public const string AppVersion = "1.0.0";
 

@@ -1,5 +1,4 @@
 using Backend.Personas;
-using Microsoft.Extensions.Logging;
 
 namespace Backend.Models;
 
@@ -20,7 +19,7 @@ namespace Backend.Models;
 ///      know which processor owns this session, is this specific persona+model+deployment
 ///      combination actually usable?
 /// </summary>
-public static class ModelDispatch
+internal static class ModelDispatch
 {
     /// <summary>
     /// Resolves which <see cref="Backend.Sessions.IPipelineProcessor"/> should own this session.

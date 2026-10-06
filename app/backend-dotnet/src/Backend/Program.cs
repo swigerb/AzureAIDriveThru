@@ -12,7 +12,6 @@ using Backend.Search;
 using Backend.Sessions;
 using Backend.Tools;
 using Microsoft.Extensions.FileProviders;
-using Microsoft.Extensions.Logging.Console;
 
 // Host wiring (issue #12 S2): config, persona-pack loading, health, auth token endpoint, static
 // files, one event loop per session -- mirrors app/backend/app.py's create_app() startup sequence
@@ -226,7 +225,7 @@ var sessionConfig = new RealtimeSessionConfig
     ParallelToolCalls = ReadBool(modelSection, "parallel_tool_calls"),
     ReasoningModel = reasoningModel,
 };
-if (sessionConfig.ReasoningEffort is not null && !sessionConfig.IsReasoningModel(Overridable<bool?>.Unset))
+if (sessionConfig.ReasoningEffort is not null && !sessionConfig.IsReasoningModel(Overridable.Unset<bool?>()))
 {
     logger.LogInformation(
         "Deployment {Deployment} is not treated as a reasoning model (reasoning_model={ReasoningModel}); `reasoning` (effort={Effort}) will not be sent",

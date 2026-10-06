@@ -1,6 +1,5 @@
 using System.Net.Http.Headers;
 using System.Text;
-using System.Text.Json;
 using System.Text.Json.Nodes;
 using Backend.Realtime;
 
@@ -11,15 +10,15 @@ namespace Backend.Cascade;
 /// Inference chat-completions endpoint (`POST {endpoint}/chat/completions`) -- the C# stand-in for
 /// cascade_processor.py's `azure.ai.inference.aio.ChatCompletionsClient`. Deliberately NOT a
 /// dependency on the azure-ai-inference SDK (no C# equivalent is wired into this repo, and the
-/// wire shape is a simple, stable, plain-JSON REST contract -- see
-/// <see cref="Conformance.Fakes.FakeChatCompletionsServer"/>'s own doc comment) -- every message
+/// wire shape is a simple, stable, plain-JSON REST contract -- see the conformance harness's
+/// <c>FakeChatCompletionsServer</c>'s own doc comment) -- every message
 /// is represented as a raw <see cref="JsonObject"/> throughout (built by <see cref="CascadeChatMessage"/>
 /// below, or threaded straight from a previous response's own `choices[0].message` for an
 /// assistant tool-call turn), matching the rest of this codebase's own convention of working with
 /// <see cref="JsonObject"/>/<see cref="JsonNode"/> directly rather than introducing a parallel set
 /// of typed message DTOs (see <see cref="Sessions.RealtimeProcessor"/>'s own frame-building style).
 /// </summary>
-public sealed class FoundryChatClient(HttpClient httpClient, string endpoint, IUpstreamBearerTokenProvider credential)
+internal sealed class FoundryChatClient(HttpClient httpClient, string endpoint, IUpstreamBearerTokenProvider credential)
 {
     /// <summary>Port of cascade_processor.py's `_COGNITIVE_SERVICES_SCOPE` -- the same bearer
     /// scope the realtime pipeline's own upstream connect uses (Realtime/UpstreamAuth.cs).</summary>
@@ -90,6 +89,7 @@ public sealed class FoundryChatClient(HttpClient httpClient, string endpoint, IU
         }
         catch (Exception)
         {
+            // Best-effort error-body read only; any failure falls back to a status-code-only message.
             return "";
         }
     }
@@ -106,7 +106,7 @@ public sealed class FoundryChatClient(HttpClient httpClient, string endpoint, IU
 /// cascade_processor.py's `azure.ai.inference.models.{SystemMessage,UserMessage,AssistantMessage,
 /// ToolMessage}` -- same four roles, same fields, just built as raw JSON here instead of typed SDK
 /// objects).</summary>
-public static class CascadeChatMessage
+internal static class CascadeChatMessage
 {
     public static JsonObject System(string content) => new() { ["role"] = "system", ["content"] = content };
 
@@ -124,7 +124,7 @@ public static class CascadeChatMessage
 /// (`{"type": "function", "function": {"name", "description", "parameters"}}`) the Foundry
 /// chat-completions endpoint expects -- C# port of cascade_processor.py's `_tool_definitions`.
 /// </summary>
-public static class CascadeToolDefinitions
+internal static class CascadeToolDefinitions
 {
     public static IReadOnlyList<JsonObject> FromToolSchemas(IReadOnlyList<JsonObject> toolSchemas)
     {

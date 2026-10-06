@@ -7,7 +7,7 @@ namespace Backend.Sessions;
 /// happens once per `/realtime` connection, in Models/ModelDispatch.cs's `DispatchProcessor`,
 /// before the WebSocket upgrade.
 /// </summary>
-public sealed class ProcessorRegistry
+internal sealed class ProcessorRegistry
 {
     private readonly Dictionary<string, IPipelineProcessor> _processors = new(StringComparer.Ordinal);
 

@@ -10,7 +10,6 @@ using Backend.Realtime;
 using Backend.Sessions;
 using Backend.Tests.Realtime;
 using Backend.Tools;
-using Xunit;
 
 namespace Backend.Tests.Sessions;
 

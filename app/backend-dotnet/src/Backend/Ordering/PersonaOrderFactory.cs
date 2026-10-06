@@ -12,7 +12,7 @@ namespace Backend.Ordering;
 /// <see cref="OrderState"/> from a <see cref="Persona"/>'s own <c>store</c>/<c>pricing</c> data
 /// (#74/#113) -- never a hardcoded tax rate, happy-hour window, or banner string.
 /// </summary>
-public static class PersonaOrderFactory
+internal static class PersonaOrderFactory
 {
     private static readonly ConcurrentDictionary<string, MenuCatalog> MenuCatalogCache = new();
 

@@ -11,7 +11,7 @@ namespace Backend;
 /// PERSONAS_DIR/CONFIG_PATH/STATIC_FILES_DIR env vars are expected to be set explicitly (see
 /// docs/dotnet_mapping.md), so this walk-up is a dev/CI convenience, not a production requirement.
 /// </summary>
-public static class RepoRootLocator
+internal static class RepoRootLocator
 {
     /// <exception cref="InvalidOperationException">No ancestor directory of <paramref name="startDirectory"/>
     /// (default: the running assembly's directory) has both a "personas" subdirectory and an

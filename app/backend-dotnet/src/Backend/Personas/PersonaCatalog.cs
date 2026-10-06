@@ -13,7 +13,7 @@ namespace Backend.Personas;
 /// pack"). Session/model binding to a specific persona is wave 7 (#74/#75) -- this catalog is
 /// just the seam later waves bind against.
 /// </summary>
-public sealed class PersonaCatalog
+internal sealed class PersonaCatalog
 {
     private readonly IReadOnlyDictionary<string, Persona> _personas;
 

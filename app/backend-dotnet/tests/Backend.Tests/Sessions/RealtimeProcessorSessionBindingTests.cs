@@ -1,4 +1,3 @@
-using System.Linq;
 using Backend.Configuration;
 using Backend.Models;
 using Backend.Personas;
@@ -6,7 +5,6 @@ using Backend.Prompts;
 using Backend.Realtime;
 using Backend.Sessions;
 using Backend.Tools;
-using Xunit;
 
 namespace Backend.Tests.Sessions;
 

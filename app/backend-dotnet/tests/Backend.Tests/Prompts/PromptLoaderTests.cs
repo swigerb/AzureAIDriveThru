@@ -1,4 +1,3 @@
-using Backend;
 using Backend.Prompts;
 
 namespace Backend.Tests.Prompts;

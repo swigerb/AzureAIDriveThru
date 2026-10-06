@@ -20,7 +20,7 @@ namespace Backend.Shared;
 /// types (see each type's own doc comment for why) -- only these settings/parsing/bounds/event-
 /// shape pieces are shared.
 /// </summary>
-public static class RateLimit
+internal static class RateLimit
 {
     public const string RateLimitedEventType = "extension.rate_limited";
 
@@ -74,7 +74,7 @@ public sealed record RateLimitSettings(
 
     /// <summary><paramref name="environment"/> is injectable for tests (defaults to the real
     /// process environment when omitted).</summary>
-    public static RateLimitSettings FromAppConfig(AppConfig config, IReadOnlyDictionary<string, string>? environment = null)
+    internal static RateLimitSettings FromAppConfig(AppConfig config, IReadOnlyDictionary<string, string>? environment = null)
     {
         var resilienceSection = config.TryGetSection("resilience");
         IDictionary<object, object>? rateLimitSection = null;

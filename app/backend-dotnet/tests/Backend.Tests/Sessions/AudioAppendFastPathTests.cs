@@ -8,7 +8,6 @@ using Backend.Sessions;
 using Backend.Tests.Realtime;
 using Backend.Tools;
 using Microsoft.Extensions.Time.Testing;
-using Xunit;
 
 namespace Backend.Tests.Sessions;
 

@@ -6,7 +6,6 @@
 global using CascadeRateLimitSettings = Backend.Shared.RateLimitSettings;
 
 using System.Text.Json.Nodes;
-using Microsoft.Extensions.Logging;
 
 namespace Backend.Cascade;
 
@@ -31,7 +30,7 @@ namespace Backend.Cascade;
 /// orchestrations (cascade's wrap-one-REST-call loop vs. realtime's WS-event-driven retry) stay
 /// separate, exactly as cascade_processor.py and rate_limit.py stay separate in Python today.
 /// </summary>
-public static class CascadeRateLimit
+internal static class CascadeRateLimit
 {
     public const string RateLimitedEvent = Shared.RateLimit.RateLimitedEventType;
 
@@ -57,7 +56,7 @@ public static class CascadeRateLimit
     /// `response.create`/`response.done` lifecycle. A non-429 error, or a 429 while
     /// <see cref="CascadeRateLimitSettings.Enabled"/> is false, propagates unchanged so existing
     /// callers' own try/catch keep handling it exactly as before. Throws
-    /// <see cref="CascadeRateLimitExhausted"/> once the ladder is spent; by then the client has
+    /// <see cref="CascadeRateLimitExhaustedException"/> once the ladder is spent; by then the client has
     /// already gotten the final notice.</summary>
     public static async Task<T> WithRetryAsync<T>(
         CascadeRateLimitSettings settings,
@@ -91,7 +90,7 @@ public static class CascadeRateLimit
                     await notifyClient(
                         new JsonObject { ["type"] = RateLimitedEvent, ["attempt"] = attempt, ["final"] = true }, ct)
                         .ConfigureAwait(false);
-                    throw new CascadeRateLimitExhausted(opName, exc);
+                    throw new CascadeRateLimitExhaustedException(opName, exc);
                 }
 
                 double delay;
@@ -138,7 +137,7 @@ public static class CascadeRateLimit
 /// this is raised the client has already received the final `extension.rate_limited` notice, so
 /// callers just need to end the turn cleanly (same as the realtime pipeline's own
 /// guest-repeats-themselves outcome). Port of cascade_processor.py's `CascadeRateLimitExhausted`.</summary>
-public sealed class CascadeRateLimitExhausted(string opName, Exception innerException)
+internal sealed class CascadeRateLimitExhaustedException(string opName, Exception innerException)
     : Exception($"Cascade {opName} rate-limited; retries exhausted.", innerException);
 
 /// <summary>Raised by <see cref="FoundryChatClient"/>/<see cref="FoundryAudioClient"/> for a
@@ -148,7 +147,7 @@ public sealed class CascadeRateLimitExhausted(string opName, Exception innerExce
 /// <see cref="CascadeRateLimit.ParseRetryHint"/>'s free-text parse of the response body) -- the C#
 /// equivalent of cascade_processor.py's `_http_status_of`/`_retry_hint_of` reading an azure-core
 /// `HttpResponseError`/aiohttp `ClientResponseError`.</summary>
-public sealed class FoundryHttpException(int statusCode, double? retryAfterSeconds, string message)
+internal sealed class FoundryHttpException(int statusCode, double? retryAfterSeconds, string message)
     : Exception(message)
 {
     public int StatusCode { get; } = statusCode;

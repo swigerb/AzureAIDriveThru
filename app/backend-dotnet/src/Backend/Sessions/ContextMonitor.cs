@@ -1,5 +1,3 @@
-using Microsoft.Extensions.Logging;
-
 namespace Backend.Sessions;
 
 /// <summary>
@@ -11,7 +9,7 @@ namespace Backend.Sessions;
 /// <see cref="SessionManager.EndSession"/>), same lifetime as
 /// Python's own <c>self._context_monitors</c> dict.
 /// </summary>
-public sealed class ContextMonitor
+internal sealed class ContextMonitor
 {
     private const int CharsPerToken = 4;
 

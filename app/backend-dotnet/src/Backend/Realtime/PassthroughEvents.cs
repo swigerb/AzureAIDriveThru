@@ -9,7 +9,7 @@ namespace Backend.Realtime;
 /// simplification -- correctness over the micro-perf win), so these are consulted only after the
 /// frame's own `type` has already been read.
 /// </summary>
-public static class PassthroughEvents
+internal static class PassthroughEvents
 {
     public static readonly IReadOnlySet<string> ServerTypes = new HashSet<string>
     {

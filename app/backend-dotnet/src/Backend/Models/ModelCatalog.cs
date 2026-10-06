@@ -2,7 +2,6 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Backend.Configuration;
 using Backend.Personas;
-using Microsoft.Extensions.Logging;
 
 namespace Backend.Models;
 
@@ -31,7 +30,7 @@ namespace Backend.Models;
 /// carve-out is on the *deployment* term for the realtime pipeline's default (see
 /// Models/ModelDispatch.cs's ResolveRealtimeModel), never here.
 /// </summary>
-public sealed class ModelCatalog
+internal sealed class ModelCatalog
 {
     private static readonly HashSet<string> Pipelines = ["realtime", "cascade"];
     private static readonly HashSet<string> RequiredEntryFields = ["id", "pipeline", "label"];

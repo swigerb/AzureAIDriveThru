@@ -23,7 +23,7 @@ namespace Backend.Search;
 /// <c>DefaultAzureCredential</c> fallback and PR #140 R5's identical pattern for the realtime
 /// upstream connect.</para>
 /// </summary>
-public sealed class SearchEndpointConfig
+internal sealed class SearchEndpointConfig
 {
     /// <summary>Azure AI Search REST data-plane API version this client sends -- pinned to the
     /// same version issue #23 verified `azure-search-documents` 12.0.0 itself sends.</summary>
@@ -71,8 +71,8 @@ public sealed class SearchEndpointConfig
         var contentField = NonEmpty(Environment.GetEnvironmentVariable("AZURE_SEARCH_CONTENT_FIELD"), "description");
         var embeddingField = NonEmpty(Environment.GetEnvironmentVariable("AZURE_SEARCH_EMBEDDING_FIELD"), "embedding");
         var useVectorQuery = GetBoolEnv("AZURE_SEARCH_USE_VECTOR_QUERY", true);
-        var useSemanticRanker = NonEmpty(Environment.GetEnvironmentVariable("AZURE_SEARCH_SEMANTIC_RANKER"), "standard")
-            .ToLowerInvariant() != "disabled";
+        var useSemanticRanker = !NonEmpty(Environment.GetEnvironmentVariable("AZURE_SEARCH_SEMANTIC_RANKER"), "standard")
+            .Equals("disabled", StringComparison.OrdinalIgnoreCase);
 
         return new SearchEndpointConfig(
             endpoint, apiKey, semanticConfiguration, identifierField, contentField, embeddingField,

@@ -1,5 +1,4 @@
 using Backend.Ordering;
-using Backend.Personas;
 using Backend.Tests.TestSupport;
 
 namespace Backend.Tests.Ordering;

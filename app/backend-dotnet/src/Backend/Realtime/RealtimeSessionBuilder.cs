@@ -12,11 +12,11 @@ namespace Backend.Realtime;
 /// explicitly to each builder call instead, exactly like `_build_session`'s own
 /// voice/system_message/reasoning_override parameters.
 /// </summary>
-public sealed class RealtimeSessionConfig
+internal sealed class RealtimeSessionConfig
 {
     public string? Deployment { get; init; }
     /// <summary>The persona's system prompt, used whenever a builder call's own `systemMessage`
-    /// parameter is <see cref="Overridable{T}.Unset"/>.</summary>
+    /// parameter is <see cref="Overridable.Unset{T}"/>.</summary>
     public string? SystemMessage { get; init; }
     public double? Temperature { get; init; }
     public int? MaxTokens { get; init; }
@@ -69,7 +69,7 @@ public sealed class RealtimeSessionConfig
 /// legacy-shaped session object and translates it to the GA shape via
 /// <see cref="GaSessionTranslator"/>.
 /// </summary>
-public static class RealtimeSessionBuilder
+internal static class RealtimeSessionBuilder
 {
     /// <summary>What the browser's useRealtime.startSession() sends. The middle tier applies the
     /// same values itself the moment the upstream socket opens, so a socket the browser never

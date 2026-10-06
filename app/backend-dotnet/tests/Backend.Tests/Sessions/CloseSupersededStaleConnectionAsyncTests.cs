@@ -2,7 +2,6 @@ using System.Net.WebSockets;
 using Backend.Sessions;
 using Backend.Tests.Realtime;
 using Microsoft.Extensions.Logging.Abstractions;
-using Xunit;
 
 namespace Backend.Tests.Sessions;
 

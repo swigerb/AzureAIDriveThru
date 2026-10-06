@@ -9,7 +9,6 @@ using Backend.Personas;
 using Backend.Prompts;
 using Backend.Realtime;
 using Backend.Tools;
-using Microsoft.Extensions.Logging;
 
 namespace Backend.Sessions;
 
@@ -41,11 +40,11 @@ namespace Backend.Sessions;
 /// cascade_processor.py's own <c>create_session</c>), which also creates the session's
 /// <see cref="ContextMonitor"/>; the registry's own end-of-session path removes it. Resume
 /// (<c>extension.resume</c> via <c>NegotiateResumeAsync</c>), idle nudge and the echo-suppression
-/// cooldown mirror the realtime pipeline. <see cref="ExecuteToolCallAsync"/> tracks tool call
+/// cooldown mirror the realtime pipeline. `ExecuteToolCallAsync` tracks tool call
 /// args/result in the context monitor, mirroring cascade_processor.py's own two
 /// <c>ctx_monitor.add_content</c> call sites exactly.
 /// </summary>
-public sealed class CascadeProcessor : IPipelineProcessor
+internal sealed class CascadeProcessor : IPipelineProcessor
 {
     private const int MaxToolRounds = 8;
     private const int AudioSampleRate = 24000;
@@ -726,7 +725,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
             {
                 finalText = await RunChatToolLoopAsync(turnCt).ConfigureAwait(false);
             }
-            catch (CascadeRateLimitExhausted)
+            catch (CascadeRateLimitExhaustedException)
             {
                 await SendTextAsync(browserSocket, new JsonObject
                 {
@@ -773,7 +772,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
                 {
                     await SpeakAsync(finalText, turnCt).ConfigureAwait(false);
                 }
-                catch (CascadeRateLimitExhausted)
+                catch (CascadeRateLimitExhaustedException)
                 {
                     // Already notified via the final extension.rate_limited frame -- nothing more to do.
                 }
@@ -824,7 +823,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
             {
                 transcript = await TranscribeAsync(turnAudio, turnCt).ConfigureAwait(false);
             }
-            catch (CascadeRateLimitExhausted)
+            catch (CascadeRateLimitExhaustedException)
             {
                 return;
             }
@@ -904,83 +903,83 @@ public sealed class CascadeProcessor : IPipelineProcessor
             switch (type)
             {
                 case "input_audio_buffer.append":
-                {
-                    var audioB64 = GetString(data, "audio");
-                    if (string.IsNullOrEmpty(audioB64))
                     {
-                        return;
-                    }
-                    byte[] pcm;
-                    try
-                    {
-                        pcm = Convert.FromBase64String(audioB64);
-                    }
-                    catch (FormatException)
-                    {
-                        return;
-                    }
-                    if (state.NudgeEligible && !state.NudgeArmed)
-                    {
-                        // #126 (mirrors rtmt.py's `nudge_awaiting_client_live` gate): arm the
-                        // one-shot resume nudge the first time THIS socket's guest proves the
-                        // conversation is live -- its own first streamed mic chunk -- never
-                        // merely because the resume handshake itself succeeded. Latched so this
-                        // only ever fires once per connection.
-                        state.NudgeArmed = true;
-                        ScheduleNudge();
-                    }
-                    var vadEvent = detector.Feed(pcm, NowSeconds());
-                    if (vadEvent == "speech_started")
-                    {
-                        // #126: real guest activity -- reset (cancel, never reschedule) any
-                        // pending resume nudge, same one-shot semantics as rtmt.py's own
-                        // `cancel_nudge`. Runs BEFORE BargeIn: a pending nudge is cancelled
-                        // under the registry lock, and one that already fired is a
-                        // CurrentTurnTask that BargeIn then cancels like any other turn.
-                        CancelNudge("guest started speaking");
-                        BargeIn();
-                    }
-                    else if (vadEvent == "speech_stopped")
-                    {
-                        CancelNudge("guest turn started");
-                        var turnAudio = detector.TakeBuffer();
-                        detector.Reset();
-                        var bargeInTail = state.BargeInTail;
-                        var (cts, task) = Spawn(async turnCt =>
+                        var audioB64 = GetString(data, "audio");
+                        if (string.IsNullOrEmpty(audioB64))
                         {
-                            // Never overlap the turn a barge-in just cut off (see BargeIn).
-                            if (bargeInTail is not null)
+                            return;
+                        }
+                        byte[] pcm;
+                        try
+                        {
+                            pcm = Convert.FromBase64String(audioB64);
+                        }
+                        catch (FormatException)
+                        {
+                            return;
+                        }
+                        if (state.NudgeEligible && !state.NudgeArmed)
+                        {
+                            // #126 (mirrors rtmt.py's `nudge_awaiting_client_live` gate): arm the
+                            // one-shot resume nudge the first time THIS socket's guest proves the
+                            // conversation is live -- its own first streamed mic chunk -- never
+                            // merely because the resume handshake itself succeeded. Latched so this
+                            // only ever fires once per connection.
+                            state.NudgeArmed = true;
+                            ScheduleNudge();
+                        }
+                        var vadEvent = detector.Feed(pcm, NowSeconds());
+                        if (vadEvent == "speech_started")
+                        {
+                            // #126: real guest activity -- reset (cancel, never reschedule) any
+                            // pending resume nudge, same one-shot semantics as rtmt.py's own
+                            // `cancel_nudge`. Runs BEFORE BargeIn: a pending nudge is cancelled
+                            // under the registry lock, and one that already fired is a
+                            // CurrentTurnTask that BargeIn then cancels like any other turn.
+                            CancelNudge("guest started speaking");
+                            BargeIn();
+                        }
+                        else if (vadEvent == "speech_stopped")
+                        {
+                            CancelNudge("guest turn started");
+                            var turnAudio = detector.TakeBuffer();
+                            detector.Reset();
+                            var bargeInTail = state.BargeInTail;
+                            var (cts, task) = Spawn(async turnCt =>
                             {
-                                await bargeInTail.WaitAsync(turnCt).ConfigureAwait(false);
-                            }
-                            await ProcessTurnAsync(turnAudio, turnCt).ConfigureAwait(false);
-                        }, "turn");
-                        state.CurrentTurnCts = cts;
-                        state.CurrentTurnTask = task;
+                                // Never overlap the turn a barge-in just cut off (see BargeIn).
+                                if (bargeInTail is not null)
+                                {
+                                    await bargeInTail.WaitAsync(turnCt).ConfigureAwait(false);
+                                }
+                                await ProcessTurnAsync(turnAudio, turnCt).ConfigureAwait(false);
+                            }, "turn");
+                            state.CurrentTurnCts = cts;
+                            state.CurrentTurnTask = task;
+                        }
+                        break;
                     }
-                    break;
-                }
                 case "input_audio_buffer.clear":
                     detector.Reset();
                     break;
                 case "extension.set_voice":
-                {
-                    // #236 Rick re-review item 2 (MEDIUM, blocking): mirror RealtimeProcessor's
-                    // HandleClientExtensionMessageAsync (~line 306) exactly -- go through the same
-                    // allow-list check rather than accepting any non-empty string, and log (rather
-                    // than silently drop) an unknown/invalid voice.
-                    var candidate = GetString(data, "voice");
-                    var newVoice = ClientServerFilter.SanitizeVoice(candidate, _allowedVoices);
-                    if (newVoice is null)
                     {
-                        _logger?.LogWarning(
-                            "Dropped extension.set_voice with an unknown/invalid voice {Voice} (session={SessionId})",
-                            candidate, sessionId);
+                        // #236 Rick re-review item 2 (MEDIUM, blocking): mirror RealtimeProcessor's
+                        // HandleClientExtensionMessageAsync (~line 306) exactly -- go through the same
+                        // allow-list check rather than accepting any non-empty string, and log (rather
+                        // than silently drop) an unknown/invalid voice.
+                        var candidate = GetString(data, "voice");
+                        var newVoice = ClientServerFilter.SanitizeVoice(candidate, _allowedVoices);
+                        if (newVoice is null)
+                        {
+                            _logger?.LogWarning(
+                                "Dropped extension.set_voice with an unknown/invalid voice {Voice} (session={SessionId})",
+                                candidate, sessionId);
+                            break;
+                        }
+                        state.Voice = newVoice;
                         break;
                     }
-                    state.Voice = newVoice;
-                    break;
-                }
                 case "extension.resume":
                     // #126: this connection's own first frame was ALREADY consumed (and, if it
                     // looked like a resume attempt, already decided) by the pre-loop negotiation
@@ -1284,7 +1283,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
     ///
     /// #236 Rick re-review item 1 (HIGH, blocking): .NET's <c>ManagedWebSocket</c> (the
     /// implementation behind both Kestrel's server-side <see cref="WebSocket"/> and
-    /// <see cref="WebSocket.CreateFromStream"/>) treats a cancelled in-flight <c>SendAsync</c> as a
+    /// <c>WebSocket.CreateFromStream(...)</c>) treats a cancelled in-flight <c>SendAsync</c> as a
     /// fatal, unrecoverable transport error: cancelling it mid-write aborts the ENTIRE socket, not
     /// just that one call. <c>BargeIn</c> cancels a turn's own
     /// <c>CurrentTurnCts</c>/<c>turnCt</c> on barge-in while the SESSION (and its socket) must keep

@@ -20,7 +20,7 @@ namespace Backend.Realtime;
 /// what <c>tool_choice</c> said must not be able to ride an unbounded ladder of one-more-apology
 /// responses with zero guest input -- only a single apology per capped streak.
 /// </summary>
-public sealed class ToolFailureTracker
+internal sealed class ToolFailureTracker
 {
     /// <summary>Mirrors rtmt.py's module-level <c>_TOOL_FAILURE_CAP</c>: after this many
     /// *consecutive* failed tool rounds with no guest turn in between, stop auto-continuing the
@@ -86,7 +86,7 @@ public sealed class ToolFailureTracker
 /// the server-authored <c>response.create</c> sent once per capped failure streak (issue #13
 /// Wave 4, swigerb/SonicAIDriveThru#36, PR #58 re-review "S1").
 /// </summary>
-public static class ToolFailureCapNotice
+internal static class ToolFailureCapNotice
 {
     /// <summary>The brand prompt config's optional <c>error_messages.yaml</c> key for this
     /// notice's <c>instructions</c> text.</summary>

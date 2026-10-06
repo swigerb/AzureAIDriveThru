@@ -1,4 +1,3 @@
-using System.Net.Http;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
@@ -8,7 +7,6 @@ using Backend.Personas;
 using Backend.Prompts;
 using Backend.Realtime;
 using Backend.Tools;
-using Microsoft.Extensions.Logging;
 
 namespace Backend.Sessions;
 
@@ -58,7 +56,7 @@ namespace Backend.Sessions;
 /// below (api-key, or a managed-identity bearer token when no key is configured -- PR #140 R5) is
 /// the OUTBOUND call to the Azure OpenAI realtime endpoint itself and applies regardless of #147.
 /// </summary>
-public sealed class RealtimeProcessor : IPipelineProcessor
+internal sealed class RealtimeProcessor : IPipelineProcessor
 {
     /// <summary>Port of app/backend/session_manager.py's <c>SESSION_ENDED_CLOSE_REASON</c> --
     /// paired with the standard <see cref="WebSocketCloseStatus.NormalClosure"/> (1000) code for a
@@ -201,7 +199,7 @@ public sealed class RealtimeProcessor : IPipelineProcessor
         // detach/reconnect instead of starting over empty (see RealtimeProcessor's class doc).
         public required IToolExecutor ToolExecutor { get; set; }
         /// <summary>Rick's #244 round-2 review, issue 1: this connection's OWN
-        /// <see cref="SessionManager.SupersededFlag"/> -- created once per connection (fresh-or-
+        /// <see cref="SupersededFlag"/> -- created once per connection (fresh-or-
         /// resumed alike, same as <see cref="Identifiers"/>) and handed to
         /// <see cref="SessionManager.CreateSession"/>/<see cref="SessionManager.TryResume"/> as
         /// <c>attachedSupersededFlag</c> so a LATER resume by some other connection can mark THIS
@@ -231,7 +229,7 @@ public sealed class RealtimeProcessor : IPipelineProcessor
         /// <summary>Port of rtmt.py's own <c>announced</c> nonlocal: set true once this socket's
         /// first-frame decision has been made and its own resume-id baton handed to the browser --
         /// whether that happened via a fresh-connection <c>extension.session_metadata</c>
-        /// (<see cref="AnnounceAfterFirstFrameDecisionAsync"/>'s "fresh" branch) or a successfully
+        /// (`AnnounceAfterFirstFrameDecisionAsync`'s "fresh" branch) or a successfully
         /// resumed connection's <c>extension.session_resumed</c> (both mirror rtmt.py's
         /// <c>announce_fresh()</c> and <c>handle_resume()</c>, which both set the nonlocal). Once
         /// true, a later stray (non-first-frame) <c>extension.resume</c> attempt on this same
@@ -270,7 +268,7 @@ public sealed class RealtimeProcessor : IPipelineProcessor
         var voice = binding.Voice;
         var toolSchemas = binding.ToolSchemas;
         var toolExecutor = binding.ToolExecutor;
-        var reasoningOverride = Overridable<bool?>.Of(resolvedModel.Reasoning);
+        var reasoningOverride = Overridable.Of<bool?>(resolvedModel.Reasoning);
         var deployment = string.IsNullOrEmpty(resolvedModel.Deployment) ? _defaultDeployment : resolvedModel.Deployment;
 
         using var upstream = new ClientWebSocket();
@@ -721,8 +719,8 @@ public sealed class RealtimeProcessor : IPipelineProcessor
             var session = RealtimeSessionBuilder.BuildSession(
                 _sessionConfig, sessionIn, toolSchemas,
                 voiceLocked: state.AssistantAudioSeen,
-                voice: Overridable<string?>.Of(state.Voice),
-                systemMessage: Overridable<string?>.Of(systemMessage),
+                voice: Overridable.Of<string?>(state.Voice),
+                systemMessage: Overridable.Of<string?>(systemMessage),
                 reasoningOverride: reasoningOverride);
             filtered["session"] = session;
             state.Guard.Stamp(filtered);
@@ -1016,8 +1014,8 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                 }
 
                 var fallback = RealtimeSessionBuilder.BuildFallbackSessionUpdate(
-                    _sessionConfig, toolSchemas, voice: Overridable<string?>.Of(state.Voice),
-                    systemMessage: Overridable<string?>.Of(systemMessage), reasoningOverride: reasoningOverride);
+                    _sessionConfig, toolSchemas, voice: Overridable.Of<string?>(state.Voice),
+                    systemMessage: Overridable.Of<string?>(systemMessage), reasoningOverride: reasoningOverride);
                 var fallbackPayload = state.Guard.Track(fallback.ToJsonString(), fallbackOf: rejectedEventId);
                 await SendTextAsync(upstream, fallbackPayload, ct).ConfigureAwait(false);
                 return null;
@@ -1465,28 +1463,28 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                     return message;
 
                 case "session.created":
-                {
-                    var echo = BuildClientSessionEcho(message);
-                    if (!state.SessionMetadataSent)
                     {
-                        state.SessionMetadataSent = true;
-                        if (_sessionManager is not null)
+                        var echo = BuildClientSessionEcho(message);
+                        if (!state.SessionMetadataSent)
                         {
-                            // Deferred: the browser doesn't learn whether this connection is fresh
-                            // or a resume until its own first frame has been processed (or the
-                            // first-frame-timeout fallback elapses) -- see
-                            // HandleResumeFirstFrameAsync/RelayBrowserToUpstreamAsync. Fire-and-forget
-                            // here (not awaited): session.created's own caller must not block on it.
-                            _ = AnnounceAfterFirstFrameDecisionAsync();
+                            state.SessionMetadataSent = true;
+                            if (_sessionManager is not null)
+                            {
+                                // Deferred: the browser doesn't learn whether this connection is fresh
+                                // or a resume until its own first frame has been processed (or the
+                                // first-frame-timeout fallback elapses) -- see
+                                // HandleResumeFirstFrameAsync/RelayBrowserToUpstreamAsync. Fire-and-forget
+                                // here (not awaited): session.created's own caller must not block on it.
+                                _ = AnnounceAfterFirstFrameDecisionAsync();
+                            }
+                            else
+                            {
+                                await SendTextAsync(browserSocket,
+                                    state.Identifiers.ToFrame("extension.session_metadata").ToJsonString(), ct).ConfigureAwait(false);
+                            }
                         }
-                        else
-                        {
-                            await SendTextAsync(browserSocket,
-                                state.Identifiers.ToFrame("extension.session_metadata").ToJsonString(), ct).ConfigureAwait(false);
-                        }
+                        return echo;
                     }
-                    return echo;
-                }
 
                 case "session.updated":
                     state.Guard.OnSessionUpdated();
@@ -1499,40 +1497,40 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                     return message["session"] is JsonObject ? BuildClientSessionEcho(message) : message;
 
                 case "response.output_item.added":
-                {
-                    if (message["item"] is JsonObject item && GetString(item, "type") == "function_call")
                     {
-                        var callId = GetString(item, "call_id");
-                        if (!string.IsNullOrEmpty(callId) && !state.ToolsPending.ContainsKey(callId))
+                        if (message["item"] is JsonObject item && GetString(item, "type") == "function_call")
                         {
-                            _logger?.LogInformation(
-                                "Tool call received: name={ToolName}, call_id={CallId} (session={SessionId})",
-                                GetString(item, "name"), callId, sessionId);
-                            state.ToolsPending[callId] = "";
+                            var callId = GetString(item, "call_id");
+                            if (!string.IsNullOrEmpty(callId) && !state.ToolsPending.ContainsKey(callId))
+                            {
+                                _logger?.LogInformation(
+                                    "Tool call received: name={ToolName}, call_id={CallId} (session={SessionId})",
+                                    GetString(item, "name"), callId, sessionId);
+                                state.ToolsPending[callId] = "";
+                            }
+                            return null;
                         }
-                        return null;
+                        return message;
                     }
-                    return message;
-                }
 
                 case "conversation.item.created":
                 case "conversation.item.added":
-                {
-                    if (message["item"] is JsonObject item)
                     {
-                        if (GetString(item, "type") == "function_call")
+                        if (message["item"] is JsonObject item)
                         {
-                            var callId = GetString(item, "call_id") ?? "";
-                            state.ToolsPending[callId] = GetString(message, "previous_item_id") ?? "";
-                            return null;
+                            if (GetString(item, "type") == "function_call")
+                            {
+                                var callId = GetString(item, "call_id") ?? "";
+                                state.ToolsPending[callId] = GetString(message, "previous_item_id") ?? "";
+                                return null;
+                            }
+                            if (ClientServerFilter.DropFromClient(item))
+                            {
+                                return null;
+                            }
                         }
-                        if (ClientServerFilter.DropFromClient(item))
-                        {
-                            return null;
-                        }
+                        return message;
                     }
-                    return message;
-                }
 
                 case "conversation.item.done":
                 case "conversation.item.retrieved":
@@ -1730,8 +1728,8 @@ public sealed class RealtimeProcessor : IPipelineProcessor
         {
             var bootstrap = state.Guard.Stamp(RealtimeSessionBuilder.BuildBootstrapSessionUpdate(
                 _sessionConfig, toolSchemas,
-                voice: Overridable<string?>.Of(voice),
-                systemMessage: Overridable<string?>.Of(systemMessage),
+                voice: Overridable.Of<string?>(voice),
+                systemMessage: Overridable.Of<string?>(systemMessage),
                 reasoningOverride: reasoningOverride));
             await SendTextAsync(upstream, bootstrap.ToJsonString(), ct).ConfigureAwait(false);
             _logger?.LogInformation(
@@ -1974,7 +1972,7 @@ public sealed class RealtimeProcessor : IPipelineProcessor
         await socket.SendAsync(payload, WebSocketMessageType.Text, endOfMessage: true, ct).ConfigureAwait(false);
     }
 
-    /// <summary>Result of <see cref="TryAppendFastPath"/>: whether <paramref name="payload"/>
+    /// <summary>Result of <see cref="TryAppendFastPath"/>: whether <c>payload</c>
     /// matched the fast-path shape at all, and if so, whether echo suppression says it must be
     /// dropped rather than forwarded.</summary>
     internal readonly record struct AppendFastPathResult(bool IsMatch, bool Suppressed);
@@ -2036,7 +2034,7 @@ public sealed class RealtimeProcessor : IPipelineProcessor
     /// the bookkeeping call, which would then wrongly cancel the very retry it just caused
     /// (mistaking it for a stale leftover one). Recording "browser-initiated" before the send closes
     /// the window by construction: upstream cannot react to a frame it has not received yet.</summary>
-    internal async Task ForwardClientFrameAsync(
+    internal static async Task ForwardClientFrameAsync(
         JsonObject forwarded,
         string? sentType,
         EchoSuppressor echo,
@@ -2243,7 +2241,7 @@ public sealed class RealtimeProcessor : IPipelineProcessor
     /// bound persona's loader, not the deployment default's or any other persona's, so a
     /// tool-execution error renders that SAME persona's own text -- mirrors R4's fix for
     /// `session.tools[].description` above, now proven on the C# side too). Internal (not
-    /// private) purely so <see cref="RealtimeProcessorSessionBindingTests"/> can exercise the
+    /// private) purely so <c>RealtimeProcessorSessionBindingTests</c> can exercise the
     /// resolution directly, with two differently-bound loaders and a capturing
     /// `toolExecutorFactory`, without needing a real WebSocket/upstream connection -- same reason
     /// <see cref="ResolveUpstreamAuthHeaderAsync"/> below is internal.</summary>
@@ -2265,7 +2263,7 @@ public sealed class RealtimeProcessor : IPipelineProcessor
     /// to the lazily-constructed real <see cref="DefaultAzureCredentialTokenProvider"/> if none
     /// was injected), matching rtmt.py's <c>DefaultAzureCredential</c> fallback and its
     /// <c>https://cognitiveservices.azure.com/.default</c> scope. Internal (not private) purely so
-    /// <see cref="UpstreamAuthHeaderTests"/> can exercise the selection without a real
+    /// <c>UpstreamAuthHeaderTests</c> can exercise the selection without a real
     /// ClientWebSocket or Azure credential.</summary>
     internal async Task<(string HeaderName, string HeaderValue)> ResolveUpstreamAuthHeaderAsync(CancellationToken cancellationToken)
     {

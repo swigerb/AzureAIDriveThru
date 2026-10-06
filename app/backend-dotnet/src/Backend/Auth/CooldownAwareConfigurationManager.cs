@@ -59,7 +59,7 @@ namespace Backend.Auth;
 /// <see cref="BaseConfigurationManager"/>; no extra plumbing is needed here beyond setting them
 /// once at construction time in EntraAuthentication.ConfigureJwtBearer.
 /// </summary>
-public sealed class CooldownAwareConfigurationManager :
+internal sealed class CooldownAwareConfigurationManager :
     BaseConfigurationManager, IConfigurationManager<OpenIdConnectConfiguration>
 {
     private readonly ConfigurationManager<OpenIdConnectConfiguration> _inner;

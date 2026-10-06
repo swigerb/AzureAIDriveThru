@@ -8,7 +8,7 @@ namespace Backend.Sessions;
 /// (events are drained but not acted on) so the one-event-loop-per-session mechanics can be built
 /// and tested now, independent of which pipeline eventually plugs in.
 /// </summary>
-public interface IPipelineProcessor
+internal interface IPipelineProcessor
 {
     /// <summary>"realtime" | "cascade" -- must match one of persona.json's models keys.</summary>
     string PipelineName { get; }
@@ -32,7 +32,7 @@ public interface IPipelineProcessor
 /// <summary>Base type for whatever a session's mailbox carries -- a client message, an upstream
 /// model frame, a control signal, etc. Left as a marker for wave 3+ to extend; the skeleton itself
 /// only needs to prove events are processed one at a time, in order, per session.</summary>
-public abstract record SessionEvent;
+internal abstract record SessionEvent;
 
 /// <summary>
 /// Port of the persona/model/pipeline triple Python's `extension.session_metadata` frame carries
@@ -42,4 +42,4 @@ public abstract record SessionEvent;
 /// eventually emits the wire frame (#13). Emitting the frame itself over the WebSocket is out of
 /// scope this wave -- SessionActor has no wire-protocol writer yet.
 /// </summary>
-public sealed record SessionMetadata(string PersonaId, string ModelId, string Pipeline);
+internal sealed record SessionMetadata(string PersonaId, string ModelId, string Pipeline);

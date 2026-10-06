@@ -14,7 +14,6 @@ using Backend.Tests.TestSupport;
 using Backend.Tools;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
-using Xunit;
 
 namespace Backend.Tests.Cascade;
 
@@ -546,8 +545,8 @@ public sealed class CascadeProcessorTests
                     ["function"] = new JsonObject { ["name"] = "search", ["arguments"] = "{}" },
                 },
             });
-            // No further chat/TTS responses queued -- the tool call blocks on its own turnCt until
-            // the real barge-in below cancels it, so the guest turn never reaches a second round.
+        // No further chat/TTS responses queued -- the tool call blocks on its own turnCt until
+        // the real barge-in below cancels it, so the guest turn never reaches a second round.
 
         var toolExecutor = new RecordingToolExecutor(
             ["search"],

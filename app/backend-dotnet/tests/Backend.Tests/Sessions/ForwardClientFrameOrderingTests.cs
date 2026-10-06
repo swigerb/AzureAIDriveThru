@@ -1,14 +1,9 @@
 using System.Net.WebSockets;
 using System.Text.Json.Nodes;
-using Backend.Configuration;
-using Backend.Models;
-using Backend.Prompts;
 using Backend.Realtime;
 using Backend.Sessions;
 using Backend.Tests.Realtime;
-using Backend.Tools;
 using Microsoft.Extensions.Time.Testing;
-using Xunit;
 
 namespace Backend.Tests.Sessions;
 
@@ -25,17 +20,6 @@ namespace Backend.Tests.Sessions;
 /// </summary>
 public sealed class ForwardClientFrameOrderingTests
 {
-    private static RealtimeProcessor CreateProcessor(TimeProvider? timeProvider = null) =>
-        new(
-            ModelCatalog.FromConfig(AppConfig.Load()),
-            defaultDeployment: "gpt-realtime-2.1",
-            upstreamEndpoint: "https://example-eastus2.openai.azure.com",
-            upstreamApiKey: "sk-not-used",
-            sessionConfig: new RealtimeSessionConfig(),
-            promptLoaders: new Dictionary<string, PromptLoader>(),
-            toolExecutor: new StubToolExecutor([]),
-            timeProvider: timeProvider);
-
     private static JsonObject ResponseCreateFrame() => new() { ["type"] = "response.create" };
 
     private static JsonObject RateLimitedErrorEvent() =>
@@ -49,7 +33,6 @@ public sealed class ForwardClientFrameOrderingTests
     public async Task ForwardClientFrameAsync_PreservesRaceWonRetry_WhenUpstreamRepliesBeforeSendReturns()
     {
         var time = new FakeTimeProvider();
-        var processor = CreateProcessor(time);
         var echo = new EchoSuppressor(cooldownSeconds: 2.0, flushSendAsync: _ => Task.CompletedTask, timeProvider: time);
         var upstreamSocket = new FakeWebSocket([]);
         var rateLimit = new RateLimitRecovery(
@@ -82,7 +65,7 @@ public sealed class ForwardClientFrameOrderingTests
             Assert.True(rateLimit.Busy, "OnErrorAsync must have scheduled a pending retry for this test to be meaningful");
         };
 
-        await processor.ForwardClientFrameAsync(
+        await RealtimeProcessor.ForwardClientFrameAsync(
             ResponseCreateFrame(), "response.create", echo, rateLimit, upstreamSocket, CancellationToken.None);
 
         // The fix: OnExternalResponseCreate("browser") ran BEFORE the send, so by the time the
@@ -105,7 +88,6 @@ public sealed class ForwardClientFrameOrderingTests
         // still behave exactly as before the #252 reorder -- response.create is forwarded, and a
         // response.cancel still triggers barge-in echo suppression.
         var time = new FakeTimeProvider();
-        var processor = CreateProcessor(time);
         var echo = new EchoSuppressor(cooldownSeconds: 2.0, flushSendAsync: _ => Task.CompletedTask, timeProvider: time);
         var upstreamSocket = new FakeWebSocket([]);
         var rateLimit = new RateLimitRecovery(
@@ -115,12 +97,12 @@ public sealed class ForwardClientFrameOrderingTests
             sendClient: (_, _) => Task.CompletedTask,
             timeProvider: time);
 
-        await processor.ForwardClientFrameAsync(
+        await RealtimeProcessor.ForwardClientFrameAsync(
             ResponseCreateFrame(), "response.create", echo, rateLimit, upstreamSocket, CancellationToken.None);
         Assert.Single(upstreamSocket.SentMessages);
         Assert.False(rateLimit.Busy); // nothing failed -- no retry scheduled.
 
-        await processor.ForwardClientFrameAsync(
+        await RealtimeProcessor.ForwardClientFrameAsync(
             new JsonObject { ["type"] = "response.cancel" }, "response.cancel", echo, rateLimit, upstreamSocket, CancellationToken.None);
         Assert.Equal(2, upstreamSocket.SentMessages.Count);
     }

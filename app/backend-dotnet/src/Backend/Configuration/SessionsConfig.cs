@@ -12,7 +12,7 @@ namespace Backend.Configuration;
 /// `CONFORMANCE_FIRST_FRAME_TIMEOUT_SECONDS`, `CONFORMANCE_SWEEP_INTERVAL_SECONDS`) drive this
 /// backend's timers identically to the Python one under test.
 /// </summary>
-public sealed class SessionsConfig
+internal sealed class SessionsConfig
 {
     public double IdleTimeoutSeconds { get; }
     public bool ResumeEnabled { get; }
