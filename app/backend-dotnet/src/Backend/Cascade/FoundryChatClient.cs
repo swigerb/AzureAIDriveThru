@@ -10,8 +10,8 @@ namespace Backend.Cascade;
 /// Inference chat-completions endpoint (`POST {endpoint}/chat/completions`) -- the C# stand-in for
 /// cascade_processor.py's `azure.ai.inference.aio.ChatCompletionsClient`. Deliberately NOT a
 /// dependency on the azure-ai-inference SDK (no C# equivalent is wired into this repo, and the
-/// wire shape is a simple, stable, plain-JSON REST contract -- see
-/// <see cref="Conformance.Fakes.FakeChatCompletionsServer"/>'s own doc comment) -- every message
+/// wire shape is a simple, stable, plain-JSON REST contract -- see the conformance harness's
+/// <c>FakeChatCompletionsServer</c>'s own doc comment) -- every message
 /// is represented as a raw <see cref="JsonObject"/> throughout (built by <see cref="CascadeChatMessage"/>
 /// below, or threaded straight from a previous response's own `choices[0].message` for an
 /// assistant tool-call turn), matching the rest of this codebase's own convention of working with

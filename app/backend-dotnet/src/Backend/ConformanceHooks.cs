@@ -136,7 +136,7 @@ public static class ConformanceHooks
     /// registration, and a <see langword="null"/>/unset formatter name makes
     /// <c>ConsoleLoggerProvider</c> fall back to its legacy built-in formatter -- which ignores
     /// <see cref="SimpleConsoleFormatterOptions"/> (including this method's
-    /// <see cref="SimpleConsoleFormatterOptions.TimestampFormat"/>) entirely, ANY configuration of
+    /// <see cref="ConsoleFormatterOptions.TimestampFormat"/>) entirely, ANY configuration of
     /// it included, regardless of <see cref="HooksEnabled"/>. <c>ILoggingBuilder.AddSimpleConsole</c>
     /// is the one API that both configures these options AND flips
     /// <c>ConsoleLoggerOptions.FormatterName</c> to <c>"simple"</c> so they're actually consulted;

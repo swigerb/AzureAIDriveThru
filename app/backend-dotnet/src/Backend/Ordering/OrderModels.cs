@@ -90,7 +90,7 @@ public sealed record OrderSummary(
     /// words (<see cref="Money.FormatMoneySpoken"/>) -- the model-facing <c>update_order</c> delta
     /// text used to append the digit/`$`-formatted <see cref="FinalTotalDisplay"/> ahead of the
     /// voice read-back, giving the realtime model TWO different renderings of the same total in
-    /// one tool result and risking it speaking the wrong one. <see cref="OrderToolExecutor"/>'s
+    /// one tool result and risking it speaking the wrong one. <see cref="Backend.Tools.OrderToolExecutor"/>'s
     /// BuildDeltaText now builds its delta text from this field instead. Mirrors models.py's
     /// <c>OrderSummary.finalTotalSpoken</c>.</summary>
     [JsonPropertyName("finalTotalSpoken")] public string FinalTotalSpoken { get; init; } = FinalTotalSpoken;

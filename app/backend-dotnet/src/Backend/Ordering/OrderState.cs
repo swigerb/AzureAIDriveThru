@@ -240,7 +240,7 @@ public sealed class OrderState
     /// <summary>Ports order_state.py's <c>handle_order_update</c> verbatim (algorithm captured in
     /// full in the class/method comments below) -- the combo-name-marker conversion, post-bundle
     /// absorption, regular add/merge, bundle-pivot absorption, bundle autoFill, modify-in-place,
-    /// and remove/decrement branches, always re-pricing from <paramref name="menu"/>
+    /// and remove/decrement branches, always re-pricing from <see cref="_menu"/>
     /// (#104) and never trusting <paramref name="callerPrice"/> except as a fallback when the menu
     /// has no price on file at all, and always ending by recomputing <see cref="Summary"/>.</summary>
     public OrderUpdateResult HandleOrderUpdate(
@@ -1335,7 +1335,7 @@ public sealed class OrderState
     /// <c>_compose_spoken_readback</c> extraction (issue #304): groups items with the same display
     /// name (spoken via this persona's own <c>sizes.spokenAs</c> + per-item <c>spokenName</c>) for
     /// a natural voice read-back, ending with the already-computed <paramref
-    /// name="finalTotalDisplay"/> -- never re-derived here. Cached once per <see cref="UpdateSummary"/>
+    /// name="finalTotal"/> -- never re-derived here. Cached once per <see cref="UpdateSummary"/>
     /// call onto <see cref="OrderSummary.SpokenReadBack"/> so it can never drift from the tool
     /// response that serializes the same <see cref="OrderSummary"/>.</summary>
     private string ComposeSpokenReadBack(IReadOnlyList<OrderItem> items, decimal finalTotal)

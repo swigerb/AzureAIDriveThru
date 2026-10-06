@@ -11,7 +11,7 @@ namespace Backend.Realtime;
 /// (<c>get_bearer_token_provider(credentials, "https://cognitiveservices.azure.com/.default")</c>).
 /// This is that fallback's C# equivalent, kept behind an interface purely so
 /// <see cref="Sessions.RealtimeProcessor"/>'s header-selection logic can be unit tested without a
-/// real Azure credential (<see cref="UpstreamAuthHeaderTests"/> substitutes a fake).
+/// real Azure credential (<c>UpstreamAuthHeaderTests</c> substitutes a fake).
 /// </summary>
 public interface IUpstreamBearerTokenProvider
 {

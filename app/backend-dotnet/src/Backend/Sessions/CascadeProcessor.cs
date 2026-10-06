@@ -40,7 +40,7 @@ namespace Backend.Sessions;
 /// cascade_processor.py's own <c>create_session</c>), which also creates the session's
 /// <see cref="ContextMonitor"/>; the registry's own end-of-session path removes it. Resume
 /// (<c>extension.resume</c> via <c>NegotiateResumeAsync</c>), idle nudge and the echo-suppression
-/// cooldown mirror the realtime pipeline. <see cref="ExecuteToolCallAsync"/> tracks tool call
+/// cooldown mirror the realtime pipeline. `ExecuteToolCallAsync` tracks tool call
 /// args/result in the context monitor, mirroring cascade_processor.py's own two
 /// <c>ctx_monitor.add_content</c> call sites exactly.
 /// </summary>

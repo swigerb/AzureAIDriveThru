@@ -15,8 +15,8 @@ public enum ToolResultDirection
 }
 
 /// <summary>Direct C# port of rtmt.py's ToolResult: the outcome of one tool invocation, addressed
-/// to the model (<see cref="Text"/>/<see cref="ToText"/>) and optionally to the connected client
-/// separately (<see cref="ClientText"/>/<see cref="ToClientText"/>). <see cref="Payload"/> carries
+/// to the model (<see cref="_text"/>/<see cref="ToText"/>) and optionally to the connected client
+/// separately (<see cref="_clientText"/>/<see cref="ToClientText"/>). <see cref="_payload"/> carries
 /// a structured (non-string) result -- e.g. a rejection object or an order summary -- exactly like
 /// Python's ToolResult.text may be a dict there; <see cref="ToText"/> serializes it the same way
 /// Python's <c>to_text()</c> calls <c>json.dumps()</c> on a non-str payload.</summary>

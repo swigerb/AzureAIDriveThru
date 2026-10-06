@@ -22,7 +22,7 @@ namespace Backend.Configuration;
 /// <see cref="WsConnectTimeoutSeconds"/> (`ws_connect_timeout_total`) still wraps the whole
 /// connect call exactly as before, and <see cref="WsConnectTimeoutConnectSeconds"/>
 /// (`ws_connect_timeout_connect`) is wired into
-/// <see cref="System.Net.SocketsHttpHandler.ConnectTimeout"/> on the <see cref="System.Net.Http.HttpMessageInvoker"/>
+/// <see cref="System.Net.Http.SocketsHttpHandler.ConnectTimeout"/> on the <see cref="System.Net.Http.HttpMessageInvoker"/>
 /// passed to <see cref="System.Net.WebSockets.ClientWebSocket.ConnectAsync(Uri, HttpMessageInvoker?, CancellationToken)"/>,
 /// which IS .NET's equivalent of aiohttp's connect sub-phase (it only bounds TCP/TLS connect, not
 /// the post-connect WebSocket handshake) -- so the two backends now fail at the same point for the

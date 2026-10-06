@@ -199,7 +199,7 @@ public sealed class RealtimeProcessor : IPipelineProcessor
         // detach/reconnect instead of starting over empty (see RealtimeProcessor's class doc).
         public required IToolExecutor ToolExecutor { get; set; }
         /// <summary>Rick's #244 round-2 review, issue 1: this connection's OWN
-        /// <see cref="SessionManager.SupersededFlag"/> -- created once per connection (fresh-or-
+        /// <see cref="SupersededFlag"/> -- created once per connection (fresh-or-
         /// resumed alike, same as <see cref="Identifiers"/>) and handed to
         /// <see cref="SessionManager.CreateSession"/>/<see cref="SessionManager.TryResume"/> as
         /// <c>attachedSupersededFlag</c> so a LATER resume by some other connection can mark THIS
@@ -229,7 +229,7 @@ public sealed class RealtimeProcessor : IPipelineProcessor
         /// <summary>Port of rtmt.py's own <c>announced</c> nonlocal: set true once this socket's
         /// first-frame decision has been made and its own resume-id baton handed to the browser --
         /// whether that happened via a fresh-connection <c>extension.session_metadata</c>
-        /// (<see cref="AnnounceAfterFirstFrameDecisionAsync"/>'s "fresh" branch) or a successfully
+        /// (`AnnounceAfterFirstFrameDecisionAsync`'s "fresh" branch) or a successfully
         /// resumed connection's <c>extension.session_resumed</c> (both mirror rtmt.py's
         /// <c>announce_fresh()</c> and <c>handle_resume()</c>, which both set the nonlocal). Once
         /// true, a later stray (non-first-frame) <c>extension.resume</c> attempt on this same
@@ -1972,7 +1972,7 @@ public sealed class RealtimeProcessor : IPipelineProcessor
         await socket.SendAsync(payload, WebSocketMessageType.Text, endOfMessage: true, ct).ConfigureAwait(false);
     }
 
-    /// <summary>Result of <see cref="TryAppendFastPath"/>: whether <paramref name="payload"/>
+    /// <summary>Result of <see cref="TryAppendFastPath"/>: whether <c>payload</c>
     /// matched the fast-path shape at all, and if so, whether echo suppression says it must be
     /// dropped rather than forwarded.</summary>
     internal readonly record struct AppendFastPathResult(bool IsMatch, bool Suppressed);
@@ -2241,7 +2241,7 @@ public sealed class RealtimeProcessor : IPipelineProcessor
     /// bound persona's loader, not the deployment default's or any other persona's, so a
     /// tool-execution error renders that SAME persona's own text -- mirrors R4's fix for
     /// `session.tools[].description` above, now proven on the C# side too). Internal (not
-    /// private) purely so <see cref="RealtimeProcessorSessionBindingTests"/> can exercise the
+    /// private) purely so <c>RealtimeProcessorSessionBindingTests</c> can exercise the
     /// resolution directly, with two differently-bound loaders and a capturing
     /// `toolExecutorFactory`, without needing a real WebSocket/upstream connection -- same reason
     /// <see cref="ResolveUpstreamAuthHeaderAsync"/> below is internal.</summary>
@@ -2263,7 +2263,7 @@ public sealed class RealtimeProcessor : IPipelineProcessor
     /// to the lazily-constructed real <see cref="DefaultAzureCredentialTokenProvider"/> if none
     /// was injected), matching rtmt.py's <c>DefaultAzureCredential</c> fallback and its
     /// <c>https://cognitiveservices.azure.com/.default</c> scope. Internal (not private) purely so
-    /// <see cref="UpstreamAuthHeaderTests"/> can exercise the selection without a real
+    /// <c>UpstreamAuthHeaderTests</c> can exercise the selection without a real
     /// ClientWebSocket or Azure credential.</summary>
     internal async Task<(string HeaderName, string HeaderValue)> ResolveUpstreamAuthHeaderAsync(CancellationToken cancellationToken)
     {

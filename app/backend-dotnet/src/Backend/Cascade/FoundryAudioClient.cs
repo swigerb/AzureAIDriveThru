@@ -9,8 +9,8 @@ namespace Backend.Cascade;
 /// endpoints cascade_processor.py's `_transcribe`/`_speak` call directly (no SDK -- these are
 /// simple, stable REST contracts, same rationale as <see cref="FoundryChatClient"/>'s own doc
 /// comment). Both endpoints live on the SAME account/base URI the realtime pipeline already
-/// authenticates against (`AZURE_OPENAI_EASTUS2_ENDPOINT`) -- see
-/// <see cref="Conformance.Fakes.FakeRealtimeUpstreamServer.ExpectedCascadeBearerToken"/>'s own doc
+/// authenticates against (`AZURE_OPENAI_EASTUS2_ENDPOINT`) -- see the conformance harness's
+/// <c>FakeRealtimeUpstreamServer.ExpectedCascadeBearerToken</c>'s own doc
 /// comment for why. Bearer-authenticated (never `api-key`) with the same
 /// <see cref="FoundryChatClient.CognitiveServicesScope"/> cascade's chat calls use.
 /// </summary>

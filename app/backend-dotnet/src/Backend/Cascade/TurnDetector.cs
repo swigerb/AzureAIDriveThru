@@ -22,7 +22,7 @@ public sealed class TurnDetector
     private int _silenceRun;
 
     /// <summary>#126: echo suppression -- a monotonic-clock-comparable deadline (caller-supplied
-    /// via <paramref name="now"/> on <see cref="StartEchoCooldown"/>/<see cref="Feed"/>, never
+    /// via <c>now</c> on <see cref="StartEchoCooldown"/>/<see cref="Feed"/>, never
     /// read from a wall clock internally, matching cascade_processor.py's own
     /// <c>_TurnDetector._echo_cooldown_until</c>/<c>time.monotonic()</c> convention) up to which
     /// loud audio is treated as the assistant's own TTS bleeding back into the guest's mic, not

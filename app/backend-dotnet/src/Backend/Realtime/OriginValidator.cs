@@ -45,7 +45,7 @@ public static class OriginValidator
     /// strips an optional leading "scheme:" (a run of ASCII letters/digits/<c>+-.</c> starting
     /// with a letter, immediately followed by ':' -- Python's own scheme grammar), then, only if
     /// what remains starts with "//", returns everything up to the next '/', '?', '#', or end of
-    /// string. Returns "" (never a legitimate match against a non-empty <paramref name="host"/>)
+    /// string. Returns "" (never a legitimate match against a non-empty <c>host</c>)
     /// for anything that isn't a "//"-introduced authority at all -- e.g. "null", a bare hostname
     /// with no "//", or a scheme whose own grammar is invalid (so it's never stripped and the
     /// unstripped string then fails the leading-"//" check too).

@@ -16,7 +16,7 @@ public sealed class RealtimeSessionConfig
 {
     public string? Deployment { get; init; }
     /// <summary>The persona's system prompt, used whenever a builder call's own `systemMessage`
-    /// parameter is <see cref="Overridable{T}.Unset"/>.</summary>
+    /// parameter is <see cref="Overridable.Unset{T}"/>.</summary>
     public string? SystemMessage { get; init; }
     public double? Temperature { get; init; }
     public int? MaxTokens { get; init; }
