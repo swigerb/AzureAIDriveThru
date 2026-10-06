@@ -1283,7 +1283,7 @@ internal sealed class CascadeProcessor : IPipelineProcessor
     ///
     /// #236 Rick re-review item 1 (HIGH, blocking): .NET's <c>ManagedWebSocket</c> (the
     /// implementation behind both Kestrel's server-side <see cref="WebSocket"/> and
-    /// <see cref="WebSocket.CreateFromStream"/>) treats a cancelled in-flight <c>SendAsync</c> as a
+    /// <c>WebSocket.CreateFromStream(...)</c>) treats a cancelled in-flight <c>SendAsync</c> as a
     /// fatal, unrecoverable transport error: cancelling it mid-write aborts the ENTIRE socket, not
     /// just that one call. <c>BargeIn</c> cancels a turn's own
     /// <c>CurrentTurnCts</c>/<c>turnCt</c> on barge-in while the SESSION (and its socket) must keep

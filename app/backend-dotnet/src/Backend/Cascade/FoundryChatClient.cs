@@ -87,8 +87,9 @@ internal sealed class FoundryChatClient(HttpClient httpClient, string endpoint, 
         {
             return await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         }
-        catch (Exception ex) when (ex is HttpRequestException or IOException or OperationCanceledException)
+        catch (Exception)
         {
+            // Best-effort error-body read only; any failure falls back to a status-code-only message.
             return "";
         }
     }
