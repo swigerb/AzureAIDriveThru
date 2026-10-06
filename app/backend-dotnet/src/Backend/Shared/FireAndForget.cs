@@ -3,13 +3,11 @@ using Microsoft.Extensions.Logging;
 namespace Backend.Shared;
 
 /// <summary>
-/// One small helper for every `_ = someAsyncMethod()`/`_ = Task.Run(...)` fire-and-forget site in
-/// the backend (RealtimeProcessor, CascadeProcessor, EchoSuppressor, NudgeScheduler,
-/// RateLimitRecovery): observes the discarded <see cref="Task"/> and logs a fault instead of
-/// letting it become either an unobserved-task-exception process crash (pre-.NET-4.5 behavior some
-/// hosts still opt back into) or a silently swallowed failure (today's actual behavior, since a
-/// discarded Task's exception is simply never looked at again). Every existing call site's own task
-/// body already handles its OWN expected failures internally (see each site's own comments) --
+/// One small helper for every discarded fire-and-forget <see cref="Task"/> in the backend:
+/// observes the task and logs a fault instead of letting it become either an
+/// unobserved-task-exception process crash (pre-.NET-4.5 behavior some hosts still opt back into)
+/// or a silently swallowed failure (a discarded Task's exception is otherwise never looked at
+/// again). Every call site's own task body already handles its OWN expected failures internally --
 /// this is strictly a last-resort safety net, not a replacement for those inner try/catch blocks,
 /// so it must never change what those bodies catch or how they log.
 /// </summary>

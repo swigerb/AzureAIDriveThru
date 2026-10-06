@@ -49,7 +49,7 @@ public sealed class FireAndForgetTests
     }
 
     [Fact]
-    public async Task AlreadyFaultedTask_LogsErrorSynchronously()
+    public void AlreadyFaultedTask_LogsErrorSynchronously()
     {
         var logger = new RecordingLogger();
         var faultingException = new InvalidOperationException("already failed");
@@ -60,7 +60,6 @@ public sealed class FireAndForgetTests
         var entry = Assert.Single(logger.Entries);
         Assert.Equal(LogLevel.Error, entry.Level);
         Assert.Same(faultingException, entry.Exception);
-        await Task.CompletedTask;
     }
 
     [Fact]

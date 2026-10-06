@@ -10,8 +10,8 @@ using Backend.Prompts;
 using Backend.Realtime;
 using Backend.Search;
 using Backend.Sessions;
+using Backend.Shared;
 using Backend.Tools;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
 
 // Host wiring (issue #12 S2): config, persona-pack loading, health, auth token endpoint, static
@@ -74,34 +74,29 @@ else
     builder.Services.AddAuthorization();
 }
 
-// C# review #335: named HttpClients from IHttpClientFactory, registered here (service
-// registration is a build-time call, so it must happen before Build() below) and resolved via
-// CreateClient() further down once app.Services exists. Search, cascade, and the one-shot startup
-// connectivity probe each get their own name so their connection pools stay isolated from each
-// other, matching how they were three independent `new HttpClient()` instances before. Every
-// client shares the same SocketsHttpHandler.PooledConnectionLifetime: these clients live for the
-// whole process, and without a bound on pooled-connection reuse there would be no reason for a
-// long-running client to ever re-resolve DNS after an Azure endpoint's address changes (failover,
-// scale-in/out). 10 minutes keeps normal connection reuse while staying comfortably inside typical
-// Azure DNS TTLs.
+// Named HttpClients (service registration is a build-time call, so it must happen before Build()
+// below), resolved via CreateClient() further down once app.Services exists. Search, cascade, and
+// the one-shot startup connectivity probe each get their own name so their connection pools stay
+// isolated from each other. Every client shares the same SocketsHttpHandler.PooledConnectionLifetime:
+// these clients live for the whole process, and without a bound on pooled-connection reuse there
+// would be no reason for a long-running client to ever re-resolve DNS after an Azure endpoint's
+// address changes (failover, scale-in/out). 10 minutes keeps normal connection reuse while staying
+// comfortably inside typical Azure DNS TTLs. See BackendHttpClients.AddBackendHttpClients for why
+// RemoveAllLoggers() is required on each of these.
 const string SearchHttpClientName = "search-endpoint";
 const string CascadeHttpClientName = "cascade-endpoint";
 const string ConnectivityCheckHttpClientName = "connectivity-check";
-var pooledConnectionLifetime = TimeSpan.FromMinutes(10);
-foreach (var clientName in new[] { SearchHttpClientName, CascadeHttpClientName, ConnectivityCheckHttpClientName })
-{
-    builder.Services.AddHttpClient(clientName)
-        .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { PooledConnectionLifetime = pooledConnectionLifetime });
-}
+builder.Services.AddBackendHttpClients(
+    TimeSpan.FromMinutes(10), SearchHttpClientName, CascadeHttpClientName, ConnectivityCheckHttpClientName);
 
-// Issue #15 follow-up (#335): the idle-close/grace-eviction sweep now runs as a real
-// BackgroundService (SessionSweepService, registered below) instead of a raw `_ = Task.Run(...)`.
-// AddHostedService must also be called before Build(), but `sessionManager` itself isn't
-// constructed until later -- same place it always was, since it depends on `sessionsConfig`/
-// `timeProvider`/`logger`, all only available after this file's own fail-fast startup checks run
-// (see the Entra authentication comment above for why those run after Build()). The factory below
-// closes over the `sessionManager` local; it is only ever invoked by the host's DI container when
-// it starts the hosted service inside app.Run(), well after the assignment further down has run.
+// The idle-close/grace-eviction sweep runs as a real BackgroundService (SessionSweepService,
+// registered below) so it starts/stops with the rest of the host. AddHostedService must also be
+// called before Build(), but `sessionManager` itself isn't constructed until later -- same place
+// it always was, since it depends on `sessionsConfig`/`timeProvider`/`logger`, all only available
+// after this file's own fail-fast startup checks run (see the Entra authentication comment above
+// for why those run after Build()). The factory below closes over the `sessionManager` local; it
+// is only ever invoked by the host's DI container when it starts the hosted service inside
+// app.Run(), well after the assignment further down has run.
 SessionManager? sessionManager = null;
 builder.Services.AddHostedService(_ => new SessionSweepService(sessionManager!));
 

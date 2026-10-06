@@ -179,21 +179,13 @@ internal static class EntraAuthentication
         //     ever tracks LastKnownGoodConfiguration on the OUTERMOST BaseConfigurationManager
         //     JwtBearerHandler was handed.
         //
-        // C# review #335 (task 2): deliberately NOT sourced from IHttpClientFactory. This method
-        // is called from the plain `Action<JwtBearerOptions>` overload of AddJwtBearer (see
-        // AddEntraAuthentication below), which has no DI access, and ConfigureJwtBearer is kept a
-        // pure, directly-unit-testable static method on purpose (this type's own doc comment) --
-        // every test that exercises it constructs JwtBearerOptions directly, with no running host
-        // or service provider at all. Pulling a factory-created HttpClient in here would mean
-        // either resolving it from a service provider captured at registration time (before
-        // Build(), when no provider exists yet) or switching to the DI-aware
-        // `AddOptions<JwtBearerOptions>().Configure<IHttpClientFactory>(...)` form -- but this
-        // same delegate constructs the ConfigurationManager/HttpDocumentRetriever immediately
-        // below using options.Backchannel, so the factory-sourced client would need to be
-        // assigned and already usable before this method's own body runs, defeating the purpose
-        // of plumbing it through options composition at all. A plain HttpClient with its own
-        // handler, scoped to this one named options instance and already timeout/buffer-size
-        // configured exactly as before, stays the simpler and lower-risk choice here.
+        // Deliberately NOT sourced from IHttpClientFactory: ConfigureJwtBearer is kept a pure,
+        // directly-unit-testable static method with no DI dependency (this type's own doc
+        // comment) -- every test that exercises it constructs JwtBearerOptions directly, with no
+        // running host or service provider at all. A factory-sourced client is only worth the
+        // DI coupling for something used often enough that connection pooling/reuse matters; this
+        // backchannel is used for low-frequency OIDC discovery fetches only, so a plain HttpClient
+        // with its own handler, scoped to this one named options instance, is the simpler choice.
         options.Backchannel ??= new HttpClient(options.BackchannelHttpHandler ?? new HttpClientHandler())
         {
             Timeout = options.BackchannelTimeout,
