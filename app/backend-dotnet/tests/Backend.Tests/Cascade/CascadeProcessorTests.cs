@@ -13,6 +13,7 @@ using Backend.Sessions;
 using Backend.Tests.TestSupport;
 using Backend.Tools;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 
 namespace Backend.Tests.Cascade;
@@ -177,7 +178,7 @@ internal sealed class RecordingToolExecutor : IToolExecutor
 /// in an extra test package for a single assertion -- same pattern as
 /// <c>Models.ModelDispatchTests.RecordingLogger</c> (kept separate per-file rather than shared,
 /// matching that file's own precedent).</summary>
-internal sealed class RecordingLogger : ILogger
+internal sealed class RecordingLogger : ILogger<CascadeProcessor>
 {
     public List<(LogLevel Level, string Message, Exception? Exception)> Entries { get; } = [];
 
@@ -299,15 +300,15 @@ public sealed class CascadeProcessorTests
 
     private static CascadeProcessor NewProcessor(
         RoutingFoundryHandler handler, IToolExecutor toolExecutor, PromptLoader loader, TimeProvider? timeProvider = null,
-        ILogger? logger = null, double echoCooldownSeconds = 0, SessionManager? sessionManager = null) =>
+        ILogger<CascadeProcessor>? logger = null, double echoCooldownSeconds = 0, SessionManager? sessionManager = null) =>
         new(
             NewCatalog(), Endpoint, Endpoint, AppConfig.Load(),
             promptLoaders: new Dictionary<string, PromptLoader> { ["test-delta"] = loader },
             toolExecutor: toolExecutor,
             httpClient: new HttpClient(handler),
+            logger: logger ?? NullLogger<CascadeProcessor>.Instance,
             bearerTokenProvider: new StaticBearerTokenProvider("fake-token"),
             timeProvider: timeProvider,
-            logger: logger,
             // #126: every PRE-existing test in this file predates cascade's own echo-suppression
             // feature and exercises fast, back-to-back turns (a greeting's TTS immediately
             // followed by a guest's own mic audio, well within what would be a real 1.5s
@@ -1024,7 +1025,11 @@ public sealed class CascadeProcessorTests
 
     private static SessionManager NewSessionManager(
         FakeTimeProvider time, double nudgeAfterSeconds = 30, double firstFrameTimeoutSeconds = 2.0) =>
-        new(new SessionsConfig(nudgeAfterSeconds: nudgeAfterSeconds, firstFrameTimeoutSeconds: firstFrameTimeoutSeconds), time);
+        new(
+            new SessionsConfig(nudgeAfterSeconds: nudgeAfterSeconds, firstFrameTimeoutSeconds: firstFrameTimeoutSeconds),
+            time,
+            NullLogger<SessionManager>.Instance,
+            NullLogger<ContextMonitor>.Instance);
 
     /// <summary>Seeds a prior, already-detached session (conversation already under way) that a
     /// new connection can resume -- mirrors Python's own

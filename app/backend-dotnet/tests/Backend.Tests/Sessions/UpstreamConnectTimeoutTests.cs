@@ -10,6 +10,7 @@ using Backend.Realtime;
 using Backend.Sessions;
 using Backend.Tests.Realtime;
 using Backend.Tools;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Backend.Tests.Sessions;
 
@@ -45,6 +46,9 @@ public sealed class UpstreamConnectTimeoutTests
             sessionConfig: new RealtimeSessionConfig(),
             promptLoaders: new Dictionary<string, PromptLoader>(),
             toolExecutor: new StubToolExecutor([]),
+            logger: NullLogger<RealtimeProcessor>.Instance,
+            rateLimitLogger: NullLogger<RateLimitRecovery>.Instance,
+            nudgeLogger: NullLogger<NudgeScheduler>.Instance,
             connectionConfig: connectionConfig);
 
     /// <summary>The core assertion: with a tiny `ws_connect_timeout_connect` and a much larger

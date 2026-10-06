@@ -7,6 +7,7 @@ using Backend.Realtime;
 using Backend.Sessions;
 using Backend.Tests.Realtime;
 using Backend.Tools;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 
 namespace Backend.Tests.Sessions;
@@ -38,6 +39,9 @@ public sealed class AudioAppendFastPathTests
             sessionConfig: new RealtimeSessionConfig(),
             promptLoaders: new Dictionary<string, PromptLoader>(),
             toolExecutor: new StubToolExecutor([]),
+            logger: NullLogger<RealtimeProcessor>.Instance,
+            rateLimitLogger: NullLogger<RateLimitRecovery>.Instance,
+            nudgeLogger: NullLogger<NudgeScheduler>.Instance,
             timeProvider: timeProvider);
 
     private static byte[] Utf8(string s) => Encoding.UTF8.GetBytes(s);

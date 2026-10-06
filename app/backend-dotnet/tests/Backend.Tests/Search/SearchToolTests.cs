@@ -7,6 +7,7 @@ using Backend.Personas;
 using Backend.Search;
 using Backend.Tests.TestSupport;
 using Backend.Tools;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Backend.Tests.Search;
 
@@ -79,6 +80,7 @@ public sealed class SearchToolTests
         var httpClient = new HttpClient(handler);
         return new SearchTool(
             httpClient, endpointConfig, searchConfig, menu, promptLoader: null, "test-delta-menu-items", personaId,
+            logger: NullLogger<SearchTool>.Instance,
             menuMode: menuMode, effectiveMachineStatus: effectiveMachineStatus);
     }
 

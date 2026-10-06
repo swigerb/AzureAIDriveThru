@@ -10,12 +10,13 @@ using Backend.Tests.Realtime;
 using Backend.Tests.TestSupport;
 using Backend.Tools;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Backend.Tests.Sessions;
 
 public sealed class RealtimeProcessorExtensionMessageTests
 {
-    private sealed class RecordingLogger : ILogger
+    private sealed class RecordingLogger : ILogger<RealtimeProcessor>
     {
         public List<(LogLevel Level, string Message)> Entries { get; } = [];
 
@@ -37,7 +38,9 @@ public sealed class RealtimeProcessorExtensionMessageTests
         }
     }
 
-    private static RealtimeProcessor CreateProcessor(SessionManager manager, ILogger? logger = null) =>
+    private static RealtimeProcessor CreateProcessor(
+        SessionManager manager,
+        ILogger<RealtimeProcessor>? logger = null) =>
         new(
             ModelCatalog.FromConfig(AppConfig.Load()),
             defaultDeployment: "gpt-realtime-2.1",
@@ -46,7 +49,9 @@ public sealed class RealtimeProcessorExtensionMessageTests
             sessionConfig: new RealtimeSessionConfig(),
             promptLoaders: new Dictionary<string, PromptLoader>(),
             toolExecutor: new StubToolExecutor([]),
-            logger: logger,
+            logger: logger ?? NullLogger<RealtimeProcessor>.Instance,
+            rateLimitLogger: NullLogger<RateLimitRecovery>.Instance,
+            nudgeLogger: NullLogger<NudgeScheduler>.Instance,
             sessionManager: manager);
 
     /// <summary>A never-invoked HTTP stand-in for the real Azure AI Search endpoint -- the
@@ -67,7 +72,11 @@ public sealed class RealtimeProcessorExtensionMessageTests
     /// implement that interface).</summary>
     private static SessionManager CreateSessionManager(Persona persona, string sessionId, out FakeWebSocket socket)
     {
-        var manager = new SessionManager();
+        var manager = new SessionManager(
+            new SessionsConfig(),
+            TimeProvider.System,
+            NullLogger<SessionManager>.Instance,
+            NullLogger<ContextMonitor>.Instance);
         var menu = PersonaOrderFactory.GetMenuCatalog(persona);
         var order = PersonaOrderFactory.CreateOrderState(persona);
         var orderTools = new OrderToolExecutor(order, menu, promptLoader: null, maxItemQuantity: 10, maxOrderItems: 25);
@@ -78,6 +87,7 @@ public sealed class RealtimeProcessorExtensionMessageTests
                 identifierField: "id", contentField: "description", embeddingField: "embedding", useVectorQuery: true, useSemanticRanker: false),
             SearchConfig.FromAppConfig(AppConfig.Load()),
             menu, promptLoader: null, indexName: "test-menu-items", personaId: persona.Id,
+            logger: NullLogger<SearchTool>.Instance,
             effectiveMachineStatus: order.EffectiveMachineStatus);
         var toolExecutor = new SessionToolExecutor(orderTools, search);
         socket = new FakeWebSocket([]);

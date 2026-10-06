@@ -89,7 +89,8 @@ internal sealed class SessionManager
 
     private readonly SessionsConfig _config;
     private readonly TimeProvider _timeProvider;
-    private readonly ILogger? _logger;
+    private readonly ILogger<SessionManager> _logger;
+    private readonly ILogger<ContextMonitor> _contextMonitorLogger;
     private readonly Lock _sync = new();
     private readonly Dictionary<string, SessionRecord> _sessions = new();
     private readonly Dictionary<string, string> _resumeIndex = new(); // digest -> sessionId
@@ -100,11 +101,16 @@ internal sealed class SessionManager
     /// Python. Created in <see cref="CreateSession"/>, removed in <see cref="EndSession"/>.</summary>
     private readonly Dictionary<string, ContextMonitor> _contextMonitors = new();
 
-    public SessionManager(SessionsConfig? config = null, TimeProvider? timeProvider = null, ILogger? logger = null)
+    public SessionManager(
+        SessionsConfig config,
+        TimeProvider timeProvider,
+        ILogger<SessionManager> logger,
+        ILogger<ContextMonitor> contextMonitorLogger)
     {
-        _config = config ?? new SessionsConfig();
-        _timeProvider = timeProvider ?? TimeProvider.System;
+        _config = config;
+        _timeProvider = timeProvider;
         _logger = logger;
+        _contextMonitorLogger = contextMonitorLogger;
     }
 
     public SessionsConfig Config => _config;
@@ -187,8 +193,8 @@ internal sealed class SessionManager
     }
 
     private ContextMonitor CreateContextMonitorLocked(string sessionId) =>
-        new(sessionId, _config.ContextMaxTokens, _config.ContextWarningThresholdPct,
-            _config.ContextCriticalThresholdPct, _logger);
+        new(sessionId, _contextMonitorLogger, _config.ContextMaxTokens, _config.ContextWarningThresholdPct,
+            _config.ContextCriticalThresholdPct);
 
     /// <summary>Port of session_manager.py's `get_context_monitor`: returns null for a null/unknown
     /// session id, never throws.</summary>

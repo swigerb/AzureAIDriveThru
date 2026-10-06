@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using Backend.Realtime;
 using Backend.Sessions;
 using Backend.Tests.Realtime;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 
 namespace Backend.Tests.Sessions;
@@ -40,7 +41,8 @@ public sealed class ForwardClientFrameOrderingTests
             sendUpstream: (payload, ct) => upstreamSocket.SendAsync(
                 System.Text.Encoding.UTF8.GetBytes(payload), WebSocketMessageType.Text, endOfMessage: true, ct),
             sendClient: (_, _) => Task.CompletedTask,
-            timeProvider: time);
+            timeProvider: time,
+            logger: NullLogger<RateLimitRecovery>.Instance);
 
         // The crux of the race: while the browser's response.create is still being sent upstream
         // (the real SendAsync call has not yet returned to its caller), the upstream's own reply to
@@ -95,7 +97,8 @@ public sealed class ForwardClientFrameOrderingTests
             sendUpstream: (payload, ct) => upstreamSocket.SendAsync(
                 System.Text.Encoding.UTF8.GetBytes(payload), WebSocketMessageType.Text, endOfMessage: true, ct),
             sendClient: (_, _) => Task.CompletedTask,
-            timeProvider: time);
+            timeProvider: time,
+            logger: NullLogger<RateLimitRecovery>.Instance);
 
         await RealtimeProcessor.ForwardClientFrameAsync(
             ResponseCreateFrame(), "response.create", echo, rateLimit, upstreamSocket, CancellationToken.None);

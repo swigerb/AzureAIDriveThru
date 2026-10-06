@@ -2,6 +2,7 @@ using Backend.Configuration;
 using Backend.Models;
 using Backend.Personas;
 using Backend.Tests.TestSupport;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Backend.Tests.Models;
 
@@ -220,7 +221,7 @@ public sealed class ModelCatalogTests
 
         // sonic's real persona.json declares gpt-realtime-2.1 as its realtime default, which IS
         // catalogued for the realtime pipeline in the real config.yaml -- must not throw.
-        modelCatalog.ValidatePersonaDefaults(catalog);
+        modelCatalog.ValidatePersonaDefaults(catalog, NullLogger<ModelCatalog>.Instance);
     }
 
     [Fact]
@@ -241,7 +242,8 @@ public sealed class ModelCatalogTests
         using var fixture = new PersonaPackFixture();
         var catalog = PersonaCatalog.Load(personasDir: fixture.PersonasDir);
 
-        var exc = Assert.Throws<ModelValidationException>(() => modelCatalog.ValidatePersonaDefaults(catalog));
+        var exc = Assert.Throws<ModelValidationException>(() =>
+            modelCatalog.ValidatePersonaDefaults(catalog, NullLogger<ModelCatalog>.Instance));
         Assert.Contains("sonic", exc.Message);
         Assert.Contains("realtime", exc.Message);
     }

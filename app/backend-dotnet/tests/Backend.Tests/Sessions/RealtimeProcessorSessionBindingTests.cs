@@ -5,6 +5,7 @@ using Backend.Prompts;
 using Backend.Realtime;
 using Backend.Sessions;
 using Backend.Tools;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Backend.Tests.Sessions;
 
@@ -66,6 +67,9 @@ public sealed class RealtimeProcessorSessionBindingTests : IDisposable
                 ["northwind"] = northwindLoader,
             },
             toolExecutor: new StubToolExecutor([]),
+            logger: NullLogger<RealtimeProcessor>.Instance,
+            rateLimitLogger: NullLogger<RateLimitRecovery>.Instance,
+            nudgeLogger: NullLogger<NudgeScheduler>.Instance,
             toolExecutorFactory: ToolExecutorFactory);
 
         var widgetcoPersona = PersonaCatalog.Load().Default with { Id = "widgetco" };
@@ -99,7 +103,10 @@ public sealed class RealtimeProcessorSessionBindingTests : IDisposable
             upstreamApiKey: "sk-not-used",
             sessionConfig: new RealtimeSessionConfig(),
             promptLoaders: new Dictionary<string, PromptLoader> { ["widgetco"] = widgetcoLoader },
-            toolExecutor: new StubToolExecutor([]));
+            toolExecutor: new StubToolExecutor([]),
+            logger: NullLogger<RealtimeProcessor>.Instance,
+            rateLimitLogger: NullLogger<RateLimitRecovery>.Instance,
+            nudgeLogger: NullLogger<NudgeScheduler>.Instance);
 
         var widgetcoPersona = PersonaCatalog.Load().Default with { Id = "widgetco" };
 

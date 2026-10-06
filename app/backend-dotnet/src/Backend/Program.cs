@@ -114,12 +114,13 @@ builder.Services.AddSingleton(sp =>
     new SessionManager(
         sp.GetRequiredService<SessionsConfig>(),
         sp.GetRequiredService<TimeProvider>(),
-        sp.GetRequiredService<ILogger<SessionManager>>()));
+        sp.GetRequiredService<ILogger<SessionManager>>(),
+        sp.GetRequiredService<ILogger<ContextMonitor>>()));
 builder.Services.AddSingleton(sp =>
 {
     var appConfig = sp.GetRequiredService<AppConfig>();
-    var logger = sp.GetRequiredService<ILogger<Program>>();
-    var settings = BuildRealtimeStartupSettings(appConfig, logger);
+    var startupLogger = sp.GetRequiredService<ILogger<Program>>();
+    var settings = BuildRealtimeStartupSettings(appConfig, startupLogger);
     return new RealtimeProcessor(
         sp.GetRequiredService<ModelCatalog>(),
         settings.RealtimeDeployment,
@@ -128,9 +129,11 @@ builder.Services.AddSingleton(sp =>
         settings.SessionConfig,
         sp.GetRequiredService<PromptLoaderRegistry>().Loaders,
         sp.GetRequiredService<IToolExecutor>(),
+        sp.GetRequiredService<ILogger<RealtimeProcessor>>(),
+        sp.GetRequiredService<ILogger<RateLimitRecovery>>(),
+        sp.GetRequiredService<ILogger<NudgeScheduler>>(),
         settings.AllowedVoices,
         settings.EchoCooldownSeconds,
-        logger: logger,
         toolExecutorFactory: sp.GetRequiredService<SessionToolExecutorFactory>().Create,
         timeProvider: sp.GetRequiredService<TimeProvider>(),
         rateLimitSettings: sp.GetRequiredService<RateLimitSettings>(),
@@ -140,8 +143,8 @@ builder.Services.AddSingleton(sp =>
 builder.Services.AddSingleton(sp =>
 {
     var appConfig = sp.GetRequiredService<AppConfig>();
-    var logger = sp.GetRequiredService<ILogger<Program>>();
-    var settings = BuildRealtimeStartupSettings(appConfig, logger);
+    var startupLogger = sp.GetRequiredService<ILogger<Program>>();
+    var settings = BuildRealtimeStartupSettings(appConfig, startupLogger);
     var cascadeBearerTokenProvider = ConformanceHooks.CascadeFakeToken is { } cascadeFakeToken
         ? new StaticBearerTokenProvider(cascadeFakeToken)
         : null;
@@ -153,9 +156,9 @@ builder.Services.AddSingleton(sp =>
         sp.GetRequiredService<PromptLoaderRegistry>().Loaders,
         sp.GetRequiredService<IToolExecutor>(),
         sp.GetRequiredService<IHttpClientFactory>().CreateClient(BackendHttpClientNames.CascadeEndpoint),
+        sp.GetRequiredService<ILogger<CascadeProcessor>>(),
         settings.AllowedVoices,
         settings.VoiceChoice,
-        logger: logger,
         bearerTokenProvider: cascadeBearerTokenProvider,
         toolExecutorFactory: sp.GetRequiredService<SessionToolExecutorFactory>().Create,
         timeProvider: sp.GetRequiredService<TimeProvider>(),
@@ -269,7 +272,7 @@ ModelCatalog modelCatalog;
 try
 {
     modelCatalog = app.Services.GetRequiredService<ModelCatalog>();
-    modelCatalog.ValidatePersonaDefaults(personaCatalog, logger);
+    modelCatalog.ValidatePersonaDefaults(personaCatalog, app.Services.GetRequiredService<ILogger<ModelCatalog>>());
 }
 catch (ModelValidationException exc)
 {

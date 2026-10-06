@@ -6,6 +6,7 @@ using Backend.Prompts;
 using Backend.Realtime;
 using Backend.Sessions;
 using Backend.Tools;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Backend.Tests.Realtime;
 
@@ -47,6 +48,9 @@ public sealed class UpstreamAuthHeaderTests
             sessionConfig: new RealtimeSessionConfig(),
             promptLoaders: new Dictionary<string, PromptLoader>(),
             toolExecutor: new StubToolExecutor([]),
+            logger: NullLogger<RealtimeProcessor>.Instance,
+            rateLimitLogger: NullLogger<RateLimitRecovery>.Instance,
+            nudgeLogger: NullLogger<NudgeScheduler>.Instance,
             bearerTokenProvider: bearerTokenProvider);
 
     [Fact]

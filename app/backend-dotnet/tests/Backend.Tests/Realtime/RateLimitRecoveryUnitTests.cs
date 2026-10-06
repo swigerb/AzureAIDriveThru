@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Text.Json.Nodes;
 using Backend.Realtime;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 
 namespace Backend.Tests.Realtime;
@@ -60,7 +61,8 @@ public sealed class RateLimitRecoveryUnitTests
                 sendUpstream: (payload, _) => { Upstream.Add(payload); return Task.CompletedTask; },
                 sendClient: (payload, _) => { Client.Add(payload); return Task.CompletedTask; },
                 timeProvider: Time,
-                sessionId: "s1");
+                sessionId: "s1",
+                logger: NullLogger<RateLimitRecovery>.Instance);
         }
     }
 

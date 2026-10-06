@@ -1,4 +1,6 @@
 using Backend.Personas;
+using Backend.Sessions;
+using Microsoft.Extensions.Logging;
 
 namespace Backend.Models;
 
@@ -77,7 +79,7 @@ internal static class ModelDispatch
         string? requestedModelId,
         ModelCatalog catalog,
         string defaultDeployment,
-        ILogger? logger = null)
+        ILogger<RealtimeProcessor> logger)
     {
         var pipelineCfg = persona.Models.Realtime;
         var modelId = requestedModelId ?? pipelineCfg.Default;
@@ -103,7 +105,7 @@ internal static class ModelDispatch
             }
 
             deployment = defaultDeployment;
-            logger?.LogWarning(
+            logger.LogWarning(
                 "Persona {PersonaId}'s realtime default model {ModelId} has no AZURE_AI_MODEL_DEPLOYMENTS entry -- " +
                 "falling back to AZURE_OPENAI_REALTIME_DEPLOYMENT ({Deployment}) for back-compat.",
                 persona.Id, modelId, defaultDeployment);

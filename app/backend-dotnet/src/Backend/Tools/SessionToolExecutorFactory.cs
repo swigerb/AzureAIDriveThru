@@ -16,7 +16,7 @@ internal sealed class SessionToolExecutorFactory(
     SearchConfig searchConfig,
     SearchEndpointConfig searchEndpointConfig,
     IHttpClientFactory httpClientFactory,
-    ILoggerFactory loggerFactory)
+    ILogger<SearchTool> searchLogger)
 {
     public IToolExecutor Create(Persona sessionPersona, PromptLoader? sessionPromptLoader, string? sessionMenuMode)
     {
@@ -37,8 +37,8 @@ internal sealed class SessionToolExecutorFactory(
             sessionPromptLoader,
             sessionPersona.Search.IndexName,
             sessionPersona.Id,
+            searchLogger,
             bearerTokenProvider: null,
-            logger: loggerFactory.CreateLogger(nameof(SearchTool)),
             menuMode: sessionMenuMode,
             effectiveMachineStatus: orderState.EffectiveMachineStatus);
         return new SessionToolExecutor(orderTools, searchTool);

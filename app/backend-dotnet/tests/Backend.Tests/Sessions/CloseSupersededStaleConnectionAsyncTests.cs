@@ -40,7 +40,7 @@ public sealed class CloseSupersededStaleConnectionAsyncTests
         using var staleCts = new CancellationTokenSource();
 
         var task = RealtimeProcessor.CloseSupersededStaleConnectionAsync(
-            staleWs, staleCts, TimeSpan.FromMilliseconds(200), NullLogger.Instance);
+            staleWs, staleCts, TimeSpan.FromMilliseconds(200), NullLogger<RealtimeProcessor>.Instance);
 
         var completed = await Task.WhenAny(task, Task.Delay(AssertionDeadline, TestContext.Current.CancellationToken));
         Assert.True(
@@ -77,7 +77,7 @@ public sealed class CloseSupersededStaleConnectionAsyncTests
 
         var sw = System.Diagnostics.Stopwatch.StartNew();
         await RealtimeProcessor.CloseSupersededStaleConnectionAsync(
-            staleWs, staleCts, TimeSpan.FromSeconds(5), NullLogger.Instance);
+            staleWs, staleCts, TimeSpan.FromSeconds(5), NullLogger<RealtimeProcessor>.Instance);
         sw.Stop();
         await settleSimulation;
 
@@ -107,7 +107,7 @@ public sealed class CloseSupersededStaleConnectionAsyncTests
         using var staleCts = new CancellationTokenSource();
 
         var closeTask = RealtimeProcessor.CloseSupersededStaleConnectionAsync(
-            staleWs, staleCts, TimeSpan.FromSeconds(5), NullLogger.Instance);
+            staleWs, staleCts, TimeSpan.FromSeconds(5), NullLogger<RealtimeProcessor>.Instance);
 
         // FakeWebSocket's non-hanging CloseOutputAsync completes synchronously, so by the time we
         // get here the close frame is long sent and the socket is parked in CloseSent -- but
@@ -141,7 +141,7 @@ public sealed class CloseSupersededStaleConnectionAsyncTests
         }, TestContext.Current.CancellationToken);
 
         await RealtimeProcessor.CloseSupersededStaleConnectionAsync(
-            staleWs, staleCts: null, TimeSpan.FromSeconds(2), NullLogger.Instance);
+            staleWs, staleCts: null, TimeSpan.FromSeconds(2), NullLogger<RealtimeProcessor>.Instance);
         await settleSimulation;
 
         Assert.True(staleWs.CloseOutputCalled);

@@ -11,6 +11,7 @@ using Backend.Realtime;
 using Backend.Sessions;
 using Backend.Tests.TestSupport;
 using Backend.Tools;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Backend.Tests.Cascade;
 
@@ -52,6 +53,7 @@ public sealed class BrowserSocketCancellationTests
             promptLoaders: new Dictionary<string, PromptLoader> { ["test-delta"] = loader },
             toolExecutor: toolExecutor,
             httpClient: new HttpClient(handler),
+            logger: NullLogger<CascadeProcessor>.Instance,
             bearerTokenProvider: new StaticBearerTokenProvider("fake-token"),
             // #126: this file's barge-in-during-backpressure scenario predates cascade's own
             // echo-suppression feature and deliberately uses REAL wall-clock delays between the

@@ -61,7 +61,7 @@ internal sealed class CascadeProcessor : IPipelineProcessor
     private readonly Func<Persona, PromptLoader?, string?, IToolExecutor>? _toolExecutorFactory;
     private readonly IReadOnlySet<string> _allowedVoices;
     private readonly string _defaultVoice;
-    private readonly ILogger? _logger;
+    private readonly ILogger<CascadeProcessor> _logger;
     private readonly TimeProvider _timeProvider;
     // #126: acoustic tail after estimated playback during which mic audio is still dropped.
     // Derived from the same `audio.echo_cooldown_seconds` the realtime pipeline uses, but capped
@@ -88,9 +88,9 @@ internal sealed class CascadeProcessor : IPipelineProcessor
         IReadOnlyDictionary<string, PromptLoader> promptLoaders,
         IToolExecutor toolExecutor,
         HttpClient httpClient,
+        ILogger<CascadeProcessor> logger,
         IReadOnlySet<string>? allowedVoices = null,
         string defaultVoice = "marin",
-        ILogger? logger = null,
         IUpstreamBearerTokenProvider? bearerTokenProvider = null,
         Func<Persona, PromptLoader?, string?, IToolExecutor>? toolExecutorFactory = null,
         TimeProvider? timeProvider = null,

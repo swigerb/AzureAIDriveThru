@@ -100,7 +100,7 @@ internal sealed class ModelCatalog
     /// </summary>
     /// <exception cref="ModelValidationException">An enabled persona's pipeline default isn't
     /// catalogued for that pipeline.</exception>
-    public void ValidatePersonaDefaults(PersonaCatalog personaCatalog, ILogger? logger = null)
+    public void ValidatePersonaDefaults(PersonaCatalog personaCatalog, ILogger<ModelCatalog> logger)
     {
         foreach (var personaId in personaCatalog.Ids)
         {
@@ -127,7 +127,7 @@ internal sealed class ModelCatalog
                     }
                     if (!IsCataloguedFor(allowedId, pipelineName))
                     {
-                        logger?.LogWarning(
+                        logger.LogWarning(
                             "Persona {PersonaId}'s {Pipeline} allowed model {AllowedId} is not in config.yaml's " +
                             "models.catalog for pipeline {Pipeline} -- it will 404 if a guest ever requests it " +
                             "explicitly by id.",

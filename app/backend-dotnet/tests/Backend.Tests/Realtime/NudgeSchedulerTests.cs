@@ -1,4 +1,5 @@
 using Backend.Realtime;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 
 namespace Backend.Tests.Realtime;
@@ -28,7 +29,8 @@ public sealed class NudgeSchedulerTests
                 isRateLimitBusy: () => RateLimitBusy,
                 sessionConfigured: SessionConfigured.Task,
                 timeProvider: Time,
-                sessionId: "s1");
+                sessionId: "s1",
+                logger: NullLogger<NudgeScheduler>.Instance);
         }
     }
 

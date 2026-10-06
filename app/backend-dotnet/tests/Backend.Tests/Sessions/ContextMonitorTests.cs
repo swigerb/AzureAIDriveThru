@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Backend.Tests.Sessions;
 
@@ -16,7 +17,7 @@ public sealed class ContextMonitorTests
     /// <summary>Captures every Log call so a test can assert a warning was actually logged,
     /// without pulling in an extra test package for a single assertion (same convention as
     /// <see cref="Backend.Tests.Models.ModelDispatchTests"/>'s own <c>RecordingLogger</c>).</summary>
-    private sealed class RecordingLogger : ILogger
+    private sealed class RecordingLogger : ILogger<Backend.Sessions.ContextMonitor>
     {
         public List<(LogLevel Level, string Message)> Entries { get; } = [];
 
@@ -33,7 +34,7 @@ public sealed class ContextMonitorTests
     [Fact]
     public void InitialState_IsZero()
     {
-        var cm = new Backend.Sessions.ContextMonitor("test-session");
+        var cm = new Backend.Sessions.ContextMonitor("test-session", logger: NullLogger<Backend.Sessions.ContextMonitor>.Instance);
         Assert.Equal(0, cm.EstimatedTokens);
         Assert.Equal(0.0, cm.UsagePct);
     }
@@ -41,7 +42,7 @@ public sealed class ContextMonitorTests
     [Fact]
     public void AddContent_IncreasesTokenEstimate()
     {
-        var cm = new Backend.Sessions.ContextMonitor("test-session");
+        var cm = new Backend.Sessions.ContextMonitor("test-session", logger: NullLogger<Backend.Sessions.ContextMonitor>.Instance);
         cm.AddContent(new string('a', 400)); // ~100 tokens
         Assert.Equal(100, cm.EstimatedTokens);
     }
@@ -49,7 +50,7 @@ public sealed class ContextMonitorTests
     [Fact]
     public void AddEmptyContent_IsSafe()
     {
-        var cm = new Backend.Sessions.ContextMonitor("test-session");
+        var cm = new Backend.Sessions.ContextMonitor("test-session", logger: NullLogger<Backend.Sessions.ContextMonitor>.Instance);
         cm.AddContent("");
         cm.AddContent(null);
         Assert.Equal(0, cm.EstimatedTokens);

@@ -4,6 +4,7 @@ using Backend.Ordering;
 using Backend.Search;
 using Backend.Tests.TestSupport;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Backend.Tests.Search;
 
@@ -32,7 +33,7 @@ internal sealed class ThrowingSearchBearerTokenProvider : ISearchBearerTokenProv
 /// <summary>Captures every log entry a <see cref="SearchTool"/> emits so R5's logging tests can
 /// assert both that a failure was actually logged AND that no entry ever contains the bearer
 /// token or api-key -- Rick's PR #149 R5 review.</summary>
-internal sealed class RecordingLogger : ILogger
+internal sealed class RecordingLogger : ILogger<SearchTool>
 {
     public List<(LogLevel Level, string Message)> Entries { get; } = [];
 
@@ -59,7 +60,7 @@ public sealed class SearchAuthHeaderTests
 {
     private static SearchTool NewTool(
         string apiKey, ISearchBearerTokenProvider? bearerTokenProvider,
-        HttpMessageHandler? handler = null, ILogger? logger = null)
+        HttpMessageHandler? handler = null, ILogger<SearchTool>? logger = null)
     {
         var persona = DeltaFixture.Load();
         var menu = PersonaOrderFactory.GetMenuCatalog(persona);
@@ -76,7 +77,8 @@ public sealed class SearchAuthHeaderTests
         var httpClient = handler is null ? new HttpClient() : new HttpClient(handler);
         return new SearchTool(
             httpClient, endpointConfig, searchConfig, menu, promptLoader: null,
-            "test-delta-menu-items", "search-auth-header-tests", bearerTokenProvider, logger);
+            "test-delta-menu-items", "search-auth-header-tests", logger ?? NullLogger<SearchTool>.Instance,
+            bearerTokenProvider);
     }
 
     [Fact]
