@@ -302,21 +302,23 @@ public sealed class CascadeProcessorTests
         RoutingFoundryHandler handler, IToolExecutor toolExecutor, PromptLoader loader, TimeProvider? timeProvider = null,
         ILogger<CascadeProcessor>? logger = null, double echoCooldownSeconds = 0, SessionManager? sessionManager = null) =>
         new(
-            NewCatalog(), Endpoint, Endpoint, AppConfig.Load(),
-            promptLoaders: new Dictionary<string, PromptLoader> { ["test-delta"] = loader },
-            toolExecutor: toolExecutor,
-            httpClient: new HttpClient(handler),
-            logger: logger ?? NullLogger<CascadeProcessor>.Instance,
-            bearerTokenProvider: new StaticBearerTokenProvider("fake-token"),
-            timeProvider: timeProvider,
-            // #126: every PRE-existing test in this file predates cascade's own echo-suppression
-            // feature and exercises fast, back-to-back turns (a greeting's TTS immediately
-            // followed by a guest's own mic audio, well within what would be a real 1.5s
-            // cooldown) with no intention of exercising echo suppression at all -- defaulting to
-            // 0 here keeps every one of them passing unmodified. Only the echo-suppression-
-            // specific tests below pass a real value explicitly.
-            echoCooldownSeconds: echoCooldownSeconds,
-            sessionManager: sessionManager);
+            NewCatalog(),
+            new CascadeProcessorOptions(
+                Endpoint,
+                Endpoint,
+                CascadeRateLimitSettings.FromAppConfig(AppConfig.Load()),
+                CascadeVadConfig.FromAppConfig(AppConfig.Load()),
+                ClientServerFilter.DefaultAllowedVoices,
+                "marin",
+                echoCooldownSeconds),
+            new CascadeProcessorDependencies(
+                new Dictionary<string, PromptLoader> { ["test-delta"] = loader },
+                toolExecutor,
+                new HttpClient(handler),
+                logger ?? NullLogger<CascadeProcessor>.Instance,
+                BearerTokenProvider: new StaticBearerTokenProvider("fake-token"),
+                TimeProvider: timeProvider,
+                SessionManager: sessionManager));
 
     private static byte[] Pcm16(short sampleValue, int count)
     {

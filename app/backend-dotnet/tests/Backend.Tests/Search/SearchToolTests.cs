@@ -79,9 +79,17 @@ public sealed class SearchToolTests
                                                    // (Rick's PR #149 R2 review) opt it back in.
         var httpClient = new HttpClient(handler);
         return new SearchTool(
-            httpClient, endpointConfig, searchConfig, menu, promptLoader: null, "test-delta-menu-items", personaId,
-            logger: NullLogger<SearchTool>.Instance,
-            menuMode: menuMode, effectiveMachineStatus: effectiveMachineStatus);
+            httpClient,
+            menu,
+            new SearchToolOptions(
+                endpointConfig,
+                searchConfig,
+                PromptLoader: null,
+                IndexName: "test-delta-menu-items",
+                PersonaId: personaId,
+                MenuMode: menuMode,
+                EffectiveMachineStatus: effectiveMachineStatus),
+            NullLogger<SearchTool>.Instance);
     }
 
     private static JsonElement QueryArgs(string query) =>

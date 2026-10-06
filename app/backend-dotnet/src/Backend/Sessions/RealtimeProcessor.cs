@@ -113,59 +113,43 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
 
     public RealtimeProcessor(
         ModelCatalog catalog,
-        string defaultDeployment,
-        string upstreamEndpoint,
-        string upstreamApiKey,
-        RealtimeSessionConfig sessionConfig,
-        IReadOnlyDictionary<string, PromptLoader> promptLoaders,
-        IToolExecutor toolExecutor,
-        ILogger<RealtimeProcessor> logger,
-        ILogger<RateLimitRecovery> rateLimitLogger,
-        ILogger<NudgeScheduler> nudgeLogger,
-        IReadOnlySet<string>? allowedVoices = null,
-        double echoCooldownSeconds = 1.5,
-        double greetingTimeoutSeconds = 5.0,
-        IUpstreamBearerTokenProvider? bearerTokenProvider = null,
-        Func<Persona, PromptLoader?, string?, IToolExecutor>? toolExecutorFactory = null,
-        TimeProvider? timeProvider = null,
-        RateLimitSettings? rateLimitSettings = null,
-        SessionManager? sessionManager = null,
-        Configuration.ConnectionConfig? connectionConfig = null)
+        RealtimeProcessorOptions options,
+        RealtimeProcessorDependencies dependencies)
     {
         _catalog = catalog;
-        _defaultDeployment = defaultDeployment;
-        _upstreamEndpoint = upstreamEndpoint;
-        _upstreamApiKey = upstreamApiKey;
-        _bearerTokenProvider = bearerTokenProvider;
-        _sessionConfig = sessionConfig;
-        _promptLoaders = promptLoaders;
-        _toolExecutor = toolExecutor;
-        _toolExecutorFactory = toolExecutorFactory;
-        _allowedVoices = allowedVoices ?? ClientServerFilter.DefaultAllowedVoices;
-        _echoCooldownSeconds = echoCooldownSeconds;
-        _greetingTimeoutSeconds = greetingTimeoutSeconds;
-        _logger = logger;
-        _rateLimitLogger = rateLimitLogger;
-        _nudgeLogger = nudgeLogger;
+        _defaultDeployment = options.DefaultDeployment;
+        _upstreamEndpoint = options.UpstreamEndpoint;
+        _upstreamApiKey = options.UpstreamApiKey;
+        _bearerTokenProvider = dependencies.BearerTokenProvider;
+        _sessionConfig = options.SessionConfig;
+        _promptLoaders = dependencies.PromptLoaders;
+        _toolExecutor = dependencies.ToolExecutor;
+        _toolExecutorFactory = dependencies.ToolExecutorFactory;
+        _allowedVoices = options.AllowedVoices;
+        _echoCooldownSeconds = options.EchoCooldownSeconds;
+        _greetingTimeoutSeconds = options.GreetingTimeoutSeconds;
+        _logger = dependencies.Logger;
+        _rateLimitLogger = dependencies.RateLimitLogger;
+        _nudgeLogger = dependencies.NudgeLogger;
         // Issue #13 Wave 4: the rate-limit retry ladder's own config (resilience.rate_limit in
         // config.yaml) -- defaults to the Python-matching shipped defaults if the caller (normally
         // Program.cs, via RateLimitSettings.FromAppConfig) doesn't supply one.
-        _rateLimitSettings = rateLimitSettings ?? new RateLimitSettings();
+        _rateLimitSettings = options.RateLimitSettings;
         // Issue #13 Wave 2: every time-dependent piece of the relay (echo-suppression cooldowns,
         // the greeting-gate timeout, the "loop time" ShouldSuppressAudio/OnAudioDone/OnResponseDone
         // read) is driven from this one clock, so a test can swap in a FakeTimeProvider instead of
         // waiting on real wall-clock delays. Defaults to TimeProvider.System in production.
-        _timeProvider = timeProvider ?? TimeProvider.System;
+        _timeProvider = dependencies.TimeProvider ?? TimeProvider.System;
         // Issue #15: the session registry (resume/rehydration/idle/grace/nudge). Left null by
         // every existing caller/test that doesn't pass one -- the whole feature is then fully
         // inert: extension.resume is silently swallowed (the pre-#15 scope-cut behaviour) and no
         // extra session_metadata field/first-frame wait is introduced, so nothing built against
         // this constructor before #15 changes behaviour.
-        _sessionManager = sessionManager;
+        _sessionManager = dependencies.SessionManager;
         // Issue #13 tail: config.yaml's `connection` section (ws_heartbeat_seconds/
         // ws_connect_timeout_total/ws_connect_timeout_connect) -- see ConnectionConfig's own doc
         // comment for the full heartbeat/connect-timeout mapping.
-        _connectionConfig = connectionConfig ?? new Configuration.ConnectionConfig();
+        _connectionConfig = options.ConnectionConfig;
     }
 
     public string PipelineName => "realtime";

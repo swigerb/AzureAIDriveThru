@@ -51,28 +51,21 @@ internal sealed class SearchTool
 
     public SearchTool(
         HttpClient http,
-        SearchEndpointConfig config,
-        SearchConfig searchConfig,
         MenuCatalog menu,
-        PromptLoader? promptLoader,
-        string indexName,
-        string? personaId,
-        ILogger<SearchTool> logger,
-        ISearchBearerTokenProvider? bearerTokenProvider = null,
-        string? menuMode = null,
-        Func<string, string?>? effectiveMachineStatus = null)
+        SearchToolOptions options,
+        ILogger<SearchTool> logger)
     {
         _http = http;
-        _config = config;
-        _searchConfig = searchConfig;
+        _config = options.EndpointConfig;
+        _searchConfig = options.SearchConfig;
         _menu = menu;
-        _promptLoader = promptLoader;
-        _indexName = indexName;
-        _personaId = personaId;
-        _bearerTokenProvider = bearerTokenProvider;
+        _promptLoader = options.PromptLoader;
+        _indexName = options.IndexName;
+        _personaId = options.PersonaId;
+        _bearerTokenProvider = options.BearerTokenProvider;
         _logger = logger;
-        _menuMode = menuMode;
-        _effectiveMachineStatus = effectiveMachineStatus;
+        _menuMode = options.MenuMode;
+        _effectiveMachineStatus = options.EffectiveMachineStatus;
     }
 
     /// <summary>Executes one <c>search</c> tool call. Always <see

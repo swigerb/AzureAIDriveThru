@@ -33,16 +33,23 @@ public sealed class AudioAppendFastPathTests
     private static RealtimeProcessor CreateProcessor(TimeProvider? timeProvider = null) =>
         new(
             ModelCatalog.FromConfig(AppConfig.Load()),
-            defaultDeployment: "gpt-realtime-2.1",
-            upstreamEndpoint: "https://example-eastus2.openai.azure.com",
-            upstreamApiKey: "sk-not-used",
-            sessionConfig: new RealtimeSessionConfig(),
-            promptLoaders: new Dictionary<string, PromptLoader>(),
-            toolExecutor: new StubToolExecutor([]),
-            logger: NullLogger<RealtimeProcessor>.Instance,
-            rateLimitLogger: NullLogger<RateLimitRecovery>.Instance,
-            nudgeLogger: NullLogger<NudgeScheduler>.Instance,
-            timeProvider: timeProvider);
+            new RealtimeProcessorOptions(
+                "gpt-realtime-2.1",
+                "https://example-eastus2.openai.azure.com",
+                "sk-not-used",
+                new RealtimeSessionConfig(),
+                ClientServerFilter.DefaultAllowedVoices,
+                1.5,
+                5.0,
+                new RateLimitSettings(),
+                new ConnectionConfig()),
+            new RealtimeProcessorDependencies(
+                new Dictionary<string, PromptLoader>(),
+                new StubToolExecutor([]),
+                NullLogger<RealtimeProcessor>.Instance,
+                NullLogger<RateLimitRecovery>.Instance,
+                NullLogger<NudgeScheduler>.Instance,
+                TimeProvider: timeProvider));
 
     private static byte[] Utf8(string s) => Encoding.UTF8.GetBytes(s);
 

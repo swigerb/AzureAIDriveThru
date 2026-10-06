@@ -43,16 +43,23 @@ public sealed class RealtimeProcessorExtensionMessageTests
         ILogger<RealtimeProcessor>? logger = null) =>
         new(
             ModelCatalog.FromConfig(AppConfig.Load()),
-            defaultDeployment: "gpt-realtime-2.1",
-            upstreamEndpoint: "https://example-eastus2.openai.azure.com",
-            upstreamApiKey: "sk-not-used",
-            sessionConfig: new RealtimeSessionConfig(),
-            promptLoaders: new Dictionary<string, PromptLoader>(),
-            toolExecutor: new StubToolExecutor([]),
-            logger: logger ?? NullLogger<RealtimeProcessor>.Instance,
-            rateLimitLogger: NullLogger<RateLimitRecovery>.Instance,
-            nudgeLogger: NullLogger<NudgeScheduler>.Instance,
-            sessionManager: manager);
+            new RealtimeProcessorOptions(
+                "gpt-realtime-2.1",
+                "https://example-eastus2.openai.azure.com",
+                "sk-not-used",
+                new RealtimeSessionConfig(),
+                ClientServerFilter.DefaultAllowedVoices,
+                1.5,
+                5.0,
+                new RateLimitSettings(),
+                new ConnectionConfig()),
+            new RealtimeProcessorDependencies(
+                new Dictionary<string, PromptLoader>(),
+                new StubToolExecutor([]),
+                logger ?? NullLogger<RealtimeProcessor>.Instance,
+                NullLogger<RateLimitRecovery>.Instance,
+                NullLogger<NudgeScheduler>.Instance,
+                SessionManager: manager));
 
     /// <summary>A never-invoked HTTP stand-in for the real Azure AI Search endpoint -- the
     /// ticket-push tests below never call the "search" tool, only extension.set_happy_hour_mode,
@@ -82,13 +89,17 @@ public sealed class RealtimeProcessorExtensionMessageTests
         var orderTools = new OrderToolExecutor(order, menu, promptLoader: null, maxItemQuantity: 10, maxOrderItems: 25);
         var search = new SearchTool(
             new HttpClient(new NeverInvokedHttpHandler()),
-            new SearchEndpointConfig(
-                endpoint: "https://fake-search.example.com", apiKey: "test-key", semanticConfiguration: "menuSemanticConfig",
-                identifierField: "id", contentField: "description", embeddingField: "embedding", useVectorQuery: true, useSemanticRanker: false),
-            SearchConfig.FromAppConfig(AppConfig.Load()),
-            menu, promptLoader: null, indexName: "test-menu-items", personaId: persona.Id,
-            logger: NullLogger<SearchTool>.Instance,
-            effectiveMachineStatus: order.EffectiveMachineStatus);
+            menu,
+            new SearchToolOptions(
+                new SearchEndpointConfig(
+                    endpoint: "https://fake-search.example.com", apiKey: "test-key", semanticConfiguration: "menuSemanticConfig",
+                    identifierField: "id", contentField: "description", embeddingField: "embedding", useVectorQuery: true, useSemanticRanker: false),
+                SearchConfig.FromAppConfig(AppConfig.Load()),
+                PromptLoader: null,
+                IndexName: "test-menu-items",
+                PersonaId: persona.Id,
+                EffectiveMachineStatus: order.EffectiveMachineStatus),
+            NullLogger<SearchTool>.Instance);
         var toolExecutor = new SessionToolExecutor(orderTools, search);
         socket = new FakeWebSocket([]);
         manager.CreateSession(sessionId, socket, persona.Id, persona.Models.Realtime.Default, null, toolExecutor, persona.Voice.Default);

@@ -76,9 +76,16 @@ public sealed class SearchAuthHeaderTests
             useSemanticRanker: false);
         var httpClient = handler is null ? new HttpClient() : new HttpClient(handler);
         return new SearchTool(
-            httpClient, endpointConfig, searchConfig, menu, promptLoader: null,
-            "test-delta-menu-items", "search-auth-header-tests", logger ?? NullLogger<SearchTool>.Instance,
-            bearerTokenProvider);
+            httpClient,
+            menu,
+            new SearchToolOptions(
+                endpointConfig,
+                searchConfig,
+                PromptLoader: null,
+                IndexName: "test-delta-menu-items",
+                PersonaId: "search-auth-header-tests",
+                BearerTokenProvider: bearerTokenProvider),
+            logger ?? NullLogger<SearchTool>.Instance);
     }
 
     [Fact]

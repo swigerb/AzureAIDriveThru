@@ -31,16 +31,16 @@ internal sealed class SessionToolExecutorFactory(
             sessionMenuMode);
         var searchTool = new SearchTool(
             httpClientFactory.CreateClient(BackendHttpClientNames.SearchEndpoint),
-            searchEndpointConfig,
-            searchConfig,
             menu,
-            sessionPromptLoader,
-            sessionPersona.Search.IndexName,
-            sessionPersona.Id,
-            searchLogger,
-            bearerTokenProvider: null,
-            menuMode: sessionMenuMode,
-            effectiveMachineStatus: orderState.EffectiveMachineStatus);
+            new SearchToolOptions(
+                searchEndpointConfig,
+                searchConfig,
+                sessionPromptLoader,
+                sessionPersona.Search.IndexName,
+                sessionPersona.Id,
+                MenuMode: sessionMenuMode,
+                EffectiveMachineStatus: orderState.EffectiveMachineStatus),
+            searchLogger);
         return new SessionToolExecutor(orderTools, searchTool);
     }
 }

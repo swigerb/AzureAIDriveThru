@@ -1,6 +1,7 @@
 using System.Net.WebSockets;
 using Backend;
 using Backend.Auth;
+using Backend.Cascade;
 using Backend.Configuration;
 using Backend.Health;
 using Backend.Models;
@@ -123,22 +124,25 @@ builder.Services.AddSingleton(sp =>
     var settings = BuildRealtimeStartupSettings(appConfig, startupLogger);
     return new RealtimeProcessor(
         sp.GetRequiredService<ModelCatalog>(),
-        settings.RealtimeDeployment,
-        settings.UpstreamEndpoint,
-        settings.UpstreamApiKey,
-        settings.SessionConfig,
-        sp.GetRequiredService<PromptLoaderRegistry>().Loaders,
-        sp.GetRequiredService<IToolExecutor>(),
-        sp.GetRequiredService<ILogger<RealtimeProcessor>>(),
-        sp.GetRequiredService<ILogger<RateLimitRecovery>>(),
-        sp.GetRequiredService<ILogger<NudgeScheduler>>(),
-        settings.AllowedVoices,
-        settings.EchoCooldownSeconds,
-        toolExecutorFactory: sp.GetRequiredService<SessionToolExecutorFactory>().Create,
-        timeProvider: sp.GetRequiredService<TimeProvider>(),
-        rateLimitSettings: sp.GetRequiredService<RateLimitSettings>(),
-        sessionManager: sp.GetRequiredService<SessionManager>(),
-        connectionConfig: sp.GetRequiredService<ConnectionConfig>());
+        new RealtimeProcessorOptions(
+            settings.RealtimeDeployment,
+            settings.UpstreamEndpoint,
+            settings.UpstreamApiKey,
+            settings.SessionConfig,
+            settings.AllowedVoices,
+            settings.EchoCooldownSeconds,
+            GreetingTimeoutSeconds: 5.0,
+            sp.GetRequiredService<RateLimitSettings>(),
+            sp.GetRequiredService<ConnectionConfig>()),
+        new RealtimeProcessorDependencies(
+            sp.GetRequiredService<PromptLoaderRegistry>().Loaders,
+            sp.GetRequiredService<IToolExecutor>(),
+            sp.GetRequiredService<ILogger<RealtimeProcessor>>(),
+            sp.GetRequiredService<ILogger<RateLimitRecovery>>(),
+            sp.GetRequiredService<ILogger<NudgeScheduler>>(),
+            ToolExecutorFactory: sp.GetRequiredService<SessionToolExecutorFactory>().Create,
+            TimeProvider: sp.GetRequiredService<TimeProvider>(),
+            SessionManager: sp.GetRequiredService<SessionManager>()));
 });
 builder.Services.AddSingleton(sp =>
 {
@@ -150,20 +154,23 @@ builder.Services.AddSingleton(sp =>
         : null;
     return new CascadeProcessor(
         sp.GetRequiredService<ModelCatalog>(),
-        Environment.GetEnvironmentVariable("AZURE_AI_FOUNDRY_ENDPOINT") ?? string.Empty,
-        settings.UpstreamEndpoint,
-        appConfig,
-        sp.GetRequiredService<PromptLoaderRegistry>().Loaders,
-        sp.GetRequiredService<IToolExecutor>(),
-        sp.GetRequiredService<IHttpClientFactory>().CreateClient(BackendHttpClientNames.CascadeEndpoint),
-        sp.GetRequiredService<ILogger<CascadeProcessor>>(),
-        settings.AllowedVoices,
-        settings.VoiceChoice,
-        bearerTokenProvider: cascadeBearerTokenProvider,
-        toolExecutorFactory: sp.GetRequiredService<SessionToolExecutorFactory>().Create,
-        timeProvider: sp.GetRequiredService<TimeProvider>(),
-        echoCooldownSeconds: settings.EchoCooldownSeconds,
-        sessionManager: sp.GetRequiredService<SessionManager>());
+        new CascadeProcessorOptions(
+            Environment.GetEnvironmentVariable("AZURE_AI_FOUNDRY_ENDPOINT") ?? string.Empty,
+            settings.UpstreamEndpoint,
+            CascadeRateLimitSettings.FromAppConfig(appConfig),
+            CascadeVadConfig.FromAppConfig(appConfig),
+            settings.AllowedVoices,
+            settings.VoiceChoice,
+            settings.EchoCooldownSeconds),
+        new CascadeProcessorDependencies(
+            sp.GetRequiredService<PromptLoaderRegistry>().Loaders,
+            sp.GetRequiredService<IToolExecutor>(),
+            sp.GetRequiredService<IHttpClientFactory>().CreateClient(BackendHttpClientNames.CascadeEndpoint),
+            sp.GetRequiredService<ILogger<CascadeProcessor>>(),
+            BearerTokenProvider: cascadeBearerTokenProvider,
+            ToolExecutorFactory: sp.GetRequiredService<SessionToolExecutorFactory>().Create,
+            TimeProvider: sp.GetRequiredService<TimeProvider>(),
+            SessionManager: sp.GetRequiredService<SessionManager>()));
 });
 builder.Services.AddSingleton(sp =>
 {
