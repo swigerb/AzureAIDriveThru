@@ -4,6 +4,7 @@ using Backend.Personas;
 using Backend.Sessions;
 using Backend.Tests.TestSupport;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Backend.Tests.Models;
 
@@ -39,7 +40,7 @@ public sealed class ModelDispatchTests
 
     /// <summary>Captures every Log call so a test can assert a warning was actually logged,
     /// without pulling in an extra test package for a single assertion.</summary>
-    private sealed class RecordingLogger : ILogger
+    private sealed class RecordingLogger : ILogger<RealtimeProcessor>
     {
         public List<(LogLevel Level, string Message)> Entries { get; } = [];
 
@@ -167,7 +168,8 @@ public sealed class ModelDispatchTests
         var catalog = RealCatalog(new Dictionary<string, string> { ["gpt-realtime-2.1"] = "rt-deploy" });
 
         var exc = Assert.Throws<ModelSelectionException>(() => ModelDispatch.ResolveRealtimeModel(
-            persona, requestedModelId: "gpt-realtime-2.1-mini", catalog, defaultDeployment: "fallback-deployment"));
+            persona, requestedModelId: "gpt-realtime-2.1-mini", catalog, defaultDeployment: "fallback-deployment",
+            NullLogger<RealtimeProcessor>.Instance));
         Assert.Contains("gpt-realtime-2.1-mini", exc.Message);
     }
 
@@ -189,8 +191,10 @@ public sealed class ModelDispatchTests
         // model to contrast against. ResolvedModel.Reasoning must still reflect the catalog's own
         // per-model flag, not a single fixed value -- both resolve to the SAME catalog-sourced
         // true here, rather than one hardcoded default being reused for both ids.
-        var reasoningModel = ModelDispatch.ResolveRealtimeModel(persona, "gpt-realtime-2.1", catalog, "unused-fallback");
-        var miniReasoningModel = ModelDispatch.ResolveRealtimeModel(persona, "gpt-realtime-2.1-mini", catalog, "unused-fallback");
+        var reasoningModel = ModelDispatch.ResolveRealtimeModel(
+            persona, "gpt-realtime-2.1", catalog, "unused-fallback", NullLogger<RealtimeProcessor>.Instance);
+        var miniReasoningModel = ModelDispatch.ResolveRealtimeModel(
+            persona, "gpt-realtime-2.1-mini", catalog, "unused-fallback", NullLogger<RealtimeProcessor>.Instance);
 
         Assert.True(reasoningModel.Reasoning);
         Assert.True(miniReasoningModel.Reasoning);

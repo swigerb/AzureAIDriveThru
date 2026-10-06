@@ -86,7 +86,7 @@ public sealed record RateLimitSettings(
         var enabled = GetBool(rateLimitSection, "enabled", true);
         var envValue = environment is not null
             ? environment.GetValueOrDefault(EnabledEnvVar)
-            : Environment.GetEnvironmentVariable(EnabledEnvVar);
+            : BackendEnvironment.Get(EnabledEnvVar);
         if (!string.IsNullOrWhiteSpace(envValue))
         {
             enabled = Truthy(envValue);

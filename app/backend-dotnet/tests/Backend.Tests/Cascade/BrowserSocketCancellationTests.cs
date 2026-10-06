@@ -4,6 +4,7 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json.Nodes;
 using Backend.Configuration;
+using Backend.Cascade;
 using Backend.Models;
 using Backend.Personas;
 using Backend.Prompts;
@@ -11,6 +12,7 @@ using Backend.Realtime;
 using Backend.Sessions;
 using Backend.Tests.TestSupport;
 using Backend.Tools;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Backend.Tests.Cascade;
 
@@ -48,17 +50,21 @@ public sealed class BrowserSocketCancellationTests
 
     private static CascadeProcessor NewProcessor(RoutingFoundryHandler handler, IToolExecutor toolExecutor, PromptLoader loader) =>
         new(
-            NewCatalog(), Endpoint, Endpoint, AppConfig.Load(),
-            promptLoaders: new Dictionary<string, PromptLoader> { ["test-delta"] = loader },
-            toolExecutor: toolExecutor,
-            httpClient: new HttpClient(handler),
-            bearerTokenProvider: new StaticBearerTokenProvider("fake-token"),
-            // #126: this file's barge-in-during-backpressure scenario predates cascade's own
-            // echo-suppression feature and deliberately uses REAL wall-clock delays between the
-            // greeting's TTS and the guest's own next turn -- well within what would be a real
-            // 1.5s echo cooldown, but not testing echo suppression at all. 0 keeps the existing
-            // barge-in behaviour this file actually tests unaffected.
-            echoCooldownSeconds: 0);
+            NewCatalog(),
+            new CascadeProcessorOptions(
+                Endpoint,
+                Endpoint,
+                CascadeRateLimitSettings.FromAppConfig(AppConfig.Load()),
+                CascadeVadConfig.FromAppConfig(AppConfig.Load()),
+                ClientServerFilter.DefaultAllowedVoices,
+                "marin",
+                0),
+            new CascadeProcessorDependencies(
+                new Dictionary<string, PromptLoader> { ["test-delta"] = loader },
+                toolExecutor,
+                new HttpClient(handler),
+                NullLogger<CascadeProcessor>.Instance,
+                BearerTokenProvider: new StaticBearerTokenProvider("fake-token")));
 
     private static byte[] Pcm16(short sampleValue, int count)
     {

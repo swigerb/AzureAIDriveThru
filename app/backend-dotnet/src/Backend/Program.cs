@@ -1,6 +1,7 @@
 using System.Net.WebSockets;
 using Backend;
 using Backend.Auth;
+using Backend.Cascade;
 using Backend.Configuration;
 using Backend.Health;
 using Backend.Models;
@@ -13,6 +14,7 @@ using Backend.Sessions;
 using Backend.Shared;
 using Backend.Tools;
 using Microsoft.Extensions.FileProviders;
+using Microsoft.Extensions.Options;
 
 // Host wiring (issue #12 S2): config, persona-pack loading, health, auth token endpoint, static
 // files, one event loop per session -- mirrors app/backend/app.py's create_app() startup sequence
@@ -21,7 +23,7 @@ using Microsoft.Extensions.FileProviders;
 // before the WebSocket upgrade; the realtime processor's own relay loop (owning frames after the
 // upgrade) is issue #13's job, not this wave's.
 
-var runningInProduction = ParseBool(Environment.GetEnvironmentVariable("RUNNING_IN_PRODUCTION"));
+var runningInProduction = ParseBool(BackendEnvironment.Get(BackendEnvironment.RunningInProduction));
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -37,10 +39,10 @@ if (ConformanceHooks.HooksEnabled)
     builder.Logging.AddSimpleConsole(ConformanceHooks.ApplyConsoleTimestampFormat);
 }
 
-var host = Environment.GetEnvironmentVariable("HOST") ?? "127.0.0.1";
+var host = BackendEnvironment.Get(BackendEnvironment.Host) ?? "127.0.0.1";
 // Default port aligned with app/backend/app.py's `int(os.environ.get("PORT", 8000))` (PR #96
 // review nit) -- both backends bind the same default when PORT is unset.
-var port = Environment.GetEnvironmentVariable("PORT") ?? "8000";
+var port = BackendEnvironment.Get(BackendEnvironment.Port) ?? "8000";
 builder.WebHost.UseUrls($"http://{host}:{port}");
 
 var startupChecks = new StartupChecks();
@@ -53,7 +55,7 @@ var startupChecks = new StartupChecks();
 EntraSettings entraSettings;
 try
 {
-    entraSettings = EntraSettings.Resolve(Environment.GetEnvironmentVariable, builder.Environment.IsProduction());
+    entraSettings = EntraSettings.Resolve(BackendEnvironment.Get, builder.Environment.IsProduction());
 }
 catch (EntraConfigException exc)
 {
@@ -83,22 +85,106 @@ else
 // address changes (failover, scale-in/out). 10 minutes keeps normal connection reuse while staying
 // comfortably inside typical Azure DNS TTLs. See BackendHttpClients.AddBackendHttpClients for why
 // RemoveAllLoggers() is required on each of these.
-const string SearchHttpClientName = "search-endpoint";
-const string CascadeHttpClientName = "cascade-endpoint";
-const string ConnectivityCheckHttpClientName = "connectivity-check";
 builder.Services.AddBackendHttpClients(
-    TimeSpan.FromMinutes(10), SearchHttpClientName, CascadeHttpClientName, ConnectivityCheckHttpClientName);
+    TimeSpan.FromMinutes(10),
+    BackendHttpClientNames.SearchEndpoint,
+    BackendHttpClientNames.CascadeEndpoint,
+    BackendHttpClientNames.ConnectivityCheck);
+
+builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
+builder.Services.AddSingleton(_ => PersonaCatalog.Load());
+builder.Services.AddSingleton(_ => AppConfig.Load());
+builder.Services.AddSingleton(sp => new PromptLoaderRegistry(
+    BackendEnvironment.Get(BackendEnvironment.PersonasDir) ?? Path.Combine(RepoRootLocator.Find(), "personas"),
+    sp.GetRequiredService<PersonaCatalog>()));
+builder.Services.AddSingleton(sp => RateLimitSettings.FromAppConfig(sp.GetRequiredService<AppConfig>()));
+builder.Services.AddSingleton(sp => ModelCatalog.FromConfig(sp.GetRequiredService<AppConfig>()));
+builder.Services.AddBackendConfigurationOptions();
+builder.Services.AddSingleton(sp =>
+{
+    var promptLoaders = sp.GetRequiredService<PromptLoaderRegistry>();
+    return (IToolExecutor)new StubToolExecutor(promptLoaders.AllToolNames);
+});
+builder.Services.AddSingleton<SessionToolExecutorFactory>();
+builder.Services.AddSingleton(sp =>
+    new SessionManager(
+        sp.GetRequiredService<SessionsConfig>(),
+        sp.GetRequiredService<TimeProvider>(),
+        sp.GetRequiredService<ILogger<SessionManager>>(),
+        sp.GetRequiredService<ILogger<ContextMonitor>>()));
+builder.Services.AddSingleton(sp =>
+{
+    var appConfig = sp.GetRequiredService<AppConfig>();
+    var startupLogger = sp.GetRequiredService<ILogger<Program>>();
+    var settings = BuildRealtimeStartupSettings(appConfig, startupLogger);
+    return new RealtimeProcessor(
+        sp.GetRequiredService<ModelCatalog>(),
+        new RealtimeProcessorOptions(
+            settings.RealtimeDeployment,
+            settings.UpstreamEndpoint,
+            settings.UpstreamApiKey,
+            settings.SessionConfig,
+            settings.AllowedVoices,
+            settings.EchoCooldownSeconds,
+            GreetingTimeoutSeconds: 5.0,
+            sp.GetRequiredService<RateLimitSettings>(),
+            sp.GetRequiredService<ConnectionConfig>()),
+        new RealtimeProcessorDependencies(
+            sp.GetRequiredService<PromptLoaderRegistry>().Loaders,
+            sp.GetRequiredService<IToolExecutor>(),
+            sp.GetRequiredService<ILogger<RealtimeProcessor>>(),
+            sp.GetRequiredService<ILogger<RateLimitRecovery>>(),
+            sp.GetRequiredService<ILogger<NudgeScheduler>>(),
+            ToolExecutorFactory: sp.GetRequiredService<SessionToolExecutorFactory>().Create,
+            TimeProvider: sp.GetRequiredService<TimeProvider>(),
+            SessionManager: sp.GetRequiredService<SessionManager>()));
+});
+builder.Services.AddSingleton(sp =>
+{
+    var appConfig = sp.GetRequiredService<AppConfig>();
+    var startupLogger = sp.GetRequiredService<ILogger<Program>>();
+    var settings = BuildRealtimeStartupSettings(appConfig, startupLogger);
+    var cascadeBearerTokenProvider = ConformanceHooks.CascadeFakeToken is { } cascadeFakeToken
+        ? new StaticBearerTokenProvider(cascadeFakeToken)
+        : null;
+    return new CascadeProcessor(
+        sp.GetRequiredService<ModelCatalog>(),
+        new CascadeProcessorOptions(
+            BackendEnvironment.Get(BackendEnvironment.AzureAiFoundryEndpoint) ?? string.Empty,
+            settings.UpstreamEndpoint,
+            CascadeRateLimitSettings.FromAppConfig(appConfig),
+            CascadeVadConfig.FromAppConfig(appConfig),
+            settings.AllowedVoices,
+            settings.VoiceChoice,
+            settings.EchoCooldownSeconds),
+        new CascadeProcessorDependencies(
+            sp.GetRequiredService<PromptLoaderRegistry>().Loaders,
+            sp.GetRequiredService<IToolExecutor>(),
+            sp.GetRequiredService<IHttpClientFactory>().CreateClient(BackendHttpClientNames.CascadeEndpoint),
+            sp.GetRequiredService<ILogger<CascadeProcessor>>(),
+            BearerTokenProvider: cascadeBearerTokenProvider,
+            ToolExecutorFactory: sp.GetRequiredService<SessionToolExecutorFactory>().Create,
+            TimeProvider: sp.GetRequiredService<TimeProvider>(),
+            SessionManager: sp.GetRequiredService<SessionManager>()));
+});
+builder.Services.AddSingleton(sp =>
+{
+    var registry = new ProcessorRegistry();
+    registry.Register(sp.GetRequiredService<RealtimeProcessor>());
+    registry.Register(sp.GetRequiredService<CascadeProcessor>());
+    return registry;
+});
+builder.Services.AddSingleton(sp =>
+{
+    var appSecret = AppSecretProvider.Load(builder.Configuration, sp.GetRequiredService<ILogger<Program>>(), runningInProduction);
+    return new SessionTokenService(appSecret);
+});
+builder.Services.AddSingleton<SessionRegistry>();
 
 // The idle-close/grace-eviction sweep runs as a real BackgroundService (SessionSweepService,
-// registered below) so it starts/stops with the rest of the host. AddHostedService must also be
-// called before Build(), but `sessionManager` itself isn't constructed until later -- same place
-// it always was, since it depends on `sessionsConfig`/`timeProvider`/`logger`, all only available
-// after this file's own fail-fast startup checks run (see the Entra authentication comment above
-// for why those run after Build()). The factory below closes over the `sessionManager` local; it
-// is only ever invoked by the host's DI container when it starts the hosted service inside
-// app.Run(), well after the assignment further down has run.
-SessionManager? sessionManager = null;
-builder.Services.AddHostedService(_ => new SessionSweepService(sessionManager!));
+// registered below) so it starts/stops with the rest of the host. Resolving SessionManager
+// through DI keeps the hosted service on the same singleton the processors use.
+builder.Services.AddHostedService<SessionSweepService>();
 
 var app = builder.Build();
 var logger = app.Logger;
@@ -120,17 +206,15 @@ else
 }
 
 // ── 1. Required environment variables (app.py's _REQUIRED_ENV_VARS) ────────────────────────
-string[] requiredEnvVars =
-[
-    "AZURE_OPENAI_EASTUS2_ENDPOINT",
-    "AZURE_OPENAI_REALTIME_DEPLOYMENT",
-    "AZURE_SEARCH_ENDPOINT",
-    "AZURE_SEARCH_INDEX",
-];
-var missingVars = requiredEnvVars.Where(v => string.IsNullOrEmpty(Environment.GetEnvironmentVariable(v))).ToList();
-if (missingVars.Count > 0)
+try
 {
-    logger.LogCritical("FATAL: Missing required environment variables: {Missing}", string.Join(", ", missingVars));
+    _ = app.Services.GetRequiredService<IOptions<RequiredBackendOptions>>().Value;
+}
+catch (OptionsValidationException exc)
+{
+    logger.LogCritical(
+        "FATAL: Missing required environment variables: {Missing}",
+        RequiredBackendOptionsValidator.GetMissingEnvironmentVariables(exc));
     return 1;
 }
 startupChecks.Pass("env_vars");
@@ -139,7 +223,7 @@ startupChecks.Pass("env_vars");
 PersonaCatalog personaCatalog;
 try
 {
-    personaCatalog = PersonaCatalog.Load();
+    personaCatalog = app.Services.GetRequiredService<PersonaCatalog>();
 }
 catch (PersonaValidationException exc)
 {
@@ -149,10 +233,9 @@ catch (PersonaValidationException exc)
 startupChecks.Pass("personas_loaded");
 
 // ── 3. Config (config.yaml) ──────────────────────────────────────────────────────────────────
-AppConfig appConfig;
 try
 {
-    appConfig = AppConfig.Load();
+    _ = app.Services.GetRequiredService<AppConfig>();
 }
 catch (ConfigValidationException exc)
 {
@@ -162,11 +245,10 @@ catch (ConfigValidationException exc)
 
 // ── 4. Prompts for the default persona (Python: PromptLoader(brand="sonic") hardcoded; here
 // persona-aware via the catalog's DefaultPersonaId -- per-session persona selection is wave 7) ──
-var personasDir = Environment.GetEnvironmentVariable("PERSONAS_DIR") ?? Path.Combine(RepoRootLocator.Find(), "personas");
 PromptLoader promptLoader;
 try
 {
-    promptLoader = new PromptLoader(personasDir, personaCatalog.DefaultPersonaId);
+    promptLoader = app.Services.GetRequiredService<PromptLoaderRegistry>().GetRequired(personaCatalog.DefaultPersonaId);
 }
 catch (PromptLoadException exc)
 {
@@ -189,8 +271,8 @@ await CheckServiceConnectivityAsync(logger, httpClientFactory).ConfigureAwait(fa
 ModelCatalog modelCatalog;
 try
 {
-    modelCatalog = ModelCatalog.FromConfig(appConfig);
-    modelCatalog.ValidatePersonaDefaults(personaCatalog, logger);
+    modelCatalog = app.Services.GetRequiredService<ModelCatalog>();
+    modelCatalog.ValidatePersonaDefaults(personaCatalog, app.Services.GetRequiredService<ILogger<ModelCatalog>>());
 }
 catch (ModelValidationException exc)
 {
@@ -202,233 +284,40 @@ catch (ModelValidationException exc)
 // loaded (same "validated at module load" reasoning as config_loaded), and /health's shape must
 // stay byte-for-byte identical to Python's, so no new field is added here.
 
-// ── 5b. Realtime session config (issue #13): config.yaml's `model`/`audio` sections plus their
-// env overrides, exactly mirroring rtmt.py's configure_realtime_model. ─────────────────────────
-var modelSection = appConfig.TryGetSection("model");
-var audioSection = appConfig.TryGetSection("audio");
-var realtimeDeployment = Environment.GetEnvironmentVariable("AZURE_OPENAI_REALTIME_DEPLOYMENT")!;
-
-var voiceChoiceOverride = Environment.GetEnvironmentVariable("AZURE_OPENAI_REALTIME_VOICE_CHOICE");
-var voiceChoice = !string.IsNullOrEmpty(voiceChoiceOverride) ? voiceChoiceOverride : ReadString(modelSection, "default_voice") ?? "marin";
-
-var transcriptionModelOverride = Environment.GetEnvironmentVariable("AZURE_OPENAI_REALTIME_TRANSCRIPTION_MODEL");
-var transcriptionModel = !string.IsNullOrEmpty(transcriptionModelOverride) ? transcriptionModelOverride : ReadString(modelSection, "transcription_model") ?? "whisper-1";
-
-var reasoningEffortOverride = Environment.GetEnvironmentVariable("AZURE_OPENAI_REALTIME_REASONING_EFFORT");
-var reasoningEffortSource = !string.IsNullOrEmpty(reasoningEffortOverride) ? reasoningEffortOverride : ReadString(modelSection, "reasoning_effort");
-var reasoningEffort = ReasoningRules.NormalizeReasoningEffort(reasoningEffortSource);
-
-var reasoningModelOverride = Environment.GetEnvironmentVariable("AZURE_OPENAI_REALTIME_REASONING_MODEL");
-var reasoningModelSource = !string.IsNullOrEmpty(reasoningModelOverride) ? reasoningModelOverride : ReadString(modelSection, "reasoning_model");
-var reasoningModel = ReasoningRules.ParseReasoningModel(reasoningModelSource);
-
-var configuredVoices = ReadStringList(modelSection, "allowed_voices");
-IReadOnlySet<string> allowedVoices = configuredVoices is { Count: > 0 }
-    ? new HashSet<string>(configuredVoices, StringComparer.Ordinal)
-    : ClientServerFilter.DefaultAllowedVoices;
-if (!allowedVoices.Contains(voiceChoice))
+// ── 5c/6. Process-wide service graph: prompts, tool-factory plumbing, session manager, and both
+// pipeline processors are registered in DI above and resolved here only after the explicit
+// fail-fast startup checks have run in Python's order. ───────────────────────────────────────────
+ConnectionConfig connectionConfig;
+ProcessorRegistry processorRegistry;
+AssetCacheConfig assetCacheConfig;
+try
 {
-    // rtmt.py's configure_realtime_model raises ValueError for exactly this at startup (#57 FU2)
-    // -- a default voice GA would reject on every bootstrap session.update is a fail-fast, not a
-    // per-session error.
-    logger.LogCritical(
-        "FATAL: The default voice '{Voice}' (AZURE_OPENAI_REALTIME_VOICE_CHOICE / model.default_voice) is not in model.allowed_voices ({AllowedVoices})",
-        voiceChoice, string.Join(", ", allowedVoices.OrderBy(v => v, StringComparer.Ordinal)));
+    _ = app.Services.GetRequiredService<SessionManager>();
+    connectionConfig = app.Services.GetRequiredService<ConnectionConfig>();
+    processorRegistry = app.Services.GetRequiredService<ProcessorRegistry>();
+    assetCacheConfig = app.Services.GetRequiredService<AssetCacheConfig>();
+}
+catch (InvalidOperationException exc)
+{
+    logger.LogCritical("FATAL: {Message}", exc.Message);
     return 1;
 }
 
-var sessionConfig = new RealtimeSessionConfig
-{
-    Deployment = realtimeDeployment,
-    // Deliberately left null: rtmt.py's per-message session.update rebuild
-    // (_process_message_to_server) omits system_message too, relying on GA to keep the
-    // bootstrap value -- the persona system prompt is only ever passed explicitly to the
-    // bootstrap session.update builder call inside RealtimeProcessor.RunSessionAsync.
-    SystemMessage = null,
-    Temperature = ReadDouble(modelSection, "temperature") ?? 0.6,
-    MaxTokens = ReadInt(modelSection, "max_response_output_tokens") ?? 4096,
-    VoiceChoice = voiceChoice,
-    TranscriptionModel = transcriptionModel,
-    ReasoningEffort = reasoningEffort,
-    ParallelToolCalls = ReadBool(modelSection, "parallel_tool_calls"),
-    ReasoningModel = reasoningModel,
-};
-if (sessionConfig.ReasoningEffort is not null && !sessionConfig.IsReasoningModel(Overridable.Unset<bool?>()))
-{
-    logger.LogInformation(
-        "Deployment {Deployment} is not treated as a reasoning model (reasoning_model={ReasoningModel}); `reasoning` (effort={Effort}) will not be sent",
-        realtimeDeployment, reasoningModel is null ? "auto" : reasoningModel.Value.ToString(), sessionConfig.ReasoningEffort);
-}
-
-// ── 5c. Per-persona prompts + this session's own SessionToolExecutor (issue #13/#14 coordination
-// seam, now landed): `toolExecutorFactory` below builds one `SessionToolExecutor` per session,
-// once persona binding resolves, composing that session's own `OrderToolExecutor` (its own fresh
-// `OrderState`, never shared) and `SearchTool`. `toolExecutor` (the shared `StubToolExecutor`)
-// stays wired as the fallback the factory is layered over -- see RealtimeProcessor's constructor
-// doc -- so a persona with no catalogued tool schemas still gets a harmless default. ─────────────
-var promptLoaders = new Dictionary<string, PromptLoader>(StringComparer.Ordinal)
-{
-    [personaCatalog.DefaultPersonaId] = promptLoader,
-};
-var allToolNames = new HashSet<string>(StringComparer.Ordinal);
-foreach (var personaId in personaCatalog.Ids)
-{
-    if (!promptLoaders.TryGetValue(personaId, out var loader))
-    {
-        loader = new PromptLoader(personasDir, personaId);
-        promptLoaders[personaId] = loader;
-    }
-    foreach (var schema in loader.ToolSchemas)
-    {
-        if (schema.TryGetValue("name", out var nameObj) && nameObj?.ToString() is { Length: > 0 } toolName)
-        {
-            allToolNames.Add(toolName);
-        }
-    }
-}
-var toolExecutor = new StubToolExecutor(allToolNames);
-
-// #14: order/search domain wiring -- one shared HttpClient (thread-safe for concurrent use,
-// reused across every session's own SearchTool instance, mirroring the realtime relay's own
-// single upstream endpoint config being shared while OrderState/MenuCatalog stay session-bound).
-var businessRulesConfig = BusinessRulesConfig.FromAppConfig(appConfig);
-var searchConfig = SearchConfig.FromAppConfig(appConfig);
-var searchEndpointConfig = SearchEndpointConfig.FromEnvironment();
-var searchHttpClient = httpClientFactory.CreateClient(SearchHttpClientName);
-
-IToolExecutor BuildSessionToolExecutor(Persona sessionPersona, PromptLoader? sessionPromptLoader, string? sessionMenuMode)
-{
-    var menu = PersonaOrderFactory.GetMenuCatalog(sessionPersona);
-    var orderState = PersonaOrderFactory.CreateOrderState(sessionPersona);
-    var orderTools = new OrderToolExecutor(
-        orderState, menu, sessionPromptLoader, businessRulesConfig.MaxItemQuantity, businessRulesConfig.MaxOrderItems,
-        sessionMenuMode);
-    var searchTool = new SearchTool(
-        searchHttpClient, searchEndpointConfig, searchConfig, menu, sessionPromptLoader,
-        sessionPersona.Search.IndexName, sessionPersona.Id, bearerTokenProvider: null, logger: logger,
-        menuMode: sessionMenuMode, effectiveMachineStatus: orderState.EffectiveMachineStatus);
-    return new SessionToolExecutor(orderTools, searchTool);
-}
-
-var upstreamEndpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_EASTUS2_ENDPOINT")!;
-var upstreamApiKey = Environment.GetEnvironmentVariable("AZURE_OPENAI_EASTUS2_API_KEY") ?? string.Empty;
-var echoCooldownSeconds = ReadDouble(audioSection, "echo_cooldown_seconds") ?? 1.5;
-// Issue #13 Wave 2: the realtime relay's one clock (echo-suppression cooldowns, the greeting-gate
-// timeout, NowSeconds()) -- a single TimeProvider.System instance, passed straight into
-// RealtimeProcessor below. Tests construct RealtimeProcessor directly with their own
-// FakeTimeProvider instead, so no DI container registration is needed here.
-var timeProvider = TimeProvider.System;
-// Issue #13 Wave 4: the rate-limit retry ladder's own config (resilience.rate_limit in
-// config.yaml, RATE_LIMIT_RECOVERY_ENABLED env override) -- Beth's #147 auth wiring in this same
-// file is unrelated to this, kept as a minimal one-line addition plus the matching constructor arg
-// below.
-var rateLimitSettings = RateLimitSettings.FromAppConfig(appConfig);
-// Issue #15: the session registry (resume/rehydration/idle/grace/nudge) -- one process-wide
-// singleton, same lifetime/shape as rateLimitSettings above. Its sweep loop runs as
-// SessionSweepService (registered as a BackgroundService before Build() above), so it starts and
-// stops with the rest of the host instead of a hand-wired Task.Run.
-var sessionsConfig = SessionsConfig.FromConfig(appConfig);
-sessionManager = new SessionManager(sessionsConfig, timeProvider, logger);
-// Issue #13 tail: config.yaml's `connection` section (ws_heartbeat_seconds/ws_compression/
-// ws_connect_timeout_total/ws_connect_timeout_connect) -- shared by the browser-facing
-// UseWebSockets() call below and RealtimeProcessor's own upstream ClientWebSocket connect.
-var connectionConfig = ConnectionConfig.FromConfig(appConfig);
-
-// ── 6. Processor registry (issue #75, design doc section 7.4): only "realtime" is registered
-// this wave -- its own model resolution is fully ported (Models/ModelDispatch.cs's
-// ResolveRealtimeModel). Issue #13 lands the real upstream relay (RunSessionAsync, called
-// directly from the /realtime handler below); ProcessAsync stays a deliberate stub since the
-// realtime pipeline never posts to a session's generic mailbox. A model catalogued for
-// "cascade" 404s at dispatch time until its own processor lands (#155 dropped "local" entirely,
-// so it is no longer a pipeline at all). ──────────────────────────────────────────────────────
-var processorRegistry = new ProcessorRegistry();
-var realtimeProcessor = new RealtimeProcessor(
-    modelCatalog,
-    realtimeDeployment,
-    upstreamEndpoint,
-    upstreamApiKey,
-    sessionConfig,
-    promptLoaders,
-    toolExecutor,
-    allowedVoices,
-    echoCooldownSeconds,
-    logger: logger,
-    toolExecutorFactory: BuildSessionToolExecutor,
-    timeProvider: timeProvider,
-    rateLimitSettings: rateLimitSettings,
-    sessionManager: sessionManager,
-    connectionConfig: connectionConfig);
-// PR #140 R5: bearerTokenProvider is left at its default (null) here deliberately --
-// RealtimeProcessor.ResolveUpstreamAuthHeaderAsync falls back to the lazily-constructed real
-// DefaultAzureCredentialTokenProvider itself, so a DefaultAzureCredential (which probes several
-// credential sources) is only ever actually constructed for a connection that has no api-key
-// configured and genuinely needs a managed-identity token. SearchTool's own bearer fallback
-// (DefaultAzureCredentialSearchTokenProvider) is analogously lazy, constructed inside
-// BuildSessionToolExecutor's SearchTool only if AZURE_SEARCH_API_KEY is unset.
-processorRegistry.Register(realtimeProcessor);
-
-// ── 6b. Cascade processor (issue #13 Wave 5 / #82): STT -> chat-completions-with-tools -> TTS,
-// for personas/models that opt into config.yaml's `models.cascade` instead of the Realtime API.
-// Reuses the SAME `promptLoaders`/`toolExecutor`/`BuildSessionToolExecutor` factory realtime does
-// (above) so tool/order/search behavior is identical regardless of pipeline. `foundryEndpoint` is
-// genuinely optional here (app.py's own `os.environ.get("AZURE_AI_FOUNDRY_ENDPOINT")` -- no
-// fail-fast): a deployment that hasn't registered any `models.cascade` entry yet simply never
-// dispatches a session to this processor (ModelDispatch 404s first), so an empty endpoint is
-// harmless until a persona/model actually selects cascade. `audioEndpoint` reuses the SAME
-// `AZURE_OPENAI_EASTUS2_ENDPOINT` realtime already requires (app.py's own `audio_endpoint=
-// llm_endpoint`), and `defaultVoice` reuses the SAME `voiceChoice` resolved above (app.py's
-// `AZURE_OPENAI_REALTIME_VOICE_CHOICE` override or `model.default_voice`) -- one voice default for
-// both pipelines. A dedicated HttpClient (not the shared `searchHttpClient`) keeps cascade's own
-// outbound REST calls (chat/STT/TTS) isolated from search's.
-var cascadeHttpClient = httpClientFactory.CreateClient(CascadeHttpClientName);
-// Mirrors app.py's own `conformance_hooks.cascade_credential() or AsyncDefaultAzureCredential()`:
-// a non-null ConformanceHooks.CascadeFakeToken (CONFORMANCE_TEST_HOOKS=1 AND
-// CONFORMANCE_CASCADE_FAKE_TOKEN set) substitutes the fixed-token StaticBearerTokenProvider so
-// cascade's chat/STT/TTS REST calls can be exercised against the conformance harness's fakes with
-// no real Azure AD identity available; otherwise CascadeProcessor's own default (bearerTokenProvider:
-// null) lazily falls back to the real DefaultAzureCredentialTokenProvider exactly as before.
-var cascadeBearerTokenProvider = ConformanceHooks.CascadeFakeToken is { } cascadeFakeToken
-    ? new StaticBearerTokenProvider(cascadeFakeToken)
-    : null;
-var cascadeProcessor = new CascadeProcessor(
-    modelCatalog,
-    Environment.GetEnvironmentVariable("AZURE_AI_FOUNDRY_ENDPOINT") ?? string.Empty,
-    upstreamEndpoint,
-    appConfig,
-    promptLoaders,
-    toolExecutor,
-    cascadeHttpClient,
-    allowedVoices,
-    voiceChoice,
-    logger: logger,
-    bearerTokenProvider: cascadeBearerTokenProvider,
-    toolExecutorFactory: BuildSessionToolExecutor,
-    timeProvider: timeProvider,
-    // #126: the SAME echo-suppression cooldown and session registry (resume/rehydration/
-    // idle/grace/nudge) RealtimeProcessor already uses above -- echo is a physical/acoustic
-    // property of the room and device, not something that differs by which pipeline answered
-    // the turn, and a resumed/rehydrated/nudged session must behave identically regardless of
-    // which pipeline the guest's persona happens to route through.
-    echoCooldownSeconds: echoCooldownSeconds,
-    sessionManager: sessionManager);
-
-processorRegistry.Register(cascadeProcessor);
-
-var assetCacheConfig = AssetCacheConfig.FromConfig(appConfig);
-
 logger.LogInformation(
     "Startup validation passed: personas={Personas}, prompts loaded ({Chars} chars), config valid, {Count}/{Count} env vars set",
-    string.Join(", ", personaCatalog.Ids), promptLoader.SystemPrompt.Length, requiredEnvVars.Length, requiredEnvVars.Length);
+    string.Join(", ", personaCatalog.Ids),
+    promptLoader.SystemPrompt.Length,
+    RequiredBackendOptions.RequiredEnvironmentVariableNames.Count,
+    RequiredBackendOptions.RequiredEnvironmentVariableNames.Count);
 
 // ── Session token service (rtmt.py's create_hmac_token/validate_hmac_token) ─────────────────
-var appSecret = AppSecretProvider.Load(app.Configuration, logger, runningInProduction);
-var tokenService = new SessionTokenService(appSecret);
+var tokenService = app.Services.GetRequiredService<SessionTokenService>();
 
 // config.yaml's `security` section (rtmt.py's module-level `_security_cfg`) -- gates the
 // /realtime Origin and session-token checks below.
-var securityConfig = SecurityConfig.FromConfig(appConfig);
+var securityConfig = app.Services.GetRequiredService<SecurityConfig>();
 
-var sessionRegistry = new SessionRegistry();
+var sessionRegistry = app.Services.GetRequiredService<SessionRegistry>();
 
 // ── Static files (shared with the Python backend -- frontend unchanged by the port) -- placed
 // BEFORE UseRouting/UseAuthentication/UseAuthorization below so a static-file request never
@@ -436,7 +325,7 @@ var sessionRegistry = new SessionRegistry();
 // circuits the pipeline for any file it serves). Computed here (rather than down where it maps
 // "/") so UseStaticFiles can be registered at the correct pipeline position while the "/" route
 // itself can still be mapped anywhere (Map* calls aren't position-sensitive). ───────────────────
-var staticDir = Environment.GetEnvironmentVariable("STATIC_FILES_DIR") ?? TryFindStaticDir();
+var staticDir = BackendEnvironment.Get(BackendEnvironment.StaticFilesDir) ?? TryFindStaticDir();
 if (staticDir is not null && Directory.Exists(staticDir))
 {
     var fileProvider = new PhysicalFileProvider(staticDir);
@@ -730,12 +619,12 @@ static async Task CheckServiceConnectivityAsync(ILogger logger, IHttpClientFacto
 {
     var endpoints = new (string Name, string? Url)[]
     {
-        ("Azure OpenAI", Environment.GetEnvironmentVariable("AZURE_OPENAI_EASTUS2_ENDPOINT")),
-        ("Azure Search", Environment.GetEnvironmentVariable("AZURE_SEARCH_ENDPOINT")),
+        ("Azure OpenAI", BackendEnvironment.Get(BackendEnvironment.AzureOpenAiEastUs2Endpoint)),
+        ("Azure Search", BackendEnvironment.Get(BackendEnvironment.AzureSearchEndpoint)),
     };
     try
     {
-        using var httpClient = httpClientFactory.CreateClient(ConnectivityCheckHttpClientName);
+        using var httpClient = httpClientFactory.CreateClient(BackendHttpClientNames.ConnectivityCheck);
         httpClient.Timeout = TimeSpan.FromSeconds(5);
         foreach (var (name, url) in endpoints)
         {
@@ -758,6 +647,78 @@ static async Task CheckServiceConnectivityAsync(ILogger logger, IHttpClientFacto
     {
         logger.LogWarning("⚠️ Service connectivity check failed — {Message} (non-fatal)", exc.Message);
     }
+}
+
+static RealtimeStartupSettings BuildRealtimeStartupSettings(AppConfig appConfig, ILogger logger)
+{
+    var modelSection = appConfig.TryGetSection("model");
+    var audioSection = appConfig.TryGetSection("audio");
+    var realtimeDeployment = BackendEnvironment.Get(BackendEnvironment.AzureOpenAiRealtimeDeployment)!;
+
+    var voiceChoiceOverride = BackendEnvironment.Get(BackendEnvironment.AzureOpenAiRealtimeVoiceChoice);
+    var voiceChoice = !string.IsNullOrEmpty(voiceChoiceOverride)
+        ? voiceChoiceOverride
+        : ReadString(modelSection, "default_voice") ?? "marin";
+
+    var transcriptionModelOverride = BackendEnvironment.Get(BackendEnvironment.AzureOpenAiRealtimeTranscriptionModel);
+    var transcriptionModel = !string.IsNullOrEmpty(transcriptionModelOverride)
+        ? transcriptionModelOverride
+        : ReadString(modelSection, "transcription_model") ?? "whisper-1";
+
+    var reasoningEffortOverride = BackendEnvironment.Get(BackendEnvironment.AzureOpenAiRealtimeReasoningEffort);
+    var reasoningEffortSource = !string.IsNullOrEmpty(reasoningEffortOverride)
+        ? reasoningEffortOverride
+        : ReadString(modelSection, "reasoning_effort");
+    var reasoningEffort = ReasoningRules.NormalizeReasoningEffort(reasoningEffortSource);
+
+    var reasoningModelOverride = BackendEnvironment.Get(BackendEnvironment.AzureOpenAiRealtimeReasoningModel);
+    var reasoningModelSource = !string.IsNullOrEmpty(reasoningModelOverride)
+        ? reasoningModelOverride
+        : ReadString(modelSection, "reasoning_model");
+    var reasoningModel = ReasoningRules.ParseReasoningModel(reasoningModelSource);
+
+    var configuredVoices = ReadStringList(modelSection, "allowed_voices");
+    IReadOnlySet<string> allowedVoices = configuredVoices is { Count: > 0 }
+        ? new HashSet<string>(configuredVoices, StringComparer.Ordinal)
+        : ClientServerFilter.DefaultAllowedVoices;
+    if (!allowedVoices.Contains(voiceChoice))
+    {
+        throw new InvalidOperationException(
+            $"The default voice '{voiceChoice}' (AZURE_OPENAI_REALTIME_VOICE_CHOICE / model.default_voice) " +
+            $"is not in model.allowed_voices ({string.Join(", ", allowedVoices.OrderBy(v => v, StringComparer.Ordinal))})");
+    }
+
+    var sessionConfig = new RealtimeSessionConfig
+    {
+        Deployment = realtimeDeployment,
+        // Deliberately left null: rtmt.py's per-message session.update rebuild
+        // (_process_message_to_server) omits system_message too, relying on GA to keep the
+        // bootstrap value -- the persona system prompt is only ever passed explicitly to the
+        // bootstrap session.update builder call inside RealtimeProcessor.RunSessionAsync.
+        SystemMessage = null,
+        Temperature = ReadDouble(modelSection, "temperature") ?? 0.6,
+        MaxTokens = ReadInt(modelSection, "max_response_output_tokens") ?? 4096,
+        VoiceChoice = voiceChoice,
+        TranscriptionModel = transcriptionModel,
+        ReasoningEffort = reasoningEffort,
+        ParallelToolCalls = ReadBool(modelSection, "parallel_tool_calls"),
+        ReasoningModel = reasoningModel,
+    };
+    if (sessionConfig.ReasoningEffort is not null && !sessionConfig.IsReasoningModel(Overridable.Unset<bool?>()))
+    {
+        logger.LogInformation(
+            "Deployment {Deployment} is not treated as a reasoning model (reasoning_model={ReasoningModel}); `reasoning` (effort={Effort}) will not be sent",
+            realtimeDeployment, reasoningModel is null ? "auto" : reasoningModel.Value.ToString(), sessionConfig.ReasoningEffort);
+    }
+
+    return new RealtimeStartupSettings(
+        realtimeDeployment,
+        BackendEnvironment.Get(BackendEnvironment.AzureOpenAiEastUs2Endpoint)!,
+        BackendEnvironment.Get(BackendEnvironment.AzureOpenAiEastUs2ApiKey) ?? string.Empty,
+        sessionConfig,
+        allowedVoices,
+        voiceChoice,
+        ReadDouble(audioSection, "echo_cooldown_seconds") ?? 1.5);
 }
 
 // config.yaml section readers for issue #13's RealtimeSessionConfig wiring: YamlDotNet's untyped
@@ -816,6 +777,15 @@ static string? TryFindStaticDir()
 /// <summary>Placeholder mailbox event: the raw bytes of one WebSocket frame. Wave 3+ (#13)
 /// replaces this with real, typed protocol events once a pipeline actually parses them.</summary>
 internal sealed record RawFrameEvent(byte[] Payload, WebSocketMessageType MessageType) : SessionEvent;
+
+internal sealed record RealtimeStartupSettings(
+    string RealtimeDeployment,
+    string UpstreamEndpoint,
+    string UpstreamApiKey,
+    RealtimeSessionConfig SessionConfig,
+    IReadOnlySet<string> AllowedVoices,
+    string VoiceChoice,
+    double EchoCooldownSeconds);
 
 /// <summary>Exposes Program's top-level statements to WebApplicationFactory-based integration
 /// tests (Microsoft.AspNetCore.Mvc.Testing requires a public partial Program type).</summary>

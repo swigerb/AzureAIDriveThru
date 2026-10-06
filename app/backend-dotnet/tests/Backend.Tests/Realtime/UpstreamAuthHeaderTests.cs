@@ -6,6 +6,7 @@ using Backend.Prompts;
 using Backend.Realtime;
 using Backend.Sessions;
 using Backend.Tools;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Backend.Tests.Realtime;
 
@@ -41,13 +42,23 @@ public sealed class UpstreamAuthHeaderTests
     private static RealtimeProcessor CreateProcessor(string upstreamApiKey, IUpstreamBearerTokenProvider? bearerTokenProvider) =>
         new(
             ModelCatalog.FromConfig(AppConfig.Load()),
-            defaultDeployment: "gpt-realtime-2.1",
-            upstreamEndpoint: "https://example-eastus2.openai.azure.com",
-            upstreamApiKey: upstreamApiKey,
-            sessionConfig: new RealtimeSessionConfig(),
-            promptLoaders: new Dictionary<string, PromptLoader>(),
-            toolExecutor: new StubToolExecutor([]),
-            bearerTokenProvider: bearerTokenProvider);
+            new RealtimeProcessorOptions(
+                "gpt-realtime-2.1",
+                "https://example-eastus2.openai.azure.com",
+                upstreamApiKey,
+                new RealtimeSessionConfig(),
+                ClientServerFilter.DefaultAllowedVoices,
+                1.5,
+                5.0,
+                new RateLimitSettings(),
+                new ConnectionConfig()),
+            new RealtimeProcessorDependencies(
+                new Dictionary<string, PromptLoader>(),
+                new StubToolExecutor([]),
+                NullLogger<RealtimeProcessor>.Instance,
+                NullLogger<RateLimitRecovery>.Instance,
+                NullLogger<NudgeScheduler>.Instance,
+                BearerTokenProvider: bearerTokenProvider));
 
     [Fact]
     public async Task ApiKeyConfigured_UsesApiKeyHeader_AndNeverCallsTheTokenProvider()

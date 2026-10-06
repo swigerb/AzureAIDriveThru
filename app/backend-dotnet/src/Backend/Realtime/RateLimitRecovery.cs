@@ -71,7 +71,7 @@ public sealed class RateLimitRecovery
     private readonly Func<JsonObject, CancellationToken, Task> _sendClient;
     private readonly TimeProvider _timeProvider;
     private readonly string? _sessionId;
-    private readonly ILogger? _logger;
+    private readonly ILogger<RateLimitRecovery> _logger;
     private readonly Lock _sync = new();
 
     // Retries already sent for the response currently being recovered.
@@ -88,9 +88,9 @@ public sealed class RateLimitRecovery
         RateLimitSettings settings,
         Func<string, CancellationToken, Task> sendUpstream,
         Func<JsonObject, CancellationToken, Task> sendClient,
+        ILogger<RateLimitRecovery> logger,
         TimeProvider? timeProvider = null,
-        string? sessionId = null,
-        ILogger? logger = null)
+        string? sessionId = null)
     {
         _settings = settings;
         _sendUpstream = sendUpstream;
@@ -173,7 +173,7 @@ public sealed class RateLimitRecovery
         if (inFlight)
         {
             // The running response's own response.done will report the failure.
-            _logger?.RateLimitErrorWhileInFlight(error["code"]?.GetValue<string>(), _sessionId);
+            _logger.RateLimitErrorWhileInFlight(error["code"]?.GetValue<string>(), _sessionId);
             return true;
         }
         await OnFailureAsync(error, "error event", ct).ConfigureAwait(false);

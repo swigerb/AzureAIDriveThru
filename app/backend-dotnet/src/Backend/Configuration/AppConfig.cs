@@ -27,7 +27,7 @@ internal sealed class AppConfig
     public static AppConfig Load(string? path = null)
     {
         var configPath = path
-            ?? Environment.GetEnvironmentVariable("CONFIG_PATH")
+            ?? BackendEnvironment.Get(BackendEnvironment.ConfigPath)
             ?? Path.Combine(RepoRootLocator.Find(), "app", "backend", "config.yaml");
 
         if (!File.Exists(configPath))

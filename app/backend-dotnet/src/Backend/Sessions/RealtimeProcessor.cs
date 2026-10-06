@@ -2,6 +2,7 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Backend.Configuration;
 using Backend.Models;
 using Backend.Personas;
 using Backend.Prompts;
@@ -103,7 +104,9 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
     private readonly IReadOnlySet<string> _allowedVoices;
     private readonly double _echoCooldownSeconds;
     private readonly double _greetingTimeoutSeconds;
-    private readonly ILogger? _logger;
+    private readonly ILogger<RealtimeProcessor> _logger;
+    private readonly ILogger<RateLimitRecovery> _rateLimitLogger;
+    private readonly ILogger<NudgeScheduler> _nudgeLogger;
     private readonly TimeProvider _timeProvider;
     private readonly RateLimitSettings _rateLimitSettings;
     private readonly SessionManager? _sessionManager;
@@ -111,55 +114,43 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
 
     public RealtimeProcessor(
         ModelCatalog catalog,
-        string defaultDeployment,
-        string upstreamEndpoint,
-        string upstreamApiKey,
-        RealtimeSessionConfig sessionConfig,
-        IReadOnlyDictionary<string, PromptLoader> promptLoaders,
-        IToolExecutor toolExecutor,
-        IReadOnlySet<string>? allowedVoices = null,
-        double echoCooldownSeconds = 1.5,
-        double greetingTimeoutSeconds = 5.0,
-        ILogger? logger = null,
-        IUpstreamBearerTokenProvider? bearerTokenProvider = null,
-        Func<Persona, PromptLoader?, string?, IToolExecutor>? toolExecutorFactory = null,
-        TimeProvider? timeProvider = null,
-        RateLimitSettings? rateLimitSettings = null,
-        SessionManager? sessionManager = null,
-        Configuration.ConnectionConfig? connectionConfig = null)
+        RealtimeProcessorOptions options,
+        RealtimeProcessorDependencies dependencies)
     {
         _catalog = catalog;
-        _defaultDeployment = defaultDeployment;
-        _upstreamEndpoint = upstreamEndpoint;
-        _upstreamApiKey = upstreamApiKey;
-        _bearerTokenProvider = bearerTokenProvider;
-        _sessionConfig = sessionConfig;
-        _promptLoaders = promptLoaders;
-        _toolExecutor = toolExecutor;
-        _toolExecutorFactory = toolExecutorFactory;
-        _allowedVoices = allowedVoices ?? ClientServerFilter.DefaultAllowedVoices;
-        _echoCooldownSeconds = echoCooldownSeconds;
-        _greetingTimeoutSeconds = greetingTimeoutSeconds;
-        _logger = logger;
+        _defaultDeployment = options.DefaultDeployment;
+        _upstreamEndpoint = options.UpstreamEndpoint;
+        _upstreamApiKey = options.UpstreamApiKey;
+        _bearerTokenProvider = dependencies.BearerTokenProvider;
+        _sessionConfig = options.SessionConfig;
+        _promptLoaders = dependencies.PromptLoaders;
+        _toolExecutor = dependencies.ToolExecutor;
+        _toolExecutorFactory = dependencies.ToolExecutorFactory;
+        _allowedVoices = options.AllowedVoices;
+        _echoCooldownSeconds = options.EchoCooldownSeconds;
+        _greetingTimeoutSeconds = options.GreetingTimeoutSeconds;
+        _logger = dependencies.Logger;
+        _rateLimitLogger = dependencies.RateLimitLogger;
+        _nudgeLogger = dependencies.NudgeLogger;
         // Issue #13 Wave 4: the rate-limit retry ladder's own config (resilience.rate_limit in
         // config.yaml) -- defaults to the Python-matching shipped defaults if the caller (normally
         // Program.cs, via RateLimitSettings.FromAppConfig) doesn't supply one.
-        _rateLimitSettings = rateLimitSettings ?? new RateLimitSettings();
+        _rateLimitSettings = options.RateLimitSettings;
         // Issue #13 Wave 2: every time-dependent piece of the relay (echo-suppression cooldowns,
         // the greeting-gate timeout, the "loop time" ShouldSuppressAudio/OnAudioDone/OnResponseDone
         // read) is driven from this one clock, so a test can swap in a FakeTimeProvider instead of
         // waiting on real wall-clock delays. Defaults to TimeProvider.System in production.
-        _timeProvider = timeProvider ?? TimeProvider.System;
+        _timeProvider = dependencies.TimeProvider ?? TimeProvider.System;
         // Issue #15: the session registry (resume/rehydration/idle/grace/nudge). Left null by
         // every existing caller/test that doesn't pass one -- the whole feature is then fully
         // inert: extension.resume is silently swallowed (the pre-#15 scope-cut behaviour) and no
         // extra session_metadata field/first-frame wait is introduced, so nothing built against
         // this constructor before #15 changes behaviour.
-        _sessionManager = sessionManager;
+        _sessionManager = dependencies.SessionManager;
         // Issue #13 tail: config.yaml's `connection` section (ws_heartbeat_seconds/
         // ws_connect_timeout_total/ws_connect_timeout_connect) -- see ConnectionConfig's own doc
         // comment for the full heartbeat/connect-timeout mapping.
-        _connectionConfig = connectionConfig ?? new Configuration.ConnectionConfig();
+        _connectionConfig = options.ConnectionConfig;
     }
 
     public string PipelineName => "realtime";
@@ -329,7 +320,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
                 sendClient: (payload, rlCt) => SendTextAsync(browserSocket, payload.ToJsonString(), rlCt),
                 timeProvider: _timeProvider,
                 sessionId: sessionId,
-                logger: _logger),
+                logger: _rateLimitLogger),
             // Issue #13 Wave 4 (swigerb/SonicAIDriveThru#36, PR #58 re-review "S1"/"S2"): one
             // tracker per connection, same lifetime as RateLimit/Echo above -- mirrors rtmt.py's
             // per-connection `tool_failures = _ToolFailureTracker()`.
@@ -389,7 +380,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
                 sessionConfigured: state.SessionConfigured.Task,
                 timeProvider: _timeProvider,
                 sessionId: sessionId,
-                logger: _logger);
+                logger: _nudgeLogger);
 
             // "Decide fresh" fallback: if the browser's very first frame never arrives (or isn't
             // extension.resume) within first_frame_timeout_seconds, unblock the deferred
@@ -433,7 +424,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
 
         double ParseGreetingTimeoutSeconds()
         {
-            var raw = Environment.GetEnvironmentVariable("CONFORMANCE_GREETING_TIMEOUT_SECONDS");
+            var raw = BackendEnvironment.Get("CONFORMANCE_GREETING_TIMEOUT_SECONDS");
             return double.TryParse(raw, System.Globalization.CultureInfo.InvariantCulture, out var seconds) && seconds > 0
                 ? seconds
                 : _greetingTimeoutSeconds;
@@ -669,7 +660,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
                 // CancellationToken, and mutates OrderState, which isn't thread-safe -- a promptly
                 // cancelled StaleCts alone was never enough to stop an already-started dispatch.
                 Task.Run(
-                    () => CloseSupersededStaleConnectionAsync(staleWs, outcome.StaleCts, SupersededCloseTimeout, _logger),
+                    () => CloseSupersededStaleConnectionAsync(staleWs, outcome.StaleCts, SupersededCloseTimeout, _logger!),
                     CancellationToken.None).FireAndForget(_logger, nameof(CloseSupersededStaleConnectionAsync));
             }
         }
@@ -905,7 +896,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
                         _sessionManager?.TouchActivity(state.EffectiveSessionId);
                     }
 
-                    var hooksEnabled = Environment.GetEnvironmentVariable("CONFORMANCE_TEST_HOOKS") == "1";
+                    var hooksEnabled = BackendEnvironment.Get("CONFORMANCE_TEST_HOOKS") == "1";
                     var (forwarded, sentType) = ProcessClientMessage(message, hooksEnabled);
                     if (forwarded is null)
                     {
@@ -1335,71 +1326,82 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
                 return;
             }
 
-            if (resumed)
+            try
             {
-                var outcome = state.ResumeAnnounce!;
-                var orderSummaryJson = outcome.ToolExecutor is IOrderTicketSource ticketSource
-                    ? SafeOrderSummaryJson(ticketSource)
-                    : "{}";
-                var resumedFrame = new JsonObject
+                if (resumed)
                 {
-                    ["type"] = "extension.session_resumed",
-                    ["order_summary"] = JsonNode.Parse(orderSummaryJson) ?? new JsonObject(),
-                    ["session_token"] = state.Identifiers.SessionToken,
-                    ["round_trip_index"] = state.Identifiers.RoundTripIndex,
-                    // Rick's #244 review (issue 5): rtmt.py's handle_resume always includes
-                    // round_trip_token alongside round_trip_index in this frame (App.tsx's own
-                    // resume handling reads it, per types.ts's SessionResumedMessage) -- it was
-                    // simply missing here even though SessionIdentifiers.RoundTripToken already
-                    // exists as a computed property.
-                    ["round_trip_token"] = state.Identifiers.RoundTripToken,
-                    ["resume_id"] = outcome.ResumeId,
-                };
-                // Parity with rtmt.py's handle_resume (sets `announced = True` right before sending
-                // extension.session_resumed): a successfully resumed connection holds a baton (its
-                // own resume id) exactly like a fresh connection does, so if a later stray
-                // extension.resume invalidates it, this socket must get the same rotated-id
-                // re-announce a fresh connection would -- not silence.
-                state.MetadataAnnounced = true;
-                await SendTextAsync(browserSocket, resumedFrame.ToJsonString(), ct).ConfigureAwait(false);
-
-                if (outcome.ConversationStarted)
-                {
-                    var rehydrationItem = new JsonObject
+                    var outcome = state.ResumeAnnounce!;
+                    var orderSummaryJson = outcome.ToolExecutor is IOrderTicketSource ticketSource
+                        ? SafeOrderSummaryJson(ticketSource)
+                        : "{}";
+                    var resumedFrame = new JsonObject
                     {
-                        ["type"] = "conversation.item.create",
-                        ["item"] = new JsonObject
-                        {
-                            ["id"] = MiddleTierItemIds.NewId(),
-                            ["type"] = "message",
-                            ["role"] = "system",
-                            ["content"] = new JsonArray(new JsonObject
-                            {
-                                ["type"] = "input_text",
-                                ["text"] = SessionManager.BuildRehydrationText(
-                                    orderSummaryJson,
-                                    outcome.RecentTurns ?? Array.Empty<(string Role, string Text)>(),
-                                    persona.RoleName),
-                            }),
-                        },
+                        ["type"] = "extension.session_resumed",
+                        ["order_summary"] = JsonNode.Parse(orderSummaryJson) ?? new JsonObject(),
+                        ["session_token"] = state.Identifiers.SessionToken,
+                        ["round_trip_index"] = state.Identifiers.RoundTripIndex,
+                        // Rick's #244 review (issue 5): rtmt.py's handle_resume always includes
+                        // round_trip_token alongside round_trip_index in this frame (App.tsx's own
+                        // resume handling reads it, per types.ts's SessionResumedMessage) -- it was
+                        // simply missing here even though SessionIdentifiers.RoundTripToken already
+                        // exists as a computed property.
+                        ["round_trip_token"] = state.Identifiers.RoundTripToken,
+                        ["resume_id"] = outcome.ResumeId,
                     };
-                    var rehydrationItemJson = rehydrationItem.ToJsonString();
-                    await SendTextAsync(upstream, rehydrationItemJson, ct).ConfigureAwait(false);
-                    // Issue #13 tail: track the rehydration item in the context window, mirroring
-                    // rtmt.py's ctx_monitor.add_content(rehydration) right after it's sent.
-                    _sessionManager?.GetContextMonitor(state.EffectiveSessionId)?.AddContent(rehydrationItemJson);
+                    // Parity with rtmt.py's handle_resume (sets `announced = True` right before sending
+                    // extension.session_resumed): a successfully resumed connection holds a baton (its
+                    // own resume id) exactly like a fresh connection does, so if a later stray
+                    // extension.resume invalidates it, this socket must get the same rotated-id
+                    // re-announce a fresh connection would -- not silence.
+                    state.MetadataAnnounced = true;
+                    await SendTextAsync(browserSocket, resumedFrame.ToJsonString(), ct).ConfigureAwait(false);
 
-                    // Restore the persisted voice on the (brand new) upstream connection BEFORE any
-                    // response.create can fire -- the bootstrap session.update already went out with
-                    // whatever voice the fresh persona binding resolved to, so this corrects it in
-                    // place (VoicePickerTests' resume-restore-precedes-response.create requirement).
-                    var voiceUpdate = state.Guard.Track(BuildVoiceUpdateFrame(state.Voice).ToJsonString());
-                    await SendTextAsync(upstream, voiceUpdate, ct).ConfigureAwait(false);
+                    if (outcome.ConversationStarted)
+                    {
+                        var rehydrationItem = new JsonObject
+                        {
+                            ["type"] = "conversation.item.create",
+                            ["item"] = new JsonObject
+                            {
+                                ["id"] = MiddleTierItemIds.NewId(),
+                                ["type"] = "message",
+                                ["role"] = "system",
+                                ["content"] = new JsonArray(new JsonObject
+                                {
+                                    ["type"] = "input_text",
+                                    ["text"] = SessionManager.BuildRehydrationText(
+                                        orderSummaryJson,
+                                        outcome.RecentTurns ?? Array.Empty<(string Role, string Text)>(),
+                                        persona.RoleName),
+                                }),
+                            },
+                        };
+                        var rehydrationItemJson = rehydrationItem.ToJsonString();
+                        await SendTextAsync(upstream, rehydrationItemJson, ct).ConfigureAwait(false);
+                        // Issue #13 tail: track the rehydration item in the context window, mirroring
+                        // rtmt.py's ctx_monitor.add_content(rehydration) right after it's sent.
+                        _sessionManager?.GetContextMonitor(state.EffectiveSessionId)?.AddContent(rehydrationItemJson);
+
+                        // Restore the persisted voice on the (brand new) upstream connection BEFORE any
+                        // response.create can fire -- the bootstrap session.update already went out with
+                        // whatever voice the fresh persona binding resolved to, so this corrects it in
+                        // place (VoicePickerTests' resume-restore-precedes-response.create requirement).
+                        var voiceUpdate = state.Guard.Track(BuildVoiceUpdateFrame(state.Voice).ToJsonString());
+                        await SendTextAsync(upstream, voiceUpdate, ct).ConfigureAwait(false);
+                    }
+                }
+                else
+                {
+                    await SendFreshSessionMetadataAsync().ConfigureAwait(false);
                 }
             }
-            else
+            catch (OperationCanceledException)
             {
-                await SendFreshSessionMetadataAsync().ConfigureAwait(false);
+                // Best-effort fire-and-forget announce: teardown can race the post-decision send.
+            }
+            catch (WebSocketException)
+            {
+                // Best-effort fire-and-forget announce: a closing socket should not emit a fresh error log.
             }
         }
 
@@ -1860,7 +1862,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
         WebSocket staleWs,
         CancellationTokenSource? staleCts,
         TimeSpan closeTimeout,
-        ILogger? logger = null)
+        ILogger logger)
     {
         try
         {

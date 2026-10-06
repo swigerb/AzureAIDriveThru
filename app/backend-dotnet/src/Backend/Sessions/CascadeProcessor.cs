@@ -61,7 +61,7 @@ internal sealed class CascadeProcessor : IPipelineProcessor
     private readonly Func<Persona, PromptLoader?, string?, IToolExecutor>? _toolExecutorFactory;
     private readonly IReadOnlySet<string> _allowedVoices;
     private readonly string _defaultVoice;
-    private readonly ILogger? _logger;
+    private readonly ILogger<CascadeProcessor> _logger;
     private readonly TimeProvider _timeProvider;
     // #126: acoustic tail after estimated playback during which mic audio is still dropped.
     // Derived from the same `audio.echo_cooldown_seconds` the realtime pipeline uses, but capped
@@ -82,40 +82,28 @@ internal sealed class CascadeProcessor : IPipelineProcessor
 
     public CascadeProcessor(
         ModelCatalog catalog,
-        string foundryEndpoint,
-        string audioEndpoint,
-        AppConfig appConfig,
-        IReadOnlyDictionary<string, PromptLoader> promptLoaders,
-        IToolExecutor toolExecutor,
-        HttpClient httpClient,
-        IReadOnlySet<string>? allowedVoices = null,
-        string defaultVoice = "marin",
-        ILogger? logger = null,
-        IUpstreamBearerTokenProvider? bearerTokenProvider = null,
-        Func<Persona, PromptLoader?, string?, IToolExecutor>? toolExecutorFactory = null,
-        TimeProvider? timeProvider = null,
-        double echoCooldownSeconds = 1.5,
-        SessionManager? sessionManager = null)
+        CascadeProcessorOptions options,
+        CascadeProcessorDependencies dependencies)
     {
         _catalog = catalog;
-        var credential = bearerTokenProvider ?? DefaultAzureCredentialTokenProvider.Instance.Value;
-        _chatClient = new FoundryChatClient(httpClient, foundryEndpoint, credential);
-        _audioClient = new FoundryAudioClient(httpClient, audioEndpoint, credential);
-        _rateLimitSettings = CascadeRateLimitSettings.FromAppConfig(appConfig);
-        _vadConfig = CascadeVadConfig.FromAppConfig(appConfig);
-        _promptLoaders = promptLoaders;
-        _toolExecutor = toolExecutor;
-        _toolExecutorFactory = toolExecutorFactory;
-        _allowedVoices = allowedVoices ?? ClientServerFilter.DefaultAllowedVoices;
-        _defaultVoice = defaultVoice;
-        _logger = logger;
+        var credential = dependencies.BearerTokenProvider ?? DefaultAzureCredentialTokenProvider.Instance.Value;
+        _chatClient = new FoundryChatClient(dependencies.HttpClient, options.FoundryEndpoint, credential);
+        _audioClient = new FoundryAudioClient(dependencies.HttpClient, options.AudioEndpoint, credential);
+        _rateLimitSettings = options.RateLimitSettings;
+        _vadConfig = options.VadConfig;
+        _promptLoaders = dependencies.PromptLoaders;
+        _toolExecutor = dependencies.ToolExecutor;
+        _toolExecutorFactory = dependencies.ToolExecutorFactory;
+        _allowedVoices = options.AllowedVoices;
+        _defaultVoice = options.DefaultVoice;
+        _logger = dependencies.Logger;
         // Issue #13 Wave 2 convention (RealtimeProcessor's own _timeProvider): the rate-limit
         // ladder's wall-clock delays (CascadeRateLimit.WithRetryAsync) are driven from this one
         // clock, so a test can swap in a FakeTimeProvider instead of waiting on the real 0.5-8s
         // delays. Defaults to TimeProvider.System in production.
-        _timeProvider = timeProvider ?? TimeProvider.System;
-        _echoCooldownSeconds = EchoTailSeconds(echoCooldownSeconds);
-        _sessionManager = sessionManager;
+        _timeProvider = dependencies.TimeProvider ?? TimeProvider.System;
+        _echoCooldownSeconds = EchoTailSeconds(options.EchoCooldownSeconds);
+        _sessionManager = dependencies.SessionManager;
     }
 
     public string PipelineName => "cascade";

@@ -36,7 +36,7 @@ internal sealed class NudgeScheduler
     private readonly Task _sessionConfigured;
     private readonly TimeProvider _timeProvider;
     private readonly string? _sessionId;
-    private readonly ILogger? _logger;
+    private readonly ILogger<NudgeScheduler> _logger;
     private readonly Lock _sync = new();
 
     private bool _armed;
@@ -47,9 +47,9 @@ internal sealed class NudgeScheduler
         Func<CancellationToken, Task> sendNudgeAsync,
         Func<bool> isRateLimitBusy,
         Task sessionConfigured,
+        ILogger<NudgeScheduler> logger,
         TimeProvider? timeProvider = null,
-        string? sessionId = null,
-        ILogger? logger = null)
+        string? sessionId = null)
     {
         _nudgeAfterSeconds = nudgeAfterSeconds;
         _sendNudgeAsync = sendNudgeAsync;
@@ -120,7 +120,7 @@ internal sealed class NudgeScheduler
                 // continuation acquiring the lock -- see this class's own doc comment. Cancel()
                 // already did everything needed; touching _pendingCts here would wipe out
                 // whatever it already cleared.
-                _logger?.NudgeTimerFiredAfterCancel(_sessionId);
+                _logger.NudgeTimerFiredAfterCancel(_sessionId);
                 return;
             }
             _pendingCts = null;
@@ -134,11 +134,11 @@ internal sealed class NudgeScheduler
         {
             // The assistant is already retrying a rate-limited response; a nudge now would stack
             // a second response on top of it.
-            _logger?.NudgeSkippedRateLimitBusy(_sessionId);
+            _logger.NudgeSkippedRateLimitBusy(_sessionId);
             return;
         }
 
-        _logger?.NudgeFiring(_nudgeAfterSeconds, _sessionId);
+        _logger.NudgeFiring(_nudgeAfterSeconds, _sessionId);
         try
         {
             // CancellationToken.None: a closing socket must not crash this fire-and-forget
@@ -147,7 +147,7 @@ internal sealed class NudgeScheduler
         }
         catch (Exception ex)
         {
-            _logger?.NudgeSendFailed(ex, ex.Message, _sessionId);
+            _logger.NudgeSendFailed(ex, ex.Message, _sessionId);
         }
     }
 
@@ -164,7 +164,7 @@ internal sealed class NudgeScheduler
             _pendingCts.Cancel();
             _pendingCts.Dispose();
             _pendingCts = null;
-            _logger?.NudgeCancelled(reason, _sessionId);
+            _logger.NudgeCancelled(reason, _sessionId);
         }
     }
 }

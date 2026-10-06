@@ -10,6 +10,7 @@ using Backend.Realtime;
 using Backend.Sessions;
 using Backend.Tests.Realtime;
 using Backend.Tools;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Backend.Tests.Sessions;
 
@@ -39,13 +40,22 @@ public sealed class UpstreamConnectTimeoutTests
     private static RealtimeProcessor CreateProcessor(ConnectionConfig connectionConfig, int port) =>
         new(
             ModelCatalog.FromConfig(AppConfig.Load()),
-            defaultDeployment: "gpt-realtime-2.1",
-            upstreamEndpoint: $"https://127.0.0.1:{port}",
-            upstreamApiKey: "sk-not-used",
-            sessionConfig: new RealtimeSessionConfig(),
-            promptLoaders: new Dictionary<string, PromptLoader>(),
-            toolExecutor: new StubToolExecutor([]),
-            connectionConfig: connectionConfig);
+            new RealtimeProcessorOptions(
+                "gpt-realtime-2.1",
+                $"https://127.0.0.1:{port}",
+                "sk-not-used",
+                new RealtimeSessionConfig(),
+                ClientServerFilter.DefaultAllowedVoices,
+                1.5,
+                5.0,
+                new RateLimitSettings(),
+                connectionConfig),
+            new RealtimeProcessorDependencies(
+                new Dictionary<string, PromptLoader>(),
+                new StubToolExecutor([]),
+                NullLogger<RealtimeProcessor>.Instance,
+                NullLogger<RateLimitRecovery>.Instance,
+                NullLogger<NudgeScheduler>.Instance));
 
     /// <summary>The core assertion: with a tiny `ws_connect_timeout_connect` and a much larger
     /// `ws_connect_timeout_total`, the session gives up close to the SHORT bound instead of

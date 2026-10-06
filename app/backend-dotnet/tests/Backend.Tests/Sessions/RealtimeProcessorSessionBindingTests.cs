@@ -5,6 +5,7 @@ using Backend.Prompts;
 using Backend.Realtime;
 using Backend.Sessions;
 using Backend.Tools;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Backend.Tests.Sessions;
 
@@ -56,17 +57,27 @@ public sealed class RealtimeProcessorSessionBindingTests : IDisposable
 
         var processor = new RealtimeProcessor(
             ModelCatalog.FromConfig(AppConfig.Load()),
-            defaultDeployment: "gpt-realtime-2.1",
-            upstreamEndpoint: "https://example-eastus2.openai.azure.com",
-            upstreamApiKey: "sk-not-used",
-            sessionConfig: new RealtimeSessionConfig(),
-            promptLoaders: new Dictionary<string, PromptLoader>
-            {
-                ["widgetco"] = widgetcoLoader,
-                ["northwind"] = northwindLoader,
-            },
-            toolExecutor: new StubToolExecutor([]),
-            toolExecutorFactory: ToolExecutorFactory);
+            new RealtimeProcessorOptions(
+                "gpt-realtime-2.1",
+                "https://example-eastus2.openai.azure.com",
+                "sk-not-used",
+                new RealtimeSessionConfig(),
+                ClientServerFilter.DefaultAllowedVoices,
+                1.5,
+                5.0,
+                new RateLimitSettings(),
+                new ConnectionConfig()),
+            new RealtimeProcessorDependencies(
+                new Dictionary<string, PromptLoader>
+                {
+                    ["widgetco"] = widgetcoLoader,
+                    ["northwind"] = northwindLoader,
+                },
+                new StubToolExecutor([]),
+                NullLogger<RealtimeProcessor>.Instance,
+                NullLogger<RateLimitRecovery>.Instance,
+                NullLogger<NudgeScheduler>.Instance,
+                ToolExecutorFactory: ToolExecutorFactory));
 
         var widgetcoPersona = PersonaCatalog.Load().Default with { Id = "widgetco" };
         var northwindPersona = PersonaCatalog.Load().Default with { Id = "northwind" };
@@ -94,12 +105,22 @@ public sealed class RealtimeProcessorSessionBindingTests : IDisposable
         var widgetcoLoader = new PromptLoader(_personasDir, "widgetco");
         var processor = new RealtimeProcessor(
             ModelCatalog.FromConfig(AppConfig.Load()),
-            defaultDeployment: "gpt-realtime-2.1",
-            upstreamEndpoint: "https://example-eastus2.openai.azure.com",
-            upstreamApiKey: "sk-not-used",
-            sessionConfig: new RealtimeSessionConfig(),
-            promptLoaders: new Dictionary<string, PromptLoader> { ["widgetco"] = widgetcoLoader },
-            toolExecutor: new StubToolExecutor([]));
+            new RealtimeProcessorOptions(
+                "gpt-realtime-2.1",
+                "https://example-eastus2.openai.azure.com",
+                "sk-not-used",
+                new RealtimeSessionConfig(),
+                ClientServerFilter.DefaultAllowedVoices,
+                1.5,
+                5.0,
+                new RateLimitSettings(),
+                new ConnectionConfig()),
+            new RealtimeProcessorDependencies(
+                new Dictionary<string, PromptLoader> { ["widgetco"] = widgetcoLoader },
+                new StubToolExecutor([]),
+                NullLogger<RealtimeProcessor>.Instance,
+                NullLogger<RateLimitRecovery>.Instance,
+                NullLogger<NudgeScheduler>.Instance));
 
         var widgetcoPersona = PersonaCatalog.Load().Default with { Id = "widgetco" };
 
