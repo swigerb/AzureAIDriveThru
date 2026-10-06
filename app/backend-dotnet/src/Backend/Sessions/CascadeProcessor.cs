@@ -725,7 +725,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
             {
                 finalText = await RunChatToolLoopAsync(turnCt).ConfigureAwait(false);
             }
-            catch (CascadeRateLimitExhausted)
+            catch (CascadeRateLimitExhaustedException)
             {
                 await SendTextAsync(browserSocket, new JsonObject
                 {
@@ -772,7 +772,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
                 {
                     await SpeakAsync(finalText, turnCt).ConfigureAwait(false);
                 }
-                catch (CascadeRateLimitExhausted)
+                catch (CascadeRateLimitExhaustedException)
                 {
                     // Already notified via the final extension.rate_limited frame -- nothing more to do.
                 }
@@ -823,7 +823,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
             {
                 transcript = await TranscribeAsync(turnAudio, turnCt).ConfigureAwait(false);
             }
-            catch (CascadeRateLimitExhausted)
+            catch (CascadeRateLimitExhaustedException)
             {
                 return;
             }

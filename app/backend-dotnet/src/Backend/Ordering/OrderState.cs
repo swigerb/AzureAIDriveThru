@@ -574,7 +574,7 @@ public sealed class OrderState
     /// bundle instance it just created/grew, never across other instances (unlike
     /// <see cref="FindBundleSlot"/>, which searches every instance for a cross-combo
     /// resize/vacate target).</summary>
-    private int? FirstVacantSlotIndex(OrderItem comboItem, string component)
+    private static int? FirstVacantSlotIndex(OrderItem comboItem, string component)
     {
         var slots = SyncBundleSlotList(comboItem, component);
         for (var i = 0; i < slots.Count; i++)
@@ -727,7 +727,7 @@ public sealed class OrderState
     /// from the END when quantity decreases -- called lazily on every read/write so there is
     /// exactly one place this invariant is enforced. Mirrors order_state.py's
     /// <c>_sync_bundle_slot_list</c>.</summary>
-    private List<BundleSlot> SyncBundleSlotList(OrderItem comboItem, string component)
+    private static List<BundleSlot> SyncBundleSlotList(OrderItem comboItem, string component)
     {
         if (!comboItem.BundleSlots.TryGetValue(component, out var slots))
         {

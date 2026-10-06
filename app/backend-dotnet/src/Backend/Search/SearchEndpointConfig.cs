@@ -71,8 +71,8 @@ public sealed class SearchEndpointConfig
         var contentField = NonEmpty(Environment.GetEnvironmentVariable("AZURE_SEARCH_CONTENT_FIELD"), "description");
         var embeddingField = NonEmpty(Environment.GetEnvironmentVariable("AZURE_SEARCH_EMBEDDING_FIELD"), "embedding");
         var useVectorQuery = GetBoolEnv("AZURE_SEARCH_USE_VECTOR_QUERY", true);
-        var useSemanticRanker = NonEmpty(Environment.GetEnvironmentVariable("AZURE_SEARCH_SEMANTIC_RANKER"), "standard")
-            .ToLowerInvariant() != "disabled";
+        var useSemanticRanker = !NonEmpty(Environment.GetEnvironmentVariable("AZURE_SEARCH_SEMANTIC_RANKER"), "standard")
+            .Equals("disabled", StringComparison.OrdinalIgnoreCase);
 
         return new SearchEndpointConfig(
             endpoint, apiKey, semanticConfiguration, identifierField, contentField, embeddingField,

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net.WebSockets;
 using System.Security.Cryptography;
 using System.Text;
@@ -81,10 +82,10 @@ public sealed class SessionManager
         "The guest reconnected mid-order after a brief connection drop. Do not greet them again or " +
         "restart the conversation -- just continue helping with their order where it left off.";
 
-    private const string NudgeTextTemplate =
+    private static readonly CompositeFormat NudgeTextTemplate = CompositeFormat.Parse(
         "The guest has been silent for a while after reconnecting. As {0}, briefly check in once " +
         "(e.g. \"Still there? Let me know if you'd like to add anything else or if you're ready to pay.\") " +
-        "without repeating the full order back.";
+        "without repeating the full order back.");
 
     private readonly SessionsConfig _config;
     private readonly TimeProvider _timeProvider;
@@ -390,9 +391,9 @@ public sealed class SessionManager
         }
 
         var digest = Digest(presentedId);
-        string? staleReason = null;
+        string? staleReason;
         ResumeOutcome? outcome = null;
-        WebSocket? staleWs = null;
+        WebSocket? staleWs;
 
         lock (_sync)
         {
@@ -562,7 +563,8 @@ public sealed class SessionManager
                $"Recent conversation (oldest first):\n{(history.Length > 0 ? history : "(none recorded)")}";
     }
 
-    public static string BuildNudgeText(string roleName) => string.Format(NudgeTextTemplate, roleName);
+    public static string BuildNudgeText(string roleName) =>
+        string.Format(CultureInfo.InvariantCulture, NudgeTextTemplate, roleName);
 
     // ── End / detach ──
 

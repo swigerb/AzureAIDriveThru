@@ -268,7 +268,7 @@ public sealed class RealtimeProcessor : IPipelineProcessor
         var voice = binding.Voice;
         var toolSchemas = binding.ToolSchemas;
         var toolExecutor = binding.ToolExecutor;
-        var reasoningOverride = Overridable<bool?>.Of(resolvedModel.Reasoning);
+        var reasoningOverride = Overridable.Of<bool?>(resolvedModel.Reasoning);
         var deployment = string.IsNullOrEmpty(resolvedModel.Deployment) ? _defaultDeployment : resolvedModel.Deployment;
 
         using var upstream = new ClientWebSocket();
@@ -719,8 +719,8 @@ public sealed class RealtimeProcessor : IPipelineProcessor
             var session = RealtimeSessionBuilder.BuildSession(
                 _sessionConfig, sessionIn, toolSchemas,
                 voiceLocked: state.AssistantAudioSeen,
-                voice: Overridable<string?>.Of(state.Voice),
-                systemMessage: Overridable<string?>.Of(systemMessage),
+                voice: Overridable.Of<string?>(state.Voice),
+                systemMessage: Overridable.Of<string?>(systemMessage),
                 reasoningOverride: reasoningOverride);
             filtered["session"] = session;
             state.Guard.Stamp(filtered);
@@ -1014,8 +1014,8 @@ public sealed class RealtimeProcessor : IPipelineProcessor
                 }
 
                 var fallback = RealtimeSessionBuilder.BuildFallbackSessionUpdate(
-                    _sessionConfig, toolSchemas, voice: Overridable<string?>.Of(state.Voice),
-                    systemMessage: Overridable<string?>.Of(systemMessage), reasoningOverride: reasoningOverride);
+                    _sessionConfig, toolSchemas, voice: Overridable.Of<string?>(state.Voice),
+                    systemMessage: Overridable.Of<string?>(systemMessage), reasoningOverride: reasoningOverride);
                 var fallbackPayload = state.Guard.Track(fallback.ToJsonString(), fallbackOf: rejectedEventId);
                 await SendTextAsync(upstream, fallbackPayload, ct).ConfigureAwait(false);
                 return null;
@@ -1728,8 +1728,8 @@ public sealed class RealtimeProcessor : IPipelineProcessor
         {
             var bootstrap = state.Guard.Stamp(RealtimeSessionBuilder.BuildBootstrapSessionUpdate(
                 _sessionConfig, toolSchemas,
-                voice: Overridable<string?>.Of(voice),
-                systemMessage: Overridable<string?>.Of(systemMessage),
+                voice: Overridable.Of<string?>(voice),
+                systemMessage: Overridable.Of<string?>(systemMessage),
                 reasoningOverride: reasoningOverride));
             await SendTextAsync(upstream, bootstrap.ToJsonString(), ct).ConfigureAwait(false);
             _logger?.LogInformation(
@@ -2034,7 +2034,7 @@ public sealed class RealtimeProcessor : IPipelineProcessor
     /// the bookkeeping call, which would then wrongly cancel the very retry it just caused
     /// (mistaking it for a stale leftover one). Recording "browser-initiated" before the send closes
     /// the window by construction: upstream cannot react to a frame it has not received yet.</summary>
-    internal async Task ForwardClientFrameAsync(
+    internal static async Task ForwardClientFrameAsync(
         JsonObject forwarded,
         string? sentType,
         EchoSuppressor echo,

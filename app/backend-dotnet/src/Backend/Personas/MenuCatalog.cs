@@ -315,8 +315,8 @@ public sealed class MenuCatalog
 
     private static string SpokenSubstitutionPattern(string raw)
     {
-        var rightBoundaryChars = raw.EndsWith("®", StringComparison.Ordinal) ||
-                                 raw.EndsWith("™", StringComparison.Ordinal)
+        var rightBoundaryChars = raw.EndsWith('®') ||
+                                 raw.EndsWith('™')
             ? "A-Za-z0-9"
             : "A-Za-z0-9®™";
         return $@"(?<![A-Za-z0-9]){Regex.Escape(raw)}(?![{rightBoundaryChars}])";

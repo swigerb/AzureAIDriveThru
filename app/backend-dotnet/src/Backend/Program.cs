@@ -225,7 +225,7 @@ var sessionConfig = new RealtimeSessionConfig
     ParallelToolCalls = ReadBool(modelSection, "parallel_tool_calls"),
     ReasoningModel = reasoningModel,
 };
-if (sessionConfig.ReasoningEffort is not null && !sessionConfig.IsReasoningModel(Overridable<bool?>.Unset))
+if (sessionConfig.ReasoningEffort is not null && !sessionConfig.IsReasoningModel(Overridable.Unset<bool?>()))
 {
     logger.LogInformation(
         "Deployment {Deployment} is not treated as a reasoning model (reasoning_model={ReasoningModel}); `reasoning` (effort={Effort}) will not be sent",

@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace Backend.Configuration;
 
 /// <summary>
@@ -24,7 +26,7 @@ public sealed record AssetCacheConfig(long ImmutableMaxAgeSeconds, long DefaultM
     {
         if (section is not null && section.TryGetValue(key, out var raw) && raw is not null)
         {
-            return Convert.ToInt64(raw);
+            return Convert.ToInt64(raw, CultureInfo.InvariantCulture);
         }
         return fallback;
     }

@@ -600,7 +600,7 @@ public sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings
         var modsLower = modsContent.ToLowerInvariant();
         foreach (var (catKey, forbiddenList) in _menu.InvalidModifiers)
         {
-            if (!category.ToLowerInvariant().Contains(catKey))
+            if (!category.Contains(catKey, StringComparison.OrdinalIgnoreCase))
             {
                 continue;
             }
