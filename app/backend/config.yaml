@@ -9,6 +9,11 @@ model:
   # OpenAI recommends for best quality. The picker offers all ten GA voices.
   # Env override: AZURE_OPENAI_REALTIME_VOICE_CHOICE.
   default_voice: "marin"
+  # Voices extension.set_voice (the picker) may choose from -- anything else
+  # is dropped with a WARNING, never forwarded upstream or adopted (PR #49
+  # review round 5, "M1"). Defaults to the ten GA voices in
+  # app/frontend/src/lib/voices.ts when omitted/empty; override per brand.
+  # allowed_voices: ["marin", "cedar", "shimmer", "sage", "coral", "ballad", "ash", "verse", "alloy", "echo"]
   # Guest-speech transcription model (session.audio.input.transcription.model).
   # `whisper-1` works on Azure with no extra deployment. gpt-4o-transcribe and
   # gpt-4o-mini-transcribe are ACCEPTED by session.update but every turn then
@@ -23,6 +28,13 @@ model:
   # included. See scripts/benchmark_reasoning.py.
   # Env override: AZURE_OPENAI_REALTIME_REASONING_EFFORT ("off" disables).
   # "low": 30/30 correct, best TTFA p90 (0.98s/1.57s) on 2.1; none/minimal skip the spoken preamble (docs/customizing_deploy.md).
+  # Rick's PR #308 review item 6 (#306): this "low" value is carried over unchanged from
+  # the 2.1 benchmark above. It has NOT been separately measured on gpt-realtime-2.1-mini,
+  # which is now the default. The accepted-effort set and the "lowest effort != lowest
+  # latency for this tool-heavy prompt" finding were both probed on 2.1 only. A follow-up
+  # must run scripts/smoke_realtime.py --model gpt-realtime-2.1-mini and
+  # scripts/benchmark_reasoning.py against the 2.1-mini deployment once it's provisioned,
+  # and only change the default effort (or split it per-catalog-id) on that data.
   reasoning_effort: "low"
   # Is the deployment a reasoning model? true | false | auto. "auto" infers it
   # from the deployment name (gpt-realtime-1.5, gpt-realtime, gpt-realtime-mini,
@@ -32,6 +44,40 @@ model:
   # parallel_tool_calls for reasoning models; null leaves the service default
   # (2.1 already batches calls; `false` serialises them and is ~1.3s slower).
   parallel_tool_calls: null
+
+# Shared model catalog (issue #75, design doc section 7.2): the facts about each Foundry model
+# that are the same on every deployment. A persona's own `models` block (persona.json, #74) says
+# which of these it allows per pipeline and its own default; `AZURE_AI_MODEL_DEPLOYMENTS` (env,
+# a JSON map of catalog id -> Foundry deployment name, emitted by Bicep -- see
+# infra/model-deployments.json, #93) says which ones actually exist on THIS deployment. A catalog
+# entry with no deployment mapped isn't selectable (section 7.3: "catalog ∩ deployment ∩
+# persona-allowed"). See app/backend/model_catalog.py.
+#
+# The realtime pipeline's OWN default model (a persona's `models.realtime.default`) is the one
+# exception: it always resolves to AZURE_OPENAI_REALTIME_DEPLOYMENT (today's back-compat
+# deployment), whether or not AZURE_AI_MODEL_DEPLOYMENTS maps it, so omitting `?model=` on
+# `/realtime` is byte-for-byte unchanged (#75 acceptance). `cascade` entries below are not
+# yet selectable through any endpoint -- #82 wires that pipeline up -- they're catalogued
+# now so a persona's own cascade allow-lists (already supported since #74) name real,
+# recognized models.
+models:
+  catalog:
+    - { id: gpt-realtime-2.1, pipeline: realtime, label: "GPT Realtime 2.1", reasoning: true }
+    # Issue #306: the default realtime model. gpt-realtime-2.1's own deeper reasoning passes add
+    # latency that straightforward transactional intents (e.g. adding a combo meal) don't need.
+    # It's a reasoning model too (unlike the older, now-removed gpt-realtime-mini) -- it accepts
+    # the same `reasoning.effort` session field as gpt-realtime-2.1, just faster/cheaper per turn.
+    - { id: gpt-realtime-2.1-mini, pipeline: realtime, label: "GPT Realtime 2.1 mini", reasoning: true }
+    - { id: gpt-5-mini, pipeline: cascade, label: "GPT-5 mini", toolCalling: true }
+    - { id: phi-4, pipeline: cascade, label: "Phi-4 (Foundry)", toolCalling: true }
+  # #82, design doc section 7.2/7.4: the cascade pipeline's own fixed transcription/TTS
+  # deployments -- not user-selectable chat models (no `pipeline`/`toolCalling` row above),
+  # just the two Azure OpenAI audio models every cascade session uses regardless of which
+  # cascade *chat* model it's bound to. Deployment names still come from the same
+  # AZURE_AI_MODEL_DEPLOYMENTS map (model_catalog.py's `deployment_for`) as any catalog id.
+  cascade:
+    transcription: gpt-4o-transcribe
+    tts: gpt-4o-mini-tts
 
 vad:
   type: "server_vad"
@@ -52,6 +98,8 @@ cache:
   search_max_size: 128
 
 audio:
+  # Realtime: delay before the post-playback buffer clear. Cascade: acoustic tail after estimated
+  # playback, capped at 0.3s; 0 disables cascade echo suppression (see docs/persona-architecture.md 7.1).
   echo_cooldown_seconds: 1.5
 
 search:
@@ -91,6 +139,16 @@ security:
   idle_timeout_seconds: 300
   allowed_origins: []  # empty = same-origin only; add URLs for cross-origin
   require_session_token: false  # set true to require HMAC session tokens
+  # #53: a browser can ask to enable server-side file logging
+  # (extension.set_log_to_file) or raise process log verbosity
+  # (extension.set_verbose_logging). Both are process-wide side effects (one
+  # connection's request affects every other connection on the same worker),
+  # so they are OFF by default in production regardless of what any one
+  # connection asks for. Only ever turn this on for a trusted debugging
+  # deployment. Env override: ALLOW_CLIENT_LOG_CONTROL=true|false. Also
+  # allowed whenever CONFORMANCE_TEST_HOOKS=1 (the conformance harness itself
+  # exercises these extensions under test).
+  allow_client_log_control: false
 
 # Order resume after a transport drop (Wi-Fi blip, LB reset, heartbeat miss).
 # An idle close (4000) is never resumable, and the idle clock

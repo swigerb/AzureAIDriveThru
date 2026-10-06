@@ -25,6 +25,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 sys.path.append(str(Path(__file__).resolve().parent))
 
 from test_order_resume import NUDGE_MARKER, FakeGAPerConnection, _ResumeHarness
+from test_session_bootstrap import BROWSER_SESSION_UPDATE
 
 import session_manager as session_manager_module
 from rate_limit import (
@@ -140,6 +141,31 @@ class GuardTests(unittest.TestCase):
         guard = _SessionUpdateGuard()
         guard.track(json.dumps({"type": "session.update", "event_id": "su_1", "session": {}}))
         self.assertEqual(guard.correlate({"type": "error", "error": {**RATE_LIMIT_ERROR, "event_id": "su_1"}}), "su_1")
+
+    def test_stamp_does_not_crash_on_a_non_string_event_id_dict(self):
+        # #31 S2 (PR #49 review round 5): a browser-forged {"event_id": {"a": 1}} on
+        # session.update used to reach guard.stamp() unchecked, where it's used as a
+        # dict key ("self._sent[event_id] = ...") -- unhashable, so it killed the socket
+        # with a raw TypeError instead of being dropped.
+        guard = _SessionUpdateGuard()
+        message = {"type": "session.update", "event_id": {"a": 1}, "session": {}}
+        stamped = guard.stamp(message)
+        self.assertIsInstance(stamped["event_id"], str)
+        self.assertTrue(stamped["event_id"])
+
+    def test_stamp_does_not_crash_on_a_non_string_event_id_list(self):
+        guard = _SessionUpdateGuard()
+        message = {"type": "session.update", "event_id": ["a"], "session": {}}
+        stamped = guard.stamp(message)
+        self.assertIsInstance(stamped["event_id"], str)
+        self.assertTrue(stamped["event_id"])
+
+    def test_stamp_ignores_an_empty_string_event_id_and_generates_its_own(self):
+        guard = _SessionUpdateGuard()
+        message = {"type": "session.update", "event_id": "", "session": {}}
+        stamped = guard.stamp(message)
+        self.assertIsInstance(stamped["event_id"], str)
+        self.assertTrue(stamped["event_id"])
 
 
 class RecoveryUnitTests(unittest.IsolatedAsyncioTestCase):
@@ -494,6 +520,7 @@ class ResumeInteractionTests(_RateLimitHarness):
         meta, _ = await self._converse_then_drop()
         self.sm.nudge_after_seconds = 0.3
         browser = await self._resume_ok(meta["resumeId"])
+        await browser.send_json(BROWSER_SESSION_UPDATE)     # mic started -> nudge arms (#181)
         await self._push_failure()
         await self._until(lambda: len(self.sleep.delays) == 1)
         await asyncio.sleep(0.6)                            # the nudge timer runs out meanwhile
@@ -511,6 +538,7 @@ class ResumeInteractionTests(_RateLimitHarness):
         self.sm.nudge_after_seconds = 0.2
         self.fake.hold_responses = True                     # the nudge's response stays in flight
         browser = await self._resume_ok(meta["resumeId"])
+        await browser.send_json(BROWSER_SESSION_UPDATE)     # mic started -> nudge arms (#181)
         await self._until(lambda: self.creates() == 1)
         await self._until(lambda: len(self.nudges()) == 1)
         await asyncio.sleep(0.1)
@@ -556,10 +584,18 @@ class ApologyClipTests(unittest.TestCase):
         self.assertEqual(sorted(self.gen.APOLOGY_PHRASES), locales)
 
     def test_clips_are_short_24khz_mono_pcm16_speech(self):
+        from default_persona import get_default_persona
+
+        out_dir = get_default_persona().assets_dir / "audio"
         for lang in self.gen.APOLOGY_PHRASES:
             with self.subTest(lang):
-                path = self.gen.clip_path(lang)
-                self.assertEqual(path.parent, self.REPO / "app" / "frontend" / "public" / "audio")
+                path = self.gen.clip_path(out_dir, lang)
+                # Issue #80 F7: the clips now live in the persona pack (single source of truth --
+                # the frontend's own copies were retired once App.tsx started reading
+                # personaAssetUrl()/apologyClipUrl() from the pack instead) -- specifically
+                # whichever pack the persona catalog resolves as its own default, not a
+                # literal hard-coded pack id.
+                self.assertEqual(path.parent, out_dir)
                 with wave.open(str(path), "rb") as wav:
                     self.assertEqual((wav.getnchannels(), wav.getsampwidth(), wav.getframerate()), (1, 2, 24_000))
                     seconds = wav.getnframes() / wav.getframerate()
@@ -584,6 +620,35 @@ class ApologyClipTests(unittest.TestCase):
         with wave.open(str(out), "rb") as wav:
             self.assertEqual((wav.getnchannels(), wav.getsampwidth(), wav.getframerate()), (1, 2, 24_000))
             self.assertEqual(wav.readframes(3), pcm)
+
+    def test_no_persona_resolves_to_the_catalog_default(self):
+        from default_persona import get_default_persona
+        self.assertIs(self.gen.resolve_persona(None), get_default_persona())
+
+    def test_unknown_persona_is_a_smoke_error(self):
+        with self.assertRaises(self.gen.smoke_realtime.SmokeError):
+            self.gen.resolve_persona("not-a-real-persona-id")
+
+    def test_every_pack_resolves_its_own_out_dir_and_voice_instructions(self):
+        """--persona (#83, P2-14): every enabled pack gets its OWN audio dir and its OWN
+        displayName/roleName in the voice instructions -- never one hard-coded brand's."""
+        from persona_loader import PersonaCatalog
+
+        catalog = PersonaCatalog.load()
+        seen_dirs, seen_instructions = set(), set()
+        for persona_id in catalog.ids:
+            with self.subTest(persona_id):
+                persona = self.gen.resolve_persona(persona_id)
+                self.assertEqual(persona.id, persona_id)
+                out_dir = self.gen.out_dir_for(persona)
+                self.assertEqual(out_dir, persona.assets_dir / "audio")
+                instructions = self.gen.voice_instructions_for(persona)
+                self.assertIn(persona.manifest.displayName, instructions)
+                self.assertIn(persona.manifest.roleName, instructions)
+                seen_dirs.add(out_dir)
+                seen_instructions.add(instructions)
+        self.assertEqual(len(seen_dirs), len(catalog.ids), "every pack should write to its own directory")
+        self.assertEqual(len(seen_instructions), len(catalog.ids), "every pack should get its own voice instructions")
 
 
 if __name__ == "__main__":

@@ -91,6 +91,30 @@ class FakeGAPerConnection(FakeGARealtime):
                 await self._respond(ws)
             elif kind == "response.create":
                 await self._respond(ws)
+            elif kind == "conversation.item.create":
+                # Real GA acknowledges every conversation.item.create with a
+                # conversation.item.created echo carrying the same item back
+                # down the same socket -- including our own rehydration/nudge
+                # system items (see RehydrationAndNudgeTests). Mirror that so
+                # tests can prove the middle tier suppresses it before the
+                # browser side (swigerb/SonicAIDriveThru#29).
+                await ws.send_json({
+                    "type": "conversation.item.created",
+                    "previous_item_id": event.get("previous_item_id"),
+                    "item": event["item"],
+                })
+                # GA also emits conversation.item.done "when the item is
+                # finalized", carrying the full item a second time on a
+                # separate event type (swigerb/SonicAIDriveThru#29 follow-up,
+                # PR #30 review "M1") -- Rick's review proved the existing
+                # suppression missed this event entirely. Mirror it too so
+                # the Python suite can catch a regression the same way the
+                # conformance harness does (see M2).
+                await ws.send_json({
+                    "type": "conversation.item.done",
+                    "previous_item_id": event.get("previous_item_id"),
+                    "item": event["item"],
+                })
         return ws
 
     async def release_session_updated(self) -> None:
@@ -673,6 +697,18 @@ class RehydrationAndNudgeTests(_ResumeHarness):
     def _nudges(self, upstream):
         return [t for t in self._system_texts(upstream) if NUDGE_MARKER in t]
 
+    def _greeting_present(self, upstream):
+        """Whether a greeting item (role="user", the exact configured greeting
+        text) was sent upstream. Compares text, not the whole dict/exact id:
+        build_greeting_msg (PR #30 review "G1"/item 1) stamps a brand-new
+        middle-tier item id on every call, so two greetings (or a greeting
+        compared against a fresh self.sm.build_greeting_msg() read) never
+        compare equal by id even when they are, in every way that matters,
+        "the same greeting" repeated."""
+        greeting_text = json.loads(self.sm.build_greeting_msg())["item"]["content"][0]["text"]
+        return any(e.get("type") == "conversation.item.create" and e["item"].get("role") == "user"
+                   and e["item"]["content"][0]["text"] == greeting_text for e in upstream)
+
     async def test_upstream_gets_bootstrap_then_rehydration_and_no_greeting(self):
         meta, sid = await self._converse_then_drop()
         order_json = order_state_singleton.get_order_summary_json(sid)
@@ -693,8 +729,36 @@ class RehydrationAndNudgeTests(_ResumeHarness):
         self.assertIn("Carhop: hi", text)
         self.assertEqual(len(self._system_texts(upstream)), 1, "exactly one rehydration item")
         self.assertNotIn("response.create", types, "the carhop spoke unprompted after a resume")
-        self.assertNotIn(json.loads(self.sm.greeting_msg), upstream, "greeting repeated on resume")
+        self.assertFalse(self._greeting_present(upstream), "greeting repeated on resume")
         self.assertLess(types.index("conversation.item.create"), types.index("input_audio_buffer.append"))
+        await browser.close()
+
+    async def test_browser_never_receives_the_rehydration_system_item(self):
+        """swigerb/SonicAIDriveThru#29: upstream (per FakeGAPerConnection, which
+        now mirrors real GA's ack behaviour) echoes the rehydration item back
+        via conversation.item.created *and* conversation.item.done (GA emits
+        both -- swigerb/SonicAIDriveThru#29 follow-up, PR #30 review "M1"/"M2")
+        on the same socket -- the middle tier must swallow both frames
+        rather than relay them, since they carry the recent transcript and
+        order JSON, not something the guest should see on their own screen.
+
+        Rick's PR #30 review proved that without the .done handling, this
+        test passed anyway (the leak was on the .done event this test didn't
+        check for) -- .done is asserted here specifically so a regression on
+        either event type fails it."""
+        meta, sid = await self._converse_then_drop()
+        browser, upstream = await self._resume_ok(meta["resumeId"])
+        # Drain everything the browser receives while the rehydration item
+        # round-trips through the (now echoing) fake upstream.
+        seen = await self._browser_events(browser, duration=0.5)
+        self.assertTrue(
+            any(e.get("type") == "conversation.item.create" and e["item"].get("role") == "system" for e in upstream),
+            "precondition: the fake upstream must have echoed the rehydration item for this test to mean anything",
+        )
+        leaked = [e for e in seen
+                  if e.get("type") in ("conversation.item.created", "conversation.item.added", "conversation.item.done")
+                  and e.get("item", {}).get("role") == "system"]
+        self.assertEqual(leaked, [], "the browser must never see a server-authored system conversation item")
         await browser.close()
 
     async def test_resume_before_the_conversation_started_keeps_the_normal_greeting(self):
@@ -705,15 +769,21 @@ class RehydrationAndNudgeTests(_ResumeHarness):
         again, upstream = await self._resume_ok(meta["resumeId"])
         await again.send_json(BROWSER_SESSION_UPDATE)
         await self._response_done(again)
-        self.assertIn(json.loads(self.sm.greeting_msg), upstream)
+        self.assertTrue(self._greeting_present(upstream))
         self.assertEqual(self._system_texts(upstream), [])
         await again.close()
 
-    async def test_nudge_fires_once_after_silence_and_only_after_session_updated(self):
+    async def test_nudge_fires_once_after_client_session_update_and_silence(self):
+        """#181: the resume nudge arms only once THIS socket's client sends its own
+        session.update (mic started / resumeConversation) -- never merely because
+        the resume + upstream bootstrap succeeded. It must also still wait for the
+        upstream's OWN session.updated to confirm voice/tools, same as the greeting."""
         meta, sid = await self._converse_then_drop()
         self.sm.nudge_after_seconds = 0.2
         self.fake.withhold_session_updated = True
         browser, upstream = await self._resume_ok(meta["resumeId"])
+        await browser.send_json(BROWSER_SESSION_UPDATE)          # mic started -> nudge arms
+        await self._until(lambda: sum(e["type"] == "session.update" for e in upstream) >= 2)
         activity = self.sm._last_activity[sid]
         self.clock.advance(5)
 
@@ -734,10 +804,64 @@ class RehydrationAndNudgeTests(_ResumeHarness):
         self.assertEqual(self.sm._last_activity[sid], activity, "the nudge counted as guest activity")
         await browser.close()
 
+    async def test_resume_without_client_session_update_never_nudges(self):
+        """#181 live bug: a page reload resumes the order, but with the mic NOT
+        started the browser never sends its own session.update on the resumed
+        socket. The nudge must never arm (no nudge item, no response.create) no
+        matter how long the guest stays on the reconnected-but-idle tab -- even
+        well past nudge_after_seconds and even after the upstream confirms the
+        bootstrap session.updated."""
+        meta, sid = await self._converse_then_drop()
+        self.sm.nudge_after_seconds = 0.2
+        browser, upstream = await self._resume_ok(meta["resumeId"])
+        await asyncio.sleep(0.6)                 # well past nudge_after_seconds, mic still off
+        self.assertEqual(self._nudges(upstream), [], "resume with no client session.update must never nudge")
+        self.assertNotIn("response.create", [e["type"] for e in upstream],
+                          "resume with no client session.update must never generate a response")
+        await browser.close()
+
+    async def test_second_client_session_update_after_resume_does_not_rearm_the_nudge(self):
+        """#181 round 2 (Rick review R2, mutation (b)): once a resumed socket's nudge has
+        armed off the client's OWN first session.update, any LATER client session.update on
+        that same socket (a voice/settings change, or the guest tapping stop then start again)
+        must not arm a second one. Covers both orderings Rick named: a second session.update
+        sent before the first nudge has fired, and a third one sent after it already fired."""
+        meta, sid = await self._converse_then_drop()
+        self.sm.nudge_after_seconds = 0.3
+        browser, upstream = await self._resume_ok(meta["resumeId"])
+        await browser.send_json(BROWSER_SESSION_UPDATE)          # mic started -> nudge arms
+        await self._until(lambda: sum(e["type"] == "session.update" for e in upstream) >= 2)
+
+        # A second client session.update BEFORE the nudge fires (e.g. a voice change) must not
+        # queue up a second countdown.
+        await browser.send_json(BROWSER_SESSION_UPDATE)
+        await self._until(lambda: sum(e["type"] == "session.update" for e in upstream) >= 3)
+
+        await self._until(lambda: "response.create" in [e["type"] for e in upstream])
+        await self._response_done(browser)
+        types = [e["type"] for e in upstream]
+        self.assertEqual(len(self._nudges(upstream)), 1, "a second session.update before the nudge fired must not arm a second one")
+        self.assertEqual(types.count("response.create"), 1, "exactly one response.create so far")
+
+        # A third client session.update AFTER the nudge already fired (the guest tapping stop
+        # then start again) must still not re-arm it.
+        await browser.send_json(BROWSER_SESSION_UPDATE)
+        await self._until(lambda: sum(e["type"] == "session.update" for e in upstream) >= 4)
+        await asyncio.sleep(0.5)                                  # well past nudge_after_seconds again
+        types = [e["type"] for e in upstream]
+        self.assertEqual(len(self._nudges(upstream)), 1, "a session.update after the nudge already fired must not re-arm it")
+        self.assertEqual(types.count("response.create"), 1, "no second response.create after the nudge already fired")
+        await browser.close()
+
     async def _assert_nudge_cancelled_by(self, guest_action):
         meta, sid = await self._converse_then_drop()
         self.sm.nudge_after_seconds = 0.3
         browser, upstream = await self._resume_ok(meta["resumeId"])
+        await browser.send_json(BROWSER_SESSION_UPDATE)          # mic started -> nudge arms
+        # Wait for the server to actually forward (and arm on) this session.update
+        # before firing the cancelling action -- otherwise on a slow/loaded runner
+        # the "cancel" can race ahead of the nudge even being spawned yet.
+        await self._until(lambda: sum(e["type"] == "session.update" for e in upstream) >= 2)
         await guest_action(browser)
         await asyncio.sleep(0.7)
         self.assertEqual(self._nudges(upstream), [], "nudge fired although the guest spoke")
@@ -765,6 +889,88 @@ class RehydrationAndNudgeTests(_ResumeHarness):
         browser, upstream = await self._resume_ok(meta["resumeId"])
         await asyncio.sleep(0.4)
         self.assertEqual(self._nudges(upstream), [])
+        await browser.close()
+
+
+class VoicePersistenceTests(_ResumeHarness):
+    """#43 fix (PR #49 review round 6, "S1"): the picked voice belongs to the
+    guest's OWN session (stored in self._sessions, never on RTMiddleTier), so
+    it survives a detach/resume (a Wi-Fi blip) instead of silently reverting
+    to the server default -- while a genuinely different, brand-new session
+    (no resume presented) still only ever gets the default. Mirrors the C#
+    conformance scenarios "guest B's fresh bootstrap still has the default"
+    and "the resumed connection's session config carries the picked voice"."""
+
+    async def _resume_ok(self, resume_id):
+        browser = await self._resume(resume_id)
+        await self._until_event(browser, "extension.session_resumed")
+        return browser, self.fake.connections[-1]
+
+    async def test_resumed_connection_restores_the_picked_voice(self):
+        browser = await self.client.ws_connect("/realtime")
+        meta = await self._until_event(browser, "extension.session_metadata")
+        sid = self._sid_for_token(meta["sessionToken"])
+        await browser.send_json({"type": "extension.set_voice", "voice": "cedar"})
+        await self._until(lambda: self.sm.get_voice(sid) == "cedar")
+        await browser.send_json(BROWSER_SESSION_UPDATE)
+        await self._response_done(browser)      # greeting, in the picked voice
+        await self._drop(browser, sid)
+
+        resumed, upstream = await self._resume_ok(meta["resumeId"])
+        await self._until(lambda: sum(e["type"] == "session.update" for e in upstream) >= 2)
+
+        session_updates = [e for e in upstream if e["type"] == "session.update"]
+        self.assertEqual(session_updates[0]["session"]["audio"]["output"]["voice"], "marin",
+                          "the bootstrap fires before the resume is known, so it must use the "
+                          "bound (default) persona's own default voice, not the picked one")
+        self.assertEqual(session_updates[1]["session"]["audio"]["output"]["voice"], "cedar",
+                          "the follow-up session.update after a confirmed resume must restore this "
+                          "session's own picked voice")
+        await resumed.close()
+
+    async def test_a_different_brand_new_session_still_gets_the_default(self):
+        """The flip side: a genuinely different, brand-new connection (no
+        resume_id presented at all) must never inherit another session's
+        persisted voice, even right after that other session picked one."""
+        browser = await self.client.ws_connect("/realtime")
+        meta = await self._until_event(browser, "extension.session_metadata")
+        sid = self._sid_for_token(meta["sessionToken"])
+        await browser.send_json({"type": "extension.set_voice", "voice": "cedar"})
+        await self._until(lambda: self.sm.get_voice(sid) == "cedar")
+        await browser.send_json(BROWSER_SESSION_UPDATE)
+        await self._response_done(browser)
+        await self._drop(browser, sid)
+
+        watermark = len(self.fake.upstreams)
+        fresh = await self.client.ws_connect("/realtime")
+        await self._until(lambda: len(self.fake.upstreams) > watermark)
+        upstream = self.fake.connections[-1]
+        await self._until(lambda: any(e["type"] == "session.update" for e in upstream))
+
+        bootstrap = next(e for e in upstream if e["type"] == "session.update")
+        self.assertEqual(bootstrap["session"]["audio"]["output"]["voice"], "marin",
+                          "a brand-new, unrelated connection must get the server (persona-bound) "
+                          "default, never another session's persisted voice pick")
+        await fresh.close()
+
+    async def test_end_session_clears_the_persisted_voice(self):
+        """#57 Probe F, white-box half: the C# conformance scenario
+        (Ending_the_session_clears_the_voice_so_the_next_fresh_session_gets_the_default)
+        proves the OBSERVABLE effect -- a next fresh session gets the config
+        default -- but that assertion holds regardless of whether
+        session_manager.end_session actually pops the voice, because a
+        brand-new connection always gets a brand-new session_id anyway (see
+        that scenario's own doc comment). This pins the specific line
+        (`self._voices.pop(session_id, None)` in `end_session`) directly."""
+        browser = await self.client.ws_connect("/realtime")
+        meta = await self._until_event(browser, "extension.session_metadata")
+        sid = self._sid_for_token(meta["sessionToken"])
+        await browser.send_json({"type": "extension.set_voice", "voice": "cedar"})
+        await self._until(lambda: self.sm.get_voice(sid) == "cedar")
+
+        self.sm.end_session(sid, "test: probe F white-box pin")
+        self.assertIsNone(self.sm.get_voice(sid),
+                           "end_session must clear this session's persisted voice pick")
         await browser.close()
 
 

@@ -1,7 +1,7 @@
 """Prompt loader for Sonic AI Drive-Thru.
 
-Loads YAML prompt files from app/backend/prompts/{brand}/ at startup.
-Validates required sections, caches in memory, and provides a clean API.
+Loads YAML prompt files from personas/{brand}/prompts/ at startup (issue #70 -- persona pack
+skeleton and loader). Validates required sections, caches in memory, and provides a clean API.
 
 Usage:
     from prompt_loader import PromptLoader
@@ -13,6 +13,7 @@ Usage:
     hints = loader.get_hints()
 """
 
+import json
 import logging
 import os
 import threading
@@ -23,22 +24,54 @@ from typing import Any
 import yaml
 from jinja2 import BaseLoader, Environment
 
-__all__ = ["PromptLoader"]
+from persona_loader import resolve_personas_dir
+
+__all__ = ["PromptLoader", "REQUIRED_ERROR_MESSAGE_KEYS"]
 
 logger = logging.getLogger("prompt-loader")
 
-_PROMPTS_DIR = Path(__file__).parent / "prompts"
+# #125 (fail-fast follow-up to #116): every structured rejection tools.py's update_order/modify
+# path can return renders one of these keys via PromptLoader.render_error, plus generic_error as
+# the shared fallback. There is no per-key default -- error_messages.yaml is per-pack only (design
+# doc section 6) -- so a pack missing any of these used to silently fall back to
+# render_error's "An error occurred (<key>)." placeholder at runtime instead of failing startup
+# like a missing greeting/tool schema does. Mirrored byte-for-byte (same values, same order) in
+# app/backend-dotnet/src/Backend/Prompts/PromptLoader.cs's RequiredErrorMessageKeys;
+# tests/test_prompt_loading.py::test_required_error_message_keys_match_dotnet parses that C# file
+# and asserts the two lists are equal, so the two can never silently drift apart.
+REQUIRED_ERROR_MESSAGE_KEYS: tuple[str, ...] = (
+    "generic_error",
+    "item_not_on_menu",  # #73: update_order add -- item_name doesn't resolve on the menu at all
+    "size_not_available",  # #73: update_order add -- item resolves, requested size doesn't
+    "item_not_in_order",  # #116: update_order modify -- item resolves, isn't in the order yet
+    "machine_unavailable",  # #116: update_order add -- item's requiresMachine is reported "down"
+    "extras_blocked_category",  # #116: update_order add -- an extra with a blocked base category
+    "extras_no_base_item",  # #116: update_order add -- an extra with no allowed base item yet
+    "item_out_of_mode",  # #165: update_order add -- item resolves, isn't offered in this session's active menu mode
+)
+
+# personas/ sits at the repo root in a checkout (design doc section 4.1), or right next to this
+# module in the flattened container image layout. resolve_personas_dir() is persona_loader.py's
+# one shared implementation (env var PERSONAS_DIR, else pick by existence, not by path depth) --
+# reused here so both loaders always agree on where packs live (#129 review round 2).
+_PERSONAS_DIR = resolve_personas_dir(Path(__file__))
 
 # Jinja2 environment for rendering error message templates
 _jinja_env = Environment(loader=BaseLoader(), undefined=__import__("jinja2").StrictUndefined)
 
 
 class PromptLoader:
-    """Loads and caches prompt YAML files for a given brand."""
+    """Loads and caches prompt YAML files for a given brand's persona pack."""
 
-    def __init__(self, brand: str = "sonic"):
+    def __init__(self, brand: str = "sonic", prompts_dir: Path | str | None = None):
+        """*prompts_dir* (#74, optional): load prompts from this exact directory instead of
+        deriving it from *brand* + ``PERSONAS_DIR`` -- lets a multi-persona deployment build one
+        ``PromptLoader`` per bound persona from its own catalog-resolved
+        :attr:`persona_loader.Persona.prompts_dir`, without requiring that path to match the
+        ``PERSONAS_DIR / brand / "prompts"`` convention. Omitted (the default): unchanged,
+        today's single-persona/env-driven behavior."""
         self._brand = brand
-        self._brand_dir = _PROMPTS_DIR / brand
+        self._brand_dir = Path(prompts_dir) if prompts_dir is not None else _PERSONAS_DIR / brand / "prompts"
         self._cache: dict[str, Any] = {}
         self._last_load_time: float = 0.0
         self._dev_mode = os.environ.get("DEV_MODE", "").lower() in ("true", "1", "yes")
@@ -111,12 +144,17 @@ class PromptLoader:
         return f" ({generic.get('hint', '')})" if generic.get("hint") else ""
 
     def get_delta_template(self, action: str) -> str:
-        """Return the delta text template for 'add' or 'remove' actions."""
+        """Return the delta text template for 'add', 'remove', or 'modify' actions."""
         self._maybe_reload()
         templates = self._cache["hints"].get("delta_templates", {})
         if action == "add":
-            return templates.get("item_added", "Added {{quantity}} {{display_name}} — your total is now ${{total}}")
-        return templates.get("item_removed", "Removed {{quantity}} {{display_name}} — your total is now ${{total}}")
+            return templates.get("item_added", "Added {{quantity}} {{display_name}} — your total is now {{total}}")
+        if action == "modify":
+            # #77: `modify` resizes an existing order line in place (design doc section 3.3 row
+            # 21) -- distinct wording from "remove" so the guest doesn't hear their item was taken
+            # off the order when it was actually just resized.
+            return templates.get("item_modified", "Changed {{display_name}} — your total is now {{total}}")
+        return templates.get("item_removed", "Removed {{quantity}} {{display_name}} — your total is now {{total}}")
 
     def render_template(self, template_str: str, **kwargs: Any) -> str:
         """Render any Jinja2 template string with the given variables."""
@@ -129,57 +167,49 @@ class PromptLoader:
     # ── Loading & Validation ────────────────────────────────────────────────
 
     def _load_all(self) -> None:
-        """Load all YAML files for the brand. Fail-fast on errors."""
+        """Load all YAML files for the brand's persona pack. Fail-fast on errors."""
         if not self._brand_dir.is_dir():
             raise FileNotFoundError(
                 f"Prompt directory not found: {self._brand_dir}. "
-                f"Expected prompts at app/backend/prompts/{self._brand}/"
+                f"Expected prompts at personas/{self._brand}/prompts/ "
+                f"(PERSONAS_DIR={_PERSONAS_DIR})"
             )
-
-        # Load manifest to discover files
-        manifest = self._load_yaml("manifest.yaml")
-        if manifest is None:
-            raise FileNotFoundError(
-                f"manifest.yaml not found in {self._brand_dir}. "
-                "This file lists which prompt files to load."
-            )
-
-        files = manifest.get("files", {})
 
         # Load system prompt
-        sp_data = self._load_yaml(files.get("system_prompt", "system_prompt.yaml"))
+        sp_data = self._load_yaml("system_prompt.yaml")
         if sp_data is None:
-            raise FileNotFoundError(f"System prompt file not found: {files.get('system_prompt')}")
+            raise FileNotFoundError("System prompt file not found: system_prompt.yaml")
         self._cache["system_prompt"] = self._assemble_system_prompt(sp_data)
 
         # Load greeting
-        gr_data = self._load_yaml(files.get("greeting", "greeting.yaml"))
+        gr_data = self._load_yaml("greeting.yaml")
         if gr_data is None:
-            raise FileNotFoundError(f"Greeting file not found: {files.get('greeting')}")
+            raise FileNotFoundError("Greeting file not found: greeting.yaml")
         self._validate_greeting(gr_data)
         greeting_msg = gr_data["greeting"]
         self._cache["greeting"] = greeting_msg
         # Pre-serialize for WebSocket
-        import json
         self._cache["greeting_json"] = json.dumps(greeting_msg)
 
         # Load tool schemas
-        ts_data = self._load_yaml(files.get("tool_schemas", "tool_schemas.yaml"))
+        ts_data = self._load_yaml("tool_schemas.yaml")
         if ts_data is None:
-            raise FileNotFoundError(f"Tool schemas file not found: {files.get('tool_schemas')}")
+            raise FileNotFoundError("Tool schemas file not found: tool_schemas.yaml")
         self._validate_tool_schemas(ts_data)
         self._cache["tool_schemas"] = ts_data["tools"]
 
         # Load error messages
-        em_data = self._load_yaml(files.get("error_messages", "error_messages.yaml"))
+        em_data = self._load_yaml("error_messages.yaml")
         if em_data is None:
-            raise FileNotFoundError(f"Error messages file not found: {files.get('error_messages')}")
-        self._cache["error_messages"] = em_data.get("messages", {})
+            raise FileNotFoundError("Error messages file not found: error_messages.yaml")
+        error_messages = em_data.get("messages", {})
+        self._validate_error_messages(error_messages)
+        self._cache["error_messages"] = error_messages
 
         # Load hints
-        hints_data = self._load_yaml(files.get("hints", "hints.yaml"))
+        hints_data = self._load_yaml("hints.yaml")
         if hints_data is None:
-            raise FileNotFoundError(f"Hints file not found: {files.get('hints')}")
+            raise FileNotFoundError("Hints file not found: hints.yaml")
         self._cache["hints"] = hints_data
 
         self._last_load_time = time.time()
@@ -233,6 +263,17 @@ class PromptLoader:
             raise ValueError("greeting.yaml must have a 'greeting' key")
         if "type" not in greeting:
             raise ValueError("greeting must have a 'type' field")
+
+    def _validate_error_messages(self, messages: dict) -> None:
+        """#125 (fail-fast follow-up to #116): every key in REQUIRED_ERROR_MESSAGE_KEYS must be
+        present so the model never gets render_error's "An error occurred (<key>)." placeholder
+        text in place of the pack's own guidance for a real, reachable rejection path."""
+        missing = [key for key in REQUIRED_ERROR_MESSAGE_KEYS if key not in messages]
+        if missing:
+            raise ValueError(
+                f"error_messages.yaml for persona pack '{self._brand}' is missing required "
+                f"rejection-message key(s): {', '.join(missing)}"
+            )
 
     def _validate_tool_schemas(self, data: dict) -> None:
         """Validate tool schemas structure."""

@@ -1,12 +1,24 @@
 # Rate-limit recovery
 
-The three drive-thru demos share one Azure OpenAI quota. When the service rate-limits a response, it
+The drive-thru app's enabled personas share the configured Azure OpenAI quota. When the service rate-limits a response, it
 fails that response with no output. Before this change the middle tier passed the failure straight through, so the
 guest heard silence and the carhop looked frozen. Now the middle tier retries and, if it has to, the browser
 apologises with a pre-recorded clip.
 
-Code: `app/backend/rate_limit.py`, which is wired in `app/backend/rtmt.py`. Browser side: `app/frontend/src/App.tsx`
-(`onReceivedRateLimited`) and `app/frontend/src/lib/apology.ts`.
+Python code: `app/backend/rate_limit.py`, which is wired in `app/backend/rtmt.py`. Browser side:
+`app/frontend/src/App.tsx` (`onReceivedRateLimited`) and `app/frontend/src/lib/apology.ts`.
+
+C# status: `app/backend-dotnet/src/Backend/Realtime/RateLimitRecovery.cs` is a verbatim port of this
+page's design, driven by the C# backend's injected `TimeProvider` (Issue #13 Wave 2) and wired into
+`app/backend-dotnet/src/Backend/Sessions/RealtimeProcessor.cs`. It implements the full retry ladder
+below (silent first retry, non-final then final `extension.rate_limited` notices, the
+`response.created`/`response.done` hooks, and cancellation on guest speech, an externally-requested
+response, or socket teardown) byte-for-byte matching Python's wire format and timing. The one
+intentional difference: because the C# relay has two concurrent loops (browser→upstream and
+upstream→browser) where Python's asyncio model has one, `RateLimitRecovery` commits each schedule
+decision inside the same lock as the failure that caused it, closing a race the single-threaded
+Python port never has to consider -- see that class's own doc comment. Not yet ported: the
+#15-tracked idle-timeout interplay (`RateLimitIdleInteractionTests`).
 
 ## Detection
 
@@ -72,7 +84,7 @@ On `extension.rate_limited` with `attempt: 1`, the browser does the following:
 
 1. Shows the notice "One moment, please…".
 2. Mutes the microphone, so the clip isn't transcribed as guest speech.
-3. Plays `/audio/apology-<lang>.wav` for the selected UI language, falling back to `en`.
+3. Plays the active persona's apology clip URL, substituting the selected UI language and falling back to `en`.
 4. Unmutes, unless the carhop has started talking again in the meantime.
 
 The clip is given at most 5 s. If it can't play, the flow carries on.
@@ -84,9 +96,10 @@ The notice clears when the guest speaks, when a response with a transcript arriv
 
 ## Apology clips
 
-The clips live in `app/frontend/public/audio/apology-{en,es,fr,ja}.wav`, one per UI locale. They are 24 kHz mono PCM16,
-about 2–3 s each (roughly 100–150 KB). They have to be local audio: when the clip is needed, the model is the thing
-being rate-limited.
+The clips live in each persona's `assets/audio/apology-{en,es,fr,ja}.wav` and are referenced by
+`persona.json` as `ui.assets.apologyClip: "assets/audio/apology-{lang}.wav"`. They are 24 kHz mono
+PCM16, about 2–3 s each (roughly 100–150 KB). They have to be local audio: when the clip is needed,
+the model is the thing being rate-limited.
 
 | lang | phrase |
 |---|---|
@@ -120,9 +133,8 @@ resilience:
     max_retries: 2
 ```
 
-`RATE_LIMIT_RECOVERY_ENABLED=true|false` overrides `enabled`, and an empty value keeps the config value. The name is
-the same in all three demos. With recovery disabled, rate-limited frames pass through to the browser as they did
-before.
+`RATE_LIMIT_RECOVERY_ENABLED=true|false` overrides `enabled`, and an empty value keeps the config value. With recovery
+disabled, rate-limited frames pass through to the browser as they did before.
 
 ## What only a deployment can confirm
 

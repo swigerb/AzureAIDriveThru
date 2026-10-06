@@ -1,0 +1,14 @@
+version: "1.0.0"
+tools:
+  - name: "search"
+    type: "function"
+    description: "Search the Test Epsilon fixture menu."
+    parameters:
+      type: "object"
+      properties:
+        query:
+          type: "string"
+          description: "Search query"
+      required:
+        - "query"
+      additionalProperties: false

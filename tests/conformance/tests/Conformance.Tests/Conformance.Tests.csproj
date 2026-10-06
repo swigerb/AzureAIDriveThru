@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Conformance.Tests</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="xunit.v3.mtp-off" />
+    <!-- Real-browser scenarios only (Category=Browser); see Scenarios/Browser/. -->
+    <PackageReference Include="Microsoft.Playwright" />
+    <!-- Issue #143 (ADR-002): FakeEntraIssuerJwtBearerValidationTests hosts a real, minimal
+         ASP.NET Core JwtBearer pipeline (stock middleware, not Microsoft.Identity.Web) against
+         FakeEntraIssuer, needing the ASP.NET Core shared framework even though this project uses
+         the plain (non-Web) SDK everywhere else. -->
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Conformance.Fakes\Conformance.Fakes.csproj" />
+    <ProjectReference Include="..\..\src\Conformance.Harness\Conformance.Harness.csproj" />
+  </ItemGroup>
+
+</Project>

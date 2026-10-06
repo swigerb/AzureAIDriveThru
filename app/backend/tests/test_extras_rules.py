@@ -27,32 +27,37 @@ class ExtrasRuleTests(unittest.TestCase):
 
     def test_block_extra_when_only_hot_dog(self):
         session_id = order_state_singleton.create_session()
-        self._add_item(session_id, "Chili Cheese Coney", "standard", 1, 3.99)
+        self._add_item(session_id, "Chili Cheese Coney", "standard", 1, 3.19)
 
         result = asyncio.run(
             update_order(
                 {
                     "action": "add",
-                    "item_name": "Extra Cheese",
+                    "item_name": "Add Bacon",
                     "size": "standard",
                     "quantity": 1,
-                    "price": 0.50,
+                    "price": 1.0,
                 },
                 session_id,
             )
         )
 
         self.assertEqual(result.destination, ToolResultDirection.TO_SERVER)
-        self.assertIn("extras", result.text.lower())
+        # #77: extras rejections are now a structured dict (status/item_added/reason/message),
+        # matching not_on_menu/machine_unavailable -- not a bare apology string. A hot dog is a
+        # blocked base category, not merely "no allowed base item yet".
+        self.assertEqual(result.text["status"], "rejected")
+        self.assertEqual(result.text["reason"], "extras_blocked_category")
+        self.assertIn("extras", result.text["message"].lower())
 
         summary = order_state_singleton.get_order_summary(session_id)
         self.assertEqual(len(summary.items), 1)
         self.assertEqual(summary.items[0].item, "Chili Cheese Coney")
-        self.assertTrue(math.isclose(summary.total, 3.99, rel_tol=1e-9))
+        self.assertTrue(math.isclose(summary.total, 3.19, rel_tol=1e-9))
 
     def test_allow_extra_when_slush_present(self):
         session_id = order_state_singleton.create_session()
-        self._add_item(session_id, "Cherry Limeade", "medium", 1, 2.99)
+        self._add_item(session_id, "Cherry Limeade", "medium", 1, 2.89)
 
         result = asyncio.run(
             update_order(
@@ -61,7 +66,7 @@ class ExtrasRuleTests(unittest.TestCase):
                     "item_name": "Flavor Add-In",
                     "size": "standard",
                     "quantity": 1,
-                    "price": 0.50,
+                    "price": 0.3,
                 },
                 session_id,
             )
@@ -74,7 +79,7 @@ class ExtrasRuleTests(unittest.TestCase):
         extras_item = summary.items[1]
         self.assertEqual(extras_item.item, "Flavor Add-In")
         self.assertEqual(extras_item.quantity, 1)
-        expected_total = (1 * 2.99) + 0.50
+        expected_total = (1 * 2.89) + 0.30
         self.assertTrue(math.isclose(summary.total, expected_total, rel_tol=1e-9))
 
     def test_block_extra_when_only_sides(self):
@@ -88,14 +93,16 @@ class ExtrasRuleTests(unittest.TestCase):
                     "item_name": "Whipped Cream",
                     "size": "standard",
                     "quantity": 1,
-                    "price": 0.50,
+                    "price": 0.2,
                 },
                 session_id,
             )
         )
 
         self.assertEqual(result.destination, ToolResultDirection.TO_SERVER)
-        self.assertIn("extras", result.text.lower())
+        self.assertEqual(result.text["status"], "rejected")
+        self.assertEqual(result.text["reason"], "extras_blocked_category")
+        self.assertIn("extras", result.text["message"].lower())
 
         summary = order_state_singleton.get_order_summary(session_id)
         self.assertEqual(len(summary.items), 1)
@@ -107,7 +114,7 @@ class ExtrasRuleTests(unittest.TestCase):
     def test_allow_extra_with_shake(self):
         """Extras should be allowed when a shake is in the order."""
         session_id = order_state_singleton.create_session()
-        self._add_item(session_id, "Classic Vanilla Shake", "large", 1, 4.99)
+        self._add_item(session_id, "Vanilla Classic Shake", "large", 1, 5.69)
 
         result = asyncio.run(
             update_order(
@@ -116,7 +123,7 @@ class ExtrasRuleTests(unittest.TestCase):
                     "item_name": "Whipped Cream",
                     "size": "standard",
                     "quantity": 1,
-                    "price": 0.50,
+                    "price": 0.2,
                 },
                 session_id,
             )
@@ -129,7 +136,7 @@ class ExtrasRuleTests(unittest.TestCase):
         """Extras allowed when order has both tots AND a slush."""
         session_id = order_state_singleton.create_session()
         self._add_item(session_id, "Tots", "medium", 1, 2.79)
-        self._add_item(session_id, "Cherry Limeade", "medium", 1, 2.99)
+        self._add_item(session_id, "Cherry Limeade", "medium", 1, 2.89)
 
         result = asyncio.run(
             update_order(
@@ -138,7 +145,7 @@ class ExtrasRuleTests(unittest.TestCase):
                     "item_name": "Flavor Add-In",
                     "size": "standard",
                     "quantity": 1,
-                    "price": 0.50,
+                    "price": 0.3,
                 },
                 session_id,
             )
@@ -150,29 +157,31 @@ class ExtrasRuleTests(unittest.TestCase):
     def test_block_extra_with_only_multiple_sides(self):
         """Even multiple sides should not unlock extras."""
         session_id = order_state_singleton.create_session()
-        self._add_item(session_id, "Tots", "large", 3, 3.29)
-        self._add_item(session_id, "Onion Rings", "medium", 1, 2.99)
+        self._add_item(session_id, "Tots", "large", 3, 3.49)
+        self._add_item(session_id, "Onion Rings", "medium", 1, 3.89)
 
         result = asyncio.run(
             update_order(
                 {
                     "action": "add",
-                    "item_name": "Extra Cheese",
+                    "item_name": "Add Bacon",
                     "size": "standard",
                     "quantity": 1,
-                    "price": 0.50,
+                    "price": 1.0,
                 },
                 session_id,
             )
         )
         self.assertEqual(result.destination, ToolResultDirection.TO_SERVER)
-        self.assertIn("extras", result.text.lower())
+        self.assertEqual(result.text["status"], "rejected")
+        self.assertEqual(result.text["reason"], "extras_blocked_category")
+        self.assertIn("extras", result.text["message"].lower())
 
     def test_allow_extra_with_multiple_drinks(self):
         """Multiple drinks in the order — extras should still be allowed."""
         session_id = order_state_singleton.create_session()
         self._add_item(session_id, "Cherry Limeade", "small", 1, 2.49)
-        self._add_item(session_id, "Ocean Water", "large", 1, 3.49)
+        self._add_item(session_id, "Ocean Water", "large", 1, 3.39)
 
         result = asyncio.run(
             update_order(
@@ -181,7 +190,7 @@ class ExtrasRuleTests(unittest.TestCase):
                     "item_name": "Whipped Cream",
                     "size": "standard",
                     "quantity": 1,
-                    "price": 0.50,
+                    "price": 0.2,
                 },
                 session_id,
             )
@@ -193,7 +202,7 @@ class ExtrasRuleTests(unittest.TestCase):
     def test_block_extra_message_differs_with_blocked_base(self):
         """When order has only blocked-category items, the apology should mention them."""
         session_id = order_state_singleton.create_session()
-        self._add_item(session_id, "Chili Cheese Coney", "standard", 1, 3.99)
+        self._add_item(session_id, "Chili Cheese Coney", "standard", 1, 3.19)
 
         result = asyncio.run(
             update_order(
@@ -202,13 +211,14 @@ class ExtrasRuleTests(unittest.TestCase):
                     "item_name": "Flavor Add-In",
                     "size": "standard",
                     "quantity": 1,
-                    "price": 0.50,
+                    "price": 0.3,
                 },
                 session_id,
             )
         )
         self.assertEqual(result.destination, ToolResultDirection.TO_SERVER)
-        self.assertIn("can't add them", result.text.lower())
+        self.assertEqual(result.text["reason"], "extras_blocked_category")
+        self.assertIn("can't add them", result.text["message"].lower())
 
     def test_non_extra_item_always_allowed(self):
         """Non-extra items should always be addable regardless of order contents."""
@@ -222,7 +232,7 @@ class ExtrasRuleTests(unittest.TestCase):
                     "item_name": "Cherry Limeade",
                     "size": "medium",
                     "quantity": 1,
-                    "price": 2.99,
+                    "price": 2.89,
                 },
                 session_id,
             )
@@ -234,8 +244,8 @@ class ExtrasRuleTests(unittest.TestCase):
     def test_remove_action_bypasses_extra_check(self):
         """Removing an extra should work even without a qualifying drink."""
         session_id = order_state_singleton.create_session()
-        self._add_item(session_id, "Cherry Limeade", "medium", 1, 2.99)
-        self._add_item(session_id, "Flavor Add-In", "standard", 1, 0.50)
+        self._add_item(session_id, "Cherry Limeade", "medium", 1, 2.89)
+        self._add_item(session_id, "Flavor Add-In", "standard", 1, 0.3)
 
         # Now remove the slush, leaving only the extra
         order_state_singleton.handle_order_update(session_id, "remove", "Cherry Limeade", "medium", 1, 2.99)
@@ -248,7 +258,7 @@ class ExtrasRuleTests(unittest.TestCase):
                     "item_name": "Flavor Add-In",
                     "size": "standard",
                     "quantity": 1,
-                    "price": 0.50,
+                    "price": 0.3,
                 },
                 session_id,
             )
@@ -271,10 +281,10 @@ class HappyHourPricingTests(unittest.TestCase):
     def test_drink_full_price_outside_happy_hour(self, _mock_hh):
         """Outside happy hour, drinks are charged at full price."""
         session_id = order_state_singleton.create_session()
-        self._add_item(session_id, "Cherry Limeade", "medium", 2, 2.99)
+        self._add_item(session_id, "Cherry Limeade", "medium", 2, 2.89)
         self._add_item(session_id, "Tots", "medium", 1, 2.79)
         summary = order_state_singleton.get_order_summary(session_id)
-        expected_subtotal = (2 * 2.99) + 2.79
+        expected_subtotal = (2 * 2.89) + 2.79
         self.assertTrue(math.isclose(summary.total, expected_subtotal, rel_tol=1e-9))
         expected_tax = expected_subtotal * 0.08
         self.assertTrue(math.isclose(summary.tax, expected_tax, rel_tol=1e-9))
@@ -283,45 +293,59 @@ class HappyHourPricingTests(unittest.TestCase):
     def test_drink_discounted_during_happy_hour(self, _mock_hh):
         """During happy hour, drinks receive a 50% discount; sides are unaffected."""
         session_id = order_state_singleton.create_session()
-        self._add_item(session_id, "Cherry Limeade", "medium", 2, 2.99)
+        self._add_item(session_id, "Cherry Limeade", "medium", 2, 2.89)
         self._add_item(session_id, "Tots", "medium", 1, 2.79)
         summary = order_state_singleton.get_order_summary(session_id)
         # Drinks discounted 50%, sides at full price
-        expected_subtotal = (2 * 2.99 * 0.5) + 2.79
+        expected_subtotal = (2 * 2.89 * 0.5) + 2.79
         self.assertTrue(math.isclose(summary.total, expected_subtotal, rel_tol=1e-9))
         expected_tax = expected_subtotal * 0.08
         self.assertTrue(math.isclose(summary.tax, expected_tax, rel_tol=1e-9))
 
     @patch("order_state.is_happy_hour", return_value=True)
+    def test_pre_applied_discount_tool_price_is_not_double_discounted(self, _mock_hh):
+        """Rick's #104 review, required item 2 (pre-applied discount): a tool call that sends an
+        already-discounted price (here, 1.45 -- Cherry Limeade medium's real price 2.89 halved)
+        must still be charged the real menu price with happy hour applied exactly once server
+        side, not the tool's own pre-discounted value. Expected subtotal is 2.89 * 0.5 = 1.445,
+        never 1.45 * 0.5 = 0.725 (which would mean the discount got applied twice)."""
+        session_id = order_state_singleton.create_session()
+        self._add_item(session_id, "Cherry Limeade", "medium", 1, 1.45)
+        summary = order_state_singleton.get_order_summary(session_id)
+        self.assertTrue(math.isclose(summary.total, 1.445, rel_tol=1e-9))
+
+    @patch("order_state.is_happy_hour", return_value=True)
     def test_happy_hour_does_not_discount_non_drinks(self, _mock_hh):
         """Happy hour only applies to drink-category items."""
         session_id = order_state_singleton.create_session()
-        self._add_item(session_id, "Chili Cheese Coney", "standard", 1, 3.99)
+        self._add_item(session_id, "Chili Cheese Coney", "standard", 1, 3.19)
         self._add_item(session_id, "Tots", "medium", 1, 2.79)
         summary = order_state_singleton.get_order_summary(session_id)
-        expected_subtotal = 3.99 + 2.79
+        expected_subtotal = 3.19 + 2.79
         self.assertTrue(math.isclose(summary.total, expected_subtotal, rel_tol=1e-9))
 
     @patch("order_state.is_happy_hour", return_value=True)
     def test_happy_hour_multiple_drink_types(self, _mock_hh):
-        """All drink-category items are discounted during happy hour."""
+        """Fountain drinks and slushes are discounted during happy hour; Shakes & Blasts are not
+        (Brian's decision, 2026-09-25 -- every Shakes & Ice Cream item's ``happyHourDiscounted``
+        field in the Sonic pack's menuItems.json is ``false``, per issue #71)."""
         session_id = order_state_singleton.create_session()
-        self._add_item(session_id, "Cherry Limeade", "medium", 1, 2.99)
-        self._add_item(session_id, "Ocean Water", "large", 1, 3.49)
-        self._add_item(session_id, "Classic Vanilla Shake", "large", 1, 4.99)
+        self._add_item(session_id, "Cherry Limeade", "medium", 1, 2.89)
+        self._add_item(session_id, "Ocean Water", "large", 1, 3.39)
+        self._add_item(session_id, "Vanilla Classic Shake", "large", 1, 5.69)
         summary = order_state_singleton.get_order_summary(session_id)
-        expected_subtotal = (2.99 * 0.5) + (3.49 * 0.5) + (4.99 * 0.5)
+        expected_subtotal = (2.89 * 0.5) + (3.39 * 0.5) + 5.69
         self.assertTrue(math.isclose(summary.total, expected_subtotal, rel_tol=1e-9))
 
     @patch("order_state.is_happy_hour", return_value=True)
     def test_extras_total_with_happy_hour_drink(self, _mock_hh):
         """Extras (non-drinks) are full price even when paired with a discounted drink."""
         session_id = order_state_singleton.create_session()
-        self._add_item(session_id, "Cherry Limeade", "medium", 1, 2.99)
-        self._add_item(session_id, "Flavor Add-In", "standard", 1, 0.50)
+        self._add_item(session_id, "Cherry Limeade", "medium", 1, 2.89)
+        self._add_item(session_id, "Flavor Add-In", "standard", 1, 0.3)
         summary = order_state_singleton.get_order_summary(session_id)
         # Cherry Limeade discounted, Flavor Add-In full price
-        expected_subtotal = (2.99 * 0.5) + 0.50
+        expected_subtotal = (2.89 * 0.5) + 0.30
         self.assertTrue(math.isclose(summary.total, expected_subtotal, rel_tol=1e-9))
 
 

@@ -18,10 +18,12 @@ gpt-realtime-1.5 on 2026-09-22):
 
 import asyncio
 import json
+import logging
+import os
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
@@ -29,6 +31,7 @@ from aiohttp import WSMsgType, web
 from aiohttp.test_utils import TestClient, TestServer
 from azure.core.credentials import AzureKeyCredential
 
+import rtmt as rtmt_module
 from rtmt import RTMiddleTier, Tool
 
 SYSTEM_PROMPT = "You are a Sonic Drive-In carhop."
@@ -62,6 +65,11 @@ class FakeGARealtime:
         self.reject_keys: set[str] = set()
         self.reject_every_update = False
         self.echo_event_id = True
+        # Issue #75: the `?model=` query param on each upstream connect -- i.e. the
+        # deployment name `_forward_messages` actually chose, not just what session
+        # metadata reports to the browser. One connect per `test_model_selection.py`
+        # WS session that reaches this fake.
+        self.connect_model_params: list[str | None] = []
 
     def app(self) -> web.Application:
         app = web.Application()
@@ -72,6 +80,7 @@ class FakeGARealtime:
         return {**self.session, "tools": [t.get("name") for t in self.session["tools"]]}
 
     async def handler(self, request: web.Request) -> web.WebSocketResponse:
+        self.connect_model_params.append(request.query.get("model"))
         ws = web.WebSocketResponse()
         await ws.prepare(request)
         await ws.send_json({"type": "session.created", "session": {"type": "realtime", **self._snapshot()}})
@@ -89,9 +98,11 @@ class FakeGARealtime:
             elif kind == "conversation.item.delete":
                 # Unrelated client event rejected, with its event_id echoed.
                 await self._error(ws, "item_not_found", "item_id", event.get("event_id"), "No such item.")
-            elif kind == "input_audio_buffer.commit":
-                # Unrelated rejection with no event_id and no param.
-                await self._error(ws, "input_audio_buffer_commit_empty", None, None, "Buffer too small.")
+            elif kind == "response.cancel":
+                # Unrelated rejection: no active response to cancel (see
+                # tests/conformance/README.md's "response_cancel_not_active" contract).
+                await self._error(ws, "response_cancel_not_active", "response_id", event.get("event_id"),
+                                  "No active response to cancel.")
         return ws
 
     async def _error(self, ws, code, param, event_id, text) -> None:
@@ -153,6 +164,26 @@ class _RealtimeHarness(unittest.IsolatedAsyncioTestCase):
         )
         self.rtmt.system_message = SYSTEM_PROMPT
         self.rtmt.max_tokens = 4096
+        # Matches the shipped config.yaml default (never unset in a real
+        # deployment) -- see input_audio_transcription server-ownership.
+        self.rtmt.transcription_model = "whisper-1"
+        # #75/Rick's PR #106 review item 1: there is no more default-path catalog
+        # bypass -- every session's bound model (including the deployment-wide
+        # default persona's own default, whichever fixture/real persona a given
+        # test binds to) must be catalogued or `_websocket_handler` 404s before
+        # the WS upgrade. Load the REAL config.yaml catalog (so the shipped
+        # default persona's own default model, gpt-realtime-2.1, is always
+        # catalogued) with an explicitly EMPTY deployment map (`environ={}`,
+        # never the real process environment) so it's never actually deployed
+        # here either -- exercising the same deployment-fallback-to-`self.deployment`
+        # ("gpt-realtime-test") branch every pre-#75 test already assumed, with
+        # its `reasoning` flag now correctly sourced from the catalog (True for
+        # gpt-realtime-2.1) instead of the old reasoning=None default path. A
+        # test that needs a different/deployed catalog (e.g. ModelWebSocketHandlerTests)
+        # overrides this in its own asyncSetUp.
+        from model_catalog import ModelCatalog
+
+        self.rtmt.model_catalog = ModelCatalog.load(environ={})
         for name in TOOL_NAMES:
             self.rtmt.tools[name] = Tool(target=MagicMock(), schema={"type": "function", "name": name})
 
@@ -196,6 +227,13 @@ class _RealtimeHarness(unittest.IsolatedAsyncioTestCase):
         except TimeoutError:
             return events
 
+    def _only_session(self) -> str:
+        """The session_id of the one connection currently attached. Only
+        meaningful right after connecting a single guest, before any other
+        guest has connected (see the voice-persistence tests, which capture
+        this immediately after each guest connects)."""
+        return next(iter(self.rtmt._sessions._session_map.values()))
+
 class SessionBootstrapTests(_RealtimeHarness):
 
     async def test_reconnected_socket_with_live_mic_still_registers_tools(self):
@@ -228,19 +266,26 @@ class SessionBootstrapTests(_RealtimeHarness):
         self.assertEqual([t["name"] for t in session["tools"]], TOOL_NAMES)
         self.assertEqual(session["tool_choice"], "auto")
         self.assertEqual(session["instructions"], SYSTEM_PROMPT)
-        self.assertEqual(session["audio"]["output"]["voice"], "shimmer")
+        self.assertEqual(session["audio"]["output"]["voice"], "marin",
+                          "with the persona catalog mandatory (#74), a fresh session's voice is "
+                          "the bound (default) persona's own voice.default, not the bare "
+                          "RTMiddleTier voice_choice constructor fallback")
         self.assertEqual(session["audio"]["input"]["turn_detection"], BROWSER_SESSION_UPDATE["session"]["turn_detection"])
         self.assertEqual(session["audio"]["input"]["transcription"], {"model": "whisper-1"})
         self.assertEqual(session["type"], "realtime")
         await browser.close()
 
     async def test_session_update_after_assistant_audio_is_not_rejected_for_voice(self):
-        """voice_choice is process-wide, so another tab can change it mid-call.
-        A re-sent session.update (mic re-toggle) must not carry a new voice."""
+        """#43 fix (PR #49 review round 6, "S1"): the voice a guest picks is
+        stored on their OWN session in self._sessions, never on RTMiddleTier
+        -- so even if another tab/guest's pick lands in session storage under
+        a DIFFERENT session_id mid-call, THIS connection's own local `voice`
+        is unaffected, and a re-sent session.update (mic re-toggle) still
+        must not carry a new voice."""
         browser = await self.client.ws_connect("/realtime")
         await browser.send_json(BROWSER_SESSION_UPDATE)
         await self._response_done(browser)          # greeting -> assistant audio present
-        self.rtmt.voice_choice = "coral"
+        self.rtmt._sessions.set_voice("another-guests-session", "coral")   # simulates another tab/guest picking a voice
         await browser.send_json(BROWSER_SESSION_UPDATE)
         await self._until(lambda: len(self._session_updates()) >= 3)
         await asyncio.sleep(0.1)
@@ -253,6 +298,8 @@ class SessionBootstrapTests(_RealtimeHarness):
 
     async def test_voice_picker_after_assistant_audio_is_deferred(self):
         browser = await self.client.ws_connect("/realtime")
+        await self._until(lambda: self.rtmt._sessions.active_session_count >= 1)
+        sid = self._only_session()
         await browser.send_json(BROWSER_SESSION_UPDATE)
         await self._response_done(browser)
         before = len(self._session_updates())
@@ -261,7 +308,10 @@ class SessionBootstrapTests(_RealtimeHarness):
 
         self.assertEqual(len(self._session_updates()), before, "voice change was sent and would be rejected")
         self.assertEqual(self.fake.errors, [])
-        self.assertEqual(self.rtmt.voice_choice, "coral")
+        # #43 fix (round 6): self.voice_choice (config default) is never
+        # mutated; the pick lands in this session's own entry in
+        # self._sessions, never on RTMiddleTier itself.
+        self.assertEqual(self.rtmt._sessions.get_voice(sid), "coral")
         await browser.close()
 
     async def test_voice_picker_before_assistant_audio_is_applied(self):
@@ -274,6 +324,88 @@ class SessionBootstrapTests(_RealtimeHarness):
         self.assertEqual(self.fake.session["voice"], "coral")
         self.assertEqual(self.fake.errors, [])
         await browser.close()
+
+    async def test_unknown_voice_is_rejected_not_forwarded(self):
+        """PR #49 review round 5, "M1": extension.set_voice trusted ANY
+        non-empty string and forwarded it upstream immediately (unlocked
+        path) -- a forged voice name reached the real GA endpoint, and (via
+        the then process-wide self.voice_choice) every later guest's
+        bootstrap too. Only a value from the server's own voice allow-list
+        may ever be forwarded or adopted."""
+        browser = await self.client.ws_connect("/realtime")
+        await self._until(lambda: len(self._session_updates()) >= 1)
+        before = len(self._session_updates())
+        await browser.send_json({"type": "extension.set_voice", "voice": "rick_probe_voice"})
+        await asyncio.sleep(0.2)
+
+        self.assertEqual(len(self._session_updates()), before,
+                          "an unknown voice must never be forwarded upstream")
+        self.assertNotEqual(self.fake.session.get("voice"), "rick_probe_voice")
+        await browser.close()
+
+    async def test_two_concurrent_guests_voice_picks_do_not_leak_into_an_already_open_connection(self):
+        """#43 fix (PR #49 review round 6, "S1"): the process-wide
+        `self.voice_choice` mutation used to mean guest A picking a voice
+        also changed guest B's in-flight conversation, even though B was
+        already connected and B's socket has nothing to do with A's pick.
+        Mirrors the C# conformance scenario of the same name."""
+        guest_a = await self.client.ws_connect("/realtime")
+        await self._until(lambda: self.rtmt._sessions.active_session_count >= 1)
+        sid_a = self._only_session()
+        await guest_a.send_json(BROWSER_SESSION_UPDATE)
+        await self._response_done(guest_a)   # A's greeting -> A's voice is locked
+
+        guest_b = await self.client.ws_connect("/realtime")
+        await guest_b.send_json(BROWSER_SESSION_UPDATE)
+        await self._response_done(guest_b)   # B's greeting -> B's voice is locked
+
+        # Guest A picks a voice mid-conversation (locked, so it's deferred to
+        # A's own next conversation) -- this must have NO effect on guest B,
+        # who is still active right now.
+        watermark = len(self._session_updates())
+        await guest_a.send_json({"type": "extension.set_voice", "voice": "coral"})
+        await asyncio.sleep(0.2)
+
+        self.assertEqual(len(self._session_updates()), watermark,
+                          "guest A's deferred voice pick must not produce any upstream session.update at all")
+        self.assertEqual(self.rtmt._sessions.get_voice(sid_a), "coral")
+
+        # Guest B's own connection is unaffected: a re-sent session.update
+        # (mic re-toggle) on B must still omit voice (still locked on B's
+        # ORIGINAL voice), never pick up A's pending pick.
+        await guest_b.send_json(BROWSER_SESSION_UPDATE)
+        await self._until(lambda: len(self._session_updates()) > watermark)
+        latest = self._session_updates()[-1]["session"]
+        self.assertNotIn("voice", (latest.get("audio") or {}).get("output", {}),
+                          "guest B's re-sent session.update must not carry guest A's pending voice pick")
+
+        await guest_a.close()
+        await guest_b.close()
+
+    async def test_voice_picked_after_lock_does_not_carry_to_a_brand_new_unrelated_connection(self):
+        """#43 fix (PR #49 review round 6, "S1"): the round-5 fix left
+        `self._voice_override` as a process-wide sticky default for every
+        future NEW connection, so guest A's pick still became guest B's, C's,
+        ... default -- exactly Rick's S1 finding ("Guest A can still change
+        every guest's voice"). A brand-new, UNRELATED connection (no
+        resume_id presented, so it has nothing to do with the first guest's
+        session) must always bootstrap with the server's config default,
+        never another guest's pick."""
+        first = await self.client.ws_connect("/realtime")
+        await first.send_json(BROWSER_SESSION_UPDATE)
+        await self._response_done(first)   # greeting -> voice locked
+        await first.send_json({"type": "extension.set_voice", "voice": "verse"})
+        await asyncio.sleep(0.2)
+        await first.close()
+
+        watermark = len(self._session_updates())
+        second = await self.client.ws_connect("/realtime")
+        await self._until(lambda: len(self._session_updates()) > watermark)
+        bootstrap = [e for e in self._session_updates() if str(e.get("event_id", "")).startswith("sonic_bootstrap")][-1]
+        self.assertEqual(bootstrap["session"]["audio"]["output"]["voice"], "marin",
+                          "a brand-new, unrelated connection must get the server (persona-bound) "
+                          "default, never another guest's pick")
+        await second.close()
 
     async def test_bootstrap_does_not_trigger_an_unprompted_greeting(self):
         """Greeting belongs to the browser's session.update (mic pressed), not to
@@ -288,6 +420,168 @@ class SessionBootstrapTests(_RealtimeHarness):
         await self._response_done(browser)
         self.assertEqual(sum(e["type"] == "conversation.item.create" for e in self.fake.received), 1)
         self.assertEqual(self.fake.response_sessions[0]["tools"], TOOL_NAMES)
+        await browser.close()
+
+
+class ClientLogControlGateTests(_RealtimeHarness):
+    """swigerb/SonicAIDriveThru#53: a browser must never be able to flip
+    process-wide log verbosity (`extension.set_verbose_logging`) or open a
+    process-wide log file (`extension.set_log_to_file`) in production --
+    both mutate the shared `sonic-verbose` logger, so one guest's request
+    would silently change every OTHER connection's logging on the same
+    worker process (and file logging additionally risks writing guest audio
+    transcripts to disk and filling it).
+
+    Gated the same way #31's G1 `response.create` gate is (see
+    `test_rtmt.ResponseCreateGateTests` /
+    `rtmt._client_log_control_allowed`): `conformance_hooks.hooks_enabled_now()`
+    (live-rechecked every call, never the frozen import-time constant -- see
+    that function's own docstring for why) OR an explicit
+    `security.allow_client_log_control` config/env opt-in.
+
+    `app/backend/tests/conftest.py` sets `CONFORMANCE_TEST_HOOKS=1` for the
+    whole pytest process, so the "dropped" test below forces hooks off LIVE
+    for its own duration to reproduce production's actual shape (mirroring
+    the G1 test's identical `patch.dict(os.environ, ...)` technique)."""
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        # Snapshot the shared vlogger's state so a test that legitimately
+        # enables it (hooks on / config flag on) can't leak into any other
+        # test in the process.
+        self._vlogger_level = rtmt_module.vlogger.level
+        self._vlogger_handlers = list(rtmt_module.vlogger.handlers)
+
+    async def asyncTearDown(self):
+        for h in list(rtmt_module.vlogger.handlers):
+            if h not in self._vlogger_handlers:
+                rtmt_module.vlogger.removeHandler(h)
+                try:
+                    h.close()
+                except Exception:
+                    pass
+        rtmt_module.vlogger.setLevel(self._vlogger_level)
+        await super().asyncTearDown()
+
+    async def test_both_extensions_dropped_with_warning_when_hooks_and_flag_are_off(self):
+        with patch.dict(os.environ, {"CONFORMANCE_TEST_HOOKS": ""}), \
+                patch.object(rtmt_module, "_security_cfg", {}):
+            browser = await self.client.ws_connect("/realtime")
+            await self._until(lambda: self.rtmt._sessions.active_session_count >= 1)
+
+            with self.assertLogs("sonic-drive-in", level="WARNING") as logs:
+                await browser.send_json({"type": "extension.set_verbose_logging", "enabled": True})
+                await asyncio.sleep(0.1)
+            self.assertTrue(any("set_verbose_logging" in m for m in logs.output))
+            self.assertEqual(rtmt_module.vlogger.level, self._vlogger_level,
+                              "verbose logging must not be enabled while gated off")
+            self.assertEqual(list(rtmt_module.vlogger.handlers), self._vlogger_handlers)
+
+            with self.assertLogs("sonic-drive-in", level="WARNING") as logs2:
+                await browser.send_json({"type": "extension.set_log_to_file", "enabled": True})
+                await asyncio.sleep(0.1)
+            self.assertTrue(any("set_log_to_file" in m for m in logs2.output))
+            self.assertEqual(list(rtmt_module.vlogger.handlers), self._vlogger_handlers,
+                              "no file handler must be attached while gated off")
+            # Liveness: the socket must still be open and processing frames
+            # afterwards -- a dropped extension frame must never close it.
+            await browser.send_json({"type": "input_audio_buffer.clear"})
+            await asyncio.sleep(0.05)
+            self.assertFalse(browser.closed)
+            await browser.close()
+
+    async def test_both_extensions_still_work_when_conformance_hooks_are_enabled(self):
+        # conftest.py already sets CONFORMANCE_TEST_HOOKS=1 for this whole
+        # process -- no patch needed, this is the existing/legacy behaviour.
+        with patch.object(rtmt_module, "_create_verbose_file_handler", return_value=MagicMock()):
+            browser = await self.client.ws_connect("/realtime")
+            await self._until(lambda: self.rtmt._sessions.active_session_count >= 1)
+
+            await browser.send_json({"type": "extension.set_verbose_logging", "enabled": True})
+            await self._until(lambda: rtmt_module.vlogger.level == logging.DEBUG)
+
+            await browser.send_json({"type": "extension.set_log_to_file", "enabled": True})
+            await self._until(lambda: len(rtmt_module.vlogger.handlers) > len(self._vlogger_handlers))
+
+            await browser.send_json({"type": "extension.set_log_to_file", "enabled": False})
+            await browser.send_json({"type": "extension.set_verbose_logging", "enabled": False})
+            await asyncio.sleep(0.05)
+            await browser.close()
+
+    async def test_verbose_logging_still_works_via_explicit_config_flag_with_hooks_off(self):
+        with patch.dict(os.environ, {"CONFORMANCE_TEST_HOOKS": ""}), \
+                patch.object(rtmt_module, "_security_cfg", {"allow_client_log_control": True}):
+            browser = await self.client.ws_connect("/realtime")
+            await self._until(lambda: self.rtmt._sessions.active_session_count >= 1)
+
+            await browser.send_json({"type": "extension.set_verbose_logging", "enabled": True})
+            await self._until(lambda: rtmt_module.vlogger.level == logging.DEBUG)
+
+            await browser.send_json({"type": "extension.set_verbose_logging", "enabled": False})
+            await asyncio.sleep(0.05)
+            await browser.close()
+
+
+class SessionUpdatedScrubTests(_RealtimeHarness):
+    """swigerb/SonicAIDriveThru#27: the middle tier scrubbed `instructions` and
+    `tools` from `session.created` before relaying it to the browser, but had
+    no case for `session.updated` in `_process_message_to_client`'s match
+    statement -- and `session.updated` is also not in
+    `_PASSTHROUGH_SERVER_TYPES`, so it fell through unmodified. GA fires
+    `session.updated` after every accepted session.update (starting with our
+    own bootstrap one), echoing the full session object back, so every
+    browser connection received the real system prompt and tool schemas.
+
+    swigerb/SonicAIDriveThru#45 replaced the original deny-list scrub with a
+    minimal allow-listed copy (`RTMiddleTier._client_session_echo`): the
+    browser-bound `session` object now contains only `id`, `object`, and
+    `audio.output.voice` -- `instructions`/`tools` (and everything else) are
+    absent entirely rather than nulled out, so these tests assert absence,
+    not emptiness.
+    """
+
+    async def test_bootstrap_session_updated_reaching_the_browser_has_no_instructions_or_tools(self):
+        browser = await self.client.ws_connect("/realtime")
+        # The bootstrap session.update (sent before any browser frame) is
+        # acknowledged by the fake with a session.updated that carries the
+        # real instructions/tools -- exactly what the real GA service does.
+        events = await self._browser_events(browser, duration=1.0)
+        updates = [e for e in events if e["type"] == "session.updated"]
+        self.assertTrue(updates, "no session.updated reached the browser")
+
+        # Sanity check: the *upstream* fake really did receive our real
+        # prompt and tool schemas, so this test would fail for the right
+        # reason if the scrub were ever removed.
+        self.assertEqual(self.fake.session["instructions"], SYSTEM_PROMPT)
+        self.assertEqual([t.get("name") for t in self.fake.session["tools"]], TOOL_NAMES)
+
+        for event in updates:
+            session = event["session"]
+            self.assertEqual(set(session), {"id", "object", "audio"},
+                              "session.updated must relay only the allow-listed session keys")
+            self.assertNotIn("instructions", session,
+                              "session.updated leaked the system prompt to the browser")
+            self.assertNotIn("tools", session,
+                              "session.updated leaked tool schemas to the browser")
+        await browser.close()
+
+    async def test_session_updated_for_the_browsers_own_update_is_also_scrubbed(self):
+        browser = await self.client.ws_connect("/realtime")
+        await self._browser_events(browser, duration=0.3)     # drain the bootstrap ack
+
+        await browser.send_json(BROWSER_SESSION_UPDATE)
+        events = await self._browser_events(browser, duration=1.0)
+        updates = [e for e in events if e["type"] == "session.updated"]
+        self.assertTrue(updates, "expected a session.updated for the browser's own session.update too")
+
+        for event in updates:
+            session = event["session"]
+            self.assertEqual(set(session), {"id", "object", "audio"},
+                              "session.updated must relay only the allow-listed session keys")
+            self.assertNotIn("instructions", session,
+                              "session.updated leaked the system prompt to the browser")
+            self.assertNotIn("tools", session,
+                              "session.updated leaked tool schemas to the browser")
         await browser.close()
 
 
@@ -418,15 +712,42 @@ class SessionUpdateFallbackTests(_RealtimeHarness):
     async def test_unrelated_errors_do_not_trigger_fallback(self):
         browser = await self.client.ws_connect("/realtime")
         await self._until_browser(browser, "session.updated")     # nothing of ours in flight now
-        await browser.send_json({"type": "conversation.item.delete", "item_id": "nope", "event_id": "client_evt_1"})
-        await browser.send_json({"type": "input_audio_buffer.commit"})
+        # swigerb/SonicAIDriveThru#31: conversation.item.delete is no longer
+        # forwarded upstream at all -- it isn't in the browser->upstream
+        # allow-list (the real frontend never sends it), so it can no longer
+        # serve as an "unrelated error" vehicle here. PR #49 review round 2,
+        # "S1" also removed input_audio_buffer.commit from the allow-list (the
+        # real frontend never sends it either), so two response.cancel frames
+        # (still allow-listed) stand in instead, each rejected by the fake
+        # with "no active response to cancel" since nothing is streaming.
+        await browser.send_json({"type": "response.cancel"})
+        await browser.send_json({"type": "response.cancel"})
         await self._until(lambda: len(self.fake.errors) >= 2)
         events = await self._browser_events(browser)
 
         self.assertEqual(self._fallbacks(), [])
         self.assertEqual(len(self._session_updates()), 1)
         self.assertEqual(sorted(e["error"]["code"] for e in events if e["type"] == "error"),
-                         ["input_audio_buffer_commit_empty", "item_not_found"])
+                         ["response_cancel_not_active", "response_cancel_not_active"])
+        await browser.close()
+
+    async def test_response_cancel_not_active_is_benign_not_an_error_log(self):
+        """#95: a response.cancel that lands after the response already finished
+        (e.g. useRealtime.tsx's unconditional cancel racing a barge-in or a mic
+        restart) is rejected by the real API with response_cancel_not_active in
+        the same race. It's not a backend fault, so it must not be logged at
+        ERROR -- strict conformance scenarios count every ERROR line as a new
+        backend error, and OrderResumeBrowserTests' strict-autoplay scenario
+        flaked on exactly this (issue #95). Still relayed to the browser
+        unchanged -- only the server-side log level changes."""
+        browser = await self.client.ws_connect("/realtime")
+        await self._until_browser(browser, "session.updated")     # nothing of ours in flight now
+        with self.assertNoLogs(rtmt_module.logger.name, level="ERROR"):
+            await browser.send_json({"type": "response.cancel"})
+            await self._until(lambda: len(self.fake.errors) >= 1)
+            events = await self._browser_events(browser)
+        self.assertEqual(sorted(e["error"]["code"] for e in events if e["type"] == "error"),
+                         ["response_cancel_not_active"])
         await browser.close()
 
 
@@ -478,7 +799,7 @@ class ReasoningAndTranscriptionConfigTests(unittest.TestCase):
         return rtmt
 
     def _bootstrap(self, rtmt):
-        return json.loads(rtmt.build_bootstrap_session_update())["session"]
+        return json.loads(rtmt.build_bootstrap_session_update(system_message=rtmt.system_message, tool_schemas=[tool.schema for tool in rtmt.tools.values()]))["session"]
 
     def test_reasoning_not_sent_when_unconfigured(self):
         session = self._bootstrap(self._rtmt())
@@ -532,7 +853,8 @@ class ReasoningAndTranscriptionConfigTests(unittest.TestCase):
 
     def test_client_cannot_inject_reasoning(self):
         rtmt = self._rtmt("gpt-realtime-1.5")
-        session = rtmt._build_session({"reasoning": {"effort": "high"}, "parallel_tool_calls": True})
+        session = rtmt._build_session({"reasoning": {"effort": "high"}, "parallel_tool_calls": True},
+                                       system_message=rtmt.system_message, tool_schemas=[tool.schema for tool in rtmt.tools.values()])
         self.assertNotIn("reasoning", session)
         self.assertNotIn("parallel_tool_calls", session)
 
@@ -583,7 +905,7 @@ class ReasoningAndTranscriptionConfigTests(unittest.TestCase):
 
     def test_fallback_is_minimal(self):
         rtmt = self._rtmt(reasoning_effort="low", parallel_tool_calls=True, transcription_model="whisper-1")
-        payload = json.loads(rtmt.build_fallback_session_update())
+        payload = json.loads(rtmt.build_fallback_session_update(system_message=rtmt.system_message, tool_schemas=[tool.schema for tool in rtmt.tools.values()]))
         self.assertTrue(payload["event_id"].startswith("sonic_fallback_"))
         self.assertEqual(set(payload["session"]), {"type", "instructions", "tools", "tool_choice"})
         self.assertEqual(payload["session"]["tool_choice"], "auto")
@@ -628,6 +950,77 @@ class ReasoningAndTranscriptionConfigTests(unittest.TestCase):
                 self.assertNotIn("reasoning", session)
                 self.assertNotIn("parallel_tool_calls", session)
 
+
+class VoiceConfigValidationTests(unittest.TestCase):
+    """swigerb/SonicAIDriveThru#57 FU2: `configure_realtime_model` must fail
+    LOUDLY at startup on a misconfigured voice allow-list, rather than
+    silently shipping a config that rejects every guest's voice pick."""
+
+    def _rtmt(self, voice_choice="marin"):
+        rtmt = RTMiddleTier("https://fake.openai.azure.com", "gpt-realtime-2.1", AzureKeyCredential("k"),
+                             voice_choice=voice_choice)
+        rtmt.system_message = SYSTEM_PROMPT
+        return rtmt
+
+    def test_a_bare_string_allowed_voices_is_rejected(self):
+        """A bare string is iterable character-by-character in Python --
+        `frozenset(str(v) for v in "marin")` would silently become
+        {"m", "a", "r", "i", "n"} instead of the single voice "marin". Pick a
+        default voice that IS one of those characters ("m") so a naive
+        char-set fallback would pass the (separate) membership check too --
+        only the isinstance guard itself can catch this."""
+        from rtmt import configure_realtime_model
+        with self.assertRaises(ValueError):
+            configure_realtime_model(self._rtmt(voice_choice="m"), {"allowed_voices": "marin"}, environ={})
+
+    def test_a_dict_allowed_voices_is_rejected(self):
+        from rtmt import configure_realtime_model
+        with self.assertRaises(ValueError):
+            configure_realtime_model(self._rtmt(), {"allowed_voices": {"marin": True}}, environ={})
+
+    def test_a_list_allowed_voices_is_accepted(self):
+        from rtmt import configure_realtime_model
+        rtmt = configure_realtime_model(self._rtmt(), {"allowed_voices": ["marin", "cedar"]}, environ={})
+        self.assertEqual(rtmt.allowed_voices, frozenset({"marin", "cedar"}))
+
+    def test_empty_or_omitted_allowed_voices_falls_back_to_the_default_ten(self):
+        from rtmt import _DEFAULT_ALLOWED_VOICES, configure_realtime_model
+        for cfg in ({}, {"allowed_voices": []}, {"allowed_voices": None}):
+            with self.subTest(cfg=cfg):
+                rtmt = configure_realtime_model(self._rtmt(), cfg, environ={})
+                self.assertEqual(rtmt.allowed_voices, _DEFAULT_ALLOWED_VOICES)
+
+    def test_default_voice_not_in_allow_list_fails_at_startup(self):
+        from rtmt import configure_realtime_model
+        with self.assertRaises(ValueError):
+            configure_realtime_model(self._rtmt(voice_choice="marin"),
+                                      {"allowed_voices": ["cedar", "shimmer"]}, environ={})
+
+    def test_default_voice_in_allow_list_succeeds(self):
+        from rtmt import configure_realtime_model
+        rtmt = configure_realtime_model(self._rtmt(voice_choice="cedar"),
+                                         {"allowed_voices": ["cedar", "shimmer"]}, environ={})
+        self.assertEqual(rtmt.voice_choice, "cedar")
+
+    def test_no_default_voice_configured_skips_the_membership_check(self):
+        """`voice_choice=None` means "send no voice at all" (see `_VOICE_UNSET`)
+        -- not a voice pick that could ever be invalid."""
+        from rtmt import configure_realtime_model
+        rtmt = configure_realtime_model(self._rtmt(voice_choice=None),
+                                         {"allowed_voices": ["cedar"]}, environ={})
+        self.assertIsNone(rtmt.voice_choice)
+
+    def test_shipped_config_default_voice_is_in_the_default_allow_list(self):
+        import yaml
+
+        from rtmt import _DEFAULT_ALLOWED_VOICES, configure_realtime_model
+        cfg = yaml.safe_load((Path(__file__).resolve().parents[1] / "config.yaml").read_text(encoding="utf-8"))
+        model_cfg = cfg["model"]
+        self.assertNotIn("allowed_voices", model_cfg, "shipped config leaves this commented out/default")
+        rtmt = configure_realtime_model(self._rtmt(voice_choice=model_cfg["default_voice"]), model_cfg, environ={})
+        self.assertIn(rtmt.voice_choice, _DEFAULT_ALLOWED_VOICES)
+
+
 class BuildSessionTests(unittest.TestCase):
 
     def _rtmt(self):
@@ -638,23 +1031,28 @@ class BuildSessionTests(unittest.TestCase):
         return rtmt
 
     def test_voice_locked_omits_voice_but_keeps_tools(self):
-        session = self._rtmt()._build_session({}, voice_locked=True)
+        rtmt = self._rtmt()
+        session = rtmt._build_session({}, voice_locked=True, system_message=rtmt.system_message, tool_schemas=[tool.schema for tool in rtmt.tools.values()])
         self.assertNotIn("audio", session)
         self.assertEqual(session["tool_choice"], "auto")
         self.assertEqual(session["tools"][0]["name"], "update_order")
         self.assertEqual(session["instructions"], SYSTEM_PROMPT)
 
     def test_voice_locked_keeps_input_audio_settings(self):
-        session = self._rtmt()._build_session(dict(BROWSER_SESSION_UPDATE["session"]), voice_locked=True)
+        rtmt = self._rtmt()
+        session = rtmt._build_session(dict(BROWSER_SESSION_UPDATE["session"]), voice_locked=True,
+                                      system_message=rtmt.system_message, tool_schemas=[tool.schema for tool in rtmt.tools.values()])
         self.assertNotIn("output", session["audio"])
         self.assertIn("turn_detection", session["audio"]["input"])
 
     def test_unlocked_sets_voice(self):
-        session = self._rtmt()._build_session({})
+        rtmt = self._rtmt()
+        session = rtmt._build_session({}, system_message=rtmt.system_message, tool_schemas=[tool.schema for tool in rtmt.tools.values()])
         self.assertEqual(session["audio"]["output"]["voice"], "shimmer")
 
     def test_bootstrap_payload_is_ga_shaped(self):
-        payload = json.loads(self._rtmt().build_bootstrap_session_update())
+        rtmt = self._rtmt()
+        payload = json.loads(rtmt.build_bootstrap_session_update(system_message=rtmt.system_message, tool_schemas=[tool.schema for tool in rtmt.tools.values()]))
         self.assertEqual(payload["type"], "session.update")
         session = payload["session"]
         self.assertEqual(session["type"], "realtime")

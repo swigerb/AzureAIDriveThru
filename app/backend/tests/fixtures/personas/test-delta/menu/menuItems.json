@@ -1,0 +1,126 @@
+{
+  "menuItems": [
+    {
+      "category": "meals",
+      "items": [
+        {
+          "name": "Delta Meal",
+          "sizes": [
+            { "size": "regular", "price": 5.99 },
+            { "size": "large", "price": 7.49 }
+          ],
+          "description": "Test Delta's numbered meal -- a main plus an auto-filled side and drink.",
+          "mealNumber": "1",
+          "bundle": {
+            "slots": ["sides", "drinks"],
+            "autoFill": { "sides": "Delta Fries ({size})", "drinks": "Delta Cola ({size})" },
+            "defaultSize": "regular"
+          }
+        },
+        {
+          "name": "Delta Breakfast Meal",
+          "sizes": [
+            { "size": "regular", "price": 4.99 }
+          ],
+          "description": "Test Delta's breakfast numbered meal, sharing meal number 2 with the lunch meal.",
+          "mealNumber": "2",
+          "menuPeriod": "breakfast"
+        },
+        {
+          "name": "Delta Lunch Meal",
+          "sizes": [
+            { "size": "regular", "price": 6.49 }
+          ],
+          "description": "Test Delta's lunch numbered meal, sharing meal number 2 with the breakfast meal.",
+          "mealNumber": "2",
+          "menuPeriod": "lunch"
+        },
+        {
+          "name": "Delta Classic Meal",
+          "sizes": [
+            { "size": "regular", "price": 5.49 },
+            { "size": "large", "price": 6.99 }
+          ],
+          "description": "Test Delta's second numbered meal -- a main plus two bundle slots with NO autoFill default, so both start vacant until a standalone side/drink is absorbed or the model explicitly picks one. Used by the combo-instance determinism/lifecycle tests, which need a bundle that is NOT already complete the instant it's added (unlike Delta Meal's own always-both-autofilled slots).",
+          "mealNumber": "3",
+          "bundle": {
+            "slots": ["sides", "drinks"],
+            "defaultSize": "regular"
+          }
+        }
+      ]
+    },
+    {
+      "category": "drinks",
+      "items": [
+        {
+          "name": "Delta Latte",
+          "sizes": [
+            { "size": "regular", "price": 3.49 },
+            { "size": "large", "price": 4.29 }
+          ],
+          "description": "Test Delta's house latte -- the base item for the splitCombinedNames test. #179: also the fixture's only multi-size, real (non-autoFill-only) comboSlot drink, used by the combo-component-resize tests -- its own existing standalone add/modify/splitCombinedNames tests never combine it with Delta Meal, so this does not change any of their behavior.",
+          "comboSlot": "drinks"
+        },
+        {
+          "name": "Delta Iced Tea",
+          "sizes": [
+            { "size": "regular", "price": 1.89 }
+          ],
+          "description": "Test Delta's iced tea -- a SECOND real, single-size comboSlot drink, distinct from Delta Latte, so a test can seed two separate Delta Meal lines with two distinguishable drinks and verify a by-name resize targets only the instance holding that exact item.",
+          "comboSlot": "drinks"
+        },
+        {
+          "name": "Delta Extra Shot",
+          "sizes": [
+            { "size": "regular", "price": 0.75 }
+          ],
+          "description": "Test Delta's chargeable espresso shot add-in.",
+          "aliases": ["Extra Shot"],
+          "isExtra": true
+        },
+        {
+          "name": "Delta Shake",
+          "sizes": [
+            { "size": "regular", "price": 2.99 }
+          ],
+          "description": "Test Delta's shake -- requires the (currently down) delta_machine, for the machine_unavailable test.",
+          "requiresMachine": "delta_machine"
+        }
+      ]
+    },
+    {
+      "category": "mains",
+      "items": [
+        {
+          "name": "Delta Burger",
+          "sizes": [
+            { "size": "regular", "price": 3.99 }
+          ],
+          "description": "Test Delta's plain burger -- an on-menu item with no bundle/machine/extra fields, for baseline add/modify checks."
+        }
+      ]
+    },
+    {
+      "category": "sides",
+      "items": [
+        {
+          "name": "Delta Fries",
+          "sizes": [
+            { "size": "regular", "price": 1.99 }
+          ],
+          "description": "Test Delta's standalone fries -- a real side a guest can order before the meal, to prove absorption wins over auto-fill for a slot that's already covered.",
+          "comboSlot": "sides"
+        },
+        {
+          "name": "Delta Onion Rings",
+          "sizes": [
+            { "size": "regular", "price": 1.79 }
+          ],
+          "description": "Test Delta's onion rings -- a SECOND real, single-size comboSlot side, distinct from Delta Fries, so a test can seed two separate Delta Meal lines with two distinguishable sides.",
+          "comboSlot": "sides"
+        }
+      ]
+    }
+  ]
+}

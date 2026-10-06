@@ -1,12 +1,14 @@
-# Customizing the Sonic AI Drive-Thru deployment
+# Customizing the Microsoft Foundry AI Drive Thru deployment
 
-This guide shows you how to customize the [Sonic AI Drive-Thru](../README.md#deploying-the-app) deployment to specify different options.
+This guide shows you how to customize the [Microsoft Foundry AI Drive Thru](../README.md#quick-start) deployment to specify different options.
 If your goal is to reuse existing services (OpenAI or Search), see the [existing services guide](./existing_services.md) instead.
 
 ## Customizing the real-time voice choice
 
 The default carhop voice is `marin` (set in `app/backend/config.yaml` `model.default_voice` and in
 `infra/main.parameters.json`). Guests can also switch voices live from the settings dialog.
+Personas can also declare their own default voice in `persona.json`.
+If you change this default, test combo, daypart, and happy-hour turns as part of the smoke pass.
 To change the deployed default, run:
 
 ```bash
@@ -30,13 +32,7 @@ If you've already run `azd up` and want to first preview the voice with the deve
 (`gpt-realtime-1.5`, `gpt-realtime`, `gpt-realtime-mini`, `gpt-4o-*` are treated as non-reasoning). If the service still
 rejects the session, the backend resends a minimal update (instructions + tools only), so tools always register.
 
-The deployment name is configuration, not code. `infra/main.bicep` creates `gpt-realtime-2.1` (GlobalStandard); to
-run on another deployment of the same model, such as a DataZoneStandard `gpt-realtime-2.1-dz` for data-residency
-requirements, point the app at it with `AZURE_OPENAI_REALTIME_DEPLOYMENT` (the `azd env set` flow in the
-[existing services guide](./existing_services.md), or `app/backend/.env` locally). With `reasoning_model: auto`,
-any name outside the non-reasoning list above, including `gpt-realtime-2.1-dz`, is treated as a reasoning
-deployment, so it gets the same `reasoning` settings as `gpt-realtime-2.1`; `gpt-realtime-1.5-dz` still does not.
-Check it with `python scripts/smoke_realtime.py --deployment gpt-realtime-2.1-dz`.
+The deployment name is configuration, not code. `infra/main.bicep` creates `gpt-realtime-2.1` and `gpt-realtime-2.1-mini` (both GlobalStandard) and emits `AZURE_AI_MODEL_DEPLOYMENTS` from `infra/model-deployments.json`. To use a differently named deployment of the same model in a standard azd environment, update `infra/model-deployments.json` before provisioning, or provide an equivalent `AZURE_AI_MODEL_DEPLOYMENTS` map locally in `app/backend/.env`. `AZURE_OPENAI_REALTIME_DEPLOYMENT` remains the realtime default fallback only when the deployment map lacks the selected catalog id. With `reasoning_model: auto`, any name outside the non-reasoning list above, including a DataZoneStandard name such as `gpt-realtime-2.1-dz`, is treated as a reasoning deployment; `gpt-realtime-1.5-dz` still is not. Check it with `python scripts/smoke_realtime.py --deployment gpt-realtime-2.1-dz`.
 
 Probed on `gpt-realtime-2.1` and `gpt-realtime-1.5`:
 
@@ -48,10 +44,10 @@ Probed on `gpt-realtime-2.1` and `gpt-realtime-1.5`:
 
 Benchmark on `gpt-realtime-2.1` (`scripts/benchmark_reasoning.py`):
 
-- Setup: real Sonic prompt and tool schemas, text turns, audio output on, stub search.
+- Setup: the default persona prompt and tool schemas, text turns, audio output on, stub search.
 - Six utterances: single, modification, multi-item, combo, size change and a menu question.
 - Reps: 3 each; 5 each for `none`, `low` and `medium`.
-- TTFA is `response.create` → first audio delta. "Tool first" counts trials where the model called a tool before
+- TTFA is `response.create` to first audio delta. "Tool first" counts trials where the model called a tool before
   speaking, leaving the guest in silence.
 
 | effort | trials | correct | TTFA median / p90 | first tool call median / p90 | total median / p90 | tool first |
@@ -80,7 +76,7 @@ Why `low` is the default:
 | `true` | 0.92s | 6.93s / 8.14s |
 | `false` | 0.71s | 8.27s / 10.13s |
 
-`false` serialises search→add pairs and uses about 2× the tokens. Leaving it unset (`null`) already batches calls on 2.1
+`false` serializes search-to-add pairs and uses about 2× the tokens. Leaving it unset (`null`) already batches calls on 2.1
 and is safe on 1.5, so `null` is the default.
 
 ## Post-deploy realtime smoke check
@@ -104,7 +100,7 @@ It checks, against the live deployment:
   tots, please?"), and that audio is sent as guest speech with the app's transcription model. The transcript must
   match the phrase word for word, ignoring case, punctuation and spacing, with a similarity of at least 0.85. That
   allows a transcriber's slip ("tops" for "tots") but not an answer. A model that replies "Sure, one large cherry
-  limeade…" instead of reading the phrase now fails the check. It used to pass with a note. The phrase is sent as
+  limeade..." instead of reading the phrase now fails the check. It used to pass with a note. The phrase is sent as
   `response.instructions` rather than a user turn, because given a user turn `gpt-realtime-2.1` took the order
   instead of reading it (5 of 6 live runs).
 
@@ -140,8 +136,18 @@ rules follow from that:
   falls back to a fresh order, when that replica is gone (scale-in, restart, redeploy).
 
 `/api/auth/session` signs its HMAC tokens with `APP_SESSION_SECRET`. The value is a Container App secret
-(`app-session-secret`), so every replica and restart validates every other's tokens. That is required before
-`security.require_session_token` can be turned on.
+(`app-session-secret`), so every replica and restart validates every other's tokens.
+
+In Entra mode (`AUTH_MODE=Entra`, design doc section 18), the session token is **forced on** --
+`security.require_session_token` in config.yaml can no longer turn it off - and `/realtime` binds the
+token to the caller's Entra object id (`oid`): a session token minted for one signed-in user can't be
+replayed on another user's WebSocket upgrade, even with an otherwise-valid Entra access token. In
+Development pass-through mode (no Entra ids configured), `security.require_session_token` still governs
+this exactly as before.
+
+**`APP_SESSION_SECRET` is required in Production Entra mode** (`RUNNING_IN_PRODUCTION=true` together with
+`AUTH_MODE=Entra`): startup's `resolve_settings()` fails fast with a clear error if it's unset, rather than
+silently falling back to a random per-process secret. The value is provisioned as follows:
 
 - By default each `azd provision` generates a random value (`newGuid()` twice).
 - To keep one value across provisions, pin it in the azd environment:
@@ -152,6 +158,6 @@ rules follow from that:
 
 - A changed secret changes `APP_SESSION_SECRET_FINGERPRINT` in the template. That rolls a new revision, so all replicas
   restart on the new value together.
-- Locally, when `APP_SESSION_SECRET` is unset, the app falls back to a random per-process secret.
-- Because sending a secrets list replaces the app's secrets, an `aad-client-secret` that was set out-of-band (EasyAuth
-  with `AZURE_AUTH_CLIENT_SECRET` empty) is read back and re-sent on each provision.
+- Locally, or in Development pass-through mode, when `APP_SESSION_SECRET` is unset, the app falls back to a random
+  per-process secret - only safe with a single process, and refused outright at startup in Production Entra mode
+  (see above).

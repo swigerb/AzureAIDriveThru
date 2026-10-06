@@ -1,0 +1,1406 @@
+{
+  "menuItems": [
+    {
+      "category": "Hot Drinks",
+      "icon": "☕",
+      "items": [
+        {
+          "name": "Original Blend Coffee",
+          "sizes": [
+            {
+              "size": "small",
+              "price": 2.19
+            },
+            {
+              "size": "medium",
+              "price": 2.59
+            },
+            {
+              "size": "large",
+              "price": 2.99
+            },
+            {
+              "size": "xlarge",
+              "price": 3.39
+            }
+          ],
+          "description": "Dunkin's classic hot coffee, black by default",
+          "longDescription": "Fresh-brewed Original Blend hot coffee. Black means no dairy or sweetener. In New England, regular coffee means cream and sugar. Free modifiers include cream, whole milk, skim milk, oat milk, almond milk, sugar, Splenda, and liquid cane sugar. Add a paid Flavor Shot Add-On, Flavor Swirl Add-On, or Extra Espresso Shot as a separate extra.",
+          "origin": "Dunkin U.S. Menu",
+          "popularity": "Iconic",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [
+            "Hot Coffee",
+            "Regular Hot Coffee",
+            "Regular Coffee",
+            "Original Blend Hot Coffee"
+          ],
+          "isExtra": false,
+          "image": "menu_images/original_blend"
+        },
+        {
+          "name": "Dunkin' Midnight Coffee",
+          "sizes": [
+            {
+              "size": "small",
+              "price": 2.29
+            },
+            {
+              "size": "medium",
+              "price": 2.69
+            },
+            {
+              "size": "large",
+              "price": 3.09
+            },
+            {
+              "size": "xlarge",
+              "price": 3.49
+            }
+          ],
+          "description": "Dark roast hot coffee, black by default",
+          "longDescription": "Dunkin' Midnight is a rich dark roast served hot. Free cream, milk, sugar, Splenda, and liquid cane sugar modifiers can be written in parentheses; paid flavor shots, flavor swirls, and espresso shots are separate extras.",
+          "origin": "Dunkin U.S. Menu",
+          "popularity": "Dark Roast",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [
+            "Midnight Coffee",
+            "Dark Roast Coffee"
+          ],
+          "isExtra": false
+        },
+        {
+          "name": "Decaf Coffee",
+          "sizes": [
+            {
+              "size": "small",
+              "price": 2.19
+            },
+            {
+              "size": "medium",
+              "price": 2.59
+            },
+            {
+              "size": "large",
+              "price": 2.99
+            },
+            {
+              "size": "xlarge",
+              "price": 3.39
+            }
+          ],
+          "description": "Decaffeinated hot coffee, black by default",
+          "longDescription": "Hot decaf coffee for guests who want Dunkin flavor with less caffeine. Black is plain; regular means cream and sugar.",
+          "origin": "Dunkin U.S. Menu",
+          "popularity": "Always On",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [
+            "Decaf Hot Coffee"
+          ],
+          "isExtra": false
+        },
+        {
+          "name": "Latte",
+          "sizes": [
+            {
+              "size": "small",
+              "price": 4.19
+            },
+            {
+              "size": "medium",
+              "price": 4.69
+            },
+            {
+              "size": "large",
+              "price": 5.19
+            }
+          ],
+          "description": "Espresso with steamed milk",
+          "longDescription": "A hot espresso drink with steamed milk. Customize with milk choice, sweetener, a flavor shot, flavor swirl, or extra espresso shot.",
+          "origin": "Dunkin U.S. Menu",
+          "popularity": "Classic Espresso",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "image": "menu_images/latte"
+        },
+        {
+          "name": "Cappuccino",
+          "sizes": [
+            {
+              "size": "small",
+              "price": 4.19
+            },
+            {
+              "size": "medium",
+              "price": 4.69
+            },
+            {
+              "size": "large",
+              "price": 5.19
+            }
+          ],
+          "description": "Espresso with steamed milk and foam",
+          "longDescription": "Hot espresso, steamed milk, and a thick foam cap for a lighter coffeehouse sip.",
+          "origin": "Dunkin U.S. Menu",
+          "popularity": "Classic Espresso",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false
+        },
+        {
+          "name": "Macchiato",
+          "sizes": [
+            {
+              "size": "small",
+              "price": 4.29
+            },
+            {
+              "size": "medium",
+              "price": 4.79
+            },
+            {
+              "size": "large",
+              "price": 5.29
+            }
+          ],
+          "description": "Layered espresso and milk",
+          "longDescription": "A hot layered espresso drink with milk, bolder than a latte and easy to customize.",
+          "origin": "Dunkin U.S. Menu",
+          "popularity": "Bold",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false
+        },
+        {
+          "name": "Americano",
+          "sizes": [
+            {
+              "size": "small",
+              "price": 3.19
+            },
+            {
+              "size": "medium",
+              "price": 3.69
+            },
+            {
+              "size": "large",
+              "price": 4.19
+            }
+          ],
+          "description": "Espresso with hot water",
+          "longDescription": "A smooth hot Americano made with espresso and hot water. Serve black or customize with cream, milk, or sweetener.",
+          "origin": "Dunkin U.S. Menu",
+          "popularity": "Espresso Classic",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false
+        },
+        {
+          "name": "Espresso",
+          "sizes": [
+            {
+              "size": "standard",
+              "price": 2.49
+            }
+          ],
+          "description": "Fresh-pulled espresso shot",
+          "longDescription": "A straight espresso served as a standard single item. Add Extra Espresso Shot for more intensity on another drink.",
+          "origin": "Dunkin U.S. Menu",
+          "popularity": "Bold",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false
+        },
+        {
+          "name": "Hot Chocolate",
+          "sizes": [
+            {
+              "size": "small",
+              "price": 2.99
+            },
+            {
+              "size": "medium",
+              "price": 3.49
+            },
+            {
+              "size": "large",
+              "price": 3.99
+            }
+          ],
+          "description": "Rich cocoa drink",
+          "longDescription": "A warm, sweet cocoa drink for guests who want something cozy without coffee.",
+          "origin": "Dunkin U.S. Menu",
+          "popularity": "Cozy",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false
+        },
+        {
+          "name": "Chai Latte",
+          "sizes": [
+            {
+              "size": "small",
+              "price": 3.99
+            },
+            {
+              "size": "medium",
+              "price": 4.49
+            },
+            {
+              "size": "large",
+              "price": 4.99
+            }
+          ],
+          "description": "Spiced tea latte",
+          "longDescription": "A hot chai latte with warm spices and milk. Oat or almond milk can be noted as a free modifier.",
+          "origin": "Dunkin U.S. Menu",
+          "popularity": "Tea Latte",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false
+        },
+        {
+          "name": "Matcha Latte",
+          "sizes": [
+            {
+              "size": "small",
+              "price": 4.29
+            },
+            {
+              "size": "medium",
+              "price": 4.79
+            },
+            {
+              "size": "large",
+              "price": 5.29
+            }
+          ],
+          "description": "Green tea latte",
+          "longDescription": "A hot matcha latte with green tea flavor and milk, customizable with dairy or nondairy milk.",
+          "origin": "Dunkin U.S. Menu",
+          "popularity": "Tea Latte",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false
+        }
+      ]
+    },
+    {
+      "category": "Signature Lattes",
+      "icon": "☕",
+      "items": [
+        {
+          "name": "Caramel Craze Latte",
+          "sizes": [
+            {
+              "size": "small",
+              "price": 4.49
+            },
+            {
+              "size": "medium",
+              "price": 4.99
+            },
+            {
+              "size": "large",
+              "price": 5.49
+            }
+          ],
+          "description": "Espresso with caramel drizzle and whipped cream",
+          "longDescription": "A Dunkin signature latte layered with bold espresso, caramel-flavored swirl, and steamed milk, topped with whipped cream and caramel drizzle for an indulgent finish.",
+          "origin": "Dunkin U.S. Menu",
+          "popularity": "Guest Favorite",
+          "comboSlot": "none",
+          "happyHourDiscounted": true,
+          "aliases": [],
+          "isExtra": false,
+          "image": "menu_images/caramel_craze"
+        },
+        {
+          "name": "Cocoa Mocha Latte",
+          "sizes": [
+            {
+              "size": "small",
+              "price": 4.59
+            },
+            {
+              "size": "medium",
+              "price": 5.09
+            },
+            {
+              "size": "large",
+              "price": 5.59
+            }
+          ],
+          "description": "Chocolate-forward espresso drink finished with mocha drizzle",
+          "longDescription": "Balanced espresso, mocha swirl, and steamed milk create a smooth chocolate latte crowned with whipped cream and cocoa powder for an elevated Dunkin moment.",
+          "origin": "Dunkin U.S. Menu",
+          "popularity": "Seasonal Spotlight",
+          "comboSlot": "none",
+          "happyHourDiscounted": true,
+          "aliases": [],
+          "isExtra": false,
+          "image": "menu_images/cocoa_mocha"
+        },
+        {
+          "name": "Toasted Almond Cold Foam Latte",
+          "sizes": [
+            {
+              "size": "small",
+              "price": 4.79
+            },
+            {
+              "size": "medium",
+              "price": 5.29
+            },
+            {
+              "size": "large",
+              "price": 5.79
+            }
+          ],
+          "description": "Iced latte with toasted almond flavor and cold foam cap",
+          "longDescription": "Chilled espresso poured over ice with toasted almond flavor, finished with vanilla cold foam for layered texture and sweetness.",
+          "origin": "Dunkin Next-Gen Restaurant",
+          "popularity": "Emerging Favorite",
+          "comboSlot": "none",
+          "happyHourDiscounted": true,
+          "aliases": [],
+          "isExtra": false,
+          "image": "menu_images/toasted_almond"
+        },
+        {
+          "name": "Pumpkin Spice Signature Latte",
+          "sizes": [
+            {
+              "size": "small",
+              "price": 4.79
+            },
+            {
+              "size": "medium",
+              "price": 5.29
+            },
+            {
+              "size": "large",
+              "price": 5.79
+            }
+          ],
+          "description": "Pumpkin and espresso with whipped cream",
+          "longDescription": "A seasonal signature latte with espresso, pumpkin spice flavor, whipped cream, caramel drizzle, and cinnamon sugar topping.",
+          "origin": "Dunkin U.S. Menu",
+          "popularity": "Seasonal",
+          "comboSlot": "none",
+          "happyHourDiscounted": true,
+          "aliases": [
+            "Pumpkin Spice Latte"
+          ],
+          "isExtra": false
+        }
+      ]
+    },
+    {
+      "category": "Cold Beverages",
+      "icon": "🧊",
+      "items": [
+        {
+          "name": "Original Blend Iced Coffee",
+          "sizes": [
+            {
+              "size": "small",
+              "price": 2.99
+            },
+            {
+              "size": "medium",
+              "price": 3.59
+            },
+            {
+              "size": "large",
+              "price": 4.09
+            },
+            {
+              "size": "xlarge",
+              "price": 4.59
+            }
+          ],
+          "description": "Dunkin's classic iced coffee, black by default",
+          "longDescription": "Freshly brewed Original Blend served over ice. Black means plain. Regular iced coffee means cream and sugar. Free modifiers include cream, milk choices, sugar, Splenda, and liquid cane sugar; paid flavor shots, flavor swirls, and extra espresso are separate extras.",
+          "origin": "Dunkin U.S. Menu",
+          "popularity": "Iconic",
+          "comboSlot": "none",
+          "happyHourDiscounted": true,
+          "aliases": [
+            "Iced Coffee",
+            "Regular Iced Coffee",
+            "Original Blend Iced"
+          ],
+          "isExtra": false,
+          "image": "menu_images/iced_coffee"
+        },
+        {
+          "name": "Original Cold Brew",
+          "sizes": [
+            {
+              "size": "small",
+              "price": 3.79
+            },
+            {
+              "size": "medium",
+              "price": 4.29
+            },
+            {
+              "size": "large",
+              "price": 4.79
+            }
+          ],
+          "description": "12-hour steeped cold brew over ice",
+          "longDescription": "Smooth, full-bodied cold brew handcrafted daily and served over ice. Add cold foam or a flavor swirl for a personalized sip.",
+          "origin": "Dunkin Breweries",
+          "popularity": "High",
+          "comboSlot": "none",
+          "happyHourDiscounted": true,
+          "aliases": [
+            "Cold Brew"
+          ],
+          "isExtra": false,
+          "image": "menu_images/cold_brew"
+        },
+        {
+          "name": "Cold Brew with Cold Foam",
+          "sizes": [
+            {
+              "size": "small",
+              "price": 4.29
+            },
+            {
+              "size": "medium",
+              "price": 4.79
+            },
+            {
+              "size": "large",
+              "price": 5.29
+            }
+          ],
+          "description": "Cold brew topped with sweet cold foam",
+          "longDescription": "Slow-steeped cold brew served over ice with a creamy cold foam top.",
+          "origin": "Dunkin U.S. Menu",
+          "popularity": "Guest Favorite",
+          "comboSlot": "none",
+          "happyHourDiscounted": true,
+          "aliases": [],
+          "isExtra": false
+        },
+        {
+          "name": "Brown Sugar Cream Cold Brew",
+          "sizes": [
+            {
+              "size": "small",
+              "price": 4.29
+            },
+            {
+              "size": "medium",
+              "price": 4.79
+            },
+            {
+              "size": "large",
+              "price": 5.29
+            }
+          ],
+          "description": "Cold brew with brown sugar syrup and cinnamon-sugar cold foam",
+          "longDescription": "Slow-steeped cold brew sweetened with brown sugar syrup, topped with cinnamon-sugar dusted cold foam for a layered finish.",
+          "origin": "Dunkin U.S. Menu",
+          "popularity": "Limited Time Feature",
+          "comboSlot": "none",
+          "happyHourDiscounted": true,
+          "aliases": [],
+          "isExtra": false,
+          "image": "menu_images/brown_sugar_coldbrew"
+        },
+        {
+          "name": "Strawberry Dragonfruit Refresher",
+          "sizes": [
+            {
+              "size": "small",
+              "price": 3.29
+            },
+            {
+              "size": "medium",
+              "price": 3.79
+            },
+            {
+              "size": "large",
+              "price": 4.29
+            }
+          ],
+          "description": "Green tea-based refresher with B vitamins",
+          "longDescription": "Vibrant strawberry dragonfruit flavor balanced with green tea and B vitamins for a light, energizing beverage without dairy.",
+          "origin": "Dunkin Beverage Innovation",
+          "popularity": "Always On Menu",
+          "comboSlot": "none",
+          "happyHourDiscounted": true,
+          "aliases": [
+            "Dunkin' Refresher",
+            "Dunkin Refresher"
+          ],
+          "isExtra": false,
+          "image": "menu_images/dragonfruit_refresher"
+        },
+        {
+          "name": "Iced Latte",
+          "sizes": [
+            {
+              "size": "small",
+              "price": 4.19
+            },
+            {
+              "size": "medium",
+              "price": 4.69
+            },
+            {
+              "size": "large",
+              "price": 5.19
+            }
+          ],
+          "description": "Espresso and milk over ice",
+          "longDescription": "A chilled espresso latte served over ice. Customize with oat milk, almond milk, flavor shot, flavor swirl, or extra espresso.",
+          "origin": "Dunkin U.S. Menu",
+          "popularity": "Classic Espresso",
+          "comboSlot": "none",
+          "happyHourDiscounted": true,
+          "aliases": [],
+          "isExtra": false
+        },
+        {
+          "name": "Iced Americano",
+          "sizes": [
+            {
+              "size": "small",
+              "price": 3.19
+            },
+            {
+              "size": "medium",
+              "price": 3.69
+            },
+            {
+              "size": "large",
+              "price": 4.19
+            }
+          ],
+          "description": "Espresso with cold water over ice",
+          "longDescription": "A clean, bold iced espresso drink that is black by default unless the guest asks for cream, milk, or sweetener.",
+          "origin": "Dunkin U.S. Menu",
+          "popularity": "Classic Espresso",
+          "comboSlot": "none",
+          "happyHourDiscounted": true,
+          "aliases": [],
+          "isExtra": false
+        },
+        {
+          "name": "Iced Tea",
+          "sizes": [
+            {
+              "size": "small",
+              "price": 2.49
+            },
+            {
+              "size": "medium",
+              "price": 2.99
+            },
+            {
+              "size": "large",
+              "price": 3.49
+            }
+          ],
+          "description": "Freshly brewed iced tea",
+          "longDescription": "Crisp unsweetened iced tea served over ice. Add liquid cane sugar if the guest wants it sweetened.",
+          "origin": "Dunkin U.S. Menu",
+          "popularity": "Refreshing",
+          "comboSlot": "none",
+          "happyHourDiscounted": true,
+          "aliases": [],
+          "isExtra": false
+        },
+        {
+          "name": "Sweet Tea",
+          "sizes": [
+            {
+              "size": "small",
+              "price": 2.49
+            },
+            {
+              "size": "medium",
+              "price": 2.99
+            },
+            {
+              "size": "large",
+              "price": 3.49
+            }
+          ],
+          "description": "Freshly brewed sweet iced tea",
+          "longDescription": "Dunkin iced tea sweetened for a classic cold tea order.",
+          "origin": "Dunkin U.S. Menu",
+          "popularity": "Refreshing",
+          "comboSlot": "none",
+          "happyHourDiscounted": true,
+          "aliases": [],
+          "isExtra": false
+        },
+        {
+          "name": "Coffee Chiller",
+          "sizes": [
+            {
+              "size": "small",
+              "price": 4.49
+            },
+            {
+              "size": "medium",
+              "price": 4.99
+            },
+            {
+              "size": "large",
+              "price": 5.49
+            }
+          ],
+          "description": "Frozen blended coffee drink",
+          "longDescription": "A frozen blended coffee drink for guests who want a sweet, creamy coffee treat.",
+          "origin": "Dunkin U.S. Menu",
+          "popularity": "Frozen Favorite",
+          "comboSlot": "none",
+          "happyHourDiscounted": true,
+          "aliases": [],
+          "isExtra": false
+        },
+        {
+          "name": "Strawberry Coolatta",
+          "sizes": [
+            {
+              "size": "small",
+              "price": 3.49
+            },
+            {
+              "size": "medium",
+              "price": 3.99
+            },
+            {
+              "size": "large",
+              "price": 4.49
+            }
+          ],
+          "description": "Frozen strawberry fruit drink",
+          "longDescription": "A bright frozen strawberry Coolatta, blended and served cold.",
+          "origin": "Dunkin U.S. Menu",
+          "popularity": "Frozen Favorite",
+          "comboSlot": "none",
+          "happyHourDiscounted": true,
+          "aliases": [],
+          "isExtra": false
+        }
+      ]
+    },
+    {
+      "category": "Donuts & Bakery",
+      "icon": "🍩",
+      "items": [
+        {
+          "name": "Glazed Donut",
+          "sizes": [
+            {
+              "size": "standard",
+              "price": 1.49
+            }
+          ],
+          "description": "Classic yeast donut coated in vanilla glaze",
+          "longDescription": "Soft, airy donut finished with a signature sweet glaze. Pair it with hot coffee for the quintessential Dunkin duo.",
+          "origin": "Dunkin Bakery",
+          "popularity": "Iconic",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "image": "menu_images/glazed_donut"
+        },
+        {
+          "name": "Chocolate Frosted Donut",
+          "sizes": [
+            {
+              "size": "standard",
+              "price": 1.69
+            }
+          ],
+          "description": "Yeast donut with chocolate icing",
+          "longDescription": "Classic yeast donut topped with chocolate frosting.",
+          "origin": "Dunkin Bakery",
+          "popularity": "Classic",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false
+        },
+        {
+          "name": "Boston Kreme Donut",
+          "sizes": [
+            {
+              "size": "standard",
+              "price": 1.79
+            }
+          ],
+          "description": "Custard-filled donut topped with chocolate icing",
+          "longDescription": "A nod to Dunkin's New England roots featuring silky Bavarian cream and rich chocolate icing.",
+          "origin": "Boston, MA",
+          "popularity": "Regional Favorite",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "image": "menu_images/boston_kreme"
+        },
+        {
+          "name": "Jelly Donut",
+          "sizes": [
+            {
+              "size": "standard",
+              "price": 1.69
+            }
+          ],
+          "description": "Jelly-filled donut with sugar",
+          "longDescription": "A classic filled donut with sweet jelly and a sugar coating.",
+          "origin": "Dunkin Bakery",
+          "popularity": "Classic",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false
+        },
+        {
+          "name": "Powdered Donut",
+          "sizes": [
+            {
+              "size": "standard",
+              "price": 1.59
+            }
+          ],
+          "description": "Cake-style donut with powdered sugar",
+          "longDescription": "A soft donut dusted with powdered sugar.",
+          "origin": "Dunkin Bakery",
+          "popularity": "Classic",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false
+        },
+        {
+          "name": "Old Fashioned Donut",
+          "sizes": [
+            {
+              "size": "standard",
+              "price": 1.59
+            }
+          ],
+          "description": "Cake donut with a classic finish",
+          "longDescription": "A simple cake donut with old-fashioned texture and flavor.",
+          "origin": "Dunkin Bakery",
+          "popularity": "Classic",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false
+        },
+        {
+          "name": "Blueberry Cake Donut",
+          "sizes": [
+            {
+              "size": "standard",
+              "price": 1.69
+            }
+          ],
+          "description": "Blueberry cake donut",
+          "longDescription": "A cake donut with blueberry flavor and a light glaze.",
+          "origin": "Dunkin Bakery",
+          "popularity": "Classic",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false
+        },
+        {
+          "name": "Strawberry Frosted Donut",
+          "sizes": [
+            {
+              "size": "standard",
+              "price": 1.69
+            }
+          ],
+          "description": "Donut with strawberry frosting",
+          "longDescription": "A classic donut topped with strawberry frosting for a colorful bakery pick.",
+          "origin": "Dunkin Bakery",
+          "popularity": "Classic",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false
+        },
+        {
+          "name": "Half Dozen Donuts",
+          "sizes": [
+            {
+              "size": "standard",
+              "price": 8.49
+            }
+          ],
+          "description": "Six assorted classic donuts",
+          "longDescription": "A half dozen box of assorted classic Dunkin donuts. Guests can note flavors such as glazed, chocolate frosted, Boston Kreme, jelly, powdered, old fashioned, blueberry cake, or strawberry frosted.",
+          "origin": "Dunkin Bakery",
+          "popularity": "Shareable",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [
+            "6 Donuts",
+            "Six Donuts"
+          ],
+          "isExtra": false
+        },
+        {
+          "name": "Dozen Donuts",
+          "sizes": [
+            {
+              "size": "standard",
+              "price": 14.99
+            }
+          ],
+          "description": "Twelve assorted classic donuts",
+          "longDescription": "A dozen box of assorted classic Dunkin donuts. Flavor notes can be added in parentheses for the bakery team.",
+          "origin": "Dunkin Bakery",
+          "popularity": "Shareable",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [
+            "12 Donuts",
+            "Twelve Donuts"
+          ],
+          "isExtra": false
+        },
+        {
+          "name": "Assorted MUNCHKINS® Donut Hole Treats",
+          "sizes": [
+            {
+              "size": "10 count",
+              "price": 3.99
+            },
+            {
+              "size": "25 count",
+              "price": 8.99
+            },
+            {
+              "size": "50 count",
+              "price": 15.99
+            }
+          ],
+          "description": "Assorted bite-sized donut holes",
+          "longDescription": "Shareable assortment of MUNCHKINS donut hole treats. Guests can ask for assorted or note a mix of glazed, chocolate glazed, jelly, powdered, or pumpkin.",
+          "origin": "Dunkin Bakery",
+          "popularity": "Group Favorite",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [
+            "MUNCHKINS Donut Hole Treats",
+            "Munchkins"
+          ],
+          "isExtra": false,
+          "image": "menu_images/munchkins",
+          "spokenName": "Assorted Munch-kins Donut Hole Treats"
+        },
+        {
+          "name": "Glazed MUNCHKINS® Donut Hole Treats",
+          "sizes": [
+            {
+              "size": "10 count",
+              "price": 3.99
+            },
+            {
+              "size": "25 count",
+              "price": 8.99
+            },
+            {
+              "size": "50 count",
+              "price": 15.99
+            }
+          ],
+          "description": "Glazed bite-sized donut holes",
+          "longDescription": "Order Glazed MUNCHKINS by 10 count, 25 count, or 50 count.",
+          "origin": "Dunkin Bakery",
+          "popularity": "Group Favorite",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [
+            "Glazed Munchkins",
+            "Glazed 10 Count Munchkins"
+          ],
+          "isExtra": false,
+          "spokenName": "Glazed Munch-kins Donut Hole Treats"
+        },
+        {
+          "name": "Chocolate Glazed MUNCHKINS® Donut Hole Treats",
+          "sizes": [
+            {
+              "size": "10 count",
+              "price": 3.99
+            },
+            {
+              "size": "25 count",
+              "price": 8.99
+            },
+            {
+              "size": "50 count",
+              "price": 15.99
+            }
+          ],
+          "description": "Chocolate glazed bite-sized donut holes",
+          "longDescription": "Order Chocolate Glazed MUNCHKINS by 10 count, 25 count, or 50 count.",
+          "origin": "Dunkin Bakery",
+          "popularity": "Group Favorite",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [
+            "Chocolate Munchkins",
+            "Chocolate Glazed Munchkins"
+          ],
+          "isExtra": false,
+          "spokenName": "Chocolate Glazed Munch-kins Donut Hole Treats"
+        },
+        {
+          "name": "Jelly MUNCHKINS® Donut Hole Treats",
+          "sizes": [
+            {
+              "size": "10 count",
+              "price": 3.99
+            },
+            {
+              "size": "25 count",
+              "price": 8.99
+            },
+            {
+              "size": "50 count",
+              "price": 15.99
+            }
+          ],
+          "description": "Jelly-filled bite-sized donut holes",
+          "longDescription": "Order Jelly MUNCHKINS by 10 count, 25 count, or 50 count.",
+          "origin": "Dunkin Bakery",
+          "popularity": "Group Favorite",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [
+            "Jelly Munchkins"
+          ],
+          "isExtra": false,
+          "spokenName": "Jelly Munch-kins Donut Hole Treats"
+        },
+        {
+          "name": "Powdered MUNCHKINS® Donut Hole Treats",
+          "sizes": [
+            {
+              "size": "10 count",
+              "price": 3.99
+            },
+            {
+              "size": "25 count",
+              "price": 8.99
+            },
+            {
+              "size": "50 count",
+              "price": 15.99
+            }
+          ],
+          "description": "Powdered sugar bite-sized donut holes",
+          "longDescription": "Order Powdered MUNCHKINS by 10 count, 25 count, or 50 count.",
+          "origin": "Dunkin Bakery",
+          "popularity": "Group Favorite",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [
+            "Powdered Munchkins"
+          ],
+          "isExtra": false,
+          "spokenName": "Powdered Munch-kins Donut Hole Treats"
+        },
+        {
+          "name": "Pumpkin MUNCHKINS® Donut Hole Treats",
+          "sizes": [
+            {
+              "size": "10 count",
+              "price": 4.29
+            },
+            {
+              "size": "25 count",
+              "price": 9.49
+            },
+            {
+              "size": "50 count",
+              "price": 16.99
+            }
+          ],
+          "description": "Seasonal pumpkin bite-sized donut holes",
+          "longDescription": "Seasonal Pumpkin MUNCHKINS available by 10 count, 25 count, or 50 count.",
+          "origin": "Dunkin Bakery",
+          "popularity": "Seasonal",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [
+            "Pumpkin Munchkins"
+          ],
+          "isExtra": false,
+          "spokenName": "Pumpkin Munch-kins Donut Hole Treats"
+        },
+        {
+          "name": "Everything Bagel & Cream Cheese",
+          "sizes": [
+            {
+              "size": "standard",
+              "price": 3.29
+            }
+          ],
+          "description": "Toasted everything bagel with plain cream cheese",
+          "longDescription": "Freshly toasted bagel coated with sesame, poppy seeds, garlic, and onion, served with cool cream cheese spread.",
+          "origin": "Dunkin Bakery",
+          "popularity": "Morning Rush MVP",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "image": "menu_images/everything_bagel"
+        },
+        {
+          "name": "Muffin",
+          "sizes": [
+            {
+              "size": "standard",
+              "price": 2.79
+            }
+          ],
+          "description": "Bakery muffin",
+          "longDescription": "A Dunkin bakery muffin. Guests can note blueberry or coffee cake when available.",
+          "origin": "Dunkin Bakery",
+          "popularity": "Bakery",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false
+        },
+        {
+          "name": "Butter Croissant",
+          "sizes": [
+            {
+              "size": "standard",
+              "price": 2.49
+            }
+          ],
+          "description": "Flaky butter croissant",
+          "longDescription": "A buttery, flaky croissant served warm on request.",
+          "origin": "Dunkin Bakery",
+          "popularity": "Bakery",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false
+        },
+        {
+          "name": "Apple Fritter",
+          "sizes": [
+            {
+              "size": "standard",
+              "price": 2.29
+            }
+          ],
+          "description": "Apple bakery fritter",
+          "longDescription": "A sweet apple fritter with cinnamon-style bakery flavor.",
+          "origin": "Dunkin Bakery",
+          "popularity": "Bakery",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false
+        }
+      ]
+    },
+    {
+      "category": "Breakfast Sandwiches",
+      "icon": "🥪",
+      "items": [
+        {
+          "name": "Bacon Egg & Cheese on Croissant",
+          "sizes": [
+            {
+              "size": "standard",
+              "price": 4.99
+            }
+          ],
+          "description": "Cherrywood smoked bacon, eggs, and American cheese",
+          "longDescription": "A flaky croissant stacked with cherrywood smoked bacon, fluffy eggs, and melty cheese to fuel busy mornings.",
+          "origin": "Dunkin Kitchens",
+          "popularity": "Top Seller",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "image": "menu_images/bacon_croissant"
+        },
+        {
+          "name": "Sausage Egg & Cheese on Croissant",
+          "sizes": [
+            {
+              "size": "standard",
+              "price": 4.99
+            }
+          ],
+          "description": "Sausage, egg, and American cheese on a croissant",
+          "longDescription": "Savory sausage, egg, and cheese on a warm croissant.",
+          "origin": "Dunkin Kitchens",
+          "popularity": "Top Seller",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false
+        },
+        {
+          "name": "Sourdough Breakfast Sandwich",
+          "sizes": [
+            {
+              "size": "standard",
+              "price": 5.49
+            }
+          ],
+          "description": "Egg, cheese, and bacon on toasted sourdough",
+          "longDescription": "A hearty breakfast sandwich served on toasted sourdough bread.",
+          "origin": "Dunkin Kitchens",
+          "popularity": "Hearty",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false
+        },
+        {
+          "name": "Power Breakfast Sandwich",
+          "sizes": [
+            {
+              "size": "standard",
+              "price": 5.49
+            }
+          ],
+          "description": "Multi-grain bread with turkey sausage and egg whites",
+          "longDescription": "Better-for-you build with veggie egg white omelet, turkey sausage, and aged white cheddar on seeded multigrain bread.",
+          "origin": "Dunkin Kitchens",
+          "popularity": "Balanced Choice",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "image": "menu_images/power_breakfast"
+        },
+        {
+          "name": "Bacon Wake-Up Wrap",
+          "sizes": [
+            {
+              "size": "standard",
+              "price": 2.79
+            }
+          ],
+          "description": "Egg, bacon, and cheese in a warm tortilla",
+          "longDescription": "Portable breakfast wrap with bacon, egg, and cheese.",
+          "origin": "Dunkin Anytime Menu",
+          "popularity": "Value",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false
+        },
+        {
+          "name": "Turkey Sausage Wake-Up Wrap",
+          "sizes": [
+            {
+              "size": "standard",
+              "price": 2.59
+            }
+          ],
+          "description": "Egg and turkey sausage in a warm tortilla",
+          "longDescription": "Portable protein with scrambled egg, turkey sausage, and American cheese inside a grilled tortilla.",
+          "origin": "Dunkin Anytime Menu",
+          "popularity": "Value Leader",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false,
+          "image": "menu_images/turkey_wrap"
+        }
+      ]
+    },
+    {
+      "category": "Snacks & Sides",
+      "icon": "🥓",
+      "items": [
+        {
+          "name": "Hash Browns",
+          "sizes": [
+            {
+              "size": "standard",
+              "price": 1.89
+            }
+          ],
+          "description": "Seasoned hash brown rounds",
+          "longDescription": "Crispy seasoned hash browns, perfect alongside a breakfast sandwich.",
+          "origin": "Dunkin Kitchens",
+          "popularity": "Side",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false
+        },
+        {
+          "name": "Maple Sugar Snackin' Bacon",
+          "sizes": [
+            {
+              "size": "standard",
+              "price": 3.49
+            }
+          ],
+          "description": "Snackable bacon with maple sugar seasoning",
+          "longDescription": "Snackable strips of bacon with sweet maple sugar seasoning.",
+          "origin": "Dunkin Kitchens",
+          "popularity": "Savory Snack",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [
+            "Snackin' Bacon"
+          ],
+          "isExtra": false
+        },
+        {
+          "name": "Bacon & Cheddar Omelet Bites",
+          "sizes": [
+            {
+              "size": "standard",
+              "price": 4.49
+            }
+          ],
+          "description": "Egg bites with bacon and cheddar",
+          "longDescription": "Warm omelet bites with bacon and cheddar for a protein-forward side.",
+          "origin": "Dunkin Kitchens",
+          "popularity": "Protein",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false
+        },
+        {
+          "name": "Avocado Toast",
+          "sizes": [
+            {
+              "size": "standard",
+              "price": 3.99
+            }
+          ],
+          "description": "Avocado spread on toasted sourdough",
+          "longDescription": "Creamy avocado spread served on toasted sourdough bread with seasoning.",
+          "origin": "Dunkin Kitchens",
+          "popularity": "Snack",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": false
+        }
+      ]
+    },
+    {
+      "category": "Extras",
+      "icon": "✨",
+      "items": [
+        {
+          "name": "Flavor Shot Add-On",
+          "sizes": [
+            {
+              "size": "standard",
+              "price": 0.5
+            }
+          ],
+          "description": "Unsweetened flavor shot for drinks",
+          "longDescription": "Unsweetened flavor shots include hazelnut, French vanilla, toasted almond, blueberry, coconut, and raspberry. Add as a separate extra after the base drink.",
+          "origin": "Dunkin U.S. Menu",
+          "popularity": "Customization",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [
+            "Flavor Shot"
+          ],
+          "isExtra": true,
+          "image": "menu_images/flavor_shot"
+        },
+        {
+          "name": "Flavor Swirl Add-On",
+          "sizes": [
+            {
+              "size": "standard",
+              "price": 0.75
+            }
+          ],
+          "description": "Sweetened flavor swirl for drinks",
+          "longDescription": "Sweetened flavor swirls include caramel, mocha, French vanilla, and pumpkin. Add as a separate extra after the base drink.",
+          "origin": "Dunkin U.S. Menu",
+          "popularity": "Customization",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [
+            "Flavor Swirl"
+          ],
+          "isExtra": true,
+          "image": "menu_images/flavor_swirl"
+        },
+        {
+          "name": "Whipped Cream",
+          "sizes": [
+            {
+              "size": "standard",
+              "price": 0.5
+            }
+          ],
+          "description": "Add whipped cream topping",
+          "longDescription": "Finish drinks with whipped cream for extra texture and presentation.",
+          "origin": "Dunkin U.S. Menu",
+          "popularity": "Customization",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [],
+          "isExtra": true,
+          "image": "menu_images/whipped_cream"
+        },
+        {
+          "name": "Extra Espresso Shot",
+          "sizes": [
+            {
+              "size": "standard",
+              "price": 1.0
+            }
+          ],
+          "description": "Add one additional espresso shot",
+          "longDescription": "Boost any beverage with a fresh-pulled Dunkin espresso shot for added intensity.",
+          "origin": "Dunkin U.S. Menu",
+          "popularity": "Customization",
+          "comboSlot": "none",
+          "happyHourDiscounted": false,
+          "aliases": [
+            "Extra Shot"
+          ],
+          "isExtra": true,
+          "image": "menu_images/extra_shot"
+        }
+      ]
+    }
+  ]
+}

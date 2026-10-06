@@ -1,0 +1,32 @@
+<Project>
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
+  </PropertyGroup>
+  <!--
+    No repo-level NuGet.Config exists anywhere in this repo on purpose: restores go only through
+    a machine-level-configured proxy (packagefeedproxy.microsoft.io); nuget.org is disabled at
+    that level. Same convention as app/backend-dotnet/Directory.Packages.props and
+    tests/conformance/Directory.Packages.props. Do not add one here either.
+  -->
+  <ItemGroup>
+    <!--
+      Test-project packages only (the tool projects themselves use System.Text.Json, part of the
+      shared framework, so no package reference needed). Same runner choice as
+      Backend.Tests/Conformance.Tests: xunit.v3.mtp-off keeps VSTest as the `dotnet test`
+      execution engine. Deliberately NOT xunit.v3.mtp-v2: its first-run scaffolding rewrites the
+      repo's one shared root global.json's "test.runner" key, which would silently change the
+      test-execution mode for tests/conformance and app/backend-dotnet too.
+    -->
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.10.0" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="4.0.0" />
+    <PackageVersion Include="xunit.v3.mtp-off" Version="4.0.1" />
+    <!--
+      Fix #16: SearchIndexIngestor's one new dependency - DefaultAzureCredential bearer tokens for
+      its raw-HttpClient Azure AI Search/Azure OpenAI REST calls. Pinned to the SAME version
+      app/backend-dotnet/Directory.Packages.props already uses, not a second, independently-chosen
+      one.
+    -->
+    <PackageVersion Include="Azure.Identity" Version="1.13.2" />
+  </ItemGroup>
+</Project>

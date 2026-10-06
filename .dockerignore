@@ -1,0 +1,58 @@
+# Issue #129: the Docker build context is the repo root (azure.yaml's docker.context: .., and
+# CI's `docker build -f app/Dockerfile .`). This file is an ALLOWLIST: exclude everything, then
+# re-include only what app/Dockerfile COPYs (app/frontend/, app/backend/ and personas/), then
+# re-exclude what must never reach the image. Anything new at the repo root stays out by default.
+#
+# S7 (#17): app/Dockerfile.dotnet (renamed from app/backend-dotnet/Dockerfile, Rick's #152
+# review R7) needs app/backend-dotnet itself (MSBuild project + Directory.Build.props/
+# Directory.Packages.props + packages.lock.json for `dotnet restore --locked-mode`) and the
+# repo-root global.json (the SDK band pin, copied for rollForward: latestPatch -- see
+# app/Dockerfile.dotnet's stage 2 comment).
+*
+!app/frontend
+!app/backend
+!app/backend-dotnet
+!personas
+!global.json
+
+# Dependencies and caches (the image installs its own).
+**/node_modules
+**/.venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+
+# Env files can hold secrets. Frontend config (VITE_AUTH_MODE, VITE_ENTRA_*) travels as Docker
+# build args instead (ARG/ENV in app/Dockerfile and Dockerfile.dotnet), so no .env exception is
+# needed here -- every .env file is excluded from the build context.
+**/.env*
+
+# Built inside the image by the multistage build (vite outDir ../backend/static).
+app/backend/static
+
+# Tests are not runtime code.
+app/backend/tests/
+app/backend-dotnet/tests/
+
+# Re-including app/backend-dotnet above unignores its whole subtree, including any local build
+# artifacts (bin/obj/.vs/TestResults) sitting in a dev's checkout when `docker build` runs
+# locally -- keep those, and secrets/env files, out of the image just like app/backend's own
+# rules above.
+app/backend-dotnet/**/bin
+app/backend-dotnet/**/obj
+app/backend-dotnet/**/.vs
+app/backend-dotnet/**/TestResults
+app/backend-dotnet/**/*.user
+
+# R5 (Rick's #152 review): appsettings.Development.json (or any other environment-specific
+# appsettings, and Properties/launchSettings.json) is the usual place for local dev secrets --
+# it isn't git-ignored, and azd's remoteBuild: true uploads the local tree, so a dev's untracked
+# local file could reach the image. The only tracked file is app/backend-dotnet/src/Backend/
+# appsettings.json, which stays included; docker-build-dotnet's CI content check asserts no
+# appsettings.*.json besides it lands in /app.
+app/backend-dotnet/**/appsettings.*.json
+app/backend-dotnet/**/Properties/launchSettings.json
+
+# Persona menu source workbooks (raw ingestion spreadsheets; the runtime only reads the
+# transformed personas/<id>/menu/menuItems.json).
+personas/*/menu/source/

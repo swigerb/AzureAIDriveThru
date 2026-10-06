@@ -1,0 +1,10 @@
+{
+  "description": "Persona smoke expectations for 'test-beta' (Rick's PR #108 second review: moved out of shared C# -- tests/conformance/tests/Conformance.Tests/PersonaSmokeTests.cs -- so no persona-specific literal lives there; a data-only pack PR adds only this file). Loaded by PersonaSmokeExpectations.For(personaId). Every field must be sourced from this SAME persona's own pack files, never invented: greetingSubstring from app/backend/tests/fixtures/personas/test-beta/prompts/greeting.yaml, and searchableOwnItem/orderableItemName/orderableItemSize/orderableItemPrice from app/backend/tests/fixtures/personas/test-beta/menu/menuItems.json (the size/price pair must match that file's entry exactly, or the add-to-order smoke step fails). test-beta's pricing.happyHour is null (persona-level, no per-item opt-in field to avoid either), so no happy-hour timing caveat applies here.",
+  "greetingSubstring": "Welcome to Test Beta Burger Co.! What can I get started for you?",
+  "instructionsSubstring": "You are the Beta voice ordering assistant for Test Beta Burger Co.",
+  "toolDescriptionSubstring": "Search the Test Beta fixture menu",
+  "searchableOwnItem": "Beta Double Burger",
+  "orderableItemName": "Beta Double Burger",
+  "orderableItemSize": "regular",
+  "orderableItemPrice": "4.49"
+}

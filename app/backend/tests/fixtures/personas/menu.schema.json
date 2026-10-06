@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/swigerb/SonicAIDriveThru/personas/menu.schema.json",
+  "title": "Persona menu (menu/menuItems.json)",
+  "description": "Schema for personas/<id>/menu/menuItems.json -- issue #70 (P2-1), design doc sections 4.1/4.3. Keeps today's shape (menuItems[].category, items[]) and adds the #51 per-item fields as OPTIONAL, additive fields with safe defaults, so #70 validates today's data unchanged and #71 can populate them later without another schema change.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["menuItems"],
+  "properties": {
+    "menuItems": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/category" }
+    }
+  },
+  "$defs": {
+    "category": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["category", "items"],
+      "properties": {
+        "category": { "type": "string", "minLength": 1 },
+        "icon": { "type": "string", "minLength": 1 },
+        "modeDisplay": {
+          "type": "object",
+          "description": "Rick's PR 166 round-1 review, required item 9: optional per-menu-mode override of this category's displayName/icon -- e.g. the original reference app renamed 'Fries, Sides & Drinks' to 'Sides & Drinks' (with a different icon) while bound to breakfast. Absent for every category that doesn't change name/icon by mode.",
+          "additionalProperties": false,
+          "properties": {
+            "breakfast": { "$ref": "#/$defs/categoryModeOverride" },
+            "lunch": { "$ref": "#/$defs/categoryModeOverride" },
+            "allDay": { "$ref": "#/$defs/categoryModeOverride" }
+          }
+        },
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/item" }
+        }
+      }
+    },
+    "categoryModeOverride": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "displayName": { "type": "string", "minLength": 1 },
+        "icon": { "type": "string", "minLength": 1 }
+      }
+    },
+    "item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "sizes", "description"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "sizes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["size", "price"],
+            "properties": {
+              "size": { "type": "string" },
+              "price": { "type": "number", "minimum": 0 }
+            }
+          }
+        },
+        "description": { "type": "string" },
+        "longDescription": { "type": "string" },
+        "origin": { "type": "string" },
+        "popularity": { "type": "string" },
+        "image": { "type": "string" },
+
+        "spokenName": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Issue #304: optional per-item phonetic/brand-safe spoken override (e.g. a trademark-styled name's natural-speech form), applied everywhere this item's name is spoken back to the guest (tool-result delta text, get_order's spokenReadBack) via the same spokenAs-style text substitution sizes.spokenAs already uses -- the canonical `name` above is UNCHANGED for search, update_order, and order storage. Omit for an item whose plain name is already guest-friendly."
+        },
+        "comboSlot": { "type": "string", "enum": ["sides", "drinks", "none"], "default": "none" },
+        "happyHourDiscounted": { "type": "boolean", "default": false },
+        "aliases": { "type": "array", "items": { "type": "string" }, "default": [] },
+        "bundle": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "slots": { "type": "array", "items": { "type": "string", "enum": ["sides", "drinks"] } },
+            "autoFill": { "type": "object", "additionalProperties": { "type": "string" } },
+            "defaultSize": { "type": "string" }
+          }
+        },
+        "requiresMachine": { "type": "string" },
+        "isExtra": { "type": "boolean", "default": false },
+        "menuPeriod": { "type": "string", "enum": ["breakfast", "lunch", "allDay"] },
+        "mealNumber": { "type": "string" },
+        "calories": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

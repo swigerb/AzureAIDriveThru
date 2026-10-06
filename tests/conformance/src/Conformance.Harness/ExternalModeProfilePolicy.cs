@@ -1,0 +1,135 @@
+namespace Conformance.Harness;
+
+/// <summary>
+/// Pure decision logic for whether a non-Default backend profile collection
+/// (<c>ShortTimersConformanceFixture</c>, <c>FixedClockConformanceFixture</c>) should skip itself
+/// when running in external mode (<c>CONFORMANCE_BACKEND_URL</c>) -- PR #22 review item N6.
+///
+/// In normal (harness-launched) mode each profile collection starts its own dedicated Python
+/// process with its own <see cref="BackendProfile.ExtraEnvironment"/> layered in -- see
+/// <c>BackendProfileFixtures.cs</c> -- so Default, ShortTimers and FixedClock can all run
+/// concurrently against three independent backend processes with no conflict. External mode
+/// breaks both halves of that assumption at once:
+///
+/// 1. There is exactly ONE external backend process, started once by whoever set
+///    CONFORMANCE_BACKEND_URL, with whatever CONFORMANCE_TEST_HOOKS configuration they gave it
+///    (if any). The harness has no way to know it matches a specific non-Default profile's
+///    requirements, and no way to make it match if it doesn't -- unlike harness-launched mode, it
+///    cannot start a second process with different env vars for a different profile.
+/// 2. Every profile collection's fixture resolves the SAME <c>CONFORMANCE_FAKE_REALTIME_PORT</c> /
+///    <c>CONFORMANCE_FAKE_SEARCH_PORT</c> fixed ports (see <see cref="ExternalModePortPolicy"/>)
+///    from the SAME environment variables, because there's still only one already-running
+///    external backend to point the fakes at. If more than one profile collection actually tried
+///    to bind Kestrel to those same fixed ports, they would race for the same TCP port and
+///    whichever loses would fail with a raw "address already in use" socket exception instead of
+///    an actionable message.
+///
+/// This policy therefore has each non-Default profile's fixture skip itself (never call
+/// <c>FakeRealtimeUpstreamServer.StartAsync</c>/<c>FakeSearchServer.StartAsync</c> at all) with a
+/// clear reason in external mode, deterministically avoiding the port race in point 2 by
+/// construction -- there is nothing left to fail explicitly at, since skipping happens before any
+/// socket is touched. See tests/conformance/README.md's BackendContract section for the
+/// documented policy.
+/// </summary>
+public static class ExternalModeProfilePolicy
+{
+    /// <summary>
+    /// Returns a clear skip reason when <paramref name="backendUrl"/> denotes external mode and
+    /// <paramref name="profileName"/> isn't <paramref name="defaultProfileName"/>; otherwise null
+    /// (the fixture should proceed normally). Equivalent to calling the four-argument overload
+    /// with <c>deployment: null</c> — kept for existing callers that only vary <see
+    /// cref="BackendProfile"/>, not <c>AZURE_OPENAI_REALTIME_DEPLOYMENT</c>.
+    /// </summary>
+    public static string? ShouldSkip(string? backendUrl, string profileName, string defaultProfileName) =>
+        ShouldSkip(backendUrl, profileName, defaultProfileName, deployment: null);
+
+    /// <summary>
+    /// Returns a clear skip reason when <paramref name="backendUrl"/> denotes external mode and
+    /// either <paramref name="profileName"/> isn't <paramref name="defaultProfileName"/>, OR
+    /// <paramref name="deployment"/> is a non-null override (PR #42 review item 2). A non-null
+    /// <paramref name="deployment"/> has exactly the same "needs its own dedicated backend
+    /// process" requirement as a non-Default <see cref="BackendProfile"/> does —
+    /// <c>AZURE_OPENAI_REALTIME_DEPLOYMENT</c> is read once at Python module-import time (see
+    /// <c>ReasoningDeploymentFixtures.cs</c>) — but before this overload existed, a fixture that
+    /// only overrode <c>Deployment</c> while leaving <c>Profile</c> at its Default value slipped
+    /// through the profile-name check entirely: it neither skipped (so it bound the same fixed
+    /// fake ports as every other collection, racing them) nor got a backend actually launched
+    /// with its intended deployment name (external mode's one already-running backend has
+    /// whatever deployment name it was started with — almost certainly not
+    /// "gpt-realtime-1.5-conformance"). Concretely, without this check, a gpt-realtime-1.5-named
+    /// fixture would silently run its "reasoning is never sent for 1.5" assertions against an
+    /// external backend that may well be a 2.1 deployment, passing or failing for the wrong
+    /// reason instead of skipping.
+    /// </summary>
+    public static string? ShouldSkip(string? backendUrl, string profileName, string defaultProfileName, string? deployment) =>
+        ShouldSkip(backendUrl, profileName, defaultProfileName, deployment, persona: null);
+
+    /// <summary>
+    /// Same as the four-argument overload, plus (issue #76): a non-null <paramref name="persona"/>
+    /// override has exactly the same "needs its own dedicated backend process" requirement as a
+    /// non-null <paramref name="deployment"/> override does — PERSONAS/DEFAULT_PERSONA are read
+    /// once at backend startup too, so a fixture that overrides <c>ConformanceFixture.Persona</c>
+    /// while leaving <see cref="ExternalModeProfilePolicy"/>'s other checks satisfied would
+    /// otherwise slip through exactly the same gap PR #42 review item 2 closed for Deployment:
+    /// neither skip (racing every other collection's fixed fake ports) nor actually run against a
+    /// backend launched with its intended default persona (external mode's one already-running
+    /// backend has whatever DEFAULT_PERSONA it was started with, almost certainly not the one this
+    /// override names, until more than one persona pack exists).
+    /// </summary>
+    public static string? ShouldSkip(
+        string? backendUrl, string profileName, string defaultProfileName, string? deployment, string? persona)
+    {
+        var isExternal = !string.IsNullOrWhiteSpace(backendUrl);
+        if (!isExternal)
+        {
+            return null;
+        }
+
+        if (deployment is not null)
+        {
+            return
+                $"CONFORMANCE_BACKEND_URL is set (external mode) -- skipping the backend " +
+                $"collection that overrides AZURE_OPENAI_REALTIME_DEPLOYMENT to '{deployment}'. " +
+                $"External mode has exactly one already-running backend process, started with " +
+                $"whatever deployment name its own operator gave it -- the harness cannot know " +
+                $"whether that matches '{deployment}', and (unlike harness-launched mode) cannot " +
+                $"start a second process with a different deployment name to find out. Running " +
+                $"this collection's assertions against a mismatched deployment would pass or fail " +
+                $"for the wrong reason instead of skipping. Every such collection would also " +
+                $"otherwise try to bind the same fixed fake ports " +
+                $"(CONFORMANCE_FAKE_REALTIME_PORT / CONFORMANCE_FAKE_SEARCH_PORT) concurrently, " +
+                $"same as the profile-name race below. Run this deployment's scenarios with " +
+                $"CONFORMANCE_BACKEND=python (harness-launched) instead.";
+        }
+
+        if (persona is not null)
+        {
+            return
+                $"CONFORMANCE_BACKEND_URL is set (external mode) -- skipping the backend " +
+                $"collection that overrides DEFAULT_PERSONA to '{persona}'. External mode has " +
+                $"exactly one already-running backend process, started with whatever " +
+                $"DEFAULT_PERSONA its own operator gave it -- the harness cannot know whether " +
+                $"that matches '{persona}', and (unlike harness-launched mode) cannot start a " +
+                $"second process with a different default persona to find out. Running this " +
+                $"collection's assertions against a mismatched persona would pass or fail for " +
+                $"the wrong reason instead of skipping. Run this persona's scenarios with " +
+                $"CONFORMANCE_BACKEND=python (harness-launched) instead.";
+        }
+
+        if (profileName == defaultProfileName)
+        {
+            return null;
+        }
+
+        return
+            $"CONFORMANCE_BACKEND_URL is set (external mode) -- skipping the '{profileName}' " +
+            $"backend profile collection. External mode has exactly one already-running backend " +
+            $"process, which cannot simultaneously satisfy the '{defaultProfileName}' profile's " +
+            $"requirements and this profile's CONFORMANCE_TEST_HOOKS overrides, and every profile " +
+            $"collection would otherwise try to bind the same fixed fake ports " +
+            $"(CONFORMANCE_FAKE_REALTIME_PORT / CONFORMANCE_FAKE_SEARCH_PORT) concurrently. Only " +
+            $"the '{defaultProfileName}' profile collection runs against an external backend; " +
+            $"run this profile's scenarios with CONFORMANCE_BACKEND=python (harness-launched) " +
+            $"instead.";
+    }
+}

@@ -1,0 +1,634 @@
+using Conformance.Fakes;
+using Conformance.Harness;
+using Xunit;
+
+namespace Conformance.Tests;
+
+/// <summary>
+/// Starts the two fakes and one backend-under-test once per test run and shares them across all
+/// tests in the "Conformance" collection — starting a fresh Python process per test would make
+/// the suite too slow to be useful as a fast feedback loop. Individual tests must not depend on
+/// each other's socket state (each opens its own <see cref="RealtimeBrowserClient"/> connection).
+/// </summary>
+public class ConformanceFixture : IAsyncLifetime
+{
+    /// <summary>
+    /// The env-var profile the Python backend is launched with. Default profile (hooks
+    /// disabled) — derived fixtures override this to opt into <see cref="BackendProfiles.ShortTimers"/>
+    /// or <see cref="BackendProfiles.FixedClock"/> on their own dedicated collection.
+    /// </summary>
+    protected virtual BackendProfile Profile => BackendProfiles.Default;
+
+    /// <summary>
+    /// The AZURE_OPENAI_REALTIME_DEPLOYMENT name the Python backend is launched with. Null uses
+    /// BackendLauncherFactory/BackendContract's own default (<see cref="BackendContract.DefaultDeployment"/>,
+    /// "gpt-realtime-2.1-conformance" — a reasoning-capable name by rtmt.py's deployment-name
+    /// classification). Derived fixtures override this to exercise reasoning-by-deployment-name
+    /// behaviour (issue #8) on their own dedicated collection — like <see cref="Profile"/>, the
+    /// deployment name is read once at Python module-import time and can't change for an
+    /// already-running process, so each distinct value needs its own collection/backend process.
+    /// See tests/conformance/tests/Conformance.Tests/Scenarios/Sessions/ReasoningDeploymentFixtures.cs.
+    /// </summary>
+    protected virtual string? Deployment => null;
+
+    /// <summary>
+    /// Issue #76: the DEFAULT_PERSONA the backend is launched with. Null uses
+    /// BackendLauncherFactory/ConformancePersonas' own default resolution (today: env var, else
+    /// disk discovery, else <see cref="ConformancePersonas.DefaultPersonaId"/>, "sonic") — every
+    /// existing fixture leaves this null and gets exactly today's implicit "sonic" behaviour.
+    /// Derived fixtures will override this once a second persona pack (#78/#79) exists, to
+    /// exercise persona-specific behaviour on their own dedicated collection — like <see
+    /// cref="Deployment"/>, PERSONAS/DEFAULT_PERSONA are read once at backend startup and can't
+    /// change for an already-running process, so each distinct value needs its own
+    /// collection/backend process.
+    /// </summary>
+    protected virtual string? Persona => null;
+
+    /// <summary>
+    /// Issue #76: the full PERSONAS enabled-list the backend is launched with. Null uses
+    /// BackendLauncherFactory/ConformancePersonas' own default resolution (env var, else disk
+    /// discovery). A fixture that only overrides <see cref="Persona"/> gets it folded into
+    /// whatever this resolves to automatically (<see cref="ConformancePersonas.EnsureIncluded"/>)
+    /// — overriding this too is only needed to exercise a *non-default* enabled persona (e.g.
+    /// asserting a rejected/unknown persona id still behaves like today when others are enabled).
+    /// </summary>
+    protected virtual IReadOnlyList<string>? Personas => null;
+
+    /// <summary>
+    /// Rick's PR #102 review item 1: overrides PERSONAS_DIR so a fixture can launch the backend
+    /// against a TEST-ONLY second persona pack directory (see
+    /// <see cref="RepoPaths.FixturePersonasDirectory"/>) instead of the real repo personas/
+    /// folder. Null (every existing fixture) resolves personas from personas/ exactly as before.
+    /// </summary>
+    protected virtual string? PersonasDir => null;
+
+    /// <summary>
+    /// Public counterpart of <see cref="PersonasDir"/>, resolved the exact same way
+    /// <see cref="InitializeAsync"/> resolves it for <see cref="MenuIndex.ResolveIndexPaths"/> and
+    /// <see cref="BackendLauncherFactory.StartAsync"/> above -- so a scenario shared across both
+    /// real-pack and fixture-pack fixtures (e.g. PersonaSmokeTests.cs's PersonaSmokeScenario) can
+    /// find THIS fixture's own persona pack root (to read a persona's own menu/menuItems.json,
+    /// say) without needing to know which concrete fixture subclass it was handed.
+    /// </summary>
+    public string PersonasDirectory => PersonasDir ?? RepoPaths.PersonasDirectory(RepoPaths.FindRepoRoot());
+
+    public FakeRealtimeUpstreamServer Realtime { get; } = new();
+    public FakeSearchServer Search { get; private set; } = null!;
+
+    /// <summary>
+    /// Rick's PR #253 review item 2 (follow-up): hook for a derived fixture's own EXTRA fake(s)
+    /// -- i.e. anything beyond the <see cref="Realtime"/>/<see cref="Search"/> fakes every
+    /// fixture already gets, like the cascade fixtures' own <c>Chat</c>
+    /// (<see cref="Conformance.Fakes.FakeChatCompletionsServer"/>) -- to assert it has no leaked
+    /// one-shot/queued state of its own. <see cref="Realtime"/>.AssertNoPendingOneShotSwitches()
+    /// and <see cref="Search"/>.AssertNoPendingOneShotSwitches() below run BEFORE the scenario
+    /// body (so a leak from a PREVIOUS scenario fails loudly before it can silently misfire
+    /// against THIS scenario's own first request -- see their own call sites' comments). This
+    /// hook is different on purpose: it is called AFTER the scenario body (see the call site
+    /// near the end of this method), because a hand-placed "assert nothing pending" call at the
+    /// *start* of every scenario in a fixture's own test file is both easy to forget on a new
+    /// scenario and -- worse -- when it IS present, it blames the WRONG scenario: the one that
+    /// happens to run next, not the one that actually left the leak behind. Asserting here
+    /// instead, immediately after this scenario's own body returns, means the scenario that
+    /// caused a leak is the one that fails.
+    ///
+    /// Default no-op: a fixture with no extra fakes (the common case -- most fixtures only ever
+    /// use <see cref="Realtime"/>/<see cref="Search"/>) has nothing extra to check. Overridden by
+    /// <c>CascadeConformanceFixture</c> and <c>CascadeMenuModeAndVoiceConformanceFixture</c> to
+    /// call their own <c>Chat.AssertNoPendingScriptedResponses()</c> -- see that method's own doc
+    /// comment for the exact FIFO-leak mechanism this guards against.
+    /// </summary>
+    protected virtual void AssertNoPendingExtraFakeState()
+    {
+    }
+
+    /// <summary>
+    /// Rick's PR #253 review (2nd follow-up): complements <see cref="AssertNoPendingExtraFakeState"/>
+    /// for the case that check can never reach -- a scenario body that THROWS (the likeliest real
+    /// leak path: an aborted request mid-parse, per
+    /// <see cref="Conformance.Fakes.FakeChatCompletionsServer.AssertNoPendingScriptedResponses"/>'s
+    /// own doc comment) never falls through to this method's sibling, since that call sits after
+    /// the body in <see cref="RunAsync(Func{Task}, int)"/>'s `try`. Without a reset on THIS path
+    /// too, a throwing scenario's leftover state would silently reach the next scenario sharing
+    /// the same fake instance (via <c>IClassFixture</c>) -- the one case
+    /// <see cref="AssertNoPendingExtraFakeState"/>'s own now-self-clearing check (see
+    /// <c>AssertNoPendingScriptedResponses</c>) cannot help with, because it is never called at
+    /// all. Called from <c>RunAsync</c>'s `finally` ONLY when the scenario did not reach its own
+    /// <see cref="AssertNoPendingExtraFakeState"/> check (i.e. the body threw, or an earlier
+    /// assertion in the try block did) -- never on the normal success path, where that check has
+    /// already handled clearing on its own. Must never throw: this runs in a `finally` specifically
+    /// so it cannot mask the scenario's own original exception.
+    ///
+    /// Default no-op, matching <see cref="AssertNoPendingExtraFakeState"/>. Overridden by
+    /// <c>CascadeConformanceFixture</c> and <c>CascadeMenuModeAndVoiceConformanceFixture</c> to
+    /// call <c>Chat.Drain()</c>.
+    /// </summary>
+    protected virtual void ResetExtraFakeState()
+    {
+    }
+
+    /// <summary>
+    /// Issue #143/ADR-002: whether this fixture launches its backend in Entra mode against a
+    /// fresh <see cref="EntraIssuer"/> (the default -- persona-architecture.md 18.11: "the default
+    /// fixture runs in Entra mode against the fake issuer") or leaves Entra entirely unconfigured
+    /// (<see cref="DevelopmentPassThroughFixture"/> overrides this to false for the mode rows and
+    /// the Playwright UX runs, which need a non-Production, unconfigured backend instead).
+    /// </summary>
+    protected virtual bool UseEntraMode => true;
+
+    /// <summary>Non-null only when <see cref="UseEntraMode"/> is true (every fixture except
+    /// <see cref="DevelopmentPassThroughFixture"/>). Row tests mint arbitrary tokens against this
+    /// directly (e.g. <c>fixture.EntraIssuer!.Mint(new() { ... })</c>) -- the fixture itself only
+    /// ever mints the one "valid token" default via <see cref="EntraDefaultCredentials"/>.</summary>
+    public FakeEntraIssuer? EntraIssuer { get; private set; }
+
+    /// <summary>
+    /// Issue #82: a derived fixture overrides this to start any additional fake servers the
+    /// cascade pipeline needs beyond <see cref="Realtime"/>/<see cref="Search"/> (namely a
+    /// <see cref="FakeChatCompletionsServer"/> for the Foundry chat endpoint -- STT/TTS reuse
+    /// <see cref="Realtime"/> itself, see that class's own `ExpectedCascadeBearerToken` doc
+    /// comment), and to return the env vars those fakes' base URIs need injected into the
+    /// backend's own environment. Called from <see cref="InitializeAsync"/> right after
+    /// <see cref="Search"/> starts and before the backend launches, so returned values are ready
+    /// in time; the returned dictionary is merged over <see cref="Profile"/>'s own
+    /// <see cref="BackendProfile.ExtraEnvironment"/> (this override wins on a key collision).
+    /// No-op / empty by default so every existing fixture is completely unaffected.
+    /// </summary>
+    protected virtual Task<IReadOnlyDictionary<string, string>> StartExtraFakesAsync() =>
+        Task.FromResult<IReadOnlyDictionary<string, string>>(new Dictionary<string, string>());
+
+    /// <summary>
+    /// Symmetric shutdown for whatever <see cref="StartExtraFakesAsync"/> started, called from
+    /// <see cref="DisposeAsync"/> after <see cref="Backend"/> stops (so any of the backend's own
+    /// final requests still in flight during shutdown have somewhere to land) but before
+    /// <see cref="Search"/>/<see cref="Realtime"/> stop. No-op by default.
+    /// </summary>
+    protected virtual Task StopExtraFakesAsync() => Task.CompletedTask;
+
+    /// <summary>Non-null once startup succeeds. Null (with <see cref="SkipReason"/> set) only when
+    /// CONFORMANCE_BACKEND=dotnet and <see cref="DotnetPlaceholderPolicy.ShouldSkip"/> allows a skip
+    /// (PR #22 review item 15); otherwise a dotnet placeholder run fails <see cref="InitializeAsync"/>
+    /// outright instead of reaching this point.</summary>
+    public IBackendUnderTest? Backend { get; private set; }
+
+    /// <summary>Set only when CONFORMANCE_BACKEND=dotnet and CONFORMANCE_ALLOW_SKIP=1 outside CI
+    /// explicitly opted in (PR #22 review item 15, S2 placeholder for issue #7). Tests must check
+    /// this first.</summary>
+    public string? SkipReason { get; private set; }
+
+    public async ValueTask InitializeAsync()
+    {
+        // Non-Default profile collections must skip themselves in external mode, before either
+        // fake is started, so they never race the Default collection (or each other) to bind the
+        // same fixed fake ports, and never assume an external, already-running backend happens to
+        // match a profile it was never configured for (PR #22 review item N6).
+        SkipReason = ExternalModeProfilePolicy.ShouldSkip(
+            Environment.GetEnvironmentVariable("CONFORMANCE_BACKEND_URL"),
+            Profile.Name,
+            BackendProfiles.Default.Name,
+            Deployment,
+            Persona);
+        if (SkipReason is not null)
+        {
+            return;
+        }
+
+        // External mode (CONFORMANCE_BACKEND_URL) requires the two fakes to bind to fixed,
+        // known-in-advance ports -- see ExternalModePortPolicy's own docs for why -- and fails
+        // fast with a clear message here (before either fake even starts) if they're missing
+        // (PR #22 review item 16).
+        var (realtimePort, searchPort) = ExternalModePortPolicy.Resolve(
+            Environment.GetEnvironmentVariable("CONFORMANCE_BACKEND_URL"),
+            Environment.GetEnvironmentVariable(ExternalModePortPolicy.RealtimePortEnvVar),
+            Environment.GetEnvironmentVariable(ExternalModePortPolicy.SearchPortEnvVar));
+
+        // Real end-to-end scenarios always go through the Python backend, which always sends
+        // the `api-key` header under key auth (rtmt.py) — so requiring it here exercises PR #22
+        // review item 9's "401 on bad/missing api-key" fidelity check on every real scenario for
+        // free, with no risk of a false failure (see BackendContract.OpenAiApiKey).
+        Realtime.RequireApiKey = true;
+        Realtime.ExpectedApiKey = BackendContract.OpenAiApiKey;
+        await Realtime.StartAsync(fixedPort: realtimePort).ConfigureAwait(false);
+
+        // Issue #76 part 2: build FakeSearchServer's index map from exactly the same persona
+        // resolution BackendLauncherFactory.StartAsync uses below (explicit Personas override,
+        // else CONFORMANCE_PERSONAS, else disk discovery, folded with any Persona override) --
+        // so the fake always has (and only has) an index loaded for every persona the backend
+        // this fixture launches can actually query. A fixture that only enables a subset (e.g.
+        // DisabledPersonaConformanceFixture) gets a fake that can't answer the disabled persona's
+        // index at all, matching that persona being genuinely unreachable end to end.
+        var resolvedPersonas = Personas ?? ConformancePersonas.ResolveEnabled(
+            Environment.GetEnvironmentVariable("CONFORMANCE_PERSONAS"), ConformancePersonas.DiscoverFromDisk);
+        resolvedPersonas = ConformancePersonas.EnsureIncluded(resolvedPersonas, Persona);
+        var personasDirForSearch = PersonasDirectory;
+        var indexPaths = MenuIndex.ResolveIndexPaths(personasDirForSearch, resolvedPersonas);
+
+        Search = new FakeSearchServer(indexPaths);
+        await Search.StartAsync(fixedPort: searchPort).ConfigureAwait(false);
+
+        // Issue #143/ADR-002: started before StartExtraFakesAsync (and independent of it, so a
+        // derived fixture that overrides that extension point -- CascadeConformanceFixtures,
+        // LocalConformanceFixtures -- still gets Entra mode for free instead of silently losing it)
+        // so ENTRA_INSTANCE is ready in time for the backend's own env below.
+        IReadOnlyDictionary<string, string> entraEnvironment = new Dictionary<string, string>();
+        if (UseEntraMode)
+        {
+            EntraIssuer = new FakeEntraIssuer();
+            await EntraIssuer.StartAsync().ConfigureAwait(false);
+            entraEnvironment = EntraModeEnvironment.Build(EntraIssuer);
+        }
+
+        var extraFakeEnvironment = await StartExtraFakesAsync().ConfigureAwait(false);
+        var extraEnvironment = MergeEnvironment(
+            MergeEnvironment(Profile.ExtraEnvironment, entraEnvironment), extraFakeEnvironment);
+
+        // Issue #259: used to pre-reserve a port with NetworkUtils.GetFreeTcpPort() -- that probe
+        // has an inherent TOCTOU race between releasing it and the backend's own bind (the exact
+        // failure mode PortRaceDetection/the retry loop exist to paper over), and nothing stopped
+        // a DIFFERENT fixture's backend from winning that race and binding this fixture's
+        // "reserved" port out from under it. Port 0 asks the OS to atomically assign a genuinely
+        // free ephemeral port at bind time instead -- no reservation, no TOCTOU window, and no way
+        // for two fixtures to ever collide on the same port. Each launcher reads the real bound
+        // port back from the backend's own startup output and reports it via Backend.BaseUri.
+        var port = 0;
+        try
+        {
+            Backend = await BackendLauncherFactory.StartAsync(
+                Realtime.BaseUri, Search.BaseUri, port, extraEnvironment: extraEnvironment, deployment: Deployment,
+                personas: Personas, persona: Persona, personasDir: PersonasDir)
+                .ConfigureAwait(false);
+
+            // Issue #143: "the harness HTTP client and RealtimeBrowserClient attach a valid token
+            // by default" -- registers a fresh-mint-per-call delegate keyed by this backend's own
+            // BaseUri (unique per fixture instance/port), so ConformanceHttpClient/
+            // RealtimeBrowserClient's ambient lookups resolve to a real, currently-valid Entra
+            // token for every existing call site with zero changes needed at any of them.
+            if (EntraIssuer is { } issuer)
+            {
+                EntraDefaultCredentials.Register(Backend.BaseUri, () => issuer.Mint());
+            }
+
+            // #66 re-review, R1(c): seed the attribution's watermark from the count observed the
+            // moment the backend finishes starting, labelled as a pseudo-scenario distinct from
+            // any real scenario name AND from ScenarioErrorAttribution's own "<unknown scenario>"
+            // fallback for a genuinely missing history. Without this, the very first real
+            // scenario's own pre-body charge would see the whole of any startup-time error count
+            // as "stranded since the beginning of time" and, if it exceeded that scenario's own
+            // allowance, fail misleadingly naming "<unknown scenario>". If a startup line is still
+            // trickling in as the first scenario begins, this at least names it clearly instead of
+            // blaming a scenario that never ran.
+            _errorAttribution.RecordScenarioChecked(
+                ScenarioErrorAttribution.StartupScenarioName, Backend.UnhandledErrorCount(), unusedAllowance: 0);
+        }
+        catch (ConformanceBackendNotImplementedException ex)
+        {
+            SkipReason = ex.Message;
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (Backend is not null)
+        {
+            EntraDefaultCredentials.Unregister(Backend.BaseUri);
+            await Backend.DisposeAsync().ConfigureAwait(false);
+        }
+        await StopExtraFakesAsync().ConfigureAwait(false);
+        if (Search is not null)
+        {
+            await Search.DisposeAsync().ConfigureAwait(false);
+        }
+        await Realtime.DisposeAsync().ConfigureAwait(false);
+        if (EntraIssuer is not null)
+        {
+            await EntraIssuer.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>Layers <paramref name="overrides"/> over <paramref name="baseEnvironment"/>,
+    /// overrides winning on a key collision -- used to combine a profile's own env vars with
+    /// whatever <see cref="StartExtraFakesAsync"/> additionally returns.</summary>
+    private static IReadOnlyDictionary<string, string> MergeEnvironment(
+        IReadOnlyDictionary<string, string> baseEnvironment, IReadOnlyDictionary<string, string> overrides)
+    {
+        var merged = new Dictionary<string, string>(baseEnvironment);
+        foreach (var (key, value) in overrides)
+        {
+            merged[key] = value;
+        }
+        return merged;
+    }
+
+    /// <summary>How long a scenario's connections get to finish closing before <see
+    /// cref="RunAsync"/> gives up and fails with a clear message — matches the <c>FrameTimeout</c>
+    /// convention used throughout the scenario tests themselves (PR #22 review item N3).</summary>
+    private static readonly TimeSpan ScenarioTeardownTimeout = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// #62: how long the backend's captured stdout/stderr must stay quiet before an error count
+    /// is trusted as a scenario boundary (both the pre-body baseline and, since #66 M1, the
+    /// post-body "actual" read), and the safety cap on how long to wait for that quiet period at
+    /// all. Kept short in the common case with the same generous upper bound used elsewhere in
+    /// this file for genuinely unusual contention (<see cref="ScenarioTeardownTimeout"/>) — #66
+    /// S1's fast path in <see cref="CapturedProcessOutput.WaitForOutputQuiescenceAsync"/> means
+    /// this window's cost is only ever paid when the backend was *not* already silent, not on
+    /// every call regardless.
+    /// </summary>
+    private static readonly TimeSpan BaselineQuiescenceWindow = TimeSpan.FromMilliseconds(250);
+    private static readonly TimeSpan BaselineQuiescenceMaxWait = ScenarioTeardownTimeout;
+
+    /// <summary>
+    /// #66 M1: attributes an unhandled backend error that lands so late it survives even the
+    /// post-body quiescence drain (below) to the scenario that actually caused it, instead of
+    /// letting the next scenario's own pre-body drain silently fold it into its own baseline. See
+    /// <see cref="Harness.ScenarioErrorAttribution"/>'s own doc comment for the full mechanism;
+    /// this fixture instance owns exactly one, since every scenario in a collection shares the one
+    /// backend process (and so the one <see cref="Backend"/>'s captured output) this tracks.
+    /// </summary>
+    private readonly ScenarioErrorAttribution _errorAttribution = new();
+
+    /// <summary>
+    /// Wraps a scenario body so any failure carries the backend's captured stdout/stderr in the
+    /// exception message — xUnit displays inner-exception text on failure without needing
+    /// ITestOutputHelper plumbing through every scenario. Equivalent to
+    /// <c>RunAsync(body, allowedNewBackendErrors: 0)</c>.
+    /// </summary>
+    public Task RunAsync(Func<Task> body) => RunAsync(body, allowedNewBackendErrors: 0);
+
+    /// <summary>
+    /// Issue #143/ADR-002: wraps <see cref="RunAsync(Func{Task})"/> for an auth-row test (18.11)
+    /// with the per-backend <see cref="AuthRowCapability"/> gate. The dynamic
+    /// <see cref="Assert.Skip"/> call deliberately runs BEFORE <see cref="RunAsync(Func{Task})"/>
+    /// is ever entered (mirroring how that method's own <see cref="SkipReason"/> check runs before
+    /// its try/catch, above) -- RunAsync's catch-and-rethrow-with-diagnostics block would
+    /// otherwise wrap xUnit's own dynamic-skip exception into an ordinary
+    /// <see cref="InvalidOperationException"/>, turning a skip into a hard failure. Both
+    /// PythonEnforcesAuth (issue #144) and DotnetEnforcesAuth (issue #147) start false, so every
+    /// row using this helper skips cleanly on both backends today, satisfying this issue's own
+    /// "whole suite stays green on both legs" acceptance criterion.
+    /// </summary>
+    public Task RunAuthRowAsync(Func<Task> body)
+    {
+        var skipReason = AuthRowCapability.ShouldSkipCurrentBackend();
+        if (skipReason is not null)
+        {
+            Assert.Skip(skipReason);
+            return Task.CompletedTask;
+        }
+
+        return RunAsync(body);
+    }
+
+    /// <summary>
+    /// Same as <see cref="RunAsync(Func{Task})"/>, but for scenarios whose entire subject matter
+    /// is a deterministic, application-level error path (e.g. a rejected session.update, or an
+    /// unrelated upstream error) that the backend legitimately logs at ERROR level as part of
+    /// proving recovery actually happened. <paramref name="allowedNewBackendErrors"/> is an
+    /// UPPER BOUND on the number of new backend ERROR-level log lines (per
+    /// <see cref="Conformance.Harness.CapturedProcessOutput.CountUnhandledErrors"/>) this
+    /// scenario's own body may deliberately, deterministically cause — asserted as
+    /// <c>actual &lt;= baseline + allowed</c>, never exact equality. How many ERROR-level lines a
+    /// backend chooses to log for a given recovered condition (one line, two lines, or logged at
+    /// WARNING instead of ERROR and therefore zero) is a logging/observability choice, not a wire
+    /// contract — a correct backend in another language must not be forced to reproduce this
+    /// backend's own log-line count to pass. The zero-arg overload's baseline-delta invariant (PR
+    /// #22 review item N5) still applies on top of the bound, so any *unexpected* excess backend
+    /// error still fails the scenario. A caught-and-reported application-level tool exception (see
+    /// ToolErrorSessionSurvivesTests's README-documented "one ERROR" contract) is one such
+    /// deliberate case (PR #38 review item 2) — without this overload, the zero-new-errors
+    /// invariant below would itself block an otherwise-passing scenario from ever passing, which
+    /// is exactly what PR #38's Rick review flagged: "the body passes and only the error count
+    /// blocked it."
+    /// </summary>
+    public async Task RunAsync(Func<Task> body, int allowedNewBackendErrors)
+    {
+        if (SkipReason is not null)
+        {
+            Assert.Skip(SkipReason);
+            return;
+        }
+
+        // Asserted BEFORE the scenario runs, not after: a leaked RejectNextConnectionWith or
+        // SuppressSessionUpdatedOnNextConnection from a *previous* scenario would otherwise
+        // misfire against *this* scenario's own connection attempt, and the resulting failure
+        // would point at this scenario's assertions instead of the real, earlier cause (PR #22
+        // review item N9). See FakeRealtimeUpstreamServer.AssertNoPendingOneShotSwitches.
+        Realtime.AssertNoPendingOneShotSwitches();
+
+        // Same reasoning as above, for FakeSearchServer.RejectSelectFieldOnce (PR #38 review
+        // item 8) — a leaked one-shot search-rejection flag from a previous scenario must not be
+        // allowed to silently misfire against this scenario's own search request instead.
+        Search.AssertNoPendingOneShotSwitches();
+
+        // Captured BEFORE the scenario runs, not after: only a handler fault recorded on a
+        // connection accepted at or after this point belongs to *this* scenario. A connection an
+        // earlier scenario accepted can still be asynchronously tearing down (e.g. its
+        // RespondAsync loop reacting to that scenario's browser dropping mid-stream) when this
+        // scenario starts — without this watermark, that connection's eventual, entirely expected
+        // "socket already closing" outcome would otherwise get attributed to whichever scenario
+        // happened to call AssertNoHandlerFaults first, not the one that actually caused it (PR
+        // #22 review item N3).
+        var connectionWatermark = Realtime.ConnectionWatermark;
+
+        var scenarioName = TestContext.Current.Test?.TestDisplayName ?? "<unnamed scenario>";
+
+        // Baseline captured BEFORE the scenario runs, not compared against zero: the backend
+        // process is shared across every test in this collection (starting a fresh Python
+        // process per test would make the suite too slow), so an earlier scenario's own
+        // deliberately-triggered backend error (e.g. a handshake-rejection or malformed-frame
+        // test) would otherwise permanently poison every later scenario's "zero errors" check
+        // with a stale, unrelated count. Comparing to a per-scenario baseline delta instead
+        // makes the invariant "this scenario introduced no new unhandled backend errors" --
+        // which is what review item N5 actually wants -- immune to run order (PR #22 review
+        // item N5).
+        //
+        // #62: drained for quiescence first. CountUnhandledErrors() reflects only the stderr
+        // lines the async ErrorDataReceived callback has actually dispatched so far -- under
+        // ThreadPool/CPU contention, a previous scenario's own already-accounted-for line can
+        // still be in flight at the instant that scenario's own "actual" check read the count (it
+        // simply wasn't visible yet, so that check under-counted and still passed). If that line
+        // then lands *after* this baseline snapshot instead of before it, this scenario's own
+        // zero-tolerance check would misattribute someone else's expected error as a new one it
+        // introduced. Waiting for a short quiet period first (event-driven, not a blind sleep; see
+        // CapturedProcessOutput.WaitForOutputQuiescenceAsync) closes that window without changing
+        // what counts as an error or retrying anything.
+        //
+        // #66 M1(b): that drain still only waits up to BaselineQuiescenceMaxWait. If a line is
+        // still in flight past that cap -- or lands in the narrow gap between the PREVIOUS
+        // scenario's own post-body check (below) and this drain -- silently trusting this drain's
+        // result as this scenario's baseline would make that line vanish from every report, the
+        // exact "silently hide a real new backend error" hole PR #28 N13 closed for the
+        // dump-buffer-wraparound case. So before trusting it, charge anything that arrived since
+        // the previous scenario's own post-body check against THAT scenario's leftover allowance
+        // (see ScenarioErrorAttribution), and fail loudly -- naming that scenario -- if it had
+        // none left, instead of folding the line into this scenario's baseline unnoticed.
+        //
+        // #66 re-review, R2: BeginScenario takes exactly ONE UnhandledErrorCount() read and reuses
+        // it both for the charge above and as this scenario's own baseline below -- the original
+        // M1 fix took two separate reads back-to-back here, so a line landing in the gap between
+        // them was neither charged to the previous scenario nor counted in this scenario's own
+        // baseline (silently lost).
+        var preBaselineQuiesced = true;
+        var baselineUnhandledErrors = 0;
+        string? strandedMessage = null;
+        if (Backend is not null)
+        {
+            preBaselineQuiesced = await Backend.WaitForOutputQuiescenceAsync(
+                BaselineQuiescenceWindow, BaselineQuiescenceMaxWait, TestContext.Current.CancellationToken)
+                .ConfigureAwait(false);
+
+            (baselineUnhandledErrors, strandedMessage) = _errorAttribution.BeginScenario(Backend.UnhandledErrorCount);
+        }
+
+        var postBodyRecorded = false;
+
+        // Rick's PR #253 review (2nd follow-up): set true only once AssertNoPendingExtraFakeState
+        // below has actually run -- i.e. the scenario body returned normally and the settle/fault
+        // checks above it also passed. If the body (or an earlier check) throws first, this stays
+        // false and the `finally` below calls ResetExtraFakeState() instead, so a throwing
+        // scenario's leftover extra-fake state (see that method's own doc comment) still gets
+        // cleared before the next scenario runs.
+        var extraFakeStateChecked = false;
+        try
+        {
+            if (strandedMessage is not null)
+            {
+                // #66 re-review, R1(b): this Assert.Fail now runs INSIDE the try/finally (it used
+                // to run before the try even started) so the finally below still records this
+                // scenario's own watermark -- otherwise every following scenario re-charged the
+                // same stranded line(s) against the same previous scenario, cascading one late
+                // error into a failure for the rest of the collection.
+                //
+                // #66 S4: hitting the quiescence cap is no longer silent -- surfaced here because
+                // it directly explains why a line could have still been "stranded" past even the
+                // drain above.
+                Assert.Fail(preBaselineQuiesced
+                    ? strandedMessage
+                    : strandedMessage + " (This scenario's own pre-body quiescence wait also hit " +
+                      $"its {BaselineQuiescenceMaxWait} cap without the backend ever going fully " +
+                      "quiet, so there may be even more still in flight.)");
+            }
+
+            await body().ConfigureAwait(false);
+
+            // Let every connection this scenario touched actually finish closing before checking
+            // for handler faults. A graceful drop (e.g. this scenario's own browser client
+            // disposing at the end of its `await using` block) does not mean the *backend's*
+            // upstream connection to the fake has finished tearing down yet — that happens
+            // asynchronously, on the backend's own schedule, once it notices the browser
+            // disconnected. Asserting faults immediately after the scenario body returns risked
+            // missing a fault that hadn't been recorded yet (this scenario would wrongly pass) and
+            // then discovering it later, misattributed to whichever *next* scenario happened to
+            // call AssertNoHandlerFaults first (PR #22 review item N3).
+            var settled = await Realtime.WaitForNoOpenConnectionsAsync(ScenarioTeardownTimeout).ConfigureAwait(false);
+            if (!settled)
+            {
+                var stillOpen = string.Join(", ", Realtime.OpenConnectionIds);
+                throw new InvalidOperationException(
+                    $"{Realtime.OpenConnectionIds.Count} upstream connection(s) were still open " +
+                    $"{ScenarioTeardownTimeout} after this scenario's body returned: [{stillOpen}]. " +
+                    "A handler is still running (or a browser client this scenario opened was " +
+                    "never closed) -- this must settle before handler faults can be checked " +
+                    "reliably.");
+            }
+
+            // Surfaces any *genuine* handler fault recorded during the scenario (a throwing
+            // script rule, or a bug in a built-in dispatch case) even when the scenario's own
+            // assertions all happened to pass -- see FakeRealtimeUpstreamServer.AssertNoHandlerFaults
+            // (item N3). Scoped to connections this scenario itself accepted (the watermark
+            // above) so a fault from an earlier scenario's already-settled teardown can never
+            // fail this one either.
+            Realtime.AssertNoHandlerFaults(since: connectionWatermark);
+
+            // Rick's PR #253 review item 2 (follow-up): deliberately placed AFTER the body (and
+            // after the fault/settle checks above), NOT alongside the Realtime/Search one-shot
+            // checks near the top of this method -- see AssertNoPendingExtraFakeState's own doc
+            // comment for why. Not gated on `Backend is not null` below: this is about a derived
+            // fixture's own extra FAKE upstream state, orthogonal to whether a real backend
+            // process is attached.
+            AssertNoPendingExtraFakeState();
+            extraFakeStateChecked = true;
+
+            // Language-neutral, fixture-wide equivalent of "backend logged no (unexpected)
+            // traceback" (item N5): a future C# backend under test reports the same
+            // baseline-plus-bound contract without ever producing a Python-shaped traceback
+            // string. Bounded from ABOVE only — backend logging verbosity/level is not a wire
+            // contract (Rick's PR #42 review, item 1): a correct backend that logs fewer lines,
+            // or logs at a level this harness doesn't count as an "unhandled error" at all, must
+            // still pass. Most scenarios pass allowedNewBackendErrors: 0 (via the single-arg
+            // RunAsync overload); a scenario that deliberately provokes one caught-and-reported
+            // tool exception passes 1 instead (PR #38 review item 2).
+            if (Backend is not null)
+            {
+                // #66 M1(a): drained again AFTER the body (and after teardown has settled above),
+                // not just before it -- so THIS scenario's own late output is checked against ITS
+                // OWN allowance here, instead of silently becoming whatever scenario runs next's
+                // problem to (potentially wrongly) absorb.
+                var postBodyQuiesced = await Backend.WaitForOutputQuiescenceAsync(
+                    BaselineQuiescenceWindow, BaselineQuiescenceMaxWait, TestContext.Current.CancellationToken)
+                    .ConfigureAwait(false);
+
+                // #66 re-review, R2: EndScenario takes exactly ONE read too, reused both for the
+                // bound check below and for the watermark/allowance recorded for the NEXT
+                // scenario's own BeginScenario charge -- the original M1 fix re-read the count a
+                // second time in this method's own `finally` for exactly that record, which could
+                // observe one more stray line than this check saw and silently drop it (neither
+                // charged nor checked).
+                var (actual, withinBound) = _errorAttribution.EndScenario(
+                    scenarioName, Backend.UnhandledErrorCount, baselineUnhandledErrors, allowedNewBackendErrors);
+                postBodyRecorded = true;
+                Assert.True(withinBound,
+                    $"Expected at most {allowedNewBackendErrors} new backend error(s) above the " +
+                    $"baseline of {baselineUnhandledErrors}, but observed {actual}." +
+                    (postBodyQuiesced ? "" : " (This scenario's own post-body quiescence wait hit " +
+                      $"its {BaselineQuiescenceMaxWait} cap without the backend ever going fully " +
+                      "quiet, so there may be even more still in flight.)"));
+            }
+        }
+        catch (Exception ex) when (Backend is not null)
+        {
+            throw new InvalidOperationException(
+                $"{ex.Message}\n\n--- backend stdout/stderr ---\n{Backend.DumpDiagnostics()}", ex);
+        }
+        finally
+        {
+            // Rick's PR #253 review (2nd follow-up): runs whenever this scenario never reached its
+            // own AssertNoPendingExtraFakeState() call above -- the body threw, the settle-timeout
+            // check threw, or AssertNoHandlerFaults threw. That is exactly the case
+            // AssertNoPendingExtraFakeState's own self-clearing fix (see
+            // FakeChatCompletionsServer.AssertNoPendingScriptedResponses) cannot help with, since
+            // it is never invoked at all on this path -- without this call, a throwing scenario's
+            // leftover extra-fake state (e.g. an unconsumed scripted /chat/completions response
+            // left by an aborted request mid-parse) would otherwise silently reach the next
+            // scenario sharing the same fake instance. A `finally` block's own body must never
+            // throw -- ResetExtraFakeState's default no-op and its cascade overrides
+            // (Chat.Drain()) are both side-effect-only resets with nothing to assert, so this can
+            // never mask the scenario's real exception above.
+            if (!extraFakeStateChecked)
+            {
+                ResetExtraFakeState();
+            }
+
+            // #66 M1 / re-review R1(b): recorded regardless of outcome (a failed stranded-error
+            // charge, the scenario's own body throwing, a settle timeout, a handler fault, or any
+            // other exception), so the NEXT scenario's own BeginScenario charge has an accurate
+            // watermark. A scenario that never reached its own post-body check above (it threw for
+            // an unrelated reason, or the stranded-error charge itself failed) leaves 0 unused
+            // allowance behind -- conservative, so nothing more is silently absorbed on its
+            // behalf, but never blocks a later, unrelated scenario from passing on its own merits.
+            // If EndScenario above already ran (and already recorded via RecordScenarioChecked),
+            // this must NOT record a second time with a fresh re-read -- that would itself be
+            // exactly the double-read/lost-line class R2 closes, just one level up.
+            if (Backend is not null && !postBodyRecorded)
+            {
+                _errorAttribution.RecordScenarioFailed(scenarioName, Backend.UnhandledErrorCount);
+            }
+        }
+    }
+}
+
+[CollectionDefinition(Name)]
+public sealed class ConformanceCollection : ICollectionFixture<ConformanceFixture>
+{
+    public const string Name = "Conformance";
+}

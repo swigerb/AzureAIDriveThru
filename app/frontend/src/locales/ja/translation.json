@@ -1,7 +1,7 @@
 {
     "app": {
-        "title": "Sonic 音声注文",
-        "footer": "Azure AI、Azure OpenAI、Azure Speech で構築",
+        "title": "音声注文",
+        "footer": "Microsoft Foundry、Azure OpenAI、Azure AI Search で構築",
         "showTranscript": "トランスクリプトを表示",
         "stopRecording": "録音を停止",
         "startRecording": "録音を開始",
@@ -9,7 +9,7 @@
         "newOrder": "新しい注文を始める"
     },
     "status": {
-        "notRecordingMessage": "アメリカのドライブインで注文しよう！",
+        "notRecordingMessage": "マイクをタップして注文してください。",
         "conversationInProgress": "会話が進行中",
         "sessionEndedIdle": "操作がなかったためセッションが終了しました。マイクをタップして新しい注文を始めてください。",
         "connectionLost": "接続が切れました。マイクをタップしてもう一度始めてください。",
@@ -30,6 +30,68 @@
         "description": "回答をグラウンディングするために使用されるファイル。"
     },
     "menu": {
-        "title": "メニュー"
+        "title": "メニュー",
+        "button": "メニューを見る",
+        "loading": "メニューを読み込んでいます…",
+        "loadError": "メニューを読み込めませんでした。しばらくしてからもう一度お試しください。",
+        "valueMealsCategory": "バリューセット"
+    },
+    "ticket": {
+        "kicker": "注文伝票",
+        "title": "ご注文",
+        "emptyHint": "商品を追加して始めましょう。",
+        "tax": "税",
+        "included": "含む",
+        "componentsLabel": "この商品に含まれるもの"
+    },
+    "personaSwitch": {
+        "title": "キャラクターを切り替えますか?",
+        "body": "{{persona}}に切り替えると新しい注文が始まります。現在の注文は消去されます。",
+        "confirm": "切り替える",
+        "cancel": "キャンセル",
+        "loadError": "{{persona}}への切り替えに失敗しました。現在の注文は変更されていません。もう一度お試しください。"
+    },
+    "picker": {
+        "backendLabel": "バックエンド",
+        "modelLabel": "モデル",
+        "modelDescription": "会話を動かすモデルを選択してください",
+        "lockedHint": "この注文の間はロックされています -- 変更するには新しい注文を始めてください",
+        "reasoningSuffix": "(推論)",
+        "realtimeGroup": "リアルタイム",
+        "cascadeGroup": "カスケード",
+        "noModelsAvailable": "利用可能なモデルがありません"
+    },
+    "settings": {
+        "demoMode": {
+            "label": "デモ モード",
+            "description": "台本付きのゲスト音声デモをハンズフリーで実行します。",
+            "on": "デモ オン",
+            "off": "デモ オフ",
+            "aria": "デモ モードを切り替え",
+            "stageAria": "デモ ステージ",
+            "guestVoiceLabel": "Ava ゲスト音声",
+            "guestAtSpeaker": "スピーカーのゲスト",
+            "waitingLine": "ゲストのセリフを待機中..."
+        }
+    },
+    "hero": {
+        "badge": "音声注文デモ",
+        "subhead": "Microsoft Foundry、Azure OpenAI、Azure AI Search を基盤とした、ペルソナ主導の音声注文アシスタントです。",
+        "poweredBy": "Microsoft Foundry・Azure OpenAI・Azure AI Search",
+        "calloutsTitle": "メニューのおすすめ",
+        "highlights": {
+            "fastOrders": {
+                "title": "スピーディーな注文",
+                "detail": "メニューをスクロールすることなく、数秒で音声注文できます。"
+            },
+            "foundryPowered": {
+                "title": "Foundry を搭載",
+                "detail": "会話インテリジェンスは Microsoft Foundry と Azure OpenAI で動作します。"
+            },
+            "liveMenu": {
+                "title": "ライブメニュー",
+                "detail": "すべての注文はペルソナ自身のライブメニューデータに基づいています。"
+            }
+        }
     }
 }

@@ -1,0 +1,166 @@
+{
+  "$schema": "../persona.schema.json",
+  "schemaVersion": 1,
+  "id": "mcdonalds",
+  "displayName": "McDonald's",
+  "roleName": "team member",
+  "locales": { "default": "en", "supported": ["en", "es", "fr", "ja"] },
+  "store": { "timezone": "America/Chicago" },
+  "voice": { "default": "marin" },
+  "search": { "indexName": "mcdonalds-menu-items", "contentFields": ["description"] },
+
+  "pricing": {
+    "taxRate": "0.08",
+    "happyHour": null
+  },
+
+  "sizes": {
+    "canonical": {
+      "small": "Small",
+      "medium": "Medium",
+      "large": "Large",
+      "regular": "Regular",
+      "standard": "Standard"
+    },
+    "aliases": {
+      "s": "small",
+      "m": "medium",
+      "l": "large",
+      "reg": "regular"
+    },
+    "spokenAs": {},
+    "hidden": ["", "standard", "n/a", "na", "none", "n.a."],
+    "default": null
+  },
+
+  "bundles": {
+    "nameMarkers": ["meal"],
+    "convertStandalone": true,
+    "missingPartText": { "sides": "World Famous Fries or another side", "drinks": "a drink" },
+    "resizeRule": "wholeBundleSize"
+  },
+
+  "extras": {
+    "allowedBaseCategories": ["burgers & sandwiches", "chicken & mcnuggets®", "breakfast"],
+    "blockedBaseCategories": ["fries, sides & drinks", "sweets & treats"],
+    "splitCombinedNames": false
+  },
+
+  "invalidModifiers": {
+    "fries, sides & drinks": ["cheese", "bacon", "patty", "lettuce", "tomato", "onion", "mustard", "ketchup", "pickle", "whipped cream", "chocolate", "vanilla", "strawberry"],
+    "sweets & treats": ["mustard", "ketchup", "mayo", "pickles", "onions", "lettuce", "cheese", "bacon", "patty"],
+    "burgers & sandwiches": ["whipped cream", "cherry", "strawberry fruit"]
+  },
+  "machines": {
+    "ice_cream_machine": { "status": "down", "label": "Ice cream machine is down for cleaning" }
+  },
+
+  "models": {
+    "realtime": { "default": "gpt-realtime-2.1-mini", "allowed": ["gpt-realtime-2.1", "gpt-realtime-2.1-mini"] },
+    "cascade": { "default": "gpt-5-mini", "allowed": ["gpt-5-mini"] }
+  },
+
+  "strategies": { "searchQueryRewrite": "meal_numbers" },
+  "features": { "dayparts": true },
+
+  "ui": {
+    "title": "McDonald's AI Drive-Thru",
+    "theme": {
+      "light": {
+        "primary": "358 100% 43%",
+        "secondary": "44 100% 59%",
+        "background": "0 0% 98%",
+        "foreground": "0 0% 13%",
+        "accents": {
+          "primaryHex": "#DB0007",
+          "primaryStrong": "#A50005",
+          "primaryLight": "#FF4D4D",
+          "primaryTintOnDark": "#FF6F63",
+          "secondaryHex": "#FFC72C",
+          "secondaryStrong": "#DDA600",
+          "secondaryLight": "#FFD54F",
+          "secondaryTintOnDark": "#FFDD7A",
+          "accent": "#27251F",
+          "accentLight": "#4A473F",
+          "ink": "#292420",
+          "surfaceTint": "#FFF8E1",
+          "surfaceDark": "#1B1B1B",
+          "surfaceDarkAlt": "#292420",
+          "success": "#2E7D32",
+          "neutral": "#8C8C8C"
+        },
+        "menuSurface": {
+          "categoryCardBackground": "#FFFAF2",
+          "itemCardBackground": "#FFF6E3"
+        }
+      },
+      "dark": {
+        "primary": "358 100% 50%",
+        "accents": {
+          "primaryTintOnDark": "#FF6F63",
+          "secondaryTintOnDark": "#FFDD7A",
+          "surfaceDark": "#1B1B1B",
+          "surfaceDarkAlt": "#292420"
+        },
+        "menuSurface": {
+          "categoryTitleColor": "#FFBC0D",
+          "itemCardBackground": "#2E2610"
+        }
+      },
+      "font": { "family": "Nunito Sans", "importUrl": "https://fonts.googleapis.com/css2?family=Nunito+Sans:wght@400;600;700;800;900&display=swap" }
+    },
+    "textRoles": { "countChip": "accent", "footerTagline": "accent", "footerExtra": "secondary" },
+    "assets": { "logo": "assets/mcdonalds-logo.png", "favicon": "assets/favicon.ico", "apologyClip": "assets/audio/apology-{lang}.wav", "logoTile": true },
+    "strings": {
+      "en": {
+        "app.title": "McDonald's AI Drive-Thru",
+        "status.notRecordingMessage": "Welcome to McDonald's Drive-Thru!",
+        "ticket.kicker": "DRIVE-THRU ORDER",
+        "ticket.title": "Your McDonald's Order",
+        "menu.button": "View McDonald's Menu",
+        "menu.title": "McDonald's Favorites",
+        "menu.valueMealsCategory": "Extra Value Meals",
+        "ticket.emptyHint": "Add a Big Mac, McNuggets, or McFlurry to get started.",
+        "settings.voiceLabel": "AI Voice",
+        "footer.extra": "I'm Lovin' It™"
+      }
+    },
+    "hero": {
+      "headline": "McDonald's ordering powered by Microsoft Foundry",
+      "description": "Recreate the McDonald's Drive-Thru experience with Big Macs, McNuggets, and crew member favorites styled after I'm Lovin' It™, now voice activated with Microsoft Foundry + Azure AI Search grounding.",
+      "callouts": [
+        { "title": "REWARDS READY", "detail": "Voice orders auto-sync with McDonald's Rewards and deals", "tone": "primary" },
+        { "title": "FOUNDRY INFUSION", "detail": "Microsoft Foundry + Azure OpenAI keep conversations flowing", "tone": "accent" },
+        { "title": "LIVE MENU", "detail": "Azure AI Search keeps McDonald's menu items current", "tone": "secondary" }
+      ],
+      "spotlight": [
+        {
+          "icon": "assets/spotlight-fries.svg",
+          "kicker": "WORLD FAMOUS FRIES",
+          "title": "Golden & crispy",
+          "rows": [
+            { "label": "Featured Item", "value": "Big Mac", "tone": "primary" },
+            { "label": "Crew Pick", "value": "Quarter Pounder® w/ Cheese", "tone": "accent" }
+          ]
+        },
+        {
+          "icon": "assets/spotlight-burger.svg",
+          "kicker": "CREW FAVORITE",
+          "title": "Big Mac®",
+          "body": "Two all-beef patties, special sauce, lettuce, cheese",
+          "accent": "Perfect pairing: Large Fries & a McCafé",
+          "tone": "accent"
+        }
+      ]
+    },
+    "categoryIcons": {
+      "Extra Value Meals": "🏷️",
+      "Burgers & Sandwiches": "🍔",
+      "Chicken & McNuggets®": "🍗",
+      "Breakfast": "🥞",
+      "Fries, Sides & Drinks": "🍟",
+      "Sweets & Treats": "🍦"
+    },
+    "legal": "This is a demo application built with Microsoft Foundry and Azure AI services. It is not affiliated with, endorsed by, or sponsored by McDonald's Corporation. McDonald's, Big Mac, McNuggets, McFlurry, McCafé, and other brand names are trademarks of McDonald's Corporation."
+  }
+}

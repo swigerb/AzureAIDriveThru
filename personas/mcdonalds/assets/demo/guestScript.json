@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "voice": "en-US-AvaMultilingualNeural",
+  "menuMode": "lunch",
+  "title": "Up-sell to a meal, resize it right",
+  "kicker": "SERVER-SIDE PRICING AND COMBO RULES",
+  "lines": [
+    {
+      "id": "01",
+      "text": "Hi, can I get a Quarter Pounder with Cheese?",
+      "audio": "demo/guest/01.mp3"
+    },
+    {
+      "id": "02",
+      "text": "Sure, make it a large meal with a Diet Coke.",
+      "audio": "demo/guest/02.mp3"
+    },
+    {
+      "id": "03",
+      "text": "Actually, make that a medium.",
+      "audio": "demo/guest/03.mp3"
+    },
+    {
+      "id": "04",
+      "text": "No thanks, that's all.",
+      "audio": "demo/guest/04.mp3"
+    }
+  ]
+}

@@ -1,0 +1,121 @@
+version: "1.0.0"
+messages:
+  # Search errors
+  search_service_unavailable: "I'm sorry, I can't reach our menu data right now."
+  search_no_results: "No matching menu entries found."
+
+  # Generic fallback (#125, fail-fast follow-up to #116): the shared engine's catch-all key,
+  # required in every pack even though nothing in tools.py/rtmt.py renders it by name today --
+  # kept here so Sonic's key set matches the required set validated at startup
+  # (docs/persona-architecture.md section 6).
+  generic_error: "Sorry, something went wrong. Could you try that again?"
+
+  # Customization errors
+  invalid_mod: "I can't add {{forbidden_item}} to a {{base_name}} — that's a new one! Want to try a different topping?"
+  nonsensical_mod_redirect: "That's a creative idea! How about a different topping?"
+
+  # Extras validation
+  extras_no_base_item: >-
+    I can add extras to drinks, slushes, shakes, or combos,
+    but not to sides or hot dogs on their own.
+  extras_blocked_category: >-
+    I can add extras to drinks, slushes, shakes, or combos,
+    but I can't add them to sides or hot dogs on their own.
+
+  # No off-menu ordering (issue #73, ADR-001 decision 4: "No off-menu. If it's not on the menu
+  # in our source data, you cannot order it."). item_not_on_menu fires when update_order's "add"
+  # action can't resolve item_name (or an alias of it) to a real menuItems.json entry at all;
+  # size_not_available fires when the item itself is real but the requested size isn't one of
+  # its priced sizes. Both come back as a structured (TO_SERVER) rejection result -- see
+  # docs/persona-architecture.md section 6 and tests/conformance/README.md's "On-menu validation
+  # gate" section for the exact JSON shape -- so the carhop can offer an on-menu alternative
+  # instead of pretending the item was added.
+  #
+  # Rick's PR #100 review, required item 1 (UX): item_not_on_menu's last line tells the model to
+  # use the search tool with the guest's own words and offer the closest real menu item back by
+  # its exact name, rather than retrying the same off-menu name or guessing a substitute itself.
+  # Deterministic suggestions deliberately stay OUT of the tool result -- search already does this
+  # semantically, and it keeps the C# port's contract trivial to match.
+  item_not_on_menu: >-
+    I'm sorry, {{item_name}} isn't on our menu. Would you like to try
+    something else instead? Use the search tool with the guest's words and
+    offer the closest real menu item by its exact name.
+  size_not_available: >-
+    I'm sorry, {{item_name}} isn't available in that size. We have it in
+    {{available_sizes}} -- would you like one of those?
+
+  # #77: add-time rejection when a real, on-menu item needs a machine (persona.json
+  # `requiresMachine`, e.g. the slush machine) that this store's own `machines.<key>.status` is
+  # currently "down". Same structured (TO_SERVER) rejection shape as item_not_on_menu/
+  # size_not_available above -- {{message}} is `machines.<key>.label` itself, so a persona doesn't
+  # need a second, differently-worded copy of the same outage text.
+  machine_unavailable: >-
+    I'm sorry, {{item_name}} isn't available right now -- {{machine_label}}. Would you like to
+    try something else instead?
+
+  # #77: `modify` (resize in place) for an on-menu item that isn't in the order. Same structured
+  # (TO_SERVER) rejection shape, reason "not_in_order", so the model never tells the guest an item
+  # was changed when nothing was.
+  item_not_in_order: >-
+    {{item_name}} isn't in the order, so nothing was changed. Call get_order to check what's in
+    the order, then ask the guest whether they'd like to add it.
+
+  # #165: add-time rejection when a real, on-menu item's own `menuPeriod` doesn't match this
+  # session's bound menu mode (order_state.OrderState.get_menu_mode, set once at the WebSocket
+  # handshake from `?mode=breakfast|lunch`). Fires when the guest asks for a breakfast item in
+  # lunch mode, or a lunch item in breakfast mode.
+  item_out_of_mode: >-
+    I'm sorry, {{item_name}} is a {{mode_label}} item and isn't on the menu right now. Would you
+    like to try something else, or switch the menu mode in Settings?
+
+  # Quantity limit messages
+  per_item_limit_maxed: >-
+    That's a lot of {{item_name}}! Our drive-thru can handle up to
+    {{max_per_item}} of any item. You already have {{existing_qty}} —
+    would you like to keep it at {{existing_qty}}?
+  per_item_limit_partial: >-
+    That's a lot of {{item_name}}! Our drive-thru can handle up to
+    {{max_per_item}} of any item. I can add {{allowed}} more —
+    would you like me to do that?
+  total_order_limit_maxed: >-
+    Wow, that's a big order! Our drive-thru tops out at
+    {{max_total}} items total so we can keep things moving.
+    You're already at the max — would you like to swap anything out?
+  total_order_limit_partial: >-
+    Wow, that's a big order! Our drive-thru tops out at
+    {{max_total}} items total so we can keep things moving.
+    I can add {{remaining}} more — would you like me to do that?
+
+  # Order reset
+  order_cleared: "Order cleared."
+
+  # Tool execution failures (swigerb/SonicAIDriveThru#36): a malformed/incomplete tool
+  # call (missing required arguments) or a genuine unhandled exception inside a tool
+  # handler. Deliberately short and neutral -- no internal detail is ever guest-visible.
+  # Model-facing (PR #58 re-review "S2"): points the model at get_order to confirm the
+  # order's actual state before doing anything else, and at asking the guest rather than
+  # silently retrying -- the exception may have landed after the order was already
+  # partially mutated, so a blind "try again" risks compounding it.
+  tool_execution_failed: >-
+    Something went wrong with that action and it did not complete. Don't retry it yet --
+    call get_order to confirm the order's current state, then ask the guest to repeat
+    what they'd like rather than guessing.
+
+  # Tool-failure cap notice (swigerb/SonicAIDriveThru#36, PR #58 re-review round 3): the
+  # response-level `instructions` sent on the ONE server-authored response.create (also
+  # carrying response.tool_choice="none") when two consecutive tool-call rounds have
+  # failed with no guest turn in between (see _TOOL_FAILURE_CAP in rtmt.py). Response-
+  # level `instructions` REPLACE the session instructions for that single response, so
+  # this must be self-contained -- it can't assume the rest of the system prompt (menu,
+  # persona details, etc.) is still in effect for this one turn.
+  #
+  # Live-probe evidence against Sonic's real gpt-realtime-2.1 deployment (2026-09-25,
+  # session-state/.../probe_tool_choice_none.py): response.tool_choice="none" ALONE still
+  # let the model falsely tell the guest an item was added/changed in 2 of 3 runs, even
+  # though it correctly didn't call a tool. Adding this explicit "nothing was added or
+  # changed" instruction fixed it in 3 of 3 runs.
+  tool_failure_cap_instructions: >-
+    The order system just failed twice in a row and NOTHING was added or changed. Do not
+    say an item was added, removed, or changed. Stay upbeat and in character as a Sonic
+    carhop: briefly apologise, say you couldn't update the order just now, and ask the
+    guest to repeat what they'd like.

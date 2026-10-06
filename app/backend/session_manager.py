@@ -30,6 +30,8 @@ from dataclasses import dataclass
 
 from aiohttp import web
 
+import conformance_hooks
+import default_persona
 from config_loader import get_config
 from order_state import SessionIdentifiers, order_state_singleton
 
@@ -47,17 +49,27 @@ _CTX_CRITICAL_PCT = _context_cfg.get("critical_threshold_pct", 95)
 
 # ── Session Limits ──
 _MAX_CONCURRENT_SESSIONS = _security_cfg.get("max_concurrent_sessions", 10)
-_IDLE_TIMEOUT_SECONDS = _security_cfg.get("idle_timeout_seconds", 300)
+_IDLE_TIMEOUT_SECONDS = conformance_hooks.seconds(
+    "CONFORMANCE_IDLE_TIMEOUT_SECONDS", _security_cfg.get("idle_timeout_seconds", 300)
+)
 
 # ── Resume (grace hold after a transport drop) ──
 _RESUME_ENABLED = bool(_resume_cfg.get("enabled", True))
-_RESUME_GRACE_SECONDS = float(_resume_cfg.get("grace_seconds", 120))
+_RESUME_GRACE_SECONDS = conformance_hooks.seconds(
+    "CONFORMANCE_GRACE_SECONDS", float(_resume_cfg.get("grace_seconds", 120))
+)
 _RESUME_MAX_DETACHED = int(_resume_cfg.get("max_detached", 20))
 _RESUME_HISTORY_TURNS = int(_resume_cfg.get("history_turns", 6))
 _RESUME_HISTORY_CHARS = int(_resume_cfg.get("history_chars", 2000))
-_RESUME_NUDGE_AFTER_SECONDS = float(_resume_cfg.get("nudge_after_seconds", 30))
-_RESUME_FIRST_FRAME_TIMEOUT_SECONDS = float(_resume_cfg.get("first_frame_timeout_seconds", 2.0))
-_RESUME_SWEEP_INTERVAL_SECONDS = float(_resume_cfg.get("sweep_interval_seconds", 15))
+_RESUME_NUDGE_AFTER_SECONDS = conformance_hooks.seconds(
+    "CONFORMANCE_NUDGE_AFTER_SECONDS", float(_resume_cfg.get("nudge_after_seconds", 30))
+)
+_RESUME_FIRST_FRAME_TIMEOUT_SECONDS = conformance_hooks.seconds(
+    "CONFORMANCE_FIRST_FRAME_TIMEOUT_SECONDS", float(_resume_cfg.get("first_frame_timeout_seconds", 2.0))
+)
+_RESUME_SWEEP_INTERVAL_SECONDS = conformance_hooks.seconds(
+    "CONFORMANCE_SWEEP_INTERVAL_SECONDS", float(_resume_cfg.get("sweep_interval_seconds", 15))
+)
 
 # Close code for an intentional idle close. Application-range (4000-4999) so the
 # browser can tell it apart from transport errors (1002/1006/1011) and must not
@@ -79,6 +91,40 @@ SESSION_ENDED_CLOSE_REASON = "session_ended"
 # Resume ids are secrets.token_urlsafe(32): 43 chars. Anything far outside that is malformed.
 _RESUME_ID_MIN_LEN = 32
 _RESUME_ID_MAX_LEN = 128
+
+
+# swigerb/SonicAIDriveThru#29 (Rick's PR #30 review, "S1"): every conversation
+# item the middle tier itself authors -- the greeting, resume rehydration, the
+# silence nudge, and a tool's function_call_output -- gets a client-supplied
+# `item.id` under this prefix. rtmt.py drops any conversation.item.* frame
+# whose item.id starts with it before relaying to the browser, by authorship
+# rather than by role, so a future middle-tier item can't leak just because it
+# happens to use a role the drop logic doesn't special-case (as the greeting,
+# role="user", already did). GA's item id may be client-supplied and just
+# needs to be a short string, so a short hex suffix keeps well under any
+# reasonable length limit while staying unique per item.
+MIDDLE_TIER_ITEM_ID_PREFIX = "sonic_mt_"
+
+
+def new_middle_tier_item_id() -> str:
+    """A fresh conversation item id carrying the middle-tier authorship prefix."""
+    return f"{MIDDLE_TIER_ITEM_ID_PREFIX}{secrets.token_hex(6)}"
+
+
+def _with_middle_tier_item_id(raw_json: str) -> str:
+    """Inject a middle-tier item id into a pre-serialized `conversation.item.create`
+    payload's `item`, if it has one. Anything that doesn't parse, or has no
+    `item` object (e.g. a test double's placeholder payload), is returned
+    completely untouched."""
+    try:
+        payload = json.loads(raw_json)
+    except (ValueError, TypeError):
+        return raw_json
+    item = payload.get("item")
+    if not isinstance(item, dict):
+        return raw_json
+    item["id"] = new_middle_tier_item_id()
+    return json.dumps(payload)
 
 
 def _resume_digest(resume_id: str) -> str:
@@ -103,9 +149,11 @@ _REHYDRATION_PREAMBLE = (
 )
 
 # Sent once, if the guest stays silent for resume.nudge_after_seconds after a resume.
-_NUDGE_TEXT = (
+# #74 (Rick's PR #102 review, round 3, required item 1): templated on the bound persona's own
+# roleName ("carhop" by default, but never hardcoded here) -- see build_nudge_item() below.
+_NUDGE_TEXT_TEMPLATE = (
     "The guest has been quiet since their connection came back. In one short, friendly sentence, "
-    "in your carhop persona, ask whether they need anything else with their order. Do not greet "
+    "in your {role_name} persona, ask whether they need anything else with their order. Do not greet "
     "them again, do not mention the connection, and do not read the order back."
 )
 
@@ -125,19 +173,6 @@ class ResumeOutcome:
 # Rough token estimation: ~4 characters per token for English text.
 # This is intentionally conservative (over-estimates) for safety monitoring.
 _CHARS_PER_TOKEN = 4
-
-# Default greeting — overridden by PromptLoader at runtime.
-_DEFAULT_GREETING_MSG = json.dumps({
-    "type": "conversation.item.create",
-    "item": {
-        "type": "message",
-        "role": "user",
-        "content": [
-            {"type": "input_text", "text": "Say EXACTLY this greeting and NOTHING else: Welcome to Sonic Drive-In! What can I get started for you today?"}
-        ]
-    }
-})
-
 
 class ContextMonitor:
     """Estimates token usage in the conversation context window and logs warnings.
@@ -208,6 +243,12 @@ class SessionManager:
         self._resume_index: dict[str, str] = {}     # digest -> session_id
         # Last few guest/carhop turns per session, replayed into a resumed upstream.
         self._transcripts: dict[str, deque[tuple[str, str]]] = {}
+        # The voice THIS session's guest picked via extension.set_voice, if any
+        # (#43, PR #49 review round 6, "S1"). Keyed by session_id -- never on
+        # RTMiddleTier -- so a pick can only ever be read back for the SAME
+        # guest's session (restored on resume, since detach/resume keeps the
+        # same session_id) and never leaks into a different, brand-new session.
+        self._voices: dict[str, str] = {}
         self._idle_check_task: asyncio.Task | None = None
         self._clock: Callable[[], float] = clock or time.monotonic
 
@@ -221,13 +262,34 @@ class SessionManager:
         self.sweep_interval_seconds = _RESUME_SWEEP_INTERVAL_SECONDS
 
         if prompt_loader is not None:
-            self._greeting_msg = prompt_loader.get_greeting_json_str()
+            self._greeting_template = prompt_loader.get_greeting_json_str()
         else:
-            self._greeting_msg = _DEFAULT_GREETING_MSG
+            # #74 (Rick's PR #102 review, round 3, required item 1): the deployment default
+            # persona's own greeting (persona.json's pack, never a hardcoded brand-specific string) --
+            # loader validation (prompt_loader.py's PromptLoader._load_all) already requires
+            # every real pack to have a greeting.yaml, so this never silently falls back to
+            # placeholder text.
+            self._greeting_template = default_persona.get_default_prompt_loader().get_greeting_json_str()
 
-    @property
-    def greeting_msg(self) -> str:
-        return self._greeting_msg
+    def build_greeting_msg(self, greeting_template: str | None = None) -> str:
+        """A fresh `conversation.item.create` for the greeting, with a brand-new
+        middle-tier item id stamped on *this* call (swigerb/SonicAIDriveThru#29
+        follow-up, PR #30 review "G1" / item 1).
+
+        GA rejects a repeated item id within the same conversation
+        (`item_create_duplicate_item_id`), so an id baked in once at
+        `SessionManager` construction and reused for every greeting would
+        break any second greeting on the same upstream conversation history
+        (e.g. a resume that happens before the conversation ever started, which
+        re-greets rather than rehydrating). Mirrors `build_rehydration_item`
+        and `build_nudge_item`, which already build a fresh item -- id
+        included -- on every call rather than caching one at init.
+
+        *greeting_template* (#74, optional): a per-persona greeting JSON string
+        (from the bound persona's own PromptLoader) to use for THIS call instead of
+        the deployment-wide default captured at construction. Omitted: unchanged,
+        single-persona behavior (``self._greeting_template``)."""
+        return _with_middle_tier_item_id(greeting_template if greeting_template is not None else self._greeting_template)
 
     @property
     def idle_timeout_seconds(self) -> float:
@@ -255,9 +317,36 @@ class SessionManager:
         """Record guest activity. Drives the idle clock (which also bounds the grace hold)."""
         self._last_activity[session_id] = self._clock()
 
-    def create_session(self, ws: web.WebSocketResponse) -> str:
-        """Create a new order session and map it to the WebSocket connection."""
-        session_id = order_state_singleton.create_session()
+    def create_session(self, ws: web.WebSocketResponse, persona=None, model_id: str | None = None,
+                        model_deployment: str | None = None, model_reasoning: bool | None = None,
+                        model_pipeline: str | None = None, menu_mode: str | None = None) -> str:
+        """Create a new order session and map it to the WebSocket connection.
+
+        *persona* (#74, optional): the persona this session is bound to for its entire
+        lifetime (no mid-conversation switching); threaded straight through to
+        ``order_state_singleton.create_session()``. Omitted: binds to the deployment's
+        default persona (mandatory catalog, #74/Rick's PR #102 review item 2 -- there is
+        no more unbound-session state).
+
+        *model_id*/*model_deployment*/*model_reasoning*/*model_pipeline* (#75, optional):
+        this session's own bound realtime model -- resolved once, by the caller
+        (``rtmt.py::_websocket_handler``, via ``processors.dispatch_processor`` + the
+        returned processor's own ``resolve_model()``), BEFORE the socket is even prepared,
+        exactly like *persona* above (no mid-conversation model switching either). Omitted:
+        binds to *persona*'s own ``models.realtime.default`` (see
+        ``order_state.OrderState.create_session``) -- today's exact, unchanged path.
+        *model_pipeline* (Rick's PR #106 review item 3) omitted defaults to ``"realtime"``.
+
+        *menu_mode* (#165, optional): this session's own bound daypart (``"breakfast"`` |
+        ``"lunch"``), resolved once by the caller (``rtmt.py::handle``, from ``?mode=``) for a
+        persona that declares ``features.dayparts`` -- threaded straight through to
+        ``order_state_singleton.create_session()``, which itself normalizes an omitted/invalid
+        value to ``"lunch"`` for such a persona, and forces ``None`` for every other persona.
+        No mid-conversation mode switching, exactly like *persona*/*model_id* above."""
+        session_id = order_state_singleton.create_session(
+            persona=persona, model_id=model_id, model_deployment=model_deployment,
+            model_reasoning=model_reasoning, model_pipeline=model_pipeline, menu_mode=menu_mode,
+        )
         self._session_map[ws] = session_id
         self._attached[session_id] = ws
         self._context_monitors[session_id] = ContextMonitor(session_id)
@@ -281,6 +370,19 @@ class SessionManager:
             return None
         return self._context_monitors.get(session_id)
 
+    def get_voice(self, session_id: str | None) -> str | None:
+        """The voice THIS session's guest last picked via extension.set_voice,
+        or None if they never picked one (the server's config-level default
+        applies). See `self._voices` for why this lives here and not on
+        RTMiddleTier."""
+        if session_id is None:
+            return None
+        return self._voices.get(session_id)
+
+    def set_voice(self, session_id: str | None, voice: str) -> None:
+        if session_id is not None:
+            self._voices[session_id] = voice
+
     # ── End / detach ──
 
     def end_session(self, session_id: str | None, reason: str = "ended") -> None:
@@ -299,6 +401,7 @@ class SessionManager:
         self._context_monitors.pop(session_id, None)
         self._last_activity.pop(session_id, None)
         self._transcripts.pop(session_id, None)
+        self._voices.pop(session_id, None)
         logger.info("Session %s ended (%s)", session_id, reason)
 
     def cleanup_session(self, ws: web.WebSocketResponse, session_id: str | None) -> None:
@@ -372,23 +475,58 @@ class SessionManager:
         kept.reverse()
         return kept
 
-    def build_rehydration_item(self, session_id: str) -> str:
-        """One system conversation.item.create carrying the order and the recent turns."""
+    def rehydration_text(self, session_id: str, role_name: str | None = None) -> str:
+        """The plain-text rehydration briefing -- the order summary plus the recent transcript
+        -- with no wire-protocol wrapping. Issue #126: the cascade pipeline has no upstream
+        Realtime API `conversation.item.create` to seed, so it appends this text directly as a
+        chat message instead; extracted here (backing `build_rehydration_item` below, unchanged)
+        so both pipelines share the exact same briefing content/wording.
+
+        *role_name* (#74, optional): the resumed session's own bound persona's roleName (e.g.
+        "carhop"), used to label that persona's turns in the replayed history instead of a
+        hardcoded "Carhop". Omitted: the deployment default persona's own roleName -- never a
+        literal brand string."""
         order_json = order_state_singleton.get_order_summary_json(session_id)
         turns = self.recent_turns(session_id)
-        history = "\n".join(f"{'Guest' if role == 'guest' else 'Carhop'}: {text}" for role, text in turns)
-        text = (f"{_REHYDRATION_PREAMBLE}\n\nCurrent order (JSON): {order_json}\n\n"
+        role_label = (role_name if role_name is not None else default_persona.get_default_persona().manifest.roleName).capitalize()
+        history = "\n".join(f"{'Guest' if role == 'guest' else role_label}: {text}" for role, text in turns)
+        return (f"{_REHYDRATION_PREAMBLE}\n\nCurrent order (JSON): {order_json}\n\n"
                 f"Recent conversation (oldest first):\n{history or '(none recorded)'}")
+
+    def build_rehydration_item(self, session_id: str, role_name: str | None = None) -> str:
+        """One system conversation.item.create carrying the order and the recent turns -- the
+        realtime pipeline's own wire shape, built from `rehydration_text` above."""
+        text = self.rehydration_text(session_id, role_name=role_name)
         return json.dumps({
             "type": "conversation.item.create",
-            "item": {"type": "message", "role": "system", "content": [{"type": "input_text", "text": text}]},
+            "item": {
+                "id": new_middle_tier_item_id(),
+                "type": "message", "role": "system", "content": [{"type": "input_text", "text": text}],
+            },
         })
 
     @staticmethod
-    def build_nudge_item() -> str:
+    def nudge_text(role_name: str | None = None) -> str:
+        """The plain-text nudge prompt, with no wire-protocol wrapping (issue #126: cascade
+        appends this directly as a chat message instead of seeding an upstream
+        `conversation.item.create`; extracted here so both pipelines share the exact same
+        wording). *role_name* (#74, optional): the session's own bound persona's roleName,
+        substituted into ``_NUDGE_TEXT_TEMPLATE``. Omitted: the deployment default persona's own
+        roleName -- never a hardcoded "carhop"."""
+        return _NUDGE_TEXT_TEMPLATE.format(
+            role_name=role_name if role_name is not None else default_persona.get_default_persona().manifest.roleName
+        )
+
+    @staticmethod
+    def build_nudge_item(role_name: str | None = None) -> str:
+        """The realtime pipeline's own wire shape, built from `nudge_text` above."""
+        text = SessionManager.nudge_text(role_name)
         return json.dumps({
             "type": "conversation.item.create",
-            "item": {"type": "message", "role": "system", "content": [{"type": "input_text", "text": _NUDGE_TEXT}]},
+            "item": {
+                "id": new_middle_tier_item_id(),
+                "type": "message", "role": "system", "content": [{"type": "input_text", "text": text}],
+            },
         })
 
     # ── Resume credential ──
@@ -408,14 +546,45 @@ class SessionManager:
         self._resume_index[digest] = session_id
         return resume_id
 
-    def resume(self, ws: web.WebSocketResponse, resume_id: object) -> ResumeOutcome:
+    def resume(self, ws: web.WebSocketResponse, resume_id: object, requested_persona_id: str | None = None,
+               requested_model_id: str | None = None, requested_menu_mode: str | None = None) -> ResumeOutcome:
         """Re-attach the session identified by ``resume_id`` to ``ws``.
 
         Single use: the presented id is consumed and a rotated one is returned.
         The provisional session created for ``ws`` on connect is ended. If the
         resumed session is still attached to another socket (half-open), that
         socket is handed back as ``stale_ws`` to be closed with 4002.
-        """
+
+        *requested_persona_id* (#74, optional): the persona id this resume request
+        connected with (``/realtime?persona=<id>``). A session can only ever resume
+        under the SAME persona it was originally bound to -- no mid-conversation
+        persona switching, ever, including across a transport drop/resume. Omitted
+        entirely (``None``) means "the caller means the deployment default persona"
+        (#74/Rick's PR #102 review item 2: the persona catalog is mandatory, so
+        there is no more "unbound session"/"skip the check" state) -- it resolves to
+        ``default_persona.get_default_persona().id`` before comparing. Mismatched ->
+        rejected as ``"persona_mismatch"`` BEFORE the presented resume id is
+        consumed, so the guest's real credential stays valid for a legitimate retry.
+
+        *requested_model_id* (#75, optional): the realtime model id this resume
+        request's OWN (provisional) session already resolved to (``/realtime?model=``,
+        validated by ``RTMiddleTier.resolve_model()`` before this socket was even
+        prepared) -- mirrors *requested_persona_id* exactly: a session can only ever
+        resume under the SAME model it was originally bound to, no mid-conversation
+        model switching. Omitted entirely (``None``) resolves to the bound persona's
+        own ``models.realtime.default`` before comparing. Mismatched -> rejected as
+        ``"model_mismatch"`` BEFORE the presented resume id is consumed, same as
+        ``"persona_mismatch"`` above.
+
+        *requested_menu_mode* (#165, optional): the menu mode this resume request's OWN
+        (provisional) session already resolved to (``order_state.OrderState.get_menu_mode``,
+        read back from whatever ``?mode=`` the provisional connect used) -- mirrors
+        *requested_persona_id*/*requested_model_id* exactly: a session can only ever resume
+        under the SAME mode it was originally bound to, no mid-conversation switching. For a
+        persona with no ``features.dayparts`` this is always ``None`` on both sides (the
+        provisional AND the resumed session), so the comparison is a trivial no-op. Mismatched
+        -> rejected as ``"mode_mismatch"`` BEFORE the presented resume id is consumed, same as
+        ``"persona_mismatch"``/``"model_mismatch"`` above."""
         if not self.resume_enabled:
             return ResumeOutcome(False, reason="disabled")
         if not isinstance(resume_id, str) or not (_RESUME_ID_MIN_LEN <= len(resume_id) <= _RESUME_ID_MAX_LEN):
@@ -436,6 +605,49 @@ class SessionManager:
         if now - last > self.idle_timeout_seconds or (expires is not None and now >= expires):
             self.end_session(session_id, "resume attempted after expiry")
             return ResumeOutcome(False, reason="expired")
+
+        effective_requested_persona_id = requested_persona_id or default_persona.get_default_persona().id
+        bound_persona_id = order_state_singleton.get_persona_id(session_id)
+        if bound_persona_id != effective_requested_persona_id:
+            logger.info(
+                "Resume rejected for session %s: bound persona %r != requested persona %r (persona_mismatch)",
+                session_id, bound_persona_id, effective_requested_persona_id,
+            )
+            return ResumeOutcome(False, reason="persona_mismatch")
+
+        # #75 bug fix (this revision, PR #106 review): an omitted `?model=` on resume means
+        # "this SESSION's own bound persona's default model", not the deployment-wide default
+        # persona's default -- using the latter here incorrectly compared against the WRONG
+        # persona's default for any session bound to a non-default persona whose own default
+        # model id differs from the deployment default persona's, silently misfiring
+        # model_mismatch (or, worse, wrongly matching) depending on which ids happened to
+        # collide. Reads the session's OWN bound persona's default straight off what
+        # `create_session` already captured from the concrete `Persona` object at creation
+        # time -- no catalog lookup of any kind, since there is no reliable persona catalog to
+        # reach for here (a session may be bound via a persona from a catalog this module has
+        # no other handle on, e.g. a caller's own fixture/test catalog).
+        effective_requested_model_id = requested_model_id or order_state_singleton.get_persona_default_model_id(session_id)
+        bound_model_id = order_state_singleton.get_model_id(session_id)
+        if bound_model_id != effective_requested_model_id:
+            logger.info(
+                "Resume rejected for session %s: bound model %r != requested model %r (model_mismatch)",
+                session_id, bound_model_id, effective_requested_model_id,
+            )
+            return ResumeOutcome(False, reason="model_mismatch")
+
+        bound_menu_mode = order_state_singleton.get_menu_mode(session_id)
+        # #186: once the deployment default persona can itself declare `features.dayparts`, an
+        # older resume caller that omits ?mode= should mean the same thing as a fresh connect:
+        # lunch for a dayparts-bound session, and None for a session with no menu mode.
+        effective_requested_menu_mode = requested_menu_mode if requested_menu_mode in ("breakfast", "lunch") else (
+            "lunch" if bound_menu_mode is not None else None
+        )
+        if bound_menu_mode != effective_requested_menu_mode:
+            logger.info(
+                "Resume rejected for session %s: bound menu mode %r != requested menu mode %r (mode_mismatch)",
+                session_id, bound_menu_mode, effective_requested_menu_mode,
+            )
+            return ResumeOutcome(False, reason="mode_mismatch")
 
         # Consume the presented id before anything else can use it.
         self._resume_index.pop(digest, None)
@@ -525,6 +737,16 @@ class SessionManager:
                 "sessionToken": identifiers.session_token,
                 "roundTripIndex": identifiers.round_trip_index,
                 "roundTripToken": identifiers.round_trip_token,
+                "persona": identifiers.persona_id,
+                # Issue #75, design doc section 5.2/7.5: the realtime model this session is
+                # bound to, alongside the persona it's already been reporting since #74 --
+                # so the browser's F11 debug panel (and any future model picker, #80) can
+                # show what's actually live for THIS session without a second round trip.
+                "model": identifiers.model_id,
+                # Rick's PR #106 review item 3: which pipeline `model` belongs to -- so
+                # Morty's model picker (F10) can group/label models by pipeline without a
+                # second round trip to `/api/personas`, exactly like `model` above.
+                "pipeline": identifiers.pipeline,
                 **(extra or {}),
             }
         )

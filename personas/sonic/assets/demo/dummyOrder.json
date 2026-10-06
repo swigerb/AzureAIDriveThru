@@ -1,0 +1,9 @@
+[
+    { "item": "SuperSONIC® Double Cheeseburger", "size": "Standard", "quantity": 2, "price": 6.59, "display": "SuperSONIC® Double Cheeseburger" },
+    { "item": "Cherry Limeade", "size": "Large", "quantity": 2, "price": 3.39, "display": "Large Cherry Limeade" },
+    { "item": "Tots", "size": "Large", "quantity": 2, "price": 3.49, "display": "Large Tots" },
+    { "item": "Cherry Limeade Slush", "size": "Medium", "quantity": 1, "price": 3.49, "display": "Medium Cherry Limeade Slush" },
+    { "item": "Chili Cheese Coney", "size": "Standard", "quantity": 2, "price": 3.19, "display": "Chili Cheese Coney" },
+    { "item": "Mozzarella Sticks", "size": "Medium", "quantity": 1, "price": 4.89, "display": "Medium Mozzarella Sticks" },
+    { "item": "Flavor Add-In", "size": "Standard", "quantity": 2, "price": 0.30, "display": "Flavor Add-In" }
+]

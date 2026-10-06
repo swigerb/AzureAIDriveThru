@@ -1,0 +1,78 @@
+[
+    { "text": "Morning! Is this the Dunkin drive-thru assistant?", "isUser": true, "timestamp": "2024-07-18T12:00:00Z", "translation": "Morning! Is this the Dunkin drive-thru assistant?" },
+    {
+        "text": "Absolutely! I'm your Dunkin crew assistant. Ready for your first sip?",
+        "isUser": false,
+        "timestamp": "2024-07-18T12:00:05Z",
+        "translation": "Absolutely! I'm your Dunkin crew assistant. Ready for your first sip?"
+    },
+    {
+        "text": "Sí, necesito dos Caramel Craze lattes medianos. Agregue un toque de sabor extra al primero, por favor.",
+        "isUser": true,
+        "timestamp": "2024-07-18T12:00:20Z",
+        "translation": "Yes, I need two medium Caramel Craze lattes. Add an extra flavor swirl to the first one, please."
+    },
+    {
+        "text": "¡Perfecto! Dos Caramel Craze Lattes medianos, con un toque de sabor extra en el primero. ¿Algo más?",
+        "isUser": false,
+        "timestamp": "2024-07-18T12:00:28Z",
+        "translation": "Perfect! Two medium Caramel Craze Lattes, with an extra flavor swirl on the first. Anything else?"
+    },
+    {
+        "text": "我想要一杯大杯的红糖奶油冷萃咖啡，谢谢。",
+        "isUser": true,
+        "timestamp": "2024-07-18T12:00:40Z",
+        "translation": "I'd like a large Brown Sugar Cream Cold Brew, thanks."
+    },
+    {
+        "text": "好的，已经为您添加一杯大杯红糖奶油冷萃咖啡。要不要加一份风味糖浆？",
+        "isUser": false,
+        "timestamp": "2024-07-18T12:00:48Z",
+        "translation": "Sure, added one large Brown Sugar Cream Cold Brew. Would you like a flavor swirl added too?"
+    },
+    { "text": "Yes, add a flavor swirl to that too.", "isUser": true, "timestamp": "2024-07-18T12:00:55Z", "translation": "Yes, add a flavor swirl to that too." },
+    {
+        "text": "Got it — a flavor swirl added to the Cold Brew as well. Anything else?",
+        "isUser": false,
+        "timestamp": "2024-07-18T12:01:00Z",
+        "translation": "Got it — a flavor swirl added to the Cold Brew as well. Anything else?"
+    },
+    {
+        "text": "I'll also take a large Strawberry Dragonfruit Refresher with an extra shot of espresso.",
+        "isUser": true,
+        "timestamp": "2024-07-18T12:01:12Z",
+        "translation": "I'll also take a large Strawberry Dragonfruit Refresher with an extra shot of espresso."
+    },
+    {
+        "text": "You got it! Large Strawberry Dragonfruit Refresher with an extra espresso shot added. Anything from the bakery case?",
+        "isUser": false,
+        "timestamp": "2024-07-18T12:01:20Z",
+        "translation": "You got it! Large Strawberry Dragonfruit Refresher with an extra espresso shot added. Anything from the bakery case?"
+    },
+    {
+        "text": "Ajoutez 3 beignets glacés et deux sandwichs bacon, œuf et fromage sur croissant, s'il vous plaît.",
+        "isUser": true,
+        "timestamp": "2024-07-18T12:01:32Z",
+        "translation": "Add 3 glazed donuts and two bacon egg and cheese croissant sandwiches, please."
+    },
+    {
+        "text": "Parfait, 3 beignets glacés et deux Bacon Egg & Cheese sur croissant ajoutés. Voulez-vous le récapitulatif de la commande ?",
+        "isUser": false,
+        "timestamp": "2024-07-18T12:01:40Z",
+        "translation": "Perfect, 3 glazed donuts and two Bacon Egg & Cheese on Croissant added. Would you like the order summary?"
+    },
+    { "text": "Yes, give me the totals.", "isUser": true, "timestamp": "2024-07-18T12:02:10Z", "translation": "Yes, give me the totals." },
+    {
+        "text": "You have 2 Medium Caramel Craze Lattes (one with a flavor swirl), 1 Large Brown Sugar Cream Cold Brew with a flavor swirl, 1 Large Strawberry Dragonfruit Refresher with an extra espresso shot, 3 Glazed Donuts, and 2 Bacon Egg & Cheese on Croissant. Your total is $39.43 with tax.",
+        "isUser": false,
+        "timestamp": "2024-07-18T12:02:18Z",
+        "translation": "You have 2 Medium Caramel Craze Lattes (one with a flavor swirl), 1 Large Brown Sugar Cream Cold Brew with a flavor swirl, 1 Large Strawberry Dragonfruit Refresher with an extra espresso shot, 3 Glazed Donuts, and 2 Bacon Egg & Cheese on Croissant. Your total is $39.43 with tax."
+    },
+    { "text": "Perfect, let's close it out.", "isUser": true, "timestamp": "2024-07-18T12:02:26Z", "translation": "Perfect, let's close it out." },
+    {
+        "text": "Thanks for rolling with Dunkin today! Swing to the next window and we'll have your order ready.",
+        "isUser": false,
+        "timestamp": "2024-07-18T12:02:32Z",
+        "translation": "Thanks for rolling with Dunkin today! Swing to the next window and we'll have your order ready."
+    }
+]

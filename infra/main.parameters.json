@@ -75,7 +75,7 @@
       "value": "${AZURE_SEARCH_SERVICE_LOCATION}"
     },
     "searchServiceSkuName": {
-      "value": "${AZURE_SEARCH_SERVICE_SKU=standard}"
+      "value": "${AZURE_SEARCH_SERVICE_SKU=basic}"
     },
     "searchServiceSemanticRankerLevel": {
       "value": "${AZURE_SEARCH_SEMANTIC_RANKER=free}"
@@ -99,13 +99,31 @@
       "value": "${AZURE_CONTAINER_APP_NAME}"
     },
     "realtimeDeploymentCapacity": {
-      "value": "${AZURE_OPENAI_REALTIME_DEPLOYMENT_CAPACITY=1}"
+      "value": "${AZURE_OPENAI_REALTIME_DEPLOYMENT_CAPACITY=10}"
+    },
+    "realtime21MiniDeploymentCapacity": {
+      "value": "${AZURE_OPENAI_REALTIME_21_MINI_DEPLOYMENT_CAPACITY=10}"
     },
     "embeddingDeploymentCapacity": {
       "value": "${AZURE_OPENAI_EMB_DEPLOYMENT_CAPACITY=30}"
     },
     "embeddingDimensions": {
       "value": "${AZURE_OPENAI_EMB_DIMENSIONS}"
+    },
+    "personas": {
+      "value": "${PERSONAS=}"
+    },
+    "defaultPersona": {
+      "value": "${DEFAULT_PERSONA=}"
+    },
+    "deployDotnetApp": {
+      "value": "${DEPLOY_DOTNET_APP=false}"
+    },
+    "dotnetServiceName": {
+      "value": "${AZURE_CONTAINER_APP_DOTNET_NAME}"
+    },
+    "backendDotnetIngressEnabled": {
+      "value": "${BACKEND_DOTNET_INGRESS_ENABLED=false}"
     },
     "logAnalyticsName": {
       "value": "${AZURE_LOG_ANALYTICS}"
@@ -119,23 +137,29 @@
     "webAppExists": {
       "value": "${SERVICE_BACKEND_RESOURCE_EXISTS=false}"
     },
+    "dotnetWebAppExists": {
+      "value": "${SERVICE_BACKEND_DOTNET_RESOURCE_EXISTS=false}"
+    },
     "azureContainerAppsWorkloadProfile": {
       "value": "${AZURE_CONTAINER_APPS_WORKLOAD_PROFILE=Consumption}"
     },
-    "enableAuth": {
-      "value": "${AZURE_AUTH_ENABLED=false}"
-    },
-    "authClientId": {
-      "value": "${AZURE_AUTH_CLIENT_ID=}"
-    },
-    "authTenantId": {
-      "value": "${AZURE_AUTH_TENANT_ID=}"
-    },
-    "authClientSecret": {
-      "value": "${AZURE_AUTH_CLIENT_SECRET=}"
-    },
     "appSessionSecret": {
       "value": "${APP_SESSION_SECRET=}"
+    },
+    "entraTenantId": {
+      "value": "${ENTRA_TENANT_ID=}"
+    },
+    "entraClientId": {
+      "value": "${ENTRA_CLIENT_ID=}"
+    },
+    "entraApiScope": {
+      "value": "${ENTRA_API_SCOPE=access_as_user}"
+    },
+    "entraAppRole": {
+      "value": "${ENTRA_APP_ROLE=DriveThru.User}"
+    },
+    "backendIngressEnabled": {
+      "value": "${BACKEND_INGRESS_ENABLED=true}"
     }
   }
 }

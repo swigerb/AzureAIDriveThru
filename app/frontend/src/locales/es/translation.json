@@ -1,7 +1,7 @@
 {
     "app": {
-        "title": "Pedidos por voz de Sonic",
-        "footer": "Creado con Azure AI, Azure OpenAI y Azure Speech",
+        "title": "Pedidos por voz",
+        "footer": "Creado con Microsoft Foundry, Azure OpenAI y Azure AI Search",
         "showTranscript": "Mostrar transcripción",
         "stopRecording": "Detener grabación",
         "startRecording": "Comenzar grabación",
@@ -9,7 +9,7 @@
         "newOrder": "Empezar un pedido nuevo"
     },
     "status": {
-        "notRecordingMessage": "¡Ordena desde el Drive-In favorito de América!",
+        "notRecordingMessage": "Toca el micrófono para hacer tu pedido.",
         "conversationInProgress": "Conversación en progreso",
         "sessionEndedIdle": "La sesión terminó por inactividad. Toca el micrófono para empezar un nuevo pedido.",
         "connectionLost": "Se perdió la conexión. Toca el micrófono para empezar de nuevo.",
@@ -30,6 +30,68 @@
         "description": "Archivos utilizados para fundamentar las respuestas."
     },
     "menu": {
-        "title": "Menú"
+        "title": "Menú",
+        "button": "Ver el menú",
+        "loading": "Cargando el menú…",
+        "loadError": "No se pudo cargar el menú. Inténtalo de nuevo más tarde.",
+        "valueMealsCategory": "Comidas de valor"
+    },
+    "ticket": {
+        "kicker": "Boleto del pedido",
+        "title": "Tu pedido",
+        "emptyHint": "Agrega artículos para empezar.",
+        "tax": "Impuesto",
+        "included": "Incluido",
+        "componentsLabel": "Incluido con este artículo"
+    },
+    "personaSwitch": {
+        "title": "¿Cambiar de personaje?",
+        "body": "Cambiar a {{persona}} iniciará un pedido nuevo. Tu pedido actual se borrará.",
+        "confirm": "Cambiar",
+        "cancel": "Cancelar",
+        "loadError": "No se pudo cambiar a {{persona}}. Tu pedido actual no cambió. Inténtalo de nuevo."
+    },
+    "picker": {
+        "backendLabel": "Backend",
+        "modelLabel": "Modelo",
+        "modelDescription": "Elige qué modelo impulsa la conversación",
+        "lockedHint": "Bloqueado para este pedido -- empieza un nuevo pedido para cambiar",
+        "reasoningSuffix": "(razonamiento)",
+        "realtimeGroup": "Tiempo real",
+        "cascadeGroup": "Cascada",
+        "noModelsAvailable": "No hay modelos disponibles"
+    },
+    "settings": {
+        "demoMode": {
+            "label": "Modo demo",
+            "description": "Ejecuta una demostración con voz de invitado guiada y manos libres.",
+            "on": "Demo activada",
+            "off": "Demo desactivada",
+            "aria": "Activar o desactivar el modo demo",
+            "stageAria": "Escenario de demo",
+            "guestVoiceLabel": "Voz de invitada Ava",
+            "guestAtSpeaker": "Invitada en el altavoz",
+            "waitingLine": "Esperando la frase de la invitada..."
+        }
+    },
+    "hero": {
+        "badge": "Demostración de pedidos por voz",
+        "subhead": "Un asistente de pedidos por voz basado en personajes, fundamentado con Microsoft Foundry, Azure OpenAI y Azure AI Search.",
+        "poweredBy": "Microsoft Foundry · Azure OpenAI · Azure AI Search",
+        "calloutsTitle": "Destacados del menú",
+        "highlights": {
+            "fastOrders": {
+                "title": "Pedidos rápidos",
+                "detail": "Los clientes ordenan por voz en segundos, sin desplazarse por el menú."
+            },
+            "foundryPowered": {
+                "title": "Impulsado por Foundry",
+                "detail": "La inteligencia conversacional funciona con Microsoft Foundry y Azure OpenAI."
+            },
+            "liveMenu": {
+                "title": "Menú en vivo",
+                "detail": "Cada pedido se fundamenta con los datos de menú en vivo del personaje."
+            }
+        }
     }
 }

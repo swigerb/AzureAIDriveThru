@@ -1,0 +1,285 @@
+import { render, screen, waitFor } from "@testing-library/react";
+import { act, useState } from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { PersonaProvider, usePersonaContext } from "../persona-context";
+import type { PersonasIndexResponse, PersonaDetail } from "@/types/persona";
+
+// Issue #80 F1 (design doc §5.1/§5.2, ADR-001 decisions 1/2): PersonaProvider fetches
+// `/api/personas` + `/api/personas/{id}` at startup, resolves the session's persona (query param >
+// last localStorage choice > catalog default), applies its theme/title/favicon, and merges its
+// strings into i18next -- all BEFORE any realtime connection is made.
+//
+// Rick's PR-110 review, item 1 + item 4: no persona pack is hard-coded as this app's
+// fallback/default anymore -- the two catalog personas used below are the neutral test
+// fixture ids ("test-beta" and "test-alpha", interchangeable catalog entries, never a
+// hard-coded default) plus a dedicated NEUTRAL placeholder before any fetch resolves.
+
+const TWO_PERSONA_INDEX: PersonasIndexResponse = {
+    default: "test-beta",
+    personas: [
+        { id: "test-beta", displayName: "Test Beta", logoUrl: "/personas/test-beta/assets/logo.svg", theme: { light: { primary: "341 100% 45%", secondary: "208 52% 33%", background: "195 44% 96%", foreground: "208 53% 20%" } } },
+        { id: "test-alpha", displayName: "Test Alpha", logoUrl: "/personas/test-alpha/assets/logo.svg", theme: { light: { primary: "200 80% 50%", secondary: "40 60% 40%", background: "0 0% 98%", foreground: "0 0% 10%" } } }
+    ],
+    backends: []
+};
+
+const ALPHA_DETAIL: PersonaDetail = {
+    id: "test-alpha",
+    roleName: "tester",
+    title: "Test Alpha Fixture",
+    theme: TWO_PERSONA_INDEX.personas[1].theme,
+    assets: { logo: "assets/logo.svg", favicon: "assets/favicon.ico" },
+    strings: { en: { "app.title": "Test Alpha Fixture", "menu.button": "View menu" } },
+    hero: { headline: "Test Alpha fixture pack", description: "Fixture description.", callouts: [], spotlight: [] },
+    legal: "Fixture-only disclaimer.",
+    voice: { default: "marin" },
+    locales: { default: "en", supported: ["en"] },
+    features: { dayparts: false },
+    menuUrl: "/personas/test-alpha/menu.json",
+    models: { realtime: { default: "gpt-realtime-2.1", models: [{ id: "gpt-realtime-2.1", label: "GPT Realtime 2.1", reasoning: true }] } },
+    taxRate: "0.08",
+    machines: {},
+    happyHour: null
+};
+
+function Probe() {
+    const { personas, backends, current, logoUrl, ready, error, selectPersona } = usePersonaContext();
+    // Issue GH-171 round 3, item 1: selectPersona()'s return value is the only signal App.tsx's
+    // handleSelectPersona has for a FAILED switch (on failure, nothing else -- current/personaId --
+    // ever changes). Captured here so a test can assert on it directly.
+    const [lastResult, setLastResult] = useState<string>("");
+    return (
+        <div>
+            <span data-testid="current-id">{current.id}</span>
+            <span data-testid="current-title">{current.title}</span>
+            <span data-testid="ready">{String(ready)}</span>
+            <span data-testid="error">{error ?? ""}</span>
+            <span data-testid="persona-count">{personas.length}</span>
+            <span data-testid="backend-count">{backends.length}</span>
+            <span data-testid="logo-url">{logoUrl}</span>
+            <span data-testid="select-result">{lastResult}</span>
+            <button onClick={() => selectPersona("test-alpha")}>select alpha</button>
+            <button onClick={() => selectPersona("test-beta")}>select beta</button>
+            <button onClick={() => void selectPersona("test-alpha").then(ok => setLastResult(String(ok)))}>select alpha (await)</button>
+            <button onClick={() => void selectPersona("test-beta").then(ok => setLastResult(String(ok)))}>select beta (await)</button>
+        </div>
+    );
+}
+
+function renderProvider() {
+    return render(
+        <PersonaProvider>
+            <Probe />
+        </PersonaProvider>
+    );
+}
+
+function mockFetchSequence(handler: (url: string) => { ok: boolean; body: unknown }) {
+    vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string) => {
+            const { ok, body } = handler(url);
+            return { ok, status: ok ? 200 : 404, json: async () => body };
+        })
+    );
+}
+
+beforeEach(() => {
+    localStorage.clear();
+    // jsdom doesn't implement navigation -- give every test a clean, param-free URL.
+    window.history.pushState({}, "", "/");
+});
+
+afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    document.documentElement.removeAttribute("style");
+    document.title = "";
+});
+
+describe("PersonaProvider", () => {
+    it("renders the brand-neutral placeholder immediately, before any fetch resolves -- no pack's content", () => {
+        vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {}))); // never resolves
+        renderProvider();
+
+        // Issue #80 F1/F6, Rick's PR-110 review items 1 + 6: the initial state before the catalog
+        // round trip has nothing branded to leak -- no id, no title, no logo -- which is what lets
+        // `App.tsx` gate all rendering on `ready` without a component ever seeing a hard-coded pack.
+        expect(screen.getByTestId("current-id")).toHaveTextContent("");
+        expect(screen.getByTestId("current-title")).toHaveTextContent("");
+        expect(screen.getByTestId("logo-url")).toHaveTextContent("");
+        expect(screen.getByTestId("ready")).toHaveTextContent("false");
+    });
+
+    it("stays on the neutral placeholder and still reports ready when /api/personas can't be reached (offline)", async () => {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async () => {
+                throw new Error("network down");
+            })
+        );
+        renderProvider();
+
+        await waitFor(() => expect(screen.getByTestId("ready")).toHaveTextContent("true"));
+        expect(screen.getByTestId("current-id")).toHaveTextContent("");
+        expect(screen.getByTestId("current-title")).toHaveTextContent("");
+        expect(screen.getByTestId("error")).toHaveTextContent("");
+    });
+
+    it("loads the catalog's declared default persona and applies its title/theme", async () => {
+        mockFetchSequence(url => {
+            if (url === "/api/personas") return { ok: true, body: TWO_PERSONA_INDEX };
+            if (url === "/api/personas/test-beta") return { ok: true, body: { ...ALPHA_DETAIL, id: "test-beta", title: "Test Beta Fixture", theme: TWO_PERSONA_INDEX.personas[0].theme } };
+            return { ok: false, body: null };
+        });
+        renderProvider();
+
+        await waitFor(() => expect(screen.getByTestId("ready")).toHaveTextContent("true"));
+        expect(screen.getByTestId("persona-count")).toHaveTextContent("2");
+        expect(document.title).toBe("Test Beta Fixture");
+        // The primary theme var is set from the catalog entry's own theme via resolvePersonaTheme.
+        expect(document.documentElement.style.getPropertyValue("--brand-primary")).toBe("341 100% 45%");
+    });
+
+    // Issue #80 F11 (design doc §5.2/§10.1): `/api/personas`' `backends[]` is exposed as-is on the
+    // context so `App.tsx` can pass it straight to the backend picker, which hides itself
+    // entirely below two entries.
+    it("exposes /api/personas' backends[] on the context", async () => {
+        mockFetchSequence(url => {
+            if (url === "/api/personas") {
+                return {
+                    ok: true,
+                    body: { ...TWO_PERSONA_INDEX, backends: [{ id: "python", url: "" }, { id: "dotnet", url: "https://dotnet.example.com" }] }
+                };
+            }
+            if (url === "/api/personas/test-beta") return { ok: true, body: { ...ALPHA_DETAIL, id: "test-beta" } };
+            return { ok: false, body: null };
+        });
+        renderProvider();
+
+        await waitFor(() => expect(screen.getByTestId("ready")).toHaveTextContent("true"));
+        expect(screen.getByTestId("backend-count")).toHaveTextContent("2");
+    });
+
+    it("resolves a persona chosen via ?persona= over the catalog default", async () => {
+        window.history.pushState({}, "", "/?persona=test-alpha");
+        mockFetchSequence(url => {
+            if (url === "/api/personas") return { ok: true, body: TWO_PERSONA_INDEX };
+            if (url === "/api/personas/test-alpha") return { ok: true, body: ALPHA_DETAIL };
+            return { ok: false, body: null };
+        });
+        renderProvider();
+
+        await waitFor(() => expect(screen.getByTestId("current-id")).toHaveTextContent("test-alpha"));
+        expect(document.title).toBe("Test Alpha Fixture");
+    });
+
+    it("remembers the last persona chosen via selectPersona in localStorage", async () => {
+        mockFetchSequence(url => {
+            if (url === "/api/personas") return { ok: true, body: TWO_PERSONA_INDEX };
+            if (url === "/api/personas/test-beta") return { ok: true, body: { ...ALPHA_DETAIL, id: "test-beta" } };
+            if (url === "/api/personas/test-alpha") return { ok: true, body: ALPHA_DETAIL };
+            return { ok: false, body: null };
+        });
+        renderProvider();
+        await waitFor(() => expect(screen.getByTestId("ready")).toHaveTextContent("true"));
+
+        await act(async () => {
+            screen.getByText("select alpha").click();
+        });
+
+        await waitFor(() => expect(screen.getByTestId("current-id")).toHaveTextContent("test-alpha"));
+        expect(localStorage.getItem("personaId")).toBe("test-alpha");
+    });
+
+    it("surfaces a non-fatal error and keeps the previous selection when a persona detail fetch fails", async () => {
+        mockFetchSequence(url => {
+            if (url === "/api/personas") return { ok: true, body: TWO_PERSONA_INDEX };
+            if (url === "/api/personas/test-beta") return { ok: true, body: { ...ALPHA_DETAIL, id: "test-beta" } };
+            return { ok: false, body: null }; // test-alpha's detail fetch fails
+        });
+        renderProvider();
+        await waitFor(() => expect(screen.getByTestId("ready")).toHaveTextContent("true"));
+
+        await act(async () => {
+            screen.getByText("select alpha").click();
+        });
+
+        await waitFor(() => expect(screen.getByTestId("error")).not.toHaveTextContent(""));
+        // Stays on the default persona rather than showing a half-applied/blank one.
+        expect(screen.getByTestId("current-id")).toHaveTextContent("test-beta");
+    });
+
+    // Issue GH-171 round 3, item 1: App.tsx's handleSelectPersona awaits selectPersona()'s
+    // returned promise and calls useRealtime's cancelSwitch() only when it resolves `false` --
+    // there is no other reliable signal for a failed switch, since on failure nothing else
+    // (current, personaId) ever changes either.
+    it("selectPersona resolves true once the requested persona's detail has actually loaded", async () => {
+        mockFetchSequence(url => {
+            if (url === "/api/personas") return { ok: true, body: TWO_PERSONA_INDEX };
+            if (url === "/api/personas/test-beta") return { ok: true, body: { ...ALPHA_DETAIL, id: "test-beta" } };
+            if (url === "/api/personas/test-alpha") return { ok: true, body: ALPHA_DETAIL };
+            return { ok: false, body: null };
+        });
+        renderProvider();
+        await waitFor(() => expect(screen.getByTestId("ready")).toHaveTextContent("true"));
+
+        await act(async () => {
+            screen.getByText("select alpha (await)").click();
+        });
+
+        await waitFor(() => expect(screen.getByTestId("select-result")).toHaveTextContent("true"));
+        expect(screen.getByTestId("current-id")).toHaveTextContent("test-alpha");
+    });
+
+    it("selectPersona resolves false when the persona detail fetch fails (a 404), and the previous selection stays active", async () => {
+        mockFetchSequence(url => {
+            if (url === "/api/personas") return { ok: true, body: TWO_PERSONA_INDEX };
+            if (url === "/api/personas/test-beta") return { ok: true, body: { ...ALPHA_DETAIL, id: "test-beta" } };
+            return { ok: false, body: null }; // test-alpha's detail fetch 404s
+        });
+        renderProvider();
+        await waitFor(() => expect(screen.getByTestId("ready")).toHaveTextContent("true"));
+
+        await act(async () => {
+            screen.getByText("select alpha (await)").click();
+        });
+
+        await waitFor(() => expect(screen.getByTestId("select-result")).toHaveTextContent("false"));
+        expect(screen.getByTestId("current-id")).toHaveTextContent("test-beta");
+    });
+
+    it("selectPersona resolves false (not true) on the early-return no-op when the id is already selected", async () => {
+        mockFetchSequence(url => {
+            if (url === "/api/personas") return { ok: true, body: TWO_PERSONA_INDEX };
+            if (url === "/api/personas/test-beta") return { ok: true, body: { ...ALPHA_DETAIL, id: "test-beta" } };
+            if (url === "/api/personas/test-alpha") return { ok: true, body: ALPHA_DETAIL };
+            return { ok: false, body: null };
+        });
+        renderProvider();
+        await waitFor(() => expect(screen.getByTestId("ready")).toHaveTextContent("true"));
+        expect(screen.getByTestId("current-id")).toHaveTextContent("test-beta"); // the catalog default
+
+        await act(async () => {
+            // test-beta is already selected: selectPersona's own `id === personaId` guard fires.
+            screen.getByText("select beta (await)").click();
+        });
+
+        await waitFor(() => expect(screen.getByTestId("select-result")).toHaveTextContent("false"));
+    });
+
+    it("never throws even though the real i18next singleton is uninitialized in tests (addResourceBundle guard)", async () => {
+        mockFetchSequence(url => {
+            if (url === "/api/personas") return { ok: true, body: TWO_PERSONA_INDEX };
+            if (url === "/api/personas/test-beta") return { ok: true, body: { ...ALPHA_DETAIL, id: "test-beta" } };
+            return { ok: false, body: null };
+        });
+        // This is the regression case: before persona-context.tsx guarded the merge with
+        // `typeof i18next.addResourceBundle === "function"`, this render would reject with
+        // "i18next.addResourceBundle is not a function" because nothing in the test import graph
+        // ever calls the real i18n/config.ts's .init().
+        expect(() => renderProvider()).not.toThrow();
+        await waitFor(() => expect(screen.getByTestId("ready")).toHaveTextContent("true"));
+    });
+});

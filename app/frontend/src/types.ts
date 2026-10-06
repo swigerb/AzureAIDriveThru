@@ -73,6 +73,11 @@ export type ResponseDone = {
     event_id: string;
     response: {
         id: string;
+        // Issues 247/262: "failed" when the backend's cascade turn pipeline hit an unrecoverable error
+        // (e.g. a non-429 chat-completion failure, or a TTS failure) partway through a turn and
+        // had to end it early with an empty `output` -- see _send_failed_response_done /
+        // SendFailedResponseDoneAsync in both backends. Absent/"completed" for the normal path.
+        status?: string;
         output: { id: string; content?: { transcript: string; type: string }[] }[];
     };
 };
@@ -80,7 +85,11 @@ export type ResponseDone = {
 // Represents a response from an extension middle tier tool
 export type ExtensionMiddleTierToolResponse = {
     type: "extension.middle_tier_tool_response";
-    previous_item_id: string;
+    // issue 309 (R2): null for a synthetic ticket refresh pushed by the backend after something other
+    // than a real pending tool call (e.g. a happy-hour mode flip) -- there is no previous model
+    // item to anchor to, and no round_trip_token will ever follow to clear followUpExpected, so
+    // callers must not treat a null previous_item_id as "a response is still expected".
+    previous_item_id: string | null;
     tool_name: string;
     tool_result: string; // JSON string that needs to be parsed into ToolResult
 };
@@ -96,10 +105,30 @@ export type ExtensionSessionMetadata = {
 
 // Same shape the ticket renders from JSON.parse(tool_result).
 export type OrderSummaryWire = {
-    items: { item: string; size: string; quantity: number; price: number; display: string }[];
+    items: {
+        item: string;
+        size: string;
+        quantity: number;
+        price: number;
+        display: string;
+        // #77/#80 F5, additive: bundle-slot item(s) absorbed into (or auto-filled onto) this
+        // line, e.g. ["Medium Fries", "Coca-Cola"] for a combo/meal. Defaults to [] on the wire
+        // (app/backend/models.py::OrderItem.components) for every a-la-carte line, so this stays
+        // optional here too -- an older payload that omits it entirely is still valid.
+        components?: string[];
+    }[];
     total: number;
     tax: number;
     finalTotal: number;
+    // #47/PR #50 follow-up: additive, backend-rounded display strings (money_utils.format_money,
+    // ROUND_HALF_UP) mirroring OrderSummaryProps' *Display fields in order-summary.tsx. Optional
+    // because they're additive on the wire -- older payloads/tests that only set the four numeric
+    // fields above remain valid -- but present on every real backend response (including
+    // extension.session_resumed's order_summary) so the resumed ticket keeps reading the same
+    // single source of truth as a fresh order instead of falling back to a client-side re-round.
+    totalDisplay?: string;
+    taxDisplay?: string;
+    finalTotalDisplay?: string;
 };
 
 // Reply to extension.resume: the dropped session (and its order) is back.

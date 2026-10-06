@@ -1,0 +1,71 @@
+{
+  "$schema": "../persona.schema.json",
+  "schemaVersion": 1,
+  "id": "test-beta",
+  "displayName": "Test Beta Burger Co.",
+  "roleName": "beta-runner",
+  "locales": { "default": "en", "supported": ["en"] },
+  "store": { "timezone": "America/Los_Angeles" },
+  "voice": { "default": "cedar" },
+  "search": { "indexName": "test-beta-menu-items", "contentFields": ["description"] },
+
+  "pricing": {
+    "taxRate": "0.09",
+    "happyHour": null
+  },
+
+  "sizes": {
+    "canonical": { "regular": "Regular", "jumbo": "Jumbo" },
+    "aliases": { "reg": "regular" },
+    "spokenAs": {},
+    "hidden": ["", "n/a", "none"],
+    "default": null
+  },
+
+  "bundles": {
+    "nameMarkers": ["meal"],
+    "convertStandalone": false,
+    "missingPartText": { "sides": "a side", "drinks": "a drink" }
+  },
+
+  "extras": {
+    "allowedBaseCategories": ["mains"],
+    "blockedBaseCategories": ["drinks"],
+    "splitCombinedNames": false
+  },
+
+  "invalidModifiers": {
+    "main": ["mustard"]
+  },
+  "machines": { "soda_machine": { "status": "operational", "label": "Soda machine is down" } },
+
+  "models": {
+    "realtime": { "default": "gpt-realtime-2.1-mini", "allowed": ["gpt-realtime-2.1-mini", "gpt-realtime-2.1"] }
+  },
+
+  "strategies": { "searchQueryRewrite": "none" },
+  "features": { "dayparts": false },
+
+  "ui": {
+    "title": "Test Beta Voice Ordering",
+    "theme": {
+      "light": { "primary": "220 80% 45%", "secondary": "220 40% 30%", "background": "0 0% 96%", "foreground": "0 0% 10%" }
+    },
+    "assets": { "logo": "assets/logo.svg", "favicon": "assets/favicon.ico" },
+    "strings": { "en": { "app.title": "Test Beta Voice Ordering" } },
+    "hero": {
+      "headline": "Test Beta fixture pack",
+      "description": "TEST-ONLY fixture hero description, not a real brand.",
+      "callouts": [
+        { "title": "CALLOUT ONE", "detail": "Fixture callout one detail.", "tone": "primary" },
+        { "title": "CALLOUT TWO", "detail": "Fixture callout two detail.", "tone": "secondary" },
+        { "title": "CALLOUT THREE", "detail": "Fixture callout three detail.", "tone": "accent" }
+      ],
+      "spotlight": [
+        { "icon": "assets/spotlight-1.svg", "kicker": "FIXTURE PICK", "title": "Fixture Card One", "rows": [{ "label": "Fixture Row", "value": "Fixture Value" }] },
+        { "icon": "assets/spotlight-2.svg", "kicker": "FIXTURE PAIR", "title": "Fixture Card Two", "body": "Fixture body sentence.", "accent": "Fixture pairing suggestion." }
+      ]
+    },
+    "legal": "TEST-ONLY fixture pack (#74) -- not a real brand, used only by the Python backend test suite to prove multi-persona isolation. Also proves pricing.happyHour: null (decision 5) works end to end."
+  }
+}

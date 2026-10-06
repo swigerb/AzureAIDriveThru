@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>SearchIndexRequestBuilder</RootNamespace>
+    <AssemblyName>SearchIndexRequestBuilder</AssemblyName>
+    <!--
+      Issue #16: implements the "client-seam + recorded-fixture" design note in
+      docs/dotnet_tooling.md for app/backend/setup_search_index.py, the first Azure-dependent tool
+      this effort has tackled. This project independently reconstructs the exact Azure AI Search
+      REST request bodies (the index definition PUT and the document-upload-batch POSTs) that
+      setup_search_index.py's create_or_update_index/upload_documents would send, from the same
+      checked-in persona data, but NEVER opens a socket and NEVER calls a real Azure or OpenAI
+      endpoint, not even in its own CLI. OpenAiSettingsResolver.cs resolves the index definition's
+      vectorizer endpoint/deployment from the real AZURE_OPENAI_EASTUS2_ENDPOINT/
+      AZURE_OPENAI_EMBEDDING_DEPLOYMENT environment variables (or the openai-endpoint/
+      embedding-deployment command-line flags); it is never given a fake value here; only
+      tests/SearchIndexRequestBuilder.Tests' own PythonParityTests.cs injects one, alongside its
+      test-only FixtureEmbedding.cs fixture for the (never-shipped) per-document "embedding" field.
+      See SearchIndexDefinitionBuilder.cs/DocumentBatchBuilder.cs for the request-building logic,
+      and tests/SearchIndexRequestBuilder.Tests/PythonParityTests.cs for how the real Python
+      script's on-wire bodies are captured (via a monkeypatched azure-core HttpTransport, never a
+      real network call either) and compared against this project's output.
+    -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="SearchIndexRequestBuilder.Tests" />
+    <!--
+      Fix #16: SearchIndexIngestor (the orchestration port) reuses this project's internal
+      request-body builders/persona discovery/settings resolvers via a project reference rather
+      than duplicating them - see SearchIndexIngestor.csproj's own remarks.
+    -->
+    <InternalsVisibleTo Include="SearchIndexIngestor" />
+    <InternalsVisibleTo Include="SearchIndexIngestor.Tests" />
+  </ItemGroup>
+
+</Project>

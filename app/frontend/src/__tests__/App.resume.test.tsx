@@ -13,8 +13,12 @@ const rt = vi.hoisted(() => ({
         sendVerboseLogging: vi.fn(),
         sendLogToFile: vi.fn(),
         sendVoiceChoice: vi.fn(),
+        setMachineStatus: vi.fn(),
+        setHappyHourMode: vi.fn(),
         endSession: vi.fn(),
         reconnect: vi.fn(async () => {}),
+        cancelSwitch: vi.fn(),
+        beginSwitch: vi.fn(),
         isConnected: true
     }
 }));
@@ -30,6 +34,43 @@ vi.mock("@/hooks/useRealtime", () => ({
 vi.mock("darkreader", () => ({ enable: vi.fn(), disable: vi.fn(), auto: vi.fn(), setFetchMethod: vi.fn() }));
 vi.mock("@/hooks/useAudioRecorder", () => ({ default: () => rec }));
 vi.mock("@/hooks/useAudioPlayer", () => ({ default: () => player }));
+
+// Rick's PR-110 review item 1 + item 6 (issue #80 F1/F6): with the hard-coded persona fallback
+// gone, `<RootApp />` now needs a real (mocked) `/api/personas` catalog + detail round trip before
+// `App()`'s `ready` gate lets `<SonicApp />` (and the mic button this suite drives) render at all.
+const FIXTURE_PERSONA_INDEX = {
+    default: "test-alpha",
+    personas: [
+        { id: "test-alpha", displayName: "Test Alpha", logoUrl: "/personas/test-alpha/assets/logo.svg", theme: { light: { primary: "200 80% 50%", secondary: "40 60% 40%", background: "0 0% 98%", foreground: "0 0% 10%" } } }
+    ],
+    backends: []
+};
+const FIXTURE_PERSONA_DETAIL = {
+    id: "test-alpha",
+    title: "Test Alpha Fixture",
+    theme: FIXTURE_PERSONA_INDEX.personas[0].theme,
+    assets: { logo: "assets/logo.svg", favicon: "assets/favicon.ico" },
+    strings: { en: {} },
+    hero: { headline: "Test Alpha fixture pack", description: "Fixture description.", callouts: [], spotlight: [] },
+    legal: "Fixture-only disclaimer.",
+    voice: { default: "marin" },
+    locales: { default: "en", supported: ["en", "es", "fr", "ja"] },
+    features: { dayparts: false },
+    menuUrl: "/personas/test-alpha/menu.json",
+    models: { realtime: { default: "gpt-realtime-2.1", models: [{ id: "gpt-realtime-2.1", label: "GPT Realtime 2.1", reasoning: true }] } },
+    taxRate: "0.08"
+};
+
+function mockPersonaFetch() {
+    vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string) => {
+            if (url === "/api/personas") return { ok: true, status: 200, json: async () => FIXTURE_PERSONA_INDEX };
+            if (url === "/api/personas/test-alpha") return { ok: true, status: 200, json: async () => FIXTURE_PERSONA_DETAIL };
+            return { ok: false, status: 404, json: async () => ({}) };
+        })
+    );
+}
 
 const TOTS = { item: "Tots", size: "Large", quantity: 1, price: 2.99, display: "Large Tots" };
 const LIMEADE = { item: "Cherry Limeade", size: "Medium", quantity: 1, price: 2.49, display: "Medium Cherry Limeade" };
@@ -48,8 +89,9 @@ const resumedMsg = (order = orderOf(TOTS, LIMEADE)) => ({
 const transportDrop = { code: 1011, reason: "", idle: false, kind: "transport", resuming: true };
 
 const tapMic = async () => {
+    const micButton = await screen.findByLabelText(/app\.(start|stop)Recording/);
     await act(async () => {
-        fireEvent.click(screen.getByLabelText(/app\.(start|stop)Recording/));
+        fireEvent.click(micButton);
     });
 };
 
@@ -65,6 +107,7 @@ beforeEach(() => {
     Element.prototype.scrollIntoView = vi.fn();
     rec.start.mockImplementation(async () => true);
     rt.api.isConnected = true;
+    mockPersonaFetch();
 });
 
 describe("order resume in the app", () => {
@@ -93,22 +136,44 @@ describe("order resume in the app", () => {
         expect(screen.getByLabelText("app.stopRecording")).toBeInTheDocument();
     });
 
+    it("session_resumed carries the backend's *Display money strings through to the ticket", async () => {
+        // PR #50 review follow-up: OrderSummaryWire's *Display fields must survive a resume, not
+        // just a fresh order -- the resumed ticket should read the exact backend-rounded strings
+        // (single source of truth), never fall back to a client-side re-round of the numerics.
+        await startConversationWithTots();
+        await act(async () => rt.params.onConnectionLost(transportDrop));
+
+        const order = { ...orderOf(TOTS, LIMEADE), totalDisplay: "$X-TOTAL", taxDisplay: "$X-TAX", finalTotalDisplay: "$X-FINAL" };
+        await act(async () => rt.params.onReceivedSessionResumed(resumedMsg(order)));
+
+        expect(screen.getByText("$X-TOTAL")).toBeInTheDocument();
+        expect(screen.getByText("$X-TAX")).toBeInTheDocument();
+        expect(screen.getByText("$X-FINAL")).toBeInTheDocument();
+    });
+
     it("falls back to tap-to-continue when the browser won't restart the mic", async () => {
         await startConversationWithTots();
         await act(async () => rt.params.onConnectionLost(transportDrop));
         rec.start.mockImplementation(async () => false);
+        rt.api.startSession.mockClear();
 
         await act(async () => rt.params.onReceivedSessionResumed(resumedMsg()));
 
         expect(screen.getByText("status.resumedTapToContinue")).toBeInTheDocument();
         expect(screen.getByLabelText("app.startRecording")).toBeInTheDocument();
         expect(screen.getByText("Medium Cherry Limeade")).toBeInTheDocument();
+        // Issue #181 R1: the mic never came up, so no session.update went out -- the server has
+        // nothing armed on this idle tab (Rick round 2 review: resumeConversation() must not send
+        // startSession() until the mic is confirmed running).
+        expect(rt.api.startSession).not.toHaveBeenCalled();
 
         rec.start.mockImplementation(async () => true);
         rec.start.mockClear();
         await tapMic();
         // Resumed session: no greeting will come, so the mic starts without the 3.5 s wait.
         expect(rec.start).toHaveBeenCalledTimes(1);
+        // The guest's own tap is what finally arms it -- genuinely live now, exactly once.
+        expect(rt.api.startSession).toHaveBeenCalledTimes(1);
         expect(screen.getByText("Medium Cherry Limeade")).toBeInTheDocument();
     });
 
@@ -118,8 +183,11 @@ describe("order resume in the app", () => {
         rec.start.mockImplementation(async () => {
             throw new DOMException("denied", "NotAllowedError");
         });
+        rt.api.startSession.mockClear();
         await act(async () => rt.params.onReceivedSessionResumed(resumedMsg()));
         expect(screen.getByText("status.resumedTapToContinue")).toBeInTheDocument();
+        // Issue #181 R1: a thrown getUserMedia rejection must not have armed the nudge either.
+        expect(rt.api.startSession).not.toHaveBeenCalled();
     });
 
     it("a resume while the guest was not talking restores the ticket without touching the mic", async () => {
@@ -131,6 +199,44 @@ describe("order resume in the app", () => {
         expect(rec.start).not.toHaveBeenCalled();
         expect(screen.getByText("Medium Cherry Limeade")).toBeInTheDocument();
         expect(screen.getByText("status.resumedTapToContinue")).toBeInTheDocument();
+    });
+
+    it("a resumed-but-idle session (#181) never surfaces the server's nudge as assistant output", async () => {
+        // Defense in depth: even if the backend ever nudged a resumed socket before the guest
+        // (re)started their mic, the client must not play/append that output while idle.
+        await startConversationWithTots();
+        await tapMic(); // guest stops the conversation -> isSessionActiveRef false
+        await act(async () => rt.params.onConnectionLost(transportDrop));
+        await act(async () => rt.params.onReceivedSessionResumed(resumedMsg()));
+        expect(screen.getByText("status.resumedTapToContinue")).toBeInTheDocument();
+
+        await act(async () =>
+            rt.params.onReceivedResponseDone({
+                response: { output: [{ content: [{ transcript: "Need anything else to go with your order, or are you all set?" }] }] }
+            })
+        );
+
+        expect(screen.queryByText("Need anything else to go with your order, or are you all set?")).not.toBeInTheDocument();
+    });
+
+    it("a resumed-but-idle session (#181) never plays the server's nudge audio either", async () => {
+        // Defense in depth, audio half (Rick round 2 review, mutation c2): dropping the
+        // `if (!isSessionActiveRef.current) return;` guard in onReceivedResponseAudioDelta must
+        // not survive. An audio delta that arrives while idle must never reach the speaker, but a
+        // genuine greeting right after the guest taps back in must still play normally.
+        await startConversationWithTots();
+        await tapMic(); // guest stops the conversation -> isSessionActiveRef false
+        await act(async () => rt.params.onConnectionLost(transportDrop));
+        await act(async () => rt.params.onReceivedSessionResumed(resumedMsg()));
+        expect(screen.getByText("status.resumedTapToContinue")).toBeInTheDocument();
+
+        await act(async () => rt.params.onReceivedResponseAudioDelta({ type: "response.audio.delta", delta: "NUDGE-AUDIO-BASE64" }));
+        expect(player.play).not.toHaveBeenCalled();
+
+        rec.start.mockImplementation(async () => true);
+        await tapMic(); // guest goes live again
+        await act(async () => rt.params.onReceivedResponseAudioDelta({ type: "response.audio.delta", delta: "GREETING-AUDIO-BASE64" }));
+        expect(player.play).toHaveBeenCalledWith("GREETING-AUDIO-BASE64");
     });
 
     it("resume_rejected clears the ticket and asks for a fresh start", async () => {

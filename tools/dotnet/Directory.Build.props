@@ -1,0 +1,19 @@
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net11.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <!--
+      Issue #16: this is an independent solution for standalone repo tooling (docs/dotnet_tooling.md),
+      not part of app/backend-dotnet's Backend.slnx or tests/conformance's Conformance.slnx. It needs
+      its own Directory.Build.props/Directory.Packages.props, but NOT its own global.json: the one
+      global.json at the repo root already pins the SDK for every project below it (.NET's lookup
+      walks up the directory tree), and this directory is still under the repo root.
+    -->
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+  </PropertyGroup>
+</Project>

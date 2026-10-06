@@ -1,0 +1,46 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>SearchIndexIngestor</RootNamespace>
+    <AssemblyName>SearchIndexIngestor</AssemblyName>
+    <!--
+      Fix #16: the REST of app/backend/setup_search_index.py - the run()/main() orchestration that
+      Batch 2 (#250/#258, SearchIndexRequestBuilder) deliberately stopped short of: persona
+      targeting, index create-or-update, embeddings generation, the document-upload-batch loop,
+      stale-document deletion, document-count verification, dry-run, azd env loading, and CLI/exit
+      code parity. This project is a GENUINE production CLI capable of a real, live Azure AI
+      Search/Azure OpenAI run (unlike SearchIndexRequestBuilder, which never opens a socket under
+      any flag) - see docs/dotnet_tooling.md's "This PR's port" section for the full design
+      (client-seam embeddings interface, raw HttpClient + DefaultAzureCredential REST calls instead
+      of adding Azure.Search.Documents/an OpenAI SDK package, and the known, accepted divergences
+      from Rich's console-log formatting and Python's raw-traceback/SystemExit error presentation).
+      References SearchIndexRequestBuilder as a project (not a copy) to reuse its already-reviewed
+      request-body builders (SearchIndexDefinitionBuilder/DocumentBatchBuilder/MenuDocumentBuilder),
+      persona discovery (EnabledPersonaDiscovery), and azd/OpenAI settings resolution
+      (AzdEnvLoader/OpenAiSettingsResolver) - see that project's InternalsVisibleTo entry.
+    -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      The ONE new NuGet dependency this PR adds to tools/dotnet (called out per the squad brief's
+      dependency policy): app/backend-dotnet already depends on Azure.Identity 1.13.2 for
+      DefaultAzureCredential (same package family rtmt.py's own Python DefaultAzureCredential use),
+      so this pins the SAME version rather than introducing a second one. Deliberately NOT
+      Azure.Search.Documents or an OpenAI SDK package - see SearchIndexHttpClient.cs/
+      AzureOpenAiEmbeddingClient.cs's remarks for why raw HttpClient + bearer tokens were chosen
+      instead.
+    -->
+    <PackageReference Include="Azure.Identity" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SearchIndexRequestBuilder\SearchIndexRequestBuilder.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="SearchIndexIngestor.Tests" />
+  </ItemGroup>
+
+</Project>

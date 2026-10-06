@@ -270,34 +270,77 @@ class LargeOrderMemoryTests(unittest.TestCase):
 # 3. Concurrency Tests
 # ===================================================================
 
-class ThreadSafetyTests(unittest.TestCase):
-    """OrderState must be safe under concurrent access from multiple threads."""
+class OrderStateThreadConfinementTests(unittest.TestCase):
+    """#97: ``OrderState`` is confined to its owning thread/event loop, like the C# backend's
+    ``SessionActor`` -- it is NOT a general-purpose thread-safe data structure. These tests assert
+    the REAL guarantee: (1) a session accessed from a different OS thread than the one that
+    created it raises immediately, rather than silently racing; (2) many sessions interleaved via
+    cooperative ``asyncio`` tasks on the SAME thread -- the actual concurrency model every guest
+    session runs under in production -- are safe, because none of ``OrderState``'s methods
+    contain an internal ``await`` that could yield control mid-mutation.
+
+    Replaces the old ``ThreadSafetyTests.test_concurrent_add_operations``, which asserted the
+    OPPOSITE of this contract: it spun up 10 real OS threads sharing one session and asserted no
+    items were lost -- passing today only because Python's GIL happens to make each individual
+    dict/list mutation atomic, not because ``OrderState`` was designed for or documents any
+    multi-thread-per-session guarantee. That test would silently break the moment any session-
+    scoped method gained an ``await`` or a non-atomic multi-step mutation; #97 replaces it with an
+    explicit, enforced contract instead of an accidental one.
+    """
 
     def setUp(self):
         order_state_singleton.sessions = {}
 
-    def test_concurrent_add_operations(self):
-        """10 threads each adding 50 items must produce 500 total items."""
+    def test_cross_thread_access_raises_runtime_error(self):
+        """A session created on this (the test) thread must reject access from ANY other OS
+        thread -- the enforced half of the #97 contract."""
         sid = order_state_singleton.create_session()
+        errors = []
 
-        def add_items(thread_id: int):
-            for i in range(50):
-                order_state_singleton.handle_order_update(
-                    sid, "add", f"T{thread_id}-Item{i}", "Medium", 1, 1.99,
-                )
+        def add_from_other_thread():
+            try:
+                order_state_singleton.handle_order_update(sid, "add", "Item", "Medium", 1, 1.99)
+            except RuntimeError as exc:
+                errors.append(exc)
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as pool:
-            futures = [pool.submit(add_items, tid) for tid in range(10)]
-            concurrent.futures.wait(futures)
-            for f in futures:
-                f.result()  # re-raise exceptions
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            pool.submit(add_from_other_thread).result()
 
+        self.assertEqual(len(errors), 1, "Expected exactly one RuntimeError from the other thread")
+        self.assertIn("thread", str(errors[0]))
+        # The session itself must be untouched -- the guard fires BEFORE any mutation.
         summary = order_state_singleton.get_order_summary(sid)
-        self.assertEqual(len(summary.items), 500,
-                         f"Expected 500 items, got {len(summary.items)}")
+        self.assertEqual(len(summary.items), 0)
+
+    def test_every_session_scoped_method_enforces_thread_confinement(self):
+        """Every public, session-scoped ``OrderState`` method must reject a foreign thread -- not
+        just ``handle_order_update`` -- so a future method can't silently reintroduce the
+        unguarded-access bug #97 closes."""
+        sid = order_state_singleton.create_session()
+        order_state_singleton.handle_order_update(sid, "add", "Item", "Medium", 1, 1.99)
+
+        checks = [
+            lambda: order_state_singleton.get_order_summary(sid),
+            lambda: order_state_singleton.get_order_items(sid),
+            lambda: order_state_singleton.get_combo_requirements(sid),
+            lambda: order_state_singleton.get_grouped_order_for_readback(sid),
+            lambda: order_state_singleton.get_order_summary_json(sid),
+            lambda: order_state_singleton.get_session_identifiers(sid),
+            lambda: order_state_singleton.advance_round_trip(sid),
+            lambda: order_state_singleton.reset_order(sid),
+            lambda: order_state_singleton.delete_session(sid),
+        ]
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            for check in checks:
+                with self.subTest(check=check):
+                    future = pool.submit(lambda c=check: c())
+                    with self.assertRaises(RuntimeError):
+                        future.result()
 
     def test_concurrent_session_create_delete(self):
-        """Concurrent session lifecycle operations must not raise."""
+        """The actual supported multi-thread pattern: each thread owns its OWN session, end to
+        end, and never touches another thread's session -- not multiple threads sharing one."""
         errors = []
 
         def lifecycle(n: int):
@@ -315,6 +358,30 @@ class ThreadSafetyTests(unittest.TestCase):
             concurrent.futures.wait(futures)
 
         self.assertEqual(len(errors), 0, f"Concurrency errors: {errors}")
+
+    def test_asyncio_interleaved_add_operations_on_same_thread_is_safe(self):
+        """The REAL production concurrency model: many guest sessions, each driven by its own
+        ``asyncio`` task, all cooperatively interleaved on ONE thread/event loop -- never a
+        second OS thread. 10 concurrent coroutines each adding 50 items to their OWN session, all
+        on the SAME thread, must produce exactly 500 items with zero lost updates, because no
+        ``OrderState`` method yields control (``await``) mid-mutation."""
+
+        async def add_items(sid: str, task_id: int):
+            for i in range(50):
+                order_state_singleton.handle_order_update(
+                    sid, "add", f"T{task_id}-Item{i}", "Medium", 1, 1.99,
+                )
+                await asyncio.sleep(0)  # yield to the event loop between adds, same thread only
+
+        async def run():
+            sid = order_state_singleton.create_session()
+            await asyncio.gather(*(add_items(sid, tid) for tid in range(10)))
+            return sid
+
+        sid = asyncio.new_event_loop().run_until_complete(run())
+        summary = order_state_singleton.get_order_summary(sid)
+        self.assertEqual(len(summary.items), 500,
+                         f"Expected 500 items, got {len(summary.items)}")
 
 
 class WebSocketSessionIsolationTests(unittest.TestCase):
@@ -363,12 +430,23 @@ class AppStartupTests(unittest.IsolatedAsyncioTestCase):
              patch("app.attach_tools_rtmt"), \
              patch.dict(os.environ, {
                  "RUNNING_IN_PRODUCTION": "1",
+                 # See test_app.py's _run_create_app comment: this suite's own conftest.py sets
+                 # CONFORMANCE_TEST_HOOKS=1 process-wide for unrelated reasons; a genuine
+                 # production simulation overrides it back off so Rick's #118 review item 4
+                 # prod guard doesn't treat this as the real, forbidden combination.
+                 "CONFORMANCE_TEST_HOOKS": "",
                  "AZURE_OPENAI_EASTUS2_ENDPOINT": "https://fake.openai.azure.com",
                  "AZURE_OPENAI_REALTIME_DEPLOYMENT": "gpt-realtime-2.1",
                  "AZURE_OPENAI_EASTUS2_API_KEY": "fake-key",
                  "AZURE_SEARCH_API_KEY": "fake-search-key",
                  "AZURE_SEARCH_ENDPOINT": "https://fake.search.windows.net",
                  "AZURE_SEARCH_INDEX": "menu-index",
+                 # Issue #144: Production now requires an explicit, valid Entra auth
+                 # configuration (design doc section 18.5).
+                 "AUTH_MODE": "Entra",
+                 "ENTRA_TENANT_ID": "11111111-1111-1111-1111-111111111111",
+                 "ENTRA_CLIENT_ID": "22222222-2222-2222-2222-222222222222",
+                 "APP_SESSION_SECRET": "test-session-secret-0123456789abcdef",
              }):
             mock_instance = MagicMock()
             mock_rt.return_value = mock_instance
@@ -409,12 +487,20 @@ class HealthEndpointTests(unittest.IsolatedAsyncioTestCase):
              patch("app.attach_tools_rtmt"), \
              patch.dict(os.environ, {
                  "RUNNING_IN_PRODUCTION": "1",
+                 "CONFORMANCE_TEST_HOOKS": "",
                  "AZURE_OPENAI_EASTUS2_ENDPOINT": "https://fake.openai.azure.com",
                  "AZURE_OPENAI_REALTIME_DEPLOYMENT": "gpt-realtime-2.1",
                  "AZURE_OPENAI_EASTUS2_API_KEY": "fake-key",
                  "AZURE_SEARCH_API_KEY": "fake-search-key",
                  "AZURE_SEARCH_ENDPOINT": "https://fake.search.windows.net",
                  "AZURE_SEARCH_INDEX": "menu-index",
+                 # Issue #144: Production now requires an explicit, valid Entra auth
+                 # configuration (design doc section 18.5). `/` stays anonymous either
+                 # way (18.2), so this doesn't change what the test itself asserts.
+                 "AUTH_MODE": "Entra",
+                 "ENTRA_TENANT_ID": "11111111-1111-1111-1111-111111111111",
+                 "ENTRA_CLIENT_ID": "22222222-2222-2222-2222-222222222222",
+                 "APP_SESSION_SECRET": "test-session-secret-0123456789abcdef",
              }):
             mock_rt.return_value = MagicMock()
             from aiohttp.test_utils import TestClient, TestServer
@@ -440,12 +526,20 @@ class CorsConfigTests(unittest.IsolatedAsyncioTestCase):
              patch("app.attach_tools_rtmt"), \
              patch.dict(os.environ, {
                  "RUNNING_IN_PRODUCTION": "1",
+                 "CONFORMANCE_TEST_HOOKS": "",
                  "AZURE_OPENAI_EASTUS2_ENDPOINT": "https://fake.openai.azure.com",
                  "AZURE_OPENAI_REALTIME_DEPLOYMENT": "gpt-realtime-2.1",
                  "AZURE_OPENAI_EASTUS2_API_KEY": "fake-key",
                  "AZURE_SEARCH_API_KEY": "fake-search-key",
                  "AZURE_SEARCH_ENDPOINT": "https://fake.search.windows.net",
                  "AZURE_SEARCH_INDEX": "menu-index",
+                 # Issue #144: Production now requires an explicit, valid Entra auth
+                 # configuration (design doc section 18.5). `/` stays anonymous either
+                 # way (18.2), so this doesn't change what the test itself asserts.
+                 "AUTH_MODE": "Entra",
+                 "ENTRA_TENANT_ID": "11111111-1111-1111-1111-111111111111",
+                 "ENTRA_CLIENT_ID": "22222222-2222-2222-2222-222222222222",
+                 "APP_SESSION_SECRET": "test-session-secret-0123456789abcdef",
              }):
             mock_rt.return_value = MagicMock()
             from aiohttp.test_utils import TestClient, TestServer

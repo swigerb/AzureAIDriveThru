@@ -94,7 +94,42 @@ param openAiRealtimeTranscriptionModel string = ''
 param openAiServiceLocation string
 
 param realtimeDeploymentCapacity int
+@description('Scale-only override for the gpt-realtime-2.1-mini entry in infra/model-deployments.json (issue #306: the default realtime model). Same "bump a param, azd provision" flow as realtimeDeploymentCapacity above.')
+param realtime21MiniDeploymentCapacity int
 param embeddingDeploymentCapacity int
+
+// --- Persona picker (ADR-001, docs/persona-architecture.md section 10) ---
+// This environment is independent of the old demo resource groups (see
+// docs/persona-architecture.md section 10 for the full list): its own
+// Foundry (Azure OpenAI) account, its own paid AI Search service. Adding
+// another persona is a personas/<id>/ pack (#70) -- no Bicep edits. Index
+// names are NOT tracked here: each pack's own persona.json `search.indexName`
+// (4.2) is the one source of truth, read by the #84 ingestion hook and by
+// the app itself. The tracked default for `personas` is empty on purpose
+// (Rick's review of #93): an empty PERSONAS env var makes the app's own
+// loader (app/backend/persona_loader.py, PersonaCatalog.load) enable every
+// pack it finds under PERSONAS_DIR, so no brand name needs to sit in
+// committed infra ahead of #76 (which inverts test_rebrand_verification.py's
+// pre-persona-pack brand guard) and no later flip is needed when a new
+// brand's pack (#79) lands. Override at provision time (azd env set
+// PERSONAS=...) only to restrict this environment to a subset of packs.
+@description('Allow-list of persona ids served by this environment, comma-separated (matches the app PERSONAS env var). Empty (the tracked default) means "every persona pack found under PERSONAS_DIR" -- app/backend/persona_loader.py discovers them automatically. Override at provision time (azd env set PERSONAS=...) only to restrict this environment to a subset of packs.')
+param personas string = ''
+
+@description('Default persona id when a session omits ?persona= (app DEFAULT_PERSONA env var). Should be one of the comma-separated ids in personas. Empty (the tracked default) means app/backend/persona_loader.py picks its own default (its first-party pack if enabled, else the first enabled id alphabetically) -- keeps tracked infra free of persona names, same as personas above.')
+param defaultPersona string = ''
+
+@description('JSON array of Foundry/Azure OpenAI model deployments to create on this environment\'s own account (section 7.2, 10.3). Each entry: catalogId (matches app/backend/config.yaml models.catalog), deploymentName, modelName, modelVersion, format (Foundry model-format id, defaults to OpenAI), skuName, capacity, isDefaultRealtime (exactly one entry should be true -- it becomes AZURE_OPENAI_REALTIME_DEPLOYMENT). realtimeDeploymentCapacity/realtime21MiniDeploymentCapacity/embeddingDeploymentCapacity above still override the matching entries by catalogId, so the existing "bump a param, azd provision" scaling flow (10.3) keeps working. The tracked list lives in infra/model-deployments.json (Rick\'s review of #93): adding a #82 model is one JSON entry there, no Bicep edits.')
+param openAiModelDeploymentsData array = loadJsonContent('model-deployments.json')
+
+// --- C# backend (section 10.1 option A, 10.2; added by S7, #17) ---
+// The module is always present so going live (#17) is a flag flip plus the DEPLOY.md
+// Step 0 service+tag patch; it deploys nothing while the flag is false.
+@description('Deploy the .NET container app alongside the Python one, sharing the same ACA environment, Foundry account, Search service and managed identity (10.2). app/backend-dotnet and app/Dockerfile.dotnet build a real image today; leave false until the owner-gated #17 go-live (DEPLOY.md, Step 0 onward). The module compiles either way.')
+param deployDotnetApp bool = false
+
+@description('Name override for the .NET container app. Empty = derived from the environment token, matching the Python app\'s naming convention.')
+param dotnetServiceName string = ''
 
 param tenantId string = tenant().tenantId
 
@@ -105,6 +140,24 @@ var abbrs = loadJsonContent('abbreviations.json')
 var resourceToken = toLower(uniqueString(subscription().id, environmentName, location))
 var tags = { 'azd-env-name': environmentName }
 
+// --- Deterministic app names + URIs (#311) ---
+// Both container apps' names are computed here, once, so the BACKEND_URI /
+// BACKEND_DOTNET_URI env vars below can be derived from name + the ACA
+// environment's defaultDomain (containerApps.outputs.defaultDomain) instead
+// of from the *other* app's module output. Reading acaBackend.outputs.uri
+// from inside acaBackendDotnet's env (or vice versa) would make one app
+// module depend on the other's deployment finishing first for no real
+// reason; computing the FQDN deterministically keeps the two modules
+// independent, matching container-app.bicep's own
+// `'https://${app.properties.configuration.ingress.fqdn}'` construction.
+var backendAppName = !empty(backendServiceName) ? backendServiceName : '${abbrs.webSitesContainerApps}backend-${resourceToken}'
+// Fit in the Container Apps 32-char name limit: 'capps-backend-dotnet-' plus the
+// 13-char resourceToken was 34 chars (over the limit). Production pins the override
+// explicitly (AZURE_CONTAINER_APP_DOTNET_NAME=capps-dotnet-pwvzk3t22wttm, 26 chars), so the
+// default below is shaped to match that exact pattern -- 'capps-dotnet-' (13) + a 13-char
+// resourceToken is 26 chars, well under 32, and the override continues to work unchanged.
+var dotnetAppName = !empty(dotnetServiceName) ? dotnetServiceName : '${abbrs.webSitesContainerApps}dotnet-${resourceToken}'
+
 @description('Whether the deployment is running on GitHub Actions')
 param runningOnGh string = ''
 
@@ -114,25 +167,14 @@ param runningOnAdo string = ''
 @description('Used by azd for containerapps deployment')
 param webAppExists bool
 
+@description('Used by azd for containerapps deployment of the .NET app (S7, #17): maps to SERVICE_BACKEND_DOTNET_RESOURCE_EXISTS, same pattern as webAppExists/SERVICE_BACKEND_RESOURCE_EXISTS above. azd sets a SERVICE_<NAME>_RESOURCE_EXISTS env var to false for every service it finds declared in azure.yaml, regardless of that service\'s own enablement -- but azure.yaml does not declare a backend-dotnet service at all until the owner-gated flip commit (see DEPLOY.md "Step 0"), so until then azd never sets this particular var and the parameter default (false) is what applies.')
+param dotnetWebAppExists bool = false
+
 @allowed(['Consumption', 'D4', 'D8', 'D16', 'D32', 'E4', 'E8', 'E16', 'E32', 'NC24-A100', 'NC48-A100', 'NC96-A100'])
 param azureContainerAppsWorkloadProfile string
 
 param acaIdentityName string = '${environmentName}-aca-identity'
 param containerRegistryName string = '${replace(environmentName, '-', '')}acr'
-
-// --- EasyAuth (Entra ID) parameters ---
-@description('Enable Entra ID authentication on the Container App. Requires authClientId and a pre-provisioned aad-client-secret.')
-param enableAuth bool = false
-
-@description('Entra ID application (client) ID for EasyAuth. Leave empty to skip auth configuration.')
-param authClientId string = ''
-
-@description('Entra ID tenant ID used to build the OpenID issuer URL. Defaults to the deployment subscription tenant.')
-param authTenantId string = tenant().tenantId
-
-@secure()
-@description('Entra ID client secret. Stored as Container App secret "aad-client-secret". Provision via azd env or out-of-band — never commit to source.')
-param authClientSecret string = ''
 
 // --- HMAC session-token secret (/api/auth/session) ---
 // Every replica/restart must validate tokens minted by any other, so the secret
@@ -146,6 +188,42 @@ param appSessionSecret string = ''
 param appSessionSecretFallback string = '${newGuid()}${newGuid()}'
 
 var effectiveAppSessionSecret = !empty(appSessionSecret) ? appSessionSecret : appSessionSecretFallback
+
+// --- Entra ID token validation (ADR-002, docs/persona-architecture.md section 18) ---
+// EasyAuth (the previously-removed enable-auth/client-id/client-secret params and the container
+// app auth module -- see git history for #146) is superseded by in-app bearer validation on both
+// backends: one Entra app registration, AUTH_MODE=Entra pinned in Azure, no client secret. These
+// four values are the shared contract (section 18.8) both container apps' env blocks read;
+// AUTH_MODE itself is not a param -- it's hardcoded 'Entra' on each app below, same as
+// RUNNING_IN_PRODUCTION/ASPNETCORE_ENVIRONMENT, so this environment can never accidentally
+// provision a pass-through backend. #17 wired the C# app first; #146 completes the contract by
+// wiring the Python app the same way and deleting EasyAuth.
+@description('Entra ID tenant id for AUTH_MODE=Entra token validation (ADR-002 18.1/18.4). Empty falls back to the deployment subscription tenant (effectiveEntraTenantId below); override only if the app registration lives in a different tenant. Left empty rather than defaulted to tenant().tenantId because azd sends the literal empty string from main.parameters.json\'s ENTRA_TENANT_ID default-value syntax when the env var is unset, which would override a non-empty Bicep default with an empty string.')
+param entraTenantId string = ''
+
+@description('Entra ID application (client) id for AUTH_MODE=Entra token validation (ADR-002 18.1/18.4). Empty until Setup-EntraAuth.ps1 (#146) creates the registration -- both backends fail fast in Production without a valid id, so an empty value here just means this environment is not provisioned in Production mode yet.')
+param entraClientId string = ''
+
+// Same pattern as effectiveAppSessionSecret above: an empty entraTenantId (the value azd actually
+// sends when ENTRA_TENANT_ID is unset -- see the param description) falls back to the
+// subscription's own tenant here instead of relying on the param default, which azd bypasses.
+var effectiveEntraTenantId = !empty(entraTenantId) ? entraTenantId : tenant().tenantId
+
+@description('Delegated scope required on an Entra access token (ADR-002 18.1/18.4).')
+param entraApiScope string = 'access_as_user'
+
+@description('App role required on an Entra access token (ADR-002 18.1/18.4).')
+param entraAppRole string = 'DriveThru.User'
+
+// Ingress switches (ADR-002 18.8/18.10): let each app be provisioned and warmed up without being
+// publicly reachable, so a dark-provision (ingress off) can validate the Entra pins via
+// Verify-ProductionAuth.ps1 -RevisionsOnly before flipping ingress on. Independent per app because
+// the C# app must not go public before its own Entra parity work lands (#147, design 18.12).
+@description('Ingress switch for the Python container app. Defaults true (its historical behavior); set false for the dark-provision step of the rollout (ADR-002 18.10). Maps to the azd env BACKEND_INGRESS_ENABLED.')
+param backendIngressEnabled bool = true
+
+@description('Ingress switch for the .NET container app. Defaults false: the C# app gets no ingress (not even environment-internal) even when deployDotnetApp is true, until the ingress-last rollout in DEPLOY.md verifies its Entra token validation dark via Verify-ProductionAuth.ps1 -RevisionsOnly. Maps to the azd env BACKEND_DOTNET_INGRESS_ENABLED.')
+param backendDotnetIngressEnabled bool = false
 
 // Figure out if we're running as a user or service principal
 var principalType = empty(runningOnGh) && empty(runningOnAdo) ? 'User' : 'ServicePrincipal'
@@ -210,6 +288,13 @@ module containerApps 'core/host/container-apps.bicep' = {
   }
 }
 
+// Deterministic FQDNs (#311): same host Container Apps itself assigns
+// (<app-name>.<environment defaultDomain>), built from containerApps.outputs.defaultDomain
+// rather than acaBackend.outputs.uri / acaBackendDotnet.outputs.uri so neither app module
+// depends on the other's deployment -- see the backendAppName/dotnetAppName comment above.
+var backendUri = 'https://${backendAppName}.${containerApps.outputs.defaultDomain}'
+var dotnetUri = 'https://${dotnetAppName}.${containerApps.outputs.defaultDomain}'
+
 // Container Apps for the web application (Python Quart app with JS frontend)
 module acaBackend 'core/host/container-app-upsert.bicep' = {
   name: 'aca-web'
@@ -219,7 +304,7 @@ module acaBackend 'core/host/container-app-upsert.bicep' = {
     acaIdentity
   ]
   params: {
-    name: !empty(backendServiceName) ? backendServiceName : '${abbrs.webSitesContainerApps}backend-${resourceToken}'
+    name: backendAppName
     location: location
     identityName: acaIdentityName
     exists: webAppExists
@@ -240,19 +325,18 @@ module acaBackend 'core/host/container-app-upsert.bicep' = {
     // The Envoy affinity cookie is set on the page load and sent on the
     // websocket upgrade. Needs single revision mode (container-app.bicep default).
     stickySessionsAffinity: 'sticky'
-    secrets: union(enableAuth && !empty(authClientSecret) ? { 'aad-client-secret': authClientSecret } : {}, {
+    // Ingress last (ADR-002 18.8/18.10): defaults true (this app's historical behavior), but the
+    // rollout's dark-provision step sets BACKEND_INGRESS_ENABLED=false so Entra pins can be
+    // validated before the app is publicly reachable.
+    ingressEnabled: backendIngressEnabled
+    secrets: {
       'app-session-secret': effectiveAppSessionSecret
-    })
-    // Sending a secrets list replaces the app's secrets, so keep an
-    // out-of-band aad-client-secret alive when it isn't supplied here.
-    preserveExistingSecretNames: enableAuth && empty(authClientSecret) ? [ 'aad-client-secret' ] : []
+    }
     secretEnv: {
       APP_SESSION_SECRET: 'app-session-secret'
     }
     env: union({
-      AZURE_SEARCH_ENDPOINT: reuseExistingSearch
-        ? searchEndpoint
-        : 'https://${searchService.outputs.name}.search.windows.net'
+      AZURE_SEARCH_ENDPOINT: resolvedSearchEndpoint
       AZURE_SEARCH_INDEX: searchIndexName
       AZURE_SEARCH_SEMANTIC_CONFIGURATION: searchSemanticConfiguration
       AZURE_SEARCH_IDENTIFIER_FIELD: searchIdentifierField
@@ -263,9 +347,13 @@ module acaBackend 'core/host/container-app-upsert.bicep' = {
       // Free SKU has no semantic ranker; the app must not request one or every
       // query returns HTTP 400.
       AZURE_SEARCH_SEMANTIC_RANKER: actualSearchServiceSemanticRankerLevel
-      AZURE_OPENAI_EASTUS2_ENDPOINT: reuseExistingOpenAi ? openAiEndpoint : openAi.outputs.endpoint
-      AZURE_OPENAI_REALTIME_DEPLOYMENT: reuseExistingOpenAi ? openAiRealtimeDeployment : openAiDeployments[0].name
+      AZURE_OPENAI_EASTUS2_ENDPOINT: resolvedOpenAiEndpoint
+      AZURE_OPENAI_REALTIME_DEPLOYMENT: reuseExistingOpenAi ? openAiRealtimeDeployment : defaultRealtimeDeployment.deploymentName
       AZURE_OPENAI_REALTIME_VOICE_CHOICE: openAiRealtimeVoiceChoice
+      // Issue #82: the cascade pipeline's Foundry chat client endpoint.
+      AZURE_AI_FOUNDRY_ENDPOINT: resolvedFoundryEndpoint
+      // Catalog id -> deployment name for every model this environment created (7.2).
+      AZURE_AI_MODEL_DEPLOYMENTS: string(modelDeploymentsMap)
       RUNNING_IN_PRODUCTION: 'true'
       // Changing a secret alone does not restart running replicas; a changed
       // fingerprint changes the template, so every replica restarts on the new
@@ -273,7 +361,30 @@ module acaBackend 'core/host/container-app-upsert.bicep' = {
       APP_SESSION_SECRET_FINGERPRINT: uniqueString(effectiveAppSessionSecret)
       // For using managed identity to access Azure resources. See https://github.com/microsoft/azure-container-apps/issues/442
       AZURE_CLIENT_ID: acaIdentity.outputs.clientId
+      // ADR-002 18.8: NO EasyAuth -- superseded tenant-wide by in-app bearer validation. Same
+      // env-var names and Entra app registration the .NET app reads (see acaBackendDotnet below).
+      AUTH_MODE: 'Entra'
+      ENTRA_TENANT_ID: effectiveEntraTenantId
+      ENTRA_CLIENT_ID: entraClientId
+      ENTRA_API_SCOPE: entraApiScope
+      ENTRA_APP_ROLE: entraAppRole
     },
+    // Both apps get both URIs (#311): each app may need to call the other (e.g. a future
+    // cross-backend health check or redirect), so BACKEND_URI / BACKEND_DOTNET_URI are injected
+    // identically into acaBackend's and acaBackendDotnet's env. Each is included only when that
+    // app's own ingress is actually enabled -- an app with ingress off has no public URI, so the
+    // env var is omitted entirely rather than carrying a URL nothing can reach.
+    backendIngressEnabled ? { BACKEND_URI: backendUri } : {},
+    (deployDotnetApp && backendDotnetIngressEnabled) ? { BACKEND_DOTNET_URI: dotnetUri } : {},
+    // Persona allow-list (4.2, 10.2): omit PERSONAS entirely when empty (the
+    // tracked default) so app/backend/persona_loader.py's own "no PERSONAS ->
+    // enable every pack found under PERSONAS_DIR" behavior applies, instead of
+    // the app seeing an explicit empty string (Rick's review of #93).
+    empty(personas) ? {} : { PERSONAS: personas },
+    // Same "omit when empty" treatment for the default persona id, so the
+    // loader's own default (its first-party pack if enabled, else the first
+    // enabled id alphabetically) applies instead of a hardcoded name here.
+    empty(defaultPersona) ? {} : { DEFAULT_PERSONA: defaultPersona },
     // Optional overrides of model.reasoning_effort / reasoning_model / transcription_model
     // in app/backend/config.yaml; unset means the config.yaml value applies.
     empty(openAiRealtimeReasoningEffort) ? {} : { AZURE_OPENAI_REALTIME_REASONING_EFFORT: openAiRealtimeReasoningEffort },
@@ -282,33 +393,174 @@ module acaBackend 'core/host/container-app-upsert.bicep' = {
   }
 }
 
+// Container App for the .NET backend (10.1 option A, 10.2). Disabled by
+// default (deployDotnetApp = false, bound to DEPLOY_DOTNET_APP in
+// main.parameters.json): app/backend-dotnet and its azure.yaml service entry
+// both exist now, together with the azd-service-name tag below (the
+// owner-gated flip commit, DEPLOY.md's "Step 0"), but provisioning the live
+// resource itself still requires DEPLOY_DOTNET_APP=true -- Brian's call, per
+// environment. It shares acaIdentity, so the RBAC already granted below
+// (openAiRoleBackend, searchRoleBackend) covers it too -- no separate role
+// assignments needed for a second app on the same identity.
+module acaBackendDotnet 'core/host/container-app-upsert.bicep' = if (deployDotnetApp) {
+  name: 'aca-web-dotnet'
+  scope: resourceGroup
+  params: {
+    name: dotnetAppName
+    location: location
+    identityName: acaIdentityName
+    // S7 (#17 go-live): same pattern as acaBackend's webAppExists above, so a redeploy of an
+    // already-provisioned dotnet app doesn't fall back to the helloworld placeholder image.
+    exists: dotnetWebAppExists
+    workloadProfile: azureContainerAppsWorkloadProfile
+    containerRegistryName: containerApps.outputs.registryName
+    containerAppsEnvironmentName: containerApps.outputs.environmentName
+    identityType: 'UserAssigned'
+    // S7 (#17 go-live, the flip commit): the azd-service-name tag landed here together with the
+    // matching azure.yaml `backend-dotnet` service entry, inside this module's `if
+    // (deployDotnetApp)` gate so an environment that has not flipped DEPLOY_DOTNET_APP=true never
+    // provisions this Container App. See DEPLOY.md's ".NET container app (S7, #17)" section,
+    // "Step 0", and test_azd_service_wiring.py for the bidirectional drift guard that keeps the
+    // tag and service in sync.
+    tags: union(tags, { 'azd-service-name': 'backend-dotnet' })
+    targetPort: 8000
+    containerCpuCoreCount: '1.0'
+    containerMemory: '2Gi'
+    containerMinReplicas: 1
+    containerMaxReplicas: 5
+    healthProbePath: '/health'
+    enableWebSocket: true
+    stickySessionsAffinity: 'sticky'
+    // Ingress last (ADR-002 18.8/18.10): defaults false, independent of the Python app's own
+    // ingress, until #147's parity work lands.
+    ingressEnabled: backendDotnetIngressEnabled
+    // Same shared HMAC session secret as the Python app (#44) -- byte-identical because both
+    // read the same effectiveAppSessionSecret variable into a Container App secret of the same
+    // name, not because Container App secrets are shared by identity.
+    secrets: {
+      'app-session-secret': effectiveAppSessionSecret
+    }
+    secretEnv: {
+      APP_SESSION_SECRET: 'app-session-secret'
+    }
+    // Same Foundry account, Search service and persona/model config as the Python app (10.2).
+    // AUTH_MODE=Entra + ENTRA_* (ADR-002 18.8): the same contract acaBackend's env carries above --
+    // one Entra app registration, no client secret, no EasyAuth anywhere in this file. The env
+    // names below match what #147 will read (persona-architecture.md 18.8); the validation logic
+    // itself is #147's scope, not this prep task's.
+    env: union({
+      AZURE_SEARCH_ENDPOINT: resolvedSearchEndpoint
+      AZURE_SEARCH_INDEX: searchIndexName
+      AZURE_SEARCH_SEMANTIC_CONFIGURATION: searchSemanticConfiguration
+      AZURE_SEARCH_IDENTIFIER_FIELD: searchIdentifierField
+      AZURE_SEARCH_CONTENT_FIELD: searchContentField
+      AZURE_SEARCH_TITLE_FIELD: searchTitleField
+      AZURE_SEARCH_EMBEDDING_FIELD: searchEmbeddingField
+      AZURE_SEARCH_USE_VECTOR_QUERY: searchUseVectorQuery
+      AZURE_SEARCH_SEMANTIC_RANKER: actualSearchServiceSemanticRankerLevel
+      AZURE_OPENAI_EASTUS2_ENDPOINT: resolvedOpenAiEndpoint
+      AZURE_OPENAI_REALTIME_DEPLOYMENT: reuseExistingOpenAi ? openAiRealtimeDeployment : defaultRealtimeDeployment.deploymentName
+      AZURE_OPENAI_REALTIME_VOICE_CHOICE: openAiRealtimeVoiceChoice
+      // Issue #82: the cascade pipeline's Foundry chat client endpoint (unused by the
+      // .NET backend until it ports the cascade processor -- see issue #82's scope note).
+      AZURE_AI_FOUNDRY_ENDPOINT: resolvedFoundryEndpoint
+      AZURE_AI_MODEL_DEPLOYMENTS: string(modelDeploymentsMap)
+      RUNNING_IN_PRODUCTION: 'true'
+      AZURE_CLIENT_ID: acaIdentity.outputs.clientId
+      // Same fingerprint trick as the Python app: a changed secret changes the template, so
+      // every replica restarts together instead of old and new replicas disagreeing.
+      APP_SESSION_SECRET_FINGERPRINT: uniqueString(effectiveAppSessionSecret)
+      // Design 18.8: pinned alongside RUNNING_IN_PRODUCTION so the C# app never runs its
+      // Development-environment behaviors (e.g. developer exception pages) in Azure.
+      ASPNETCORE_ENVIRONMENT: 'Production'
+      AUTH_MODE: 'Entra'
+      ENTRA_TENANT_ID: effectiveEntraTenantId
+      ENTRA_CLIENT_ID: entraClientId
+      ENTRA_API_SCOPE: entraApiScope
+      ENTRA_APP_ROLE: entraAppRole
+    },
+    // Same BACKEND_URI / BACKEND_DOTNET_URI treatment as acaBackend's env above.
+    backendIngressEnabled ? { BACKEND_URI: backendUri } : {},
+    (deployDotnetApp && backendDotnetIngressEnabled) ? { BACKEND_DOTNET_URI: dotnetUri } : {},
+    // Same "omit when empty" persona behavior as the Python app's env, above.
+    empty(personas) ? {} : { PERSONAS: personas },
+    empty(defaultPersona) ? {} : { DEFAULT_PERSONA: defaultPersona },
+    // Rick's review of #281 (R2): identical optional overrides to acaBackend's env above, so an
+    // environment that sets one of these runs the same realtime model/reasoning config on both
+    // apps instead of the C# app silently falling back to config.yaml's default.
+    empty(openAiRealtimeReasoningEffort) ? {} : { AZURE_OPENAI_REALTIME_REASONING_EFFORT: openAiRealtimeReasoningEffort },
+    empty(openAiRealtimeReasoningModel) ? {} : { AZURE_OPENAI_REALTIME_REASONING_MODEL: openAiRealtimeReasoningModel },
+    empty(openAiRealtimeTranscriptionModel) ? {} : { AZURE_OPENAI_REALTIME_TRANSCRIPTION_MODEL: openAiRealtimeTranscriptionModel })
+  }
+}
+
 var embedModel = 'text-embedding-3-large'
-var openAiDeployments = [
-  {
-    name: 'gpt-realtime-2.1'
-    model: {
-      format: 'OpenAI'
-      name: 'gpt-realtime-2.1'
-      version: '2026-07-07'
-    }
-    sku: {
-      name: 'GlobalStandard'
-      capacity: realtimeDeploymentCapacity
-    }
+
+// Computed once so both container apps (and the outputs below) reference the
+// same value instead of repeating the reuseExisting ternary at every call site.
+var resolvedSearchEndpoint = reuseExistingSearch ? searchEndpoint : 'https://${searchService.outputs.name}.search.windows.net'
+// The AVM cognitive-services/account module's generic `endpoint` output
+// (cognitiveService.properties.endpoint) is the multi-service Foundry
+// endpoint for an `AIServices`-kind account, not the OpenAI-compatible host.
+// The realtime relay (rtmt.py) needs the `<subdomain>.openai.azure.com` host
+// specifically (Rick's review of #93; confirmed against the Foundry realtime
+// docs, which show `https://{your-resource}.openai.azure.com` regardless of
+// account kind) -- built explicitly from the same customSubDomainName passed
+// to the module below, instead of trusting the module's generic output.
+var openAiCustomSubDomainName = !empty(openAiServiceName)
+  ? openAiServiceName
+  : '${abbrs.cognitiveServicesAccounts}${resourceToken}'
+var resolvedOpenAiEndpoint = reuseExistingOpenAi ? openAiEndpoint : 'https://${openAiCustomSubDomainName}.openai.azure.com'
+// Issue #82: the cascade pipeline's Foundry chat model calls (azure-ai-inference SDK,
+// DefaultAzureCredential only) go through the Azure AI Model Inference API instead of
+// the OpenAI-compatible host above -- the surface that also serves the design's
+// non-OpenAI-format models (Phi-4), which the OpenAI-compatible endpoint cannot.
+// Same account, same `openAiCustomSubDomainName`, different DNS name and `/models`
+// route suffix (Microsoft Learn: Azure AI Model Inference API reference). Reuse mode
+// has no dedicated override param yet (no reuse-existing environment has exercised
+// cascade so far); it derives from the same subdomain as resolvedOpenAiEndpoint until
+// one is needed.
+var resolvedFoundryEndpoint = 'https://${openAiCustomSubDomainName}.services.ai.azure.com/models'
+
+// The model deployment list (10.3, tracked in infra/model-deployments.json --
+// Rick's review of #93: adding a #82 model is one JSON entry there, no Bicep
+// edits) with the three existing scale-only params (realtimeDeploymentCapacity,
+// realtime21MiniDeploymentCapacity, embeddingDeploymentCapacity) still
+// overriding their matching entries by catalogId, so "bump a param, azd
+// provision" keeps working for the knobs the design calls out even though
+// the list itself is data, not hardcoded Bicep.
+var capacityOverridesByCatalogId = {
+  'gpt-realtime-2.1': realtimeDeploymentCapacity
+  'gpt-realtime-2.1-mini': realtime21MiniDeploymentCapacity
+  '${embedModel}': embeddingDeploymentCapacity
+}
+var openAiModelDeployments = [for d in openAiModelDeploymentsData: union(d, {
+  capacity: capacityOverridesByCatalogId[?d.catalogId] ?? d.capacity
+})]
+// Exactly one entry should be isDefaultRealtime: true -- it feeds
+// AZURE_OPENAI_REALTIME_DEPLOYMENT, same as the old openAiDeployments[0]. Falls
+// back to the list's first entry so a catalog with no isDefaultRealtime flag
+// (or an empty override list) still resolves to something instead of null.
+var defaultRealtimeDeployment = first(filter(openAiModelDeployments, d => d.isDefaultRealtime)) ?? openAiModelDeployments[0]
+// Bicep output AZURE_AI_MODEL_DEPLOYMENTS (7.2): catalog id -> deployment name,
+// for whichever deployments this environment actually created.
+var modelDeploymentsMap = reduce(openAiModelDeployments, {}, (cur, d) => union(cur, { '${d.catalogId}': d.deploymentName }))
+
+var openAiDeployments = [for d in openAiModelDeployments: {
+  name: d.deploymentName
+  model: {
+    // Per-model Foundry format id (Rick's review of #93), defaulting to
+    // OpenAI so an entry that omits it (or an older cached parameter file)
+    // still deploys exactly as before.
+    format: d.?format ?? 'OpenAI'
+    name: d.modelName
+    version: d.modelVersion
   }
-  {
-    name: embedModel
-    model: {
-      format: 'OpenAI'
-      name: embedModel
-      version: '1'
-    }
-    sku: {
-      name: 'Standard'
-      capacity: embeddingDeploymentCapacity
-    }
+  sku: {
+    name: d.skuName
+    capacity: d.capacity
   }
-]
+}]
 
 module openAi 'br/public:avm/res/cognitive-services/account:0.8.0' = if (!reuseExistingOpenAi) {
   name: 'openai'
@@ -317,10 +569,13 @@ module openAi 'br/public:avm/res/cognitive-services/account:0.8.0' = if (!reuseE
     name: !empty(openAiServiceName) ? openAiServiceName : '${abbrs.cognitiveServicesAccounts}${resourceToken}'
     location: openAiServiceLocation
     tags: tags
-    kind: 'OpenAI'
-    customSubDomainName: !empty(openAiServiceName)
-      ? openAiServiceName
-      : '${abbrs.cognitiveServicesAccounts}${resourceToken}'
+    // A Foundry (multi-service AI Services) account, not a plain OpenAI one
+    // (Rick's review of #93): #82's non-OpenAI Foundry chat models can only
+    // deploy on an `AIServices`-kind account, and `kind` is immutable after
+    // the first provision. The realtime host stays `<subdomain>.openai.azure.com`
+    // regardless (see resolvedOpenAiEndpoint above and openAiCustomSubDomainName).
+    kind: 'AIServices'
+    customSubDomainName: openAiCustomSubDomainName
     sku: 'S0'
     deployments: openAiDeployments
     disableLocalAuth: true
@@ -329,6 +584,15 @@ module openAi 'br/public:avm/res/cognitive-services/account:0.8.0' = if (!reuseE
     roleAssignments: [
       {
         roleDefinitionIdOrName: 'Cognitive Services OpenAI User'
+        principalId: principalId
+        principalType: principalType
+      }
+      {
+        // Issue #82 (Rick's #82 review notes): the cascade pipeline's Foundry chat
+        // client calls the Azure AI Model Inference API (resolvedFoundryEndpoint),
+        // which authorizes against the generic "Cognitive Services User" role rather
+        // than (or in addition to) "Cognitive Services OpenAI User" above.
+        roleDefinitionIdOrName: 'Cognitive Services User'
         principalId: principalId
         principalType: principalType
       }
@@ -423,6 +687,24 @@ module openAiRoleBackend 'core/security/role.bicep' = {
   }
 }
 
+// Issue #82 (Rick's PR #118 review, required item 6): the cascade pipeline's Foundry chat
+// client (ChatCompletionsClient against resolvedFoundryEndpoint) authorizes with the generic
+// "Cognitive Services User" role, same as the `principalId` grant already on the `openAi`
+// module above -- that earlier grant only covers the deploying user's own `az` session/local
+// dev, never the deployed container app, so without this module the deployed backend's
+// managed identity 401s the very first cascade chat-completions call. STT/TTS need no separate
+// grant here: they call the SAME AIServices account's `/openai/v1/audio/*` routes, already
+// covered by `openAiRoleBackend`'s "Cognitive Services OpenAI User" below.
+module openAiRoleBackendCascade 'core/security/role.bicep' = {
+  scope: openAiResourceGroup
+  name: 'openai-role-backend-cascade'
+  params: {
+    principalId: acaBackend.outputs.identityPrincipalId
+    roleDefinitionId: 'a97b65f3-24c7-4388-baec-2e87135dc908' // Cognitive Services User
+    principalType: 'ServicePrincipal'
+  }
+}
+
 // Used to issue search queries
 // https://learn.microsoft.com/azure/search/search-security-rbac
 module searchRoleBackend 'core/security/role.bicep' = {
@@ -457,39 +739,26 @@ module openAiRoleSearchService 'core/security/role.bicep' = if (!reuseExistingSe
   }
 }
 
-// --- EasyAuth: Entra ID authentication on the Container App ---
-// Only deployed when enableAuth is true and a client ID is provided.
-// The Container App secret 'aad-client-secret' must be provisioned before or
-// alongside this resource (handled above via the secrets param when authClientSecret is supplied,
-// or provisioned out-of-band via `az containerapp secret set`).
-module containerAppAuth 'core/security/container-app-auth.bicep' = if (enableAuth && !empty(authClientId)) {
-  name: 'container-app-auth'
-  scope: resourceGroup
-  dependsOn: [
-    acaBackend
-  ]
-  params: {
-    containerAppName: acaBackend.outputs.name
-    clientId: authClientId
-    tenantId: authTenantId
-  }
-}
-
 output AZURE_LOCATION string = location
 output AZURE_TENANT_ID string = tenantId
 output AZURE_RESOURCE_GROUP string = resourceGroup.name
 
-output AZURE_OPENAI_EASTUS2_ENDPOINT string = reuseExistingOpenAi ? openAiEndpoint : openAi.outputs.endpoint
+output AZURE_OPENAI_EASTUS2_ENDPOINT string = resolvedOpenAiEndpoint
+// Issue #82: the cascade pipeline's Foundry chat client endpoint (see
+// resolvedFoundryEndpoint above). Container apps read this as AZURE_AI_FOUNDRY_ENDPOINT.
+output AZURE_AI_FOUNDRY_ENDPOINT string = resolvedFoundryEndpoint
 output AZURE_OPENAI_REALTIME_DEPLOYMENT string = reuseExistingOpenAi
   ? openAiRealtimeDeployment
-  : openAiDeployments[0].name
+  : defaultRealtimeDeployment.deploymentName
 output AZURE_OPENAI_REALTIME_VOICE_CHOICE string = openAiRealtimeVoiceChoice
 output AZURE_OPENAI_EMBEDDING_DEPLOYMENT string = embedModel
 output AZURE_OPENAI_EMBEDDING_MODEL string = embedModel
+// Catalog id -> deployment name for every model this environment created
+// (section 7.2). A catalog entry (app/backend/config.yaml) with no matching
+// key here isn't selectable.
+output AZURE_AI_MODEL_DEPLOYMENTS string = string(modelDeploymentsMap)
 
-output AZURE_SEARCH_ENDPOINT string = reuseExistingSearch
-  ? searchEndpoint
-  : 'https://${searchService.outputs.name}.search.windows.net'
+output AZURE_SEARCH_ENDPOINT string = resolvedSearchEndpoint
 output AZURE_SEARCH_INDEX string = searchIndexName
 output AZURE_SEARCH_SEMANTIC_CONFIGURATION string = searchSemanticConfiguration
 output AZURE_SEARCH_IDENTIFIER_FIELD string = searchIdentifierField
@@ -508,5 +777,12 @@ output AZURE_STORAGE_CONNECTION_STRING string = 'ResourceId=/subscriptions/${sub
 output AZURE_STORAGE_CONTAINER string = storageContainerName
 output AZURE_STORAGE_RESOURCE_GROUP string = storageResourceGroup.name
 
+output PERSONAS string = personas
+output DEFAULT_PERSONA string = defaultPersona
+
 output BACKEND_URI string = acaBackend.outputs.uri
+// Empty until deployDotnetApp is flipped on (S7, #17); the C# app then serves
+// the same frontend and personas behind its own hostname (10.1 option A).
+output AZURE_CONTAINER_APP_DOTNET_NAME string = deployDotnetApp ? acaBackendDotnet.outputs.name : ''
+output BACKEND_DOTNET_URI string = deployDotnetApp ? acaBackendDotnet.outputs.uri : ''
 output AZURE_CONTAINER_REGISTRY_ENDPOINT string = containerApps.outputs.registryLoginServer

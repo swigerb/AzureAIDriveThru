@@ -1,0 +1,91 @@
+{
+  "menuItems": [
+    {
+      "category": "meals",
+      "items": [
+        {
+          "name": "Zeta Supreme Combo",
+          "sizes": [
+            { "size": "regular", "price": 5.49 },
+            { "size": "large", "price": 6.49 }
+          ],
+          "description": "Test Zeta's flagship combo -- a main plus two bundle slots with NO autoFill default, so both start vacant until a standalone side/drink is absorbed or the model explicitly picks one. #283: the open drinks slot (never autofilled) is what lets this pack qualify for ComboComponentResizeConformanceTests' Discovered_* theories, which require a real, non-wholeBundleSize, non-componentUpcharge persona whose own bundle genuinely leaves a drink slot open.",
+          "bundle": {
+            "slots": ["sides", "drinks"],
+            "defaultSize": "regular"
+          }
+        },
+        {
+          "name": "Zeta Value Combo",
+          "sizes": [
+            { "size": "regular", "price": 4.49 }
+          ],
+          "description": "Test Zeta's second, distinctly-named combo -- also a drinks-only bundle slot with NO autoFill, so a test can seed TWO separate bundle instances at once (#283, mirroring #184 round 3 item H(b)'s DiscoverTwoInstance) and verify a by-name drink resize targets only the instance holding that exact item.",
+          "bundle": {
+            "slots": ["drinks"],
+            "defaultSize": "regular"
+          }
+        }
+      ]
+    },
+    {
+      "category": "drinks",
+      "items": [
+        {
+          "name": "Zeta Cola",
+          "sizes": [
+            { "size": "regular", "price": 1.99 },
+            { "size": "large", "price": 2.49 }
+          ],
+          "description": "Test Zeta's house cola -- the fixture's only multi-size, real (non-autoFill-only) comboSlot drink, used by the combo-component-resize tests to prove resizing an included-any-size slot item never changes the bundle's own total.",
+          "comboSlot": "drinks"
+        },
+        {
+          "name": "Zeta Lemonade",
+          "sizes": [
+            { "size": "regular", "price": 1.69 }
+          ],
+          "description": "Test Zeta's lemonade -- a SECOND real, single-size comboSlot drink, distinct from Zeta Cola, so a test can seed two separate bundle instances with two distinguishable drinks and verify a by-name resize targets only the instance holding that exact item.",
+          "comboSlot": "drinks"
+        }
+      ]
+    },
+    {
+      "category": "sides",
+      "items": [
+        {
+          "name": "Zeta Fries",
+          "sizes": [
+            { "size": "regular", "price": 1.49 }
+          ],
+          "description": "Test Zeta's standalone fries -- a real side a guest can order before the combo, so bundle-pivot absorption (not autoFill, which this pack never has) fills Zeta Supreme Combo's own sides slot.",
+          "comboSlot": "sides"
+        }
+      ]
+    },
+    {
+      "category": "snacks",
+      "items": [
+        {
+          "name": "ZORBS® Bite Treats",
+          "sizes": [
+            { "size": "10 count", "price": 3.99 },
+            { "size": "25 count", "price": 8.99 }
+          ],
+          "description": "#313 (Rick's review, items 2/3): a TEST-ONLY, count-sized, trademark-cased item -- the synthetic equivalent of a real pack's own bite-sized brand treat (e.g. a real pack's own MUNCHKINS-style item), so the count-size word-spelled-quantity read-back and the case-sensitive spokenAs/spokenName pronunciation rewrite can be exercised against a non-branded fixture pack instead of a real persona pack id.",
+          "comboSlot": "none",
+          "aliases": ["ZORBS Bite Treats", "Zorbs"],
+          "spokenName": "Zorb Bite Treats"
+        },
+        {
+          "name": "Zeta Snack Mix (Family Size)",
+          "sizes": [
+            { "size": "regular", "price": 3.49 }
+          ],
+          "description": "#325 B2 regression fixture (Rick's PR #326 review): a standalone item whose OWN canonical name contains a paren group -- mirrors a real pack's own data (e.g. a shipped pack's real \"Milk Jug (1%) - White\") -- so update_order's add/modify/remove canonicalization can be proven NOT to duplicate the canonical name's own \"(...)\" group when the model echoes it back verbatim, NOT to lose the merge guarantee when the model omits it, and to still correctly stack a GENUINE guest-added customization group on top without reading the canonical name's own parens as that customization.",
+          "comboSlot": "none"
+        }
+      ]
+    }
+  ]
+}

@@ -6,57 +6,70 @@ from unittest.mock import AsyncMock
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
+from default_persona import get_default_persona
+from menu_utils import get_catalog_for_persona
 from rtmt import ToolResultDirection
-from tools import _infer_category, _is_extra_item, _search_cache, search
+from tools import _search_cache, search
+
+# #74: the default (env-driven) persona's own MenuCatalog -- replaces the old module-level
+# menu_utils/tools free functions (is_extra_item/infer_category) these tests used to call
+# directly. Every session (including the default one) resolves its menu through this exact
+# same MenuCatalog path now.
+_SONIC = get_catalog_for_persona(get_default_persona())
 
 
 class IsExtraItemTests(unittest.TestCase):
     def test_recognized_extras(self):
-        self.assertTrue(_is_extra_item("Extra Patty"))
-        self.assertTrue(_is_extra_item("Whipped Cream"))
-        self.assertTrue(_is_extra_item("Flavor Add-In"))
-        self.assertTrue(_is_extra_item("Extra Cheese"))
+        self.assertTrue(_SONIC.is_extra_item("Whipped Cream"))
+        self.assertTrue(_SONIC.is_extra_item("Flavor Add-In"))
 
     def test_case_insensitive(self):
-        self.assertTrue(_is_extra_item("extra patty"))
-        self.assertTrue(_is_extra_item("WHIPPED CREAM"))
+        self.assertTrue(_SONIC.is_extra_item("WHIPPED CREAM"))
+        self.assertTrue(_SONIC.is_extra_item("flavor add-in"))
 
     def test_non_extras(self):
-        self.assertFalse(_is_extra_item("Tots"))
-        self.assertFalse(_is_extra_item("Cherry Limeade"))
-        self.assertFalse(_is_extra_item("Sonic Cheeseburger"))
-        self.assertFalse(_is_extra_item("Onion Rings"))
+        self.assertFalse(_SONIC.is_extra_item("Tots"))
+        self.assertFalse(_SONIC.is_extra_item("Cherry Limeade"))
+        self.assertFalse(_SONIC.is_extra_item("Sonic Cheeseburger"))
+        self.assertFalse(_SONIC.is_extra_item("Onion Rings"))
+
+    def test_off_menu_names_are_not_extras(self):
+        """#73: "Extra Patty"/"Extra Cheese" are not real menuItems.json items at all -- they're
+        never real extras, they're rejected outright as not_on_menu by tools.py's update_order
+        (via MenuCatalog.resolve_menu_item) before is_extra_item would ever matter for them."""
+        self.assertFalse(_SONIC.is_extra_item("Extra Patty"))
+        self.assertFalse(_SONIC.is_extra_item("Extra Cheese"))
 
 
 class InferCategoryTests(unittest.TestCase):
     def test_slush_inferred(self):
-        cat = _infer_category("Cherry Limeade")
+        cat = _SONIC.infer_category("Cherry Limeade")
         self.assertIn("slush", cat)
-        cat2 = _infer_category("Ocean Water")
+        cat2 = _SONIC.infer_category("Ocean Water")
         self.assertIn("slush", cat2)
 
     def test_shakes_inferred(self):
-        cat = _infer_category("Classic Vanilla Shake")
+        cat = _SONIC.infer_category("Vanilla Classic Shake")
         self.assertIn("shake", cat)
-        cat2 = _infer_category("Oreo Blast")
+        cat2 = _SONIC.infer_category("Turtle Truffle Nut Blast")
         self.assertIn("shake", cat2)
 
     def test_combos_inferred(self):
-        cat = _infer_category("Sonic Cheeseburger")
+        cat = _SONIC.infer_category("Sonic Cheeseburger")
         self.assertTrue("burger" in cat or "combo" in cat)
 
     def test_hot_dogs_inferred(self):
-        cat = _infer_category("Chili Cheese Coney")
+        cat = _SONIC.infer_category("Chili Cheese Coney")
         self.assertIn("hot dog", cat)
-        cat2 = _infer_category("All-American Hot Dog")
+        cat2 = _SONIC.infer_category("All-American Dog")
         self.assertIn("hot dog", cat2)
 
     def test_sides_inferred(self):
-        cat = _infer_category("Onion Rings")
+        cat = _SONIC.infer_category("Onion Rings")
         self.assertTrue("side" in cat or "tot" in cat or "ring" in cat or len(cat) > 0)
 
     def test_unknown_returns_empty(self):
-        self.assertEqual(_infer_category("Mystery Item XYZ"), "")
+        self.assertEqual(_SONIC.infer_category("Mystery Item XYZ"), "")
 
 
 class SearchToolTests(unittest.TestCase):
@@ -115,19 +128,37 @@ class SearchToolTests(unittest.TestCase):
         self.assertIn("can't reach", result.text.lower())
 
     def test_field_mismatch_triggers_fallback_retry(self):
+        """#37: the real azure-search-documents async SearchClient.search(...) is lazy -- it
+        returns an async-iterable immediately without making any HTTP request; the request (and
+        any HttpResponseError, e.g. this "Could not find a property named" 400) only happens once
+        the results are iterated (`async for` / `__anext__`). A mock where `search()` itself raises
+        synchronously doesn't exercise that shape at all, so this mock raises from the *iterator's*
+        `__anext__` instead, matching production exactly."""
         from azure.core.exceptions import HttpResponseError
 
         records = [{"id": "5", "description": "A tasty item"}]
         call_count = 0
 
+        class _FailingResults:
+            """Simulates the SDK returning immediately (no exception at call time) but raising
+            once the caller starts iterating -- i.e. when the first-page HTTP request actually
+            fires."""
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                raise HttpResponseError(message="Could not find a property named 'sizes'")
+
+        async def _async_iter():
+            for r in records:
+                yield r
+
         async def _search_with_fallback(**kwargs):
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                raise HttpResponseError(message="Could not find a property named 'sizes'")
-            async def _async_iter():
-                for r in records:
-                    yield r
+                return _FailingResults()
             return _async_iter()
 
         client = AsyncMock()

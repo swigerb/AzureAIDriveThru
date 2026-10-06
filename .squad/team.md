@@ -1,6 +1,6 @@
 # Squad Team
 
-> Sonic AI Drive-Thru Voice Assistant — AI-powered drive-thru ordering experience
+> Azure AI Drive-Thru — a Microsoft Foundry voice-ordering demo with persona switching and model flexibility
 
 ## Coordinator
 
@@ -18,17 +18,19 @@
 | Birdperson | Tester | `.squad/agents/birdperson/charter.md` | 🧪 Active |
 | Squanchy | DevOps | `.squad/agents/squanchy/charter.md` | ⚙️ Active |
 | Unity | AI / Realtime Expert | `.squad/agents/unity/charter.md` | 🤖 Active |
+| Beth | .NET / C# Backend Dev | `.squad/agents/beth/charter.md` | 🩺 Active |
 | Scribe | Session Logger | `.squad/agents/scribe/charter.md` | 📋 Active |
 | Ralph | Work Monitor | — | 🔄 Monitor |
 
 ## Project Context
 
 - **Owner:** Brian Swiger
-- **Project:** Sonic AI Drive-Thru Voice Assistant — a voice-driven drive-thru ordering experience showcasing Azure OpenAI GPT-4o Realtime, Azure AI Search, and Azure Container Apps. Emulates a Sonic Drive-In carhop who can search the menu, hold multilingual conversations, and keep orders in sync across devices.
-- **Repo:** https://github.com/swigerb/SonicAIDriveThru
+- **Project:** Azure AI Drive-Thru — a voice-driven drive-thru ordering demo on Microsoft Foundry (Azure OpenAI GPT-4o Realtime, Azure AI Search, Azure Container Apps) with persona switching across drive-thru brands (Sonic, McDonald's, Dunkin) and model flexibility.
+- **Repo:** https://github.com/swigerb/AzureAIDriveThru
 - **Stack:**
   - **Frontend:** React, TypeScript, Vite, Tailwind CSS, shadcn/ui
-  - **Backend:** Python (aiohttp, WebSockets), Azure OpenAI GPT-4o Realtime API, Azure AI Search, Azure Speech SDK
+  - **Backend (Python, reference):** Python (aiohttp, WebSockets), Azure OpenAI Realtime API (gpt-realtime-2.1), Azure AI Search
+  - **Backend (C#, in progress):** .NET 11 RC 1, ASP.NET Core, System.Net.WebSockets — feature-equivalent, validated by the shared conformance suite
   - **Infrastructure:** Bicep IaC, Azure Container Apps, Docker, azd CLI
   - **Data:** Jupyter notebooks for menu ingestion, JSON/PDF parsing, semantic hybrid search
 - **Key Files:**

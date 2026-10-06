@@ -1,0 +1,72 @@
+{
+  "$schema": "../persona.schema.json",
+  "schemaVersion": 1,
+  "id": "test-eta",
+  "displayName": "Test Eta Meal Co.",
+  "roleName": "eta-runner",
+  "locales": { "default": "en", "supported": ["en"] },
+  "store": { "timezone": "America/Denver" },
+  "voice": { "default": "alloy" },
+  "search": { "indexName": "test-eta-menu-items", "contentFields": ["description"] },
+
+  "pricing": {
+    "taxRate": "0.05",
+    "happyHour": null
+  },
+
+  "sizes": {
+    "canonical": { "medium": "Medium", "large": "Large", "standard": "Standard" },
+    "aliases": { "reg": "standard", "regular": "standard" },
+    "spokenAs": {},
+    "hidden": ["", "n/a", "none"],
+    "default": null
+  },
+
+  "bundles": {
+    "nameMarkers": ["combo"],
+    "convertStandalone": false,
+    "missingPartText": { "sides": "a side", "drinks": "a drink" },
+    "resizeRule": "componentUpcharge",
+    "includedSize": "Medium"
+  },
+
+  "extras": {
+    "allowedBaseCategories": ["drinks"],
+    "blockedBaseCategories": ["mains"],
+    "splitCombinedNames": false
+  },
+
+  "invalidModifiers": {},
+  "machines": {},
+
+  "models": {
+    "realtime": { "default": "gpt-realtime-2.1", "allowed": ["gpt-realtime-2.1"] },
+    "cascade": { "default": "gpt-5-mini", "allowed": ["gpt-5-mini"] }
+  },
+
+  "strategies": { "searchQueryRewrite": "none" },
+  "features": { "dayparts": false },
+
+  "ui": {
+    "title": "Test Eta Voice Ordering",
+    "theme": {
+      "light": { "primary": "150 80% 35%", "secondary": "150 40% 25%", "background": "0 0% 96%", "foreground": "0 0% 10%" }
+    },
+    "assets": { "logo": "assets/logo.svg", "favicon": "assets/favicon.ico" },
+    "strings": { "en": { "app.title": "Test Eta Voice Ordering" } },
+    "hero": {
+      "headline": "Test Eta fixture pack",
+      "description": "TEST-ONLY fixture hero description, not a real brand.",
+      "callouts": [
+        { "title": "CALLOUT ONE", "detail": "Fixture callout one detail.", "tone": "primary" },
+        { "title": "CALLOUT TWO", "detail": "Fixture callout two detail.", "tone": "secondary" },
+        { "title": "CALLOUT THREE", "detail": "Fixture callout three detail.", "tone": "accent" }
+      ],
+      "spotlight": [
+        { "icon": "assets/spotlight-1.svg", "kicker": "FIXTURE PICK", "title": "Fixture Card One", "rows": [{ "label": "Fixture Row", "value": "Fixture Value" }] },
+        { "icon": "assets/spotlight-2.svg", "kicker": "FIXTURE PAIR", "title": "Fixture Card Two", "body": "Fixture body sentence.", "accent": "Fixture pairing suggestion." }
+      ]
+    },
+    "legal": "TEST-ONLY fixture pack (#313, Rick's re-review item 2) -- not a real brand, used only by OrderToolExecutorComboUpchargeSpokenDeltaTests' combo-upcharge spoken-delta coverage, since no other fixture pack under app/backend/tests/fixtures/personas declares `bundles.resizeRule: \"componentUpcharge\"`."
+  }
+}

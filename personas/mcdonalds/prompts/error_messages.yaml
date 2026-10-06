@@ -1,0 +1,116 @@
+version: "1.0.0"
+messages:
+  # Catch-all fallback (forward guidance from #125, ahead of it landing: every rejection key the
+  # shared engines can emit must be defined so a missing key doesn't fail startup once #125 lands).
+  # Deliberately generic/short and never guest-blaming, for any failure that doesn't have its own
+  # more specific key below.
+  generic_error: "Sorry, something went wrong with that. Could you say that again?"
+
+  # Search errors
+  search_service_unavailable: "I'm sorry, I can't reach our menu data right now."
+  search_no_results: "No matching menu entries found."
+
+  # Customization errors
+  invalid_mod: "I can't add {{forbidden_item}} to a {{base_name}} — that's a new one! Want to try a different topping?"
+  nonsensical_mod_redirect: "That's a creative idea! How about a different topping?"
+
+  # Extras validation (dormant for this persona: McDonald's source menu has no priced,
+  # standalone-orderable "extra" line items the way some other persona packs' add-in
+  # style items are, so no menu item is ever marked isExtra: true and this code path
+  # never actually fires today -- see personas/mcdonalds/menu/menuItems.json's decision notes).
+  # Kept populated anyway for parity with the full key set every persona pack documents.
+  extras_no_base_item: >-
+    I can add extras to burgers, sandwiches, McNuggets, or meals,
+    but not to sides or drinks on their own.
+  extras_blocked_category: >-
+    I can add extras to burgers, sandwiches, McNuggets, or meals,
+    but I can't add them to sides or drinks on their own.
+
+  # No off-menu ordering (ADR-001 decision 4: "No off-menu. If it's not on the menu in our
+  # source data, you cannot order it."). item_not_on_menu fires when update_order's "add"
+  # action can't resolve item_name (or an alias of it) to a real menuItems.json entry at
+  # all; size_not_available fires when the item itself is real but the requested size
+  # isn't one of its priced sizes. See docs/persona-architecture.md section 6.
+  item_not_on_menu: >-
+    I'm sorry, {{item_name}} isn't on our menu. Would you like to try
+    something else instead? Use the search tool with the guest's words and
+    offer the closest real menu item by its exact name.
+  size_not_available: >-
+    I'm sorry, {{item_name}} isn't available in that size. We have it in
+    {{available_sizes}} -- would you like one of those?
+
+  # #77: add-time rejection when a real, on-menu item needs a machine (persona.json
+  # `machines.<key>.status`) that this store's own equipment is currently "down" (here, only
+  # `ice_cream_machine` -- there is no `fryer` entry because no menu item requires one). Same
+  # structured (TO_SERVER) rejection shape as item_not_on_menu/size_not_available above --
+  # {{machine_label}} is `machines.<key>.label` itself, so this pack doesn't need a second,
+  # differently-worded copy of the same outage text.
+  machine_unavailable: >-
+    I'm sorry, {{item_name}} isn't available right now -- {{machine_label}}. Would you like to
+    try something else instead?
+
+  # #77: `modify` (resize in place) for an on-menu item that isn't in the order. Same structured
+  # (TO_SERVER) rejection shape, reason "not_in_order", so the model never tells the guest an item
+  # was changed when nothing was.
+  item_not_in_order: >-
+    {{item_name}} isn't in the order, so nothing was changed. Call get_order to check what's in
+    the order, then ask the guest whether they'd like to add it.
+
+  # PR #184 round 4 (Rick's review, item 3): a meal's included side/drink can't be resized BY
+  # ITSELF to a size the whole meal doesn't come in -- "wholeBundleSize" means one resize always
+  # moves the whole meal, never just one slot. Nothing was changed; offer the real alternative
+  # (resize the whole meal) instead of a bare apology.
+  combo_component_resize_rejected: >-
+    I'm sorry, {{item_name}} comes with the {{bundle_name}} at its own size, so it can't be
+    resized by itself. Would you like to resize the whole meal instead?
+
+  # #165: add-time rejection when a real, on-menu item's own `menuPeriod` doesn't match this
+  # session's own bound menu mode (order_state.OrderState.get_menu_mode, set once at the
+  # WebSocket handshake from `?mode=breakfast|lunch`). Fires for, e.g., ordering "Egg McMuffin"
+  # while the session is bound to "lunch", or "Big Mac" while bound to "breakfast" -- the item is
+  # real and on the menu, just not offered right now. Same structured (TO_SERVER) rejection shape
+  # as item_not_on_menu/size_not_available above, reason "item_out_of_mode".
+  item_out_of_mode: >-
+    I'm sorry, {{item_name}} is a {{mode_label}} item and isn't on the menu right now. Would you
+    like to try something else, or switch the menu mode in Settings?
+
+  # Quantity limit messages
+  per_item_limit_maxed: >-
+    That's a lot of {{item_name}}! Our drive-thru can handle up to
+    {{max_per_item}} of any item. You already have {{existing_qty}} —
+    would you like to keep it at {{existing_qty}}?
+  per_item_limit_partial: >-
+    That's a lot of {{item_name}}! Our drive-thru can handle up to
+    {{max_per_item}} of any item. I can add {{allowed}} more —
+    would you like me to do that?
+  total_order_limit_maxed: >-
+    Wow, that's a big order! Our drive-thru tops out at
+    {{max_total}} items total so we can keep things moving.
+    You're already at the max — would you like to swap anything out?
+  total_order_limit_partial: >-
+    Wow, that's a big order! Our drive-thru tops out at
+    {{max_total}} items total so we can keep things moving.
+    I can add {{remaining}} more — would you like me to do that?
+
+  # Order reset
+  order_cleared: "Order cleared."
+
+  # Tool execution failures: a malformed/incomplete tool call (missing required
+  # arguments) or a genuine unhandled exception inside a tool handler. Deliberately
+  # short and neutral -- no internal detail is ever guest-visible. Points the model at
+  # get_order to confirm the order's actual state before doing anything else, and at
+  # asking the guest rather than silently retrying.
+  tool_execution_failed: >-
+    Something went wrong with that action and it did not complete. Don't retry it yet --
+    call get_order to confirm the order's current state, then ask the guest to repeat
+    what they'd like rather than guessing.
+
+  # Tool-failure cap notice: the response-level `instructions` sent on the ONE
+  # server-authored response.create when two consecutive tool-call rounds have failed
+  # with no guest turn in between. Response-level `instructions` REPLACE the session
+  # instructions for that single response, so this must be self-contained.
+  tool_failure_cap_instructions: >-
+    The order system just failed twice in a row and NOTHING was added or changed. Do not
+    say an item was added, removed, or changed. Stay upbeat and in character as a
+    McDonald's team member: briefly apologise, say you couldn't update the order just
+    now, and ask the guest to repeat what they'd like.

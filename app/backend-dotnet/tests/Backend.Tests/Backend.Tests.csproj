@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Backend.Tests</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      Same runner as tests/conformance/tests/Conformance.Tests.csproj: xunit.v3.mtp-off keeps
+      VSTest as the execution engine instead of Microsoft.Testing.Platform, so this project runs
+      the same way (dotnet test, no repo-wide global.json "test.runner" opt-in needed) as the
+      conformance suite. Do not switch to xunit.v3.mtp-v2, its template scaffolding writes a
+      "test.runner": "Microsoft.Testing.Platform" entry into the single repo-root global.json,
+      which is shared with (and would change execution mode for) tests/conformance.
+    -->
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="xunit.v3.mtp-off" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
+    <!-- Issue #13 Wave 2: FakeTimeProvider for deterministic EchoSuppressor/greeting-timeout tests. -->
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Backend\Backend.csproj" />
+  </ItemGroup>
+
+</Project>

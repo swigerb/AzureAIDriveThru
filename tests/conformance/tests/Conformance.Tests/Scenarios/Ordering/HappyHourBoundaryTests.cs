@@ -1,0 +1,339 @@
+using System.Text.Json;
+using Conformance.Fakes;
+using Conformance.Harness;
+using Xunit;
+
+namespace Conformance.Tests.Scenarios.Ordering;
+
+/// <summary>
+/// Issue #9: happy hour (50% off drinks, 14:00-16:00 store time) at all six requested boundary
+/// instants — 13:59:59, 14:00:00, 15:59:59, 16:00:00 (summer/CDT), plus a winter (CST/-06:00)
+/// 13:59:59/14:00:00 pair (PR #38 review item 5) — using a dedicated FixedClock backend per
+/// instant (see HappyHourBoundaryFixtures.cs), plus proof a non-drink item is unaffected while the
+/// discount is active. app/backend/order_state.py's is_happy_hour() only compares now().hour, so
+/// 13:59:59 and 16:00:00 are both "off" and 14:00:00/15:59:59 are both "on" — see the golden
+/// dataset's happyHourBoundaryInstants block for the source of these expectations. Tax rate and
+/// happy-hour discount are read from the golden file's businessRules block (PR #38 review item 6)
+/// rather than hardcoded here, so both this suite and a golden-data update stay in lockstep.
+/// Rick's PR #108 review, required item 1: HappyHourAtOpenTests/HappyHourJustBeforeOpenTests also
+/// carry the banner-text proof (Sonic's OWN banner, read from personas/sonic/persona.json at test
+/// time) -- app/backend/tools.py used to hardcode Sonic's banner literal regardless of session
+/// persona, so no conformance test anywhere asserted the banner text before this; see
+/// PersonaHappyHourConformanceTests.cs for the equivalent test-alpha proof.
+/// </summary>
+file static class HappyHourBoundaryTestSupport
+{
+    public const string DrinkItemName = "Cherry Limeade";
+    // #104: update_order now prices from the resolved menu record, not the caller-supplied tool
+    // price, so this must be the real menu price (personas/sonic/menu/menuItems.json, "Cherry
+    // Limeade" medium) rather than an arbitrary tool-call constant.
+    public const decimal DrinkPrice = 2.89m;
+    // #73 (ADR-001 decision 4 "No off-menu"): "Regular" was never a real size for Cherry Limeade
+    // (mini/small/medium/large/route 44 are); the #73 size gate now rejects it as
+    // size_not_available, so this uses the real "medium" size instead.
+    public const string DrinkItemSize = "medium";
+
+    public static async Task<ToolCallResult> AddOneDrinkAndReadResultAsync(ConformanceFixture fixture, CancellationToken ct)
+    {
+        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using var _ = browser;
+
+        return await OrderScenarioHelpers.RunOrderStepsAsync(
+            connection, browser,
+            [("add", DrinkItemName, DrinkItemSize, 1, DrinkPrice)],
+            roundTripIndex, ct);
+    }
+
+    public static async Task<decimal> AddOneDrinkAndReadFinalTotalAsync(ConformanceFixture fixture, CancellationToken ct)
+    {
+        var result = await AddOneDrinkAndReadResultAsync(fixture, ct);
+        return OrderScenarioHelpers.GetOrderFinalTotal(result.ToolResultJson!);
+    }
+
+    // Rick's PR #108 review, required item 1: read Sonic's own banner text from its OWN
+    // personas/sonic/persona.json rather than typing it as a literal in the test, so the
+    // assertion stays truthful to whatever the pack actually declares.
+    public static string SonicHappyHourBanner() =>
+        PersonaHappyHourBanner.Read(RepoPaths.PersonasDirectory(RepoPaths.FindRepoRoot()), "sonic");
+
+    public static decimal FullPriceFinalTotal(decimal unitPrice) =>
+        unitPrice * (1 + GoldenOrderPricingData.Load(RepoPaths.FindRepoRoot()).BusinessRules.TaxRate);
+
+    public static decimal HappyHourFinalTotal(decimal unitPrice)
+    {
+        var rules = GoldenOrderPricingData.Load(RepoPaths.FindRepoRoot()).BusinessRules;
+        return unitPrice * rules.HappyHourDiscount * (1 + rules.TaxRate);
+    }
+}
+
+[Collection(HappyHourJustBeforeOpenCollection.Name)]
+public sealed class HappyHourJustBeforeOpenTests(HappyHourJustBeforeOpenFixture fixture)
+{
+    [Fact]
+    [Trait("Dotnet", "ready")]
+    public Task At_13_59_59_happy_hour_is_not_yet_active() => fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var finalTotal = await HappyHourBoundaryTestSupport.AddOneDrinkAndReadFinalTotalAsync(fixture, ct);
+        OrderScenarioHelpers.AssertMoneyEqual(
+            HappyHourBoundaryTestSupport.FullPriceFinalTotal(HappyHourBoundaryTestSupport.DrinkPrice), finalTotal);
+    });
+
+    // Rick's PR #108 review, required item 1: "just before the window ... no banner and full
+    // price". Paired with HappyHourAtOpenTests's banner fact below -- same drink, same tool --
+    // one instant either side of 14:00:00.
+    [Fact]
+    [Trait("Dotnet", "ready")]
+    public Task At_13_59_59_the_banner_is_absent() => fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var result = await HappyHourBoundaryTestSupport.AddOneDrinkAndReadResultAsync(fixture, ct);
+        Assert.DoesNotContain(
+            HappyHourBoundaryTestSupport.SonicHappyHourBanner(), result.FunctionCallOutputText);
+        OrderScenarioHelpers.AssertMoneyEqual(
+            HappyHourBoundaryTestSupport.FullPriceFinalTotal(HappyHourBoundaryTestSupport.DrinkPrice),
+            OrderScenarioHelpers.GetOrderFinalTotal(result.ToolResultJson!));
+    });
+}
+
+[Collection(HappyHourAtOpenCollection.Name)]
+public sealed class HappyHourAtOpenTests(HappyHourAtOpenFixture fixture)
+{
+    [Fact]
+    [Trait("Dotnet", "ready")]
+    public Task At_14_00_00_happy_hour_is_active() => fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var finalTotal = await HappyHourBoundaryTestSupport.AddOneDrinkAndReadFinalTotalAsync(fixture, ct);
+        OrderScenarioHelpers.AssertMoneyEqual(
+            HappyHourBoundaryTestSupport.HappyHourFinalTotal(HappyHourBoundaryTestSupport.DrinkPrice), finalTotal);
+    });
+
+    // Rick's PR #108 review, required item 1: an eligible drink's update_order result must
+    // contain Sonic's OWN banner (read from personas/sonic/persona.json, not typed here) AND the
+    // discount must be applied, in the SAME assertion -- proving the banner and the discount are
+    // both driven by the same is_happy_hour_for_session() truth, not independently coincidental.
+    [Fact]
+    [Trait("Dotnet", "ready")]
+    public Task At_14_00_00_an_eligible_drink_announces_Sonics_own_banner_and_is_discounted() => fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var result = await HappyHourBoundaryTestSupport.AddOneDrinkAndReadResultAsync(fixture, ct);
+        Assert.Contains(
+            HappyHourBoundaryTestSupport.SonicHappyHourBanner(), result.FunctionCallOutputText);
+        Assert.Contains(
+            "[HAPPY HOUR DISCOUNT APPLIED TO: Medium Cherry Limeade]",
+            result.FunctionCallOutputText);
+        OrderScenarioHelpers.AssertMoneyEqual(
+            HappyHourBoundaryTestSupport.HappyHourFinalTotal(HappyHourBoundaryTestSupport.DrinkPrice),
+            OrderScenarioHelpers.GetOrderFinalTotal(result.ToolResultJson!));
+    });
+
+    [Fact]
+    [Trait("Dotnet", "ready")]
+    public Task A_combo_drink_component_does_not_emit_a_happy_hour_discount_claim() => fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using var _ = browser;
+
+        var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+            connection, browser,
+            [
+                ("add", "SuperSONIC® Double Cheeseburger Combo", "standard", 1, 10.19m),
+                ("add", "Cherry Limeade", "medium", 1, HappyHourBoundaryTestSupport.DrinkPrice),
+            ],
+            roundTripIndex, ct);
+
+        Assert.DoesNotContain(
+            HappyHourBoundaryTestSupport.SonicHappyHourBanner(), result.FunctionCallOutputText);
+        Assert.DoesNotContain("HAPPY HOUR DISCOUNT APPLIED", result.FunctionCallOutputText);
+        OrderScenarioHelpers.AssertMoneyEqual(
+            10.19m * (1 + GoldenOrderPricingData.Load(RepoPaths.FindRepoRoot()).BusinessRules.TaxRate),
+            OrderScenarioHelpers.GetOrderFinalTotal(result.ToolResultJson!));
+    });
+
+    [Fact]
+    [Trait("Dotnet", "ready")]
+    public Task A_non_drink_item_is_unaffected_by_happy_hour_pricing_logic() => fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using var _ = browser;
+
+        var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+            connection, browser,
+            [("add", "Tots", "medium", 1, 2.79m)],
+            roundTripIndex, ct);
+
+        // Paired with HappyHourJustBeforeClose's drink-item assertion (also taken during an
+        // active window) this demonstrates order_state.py::_update_summary's
+        // `_infer_combo_component(...) == "drinks"` guard is item-category-scoped, not merely
+        // clock-scoped: a non-drink item's price is never discounted regardless of the clock.
+        OrderScenarioHelpers.AssertMoneyEqual(
+            HappyHourBoundaryTestSupport.FullPriceFinalTotal(2.79m),
+            OrderScenarioHelpers.GetOrderFinalTotal(result.ToolResultJson!));
+    });
+
+    [Fact]
+    [Trait("Dotnet", "ready")]
+    public Task Ched_R_Peppers_is_full_price_during_happy_hour_despite_the_keyword_pepper() => fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+        const decimal unitPrice = 3.99m; // Small, app/frontend/src/data/menuItems.json
+        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using var _ = browser;
+
+        var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+            connection, browser,
+            [("add", "Ched 'R' Peppers", "small", 1, unitPrice)],
+            roundTripIndex, ct);
+
+        // A side must price exactly like this class's own non-drink case above (full price, no
+        // happy-hour discount) even though its name contains "pepper" -- unlike an actual drink
+        // such as Dr Pepper, which the keyword fallback exists to correctly catch.
+        OrderScenarioHelpers.AssertMoneyEqual(
+            HappyHourBoundaryTestSupport.FullPriceFinalTotal(unitPrice),
+            OrderScenarioHelpers.GetOrderFinalTotal(result.ToolResultJson!));
+    });
+}
+
+[Collection(HappyHourJustBeforeCloseCollection.Name)]
+public sealed class HappyHourJustBeforeCloseTests(HappyHourJustBeforeCloseFixture fixture)
+{
+    [Fact]
+    [Trait("Dotnet", "ready")]
+    public Task At_15_59_59_happy_hour_is_still_active() => fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var finalTotal = await HappyHourBoundaryTestSupport.AddOneDrinkAndReadFinalTotalAsync(fixture, ct);
+        OrderScenarioHelpers.AssertMoneyEqual(
+            HappyHourBoundaryTestSupport.HappyHourFinalTotal(HappyHourBoundaryTestSupport.DrinkPrice), finalTotal);
+    });
+}
+
+[Collection(HappyHourAtCloseCollection.Name)]
+public sealed class HappyHourAtCloseTests(HappyHourAtCloseFixture fixture)
+{
+    [Fact]
+    [Trait("Dotnet", "ready")]
+    public Task At_16_00_00_happy_hour_has_ended() => fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var finalTotal = await HappyHourBoundaryTestSupport.AddOneDrinkAndReadFinalTotalAsync(fixture, ct);
+        OrderScenarioHelpers.AssertMoneyEqual(
+            HappyHourBoundaryTestSupport.FullPriceFinalTotal(HappyHourBoundaryTestSupport.DrinkPrice), finalTotal);
+    });
+}
+
+/// <summary>Winter (CST/-06:00) counterpart of <see cref="HappyHourJustBeforeOpenTests"/> — PR #38
+/// review item 5: proves the boundary hour comparison isn't hiding a hardcoded -05:00/summer-only
+/// UTC offset, since America/Chicago is -06:00 in January.</summary>
+[Collection(HappyHourJustBeforeOpenWinterCollection.Name)]
+public sealed class HappyHourJustBeforeOpenWinterTests(HappyHourJustBeforeOpenWinterFixture fixture)
+{
+    [Fact]
+    [Trait("Dotnet", "ready")]
+    public Task At_13_59_59_CST_happy_hour_is_not_yet_active() => fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var finalTotal = await HappyHourBoundaryTestSupport.AddOneDrinkAndReadFinalTotalAsync(fixture, ct);
+        OrderScenarioHelpers.AssertMoneyEqual(
+            HappyHourBoundaryTestSupport.FullPriceFinalTotal(HappyHourBoundaryTestSupport.DrinkPrice), finalTotal);
+    });
+}
+
+/// <summary>Winter (CST/-06:00) counterpart of <see cref="HappyHourAtOpenTests"/> — PR #38 review
+/// item 5.</summary>
+[Collection(HappyHourAtOpenWinterCollection.Name)]
+public sealed class HappyHourAtOpenWinterTests(HappyHourAtOpenWinterFixture fixture)
+{
+    [Fact]
+    [Trait("Dotnet", "ready")]
+    public Task At_14_00_00_CST_happy_hour_is_active() => fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var finalTotal = await HappyHourBoundaryTestSupport.AddOneDrinkAndReadFinalTotalAsync(fixture, ct);
+        OrderScenarioHelpers.AssertMoneyEqual(
+            HappyHourBoundaryTestSupport.HappyHourFinalTotal(HappyHourBoundaryTestSupport.DrinkPrice), finalTotal);
+    });
+}
+
+// Runs under a FixedClock pinned outside 14:00-16:00 rather than the ambient ConformanceCollection
+// (real wall-clock time): several of these golden cases add drink items, so if the suite happened
+// to run during the real happy-hour window their expected totals would be wrong non-deterministically.
+[Collection(HappyHourJustBeforeOpenCollection.Name)]
+public sealed class TaxToTheCentOffHappyHourTests(HappyHourJustBeforeOpenFixture fixture)
+{
+    public static TheoryData<int> OffHappyHourTaxCaseIndexes()
+    {
+        var golden = GoldenOrderPricingData.Load(RepoPaths.FindRepoRoot());
+        var data = new TheoryData<int>();
+        for (var i = 0; i < golden.TaxCases.Count; i++)
+        {
+            if (!golden.TaxCases[i].HappyHour) data.Add(i);
+        }
+        return data;
+    }
+
+    [Theory]
+    [Trait("Dotnet", "ready")]
+    [MemberData(nameof(OffHappyHourTaxCaseIndexes))]
+    public Task Tax_and_totals_match_to_the_cent(int caseIndex) => fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var repoRoot = RepoPaths.FindRepoRoot();
+        var golden = GoldenOrderPricingData.Load(repoRoot);
+        var taxCase = golden.TaxCases[caseIndex];
+
+        var mode = OrderScenarioHelpers.MenuModeForItems(repoRoot, taxCase.Items.Select(i => i.Item));
+        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, mode: mode);
+        await using var _ = browser;
+
+        var steps = taxCase.Items.Select(i => ("add", i.Item, i.Size, i.Quantity, i.UnitPrice));
+        var result = await OrderScenarioHelpers.RunOrderStepsAsync(connection, browser, steps, roundTripIndex, ct);
+
+        var order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        OrderScenarioHelpers.AssertMoneyEqual(taxCase.ExpectedSubtotal, order.GetProperty("total").GetDecimal());
+        OrderScenarioHelpers.AssertMoneyEqual(taxCase.ExpectedTax, order.GetProperty("tax").GetDecimal());
+        OrderScenarioHelpers.AssertMoneyEqual(taxCase.ExpectedFinalTotal, order.GetProperty("finalTotal").GetDecimal());
+    });
+}
+
+[Collection(HappyHourAtOpenCollection.Name)]
+public sealed class TaxToTheCentDuringHappyHourTests(HappyHourAtOpenFixture fixture)
+{
+    public static TheoryData<int> OnHappyHourTaxCaseIndexes()
+    {
+        var golden = GoldenOrderPricingData.Load(RepoPaths.FindRepoRoot());
+        var data = new TheoryData<int>();
+        for (var i = 0; i < golden.TaxCases.Count; i++)
+        {
+            if (golden.TaxCases[i].HappyHour) data.Add(i);
+        }
+        return data;
+    }
+
+    [Theory]
+    [Trait("Dotnet", "ready")]
+    [MemberData(nameof(OnHappyHourTaxCaseIndexes))]
+    public Task Tax_and_totals_match_to_the_cent_during_happy_hour(int caseIndex) => fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var repoRoot = RepoPaths.FindRepoRoot();
+        var golden = GoldenOrderPricingData.Load(repoRoot);
+        var taxCase = golden.TaxCases[caseIndex];
+
+        var mode = OrderScenarioHelpers.MenuModeForItems(repoRoot, taxCase.Items.Select(i => i.Item));
+        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, mode: mode);
+        await using var _ = browser;
+
+        var steps = taxCase.Items.Select(i => ("add", i.Item, i.Size, i.Quantity, i.UnitPrice));
+        var result = await OrderScenarioHelpers.RunOrderStepsAsync(connection, browser, steps, roundTripIndex, ct);
+
+        var order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        OrderScenarioHelpers.AssertMoneyEqual(taxCase.ExpectedSubtotal, order.GetProperty("total").GetDecimal());
+        OrderScenarioHelpers.AssertMoneyEqual(taxCase.ExpectedTax, order.GetProperty("tax").GetDecimal());
+        OrderScenarioHelpers.AssertMoneyEqual(taxCase.ExpectedFinalTotal, order.GetProperty("finalTotal").GetDecimal());
+    });
+}

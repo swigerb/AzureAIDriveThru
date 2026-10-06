@@ -1,0 +1,43 @@
+version: "1.0.0"
+upsell_hints:
+  hot_drink:
+    trigger_categories:
+      - "hot drinks"
+    hint: "Great pick! Ask if they'd like a flavor shot, flavor swirl, or extra espresso shot."
+
+  latte:
+    trigger_categories:
+      - "signature lattes"
+    hint: "Great pick! Ask if they'd like whipped cream, a flavor swirl, or an extra espresso shot."
+
+  cold_beverage:
+    trigger_categories:
+      - "cold beverages"
+    hint: "Nice choice! Ask if they'd like a flavor shot, flavor swirl, or an extra espresso shot added."
+
+  bakery:
+    trigger_categories:
+      - "donuts & bakery"
+    hint: "Tasty! Ask if they'd like to pair it with a hot or iced coffee."
+
+  sandwich:
+    trigger_categories:
+      - "breakfast sandwiches"
+    hint: "Good call! Ask if they'd like a hot or iced coffee to go with it."
+
+  snack:
+    trigger_categories:
+      - "snacks & sides"
+    hint: "Nice snack choice! Ask if they'd like a hot or iced coffee with it."
+
+  generic:
+    trigger_categories: []
+    hint: "Ask if they'd like to add anything else, maybe a coffee, MUNCHKINS, or a donut!"
+
+system_hints:
+  combo_incomplete: "SYSTEM HINT: {{prompt_hint}}"
+  out_of_stock: "OOS: {{oos_reason}}"
+
+delta_templates:
+  item_added: "Added {{quantity}} {{display_name}} - your total is now {{total}}"
+  item_removed: "Removed {{quantity}} {{display_name}} - your total is now {{total}}"

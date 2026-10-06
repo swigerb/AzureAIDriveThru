@@ -1,0 +1,629 @@
+{
+  "menuItems": [
+    {
+      "category": "Burgers & Sandwiches",
+      "items": [
+        {
+          "name": "Big Mac®",
+          "menuPeriod": "lunch",
+          "sizes": [{ "size": "Standard", "price": 5.29 }],
+          "description": "Mouthwatering perfection starts with two 100% pure all beef patties and Big Mac® sauce sandwiched between a sesame seed bun. It's topped off with pickles, crisp shredded lettuce, finely chopped onion, and a slice of melty American cheese.",
+          "calories": 550
+        },
+        {
+          "name": "Quarter Pounder® with Cheese",
+          "menuPeriod": "lunch",
+          "sizes": [{ "size": "Standard", "price": 5.79 }],
+          "description": "A quarter pound of 100% fresh beef, hot off the grill and seasoned with just a pinch of salt and pepper. Topped with two slices of melty American cheese, slivered onions, tangy pickles, ketchup, and mustard on a toasted sesame seed bun.",
+          "calories": 520
+        },
+        {
+          "name": "Double Quarter Pounder® with Cheese",
+          "menuPeriod": "lunch",
+          "sizes": [{ "size": "Standard", "price": 7.79 }],
+          "description": "Two quarter pound 100% fresh beef patties, hot off the grill and seasoned with just a pinch of salt and pepper. Topped with two slices of melty American cheese, slivered onions, tangy pickles, ketchup, and mustard on a toasted sesame seed bun.",
+          "calories": 740
+        },
+        {
+          "name": "Bacon Quarter Pounder® with Cheese",
+          "menuPeriod": "lunch",
+          "sizes": [{ "size": "Standard", "price": 6.89 }],
+          "description": "A quarter pound of 100% fresh beef, topped with thick-cut Applewood smoked bacon, two slices of melty American cheese, slivered onions, tangy pickles, ketchup, and mustard on a toasted sesame seed bun.",
+          "calories": 620
+        },
+        {
+          "name": "McDouble®",
+          "menuPeriod": "lunch",
+          "sizes": [{ "size": "Standard", "price": 2.59 }],
+          "description": "A classic double burger featuring two 100% pure beef patties seasoned with just a pinch of salt and pepper, topped with tangy pickles, chopped onions, ketchup, mustard, and a slice of melty American cheese on a toasted bun.",
+          "calories": 400
+        },
+        {
+          "name": "Cheeseburger",
+          "menuPeriod": "lunch",
+          "sizes": [{ "size": "Standard", "price": 2.09 }],
+          "description": "A simple, satisfying classic. A 100% pure beef patty seasoned with just a pinch of salt and pepper, topped with a slice of melty American cheese, tangy pickles, chopped onions, ketchup, and mustard on a toasted bun.",
+          "calories": 300
+        },
+        {
+          "name": "Double Cheeseburger",
+          "menuPeriod": "lunch",
+          "sizes": [{ "size": "Standard", "price": 2.99 }],
+          "description": "Two 100% pure beef patties with two slices of melty American cheese, tangy pickles, chopped onions, ketchup, and mustard on a toasted bun. Double the beef, double the cheese, double the deliciousness.",
+          "calories": 450
+        },
+        {
+          "name": "Hamburger",
+          "menuPeriod": "lunch",
+          "sizes": [{ "size": "Standard", "price": 1.99 }],
+          "description": "The original McDonald's burger. A 100% pure beef patty seasoned with just a pinch of salt and pepper, topped with tangy pickles, chopped onions, ketchup, and mustard on a toasted bun.",
+          "calories": 250
+        },
+        {
+          "name": "McCrispy®",
+          "menuPeriod": "lunch",
+          "sizes": [{ "size": "Standard", "price": 4.79 }],
+          "description": "Crispy, juicy, tender perfection. A Southern-style fried chicken fillet on a toasted, buttery potato roll with crinkle-cut pickles. Simple, bold, and unforgettable.",
+          "calories": 470
+        },
+        {
+          "name": "Filet-O-Fish®",
+          "menuPeriod": "lunch",
+          "sizes": [{ "size": "Standard", "price": 4.89 }],
+          "description": "Dive into a wild-caught Alaskan Pollock filet, breaded and fried to golden perfection, with creamy tartar sauce and a slice of melty American cheese, all on a soft, steamed bun.",
+          "calories": 390
+        }
+      ]
+    },
+    {
+      "category": "Chicken & McNuggets®",
+      "items": [
+        {
+          "name": "10 Piece Chicken McNuggets®",
+          "menuPeriod": "lunch",
+          "sizes": [{ "size": "Standard", "price": 4.89 }],
+          "description": "Ten tender, bite-sized pieces made with 100% white meat chicken, battered, breaded, and seasoned to crispy, golden perfection. Served with your choice of dipping sauce.",
+          "calories": 410
+        },
+        {
+          "name": "McChicken®",
+          "menuPeriod": "lunch",
+          "sizes": [{ "size": "Standard", "price": 3.09 }],
+          "description": "A crispy, seasoned chicken patty topped with shredded iceberg lettuce and creamy mayonnaise on a perfectly toasted bun. A classic value favorite.",
+          "calories": 400
+        },
+        {
+          "name": "Spicy McCrispy®",
+          "menuPeriod": "lunch",
+          "sizes": [{ "size": "Standard", "price": 4.99 }],
+          "description": "A Southern-style fried chicken fillet seasoned with a bold, spicy pepper blend, topped with crinkle-cut pickles and spicy sauce on a toasted, buttery potato roll.",
+          "calories": 530
+        },
+        {
+          "name": "Deluxe McCrispy®",
+          "menuPeriod": "lunch",
+          "sizes": [{ "size": "Standard", "price": 5.59 }],
+          "description": "A Southern-style fried chicken fillet topped with shredded lettuce, Roma tomatoes, and creamy mayo on a toasted, buttery potato roll. The deluxe upgrade you deserve.",
+          "calories": 530
+        },
+        {
+          "name": "Spicy Deluxe McCrispy®",
+          "menuPeriod": "lunch",
+          "sizes": [{ "size": "Standard", "price": 5.99 }],
+          "description": "A spicy, Southern-style fried chicken fillet topped with shredded lettuce, Roma tomatoes, and creamy mayo on a toasted, buttery potato roll. Heat meets deluxe.",
+          "calories": 540
+        },
+        {
+          "name": "Hot 'N Spicy McChicken®",
+          "menuPeriod": "lunch",
+          "sizes": [{ "size": "Standard", "price": 3.19 }],
+          "description": "A crispy chicken patty seasoned with a bold, spicy blend, topped with shredded lettuce and creamy mayonnaise on a perfectly toasted bun.",
+          "calories": 400
+        },
+        {
+          "name": "4 Piece Chicken McNuggets®",
+          "menuPeriod": "lunch",
+          "sizes": [{ "size": "Standard", "price": 3.79 }],
+          "description": "Four tender, bite-sized pieces made with 100% white meat chicken, battered, breaded, and seasoned to crispy, golden perfection. A great snack-size portion served with your choice of dipping sauce.",
+          "calories": 170
+        },
+        {
+          "name": "6 Piece Chicken McNuggets®",
+          "menuPeriod": "lunch",
+          "sizes": [{ "size": "Standard", "price": 5.29 }],
+          "description": "Six tender, bite-sized pieces made with 100% white meat chicken, battered, breaded, and seasoned to crispy, golden perfection. The perfect individual portion served with your choice of dipping sauce.",
+          "calories": 250
+        },
+        {
+          "name": "20 Piece Chicken McNuggets®",
+          "menuPeriod": "lunch",
+          "sizes": [{ "size": "Standard", "price": 9.99 }],
+          "description": "Twenty tender, bite-sized pieces made with 100% white meat chicken, battered, breaded, and seasoned to crispy, golden perfection. A shareable box perfect for splitting with friends or family.",
+          "calories": 830
+        },
+        {
+          "name": "40 Piece Chicken McNuggets®",
+          "menuPeriod": "lunch",
+          "sizes": [{ "size": "Standard", "price": 14.99 }],
+          "description": "Forty tender, bite-sized pieces made with 100% white meat chicken, battered, breaded, and seasoned to crispy, golden perfection. The ultimate party-size box for gatherings and game days.",
+          "calories": 1660
+        },
+        {
+          "name": "10 Piece McNuggets® Meal",
+          "menuPeriod": "lunch",
+          "mealNumber": "6",
+          "sizes": [{ "size": "Small", "price": 8.49 }, { "size": "Medium", "price": 9.89 }, { "size": "Large", "price": 10.89 }],
+          "description": "10 tender Chicken McNuggets® made with 100% white meat chicken, served with medium World Famous Fries® and your choice of a medium drink.",
+          "calories": 1080,
+          "bundle": { "slots": ["sides", "drinks"], "autoFill": { "sides": "{size} World Famous Fries®" }, "defaultSize": "Medium" }
+        },
+        {
+          "name": "Big Mac® Meal",
+          "menuPeriod": "lunch",
+          "mealNumber": "1",
+          "sizes": [{ "size": "Small", "price": 8.99 }, { "size": "Medium", "price": 10.29 }, { "size": "Large", "price": 11.29 }],
+          "description": "The iconic Big Mac® paired with medium World Famous Fries® and your choice of a medium drink. The classic combo.",
+          "calories": 1100,
+          "bundle": { "slots": ["sides", "drinks"], "autoFill": { "sides": "{size} World Famous Fries®" }, "defaultSize": "Medium" }
+        },
+        {
+          "name": "Quarter Pounder® with Cheese Meal",
+          "menuPeriod": "lunch",
+          "mealNumber": "2",
+          "sizes": [{ "size": "Small", "price": 9.29 }, { "size": "Medium", "price": 10.69 }, { "size": "Large", "price": 11.69 }],
+          "description": "A Quarter Pounder® with Cheese made with fresh beef, paired with medium World Famous Fries® and your choice of a medium drink.",
+          "calories": 1080,
+          "bundle": { "slots": ["sides", "drinks"], "autoFill": { "sides": "{size} World Famous Fries®" }, "defaultSize": "Medium" }
+        },
+        {
+          "name": "McCrispy® Meal",
+          "menuPeriod": "lunch",
+          "mealNumber": "7",
+          "sizes": [{ "size": "Small", "price": 9.29 }, { "size": "Medium", "price": 10.69 }, { "size": "Large", "price": 11.69 }],
+          "description": "The crispy, juicy McCrispy® chicken sandwich paired with medium World Famous Fries® and your choice of a medium drink.",
+          "calories": 1030,
+          "bundle": { "slots": ["sides", "drinks"], "autoFill": { "sides": "{size} World Famous Fries®" }, "defaultSize": "Medium" }
+        },
+        {
+          "name": "Quarter Pounder® with Cheese Deluxe Meal",
+          "menuPeriod": "lunch",
+          "mealNumber": "3",
+          "sizes": [{ "size": "Small", "price": 9.79 }, { "size": "Medium", "price": 11.19 }, { "size": "Large", "price": 12.19 }],
+          "description": "The Quarter Pounder® with Cheese Deluxe as a meal with Medium Fries and a Medium Drink.",
+          "calories": 1100,
+          "bundle": { "slots": ["sides", "drinks"], "autoFill": { "sides": "{size} World Famous Fries®" }, "defaultSize": "Medium" }
+        },
+        {
+          "name": "Bacon Quarter Pounder® with Cheese Meal",
+          "menuPeriod": "lunch",
+          "mealNumber": "4",
+          "sizes": [{ "size": "Small", "price": 10.29 }, { "size": "Medium", "price": 11.69 }, { "size": "Large", "price": 12.69 }],
+          "description": "The Bacon Quarter Pounder® with Cheese as a meal with Medium Fries and a Medium Drink.",
+          "calories": 1090,
+          "bundle": { "slots": ["sides", "drinks"], "autoFill": { "sides": "{size} World Famous Fries®" }, "defaultSize": "Medium" }
+        },
+        {
+          "name": "Double Quarter Pounder® with Cheese Meal",
+          "menuPeriod": "lunch",
+          "mealNumber": "5",
+          "sizes": [{ "size": "Small", "price": 10.79 }, { "size": "Medium", "price": 12.19 }, { "size": "Large", "price": 13.19 }],
+          "description": "Two quarter-pound beef patties with cheese as a meal with Medium Fries and a Medium Drink.",
+          "calories": 1210,
+          "bundle": { "slots": ["sides", "drinks"], "autoFill": { "sides": "{size} World Famous Fries®" }, "defaultSize": "Medium" }
+        },
+        {
+          "name": "Filet-O-Fish® Meal",
+          "menuPeriod": "lunch",
+          "mealNumber": "8",
+          "sizes": [{ "size": "Small", "price": 8.79 }, { "size": "Medium", "price": 10.19 }, { "size": "Large", "price": 11.19 }],
+          "description": "The Filet-O-Fish® as a meal with Medium Fries and a Medium Drink.",
+          "calories": 970,
+          "bundle": { "slots": ["sides", "drinks"], "autoFill": { "sides": "{size} World Famous Fries®" }, "defaultSize": "Medium" }
+        },
+        {
+          "name": "2 Cheeseburger Meal",
+          "menuPeriod": "lunch",
+          "mealNumber": "9",
+          "sizes": [{ "size": "Small", "price": 7.49 }, { "size": "Medium", "price": 8.89 }, { "size": "Large", "price": 9.89 }],
+          "description": "Two classic Cheeseburgers as a meal with Medium Fries and a Medium Drink.",
+          "calories": 1070,
+          "bundle": { "slots": ["sides", "drinks"], "autoFill": { "sides": "{size} World Famous Fries®" }, "defaultSize": "Medium" }
+        },
+        {
+          "name": "McChicken® Meal",
+          "menuPeriod": "lunch",
+          "mealNumber": "10",
+          "sizes": [{ "size": "Standard", "price": 5.99 }],
+          "description": "The McChicken® as a meal with Medium Fries and a Medium Drink.",
+          "calories": 920,
+          "bundle": { "slots": ["sides", "drinks"], "autoFill": { "sides": "{size} World Famous Fries®" }, "defaultSize": "Medium" }
+        }
+      ]
+    },
+    {
+      "category": "Breakfast",
+      "items": [
+        {
+          "name": "Egg McMuffin®",
+          "menuPeriod": "breakfast",
+          "sizes": [{ "size": "Standard", "price": 4.19 }],
+          "description": "A freshly cracked Grade A egg on a toasted English muffin with real butter, lean Canadian bacon, and a slice of melty American cheese. An excellent source of protein.",
+          "calories": 300
+        },
+        {
+          "name": "Sausage McMuffin® with Egg",
+          "menuPeriod": "breakfast",
+          "sizes": [{ "size": "Standard", "price": 4.19 }],
+          "description": "A savory hot sausage patty, a freshly cracked egg, and a slice of melty American cheese on a toasted English muffin. A hearty, protein-packed start to your day.",
+          "calories": 480
+        },
+        {
+          "name": "Sausage McMuffin®",
+          "menuPeriod": "breakfast",
+          "sizes": [{ "size": "Standard", "price": 2.19 }],
+          "description": "A warm, freshly toasted English muffin topped with a savory hot sausage patty and a slice of melty American cheese. Simple and satisfying.",
+          "calories": 400
+        },
+        {
+          "name": "Bacon, Egg & Cheese Biscuit",
+          "menuPeriod": "breakfast",
+          "sizes": [{ "size": "Standard", "price": 4.59 }],
+          "description": "Thick-cut Applewood smoked bacon, a fluffy folded egg, and a slice of melty American cheese on a warm, buttermilk biscuit. Southern comfort in every bite.",
+          "calories": 460
+        },
+        {
+          "name": "Sausage, Egg & Cheese McGriddles®",
+          "menuPeriod": "breakfast",
+          "sizes": [{ "size": "Standard", "price": 4.79 }],
+          "description": "Soft, warm griddle cakes with the taste of sweet maple, filled with a savory sausage patty, fluffy egg, and melty American cheese. Sweet meets savory.",
+          "calories": 550
+        },
+        {
+          "name": "Bacon, Egg & Cheese McGriddles®",
+          "menuPeriod": "breakfast",
+          "sizes": [{ "size": "Standard", "price": 4.99 }],
+          "description": "Thick-cut Applewood smoked bacon, a fluffy folded egg, and melty American cheese between soft, warm griddle cakes with the taste of sweet maple.",
+          "calories": 520
+        },
+        {
+          "name": "Hotcakes",
+          "menuPeriod": "breakfast",
+          "sizes": [{ "size": "Standard", "price": 4.19 }],
+          "description": "Three fluffy, golden-brown hotcakes served with real butter and sweet maple-flavored hotcake syrup. A warm, comforting breakfast classic.",
+          "calories": 580
+        },
+        {
+          "name": "Hotcakes & Sausage",
+          "menuPeriod": "breakfast",
+          "sizes": [{ "size": "Standard", "price": 5.19 }],
+          "description": "Three fluffy, golden-brown hotcakes with real butter and sweet maple-flavored syrup, plus a warm sausage patty on the side.",
+          "calories": 770
+        },
+        {
+          "name": "Sausage Burrito",
+          "menuPeriod": "breakfast",
+          "sizes": [{ "size": "Standard", "price": 2.59 }],
+          "description": "A warm flour tortilla filled with fluffy scrambled egg, pork sausage, melty cheese, green chiles, and onions. Breakfast on the go.",
+          "calories": 310
+        },
+        {
+          "name": "Hash Browns",
+          "menuPeriod": "breakfast",
+          "sizes": [{ "size": "Standard", "price": 2.99 }],
+          "description": "Crispy, golden hash brown patties made from freshly shredded potatoes, seasoned and fried to delicious perfection. The perfect breakfast side.",
+          "calories": 140,
+          "comboSlot": "sides"
+        },
+        {
+          "name": "Egg McMuffin® Meal",
+          "menuPeriod": "breakfast",
+          "mealNumber": "1",
+          "sizes": [{ "size": "Standard", "price": 6.49 }],
+          "description": "The Egg McMuffin® as a breakfast meal with Hash Browns and a Small Premium Roast Coffee.",
+          "calories": 650,
+          "bundle": { "slots": ["sides", "drinks"], "autoFill": { "sides": "Hash Browns" } }
+        },
+        {
+          "name": "Sausage McMuffin® with Egg Meal",
+          "menuPeriod": "breakfast",
+          "mealNumber": "2",
+          "sizes": [{ "size": "Standard", "price": 5.69 }],
+          "description": "The Sausage McMuffin® with Egg as a breakfast meal with Hash Browns and a Small Premium Roast Coffee.",
+          "calories": 780,
+          "bundle": { "slots": ["sides", "drinks"], "autoFill": { "sides": "Hash Browns" } }
+        },
+        {
+          "name": "Sausage Biscuit Meal",
+          "menuPeriod": "breakfast",
+          "mealNumber": "3",
+          "sizes": [{ "size": "Standard", "price": 5.29 }],
+          "description": "Sausage Biscuit as a breakfast meal with Hash Browns and a Small Premium Roast Coffee.",
+          "calories": 710,
+          "bundle": { "slots": ["sides", "drinks"], "autoFill": { "sides": "Hash Browns" } }
+        },
+        {
+          "name": "Bacon, Egg & Cheese Biscuit Meal",
+          "menuPeriod": "breakfast",
+          "mealNumber": "4",
+          "sizes": [{ "size": "Standard", "price": 6.49 }],
+          "description": "Bacon, Egg & Cheese Biscuit as a breakfast meal with Hash Browns and a Small Premium Roast Coffee.",
+          "calories": 790,
+          "bundle": { "slots": ["sides", "drinks"], "autoFill": { "sides": "Hash Browns" } }
+        },
+        {
+          "name": "Sausage, Egg & Cheese McGriddles® Meal",
+          "menuPeriod": "breakfast",
+          "mealNumber": "5",
+          "sizes": [{ "size": "Standard", "price": 5.79 }],
+          "description": "Sausage, Egg & Cheese McGriddles® as a breakfast meal with Hash Browns and a Small Premium Roast Coffee.",
+          "calories": 830,
+          "bundle": { "slots": ["sides", "drinks"], "autoFill": { "sides": "Hash Browns" } }
+        },
+        {
+          "name": "Big Breakfast® with Hotcakes Meal",
+          "menuPeriod": "breakfast",
+          "mealNumber": "6",
+          "sizes": [{ "size": "Standard", "price": 7.99 }],
+          "description": "Scrambled eggs, sausage patty, biscuit, hash brown, and hotcakes with butter and syrup, plus a Small Premium Roast Coffee.",
+          "calories": 1340
+        },
+        {
+          "name": "Big Breakfast® Meal",
+          "menuPeriod": "breakfast",
+          "mealNumber": "7",
+          "sizes": [{ "size": "Standard", "price": 6.49 }],
+          "description": "Scrambled eggs, sausage patty, biscuit, and hash brown, plus a Small Premium Roast Coffee.",
+          "calories": 760
+        },
+        {
+          "name": "Hotcakes Meal",
+          "menuPeriod": "breakfast",
+          "mealNumber": "8",
+          "sizes": [{ "size": "Standard", "price": 5.49 }],
+          "description": "Three golden brown hotcakes with butter and syrup, plus a Small Premium Roast Coffee.",
+          "calories": 590
+        },
+        {
+          "name": "Bacon, Egg & Cheese McGriddles® Meal",
+          "menuPeriod": "breakfast",
+          "mealNumber": "9",
+          "sizes": [{ "size": "Standard", "price": 6.99 }],
+          "description": "Bacon, egg, and cheese between maple-flavored McGriddles® cakes as a breakfast meal with Hash Browns and a Small Premium Roast Coffee.",
+          "calories": 780,
+          "bundle": { "slots": ["sides", "drinks"], "autoFill": { "sides": "Hash Browns" } }
+        },
+        {
+          "name": "Sausage Biscuit with Egg Meal",
+          "menuPeriod": "breakfast",
+          "mealNumber": "10",
+          "sizes": [{ "size": "Standard", "price": 5.99 }],
+          "description": "Sausage Biscuit with Egg as a breakfast meal with Hash Browns and a Small Premium Roast Coffee.",
+          "calories": 720,
+          "bundle": { "slots": ["sides", "drinks"], "autoFill": { "sides": "Hash Browns" } }
+        }
+      ]
+    },
+    {
+      "category": "Fries, Sides & Drinks",
+      "modeDisplay": {
+        "breakfast": { "displayName": "Sides & Drinks", "icon": "☕" }
+      },
+      "items": [
+        {
+          "name": "World Famous Fries®",
+          "menuPeriod": "lunch",
+          "sizes": [
+            { "size": "Small", "price": 1.89 },
+            { "size": "Medium", "price": 3.59 },
+            { "size": "Large", "price": 4.19 }
+          ],
+          "description": "Our World Famous Fries® are made with premium potatoes like the Russet Burbank and Shepody. Crispy and golden on the outside, fluffy on the inside, and perfectly salted.",
+          "calories": 320,
+          "comboSlot": "sides"
+        },
+        {
+          "name": "Apple Slices",
+          "menuPeriod": "allDay",
+          "sizes": [{ "size": "Standard", "price": 0.89 }],
+          "description": "Fresh, crisp apple slices. A wholesome snack or side that's a great complement to any meal.",
+          "calories": 15
+        },
+        {
+          "name": "Coca-Cola®",
+          "menuPeriod": "allDay",
+          "sizes": [
+            { "size": "Small", "price": 1.29 },
+            { "size": "Medium", "price": 1.79 },
+            { "size": "Large", "price": 2.29 }
+          ],
+          "description": "Ice-cold Coca-Cola®, the refreshing soft drink that pairs perfectly with any McDonald's meal.",
+          "calories": 210,
+          "comboSlot": "drinks"
+        },
+        {
+          "name": "Diet Coke®",
+          "menuPeriod": "allDay",
+          "sizes": [
+            { "size": "Small", "price": 1.29 },
+            { "size": "Medium", "price": 1.79 },
+            { "size": "Large", "price": 2.29 }
+          ],
+          "description": "Ice-cold Diet Coke®, the crisp, refreshing zero-calorie soft drink that pairs perfectly with any McDonald's meal.",
+          "calories": 0,
+          "comboSlot": "drinks"
+        },
+        {
+          "name": "Sprite®",
+          "menuPeriod": "allDay",
+          "sizes": [
+            { "size": "Small", "price": 1.29 },
+            { "size": "Medium", "price": 1.79 },
+            { "size": "Large", "price": 2.29 }
+          ],
+          "description": "Crisp, refreshing Sprite® with a lemon-lime flavor that quenches your thirst and complements any meal.",
+          "calories": 200,
+          "comboSlot": "drinks"
+        },
+        {
+          "name": "Hi-C® Orange Lavaburst",
+          "menuPeriod": "allDay",
+          "sizes": [
+            { "size": "Small", "price": 1.29 },
+            { "size": "Medium", "price": 1.79 },
+            { "size": "Large", "price": 2.29 }
+          ],
+          "description": "The fan-favorite Hi-C® Orange Lavaburst is back! A burst of sweet, citrusy orange flavor in every sip.",
+          "calories": 230,
+          "comboSlot": "drinks"
+        },
+        {
+          "name": "Sweet Iced Tea",
+          "menuPeriod": "allDay",
+          "sizes": [
+            { "size": "Small", "price": 1.19 },
+            { "size": "Medium", "price": 1.49 },
+            { "size": "Large", "price": 1.89 }
+          ],
+          "description": "Freshly brewed and sweetened to perfection. McDonald's Sweet Iced Tea is made from a refreshing blend of brewed orange pekoe and pekoe cut black tea.",
+          "calories": 90,
+          "comboSlot": "drinks"
+        },
+        {
+          "name": "Premium Roast Coffee",
+          "menuPeriod": "allDay",
+          "sizes": [
+            { "size": "Small", "price": 1.49 },
+            { "size": "Medium", "price": 1.99 },
+            { "size": "Large", "price": 2.29 }
+          ],
+          "description": "A rich, smooth blend of 100% Arabica beans, freshly brewed every 30 minutes. The perfect cup, available hot.",
+          "calories": 0,
+          "comboSlot": "drinks"
+        },
+        {
+          "name": "Caramel Frappé",
+          "menuPeriod": "allDay",
+          "sizes": [
+            { "size": "Small", "price": 3.49 },
+            { "size": "Medium", "price": 3.99 },
+            { "size": "Large", "price": 4.49 }
+          ],
+          "description": "Cool, creamy, and caffeinated. A sweet blend of rich caramel flavor with coffee, milk, and ice, topped with whipped topping and caramel drizzle.",
+          "calories": 510,
+          "comboSlot": "drinks"
+        },
+        {
+          "name": "Mocha Frappé",
+          "menuPeriod": "allDay",
+          "sizes": [
+            { "size": "Small", "price": 3.49 },
+            { "size": "Medium", "price": 3.99 },
+            { "size": "Large", "price": 4.49 }
+          ],
+          "description": "A sweet blend of rich chocolate flavor with coffee, milk, and ice, topped with whipped topping and a chocolate drizzle. Indulgently cool and creamy.",
+          "calories": 500,
+          "comboSlot": "drinks"
+        },
+        {
+          "name": "Minute Maid® Orange Juice",
+          "menuPeriod": "allDay",
+          "sizes": [
+            { "size": "Small", "price": 2.39 },
+            { "size": "Medium", "price": 3.29 },
+            { "size": "Large", "price": 3.79 }
+          ],
+          "description": "100% orange juice, freshly squeezed goodness from Minute Maid®. A refreshing way to start your morning.",
+          "calories": 190,
+          "comboSlot": "drinks"
+        }
+      ]
+    },
+    {
+      "category": "Sweets & Treats",
+      "items": [
+        {
+          "name": "McFlurry® with OREO® Cookies",
+          "menuPeriod": "allDay",
+          "sizes": [{ "size": "Regular", "price": 4.29 }],
+          "description": "Creamy vanilla soft serve swirled with crunchy OREO® cookie pieces. A delicious frozen treat that's the perfect ending to any meal.",
+          "calories": 510
+        },
+        {
+          "name": "McFlurry® with M&M's® Candies",
+          "menuPeriod": "allDay",
+          "sizes": [{ "size": "Regular", "price": 4.29 }],
+          "description": "Creamy vanilla soft serve blended with colorful, crunchy M&M's® chocolate candies. A sweet, crunchy, irresistible combination.",
+          "calories": 640
+        },
+        {
+          "name": "Chocolate Shake",
+          "menuPeriod": "allDay",
+          "sizes": [
+            { "size": "Small", "price": 2.99 },
+            { "size": "Medium", "price": 3.69 },
+            { "size": "Large", "price": 4.19 }
+          ],
+          "description": "Thick, creamy, and delicious, our chocolate shake is made with our creamy vanilla soft serve and chocolate syrup, topped with whipped topping.",
+          "calories": 630
+        },
+        {
+          "name": "Vanilla Shake",
+          "menuPeriod": "allDay",
+          "sizes": [
+            { "size": "Small", "price": 2.99 },
+            { "size": "Medium", "price": 3.69 },
+            { "size": "Large", "price": 4.19 }
+          ],
+          "description": "Thick, creamy, and delicious, our vanilla shake is made with our creamy vanilla soft serve and topped with whipped topping. Simple perfection.",
+          "calories": 530
+        },
+        {
+          "name": "Strawberry Shake",
+          "menuPeriod": "allDay",
+          "sizes": [
+            { "size": "Small", "price": 2.99 },
+            { "size": "Medium", "price": 3.69 },
+            { "size": "Large", "price": 4.19 }
+          ],
+          "description": "Thick, creamy, and delicious, our strawberry shake is made with our creamy vanilla soft serve and strawberry syrup, topped with whipped topping.",
+          "calories": 550
+        },
+        {
+          "name": "Vanilla Cone",
+          "menuPeriod": "allDay",
+          "sizes": [{ "size": "Standard", "price": 1.49 }],
+          "description": "Creamy, smooth vanilla soft serve in a crispy cone. A sweet, simple treat at a great price.",
+          "calories": 200
+        },
+        {
+          "name": "Hot Fudge Sundae",
+          "menuPeriod": "allDay",
+          "sizes": [{ "size": "Standard", "price": 3.49 }],
+          "description": "Creamy vanilla soft serve topped with hot, rich fudge sauce. A warm-and-cold combination that's pure indulgence.",
+          "calories": 330
+        },
+        {
+          "name": "Hot Caramel Sundae",
+          "menuPeriod": "allDay",
+          "sizes": [{ "size": "Standard", "price": 3.49 }],
+          "description": "Creamy vanilla soft serve drizzled with warm, buttery caramel sauce. Sweet, smooth, and utterly satisfying.",
+          "calories": 340
+        },
+        {
+          "name": "Baked Apple Pie",
+          "menuPeriod": "allDay",
+          "sizes": [{ "size": "Standard", "price": 1.59 }],
+          "description": "A flaky, baked crust filled with sweet, cinnamon-spiced apples. A warm, satisfying dessert at a great value.",
+          "calories": 230
+        },
+        {
+          "name": "Chocolate Chip Cookie",
+          "menuPeriod": "allDay",
+          "sizes": [{ "size": "Standard", "price": 1.99 }],
+          "description": "A warm, soft-baked chocolate chip cookie made with semi-sweet chocolate chips. Freshly baked and delicious.",
+          "calories": 170
+        }
+      ]
+    }
+  ]
+}

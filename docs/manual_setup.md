@@ -1,26 +1,66 @@
-
 # Manual setup guide
 
-You'll need instances of the following Azure services. You can re-use service instances you have already or create new ones.
+Prefer `azd up` for repeatable deployments. Use this guide only when you need to wire Microsoft Foundry AI Drive Thru to resources that were created outside the template.
 
-1. [Azure OpenAI](https://ms.portal.azure.com/#create/Microsoft.CognitiveServicesOpenAI), with 2 model deployments, one of the **gpt-realtime-2.1** model, and one for embeddings (e.g.text-embedding-3-large, text-embedding-3-small, or text-embedding-ada-002)
-1. [Azure AI Search](https://ms.portal.azure.com/#create/Microsoft.Search), any tier Basic or above will work, ideally with [Semantic Search enabled](https://learn.microsoft.com/azure/search/semantic-how-to-enable-disable)
-1. [Azure Blob Storage](https://ms.portal.azure.com/#create/Microsoft.StorageAccount-ARM), with a container that has the content that represents your knowledge base (we include some sample data in this repo if you want an easy starting point)
+## Required Azure resources
 
-## Creating an index
+1. A Microsoft Foundry or Azure AI services account of kind `AIServices`. It must have the deployments listed in `infra/model-deployments.json` for realtime, embeddings, cascade STT, reasoning, and TTS. See [Deploy models in Azure AI Foundry](https://learn.microsoft.com/azure/ai-foundry/how-to/deploy-models-openai).
+2. An Azure AI Search service, Basic tier or higher for the standard persona set. The app uses vector search and semantic configuration `menuSemanticConfig`. See [Create an Azure AI Search service](https://learn.microsoft.com/azure/search/search-create-service-portal).
+3. Azure Container Apps, Azure Container Registry, Log Analytics, Storage, and a user-assigned managed identity if you are matching the production topology. The Bicep modules in `infra/` show the exact environment variables, secrets, RBAC roles, and local-auth settings.
+4. A Microsoft Entra app registration for production auth. Use `scripts/Setup-EntraAuth.ps1` rather than creating it by hand when possible.
 
-RAG applications use a retrieval system to get the right grounding data for LLMs. We use Azure AI Search as our retrieval system, so we need to get our knowledge base (e.g. documents or any other content you want the app to be able to talk about) into an Azure AI Search index.
+## Search indexes
 
-### Using an already existing Azure AI Search index
+The current app does not use a generic document RAG index. It uses one menu index per enabled persona. Index names are defined in `personas/<id>/persona.json` under `search.indexName`.
 
-You can use an existing index directly. If you created that index using the "Import and vectorize data" option in the portal, no further changes are needed. Otherwise, you'll need to update the field names in the [code](https://github.com/Azure-Samples/aisearch-openai-rag-audio/blob/main/app/backend/ragtools.py) to match your text/vector fields.
+The standard schema is created by `app/backend/setup_search_index.py` and includes:
 
-### Creating a new index with sample data or your own
+- Text fields: `id`, `category`, `name`, `description`, `longDescription`, `origin`, `caffeineContent`, `brewingMethod`, `popularity`, `menuPeriod`, and `sizes`.
+- Vector field: `embedding` with 3072 dimensions from `text-embedding-3-large`.
+- Semantic configuration: `menuSemanticConfig`.
+- Vector profile: `menuHnswProfile` with an Azure OpenAI vectorizer.
 
-Follow these steps to create a new index. We'll create a setup where once created, you can add, delete, or update your documents in blob storage and the index will automatically follow the changes.
+To create or refresh every enabled persona index after your environment variables and RBAC are set, run:
 
-1. Upload your documents to an Azure Blob Storage container. An easy way to do this is using the Azure Portal: navigate to the container and use the upload option to move your content (e.g. PDFs, Office docs, etc.)
-1. In the Azure Portal, go to your Azure AI Search service and select "Import and vectorize data", choose Blob Storage, then point at your container and follow the rest of the steps on the screen.
-1. Once the indexing process completes, you'll have a search index ready for vector and hybrid search.
+```powershell
+./scripts/setup_search_index.ps1
+```
 
-For more details on ingesting data in Azure AI Search using "Import and vectorize data", here's a [quickstart](https://learn.microsoft.com/en-us/azure/search/search-get-started-portal-import-vectors).
+On macOS or Linux, run:
+
+```bash
+./scripts/setup_search_index.sh
+```
+
+For a dry run with no Azure calls:
+
+```powershell
+python app/backend/setup_search_index.py --dry-run
+```
+
+## Backend environment
+
+At minimum, the Python backend needs these settings for local development with existing resources:
+
+```bash
+AZURE_TENANT_ID=<tenant-id>
+AZURE_OPENAI_EASTUS2_ENDPOINT=https://<foundry-subdomain>.openai.azure.com
+AZURE_AI_FOUNDRY_ENDPOINT=https://<foundry-subdomain>.services.ai.azure.com/models
+AZURE_OPENAI_REALTIME_DEPLOYMENT=gpt-realtime-2.1-mini
+AZURE_AI_MODEL_DEPLOYMENTS={"gpt-realtime-2.1":"gpt-realtime-2.1","gpt-realtime-2.1-mini":"gpt-realtime-2.1-mini","text-embedding-3-large":"text-embedding-3-large","gpt-5-mini":"gpt-5-mini","phi-4":"phi-4","gpt-4o-transcribe":"gpt-4o-transcribe","gpt-4o-mini-tts":"gpt-4o-mini-tts"}
+AZURE_SEARCH_ENDPOINT=https://<search-service>.search.windows.net
+AZURE_SEARCH_SEMANTIC_CONFIGURATION=menuSemanticConfig
+AZURE_SEARCH_IDENTIFIER_FIELD=id
+AZURE_SEARCH_CONTENT_FIELD=description
+AZURE_SEARCH_TITLE_FIELD=name
+AZURE_SEARCH_EMBEDDING_FIELD=embedding
+AZURE_SEARCH_USE_VECTOR_QUERY=true
+```
+
+For production, let `azd` and `infra/main.bicep` set the Container Apps environment. They also set `AUTH_MODE=Entra`, `RUNNING_IN_PRODUCTION=true`, `APP_SESSION_SECRET`, `AZURE_CLIENT_ID`, and the Entra settings required by the API.
+
+## Validation
+
+- Run `python app/backend/setup_search_index.py --dry-run` to verify persona discovery and index plans.
+- Run `python scripts/smoke_realtime.py --deployment gpt-realtime-2.1` to verify the realtime deployment accepts the session configuration.
+- Run `./scripts/Verify-ProductionAuth.ps1` after production auth is configured and the app is public.

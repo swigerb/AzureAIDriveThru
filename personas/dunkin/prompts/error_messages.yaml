@@ -1,0 +1,98 @@
+version: "1.0.0"
+messages:
+  # Search errors
+  search_service_unavailable: "I'm sorry, I can't reach our menu data right now."
+  search_no_results: "No matching menu entries found."
+
+  # Generic fallback (coordinator round 4, #79/#77 parity ask): not rendered by any current
+  # code path -- tools.py/rtmt.py have no lookup for this key today (only the fixture packs
+  # test-alpha/test-beta/test-gamma/test-delta define it) -- kept here so Dunkin's key set
+  # matches the shared engine's full key list if a future generic-catch-all path is added.
+  generic_error: "Sorry, something went wrong with that. Could you try again?"
+
+  # Customization errors (Dunkin has no invalid-modifier guard today -- persona.json's
+  # invalidModifiers is {} -- these keys exist for parity with the shared engine's key set
+  # and are never rendered until Dunkin defines invalid mods of its own).
+  invalid_mod: "I can't add {{forbidden_item}} to a {{base_name}} -- that's a new one! Want to try something else?"
+  nonsensical_mod_redirect: "That's a creative idea! How about something else?"
+
+  # Extras validation (ported from the sibling's tools.py apology strings)
+  extras_no_base_item: >-
+    I can add extras to hot drinks, signature lattes, or cold beverages,
+    but not to donuts, bakery, snacks, or breakfast sandwiches.
+  extras_blocked_category: >-
+    I can add extras to hot drinks, signature lattes, or cold beverages,
+    but I can't add them to donuts, bakery, snacks, or breakfast sandwiches.
+  extras_combined_name: >-
+    Extras are separate items: add the drink first, then the extra as its own item.
+
+  # No off-menu ordering (issue #73, ADR-001 decision 4: "No off-menu. If it's not on the menu
+  # in our source data, you cannot order it."). Same contract as the reference persona pack's
+  # error_messages.yaml, adapted to Dunkin wording.
+  item_not_on_menu: >-
+    I'm sorry, {{item_name}} isn't on our menu. Would you like to try
+    something else instead? Use the search tool with the guest's words and
+    offer the closest real menu item by its exact name.
+  size_not_available: >-
+    I'm sorry, {{item_name}} isn't available in that size. We have it in
+    {{available_sizes}} -- would you like one of those?
+
+  # #77: add-time rejection when a real, on-menu item needs a machine (persona.json
+  # `requiresMachine`, e.g. an espresso machine) that this store's own `machines.<key>.status`
+  # is currently "down". Dunkin's own `machines` is {} today (no item's `requiresMachine`
+  # names one yet), so this never renders -- kept for parity with the shared engine's key set,
+  # same contract as the reference persona pack's error_messages.yaml.
+  machine_unavailable: >-
+    I'm sorry, {{item_name}} isn't available right now -- {{machine_label}}. Would you like to
+    try something else instead?
+
+  # #77: `modify` (resize in place) for an on-menu item that isn't in the order. Same structured
+  # (TO_SERVER) rejection shape, reason "not_in_order", so the model never tells the guest an
+  # item was changed when nothing was. Same contract as the reference persona pack's
+  # error_messages.yaml (brand-neutral wording, no changes needed for Dunkin).
+  item_not_in_order: >-
+    {{item_name}} isn't in the order, so nothing was changed. Call get_order to check what's in
+    the order, then ask the guest whether they'd like to add it.
+
+  # #165: add-time rejection when a real, on-menu item's own `menuPeriod` doesn't match this
+  # session's bound menu mode. Dormant for this persona: Dunkin's `persona.json` doesn't declare
+  # `features.dayparts`, so every session has `menu_mode=None` and this path never fires -- kept
+  # populated anyway for parity with the full required-key set every persona pack documents (see
+  # prompt_loader.py's REQUIRED_ERROR_MESSAGE_KEYS).
+  item_out_of_mode: >-
+    I'm sorry, {{item_name}} isn't on our menu right now. Would you like to try
+    something else instead?
+
+  # Quantity limit messages (ported from the sibling's tools.py f-strings)
+  per_item_limit_maxed: >-
+    That's a lot of {{item_name}}! We can do up to {{max_per_item}}
+    of any one item. You already have {{existing_qty}} --
+    would you like to keep it at {{existing_qty}}?
+  per_item_limit_partial: >-
+    That's a lot of {{item_name}}! We can do up to {{max_per_item}}
+    of any one item. I can add {{allowed}} more --
+    would you like me to do that?
+  total_order_limit_maxed: >-
+    Wow, that's a big order! Our drive-thru tops out at
+    {{max_total}} items total so we can keep things moving.
+    You're already at the max -- would you like to swap anything out?
+  total_order_limit_partial: >-
+    Wow, that's a big order! Our drive-thru tops out at
+    {{max_total}} items total so we can keep things moving.
+    I can add {{remaining}} more -- would you like me to do that?
+
+  # Order reset
+  order_cleared: "Order cleared."
+
+  # Tool execution failures -- same contract as the reference persona pack's (issue #36).
+  tool_execution_failed: >-
+    Something went wrong with that action and it did not complete. Don't retry it yet --
+    call get_order to confirm the order's current state, then ask the guest to repeat
+    what they'd like rather than guessing.
+
+  # Tool-failure cap notice -- same contract as the reference persona pack's (issue #36).
+  tool_failure_cap_instructions: >-
+    The order system just failed twice in a row and NOTHING was added or changed. Do not
+    say an item was added, removed, or changed. Stay upbeat and in character as Dunkin
+    crew: briefly apologise, say you couldn't update the order just now, and ask the
+    guest to repeat what they'd like.

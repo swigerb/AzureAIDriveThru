@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none" role="img" aria-label="Dunkin iced coffee illustration">
+    <rect x="14" y="6" width="20" height="36" rx="10" fill="#FFE8D6" stroke="#FF671F" stroke-width="2" />
+    <rect x="16" y="10" width="16" height="24" rx="8" fill="#F2C097" />
+    <rect x="16" y="18" width="16" height="8" fill="#D07A4A" opacity="0.8" />
+    <path d="M24 6V2" stroke="#E3007F" stroke-width="2" stroke-linecap="round" />
+    <path d="M18 28l12-4" stroke="#FFECD1" stroke-width="2" stroke-linecap="round" />
+    <circle cx="22" cy="24" r="1.2" fill="#FFECD1" />
+    <circle cx="26" cy="21" r="1.2" fill="#FFECD1" />
+</svg>

@@ -27,7 +27,7 @@ class QuantityLimitTests(unittest.TestCase):
         session_id = order_state_singleton.create_session()
         result = self._run(update_order({
             "action": "add",
-            "item_name": "SuperSONIC Cheeseburger",
+            "item_name": "SuperSONIC Double Cheeseburger",
             "size": "standard",
             "quantity": MAX_QUANTITY_PER_ITEM,
             "price": 5.99,
@@ -42,7 +42,7 @@ class QuantityLimitTests(unittest.TestCase):
         session_id = order_state_singleton.create_session()
         result = self._run(update_order({
             "action": "add",
-            "item_name": "SuperSONIC Cheeseburger",
+            "item_name": "SuperSONIC Double Cheeseburger",
             "size": "standard",
             "quantity": MAX_QUANTITY_PER_ITEM + 1,
             "price": 5.99,
@@ -115,7 +115,7 @@ class QuantityLimitTests(unittest.TestCase):
             "item_name": "Cherry Limeade",
             "size": "large",
             "quantity": 1,
-            "price": 3.49,
+            "price": 3.39,
         }, session_id))
 
         self.assertEqual(result.destination, ToolResultDirection.TO_BOTH)
@@ -130,7 +130,7 @@ class QuantityLimitTests(unittest.TestCase):
             "item_name": "Cherry Limeade",
             "size": "large",
             "quantity": 1,
-            "price": 3.49,
+            "price": 3.39,
         }, session_id))
 
         self.assertEqual(result.destination, ToolResultDirection.TO_SERVER)
@@ -146,7 +146,7 @@ class QuantityLimitTests(unittest.TestCase):
             "item_name": "Cherry Limeade",
             "size": "medium",
             "quantity": 1,
-            "price": 2.99,
+            "price": 2.89,
         }, session_id))
 
         self.assertEqual(result.destination, ToolResultDirection.TO_BOTH)
@@ -160,7 +160,7 @@ class QuantityLimitTests(unittest.TestCase):
         session_id = order_state_singleton.create_session()
         result = self._run(update_order({
             "action": "add",
-            "item_name": "SuperSONIC Cheeseburger",
+            "item_name": "SuperSONIC Double Cheeseburger",
             "size": "standard",
             "quantity": MAX_QUANTITY_PER_ITEM + 5,
             "price": 5.99,

@@ -1,0 +1,304 @@
+"""Test-only hooks for the .NET conformance harness (tests/conformance, issue #7).
+
+Everything in this module is a no-op unless ``CONFORMANCE_TEST_HOOKS=1`` is set
+in the process environment. It exists so the black-box conformance suite can
+exercise happy-hour pricing and timer-driven behaviour (idle timeout, resume
+grace, resume nudge, the first-frame resume timeout, the greeting timeout, the
+idle/grace sweep interval, and rate-limit retry delays) deterministically and
+fast, without sleeping through real wall-clock minutes or hard-coding guesses
+about production timer values.
+
+Kept deliberately small and centralised: every other module reads the clock or
+a timer default through this file rather than rolling its own env var
+handling, so the entire gated surface is auditable in one place.
+
+Two independent mechanisms -- don't conflate them:
+
+- ``now(tz)`` freezes *business-logic* wall-clock reads only. Today the only
+  consumer is ``order_state.py``'s happy-hour / time-based pricing lookup. It
+  has **no effect** on any asyncio timer duration.
+- ``seconds(env_var, default)`` overrides *timer durations* fed into
+  ``asyncio.sleep`` / deadline arithmetic (idle timeout, resume grace, resume
+  nudge, the first-frame resume timeout, the greeting timeout, the idle/grace
+  sweep interval, and the two rate-limit retry delays). It has **no effect**
+  on what ``now()`` returns.
+
+Both are gated independently behind ``CONFORMANCE_TEST_HOOKS=1`` and either
+can be used without the other.
+
+A third, independently-gated mechanism (issue #82): ``cascade_credential()``
+returns a fake, static-token credential for the cascade pipeline's Foundry
+chat client when ``CONFORMANCE_TEST_HOOKS=1`` AND ``CONFORMANCE_CASCADE_FAKE_TOKEN``
+are both set, or ``None`` otherwise. Unlike ``now()``/``seconds()`` (which
+override a *value* some already-constructed production code path reads), this
+overrides *which object* app.py constructs in the first place -- the cascade
+pipeline's task-level requirement is "DefaultAzureCredential only, no API-key
+fallback" (issue #82 / design doc 7.4), so unlike the realtime pipeline (which
+already has an api-key escape hatch the conformance harness uses instead of
+ever exercising DefaultAzureCredential in CI -- see
+tests/conformance's BackendEnvironment: "Key auth, never DefaultAzureCredential/
+AzureDeveloperCliCredential in CI"), cascade has no such escape hatch to reuse.
+A real ``DefaultAzureCredential`` would try every credential source in its
+chain (environment, managed identity, Azure/azd/PowerShell CLI, ...) and fail
+outright in a CI sandbox with no Azure identity available -- this hook exists
+so the conformance harness can supply a fake credential whose ``get_token()``
+always returns one fixed, harness-known string instead, which
+``FakeChatCompletionsServer``/``FakeRealtimeUpstreamServer``'s audio routes can
+then check for byte-for-byte, at the same fidelity level every other fake
+upstream in this suite checks its own bearer/api-key header.
+``cascade_chat_kwargs()`` rides the same double-gate: it hands back the one
+extra keyword argument (``enforce_https=False``) the Foundry chat client
+needs to tolerate that same fake credential being attached to a plain-HTTP
+fake server, and is likewise a no-op (``{}``) whenever a real credential is
+in play.
+
+One caveat worth flagging here even though it lives in ``rate_limit.py``:
+the *default* delay fed into ``retry_delay()`` is overridable via ``seconds()``
+above, but the clamp bounds (``FIRST_RETRY_BOUNDS`` / ``SECOND_RETRY_BOUNDS``)
+are **not** -- a scripted rate-limit hint still clamps into the *production*
+bounds even when hooks are enabled. See ``rate_limit.py``'s module docstring.
+
+Startup validation: if hooks are enabled and ``CONFORMANCE_FIXED_NOW`` is set
+but malformed (missing an explicit numeric UTC offset, or not a parseable
+ISO-8601/RFC 3339 timestamp), this module raises **immediately at import
+time** -- not lazily the first time some downstream code happens to call
+``now()`` -- so a bad harness configuration fails the backend's startup with
+a clear message instead of surfacing as a confusing failure deep inside
+unrelated business-logic code much later in a test run. ``seconds()`` is
+equally fail-fast for its own override: an enabled, non-empty override that
+isn't a positive finite number raises ``ValueError`` at the call site, which
+every consumer evaluates at its own module import time (see
+``session_manager.py``, ``rate_limit.py``, ``rtmt.py``), so a bad
+``CONFORMANCE_*_SECONDS`` value also fails backend startup rather than
+silently falling back to the production default for an entire test run.
+
+NEVER set CONFORMANCE_TEST_HOOKS in infra/ (bicep), the Dockerfile, or
+azure.yaml. It must only ever be set by the conformance harness's own
+child-process environment (see tests/conformance's BackendEnvironment).
+Guarded by a dedicated guard test
+(``tests/test_conformance_hooks.py::TestNeverInInfraOrDockerfile``) that scans
+those files for the literal string and fails the build if it ever appears.
+"""
+from __future__ import annotations
+
+import logging
+import math
+import os
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+__all__ = ["HOOKS_ENABLED", "hooks_enabled_now", "now", "seconds", "cascade_credential", "cascade_chat_kwargs"]
+
+logger = logging.getLogger("sonic-drive-in")
+
+_ENABLED_ENV = "CONFORMANCE_TEST_HOOKS"
+_FIXED_NOW_ENV = "CONFORMANCE_FIXED_NOW"
+_CASCADE_FAKE_TOKEN_ENV = "CONFORMANCE_CASCADE_FAKE_TOKEN"
+
+# Read once at import time, like every other env-driven constant in this
+# codebase (see e.g. session_manager.py's module-level _RESUME_* constants).
+# Tests that need a different value re-import the module in-process (see
+# app/backend/tests/test_conformance_hooks.py) rather than mutating this at
+# runtime.
+HOOKS_ENABLED = os.environ.get(_ENABLED_ENV, "").strip() == "1"
+
+
+def hooks_enabled_now() -> bool:
+    """Live re-check of ``CONFORMANCE_TEST_HOOKS``, independent of the frozen
+    ``HOOKS_ENABLED`` constant above.
+
+    ``HOOKS_ENABLED`` is intentionally read once at import time and stays
+    fixed for the process's lifetime, matching every other consumer of this
+    module (``now()``/``seconds()``) and this module's own guard test. That's
+    the right contract for a real backend process, which imports this module
+    exactly once.
+
+    But ``rtmt.py``'s browser->upstream ``response.create`` gate (PR #49
+    review round 2, "S1") runs inside a shared ``pytest`` process where a
+    wholly unrelated test file, ``test_conformance_hooks.py``, deliberately
+    ``importlib.reload()``s this module to a *disabled* state as part of
+    *its own* test isolation (see that file's
+    ``_reset_conformance_hooks_module`` autouse fixture) -- and leaves it
+    that way afterwards, since ``monkeypatch`` restores the env var but has
+    no way to know it should also reload this module again. Left unguarded,
+    that side effect would silently disable every ``response.create``-
+    dependent test in every *other* test file that happens to run later in
+    the same process (e.g. ``test_order_resume.py``, ``test_rate_limit.py``,
+    ``test_rtmt.py``), independent of whatever ``CONFORMANCE_TEST_HOOKS`` is
+    actually set to at that point.
+
+    This function re-reads the live env var on every call instead, so
+    ``rtmt.py``'s gate is immune to that unrelated module-reload churn. In a
+    real backend process (which never reloads this module) it is functionally
+    identical to ``HOOKS_ENABLED``.
+    """
+    return os.environ.get(_ENABLED_ENV, "").strip() == "1"
+
+
+
+def _parse_fixed_now(raw: str) -> datetime:
+    """Parse ``CONFORMANCE_FIXED_NOW``, raising a clear error if it's naive.
+
+    RFC 3339 with an explicit numeric UTC offset (e.g.
+    ``"2026-07-04T15:30:00-05:00"``, or a trailing ``Z`` for UTC) is required
+    so the fixed instant is unambiguous regardless of the store timezone
+    under test. Note this is a numeric offset only -- ``datetime.fromisoformat``
+    does **not** accept a trailing IANA zone name (e.g. ``"... America/Chicago"``
+    raises ``ValueError``), so despite this module and issue #7 sometimes
+    describing the format loosely as "ISO-8601 plus IANA zone", an IANA zone
+    *name* is never a valid value for this env var -- only a numeric offset is.
+    """
+    fixed = datetime.fromisoformat(raw)
+    if fixed.tzinfo is None:
+        raise ValueError(
+            f"{_FIXED_NOW_ENV} must be an RFC 3339 timestamp with an explicit numeric UTC "
+            f"offset (e.g. '2026-07-04T15:30:00-05:00' or '...Z'), got: {raw!r}"
+        )
+    return fixed
+
+
+def _validate_at_startup() -> None:
+    """Fail fast at import time if hooks are enabled but misconfigured.
+
+    Without this, a malformed CONFORMANCE_FIXED_NOW would only surface the
+    first time some downstream business-logic code happened to call now() --
+    possibly minutes into a test run, far from the actual misconfiguration.
+    """
+    if not HOOKS_ENABLED:
+        return
+    raw = os.environ.get(_FIXED_NOW_ENV)
+    if raw:
+        _parse_fixed_now(raw)
+    logger.warning(
+        "%s=1 -- test-only clock/timer overrides are ACTIVE for this process. This must "
+        "never be set in a deployed environment (see conformance_hooks.py's module "
+        "docstring and its infra/Dockerfile/azure.yaml guard test).",
+        _ENABLED_ENV,
+    )
+
+
+_validate_at_startup()
+
+
+def now(tz: ZoneInfo) -> datetime:
+    """Return the current time in ``tz``.
+
+    Identical to ``datetime.now(tz)`` unless test hooks are enabled AND
+    ``CONFORMANCE_FIXED_NOW`` is set, in which case that fixed instant is
+    returned instead (converted into ``tz`` so callers always get a tz-aware
+    datetime in the zone they asked for). See the module docstring: this
+    affects business-logic wall-clock reads only, never timer durations.
+    """
+    if HOOKS_ENABLED:
+        raw = os.environ.get(_FIXED_NOW_ENV)
+        if raw:
+            return _parse_fixed_now(raw).astimezone(tz)
+    return datetime.now(tz)
+
+
+def seconds(env_var: str, default: float) -> float:
+    """Return a timer override read from ``env_var``, or ``default`` unchanged.
+
+    The override only applies when test hooks are enabled AND ``env_var`` is
+    set to a non-empty value; in that case the value must parse as a finite,
+    strictly-positive float or this raises ``ValueError`` immediately -- it
+    does **not** silently fall back to ``default``. Since every call site
+    assigns the result to a module-level constant at its own import time
+    (see ``session_manager.py``, ``rate_limit.py``, ``rtmt.py``), an invalid
+    override fails the backend's startup with a clear, non-zero-exit error
+    instead of quietly using a wrong-but-plausible timer value for an entire
+    test run. Hooks disabled, or the var unset/empty, returns ``default``
+    untouched -- neither of those is a misconfiguration. See the module
+    docstring: this affects timer durations only, never what ``now()``
+    returns.
+    """
+    if HOOKS_ENABLED:
+        raw = os.environ.get(env_var)
+        if raw:
+            try:
+                value = float(raw)
+            except ValueError as exc:
+                raise ValueError(
+                    f"{env_var} must be a positive, finite number of seconds "
+                    f"(test hooks are enabled), got unparseable value: {raw!r}"
+                ) from exc
+            if not math.isfinite(value) or value <= 0:
+                raise ValueError(
+                    f"{env_var} must be a positive, finite number of seconds "
+                    f"(test hooks are enabled), got: {raw!r}"
+                )
+            return value
+    return default
+
+
+class _StaticAccessToken:
+    """Duck-types ``azure.core.credentials.AccessToken`` (just the ``.token``
+    attribute every caller of ``get_token()`` actually reads -- see
+    ``cascade_processor.py``'s ``_bearer_token()`` and ``azure-ai-inference``'s
+    own bearer-token auth policy)."""
+
+    def __init__(self, token: str):
+        self.token = token
+        # Far enough in the future that no conformance run could plausibly
+        # need a refresh mid-suite; azure-core's bearer-token policy treats
+        # this as epoch seconds.
+        self.expires_on = 9_999_999_999
+
+
+class _FakeCascadeCredential:
+    """A fake ``TokenCredential`` (sync-callable ``get_token``, plus the
+    ``async def get_token`` shape ``azure.ai.inference.aio.ChatCompletionsClient``
+    and ``cascade_processor.py``'s own ``await self.credential.get_token(...)``
+    both need) that always returns the one fixed token string it was built
+    with, regardless of the requested scope(s). See ``cascade_credential()``'s
+    own doc comment for why this exists."""
+
+    def __init__(self, token: str):
+        self._token = token
+
+    async def get_token(self, *scopes: str, **kwargs) -> _StaticAccessToken:
+        return _StaticAccessToken(self._token)
+
+    async def close(self) -> None:
+        """No-op -- matches azure.identity.aio credentials' own async
+        context-manager-adjacent ``close()``, in case any caller ever calls
+        it defensively."""
+
+
+def cascade_credential():
+    """Returns a fake, static-token async credential for the cascade
+    pipeline's Foundry chat client (and its own STT/TTS bearer-token calls)
+    when test hooks are enabled AND ``CONFORMANCE_CASCADE_FAKE_TOKEN`` is set
+    to a non-empty value; ``None`` otherwise, in which case the caller (app.py)
+    constructs the real ``azure.identity.aio.DefaultAzureCredential`` exactly
+    as it already does today. See the module docstring's third mechanism for
+    why this is necessary (cascade has no api-key fallback to reuse, unlike
+    the realtime pipeline's own conformance-harness credential story).
+    """
+    if HOOKS_ENABLED:
+        token = os.environ.get(_CASCADE_FAKE_TOKEN_ENV)
+        if token:
+            return _FakeCascadeCredential(token)
+    return None
+
+
+def cascade_chat_kwargs() -> dict:
+    """Extra per-call keyword arguments for ``ChatCompletionsClient.complete()``,
+    needed **only** under the same fake-credential conditions as
+    ``cascade_credential()`` above (test hooks enabled AND
+    ``CONFORMANCE_CASCADE_FAKE_TOKEN`` set): ``azure-core``'s
+    ``BearerTokenCredentialPolicy`` unconditionally refuses to attach a bearer
+    token to a plain-``http://`` request (see
+    ``azure.core.pipeline.policies._authentication._enforce_https``) --
+    exactly right for a real, always-``https`` Foundry endpoint, but it also
+    means the conformance harness's own plain-HTTP
+    ``FakeChatCompletionsServer`` (issue #82) would otherwise make every
+    scripted tool-calling/pricing/not_on_menu row fail with
+    ``ServiceRequestError`` before the fake ever sees a request. ``{}`` (no
+    override) whenever a real ``DefaultAzureCredential`` is in play, so this
+    can never relax the check for a real, deployed Foundry endpoint --
+    identical safety story to ``cascade_credential()`` itself.
+    """
+    if HOOKS_ENABLED and os.environ.get(_CASCADE_FAKE_TOKEN_ENV):
+        return {"enforce_https": False}
+    return {}

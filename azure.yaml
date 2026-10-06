@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
 
-name: aisearch-openai-rag-audio
+name: azureaidrivethru
 metadata:
   template: aisearch-openai-rag-audio@0.0.3-beta
 services:
@@ -10,16 +10,54 @@ services:
     host: containerapp
     docker:
       remoteBuild: true
+      # Issue #129: the Dockerfile's COPY paths (frontend/, backend/, and personas/ at the repo
+      # root) assume the build context is the repo root, not this service's ./app project dir --
+      # azd resolves a relative `context` against the service directory (see
+      # resolveDockerPaths in azd's container_helper.go), so `..` here lands exactly on the repo
+      # root. docker.path is left at its default (./Dockerfile, also service-relative), which
+      # already points at app/Dockerfile correctly.
+      context: ..
+      # ADR-002 18.8: the frontend's Entra config is baked in at build time (app/Dockerfile's
+      # build-stage ARGs), read from the same azd env names Setup-EntraAuth.ps1 prints. A remote
+      # build (remoteBuild: true above) must pass these through to ACR -- verify this on the first
+      # real Entra deploy; if it doesn't, fall back to remoteBuild: false for this service.
+      buildArgs:
+        - VITE_AUTH_MODE=Entra
+        - VITE_ENTRA_TENANT_ID=${ENTRA_TENANT_ID}
+        - VITE_ENTRA_CLIENT_ID=${ENTRA_CLIENT_ID}
+        - VITE_ENTRA_API_SCOPE=${ENTRA_API_SCOPE}
+  # S7 (#17 go-live): the side-by-side C# container app (app/backend-dotnet, built from
+  # app/Dockerfile.dotnet). The flip commit landed this service entry together with
+  # infra/main.bicep's 'azd-service-name': 'backend-dotnet' tag on acaBackendDotnet (gated behind
+  # `if (deployDotnetApp)`, default false) -- see DEPLOY.md's ".NET container app (S7, #17)"
+  # section, "Step 0". Every environment that has NOT flipped DEPLOY_DOTNET_APP=true must scope
+  # deploys explicitly (`azd deploy backend`, not a bare `azd deploy`/`azd up`), because azd has
+  # no service-level `condition:` (as of the pinned release) to skip a declared service entirely.
+  # Once DEPLOY_DOTNET_APP=true for a given environment, `azd deploy`/`azd deploy backend-dotnet`
+  # both work normally, because the tagged resource now exists.
+  backend-dotnet:
+    project: ./app
+    language: docker
+    host: containerapp
+    docker:
+      path: ./Dockerfile.dotnet
+      context: ..
+      remoteBuild: true
+      buildArgs:
+        - VITE_AUTH_MODE=Entra
+        - VITE_ENTRA_TENANT_ID=${ENTRA_TENANT_ID}
+        - VITE_ENTRA_CLIENT_ID=${ENTRA_CLIENT_ID}
+        - VITE_ENTRA_API_SCOPE=${ENTRA_API_SCOPE}
 hooks:
     postprovision:
       windows:
         shell: pwsh
-        run: ./scripts/write_env.ps1; ./scripts/setup_search_index.ps1
+        run: ./scripts/postprovision_auth.ps1; ./scripts/write_env.ps1; ./scripts/setup_search_index.ps1
         interactive: true
         continueOnError: false
       posix:
         shell: sh
-        run: ./scripts/write_env.sh; ./scripts/setup_search_index.sh
+        run: ./scripts/postprovision_auth.sh; ./scripts/write_env.sh; ./scripts/setup_search_index.sh
         interactive: true
         continueOnError: false
     # Non-fatal: checks the live realtime deployment accepts the carhop's exact
@@ -69,3 +107,14 @@ pipeline:
     - AZURE_CONTAINER_APP_NAME
     - AZURE_LOG_ANALYTICS
     - AZURE_CONTAINER_APPS_WORKLOAD_PROFILE
+    - PERSONAS
+    - DEFAULT_PERSONA
+    - AZURE_AI_MODEL_DEPLOYMENTS
+    - DEPLOY_DOTNET_APP
+    - AZURE_CONTAINER_APP_DOTNET_NAME
+    - BACKEND_DOTNET_INGRESS_ENABLED
+    - BACKEND_INGRESS_ENABLED
+    - ENTRA_TENANT_ID
+    - ENTRA_CLIENT_ID
+    - ENTRA_API_SCOPE
+    - ENTRA_APP_ROLE
