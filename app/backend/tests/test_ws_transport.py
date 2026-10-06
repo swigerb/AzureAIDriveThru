@@ -77,29 +77,47 @@ class BrowserSocketTransportTests(unittest.IsolatedAsyncioTestCase):
         await browser.close()
 
     async def test_first_data_frame_after_heartbeat_pong_is_accepted(self):
-        """Exact production framing: server PING -> browser PONG -> browser data frame."""
-        with patch.object(rtmt_module, "_WS_HEARTBEAT_SEC", 0.2):
-            browser = await self.client.ws_connect("/realtime", compress=15, autoping=False)
-            ping = await asyncio.wait_for(browser.receive(), 5)
-            while ping.type is not WSMsgType.PING:  # skip upstream traffic relayed to us
-                ping = await asyncio.wait_for(browser.receive(), 5)
-            await browser.pong(ping.data)
-            await browser.send_str(json.dumps(BROWSER_SESSION_UPDATE))
+        """Exact production framing: server PING -> browser PONG -> browser data frame.
 
-            async def read_until_close():
-                while True:
-                    msg = await browser.receive()
-                    if msg.type is WSMsgType.PING:
-                        await browser.pong(msg.data)
-                    elif msg.type in (WSMsgType.CLOSE, WSMsgType.CLOSED, WSMsgType.ERROR):
-                        return msg
-            reader = asyncio.create_task(read_until_close())
-            await self._until(lambda: len(self._session_updates()) >= 2 or reader.done())
-            if reader.done():
-                close = reader.result()
-                self.fail(f"server killed the socket: {close.data} {close.extra}")
-            reader.cancel()
-            await browser.close()
+        #328: this used to drive the PING off the *real* heartbeat timer by
+        patching `_WS_HEARTBEAT_SEC` down to 0.2s, racing aiohttp's own
+        pong-timeout (`heartbeat / 2` -- 0.1s here) against this test process
+        actually getting scheduled to receive the PING and write the PONG back.
+        On a loaded CI runner that race lost intermittently and aiohttp killed
+        the socket itself (`No PONG received after 0.1 seconds`) before this
+        test's own assertions ever ran -- nothing to do with the real bug this
+        test guards (aio-libs/aiohttp#13274). The production heartbeat interval
+        (`_WS_HEARTBEAT_SEC`, 15s by default) is left untouched, and the PING
+        is instead sent on demand via the server `WebSocketResponse.ping()`
+        (aiohttp's public one-off-ping API, which -- unlike the internal
+        heartbeat timer -- never arms a pong-timeout), so the only timing this
+        test depends on is its own `asyncio.wait_for` timeouts.
+        """
+        browser = await self.client.ws_connect("/realtime", compress=15, autoping=False)
+        await self._until(lambda: self.rtmt._sessions.active_session_count == 1)
+        server_ws = next(iter(self.rtmt._sessions._session_map.keys()))
+
+        await server_ws.ping()
+        ping = await asyncio.wait_for(browser.receive(), 5)
+        while ping.type is not WSMsgType.PING:  # skip upstream traffic relayed to us
+            ping = await asyncio.wait_for(browser.receive(), 5)
+        await browser.pong(ping.data)
+        await browser.send_str(json.dumps(BROWSER_SESSION_UPDATE))
+
+        async def read_until_close():
+            while True:
+                msg = await browser.receive()
+                if msg.type is WSMsgType.PING:
+                    await browser.pong(msg.data)
+                elif msg.type in (WSMsgType.CLOSE, WSMsgType.CLOSED, WSMsgType.ERROR):
+                    return msg
+        reader = asyncio.create_task(read_until_close())
+        await self._until(lambda: len(self._session_updates()) >= 2 or reader.done())
+        if reader.done():
+            close = reader.result()
+            self.fail(f"server killed the socket: {close.data} {close.extra}")
+        reader.cancel()
+        await browser.close()
 
     async def test_idle_close_uses_application_close_code(self):
         """The browser keys 'do not auto-reconnect' off this exact code/reason."""
