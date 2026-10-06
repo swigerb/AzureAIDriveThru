@@ -47,7 +47,7 @@ namespace Backend.Sessions;
 /// </summary>
 internal sealed class CascadeProcessor : IPipelineProcessor
 {
-    private const int MaxToolRounds = 8;
+    internal const int MaxToolRounds = 8;
     private const int AudioSampleRate = 24000;
     private const int TtsChunkBytes = 24000;
 
@@ -118,7 +118,7 @@ internal sealed class CascadeProcessor : IPipelineProcessor
 
     /// <summary>Per-connection mutable state -- the C# equivalent of cascade_processor.py's
     /// <c>_CascadeSessionState</c> dataclass.</summary>
-    private sealed class CascadeSessionState
+    internal sealed class CascadeSessionState
     {
         public required string SessionId { get; init; }
         public required string Deployment { get; init; }
@@ -210,6 +210,16 @@ internal sealed class CascadeProcessor : IPipelineProcessor
 
         Task NotifyClientAsync(JsonObject frame, CancellationToken notifyCt) =>
             SendTextAsync(browserSocket, frame.ToJsonString(), notifyCt, ct);
+
+        // Issue #338: chat-completion/tool-call dispatch (CallChatCompletionAsync,
+        // ExecuteToolCallAsync, RunChatToolLoopAsync) is its own collaborator now
+        // (CascadeToolCallDispatcher.cs) -- same logic, same log templates/EventIds, constructed
+        // here with this connection's own toolExecutor/promptLoader/state/toolDefinitions so the
+        // call site below is a pure delegate. NotifyClientAsync stays a delegate onto the local
+        // function above rather than being duplicated inside the new class.
+        var toolCallDispatcher = new CascadeToolCallDispatcher(
+            browserSocket, toolExecutor, promptLoader, state, _rateLimitSettings, _chatClient,
+            toolDefinitions, _sessionManager, sessionId, _timeProvider, NotifyClientAsync, _logger!, ct);
 
         // #126: a monotonic-comparable clock reading for TurnDetector's echo-cooldown deadline
         // math, driven off `_timeProvider` (so a FakeTimeProvider-based test can control it)
@@ -437,174 +447,6 @@ internal sealed class CascadeProcessor : IPipelineProcessor
             cts?.Dispose();
         }
 
-        async Task<JsonObject> CallChatCompletionAsync(CancellationToken turnCt) =>
-            await CascadeRateLimit.WithRetryAsync(
-                _rateLimitSettings,
-                () => _chatClient.CompleteAsync(state.Messages, state.Deployment, toolDefinitions, turnCt),
-                "chat completion", NotifyClientAsync, sessionId, _logger, turnCt, _timeProvider).ConfigureAwait(false);
-
-        async Task ExecuteToolCallAsync(JsonObject toolCall, string previousItemId, CancellationToken turnCt)
-        {
-            var callId = GetString(toolCall, "id") ?? "";
-            var name = GetString(toolCall["function"] as JsonObject, "name") ?? "";
-            if (!toolExecutor.ToolNames.Contains(name))
-            {
-                _logger?.CascadeUnknownTool(name, sessionId);
-                state.Messages.Add(CascadeChatMessage.Tool("", callId));
-                return;
-            }
-
-            string outputText;
-            bool sendToClient;
-            string? clientText;
-            try
-            {
-                // Mirrors Python's `tool_call.function.arguments or "{}"`: treat BOTH a missing
-                // field and an empty string the same way (some tool calls with no parameters come
-                // back as `"arguments": ""`, not an omitted field -- `?? "{}"` alone only covers
-                // the missing-field case and would otherwise send "" into JsonDocument.Parse,
-                // throwing and routing a legitimate no-arg call into the generic error branch below).
-                var rawArguments = GetString(toolCall["function"] as JsonObject, "arguments");
-                var argumentsJson = string.IsNullOrEmpty(rawArguments) ? "{}" : rawArguments;
-                using var argumentsDoc = JsonDocument.Parse(argumentsJson);
-                _logger?.CascadeExecutingTool(name, sessionId);
-                var result = await toolExecutor.ExecuteAsync(name, argumentsDoc.RootElement.Clone(), turnCt).ConfigureAwait(false);
-                _logger?.CascadeToolResultDirection(name, result.Destination, sessionId);
-
-                // Issue #13 tail: track tool call args + result in the context window, mirroring
-                // cascade_processor.py's own ctx_monitor.add_content(tool_call.function.arguments
-                // or "") / ctx_monitor.add_content(result.to_text()) right after logging the
-                // result.
-                var ctxMonitorForTool = _sessionManager?.GetContextMonitor(sessionId);
-                if (ctxMonitorForTool is not null)
-                {
-                    ctxMonitorForTool.AddContent(argumentsJson);
-                    ctxMonitorForTool.AddContent(result.ToText());
-                }
-
-                outputText = result.Destination is ToolResultDirection.ToServer or ToolResultDirection.ToBoth
-                    ? result.ToText() : "";
-                sendToClient = result.Destination is ToolResultDirection.ToClient or ToolResultDirection.ToBoth;
-                clientText = sendToClient ? result.ToClientText() : null;
-            }
-            catch (OperationCanceledException) when (turnCt.IsCancellationRequested)
-            {
-                // Python's mirror-image `except Exception:` here (cascade_processor.py's
-                // `_execute_tool_call`) never catches cancellation in the first place --
-                // `asyncio.CancelledError` derives from `BaseException`, not `Exception`. C#'s
-                // `OperationCanceledException` DOES derive from `Exception`, so without this
-                // clause a guest barging in mid-tool-call would get logged as a tool failure and
-                // a synthetic "something went wrong" error message appended to history, instead
-                // of the turn just quietly ending the way barge-in (`BargeIn`) expects.
-                //
-                // #236 Rick re-review item 3 (LOW): the `when` guard matters -- an
-                // `OperationCanceledException` can also come from an HttpClient-internal timeout
-                // (a `TaskCanceledException`, which derives from `OperationCanceledException`)
-                // that has NOTHING to do with a barge-in -- `turnCt` itself was never cancelled.
-                // Without this guard, that would be misclassified as "the turn was barged in on"
-                // and silently swallowed here (re-thrown, then silently absorbed by `Spawn`'s own
-                // catch), with no log and no `response.done` ever reaching the guest. Filtering on
-                // `turnCt.IsCancellationRequested` means a genuine non-barge-in timeout instead
-                // falls through to the `catch (Exception ex)` below, which DOES log it and still
-                // lets the turn finish (synthetic tool-failure message, `response.done` still sent).
-                throw;
-            }
-            catch (Exception ex)
-            {
-                _logger?.CascadeToolUnhandledException(ex, name, sessionId);
-                outputText = promptLoader?.RenderError("tool_execution_failed") ??
-                    "Something went wrong with that action and it did not complete. Don't retry it yet -- " +
-                    "call get_order to confirm the order's current state, then ask the guest to repeat what they'd like.";
-                sendToClient = false;
-                clientText = null;
-
-                if (toolExecutor is IOrderTicketSource ticketSource)
-                {
-                    string? ticketJson = null;
-                    try
-                    {
-                        ticketJson = ticketSource.CurrentOrderSummaryJson;
-                    }
-                    catch (Exception ticketEx)
-                    {
-                        _logger?.CascadeTicketRefreshFailed(ticketEx, sessionId);
-                    }
-                    if (ticketJson is not null)
-                    {
-                        await SendTextAsync(browserSocket, new JsonObject
-                        {
-                            ["type"] = "extension.middle_tier_tool_response",
-                            ["previous_item_id"] = previousItemId,
-                            ["tool_name"] = "get_order",
-                            ["tool_result"] = ticketJson,
-                        }.ToJsonString(), turnCt, ct).ConfigureAwait(false);
-                    }
-                }
-            }
-
-            state.Messages.Add(CascadeChatMessage.Tool(outputText, callId));
-            if (sendToClient)
-            {
-                await SendTextAsync(browserSocket, new JsonObject
-                {
-                    ["type"] = "extension.middle_tier_tool_response",
-                    ["previous_item_id"] = previousItemId,
-                    ["tool_name"] = name,
-                    ["tool_result"] = clientText,
-                }.ToJsonString(), turnCt, ct).ConfigureAwait(false);
-            }
-        }
-
-        async Task<string> RunChatToolLoopAsync(CancellationToken turnCt)
-        {
-            for (var round = 0; round < MaxToolRounds; round++)
-            {
-                var message = await CallChatCompletionAsync(turnCt).ConfigureAwait(false);
-                var toolCalls = message["tool_calls"] as JsonArray;
-                if (toolCalls is null || toolCalls.Count == 0)
-                {
-                    var content = GetString(message, "content") ?? "";
-                    state.Messages.Add(CascadeChatMessage.Assistant(content));
-                    return content;
-                }
-
-                var preRoundCount = state.Messages.Count;
-                state.Messages.Add((JsonObject)message.DeepClone());
-                var previousItemId = MiddleTierItemIds.NewId();
-                try
-                {
-                    foreach (var toolCallNode in toolCalls)
-                    {
-                        if (toolCallNode is JsonObject toolCall)
-                        {
-                            await ExecuteToolCallAsync(toolCall, previousItemId, turnCt).ConfigureAwait(false);
-                        }
-                    }
-                }
-                catch
-                {
-                    // #247: a barge-in (`OperationCanceledException`, re-thrown unchanged by
-                    // `ExecuteToolCallAsync`'s own `when (turnCt.IsCancellationRequested)` guard)
-                    // or any other failure mid-round can leave some of this round's `toolCalls`
-                    // ids answered (a tool message appended) and others not. A chat API that sees
-                    // an assistant `tool_calls` message without a matching tool message for EVERY
-                    // id 400s the next request -- exactly what the fake chat server in the
-                    // conformance scenario enforces. Rather than appending neutral placeholder
-                    // tool messages for the unanswered ids, truncate the whole round back out of
-                    // `state.Messages`: history is then always either "fully pre-round" or "fully
-                    // post-round", never partially answered, and the next turn's model can always
-                    // re-discover real-world state via `get_order` (the same tool-failure-recovery
-                    // instruction `ExecuteToolCallAsync` already gives it), so nothing is actually
-                    // lost. A tool that already mutated the order (e.g. `update_order`) keeps its
-                    // real-world effect -- the order store is untouched by this truncation.
-                    state.Messages.RemoveRange(preRoundCount, state.Messages.Count - preRoundCount);
-                    throw;
-                }
-            }
-            _logger?.CascadeChatToolLoopCapped(MaxToolRounds, sessionId);
-            return "";
-        }
-
         async Task<string> TranscribeAsync(byte[] turnAudio, CancellationToken turnCt)
         {
             var cascadeAudio = _catalog.CascadeAudio
@@ -705,7 +547,7 @@ internal sealed class CascadeProcessor : IPipelineProcessor
             string finalText;
             try
             {
-                finalText = await RunChatToolLoopAsync(turnCt).ConfigureAwait(false);
+                finalText = await toolCallDispatcher.RunChatToolLoopAsync(turnCt).ConfigureAwait(false);
             }
             catch (CascadeRateLimitExhaustedException)
             {
@@ -1266,7 +1108,7 @@ internal sealed class CascadeProcessor : IPipelineProcessor
     /// turn from issuing any FURTHER sends, preserving the original "stop talking once barged in
     /// on" behaviour.
     /// </summary>
-    private static async Task SendTextAsync(WebSocket socket, string payload, CancellationToken turnCt, CancellationToken socketCt)
+    internal static async Task SendTextAsync(WebSocket socket, string payload, CancellationToken turnCt, CancellationToken socketCt)
     {
         turnCt.ThrowIfCancellationRequested();
         if (socket.State != WebSocketState.Open)
@@ -1280,7 +1122,7 @@ internal sealed class CascadeProcessor : IPipelineProcessor
     /// <summary>Duplicated from <see cref="RealtimeProcessor"/>'s own private helper of the same
     /// name -- a defensive string read that never throws for a malformed/missing/non-string field,
     /// used for every piece of JSON this class reads off the wire or an upstream REST response.</summary>
-    private static string? GetString(JsonObject? obj, string key) =>
+    internal static string? GetString(JsonObject? obj, string key) =>
         obj?[key] is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
 
     /// <summary>Duplicated from <see cref="RealtimeProcessor"/>'s own private helper of the same
