@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "leaseKey": "session-ddt-338-split",
+  "sessionId": "ddt-338-split",
+  "repository": "swigerb/AzureAIDriveThru",
+  "issueNumber": null,
+  "dispatchSource": "local-cli",
+  "route": "aca-job",
+  "executionMode": "aca-job",
+  "state": "claimed",
+  "attempts": 1,
+  "startedAt": "2026-10-06T17:51:56.103Z",
+  "lastHeartbeatAt": "2026-10-06T17:51:56.103Z",
+  "updatedAt": "2026-10-06T17:51:56.103Z",
+  "terminalReason": null,
+  "executionRef": null
+}
