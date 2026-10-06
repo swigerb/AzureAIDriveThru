@@ -1305,3 +1305,11 @@ On any failure or cancellation while executing a round's tool calls, **delete th
 **Risk/trade-off:** None — this is a documentation-only decision record capturing rules and semantics already shipped and tested in prior PRs; no code changes accompany this entry.
 
 **Team impact:** Captures durable program-level rules so future contributors (and future C# or conformance work) don't have to reconstruct them from individual PR history.
+
+## 2026-10-06 — #328: deterministic heartbeat/pong transport test
+
+- **Decision:** `test_first_data_frame_after_heartbeat_pong_is_accepted` (`test_ws_transport.py`) no longer patches `_WS_HEARTBEAT_SEC` down to 0.2s to force a PING. That raced aiohttp's own pong-timeout (`heartbeat / 2` = 0.1s) against the test process getting scheduled to receive the PING and write the PONG back — on a loaded CI runner the race lost intermittently (`AssertionError: server killed the socket: None None`, PRs #313/#327), unrelated to the real regression under test (aio-libs/aiohttp#13274, first compressed data frame after a PONG). Fixed by leaving the production heartbeat interval untouched and triggering the PING deterministically via the server-side `WebSocketResponse.ping()` (aiohttp's public one-off-ping API, which never arms a pong-timeout), fetched from `self.rtmt._sessions._session_map` after awaiting session creation.
+- **Verification:** 30/30 local runs green (~0.77s each, no timing variance). Mutation check: temporarily forced `compress=True` on the browser-facing `WebSocketResponse` in `rtmt.py` (reintroducing the #13274 regression) — both this test and `test_handshake_does_not_negotiate_permessage_deflate` failed with the real aiohttp error (`Received frame with non-zero reserved bits`, close code 1002); reverted via file copy, `diff` confirmed byte-identical restore.
+- **Scope:** Test-only change — no product code touched. The underlying fix (declining permessage-deflate on the browser socket) was already correct; this was a test-harness timing bug, not a real product race.
+- **Risk/trade-off:** None — purely a test determinism fix with its regression teeth proven by mutation check.
+- **Team impact:** `test_ws_transport.py::BrowserSocketTransportTests` should no longer flake under CI load; future reviewers mutating the compression/heartbeat protection will still get a red test.
