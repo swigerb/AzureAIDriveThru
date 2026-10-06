@@ -79,13 +79,78 @@ public sealed class BrowserSocketCancellationTests
             ["audio"] = Convert.ToBase64String(pcm16Bytes),
         }.ToJsonString());
 
+    /// <summary>#331: wraps the browser-side socket's own transport stream so the test can wait
+    /// on the one piece of state #290's bug actually depends on -- a browser-socket
+    /// <c>SendAsync</c> write genuinely in flight (started, not yet completed) for a chunk big
+    /// enough to actually overrun the tiny socket buffers -- instead of guessing with a fixed
+    /// <c>Task.Delay</c> how long the (STT -&gt; chat -&gt; TTS) pipeline takes to reach the big reply's
+    /// chunk-send loop. <c>RunSessionAsync_BargeInDuringABackpressuredTtsWrite_...</c> writes
+    /// several small control frames (<c>response.created</c>, the transcript delta, ...) before
+    /// the big reply's own ~24 KB-per-chunk <c>response.audio.delta</c> writes start, so this
+    /// only signals for a write whose payload is actually bigger than the socket buffers -- the
+    /// direct, data-driven proof it's one of THOSE chunks, not a race against how many small
+    /// frames happen to precede it. Every other stream member is a plain pass-through; only the
+    /// <c>Memory</c>-based <c>WriteAsync</c> overload is intercepted because that's the overload
+    /// <c>ManagedWebSocket.SendAsync</c> actually calls.</summary>
+    private sealed class WriteObservingStream(Stream inner, int minBytesToSignal) : Stream
+    {
+        private TaskCompletionSource<Task>? _nextBigWriteStarted;
+
+        /// <summary>Arms a one-shot signal for this stream's next <c>WriteAsync</c> call whose
+        /// buffer is at least <c>minBytesToSignal</c> long; the returned task completes with that
+        /// call's own (still in-flight, not-yet-awaited) write task the instant the write starts --
+        /// proof a genuinely large send is pending, not a guess.</summary>
+        public Task<Task> ArmNextBigWrite()
+        {
+            var tcs = new TaskCompletionSource<Task>(TaskCreationOptions.RunContinuationsAsynchronously);
+            Interlocked.Exchange(ref _nextBigWriteStarted, tcs);
+            return tcs.Task;
+        }
+
+        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            var writeTask = inner.WriteAsync(buffer, cancellationToken).AsTask();
+            if (buffer.Length >= minBytesToSignal)
+            {
+                Interlocked.Exchange(ref _nextBigWriteStarted, null)?.TrySetResult(writeTask);
+            }
+            await writeTask.ConfigureAwait(false);
+        }
+
+        public override bool CanRead => inner.CanRead;
+        public override bool CanSeek => inner.CanSeek;
+        public override bool CanWrite => inner.CanWrite;
+        public override long Length => inner.Length;
+        public override long Position { get => inner.Position; set => inner.Position = value; }
+        public override void Flush() => inner.Flush();
+        public override Task FlushAsync(CancellationToken cancellationToken) => inner.FlushAsync(cancellationToken);
+        public override int Read(byte[] buffer, int offset, int count) => inner.Read(buffer, offset, count);
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
+            inner.ReadAsync(buffer, cancellationToken);
+        public override long Seek(long offset, SeekOrigin origin) => inner.Seek(offset, origin);
+        public override void SetLength(long value) => inner.SetLength(value);
+        public override void Write(byte[] buffer, int offset, int count) => inner.Write(buffer, offset, count);
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                inner.Dispose();
+            }
+            base.Dispose(disposing);
+        }
+    }
+
     /// <summary>Opens a real loopback TCP pair and wraps each end as a real
     /// <c>ManagedWebSocket</c>: <paramref name="BrowserSocket"/> is what <see cref="CascadeProcessor"/>
     /// treats as the server-accepted connection to the browser (<c>isServer: true</c>, matching
     /// Kestrel), <paramref name="GuestSocket"/> is the test's stand-in for the guest's own browser
     /// WebSocket client. Both ends get a tiny socket buffer so a large payload genuinely
-    /// backpressures if the guest side stops reading.</summary>
-    private static async Task<(WebSocket BrowserSocket, WebSocket GuestSocket, TcpClient ServerTcp, TcpClient ClientTcp)> OpenLoopbackWebSocketPairAsync()
+    /// backpressures if the guest side stops reading. <paramref name="BrowserWriteTracker"/> is the
+    /// same stream <paramref name="BrowserSocket"/> writes through, exposed so the test can observe
+    /// (<see cref="WriteObservingStream.ArmNextBigWrite"/>) exactly when a browser-socket send is
+    /// genuinely backpressure-blocked, rather than guessing with a fixed delay (#331).</summary>
+    private static async Task<(WebSocket BrowserSocket, WebSocket GuestSocket, TcpClient ServerTcp, TcpClient ClientTcp, WriteObservingStream BrowserWriteTracker)> OpenLoopbackWebSocketPairAsync()
     {
         const int TinyBufferBytes = 512;
         // Sized BEFORE the TCP handshake (the listener's buffers are inherited by the accepted
@@ -115,11 +180,17 @@ public sealed class BrowserSocketCancellationTests
             serverTcp.Client.SendBufferSize = TinyBufferBytes;
             serverTcp.Client.ReceiveBufferSize = TinyBufferBytes;
 
+            // Big-write threshold: well above every small control/event frame this test sends
+            // (response.created, the transcript delta, speech_started, ...), well below a single
+            // ~24 KB raw PCM TTS chunk's base64'd size -- see TinyBufferBytes above for why that
+            // chunk size alone is already enough to overrun this socket's buffers.
+            const int BigWriteThresholdBytes = TinyBufferBytes * 4;
+            var browserWriteTracker = new WriteObservingStream(serverTcp.GetStream(), BigWriteThresholdBytes);
             var browserSocket = WebSocket.CreateFromStream(
-                serverTcp.GetStream(), isServer: true, subProtocol: null, keepAliveInterval: Timeout.InfiniteTimeSpan);
+                browserWriteTracker, isServer: true, subProtocol: null, keepAliveInterval: Timeout.InfiniteTimeSpan);
             var guestSocket = WebSocket.CreateFromStream(
                 clientTcp.GetStream(), isServer: false, subProtocol: null, keepAliveInterval: Timeout.InfiniteTimeSpan);
-            return (browserSocket, guestSocket, serverTcp, clientTcp);
+            return (browserSocket, guestSocket, serverTcp, clientTcp, browserWriteTracker);
         }
         finally
         {
@@ -187,7 +258,7 @@ public sealed class BrowserSocketCancellationTests
         overallCts.CancelAfter(TimeSpan.FromSeconds(30));
         var ct = overallCts.Token;
 
-        var (browserSocket, guestSocket, serverTcp, clientTcp) = await OpenLoopbackWebSocketPairAsync();
+        var (browserSocket, guestSocket, serverTcp, clientTcp, browserWriteTracker) = await OpenLoopbackWebSocketPairAsync();
         using var _server = serverTcp;
         using var _client = clientTcp;
 
@@ -197,25 +268,38 @@ public sealed class BrowserSocketCancellationTests
         await DrainUntilAsync(guestSocket, "extension.round_trip_token", ct);
 
         // 2) Kick off guest turn 1 (the big spoken answer) -- then deliberately STOP reading, so its
-        //    TTS chunks back up against the 512-byte socket buffers almost immediately.
+        //    TTS chunks back up against the 512-byte socket buffers almost immediately. Arm the
+        //    write tracker first: nothing else writes to the browser socket between here and the
+        //    big reply's own chunk-send loop, so the next write it observes IS that reply's.
         var loudChunk = Pcm16(20000, count: 10);
         var silentChunk = Pcm16(0, count: 4800); // config.yaml vad.silence_duration_ms=200 @ 24kHz
+        var nextBrowserWrite = browserWriteTracker.ArmNextBigWrite();
         await guestSocket.SendAsync(AppendFrame(loudChunk), WebSocketMessageType.Text, true, ct);
         await guestSocket.SendAsync(AppendFrame(silentChunk), WebSocketMessageType.Text, true, ct);
 
-        // Give the (STT -> chat -> TTS) pipeline real wall-clock time to reach the big reply's
-        // chunk-send loop and genuinely back up on the unread socket -- a generous margin, not a
-        // tight race: with a 512-byte buffer, an 800 KB base64'd payload backs up within the very
-        // first chunk, so this is not flaky even under CPU stress.
-        await Task.Delay(TimeSpan.FromSeconds(1), ct);
+        // #331: wait on the observable state the bug actually depends on -- the big reply's send
+        // genuinely in flight against the browser socket -- instead of guessing how long the
+        // (STT -> chat -> TTS) pipeline takes to reach its chunk-send loop. This resolves the
+        // instant that first chunk's SendAsync call starts, however long the pipeline work above
+        // it actually took under current load, and (with a 512-byte buffer and an 800 KB base64'd
+        // payload) that write cannot complete until the guest below resumes reading in step 4, so
+        // it is still genuinely in flight -- backpressure-blocked -- when step 3 fires below.
+        var backpressuredWrite = await nextBrowserWrite.WaitAsync(TimeSpan.FromSeconds(10), ct);
 
         // 3) The real barge-in: a second speech_started lands while that big send is still
         //    genuinely blocked on backpressure.
         await guestSocket.SendAsync(AppendFrame(loudChunk), WebSocketMessageType.Text, true, ct);
 
-        // Let the barge-in's turn cancellation settle (the cancelled turn itself can't finish
-        // until its in-flight write drains, which is fine: the receive loop must keep reading).
-        await Task.Delay(TimeSpan.FromMilliseconds(500), ct);
+        // #331: wait for the barge-in's turn-cancellation handling to settle against the same
+        // observable write, instead of guessing a fixed settle time. If Rick's #290 mutation
+        // (turnCt passed into the real socket SendAsync) is present, cancelling that turn cancels
+        // THIS in-flight write and the whole socket aborts near-instantly -- `backpressuredWrite`
+        // completes (faulted) and this returns as soon as that happens. If the mutation is absent,
+        // this write is deliberately unaffected by the turn cancellation and keeps blocking on
+        // backpressure exactly as before, so this simply waits out the bound below -- generous
+        // enough for the cancellation handling to settle, but no longer assumed sufficient by
+        // guesswork: the mutated case never needs to wait for it.
+        await Task.WhenAny(backpressuredWrite, Task.Delay(TimeSpan.FromSeconds(2), ct));
 
         // The core assertion: the socket we handed to CascadeProcessor must still be Open, not
         // Aborted, even though a send was genuinely in flight when the barge-in's cancellation fired.
