@@ -15,14 +15,12 @@ internal static partial class Log
     [LoggerMessage(EventId = 1000, Level = LogLevel.Error, Message = "Failed to connect to upstream realtime endpoint for deployment {Deployment} (session={SessionId})")]
     public static partial void UpstreamConnectFailed(this ILogger logger, Exception ex, string deployment, string sessionId);
 
-    [LoggerMessage(EventId = 1001, Level = LogLevel.Warning, Message = "No session.updated within {Timeout}s; sending greeting anyway (session={SessionId})")]
-    public static partial void NoSessionUpdatedBeforeGreeting(this ILogger logger, double timeout, string sessionId);
+    // EventIds 1001-1002 moved to GreetingGate.Log.cs with issue #338's GreetingGate
+    // extraction -- same EventIds, same templates, same levels, just a new home alongside the
+    // code that logs them now.
 
-    [LoggerMessage(EventId = 1002, Level = LogLevel.Information, Message = "Sending greeting (trigger={Trigger}, session={SessionId})")]
-    public static partial void SendingGreeting(this ILogger logger, string trigger, string sessionId);
-
-    [LoggerMessage(EventId = 1003, Level = LogLevel.Warning, Message = "Dropped extension.resume arriving after the first-frame decision ({Reason}, session={SessionId})")]
-    public static partial void DroppedLateResume(this ILogger logger, string reason, string sessionId);
+    // EventId 1003 (DroppedLateResume) moved to ResumeCoordinator.Log.cs with issue #338's
+    // ResumeCoordinator extraction -- same EventId, template and level.
 
     [LoggerMessage(EventId = 1004, Level = LogLevel.Warning, Message = "Dropped extension.set_voice with an unknown/invalid voice {Voice} (session={SessionId})")]
     public static partial void DroppedSetVoice(this ILogger logger, string? voice, string sessionId);
@@ -30,11 +28,9 @@ internal static partial class Log
     [LoggerMessage(EventId = 1005, Level = LogLevel.Information, Message = "Assistant audio already present -- voice {Voice} applies from the next conversation (session={SessionId})")]
     public static partial void VoiceDeferredToNextConversation(this ILogger logger, string voice, string sessionId);
 
-    [LoggerMessage(EventId = 1006, Level = LogLevel.Information, Message = "extension.resume rejected (reason={Reason}, session={SessionId})")]
-    public static partial void ExtensionResumeRejected(this ILogger logger, string? reason, string sessionId);
-
-    [LoggerMessage(EventId = 1007, Level = LogLevel.Information, Message = "Session resumed (resumedSessionId={ResumedSessionId}, session={SessionId})")]
-    public static partial void SessionResumedWithId(this ILogger logger, string? resumedSessionId, string sessionId);
+    // EventIds 1006-1007 (ExtensionResumeRejected, SessionResumedWithId) moved to
+    // ResumeCoordinator.Log.cs alongside issue #338's ResumeCoordinator extraction -- same
+    // EventIds, templates and levels.
 
     [LoggerMessage(EventId = 1008, Level = LogLevel.Warning, Message = "Browser WebSocket error (session={SessionId})")]
     public static partial void BrowserWebSocketError(this ILogger logger, Exception ex, string sessionId);
@@ -69,26 +65,9 @@ internal static partial class Log
     [LoggerMessage(EventId = 1018, Level = LogLevel.Error, Message = "OpenAI Realtime API error: {Error}")]
     public static partial void RealtimeApiError(this ILogger logger, string error);
 
-    [LoggerMessage(EventId = 1019, Level = LogLevel.Warning, Message = "Tool call {CallId} not found in pending tools (session={SessionId})")]
-    public static partial void ToolCallNotFoundInPending(this ILogger logger, string? callId, string sessionId);
-
-    [LoggerMessage(EventId = 1020, Level = LogLevel.Error, Message = "Unknown tool requested: {ToolName} (session={SessionId})")]
-    public static partial void UnknownToolRequested(this ILogger logger, string toolName, string sessionId);
-
-    [LoggerMessage(EventId = 1021, Level = LogLevel.Information, Message = "Dropping tool call '{ToolName}' for call_id={CallId}: this connection was superseded by a resume elsewhere (session={SessionId})")]
-    public static partial void ToolCallDroppedSuperseded(this ILogger logger, string toolName, string? callId, string sessionId);
-
-    [LoggerMessage(EventId = 1022, Level = LogLevel.Information, Message = "Executing tool '{ToolName}' (session={SessionId})")]
-    public static partial void ExecutingTool(this ILogger logger, string toolName, string sessionId);
-
-    [LoggerMessage(EventId = 1023, Level = LogLevel.Information, Message = "Tool '{ToolName}' result direction={Direction} (session={SessionId})")]
-    public static partial void ToolResultDirectionLogged(this ILogger logger, string toolName, ToolResultDirection direction, string sessionId);
-
-    [LoggerMessage(EventId = 1024, Level = LogLevel.Error, Message = "Tool '{ToolName}' raised an unhandled exception (session={SessionId})")]
-    public static partial void ToolUnhandledException(this ILogger logger, Exception ex, string toolName, string sessionId);
-
-    [LoggerMessage(EventId = 1025, Level = LogLevel.Warning, Message = "Could not read order state to refresh the ticket after a tool failure (session={SessionId})")]
-    public static partial void TicketRefreshAfterToolFailureFailed(this ILogger logger, Exception ex, string sessionId);
+    // Issue #338: EventIds 1019-1025 (tool-call dispatch logging) moved verbatim to
+    // ToolCallDispatcher.Log.cs alongside HandleToolCallDoneAsync's extraction into
+    // ToolCallDispatcher -- same EventIds, templates and levels, just a new home.
 
     [LoggerMessage(EventId = 1026, Level = LogLevel.Warning, Message = "Capping auto response.create with tool_choice=none after {Count} consecutive failed tool round(s) (session={SessionId})")]
     public static partial void CappingAutoResponseCreate(this ILogger logger, int count, string sessionId);
@@ -99,8 +78,8 @@ internal static partial class Log
     [LoggerMessage(EventId = 1028, Level = LogLevel.Information, Message = "Response contained {Count} tool call(s): {Names} (session={SessionId})")]
     public static partial void ResponseContainedToolCalls(this ILogger logger, int count, string names, string sessionId);
 
-    [LoggerMessage(EventId = 1029, Level = LogLevel.Warning, Message = "Could not read order state while building a session-resumed announcement (session={SessionId})")]
-    public static partial void OrderStateReadForAnnouncementFailed(this ILogger logger, Exception ex, string sessionId);
+    // EventId 1029 (OrderStateReadForAnnouncementFailed) moved to ResumeCoordinator.Log.cs
+    // alongside issue #338's ResumeCoordinator extraction -- same EventId, template and level.
 
     [LoggerMessage(EventId = 1030, Level = LogLevel.Error, Message = "Input audio transcription failed (model={Model}): {Error} (session={SessionId})")]
     public static partial void InputAudioTranscriptionFailed(this ILogger logger, string? model, string? error, string sessionId);
@@ -126,14 +105,9 @@ internal static partial class Log
     [LoggerMessage(EventId = 1037, Level = LogLevel.Error, Message = "Unexpected error in realtime relay (session={SessionId})")]
     public static partial void UnexpectedRelayError(this ILogger logger, Exception ex, string sessionId);
 
-    [LoggerMessage(EventId = 1038, Level = LogLevel.Error, Message = "Unhandled exception draining a realtime relay loop")]
-    public static partial void UnhandledRelayDrainException(this ILogger logger, Exception ex);
-
-    [LoggerMessage(EventId = 1039, Level = LogLevel.Warning, Message = "Error forwarding fast-path audio append frame (session={SessionId})")]
-    public static partial void FastPathAudioForwardFailed(this ILogger logger, Exception ex, string sessionId);
-
-    [LoggerMessage(EventId = 1040, Level = LogLevel.Warning, Message = "Unexpected failure closing a superseded stale connection's output")]
-    public static partial void SupersededCloseFailed(this ILogger logger, Exception ex);
+    // EventIds 1038-1040 moved to FramePump.Log.cs with issue #338's FramePump extraction --
+    // same EventIds, same templates, same levels, just a new home alongside the code that logs
+    // them now.
 
     [LoggerMessage(EventId = 1041, Level = LogLevel.Warning, Message = "Dropped extension.set_machine_status with unknown/invalid machine or status (machine={Machine}, status={Status}, session={SessionId})")]
     public static partial void DroppedSetMachineStatus(this ILogger logger, string? machine, string? status, string sessionId);

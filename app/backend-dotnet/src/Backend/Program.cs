@@ -112,11 +112,15 @@ builder.Services.AddSingleton(sp =>
         sp.GetRequiredService<TimeProvider>(),
         sp.GetRequiredService<ILogger<SessionManager>>(),
         sp.GetRequiredService<ILogger<ContextMonitor>>()));
+// Rick's #344 review nit: BuildRealtimeStartupSettings used to be called once per processor
+// factory below (realtime and cascade both need it), which computed/logged the same
+// "is not treated as a reasoning model" info line twice at startup. Registering the settings
+// once here means both factories resolve the SAME computed instance.
+builder.Services.AddSingleton(sp =>
+    BuildRealtimeStartupSettings(sp.GetRequiredService<AppConfig>(), sp.GetRequiredService<ILogger<Program>>()));
 builder.Services.AddSingleton(sp =>
 {
-    var appConfig = sp.GetRequiredService<AppConfig>();
-    var startupLogger = sp.GetRequiredService<ILogger<Program>>();
-    var settings = BuildRealtimeStartupSettings(appConfig, startupLogger);
+    var settings = sp.GetRequiredService<RealtimeStartupSettings>();
     return new RealtimeProcessor(
         sp.GetRequiredService<ModelCatalog>(),
         new RealtimeProcessorOptions(
@@ -142,8 +146,7 @@ builder.Services.AddSingleton(sp =>
 builder.Services.AddSingleton(sp =>
 {
     var appConfig = sp.GetRequiredService<AppConfig>();
-    var startupLogger = sp.GetRequiredService<ILogger<Program>>();
-    var settings = BuildRealtimeStartupSettings(appConfig, startupLogger);
+    var settings = sp.GetRequiredService<RealtimeStartupSettings>();
     var cascadeBearerTokenProvider = ConformanceHooks.CascadeFakeToken is { } cascadeFakeToken
         ? new StaticBearerTokenProvider(cascadeFakeToken)
         : null;
