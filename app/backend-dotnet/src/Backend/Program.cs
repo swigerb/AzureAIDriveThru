@@ -14,6 +14,7 @@ using Backend.Sessions;
 using Backend.Shared;
 using Backend.Tools;
 using Microsoft.Extensions.FileProviders;
+using Microsoft.Extensions.Options;
 
 // Host wiring (issue #12 S2): config, persona-pack loading, health, auth token endpoint, static
 // files, one event loop per session -- mirrors app/backend/app.py's create_app() startup sequence
@@ -96,15 +97,9 @@ builder.Services.AddSingleton(_ => AppConfig.Load());
 builder.Services.AddSingleton(sp => new PromptLoaderRegistry(
     BackendEnvironment.Get(BackendEnvironment.PersonasDir) ?? Path.Combine(RepoRootLocator.Find(), "personas"),
     sp.GetRequiredService<PersonaCatalog>()));
-builder.Services.AddSingleton(sp => BusinessRulesConfig.FromAppConfig(sp.GetRequiredService<AppConfig>()));
-builder.Services.AddSingleton(sp => SearchConfig.FromAppConfig(sp.GetRequiredService<AppConfig>()));
-builder.Services.AddSingleton(_ => SearchEndpointConfig.FromEnvironment());
 builder.Services.AddSingleton(sp => RateLimitSettings.FromAppConfig(sp.GetRequiredService<AppConfig>()));
-builder.Services.AddSingleton(sp => SessionsConfig.FromConfig(sp.GetRequiredService<AppConfig>()));
-builder.Services.AddSingleton(sp => ConnectionConfig.FromConfig(sp.GetRequiredService<AppConfig>()));
-builder.Services.AddSingleton(sp => SecurityConfig.FromConfig(sp.GetRequiredService<AppConfig>()));
-builder.Services.AddSingleton(sp => AssetCacheConfig.FromConfig(sp.GetRequiredService<AppConfig>()));
 builder.Services.AddSingleton(sp => ModelCatalog.FromConfig(sp.GetRequiredService<AppConfig>()));
+builder.Services.AddBackendConfigurationOptions();
 builder.Services.AddSingleton(sp =>
 {
     var promptLoaders = sp.GetRequiredService<PromptLoaderRegistry>();
@@ -211,17 +206,15 @@ else
 }
 
 // ── 1. Required environment variables (app.py's _REQUIRED_ENV_VARS) ────────────────────────
-string[] requiredEnvVars =
-[
-    "AZURE_OPENAI_EASTUS2_ENDPOINT",
-    "AZURE_OPENAI_REALTIME_DEPLOYMENT",
-    "AZURE_SEARCH_ENDPOINT",
-    "AZURE_SEARCH_INDEX",
-];
-var missingVars = requiredEnvVars.Where(v => string.IsNullOrEmpty(BackendEnvironment.Get(v))).ToList();
-if (missingVars.Count > 0)
+try
 {
-    logger.LogCritical("FATAL: Missing required environment variables: {Missing}", string.Join(", ", missingVars));
+    _ = app.Services.GetRequiredService<IOptions<RequiredBackendOptions>>().Value;
+}
+catch (OptionsValidationException exc)
+{
+    logger.LogCritical(
+        "FATAL: Missing required environment variables: {Missing}",
+        RequiredBackendOptionsValidator.GetMissingEnvironmentVariables(exc));
     return 1;
 }
 startupChecks.Pass("env_vars");
@@ -312,7 +305,10 @@ catch (InvalidOperationException exc)
 
 logger.LogInformation(
     "Startup validation passed: personas={Personas}, prompts loaded ({Chars} chars), config valid, {Count}/{Count} env vars set",
-    string.Join(", ", personaCatalog.Ids), promptLoader.SystemPrompt.Length, requiredEnvVars.Length, requiredEnvVars.Length);
+    string.Join(", ", personaCatalog.Ids),
+    promptLoader.SystemPrompt.Length,
+    RequiredBackendOptions.RequiredEnvironmentVariableNames.Count,
+    RequiredBackendOptions.RequiredEnvironmentVariableNames.Count);
 
 // ── Session token service (rtmt.py's create_hmac_token/validate_hmac_token) ─────────────────
 var tokenService = app.Services.GetRequiredService<SessionTokenService>();

@@ -16,6 +16,7 @@ internal static class BackendEnvironment
     public const string AzureSearchEmbeddingField = "AZURE_SEARCH_EMBEDDING_FIELD";
     public const string AzureSearchEndpoint = "AZURE_SEARCH_ENDPOINT";
     public const string AzureSearchIdentifierField = "AZURE_SEARCH_IDENTIFIER_FIELD";
+    public const string AzureSearchIndex = "AZURE_SEARCH_INDEX";
     public const string AzureSearchSemanticConfiguration = "AZURE_SEARCH_SEMANTIC_CONFIGURATION";
     public const string AzureSearchSemanticRanker = "AZURE_SEARCH_SEMANTIC_RANKER";
     public const string AzureSearchUseVectorQuery = "AZURE_SEARCH_USE_VECTOR_QUERY";

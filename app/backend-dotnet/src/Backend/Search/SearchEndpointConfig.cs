@@ -31,14 +31,18 @@ internal sealed class SearchEndpointConfig
     /// same version issue #23 verified `azure-search-documents` 12.0.0 itself sends.</summary>
     public const string ApiVersion = "2026-04-01";
 
-    public string Endpoint { get; }
-    public string? ApiKey { get; }
-    public string SemanticConfiguration { get; }
-    public string IdentifierField { get; }
-    public string ContentField { get; }
-    public string EmbeddingField { get; }
-    public bool UseVectorQuery { get; }
-    public bool UseSemanticRanker { get; }
+    public string Endpoint { get; set; } = string.Empty;
+    public string? ApiKey { get; set; }
+    public string SemanticConfiguration { get; set; } = "menuSemanticConfig";
+    public string IdentifierField { get; set; } = "id";
+    public string ContentField { get; set; } = "description";
+    public string EmbeddingField { get; set; } = "embedding";
+    public bool UseVectorQuery { get; set; } = true;
+    public bool UseSemanticRanker { get; set; } = true;
+
+    public SearchEndpointConfig()
+    {
+    }
 
     public SearchEndpointConfig(
         string endpoint,
@@ -64,21 +68,19 @@ internal sealed class SearchEndpointConfig
     /// context and every per-persona `persona_search_contexts[persona_id]` entry -- the same six
     /// env vars back both in Python (only the index name/client differ per persona), so there is
     /// exactly one env-reading path here too.</summary>
-    public static SearchEndpointConfig FromEnvironment()
+    public static void ConfigureFromEnvironment(SearchEndpointConfig options)
     {
-        var endpoint = BackendEnvironment.Get(BackendEnvironment.AzureSearchEndpoint) ?? "";
-        var apiKey = BackendEnvironment.Get(BackendEnvironment.AzureSearchApiKey);
-        var semanticConfiguration = NonEmpty(BackendEnvironment.Get(BackendEnvironment.AzureSearchSemanticConfiguration), "menuSemanticConfig");
-        var identifierField = NonEmpty(BackendEnvironment.Get(BackendEnvironment.AzureSearchIdentifierField), "id");
-        var contentField = NonEmpty(BackendEnvironment.Get(BackendEnvironment.AzureSearchContentField), "description");
-        var embeddingField = NonEmpty(BackendEnvironment.Get(BackendEnvironment.AzureSearchEmbeddingField), "embedding");
-        var useVectorQuery = GetBoolEnv(BackendEnvironment.AzureSearchUseVectorQuery, true);
-        var useSemanticRanker = !NonEmpty(BackendEnvironment.Get(BackendEnvironment.AzureSearchSemanticRanker), "standard")
+        options.Endpoint = BackendEnvironment.Get(BackendEnvironment.AzureSearchEndpoint) ?? string.Empty;
+        options.ApiKey = BackendEnvironment.Get(BackendEnvironment.AzureSearchApiKey);
+        options.SemanticConfiguration = NonEmpty(
+            BackendEnvironment.Get(BackendEnvironment.AzureSearchSemanticConfiguration),
+            "menuSemanticConfig");
+        options.IdentifierField = NonEmpty(BackendEnvironment.Get(BackendEnvironment.AzureSearchIdentifierField), "id");
+        options.ContentField = NonEmpty(BackendEnvironment.Get(BackendEnvironment.AzureSearchContentField), "description");
+        options.EmbeddingField = NonEmpty(BackendEnvironment.Get(BackendEnvironment.AzureSearchEmbeddingField), "embedding");
+        options.UseVectorQuery = GetBoolEnv(BackendEnvironment.AzureSearchUseVectorQuery, true);
+        options.UseSemanticRanker = !NonEmpty(BackendEnvironment.Get(BackendEnvironment.AzureSearchSemanticRanker), "standard")
             .Equals("disabled", StringComparison.OrdinalIgnoreCase);
-
-        return new SearchEndpointConfig(
-            endpoint, apiKey, semanticConfiguration, identifierField, contentField, embeddingField,
-            useVectorQuery, useSemanticRanker);
     }
 
     private static string NonEmpty(string? value, string fallback) =>
