@@ -434,3 +434,20 @@
 - Restored the broad best-effort `catch (Exception)` in both Foundry REST clients' `ReadBodySafelyAsync()` helpers, with an explicit why-comment, so buffered non-2xx responses with invalid `charset=` values still degrade to an empty body and preserve the original `FoundryHttpException(429, ...)` retry path.
 - Added regression coverage in `FoundryChatClientTests` and `FoundryAudioClientTests` for a 429 response whose `Content-Type` advertises `charset=bogus-charset`; both now assert the call still surfaces as `FoundryHttpException` with status 429 instead of leaking `InvalidOperationException`.
 - Cleared the remaining XML-doc hygiene warnings by replacing the ambiguous `WebSocket.CreateFromStream` cref in `CascadeProcessor.cs` with `<c>WebSocket.CreateFromStream(...)</c>` text and by swapping `ToolResult.cs`'s private-field crefs (`_text`, `_clientText`, `_payload`) to `<c>` tags.
+
+## 2026-10-06T16:14:34Z — Issue #337 backend DI/logging/options slice
+- Read charter/decisions/history, mapped Program.cs/manual startup wiring, optional logger call sites, env-var reads, and conformance commands.
+- Commit `e0649d2` `Fix #337: register backend services in DI`
+  - Registered process-wide services in DI (`SessionManager`, processors, registries, token service, prompt loader registry, tool-executor factory, named HttpClients, hosted session sweep).
+  - Switched `SessionSweepService` to constructor-injected `SessionManager`, updated `SessionManager.RunSweepLoopAsync` summary, and added the hosted-service shutdown why-comment.
+  - Validation: `dotnet build Backend.slnx --no-restore -warnaserror` ✅, `dotnet test tests/Backend.Tests/Backend.Tests.csproj --no-build -warnaserror` ✅ (825/825).
+- Commit `90ea665` `Fix #337: inject typed loggers`
+  - Removed optional `ILogger?` patterns from backend code, switched to typed loggers, updated tests to pass `NullLogger<T>`, and guarded `AnnounceAfterFirstFrameDecisionAsync`'s post-decision browser send path so a mid-send close stays best-effort.
+  - Validation: `dotnet build Backend.slnx --no-restore -warnaserror` ✅, `dotnet test tests/Backend.Tests/Backend.Tests.csproj --no-build -warnaserror` ✅ (825/825).
+- Commit `7542589` `Fix #337: group processor constructor options`
+  - Grouped `RealtimeProcessor`, `CascadeProcessor`, and `SearchTool` constructor inputs into typed options/dependency records so the main production constructors stay under the requested parameter ceiling.
+  - Validation: `dotnet build Backend.slnx --no-restore -warnaserror` ✅, `dotnet test tests/Backend.Tests/Backend.Tests.csproj --no-build -warnaserror` ✅ (825/825).
+- In-progress final slice:
+  - Centralized backend environment variable names/reads behind `BackendEnvironment` and removed direct `Environment.GetEnvironmentVariable(...)` calls from backend production files.
+  - Validation so far: `dotnet build Backend.slnx --no-restore -warnaserror` ✅, `dotnet test tests/Backend.Tests/Backend.Tests.csproj --no-build -warnaserror` ✅ (825/825).
+  - `dotnet test tests/conformance/Conformance.slnx --filter "Dotnet=ready&Category!=Browser"` could not complete meaningfully in this environment because the harness failed before exercising the .NET backend: `/workspace/ddt-337-di/repo/.venv/bin/python` is missing, so the Python-side fixture bootstrap aborts with `FileNotFoundException`.

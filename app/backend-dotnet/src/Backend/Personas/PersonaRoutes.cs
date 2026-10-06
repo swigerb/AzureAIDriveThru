@@ -172,10 +172,10 @@ internal static class PersonaRoutes
     {
         var entries = new JsonArray
         {
-            new JsonObject { ["id"] = "python", ["url"] = (Environment.GetEnvironmentVariable("BACKEND_URI") ?? string.Empty).Trim() },
+            new JsonObject { ["id"] = "python", ["url"] = (BackendEnvironment.Get(BackendEnvironment.BackendUri) ?? string.Empty).Trim() },
         };
 
-        var dotnetUri = (Environment.GetEnvironmentVariable("BACKEND_DOTNET_URI") ?? string.Empty).Trim();
+        var dotnetUri = (BackendEnvironment.Get(BackendEnvironment.BackendDotnetUri) ?? string.Empty).Trim();
         if (dotnetUri.Length > 0)
         {
             entries.Add(new JsonObject { ["id"] = "dotnet", ["url"] = dotnetUri });

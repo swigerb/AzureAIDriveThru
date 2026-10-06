@@ -186,7 +186,7 @@ internal sealed class ModelCatalog
         }
         else
         {
-            deploymentsRaw = Environment.GetEnvironmentVariable(DeploymentsEnvVar);
+            deploymentsRaw = BackendEnvironment.Get(DeploymentsEnvVar);
         }
 
         var deployments = ParseDeploymentMap(deploymentsRaw);

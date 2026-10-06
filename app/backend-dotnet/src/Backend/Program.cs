@@ -22,7 +22,7 @@ using Microsoft.Extensions.FileProviders;
 // before the WebSocket upgrade; the realtime processor's own relay loop (owning frames after the
 // upgrade) is issue #13's job, not this wave's.
 
-var runningInProduction = ParseBool(Environment.GetEnvironmentVariable("RUNNING_IN_PRODUCTION"));
+var runningInProduction = ParseBool(BackendEnvironment.Get(BackendEnvironment.RunningInProduction));
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -38,10 +38,10 @@ if (ConformanceHooks.HooksEnabled)
     builder.Logging.AddSimpleConsole(ConformanceHooks.ApplyConsoleTimestampFormat);
 }
 
-var host = Environment.GetEnvironmentVariable("HOST") ?? "127.0.0.1";
+var host = BackendEnvironment.Get(BackendEnvironment.Host) ?? "127.0.0.1";
 // Default port aligned with app/backend/app.py's `int(os.environ.get("PORT", 8000))` (PR #96
 // review nit) -- both backends bind the same default when PORT is unset.
-var port = Environment.GetEnvironmentVariable("PORT") ?? "8000";
+var port = BackendEnvironment.Get(BackendEnvironment.Port) ?? "8000";
 builder.WebHost.UseUrls($"http://{host}:{port}");
 
 var startupChecks = new StartupChecks();
@@ -54,7 +54,7 @@ var startupChecks = new StartupChecks();
 EntraSettings entraSettings;
 try
 {
-    entraSettings = EntraSettings.Resolve(Environment.GetEnvironmentVariable, builder.Environment.IsProduction());
+    entraSettings = EntraSettings.Resolve(BackendEnvironment.Get, builder.Environment.IsProduction());
 }
 catch (EntraConfigException exc)
 {
@@ -94,7 +94,7 @@ builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
 builder.Services.AddSingleton(_ => PersonaCatalog.Load());
 builder.Services.AddSingleton(_ => AppConfig.Load());
 builder.Services.AddSingleton(sp => new PromptLoaderRegistry(
-    Environment.GetEnvironmentVariable("PERSONAS_DIR") ?? Path.Combine(RepoRootLocator.Find(), "personas"),
+    BackendEnvironment.Get(BackendEnvironment.PersonasDir) ?? Path.Combine(RepoRootLocator.Find(), "personas"),
     sp.GetRequiredService<PersonaCatalog>()));
 builder.Services.AddSingleton(sp => BusinessRulesConfig.FromAppConfig(sp.GetRequiredService<AppConfig>()));
 builder.Services.AddSingleton(sp => SearchConfig.FromAppConfig(sp.GetRequiredService<AppConfig>()));
@@ -155,7 +155,7 @@ builder.Services.AddSingleton(sp =>
     return new CascadeProcessor(
         sp.GetRequiredService<ModelCatalog>(),
         new CascadeProcessorOptions(
-            Environment.GetEnvironmentVariable("AZURE_AI_FOUNDRY_ENDPOINT") ?? string.Empty,
+            BackendEnvironment.Get(BackendEnvironment.AzureAiFoundryEndpoint) ?? string.Empty,
             settings.UpstreamEndpoint,
             CascadeRateLimitSettings.FromAppConfig(appConfig),
             CascadeVadConfig.FromAppConfig(appConfig),
@@ -218,7 +218,7 @@ string[] requiredEnvVars =
     "AZURE_SEARCH_ENDPOINT",
     "AZURE_SEARCH_INDEX",
 ];
-var missingVars = requiredEnvVars.Where(v => string.IsNullOrEmpty(Environment.GetEnvironmentVariable(v))).ToList();
+var missingVars = requiredEnvVars.Where(v => string.IsNullOrEmpty(BackendEnvironment.Get(v))).ToList();
 if (missingVars.Count > 0)
 {
     logger.LogCritical("FATAL: Missing required environment variables: {Missing}", string.Join(", ", missingVars));
@@ -329,7 +329,7 @@ var sessionRegistry = app.Services.GetRequiredService<SessionRegistry>();
 // circuits the pipeline for any file it serves). Computed here (rather than down where it maps
 // "/") so UseStaticFiles can be registered at the correct pipeline position while the "/" route
 // itself can still be mapped anywhere (Map* calls aren't position-sensitive). ───────────────────
-var staticDir = Environment.GetEnvironmentVariable("STATIC_FILES_DIR") ?? TryFindStaticDir();
+var staticDir = BackendEnvironment.Get(BackendEnvironment.StaticFilesDir) ?? TryFindStaticDir();
 if (staticDir is not null && Directory.Exists(staticDir))
 {
     var fileProvider = new PhysicalFileProvider(staticDir);
@@ -623,8 +623,8 @@ static async Task CheckServiceConnectivityAsync(ILogger logger, IHttpClientFacto
 {
     var endpoints = new (string Name, string? Url)[]
     {
-        ("Azure OpenAI", Environment.GetEnvironmentVariable("AZURE_OPENAI_EASTUS2_ENDPOINT")),
-        ("Azure Search", Environment.GetEnvironmentVariable("AZURE_SEARCH_ENDPOINT")),
+        ("Azure OpenAI", BackendEnvironment.Get(BackendEnvironment.AzureOpenAiEastUs2Endpoint)),
+        ("Azure Search", BackendEnvironment.Get(BackendEnvironment.AzureSearchEndpoint)),
     };
     try
     {
@@ -657,25 +657,25 @@ static RealtimeStartupSettings BuildRealtimeStartupSettings(AppConfig appConfig,
 {
     var modelSection = appConfig.TryGetSection("model");
     var audioSection = appConfig.TryGetSection("audio");
-    var realtimeDeployment = Environment.GetEnvironmentVariable("AZURE_OPENAI_REALTIME_DEPLOYMENT")!;
+    var realtimeDeployment = BackendEnvironment.Get(BackendEnvironment.AzureOpenAiRealtimeDeployment)!;
 
-    var voiceChoiceOverride = Environment.GetEnvironmentVariable("AZURE_OPENAI_REALTIME_VOICE_CHOICE");
+    var voiceChoiceOverride = BackendEnvironment.Get(BackendEnvironment.AzureOpenAiRealtimeVoiceChoice);
     var voiceChoice = !string.IsNullOrEmpty(voiceChoiceOverride)
         ? voiceChoiceOverride
         : ReadString(modelSection, "default_voice") ?? "marin";
 
-    var transcriptionModelOverride = Environment.GetEnvironmentVariable("AZURE_OPENAI_REALTIME_TRANSCRIPTION_MODEL");
+    var transcriptionModelOverride = BackendEnvironment.Get(BackendEnvironment.AzureOpenAiRealtimeTranscriptionModel);
     var transcriptionModel = !string.IsNullOrEmpty(transcriptionModelOverride)
         ? transcriptionModelOverride
         : ReadString(modelSection, "transcription_model") ?? "whisper-1";
 
-    var reasoningEffortOverride = Environment.GetEnvironmentVariable("AZURE_OPENAI_REALTIME_REASONING_EFFORT");
+    var reasoningEffortOverride = BackendEnvironment.Get(BackendEnvironment.AzureOpenAiRealtimeReasoningEffort);
     var reasoningEffortSource = !string.IsNullOrEmpty(reasoningEffortOverride)
         ? reasoningEffortOverride
         : ReadString(modelSection, "reasoning_effort");
     var reasoningEffort = ReasoningRules.NormalizeReasoningEffort(reasoningEffortSource);
 
-    var reasoningModelOverride = Environment.GetEnvironmentVariable("AZURE_OPENAI_REALTIME_REASONING_MODEL");
+    var reasoningModelOverride = BackendEnvironment.Get(BackendEnvironment.AzureOpenAiRealtimeReasoningModel);
     var reasoningModelSource = !string.IsNullOrEmpty(reasoningModelOverride)
         ? reasoningModelOverride
         : ReadString(modelSection, "reasoning_model");
@@ -717,8 +717,8 @@ static RealtimeStartupSettings BuildRealtimeStartupSettings(AppConfig appConfig,
 
     return new RealtimeStartupSettings(
         realtimeDeployment,
-        Environment.GetEnvironmentVariable("AZURE_OPENAI_EASTUS2_ENDPOINT")!,
-        Environment.GetEnvironmentVariable("AZURE_OPENAI_EASTUS2_API_KEY") ?? string.Empty,
+        BackendEnvironment.Get(BackendEnvironment.AzureOpenAiEastUs2Endpoint)!,
+        BackendEnvironment.Get(BackendEnvironment.AzureOpenAiEastUs2ApiKey) ?? string.Empty,
         sessionConfig,
         allowedVoices,
         voiceChoice,

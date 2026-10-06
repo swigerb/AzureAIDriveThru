@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
+using Backend.Configuration;
 using Microsoft.Extensions.Logging.Console;
 
 namespace Backend;
@@ -42,7 +43,7 @@ internal static class ConformanceHooks
     /// cached), matching Python's <c>hooks_enabled_now()</c> re-read contract so a test process
     /// that mutates the env var mid-run is never stuck on a stale snapshot.</summary>
     public static bool HooksEnabled =>
-        (Environment.GetEnvironmentVariable(EnabledEnv) ?? "").Trim() == "1";
+        (BackendEnvironment.Get(EnabledEnv) ?? "").Trim() == "1";
 
     /// <summary>Returns the current time in <paramref name="tz"/>. Identical to
     /// <c>DateTimeOffset.Now</c> converted into <paramref name="tz"/> unless test hooks are
@@ -53,7 +54,7 @@ internal static class ConformanceHooks
     {
         if (HooksEnabled)
         {
-            var raw = Environment.GetEnvironmentVariable(FixedNowEnv);
+            var raw = BackendEnvironment.Get(FixedNowEnv);
             if (!string.IsNullOrEmpty(raw))
             {
                 return TimeZoneInfo.ConvertTime(ParseFixedNow(raw), tz);
@@ -82,7 +83,7 @@ internal static class ConformanceHooks
         {
             return defaultValue;
         }
-        var raw = Environment.GetEnvironmentVariable(envVar);
+        var raw = BackendEnvironment.Get(envVar);
         if (string.IsNullOrEmpty(raw))
         {
             return defaultValue;
@@ -112,7 +113,7 @@ internal static class ConformanceHooks
     /// fake-token substitution is the only way its three REST calls can be exercised against the
     /// conformance harness's fakes without a real Azure AD identity.</summary>
     public static string? CascadeFakeToken =>
-        HooksEnabled && Environment.GetEnvironmentVariable(CascadeFakeTokenEnv) is { Length: > 0 } token
+        HooksEnabled && BackendEnvironment.Get(CascadeFakeTokenEnv) is { Length: > 0 } token
             ? token
             : null;
 

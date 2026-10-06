@@ -2,6 +2,7 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Backend.Configuration;
 using Backend.Models;
 using Backend.Personas;
 using Backend.Prompts;
@@ -423,7 +424,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
 
         double ParseGreetingTimeoutSeconds()
         {
-            var raw = Environment.GetEnvironmentVariable("CONFORMANCE_GREETING_TIMEOUT_SECONDS");
+            var raw = BackendEnvironment.Get("CONFORMANCE_GREETING_TIMEOUT_SECONDS");
             return double.TryParse(raw, System.Globalization.CultureInfo.InvariantCulture, out var seconds) && seconds > 0
                 ? seconds
                 : _greetingTimeoutSeconds;
@@ -895,7 +896,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
                         _sessionManager?.TouchActivity(state.EffectiveSessionId);
                     }
 
-                    var hooksEnabled = Environment.GetEnvironmentVariable("CONFORMANCE_TEST_HOOKS") == "1";
+                    var hooksEnabled = BackendEnvironment.Get("CONFORMANCE_TEST_HOOKS") == "1";
                     var (forwarded, sentType) = ProcessClientMessage(message, hooksEnabled);
                     if (forwarded is null)
                     {

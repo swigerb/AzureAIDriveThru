@@ -1,3 +1,5 @@
+using Backend.Configuration;
+
 namespace Backend.Search;
 
 /// <summary>
@@ -64,14 +66,14 @@ internal sealed class SearchEndpointConfig
     /// exactly one env-reading path here too.</summary>
     public static SearchEndpointConfig FromEnvironment()
     {
-        var endpoint = Environment.GetEnvironmentVariable("AZURE_SEARCH_ENDPOINT") ?? "";
-        var apiKey = Environment.GetEnvironmentVariable("AZURE_SEARCH_API_KEY");
-        var semanticConfiguration = NonEmpty(Environment.GetEnvironmentVariable("AZURE_SEARCH_SEMANTIC_CONFIGURATION"), "menuSemanticConfig");
-        var identifierField = NonEmpty(Environment.GetEnvironmentVariable("AZURE_SEARCH_IDENTIFIER_FIELD"), "id");
-        var contentField = NonEmpty(Environment.GetEnvironmentVariable("AZURE_SEARCH_CONTENT_FIELD"), "description");
-        var embeddingField = NonEmpty(Environment.GetEnvironmentVariable("AZURE_SEARCH_EMBEDDING_FIELD"), "embedding");
-        var useVectorQuery = GetBoolEnv("AZURE_SEARCH_USE_VECTOR_QUERY", true);
-        var useSemanticRanker = !NonEmpty(Environment.GetEnvironmentVariable("AZURE_SEARCH_SEMANTIC_RANKER"), "standard")
+        var endpoint = BackendEnvironment.Get(BackendEnvironment.AzureSearchEndpoint) ?? "";
+        var apiKey = BackendEnvironment.Get(BackendEnvironment.AzureSearchApiKey);
+        var semanticConfiguration = NonEmpty(BackendEnvironment.Get(BackendEnvironment.AzureSearchSemanticConfiguration), "menuSemanticConfig");
+        var identifierField = NonEmpty(BackendEnvironment.Get(BackendEnvironment.AzureSearchIdentifierField), "id");
+        var contentField = NonEmpty(BackendEnvironment.Get(BackendEnvironment.AzureSearchContentField), "description");
+        var embeddingField = NonEmpty(BackendEnvironment.Get(BackendEnvironment.AzureSearchEmbeddingField), "embedding");
+        var useVectorQuery = GetBoolEnv(BackendEnvironment.AzureSearchUseVectorQuery, true);
+        var useSemanticRanker = !NonEmpty(BackendEnvironment.Get(BackendEnvironment.AzureSearchSemanticRanker), "standard")
             .Equals("disabled", StringComparison.OrdinalIgnoreCase);
 
         return new SearchEndpointConfig(
@@ -86,7 +88,7 @@ internal sealed class SearchEndpointConfig
     /// one of "1"/"true"/"yes"/"on" (case-insensitive, trimmed) -> true, anything else -> false.</summary>
     private static bool GetBoolEnv(string name, bool fallback)
     {
-        var value = Environment.GetEnvironmentVariable(name);
+        var value = BackendEnvironment.Get(name);
         if (value is null)
         {
             return fallback;
