@@ -125,3 +125,28 @@
   - `async Task` + `await Task.CompletedTask` in `AlreadyFaultedTask_LogsErrorSynchronously`.
 - **Reproduced myself:** `dotnet build src/Backend -c Release --no-incremental` gave 0 warnings and 0 errors. `dotnet test Backend.Tests -c Release` gave 824/824 passing. I didn't rerun conformance (Beth reports 723/723). It passing while the HTTP log lines are there shows the suite doesn't assert log *absence*.
 - **Lesson:** "Swap `new HttpClient()` for IHttpClientFactory" is not a pure plumbing change. The factory adds logging handlers by default, so check the logs under real config, not only build and tests.
+
+## 2026-10-06 - Re-review of #335, commit `a1922ba` (one-off C# specialist revision of my `210345b` reject)
+
+- **Verdict: 🟡 Approve with minor notes.** Both blocking items are fixed. Nothing new blocks.
+- **Logging leak, fixed:** registration moved to `Backend.Shared.BackendHttpClients.AddBackendHttpClients(lifetime, params ReadOnlySpan<string>)`, and `.RemoveAllLoggers()` is on every builder in the loop. `Program.cs` passes all three names (`search-endpoint`, `cascade-endpoint`, `connectivity-check`).
+  - **Manual rerun:** Development mode, both endpoints pointed at `127.0.0.1:9`. I saw 0 `System.Net.Http.HttpClient.*` lines. The only warns were the pre-existing synthetic-identity `AUTH_MODE` warning plus the two `⚠️ … unreachable (non-fatal)` lines. Startup validation passed, and a SIGTERM shutdown was clean.
+- **Regression test is real:** `BackendHttpClientsTests` uses a plain `ServiceCollection`, a recording provider and a fake primary handler (last `ConfigurePrimaryHttpMessageHandler` wins). I ran the mutation check myself: with `.RemoveAllLoggers()` deleted, the test fails on `Assert.DoesNotContain`. I then reverted the change and the tree is clean. Gap: the test uses one synthetic name rather than the three production names. That's fine, because the loop is uniform.
+- **Narration, fixed:** my exact grep over `src/Backend` returns only the unrelated pre-existing `OrderToolExecutor.cs:75` (#36) hit. The `SessionSweepService` summary and the `FireAndForget` summary (call-site list dropped) are now *why*-only.
+- **Non-blocking notes, all done:**
+  - The Entra comment went from 16 lines to 7: pure static, low-frequency OIDC-only client.
+  - `Program.cs` drops the redundant DI `using`.
+  - `AlreadyFaultedTask_LogsErrorSynchronously` is now a sync `void`.
+- **Leftover nits (don't block, fold into any later touch):**
+  - The redundant `using Microsoft.Extensions.DependencyInjection;` is back in the new `BackendHttpClients.cs`. The Web SDK's implicit usings already cover it.
+  - There's still light history phrasing:
+    - `BackendHttpClients` says "instances these replaced never logged". Better: "these clients must not emit per-request logs".
+    - `Program.cs` says "same place it always was".
+    - The test doc says "Regression test for Rick's #335 review … verified by hand for this revision".
+  - The commit also carried my earlier uncommitted `210345b` review entry into `history.md` verbatim. That's fine, but it went in without a blank line before the heading.
+- **Nothing new found:**
+  - Code changes stay in `src/Backend` and `Backend.Tests`.
+  - No new log calls and no `LoggerMessage`, so #336 is untouched. The `Program.cs` conflict warning still applies.
+  - No brand tokens in added lines, and `rebrand_baseline.yaml` is untouched.
+- **Reproduced myself:** `dotnet build src/Backend -c Release --no-incremental` gave 0 warnings and 0 errors. `dotnet test Backend.Tests -c Release` gave 825/825 passing (824 plus the 1 new test). I didn't rerun conformance; the specialist reports 723/723.
+- **Lesson:** when a fix adds a "no X happens" test, run the mutation check yourself. Here it took 30 seconds and turned "reported verified by hand" into proof.
