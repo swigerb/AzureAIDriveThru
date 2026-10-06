@@ -23,7 +23,7 @@ namespace Backend.Search;
 /// <c>DefaultAzureCredential</c> fallback and PR #140 R5's identical pattern for the realtime
 /// upstream connect.</para>
 /// </summary>
-public sealed class SearchEndpointConfig
+internal sealed class SearchEndpointConfig
 {
     /// <summary>Azure AI Search REST data-plane API version this client sends -- pinned to the
     /// same version issue #23 verified `azure-search-documents` 12.0.0 itself sends.</summary>

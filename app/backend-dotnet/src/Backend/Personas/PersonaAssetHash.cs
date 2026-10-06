@@ -10,7 +10,7 @@ namespace Backend.Personas;
 /// instead of being trusted. 16 hex chars (64 bits) of SHA-256 is plenty of collision resistance
 /// for a cache-busting token.
 /// </summary>
-public static class PersonaAssetHash
+internal static class PersonaAssetHash
 {
     public static string ComputeHash(string filePath)
     {

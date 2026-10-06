@@ -35,7 +35,7 @@ namespace Backend.Configuration;
 /// this field at all. It's still parsed below for config-shape parity with Python's own reads of
 /// the same section (and in case a Kestrel version in the future adds the knob).
 /// </summary>
-public sealed class ConnectionConfig
+internal sealed class ConnectionConfig
 {
     public double WsHeartbeatSeconds { get; }
     public bool WsCompression { get; }

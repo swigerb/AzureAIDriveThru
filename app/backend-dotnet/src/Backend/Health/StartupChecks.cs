@@ -3,7 +3,7 @@ namespace Backend.Health;
 /// <summary>Port of app/backend/app.py's module-level `_startup_checks` dict, read by /health.
 /// Registered as a singleton so Program.cs's startup sequence and the /health handler share the
 /// same instance.</summary>
-public sealed class StartupChecks
+internal sealed class StartupChecks
 {
     private readonly Dictionary<string, bool> _checks = new(StringComparer.Ordinal)
     {

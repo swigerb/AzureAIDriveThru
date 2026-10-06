@@ -5,7 +5,7 @@ namespace Backend.Realtime;
 /// (with the type parameter on the method, not the type) so a generic type doesn't carry static
 /// members that vary per closed instantiation (CA1000).
 /// </summary>
-public static class Overridable
+internal static class Overridable
 {
     /// <summary>The caller did not override -- use the instance-level default.</summary>
     public static Overridable<T> Unset<T>() => default;

@@ -26,7 +26,7 @@ namespace Backend.Realtime;
 /// means this schedule was already superseded (by <see cref="Cancel"/>) and the stale call returns
 /// immediately, sending nothing.
 /// </summary>
-public sealed class NudgeScheduler
+internal sealed class NudgeScheduler
 {
     private readonly double _nudgeAfterSeconds;
     private readonly Func<CancellationToken, Task> _sendNudgeAsync;

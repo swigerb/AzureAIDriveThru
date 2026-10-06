@@ -5,7 +5,7 @@ namespace Backend.Realtime;
 /// target). Every session.update this backend sends carries one, so a GA rejection can be
 /// correlated back to the update that caused it (see <see cref="SessionUpdateGuard"/>).
 /// </summary>
-public static class EventIds
+internal static class EventIds
 {
     public static string NewEventId(string prefix) =>
         $"{prefix}_{Guid.NewGuid():N}"[..(prefix.Length + 1 + 20)];

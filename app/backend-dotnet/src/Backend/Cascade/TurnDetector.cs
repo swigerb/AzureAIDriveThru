@@ -12,7 +12,7 @@ namespace Backend.Cascade;
 /// same to a guest, without pretending to reimplement OpenAI's actual VAD algorithm -- just enough
 /// to segment turns for STT.
 /// </summary>
-public sealed class TurnDetector
+internal sealed class TurnDetector
 {
     private const int AudioSampleRate = 24000;
 
@@ -125,9 +125,9 @@ public sealed class TurnDetector
 /// shared verbatim with the realtime pipeline's own `server_vad` config (Realtime/RealtimeSessionConfig.cs),
 /// just read independently here since <see cref="TurnDetector"/> is cascade's own local VAD, not
 /// a value forwarded in a `session.update` to an upstream Realtime API.</summary>
-public sealed record CascadeVadConfig(double Threshold, int SilenceDurationMs)
+internal sealed record CascadeVadConfig(double Threshold, int SilenceDurationMs)
 {
-    public static CascadeVadConfig FromAppConfig(AppConfig config)
+    internal static CascadeVadConfig FromAppConfig(AppConfig config)
     {
         var section = config.TryGetSection("vad");
         return new CascadeVadConfig(

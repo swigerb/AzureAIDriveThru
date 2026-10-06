@@ -27,7 +27,7 @@ namespace Backend;
 /// for the literal string in the Python tree; a C# mirror of that guard is out of this file's
 /// scope but the same rule applies).
 /// </summary>
-public static class ConformanceHooks
+internal static class ConformanceHooks
 {
     private const string EnabledEnv = "CONFORMANCE_TEST_HOOKS";
     private const string FixedNowEnv = "CONFORMANCE_FIXED_NOW";

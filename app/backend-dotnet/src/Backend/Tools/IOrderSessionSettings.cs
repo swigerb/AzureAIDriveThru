@@ -7,7 +7,7 @@ namespace Backend.Tools;
 /// <see cref="IToolExecutor"/> for the same reason as <see cref="IOrderTicketSource"/>:
 /// non-order executors remain valid without implementing it.
 /// </summary>
-public interface IOrderSessionSettings
+internal interface IOrderSessionSettings
 {
     bool SetMachineOverride(string machine, string status);
     IReadOnlyDictionary<string, string> GetMachineOverrides();

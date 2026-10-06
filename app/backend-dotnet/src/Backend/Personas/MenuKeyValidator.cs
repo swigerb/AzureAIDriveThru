@@ -25,7 +25,7 @@ namespace Backend.Personas;
 /// per-session <c>MenuCatalog</c>-equivalent in the C# backend yet for it to also guard, so a
 /// single call site is correct here (unlike Python's "belt and suspenders" two call sites).
 /// </summary>
-public static class MenuKeyValidator
+internal static class MenuKeyValidator
 {
     // Strips a parenthesized customization suffix, e.g. "Tots (Extra Crispy)" -> "Tots".
     // Mirrors menu_utils.py's _MODIFIER_SUFFIX_RE exactly (r"\s*\([^)]*\)\s*").

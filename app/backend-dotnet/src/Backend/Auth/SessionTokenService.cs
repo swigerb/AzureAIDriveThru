@@ -12,7 +12,7 @@ namespace Backend.Auth;
 /// validate on the other: it costs nothing to match the algorithm exactly, and it keeps the
 /// door open if #44 is ever resolved the other way.
 /// </summary>
-public sealed class SessionTokenService(byte[] secret)
+internal sealed class SessionTokenService(byte[] secret)
 {
     private readonly byte[] _secret = secret;
 

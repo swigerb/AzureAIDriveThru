@@ -19,7 +19,7 @@ namespace Backend.Realtime;
 /// `Uri.Authority`-based comparison here would have wrongly normalised both away and accepted an
 /// Origin Python rejects -- an over-permissive gap, not merely a cosmetic difference.
 /// </summary>
-public static class OriginValidator
+internal static class OriginValidator
 {
     private static readonly char[] NetlocTerminators = ['/', '?', '#'];
 

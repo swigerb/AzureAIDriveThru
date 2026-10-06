@@ -16,7 +16,7 @@ namespace Backend.Configuration;
 /// bool `false`. <see cref="FromConfig"/> tolerates both shapes for the same reason ParsePriority
 /// does.
 /// </summary>
-public sealed class SecurityConfig
+internal sealed class SecurityConfig
 {
     private SecurityConfig(IReadOnlyList<string> allowedOrigins, bool requireSessionToken)
     {

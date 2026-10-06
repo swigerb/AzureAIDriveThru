@@ -32,7 +32,7 @@ namespace Backend.Realtime;
 /// request 401 (the Entra check rejects first) rather than 403 (this gate's own Origin check),
 /// matching 18.11 row 11.
 /// </summary>
-public static class RealtimeAuthGate
+internal static class RealtimeAuthGate
 {
     /// <summary>Returns a rejection <see cref="IResult"/> (403/401) if the request must be
     /// rejected before <c>AcceptWebSocketAsync</c>, or null if the request may proceed.</summary>

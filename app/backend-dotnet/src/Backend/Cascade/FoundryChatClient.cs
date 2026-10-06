@@ -18,7 +18,7 @@ namespace Backend.Cascade;
 /// <see cref="JsonObject"/>/<see cref="JsonNode"/> directly rather than introducing a parallel set
 /// of typed message DTOs (see <see cref="Sessions.RealtimeProcessor"/>'s own frame-building style).
 /// </summary>
-public sealed class FoundryChatClient(HttpClient httpClient, string endpoint, IUpstreamBearerTokenProvider credential)
+internal sealed class FoundryChatClient(HttpClient httpClient, string endpoint, IUpstreamBearerTokenProvider credential)
 {
     /// <summary>Port of cascade_processor.py's `_COGNITIVE_SERVICES_SCOPE` -- the same bearer
     /// scope the realtime pipeline's own upstream connect uses (Realtime/UpstreamAuth.cs).</summary>
@@ -105,7 +105,7 @@ public sealed class FoundryChatClient(HttpClient httpClient, string endpoint, IU
 /// cascade_processor.py's `azure.ai.inference.models.{SystemMessage,UserMessage,AssistantMessage,
 /// ToolMessage}` -- same four roles, same fields, just built as raw JSON here instead of typed SDK
 /// objects).</summary>
-public static class CascadeChatMessage
+internal static class CascadeChatMessage
 {
     public static JsonObject System(string content) => new() { ["role"] = "system", ["content"] = content };
 
@@ -123,7 +123,7 @@ public static class CascadeChatMessage
 /// (`{"type": "function", "function": {"name", "description", "parameters"}}`) the Foundry
 /// chat-completions endpoint expects -- C# port of cascade_processor.py's `_tool_definitions`.
 /// </summary>
-public static class CascadeToolDefinitions
+internal static class CascadeToolDefinitions
 {
     public static IReadOnlyList<JsonObject> FromToolSchemas(IReadOnlyList<JsonObject> toolSchemas)
     {

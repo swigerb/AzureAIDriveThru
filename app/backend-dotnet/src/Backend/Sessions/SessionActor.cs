@@ -10,7 +10,7 @@ namespace Backend.Sessions;
 /// anything real (wave 7): posted events are drained in order but not acted on until a processor
 /// is supplied.
 /// </summary>
-public sealed class SessionActor : IAsyncDisposable
+internal sealed class SessionActor : IAsyncDisposable
 {
     private readonly Channel<SessionEvent> _mailbox = Channel.CreateUnbounded<SessionEvent>(
         new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });

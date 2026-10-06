@@ -19,7 +19,7 @@ namespace Backend.Realtime;
 /// the thread pool. Every public member takes an internal lock around the shared
 /// Dictionary/List/Queue/HashSet state.
 /// </summary>
-public sealed class SessionUpdateGuard
+internal sealed class SessionUpdateGuard
 {
     private const int MaxTracked = 64;
 

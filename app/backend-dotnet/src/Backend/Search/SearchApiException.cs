@@ -8,7 +8,7 @@ namespace Backend.Search;
 /// <c>error.message</c> field carries (or a generic fallback) -- <see cref="SearchTool"/>'s own
 /// retry branches pattern-match on this text (e.g. "Could not find a property named") exactly
 /// like Python's own `"Could not find a property named" in str(exc)` check.</summary>
-public sealed class SearchApiException(int statusCode, string message) : Exception(message)
+internal sealed class SearchApiException(int statusCode, string message) : Exception(message)
 {
     public int StatusCode { get; } = statusCode;
 }

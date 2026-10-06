@@ -56,7 +56,7 @@ namespace Backend.Sessions;
 /// below (api-key, or a managed-identity bearer token when no key is configured -- PR #140 R5) is
 /// the OUTBOUND call to the Azure OpenAI realtime endpoint itself and applies regardless of #147.
 /// </summary>
-public sealed class RealtimeProcessor : IPipelineProcessor
+internal sealed class RealtimeProcessor : IPipelineProcessor
 {
     /// <summary>Port of app/backend/session_manager.py's <c>SESSION_ENDED_CLOSE_REASON</c> --
     /// paired with the standard <see cref="WebSocketCloseStatus.NormalClosure"/> (1000) code for a

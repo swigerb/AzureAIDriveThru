@@ -9,7 +9,7 @@ namespace Backend.Configuration;
 /// Python (every persona sharing one drive-thru's throughput ceiling), so this C# port reads them
 /// the same way: once, from the shared app/backend/config.yaml, never from a pack.
 /// </summary>
-public sealed class BusinessRulesConfig
+internal sealed class BusinessRulesConfig
 {
     public int MaxItemQuantity { get; }
     public int MaxOrderItems { get; }
@@ -22,7 +22,7 @@ public sealed class BusinessRulesConfig
 
     /// <summary>Mirrors tools.py's <c>_biz_cfg.get("max_item_quantity", 10)</c> /
     /// <c>_biz_cfg.get("max_order_items", 25)</c> -- same field names, same fallback defaults.</summary>
-    public static BusinessRulesConfig FromAppConfig(AppConfig config)
+    internal static BusinessRulesConfig FromAppConfig(AppConfig config)
     {
         var section = config.TryGetSection("business_rules");
         return new BusinessRulesConfig(

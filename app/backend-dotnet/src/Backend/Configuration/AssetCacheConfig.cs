@@ -9,7 +9,7 @@ namespace Backend.Configuration;
 /// is tolerated and defaults to the exact literal values Python falls back to, not an error).
 /// Drives the persona asset/menu routes' Cache-Control header (Backend.Personas.PersonaRoutes).
 /// </summary>
-public sealed record AssetCacheConfig(long ImmutableMaxAgeSeconds, long DefaultMaxAgeSeconds)
+internal sealed record AssetCacheConfig(long ImmutableMaxAgeSeconds, long DefaultMaxAgeSeconds)
 {
     private const long DefaultImmutableMaxAgeSeconds = 31_536_000;
     private const long DefaultDefaultMaxAgeSeconds = 3600;

@@ -13,7 +13,7 @@ namespace Backend.Tools;
 /// "search" -- see <c>SearchTool</c>/whatever composes both into one <see cref="IToolExecutor"/>
 /// for a session's full tool set.
 /// </summary>
-public sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings
+internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings
 {
     private readonly Ordering.OrderState _order;
     private readonly MenuCatalog _menu;

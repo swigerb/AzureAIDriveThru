@@ -7,7 +7,7 @@ namespace Backend.Tools;
 /// gets corrective text, the guest-facing client display is untouched); a successful order update
 /// is ToBoth (the model gets spoken confirmation text, the client also gets a fresh order-summary
 /// JSON payload).</summary>
-public enum ToolResultDirection
+internal enum ToolResultDirection
 {
     ToServer,
     ToClient,
@@ -20,7 +20,7 @@ public enum ToolResultDirection
 /// a structured (non-string) result -- e.g. a rejection object or an order summary -- exactly like
 /// Python's ToolResult.text may be a dict there; <see cref="ToText"/> serializes it the same way
 /// Python's <c>to_text()</c> calls <c>json.dumps()</c> on a non-str payload.</summary>
-public sealed class ToolResult
+internal sealed class ToolResult
 {
     private static readonly JsonSerializerOptions PayloadJsonOptions = new();
 

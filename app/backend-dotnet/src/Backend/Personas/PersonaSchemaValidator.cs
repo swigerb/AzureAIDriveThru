@@ -10,7 +10,7 @@ namespace Backend.Personas;
 /// two-layer validation persona_loader.py also does; layer 2 (strongly-typed deserialization with
 /// JsonUnmappedMemberHandling.Disallow) happens in PersonaCatalog.
 /// </summary>
-public static class PersonaSchemaValidator
+internal static class PersonaSchemaValidator
 {
     private static readonly EvaluationOptions Options = new() { OutputFormat = OutputFormat.List };
 

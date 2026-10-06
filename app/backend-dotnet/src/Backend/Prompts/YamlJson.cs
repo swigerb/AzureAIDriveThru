@@ -12,7 +12,7 @@ namespace Backend.Prompts;
 /// the one conversion point <see cref="PromptLoader"/>'s consumers (issue #13's RealtimeProcessor)
 /// need.
 /// </summary>
-public static class YamlJson
+internal static class YamlJson
 {
     public static JsonNode? ToJsonNode(object? value) => value switch
     {

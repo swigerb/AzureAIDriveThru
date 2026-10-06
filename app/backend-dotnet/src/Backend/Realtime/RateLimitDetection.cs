@@ -8,7 +8,7 @@ namespace Backend.Realtime;
 /// <see cref="RateLimitRecovery"/> both need to tell a genuine rate limit apart from any other
 /// upstream `error`.
 /// </summary>
-public static class RateLimitDetection
+internal static class RateLimitDetection
 {
     /// <summary>True if an error object's `code` or `type` names a rate limit.</summary>
     public static bool IsRateLimitError(JsonObject? error)

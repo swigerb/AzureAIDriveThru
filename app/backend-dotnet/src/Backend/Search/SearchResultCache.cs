@@ -21,7 +21,7 @@ namespace Backend.Search;
 /// is safe to share across sessions/override states because <see cref="SearchTool"/> reformats it
 /// (including the OOS tag) fresh on every call, cache hit or not.</para>
 /// </summary>
-public sealed class SearchResultCache
+internal sealed class SearchResultCache
 {
     private sealed record Entry(List<JsonElement> Records, DateTime ExpiresAtUtc, long InsertedOrder);
 

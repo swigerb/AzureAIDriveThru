@@ -14,7 +14,7 @@ namespace Backend.Cascade;
 /// comment for why. Bearer-authenticated (never `api-key`) with the same
 /// <see cref="FoundryChatClient.CognitiveServicesScope"/> cascade's chat calls use.
 /// </summary>
-public sealed class FoundryAudioClient(HttpClient httpClient, string endpoint, IUpstreamBearerTokenProvider credential)
+internal sealed class FoundryAudioClient(HttpClient httpClient, string endpoint, IUpstreamBearerTokenProvider credential)
 {
     private readonly string _endpoint = endpoint.TrimEnd('/');
 
@@ -117,7 +117,7 @@ public sealed class FoundryAudioClient(HttpClient httpClient, string endpoint, I
 /// `_pcm16_to_wav_bytes` uses), so this writes the RIFF header by hand. Produces a standard
 /// uncompressed PCM WAV: `RIFF` chunk descriptor, `fmt ` subchunk (1 channel, 16-bit, the given
 /// sample rate), `data` subchunk containing the PCM bytes verbatim.</summary>
-public static class WavEncoder
+internal static class WavEncoder
 {
     public static byte[] PcmToWav(byte[] pcm16Bytes, int sampleRate, int channels = 1, int bitsPerSample = 16)
     {

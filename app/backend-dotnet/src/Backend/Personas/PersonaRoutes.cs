@@ -19,7 +19,7 @@ namespace Backend.Personas;
 /// {id}`'s `models` block ALWAYS narrows to what's actually selectable (catalog ∩ deployment ∩
 /// persona-allowed, design doc section 7.3), `{id, label, reasoning}` shaped, never bare ids.
 /// </summary>
-public static class PersonaRoutes
+internal static class PersonaRoutes
 {
     private static readonly Dictionary<string, string> AssetContentTypes = new(StringComparer.Ordinal)
     {

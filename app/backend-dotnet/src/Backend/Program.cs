@@ -794,4 +794,4 @@ internal sealed record RawFrameEvent(byte[] Payload, WebSocketMessageType Messag
 
 /// <summary>Exposes Program's top-level statements to WebApplicationFactory-based integration
 /// tests (Microsoft.AspNetCore.Mvc.Testing requires a public partial Program type).</summary>
-public partial class Program;
+internal partial class Program;

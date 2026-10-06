@@ -6,7 +6,7 @@ namespace Backend.Ordering;
 /// mutated order (mirrors order_state.py's <c>result_info</c> dict) -- read by
 /// <c>Tools.OrderToolExecutor</c> to build the right delta text (combo-absorption/conversion
 /// wording) without re-deriving what happened from the order lines themselves.</summary>
-public sealed class OrderUpdateResult
+internal sealed class OrderUpdateResult
 {
     public bool AbsorbedIntoCombo { get; set; }
     public string? ComboConvertedFrom { get; set; }
@@ -46,7 +46,7 @@ public sealed class OrderUpdateResult
 
 /// <summary>Result of <see cref="OrderState.GetComboRequirements"/> -- mirrors order_state.py's
 /// <c>get_combo_requirements</c> return dict.</summary>
-public sealed record ComboRequirements(bool IsComplete, IReadOnlyList<string> MissingItems, string PromptHint);
+internal sealed record ComboRequirements(bool IsComplete, IReadOnlyList<string> MissingItems, string PromptHint);
 
 /// <summary>
 /// Port of app/backend/order_state.py's <c>OrderState</c> class (docs/dotnet_mapping.md, issues
@@ -67,7 +67,7 @@ public sealed record ComboRequirements(bool IsComplete, IReadOnlyList<string> Mi
 /// (there is no second actor that could ever hold a reference to call it from). This is
 /// deliberately NOT a thread-safe type; do not share one instance across actors.</para>
 /// </summary>
-public sealed class OrderState
+internal sealed class OrderState
 {
     private readonly List<OrderItem> _items = [];
     private readonly MenuCatalog _menu;

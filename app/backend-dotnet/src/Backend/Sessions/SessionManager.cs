@@ -20,7 +20,7 @@ namespace Backend.Sessions;
 /// is what actually stops that connection's relay loops (and any in-flight tool dispatch through
 /// the shared <see cref="IToolExecutor"/>) promptly on supersede, rather than relying solely on it
 /// noticing the 4002 close frame on its own schedule.</summary>
-public sealed record ResumeOutcome(
+internal sealed record ResumeOutcome(
     bool Accepted,
     string? Reason = null,
     string? SessionId = null,
@@ -43,7 +43,7 @@ public sealed record ResumeOutcome(
 /// ever being cancelled promptly (the background close it now shares a fate with may legitimately
 /// take up to its own short timeout against a non-draining peer) -- it needs a flag it can check
 /// synchronously, with no IO and no dependency on how long that close takes.</summary>
-public sealed class SupersededFlag
+internal sealed class SupersededFlag
 {
     private volatile bool _value;
 
@@ -67,7 +67,7 @@ public sealed class SupersededFlag
 /// (unlike those two classes, which are purely per-connection), so this class's lock protects the
 /// whole shared registry, not just one session's state.
 /// </summary>
-public sealed class SessionManager
+internal sealed class SessionManager
 {
     public const int IdleCloseCode = 4000;
     public const string IdleCloseReason = "idle_timeout";

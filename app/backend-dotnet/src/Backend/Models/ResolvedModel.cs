@@ -10,7 +10,7 @@ namespace Backend.Models;
 /// every model, including the persona's own pipeline default. There is no default-path special
 /// case; design doc's "reasoning sent only for catalog reasoning models" (section 7.5).
 /// </summary>
-public sealed record ResolvedModel(string Id, string Pipeline, string Deployment, bool Reasoning);
+internal sealed record ResolvedModel(string Id, string Pipeline, string Deployment, bool Reasoning);
 
 /// <summary>
 /// Port of processors.py's ModelSelectionError: raised when a requested model isn't selectable for
@@ -19,7 +19,7 @@ public sealed record ResolvedModel(string Id, string Pipeline, string Deployment
 /// deployed. The caller (Program.cs's `/realtime` handler) turns this into the same plain HTTP 404
 /// an unknown/disabled persona already gets -- never a silent fallback to some other model.
 /// </summary>
-public sealed class ModelSelectionException : Exception
+internal sealed class ModelSelectionException : Exception
 {
     public ModelSelectionException(string message) : base(message)
     {

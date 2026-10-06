@@ -11,7 +11,7 @@ namespace Backend.Tools;
 /// unrecognised name is handled by the caller exactly like rtmt.py's `self.tools.get(name)` miss
 /// (a fallback error result, not an exception).
 /// </summary>
-public sealed class StubToolExecutor : IToolExecutor
+internal sealed class StubToolExecutor : IToolExecutor
 {
     public IReadOnlyList<string> ToolNames { get; }
 

@@ -44,7 +44,7 @@ namespace Backend.Sessions;
 /// args/result in the context monitor, mirroring cascade_processor.py's own two
 /// <c>ctx_monitor.add_content</c> call sites exactly.
 /// </summary>
-public sealed class CascadeProcessor : IPipelineProcessor
+internal sealed class CascadeProcessor : IPipelineProcessor
 {
     private const int MaxToolRounds = 8;
     private const int AudioSampleRate = 24000;

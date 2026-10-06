@@ -14,11 +14,11 @@ namespace Backend.Tests.TestSupport;
 /// spokenAs/spokenName pronunciation-rewrite tests never need a real persona pack id in their own
 /// source (#313, Rick's re-review item 1).
 /// </summary>
-public static class ZetaFixture
+internal static class ZetaFixture
 {
     public const string PersonaId = "test-zeta";
 
-    public static Persona Load()
+    internal static Persona Load()
     {
         var fixturesDir = Path.Combine(RepoRootLocator.Find(), "app", "backend", "tests", "fixtures", "personas");
         var catalog = PersonaCatalog.Load(personasDir: fixturesDir, personasEnv: PersonaId, defaultPersonaEnv: PersonaId);

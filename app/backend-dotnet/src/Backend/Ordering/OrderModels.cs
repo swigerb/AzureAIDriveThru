@@ -9,7 +9,7 @@ namespace Backend.Ordering;
 /// "" when the slot is vacant; <see cref="LastItem"/>/<see cref="LastSize"/> deliberately SURVIVE
 /// a vacate (<see cref="OrderState"/>'s VacateBundleComponent) so a later refill of that same item
 /// reports as a resize instead of a fresh free absorption.</summary>
-public sealed class BundleSlot
+internal sealed class BundleSlot
 {
     public string Item { get; set; } = "";
     public string Size { get; set; } = "";
@@ -27,7 +27,7 @@ public sealed class BundleSlot
 /// existing line in place (e.g. absorbing a standalone side into a newly-added combo, or
 /// <c>modify</c> resizing a line), exactly like Python's Pydantic model instances do.
 /// </summary>
-public sealed class OrderItem
+internal sealed class OrderItem
 {
     [JsonPropertyName("item")] public required string Item { get; set; }
     [JsonPropertyName("size")] public required string Size { get; set; }
@@ -63,7 +63,7 @@ public sealed class OrderItem
 /// unlike Python's ``float``-typed numeric fields (a Pydantic/JSON-wire concession Python needs
 /// that this port does not), every numeric field here stays <c>decimal</c> end-to-end.
 /// </summary>
-public sealed record OrderSummary(
+internal sealed record OrderSummary(
     IReadOnlyList<OrderItem> Items,
     decimal Total,
     decimal Tax,
