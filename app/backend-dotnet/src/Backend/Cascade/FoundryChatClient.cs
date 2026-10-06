@@ -87,7 +87,7 @@ public sealed class FoundryChatClient(HttpClient httpClient, string endpoint, IU
         {
             return await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         }
-        catch (Exception)
+        catch (Exception ex) when (ex is HttpRequestException or IOException or OperationCanceledException)
         {
             return "";
         }

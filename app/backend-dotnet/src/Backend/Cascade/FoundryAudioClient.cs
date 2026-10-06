@@ -98,7 +98,7 @@ public sealed class FoundryAudioClient(HttpClient httpClient, string endpoint, I
         {
             return await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         }
-        catch (Exception)
+        catch (Exception ex) when (ex is HttpRequestException or IOException or OperationCanceledException)
         {
             return "";
         }
