@@ -61,14 +61,6 @@ entries:
   reason: C# port mirrors Python's default-persona fallback and brand examples in
     comments; remove with the persona-neutral default (#76).
   increase_reason: '#105'
-- file: app/backend-dotnet/src/Backend/Tools/OrderToolExecutor.cs
-  brand: sonic
-  max: 1
-  issue: '#325'
-  reason: 'B2 fix comment uses Sonic''s real "Milk Jug (1%) - White" menu item as
-    the canonical-name-with-parens example proving ReattachCustomizationSuffix is
-    not synthetic/hypothetical; same class as the other #325 comment references below.'
-  increase_reason: '#325'
 - file: app/backend-dotnet/tests/Backend.Tests/Models/ModelCatalogTests.cs
   brand: sonic
   max: 2
@@ -166,15 +158,6 @@ entries:
     same class as the #78 Python test baseline entries; remove only if the pack roster
     or its test coverage changes.'
   increase_reason: '#105'
-- file: app/backend-dotnet/tests/Backend.Tests/Tools/OrderToolExecutorCanonicalItemNameTests.cs
-  brand: sonic
-  max: 5
-  issue: '#325'
-  reason: 'B3 parity tests load the real "sonic" persona (PersonaCatalog.Load) to
-    prove the #325 canonicalization fix against real menu data (e.g. "Coca-Cola(R)"/"Coke",
-    "Milk Jug (1%) - White") in addition to the non-brand-coupled test-zeta fixture;
-    same class as the Python test baseline entries below.'
-  increase_reason: '#325'
 - file: app/backend/audio_pipeline.py
   brand: sonic
   max: 4
@@ -270,14 +253,6 @@ entries:
     docstring examples still default/hardcode to the single Sonic persona pending
     #74''s session-scoped persona binding.'
   increase_reason: ''
-- file: app/backend/tests/fixtures/personas/test-zeta/menu/menuItems.json
-  brand: sonic
-  max: 1
-  issue: '#325'
-  reason: The "Zeta Snack Mix (Family Size)" B2 regression item's own description
-    names Sonic's real "Milk Jug (1%) - White" item as the real-world data point that
-    motivated this fixture; non-brand-coupled otherwise.
-  increase_reason: '#325'
 - file: app/backend/tests/test_combo_orders.py
   brand: sonic
   max: 31
@@ -399,12 +374,12 @@ entries:
   increase_reason: ''
 - file: app/backend/tests/test_tool_calling.py
   brand: sonic
-  max: 12
+  max: 11
   issue: '#78'
   reason: 'Backend test fixtures/paths reference personas/sonic/** directly because
     it''s the only persona pack that exists yet -- #78/#79 land the other packs, at
     which point these tests get parameterized per-persona instead of hardcoding Sonic.'
-  increase_reason: '#325'
+  increase_reason: ''
 - file: app/backend/tests/test_tools_search.py
   brand: sonic
   max: 2
@@ -413,14 +388,6 @@ entries:
     it''s the only persona pack that exists yet -- #78/#79 land the other packs, at
     which point these tests get parameterized per-persona instead of hardcoding Sonic.'
   increase_reason: ''
-- file: app/backend/tools.py
-  brand: sonic
-  max: 1
-  issue: '#325'
-  reason: B2 fix comment names Sonic's real "Milk Jug (1%) - White" menu item as the
-    canonical-name-with-parens example proving _reattach_customization_suffix is not
-    a synthetic/hypothetical concern.
-  increase_reason: '#325'
 - file: app/frontend/index.html
   brand: sonic
   max: 1
@@ -679,14 +646,6 @@ entries:
     same class as the #78 Python test baseline entries; remove only if the pack roster
     or its test coverage changes.'
   increase_reason: '#105'
-- file: tests/conformance/tests/Conformance.Tests/DotnetTraitCoverageTests.cs
-  brand: sonic
-  max: 1
-  issue: '#325'
-  reason: 'Floor re-measurement doc comment names the real default "sonic" persona the new
-    CanonicalItemNameModifyConformanceTests row runs against; same class as the other
-    #325 comment references above.'
-  increase_reason: '#325'
 - file: tests/conformance/tests/Conformance.Tests/ExternalModeProfilePolicyTests.cs
   brand: dunkin
   max: 2
@@ -777,15 +736,6 @@ entries:
     same class as the #78 Python test baseline entries; remove only if the pack roster
     or its test coverage changes.'
   increase_reason: '#105'
-- file: tests/conformance/tests/Conformance.Tests/Scenarios/Ordering/CanonicalItemNameConformanceTests.cs
-  brand: sonic
-  max: 1
-  issue: '#325'
-  reason: B3 parity row runs the modify-with-alias-and-size-change scenario against
-    the real default "sonic" persona (via the default ConformanceFixture/ConformanceCollection,
-    not the Zeta fixture) to close the B3 coverage gap Rick flagged; same class as
-    the other conformance/unit-test baseline entries above.
-  increase_reason: '#325'
 - file: tests/conformance/tests/Conformance.Tests/Scenarios/Ordering/ComboAbsorptionTests.cs
   brand: sonic
   max: 6

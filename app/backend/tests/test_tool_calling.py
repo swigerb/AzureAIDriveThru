@@ -859,7 +859,7 @@ class NotOnMenuRejectionTests(unittest.TestCase):
         self.assertEqual(len(summary.items), 0)
 
     def test_add_with_a_real_menu_items_own_parenthetical_name_is_not_duplicated(self):
-        """#325 (B2, Rick's PR #326 review): Sonic's REAL "Milk Jug (1%) - White" is a canonical
+        """#325 (B2, Rick's PR #326 review): A shipped pack's REAL "Milk Jug (1%) - White" is a canonical
         menu name that itself contains a paren group. The model echoing that exact name back
         must store it unchanged -- not "Milk Jug (1%) - White (1%) - White" (the duplication bug:
         the old code blindly reattached everything from the first "(" in the MODEL's own string,

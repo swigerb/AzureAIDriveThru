@@ -90,8 +90,8 @@ public sealed class OrderToolExecutorCanonicalItemNameTests
     }
 
     // ── B2 (Rick's PR #326 review): a canonical name that ITSELF contains a paren group ──
-    // "Zeta Snack Mix (Family Size)" mirrors a real pack's own data (Sonic's real "Milk Jug (1%)
-    // - White") without coupling this proof to any one real pack's own item.
+    // "Zeta Snack Mix (Family Size)" mirrors a shipped pack's own paren-named item (e.g. a
+    // "Milk Jug (1%) - White"-style name) without coupling this proof to any one real pack.
 
     [Fact]
     public async Task Add_with_the_exact_canonical_paren_name_stores_it_unchanged_not_duplicated()
@@ -134,9 +134,9 @@ public sealed class OrderToolExecutorCanonicalItemNameTests
 }
 
 /// <summary>
-/// #325 (B3, Rick's PR #326 review): mirrors test_tool_calling.py's Sonic-persona canonical-name
+/// #325 (B3, Rick's PR #326 review): mirrors test_tool_calling.py's shipped-pack canonical-name
 /// tests (bundle/combo add, merge, modify-via-alias-with-a-size-change, remove) against the SAME
-/// real production "sonic" persona -- not just the "test-zeta" fixture -- so the C# suite covers
+/// real shipped pack that carries this combo (found by menu data, not by id) -- not just the "test-zeta" fixture -- so the C# suite covers
 /// the exact same scenario classes the Python suite does, including a genuine combo/bundle item
 /// and a real alias (<see cref="Backend.Personas.MenuCatalog.ResolveMenuItem"/>'s own alias map).
 /// </summary>
@@ -149,8 +149,10 @@ public sealed class OrderToolExecutorCanonicalItemNameSonicTests
 
     private static OrderToolExecutor NewExecutor()
     {
-        var catalog = PersonaCatalog.Load(personasEnv: "sonic", defaultPersonaEnv: "sonic");
-        var persona = catalog.Get("sonic");
+        // Brand-neutral: locate the shipped pack whose own menu carries this combo, instead of naming it.
+        var catalog = PersonaCatalog.Load();
+        var persona = catalog.Ids.Select(catalog.Get)
+            .First(p => Backend.Ordering.PersonaOrderFactory.GetMenuCatalog(p).ResolveMenuItem(Bundle) is not null);
         var menu = Backend.Ordering.PersonaOrderFactory.GetMenuCatalog(persona);
         var order = Backend.Ordering.PersonaOrderFactory.CreateOrderState(persona);
         return new OrderToolExecutor(order, menu, promptLoader: null, MaxItemQuantity, MaxOrderItems);

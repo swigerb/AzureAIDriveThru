@@ -137,7 +137,7 @@ public sealed class CanonicalItemNameConformanceTests(ZetaConformanceFixture fix
 
 /// <summary>
 /// #325 (B3, Rick's PR #326 review): a `modify` row -- resizing "Coke" (a real alias on the
-/// default "sonic" persona's own menu data) must match the "Coca-Cola&#174;" line it was added as
+/// default persona's own menu data) must match the "Coca-Cola&#174;" line it was added as
 /// and keep storing the canonical name, not revert the ticket back to the alias, even when the
 /// size also changes in the same call. Runs against the deployment-default persona (no
 /// <c>Persona</c> override), same precedent/collection as <see cref="UpdateOrderAddRemoveModifyTests"/>.

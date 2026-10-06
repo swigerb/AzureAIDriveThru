@@ -167,7 +167,7 @@ MAX_TOTAL_ITEMS = _biz_cfg.get("max_order_items", 25)
 # B2) -- previously each site re-derived the guest's "(modifiers)" suffix with
 # ``item_name[item_name.find("("):]``, which blindly grabbed EVERYTHING from the first "(" in the
 # MODEL's own string. That's wrong whenever the menu's own canonical name itself contains a
-# paren group (e.g. Sonic's real "Milk Jug (1%) - White"): a model that echoed the exact
+# paren group (e.g. a shipped "Milk Jug (1%) - White"-style item): a model that echoed the exact
 # canonical spelling got back "Milk Jug (1%) - White (1%) - White" (the canonical name's own
 # "(1%)" duplicated), and a plain, paren-less "Milk Jug - White" add stored a DIFFERENT string
 # ("Milk Jug (1%) - White" with no trailing space artifact, which is actually fine -- but the

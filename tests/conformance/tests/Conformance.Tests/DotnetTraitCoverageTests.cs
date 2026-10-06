@@ -592,7 +592,7 @@ namespace Conformance.Tests;
 /// in <c>CanonicalItemNameConformanceTests</c> -- the test-zeta "ZORBS&#174; Bite Treats"
 /// add-unmarked/merge/remove rows plus the two new B2 paren-group rows -- and 1 in
 /// <c>CanonicalItemNameModifyConformanceTests</c>, covering the B3 modify-with-alias-and-size-
-/// change row against the real default "sonic" persona). A second real measurement after adding
+/// change row against the real default persona). A second real measurement after adding
 /// these (same temporarily-bumped-assert technique) gave <b>373</b> (367 + 6 new methods) -- a
 /// genuine fresh measurement both times, not arithmetic projection carried forward by hand.</para>
 /// </summary>

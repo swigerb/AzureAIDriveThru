@@ -408,7 +408,7 @@ public sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings
     // review, B2) -- previously each site re-derived the guest's "(modifiers)" suffix with
     // `itemName[openParen..]`, which blindly grabbed EVERYTHING from the first '(' in the
     // MODEL's own string. That's wrong whenever the menu's own canonical name itself contains a
-    // paren group (e.g. Sonic's real "Milk Jug (1%) - White"): a model that echoed the exact
+    // paren group (e.g. a shipped "Milk Jug (1%) - White"-style item): a model that echoed the exact
     // canonical spelling got back "Milk Jug (1%) - White (1%) - White" (the canonical name's own
     // "(1%)" duplicated). A multiset difference of the paren groups (`\([^)]*\)`) in the model's
     // raw string vs. the canonical name's OWN groups fixes both: any canonical-name group the
