@@ -25,7 +25,7 @@ internal sealed class SearchConfig
         CacheMaxSize = cacheMaxSize;
     }
 
-    internal static SearchConfig FromAppConfig(AppConfig config)
+    public static SearchConfig FromAppConfig(AppConfig config)
     {
         var search = config.TryGetSection("search");
         var cache = config.TryGetSection("cache");

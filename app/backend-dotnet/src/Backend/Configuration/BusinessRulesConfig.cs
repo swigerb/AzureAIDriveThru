@@ -22,7 +22,7 @@ internal sealed class BusinessRulesConfig
 
     /// <summary>Mirrors tools.py's <c>_biz_cfg.get("max_item_quantity", 10)</c> /
     /// <c>_biz_cfg.get("max_order_items", 25)</c> -- same field names, same fallback defaults.</summary>
-    internal static BusinessRulesConfig FromAppConfig(AppConfig config)
+    public static BusinessRulesConfig FromAppConfig(AppConfig config)
     {
         var section = config.TryGetSection("business_rules");
         return new BusinessRulesConfig(

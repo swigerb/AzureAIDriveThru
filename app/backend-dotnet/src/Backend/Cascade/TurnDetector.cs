@@ -127,7 +127,7 @@ internal sealed class TurnDetector
 /// a value forwarded in a `session.update` to an upstream Realtime API.</summary>
 internal sealed record CascadeVadConfig(double Threshold, int SilenceDurationMs)
 {
-    internal static CascadeVadConfig FromAppConfig(AppConfig config)
+    public static CascadeVadConfig FromAppConfig(AppConfig config)
     {
         var section = config.TryGetSection("vad");
         return new CascadeVadConfig(

@@ -29,7 +29,7 @@ internal sealed class BundleSlot
 /// </summary>
 internal sealed class OrderItem
 {
-    [JsonPropertyName("item")] public required string Item { get; set; }
+    [JsonPropertyName("item")] public required string Item { get; init; }
     [JsonPropertyName("size")] public required string Size { get; set; }
     [JsonPropertyName("quantity")] public int Quantity { get; set; }
     [JsonPropertyName("price")] public decimal Price { get; set; }
