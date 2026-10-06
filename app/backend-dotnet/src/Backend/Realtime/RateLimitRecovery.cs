@@ -71,7 +71,7 @@ public sealed class RateLimitRecovery
     private readonly TimeProvider _timeProvider;
     private readonly string? _sessionId;
     private readonly ILogger? _logger;
-    private readonly object _sync = new();
+    private readonly Lock _sync = new();
 
     // Retries already sent for the response currently being recovered.
     private int _attempt;
@@ -274,7 +274,7 @@ public sealed class RateLimitRecovery
 
         var notifyFinal = false;
         var notifyNonFinal = false;
-        var attempt = 0;
+        int attempt;
 
         lock (_sync)
         {

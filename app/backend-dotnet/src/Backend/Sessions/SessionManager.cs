@@ -33,13 +33,13 @@ public sealed record ResumeOutcome(
     CancellationTokenSource? StaleCts = null,
     SessionIdentifiers? Identifiers = null);
 
-/// <summary>Rick's #244 round-2 review (issue 1): a signal independent of <see cref="StaleCts"/>'s
+/// <summary>Rick's #244 round-2 review (issue 1): a signal independent of <see cref="ResumeOutcome.StaleCts"/>'s
 /// cancellation, set exactly once, synchronously, inside <see cref="SessionManager"/>'s own lock
 /// the instant a resume captures a still-attached socket as stale -- i.e. as early as possible,
 /// before any socket IO (the background supersede-close) is even scheduled, let alone awaited.
 /// <c>OrderToolExecutor.ExecuteAsync</c> is synchronous and ignores its <see cref="CancellationToken"/>
 /// parameter entirely, and the <c>OrderState</c> it mutates isn't thread-safe, so a stale
-/// connection's own in-flight <c>HandleToolCallDoneAsync</c> cannot rely on <see cref="StaleCts"/>
+/// connection's own in-flight <c>HandleToolCallDoneAsync</c> cannot rely on <see cref="ResumeOutcome.StaleCts"/>
 /// ever being cancelled promptly (the background close it now shares a fate with may legitimately
 /// take up to its own short timeout against a non-draining peer) -- it needs a flag it can check
 /// synchronously, with no IO and no dependency on how long that close takes.</summary>
@@ -55,7 +55,7 @@ public sealed class SupersededFlag
 /// <summary>
 /// Port of app/backend/session_manager.py's <c>SessionManager</c> (issue #15). A single
 /// process-wide singleton (constructor-injected into <see cref="Backend.Sessions.RealtimeProcessor"/>
-/// the same way <see cref="Backend.Realtime.RateLimitSettings"/> is) tracking every session's
+/// the same way <see cref="Backend.Shared.RateLimitSettings"/> is) tracking every session's
 /// attach/detach/resume/idle state -- NOT the same thing as the orthogonal
 /// <see cref="SessionRegistry"/>/<see cref="SessionActor"/> mailbox plumbing from issue #12, which
 /// has nothing to do with resume/idle/grace.
@@ -90,7 +90,7 @@ public sealed class SessionManager
     private readonly SessionsConfig _config;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger? _logger;
-    private readonly object _sync = new();
+    private readonly Lock _sync = new();
     private readonly Dictionary<string, SessionRecord> _sessions = new();
     private readonly Dictionary<string, string> _resumeIndex = new(); // digest -> sessionId
     private readonly LinkedList<string> _detachedLru = new(); // oldest first
@@ -110,9 +110,10 @@ public sealed class SessionManager
     public SessionsConfig Config => _config;
 
     /// <summary>Test-only: exposes the internal lock object for the same reason
-    /// <see cref="Backend.Realtime.RateLimitRecovery.SyncRootForTests"/> does -- holding it across a
-    /// FakeTimeProvider.Advance() to deterministically reproduce a timer-vs-cancellation race.</summary>
-    internal object SyncRootForTests => _sync;
+    /// <see cref="Backend.Realtime.NudgeScheduler.SyncRootForTests"/> does -- holding it (via
+    /// <see cref="Lock.EnterScope"/>) across a FakeTimeProvider.Advance() to deterministically
+    /// reproduce a timer-vs-cancellation race.</summary>
+    internal Lock SyncRootForTests => _sync;
 
     private sealed class SessionRecord
     {
@@ -392,7 +393,7 @@ public sealed class SessionManager
 
         var digest = Digest(presentedId);
         string? staleReason;
-        ResumeOutcome? outcome = null;
+        ResumeOutcome? outcome;
         WebSocket? staleWs;
 
         lock (_sync)

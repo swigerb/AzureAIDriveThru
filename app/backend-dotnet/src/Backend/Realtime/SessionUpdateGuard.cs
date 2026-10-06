@@ -23,7 +23,7 @@ public sealed class SessionUpdateGuard
 {
     private const int MaxTracked = 64;
 
-    private readonly object _sync = new();
+    private readonly Lock _sync = new();
 
     // Insertion-ordered event_id -> event_id of the original if this is a fallback, else null.
     // A plain Dictionary<> plus a separate ordering list stands in for Python's OrderedDict here.

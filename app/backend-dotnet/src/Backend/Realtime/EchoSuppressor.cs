@@ -20,7 +20,7 @@ namespace Backend.Realtime;
 /// </summary>
 public sealed class EchoSuppressor : IDisposable
 {
-    private readonly object _sync = new();
+    private readonly Lock _sync = new();
     private readonly double _cooldownSeconds;
     private readonly Func<CancellationToken, Task> _flushSendAsync;
     private readonly TimeProvider _timeProvider;
