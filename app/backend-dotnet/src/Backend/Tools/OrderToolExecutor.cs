@@ -88,14 +88,32 @@ public sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings
         var size = args.GetProperty("size").GetString() ?? "";
         var quantity = args.GetProperty("quantity").GetInt32();
         var callerPrice = TryGetPrice(args);
+        // #325 B2: the guest's own genuine modifier-group text, if any -- set by
+        // ReattachCustomizationSuffix below for add/modify/remove, so the customization-
+        // validation block further down can tell a real guest customization apart from the
+        // menu's own canonical name happening to contain parens (e.g. "Milk Jug (1%) - White").
+        var customizationSuffix = "";
 
         if (action is "add" or "modify")
         {
-            var rejection = CheckAddOrModifyGates(action, itemName, ref size);
+            var rejection = CheckAddOrModifyGates(action, ref itemName, ref size, out customizationSuffix);
             if (rejection is not null)
             {
                 return rejection;
             }
+        }
+
+        // #325: `remove` targets a line already in the order, so it never passed through
+        // CheckAddOrModifyGates above (only "add"/"modify" do). Since that line is now stored
+        // under the menu's canonical name (that gate), canonicalize a resolvable `remove`
+        // itemName the same way, so e.g. "remove the zorbs" matches a ticket line stored as
+        // "ZORBS® Bite Treats" instead of failing OrderState.HandleOrderUpdate's exact-string
+        // match. An unresolved name (e.g. an item removed from the menu after it was ordered)
+        // falls through unchanged -- removing an existing line never required it still be on
+        // the menu.
+        if (action == "remove")
+        {
+            (itemName, customizationSuffix) = CanonicalizeForRemove(itemName);
         }
 
         if (action == "add")
@@ -108,13 +126,19 @@ public sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings
         }
 
         // ── Customization validation (reject nonsensical mods) ──
-        if (itemName.Contains('('))
+        // #325 (B2 side effect, Rick's PR #326 review): gate on customizationSuffix -- the
+        // guest's own genuine modifier group(s), set above by ReattachCustomizationSuffix --
+        // rather than a bare itemName.Contains('(') check. itemName is now the MENU's canonical
+        // spelling, which can itself contain parens (e.g. "Milk Jug (1%) - White"); without this,
+        // the menu's own "(1%)" would be misread as a guest-added modifier on a plain,
+        // uncustomized add.
+        if (customizationSuffix.Length > 0)
         {
-            var open = itemName.IndexOf('(');
-            var close = itemName.IndexOf(')');
+            var open = customizationSuffix.IndexOf('(');
+            var close = customizationSuffix.IndexOf(')');
             if (close > open)
             {
-                var modsContent = itemName[(open + 1)..close];
+                var modsContent = customizationSuffix[(open + 1)..close];
                 var modsError = ValidateCustomization(itemName, modsContent);
                 if (modsError is not null)
                 {
@@ -198,12 +222,23 @@ public sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings
             // "extras & sides" mapping was added in #168 (back then "extras & sides" didn't
             // match ANY bucket either).
             var category = _menu.IsExtraItem(itemName) ? "" : _menu.InferCategory(itemName);
-            deltaText += _promptLoader is not null ? _promptLoader.GetUpsellHint(category) : FallbackUpsellHint(category);
+            // #313 (Rick's review, 1.2): hints.yaml's upsell copy is free-form prose that can
+            // itself name a brand item (e.g. "upgrade to a Large or add a Widget!") -- it must go
+            // through the same pronunciation lexicon as everything else the realtime model speaks.
+            var hintText = _promptLoader is not null ? _promptLoader.GetUpsellHint(category) : FallbackUpsellHint(category);
+            deltaText += _menu.Spoken(hintText);
         }
 
+        // #313 (Rick's review, 1.4): the realtime model never sees the client-only JSON payload
+        // (`jsonOrderSummary`, ToolResultDirection.ToBoth's client channel) -- only the text
+        // channel below. Appending the already-cached `Summary.SpokenReadBack` here is what makes
+        // the mandatory read-back actually mandatory on realtime: the model has the full order
+        // read-back available verbatim in its own tool result, not just an instruction in the
+        // system prompt to "read back the order" from nothing.
         // #113: this session's own bound persona's happy-hour banner -- never hardcoded here.
         var happyHourNote = _order.HappyHourBanner;
-        return new ToolResult(deltaText + happyHourNote, ToolResultDirection.ToBoth, clientText: jsonOrderSummary);
+        return new ToolResult(
+            deltaText + happyHourNote + "\n\n" + summary.SpokenReadBack, ToolResultDirection.ToBoth, clientText: jsonOrderSummary);
     }
 
     private ToolResult GetOrder()
@@ -227,8 +262,9 @@ public sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings
     /// add/modify path. Also covers item_out_of_mode (issue 165, add-only), size_not_available
     /// and (modify-only) not_in_order -- same TO_SERVER structured-JSON shape for all four
     /// (Rick's PR #100 review, required item 1).</summary>
-    private ToolResult? CheckAddOrModifyGates(string action, string itemName, ref string size)
+    private ToolResult? CheckAddOrModifyGates(string action, ref string itemName, ref string size, out string customizationSuffix)
     {
+        customizationSuffix = "";
         var menuItem = _menu.ResolveMenuItem(itemName);
         if (menuItem is null)
         {
@@ -256,6 +292,19 @@ public sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings
             }
             return new ToolResult(rejection, ToolResultDirection.ToServer);
         }
+
+        // #325: from here on, every add/modify path (order storage, bundle-slot filling,
+        // display/spoken text, extras/machine checks, upsell category) uses the MENU's own
+        // canonical spelling -- never the model's. Two adds of the same item with different
+        // spellings/trademark marks now merge into one order line because they're matched and
+        // stored under this same canonical name (OrderState.HandleOrderUpdate's own exact-string
+        // matching is keyed on this value). ResolveMenuItem resolved against the modifier-
+        // stripped base name (MenuKeyValidator.StripModifiers), so a customized name's own
+        // "(...)" suffix is reattached via ReattachCustomizationSuffix (B2 fix, Rick's PR #326
+        // review) -- a multiset difference against the canonical name's OWN paren groups, so a
+        // canonical name that itself contains parens (e.g. "Milk Jug (1%) - White") is never
+        // duplicated, and only a genuine guest-added modifier group is reattached.
+        (itemName, customizationSuffix) = ReattachCustomizationSuffix(itemName, menuItem.Name);
 
         // Issue 165: this session's own bound menu-mode gate -- an item that's real and on the
         // menu, but not offered in the active daypart (e.g. a breakfast-only item add while the
@@ -332,7 +381,10 @@ public sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings
         // of the order even though it has no raw OrderItem line of its own -- the guest saying
         // "make that a large" about the drink that came with their combo. IsAbsorbedComponent is
         // the second chance before this rejects it.
-        if (action == "modify" && !_order.Items.Any(item => item.Item == itemName) && !_order.IsAbsorbedComponent(itemName))
+        // #325: `itemName` is now the ref param, which a lambda can't capture directly (CS1628)
+        // -- copy it to a local first. It's already the canonical name at this point.
+        var resolvedItemName = itemName;
+        if (action == "modify" && !_order.Items.Any(item => item.Item == resolvedItemName) && !_order.IsAbsorbedComponent(resolvedItemName))
         {
             var message = _promptLoader?.RenderError("item_not_in_order", Vars(("item_name", menuItem.Name)))
                 ?? $"{menuItem.Name} isn't in the order, so nothing was changed. " +
@@ -350,6 +402,56 @@ public sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings
         }
 
         return null;
+    }
+
+    // #325: one shared helper for the add/modify gate AND the remove path (Rick's PR #326
+    // review, B2) -- previously each site re-derived the guest's "(modifiers)" suffix with
+    // `itemName[openParen..]`, which blindly grabbed EVERYTHING from the first '(' in the
+    // MODEL's own string. That's wrong whenever the menu's own canonical name itself contains a
+    // paren group (e.g. a shipped "Milk Jug (1%) - White"-style item): a model that echoed the exact
+    // canonical spelling got back "Milk Jug (1%) - White (1%) - White" (the canonical name's own
+    // "(1%)" duplicated). A multiset difference of the paren groups (`\([^)]*\)`) in the model's
+    // raw string vs. the canonical name's OWN groups fixes both: any canonical-name group the
+    // model also said is consumed and never re-appended, so only a GENUINE guest-added modifier
+    // group (one the canonical name doesn't already have) is reattached. Returns
+    // (newItemName, guestModifierSuffix) -- the second value is "" unless the guest actually
+    // added a NEW modifier group beyond the canonical name's own, so the unconditional
+    // customization-validation block in UpdateOrder can tell "Milk Jug (1%) - White" (the
+    // canonical name's own parens, not a guest modifier) apart from "Milk Jug (1%) - White (no
+    // ice)" (a genuine customization).
+    private static readonly System.Text.RegularExpressions.Regex ParenGroupRegex =
+        new(@"\([^)]*\)", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    private static (string ItemName, string CustomizationSuffix) ReattachCustomizationSuffix(string rawItemName, string canonicalName)
+    {
+        string raw = rawItemName ?? "";
+        string canonical = canonicalName ?? "";
+        var rawGroups = ParenGroupRegex.Matches(raw).Select(m => m.Value).ToList();
+        var canonicalGroups = ParenGroupRegex.Matches(canonical).Select(m => m.Value).ToList();
+        foreach (var group in canonicalGroups)
+        {
+            rawGroups.Remove(group);
+        }
+        if (rawGroups.Count == 0)
+        {
+            return (canonical, "");
+        }
+        var suffix = string.Join(" ", rawGroups);
+        return ($"{canonical} {suffix}", suffix);
+    }
+
+    /// <summary>#325: see UpdateOrder's own "remove" branch -- canonicalizes a resolvable
+    /// `remove` itemName the same way CheckAddOrModifyGates does for add/modify, so a removal
+    /// matches a line stored under the menu's canonical spelling regardless of which spelling
+    /// the model used for this particular turn.</summary>
+    private (string ItemName, string CustomizationSuffix) CanonicalizeForRemove(string itemName)
+    {
+        var menuItem = _menu.ResolveMenuItem(itemName);
+        if (menuItem is null)
+        {
+            return (itemName, "");
+        }
+        return ReattachCustomizationSuffix(itemName, menuItem.Name);
     }
 
     /// <summary>#77: add-time <c>machine_unavailable</c> -- an on-menu item that requires a
@@ -530,8 +632,8 @@ public sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings
         if (resultInfo.AbsorbedIntoCombo)
         {
             return resultInfo.ComboComponentUpchargeDisplay is { Length: > 0 } upcharge
-                ? $"{spokenDisplayName} included with your combo with a {upcharge} upcharge — your total is {summary.FinalTotalDisplay}"
-                : $"{spokenDisplayName} included with your combo — your total is {summary.FinalTotalDisplay}";
+                ? $"{spokenDisplayName} included with your combo with a {upcharge} upcharge — your total is {summary.FinalTotalSpoken}"
+                : $"{spokenDisplayName} included with your combo — your total is {summary.FinalTotalSpoken}";
         }
         if (resultInfo.ComboConvertedFrom is not null && action == "add")
         {
@@ -541,7 +643,7 @@ public sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings
             {
                 comboDisplay = $"{spokenDisplayName} {mods}";
             }
-            return $"Upgraded to {comboDisplay} — your total is now {summary.FinalTotalDisplay}";
+            return $"Upgraded to {comboDisplay} — your total is now {summary.FinalTotalSpoken}";
         }
         // #179: set by OrderState.HandleOrderUpdate whenever a combo's side/drink slot was
         // (re)sized in place -- via an `add` of the same item at a different size while the slot
@@ -554,31 +656,29 @@ public sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings
         if (resultInfo.ResizedComboComponent is not null)
         {
             return resultInfo.ComboComponentUpchargeDisplay is { Length: > 0 } upcharge
-                ? $"Changed {spokenDisplayName} with a {upcharge} upcharge, your total is now {summary.FinalTotalDisplay}"
-                : $"Changed {spokenDisplayName}, your total is now {summary.FinalTotalDisplay}";
+                ? $"Changed {spokenDisplayName} with a {upcharge} upcharge, your total is now {summary.FinalTotalSpoken}"
+                : $"Changed {spokenDisplayName}, your total is now {summary.FinalTotalSpoken}";
         }
-        // PR #184 round 3 (Rick's review, item C): set by OrderState.HandleOrderUpdate whenever
-        // `modify` actually changed an existing order line's OWN size (a bare resize,
-        // "wholeBundleSize" or not) -- distinct from ResizedComboComponent above, which is a
-        // combo's SIDE/DRINK slot resizing in place. Matches the original app's exact
-        // wording/verb for this case.
+        // #313 (Rick's review, 1.7): "Upgraded" implies the new size is always bigger, but a
+        // guest can resize down too (Brian's exact bug report: "25 to 10 count" shrank, yet the
+        // realtime model said "I've upgraded you"). "Changed" is accurate either direction.
         if (resultInfo.ModifiedFromSize is { Length: > 0 } fromSize
             && resultInfo.ModifiedToSize is { Length: > 0 } toSize
             && fromSize != toSize)
         {
-            return $"Upgraded {spokenItemName} from {Capitalize(fromSize)} to {Capitalize(toSize)}, your total is now {summary.FinalTotalDisplay}";
+            return $"Changed {spokenItemName} from {Capitalize(fromSize)} to {Capitalize(toSize)}, your total is now {summary.FinalTotalSpoken}";
         }
         if (_promptLoader is { } pl)
         {
             var tpl = pl.GetDeltaTemplate(action);
             return pl.RenderTemplate(tpl, Vars(
-                ("quantity", quantity), ("display_name", spokenDisplayName), ("total", summary.FinalTotalDisplay)));
+                ("quantity", Ordering.Money.NumberToWords(quantity)), ("display_name", spokenDisplayName), ("total", summary.FinalTotalSpoken)));
         }
         return action switch
         {
-            "add" => $"Added {quantity} {spokenDisplayName} — your total is now {summary.FinalTotalDisplay}",
-            "modify" => $"Changed {spokenDisplayName} — your total is now {summary.FinalTotalDisplay}",
-            _ => $"Removed {quantity} {spokenDisplayName} — your total is now {summary.FinalTotalDisplay}",
+            "add" => $"Added {Ordering.Money.NumberToWords(quantity)} {spokenDisplayName} — your total is now {summary.FinalTotalSpoken}",
+            "modify" => $"Changed {spokenDisplayName} — your total is now {summary.FinalTotalSpoken}",
+            _ => $"Removed {Ordering.Money.NumberToWords(quantity)} {spokenDisplayName} — your total is now {summary.FinalTotalSpoken}",
         };
     }
 

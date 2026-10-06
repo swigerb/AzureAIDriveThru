@@ -227,7 +227,15 @@ public sealed class SearchTool
         var category = GetString(record, "category") ?? "N/A";
         var sizeStr = FormatSizes(record);
 
-        var summary = $"[{identifier}]: Item: {itemName}, Category: {category}, Available Sizes: {sizeStr}";
+        // #313 (Rick's review, 1.1): every persona prompt requires calling `search` BEFORE
+        // `update_order`, so this is the model's first (and often only) exposure to the item's
+        // name -- it previously saw only the raw catalog string (e.g. a trademarked "WIDGET®")
+        // and had to improvise a pronunciation. The canonical name stays first (it
+        // is what the model must still pass back to `update_order`); the spoken form is appended
+        // so the model has a correct pronunciation to actually say out loud.
+        var spokenName = _menu.Spoken(itemName);
+        var nameForSpeech = spokenName != itemName ? $"{itemName} (say: {spokenName})" : itemName;
+        var summary = $"[{identifier}]: Item: {nameForSpeech}, Category: {category}, Available Sizes: {sizeStr}";
 
         // Flag items affected by machine outages so the model knows not to recommend them --
         // data-driven off the item's own `requiresMachine` field (#73), never a keyword list.

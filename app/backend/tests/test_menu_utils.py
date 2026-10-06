@@ -845,5 +845,66 @@ class TrademarkAndCurlyApostropheNormalisationTests(unittest.TestCase):
         self.assertIn("™", on_menu)
 
 
-if __name__ == "__main__":
-    unittest.main()
+class ApplyLexiconTests(unittest.TestCase):
+    """Issue #304: ``apply_lexicon`` is the single substitution primitive shared by
+    ``MenuCatalog.spoken`` (``sizes.spokenAs`` + per-item ``spokenName``) and
+    ``cascade_processor.py``'s ``_speak`` (persona-level ``pronunciations``) -- unit-test it
+    directly, independent of any persona pack, so its boundary/precedence rules are pinned down
+    without depending on real pack content drifting underneath the test."""
+
+    def test_empty_lexicon_returns_text_unchanged(self):
+        self.assertEqual(menu_utils.apply_lexicon("Munchkins are great", {}), "Munchkins are great")
+
+    def test_exact_word_is_substituted(self):
+        self.assertEqual(
+            menu_utils.apply_lexicon("Glazed Munchkins Donut Hole Treats", {"Munchkins": "Munch-kins"}),
+            "Glazed Munch-kins Donut Hole Treats",
+        )
+
+    def test_substring_inside_a_longer_word_is_not_rewritten(self):
+        """A bare substring match must never rewrite the middle of an unrelated word -- e.g. a
+        hypothetical "Munchkinsy" must stay untouched even though it contains "Munchkins"."""
+        self.assertEqual(
+            menu_utils.apply_lexicon("Munchkinsy is not a word", {"Munchkins": "Munch-kins"}),
+            "Munchkinsy is not a word",
+        )
+
+    def test_case_sensitive_match_only(self):
+        """``pronunciations``/``spokenName`` keys are matched case-sensitively -- an all-caps
+        transcription variant the lexicon does not itself declare is left untouched."""
+        self.assertEqual(
+            menu_utils.apply_lexicon("MUNCHKINS are great", {"Munchkins": "Munch-kins"}),
+            "MUNCHKINS are great",
+        )
+
+    def test_trademark_suffix_boundary_requires_the_trademark_symbol_in_the_key(self):
+        """Per ``_spoken_substitution_pattern``'s own boundary rule: a key that does NOT itself
+        end with a trademark symbol treats "®"/"™" as part of the right boundary, so it will not
+        rewrite a word immediately followed by one -- the lexicon entry must include the symbol
+        to match a trademarked occurrence."""
+        self.assertEqual(
+            menu_utils.apply_lexicon("Glazed Munchkins® Donut Hole Treats", {"Munchkins": "Munch-kins"}),
+            "Glazed Munchkins® Donut Hole Treats",
+        )
+        self.assertEqual(
+            menu_utils.apply_lexicon("Glazed Munchkins® Donut Hole Treats", {"Munchkins®": "Munch-kins®"}),
+            "Glazed Munch-kins® Donut Hole Treats",
+        )
+
+    def test_longer_key_wins_over_a_shorter_key_it_contains(self):
+        """Issue #304 doc comment: longer keys apply first so a multi-word entry always wins over
+        a single-word one it happens to contain."""
+        lexicon = {"Munchkins": "Munch-kins", "Chocolate Glazed Munchkins": "Choc-Glazed Munch-kins"}
+        self.assertEqual(
+            menu_utils.apply_lexicon("Chocolate Glazed Munchkins Donut Hole Treats", lexicon),
+            "Choc-Glazed Munch-kins Donut Hole Treats",
+        )
+
+    def test_empty_key_in_lexicon_is_skipped_without_error(self):
+        self.assertEqual(menu_utils.apply_lexicon("Munchkins", {"": "ignored"}), "Munchkins")
+
+    def test_multiple_occurrences_all_substituted(self):
+        self.assertEqual(
+            menu_utils.apply_lexicon("Munchkins Munchkins Munchkins", {"Munchkins": "Munch-kins"}),
+            "Munch-kins Munch-kins Munch-kins",
+        )

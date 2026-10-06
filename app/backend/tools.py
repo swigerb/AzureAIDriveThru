@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import re
 import time
 from typing import Any
 
@@ -13,6 +14,7 @@ from azure.search.documents.models import VectorizableTextQuery
 import default_persona
 from config_loader import get_config
 from menu_utils import strip_modifiers
+from money_utils import number_to_words
 from order_state import order_state_singleton
 from rtmt import RTMiddleTier, Tool, ToolResult, ToolResultDirection
 
@@ -159,6 +161,44 @@ MAX_TOTAL_ITEMS = _biz_cfg.get("max_order_items", 25)
 # `menu.allowed_extra_categories`/`menu.blocked_extra_categories`/`menu.invalid_modifiers`) --
 # never a module-level global. See update_order()'s extras check and validate_customization()
 # below.
+
+
+# #325: one shared helper for the add/modify gate AND the remove path (Rick's PR #326 review,
+# B2) -- previously each site re-derived the guest's "(modifiers)" suffix with
+# ``item_name[item_name.find("("):]``, which blindly grabbed EVERYTHING from the first "(" in the
+# MODEL's own string. That's wrong whenever the menu's own canonical name itself contains a
+# paren group (e.g. a shipped "Milk Jug (1%) - White"-style item): a model that echoed the exact
+# canonical spelling got back "Milk Jug (1%) - White (1%) - White" (the canonical name's own
+# "(1%)" duplicated), and a plain, paren-less "Milk Jug - White" add stored a DIFFERENT string
+# ("Milk Jug (1%) - White" with no trailing space artifact, which is actually fine -- but the
+# model's various `Milk Jug (1%) - White (no ice)` phrasing isn't). A multiset difference of the
+# paren groups (``\([^)]*\)``) in the model's raw string vs. the canonical name's OWN groups
+# fixes both: any canonical-name group the model also said is consumed and never re-appended, so
+# only a GENUINE guest-added modifier group (one the canonical name doesn't already have) is
+# reattached. Returns ``(new_item_name, guest_modifier_suffix)`` -- the second value is "" unless
+# the guest actually added a NEW modifier group beyond the canonical name's own, so the
+# unconditional customization-validation block below can tell "Milk Jug (1%) - White" (the
+# canonical name's own parens, not a guest modifier) apart from "Milk Jug (1%) - White (no ice)"
+# (a genuine customization) instead of misreading the menu's own "(1%)" as a guest modifier.
+_PAREN_GROUP_RE = re.compile(r"\([^)]*\)")
+
+
+def _reattach_customization_suffix(raw_item_name: str, canonical_name: str) -> tuple[str, str]:
+    """See the module comment above. *raw_item_name* is the model's own (pre-canonicalization)
+    ``item_name``; *canonical_name* is the resolved menu item's own ``name``. Returns the new,
+    canonical ``item_name`` (with any genuine guest-added modifier group(s) reattached) and the
+    guest modifier suffix text alone (empty when the guest didn't add anything beyond the
+    canonical name's own parens)."""
+    raw_groups = _PAREN_GROUP_RE.findall(raw_item_name or "")
+    canonical_groups = _PAREN_GROUP_RE.findall(canonical_name or "")
+    remaining = list(raw_groups)
+    for group in canonical_groups:
+        if group in remaining:
+            remaining.remove(group)
+    if not remaining:
+        return canonical_name, ""
+    suffix = " ".join(remaining)
+    return f"{canonical_name} {suffix}", suffix
 
 
 def validate_customization(item_name: str, mods_string: str, prompt_loader=None, menu=None) -> str | None:
@@ -421,9 +461,17 @@ async def search(
             size_str = raw_sizes
 
         item_name = record.get('name', 'N/A')
+        # #313 (Rick's review, 1.1): every persona prompt requires calling `search` BEFORE
+        # `update_order`, so this is the model's first (and often only) exposure to the item's
+        # name -- it previously saw only the raw catalog string (e.g. a trademarked "WIDGET®")
+        # and had to improvise a pronunciation. The canonical name stays first (it
+        # is what the model must still pass back to `update_order`); the spoken form is appended
+        # so the model has a correct pronunciation to actually say out loud.
+        spoken_name = menu.spoken(item_name) if menu else item_name
+        name_for_speech = f"{item_name} (say: {spoken_name})" if spoken_name != item_name else item_name
         summary = (
             f"[{identifier}]: "
-            f"Item: {item_name}, Category: {record.get('category', 'N/A')}, "
+            f"Item: {name_for_speech}, Category: {record.get('category', 'N/A')}, "
             f"Available Sizes: {size_str}"
         )
 
@@ -521,6 +569,11 @@ async def update_order(args, session_id: str) -> ToolResult:
 
     item_name = args["item_name"]
     size = args["size"]
+    # #325 B2: the guest's own genuine modifier-group text, if any -- set by
+    # ``_reattach_customization_suffix`` below for add/modify/remove, so the customization-
+    # validation block further down can tell a real guest customization apart from the menu's
+    # own canonical name happening to contain parens (e.g. "Milk Jug (1%) - White").
+    _customization_suffix = ""
 
     # ── #73 (ADR-001 decision 4: "No off-menu"): the on-menu gate, first thing in the add path,
     # before any other validation (customization, price, extras, quantity limits). An item is
@@ -569,6 +622,19 @@ async def update_order(args, session_id: str) -> ToolResult:
                     item_name, base_name, extra_name, session_id,
                 )
             return ToolResult(_rejection, ToolResultDirection.TO_SERVER)
+
+        # #325: from here on, every add/modify path (order_state storage, bundle-slot filling,
+        # display/spoken text, extras/machine checks, upsell category) uses the MENU's own
+        # canonical spelling -- never the model's. Two adds of the same item with different
+        # spellings/trademark marks now merge into one order line because they're matched and
+        # stored under this same canonical name (order_state.handle_order_update's own
+        # exact-string matching is keyed on this value). resolve_menu_item resolved against the
+        # modifier-stripped base name (menu_utils.strip_modifiers/_menu_key), so a customized
+        # name's own "(...)" suffix is reattached via ``_reattach_customization_suffix`` (B2 fix,
+        # Rick's PR #326 review) -- a multiset difference against the canonical name's OWN paren
+        # groups, so a canonical name that itself contains parens (e.g. "Milk Jug (1%) - White")
+        # is never duplicated, and only a genuine guest-added modifier group is reattached.
+        item_name, _customization_suffix = _reattach_customization_suffix(item_name, menu_item["name"])
 
         # #165: this session's own bound menu mode gate -- an item that's real and on the menu,
         # but not offered in the active daypart (e.g. a breakfast-only item add while the session
@@ -674,6 +740,18 @@ async def update_order(args, session_id: str) -> ToolResult:
                 ToolResultDirection.TO_SERVER,
             )
 
+    # #325: `remove` targets a line already in the order, so it never passed through this
+    # function's own on-menu gate above (only "add"/"modify" do). Since that line is now stored
+    # under the menu's canonical name (the gate above), canonicalize a resolvable `remove`
+    # item_name the same way so "remove the zorbs" matches a ticket line stored as "ZORBS® Bite
+    # Treats" instead of failing order_state.handle_order_update's exact-string match. An
+    # unresolved name (e.g. an item removed from the menu after it was ordered) falls through
+    # unchanged -- removing an existing line never required it still be on the menu.
+    if args["action"] == "remove":
+        _remove_target = menu.resolve_menu_item(item_name)
+        if _remove_target is not None:
+            item_name, _customization_suffix = _reattach_customization_suffix(item_name, _remove_target["name"])
+
     # ── #77: add-time `machine_unavailable` structured rejection -- an on-menu item that
     # `requiresMachine` a machine this persona's OWN `machines.<key>.status` currently reports
     # "down". Same TO_SERVER structured-JSON shape as not_on_menu/size_not_available above (Rick's
@@ -706,8 +784,13 @@ async def update_order(args, session_id: str) -> ToolResult:
             )
 
     # ── Customization validation (reject nonsensical mods) ──
-    if "(" in item_name:
-        mods_content = item_name[item_name.find("(")+1:item_name.find(")")]
+    # #325 (B2 side effect, Rick's PR #326 review): gate on ``_customization_suffix`` -- the
+    # guest's own genuine modifier group(s), set above by ``_reattach_customization_suffix`` --
+    # rather than a bare "(" in item_name check. item_name is now the MENU's canonical spelling,
+    # which can itself contain parens (e.g. "Milk Jug (1%) - White"); without this, the menu's
+    # own "(1%)" would be misread as a guest-added modifier on a plain, uncustomized add.
+    if _customization_suffix:
+        mods_content = _customization_suffix[_customization_suffix.find("(")+1:_customization_suffix.find(")")]
         error = validate_customization(item_name, mods_content, prompt_loader=pl, menu=menu)
         if error:
             return ToolResult(error, ToolResultDirection.TO_SERVER)
@@ -901,33 +984,37 @@ async def update_order(args, session_id: str) -> ToolResult:
 
     if absorbed:
         if component_upcharge_display:
-            delta_text = f"{spoken_display_name} included with your combo with a {component_upcharge_display} upcharge — your total is {summary.finalTotalDisplay}"
+            delta_text = f"{spoken_display_name} included with your combo with a {component_upcharge_display} upcharge — your total is {summary.finalTotalSpoken}"
         else:
-            delta_text = f"{spoken_display_name} included with your combo — your total is {summary.finalTotalDisplay}"
+            delta_text = f"{spoken_display_name} included with your combo — your total is {summary.finalTotalSpoken}"
     elif converted_from and action == "add":
         combo_display = spoken_display_name
         mods = result_info.get("mods_carried", "")
         if mods:
             combo_display = f"{spoken_display_name} {mods}"
-        delta_text = f"Upgraded to {combo_display} — your total is now {summary.finalTotalDisplay}"
+        delta_text = f"Upgraded to {combo_display} — your total is now {summary.finalTotalSpoken}"
     elif resized_component:
         if component_upcharge_display:
-            delta_text = f"Changed {spoken_display_name} with a {component_upcharge_display} upcharge, your total is now {summary.finalTotalDisplay}"
+            delta_text = f"Changed {spoken_display_name} with a {component_upcharge_display} upcharge, your total is now {summary.finalTotalSpoken}"
         else:
-            delta_text = f"Changed {spoken_display_name}, your total is now {summary.finalTotalDisplay}"
+            delta_text = f"Changed {spoken_display_name}, your total is now {summary.finalTotalSpoken}"
     elif modified_from_size and modified_to_size and modified_from_size != modified_to_size:
         old_label = modified_from_size.capitalize()
         new_label = modified_to_size.capitalize()
-        delta_text = f"Upgraded {spoken_item_name} from {old_label} to {new_label}, your total is now {summary.finalTotalDisplay}"
+        # #313 (Rick's review, 1.7): "Upgraded" implies the new size is always bigger, but a
+        # resize can go either way (Brian's bug report: 25 count -> 10 count). Use the neutral
+        # "Changed" for every size change, same verb already used by the resized_component and
+        # `modify` action branches above/below.
+        delta_text = f"Changed {spoken_item_name} from {old_label} to {new_label}, your total is now {summary.finalTotalSpoken}"
     elif pl:
         tpl = pl.get_delta_template(action)
-        delta_text = pl.render_template(tpl, quantity=quantity, display_name=spoken_display_name, total=summary.finalTotalDisplay)
+        delta_text = pl.render_template(tpl, quantity=number_to_words(quantity), display_name=spoken_display_name, total=summary.finalTotalSpoken)
     elif action == "add":
-        delta_text = f"Added {quantity} {spoken_display_name} — your total is now {summary.finalTotalDisplay}"
+        delta_text = f"Added {number_to_words(quantity)} {spoken_display_name} — your total is now {summary.finalTotalSpoken}"
     elif action == "modify":
-        delta_text = f"Changed {spoken_display_name} — your total is now {summary.finalTotalDisplay}"
+        delta_text = f"Changed {spoken_display_name} — your total is now {summary.finalTotalSpoken}"
     else:
-        delta_text = f"Removed {quantity} {spoken_display_name} — your total is now {summary.finalTotalDisplay}"
+        delta_text = f"Removed {number_to_words(quantity)} {spoken_display_name} — your total is now {summary.finalTotalSpoken}"
 
     # ── Combo validation: flag missing components ──
     validation = order_state_singleton.get_combo_requirements(session_id)
@@ -949,7 +1036,11 @@ async def update_order(args, session_id: str) -> ToolResult:
         # mapping was added in #168 (back then "extras & sides" didn't match ANY bucket either).
         category = "" if menu.is_extra_item(item_name) else menu.infer_category(item_name)
         if pl:
-            delta_text += pl.get_upsell_hint(category)
+            # #313 (Rick's review, 1.2): the upsell hint text (e.g. hints.yaml's "maybe a coffee,
+            # a Widget, or a donut!") is guest-facing speech, same as every other string appended
+            # to delta_text -- it must go through the same menu.spoken() pronunciation lexicon or
+            # the model reads the raw brand string verbatim right after a correctly-spoken item name.
+            delta_text += menu.spoken(pl.get_upsell_hint(category))
         logger.debug("Upsell hint for category '%s'", category)
 
     # #113: the banner text (and whether to announce at all) is this session's OWN bound
@@ -957,7 +1048,17 @@ async def update_order(args, session_id: str) -> ToolResult:
     # order_state.OrderState.get_happy_hour_banner_for_session for the single place that's
     # decided (mirrors is_happy_hour_for_session's per-session lookup just above it).
     happy_hour_note = order_state_singleton.get_happy_hour_banner_for_session(session_id)
-    return ToolResult(delta_text + happy_hour_note, ToolResultDirection.TO_BOTH, client_text=json_order_summary)
+    # #313 (Rick's review, 1.4): Brian's bug was that the read-back after a *modify* never
+    # reached the model unless it made a second `get_order` call a prompt told it to -- the same
+    # model behavior that dropped the read-back in the original #304 report. Appending the
+    # already-composed, server-side `spokenReadBack` to EVERY successful add/remove/modify
+    # `function_call_output` means the read-back is in the model's context the instant it has to
+    # speak, with no second tool call required. `summary` here is this same call's freshly
+    # recomputed `OrderSummary` (see `get_order_summary` above), so it always reflects the change
+    # that was just made.
+    spoken_read_back = summary.spokenReadBack
+    delta_text_with_readback = f"{delta_text}{happy_hour_note}\n\n{spoken_read_back}" if spoken_read_back else delta_text + happy_hour_note
+    return ToolResult(delta_text_with_readback, ToolResultDirection.TO_BOTH, client_text=json_order_summary)
 
 
 get_order_tool_schema = {
@@ -1004,6 +1105,53 @@ async def reset_order(_args: Any, session_id: str) -> ToolResult:
     return ToolResult(f"Order cleared. {json_summary}", ToolResultDirection.TO_BOTH, client_text=json_summary)
 
 
+def _local_menu_search(args: Any, menu, prompt_loader=None) -> ToolResult:
+    """In-process menu-catalog lookup used when no Azure AI Search context is configured for
+    this session (#313 item 4, Rick's review): ``_search_dispatch`` used to assume ``cfg``
+    always had a real ``search_client`` and blew up with a bare ``KeyError`` the instant it
+    didn't -- the case for any caller (``scripts/eval_voice.py``'s live sessions; any future
+    persona a deployer hasn't wired an index for yet) that never calls ``attach_tools_rtmt``.
+
+    A substring match over *menu*'s own ``item_fields`` against the query, formatted in the
+    exact same ``Item: <canonical> (say: <spoken>)`` style ``search()`` above produces from a
+    real Azure AI Search record, so a caller can't tell the two apart by format alone -- the
+    whole point of #304's search-result pronunciation fix (item 1) is that the model sees a
+    ``(say: ...)`` hint before it ever has to speak the item's name, and that must hold true
+    whether or not a real search index is behind this call."""
+    query = (args.get("query") or "").strip().lower()
+    results: list[str] = []
+    if query:
+        # Rick's non-blocking note (#313 re-review): tokens of 2 characters or fewer (e.g. "a",
+        # "to", "an") match almost every item's name by sheer coincidence, defeating the point of
+        # a token match at all -- drop them and rely on the whole-query substring check above for
+        # short queries instead.
+        tokens = [t for t in query.split() if len(t) > 2]
+        for fields in menu.item_fields.values():
+            name = fields.get("name")
+            if not name:
+                continue
+            haystack = name.lower()
+            if query in haystack or any(tok in haystack for tok in tokens):
+                prices = fields.get("prices") or {}
+                sizes = fields.get("sizes") or ()
+                size_str = ", ".join(
+                    f"{_format_size_human_readable(s, menu=menu)} (${prices[s]})"
+                    for s in sizes if s in prices
+                ) or "N/A"
+                spoken_name = menu.spoken(name) if menu else name
+                name_for_speech = f"{name} (say: {spoken_name})" if spoken_name != name else name
+                results.append(
+                    f"[{name}]: Item: {name_for_speech}, Category: {fields.get('category', 'N/A')}, "
+                    f"Available Sizes: {size_str}"
+                )
+    joined_results = "\n-----\n".join(results)
+    _no_results = (
+        prompt_loader.get_error_messages().get("search_no_results", "No matching menu entries found.")
+        if prompt_loader else "No matching menu entries found."
+    )
+    return ToolResult(joined_results or _no_results, ToolResultDirection.TO_SERVER)
+
+
 async def _search_dispatch(args, session_id: str | None) -> ToolResult:
     """Resolve *this session's* bound persona search client/field-config (or the shared
     deployment-wide default for an unbound session or a persona with no registered override,
@@ -1012,12 +1160,24 @@ async def _search_dispatch(args, session_id: str | None) -> ToolResult:
     This is the function actually registered as ``rtmt.tools["search"].target`` -- it is the
     one place a per-persona ``SearchClient``/index gets selected, keeping ``search()`` itself
     100% backward compatible (same positional signature every existing direct test call uses).
+
+    #313 (Rick's review, item 4): ``cfg`` is only ever populated by ``attach_tools_rtmt`` (or a
+    ``personas`` registry entry it was given) -- a caller that never wires up Azure AI Search at
+    all (``scripts/eval_voice.py``'s live sessions, which build the middle tier with tool
+    schemas only and never call ``attach_tools_rtmt``) leaves ``cfg`` as the still-empty
+    ``_default_search_ctx``/``{}``, and indexing ``cfg["search_client"]`` used to raise a bare
+    ``KeyError`` that nothing upstream caught, aborting the whole session on its very first
+    (mandatory, per every persona's own prompt) ``search`` call. Falling back to
+    ``_local_menu_search`` instead keeps that call answerable with real menu data -- in the same
+    ``(say: ...)`` format a real search result carries -- whenever no search context is bound.
     """
     pid = order_state_singleton.get_persona_id(session_id) if session_id else None
     cfg = (_persona_registry.get(pid) if pid else None) or _default_search_ctx
     menu = _menu_for(session_id)
     pl = _prompt_loader_for(session_id)
     menu_mode = order_state_singleton.get_menu_mode(session_id) if session_id else None
+    if "search_client" not in cfg:
+        return _local_menu_search(args, menu, prompt_loader=pl)
     return await search(
         cfg["search_client"],
         cfg["semantic_configuration"],

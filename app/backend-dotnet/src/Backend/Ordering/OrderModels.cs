@@ -70,7 +70,9 @@ public sealed record OrderSummary(
     decimal FinalTotal,
     string TotalDisplay,
     string TaxDisplay,
-    string FinalTotalDisplay)
+    string FinalTotalDisplay,
+    string SpokenReadBack,
+    string FinalTotalSpoken)
 {
     [JsonPropertyName("items")] public IReadOnlyList<OrderItem> Items { get; init; } = Items;
     [JsonPropertyName("total")] public decimal Total { get; init; } = Total;
@@ -79,14 +81,29 @@ public sealed record OrderSummary(
     [JsonPropertyName("totalDisplay")] public string TotalDisplay { get; init; } = TotalDisplay;
     [JsonPropertyName("taxDisplay")] public string TaxDisplay { get; init; } = TaxDisplay;
     [JsonPropertyName("finalTotalDisplay")] public string FinalTotalDisplay { get; init; } = FinalTotalDisplay;
+    /// <summary>Issue #304: server-composed, mandatory spoken order read-back -- every line's
+    /// quantity/size/spoken name, then "Your total is {FinalTotalDisplay}." Computed once here (by
+    /// <see cref="OrderState.UpdateSummary"/>) so the get_order tool response and this cached field
+    /// can never drift apart. Mirrors models.py's <c>OrderSummary.spokenReadBack</c>.</summary>
+    [JsonPropertyName("spokenReadBack")] public string SpokenReadBack { get; init; } = SpokenReadBack;
+    /// <summary>#313 (Rick's review, item 6): the same <see cref="FinalTotal"/>, spoken out in
+    /// words (<see cref="Money.FormatMoneySpoken"/>) -- the model-facing <c>update_order</c> delta
+    /// text used to append the digit/`$`-formatted <see cref="FinalTotalDisplay"/> ahead of the
+    /// voice read-back, giving the realtime model TWO different renderings of the same total in
+    /// one tool result and risking it speaking the wrong one. <see cref="OrderToolExecutor"/>'s
+    /// BuildDeltaText now builds its delta text from this field instead. Mirrors models.py's
+    /// <c>OrderSummary.finalTotalSpoken</c>.</summary>
+    [JsonPropertyName("finalTotalSpoken")] public string FinalTotalSpoken { get; init; } = FinalTotalSpoken;
 
     /// <summary>Builds a summary from raw totals, filling in the three Display strings from
-    /// <see cref="Money.Format"/> -- mirrors Python's <c>OrderSummary</c> model_validator default-
-    /// fill behavior, except here it's the ONLY construction path (no separately-suppliable
-    /// override), since nothing in this C# port ever needs to pass a display string that
-    /// disagrees with its own numeric value.</summary>
-    public static OrderSummary Build(IReadOnlyList<OrderItem> items, decimal total, decimal tax, decimal finalTotal) =>
-        new(items, total, tax, finalTotal, Money.Format(total), Money.Format(tax), Money.Format(finalTotal));
+    /// <see cref="Money.Format"/> and the spoken total from <see cref="Money.FormatMoneySpoken"/>
+    /// -- mirrors Python's <c>OrderSummary</c> model_validator default-fill behavior, except here
+    /// it's the ONLY construction path (no separately-suppliable override), since nothing in this
+    /// C# port ever needs to pass a display string that disagrees with its own numeric value.</summary>
+    public static OrderSummary Build(
+        IReadOnlyList<OrderItem> items, decimal total, decimal tax, decimal finalTotal, string spokenReadBack) =>
+        new(items, total, tax, finalTotal, Money.Format(total), Money.Format(tax), Money.Format(finalTotal),
+            spokenReadBack, Money.FormatMoneySpoken(finalTotal));
 
-    public static OrderSummary Empty() => Build([], 0m, 0m, 0m);
+    public static OrderSummary Empty() => Build([], 0m, 0m, 0m, "Your order is currently empty.");
 }

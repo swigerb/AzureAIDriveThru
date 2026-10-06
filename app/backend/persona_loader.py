@@ -476,11 +476,26 @@ class PersonaManifest(BaseModel):
     bundles: _Bundles
     extras: _Extras
     invalidModifiers: dict[str, list[str]]
+    # Issue #304: optional pack-level phonetic respelling lexicon (e.g. {"Widget":
+    # "Wid-jet"}), consulted ONLY by the cascade pipeline's `_speak` right before its TTS
+    # input text is sent upstream -- never by the realtime pipeline and never applied to
+    # order/search data. Defaults to {} so every pack predating #304 (and any pack with no
+    # brand words at pronunciation risk) needs no persona.json change at all.
+    pronunciations: dict[str, str] = Field(default_factory=dict)
     machines: dict[str, _Machine]
     models: _Models
     strategies: _Strategies
     features: _Features
     ui: _Ui
+
+    @model_validator(mode="after")
+    def _validate_pronunciations(self) -> PersonaManifest:
+        for raw, spoken in self.pronunciations.items():
+            if not raw.strip():
+                raise ValueError("pronunciations keys must be non-empty, non-whitespace strings")
+            if not spoken.strip():
+                raise ValueError(f"pronunciations['{raw}'] must be a non-empty, non-whitespace string")
+        return self
 
 
 class Persona:

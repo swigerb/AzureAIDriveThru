@@ -29,6 +29,12 @@ public sealed record Persona
     [JsonPropertyName("bundles")] public required PersonaBundles Bundles { get; init; }
     [JsonPropertyName("extras")] public required PersonaExtras Extras { get; init; }
     [JsonPropertyName("invalidModifiers")] public required Dictionary<string, List<string>> InvalidModifiers { get; init; }
+
+    // Issue #304: optional persona-level phonetic lexicon (e.g. {"Widget": "Wid-jet"}),
+    // consulted ONLY by the cascade pipeline's SpeakAsync (never by the realtime model, never
+    // applied to order/search/display data). Mirrors persona_loader.py's
+    // PersonaManifest.pronunciations.
+    [JsonPropertyName("pronunciations")] public Dictionary<string, string>? Pronunciations { get; init; }
     [JsonPropertyName("machines")] public required Dictionary<string, PersonaMachine> Machines { get; init; }
     [JsonPropertyName("models")] public required PersonaModelsBlock Models { get; init; }
     [JsonPropertyName("strategies")] public required PersonaStrategies Strategies { get; init; }

@@ -273,7 +273,8 @@ entries:
   brand: sonic
   max: 5
   issue: '#233'
-  reason: new test file asserting on real logger names ("sonic-drive-in"/"sonic-verbose") and log line shapes
+  reason: new test file asserting on real logger names ("sonic-drive-in"/"sonic-verbose")
+    and log line shapes
   increase_reason: '#233'
 - file: app/backend/tests/test_extras_rules.py
   brand: sonic
@@ -555,19 +556,17 @@ entries:
   brand: mcdonalds
   max: 2
   issue: '#105'
-  reason: Doc-comment/example text illustrating the harness's own default-pack
-    tie-break (sonic); every other shipped pack under personas/ now exists for
-    real too (#78/#79), so this is no longer "the repo's only real pack" (#287
-    follow-up).
+  reason: Doc-comment/example text illustrating the harness's own default-pack tie-break
+    (sonic); every other shipped pack under personas/ now exists for real too (#78/#79),
+    so this is no longer "the repo's only real pack" (#287 follow-up).
   increase_reason: '#105'
 - file: tests/conformance/src/Conformance.Harness/ConformancePersonas.cs
   brand: sonic
   max: 6
   issue: '#105'
-  reason: Doc-comment/example text illustrating the harness's own default-pack
-    tie-break (sonic); every other shipped pack under personas/ now exists for
-    real too (#78/#79), so this is no longer "the repo's only real pack" (#287
-    follow-up).
+  reason: Doc-comment/example text illustrating the harness's own default-pack tie-break
+    (sonic); every other shipped pack under personas/ now exists for real too (#78/#79),
+    so this is no longer "the repo's only real pack" (#287 follow-up).
   increase_reason: '#105'
 - file: tests/conformance/src/Conformance.Harness/DotnetBackendLauncher.cs
   brand: sonic
@@ -599,7 +598,8 @@ entries:
   brand: sonic
   max: 14
   issue: '#233'
-  reason: new test file asserting on real logger names ("sonic-drive-in") used in Python subprocess scripts under test
+  reason: new test file asserting on real logger names ("sonic-drive-in") used in
+    Python subprocess scripts under test
   increase_reason: '#233'
 - file: tests/conformance/tests/Conformance.Tests/CapturedProcessOutputWaitTests.cs
   brand: sonic

@@ -84,3 +84,30 @@ public sealed class MenuModeConformanceCollection : ICollectionFixture<MenuModeC
 {
     public const string Name = "ConformanceMenuMode";
 }
+
+/// <summary>
+/// #313 (Rick's REQUEST CHANGES re-review, items 2/3): the count-size word-spelled-quantity
+/// read-back and case-sensitive spokenAs/spokenName pronunciation rewrite were previously
+/// exercised only against a real persona pack's own trademarked count-sized item -- a
+/// real brand name in test code/data, which forced a new `rebrand_baseline.yaml` "increase"
+/// entry just to keep the ratchet green. <see cref="RepoPaths.FixturePersonasDirectory"/>'s own
+/// <c>test-zeta</c> pack was extended with a synthetic, non-branded count-sized item
+/// ("ZORBS® Bite Treats", sizes "10 count"/"25 count", a <c>spokenName</c> override, and a
+/// trademark-cased <c>sizes.spokenAs</c> key) so these scenarios can run against a TEST-ONLY
+/// fixture pack instead, with no real brand word anywhere in the test file and no baseline
+/// entry required.
+/// </summary>
+public sealed class ZetaConformanceFixture : ConformanceFixture
+{
+    public const string PersonaId = "test-zeta";
+
+    protected override IReadOnlyList<string>? Personas => [PersonaId];
+    protected override string? Persona => PersonaId;
+    protected override string? PersonasDir => RepoPaths.FixturePersonasDirectory(RepoPaths.FindRepoRoot());
+}
+
+[CollectionDefinition(Name)]
+public sealed class ZetaConformanceCollection : ICollectionFixture<ZetaConformanceFixture>
+{
+    public const string Name = "ConformanceZeta";
+}

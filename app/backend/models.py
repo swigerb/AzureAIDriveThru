@@ -1,6 +1,6 @@
 from pydantic import BaseModel, PrivateAttr, model_validator
 
-from money_utils import format_money
+from money_utils import format_money, format_money_spoken
 
 __all__ = ["OrderItem", "OrderSummary"]
 
@@ -55,6 +55,25 @@ class OrderSummary(BaseModel):
     totalDisplay: str = ""
     taxDisplay: str = ""
     finalTotalDisplay: str = ""
+    # #304: server-composed, voice-ready order read-back -- every line (quantity, size, and
+    # spoken item name) followed by "Your total is ...". Computed once per OrderState._update_summary
+    # call (order_state.py's `_compose_spoken_readback`) from the SAME grouping/spoken-name logic
+    # `get_grouped_order_for_readback` already used, so the two can never drift. Every persona's
+    # system prompt (#304) instructs the model to call `get_order` and speak this field VERBATIM
+    # before the final total, after any change, and when the guest says they're done -- never a
+    # total-only reply. Left as "" (never required) for the same backward-compatible reason
+    # totalDisplay/taxDisplay/finalTotalDisplay are: existing call sites that build an
+    # OrderSummary with only the numeric/display fields keep working unchanged.
+    spokenReadBack: str = ""
+    # #313 (Rick's review, item 6): the same finalTotal, spoken out in words (money_utils
+    # .format_money_spoken) -- the model-facing `update_order` delta text used to append the
+    # digit/`$`-formatted finalTotalDisplay ahead of the voice read-back, giving the realtime
+    # model TWO different renderings of the same total in one tool result (a `$9.71` followed
+    # moments later by "nine dollars and seventy-one cents") and risking it speaking the wrong
+    # one. tools.py's update_order now builds its delta text from this field instead. Left as
+    # "" (never required) for the same backward-compatible reason the other *Display fields
+    # are: existing call sites that only pass the numeric fields keep working unchanged.
+    finalTotalSpoken: str = ""
 
     @model_validator(mode="after")
     def _fill_display_defaults(self) -> "OrderSummary":
@@ -64,4 +83,6 @@ class OrderSummary(BaseModel):
             self.taxDisplay = format_money(self.tax)
         if not self.finalTotalDisplay:
             self.finalTotalDisplay = format_money(self.finalTotal)
+        if not self.finalTotalSpoken:
+            self.finalTotalSpoken = format_money_spoken(self.finalTotal)
         return self

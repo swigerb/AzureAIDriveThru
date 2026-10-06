@@ -265,6 +265,12 @@ public sealed class FixturePackPersonaSmokeTests(TwoPersonaConformanceFixture fi
                 "part of TwoPersonaConformanceFixture (test-alpha/test-beta) and doesn't need its " +
                 "own generic greeting/search/order/happy-hour smoke coverage; the combo-resize " +
                 "Theory above already covers it end to end.",
+            ["test-eta"] = "Refs #304: a narrow, TEST-ONLY `componentUpcharge` combo fixture pack " +
+                "used by Backend.Tests' OrderToolExecutorComboUpchargeSpokenDeltaTests (via " +
+                "TestSupport/EtaFixture.cs) to prove the spoken combo-upcharge delta carries no `$` " +
+                "rendering, without naming a shipped persona pack. Not part of " +
+                "TwoPersonaConformanceFixture (test-alpha/test-beta) and doesn't need its own generic " +
+                "greeting/search/order/happy-hour smoke coverage.",
         };
 
     [Theory]

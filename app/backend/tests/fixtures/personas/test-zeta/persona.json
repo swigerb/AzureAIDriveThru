@@ -15,9 +15,19 @@
   },
 
   "sizes": {
-    "canonical": { "regular": "Regular", "large": "Large" },
+    "canonical": {
+      "regular": "Regular",
+      "large": "Large",
+      "10 count": "10 Count",
+      "25 count": "25 Count"
+    },
     "aliases": { "reg": "regular" },
-    "spokenAs": {},
+    "spokenAs": {
+      "10 count": "10 Count",
+      "25 count": "25 Count",
+      "ZORBS®": "Zorbs",
+      "ZORBS": "Zorbs"
+    },
     "hidden": ["", "n/a", "none"],
     "default": "regular"
   },

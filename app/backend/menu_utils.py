@@ -38,6 +38,7 @@ __all__ = [
     "MenuKeyCollisionError",
     "validate_menu_key_collisions",
     "get_catalog_for_persona",
+    "apply_lexicon",
 ]
 
 _SPOKEN_LEFT_BOUNDARY = r"(?<![A-Za-z0-9])"
@@ -48,6 +49,24 @@ def _spoken_substitution_pattern(raw: str) -> str:
     """Literal spokenAs match that will not rewrite the middle of another token."""
     right_boundary_chars = "A-Za-z0-9" if raw.endswith(tuple(_SPOKEN_TRADEMARK_CHARS)) else f"A-Za-z0-9{_SPOKEN_TRADEMARK_CHARS}"
     return rf"{_SPOKEN_LEFT_BOUNDARY}{re.escape(raw)}(?![{right_boundary_chars}])"
+
+
+def apply_lexicon(text: str, lexicon: dict[str, str]) -> str:
+    """Apply a raw-text -> replacement *lexicon* to *text* with the SAME longest-match/
+    alphanumeric-boundary-safe substitution :meth:`MenuCatalog.spoken` uses for
+    ``sizes.spokenAs``/per-item ``spokenName`` -- one substitution algorithm, two callers.
+    Issue #304: this is also the exact mechanism ``cascade_processor.py``'s ``_speak`` uses to
+    apply a persona's own ``pronunciations`` lexicon to its TTS input text, so a phonetic
+    respelling (e.g. ``{"Widget": "Wid-jet"}``) can never rewrite the middle of an
+    unrelated word (a bare substring match could, e.g. turning "Widgety" into
+    "Wid-jety"). Longer keys are applied first so a multi-word entry always wins over a
+    single-word one it happens to contain."""
+    for raw, replacement in sorted(lexicon.items(), key=lambda item: len(item[0]), reverse=True):
+        if not raw:
+            continue
+        text = re.sub(_spoken_substitution_pattern(raw), replacement, text)
+    return text
+
 
 logger = logging.getLogger(__name__)
 
@@ -377,6 +396,11 @@ def _load_menu_data(
                     # that opts into "meal_numbers").
                     "mealNumber": item.get("mealNumber"),
                     "menuPeriod": item.get("menuPeriod"),
+                    # #304: this item's own optional spoken-name override (menu.schema.json
+                    # ``spokenName``) -- e.g. a trademark-styled name's natural-speech form.
+                    # "" (falsy) for an item that doesn't define one, so MenuCatalog.from_persona
+                    # below only adds a substitution for items that actually opt in.
+                    "spokenName": item.get("spokenName") or "",
                 }
                 for alias in item.get("aliases") or ():
                     alias_key = _menu_key(alias)
@@ -439,7 +463,18 @@ class MenuCatalog:
         self.size_map = size_map
         self.size_aliases = size_aliases
         self.hidden_sizes = hidden_sizes
-        self.spoken_as = spoken_as
+        # #304: merge each item's own optional ``spokenName`` override (menu.schema.json) into
+        # the same spokenAs substitution table sizes.spokenAs already populates, so `spoken()`
+        # below applies BOTH size-vocabulary and per-item spoken-name substitutions through the
+        # one, already-tested longest-match/word-boundary regex mechanism -- no second
+        # substitution pass, and no risk of the two tables disagreeing on precedence. An item's
+        # own raw ``name`` always wins as the dict KEY here (never an alias), and a pack with no
+        # ``spokenName`` fields at all leaves this identical to ``spoken_as``.
+        self.spoken_as = dict(spoken_as)
+        for fields in item_fields.values():
+            spoken_name = fields.get("spokenName") or ""
+            if spoken_name:
+                self.spoken_as[fields["name"]] = spoken_name
         self.item_fields = item_fields
         self.alias_map = alias_map
         self.category_map: dict[str, str] = {key: fields["category"] for key, fields in item_fields.items()}
@@ -558,20 +593,17 @@ class MenuCatalog:
         return self.alias_map.get(normalized, normalized)
 
     def spoken(self, text: str) -> str:
-        """Apply this persona's ``sizes.spokenAs`` spoken-readback substitutions.
+        """Apply this persona's ``sizes.spokenAs`` + per-item ``spokenName`` spoken-readback
+        substitutions (both merged into ``self.spoken_as`` -- see ``from_persona``).
 
         #74: replaces ``order_state.py``'s old hardcoded ``"RT 44"``/``"RT44"`` -> ``"Route 44"``
         readback substitution -- Sonic's own persona.json ``spokenAs`` block is exactly that same
         mapping, so this is a no-op behavior change for Sonic, but a future persona with its own
         size vocabulary now drives its own readback text instead of inheriting Sonic's.
         Longer keys are applied first, and matches require alphanumeric/trademark boundaries so
-        item-name pronunciation hints (e.g. MUNCHKINS® -> Munchkins) cannot rewrite unrelated
+        item-name pronunciation hints (e.g. WIDGET® -> Widget) cannot rewrite unrelated
         tokens or leave a registered mark behind."""
-        for raw, spoken in sorted(self.spoken_as.items(), key=lambda item: len(item[0]), reverse=True):
-            if not raw:
-                continue
-            text = re.sub(_spoken_substitution_pattern(raw), spoken, text)
-        return text
+        return apply_lexicon(text, self.spoken_as)
 
     def infer_category(self, item_name: str) -> str:
         normalized = self._resolve_alias(_menu_key(item_name))

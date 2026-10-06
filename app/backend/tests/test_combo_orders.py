@@ -267,7 +267,7 @@ class TestComponentUpcharge:
         order_state_singleton.handle_order_update(sid, "add", "Tots", "medium", 1, 2.79)
         result = order_state_singleton.handle_order_update(sid, "add", "Cherry Limeade", "large", 1, 3.39)
 
-        assert result["combo_component_upcharge_display"] == "$0.50"
+        assert result["combo_component_upcharge_display"] == "fifty cents"
         summary = order_state_singleton.get_order_summary(sid)
         assert math.isclose(summary.total, 10.69, rel_tol=1e-9)
         item = order_state_singleton.get_order_items(sid)[0]
@@ -326,7 +326,7 @@ class TestComponentUpcharge:
         order_state_singleton.handle_order_update(sid, "add", "Cherry Limeade", "medium", 2, 2.89)
 
         result = order_state_singleton.handle_order_update(sid, "modify", "Cherry Limeade", "large", 1, 3.39)
-        assert result["combo_component_upcharge_display"] == "$0.50"
+        assert result["combo_component_upcharge_display"] == "fifty cents"
         items = order_state_singleton.get_order_items(sid)
         assert len(items) == 2
         assert sorted((item.quantity, item.price, item.componentUpcharges) for item in items) == [
@@ -344,8 +344,8 @@ class TestComponentUpcharge:
         assert all(item.componentUpcharges == [0.0, 0.5] for item in items)
         assert math.isclose(order_state_singleton.get_order_summary(sid).total, 21.38, rel_tol=1e-9)
         readback = order_state_singleton.get_grouped_order_for_readback(sid)
-        assert "2 SuperSONIC" in readback
-        assert "$0.50 upcharge" in readback
+        assert "two SuperSONIC" in readback
+        assert "fifty cents upcharge" in readback
 
     @patch("order_state.is_happy_hour", return_value=False)
     @pytest.mark.parametrize(

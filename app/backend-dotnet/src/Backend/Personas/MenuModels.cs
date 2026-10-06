@@ -38,6 +38,11 @@ public sealed record PersonaMenuItem
     [JsonPropertyName("origin")] public string? Origin { get; init; }
     [JsonPropertyName("popularity")] public string? Popularity { get; init; }
     [JsonPropertyName("image")] public string? Image { get; init; }
+    // Issue #304: optional per-item spoken-name override ("Assorted Munch-kins Donut Hole
+    // Treats" for "Assorted MUNCHKINS\u00ae Donut Hole Treats"). Merged into MenuCatalog's
+    // spoken-substitution table alongside sizes.spokenAs -- same Spoken()/apply-lexicon
+    // mechanism, zero new call sites. Mirrors menu_utils.py's item_fields[key]["spokenName"].
+    [JsonPropertyName("spokenName")] public string? SpokenName { get; init; }
 
     [JsonPropertyName("comboSlot")] public string ComboSlot { get; init; } = "none";
     [JsonPropertyName("happyHourDiscounted")] public bool HappyHourDiscounted { get; init; }

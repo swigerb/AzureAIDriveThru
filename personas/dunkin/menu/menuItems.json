@@ -915,7 +915,8 @@
             "Munchkins"
           ],
           "isExtra": false,
-          "image": "menu_images/munchkins"
+          "image": "menu_images/munchkins",
+          "spokenName": "Assorted Munch-kins Donut Hole Treats"
         },
         {
           "name": "Glazed MUNCHKINS® Donut Hole Treats",
@@ -943,7 +944,8 @@
             "Glazed Munchkins",
             "Glazed 10 Count Munchkins"
           ],
-          "isExtra": false
+          "isExtra": false,
+          "spokenName": "Glazed Munch-kins Donut Hole Treats"
         },
         {
           "name": "Chocolate Glazed MUNCHKINS® Donut Hole Treats",
@@ -971,7 +973,8 @@
             "Chocolate Munchkins",
             "Chocolate Glazed Munchkins"
           ],
-          "isExtra": false
+          "isExtra": false,
+          "spokenName": "Chocolate Glazed Munch-kins Donut Hole Treats"
         },
         {
           "name": "Jelly MUNCHKINS® Donut Hole Treats",
@@ -998,7 +1001,8 @@
           "aliases": [
             "Jelly Munchkins"
           ],
-          "isExtra": false
+          "isExtra": false,
+          "spokenName": "Jelly Munch-kins Donut Hole Treats"
         },
         {
           "name": "Powdered MUNCHKINS® Donut Hole Treats",
@@ -1025,7 +1029,8 @@
           "aliases": [
             "Powdered Munchkins"
           ],
-          "isExtra": false
+          "isExtra": false,
+          "spokenName": "Powdered Munch-kins Donut Hole Treats"
         },
         {
           "name": "Pumpkin MUNCHKINS® Donut Hole Treats",
@@ -1052,7 +1057,8 @@
           "aliases": [
             "Pumpkin Munchkins"
           ],
-          "isExtra": false
+          "isExtra": false,
+          "spokenName": "Pumpkin Munch-kins Donut Hole Treats"
         },
         {
           "name": "Everything Bagel & Cream Cheese",

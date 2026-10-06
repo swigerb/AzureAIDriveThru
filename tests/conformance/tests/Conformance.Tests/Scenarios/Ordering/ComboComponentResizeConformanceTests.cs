@@ -631,7 +631,10 @@ public sealed class ComboComponentResizeConformanceTests
                     connection, browser,
                     [("modify", Drink, "large", 1, 3.39m)],
                     medium.RoundTripIndex, ct, callIdPrefix: "call_component_upcharge_large_drink");
-                Assert.Contains("$0.50 upcharge", largeDrink.FunctionCallOutputText);
+                // #313 (Rick's re-review, item 2): the model-facing delta text speaks the upcharge
+                // in words (Money.FormatMoneySpoken) -- never the "$X.XX" digit display.
+                Assert.Contains("fifty cents upcharge", largeDrink.FunctionCallOutputText);
+                Assert.DoesNotContain("$", largeDrink.FunctionCallOutputText);
                 OrderScenarioHelpers.AssertMoneyEqual(10.69m, OrderScenarioHelpers.GetOrderTotal(largeDrink.ToolResultJson!), "Large drink adds only its above-medium delta.");
 
                 using var largeDrinkDoc = JsonDocument.Parse(largeDrink.ToolResultJson!);
