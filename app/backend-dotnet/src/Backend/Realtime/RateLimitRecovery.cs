@@ -172,9 +172,7 @@ public sealed class RateLimitRecovery
         if (inFlight)
         {
             // The running response's own response.done will report the failure.
-            _logger?.LogWarning(
-                "Rate-limit error while a response is in flight (code={Code}); waiting for its response.done (session={SessionId})",
-                error["code"]?.GetValue<string>(), _sessionId);
+            _logger?.RateLimitErrorWhileInFlight(error["code"]?.GetValue<string>(), _sessionId);
             return true;
         }
         await OnFailureAsync(error, "error event", ct).ConfigureAwait(false);
@@ -235,7 +233,7 @@ public sealed class RateLimitRecovery
         _pendingCts?.Dispose();
         _pendingCts = null;
         _pendingScheduled = false;
-        _logger?.LogInformation("Rate-limit retry cancelled: {Reason} (session={SessionId})", reason, _sessionId);
+        _logger?.RateLimitRetryCancelled(reason, _sessionId);
     }
 
     /// <summary>Must be called with <see cref="_sync"/> held. Commits the schedule (CTS created,
@@ -264,8 +262,7 @@ public sealed class RateLimitRecovery
     private async Task OnFailureAsync(JsonObject error, string source, CancellationToken ct)
     {
         var hint = ParseRetryHint(error["message"]?.GetValue<string>());
-        _logger?.LogWarning(
-            "Model response rate-limited ({Source}): code={Code} type={Type} retry_hint={Hint} (session={SessionId})",
+        _logger?.ModelResponseRateLimited(
             source,
             error["code"]?.GetValue<string>(),
             error["type"]?.GetValue<string>(),
@@ -280,15 +277,12 @@ public sealed class RateLimitRecovery
         {
             if (_pendingScheduled)
             {
-                _logger?.LogInformation(
-                    "Rate-limit failure while a retry is already pending; same attempt (session={SessionId})", _sessionId);
+                _logger?.RateLimitFailureRetryPending(_sessionId);
                 return;
             }
             if (_exhausted)
             {
-                _logger?.LogInformation(
-                    "Rate-limit failure after the final retry; waiting for the guest's next turn (session={SessionId})",
-                    _sessionId);
+                _logger?.RateLimitFailureAfterExhausted(_sessionId);
                 return;
             }
             if (!_awaitingRetry)
@@ -319,9 +313,7 @@ public sealed class RateLimitRecovery
 
         if (notifyFinal)
         {
-            _logger?.LogWarning(
-                "Rate-limit retries exhausted after {Attempt} attempt(s); asking the guest to repeat (session={SessionId})",
-                attempt, _sessionId);
+            _logger?.RateLimitRetriesExhausted(attempt, _sessionId);
             await NotifyAsync(
                 new JsonObject { ["type"] = RateLimitedEventType, ["attempt"] = attempt, ["final"] = true }, ct)
                 .ConfigureAwait(false);
@@ -350,9 +342,7 @@ public sealed class RateLimitRecovery
                 // pending retry's bookkeeping or resurrect state for an attempt nobody asked for any
                 // more, and sending would be a stale/duplicate response.create (possibly onto an
                 // already-closing socket). Stay out of the way entirely.
-                _logger?.LogInformation(
-                    "Rate-limit retry {Attempt} skipped: superseded before it could run (session={SessionId})",
-                    attempt, _sessionId);
+                _logger?.RateLimitRetrySupersededSkip(attempt, _sessionId);
                 return;
             }
 
@@ -374,15 +364,11 @@ public sealed class RateLimitRecovery
 
         if (skip)
         {
-            _logger?.LogInformation(
-                "Rate-limit retry {Attempt} skipped: another response is already running (session={SessionId})",
-                attempt, _sessionId);
+            _logger?.RateLimitRetryInFlightSkip(attempt, _sessionId);
             return;
         }
 
-        _logger?.LogInformation(
-            "Rate-limit retry {Attempt}: response.create after {Delay:F2}s (session={SessionId})",
-            attempt, delaySeconds, _sessionId);
+        _logger?.RateLimitRetrySending(attempt, delaySeconds, _sessionId);
         try
         {
             // CancellationToken.None: a closing socket must not crash this fire-and-forget
@@ -391,8 +377,7 @@ public sealed class RateLimitRecovery
         }
         catch (Exception exc)
         {
-            _logger?.LogInformation(
-                "Rate-limit retry {Attempt} not sent: {Message} (session={SessionId})", attempt, exc.Message, _sessionId);
+            _logger?.RateLimitRetryNotSent(attempt, exc.Message, _sessionId);
             lock (_sync)
             {
                 ResetLocked();
@@ -408,9 +393,12 @@ public sealed class RateLimitRecovery
         }
         catch (Exception exc)
         {
-            _logger?.LogInformation(
-                "Could not send {Type} to the browser: {Message} (session={SessionId})",
-                payload["type"]?.GetValue<string>(), exc.Message, _sessionId);
+            // CA1873: payload["type"]?.GetValue<string>() is a JsonNode lookup + method call, so
+            // it's only computed once logging at this level is actually enabled.
+            if (_logger is { } logger && logger.IsEnabled(LogLevel.Information))
+            {
+                logger.RateLimitNotifyFailed(payload["type"]?.GetValue<string>(), exc.Message, _sessionId);
+            }
         }
     }
 
