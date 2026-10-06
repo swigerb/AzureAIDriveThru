@@ -451,3 +451,16 @@
   - Centralized backend environment variable names/reads behind `BackendEnvironment` and removed direct `Environment.GetEnvironmentVariable(...)` calls from backend production files.
   - Validation so far: `dotnet build Backend.slnx --no-restore -warnaserror` ✅, `dotnet test tests/Backend.Tests/Backend.Tests.csproj --no-build -warnaserror` ✅ (825/825).
   - `dotnet test tests/conformance/Conformance.slnx --filter "Dotnet=ready&Category!=Browser"` could not complete meaningfully in this environment because the harness failed before exercising the .NET backend: `/workspace/ddt-337-di/repo/.venv/bin/python` is missing, so the Python-side fixture bootstrap aborts with `FileNotFoundException`.
+
+## 2026-10-06T16:48:37Z — Issue #337 typed options completion
+- Commit `57b426b` `Fix #337: bind backend startup config through options`
+  - Added `RequiredBackendOptions` + `RequiredBackendOptionsValidator`, registered with `AddOptions(...).ValidateOnStart()`, and changed Program.cs's step-1 startup gate to resolve `IOptions<RequiredBackendOptions>` and log the exact existing `FATAL: Missing required environment variables: ...` line on `OptionsValidationException`.
+  - Converted `SearchEndpointConfig` from the static `FromEnvironment()` factory to `IOptions<SearchEndpointConfig>` configuration, then exposed the bound value through DI so `SessionToolExecutorFactory`/`SearchTool` still consume one process-wide typed config instance without call-site env reads.
+  - Exposed the existing config.yaml-derived `BusinessRulesConfig`, `SearchConfig`, `SessionsConfig`, `ConnectionConfig`, `SecurityConfig`, and `AssetCacheConfig` through `IOptions<T>` wrappers backed by the unchanged `AppConfig.Load()` / `FromConfig(...)` factories, keeping config.yaml as the source of truth without changing fail-fast order.
+  - Re-grepped backend production code after the refactor: the only remaining direct `Environment.GetEnvironmentVariable(...)` call is `BackendEnvironment.Get(...)`.
+  - Added `BackendConfigurationOptionsTests` covering required-env validation ordering/message shape plus `SearchEndpointConfig` default/override binding.
+- Decision note filed to inbox: `beth-337-entra-options-scope.md` (why `EntraSettings` stays pre-Build and out of the options/ValidateOnStart path).
+- Validation (final):
+  - `dotnet build app/backend-dotnet/Backend.slnx --no-restore -warnaserror` ✅
+  - `dotnet test app/backend-dotnet/tests/Backend.Tests/Backend.Tests.csproj --no-build -warnaserror` ✅ (**829/829**)
+  - Conformance (`CONFORMANCE_BACKEND=dotnet`, `Dotnet=ready&Category!=Browser`) ✅ with only the 2 known sandbox baseline failures: **721 passed / 2 failed / 723 total**. The failures were exactly `AuthRowSpecialCaseTests.Row_12_anonymous_allow_list_path_is_reachable_with_no_token("/")` and `StaticIndexHtmlTests.Root_route_serves_index_html_with_cache_control_no_cache`, matching the pre-existing missing-frontend baseline.
