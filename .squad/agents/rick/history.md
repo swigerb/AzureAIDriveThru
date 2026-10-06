@@ -150,3 +150,24 @@
   - No brand tokens in added lines, and `rebrand_baseline.yaml` is untouched.
 - **Reproduced myself:** `dotnet build src/Backend -c Release --no-incremental` gave 0 warnings and 0 errors. `dotnet test Backend.Tests -c Release` gave 825/825 passing (824 plus the 1 new test). I didn't rerun conformance; the specialist reports 723/723.
 - **Lesson:** when a fix adds a "no X happens" test, run the mutation check yourself. Here it took 30 seconds and turned "reported verified by hand" into proof.
+## 2026-10-06 - Review of #336, source-generated LoggerMessage (Beth, `08d524e` on `dev`): 🟡 Approve with notes
+
+- **Scope is correct.** Only the 7 named files and their new `.Log.cs` companions changed. Program.cs, the fire-and-forget call sites (#335) and `rebrand_baseline.yaml` are untouched, and no brand words were added. Beth's inbox note is gitignored, so it isn't in the commit, as expected.
+- **The logs are byte-identical, checked with a script (`scratch/rick/cmp.js`).** It lined up all 109 old `LogX(...)` calls (`d751261`) with their new generated-method calls in source order:
+  - Level and template text (after literal concatenation) match exactly at 109 of 109 sites.
+  - Argument expressions match exactly with whitespace ignored.
+  - Placeholder order matches parameter order for every method.
+  - Typed `double`/`int` parameters receive values whose source is already `double`/`int`, so no widening changes how a value prints.
+  - The two shared Cascade templates reuse one method each.
+- **EventIds:** 107 unique, contiguous within each file's range (1000-1045, 2000-2025, 3000-3007, 4000-4006, 5000-5004, 6000-6010, 7000-7003), with no collisions.
+- **CA1873 guards:** five guards (4 in RealtimeProcessor, 1 in RateLimitRecovery). Each one only skips side-effect-free work (`ToJsonString`, `string.Join`, a pure `GetString`, `GetValue`). The `isToolCallResponse &&` merge is safe because that block held only the log call.
+- **My own runs** (the sandbox's `/workspace/.dotnet` needs `DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1` because there's no libicu):
+  - `build -warnaserror --no-incremental`: 0 warnings and 0 errors.
+  - `AnalysisMode=Recommended`: 0 CA1848/CA1873 in the 7 files. The remaining warnings are only in Program.cs, CascadeRateLimit, ContextMonitor, AppSecretProvider, ModelCatalog, ModelDispatch and a test file.
+  - Backend.Tests: 818 of 818 passed on 5 of 6 runs.
+  - Conformance (`Dotnet=ready&Category!=Browser`): 723 of 723 passed.
+- **Notes (non-blocking; a follow-up can go to any C# dev or Birdperson):**
+  1. **Flake.** `CascadeProcessorTests.RunSessionAsync_TtsServerError_SendsFailedResponseDoneInsteadOfANormalOne` failed once, on the first cold run. The barge-in "Cancelled in-flight cascade turn" won the race before the TTS 500. The next 5 full runs were green. It's a timing flake and not caused by this change, because log text is unchanged and generated logging is cheaper. Birdperson should file and track it.
+  2. **Guard rule is applied unevenly.** Some non-trivial arguments are still unguarded because the analyzer doesn't flag them at Warning and above: `error["code"]?.GetValue<string>()` in RateLimitRecovery, `message["error"]?.ToJsonString()` in InputAudioTranscriptionFailed, and `exc.GetType().Name` in SearchTool. That's fine, but the decision note should say "guard where CA1873 fires", not "every non-trivial argument".
+  3. **Doc comments.** All 7 `.Log.cs` summaries embed "(issue #336: ...)" narration, plus an unverified "ops dashboards match on log text" claim. Next time a file is touched, trim them to the reason only: templates are a compatibility surface, so don't edit them.
+- **Lesson:** for "byte-identical" refactors, check by script in source order rather than by spot-check. It also covers argument expressions and implicit numeric conversions, which a template-only diff would miss.

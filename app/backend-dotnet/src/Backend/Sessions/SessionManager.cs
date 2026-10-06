@@ -417,23 +417,17 @@ internal sealed class SessionManager
                 }
                 else if (record.PersonaId != requestedPersonaId)
                 {
-                    _logger?.LogInformation(
-                        "Resume rejected for session {SessionId}: bound persona {Bound} != requested persona {Requested} (persona_mismatch)",
-                        sessionId, record.PersonaId, requestedPersonaId);
+                    _logger?.ResumeRejectedPersonaMismatch(sessionId, record.PersonaId, requestedPersonaId);
                     outcome = new ResumeOutcome(false, Reason: "persona_mismatch");
                 }
                 else if (record.ModelId != requestedModelId)
                 {
-                    _logger?.LogInformation(
-                        "Resume rejected for session {SessionId}: bound model {Bound} != requested model {Requested} (model_mismatch)",
-                        sessionId, record.ModelId, requestedModelId);
+                    _logger?.ResumeRejectedModelMismatch(sessionId, record.ModelId, requestedModelId);
                     outcome = new ResumeOutcome(false, Reason: "model_mismatch");
                 }
                 else if (record.MenuMode != requestedMenuMode)
                 {
-                    _logger?.LogInformation(
-                        "Resume rejected for session {SessionId}: bound menu mode {Bound} != requested menu mode {Requested} (mode_mismatch)",
-                        sessionId, record.MenuMode, requestedMenuMode);
+                    _logger?.ResumeRejectedModeMismatch(sessionId, record.MenuMode, requestedMenuMode);
                     outcome = new ResumeOutcome(false, Reason: "mode_mismatch");
                 }
                 else
@@ -476,8 +470,7 @@ internal sealed class SessionManager
 
                     var newId = IssueResumeIdLocked(record);
                     staleReason = staleWs is not null ? "; superseding a still-attached socket" : "";
-                    _logger?.LogInformation(
-                        "Session {SessionId} resumed{Superseded}", sessionId, staleReason);
+                    _logger?.SessionResumed(sessionId, staleReason);
 
                     outcome = new ResumeOutcome(
                         true,
@@ -596,7 +589,7 @@ internal sealed class SessionManager
         }
         _contextMonitors.Remove(sessionId);
         RemoveFromDetachedLocked(sessionId);
-        _logger?.LogInformation("Session {SessionId} ended ({Reason})", sessionId, reason);
+        _logger?.SessionEnded(sessionId, reason);
     }
 
     private void RemoveFromDetachedLocked(string sessionId)
@@ -643,9 +636,7 @@ internal sealed class SessionManager
                 EndSessionLocked(sessionId, $"{reason}; idle budget exhausted");
                 return;
             }
-            _logger?.LogInformation(
-                "Session {SessionId} detached ({Reason}); holding order for {Seconds:F0}s",
-                sessionId, reason, (expires - now).TotalSeconds);
+            _logger?.SessionDetached(sessionId, reason, (expires - now).TotalSeconds);
 
             while (_detachedLru.Count > Math.Max(_config.MaxDetached, 0))
             {
@@ -709,7 +700,7 @@ internal sealed class SessionManager
 
         foreach (var (socket, sessionId) in idle)
         {
-            _logger?.LogWarning("Closing idle session {SessionId} (idle beyond {Seconds}s)", sessionId, _config.IdleTimeoutSeconds);
+            _logger?.ClosingIdleSession(sessionId, _config.IdleTimeoutSeconds);
             try
             {
                 if (socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
@@ -741,7 +732,7 @@ internal sealed class SessionManager
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                _logger?.LogWarning(ex, "Idle/grace sweep error");
+                _logger?.IdleGraceSweepError(ex);
             }
             try
             {

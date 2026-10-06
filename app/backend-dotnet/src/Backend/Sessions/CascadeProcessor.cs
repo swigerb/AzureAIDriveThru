@@ -263,9 +263,9 @@ internal sealed class CascadeProcessor : IPipelineProcessor
             }
             catch (Exception ex)
             {
-                _logger?.LogWarning(ex, "Cascade turn ended with an unexpected exception while cancelling it (session={SessionId})", sessionId);
+                _logger?.CascadeTurnCancelException(ex, sessionId);
             }
-            _logger?.LogInformation("Cancelled in-flight cascade turn: {Reason} (session={SessionId})", reason, sessionId);
+            _logger?.CascadeTurnCancelled(reason, sessionId);
             state.CurrentTurnTask = null;
             state.CurrentTurnCts = null;
             cts?.Dispose();
@@ -305,8 +305,7 @@ internal sealed class CascadeProcessor : IPipelineProcessor
                 cts?.Dispose();
                 if (wasInFlight)
                 {
-                    _logger?.LogInformation("Cancelled in-flight cascade turn: {Reason} (session={SessionId})",
-                        "guest started speaking (barge-in)", sessionId);
+                    _logger?.CascadeTurnCancelled("guest started speaking (barge-in)", sessionId);
                 }
                 try
                 {
@@ -319,7 +318,7 @@ internal sealed class CascadeProcessor : IPipelineProcessor
                 }
                 catch (Exception ex)
                 {
-                    _logger?.LogWarning(ex, "Could not send speech_started after a barge-in (session={SessionId})", sessionId);
+                    _logger?.SpeechStartedSendFailed(ex, sessionId);
                 }
             });
         }
@@ -340,7 +339,7 @@ internal sealed class CascadeProcessor : IPipelineProcessor
             }
             catch (Exception ex)
             {
-                _logger?.LogWarning(ex, "Cascade turn ended with an unexpected exception while cancelling it (session={SessionId})", sessionId);
+                _logger?.CascadeTurnCancelException(ex, sessionId);
             }
         }
 
@@ -372,7 +371,7 @@ internal sealed class CascadeProcessor : IPipelineProcessor
                 }
                 catch (Exception ex)
                 {
-                    _logger?.LogError(ex, "Unhandled exception in cascade background task '{Label}' (session={SessionId})", label, sessionId);
+                    _logger?.CascadeBackgroundTaskFailed(ex, label, sessionId);
                 }
             });
             return (cts, task);
@@ -417,12 +416,10 @@ internal sealed class CascadeProcessor : IPipelineProcessor
                 {
                     // Mid-turn, or the assistant is already speaking -- never stack a nudge on
                     // top of a real turn. One-shot: a skipped nudge is not rescheduled.
-                    _logger?.LogInformation("Cascade: resume nudge skipped, a turn is in flight (session={SessionId})", sessionId);
+                    _logger?.CascadeNudgeSkippedTurnInFlight(sessionId);
                     return;
                 }
-                _logger?.LogInformation(
-                    "Cascade: guest silent {Seconds}s after resume; nudging (session={SessionId})",
-                    _sessionManager!.Config.NudgeAfterSeconds, sessionId);
+                _logger?.CascadeNudgeFiring(_sessionManager!.Config.NudgeAfterSeconds, sessionId);
                 state.Messages.Add(CascadeChatMessage.User(SessionManager.BuildNudgeText(state.RoleName)));
                 await RunTurnAndSpeakAsync(nudgeCt).ConfigureAwait(false);
             }, "nudge");
@@ -446,7 +443,7 @@ internal sealed class CascadeProcessor : IPipelineProcessor
                 if (task is not null && !task.IsCompleted)
                 {
                     cts?.Cancel();
-                    _logger?.LogInformation("Cascade: resume nudge cancelled: {Reason} (session={SessionId})", reason, sessionId);
+                    _logger?.CascadeNudgeCancelled(reason, sessionId);
                 }
             }
             cts?.Dispose();
@@ -464,7 +461,7 @@ internal sealed class CascadeProcessor : IPipelineProcessor
             var name = GetString(toolCall["function"] as JsonObject, "name") ?? "";
             if (!toolExecutor.ToolNames.Contains(name))
             {
-                _logger?.LogError("Unknown tool requested: {ToolName} (session={SessionId})", name, sessionId);
+                _logger?.CascadeUnknownTool(name, sessionId);
                 state.Messages.Add(CascadeChatMessage.Tool("", callId));
                 return;
             }
@@ -482,10 +479,9 @@ internal sealed class CascadeProcessor : IPipelineProcessor
                 var rawArguments = GetString(toolCall["function"] as JsonObject, "arguments");
                 var argumentsJson = string.IsNullOrEmpty(rawArguments) ? "{}" : rawArguments;
                 using var argumentsDoc = JsonDocument.Parse(argumentsJson);
-                _logger?.LogInformation("Executing cascade tool '{ToolName}' (session={SessionId})", name, sessionId);
+                _logger?.CascadeExecutingTool(name, sessionId);
                 var result = await toolExecutor.ExecuteAsync(name, argumentsDoc.RootElement.Clone(), turnCt).ConfigureAwait(false);
-                _logger?.LogInformation("Cascade tool '{ToolName}' result direction={Direction} (session={SessionId})",
-                    name, result.Destination, sessionId);
+                _logger?.CascadeToolResultDirection(name, result.Destination, sessionId);
 
                 // Issue #13 tail: track tool call args + result in the context window, mirroring
                 // cascade_processor.py's own ctx_monitor.add_content(tool_call.function.arguments
@@ -527,7 +523,7 @@ internal sealed class CascadeProcessor : IPipelineProcessor
             }
             catch (Exception ex)
             {
-                _logger?.LogError(ex, "Cascade tool '{ToolName}' raised an unhandled exception (session={SessionId})", name, sessionId);
+                _logger?.CascadeToolUnhandledException(ex, name, sessionId);
                 outputText = promptLoader?.RenderError("tool_execution_failed") ??
                     "Something went wrong with that action and it did not complete. Don't retry it yet -- " +
                     "call get_order to confirm the order's current state, then ask the guest to repeat what they'd like.";
@@ -543,9 +539,7 @@ internal sealed class CascadeProcessor : IPipelineProcessor
                     }
                     catch (Exception ticketEx)
                     {
-                        _logger?.LogWarning(ticketEx,
-                            "Could not read order state to refresh the ticket after a cascade tool failure (session={SessionId})",
-                            sessionId);
+                        _logger?.CascadeTicketRefreshFailed(ticketEx, sessionId);
                     }
                     if (ticketJson is not null)
                     {
@@ -619,8 +613,7 @@ internal sealed class CascadeProcessor : IPipelineProcessor
                     throw;
                 }
             }
-            _logger?.LogWarning("Cascade chat-tool loop hit its {MaxRounds}-round cap without a final answer (session={SessionId})",
-                MaxToolRounds, sessionId);
+            _logger?.CascadeChatToolLoopCapped(MaxToolRounds, sessionId);
             return "";
         }
 
@@ -752,7 +745,7 @@ internal sealed class CascadeProcessor : IPipelineProcessor
                 // Send a terminal `response.done` (failed status) plus a best-effort `error`
                 // event instead. The 429 path and barge-in (both just above) are unaffected --
                 // this `catch` only ever reaches OTHER failures.
-                _logger?.LogError(ex, "Cascade chat completion failed (session={SessionId})", sessionId);
+                _logger?.CascadeChatCompletionFailed(ex, sessionId);
                 await SendFailedResponseDoneAsync(responseId, "chat completion failed", turnCt).ConfigureAwait(false);
                 return;
             }
@@ -796,7 +789,7 @@ internal sealed class CascadeProcessor : IPipelineProcessor
                     // frontend as if the turn had succeeded with no audio. Report it the same way
                     // chat-completion failures are now reported, instead of a quiet, misleading
                     // "success".
-                    _logger?.LogWarning(ex, "Cascade TTS failed for this turn's final answer (session={SessionId})", sessionId);
+                    _logger?.CascadeTtsFailed(ex, sessionId);
                     await SendFailedResponseDoneAsync(responseId, "text-to-speech failed", turnCt).ConfigureAwait(false);
                     return;
                 }
@@ -839,7 +832,7 @@ internal sealed class CascadeProcessor : IPipelineProcessor
             }
             catch (Exception ex)
             {
-                _logger?.LogError(ex, "Cascade transcription failed (session={SessionId})", sessionId);
+                _logger?.CascadeTranscriptionFailed(ex, sessionId);
                 return;
             }
             if (string.IsNullOrWhiteSpace(transcript))
@@ -878,12 +871,12 @@ internal sealed class CascadeProcessor : IPipelineProcessor
             }
             catch (Exception ex)
             {
-                _logger?.LogWarning(ex, "Could not extract greeting text from prompt_loader.greeting (session={SessionId})", sessionId);
+                _logger?.CascadeGreetingExtractFailed(ex, sessionId);
                 return;
             }
             if (string.IsNullOrEmpty(text))
             {
-                _logger?.LogWarning("prompt_loader.greeting had no usable item.content[0].text (session={SessionId})", sessionId);
+                _logger?.CascadeGreetingTextMissing(sessionId);
                 return;
             }
 
@@ -973,9 +966,7 @@ internal sealed class CascadeProcessor : IPipelineProcessor
                         var newVoice = ClientServerFilter.SanitizeVoice(candidate, _allowedVoices);
                         if (newVoice is null)
                         {
-                            _logger?.LogWarning(
-                                "Dropped extension.set_voice with an unknown/invalid voice {Voice} (session={SessionId})",
-                                candidate, sessionId);
+                            _logger?.CascadeSetVoiceDropped(candidate, sessionId);
                             break;
                         }
                         state.Voice = newVoice;
@@ -1011,9 +1002,7 @@ internal sealed class CascadeProcessor : IPipelineProcessor
             }
             catch (Exception ex)
             {
-                _logger?.LogWarning(ex,
-                    "Could not read order state while building a session-resumed announcement (session={SessionId})",
-                    sessionId);
+                _logger?.CascadeOrderStateReadFailed(ex, sessionId);
                 return "{}";
             }
         }
@@ -1134,9 +1123,7 @@ internal sealed class CascadeProcessor : IPipelineProcessor
                         {
                             state.NudgeEligible = true;
                         }
-                        _logger?.LogInformation(
-                            "Cascade: resumed session {SessionId} rehydrated ({Count} recent turns); greeting suppressed",
-                            sessionId, outcome.RecentTurns?.Count ?? 0);
+                        _logger?.CascadeResumeRehydrated(sessionId, outcome.RecentTurns?.Count ?? 0);
                     }
                     else
                     {
@@ -1147,9 +1134,7 @@ internal sealed class CascadeProcessor : IPipelineProcessor
                     return null; // the resume frame itself is fully consumed either way, never replayed
                 }
 
-                _logger?.LogInformation(
-                    "Cascade: resume rejected (reason={Reason}); starting fresh session (session={SessionId})",
-                    outcome.Reason, sessionId);
+                _logger?.CascadeResumeRejected(outcome.Reason, sessionId);
                 await SendTextAsync(browserSocket, new JsonObject
                 {
                     ["type"] = "extension.resume_rejected",
@@ -1200,7 +1185,7 @@ internal sealed class CascadeProcessor : IPipelineProcessor
             }
             catch (Exception ex)
             {
-                _logger?.LogError(ex, "Error handling cascade client's replayed first message (session={SessionId})", sessionId);
+                _logger?.CascadeReplayedFirstMessageFailed(ex, sessionId);
             }
         }
 
@@ -1238,7 +1223,7 @@ internal sealed class CascadeProcessor : IPipelineProcessor
                 }
                 catch (JsonException ex)
                 {
-                    _logger?.LogWarning(ex, "Malformed JSON from cascade browser client, ignoring (session={SessionId})", sessionId);
+                    _logger?.CascadeMalformedJson(ex, sessionId);
                     continue;
                 }
                 if (data is null)
@@ -1252,7 +1237,7 @@ internal sealed class CascadeProcessor : IPipelineProcessor
                 }
                 catch (Exception ex)
                 {
-                    _logger?.LogError(ex, "Error handling cascade client message (session={SessionId})", sessionId);
+                    _logger?.CascadeClientMessageHandlingFailed(ex, sessionId);
                 }
             }
         }
@@ -1262,7 +1247,7 @@ internal sealed class CascadeProcessor : IPipelineProcessor
         }
         catch (WebSocketException ex)
         {
-            _logger?.LogInformation(ex, "Cascade browser WebSocket ended abruptly (session={SessionId})", sessionId);
+            _logger?.CascadeWebSocketEndedAbruptly(ex, sessionId);
         }
         finally
         {
