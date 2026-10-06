@@ -718,7 +718,8 @@ internal sealed class SessionManager
         SweepDetached();
     }
 
-    /// <summary>Background loop (started once from Program.cs, cancelled at app shutdown): scans
+    /// <summary>Background loop (started once by <see cref="SessionSweepService"/>, cancelled at
+    /// app shutdown): scans
     /// for idle/expired sessions every <see cref="SessionsConfig.SweepIntervalSeconds"/>. Mirrors
     /// Python's <c>_idle_check_loop</c>; one process-wide loop, not per-connection, so it is not a
     /// candidate for the CTS-identity cancellation pattern the per-connection timers use.</summary>
