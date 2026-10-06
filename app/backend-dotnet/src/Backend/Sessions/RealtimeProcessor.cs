@@ -406,6 +406,12 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
         var greetingGate = new GreetingGate(
             upstream, promptLoader, state, _sessionManager, _timeProvider, _greetingTimeoutSeconds, sessionId, _logger!, ct);
 
+        // Issue #338: tool-call dispatch (HandleToolCallDoneAsync) is its own collaborator now
+        // (ToolCallDispatcher.cs) -- same logic, same log templates/EventIds, constructed here
+        // with this connection's own upstream/browserSocket/state so the call site below is a
+        // pure delegate.
+        var toolCallDispatcher = new ToolCallDispatcher(upstream, browserSocket, state, _sessionManager, sessionId, _logger!, ct);
+
         JsonObject BuildVoiceUpdateFrame(string newVoice) => new()
         {
             ["type"] = "session.update",
@@ -931,134 +937,6 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
             return message;
         }
 
-        async Task HandleToolCallDoneAsync(JsonObject item)
-        {
-            var callId = GetString(item, "call_id");
-            if (callId is null || !state.ToolsPending.TryGetValue(callId, out var previousItemId))
-            {
-                _logger?.ToolCallNotFoundInPending(callId, sessionId);
-                return;
-            }
-            var toolName = GetString(item, "name") ?? "";
-            if (!state.ToolExecutor.ToolNames.Contains(toolName))
-            {
-                _logger?.UnknownToolRequested(toolName, sessionId);
-                return;
-            }
-
-            // Rick's #244 round-2 review, issue 1: refuse to dispatch once this connection has
-            // been superseded by a resume elsewhere, checked HERE -- synchronously, with no IO --
-            // rather than relying on StaleCts having been cancelled promptly. StaleCts cancellation
-            // now happens from a BACKGROUND task (see HandleResumeFirstFrameAsync) that may still
-            // be mid-flight against a non-draining stale peer, and even when prompt,
-            // OrderToolExecutor.ExecuteAsync is synchronous and ignores its own CancellationToken
-            // entirely -- an in-flight call already past this point would run to completion and
-            // mutate the shared (not thread-safe) OrderState regardless of cancellation. This flag
-            // is set synchronously, under SessionManager's own lock, the instant TryResume captures
-            // this connection as stale (SessionManager.SupersededFlag's own doc comment has the
-            // full reasoning), so it is safe to trust here with no further synchronization.
-            if (state.Superseded.IsSuperseded)
-            {
-                _logger?.ToolCallDroppedSuperseded(toolName, callId, sessionId);
-                return;
-            }
-
-            string outputText;
-            bool sendToClient;
-            string? clientText;
-            try
-            {
-                var argumentsJson = GetString(item, "arguments") ?? "{}";
-                using var argumentsDoc = JsonDocument.Parse(argumentsJson);
-                _logger?.ExecutingTool(toolName, sessionId);
-                var result = await state.ToolExecutor.ExecuteAsync(toolName, argumentsDoc.RootElement.Clone(), ct)
-                    .ConfigureAwait(false);
-                _logger?.ToolResultDirectionLogged(toolName, result.Destination, sessionId);
-                outputText = result.Destination is ToolResultDirection.ToServer or ToolResultDirection.ToBoth
-                    ? result.ToText() : "";
-                sendToClient = result.Destination is ToolResultDirection.ToClient or ToolResultDirection.ToBoth;
-                clientText = sendToClient ? result.ToClientText() : null;
-
-                // Issue #13 tail: track tool call args + result in the context window, mirroring
-                // rtmt.py's ctx_monitor.add_content(item.get("arguments", "")) /
-                // ctx_monitor.add_content(result.to_text()).
-                var ctxMonitorForTool = _sessionManager?.GetContextMonitor(state.EffectiveSessionId);
-                if (ctxMonitorForTool is not null)
-                {
-                    ctxMonitorForTool.AddContent(argumentsJson);
-                    ctxMonitorForTool.AddContent(result.ToText());
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger?.ToolUnhandledException(ex, toolName, sessionId);
-                outputText = "Something went wrong with that action and it did not complete. Don't retry it yet -- " +
-                    "call get_order to confirm the order's current state, then ask the guest to repeat what they'd like.";
-                sendToClient = false;
-                clientText = null;
-
-                // Issue #14, Rick's PR #149 R4 review (Python parity: rtmt.py's post-exception
-                // order_state_singleton.get_order_summary_json read): refresh the guest-visible
-                // order ticket from the session's own current order state -- not from the failed
-                // tool's own result, since it never produced one. Best-effort: only executors that
-                // opt into IOrderTicketSource support this (StubToolExecutor does not), and the
-                // read itself is wrapped separately from the send so a session with no readable
-                // order state yet just skips the refresh instead of losing the function_call_output
-                // below too.
-                if (state.ToolExecutor is IOrderTicketSource ticketSource)
-                {
-                    string? ticketJson = null;
-                    try
-                    {
-                        ticketJson = ticketSource.CurrentOrderSummaryJson;
-                    }
-                    catch (Exception ticketEx)
-                    {
-                        _logger?.TicketRefreshAfterToolFailureFailed(ticketEx, sessionId);
-                    }
-
-                    if (ticketJson is not null)
-                    {
-                        await SendTextAsync(browserSocket, new JsonObject
-                        {
-                            ["type"] = "extension.middle_tier_tool_response",
-                            ["previous_item_id"] = previousItemId,
-                            ["tool_name"] = "get_order",
-                            ["tool_result"] = ticketJson,
-                        }.ToJsonString(), ct).ConfigureAwait(false);
-                    }
-                }
-
-                // Issue #13 Wave 4 (swigerb/SonicAIDriveThru#36, PR #58 re-review "S1"/"S2"):
-                // marks this round failed; HandleResponseDoneAsync's response.done handling below
-                // tallies the round (not the call) exactly once via EndRound().
-                state.ToolFailures.RecordCallFailure();
-            }
-
-            await SendTextAsync(upstream, new JsonObject
-            {
-                ["type"] = "conversation.item.create",
-                ["item"] = new JsonObject
-                {
-                    ["id"] = MiddleTierItemIds.NewId(),
-                    ["type"] = "function_call_output",
-                    ["call_id"] = callId,
-                    ["output"] = outputText,
-                },
-            }.ToJsonString(), ct).ConfigureAwait(false);
-
-            if (sendToClient)
-            {
-                await SendTextAsync(browserSocket, new JsonObject
-                {
-                    ["type"] = "extension.middle_tier_tool_response",
-                    ["previous_item_id"] = previousItemId,
-                    ["tool_name"] = toolName,
-                    ["tool_result"] = clientText,
-                }.ToJsonString(), ct).ConfigureAwait(false);
-            }
-        }
-
         async Task<JsonObject?> HandleResponseDoneAsync(JsonObject message)
         {
             if (await state.RateLimit.OnResponseDoneAsync(message, ct).ConfigureAwait(false))
@@ -1436,7 +1314,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
                 case "response.output_item.done":
                     if (message["item"] is JsonObject doneCallItem && GetString(doneCallItem, "type") == "function_call")
                     {
-                        await HandleToolCallDoneAsync(doneCallItem).ConfigureAwait(false);
+                        await toolCallDispatcher.HandleToolCallDoneAsync(doneCallItem).ConfigureAwait(false);
                     }
                     return null;
 
@@ -1700,7 +1578,9 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
 
     internal static bool TryMatchAppendFastPath(byte[] payload) => FramePump.TryMatchAppendFastPath(payload);
 
-    private static string? GetString(JsonObject? obj, string key) =>
+    // Issue #338: internal (not private) so extracted collaborators (e.g. ToolCallDispatcher) in
+    // the same assembly can reuse it instead of duplicating this JSON helper.
+    internal static string? GetString(JsonObject? obj, string key) =>
         obj?[key] is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
 
     /// <summary>Consumes extension messages that mutate only this session's own order settings
