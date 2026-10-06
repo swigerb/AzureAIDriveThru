@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "leaseKey": "session-ddt-rv-339b",
+  "sessionId": "ddt-rv-339b",
+  "repository": "swigerb/AzureAIDriveThru",
+  "issueNumber": null,
+  "dispatchSource": "local-cli",
+  "route": "aca-job",
+  "executionMode": "aca-job",
+  "state": "claimed",
+  "attempts": 1,
+  "startedAt": "2026-10-06T14:51:59.753Z",
+  "lastHeartbeatAt": "2026-10-06T14:51:59.753Z",
+  "updatedAt": "2026-10-06T14:51:59.753Z",
+  "terminalReason": null,
+  "executionRef": null
+}
