@@ -178,6 +178,14 @@ internal static class EntraAuthentication
         //     below -- not the wrapped inner manager, since Microsoft.IdentityModel.Tokens only
         //     ever tracks LastKnownGoodConfiguration on the OUTERMOST BaseConfigurationManager
         //     JwtBearerHandler was handed.
+        //
+        // Deliberately NOT sourced from IHttpClientFactory: ConfigureJwtBearer is kept a pure,
+        // directly-unit-testable static method with no DI dependency (this type's own doc
+        // comment) -- every test that exercises it constructs JwtBearerOptions directly, with no
+        // running host or service provider at all. A factory-sourced client is only worth the
+        // DI coupling for something used often enough that connection pooling/reuse matters; this
+        // backchannel is used for low-frequency OIDC discovery fetches only, so a plain HttpClient
+        // with its own handler, scoped to this one named options instance, is the simpler choice.
         options.Backchannel ??= new HttpClient(options.BackchannelHttpHandler ?? new HttpClientHandler())
         {
             Timeout = options.BackchannelTimeout,

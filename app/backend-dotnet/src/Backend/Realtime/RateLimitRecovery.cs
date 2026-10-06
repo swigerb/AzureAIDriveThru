@@ -6,6 +6,7 @@
 global using RateLimitSettings = Backend.Shared.RateLimitSettings;
 
 using System.Text.Json.Nodes;
+using Backend.Shared;
 
 namespace Backend.Realtime;
 
@@ -251,7 +252,7 @@ public sealed class RateLimitRecovery
             {
                 if (!t.IsCanceled)
                 {
-                    _ = RunRetryAsync(delaySeconds, attempt, cts);
+                    RunRetryAsync(delaySeconds, attempt, cts).FireAndForget(_logger, nameof(RunRetryAsync));
                 }
             },
             CancellationToken.None,

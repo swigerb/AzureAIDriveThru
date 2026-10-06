@@ -99,6 +99,57 @@
 - **F2, gunicorn boot failure:** `sys.exit` in the app factory raises `SystemExit`, which skips gunicorn's boot-failure halt, so the worker respawns about 100 times in 8 s. `create_runner()` turns it into `RuntimeError` (master exits 3). The CI Docker job never ran the real CMD, so #144 adds a positive boot check (placeholder required env vars, `CANARY` log scan) and a negative one (Production without `AUTH_MODE` exits within 30 s).
 - **Also taken from the non-blocking notes:** log the matched route template, not `request.path` (percent-decoded), and send aiohttp server errors to `gunicorn.error` on purpose.
 - **Lesson:** "fails fast" has to be proven under the real process manager, not only under `python app.py`.
+## 2026-10-06 - Review of #335 (IHttpClientFactory + hosted services), commit `210345b` on `dev` (Beth)
+
+- **Verdict: 🔴 Reject.** The commit message and Beth's log both say "log output unchanged". That's false. Named `AddHttpClient` clients get `LoggingHttpMessageHandler`/`LoggingScopeHttpMessageHandler` by default, and `appsettings.json` only quiets `Microsoft.AspNetCore` (Default=Information). I ran the built backend (Development, endpoints pointed at `127.0.0.1:9`). Each startup connectivity probe now prints four `info: System.Net.Http.HttpClient.connectivity-check.{LogicalHandler,ClientHandler}` lines, two of them with full stack traces. Every search/cascade request at runtime does the same. Neither the old `new HttpClient()` nor Python logs these. That breaks the "logs identical" rule.
+- **Fix, checked by me then reverted:** add `.RemoveAllLoggers()` to each `AddHttpClient(name)` builder. With it, startup output matched the pre-change shape exactly: only the two `⚠️ … unreachable (non-fatal)` warnings. It builds with 0 warnings.
+- **Required, also blocking:** remove history narration from the new comments: "C# review #335 (task 2):", "C# review #335:", "Issue #15 follow-up (#335): … now runs … instead of a raw `_ = Task.Run`", "matching how they were three independent `new HttpClient()` instances before", `SessionSweepService`'s "instead of … The host now owns … used to use directly", and `FireAndForget`'s "(today's actual behavior …)" plus its hard-coded list of call-site classes (it will go stale). Keep only the *why*. Also add a regression test that the factory clients don't log. One option: pull client registration into a small static `IServiceCollection` extension and assert that a request through `CreateClient(name)` produces no `System.Net.Http.HttpClient.*` entries.
+- **Revision owner: Summer** (backend). Beth is locked out of this revision under the reviewer protocol. The change is about 3 lines of code, comment trims and one test. Nothing else needs to change.
+- **Confirmed correct:**
+  - **Timeouts:** search and cascade keep the default 100 s, and connectivity-check sets the 5 s instance `Timeout` after `CreateClient`. `PooledConnectionLifetime=10min` only changes connection recycling and DNS re-resolve, nothing visible on the wire.
+  - **Isolation:** there are three distinct names, each with its own `ConfigurePrimaryHttpMessageHandler` lambda, so no handler is shared.
+  - **Long-lived clients:** `search`/`cascade` are created once and held for the process lifetime. The factory's 2-minute `HandlerLifetime` won't dispose a handler that's still referenced, so `PooledConnectionLifetime` is what handles DNS.
+- **Sweep closure-capture is safe here:** between `Build()` and `sessionManager = new SessionManager(...)`, `Program.cs` only runs sequential statements and `await`s. The single `app.Run()` is near the end of the file, and nothing resolves `IHostedService` early. On fail-fast exits (`return 1`) the factory is never invoked. I saw this happen: a missing-env FATAL exited with code 1 and no NRE. I also confirmed SIGTERM shutdown runs `Host[3]` then `Host[4]` promptly.
+- **Sweep exceptions can't stop the host:** `CloseIdleSessionsAsync` catches per-socket failures and the loop catches everything except OCE. So `BackgroundServiceExceptionBehavior.StopHost` can't fire because of a sweep fault, and the only OCE that can escape comes from the stopping token. Hosted-service start replaces the old pre-`Run()` `Task.Run`. The first loop iteration is the same, so the timing difference doesn't matter.
+- **`FireAndForget` checks out:**
+  - The already-faulted path reads `task.Exception` even when the logger is null, so the exception is still observed. The pending path `await`s it.
+  - OCE and cancellation are skipped, and faults log at Error. Matching Python is arguable but fine: asyncio logs "Task exception was never retrieved" at ERROR too.
+  - I checked the bodies at all 7 sites. Each catches internally, except `AnnounceAfterFirstFrameDecisionAsync`, which Beth called out correctly.
+  - Tests cover a real async fault via TCS and `Task.Run`, not just `Task.FromException`.
+  - Nice-to-have: a test that hooks `TaskScheduler.UnobservedTaskException` and forces GC, to prove the "observed" claim directly.
+- **#336 boundary was respected:** the only new log calls are two plain `logger?.LogError(...)` calls in the helper. There's no `LoggerMessage`/`[LoggerMessage]`, and no existing log call site was touched. Heads-up: `Program.cs` hunks will likely conflict with the #336 branch, so whichever lands second rebases.
+- **Scope:** only `src/Backend` plus `Backend.Tests` changed. `rebrand_baseline.yaml` is untouched and the diff has no brand tokens. No Python in the sandbox, so I couldn't run the rebrand pytest; I grep-checked instead.
+- **Acceptance grep:** zero `_ = Task.Run`/`_ = …Async(` outside comments/the helper itself. One `new HttpClient(` remains (`EntraAuthentication` backchannel). The issue allows documenting why, so it's acceptable.
+- **Non-blocking:** Beth's Entra rationale is overstated. `AddOptions<JwtBearerOptions>(scheme).Configure<IHttpClientFactory>((o, f) => { o.Backchannel = f.CreateClient(...); ConfigureJwtBearer(o, …); })` would work, because `??=` keeps a preassigned client. The real reason is "keep the static method pure, low value for an OIDC-discovery-only client". Trim the 16-line comment to that.
+  - Redundant `using Microsoft.Extensions.DependencyInjection;` (the Web SDK's implicit usings already include it).
+  - `async Task` + `await Task.CompletedTask` in `AlreadyFaultedTask_LogsErrorSynchronously`.
+- **Reproduced myself:** `dotnet build src/Backend -c Release --no-incremental` gave 0 warnings and 0 errors. `dotnet test Backend.Tests -c Release` gave 824/824 passing. I didn't rerun conformance (Beth reports 723/723). It passing while the HTTP log lines are there shows the suite doesn't assert log *absence*.
+- **Lesson:** "Swap `new HttpClient()` for IHttpClientFactory" is not a pure plumbing change. The factory adds logging handlers by default, so check the logs under real config, not only build and tests.
+
+## 2026-10-06 - Re-review of #335, commit `a1922ba` (one-off C# specialist revision of my `210345b` reject)
+
+- **Verdict: 🟡 Approve with minor notes.** Both blocking items are fixed. Nothing new blocks.
+- **Logging leak, fixed:** registration moved to `Backend.Shared.BackendHttpClients.AddBackendHttpClients(lifetime, params ReadOnlySpan<string>)`, and `.RemoveAllLoggers()` is on every builder in the loop. `Program.cs` passes all three names (`search-endpoint`, `cascade-endpoint`, `connectivity-check`).
+  - **Manual rerun:** Development mode, both endpoints pointed at `127.0.0.1:9`. I saw 0 `System.Net.Http.HttpClient.*` lines. The only warns were the pre-existing synthetic-identity `AUTH_MODE` warning plus the two `⚠️ … unreachable (non-fatal)` lines. Startup validation passed, and a SIGTERM shutdown was clean.
+- **Regression test is real:** `BackendHttpClientsTests` uses a plain `ServiceCollection`, a recording provider and a fake primary handler (last `ConfigurePrimaryHttpMessageHandler` wins). I ran the mutation check myself: with `.RemoveAllLoggers()` deleted, the test fails on `Assert.DoesNotContain`. I then reverted the change and the tree is clean. Gap: the test uses one synthetic name rather than the three production names. That's fine, because the loop is uniform.
+- **Narration, fixed:** my exact grep over `src/Backend` returns only the unrelated pre-existing `OrderToolExecutor.cs:75` (#36) hit. The `SessionSweepService` summary and the `FireAndForget` summary (call-site list dropped) are now *why*-only.
+- **Non-blocking notes, all done:**
+  - The Entra comment went from 16 lines to 7: pure static, low-frequency OIDC-only client.
+  - `Program.cs` drops the redundant DI `using`.
+  - `AlreadyFaultedTask_LogsErrorSynchronously` is now a sync `void`.
+- **Leftover nits (don't block, fold into any later touch):**
+  - The redundant `using Microsoft.Extensions.DependencyInjection;` is back in the new `BackendHttpClients.cs`. The Web SDK's implicit usings already cover it.
+  - There's still light history phrasing:
+    - `BackendHttpClients` says "instances these replaced never logged". Better: "these clients must not emit per-request logs".
+    - `Program.cs` says "same place it always was".
+    - The test doc says "Regression test for Rick's #335 review … verified by hand for this revision".
+  - The commit also carried my earlier uncommitted `210345b` review entry into `history.md` verbatim. That's fine, but it went in without a blank line before the heading.
+- **Nothing new found:**
+  - Code changes stay in `src/Backend` and `Backend.Tests`.
+  - No new log calls and no `LoggerMessage`, so #336 is untouched. The `Program.cs` conflict warning still applies.
+  - No brand tokens in added lines, and `rebrand_baseline.yaml` is untouched.
+- **Reproduced myself:** `dotnet build src/Backend -c Release --no-incremental` gave 0 warnings and 0 errors. `dotnet test Backend.Tests -c Release` gave 825/825 passing (824 plus the 1 new test). I didn't rerun conformance; the specialist reports 723/723.
+- **Lesson:** when a fix adds a "no X happens" test, run the mutation check yourself. Here it took 30 seconds and turned "reported verified by hand" into proof.
 ## 2026-10-06 - Review of #336, source-generated LoggerMessage (Beth, `08d524e` on `dev`): 🟡 Approve with notes
 
 - **Scope is correct.** Only the 7 named files and their new `.Log.cs` companions changed. Program.cs, the fire-and-forget call sites (#335) and `rebrand_baseline.yaml` are untouched, and no brand words were added. Beth's inbox note is gitignored, so it isn't in the commit, as expected.
