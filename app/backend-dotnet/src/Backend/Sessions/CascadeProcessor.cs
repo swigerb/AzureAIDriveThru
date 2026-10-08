@@ -8,8 +8,8 @@ using Backend.Models;
 using Backend.Personas;
 using Backend.Prompts;
 using Backend.Realtime;
+using Backend.Shared;
 using Backend.Tools;
-using Microsoft.Extensions.Logging;
 
 namespace Backend.Sessions;
 
@@ -41,15 +41,15 @@ namespace Backend.Sessions;
 /// cascade_processor.py's own <c>create_session</c>), which also creates the session's
 /// <see cref="ContextMonitor"/>; the registry's own end-of-session path removes it. Resume
 /// (<c>extension.resume</c> via <c>NegotiateResumeAsync</c>), idle nudge and the echo-suppression
-/// cooldown mirror the realtime pipeline. <see cref="ExecuteToolCallAsync"/> tracks tool call
+/// cooldown mirror the realtime pipeline. `ExecuteToolCallAsync` tracks tool call
 /// args/result in the context monitor, mirroring cascade_processor.py's own two
 /// <c>ctx_monitor.add_content</c> call sites exactly.
 /// </summary>
-public sealed class CascadeProcessor : IPipelineProcessor
+internal sealed class CascadeProcessor : IPipelineProcessor
 {
-    private const int MaxToolRounds = 8;
-    private const int AudioSampleRate = 24000;
-    private const int TtsChunkBytes = 24000;
+    internal const int MaxToolRounds = 8;
+    internal const int AudioSampleRate = 24000;
+    internal const int TtsChunkBytes = 24000;
 
     private readonly ModelCatalog _catalog;
     private readonly FoundryChatClient _chatClient;
@@ -61,7 +61,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
     private readonly Func<Persona, PromptLoader?, string?, IToolExecutor>? _toolExecutorFactory;
     private readonly IReadOnlySet<string> _allowedVoices;
     private readonly string _defaultVoice;
-    private readonly ILogger? _logger;
+    private readonly ILogger<CascadeProcessor> _logger;
     private readonly TimeProvider _timeProvider;
     // #126: acoustic tail after estimated playback during which mic audio is still dropped.
     // Derived from the same `audio.echo_cooldown_seconds` the realtime pipeline uses, but capped
@@ -82,40 +82,28 @@ public sealed class CascadeProcessor : IPipelineProcessor
 
     public CascadeProcessor(
         ModelCatalog catalog,
-        string foundryEndpoint,
-        string audioEndpoint,
-        AppConfig appConfig,
-        IReadOnlyDictionary<string, PromptLoader> promptLoaders,
-        IToolExecutor toolExecutor,
-        HttpClient httpClient,
-        IReadOnlySet<string>? allowedVoices = null,
-        string defaultVoice = "marin",
-        ILogger? logger = null,
-        IUpstreamBearerTokenProvider? bearerTokenProvider = null,
-        Func<Persona, PromptLoader?, string?, IToolExecutor>? toolExecutorFactory = null,
-        TimeProvider? timeProvider = null,
-        double echoCooldownSeconds = 1.5,
-        SessionManager? sessionManager = null)
+        CascadeProcessorOptions options,
+        CascadeProcessorDependencies dependencies)
     {
         _catalog = catalog;
-        var credential = bearerTokenProvider ?? DefaultAzureCredentialTokenProvider.Instance.Value;
-        _chatClient = new FoundryChatClient(httpClient, foundryEndpoint, credential);
-        _audioClient = new FoundryAudioClient(httpClient, audioEndpoint, credential);
-        _rateLimitSettings = CascadeRateLimitSettings.FromAppConfig(appConfig);
-        _vadConfig = CascadeVadConfig.FromAppConfig(appConfig);
-        _promptLoaders = promptLoaders;
-        _toolExecutor = toolExecutor;
-        _toolExecutorFactory = toolExecutorFactory;
-        _allowedVoices = allowedVoices ?? ClientServerFilter.DefaultAllowedVoices;
-        _defaultVoice = defaultVoice;
-        _logger = logger;
+        var credential = dependencies.BearerTokenProvider ?? DefaultAzureCredentialTokenProvider.Instance.Value;
+        _chatClient = new FoundryChatClient(dependencies.HttpClient, options.FoundryEndpoint, credential);
+        _audioClient = new FoundryAudioClient(dependencies.HttpClient, options.AudioEndpoint, credential);
+        _rateLimitSettings = options.RateLimitSettings;
+        _vadConfig = options.VadConfig;
+        _promptLoaders = dependencies.PromptLoaders;
+        _toolExecutor = dependencies.ToolExecutor;
+        _toolExecutorFactory = dependencies.ToolExecutorFactory;
+        _allowedVoices = options.AllowedVoices;
+        _defaultVoice = options.DefaultVoice;
+        _logger = dependencies.Logger;
         // Issue #13 Wave 2 convention (RealtimeProcessor's own _timeProvider): the rate-limit
         // ladder's wall-clock delays (CascadeRateLimit.WithRetryAsync) are driven from this one
         // clock, so a test can swap in a FakeTimeProvider instead of waiting on the real 0.5-8s
         // delays. Defaults to TimeProvider.System in production.
-        _timeProvider = timeProvider ?? TimeProvider.System;
-        _echoCooldownSeconds = EchoTailSeconds(echoCooldownSeconds);
-        _sessionManager = sessionManager;
+        _timeProvider = dependencies.TimeProvider ?? TimeProvider.System;
+        _echoCooldownSeconds = EchoTailSeconds(options.EchoCooldownSeconds);
+        _sessionManager = dependencies.SessionManager;
     }
 
     public string PipelineName => "cascade";
@@ -130,7 +118,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
 
     /// <summary>Per-connection mutable state -- the C# equivalent of cascade_processor.py's
     /// <c>_CascadeSessionState</c> dataclass.</summary>
-    private sealed class CascadeSessionState
+    internal sealed class CascadeSessionState
     {
         public required string SessionId { get; init; }
         public required string Deployment { get; init; }
@@ -223,6 +211,16 @@ public sealed class CascadeProcessor : IPipelineProcessor
         Task NotifyClientAsync(JsonObject frame, CancellationToken notifyCt) =>
             SendTextAsync(browserSocket, frame.ToJsonString(), notifyCt, ct);
 
+        // Issue #338: chat-completion/tool-call dispatch (CallChatCompletionAsync,
+        // ExecuteToolCallAsync, RunChatToolLoopAsync) is its own collaborator now
+        // (CascadeToolCallDispatcher.cs) -- same logic, same log templates/EventIds, constructed
+        // here with this connection's own toolExecutor/promptLoader/state/toolDefinitions so the
+        // call site below is a pure delegate. NotifyClientAsync stays a delegate onto the local
+        // function above rather than being duplicated inside the new class.
+        var toolCallDispatcher = new CascadeToolCallDispatcher(
+            browserSocket, toolExecutor, promptLoader, state, _rateLimitSettings, _chatClient,
+            toolDefinitions, _sessionManager, sessionId, _timeProvider, NotifyClientAsync, _logger!, ct);
+
         // #126: a monotonic-comparable clock reading for TurnDetector's echo-cooldown deadline
         // math, driven off `_timeProvider` (so a FakeTimeProvider-based test can control it)
         // rather than `DateTime.UtcNow` directly.
@@ -231,6 +229,14 @@ public sealed class CascadeProcessor : IPipelineProcessor
         var turnRegistryLock = new object();
 
         double NowSeconds() => _timeProvider.GetUtcNow().ToUnixTimeMilliseconds() / 1000.0;
+
+        // Issue #338: transcription/TTS-playback/failed-turn-teardown is its own collaborator now
+        // (CascadeAudioTurnPipeline.cs) -- same logic, constructed here with this connection's own
+        // detector/state/persona so the call sites below are pure delegates. NotifyClientAsync and
+        // NowSeconds stay delegates onto the local functions above rather than being duplicated.
+        var audioTurnPipeline = new CascadeAudioTurnPipeline(
+            browserSocket, persona, state, detector, _catalog, _audioClient, _rateLimitSettings,
+            _echoCooldownSeconds, sessionId, _timeProvider, NotifyClientAsync, NowSeconds, _logger!, ct);
 
         async Task CancelCurrentTurnAsync(string reason)
         {
@@ -263,9 +269,9 @@ public sealed class CascadeProcessor : IPipelineProcessor
             }
             catch (Exception ex)
             {
-                _logger?.LogWarning(ex, "Cascade turn ended with an unexpected exception while cancelling it (session={SessionId})", sessionId);
+                _logger?.CascadeTurnCancelException(ex, sessionId);
             }
-            _logger?.LogInformation("Cancelled in-flight cascade turn: {Reason} (session={SessionId})", reason, sessionId);
+            _logger?.CascadeTurnCancelled(reason, sessionId);
             state.CurrentTurnTask = null;
             state.CurrentTurnCts = null;
             cts?.Dispose();
@@ -305,8 +311,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
                 cts?.Dispose();
                 if (wasInFlight)
                 {
-                    _logger?.LogInformation("Cancelled in-flight cascade turn: {Reason} (session={SessionId})",
-                        "guest started speaking (barge-in)", sessionId);
+                    _logger?.CascadeTurnCancelled("guest started speaking (barge-in)", sessionId);
                 }
                 try
                 {
@@ -319,7 +324,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
                 }
                 catch (Exception ex)
                 {
-                    _logger?.LogWarning(ex, "Could not send speech_started after a barge-in (session={SessionId})", sessionId);
+                    _logger?.SpeechStartedSendFailed(ex, sessionId);
                 }
             });
         }
@@ -340,7 +345,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
             }
             catch (Exception ex)
             {
-                _logger?.LogWarning(ex, "Cascade turn ended with an unexpected exception while cancelling it (session={SessionId})", sessionId);
+                _logger?.CascadeTurnCancelException(ex, sessionId);
             }
         }
 
@@ -372,7 +377,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
                 }
                 catch (Exception ex)
                 {
-                    _logger?.LogError(ex, "Unhandled exception in cascade background task '{Label}' (session={SessionId})", label, sessionId);
+                    _logger?.CascadeBackgroundTaskFailed(ex, label, sessionId);
                 }
             });
             return (cts, task);
@@ -417,12 +422,10 @@ public sealed class CascadeProcessor : IPipelineProcessor
                 {
                     // Mid-turn, or the assistant is already speaking -- never stack a nudge on
                     // top of a real turn. One-shot: a skipped nudge is not rescheduled.
-                    _logger?.LogInformation("Cascade: resume nudge skipped, a turn is in flight (session={SessionId})", sessionId);
+                    _logger?.CascadeNudgeSkippedTurnInFlight(sessionId);
                     return;
                 }
-                _logger?.LogInformation(
-                    "Cascade: guest silent {Seconds}s after resume; nudging (session={SessionId})",
-                    _sessionManager!.Config.NudgeAfterSeconds, sessionId);
+                _logger?.CascadeNudgeFiring(_sessionManager!.Config.NudgeAfterSeconds, sessionId);
                 state.Messages.Add(CascadeChatMessage.User(SessionManager.BuildNudgeText(state.RoleName)));
                 await RunTurnAndSpeakAsync(nudgeCt).ConfigureAwait(false);
             }, "nudge");
@@ -446,270 +449,10 @@ public sealed class CascadeProcessor : IPipelineProcessor
                 if (task is not null && !task.IsCompleted)
                 {
                     cts?.Cancel();
-                    _logger?.LogInformation("Cascade: resume nudge cancelled: {Reason} (session={SessionId})", reason, sessionId);
+                    _logger?.CascadeNudgeCancelled(reason, sessionId);
                 }
             }
             cts?.Dispose();
-        }
-
-        async Task<JsonObject> CallChatCompletionAsync(CancellationToken turnCt) =>
-            await CascadeRateLimit.WithRetryAsync(
-                _rateLimitSettings,
-                () => _chatClient.CompleteAsync(state.Messages, state.Deployment, toolDefinitions, turnCt),
-                "chat completion", NotifyClientAsync, sessionId, _logger, turnCt, _timeProvider).ConfigureAwait(false);
-
-        async Task ExecuteToolCallAsync(JsonObject toolCall, string previousItemId, CancellationToken turnCt)
-        {
-            var callId = GetString(toolCall, "id") ?? "";
-            var name = GetString(toolCall["function"] as JsonObject, "name") ?? "";
-            if (!toolExecutor.ToolNames.Contains(name))
-            {
-                _logger?.LogError("Unknown tool requested: {ToolName} (session={SessionId})", name, sessionId);
-                state.Messages.Add(CascadeChatMessage.Tool("", callId));
-                return;
-            }
-
-            string outputText;
-            bool sendToClient;
-            string? clientText;
-            try
-            {
-                // Mirrors Python's `tool_call.function.arguments or "{}"`: treat BOTH a missing
-                // field and an empty string the same way (some tool calls with no parameters come
-                // back as `"arguments": ""`, not an omitted field -- `?? "{}"` alone only covers
-                // the missing-field case and would otherwise send "" into JsonDocument.Parse,
-                // throwing and routing a legitimate no-arg call into the generic error branch below).
-                var rawArguments = GetString(toolCall["function"] as JsonObject, "arguments");
-                var argumentsJson = string.IsNullOrEmpty(rawArguments) ? "{}" : rawArguments;
-                using var argumentsDoc = JsonDocument.Parse(argumentsJson);
-                _logger?.LogInformation("Executing cascade tool '{ToolName}' (session={SessionId})", name, sessionId);
-                var result = await toolExecutor.ExecuteAsync(name, argumentsDoc.RootElement.Clone(), turnCt).ConfigureAwait(false);
-                _logger?.LogInformation("Cascade tool '{ToolName}' result direction={Direction} (session={SessionId})",
-                    name, result.Destination, sessionId);
-
-                // Issue #13 tail: track tool call args + result in the context window, mirroring
-                // cascade_processor.py's own ctx_monitor.add_content(tool_call.function.arguments
-                // or "") / ctx_monitor.add_content(result.to_text()) right after logging the
-                // result.
-                var ctxMonitorForTool = _sessionManager?.GetContextMonitor(sessionId);
-                if (ctxMonitorForTool is not null)
-                {
-                    ctxMonitorForTool.AddContent(argumentsJson);
-                    ctxMonitorForTool.AddContent(result.ToText());
-                }
-
-                outputText = result.Destination is ToolResultDirection.ToServer or ToolResultDirection.ToBoth
-                    ? result.ToText() : "";
-                sendToClient = result.Destination is ToolResultDirection.ToClient or ToolResultDirection.ToBoth;
-                clientText = sendToClient ? result.ToClientText() : null;
-            }
-            catch (OperationCanceledException) when (turnCt.IsCancellationRequested)
-            {
-                // Python's mirror-image `except Exception:` here (cascade_processor.py's
-                // `_execute_tool_call`) never catches cancellation in the first place --
-                // `asyncio.CancelledError` derives from `BaseException`, not `Exception`. C#'s
-                // `OperationCanceledException` DOES derive from `Exception`, so without this
-                // clause a guest barging in mid-tool-call would get logged as a tool failure and
-                // a synthetic "something went wrong" error message appended to history, instead
-                // of the turn just quietly ending the way barge-in (`BargeIn`) expects.
-                //
-                // #236 Rick re-review item 3 (LOW): the `when` guard matters -- an
-                // `OperationCanceledException` can also come from an HttpClient-internal timeout
-                // (a `TaskCanceledException`, which derives from `OperationCanceledException`)
-                // that has NOTHING to do with a barge-in -- `turnCt` itself was never cancelled.
-                // Without this guard, that would be misclassified as "the turn was barged in on"
-                // and silently swallowed here (re-thrown, then silently absorbed by `Spawn`'s own
-                // catch), with no log and no `response.done` ever reaching the guest. Filtering on
-                // `turnCt.IsCancellationRequested` means a genuine non-barge-in timeout instead
-                // falls through to the `catch (Exception ex)` below, which DOES log it and still
-                // lets the turn finish (synthetic tool-failure message, `response.done` still sent).
-                throw;
-            }
-            catch (Exception ex)
-            {
-                _logger?.LogError(ex, "Cascade tool '{ToolName}' raised an unhandled exception (session={SessionId})", name, sessionId);
-                outputText = promptLoader?.RenderError("tool_execution_failed") ??
-                    "Something went wrong with that action and it did not complete. Don't retry it yet -- " +
-                    "call get_order to confirm the order's current state, then ask the guest to repeat what they'd like.";
-                sendToClient = false;
-                clientText = null;
-
-                if (toolExecutor is IOrderTicketSource ticketSource)
-                {
-                    string? ticketJson = null;
-                    try
-                    {
-                        ticketJson = ticketSource.CurrentOrderSummaryJson;
-                    }
-                    catch (Exception ticketEx)
-                    {
-                        _logger?.LogWarning(ticketEx,
-                            "Could not read order state to refresh the ticket after a cascade tool failure (session={SessionId})",
-                            sessionId);
-                    }
-                    if (ticketJson is not null)
-                    {
-                        await SendTextAsync(browserSocket, new JsonObject
-                        {
-                            ["type"] = "extension.middle_tier_tool_response",
-                            ["previous_item_id"] = previousItemId,
-                            ["tool_name"] = "get_order",
-                            ["tool_result"] = ticketJson,
-                        }.ToJsonString(), turnCt, ct).ConfigureAwait(false);
-                    }
-                }
-            }
-
-            state.Messages.Add(CascadeChatMessage.Tool(outputText, callId));
-            if (sendToClient)
-            {
-                await SendTextAsync(browserSocket, new JsonObject
-                {
-                    ["type"] = "extension.middle_tier_tool_response",
-                    ["previous_item_id"] = previousItemId,
-                    ["tool_name"] = name,
-                    ["tool_result"] = clientText,
-                }.ToJsonString(), turnCt, ct).ConfigureAwait(false);
-            }
-        }
-
-        async Task<string> RunChatToolLoopAsync(CancellationToken turnCt)
-        {
-            for (var round = 0; round < MaxToolRounds; round++)
-            {
-                var message = await CallChatCompletionAsync(turnCt).ConfigureAwait(false);
-                var toolCalls = message["tool_calls"] as JsonArray;
-                if (toolCalls is null || toolCalls.Count == 0)
-                {
-                    var content = GetString(message, "content") ?? "";
-                    state.Messages.Add(CascadeChatMessage.Assistant(content));
-                    return content;
-                }
-
-                var preRoundCount = state.Messages.Count;
-                state.Messages.Add((JsonObject)message.DeepClone());
-                var previousItemId = MiddleTierItemIds.NewId();
-                try
-                {
-                    foreach (var toolCallNode in toolCalls)
-                    {
-                        if (toolCallNode is JsonObject toolCall)
-                        {
-                            await ExecuteToolCallAsync(toolCall, previousItemId, turnCt).ConfigureAwait(false);
-                        }
-                    }
-                }
-                catch
-                {
-                    // #247: a barge-in (`OperationCanceledException`, re-thrown unchanged by
-                    // `ExecuteToolCallAsync`'s own `when (turnCt.IsCancellationRequested)` guard)
-                    // or any other failure mid-round can leave some of this round's `toolCalls`
-                    // ids answered (a tool message appended) and others not. A chat API that sees
-                    // an assistant `tool_calls` message without a matching tool message for EVERY
-                    // id 400s the next request -- exactly what the fake chat server in the
-                    // conformance scenario enforces. Rather than appending neutral placeholder
-                    // tool messages for the unanswered ids, truncate the whole round back out of
-                    // `state.Messages`: history is then always either "fully pre-round" or "fully
-                    // post-round", never partially answered, and the next turn's model can always
-                    // re-discover real-world state via `get_order` (the same tool-failure-recovery
-                    // instruction `ExecuteToolCallAsync` already gives it), so nothing is actually
-                    // lost. A tool that already mutated the order (e.g. `update_order`) keeps its
-                    // real-world effect -- the order store is untouched by this truncation.
-                    state.Messages.RemoveRange(preRoundCount, state.Messages.Count - preRoundCount);
-                    throw;
-                }
-            }
-            _logger?.LogWarning("Cascade chat-tool loop hit its {MaxRounds}-round cap without a final answer (session={SessionId})",
-                MaxToolRounds, sessionId);
-            return "";
-        }
-
-        async Task<string> TranscribeAsync(byte[] turnAudio, CancellationToken turnCt)
-        {
-            var cascadeAudio = _catalog.CascadeAudio
-                ?? throw new InvalidOperationException("config.yaml has no models.cascade transcription/tts configured.");
-            var deployment = _catalog.DeploymentFor(cascadeAudio.Transcription)
-                ?? throw new InvalidOperationException(
-                    $"Cascade transcription model '{cascadeAudio.Transcription}' has no AZURE_AI_MODEL_DEPLOYMENTS entry.");
-            return await CascadeRateLimit.WithRetryAsync(
-                _rateLimitSettings,
-                () => _audioClient.TranscribeAsync(turnAudio, deployment, AudioSampleRate, turnCt),
-                "transcription", NotifyClientAsync, sessionId, _logger, turnCt, _timeProvider).ConfigureAwait(false);
-        }
-
-        async Task SpeakAsync(string text, CancellationToken turnCt)
-        {
-            var cascadeAudio = _catalog.CascadeAudio
-                ?? throw new InvalidOperationException("config.yaml has no models.cascade transcription/tts configured.");
-            var deployment = _catalog.DeploymentFor(cascadeAudio.Tts)
-                ?? throw new InvalidOperationException(
-                    $"Cascade TTS model '{cascadeAudio.Tts}' has no AZURE_AI_MODEL_DEPLOYMENTS entry.");
-            // Issue #304: apply this persona's own phonetic pronunciation lexicon ONLY to the TTS
-            // input text -- never to the chat transcript/history sent to the browser (that still
-            // carries the unmodified `text`). Mirrors cascade_processor.py's
-            // `_apply_pronunciations`/`_speak`.
-            var ttsText = persona.Pronunciations is { Count: > 0 } pronunciations
-                ? MenuCatalog.ApplyLexicon(text, pronunciations)
-                : text;
-            await CascadeRateLimit.WithRetryAsync(
-                _rateLimitSettings,
-                async () =>
-                {
-                    var pcm = await _audioClient.SpeakAsync(ttsText, state.Voice, deployment, turnCt).ConfigureAwait(false);
-                    if (_echoCooldownSeconds > 0)
-                    {
-                        // #126: arm echo suppression for the GUEST'S estimated speaker playback
-                        // of this reply (not this loop's own fast send time) plus a short acoustic
-                        // tail (`_echoCooldownSeconds`, capped at 300ms in the constructor).
-                        // 0 disables suppression entirely, identically to cascade_processor.py's
-                        // `_speak`. PCM16 mono => 2 bytes/sample.
-                        var durationSeconds = pcm.Length / (double)(AudioSampleRate * 2);
-                        detector.StartEchoCooldown(durationSeconds + _echoCooldownSeconds, NowSeconds());
-                    }
-                    for (var offset = 0; offset < pcm.Length; offset += TtsChunkBytes)
-                    {
-                        var chunkLength = Math.Min(TtsChunkBytes, pcm.Length - offset);
-                        var chunk = pcm.AsSpan(offset, chunkLength).ToArray();
-                        await SendTextAsync(browserSocket, new JsonObject
-                        {
-                            ["type"] = "response.audio.delta",
-                            ["delta"] = Convert.ToBase64String(chunk),
-                        }.ToJsonString(), turnCt, ct).ConfigureAwait(false);
-                    }
-                },
-                "text-to-speech", NotifyClientAsync, sessionId, _logger, turnCt, _timeProvider).ConfigureAwait(false);
-        }
-
-        async Task SendFailedResponseDoneAsync(string responseId, string message, CancellationToken turnCt)
-        {
-            // #262: closes out a turn that failed (non-429) after `response.created` was already
-            // sent, so the browser is never left thinking a response is still in progress. Shape
-            // mirrors the Realtime API's own failed-response `response.done` (`status: "failed"`,
-            // `status_details.error`) -- see RealtimeProcessor's own passthrough of upstream's
-            // `response.done`, which never needs to construct this shape itself -- so the
-            // frontend's shared `onReceivedResponseDone` handler needs no cascade-specific
-            // branch, just a `status` check. The plain `error` event mirrors the Realtime API's
-            // own `error` passthrough (upstream protocol errors reach the browser the same way).
-            await SendTextAsync(browserSocket, new JsonObject
-            {
-                ["type"] = "error",
-                ["error"] = new JsonObject { ["type"] = "server_error", ["message"] = message },
-            }.ToJsonString(), turnCt, ct).ConfigureAwait(false);
-            await SendTextAsync(browserSocket, new JsonObject
-            {
-                ["type"] = "response.done",
-                ["response"] = new JsonObject
-                {
-                    ["id"] = responseId,
-                    ["status"] = "failed",
-                    ["status_details"] = new JsonObject
-                    {
-                        ["type"] = "failed",
-                        ["error"] = new JsonObject { ["type"] = "server_error", ["message"] = message },
-                    },
-                    ["output"] = new JsonArray(),
-                },
-            }.ToJsonString(), turnCt, ct).ConfigureAwait(false);
         }
 
         async Task RunTurnAndSpeakAsync(CancellationToken turnCt)
@@ -724,9 +467,9 @@ public sealed class CascadeProcessor : IPipelineProcessor
             string finalText;
             try
             {
-                finalText = await RunChatToolLoopAsync(turnCt).ConfigureAwait(false);
+                finalText = await toolCallDispatcher.RunChatToolLoopAsync(turnCt).ConfigureAwait(false);
             }
-            catch (CascadeRateLimitExhausted)
+            catch (CascadeRateLimitExhaustedException)
             {
                 await SendTextAsync(browserSocket, new JsonObject
                 {
@@ -752,8 +495,8 @@ public sealed class CascadeProcessor : IPipelineProcessor
                 // Send a terminal `response.done` (failed status) plus a best-effort `error`
                 // event instead. The 429 path and barge-in (both just above) are unaffected --
                 // this `catch` only ever reaches OTHER failures.
-                _logger?.LogError(ex, "Cascade chat completion failed (session={SessionId})", sessionId);
-                await SendFailedResponseDoneAsync(responseId, "chat completion failed", turnCt).ConfigureAwait(false);
+                _logger?.CascadeChatCompletionFailed(ex, sessionId);
+                await audioTurnPipeline.SendFailedResponseDoneAsync(responseId, "chat completion failed", turnCt).ConfigureAwait(false);
                 return;
             }
 
@@ -771,9 +514,9 @@ public sealed class CascadeProcessor : IPipelineProcessor
 
                 try
                 {
-                    await SpeakAsync(finalText, turnCt).ConfigureAwait(false);
+                    await audioTurnPipeline.SpeakAsync(finalText, turnCt).ConfigureAwait(false);
                 }
-                catch (CascadeRateLimitExhausted)
+                catch (CascadeRateLimitExhaustedException)
                 {
                     // Already notified via the final extension.rate_limited frame -- nothing more to do.
                 }
@@ -796,8 +539,8 @@ public sealed class CascadeProcessor : IPipelineProcessor
                     // frontend as if the turn had succeeded with no audio. Report it the same way
                     // chat-completion failures are now reported, instead of a quiet, misleading
                     // "success".
-                    _logger?.LogWarning(ex, "Cascade TTS failed for this turn's final answer (session={SessionId})", sessionId);
-                    await SendFailedResponseDoneAsync(responseId, "text-to-speech failed", turnCt).ConfigureAwait(false);
+                    _logger?.CascadeTtsFailed(ex, sessionId);
+                    await audioTurnPipeline.SendFailedResponseDoneAsync(responseId, "text-to-speech failed", turnCt).ConfigureAwait(false);
                     return;
                 }
             }
@@ -822,9 +565,9 @@ public sealed class CascadeProcessor : IPipelineProcessor
             string transcript;
             try
             {
-                transcript = await TranscribeAsync(turnAudio, turnCt).ConfigureAwait(false);
+                transcript = await audioTurnPipeline.TranscribeAsync(turnAudio, turnCt).ConfigureAwait(false);
             }
-            catch (CascadeRateLimitExhausted)
+            catch (CascadeRateLimitExhaustedException)
             {
                 return;
             }
@@ -839,7 +582,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
             }
             catch (Exception ex)
             {
-                _logger?.LogError(ex, "Cascade transcription failed (session={SessionId})", sessionId);
+                _logger?.CascadeTranscriptionFailed(ex, sessionId);
                 return;
             }
             if (string.IsNullOrWhiteSpace(transcript))
@@ -878,12 +621,12 @@ public sealed class CascadeProcessor : IPipelineProcessor
             }
             catch (Exception ex)
             {
-                _logger?.LogWarning(ex, "Could not extract greeting text from prompt_loader.greeting (session={SessionId})", sessionId);
+                _logger?.CascadeGreetingExtractFailed(ex, sessionId);
                 return;
             }
             if (string.IsNullOrEmpty(text))
             {
-                _logger?.LogWarning("prompt_loader.greeting had no usable item.content[0].text (session={SessionId})", sessionId);
+                _logger?.CascadeGreetingTextMissing(sessionId);
                 return;
             }
 
@@ -904,83 +647,81 @@ public sealed class CascadeProcessor : IPipelineProcessor
             switch (type)
             {
                 case "input_audio_buffer.append":
-                {
-                    var audioB64 = GetString(data, "audio");
-                    if (string.IsNullOrEmpty(audioB64))
                     {
-                        return;
-                    }
-                    byte[] pcm;
-                    try
-                    {
-                        pcm = Convert.FromBase64String(audioB64);
-                    }
-                    catch (FormatException)
-                    {
-                        return;
-                    }
-                    if (state.NudgeEligible && !state.NudgeArmed)
-                    {
-                        // #126 (mirrors rtmt.py's `nudge_awaiting_client_live` gate): arm the
-                        // one-shot resume nudge the first time THIS socket's guest proves the
-                        // conversation is live -- its own first streamed mic chunk -- never
-                        // merely because the resume handshake itself succeeded. Latched so this
-                        // only ever fires once per connection.
-                        state.NudgeArmed = true;
-                        ScheduleNudge();
-                    }
-                    var vadEvent = detector.Feed(pcm, NowSeconds());
-                    if (vadEvent == "speech_started")
-                    {
-                        // #126: real guest activity -- reset (cancel, never reschedule) any
-                        // pending resume nudge, same one-shot semantics as rtmt.py's own
-                        // `cancel_nudge`. Runs BEFORE BargeIn: a pending nudge is cancelled
-                        // under the registry lock, and one that already fired is a
-                        // CurrentTurnTask that BargeIn then cancels like any other turn.
-                        CancelNudge("guest started speaking");
-                        BargeIn();
-                    }
-                    else if (vadEvent == "speech_stopped")
-                    {
-                        CancelNudge("guest turn started");
-                        var turnAudio = detector.TakeBuffer();
-                        detector.Reset();
-                        var bargeInTail = state.BargeInTail;
-                        var (cts, task) = Spawn(async turnCt =>
+                        var audioB64 = GetString(data, "audio");
+                        if (string.IsNullOrEmpty(audioB64))
                         {
-                            // Never overlap the turn a barge-in just cut off (see BargeIn).
-                            if (bargeInTail is not null)
+                            return;
+                        }
+                        byte[] pcm;
+                        try
+                        {
+                            pcm = Convert.FromBase64String(audioB64);
+                        }
+                        catch (FormatException)
+                        {
+                            return;
+                        }
+                        if (state.NudgeEligible && !state.NudgeArmed)
+                        {
+                            // #126 (mirrors rtmt.py's `nudge_awaiting_client_live` gate): arm the
+                            // one-shot resume nudge the first time THIS socket's guest proves the
+                            // conversation is live -- its own first streamed mic chunk -- never
+                            // merely because the resume handshake itself succeeded. Latched so this
+                            // only ever fires once per connection.
+                            state.NudgeArmed = true;
+                            ScheduleNudge();
+                        }
+                        var vadEvent = detector.Feed(pcm, NowSeconds());
+                        if (vadEvent == "speech_started")
+                        {
+                            // #126: real guest activity -- reset (cancel, never reschedule) any
+                            // pending resume nudge, same one-shot semantics as rtmt.py's own
+                            // `cancel_nudge`. Runs BEFORE BargeIn: a pending nudge is cancelled
+                            // under the registry lock, and one that already fired is a
+                            // CurrentTurnTask that BargeIn then cancels like any other turn.
+                            CancelNudge("guest started speaking");
+                            BargeIn();
+                        }
+                        else if (vadEvent == "speech_stopped")
+                        {
+                            CancelNudge("guest turn started");
+                            var turnAudio = detector.TakeBuffer();
+                            detector.Reset();
+                            var bargeInTail = state.BargeInTail;
+                            var (cts, task) = Spawn(async turnCt =>
                             {
-                                await bargeInTail.WaitAsync(turnCt).ConfigureAwait(false);
-                            }
-                            await ProcessTurnAsync(turnAudio, turnCt).ConfigureAwait(false);
-                        }, "turn");
-                        state.CurrentTurnCts = cts;
-                        state.CurrentTurnTask = task;
+                                // Never overlap the turn a barge-in just cut off (see BargeIn).
+                                if (bargeInTail is not null)
+                                {
+                                    await bargeInTail.WaitAsync(turnCt).ConfigureAwait(false);
+                                }
+                                await ProcessTurnAsync(turnAudio, turnCt).ConfigureAwait(false);
+                            }, "turn");
+                            state.CurrentTurnCts = cts;
+                            state.CurrentTurnTask = task;
+                        }
+                        break;
                     }
-                    break;
-                }
                 case "input_audio_buffer.clear":
                     detector.Reset();
                     break;
                 case "extension.set_voice":
-                {
-                    // #236 Rick re-review item 2 (MEDIUM, blocking): mirror RealtimeProcessor's
-                    // HandleClientExtensionMessageAsync (~line 306) exactly -- go through the same
-                    // allow-list check rather than accepting any non-empty string, and log (rather
-                    // than silently drop) an unknown/invalid voice.
-                    var candidate = GetString(data, "voice");
-                    var newVoice = ClientServerFilter.SanitizeVoice(candidate, _allowedVoices);
-                    if (newVoice is null)
                     {
-                        _logger?.LogWarning(
-                            "Dropped extension.set_voice with an unknown/invalid voice {Voice} (session={SessionId})",
-                            candidate, sessionId);
+                        // #236 Rick re-review item 2 (MEDIUM, blocking): mirror RealtimeProcessor's
+                        // HandleClientExtensionMessageAsync (~line 306) exactly -- go through the same
+                        // allow-list check rather than accepting any non-empty string, and log (rather
+                        // than silently drop) an unknown/invalid voice.
+                        var candidate = GetString(data, "voice");
+                        var newVoice = ClientServerFilter.SanitizeVoice(candidate, _allowedVoices);
+                        if (newVoice is null)
+                        {
+                            _logger?.CascadeSetVoiceDropped(candidate, sessionId);
+                            break;
+                        }
+                        state.Voice = newVoice;
                         break;
                     }
-                    state.Voice = newVoice;
-                    break;
-                }
                 case "extension.resume":
                     // #126: this connection's own first frame was ALREADY consumed (and, if it
                     // looked like a resume attempt, already decided) by the pre-loop negotiation
@@ -1011,9 +752,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
             }
             catch (Exception ex)
             {
-                _logger?.LogWarning(ex,
-                    "Could not read order state while building a session-resumed announcement (session={SessionId})",
-                    sessionId);
+                _logger?.CascadeOrderStateReadFailed(ex, sessionId);
                 return "{}";
             }
         }
@@ -1104,23 +843,18 @@ public sealed class CascadeProcessor : IPipelineProcessor
                     }
                     if (outcome.StaleWs is { } staleWs)
                     {
-                        _ = Task.Run(
-                            () => RealtimeProcessor.CloseSupersededStaleConnectionAsync(
-                                staleWs, outcome.StaleCts, RealtimeProcessor.SupersededCloseTimeout, _logger),
-                            CancellationToken.None);
+                        Task.Run(
+                            () => FramePump.CloseSupersededStaleConnectionAsync(
+                                staleWs, outcome.StaleCts, FramePump.SupersededCloseTimeout, _logger),
+                            CancellationToken.None).FireAndForget(_logger, nameof(FramePump.CloseSupersededStaleConnectionAsync));
                     }
                     var orderSummaryJson = toolExecutor is IOrderTicketSource ticketSource
                         ? SafeOrderSummaryJson(ticketSource)
                         : "{}";
-                    await SendTextAsync(browserSocket, new JsonObject
-                    {
-                        ["type"] = "extension.session_resumed",
-                        ["order_summary"] = JsonNode.Parse(orderSummaryJson) ?? new JsonObject(),
-                        ["session_token"] = identifiers.SessionToken,
-                        ["round_trip_index"] = identifiers.RoundTripIndex,
-                        ["round_trip_token"] = identifiers.RoundTripToken,
-                        ["resume_id"] = outcome.ResumeId,
-                    }.ToJsonString(), ct, ct).ConfigureAwait(false);
+                    await SendTextAsync(
+                        browserSocket,
+                        ResumeEnvelope.BuildSessionResumedFrame(identifiers, orderSummaryJson, outcome.ResumeId).ToJsonString(),
+                        ct, ct).ConfigureAwait(false);
 
                     if (outcome.ConversationStarted)
                     {
@@ -1134,9 +868,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
                         {
                             state.NudgeEligible = true;
                         }
-                        _logger?.LogInformation(
-                            "Cascade: resumed session {SessionId} rehydrated ({Count} recent turns); greeting suppressed",
-                            sessionId, outcome.RecentTurns?.Count ?? 0);
+                        _logger?.CascadeResumeRehydrated(sessionId, outcome.RecentTurns?.Count ?? 0);
                     }
                     else
                     {
@@ -1147,14 +879,10 @@ public sealed class CascadeProcessor : IPipelineProcessor
                     return null; // the resume frame itself is fully consumed either way, never replayed
                 }
 
-                _logger?.LogInformation(
-                    "Cascade: resume rejected (reason={Reason}); starting fresh session (session={SessionId})",
-                    outcome.Reason, sessionId);
-                await SendTextAsync(browserSocket, new JsonObject
-                {
-                    ["type"] = "extension.resume_rejected",
-                    ["reason"] = outcome.Reason,
-                }.ToJsonString(), ct, ct).ConfigureAwait(false);
+                _logger?.CascadeResumeRejected(outcome.Reason, sessionId);
+                await SendTextAsync(
+                    browserSocket, ResumeEnvelope.BuildResumeRejectedFrame(outcome.Reason).ToJsonString(), ct, ct)
+                    .ConfigureAwait(false);
                 // Falls through to the fresh path below -- the resume frame is fully consumed
                 // either way, accepted or rejected.
             }
@@ -1163,11 +891,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
             // connection's own identity and start the greeting -- the exact pre-#126
             // unconditional behaviour.
             var resumeId = _sessionManager.IssueResumeId(sessionId);
-            var metadataFrame = identifiers.ToFrame("extension.session_metadata");
-            if (resumeId is not null)
-            {
-                metadataFrame["resumeId"] = resumeId;
-            }
+            var metadataFrame = ResumeEnvelope.BuildSessionMetadataFrame(identifiers, resumeId);
             await SendTextAsync(browserSocket, metadataFrame.ToJsonString(), ct, ct).ConfigureAwait(false);
             var (freshGreetingCts, freshGreetingTask) = Spawn(SendGreetingAsync, "greeting");
             state.CurrentTurnCts = freshGreetingCts;
@@ -1200,7 +924,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
             }
             catch (Exception ex)
             {
-                _logger?.LogError(ex, "Error handling cascade client's replayed first message (session={SessionId})", sessionId);
+                _logger?.CascadeReplayedFirstMessageFailed(ex, sessionId);
             }
         }
 
@@ -1238,7 +962,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
                 }
                 catch (JsonException ex)
                 {
-                    _logger?.LogWarning(ex, "Malformed JSON from cascade browser client, ignoring (session={SessionId})", sessionId);
+                    _logger?.CascadeMalformedJson(ex, sessionId);
                     continue;
                 }
                 if (data is null)
@@ -1252,7 +976,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
                 }
                 catch (Exception ex)
                 {
-                    _logger?.LogError(ex, "Error handling cascade client message (session={SessionId})", sessionId);
+                    _logger?.CascadeClientMessageHandlingFailed(ex, sessionId);
                 }
             }
         }
@@ -1262,7 +986,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
         }
         catch (WebSocketException ex)
         {
-            _logger?.LogInformation(ex, "Cascade browser WebSocket ended abruptly (session={SessionId})", sessionId);
+            _logger?.CascadeWebSocketEndedAbruptly(ex, sessionId);
         }
         finally
         {
@@ -1284,7 +1008,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
     ///
     /// #236 Rick re-review item 1 (HIGH, blocking): .NET's <c>ManagedWebSocket</c> (the
     /// implementation behind both Kestrel's server-side <see cref="WebSocket"/> and
-    /// <see cref="WebSocket.CreateFromStream"/>) treats a cancelled in-flight <c>SendAsync</c> as a
+    /// <c>WebSocket.CreateFromStream(...)</c>) treats a cancelled in-flight <c>SendAsync</c> as a
     /// fatal, unrecoverable transport error: cancelling it mid-write aborts the ENTIRE socket, not
     /// just that one call. <c>BargeIn</c> cancels a turn's own
     /// <c>CurrentTurnCts</c>/<c>turnCt</c> on barge-in while the SESSION (and its socket) must keep
@@ -1304,7 +1028,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
     /// turn from issuing any FURTHER sends, preserving the original "stop talking once barged in
     /// on" behaviour.
     /// </summary>
-    private static async Task SendTextAsync(WebSocket socket, string payload, CancellationToken turnCt, CancellationToken socketCt)
+    internal static async Task SendTextAsync(WebSocket socket, string payload, CancellationToken turnCt, CancellationToken socketCt)
     {
         turnCt.ThrowIfCancellationRequested();
         if (socket.State != WebSocketState.Open)
@@ -1318,7 +1042,7 @@ public sealed class CascadeProcessor : IPipelineProcessor
     /// <summary>Duplicated from <see cref="RealtimeProcessor"/>'s own private helper of the same
     /// name -- a defensive string read that never throws for a malformed/missing/non-string field,
     /// used for every piece of JSON this class reads off the wire or an upstream REST response.</summary>
-    private static string? GetString(JsonObject? obj, string key) =>
+    internal static string? GetString(JsonObject? obj, string key) =>
         obj?[key] is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
 
     /// <summary>Duplicated from <see cref="RealtimeProcessor"/>'s own private helper of the same

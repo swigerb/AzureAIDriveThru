@@ -428,3 +428,39 @@
 - First pass tripped `test_rebrand_verification.py`'s inverted brand-word guard twice: an explanatory comment in Sonic's own `error_messages.yaml` that named "Dunkin" (a persona pack may only reference its own brand -- reworded to drop the brand name entirely), and a `test_prompt_loading.py` Dunkin-parity test plus wording that pushed the file's own "sonic" baseline hit count from 11 to 13 (no baseline entry covers a rise). Fixed by dropping the redundant Dunkin-pack test (out of this issue's stated scope) and folding the Sonic key-completeness assertion into the existing `test_sonic_error_messages_populated` test body instead of adding a new test method with its own `PromptLoader(brand="sonic")` line -- net zero new "sonic" hits, baseline stayed at 11 with no ratchet needed. `regenerate_rebrand_baseline.py` (lower-only, no `--allow-increase`) confirmed byte-identical output afterward.
 - **Mutation proof, both languages**: temporarily removed the `_validate_error_messages()` call from `_load_all()` -- exactly the 2 targeted Python tests failed (`DID NOT RAISE ValueError`), all others green; restored, all green again. Same for C#: removed the `ValidateErrorMessages(ErrorMessages)` call from the constructor -- exactly the 2 targeted C# tests failed (`No exception was thrown`), 11/13 still green; restored, 13/13 green again.
 - Validation (final, this session): `python -m pytest -q` **1178 passed, 168 subtests passed**, 0 failed (the 7 pre-existing `test_app.py`/`test_performance.py` static-file failures seen before building the frontend were confirmed pre-existing via `git stash`, unrelated to this change, and cleared once `npm ci && npm run build` produced `app/backend/static`). `ruff check .` clean. C# `dotnet test` (`app/backend-dotnet`, .NET 11 RC1 SDK, PATH/DOTNET_ROOT scoped to this process only) **106 passed, 0 failed**. Full conformance suite, both legs: dotnet backend (`Dotnet=ready&Category!=Browser`) **36/36**, python backend (`Category!=Browser`) **669/669**.
+
+## 2026-10-06 — PR #339 review fixes (Rick finding 4 + note 6)
+
+- Restored the broad best-effort `catch (Exception)` in both Foundry REST clients' `ReadBodySafelyAsync()` helpers, with an explicit why-comment, so buffered non-2xx responses with invalid `charset=` values still degrade to an empty body and preserve the original `FoundryHttpException(429, ...)` retry path.
+- Added regression coverage in `FoundryChatClientTests` and `FoundryAudioClientTests` for a 429 response whose `Content-Type` advertises `charset=bogus-charset`; both now assert the call still surfaces as `FoundryHttpException` with status 429 instead of leaking `InvalidOperationException`.
+- Cleared the remaining XML-doc hygiene warnings by replacing the ambiguous `WebSocket.CreateFromStream` cref in `CascadeProcessor.cs` with `<c>WebSocket.CreateFromStream(...)</c>` text and by swapping `ToolResult.cs`'s private-field crefs (`_text`, `_clientText`, `_payload`) to `<c>` tags.
+
+## 2026-10-06T16:14:34Z — Issue #337 backend DI/logging/options slice
+- Read charter/decisions/history, mapped Program.cs/manual startup wiring, optional logger call sites, env-var reads, and conformance commands.
+- Commit `e0649d2` `Fix #337: register backend services in DI`
+  - Registered process-wide services in DI (`SessionManager`, processors, registries, token service, prompt loader registry, tool-executor factory, named HttpClients, hosted session sweep).
+  - Switched `SessionSweepService` to constructor-injected `SessionManager`, updated `SessionManager.RunSweepLoopAsync` summary, and added the hosted-service shutdown why-comment.
+  - Validation: `dotnet build Backend.slnx --no-restore -warnaserror` ✅, `dotnet test tests/Backend.Tests/Backend.Tests.csproj --no-build -warnaserror` ✅ (825/825).
+- Commit `90ea665` `Fix #337: inject typed loggers`
+  - Removed optional `ILogger?` patterns from backend code, switched to typed loggers, updated tests to pass `NullLogger<T>`, and guarded `AnnounceAfterFirstFrameDecisionAsync`'s post-decision browser send path so a mid-send close stays best-effort.
+  - Validation: `dotnet build Backend.slnx --no-restore -warnaserror` ✅, `dotnet test tests/Backend.Tests/Backend.Tests.csproj --no-build -warnaserror` ✅ (825/825).
+- Commit `7542589` `Fix #337: group processor constructor options`
+  - Grouped `RealtimeProcessor`, `CascadeProcessor`, and `SearchTool` constructor inputs into typed options/dependency records so the main production constructors stay under the requested parameter ceiling.
+  - Validation: `dotnet build Backend.slnx --no-restore -warnaserror` ✅, `dotnet test tests/Backend.Tests/Backend.Tests.csproj --no-build -warnaserror` ✅ (825/825).
+- In-progress final slice:
+  - Centralized backend environment variable names/reads behind `BackendEnvironment` and removed direct `Environment.GetEnvironmentVariable(...)` calls from backend production files.
+  - Validation so far: `dotnet build Backend.slnx --no-restore -warnaserror` ✅, `dotnet test tests/Backend.Tests/Backend.Tests.csproj --no-build -warnaserror` ✅ (825/825).
+  - `dotnet test tests/conformance/Conformance.slnx --filter "Dotnet=ready&Category!=Browser"` could not complete meaningfully in this environment because the harness failed before exercising the .NET backend: `/workspace/ddt-337-di/repo/.venv/bin/python` is missing, so the Python-side fixture bootstrap aborts with `FileNotFoundException`.
+
+## 2026-10-06T16:48:37Z — Issue #337 typed options completion
+- Commit `57b426b` `Fix #337: bind backend startup config through options`
+  - Added `RequiredBackendOptions` + `RequiredBackendOptionsValidator`, registered with `AddOptions(...).ValidateOnStart()`, and changed Program.cs's step-1 startup gate to resolve `IOptions<RequiredBackendOptions>` and log the exact existing `FATAL: Missing required environment variables: ...` line on `OptionsValidationException`.
+  - Converted `SearchEndpointConfig` from the static `FromEnvironment()` factory to `IOptions<SearchEndpointConfig>` configuration, then exposed the bound value through DI so `SessionToolExecutorFactory`/`SearchTool` still consume one process-wide typed config instance without call-site env reads.
+  - Exposed the existing config.yaml-derived `BusinessRulesConfig`, `SearchConfig`, `SessionsConfig`, `ConnectionConfig`, `SecurityConfig`, and `AssetCacheConfig` through `IOptions<T>` wrappers backed by the unchanged `AppConfig.Load()` / `FromConfig(...)` factories, keeping config.yaml as the source of truth without changing fail-fast order.
+  - Re-grepped backend production code after the refactor: the only remaining direct `Environment.GetEnvironmentVariable(...)` call is `BackendEnvironment.Get(...)`.
+  - Added `BackendConfigurationOptionsTests` covering required-env validation ordering/message shape plus `SearchEndpointConfig` default/override binding.
+- Decision note filed to inbox: `beth-337-entra-options-scope.md` (why `EntraSettings` stays pre-Build and out of the options/ValidateOnStart path).
+- Validation (final):
+  - `dotnet build app/backend-dotnet/Backend.slnx --no-restore -warnaserror` ✅
+  - `dotnet test app/backend-dotnet/tests/Backend.Tests/Backend.Tests.csproj --no-build -warnaserror` ✅ (**829/829**)
+  - Conformance (`CONFORMANCE_BACKEND=dotnet`, `Dotnet=ready&Category!=Browser`) ✅ with only the 2 known sandbox baseline failures: **721 passed / 2 failed / 723 total**. The failures were exactly `AuthRowSpecialCaseTests.Row_12_anonymous_allow_list_path_is_reachable_with_no_token("/")` and `StaticIndexHtmlTests.Root_route_serves_index_html_with_cache_control_no_cache`, matching the pre-existing missing-frontend baseline.

@@ -9,7 +9,7 @@ namespace Backend.Configuration;
 /// Python (every persona sharing one drive-thru's throughput ceiling), so this C# port reads them
 /// the same way: once, from the shared app/backend/config.yaml, never from a pack.
 /// </summary>
-public sealed class BusinessRulesConfig
+internal sealed class BusinessRulesConfig
 {
     public int MaxItemQuantity { get; }
     public int MaxOrderItems { get; }

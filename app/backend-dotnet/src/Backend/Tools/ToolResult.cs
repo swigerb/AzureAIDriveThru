@@ -7,7 +7,7 @@ namespace Backend.Tools;
 /// gets corrective text, the guest-facing client display is untouched); a successful order update
 /// is ToBoth (the model gets spoken confirmation text, the client also gets a fresh order-summary
 /// JSON payload).</summary>
-public enum ToolResultDirection
+internal enum ToolResultDirection
 {
     ToServer,
     ToClient,
@@ -15,12 +15,12 @@ public enum ToolResultDirection
 }
 
 /// <summary>Direct C# port of rtmt.py's ToolResult: the outcome of one tool invocation, addressed
-/// to the model (<see cref="Text"/>/<see cref="ToText"/>) and optionally to the connected client
-/// separately (<see cref="ClientText"/>/<see cref="ToClientText"/>). <see cref="Payload"/> carries
+/// to the model (<c>_text</c>/<see cref="ToText"/>) and optionally to the connected client
+/// separately (<c>_clientText</c>/<see cref="ToClientText"/>). <c>_payload</c> carries
 /// a structured (non-string) result -- e.g. a rejection object or an order summary -- exactly like
 /// Python's ToolResult.text may be a dict there; <see cref="ToText"/> serializes it the same way
 /// Python's <c>to_text()</c> calls <c>json.dumps()</c> on a non-str payload.</summary>
-public sealed class ToolResult
+internal sealed class ToolResult
 {
     private static readonly JsonSerializerOptions PayloadJsonOptions = new();
 

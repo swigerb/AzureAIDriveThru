@@ -2,11 +2,11 @@ using System.Net.WebSockets;
 using System.Text.Json;
 using Backend.Configuration;
 using Backend.Ordering;
-using Backend.Personas;
 using Backend.Sessions;
 using Backend.Tests.Realtime;
 using Backend.Tests.TestSupport;
 using Backend.Tools;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 
 namespace Backend.Tests.Sessions;
@@ -44,7 +44,9 @@ public sealed class SessionManagerTests
                 maxDetached: maxDetached,
                 historyTurns: historyTurns,
                 historyChars: historyChars),
-            time);
+            time,
+            NullLogger<SessionManager>.Instance,
+            NullLogger<ContextMonitor>.Instance);
 
     private static FakeWebSocket NewSocket() => new([]);
 

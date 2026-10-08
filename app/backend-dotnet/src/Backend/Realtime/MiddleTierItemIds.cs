@@ -9,7 +9,7 @@ namespace Backend.Realtime;
 /// <see cref="ClientServerFilter.DropFromClient"/> can recognise and drop it before it reaches the
 /// browser -- and so GA never sees the same item id twice, which it rejects outright.
 /// </summary>
-public static class MiddleTierItemIds
+internal static class MiddleTierItemIds
 {
     public static string NewId() =>
         ClientServerFilter.MiddleTierItemIdPrefix + Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(6));

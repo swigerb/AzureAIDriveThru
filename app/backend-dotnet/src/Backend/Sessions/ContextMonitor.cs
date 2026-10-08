@@ -1,5 +1,3 @@
-using Microsoft.Extensions.Logging;
-
 namespace Backend.Sessions;
 
 /// <summary>
@@ -11,7 +9,7 @@ namespace Backend.Sessions;
 /// <see cref="SessionManager.EndSession"/>), same lifetime as
 /// Python's own <c>self._context_monitors</c> dict.
 /// </summary>
-public sealed class ContextMonitor
+internal sealed class ContextMonitor
 {
     private const int CharsPerToken = 4;
 
@@ -19,15 +17,18 @@ public sealed class ContextMonitor
     private readonly int _maxTokens;
     private readonly double _warningPct;
     private readonly double _criticalPct;
-    private readonly ILogger? _logger;
+    private readonly ILogger<ContextMonitor> _logger;
 
     private int _charCount;
     private bool _warnedWarning;
     private bool _warnedCritical;
 
     public ContextMonitor(
-        string sessionId, int maxTokens = 128_000, double warningPct = 80, double criticalPct = 95,
-        ILogger? logger = null)
+        string sessionId,
+        ILogger<ContextMonitor> logger,
+        int maxTokens = 128_000,
+        double warningPct = 80,
+        double criticalPct = 95)
     {
         _sessionId = sessionId;
         _maxTokens = maxTokens;
@@ -59,7 +60,7 @@ public sealed class ContextMonitor
 
         if (!_warnedCritical && pct >= _criticalPct)
         {
-            _logger?.LogWarning(
+            _logger.LogWarning(
                 "CRITICAL: Context window at {Pct}% ({Tokens:N0}/{MaxTokens:N0} tokens) for session {SessionId}",
                 (int)pct, tokens, _maxTokens, _sessionId);
             _warnedCritical = true;
@@ -67,7 +68,7 @@ public sealed class ContextMonitor
         }
         else if (!_warnedWarning && pct >= _warningPct)
         {
-            _logger?.LogWarning(
+            _logger.LogWarning(
                 "WARNING: Context window at {Pct}% ({Tokens:N0}/{MaxTokens:N0} tokens) for session {SessionId}",
                 (int)pct, tokens, _maxTokens, _sessionId);
             _warnedWarning = true;

@@ -6,7 +6,7 @@ namespace Backend.Ordering;
 /// mutated order (mirrors order_state.py's <c>result_info</c> dict) -- read by
 /// <c>Tools.OrderToolExecutor</c> to build the right delta text (combo-absorption/conversion
 /// wording) without re-deriving what happened from the order lines themselves.</summary>
-public sealed class OrderUpdateResult
+internal sealed class OrderUpdateResult
 {
     public bool AbsorbedIntoCombo { get; set; }
     public string? ComboConvertedFrom { get; set; }
@@ -46,7 +46,7 @@ public sealed class OrderUpdateResult
 
 /// <summary>Result of <see cref="OrderState.GetComboRequirements"/> -- mirrors order_state.py's
 /// <c>get_combo_requirements</c> return dict.</summary>
-public sealed record ComboRequirements(bool IsComplete, IReadOnlyList<string> MissingItems, string PromptHint);
+internal sealed record ComboRequirements(bool IsComplete, IReadOnlyList<string> MissingItems, string PromptHint);
 
 /// <summary>
 /// Port of app/backend/order_state.py's <c>OrderState</c> class (docs/dotnet_mapping.md, issues
@@ -67,7 +67,7 @@ public sealed record ComboRequirements(bool IsComplete, IReadOnlyList<string> Mi
 /// (there is no second actor that could ever hold a reference to call it from). This is
 /// deliberately NOT a thread-safe type; do not share one instance across actors.</para>
 /// </summary>
-public sealed class OrderState
+internal sealed class OrderState
 {
     private readonly List<OrderItem> _items = [];
     private readonly MenuCatalog _menu;
@@ -240,7 +240,7 @@ public sealed class OrderState
     /// <summary>Ports order_state.py's <c>handle_order_update</c> verbatim (algorithm captured in
     /// full in the class/method comments below) -- the combo-name-marker conversion, post-bundle
     /// absorption, regular add/merge, bundle-pivot absorption, bundle autoFill, modify-in-place,
-    /// and remove/decrement branches, always re-pricing from <paramref name="menu"/>
+    /// and remove/decrement branches, always re-pricing from <see cref="_menu"/>
     /// (#104) and never trusting <paramref name="callerPrice"/> except as a fallback when the menu
     /// has no price on file at all, and always ending by recomputing <see cref="Summary"/>.</summary>
     public OrderUpdateResult HandleOrderUpdate(
@@ -574,7 +574,7 @@ public sealed class OrderState
     /// bundle instance it just created/grew, never across other instances (unlike
     /// <see cref="FindBundleSlot"/>, which searches every instance for a cross-combo
     /// resize/vacate target).</summary>
-    private int? FirstVacantSlotIndex(OrderItem comboItem, string component)
+    private static int? FirstVacantSlotIndex(OrderItem comboItem, string component)
     {
         var slots = SyncBundleSlotList(comboItem, component);
         for (var i = 0; i < slots.Count; i++)
@@ -727,7 +727,7 @@ public sealed class OrderState
     /// from the END when quantity decreases -- called lazily on every read/write so there is
     /// exactly one place this invariant is enforced. Mirrors order_state.py's
     /// <c>_sync_bundle_slot_list</c>.</summary>
-    private List<BundleSlot> SyncBundleSlotList(OrderItem comboItem, string component)
+    private static List<BundleSlot> SyncBundleSlotList(OrderItem comboItem, string component)
     {
         if (!comboItem.BundleSlots.TryGetValue(component, out var slots))
         {
@@ -1335,7 +1335,7 @@ public sealed class OrderState
     /// <c>_compose_spoken_readback</c> extraction (issue #304): groups items with the same display
     /// name (spoken via this persona's own <c>sizes.spokenAs</c> + per-item <c>spokenName</c>) for
     /// a natural voice read-back, ending with the already-computed <paramref
-    /// name="finalTotalDisplay"/> -- never re-derived here. Cached once per <see cref="UpdateSummary"/>
+    /// name="finalTotal"/> -- never re-derived here. Cached once per <see cref="UpdateSummary"/>
     /// call onto <see cref="OrderSummary.SpokenReadBack"/> so it can never drift from the tool
     /// response that serializes the same <see cref="OrderSummary"/>.</summary>
     private string ComposeSpokenReadBack(IReadOnlyList<OrderItem> items, decimal finalTotal)

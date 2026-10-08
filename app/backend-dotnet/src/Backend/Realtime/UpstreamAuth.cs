@@ -11,9 +11,9 @@ namespace Backend.Realtime;
 /// (<c>get_bearer_token_provider(credentials, "https://cognitiveservices.azure.com/.default")</c>).
 /// This is that fallback's C# equivalent, kept behind an interface purely so
 /// <see cref="Sessions.RealtimeProcessor"/>'s header-selection logic can be unit tested without a
-/// real Azure credential (<see cref="UpstreamAuthHeaderTests"/> substitutes a fake).
+/// real Azure credential (<c>UpstreamAuthHeaderTests</c> substitutes a fake).
 /// </summary>
-public interface IUpstreamBearerTokenProvider
+internal interface IUpstreamBearerTokenProvider
 {
     Task<string> GetTokenAsync(CancellationToken cancellationToken);
 }
@@ -21,7 +21,7 @@ public interface IUpstreamBearerTokenProvider
 /// <summary>Production implementation: wraps a <see cref="TokenCredential"/> (a real
 /// <see cref="DefaultAzureCredential"/> by default) and requests the Cognitive Services scope
 /// rtmt.py uses for the same upstream endpoint.</summary>
-public sealed class DefaultAzureCredentialTokenProvider : IUpstreamBearerTokenProvider
+internal sealed class DefaultAzureCredentialTokenProvider : IUpstreamBearerTokenProvider
 {
     // Matches rtmt.py's get_bearer_token_provider(credentials, "https://cognitiveservices.azure.com/.default").
     private static readonly string[] Scopes = ["https://cognitiveservices.azure.com/.default"];
@@ -56,7 +56,7 @@ public sealed class DefaultAzureCredentialTokenProvider : IUpstreamBearerTokenPr
 /// fakes -- substituted in by Program.cs when <see cref="ConformanceHooks.CascadeFakeToken"/> is
 /// non-null, exactly like the real <see cref="DefaultAzureCredentialTokenProvider"/> is used
 /// otherwise.</summary>
-public sealed class StaticBearerTokenProvider(string token) : IUpstreamBearerTokenProvider
+internal sealed class StaticBearerTokenProvider(string token) : IUpstreamBearerTokenProvider
 {
     public Task<string> GetTokenAsync(CancellationToken cancellationToken) => Task.FromResult(token);
 }

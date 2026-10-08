@@ -1,9 +1,7 @@
 using System.Net;
-using System.Net.Http.Headers;
 using System.Text;
 using Backend.Cascade;
 using Backend.Realtime;
-using Xunit;
 
 namespace Backend.Tests.Cascade;
 
@@ -56,6 +54,24 @@ public sealed class FoundryAudioClientTests
 
         Assert.Equal(503, exc.StatusCode);
         Assert.Contains("upstream down", exc.Message);
+    }
+
+    [Fact]
+    public async Task TranscribeAsync_BogusCharset429StillThrowsFoundryHttpException()
+    {
+        var handler = new QueuedFoundryHttpHandler().EnqueueRaw(
+            HttpStatusCode.TooManyRequests,
+            Encoding.UTF8.GetBytes("""{"error":"rate limited"}"""),
+            "application/json; charset=bogus-charset",
+            retryAfterHeader: "3");
+        var client = NewClient(handler);
+
+        var exc = await Assert.ThrowsAsync<FoundryHttpException>(() =>
+            client.TranscribeAsync([0x00, 0x00], "gpt-4o-transcribe", 24000, CancellationToken.None));
+
+        Assert.Equal(429, exc.StatusCode);
+        Assert.Equal(3.0, exc.RetryAfterSeconds);
+        Assert.Equal("HTTP 429", exc.Message);
     }
 
     [Fact]

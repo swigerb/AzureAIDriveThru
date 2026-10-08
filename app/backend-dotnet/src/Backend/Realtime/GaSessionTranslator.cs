@@ -11,7 +11,7 @@ namespace Backend.Realtime;
 /// requires a `type` discriminator, and rejects unknown top-level parameters outright instead of
 /// ignoring them (unlike the legacy dialect).
 /// </summary>
-public static class GaSessionTranslator
+internal static class GaSessionTranslator
 {
     /// <summary>Session keys the GA realtime API accepts at the top level (rtmt.py's
     /// `_GA_SESSION_TOP_LEVEL`). Anything else a legacy client sends (notably `temperature`,

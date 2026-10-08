@@ -8,7 +8,7 @@ namespace Backend.Configuration;
 /// <c>dict.get(key, default)</c> fallbacks so an empty/missing section behaves identically in both
 /// backends.
 /// </summary>
-public sealed class SearchConfig
+internal sealed class SearchConfig
 {
     public int KNearestNeighbors { get; }
     public int TopResults { get; }

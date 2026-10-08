@@ -2,7 +2,6 @@ using System.Net.WebSockets;
 using Backend.Sessions;
 using Backend.Tests.Realtime;
 using Microsoft.Extensions.Logging.Abstractions;
-using Xunit;
 
 namespace Backend.Tests.Sessions;
 
@@ -19,7 +18,7 @@ namespace Backend.Tests.Sessions;
 /// first-frame handling -- the guest would see <c>session_resumed</c> then silence until an
 /// eventual 4000 idle close deleted the order.
 ///
-/// <see cref="RealtimeProcessor.CloseSupersededStaleConnectionAsync"/> was extracted specifically
+/// <see cref="FramePump.CloseSupersededStaleConnectionAsync"/> was extracted specifically
 /// so this can be proven WITHOUT any real sockets or real TCP backpressure (see
 /// <c>ResumeHandshakeTests.Resuming_from_a_still_attached_socket_supersedes_it_with_4002</c> in the
 /// conformance suite for the end-to-end counterpart, which drives this same bug through an actual
@@ -30,7 +29,7 @@ namespace Backend.Tests.Sessions;
 /// </summary>
 public sealed class CloseSupersededStaleConnectionAsyncTests
 {
-    // Generous relative to RealtimeProcessor.SupersededCloseTimeout itself (2s) so this never
+    // Generous relative to FramePump.SupersededCloseTimeout itself (2s) so this never
     // flakes under CI load while still being far short of "effectively unbounded."
     private static readonly TimeSpan AssertionDeadline = TimeSpan.FromSeconds(10);
 
@@ -40,8 +39,8 @@ public sealed class CloseSupersededStaleConnectionAsyncTests
         var staleWs = new FakeWebSocket([], hangCloseOutputUntilCancelled: true);
         using var staleCts = new CancellationTokenSource();
 
-        var task = RealtimeProcessor.CloseSupersededStaleConnectionAsync(
-            staleWs, staleCts, TimeSpan.FromMilliseconds(200), NullLogger.Instance);
+        var task = FramePump.CloseSupersededStaleConnectionAsync(
+            staleWs, staleCts, TimeSpan.FromMilliseconds(200), NullLogger<RealtimeProcessor>.Instance);
 
         var completed = await Task.WhenAny(task, Task.Delay(AssertionDeadline, TestContext.Current.CancellationToken));
         Assert.True(
@@ -77,8 +76,8 @@ public sealed class CloseSupersededStaleConnectionAsyncTests
         }, TestContext.Current.CancellationToken);
 
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        await RealtimeProcessor.CloseSupersededStaleConnectionAsync(
-            staleWs, staleCts, TimeSpan.FromSeconds(5), NullLogger.Instance);
+        await FramePump.CloseSupersededStaleConnectionAsync(
+            staleWs, staleCts, TimeSpan.FromSeconds(5), NullLogger<RealtimeProcessor>.Instance);
         sw.Stop();
         await settleSimulation;
 
@@ -107,8 +106,8 @@ public sealed class CloseSupersededStaleConnectionAsyncTests
         var staleWs = new FakeWebSocket([]);
         using var staleCts = new CancellationTokenSource();
 
-        var closeTask = RealtimeProcessor.CloseSupersededStaleConnectionAsync(
-            staleWs, staleCts, TimeSpan.FromSeconds(5), NullLogger.Instance);
+        var closeTask = FramePump.CloseSupersededStaleConnectionAsync(
+            staleWs, staleCts, TimeSpan.FromSeconds(5), NullLogger<RealtimeProcessor>.Instance);
 
         // FakeWebSocket's non-hanging CloseOutputAsync completes synchronously, so by the time we
         // get here the close frame is long sent and the socket is parked in CloseSent -- but
@@ -141,8 +140,8 @@ public sealed class CloseSupersededStaleConnectionAsyncTests
             staleWs.SimulatePeerAnsweredClose();
         }, TestContext.Current.CancellationToken);
 
-        await RealtimeProcessor.CloseSupersededStaleConnectionAsync(
-            staleWs, staleCts: null, TimeSpan.FromSeconds(2), NullLogger.Instance);
+        await FramePump.CloseSupersededStaleConnectionAsync(
+            staleWs, staleCts: null, TimeSpan.FromSeconds(2), NullLogger<RealtimeProcessor>.Instance);
         await settleSimulation;
 
         Assert.True(staleWs.CloseOutputCalled);

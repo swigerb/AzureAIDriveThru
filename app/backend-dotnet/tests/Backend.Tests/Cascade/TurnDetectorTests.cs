@@ -1,6 +1,5 @@
 using Backend.Cascade;
 using Backend.Configuration;
-using Xunit;
 
 namespace Backend.Tests.Cascade;
 

@@ -10,7 +10,7 @@ namespace Backend.Realtime;
 /// allowed to send upstream, rebuilt from scratch (never the browser's original object) so no
 /// forged extra top-level key or sub-key can ride through unfiltered.
 /// </summary>
-public static class ClientServerFilter
+internal static class ClientServerFilter
 {
     /// <summary>Every event type a browser is allowed to send upstream in production.</summary>
     public static readonly IReadOnlySet<string> ClientAllowedTypes = new HashSet<string>

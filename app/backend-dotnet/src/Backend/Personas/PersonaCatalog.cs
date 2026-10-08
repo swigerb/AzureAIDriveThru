@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using Backend.Configuration;
 using Json.Schema;
 
 namespace Backend.Personas;
@@ -13,7 +14,7 @@ namespace Backend.Personas;
 /// pack"). Session/model binding to a specific persona is wave 7 (#74/#75) -- this catalog is
 /// just the seam later waves bind against.
 /// </summary>
-public sealed class PersonaCatalog
+internal sealed class PersonaCatalog
 {
     private readonly IReadOnlyDictionary<string, Persona> _personas;
 
@@ -48,7 +49,7 @@ public sealed class PersonaCatalog
         string? defaultPersonaEnv = null)
     {
         var baseDir = personasDir
-            ?? Environment.GetEnvironmentVariable("PERSONAS_DIR")
+            ?? BackendEnvironment.Get(BackendEnvironment.PersonasDir)
             ?? Path.Combine(RepoRootLocator.Find(), "personas");
 
         if (!Directory.Exists(baseDir))
@@ -65,7 +66,7 @@ public sealed class PersonaCatalog
             .OrderBy(name => name, StringComparer.Ordinal)
             .ToList();
 
-        var personasCsv = personasEnv ?? Environment.GetEnvironmentVariable("PERSONAS");
+        var personasCsv = personasEnv ?? BackendEnvironment.Get(BackendEnvironment.Personas);
         var enabledIds = string.IsNullOrWhiteSpace(personasCsv)
             ? discovered
             : personasCsv.Split(',', StringSplitOptions.RemoveEmptyEntries)
@@ -93,7 +94,7 @@ public sealed class PersonaCatalog
             personas[id] = LoadOnePersona(baseDir, id, personaSchema, menuSchema);
         }
 
-        var defaultId = defaultPersonaEnv ?? Environment.GetEnvironmentVariable("DEFAULT_PERSONA");
+        var defaultId = defaultPersonaEnv ?? BackendEnvironment.Get(BackendEnvironment.DefaultPersona);
         if (defaultId is not null)
         {
             if (!personas.ContainsKey(defaultId))

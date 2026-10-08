@@ -6,7 +6,7 @@ namespace Backend.Personas;
 /// resolved name (mirrors menu_utils.py's <c>resolve_menu_item</c> return dict). <c>null</c> from
 /// that method means "not on the menu" (issue #73's single on-menu gate); there is no keyword
 /// fallback anywhere in this class.</summary>
-public sealed record ResolvedMenuItem(
+internal sealed record ResolvedMenuItem(
     string Name,
     string Category,
     IReadOnlyList<string> Sizes,
@@ -27,7 +27,7 @@ public sealed record ResolvedMenuItem(
 /// keyword/substring guess. <see cref="ResolveMenuItem"/> is the single on-menu gate
 /// <c>Tools.UpdateOrder</c> calls before adding anything to an order.
 /// </summary>
-public sealed class MenuCatalog
+internal sealed class MenuCatalog
 {
     private sealed record ItemFields(
         string Name,
@@ -315,8 +315,8 @@ public sealed class MenuCatalog
 
     private static string SpokenSubstitutionPattern(string raw)
     {
-        var rightBoundaryChars = raw.EndsWith("®", StringComparison.Ordinal) ||
-                                 raw.EndsWith("™", StringComparison.Ordinal)
+        var rightBoundaryChars = raw.EndsWith('®') ||
+                                 raw.EndsWith('™')
             ? "A-Za-z0-9"
             : "A-Za-z0-9®™";
         return $@"(?<![A-Za-z0-9]){Regex.Escape(raw)}(?![{rightBoundaryChars}])";

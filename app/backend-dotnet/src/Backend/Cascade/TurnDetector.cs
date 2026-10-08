@@ -12,7 +12,7 @@ namespace Backend.Cascade;
 /// same to a guest, without pretending to reimplement OpenAI's actual VAD algorithm -- just enough
 /// to segment turns for STT.
 /// </summary>
-public sealed class TurnDetector
+internal sealed class TurnDetector
 {
     private const int AudioSampleRate = 24000;
 
@@ -22,7 +22,7 @@ public sealed class TurnDetector
     private int _silenceRun;
 
     /// <summary>#126: echo suppression -- a monotonic-clock-comparable deadline (caller-supplied
-    /// via <paramref name="now"/> on <see cref="StartEchoCooldown"/>/<see cref="Feed"/>, never
+    /// via <c>now</c> on <see cref="StartEchoCooldown"/>/<see cref="Feed"/>, never
     /// read from a wall clock internally, matching cascade_processor.py's own
     /// <c>_TurnDetector._echo_cooldown_until</c>/<c>time.monotonic()</c> convention) up to which
     /// loud audio is treated as the assistant's own TTS bleeding back into the guest's mic, not
@@ -125,7 +125,7 @@ public sealed class TurnDetector
 /// shared verbatim with the realtime pipeline's own `server_vad` config (Realtime/RealtimeSessionConfig.cs),
 /// just read independently here since <see cref="TurnDetector"/> is cascade's own local VAD, not
 /// a value forwarded in a `session.update` to an upstream Realtime API.</summary>
-public sealed record CascadeVadConfig(double Threshold, int SilenceDurationMs)
+internal sealed record CascadeVadConfig(double Threshold, int SilenceDurationMs)
 {
     public static CascadeVadConfig FromAppConfig(AppConfig config)
     {

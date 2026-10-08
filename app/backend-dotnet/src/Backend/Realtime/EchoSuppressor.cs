@@ -1,3 +1,5 @@
+using Backend.Shared;
+
 namespace Backend.Realtime;
 
 /// <summary>
@@ -18,9 +20,9 @@ namespace Backend.Realtime;
 /// <see cref="TimeProvider"/> instead (issue #13 Wave 2), so a test can swap in a
 /// <c>FakeTimeProvider</c> and advance it instead of waiting on a real delay.
 /// </summary>
-public sealed class EchoSuppressor : IDisposable
+internal sealed class EchoSuppressor : IDisposable
 {
-    private readonly object _sync = new();
+    private readonly Lock _sync = new();
     private readonly double _cooldownSeconds;
     private readonly Func<CancellationToken, Task> _flushSendAsync;
     private readonly TimeProvider _timeProvider;
@@ -146,7 +148,7 @@ public sealed class EchoSuppressor : IDisposable
                 {
                     if (!t.IsCanceled)
                     {
-                        _ = FlushIfStillPendingAsync(cts);
+                        FlushIfStillPendingAsync(cts).FireAndForget(logger: null, nameof(FlushIfStillPendingAsync));
                     }
                 },
                 CancellationToken.None,
@@ -160,7 +162,7 @@ public sealed class EchoSuppressor : IDisposable
         // Flush any echoed audio that leaked into OpenAI's buffer, best-effort (fire-and-forget).
         // Invoked outside the lock: the send may await, and nothing here needs to hold _sync while
         // that happens.
-        _ = BestEffortSend();
+        BestEffortSend().FireAndForget(logger: null, nameof(BestEffortSend));
     }
 
     /// <summary>Cancels any delayed echo flush still pending, and becomes terminal -- called from

@@ -1,4 +1,5 @@
 using Backend.Personas;
+using Backend.Sessions;
 using Microsoft.Extensions.Logging;
 
 namespace Backend.Models;
@@ -20,7 +21,7 @@ namespace Backend.Models;
 ///      know which processor owns this session, is this specific persona+model+deployment
 ///      combination actually usable?
 /// </summary>
-public static class ModelDispatch
+internal static class ModelDispatch
 {
     /// <summary>
     /// Resolves which <see cref="Backend.Sessions.IPipelineProcessor"/> should own this session.
@@ -78,7 +79,7 @@ public static class ModelDispatch
         string? requestedModelId,
         ModelCatalog catalog,
         string defaultDeployment,
-        ILogger? logger = null)
+        ILogger<RealtimeProcessor> logger)
     {
         var pipelineCfg = persona.Models.Realtime;
         var modelId = requestedModelId ?? pipelineCfg.Default;
@@ -104,7 +105,7 @@ public static class ModelDispatch
             }
 
             deployment = defaultDeployment;
-            logger?.LogWarning(
+            logger.LogWarning(
                 "Persona {PersonaId}'s realtime default model {ModelId} has no AZURE_AI_MODEL_DEPLOYMENTS entry -- " +
                 "falling back to AZURE_OPENAI_REALTIME_DEPLOYMENT ({Deployment}) for back-compat.",
                 persona.Id, modelId, defaultDeployment);

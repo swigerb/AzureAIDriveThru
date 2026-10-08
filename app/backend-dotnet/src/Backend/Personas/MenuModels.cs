@@ -5,34 +5,34 @@ namespace Backend.Personas;
 /// <summary>Mirror of personas/menu.schema.json (menu/menuItems.json). #51's per-item fields are
 /// additive and optional with the same defaults as the JSON Schema's own "default" keywords, so a
 /// pack written before #51 still deserializes identically.</summary>
-public sealed record PersonaMenu
+internal sealed record PersonaMenu
 {
-    [JsonPropertyName("menuItems")] public required List<PersonaMenuCategory> MenuItems { get; init; }
+    [JsonPropertyName("menuItems")] public required IReadOnlyList<PersonaMenuCategory> MenuItems { get; init; }
 }
 
-public sealed record PersonaMenuCategory
+internal sealed record PersonaMenuCategory
 {
     [JsonPropertyName("category")] public required string Category { get; init; }
-    [JsonPropertyName("items")] public required List<PersonaMenuItem> Items { get; init; }
+    [JsonPropertyName("items")] public required IReadOnlyList<PersonaMenuItem> Items { get; init; }
     // Optional icon glyph (issue 119); the frontend falls back to a neutral default when absent.
     [JsonPropertyName("icon")] public string? Icon { get; init; }
     // Rick's PR 166 round-1 review, required item 9: optional per-menu-mode name/icon override,
     // rendered by the frontend only -- this backend never reads it itself (the raw menuItems.json
     // bytes are what `/personas/{id}/menu.json` actually serves, see PersonaRoutes.cs), it just
     // needs to round-trip through model validation at catalog load time without being rejected.
-    [JsonPropertyName("modeDisplay")] public Dictionary<string, PersonaMenuCategoryModeOverride>? ModeDisplay { get; init; }
+    [JsonPropertyName("modeDisplay")] public IReadOnlyDictionary<string, PersonaMenuCategoryModeOverride>? ModeDisplay { get; init; }
 }
 
-public sealed record PersonaMenuCategoryModeOverride
+internal sealed record PersonaMenuCategoryModeOverride
 {
     [JsonPropertyName("displayName")] public string? DisplayName { get; init; }
     [JsonPropertyName("icon")] public string? Icon { get; init; }
 }
 
-public sealed record PersonaMenuItem
+internal sealed record PersonaMenuItem
 {
     [JsonPropertyName("name")] public required string Name { get; init; }
-    [JsonPropertyName("sizes")] public required List<PersonaMenuItemSize> Sizes { get; init; }
+    [JsonPropertyName("sizes")] public required IReadOnlyList<PersonaMenuItemSize> Sizes { get; init; }
     [JsonPropertyName("description")] public required string Description { get; init; }
     [JsonPropertyName("longDescription")] public string? LongDescription { get; init; }
     [JsonPropertyName("origin")] public string? Origin { get; init; }
@@ -46,7 +46,7 @@ public sealed record PersonaMenuItem
 
     [JsonPropertyName("comboSlot")] public string ComboSlot { get; init; } = "none";
     [JsonPropertyName("happyHourDiscounted")] public bool HappyHourDiscounted { get; init; }
-    [JsonPropertyName("aliases")] public List<string> Aliases { get; init; } = [];
+    [JsonPropertyName("aliases")] public IReadOnlyList<string> Aliases { get; init; } = [];
     [JsonPropertyName("bundle")] public PersonaMenuItemBundle? Bundle { get; init; }
     [JsonPropertyName("requiresMachine")] public string? RequiresMachine { get; init; }
     [JsonPropertyName("isExtra")] public bool IsExtra { get; init; }
@@ -56,15 +56,15 @@ public sealed record PersonaMenuItem
     [JsonPropertyName("calories")] public int? Calories { get; init; }
 }
 
-public sealed record PersonaMenuItemSize
+internal sealed record PersonaMenuItemSize
 {
     [JsonPropertyName("size")] public required string Size { get; init; }
     [JsonPropertyName("price")] public required decimal Price { get; init; }
 }
 
-public sealed record PersonaMenuItemBundle
+internal sealed record PersonaMenuItemBundle
 {
-    [JsonPropertyName("slots")] public List<string>? Slots { get; init; }
-    [JsonPropertyName("autoFill")] public Dictionary<string, string>? AutoFill { get; init; }
+    [JsonPropertyName("slots")] public IReadOnlyList<string>? Slots { get; init; }
+    [JsonPropertyName("autoFill")] public IReadOnlyDictionary<string, string>? AutoFill { get; init; }
     [JsonPropertyName("defaultSize")] public string? DefaultSize { get; init; }
 }

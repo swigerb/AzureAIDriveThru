@@ -3,7 +3,6 @@ using System.Text;
 using System.Text.Json.Nodes;
 using Backend.Cascade;
 using Backend.Realtime;
-using Xunit;
 
 namespace Backend.Tests.Cascade;
 
@@ -34,6 +33,21 @@ internal sealed class QueuedFoundryHttpHandler : HttpMessageHandler
     public QueuedFoundryHttpHandler EnqueueBytes(HttpStatusCode status, byte[] body)
     {
         _responses.Enqueue(_ => new HttpResponseMessage(status) { Content = new ByteArrayContent(body) });
+        return this;
+    }
+
+    public QueuedFoundryHttpHandler EnqueueRaw(HttpStatusCode status, byte[] body, string contentType, string? retryAfterHeader = null)
+    {
+        _responses.Enqueue(_ =>
+        {
+            var response = new HttpResponseMessage(status) { Content = new ByteArrayContent(body) };
+            response.Content.Headers.TryAddWithoutValidation("Content-Type", contentType);
+            if (retryAfterHeader is not null)
+            {
+                response.Headers.TryAddWithoutValidation("Retry-After", retryAfterHeader);
+            }
+            return response;
+        });
         return this;
     }
 
@@ -133,6 +147,22 @@ public sealed class FoundryChatClientTests
 
         Assert.Equal(429, exc.StatusCode);
         Assert.Contains("try again in 2s", exc.Message);
+    }
+
+    [Fact]
+    public async Task CompleteAsync_BogusCharset429StillThrowsFoundryHttpException()
+    {
+        var handler = new QueuedFoundryHttpHandler().EnqueueRaw(
+            HttpStatusCode.TooManyRequests,
+            Encoding.UTF8.GetBytes("""{"error":{"message":"Please try again in 2s"}}"""),
+            "application/json; charset=bogus-charset");
+        var client = NewClient(handler);
+
+        var exc = await Assert.ThrowsAsync<FoundryHttpException>(() =>
+            client.CompleteAsync([CascadeChatMessage.User("hi")], "gpt-5-mini", null, CancellationToken.None));
+
+        Assert.Equal(429, exc.StatusCode);
+        Assert.Equal("HTTP 429", exc.Message);
     }
 
     [Fact]

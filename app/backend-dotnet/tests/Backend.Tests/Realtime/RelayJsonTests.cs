@@ -1,7 +1,6 @@
 using System.Text;
 using System.Text.Json;
 using Backend.Realtime;
-using Xunit;
 
 namespace Backend.Tests.Realtime;
 

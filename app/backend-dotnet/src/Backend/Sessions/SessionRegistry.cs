@@ -5,7 +5,7 @@ namespace Backend.Sessions;
 /// <summary>Shared, process-wide registry of active <see cref="SessionActor"/> instances (issue
 /// #12's "shared registry"). Thread-safe: concurrent registrations/lookups/removals are expected
 /// from multiple concurrent /realtime upgrade requests and disconnect handlers.</summary>
-public sealed class SessionRegistry
+internal sealed class SessionRegistry
 {
     private readonly ConcurrentDictionary<string, SessionActor> _sessions = new(StringComparer.Ordinal);
 

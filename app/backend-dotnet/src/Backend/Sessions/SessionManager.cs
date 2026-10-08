@@ -1,10 +1,10 @@
+using System.Globalization;
 using System.Net.WebSockets;
 using System.Security.Cryptography;
 using System.Text;
 using Backend.Configuration;
 using Backend.Realtime;
 using Backend.Tools;
-using Microsoft.Extensions.Logging;
 
 namespace Backend.Sessions;
 
@@ -20,7 +20,7 @@ namespace Backend.Sessions;
 /// is what actually stops that connection's relay loops (and any in-flight tool dispatch through
 /// the shared <see cref="IToolExecutor"/>) promptly on supersede, rather than relying solely on it
 /// noticing the 4002 close frame on its own schedule.</summary>
-public sealed record ResumeOutcome(
+internal sealed record ResumeOutcome(
     bool Accepted,
     string? Reason = null,
     string? SessionId = null,
@@ -33,17 +33,17 @@ public sealed record ResumeOutcome(
     CancellationTokenSource? StaleCts = null,
     SessionIdentifiers? Identifiers = null);
 
-/// <summary>Rick's #244 round-2 review (issue 1): a signal independent of <see cref="StaleCts"/>'s
+/// <summary>Rick's #244 round-2 review (issue 1): a signal independent of <see cref="ResumeOutcome.StaleCts"/>'s
 /// cancellation, set exactly once, synchronously, inside <see cref="SessionManager"/>'s own lock
 /// the instant a resume captures a still-attached socket as stale -- i.e. as early as possible,
 /// before any socket IO (the background supersede-close) is even scheduled, let alone awaited.
 /// <c>OrderToolExecutor.ExecuteAsync</c> is synchronous and ignores its <see cref="CancellationToken"/>
 /// parameter entirely, and the <c>OrderState</c> it mutates isn't thread-safe, so a stale
-/// connection's own in-flight <c>HandleToolCallDoneAsync</c> cannot rely on <see cref="StaleCts"/>
+/// connection's own in-flight <c>HandleToolCallDoneAsync</c> cannot rely on <see cref="ResumeOutcome.StaleCts"/>
 /// ever being cancelled promptly (the background close it now shares a fate with may legitimately
 /// take up to its own short timeout against a non-draining peer) -- it needs a flag it can check
 /// synchronously, with no IO and no dependency on how long that close takes.</summary>
-public sealed class SupersededFlag
+internal sealed class SupersededFlag
 {
     private volatile bool _value;
 
@@ -55,7 +55,7 @@ public sealed class SupersededFlag
 /// <summary>
 /// Port of app/backend/session_manager.py's <c>SessionManager</c> (issue #15). A single
 /// process-wide singleton (constructor-injected into <see cref="Backend.Sessions.RealtimeProcessor"/>
-/// the same way <see cref="Backend.Realtime.RateLimitSettings"/> is) tracking every session's
+/// the same way <see cref="Backend.Shared.RateLimitSettings"/> is) tracking every session's
 /// attach/detach/resume/idle state -- NOT the same thing as the orthogonal
 /// <see cref="SessionRegistry"/>/<see cref="SessionActor"/> mailbox plumbing from issue #12, which
 /// has nothing to do with resume/idle/grace.
@@ -67,7 +67,7 @@ public sealed class SupersededFlag
 /// (unlike those two classes, which are purely per-connection), so this class's lock protects the
 /// whole shared registry, not just one session's state.
 /// </summary>
-public sealed class SessionManager
+internal sealed class SessionManager
 {
     public const int IdleCloseCode = 4000;
     public const string IdleCloseReason = "idle_timeout";
@@ -82,15 +82,16 @@ public sealed class SessionManager
         "The guest reconnected mid-order after a brief connection drop. Do not greet them again or " +
         "restart the conversation -- just continue helping with their order where it left off.";
 
-    private const string NudgeTextTemplate =
+    private static readonly CompositeFormat NudgeTextTemplate = CompositeFormat.Parse(
         "The guest has been silent for a while after reconnecting. As {0}, briefly check in once " +
         "(e.g. \"Still there? Let me know if you'd like to add anything else or if you're ready to pay.\") " +
-        "without repeating the full order back.";
+        "without repeating the full order back.");
 
     private readonly SessionsConfig _config;
     private readonly TimeProvider _timeProvider;
-    private readonly ILogger? _logger;
-    private readonly object _sync = new();
+    private readonly ILogger<SessionManager> _logger;
+    private readonly ILogger<ContextMonitor> _contextMonitorLogger;
+    private readonly Lock _sync = new();
     private readonly Dictionary<string, SessionRecord> _sessions = new();
     private readonly Dictionary<string, string> _resumeIndex = new(); // digest -> sessionId
     private readonly LinkedList<string> _detachedLru = new(); // oldest first
@@ -100,19 +101,25 @@ public sealed class SessionManager
     /// Python. Created in <see cref="CreateSession"/>, removed in <see cref="EndSession"/>.</summary>
     private readonly Dictionary<string, ContextMonitor> _contextMonitors = new();
 
-    public SessionManager(SessionsConfig? config = null, TimeProvider? timeProvider = null, ILogger? logger = null)
+    public SessionManager(
+        SessionsConfig config,
+        TimeProvider timeProvider,
+        ILogger<SessionManager> logger,
+        ILogger<ContextMonitor> contextMonitorLogger)
     {
-        _config = config ?? new SessionsConfig();
-        _timeProvider = timeProvider ?? TimeProvider.System;
+        _config = config;
+        _timeProvider = timeProvider;
         _logger = logger;
+        _contextMonitorLogger = contextMonitorLogger;
     }
 
     public SessionsConfig Config => _config;
 
     /// <summary>Test-only: exposes the internal lock object for the same reason
-    /// <see cref="Backend.Realtime.RateLimitRecovery.SyncRootForTests"/> does -- holding it across a
-    /// FakeTimeProvider.Advance() to deterministically reproduce a timer-vs-cancellation race.</summary>
-    internal object SyncRootForTests => _sync;
+    /// <see cref="Backend.Realtime.NudgeScheduler.SyncRootForTests"/> does -- holding it (via
+    /// <see cref="Lock.EnterScope"/>) across a FakeTimeProvider.Advance() to deterministically
+    /// reproduce a timer-vs-cancellation race.</summary>
+    internal Lock SyncRootForTests => _sync;
 
     private sealed class SessionRecord
     {
@@ -186,8 +193,8 @@ public sealed class SessionManager
     }
 
     private ContextMonitor CreateContextMonitorLocked(string sessionId) =>
-        new(sessionId, _config.ContextMaxTokens, _config.ContextWarningThresholdPct,
-            _config.ContextCriticalThresholdPct, _logger);
+        new(sessionId, _contextMonitorLogger, _config.ContextMaxTokens, _config.ContextWarningThresholdPct,
+            _config.ContextCriticalThresholdPct);
 
     /// <summary>Port of session_manager.py's `get_context_monitor`: returns null for a null/unknown
     /// session id, never throws.</summary>
@@ -391,9 +398,9 @@ public sealed class SessionManager
         }
 
         var digest = Digest(presentedId);
-        string? staleReason = null;
-        ResumeOutcome? outcome = null;
-        WebSocket? staleWs = null;
+        string? staleReason;
+        ResumeOutcome? outcome;
+        WebSocket? staleWs;
 
         lock (_sync)
         {
@@ -416,23 +423,17 @@ public sealed class SessionManager
                 }
                 else if (record.PersonaId != requestedPersonaId)
                 {
-                    _logger?.LogInformation(
-                        "Resume rejected for session {SessionId}: bound persona {Bound} != requested persona {Requested} (persona_mismatch)",
-                        sessionId, record.PersonaId, requestedPersonaId);
+                    _logger?.ResumeRejectedPersonaMismatch(sessionId, record.PersonaId, requestedPersonaId);
                     outcome = new ResumeOutcome(false, Reason: "persona_mismatch");
                 }
                 else if (record.ModelId != requestedModelId)
                 {
-                    _logger?.LogInformation(
-                        "Resume rejected for session {SessionId}: bound model {Bound} != requested model {Requested} (model_mismatch)",
-                        sessionId, record.ModelId, requestedModelId);
+                    _logger?.ResumeRejectedModelMismatch(sessionId, record.ModelId, requestedModelId);
                     outcome = new ResumeOutcome(false, Reason: "model_mismatch");
                 }
                 else if (record.MenuMode != requestedMenuMode)
                 {
-                    _logger?.LogInformation(
-                        "Resume rejected for session {SessionId}: bound menu mode {Bound} != requested menu mode {Requested} (mode_mismatch)",
-                        sessionId, record.MenuMode, requestedMenuMode);
+                    _logger?.ResumeRejectedModeMismatch(sessionId, record.MenuMode, requestedMenuMode);
                     outcome = new ResumeOutcome(false, Reason: "mode_mismatch");
                 }
                 else
@@ -475,8 +476,7 @@ public sealed class SessionManager
 
                     var newId = IssueResumeIdLocked(record);
                     staleReason = staleWs is not null ? "; superseding a still-attached socket" : "";
-                    _logger?.LogInformation(
-                        "Session {SessionId} resumed{Superseded}", sessionId, staleReason);
+                    _logger?.SessionResumed(sessionId, staleReason);
 
                     outcome = new ResumeOutcome(
                         true,
@@ -563,7 +563,8 @@ public sealed class SessionManager
                $"Recent conversation (oldest first):\n{(history.Length > 0 ? history : "(none recorded)")}";
     }
 
-    public static string BuildNudgeText(string roleName) => string.Format(NudgeTextTemplate, roleName);
+    public static string BuildNudgeText(string roleName) =>
+        string.Format(CultureInfo.InvariantCulture, NudgeTextTemplate, roleName);
 
     // ── End / detach ──
 
@@ -594,7 +595,7 @@ public sealed class SessionManager
         }
         _contextMonitors.Remove(sessionId);
         RemoveFromDetachedLocked(sessionId);
-        _logger?.LogInformation("Session {SessionId} ended ({Reason})", sessionId, reason);
+        _logger?.SessionEnded(sessionId, reason);
     }
 
     private void RemoveFromDetachedLocked(string sessionId)
@@ -641,9 +642,7 @@ public sealed class SessionManager
                 EndSessionLocked(sessionId, $"{reason}; idle budget exhausted");
                 return;
             }
-            _logger?.LogInformation(
-                "Session {SessionId} detached ({Reason}); holding order for {Seconds:F0}s",
-                sessionId, reason, (expires - now).TotalSeconds);
+            _logger?.SessionDetached(sessionId, reason, (expires - now).TotalSeconds);
 
             while (_detachedLru.Count > Math.Max(_config.MaxDetached, 0))
             {
@@ -707,7 +706,7 @@ public sealed class SessionManager
 
         foreach (var (socket, sessionId) in idle)
         {
-            _logger?.LogWarning("Closing idle session {SessionId} (idle beyond {Seconds}s)", sessionId, _config.IdleTimeoutSeconds);
+            _logger?.ClosingIdleSession(sessionId, _config.IdleTimeoutSeconds);
             try
             {
                 if (socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
@@ -725,7 +724,8 @@ public sealed class SessionManager
         SweepDetached();
     }
 
-    /// <summary>Background loop (started once from Program.cs, cancelled at app shutdown): scans
+    /// <summary>Background loop (started once by <see cref="SessionSweepService"/>, cancelled at
+    /// app shutdown): scans
     /// for idle/expired sessions every <see cref="SessionsConfig.SweepIntervalSeconds"/>. Mirrors
     /// Python's <c>_idle_check_loop</c>; one process-wide loop, not per-connection, so it is not a
     /// candidate for the CTS-identity cancellation pattern the per-connection timers use.</summary>
@@ -739,7 +739,7 @@ public sealed class SessionManager
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                _logger?.LogWarning(ex, "Idle/grace sweep error");
+                _logger?.IdleGraceSweepError(ex);
             }
             try
             {

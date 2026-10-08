@@ -10,7 +10,7 @@ namespace Backend.Auth;
 /// would mint tokens no other replica (or backend) can validate, so a missing secret in
 /// production is logged as a warning, matching Python's behaviour exactly.
 /// </summary>
-public static class AppSecretProvider
+internal static class AppSecretProvider
 {
     public const int MinimumRecommendedLength = 32;
 

@@ -3,7 +3,6 @@ using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using Backend.Configuration;
 using Backend.Models;
-using Microsoft.AspNetCore.Http;
 
 namespace Backend.Personas;
 
@@ -20,7 +19,7 @@ namespace Backend.Personas;
 /// {id}`'s `models` block ALWAYS narrows to what's actually selectable (catalog ∩ deployment ∩
 /// persona-allowed, design doc section 7.3), `{id, label, reasoning}` shaped, never bare ids.
 /// </summary>
-public static class PersonaRoutes
+internal static class PersonaRoutes
 {
     private static readonly Dictionary<string, string> AssetContentTypes = new(StringComparer.Ordinal)
     {
@@ -173,10 +172,10 @@ public static class PersonaRoutes
     {
         var entries = new JsonArray
         {
-            new JsonObject { ["id"] = "python", ["url"] = (Environment.GetEnvironmentVariable("BACKEND_URI") ?? string.Empty).Trim() },
+            new JsonObject { ["id"] = "python", ["url"] = (BackendEnvironment.Get(BackendEnvironment.BackendUri) ?? string.Empty).Trim() },
         };
 
-        var dotnetUri = (Environment.GetEnvironmentVariable("BACKEND_DOTNET_URI") ?? string.Empty).Trim();
+        var dotnetUri = (BackendEnvironment.Get(BackendEnvironment.BackendDotnetUri) ?? string.Empty).Trim();
         if (dotnetUri.Length > 0)
         {
             entries.Add(new JsonObject { ["id"] = "dotnet", ["url"] = dotnetUri });

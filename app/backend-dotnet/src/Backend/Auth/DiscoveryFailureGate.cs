@@ -17,7 +17,7 @@ namespace Backend.Auth;
 /// <see cref="TimeProvider"/> is injectable purely for deterministic unit testing of the cooldown
 /// window; production code always uses <see cref="TimeProvider.System"/> (the implicit default).
 /// </summary>
-public sealed class DiscoveryFailureGate(TimeProvider? timeProvider = null, TimeSpan? cooldown = null)
+internal sealed class DiscoveryFailureGate(TimeProvider? timeProvider = null, TimeSpan? cooldown = null)
 {
     private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
     private readonly TimeSpan _cooldown = cooldown ?? TimeSpan.FromSeconds(30);

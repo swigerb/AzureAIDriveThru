@@ -2,7 +2,6 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Backend.Configuration;
 using Backend.Personas;
-using Microsoft.Extensions.Logging;
 
 namespace Backend.Models;
 
@@ -31,7 +30,7 @@ namespace Backend.Models;
 /// carve-out is on the *deployment* term for the realtime pipeline's default (see
 /// Models/ModelDispatch.cs's ResolveRealtimeModel), never here.
 /// </summary>
-public sealed class ModelCatalog
+internal sealed class ModelCatalog
 {
     private static readonly HashSet<string> Pipelines = ["realtime", "cascade"];
     private static readonly HashSet<string> RequiredEntryFields = ["id", "pipeline", "label"];
@@ -101,7 +100,7 @@ public sealed class ModelCatalog
     /// </summary>
     /// <exception cref="ModelValidationException">An enabled persona's pipeline default isn't
     /// catalogued for that pipeline.</exception>
-    public void ValidatePersonaDefaults(PersonaCatalog personaCatalog, ILogger? logger = null)
+    public void ValidatePersonaDefaults(PersonaCatalog personaCatalog, ILogger<ModelCatalog> logger)
     {
         foreach (var personaId in personaCatalog.Ids)
         {
@@ -128,7 +127,7 @@ public sealed class ModelCatalog
                     }
                     if (!IsCataloguedFor(allowedId, pipelineName))
                     {
-                        logger?.LogWarning(
+                        logger.LogWarning(
                             "Persona {PersonaId}'s {Pipeline} allowed model {AllowedId} is not in config.yaml's " +
                             "models.catalog for pipeline {Pipeline} -- it will 404 if a guest ever requests it " +
                             "explicitly by id.",
@@ -187,7 +186,7 @@ public sealed class ModelCatalog
         }
         else
         {
-            deploymentsRaw = Environment.GetEnvironmentVariable(DeploymentsEnvVar);
+            deploymentsRaw = BackendEnvironment.Get(DeploymentsEnvVar);
         }
 
         var deployments = ParseDeploymentMap(deploymentsRaw);

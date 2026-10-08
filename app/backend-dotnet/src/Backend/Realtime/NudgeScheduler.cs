@@ -1,4 +1,4 @@
-using Microsoft.Extensions.Logging;
+using Backend.Shared;
 
 namespace Backend.Realtime;
 
@@ -28,7 +28,7 @@ namespace Backend.Realtime;
 /// means this schedule was already superseded (by <see cref="Cancel"/>) and the stale call returns
 /// immediately, sending nothing.
 /// </summary>
-public sealed class NudgeScheduler
+internal sealed class NudgeScheduler
 {
     private readonly double _nudgeAfterSeconds;
     private readonly Func<CancellationToken, Task> _sendNudgeAsync;
@@ -36,8 +36,8 @@ public sealed class NudgeScheduler
     private readonly Task _sessionConfigured;
     private readonly TimeProvider _timeProvider;
     private readonly string? _sessionId;
-    private readonly ILogger? _logger;
-    private readonly object _sync = new();
+    private readonly ILogger<NudgeScheduler> _logger;
+    private readonly Lock _sync = new();
 
     private bool _armed;
     private CancellationTokenSource? _pendingCts;
@@ -47,9 +47,9 @@ public sealed class NudgeScheduler
         Func<CancellationToken, Task> sendNudgeAsync,
         Func<bool> isRateLimitBusy,
         Task sessionConfigured,
+        ILogger<NudgeScheduler> logger,
         TimeProvider? timeProvider = null,
-        string? sessionId = null,
-        ILogger? logger = null)
+        string? sessionId = null)
     {
         _nudgeAfterSeconds = nudgeAfterSeconds;
         _sendNudgeAsync = sendNudgeAsync;
@@ -67,9 +67,11 @@ public sealed class NudgeScheduler
         get { lock (_sync) { return _pendingCts is not null; } }
     }
 
-    /// <summary>Test-only: see <see cref="RateLimitRecovery.SyncRootForTests"/>'s identical
-    /// doc.</summary>
-    internal object SyncRootForTests => _sync;
+    /// <summary>Test-only: exposes the internal lock so a test can hold it (via
+    /// <see cref="Lock.EnterScope"/>) across a FakeTimeProvider.Advance() to deterministically
+    /// reproduce a timer-vs-cancellation race -- same pattern as
+    /// <see cref="Backend.Sessions.SessionManager.SyncRootForTests"/>.</summary>
+    internal Lock SyncRootForTests => _sync;
 
     /// <summary>Schedules the silence timer. A no-op if already armed (or if the timer is
     /// disabled, `nudge_after_seconds &lt;= 0` -- mirrors rtmt.py's own
@@ -100,7 +102,7 @@ public sealed class NudgeScheduler
             {
                 if (!t.IsCanceled)
                 {
-                    _ = RunNudgeAsync(cts);
+                    RunNudgeAsync(cts).FireAndForget(_logger, nameof(RunNudgeAsync));
                 }
             },
             CancellationToken.None,
@@ -118,8 +120,7 @@ public sealed class NudgeScheduler
                 // continuation acquiring the lock -- see this class's own doc comment. Cancel()
                 // already did everything needed; touching _pendingCts here would wipe out
                 // whatever it already cleared.
-                _logger?.LogInformation(
-                    "Resume nudge timer fired but was already cancelled (session={SessionId})", _sessionId);
+                _logger.NudgeTimerFiredAfterCancel(_sessionId);
                 return;
             }
             _pendingCts = null;
@@ -133,13 +134,11 @@ public sealed class NudgeScheduler
         {
             // The assistant is already retrying a rate-limited response; a nudge now would stack
             // a second response on top of it.
-            _logger?.LogInformation(
-                "Resume nudge skipped: a rate-limit retry is in progress (session={SessionId})", _sessionId);
+            _logger.NudgeSkippedRateLimitBusy(_sessionId);
             return;
         }
 
-        _logger?.LogInformation(
-            "Guest silent {Seconds}s after resume; nudging (session={SessionId})", _nudgeAfterSeconds, _sessionId);
+        _logger.NudgeFiring(_nudgeAfterSeconds, _sessionId);
         try
         {
             // CancellationToken.None: a closing socket must not crash this fire-and-forget
@@ -148,7 +147,7 @@ public sealed class NudgeScheduler
         }
         catch (Exception ex)
         {
-            _logger?.LogInformation(ex, "Resume nudge not sent: {Message} (session={SessionId})", ex.Message, _sessionId);
+            _logger.NudgeSendFailed(ex, ex.Message, _sessionId);
         }
     }
 
@@ -165,7 +164,7 @@ public sealed class NudgeScheduler
             _pendingCts.Cancel();
             _pendingCts.Dispose();
             _pendingCts = null;
-            _logger?.LogInformation("Resume nudge cancelled: {Reason} (session={SessionId})", reason, _sessionId);
+            _logger.NudgeCancelled(reason, _sessionId);
         }
     }
 }

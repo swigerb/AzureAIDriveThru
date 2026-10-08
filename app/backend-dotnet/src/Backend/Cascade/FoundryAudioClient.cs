@@ -9,12 +9,12 @@ namespace Backend.Cascade;
 /// endpoints cascade_processor.py's `_transcribe`/`_speak` call directly (no SDK -- these are
 /// simple, stable REST contracts, same rationale as <see cref="FoundryChatClient"/>'s own doc
 /// comment). Both endpoints live on the SAME account/base URI the realtime pipeline already
-/// authenticates against (`AZURE_OPENAI_EASTUS2_ENDPOINT`) -- see
-/// <see cref="Conformance.Fakes.FakeRealtimeUpstreamServer.ExpectedCascadeBearerToken"/>'s own doc
+/// authenticates against (`AZURE_OPENAI_EASTUS2_ENDPOINT`) -- see the conformance harness's
+/// <c>FakeRealtimeUpstreamServer.ExpectedCascadeBearerToken</c>'s own doc
 /// comment for why. Bearer-authenticated (never `api-key`) with the same
 /// <see cref="FoundryChatClient.CognitiveServicesScope"/> cascade's chat calls use.
 /// </summary>
-public sealed class FoundryAudioClient(HttpClient httpClient, string endpoint, IUpstreamBearerTokenProvider credential)
+internal sealed class FoundryAudioClient(HttpClient httpClient, string endpoint, IUpstreamBearerTokenProvider credential)
 {
     private readonly string _endpoint = endpoint.TrimEnd('/');
 
@@ -100,6 +100,7 @@ public sealed class FoundryAudioClient(HttpClient httpClient, string endpoint, I
         }
         catch (Exception)
         {
+            // Best-effort error-body read only; any failure falls back to a status-code-only message.
             return "";
         }
     }
@@ -117,7 +118,7 @@ public sealed class FoundryAudioClient(HttpClient httpClient, string endpoint, I
 /// `_pcm16_to_wav_bytes` uses), so this writes the RIFF header by hand. Produces a standard
 /// uncompressed PCM WAV: `RIFF` chunk descriptor, `fmt ` subchunk (1 channel, 16-bit, the given
 /// sample rate), `data` subchunk containing the PCM bytes verbatim.</summary>
-public static class WavEncoder
+internal static class WavEncoder
 {
     public static byte[] PcmToWav(byte[] pcm16Bytes, int sampleRate, int channels = 1, int bitsPerSample = 16)
     {

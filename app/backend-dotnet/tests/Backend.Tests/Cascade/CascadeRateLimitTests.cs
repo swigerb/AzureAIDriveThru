@@ -2,7 +2,6 @@ using System.Text.Json.Nodes;
 using Backend.Cascade;
 using Backend.Configuration;
 using Microsoft.Extensions.Time.Testing;
-using Xunit;
 
 namespace Backend.Tests.Cascade;
 
@@ -126,7 +125,7 @@ public sealed class CascadeRateLimitTests
         // no further delay is awaited on that path.
         fakeTime.Advance(TimeSpan.FromSeconds(1));
 
-        await Assert.ThrowsAsync<CascadeRateLimitExhausted>(() => runTask);
+        await Assert.ThrowsAsync<CascadeRateLimitExhaustedException>(() => runTask);
         var finalNotice = Assert.Single(notices);
         Assert.Equal(1, finalNotice["attempt"]!.GetValue<int>());
         Assert.True(finalNotice["final"]!.GetValue<bool>());

@@ -1,81 +1,109 @@
 {
+  "schema": "squad-agent-provenance/v1",
+  "schema_version": 1,
+  "revision": 5,
+  "generated_at": "2026-10-04T16:39:37.168Z",
   "agents": {
     "rick": {
+      "display_name": "Rick",
       "persistent_name": "Rick",
-      "universe": "Rick and Morty",
       "role": "Lead",
-      "created_at": "2026-03-19T03:45:33Z",
-      "legacy_named": false,
-      "status": "active"
+      "universe": "Rick and Morty",
+      "status": "active",
+      "created_at": "2026-03-19T03:45:33.000Z",
+      "updated_at": "2026-03-19T03:45:33.000Z",
+      "legacy_named": false
     },
     "morty": {
+      "display_name": "Morty",
       "persistent_name": "Morty",
-      "universe": "Rick and Morty",
       "role": "Frontend Dev",
-      "created_at": "2026-03-19T03:45:33Z",
-      "legacy_named": false,
-      "status": "active"
+      "universe": "Rick and Morty",
+      "status": "active",
+      "created_at": "2026-03-19T03:45:33.000Z",
+      "updated_at": "2026-03-19T03:45:33.000Z",
+      "legacy_named": false
     },
     "summer": {
+      "display_name": "Summer",
       "persistent_name": "Summer",
-      "universe": "Rick and Morty",
       "role": "Backend Dev",
-      "created_at": "2026-03-19T03:45:33Z",
-      "legacy_named": false,
-      "status": "active"
+      "universe": "Rick and Morty",
+      "status": "active",
+      "created_at": "2026-03-19T03:45:33.000Z",
+      "updated_at": "2026-03-19T03:45:33.000Z",
+      "legacy_named": false
     },
     "birdperson": {
+      "display_name": "Birdperson",
       "persistent_name": "Birdperson",
-      "universe": "Rick and Morty",
       "role": "Tester",
-      "created_at": "2026-03-19T03:45:33Z",
-      "legacy_named": false,
-      "status": "active"
+      "universe": "Rick and Morty",
+      "status": "active",
+      "created_at": "2026-03-19T03:45:33.000Z",
+      "updated_at": "2026-03-19T03:45:33.000Z",
+      "legacy_named": false
     },
     "squanchy": {
+      "display_name": "Squanchy",
       "persistent_name": "Squanchy",
-      "universe": "Rick and Morty",
       "role": "DevOps",
-      "created_at": "2026-03-19T03:45:33Z",
-      "legacy_named": false,
-      "status": "active"
+      "universe": "Rick and Morty",
+      "status": "active",
+      "created_at": "2026-03-19T03:45:33.000Z",
+      "updated_at": "2026-03-19T03:45:33.000Z",
+      "legacy_named": false
     },
     "unity": {
+      "display_name": "Unity",
       "persistent_name": "Unity",
-      "universe": "Rick and Morty",
       "role": "AI / Realtime Expert",
-      "created_at": "2026-03-21T19:32:07Z",
-      "legacy_named": false,
-      "status": "active"
+      "universe": "Rick and Morty",
+      "status": "active",
+      "created_at": "2026-03-21T19:32:07.000Z",
+      "updated_at": "2026-03-21T19:32:07.000Z",
+      "legacy_named": false
     },
     "beth": {
+      "display_name": "Beth",
       "persistent_name": "Beth",
-      "universe": "Rick and Morty",
       "role": ".NET / C# Backend Dev",
-      "created_at": "2026-09-23T18:32:05Z",
-      "legacy_named": false,
-      "status": "active"
+      "universe": "Rick and Morty",
+      "status": "active",
+      "created_at": "2026-09-23T18:32:05.000Z",
+      "updated_at": "2026-09-23T18:32:05.000Z",
+      "legacy_named": false
     },
     "fact-checker": {
+      "display_name": "Fact Checker",
       "persistent_name": "Fact Checker",
+      "role": "Fact Checker",
       "universe": "builtin",
+      "status": "active",
       "created_at": "2026-10-04T16:39:36.681Z",
-      "legacy_named": false,
-      "status": "active"
+      "updated_at": "2026-10-04T16:39:36.681Z",
+      "legacy_named": false
     },
     "rai": {
+      "display_name": "Rai",
       "persistent_name": "Rai",
+      "role": "Responsible AI Reviewer",
       "universe": "builtin",
+      "status": "active",
       "created_at": "2026-10-04T16:39:37.168Z",
-      "legacy_named": false,
-      "status": "active"
+      "updated_at": "2026-10-04T16:39:37.168Z",
+      "legacy_named": false
     },
     "scribe": {
+      "display_name": "Scribe",
       "persistent_name": "Scribe",
+      "role": "Session Logger",
       "universe": "builtin",
+      "status": "active",
       "created_at": "2026-10-04T16:39:37.168Z",
-      "legacy_named": false,
-      "status": "active"
+      "updated_at": "2026-10-04T16:39:37.168Z",
+      "legacy_named": false
     }
-  }
+  },
+  "transaction_id": "2c440f8a-8916-49db-a097-166d57d74920"
 }

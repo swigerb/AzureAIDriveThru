@@ -27,7 +27,7 @@ namespace Backend.Personas;
 /// a symlinked `personas/` itself) doesn't defeat the final containment check either. The
 /// resolved candidate must still land under the resolved assets root's own real path.
 /// </summary>
-public static class PersonaAssetResolver
+internal static class PersonaAssetResolver
 {
     public static string? Resolve(Persona persona, string requestedPath)
     {

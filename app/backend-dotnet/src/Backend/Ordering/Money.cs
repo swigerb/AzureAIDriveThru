@@ -14,7 +14,7 @@ namespace Backend.Ordering;
 /// port of <c>format_money</c>: round-half-up to exactly two decimal places, then render with a
 /// leading "$", culture-invariant.
 /// </summary>
-public static class Money
+internal static class Money
 {
     private static readonly string[] Ones =
     [

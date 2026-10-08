@@ -16,7 +16,7 @@ namespace Backend.Realtime;
 /// 4. The deployment-name heuristic (<see cref="DeploymentSupportsReasoning"/>) -- last resort,
 ///    used only when the switch is "auto" (null) and no catalog override was passed.
 /// </summary>
-public static class ReasoningRules
+internal static class ReasoningRules
 {
     /// <summary>Values accepted by gpt-realtime-2.1 for `reasoning.effort` (probed live 2026-09-22).</summary>
     public static readonly IReadOnlySet<string> ReasoningEfforts = new HashSet<string>

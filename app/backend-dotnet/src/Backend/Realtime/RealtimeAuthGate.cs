@@ -32,7 +32,7 @@ namespace Backend.Realtime;
 /// request 401 (the Entra check rejects first) rather than 403 (this gate's own Origin check),
 /// matching 18.11 row 11.
 /// </summary>
-public static class RealtimeAuthGate
+internal static class RealtimeAuthGate
 {
     /// <summary>Returns a rejection <see cref="IResult"/> (403/401) if the request must be
     /// rejected before <c>AcceptWebSocketAsync</c>, or null if the request may proceed.</summary>
@@ -51,7 +51,7 @@ public static class RealtimeAuthGate
         // logger wrapping app.py's whole request pipeline -- that line is this row's own positive
         // control proving the leak checks below aren't vacuously passing because nothing was
         // logged at all. Deliberately logs only Origin/Host, never `token`/`principalOid`.
-        logger.LogInformation("Realtime handshake: GET /realtime (host={Host}, origin={Origin})", host, origin);
+        logger.RealtimeHandshake(host, origin);
 
         // ── Origin validation ("Task 3") -- missing/empty Origin is accepted unchanged
         // (non-browser and same-process callers legitimately omit it); this only hardens the
@@ -60,7 +60,7 @@ public static class RealtimeAuthGate
             && !OriginValidator.MatchesHost(origin, host)
             && !security.AllowedOrigins.Contains(origin, StringComparer.Ordinal))
         {
-            logger.LogWarning("Rejected WebSocket from disallowed origin: host={Host} origin={Origin}", host, origin);
+            logger.RejectedDisallowedOrigin(host, origin);
             return Results.Text("Origin not allowed", statusCode: StatusCodes.Status403Forbidden);
         }
 
@@ -73,13 +73,13 @@ public static class RealtimeAuthGate
         {
             if (!tokenService.TryValidate(token ?? string.Empty, out var tokenOid))
             {
-                logger.LogWarning("Rejected WebSocket with invalid/expired session token");
+                logger.RejectedInvalidSessionToken();
                 return UnauthorizedWithBearerChallenge("Invalid or expired token");
             }
 
             if (entraMode && (string.IsNullOrEmpty(tokenOid) || !string.Equals(tokenOid, principalOid, StringComparison.Ordinal)))
             {
-                logger.LogWarning("Rejected WebSocket: session token oid does not match Entra principal");
+                logger.RejectedOidMismatch();
                 return UnauthorizedWithBearerChallenge("Invalid or expired token");
             }
         }

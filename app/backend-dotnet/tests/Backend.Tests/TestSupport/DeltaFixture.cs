@@ -10,9 +10,9 @@ namespace Backend.Tests.TestSupport;
 /// identical persona/menu JSON; a behavior difference can never be explained away by "the fixture
 /// data itself quietly drifted between the two copies".
 /// </summary>
-public static class DeltaFixture
+internal static class DeltaFixture
 {
-    public static Persona Load(string personaId = "test-delta")
+    internal static Persona Load(string personaId = "test-delta")
     {
         var fixturesDir = Path.Combine(RepoRootLocator.Find(), "app", "backend", "tests", "fixtures", "personas");
         var catalog = PersonaCatalog.Load(personasDir: fixturesDir, personasEnv: personaId, defaultPersonaEnv: personaId);

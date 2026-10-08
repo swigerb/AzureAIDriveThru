@@ -13,7 +13,7 @@ namespace Backend.Tools;
 /// stays a valid <see cref="IToolExecutor"/> without implementing this -- the ticket-refresh
 /// behavior is opt-in per executor, not a universal requirement.</para>
 /// </summary>
-public interface IOrderTicketSource
+internal interface IOrderTicketSource
 {
     /// <summary>The current order summary, serialized the same way <c>get_order</c>/
     /// <c>reset_order</c> already do (<see cref="OrderSummaryJson"/>). Reading this must not

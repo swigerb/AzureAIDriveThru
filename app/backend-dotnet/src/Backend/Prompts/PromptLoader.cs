@@ -9,7 +9,7 @@ namespace Backend.Prompts;
 /// YAML file, or an empty/invalid assembled prompt. Mirrors app/backend/prompt_loader.py's
 /// FileNotFoundError/ValueError, thrown out of Program.cs startup uncaught (fail-fast, matching
 /// personas and config).</summary>
-public sealed class PromptLoadException(string message) : Exception(message);
+internal sealed class PromptLoadException(string message) : Exception(message);
 
 /// <summary>
 /// Port of app/backend/prompt_loader.py (docs/dotnet_mapping.md), minus DEV_MODE hot-reload
@@ -21,13 +21,13 @@ public sealed class PromptLoadException(string message) : Exception(message);
 /// full Jinja2-equivalent engine, since every real persona pack's templates (verified against
 /// the default pack) only ever use plain variable interpolation, never control flow.
 /// </summary>
-public sealed class PromptLoader
+internal sealed class PromptLoader
 {
     // Plain (unquoted) scalars are typed per YAML's core schema -- `false` -> bool, `3` -> int --
-// exactly as PyYAML's safe_load does for the Python backend. Without this, tool_schemas.yaml's
-// `additionalProperties: false` reached the realtime API as the STRING "false", which rejects the
-// whole session.update (invalid_function_parameters), leaving the session with no tools and no
-// instructions. Quoted scalars ('false', "10") stay strings.
+    // exactly as PyYAML's safe_load does for the Python backend. Without this, tool_schemas.yaml's
+    // `additionalProperties: false` reached the realtime API as the STRING "false", which rejects the
+    // whole session.update (invalid_function_parameters), leaving the session with no tools and no
+    // instructions. Quoted scalars ('false', "10") stay strings.
     private readonly IDeserializer _yaml = new DeserializerBuilder()
         .WithAttemptingUnquotedStringTypeDeserialization()
         .Build();
@@ -115,7 +115,7 @@ public sealed class PromptLoader
     /// <c>{{token}}</c> it contains has no matching entry in <paramref name="variables"/> (Python's
     /// <c>StrictUndefined</c>-triggered exception fallback), rather than partially substituting or
     /// throwing.</summary>
-    public string RenderTemplate(string template, IReadOnlyDictionary<string, object?>? variables = null)
+    public static string RenderTemplate(string template, IReadOnlyDictionary<string, object?>? variables = null)
     {
         variables ??= new Dictionary<string, object?>();
         var missing = TemplateToken.Matches(template)

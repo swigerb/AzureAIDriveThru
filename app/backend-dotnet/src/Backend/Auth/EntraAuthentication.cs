@@ -1,12 +1,7 @@
-using System.IO;
-using System.Net.Http;
 using System.Text.Json;
 using Backend.Personas;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Routing;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Primitives;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Protocols;
@@ -24,7 +19,7 @@ namespace Backend.Auth;
 /// PersonaRoutes.Map) -- so both Program.cs and a lightweight test-only host can call the exact
 /// same wiring without booting the full application.
 /// </summary>
-public static class EntraAuthentication
+internal static class EntraAuthentication
 {
     /// <summary>
     /// #226 Rick's review, fix #2 (MEDIUM): key used to relay OnTokenValidated's raw-JSON
@@ -183,6 +178,14 @@ public static class EntraAuthentication
         //     below -- not the wrapped inner manager, since Microsoft.IdentityModel.Tokens only
         //     ever tracks LastKnownGoodConfiguration on the OUTERMOST BaseConfigurationManager
         //     JwtBearerHandler was handed.
+        //
+        // Deliberately NOT sourced from IHttpClientFactory: ConfigureJwtBearer is kept a pure,
+        // directly-unit-testable static method with no DI dependency (this type's own doc
+        // comment) -- every test that exercises it constructs JwtBearerOptions directly, with no
+        // running host or service provider at all. A factory-sourced client is only worth the
+        // DI coupling for something used often enough that connection pooling/reuse matters; this
+        // backchannel is used for low-frequency OIDC discovery fetches only, so a plain HttpClient
+        // with its own handler, scoped to this one named options instance, is the simpler choice.
         options.Backchannel ??= new HttpClient(options.BackchannelHttpHandler ?? new HttpClientHandler())
         {
             Timeout = options.BackchannelTimeout,
@@ -471,7 +474,7 @@ public static class EntraAuthentication
 
 /// <summary>The one requirement <see cref="EntraAuthentication.BuildAccessPolicy"/> builds its
 /// policy from -- the configured app role and API scope every authenticated request must carry.</summary>
-public sealed class EntraAccessRequirement(string appRole, string apiScope) : IAuthorizationRequirement
+internal sealed class EntraAccessRequirement(string appRole, string apiScope) : IAuthorizationRequirement
 {
     public string AppRole { get; } = appRole;
     public string ApiScope { get; } = apiScope;
@@ -487,7 +490,7 @@ public sealed class EntraAccessRequirement(string appRole, string apiScope) : IA
 /// matching) and scope ("scp" split on whitespace must contain api_scope, exact match) checks,
 /// which JwtBearer's own validation doesn't express.
 /// </summary>
-public sealed class EntraAccessRequirementHandler : AuthorizationHandler<EntraAccessRequirement>
+internal sealed class EntraAccessRequirementHandler : AuthorizationHandler<EntraAccessRequirement>
 {
     protected override Task HandleRequirementAsync(
         AuthorizationHandlerContext context, EntraAccessRequirement requirement)

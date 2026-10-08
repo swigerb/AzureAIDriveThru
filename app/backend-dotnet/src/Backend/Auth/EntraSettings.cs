@@ -3,7 +3,7 @@ using System.Text.RegularExpressions;
 namespace Backend.Auth;
 
 /// <summary>Byte-for-byte port of app/backend/entra_auth.py's Mode enum (docs/dotnet_mapping.md).</summary>
-public enum EntraMode
+internal enum EntraMode
 {
     Entra,
     Development,
@@ -14,7 +14,7 @@ public enum EntraMode
 /// entra_auth.py's EntraConfigError. Callers must log the message and exit non-zero before the
 /// process ever starts listening (matching every other startup validation failure in Program.cs).
 /// </summary>
-public sealed class EntraConfigException(string message) : Exception(message);
+internal sealed class EntraConfigException(string message) : Exception(message);
 
 /// <summary>
 /// Byte-for-byte port of app/backend/entra_auth.py's EntraSettings + resolve_settings (ADR-002,
@@ -24,7 +24,7 @@ public sealed class EntraConfigException(string message) : Exception(message);
 /// DOTNET_ENVIRONMENT) instead -- every caller here takes that boolean in, already resolved,
 /// rather than reading RUNNING_IN_PRODUCTION itself.
 /// </summary>
-public sealed record EntraSettings(
+internal sealed record EntraSettings(
     EntraMode Mode,
     string? TenantId,
     string? ClientId,

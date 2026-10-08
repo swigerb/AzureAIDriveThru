@@ -1,4 +1,5 @@
 using Backend.Realtime;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 
 namespace Backend.Tests.Realtime;
@@ -28,7 +29,8 @@ public sealed class NudgeSchedulerTests
                 isRateLimitBusy: () => RateLimitBusy,
                 sessionConfigured: SessionConfigured.Task,
                 timeProvider: Time,
-                sessionId: "s1");
+                sessionId: "s1",
+                logger: NullLogger<NudgeScheduler>.Instance);
         }
     }
 
@@ -128,16 +130,11 @@ public sealed class NudgeSchedulerTests
 
         var syncRoot = h.Scheduler.SyncRootForTests;
         Task advanceTask;
-        System.Threading.Monitor.Enter(syncRoot);
-        try
+        using (syncRoot.EnterScope())
         {
             advanceTask = Task.Run(() => h.Time.Advance(TimeSpan.FromSeconds(1.5)), TestContext.Current.CancellationToken);
             Thread.Sleep(100);
             h.Scheduler.Cancel("guest speech_started");
-        }
-        finally
-        {
-            System.Threading.Monitor.Exit(syncRoot);
         }
 
         var finished = await Task.WhenAny(advanceTask, Task.Delay(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken)) == advanceTask;

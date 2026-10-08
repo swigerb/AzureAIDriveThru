@@ -9,7 +9,7 @@ namespace Backend.Personas;
 // persona_loader.py's jsonschema-then-Pydantic double validation) so a schema/model drift can
 // never silently let an unrecognised shape through as if it were valid.
 
-public sealed record Persona
+internal sealed record Persona
 {
     /// <summary>Optional, purely-editor-hint self-reference (JSON Schema's own "$schema"
     /// keyword). Schema-valid but not part of the typed contract otherwise -- present here only
@@ -28,14 +28,14 @@ public sealed record Persona
     [JsonPropertyName("sizes")] public required PersonaSizes Sizes { get; init; }
     [JsonPropertyName("bundles")] public required PersonaBundles Bundles { get; init; }
     [JsonPropertyName("extras")] public required PersonaExtras Extras { get; init; }
-    [JsonPropertyName("invalidModifiers")] public required Dictionary<string, List<string>> InvalidModifiers { get; init; }
+    [JsonPropertyName("invalidModifiers")] public required IReadOnlyDictionary<string, IReadOnlyList<string>> InvalidModifiers { get; init; }
 
     // Issue #304: optional persona-level phonetic lexicon (e.g. {"Widget": "Wid-jet"}),
     // consulted ONLY by the cascade pipeline's SpeakAsync (never by the realtime model, never
     // applied to order/search/display data). Mirrors persona_loader.py's
     // PersonaManifest.pronunciations.
-    [JsonPropertyName("pronunciations")] public Dictionary<string, string>? Pronunciations { get; init; }
-    [JsonPropertyName("machines")] public required Dictionary<string, PersonaMachine> Machines { get; init; }
+    [JsonPropertyName("pronunciations")] public IReadOnlyDictionary<string, string>? Pronunciations { get; init; }
+    [JsonPropertyName("machines")] public required IReadOnlyDictionary<string, PersonaMachine> Machines { get; init; }
     [JsonPropertyName("models")] public required PersonaModelsBlock Models { get; init; }
     [JsonPropertyName("strategies")] public required PersonaStrategies Strategies { get; init; }
     [JsonPropertyName("features")] public required PersonaFeatures Features { get; init; }
@@ -56,35 +56,35 @@ public sealed record Persona
     [JsonIgnore] public string PromptsDir { get; init; } = null!;
 }
 
-public sealed record PersonaLocales
+internal sealed record PersonaLocales
 {
     [JsonPropertyName("default")] public required string Default { get; init; }
-    [JsonPropertyName("supported")] public required List<string> Supported { get; init; }
+    [JsonPropertyName("supported")] public required IReadOnlyList<string> Supported { get; init; }
 }
 
-public sealed record PersonaStore
+internal sealed record PersonaStore
 {
     [JsonPropertyName("timezone")] public required string Timezone { get; init; }
 }
 
-public sealed record PersonaVoice
+internal sealed record PersonaVoice
 {
     [JsonPropertyName("default")] public required string Default { get; init; }
 }
 
-public sealed record PersonaSearch
+internal sealed record PersonaSearch
 {
     [JsonPropertyName("indexName")] public required string IndexName { get; init; }
-    [JsonPropertyName("contentFields")] public required List<string> ContentFields { get; init; }
+    [JsonPropertyName("contentFields")] public required IReadOnlyList<string> ContentFields { get; init; }
 }
 
-public sealed record PersonaPricing
+internal sealed record PersonaPricing
 {
     [JsonPropertyName("taxRate")] public required string TaxRate { get; init; }
     [JsonPropertyName("happyHour")] public PersonaHappyHour? HappyHour { get; init; }
 }
 
-public sealed record PersonaHappyHour
+internal sealed record PersonaHappyHour
 {
     [JsonPropertyName("startHour")] public required int StartHour { get; init; }
     [JsonPropertyName("endHour")] public required int EndHour { get; init; }
@@ -93,20 +93,20 @@ public sealed record PersonaHappyHour
     [JsonPropertyName("banner")] public required string Banner { get; init; }
 }
 
-public sealed record PersonaSizes
+internal sealed record PersonaSizes
 {
-    [JsonPropertyName("canonical")] public required Dictionary<string, string> Canonical { get; init; }
-    [JsonPropertyName("aliases")] public required Dictionary<string, string> Aliases { get; init; }
-    [JsonPropertyName("spokenAs")] public required Dictionary<string, string> SpokenAs { get; init; }
-    [JsonPropertyName("hidden")] public required List<string> Hidden { get; init; }
+    [JsonPropertyName("canonical")] public required IReadOnlyDictionary<string, string> Canonical { get; init; }
+    [JsonPropertyName("aliases")] public required IReadOnlyDictionary<string, string> Aliases { get; init; }
+    [JsonPropertyName("spokenAs")] public required IReadOnlyDictionary<string, string> SpokenAs { get; init; }
+    [JsonPropertyName("hidden")] public required IReadOnlyList<string> Hidden { get; init; }
     [JsonPropertyName("default")] public string? Default { get; init; }
 }
 
-public sealed record PersonaBundles
+internal sealed record PersonaBundles
 {
-    [JsonPropertyName("nameMarkers")] public required List<string> NameMarkers { get; init; }
+    [JsonPropertyName("nameMarkers")] public required IReadOnlyList<string> NameMarkers { get; init; }
     [JsonPropertyName("convertStandalone")] public required bool ConvertStandalone { get; init; }
-    [JsonPropertyName("missingPartText")] public required Dictionary<string, string> MissingPartText { get; init; }
+    [JsonPropertyName("missingPartText")] public required IReadOnlyDictionary<string, string> MissingPartText { get; init; }
     // PR #184 round 2 (Rick's review, item 1): which of this pack's OWN pricing rules a bundle
     // slot-fill/resize follows -- "includedAnySize" (default; a slot filled/resized to ANY size
     // never changes what the bundle itself costs), "wholeBundleSize" (a slot resize re-prices
@@ -117,57 +117,57 @@ public sealed record PersonaBundles
     [JsonPropertyName("includedSize")] public string? IncludedSize { get; init; }
 }
 
-public sealed record PersonaExtras
+internal sealed record PersonaExtras
 {
-    [JsonPropertyName("allowedBaseCategories")] public required List<string> AllowedBaseCategories { get; init; }
-    [JsonPropertyName("blockedBaseCategories")] public required List<string> BlockedBaseCategories { get; init; }
+    [JsonPropertyName("allowedBaseCategories")] public required IReadOnlyList<string> AllowedBaseCategories { get; init; }
+    [JsonPropertyName("blockedBaseCategories")] public required IReadOnlyList<string> BlockedBaseCategories { get; init; }
     [JsonPropertyName("splitCombinedNames")] public required bool SplitCombinedNames { get; init; }
 }
 
 /// <summary>#77: each pack owns its own guest-facing out-of-stock label, so a machine going
 /// down doesn't fall back to a hardcoded, Sonic-only apology (mirrors persona_loader.py's
 /// _Machine).</summary>
-public sealed record PersonaMachine
+internal sealed record PersonaMachine
 {
     [JsonPropertyName("status")] public required string Status { get; init; }
     [JsonPropertyName("label")] public required string Label { get; init; }
 }
 
-public sealed record PersonaModelsBlock
+internal sealed record PersonaModelsBlock
 {
     [JsonPropertyName("realtime")] public required PersonaModelPipeline Realtime { get; init; }
     [JsonPropertyName("cascade")] public PersonaModelPipeline? Cascade { get; init; }
 }
 
-public sealed record PersonaModelPipeline
+internal sealed record PersonaModelPipeline
 {
     [JsonPropertyName("default")] public required string Default { get; init; }
-    [JsonPropertyName("allowed")] public required List<string> Allowed { get; init; }
+    [JsonPropertyName("allowed")] public required IReadOnlyList<string> Allowed { get; init; }
 }
 
-public sealed record PersonaStrategies
+internal sealed record PersonaStrategies
 {
     [JsonPropertyName("searchQueryRewrite")] public required string SearchQueryRewrite { get; init; }
 }
 
-public sealed record PersonaFeatures
+internal sealed record PersonaFeatures
 {
     [JsonPropertyName("dayparts")] public required bool Dayparts { get; init; }
 }
 
-public sealed record PersonaUi
+internal sealed record PersonaUi
 {
     [JsonPropertyName("title")] public required string Title { get; init; }
     [JsonPropertyName("theme")] public required PersonaTheme Theme { get; init; }
     [JsonPropertyName("assets")] public required PersonaAssets Assets { get; init; }
-    [JsonPropertyName("strings")] public required Dictionary<string, Dictionary<string, string>> Strings { get; init; }
+    [JsonPropertyName("strings")] public required IReadOnlyDictionary<string, IReadOnlyDictionary<string, string>> Strings { get; init; }
     [JsonPropertyName("hero")] public required PersonaHero Hero { get; init; }
     [JsonPropertyName("legal")] public required string Legal { get; init; }
     [JsonPropertyName("sessionBar")] public PersonaSessionBar? SessionBar { get; init; }
     /// <summary>Issue #164 E1: optional menu-category-name -> emoji/icon override, keyed by the
     /// category's exact menuItems.json name. Lets a pack whose menu data is shared territory
     /// (issue #165's menu-data work) restore its original category icons WITHOUT editing menuItems.json.</summary>
-    [JsonPropertyName("categoryIcons")] public Dictionary<string, string>? CategoryIcons { get; init; }
+    [JsonPropertyName("categoryIcons")] public IReadOnlyDictionary<string, string>? CategoryIcons { get; init; }
     /// <summary>Issue #164 R2 (PR #167 round 1 review): optional per-slot override of which
     /// brand role a handful of shared text elements draw their color from. Any key a pack omits
     /// falls back to the shared default (badge=primary, countChip=secondary,
@@ -179,7 +179,7 @@ public sealed record PersonaUi
 /// <summary>Issue #164 R2 (PR #167 round 1 review): which brand role a shared text element's
 /// color is drawn from. Each field is one of "primary" | "primaryDeep" | "secondary" | "accent" |
 /// "ink" (enforced by the JSON Schema `enum`, not re-validated here -- see the file banner).</summary>
-public sealed record PersonaTextRoles
+internal sealed record PersonaTextRoles
 {
     [JsonPropertyName("badge")] public string? Badge { get; init; }
     [JsonPropertyName("countChip")] public string? CountChip { get; init; }
@@ -191,25 +191,25 @@ public sealed record PersonaTextRoles
 /// used, which follows the page's light/dark mode. 'chips' is one original's
 /// colored pill-chip bar, which always stays on its light background regardless of page
 /// theme.</summary>
-public sealed record PersonaSessionBar
+internal sealed record PersonaSessionBar
 {
     [JsonPropertyName("variant")] public string? Variant { get; init; }
 }
 
-public sealed record PersonaTheme
+internal sealed record PersonaTheme
 {
     [JsonPropertyName("light")] public required PersonaThemeTokens Light { get; init; }
     [JsonPropertyName("dark")] public PersonaThemeTokens? Dark { get; init; }
     [JsonPropertyName("font")] public PersonaThemeFont? Font { get; init; }
 }
 
-public sealed record PersonaThemeFont
+internal sealed record PersonaThemeFont
 {
     [JsonPropertyName("family")] public required string Family { get; init; }
     [JsonPropertyName("importUrl")] public string? ImportUrl { get; init; }
 }
 
-public sealed record PersonaThemeTokens
+internal sealed record PersonaThemeTokens
 {
     [JsonPropertyName("primary")] public string? Primary { get; init; }
     [JsonPropertyName("secondary")] public string? Secondary { get; init; }
@@ -221,7 +221,7 @@ public sealed record PersonaThemeTokens
 }
 
 /// <summary>Optional extended brand accent palette (issue #80 F2). Every key optional.</summary>
-public sealed record PersonaThemeAccents
+internal sealed record PersonaThemeAccents
 {
     [JsonPropertyName("primaryHex")] public string? PrimaryHex { get; init; }
     [JsonPropertyName("primaryStrong")] public string? PrimaryStrong { get; init; }
@@ -252,7 +252,7 @@ public sealed record PersonaThemeAccents
 
 /// <summary>Optional shadcn-style UI slot palette (issue #117). Every key optional; the same shape
 /// is reused for both `light.surface` and `dark.surface` (see PersonaThemeTokens.Surface).</summary>
-public sealed record PersonaThemeSurface
+internal sealed record PersonaThemeSurface
 {
     [JsonPropertyName("cardForeground")] public string? CardForeground { get; init; }
     [JsonPropertyName("secondary")] public string? Secondary { get; init; }
@@ -275,14 +275,14 @@ public sealed record PersonaThemeSurface
 /// `dark.menuSurface` (same convention as <see cref="PersonaThemeSurface"/>) even though a mode
 /// only ever sets a subset -- a pack that omits the block entirely still deserializes and simply
 /// renders the shared neutral defaults app/frontend/src/index.css falls back to.</summary>
-public sealed record PersonaThemeMenuSurface
+internal sealed record PersonaThemeMenuSurface
 {
     [JsonPropertyName("categoryCardBackground")] public string? CategoryCardBackground { get; init; }
     [JsonPropertyName("itemCardBackground")] public string? ItemCardBackground { get; init; }
     [JsonPropertyName("categoryTitleColor")] public string? CategoryTitleColor { get; init; }
 }
 
-public sealed record PersonaAssets
+internal sealed record PersonaAssets
 {
     [JsonPropertyName("logo")] public required string Logo { get; init; }
     [JsonPropertyName("favicon")] public required string Favicon { get; init; }
@@ -293,7 +293,7 @@ public sealed record PersonaAssets
     [JsonPropertyName("logoTile")] public bool? LogoTile { get; init; }
 }
 
-public sealed record PersonaHero
+internal sealed record PersonaHero
 {
     [JsonPropertyName("headline")] public required string Headline { get; init; }
     /// <summary>Issue #164 A5: overrides the shared neutral "Voice Ordering Demo" hero pill
@@ -301,14 +301,14 @@ public sealed record PersonaHero
     [JsonPropertyName("badge")] public string? Badge { get; init; }
     /// <summary>Issue #164 A4: the persona's own hero sub-headline sentence.</summary>
     [JsonPropertyName("description")] public required string Description { get; init; }
-    [JsonPropertyName("callouts")] public required List<PersonaHeroCallout> Callouts { get; init; }
-    [JsonPropertyName("spotlight")] public required List<PersonaHeroSpotlight> Spotlight { get; init; }
+    [JsonPropertyName("callouts")] public required IReadOnlyList<PersonaHeroCallout> Callouts { get; init; }
+    [JsonPropertyName("spotlight")] public required IReadOnlyList<PersonaHeroSpotlight> Spotlight { get; init; }
 }
 
 /// <summary>Issue #164 A3: one of the hero's three compact callout pills. `Tone` names which of
 /// the persona's own theme roles (primary/secondary/accent) the pill's gradient is drawn from --
 /// the shared component stays brand-free by never hard-coding a color itself.</summary>
-public sealed record PersonaHeroCallout
+internal sealed record PersonaHeroCallout
 {
     [JsonPropertyName("title")] public required string Title { get; init; }
     [JsonPropertyName("detail")] public required string Detail { get; init; }
@@ -318,12 +318,12 @@ public sealed record PersonaHeroCallout
 /// <summary>Issue #164 A1/A2: one of the hero's two spotlight cards. The first card shape uses
 /// `Rows` (label/value pairs); the second instead pairs a `Body` sentence with an `Accent`
 /// pairing suggestion -- matching each original's two distinct card layouts.</summary>
-public sealed record PersonaHeroSpotlight
+internal sealed record PersonaHeroSpotlight
 {
     [JsonPropertyName("icon")] public required string Icon { get; init; }
     [JsonPropertyName("kicker")] public required string Kicker { get; init; }
     [JsonPropertyName("title")] public required string Title { get; init; }
-    [JsonPropertyName("rows")] public List<PersonaHeroSpotlightRow>? Rows { get; init; }
+    [JsonPropertyName("rows")] public IReadOnlyList<PersonaHeroSpotlightRow>? Rows { get; init; }
     [JsonPropertyName("body")] public string? Body { get; init; }
     [JsonPropertyName("accent")] public string? Accent { get; init; }
     // Issue #164 A2: which brand role the second ("body") card's border/wash/kicker draw from.
@@ -338,7 +338,7 @@ public sealed record PersonaHeroSpotlight
     [JsonPropertyName("tint")] public string? Tint { get; init; }
 }
 
-public sealed record PersonaHeroSpotlightRow
+internal sealed record PersonaHeroSpotlightRow
 {
     [JsonPropertyName("label")] public required string Label { get; init; }
     [JsonPropertyName("value")] public required string Value { get; init; }

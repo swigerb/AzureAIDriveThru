@@ -1,0 +1,36 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+[*.{csproj,props,targets,slnx}]
+indent_size = 2
+
+[*.{json,yml,yaml}]
+indent_size = 2
+
+[*.cs]
+# House style: one namespace declaration per file, no nested indent level for it.
+csharp_style_namespace_declarations = file_scoped:warning
+
+# Prefer collection expressions ([1, 2, 3]) over initializer syntax where the target type is
+# unambiguous; "when_types_loosely_match" avoids forcing it where it would change inferred type.
+csharp_style_prefer_collection_expression = when_types_loosely_match:suggestion
+dotnet_style_prefer_collection_expression = when_types_loosely_match:suggestion
+
+# Primary constructors are an option, not a mandate -- existing explicit constructors stay as-is.
+csharp_style_prefer_primary_constructors = true:suggestion
+
+# `var` is the prevailing style across this codebase; match it rather than forcing explicit types
+# (a blanket flip would touch on the order of a thousand call sites with zero behavior change).
+csharp_style_var_for_built_in_types = true:silent
+csharp_style_var_when_type_is_apparent = true:silent
+csharp_style_var_elsewhere = true:silent
+
+# Dead usings are just noise -- always clean them up.
+dotnet_diagnostic.IDE0005.severity = warning

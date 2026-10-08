@@ -21,7 +21,7 @@ namespace Backend.Tools;
 /// <see cref="ExecuteAsync"/> on every <c>response.output_item.done</c> function_call, exactly
 /// mirroring rtmt.py's <c>tool.target(args, session_id)</c> dispatch.</para>
 /// </summary>
-public interface IToolExecutor
+internal interface IToolExecutor
 {
     /// <summary>Every tool name this executor can dispatch for its session's bound persona
     /// (typically "search", "update_order", "get_order", "reset_order" -- mirrors

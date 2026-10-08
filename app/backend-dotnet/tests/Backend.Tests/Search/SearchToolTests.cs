@@ -7,6 +7,7 @@ using Backend.Personas;
 using Backend.Search;
 using Backend.Tests.TestSupport;
 using Backend.Tools;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Backend.Tests.Search;
 
@@ -74,12 +75,21 @@ public sealed class SearchToolTests
             embeddingField: "embedding",
             useVectorQuery: true,
             useSemanticRanker: useSemanticRanker); // false keeps the happy-path/cache/no-results
-                                                    // tests simple; the semantic-ranker tests below
-                                                    // (Rick's PR #149 R2 review) opt it back in.
+                                                   // tests simple; the semantic-ranker tests below
+                                                   // (Rick's PR #149 R2 review) opt it back in.
         var httpClient = new HttpClient(handler);
         return new SearchTool(
-            httpClient, endpointConfig, searchConfig, menu, promptLoader: null, "test-delta-menu-items", personaId,
-            menuMode: menuMode, effectiveMachineStatus: effectiveMachineStatus);
+            httpClient,
+            menu,
+            new SearchToolOptions(
+                endpointConfig,
+                searchConfig,
+                PromptLoader: null,
+                IndexName: "test-delta-menu-items",
+                PersonaId: personaId,
+                MenuMode: menuMode,
+                EffectiveMachineStatus: effectiveMachineStatus),
+            NullLogger<SearchTool>.Instance);
     }
 
     private static JsonElement QueryArgs(string query) =>

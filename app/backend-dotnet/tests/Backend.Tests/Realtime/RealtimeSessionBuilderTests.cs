@@ -172,7 +172,7 @@ public sealed class RealtimeSessionBuilderTests
 
         var session = RealtimeSessionBuilder.BuildSession(
             config, RealtimeSessionBuilder.BootstrapClientSession(), [UpdateOrderTool],
-            systemMessage: Overridable<string?>.Of(boundPersonaSystemMessage));
+            systemMessage: Overridable.Of<string?>(boundPersonaSystemMessage));
 
         Assert.Equal(boundPersonaSystemMessage, session["instructions"]!.GetValue<string>());
         Assert.NotEqual(config.SystemMessage, session["instructions"]!.GetValue<string>());

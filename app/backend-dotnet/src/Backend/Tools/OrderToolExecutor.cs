@@ -13,7 +13,7 @@ namespace Backend.Tools;
 /// "search" -- see <c>SearchTool</c>/whatever composes both into one <see cref="IToolExecutor"/>
 /// for a session's full tool set.
 /// </summary>
-public sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings
+internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings
 {
     private readonly Ordering.OrderState _order;
     private readonly MenuCatalog _menu;
@@ -600,7 +600,7 @@ public sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings
         var modsLower = modsContent.ToLowerInvariant();
         foreach (var (catKey, forbiddenList) in _menu.InvalidModifiers)
         {
-            if (!category.ToLowerInvariant().Contains(catKey))
+            if (!category.Contains(catKey, StringComparison.OrdinalIgnoreCase))
             {
                 continue;
             }
@@ -671,7 +671,7 @@ public sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings
         if (_promptLoader is { } pl)
         {
             var tpl = pl.GetDeltaTemplate(action);
-            return pl.RenderTemplate(tpl, Vars(
+            return PromptLoader.RenderTemplate(tpl, Vars(
                 ("quantity", Ordering.Money.NumberToWords(quantity)), ("display_name", spokenDisplayName), ("total", summary.FinalTotalSpoken)));
         }
         return action switch
