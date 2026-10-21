@@ -33,7 +33,7 @@ permissions:
 env:
   # Keep these two in sync with global.json (repo root).
   DOTNET_VERSION: "11.0.100-rc.2.26504.105"
-  PYTHON_VERSION: "3.14"
+  PYTHON_VERSION: "3.15"
   DOTNET_NOLOGO: "true"
   DOTNET_CLI_TELEMETRY_OPTOUT: "true"
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "true"
@@ -65,6 +65,8 @@ jobs:
           cache-dependency-path: app/backend/requirements.txt
 
       - name: Install backend dependencies
+        env:
+          PYYAML_FORCE_LIBYAML: "0"
         run: |
           python -m pip install --upgrade pip
           pip install -r app/backend/requirements.txt
@@ -425,6 +427,8 @@ jobs:
         # it only actually runs (and proves anything) on this python leg, not the dotnet leg
         # (which never sets up a Python interpreter at all).
         if: matrix.backend == 'python'
+        env:
+          PYYAML_FORCE_LIBYAML: "0"
         run: |
           python -m venv .venv
           .venv/bin/python -m pip install --upgrade pip
@@ -576,6 +580,8 @@ jobs:
         # PythonBackendLauncher (tests/conformance/src/Conformance.Harness)
         # expects a .venv at the repo root with the backend's runtime deps
         # installed -- exactly what a developer's local checkout has.
+        env:
+          PYYAML_FORCE_LIBYAML: "0"
         run: |
           python -m venv .venv
           .venv/bin/python -m pip install --upgrade pip

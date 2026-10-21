@@ -68,7 +68,7 @@ The cascade pipeline uses the same WebSocket and frontend contract. The backend 
 ### Prerequisites
 
 - Windows PowerShell 7 or a compatible shell.
-- Azure Developer CLI (`azd`), Azure CLI, Docker, Node.js 24 LTS (24.15+), Python 3.14 (3.12 remains supported), and Git.
+- Azure Developer CLI (`azd`), Azure CLI, Docker, Node.js 24 LTS (24.15+), Python 3.15 (3.14 and 3.12 remain supported), and Git.
 - The .NET 11 RC2 SDK pinned in `global.json`, only if you run the C# backend or conformance suites.
 - Azure and GitHub authentication for deployment workflows.
 
@@ -85,9 +85,11 @@ The runtime sweep retains these explicit exceptions:
 - The C# port already targets .NET 11; RC2 is the latest compatible SDK/runtime, not a stable
   release. Moving the port to stable .NET 10 is a separate target-framework change.
 - `azure-ai-inference` remains at `1.0.0b9` because no stable release is available.
-- Python 3.15.1 could not install the current PyYAML dependency on Windows without a C++ source
-  build. Production and CI use Python 3.14 instead. The Microsoft Python devcontainer image
-  still uses its available Python 3.12 base; a matching 3.14 image tag was not available.
+- PyYAML 6.0.3 does not yet publish a Windows wheel for Python 3.15, so local setup, CI, and the
+  production image set `PYYAML_FORCE_LIBYAML=0` while installing it. This selects PyYAML's
+  supported pure-Python parser and avoids requiring a C/C++ compiler; the backend's YAML behavior
+  is covered by the full test suite. The Microsoft Python devcontainer image still uses its
+  available Python 3.12 base.
 
 Local Windows validation does not replace the Linux container build and Gunicorn startup
 checks in CI. No Azure resources or hosting plans need to change for these upgrades.

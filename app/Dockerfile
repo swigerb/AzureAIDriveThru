@@ -40,7 +40,7 @@ RUN npm run build
 # ---------------------------------------------------------------------------
 # Stage 2: Production Python runtime
 # ---------------------------------------------------------------------------
-FROM python:3.14-slim AS production-stage
+FROM python:3.15-slim AS production-stage
 
 WORKDIR /app
 
@@ -50,7 +50,7 @@ ENV PYTHONUNBUFFERED=1
 # Install Python deps before copying app source for layer caching
 COPY ./app/backend/requirements.txt /app/requirements.txt
 RUN --mount=type=secret,id=pip_config,target=/etc/pip.conf \
-    python -m pip install --no-cache-dir -r requirements.txt
+    PYYAML_FORCE_LIBYAML=0 python -m pip install --no-cache-dir -r requirements.txt
 
 # Copy backend application source
 COPY ./app/backend/ /app
