@@ -1,5 +1,12 @@
 #!/bin/bash
 
+# AZD values are available through `azd env get-value`. This flag keeps deployments from
+# overwriting the user's local backend .env file.
+if [[ "$(azd env get-value AZURE_SKIP_LOCAL_ENV_WRITE 2>/dev/null || true)" == "true" ]]; then
+  echo "Skipping local app/backend/.env write (AZURE_SKIP_LOCAL_ENV_WRITE=true)."
+  exit 0
+fi
+
 # Define the .env file path
 ENV_FILE_PATH="app/backend/.env"
 

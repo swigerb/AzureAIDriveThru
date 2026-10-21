@@ -1,3 +1,11 @@
+# AZD environment values are already available through `azd env get-value`. A deployment can set
+# this flag to leave the user's local backend .env file untouched.
+$skipLocalEnvWrite = azd env get-value AZURE_SKIP_LOCAL_ENV_WRITE 2>$null
+if ($LASTEXITCODE -eq 0 -and $skipLocalEnvWrite -eq "true") {
+  Write-Host "Skipping local app/backend/.env write (AZURE_SKIP_LOCAL_ENV_WRITE=true)."
+  exit 0
+}
+
 # Define the .env file path
 $envFilePath = "app\backend\.env"
 

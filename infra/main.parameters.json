@@ -143,6 +143,9 @@
     "azureContainerAppsWorkloadProfile": {
       "value": "${AZURE_CONTAINER_APPS_WORKLOAD_PROFILE=Consumption}"
     },
+    "containerAppMaxReplicas": {
+      "value": "${AZURE_CONTAINER_APP_MAX_REPLICAS=5}"
+    },
     "appSessionSecret": {
       "value": "${APP_SESSION_SECRET=}"
     },

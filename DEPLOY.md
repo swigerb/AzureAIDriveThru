@@ -2,15 +2,15 @@
 
 ## What azd deploys
 
-`azd up` provisions or updates the Microsoft Foundry AI Drive Thru environment:
+AZD provisions or updates the Microsoft Foundry AI Drive Thru environment:
 
 1. Resource group, Azure Container Registry, Log Analytics, Storage, and a user-assigned managed identity.
-2. Microsoft Foundry `AIServices` with the model deployments in `infra/model-deployments.json`.
+2. Microsoft Foundry `AIServices` with the model deployments in `infra/model-deployments.json`, or the configured existing account.
 3. Azure AI Search with one index per persona.
-4. Azure Container Apps with one container app that serves the frontend and Python backend.
-5. Entra ID in-app auth settings, managed-identity RBAC, search ingestion, and the non-fatal realtime smoke check through azd hooks.
+4. Azure Container Apps with the Python backend and an optional C# backend.
+5. Entra ID in-app auth settings, managed-identity RBAC, Search ingestion, and a non-fatal realtime smoke check through AZD hooks.
 
-## Build and Test Locally with Docker
+## Build and test locally with Docker
 
 From the root directory, execute the following commands:
 
@@ -21,9 +21,9 @@ docker run -p 8000:8000 --env-file ./app/backend/.env azure-ai-drive-thru:latest
 
 `VITE_AUTH_MODE=Development` skips the Entra sign-in build check for a local smoke test. Without it the image defaults to Entra and the frontend build fails unless real `VITE_ENTRA_TENANT_ID` and `VITE_ENTRA_CLIENT_ID` values are passed.
 
-## Deploy the Application
+## Deploy the application
 
-The deployed app always runs with Entra ID auth, so a fresh environment needs the Entra app registration before the first `azd up`. Otherwise the frontend build and the backend startup both fail on empty Entra ids. See [Setup](#setup), case (b), for details.
+The deployed app always uses Entra ID auth, so a fresh environment needs the app registration before the first image build. See [Setup](#setup), case (b), for details.
 
 ```powershell
 azd auth login
@@ -36,10 +36,13 @@ azd env set AZURE_OPENAI_SERVICE_LOCATION eastus2
 azd env set ENTRA_TENANT_ID "<tenant-id>"
 azd env set ENTRA_CLIENT_ID "<client-id>"
 
-azd up
 ```
 
-## New Environment: Personas, Search Indexes, and Model Deployments
+Follow the ingress-last rollout below. `DEPLOY_DOTNET_APP` defaults to `false`; while C# is
+disabled, deploy the Python service explicitly with `azd deploy backend`. Do not run bare
+`azd up` or `azd deploy` until the C# service is enabled and provisioned.
+
+## New environment: personas, Search indexes, and model deployments
 
 A brand-new `azd` environment, with its own resource group, Foundry AIServices account, and paid Search service, is configured with these `infra/main.bicep` parameters:
 
@@ -49,21 +52,22 @@ The tracked default leaves `DEFAULT_PERSONA` empty. When no query string is supp
 |---|---|---|---|
 | `personas` | `PERSONAS` | *(empty)* | Comma list; the app parses this to its own allow-list. Empty (the tracked default) means "every persona found under `PERSONAS_DIR`" (`app/backend/persona_loader.py`), so all personas are served without naming any of them in tracked infra. The container app omits the `PERSONAS` env var entirely when this is empty, so the loader's own default applies. Override with `azd env set PERSONAS=...` only to restrict an environment to a subset of personas. |
 | `defaultPersona` | `DEFAULT_PERSONA` | *(empty)* | Persona selected when a request doesn't specify one. Empty (the tracked default) means the container app omits `DEFAULT_PERSONA` entirely, so `app/backend/persona_loader.py` picks its own default (its sonic persona if enabled, else the first enabled id alphabetically) -- same "don't name a brand in tracked infra" treatment as `personas` above. |
-| `openAiModelDeployments` | *(not wired to an env var)* | `infra/model-deployments.json` (loaded via `loadJsonContent()`): `gpt-realtime-2.1`, `gpt-realtime-2.1-mini`, `text-embedding-3-large`, `gpt-5-mini`, `phi-4`, `gpt-4o-transcribe`, and `gpt-4o-mini-tts` | Each entry is `{catalogId, deploymentName, modelName, modelVersion, format, skuName, capacity, isDefaultRealtime}` (`format` is the Foundry model-format id, defaults to `OpenAI` when omitted). `AZURE_AI_MODEL_DEPLOYMENTS` output/env exposes the catalogId-to-deploymentName map for the model catalog in `app/backend/config.yaml`. Adding a model deployment is one new entry in `infra/model-deployments.json`, no Bicep edits. `gpt-realtime-2.1-mini` is `isDefaultRealtime` (issue #306); a Grok voice/realtime model is deferred -- none exists in Foundry for this subscription yet. |
+| `openAiModelDeployments` | *(not wired to an env var)* | `infra/model-deployments.json` (loaded via `loadJsonContent()`): `gpt-realtime-2.1`, `gpt-realtime-2.1-mini`, `text-embedding-3-large`, `gpt-5-mini`, `phi-4`, `gpt-4o-transcribe`, and `gpt-4o-mini-tts` | Each entry is `{catalogId, deploymentName, modelName, modelVersion, format, skuName, capacity, isDefaultRealtime}` (`format` is the Foundry model-format id, defaults to `OpenAI` when omitted). `AZURE_AI_MODEL_DEPLOYMENTS` exposes the catalogId-to-deploymentName map used by `app/backend/config.yaml`. Add deployments in `infra/model-deployments.json`; no Bicep edit is needed. `gpt-realtime-2.1-mini` is the default realtime model. |
 | `realtimeDeploymentCapacity` | `AZURE_OPENAI_REALTIME_DEPLOYMENT_CAPACITY` | `10` | Scale-only override for the `gpt-realtime-2.1` entry above (section 10.3): bump the param, then `azd provision`. |
-| `realtime21MiniDeploymentCapacity` | `AZURE_OPENAI_REALTIME_21_MINI_DEPLOYMENT_CAPACITY` | `10` | Scale-only override for the `gpt-realtime-2.1-mini` entry above (issue #306, the default realtime model): bump the param, then `azd provision`. |
+| `realtime21MiniDeploymentCapacity` | `AZURE_OPENAI_REALTIME_21_MINI_DEPLOYMENT_CAPACITY` | `10` | Scale-only override for the default `gpt-realtime-2.1-mini` model; change the parameter, then run `azd provision`. |
 | `searchServiceSkuName` | `AZURE_SEARCH_SERVICE_SKU` | `basic` | Paid tier for a clean-clone `azd up` (design section 10.2): Basic removes the free tier's 3-index cap at roughly a third of Standard's cost. |
 | `searchServiceLocation` | `AZURE_SEARCH_SERVICE_LOCATION` | *(empty -- falls back to `location`)* | Independent region override for the Search module only (same pattern as `openAiServiceLocation`/`AZURE_OPENAI_SERVICE_LOCATION`). Set this when the main `location` has no Basic-SKU Search capacity. |
-| `deployDotnetApp` | `DEPLOY_DOTNET_APP` | `false` | Deploys the optional `acaBackendDotnet` Container App module. The azd `backend-dotnet` deploy target in `azure.yaml` and the matching bicep tag have already landed (the flip commit, [".NET container app (S7, #17)"](#net-container-app-s7-17) below, "Step 0"); flipping this param per environment is still a real, owner-gated spend decision (a second always-on Container App) -- see "Turning it on" below for the `azd env set` steps and the full ingress-last rollout. |
-| `dotnetServiceName` | `AZURE_CONTAINER_APP_DOTNET_NAME` | *(auto-generated: `capps-dotnet-<resourceToken>`)* | Only used when `deployDotnetApp` is `true`. The auto-generated default is shaped to fit the Container Apps 32-char name limit (`capps-dotnet-` + the 13-char `resourceToken` = 26 chars); production pins `AZURE_CONTAINER_APP_DOTNET_NAME=capps-dotnet-pwvzk3t22wttm` (#311), which is exactly what the default produces for that environment's token, so the override keeps working unchanged. |
-| `backendDotnetIngressEnabled` | `BACKEND_DOTNET_INGRESS_ENABLED` | `false` | Same ingress-last pattern as `backendIngressEnabled` below, independent per app. Flip only after #147's Entra parity work has been verified dark on the dotnet app. |
+| `containerAppMaxReplicas` | `AZURE_CONTAINER_APP_MAX_REPLICAS` | `5` | Maximum replicas for each backend Container App. Set to `1` for a cost-bounded test environment; this caps app scaling but is not a total-spend limit. |
+| `deployDotnetApp` | `DEPLOY_DOTNET_APP` | `false` | Deploys the optional C# Container App. Enabling it adds a second always-on app; review cost and rollout for the target environment before setting it to `true`. See [.NET container app](#net-container-app). |
+| `dotnetServiceName` | `AZURE_CONTAINER_APP_DOTNET_NAME` | *(auto-generated: `capps-dotnet-<resourceToken>`)* | Used only when `deployDotnetApp` is `true`; override it only when the generated name does not fit the target environment. |
+| `backendDotnetIngressEnabled` | `BACKEND_DOTNET_INGRESS_ENABLED` | `false` | Enables public ingress for the C# app. Keep it disabled until the dark revision passes auth checks. |
 
 Search index names are not tracked in infra at all: each persona's own
 `persona.json` `search.indexName` (design section 4.2) is the one source of
-truth, read by the #84 ingestion hook and by the app itself. An infra-level
+truth, read by the ingestion hook and by the app itself. An infra-level
 index-name map would be a second source of truth for the same data.
 
-### `BACKEND_URI` / `BACKEND_DOTNET_URI` container env vars (#311)
+### `BACKEND_URI` and `BACKEND_DOTNET_URI` container environment variables
 
 Both container apps' own env blocks (not just the azd output/`.env` file -- see
 "Entra redirect URIs" below) now carry `BACKEND_URI` and, once the dotnet app is deployed with
@@ -128,7 +132,7 @@ This only changes which persona a session gets when it doesn't name one
 -- every enabled persona still gets its own index and is still
 reachable by a session that requests it explicitly.
 
-## Realtime & Cascade Smoke Checks (postdeploy, #302)
+## Realtime and cascade smoke checks
 
 The azd `postdeploy` hook (`scripts/smoke_realtime.sh` / `.ps1`) runs
 `scripts/smoke_realtime.py` once per persona (discovered live via
@@ -163,6 +167,13 @@ afterward, not a deployment gate. See `app/backend/tests/test_smoke_realtime.py`
 for the fake-server-only unit coverage of both pipelines (no live Azure calls
 are made in tests).
 
+For an isolated deployment where the C# app itself is the realtime test client,
+set `SONIC_SKIP_REALTIME_SMOKE=true` to avoid separate client-level AI smoke
+calls. `scripts/setup_search_index.py` loads only its allowlisted, non-secret
+runtime settings with `azd env get-value`; it does not read an AZD `.env` file.
+Set `AZURE_SKIP_LOCAL_ENV_WRITE=true` to keep the postprovision hook from
+overwriting `app/backend/.env`.
+
 ## Entra ID Authentication (ADR-002)
 
 The app requires Microsoft Entra ID sign-in on every request, including the `/realtime` WebSocket, which
@@ -185,7 +196,7 @@ the registered SPA redirect URIs to the localhost defaults only, dropping any al
 from that set. Only a run whose combined total is empty (`-RedirectUri @()` explicitly, with no
 `-FrontendOrigin`/`-FromAzdEnv`) leaves the existing SPA URIs untouched.
 
-**However, since #162, `-Apply` never does that replacement silently.** Always pass `-FrontendOrigin` (or
+Always pass `-FrontendOrigin` (or
 `-RedirectUri`/`-FromAzdEnv`) on every re-run to keep a live origin registered: if the reconcile above would
 remove an already-registered, non-localhost SPA redirect URI, the script refuses and stops with an error naming
 the URI(s) instead of replacing them with the localhost defaults. Pass `-AllowRedirectUriRemoval` only if you
@@ -197,7 +208,7 @@ never needs the switch. Preview (no `-Apply`) always prints the would-be removal
 az login --tenant <tenant-id>
 ```
 
-**(a) Today's staging env (ingress off, `BACKEND_URI` blank).** `-FromAzdEnv` fails hard on an empty `BACKEND_URI`
+**(a) An existing environment with ingress off (`BACKEND_URI` blank).** `-FromAzdEnv` fails hard on an empty `BACKEND_URI`
 (see below), so derive the Python container app's stable FQDN read-only instead: it is `<app-name>.<environment
 defaultDomain>`, which does not change when ingress is toggled.
 
@@ -291,12 +302,8 @@ in the same session as case (a) above so `$app` and `$domain` are still set:
 ./scripts/Setup-EntraAuth.ps1 -TenantId <tenant-id> -ClientId <appId> -FrontendOrigin "https://$app.$domain" -Apply
 ```
 
-Always include `-FrontendOrigin` on every line above. `-Apply` reconciles the whole SPA redirect-URI set, and since
-#162 a fallback re-run that omits it -- which would drop the live URL down to only the two localhost defaults --
-now refuses outright: a non-zero exit naming the live URI(s) and pointing at `-AllowRedirectUriRemoval`, instead of
-silently replacing them and leaving sign-in on the live URL to fail at step 6 with AADSTS50011 (redirect URI
-mismatch). Only pass `-AllowRedirectUriRemoval` here if you really mean to drop that live origin (for example,
-retiring the environment it belongs to).
+Always include `-FrontendOrigin` (or another redirect source) on every apply. The script refuses to remove a
+registered non-localhost origin unless you explicitly pass `-AllowRedirectUriRemoval`.
 
 ### Rollout (ingress last)
 
@@ -306,9 +313,8 @@ leave an unauthenticated revision reachable if the new one fails to boot. **So e
 step.** `backendIngressEnabled` (from the azd env `BACKEND_INGRESS_ENABLED`, default `true`) makes this dark rollout
 possible without touching every other environment's default behavior.
 
-1. The infra, scripts and backend/frontend Entra changes merge to `dev`, including #144 (Python Entra auth) and
-   #145 (CI build-arg wiring), which this rollout depends on.
-2. Brian runs Setup (above), then the two `azd env set` lines it prints.
+1. Confirm the infrastructure, Entra auth, and frontend build-argument changes are in the release branch.
+2. Run the Entra setup script and set the tenant and client ids it returns.
 3. `azd deploy` while ingress is still disabled. The new image in Production without `AUTH_MODE` fails fast (a clean
    gunicorn exit). **That is expected:** `azd deploy` may report the revision as failed or unhealthy. Don't "fix"
    it by provisioning with ingress on.
@@ -328,7 +334,7 @@ possible without touching every other environment's default behavior.
      `BACKEND_INGRESS_ENABLED` back to `false` just because two revisions are briefly active.
    - On any OTHER failure (wrong image, `AUTH_MODE` missing, EasyAuth re-enabled, a probe 401/failing where it should
      pass), run `az containerapp ingress disable` (or set the variable back to `false` and provision), then fix it.
-6. Brian signs in on the live URL, and posts the result on #85.
+6. Sign in with the test user and complete the live authenticated checks.
 
 **The rule:** never run `azd provision` or `azd up` against a production environment with `BACKEND_INGRESS_ENABLED`
 true (or unset) until step 4a has passed with ingress off. This also covers the manual `Deploy to Azure with azd`
@@ -336,87 +342,26 @@ workflow (`.github/workflows/azure-dev.yaml`, `workflow_dispatch` only): it runs
 `BACKEND_INGRESS_ENABLED` or the `ENTRA_*` values, so dispatching it against `azureaidrivethru-prod` before 4a has
 passed would publish the old, unauthenticated image with ingress on.
 
-## .NET container app (S7, #17)
+## .NET container app
 
-The C# backend (`app/backend-dotnet`, built from `app/Dockerfile.dotnet`) deploys side by side with
-the Python app in the SAME resource group, sharing the same ACA environment, Foundry account,
-Search service and managed identity (design section 10.2). `deployDotnetApp`/`DEPLOY_DOTNET_APP`
-gates the whole `acaBackendDotnet` Container App module (`infra/main.bicep`) and defaults to
-`false` everywhere, including `rg-azureaidrivethru-prod` -- **this is an owner-gated go-live, not an
-automatic one.** Flipping it on provisions a second always-on Container App (real cost); get
-Brian's sign-off first.
+The C# backend (`app/backend-dotnet`, built from `app/Dockerfile.dotnet`) can run beside the Python
+app in the same resource group, Container Apps environment, Foundry account, Search service, and
+managed identity. `DEPLOY_DOTNET_APP` gates the C# Container App and defaults to `false`. Enabling
+it adds a second always-on app; review cost and approve the target environment before setting it.
 
-As of this PR, `azure.yaml` declares the `backend-dotnet` service, and `infra/main.bicep`'s
-`acaBackendDotnet` module carries the matching `'azd-service-name': 'backend-dotnet'` tag, gated
-inside the module's `if (deployDotnetApp)` condition (Rick's review of #281, R1): the service and
-the tag landed together in the same owner-gated flip commit, so there was never a window where one
-existed without the other -- declaring the service ahead of the tag would have broken a bare `azd
-deploy`/`azd up` for every environment that has not flipped `DEPLOY_DOTNET_APP=true`, because azd
-has no service-level `condition:` (as of the pinned release, <https://aka.ms/azure.yaml.json>) to
-skip a declared service entirely. `DEPLOY_DOTNET_APP` itself still defaults to `false` everywhere,
-including `rg-azureaidrivethru-prod` -- landing the service and the tag is cost-neutral by itself;
-turning the Container App on is still the separate, owner-gated `azd env set` step below. That
-means today:
-
-- `azd provision` works normally and creates nothing new for the dotnet app in an environment that
-  has not flipped the flag (the module is disabled).
-- A bare `azd deploy` or `azd up` now resolves `backend-dotnet` against the tagged
-  `acaBackendDotnet` resource once `DEPLOY_DOTNET_APP=true`; until then, every environment must
-  scope deploys explicitly (see below), because the tagged resource doesn't exist yet in that
-  environment.
-- `app/backend-dotnet`, `app/Dockerfile.dotnet`, `dotnetWebAppExists` and its
-  `SERVICE_BACKEND_DOTNET_RESOURCE_EXISTS` mapping, the smoke-script wiring and this whole runbook
-  all exist and are ready. `test_azd_service_wiring.py` guards both directions (every
-  `host: containerapp` service has a tag, every tag has a service) and the gate
-  (`deployDotnetApp` must still default `false` and the tag must stay inside its `if`).
-
-### Step 0: land the service and the tag (the flip commit)
-
-The flip commit added BOTH of these together:
-
-**1. The `backend-dotnet` service block in `azure.yaml`**, alongside `backend`:
-
-```yaml
-  backend-dotnet:
-    project: ./app
-    language: docker
-    host: containerapp
-    docker:
-      path: ./Dockerfile.dotnet
-      context: ..
-      remoteBuild: true
-      buildArgs:
-        - VITE_AUTH_MODE=Entra
-        - VITE_ENTRA_TENANT_ID=${ENTRA_TENANT_ID}
-        - VITE_ENTRA_CLIENT_ID=${ENTRA_CLIENT_ID}
-        - VITE_ENTRA_API_SCOPE=${ENTRA_API_SCOPE}
-```
-
-**2. The matching tag on `acaBackendDotnet`'s `tags:` in `infra/main.bicep`** (replacing the
-plain `tags: tags` the module carried while this was pending):
-
-```bicep
-    tags: union(tags, { 'azd-service-name': 'backend-dotnet' })
-```
-
-**3. The S7 comment block above the `backend-dotnet` service in `azure.yaml`** now describes the
-live state instead of saying the service isn't declared yet, matching the module's own comment in
-`main.bicep`.
-
-With both landed in the same commit, `test_azd_service_wiring.py`'s bidirectional checks (every
-`host: containerapp` service has a tag, every tag has a service) and its gating assertion (the
-`backend-dotnet` tag must sit inside `if (deployDotnetApp)`, and `deployDotnetApp` must still map
-to `${DEPLOY_DOTNET_APP=false}`) all stay green. From this commit on, every environment that has
-NOT flipped `DEPLOY_DOTNET_APP=true` must scope deploys explicitly:
+`azure.yaml` declares the `backend-dotnet` service, and the Bicep module adds its matching
+`azd-service-name` tag only when `deployDotnetApp` is enabled. Until the app exists in an
+environment, scope deployment to Python. Once enabled and provisioned, AZD can target either
+service explicitly:
 
 ```bash
-azd provision                 # fine as-is, deploys/updates infra for both (disabled) modules
-azd deploy backend            # NOT a bare `azd deploy` or `azd up`
+azd provision
+azd deploy backend
+azd deploy backend-dotnet
 ```
 
-CI (`.github/workflows/azure-dev.yaml`) and any future pipeline step must do the same until the
-flag flips. Once `DEPLOY_DOTNET_APP=true` for a given environment, `azd deploy` /
-`azd deploy backend-dotnet` both work normally, because the tagged resource now exists.
+`test_azd_service_wiring.py` verifies that each Container App service has a matching tag and that
+the C# tag remains behind the `DEPLOY_DOTNET_APP` gate.
 
 ### Turning it on: `azd env set` steps
 
@@ -444,31 +389,18 @@ Bicep variables feed both container apps), so no separate secret/registration wo
    expected image, healthy and running, before proceeding.
 3. **Public provision:** `azd env set BACKEND_DOTNET_INGRESS_ENABLED true`, then `azd provision`.
    Same two-active-revisions-is-transient caveat as the Python app's step 5 above applies here too.
-4. **Register the redirect URI now that ingress is public** (NOT before -- see the ordering note
-   below): run `./scripts/Setup-EntraAuth.ps1 -TenantId <tenant-id> -ClientId <client-id>
+4. **Register the redirect URI after ingress is public:** run
+   `./scripts/Setup-EntraAuth.ps1 -TenantId <tenant-id> -ClientId <client-id>
    -FromAzdEnv -Apply`. `-FromAzdEnv` reads both `BACKEND_URI` (must already be non-empty -- the
-   Python app's public rollout) and `BACKEND_DOTNET_URI`; now that the dotnet app has public
-   ingress, `BACKEND_DOTNET_URI` is non-empty (`infra/core/host/container-app.bicep`'s
-   `ingressEnabled ? 'https://...' : ''`), so this adds the dotnet app's hostname as a SECOND SPA
-   redirect URI on the SAME single Entra app registration from #85 -- idempotently. Running this
-   step while ingress was still dark (as an earlier draft of this runbook had it, step 3 before
-   step 4) would silently skip the dotnet origin, because `BACKEND_DOTNET_URI` is empty until
-   ingress goes public, and the runbook never re-ran Setup afterward -- leaving sign-in on the C#
-   hostname to fail with a redirect-URI mismatch (AADSTS50011). The deterministic-FQDN
-   `-FrontendOrigin` path (case (a) in the Entra section above) is the alternative if you'd
-   rather pre-register before ingress is public; this runbook uses the simpler "after" ordering.
+   Python app's public rollout) and `BACKEND_DOTNET_URI`. Once the C# app has public ingress, the
+   script adds its hostname to the SPA redirect URIs. Registering while ingress is dark leaves
+   `BACKEND_DOTNET_URI` empty and causes a redirect mismatch.
 5. Run `./scripts/Verify-ProductionAuth.ps1` (and `-Authenticated`) again; it now has an `fqdn` to
    anonymously probe for `backend-dotnet` as well. Run this AFTER step 4 registers the redirect URI
    -- an authenticated check against a hostname Entra doesn't recognize yet as a valid redirect URI
    will fail at sign-in, not because the app itself is broken.
-6. The real C# realtime check is this same `Verify-ProductionAuth.ps1 -Authenticated` run against
-   `BACKEND_DOTNET_URI` in step 5 above -- `scripts/smoke_realtime.sh`/`.ps1` (the azd `postdeploy`
-   hook) does NOT run a second pass for the dotnet app: `scripts/smoke_realtime.py` always builds
-   the Python `RTMiddleTier` against the shared Azure OpenAI realtime deployment, so a second
-   invocation would just be the same Python-side check run twice, telling you nothing about the
-   .NET app while still burning realtime capacity guests share. A real .NET realtime smoke probe
-   (opening a realtime session against the C# app's own endpoint) is tracked as a follow-up, not
-   yet implemented.
+6. Verify the C# realtime path separately. The `postdeploy` smoke hook targets the Python backend
+   and does not validate the C# endpoint.
 
 ### Rollback
 

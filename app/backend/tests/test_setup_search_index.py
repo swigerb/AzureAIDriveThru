@@ -42,6 +42,82 @@ def _fixture_catalog(enabled=None) -> PersonaCatalog:
 
 
 # ===========================================================================
+# load_azd_env
+# ===========================================================================
+
+
+class LoadAzdEnvTests(unittest.TestCase):
+    def test_loads_only_allowlisted_nonsecret_settings_from_azd(self):
+        values = {name: f"value-for-{name}" for name in ssi._AZD_RUNTIME_SETTINGS}
+
+        def fake_run(command, **kwargs):
+            self.assertEqual(command[:3], ["azd", "env", "get-value"])
+            self.assertIn(command[3], values)
+            self.assertEqual(kwargs, {"capture_output": True, "text": True, "check": False})
+            return MagicMock(returncode=0, stdout=values[command[3]])
+
+        with (
+            patch.dict(ssi.os.environ, {}, clear=True),
+            patch.object(ssi.subprocess, "run", side_effect=fake_run) as run,
+        ):
+            ssi.load_azd_env()
+
+            self.assertEqual({name: ssi.os.environ[name] for name in values}, values)
+            self.assertEqual(
+                [call.args[0][3] for call in run.call_args_list],
+                list(ssi._AZD_RUNTIME_SETTINGS),
+            )
+
+    def test_ignores_missing_optional_settings_but_requires_endpoints(self):
+        def fake_run(command, **kwargs):
+            name = command[3]
+            if name in ssi._AZD_REQUIRED_RUNTIME_SETTINGS:
+                return MagicMock(returncode=0, stdout=f"value-for-{name}", stderr="")
+            return MagicMock(returncode=1, stdout="", stderr="not set")
+
+        with (
+            patch.dict(ssi.os.environ, {}, clear=True),
+            patch.object(ssi.subprocess, "run", side_effect=fake_run),
+        ):
+            ssi.load_azd_env()
+            self.assertEqual(
+                {name: ssi.os.environ[name] for name in ssi._AZD_REQUIRED_RUNTIME_SETTINGS},
+                {
+                    name: f"value-for-{name}"
+                    for name in ssi._AZD_REQUIRED_RUNTIME_SETTINGS
+                },
+            )
+
+    def test_missing_required_endpoint_raises(self):
+        with (
+            patch.dict(ssi.os.environ, {}, clear=True),
+            patch.object(
+                ssi.subprocess,
+                "run",
+                return_value=MagicMock(returncode=1, stdout="", stderr="not configured"),
+            ),
+            self.assertRaisesRegex(RuntimeError, "AZURE_SEARCH_ENDPOINT"),
+        ):
+            ssi.load_azd_env()
+
+    def test_skip_flag_avoids_loading_other_settings(self):
+        def fake_run(command, **kwargs):
+            if command[3] == ssi._AZD_SKIP_INDEX_SETTING:
+                return MagicMock(returncode=0, stdout="true", stderr="")
+            raise AssertionError("settings are not needed when index setup is skipped")
+
+        with (
+            patch.dict(ssi.os.environ, {}, clear=True),
+            patch.object(ssi.subprocess, "run", side_effect=fake_run),
+        ):
+            ssi.load_azd_env()
+            self.assertEqual(
+                ssi.os.environ[ssi._AZD_SKIP_INDEX_SETTING],
+                "true",
+            )
+
+
+# ===========================================================================
 # resolve_target_personas
 # ===========================================================================
 

@@ -70,8 +70,11 @@ COPY global.json ./
 COPY app/backend-dotnet/Directory.Build.props app/backend-dotnet/Directory.Packages.props app/backend-dotnet/
 COPY app/backend-dotnet/src/Backend/Backend.csproj app/backend-dotnet/src/Backend/packages.lock.json app/backend-dotnet/src/Backend/
 
+# User NuGet configs may include host-specific fallback sources; ignore only NU1801 for those
+# unavailable paths while locked restore still fails if a package is missing from configured feeds.
 RUN --mount=type=secret,id=nuget_config,target=/root/.nuget/NuGet/NuGet.Config \
-    dotnet restore app/backend-dotnet/src/Backend/Backend.csproj --locked-mode
+    dotnet restore app/backend-dotnet/src/Backend/Backend.csproj --locked-mode \
+      --ignore-failed-sources -p:WarningsNotAsErrors=NU1801
 
 # Copy the remaining backend source (changes more often than deps) and publish.
 COPY app/backend-dotnet/src/Backend/ app/backend-dotnet/src/Backend/
