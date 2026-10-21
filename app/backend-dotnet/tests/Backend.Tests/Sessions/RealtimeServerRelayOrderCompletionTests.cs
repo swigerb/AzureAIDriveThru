@@ -17,7 +17,7 @@ namespace Backend.Tests.Sessions;
 public sealed class RealtimeServerRelayOrderCompletionTests
 {
     private const string ClosingText =
-        "I have one Sonic Double Cheeseburger. That brings your new total to $7.12. " +
+        "I have one Double Cheeseburger. That brings your new total to $7.12. " +
         "Thank you! Your carhop will have that right out!";
 
     [Fact]
@@ -30,9 +30,9 @@ public sealed class RealtimeServerRelayOrderCompletionTests
             Text("""{"type":"response.output_item.done","item":{"type":"function_call","call_id":"call-1","name":"get_order","arguments":"{}"}}"""),
             Text("""{"type":"response.done","response":{"id":"response-tool","status":"completed","output":[{"type":"function_call","call_id":"call-1","name":"get_order","arguments":"{}"}]}}"""),
             Text("""{"type":"response.created","response":{"id":"response-close"}}"""),
-            Text("""{"type":"response.output_audio_transcript.delta","response_id":"response-close","item_id":"item-close","content_index":0,"delta":"I have one Sonic Double Cheeseburger."}"""),
+            Text("""{"type":"response.output_audio_transcript.delta","response_id":"response-close","item_id":"item-close","content_index":0,"delta":"I have one Double Cheeseburger."}"""),
             Text("""{"type":"response.output_audio.delta","response_id":"response-close","item_id":"item-close","content_index":0,"delta":"AA=="}"""),
-            Text("""{"type":"response.done","response":{"id":"response-close","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"audio","transcript":"I have one Sonic Double Cheeseburger. That brings your new total to $7.12. Thank you! Your carhop will have that right out!"}]}]}}"""),
+            Text("""{"type":"response.done","response":{"id":"response-close","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"audio","transcript":"I have one Double Cheeseburger. That brings your new total to $7.12. Thank you! Your carhop will have that right out!"}]}]}}"""),
             Close(),
         ]);
         var browser = new FakeWebSocket([]);
@@ -50,7 +50,7 @@ public sealed class RealtimeServerRelayOrderCompletionTests
         var browserFrames = TextFrames(browser).Select(Parse).ToArray();
         Assert.Contains(browserFrames, frame =>
             (string?)frame["type"] == "response.audio_transcript.delta"
-            && ((string?)frame["delta"])!.Contains("Sonic Double Cheeseburger", StringComparison.Ordinal));
+            && ((string?)frame["delta"])!.Contains("Double Cheeseburger", StringComparison.Ordinal));
         Assert.Contains(browserFrames, frame =>
             (string?)frame["type"] == "response.audio.delta" && (string?)frame["delta"] == "AA==");
         var finalResponse = browserFrames.Last(frame => (string?)frame["type"] == "response.done");
@@ -86,7 +86,7 @@ public sealed class RealtimeServerRelayOrderCompletionTests
                 NullLogger<RateLimitRecovery>.Instance),
             ToolFailures = new ToolFailureTracker(),
             Guard = new SessionUpdateGuard(),
-            Identifiers = new SessionIdentifiers("sonic", "gpt-realtime-2.1"),
+            Identifiers = new SessionIdentifiers("test-persona", "gpt-realtime-2.1"),
             ToolExecutor = new StubToolExecutor(["get_order"]),
         };
         state.EffectiveSessionId = state.SessionId;

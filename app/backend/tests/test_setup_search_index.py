@@ -51,7 +51,8 @@ class LoadAzdEnvTests(unittest.TestCase):
         values = {name: f"value-for-{name}" for name in ssi._AZD_RUNTIME_SETTINGS}
 
         def fake_run(command, **kwargs):
-            self.assertEqual(command[:3], ["azd", "env", "get-value"])
+            self.assertEqual(ssi.os.path.splitext(ssi.os.path.basename(command[0]))[0].lower(), "azd")
+            self.assertEqual(command[1:3], ["env", "get-value"])
             self.assertIn(command[3], values)
             self.assertEqual(kwargs, {"capture_output": True, "text": True, "check": False})
             return MagicMock(returncode=0, stdout=values[command[3]])

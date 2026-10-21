@@ -929,9 +929,9 @@ class DeployMdDarkStateSetupSequenceTests(unittest.TestCase):
 
     def _dark_state_block(self):
         # The dark-state (a) walkthrough is the fenced ```powershell block immediately following
-        # the "**(a) Today's staging env" heading.
+        # the "**(a) An existing environment with ingress off" heading.
         match = re.search(
-            r"\*\*\(a\) Today's staging env.*?```powershell\n(?P<body>.*?)\n```",
+            r"\*\*\(a\) An existing environment with ingress off.*?```powershell\n(?P<body>.*?)\n```",
             self.text, re.DOTALL,
         )
         self.assertIsNotNone(match, "expected a dark-state (case (a)) fenced powershell block in DEPLOY.md")
@@ -1013,9 +1013,9 @@ class DeployMdDarkStateSetupSequenceTests(unittest.TestCase):
             "-FrontendOrigin/-FromAzdEnv) leaves existing SPA URIs untouched",
         )
         self.assertIn(
-            "However, since #162, `-Apply` never does that replacement silently.",
+            "However, `-Apply` never does that replacement silently.",
             self.text,
-            "expected the #162 paragraph to immediately follow and qualify the full-SET "
+            "expected the refuse-to-remove paragraph to immediately follow and qualify the full-SET "
             "description above, rather than contradicting it",
         )
 

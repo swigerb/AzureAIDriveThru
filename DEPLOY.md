@@ -196,7 +196,7 @@ the registered SPA redirect URIs to the localhost defaults only, dropping any al
 from that set. Only a run whose combined total is empty (`-RedirectUri @()` explicitly, with no
 `-FrontendOrigin`/`-FromAzdEnv`) leaves the existing SPA URIs untouched.
 
-Always pass `-FrontendOrigin` (or
+**However, `-Apply` never does that replacement silently.** Always pass `-FrontendOrigin` (or
 `-RedirectUri`/`-FromAzdEnv`) on every re-run to keep a live origin registered: if the reconcile above would
 remove an already-registered, non-localhost SPA redirect URI, the script refuses and stops with an error naming
 the URI(s) instead of replacing them with the localhost defaults. Pass `-AllowRedirectUriRemoval` only if you

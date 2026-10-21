@@ -38,6 +38,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -107,9 +108,11 @@ _AZD_RUNTIME_SETTINGS = (
 def load_azd_env():
     """Load only the non-secret runtime settings needed from the selected azd environment."""
 
+    azd = shutil.which("azd") or "azd"
+
     def load_setting(name: str, *, required: bool = False) -> str:
         result = subprocess.run(
-            ["azd", "env", "get-value", name],
+            [azd, "env", "get-value", name],
             capture_output=True,
             text=True,
             check=False,

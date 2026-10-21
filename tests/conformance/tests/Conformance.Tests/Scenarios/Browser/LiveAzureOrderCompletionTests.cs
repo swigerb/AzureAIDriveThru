@@ -10,6 +10,7 @@ namespace Conformance.Tests.Scenarios.Browser;
 /// tokens, WebSocket URLs, or raw audio frames.
 /// </summary>
 [Trait("Category", "LiveAzure")]
+[Trait("Dotnet", "n/a-live-azure")] // Opt-in deployed-endpoint test; skipped unless LIVE_CSHARP_ORDER_ENDPOINT is set.
 public sealed class LiveAzureOrderCompletionTests
 {
     private const string CaptureEventsScript = """
@@ -20,12 +21,19 @@ public sealed class LiveAzureOrderCompletionTests
             construct(target, args) {
               const socket = new target(...args);
               if (String(args[0] ?? '').includes('/realtime')) {
+                socket.addEventListener('close', event => {
+                  window.__liveOrderEvents.push({ type: 'socket.close', code: String(event.code), t: Math.round(performance.now()) });
+                });
                 socket.addEventListener('message', event => {
                   if (typeof event.data !== 'string') return;
                   let message;
                   try { message = JSON.parse(event.data); } catch { return; }
-                  const record = { type: message.type };
-                  if (message.type === 'conversation.item.input_audio_transcription.completed') {
+                  const record = { type: message.type, t: Math.round(performance.now()) };
+                  if (message.type === 'error') {
+                    record.code = message.error?.code ?? message.error?.type ?? '';
+                  } else if (message.type === 'response.function_call_arguments.done') {
+                    record.name = message.name ?? '';
+                  } else if (message.type === 'conversation.item.input_audio_transcription.completed') {
                     record.transcript = message.transcript ?? '';
                   } else if (message.type === 'response.created') {
                     record.responseId = message.response?.id ?? '';
@@ -53,6 +61,34 @@ public sealed class LiveAzureOrderCompletionTests
             }
           });
         })();
+        """;
+
+    // Phases, in order: guest orders a burger; a tool round runs and the assistant speaks;
+    // guest closes ("...be it"/"that's all"); a tool round (get_order) runs; the assistant
+    // speaks a completed closing response with audio that reads back the total or the carhop.
+    private const string OrderCompletedScript = """
+        () => {
+          const events = window.__liveOrderEvents ?? [];
+          const after = (from, predicate) => {
+            for (let i = from + 1; i < events.length; i++) { if (predicate(events[i])) return i; }
+            return -1;
+          };
+          const hasAudio = id => events.some(e => e.type === 'response.audio.delta' && e.responseId === id);
+          const spoken = e => e.type === 'response.done' && e.status === 'completed' && (e.transcript ?? '').trim() !== '' && hasAudio(e.responseId);
+          const guest = re => e => e.type === 'conversation.item.input_audio_transcription.completed' && re.test(e.transcript ?? '');
+          const tool = e => e.type === 'extension.middle_tier_tool_response';
+          const order = after(-1, guest(/burger/i));
+          if (order < 0) return false;
+          const orderTool = after(order, tool);
+          if (orderTool < 0) return false;
+          const ask = after(orderTool, spoken);
+          if (ask < 0) return false;
+          const close = after(ask, guest(/be it|that'?s (it|all)/i));
+          if (close < 0) return false;
+          const closeTool = after(close, tool);
+          if (closeTool < 0) return false;
+          return after(closeTool, e => spoken(e) && /carhop|right out|total/i.test(e.transcript)) >= 0;
+        }
         """;
 
     [Fact]
@@ -121,7 +157,25 @@ public sealed class LiveAzureOrderCompletionTests
                 await context.AddInitScriptAsync(CaptureEventsScript);
                 var page = await context.NewPageAsync();
                 await page.GotoAsync(endpoint, new PageGotoOptions { WaitUntil = WaitUntilState.DOMContentLoaded });
-                await page.Locator("[data-testid='conversation-controls']")
+                var controls = page.Locator("[data-testid='conversation-controls']");
+                var accountUpn = Environment.GetEnvironmentVariable("LIVE_CSHARP_ACCOUNT_UPN");
+                if (!string.IsNullOrWhiteSpace(accountUpn))
+                {
+                    // Selects an account the dedicated profile is already signed in to on the
+                    // Entra account picker; never types credentials.
+                    var tile = page.GetByRole(AriaRole.Button, new() { Name = $"Sign in with {accountUpn}" }).First;
+                    var deadline = DateTime.UtcNow.AddSeconds(60);
+                    while (DateTime.UtcNow < deadline && !await controls.IsVisibleAsync())
+                    {
+                        if (await tile.IsVisibleAsync())
+                        {
+                            await tile.ClickAsync();
+                            break;
+                        }
+                        await page.WaitForTimeoutAsync(1_000);
+                    }
+                }
+                await controls
                     .WaitForAsync(new LocatorWaitForOptions
                     {
                         State = WaitForSelectorState.Visible,
@@ -129,77 +183,26 @@ public sealed class LiveAzureOrderCompletionTests
                     });
 
                 await page.GetByRole(AriaRole.Button, new() { Name = "Start recording", Exact = true }).ClickAsync();
-                await page.WaitForFunctionAsync(
-                    """() => (window.__liveOrderEvents ?? []).some(event => event.type === 'conversation.item.input_audio_transcription.completed' && /burger/i.test(event.transcript ?? ''))""",
-                    null,
-                    new PageWaitForFunctionOptions { Timeout = 90_000 });
-                await page.WaitForFunctionAsync(
-                    """() => (window.__liveOrderEvents ?? []).some(event => event.type === 'response.done' && event.status === 'completed' && /anything else/i.test(event.transcript ?? ''))""",
-                    null,
-                    new PageWaitForFunctionOptions { Timeout = 90_000 });
-                await page.WaitForFunctionAsync(
-                    """() => (window.__liveOrderEvents ?? []).some(event => event.type === 'conversation.item.input_audio_transcription.completed' && /no\b.*\bit\b/i.test(event.transcript ?? ''))""",
-                    null,
-                    new PageWaitForFunctionOptions { Timeout = 90_000 });
-                await page.WaitForFunctionAsync(
-                    """
-                    () => {
-                      const events = window.__liveOrderEvents ?? [];
-                      const close = events.find(event => event.type === 'response.done' && event.status === 'completed' && /carhop/i.test(event.transcript ?? ''));
-                      return close && events.some(event => event.type === 'response.audio.delta' && event.responseId === close.responseId);
-                    }
-                    """,
-                    null,
-                    new PageWaitForFunctionOptions { Timeout = 90_000 });
-                await page.WaitForFunctionAsync(
-                    """
-                    () => {
-                      const ticket = document.querySelector('[data-testid="order-ticket"]')?.innerText ?? '';
-                      return /Sonic Double Cheeseburger/i.test(ticket) && ticket.includes('$7.12');
-                    }
-                    """,
-                    null,
-                    new PageWaitForFunctionOptions { Timeout = 30_000 });
-
-                var events = await page.EvaluateAsync<JsonElement>("() => window.__liveOrderEvents");
-                var eventSummary = events.EnumerateArray().Select((entry, index) => new
+                try
                 {
-                    Index = index,
-                    Type = entry.TryGetProperty("type", out var type) ? type.GetString() : null,
-                    Status = entry.TryGetProperty("status", out var status) ? status.GetString() : null,
-                    ResponseId = entry.TryGetProperty("responseId", out var responseId) ? responseId.GetString() : null,
-                    Transcript = entry.TryGetProperty("transcript", out var transcript) ? transcript.GetString() : null,
-                    AudioDelta = entry.TryGetProperty("audioDelta", out var audioDelta) && audioDelta.GetBoolean(),
-                }).ToArray();
-
-                var firstGuest = Array.FindIndex(eventSummary,
-                    item => item.Type == "conversation.item.input_audio_transcription.completed"
-                        && item.Transcript?.Contains("burger", StringComparison.OrdinalIgnoreCase) == true);
-                var firstAssistant = Array.FindIndex(eventSummary,
-                    item => item.Type == "response.done"
-                        && item.Transcript?.Contains("Anything else", StringComparison.OrdinalIgnoreCase) == true);
-                var closingGuest = Array.FindIndex(eventSummary,
-                    item => item.Type == "conversation.item.input_audio_transcription.completed"
-                        && item.Transcript?.Contains("No", StringComparison.OrdinalIgnoreCase) == true
-                        && item.Transcript?.Contains("it", StringComparison.OrdinalIgnoreCase) == true);
-                var closingAssistant = Array.FindIndex(eventSummary,
-                    item => item.Type == "response.done"
-                        && item.Transcript?.Contains("carhop", StringComparison.OrdinalIgnoreCase) == true);
-                Assert.True(firstGuest >= 0 && firstGuest < firstAssistant
-                    && firstAssistant < closingGuest && closingGuest < closingAssistant,
-                    "Expected order speech -> assistant 'anything else' -> guest close -> assistant carhop farewell.");
-
-                var diagnosticsPath = Environment.GetEnvironmentVariable("LIVE_CSHARP_ORDER_DIAGNOSTICS");
-                if (!string.IsNullOrWhiteSpace(diagnosticsPath))
+                    // The model's wording and turn segmentation vary between runs (for example
+                    // it may offer a combo instead of asking "anything else", and "No, that'll be
+                    // it" may arrive as two transcripts), so assert the turn structure instead.
+                    await page.WaitForFunctionAsync(OrderCompletedScript, null,
+                        new PageWaitForFunctionOptions { Timeout = 180_000 });
+                    await page.WaitForFunctionAsync(
+                        """
+                        () => {
+                          const ticket = document.querySelector('[data-testid="order-ticket"]')?.innerText ?? '';
+                          return /Double Cheeseburger/i.test(ticket) && ticket.includes('$7.12');
+                        }
+                        """,
+                        null,
+                        new PageWaitForFunctionOptions { Timeout = 30_000 });
+                }
+                finally
                 {
-                    await File.WriteAllTextAsync(diagnosticsPath, JsonSerializer.Serialize(new
-                    {
-                        endpointHost = endpointUri!.Host,
-                        observedAtUtc = DateTimeOffset.UtcNow,
-                        events = eventSummary,
-                        ticket = await page.Locator("[data-testid='order-ticket']").InnerTextAsync(),
-                    }, new JsonSerializerOptions { WriteIndented = true }),
-                        TestContext.Current.CancellationToken);
+                    await WriteDiagnosticsAsync(page, endpointUri!.Host);
                 }
             }
             finally
@@ -214,5 +217,27 @@ public sealed class LiveAzureOrderCompletionTests
                 await browser.CloseAsync();
             }
         }
+    }
+
+    private static async Task WriteDiagnosticsAsync(IPage page, string host)
+    {
+        var diagnosticsPath = Environment.GetEnvironmentVariable("LIVE_CSHARP_ORDER_DIAGNOSTICS");
+        if (string.IsNullOrWhiteSpace(diagnosticsPath))
+        {
+            return;
+        }
+
+        var events = await page.EvaluateAsync<JsonElement>("() => window.__liveOrderEvents ?? []");
+        var ticket = await page.EvaluateAsync<string>(
+            "() => document.querySelector('[data-testid=\"order-ticket\"]')?.innerText ?? ''");
+        var status = await page.EvaluateAsync<string>("() => document.body?.innerText?.slice(-2000) ?? ''");
+        await File.WriteAllTextAsync(diagnosticsPath, JsonSerializer.Serialize(new
+        {
+            endpointHost = host,
+            observedAtUtc = DateTimeOffset.UtcNow,
+            events,
+            ticket,
+            pageTail = status,
+        }, new JsonSerializerOptions { WriteIndented = true }));
     }
 }
