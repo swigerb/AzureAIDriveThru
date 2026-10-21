@@ -71,6 +71,9 @@ try {
   } else {
     Write-Host 'Creating python virtual environment ".venv"'
     & $pythonCmdPath @pythonCmdArgs -m venv ./.venv
+    if ($LASTEXITCODE -ne 0) {
+      throw "Failed to create the Python virtual environment."
+    }
   }
 
   if (-not (Test-Path $venvPythonPath)) {
@@ -82,6 +85,9 @@ try {
   try {
     $env:PYYAML_FORCE_LIBYAML = "0"
     & $venvPythonPath -m pip install -r (Join-Path $projectRoot "app/backend/requirements.txt")
+    if ($LASTEXITCODE -ne 0) {
+      throw "Failed to install backend Python dependencies."
+    }
   }
   finally {
     $env:PYYAML_FORCE_LIBYAML = $previousPyYamlForceLibYaml

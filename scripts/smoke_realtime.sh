@@ -11,7 +11,7 @@ fi
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 PROJECT_ROOT=$(dirname "$SCRIPT_DIR")
 PYTHON=""
-for candidate in "$PROJECT_ROOT/app/backend/.venv/bin/python" "$PROJECT_ROOT/.venv/bin/python"; do
+for candidate in "$PROJECT_ROOT/.venv/bin/python" "$PROJECT_ROOT/app/backend/.venv/bin/python"; do
   if [ -x "$candidate" ]; then
     PYTHON="$candidate"
     break

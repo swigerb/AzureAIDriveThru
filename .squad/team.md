@@ -30,7 +30,7 @@
 - **Stack:**
   - **Frontend:** React, TypeScript, Vite, Tailwind CSS, shadcn/ui
   - **Backend (Python, reference):** Python (aiohttp, WebSockets), Azure OpenAI Realtime API (gpt-realtime-2.1), Azure AI Search
-  - **Backend (C#, in progress):** .NET 11 RC 1, ASP.NET Core, System.Net.WebSockets — feature-equivalent, validated by the shared conformance suite
+  - **Backend (C#, in progress):** .NET 11 RC2 (prerelease, pinned in `global.json`), ASP.NET Core, System.Net.WebSockets — parity validated by the shared conformance suite
   - **Infrastructure:** Bicep IaC, Azure Container Apps, Docker, azd CLI
   - **Data:** Jupyter notebooks for menu ingestion, JSON/PDF parsing, semantic hybrid search
 - **Key Files:**

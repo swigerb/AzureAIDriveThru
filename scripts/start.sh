@@ -1,4 +1,9 @@
 #!/bin/sh
+set -e
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+PROJECT_ROOT=$(dirname -- "$SCRIPT_DIR")
+cd "$PROJECT_ROOT"
 
 PRODUCTION_MODE="${1:-}"
 
@@ -11,10 +16,6 @@ if [ "$PRODUCTION_MODE" != "--production" ]; then
     echo ""
     cd app/frontend
     npm install
-    if [ $? -ne 0 ]; then
-        echo "Failed to restore frontend npm packages"
-        exit $?
-    fi
 
     echo ""
     echo "Building frontend"
@@ -27,10 +28,6 @@ if [ "$PRODUCTION_MODE" != "--production" ]; then
     # sign-in, say).
     export VITE_AUTH_MODE="${VITE_AUTH_MODE:-Development}"
     npm run build
-    if [ $? -ne 0 ]; then
-        echo "Failed to build frontend"
-        exit $?
-    fi
     cd ../../
 fi
 
@@ -44,7 +41,7 @@ if [ "$PRODUCTION_MODE" = "--production" ]; then
     LOG_LEVEL="${LOG_LEVEL:-info}"
     export RUNNING_IN_PRODUCTION=true
     cd app/backend
-    python -m gunicorn app:create_app \
+    "$PROJECT_ROOT/.venv/bin/python" -m gunicorn app:create_app \
         -b "${HOST}:${PORT}" \
         --worker-class aiohttp.GunicornWebWorker \
         --workers 1 \
@@ -54,10 +51,5 @@ if [ "$PRODUCTION_MODE" = "--production" ]; then
         --log-level "${LOG_LEVEL}"
 else
     cd app/backend
-    python app.py
-fi
-
-if [ $? -ne 0 ]; then
-    echo "Failed to start backend"
-    exit $?
+    "$PROJECT_ROOT/.venv/bin/python" -m app
 fi
