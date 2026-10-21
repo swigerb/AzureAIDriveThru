@@ -34,6 +34,15 @@ turn lifetimes respectively. A barge-in cancels immediately but its speech-start
 for the prior turn tail; the next turn waits for that announcement before transcription begins.
 Socket writes retain the connection cancellation token, not a turn token.
 
+Processor construction groups immutable settings in `RealtimeProcessorOptions` /
+`CascadeProcessorOptions` and shared services in their corresponding `*Dependencies` records.
+Those services are not per-guest mutable state: keep the resumed `SessionId`, identifiers, and
+tool executor on the per-connection context. `CascadeAudioTurnPipeline` owns STT/chat/TTS turn
+work and `CascadeToolCallDispatcher` owns tool dispatch, while `CascadeTurnCoordinator` owns
+turn cancellation and scheduling. For changes to this split, run backend unit tests and the
+explicit C# conformance leg (`CONFORMANCE_BACKEND=dotnet`); an unqualified harness run selects
+Python and does not validate the C# refactor.
+
 | Python (`app/backend/`) | C# (`app/backend-dotnet/src/Backend/`) | Notes |
 | --- | --- | --- |
 | `app.py` (create_app, startup validation, route table) | `Program.cs` | Same startup order: required env vars -> persona catalog -> config -> prompts for the default persona. Fails fast (process exit code 1) on the first problem, same as Python's `sys.exit(1)`. |

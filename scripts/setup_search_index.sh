@@ -10,5 +10,4 @@ cd "$PROJECT_ROOT"
 
 . "$SCRIPT_DIR/load_python_env.sh"
 
-# load_python_env.sh provisions the virtualenv at app/backend/.venv
-"$PROJECT_ROOT/app/backend/.venv/bin/python" "$PROJECT_ROOT/app/backend/setup_search_index.py"
+"$PROJECT_ROOT/.venv/bin/python" "$PROJECT_ROOT/app/backend/setup_search_index.py"

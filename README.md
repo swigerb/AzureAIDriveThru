@@ -68,7 +68,7 @@ The cascade pipeline uses the same WebSocket and frontend contract. The backend 
 ### Prerequisites
 
 - Windows PowerShell 7 or a compatible shell.
-- Azure Developer CLI (`azd`), Azure CLI, Docker, Node.js 24 LTS (24.15+), Python 3.15 (3.14 and 3.12 remain supported), and Git.
+- Azure Developer CLI (`azd`), Azure CLI, Docker, Node.js 24 LTS (24.15+), Python 3.15 (3.12-3.14 remain supported), and Git.
 - The .NET 11 RC2 SDK pinned in `global.json`, only if you run the C# backend or conformance suites.
 - Azure and GitHub authentication for deployment workflows.
 
@@ -80,19 +80,55 @@ transpiled CommonJS default export, and removing the option breaks the productio
 Commit `package-lock.json` and NuGet `packages.lock.json` updates with manifest changes;
 Dependabot monitors npm, pip, NuGet, containers, and GitHub Actions against `dev`.
 
-The runtime sweep retains these explicit exceptions:
+The dependency audit on 2026-10-21 checked npm and Python against the configured corporate
+package proxy, all three NuGet solutions (including transitives) against the enabled NuGet
+sources, GitHub Action releases, and official container/runtime metadata. No public package
+registry fallback or feed replacement is needed. React/React DOM are now 19.3.1; compatible
+transitive npm updates are in the lockfile. See [contributor checks](CONTRIBUTING.md#dependency-maintenance)
+for repeatable inventory and audit commands.
+
+The runtime sweep retains these explicit exceptions, not a claim that everything is stable:
 
 - The C# port already targets .NET 11; RC2 is the latest compatible SDK/runtime, not a stable
   release. Moving the port to stable .NET 10 is a separate target-framework change.
 - `azure-ai-inference` remains at `1.0.0b9` because no stable release is available.
-- PyYAML 6.0.3 does not yet publish a Windows wheel for Python 3.15, so local setup, CI, and the
+- PyYAML 6.0.3 does not yet publish a Windows wheel for Python 3.15, so both local setup scripts, CI, and the
   production image set `PYYAML_FORCE_LIBYAML=0` while installing it. This selects PyYAML's
   supported pure-Python parser and avoids requiring a C/C++ compiler; the backend's YAML behavior
-  is covered by the full test suite. The Microsoft Python devcontainer image still uses its
-  available Python 3.12 base.
+  is covered by backend tests. The Microsoft Python devcontainer now uses the available
+  Python 3.13 Bookworm base; its registry does not yet offer a 3.14 or 3.15 image. It does not
+  reproduce the production/CI Python 3.15 runtime.
+- Transitive npm packages can remain below their upstream `latest` tag when a parent pins or
+  restricts their version. Keep the parent-compatible resolution; do not force incompatible
+  major versions with overrides merely to make an outdated report empty. Some upstream
+  `latest` tags themselves point to prereleases (for example Rollup `5.0.0-0`); those are
+  not stable upgrade candidates.
 
 Local Windows validation does not replace the Linux container build and Gunicorn startup
 checks in CI. No Azure resources or hosting plans need to change for these upgrades.
+
+### Local development
+
+Run commands from the repository root. On Windows, `pwsh ./scripts/start.ps1` provisions
+`.venv`, installs backend requirements, builds the frontend with `VITE_AUTH_MODE=Development`
+(unless already set), and launches the Python backend. On macOS/Linux, use
+`sh ./scripts/start.sh`; the shell scripts use the same root `.venv`, including search indexing.
+Neither command installs test tooling. For Python tests, first install
+`app/backend/requirements-dev.txt` with that virtual environment's interpreter.
+
+To select Python 3.15 explicitly on Windows before running the helper:
+
+```powershell
+py -3.15 -m venv .venv
+$env:PYYAML_FORCE_LIBYAML='0'
+.\.venv\Scripts\python.exe -m pip install -r app/backend/requirements-dev.txt
+```
+
+On macOS/Linux use `python3.15 -m venv .venv`, then
+`PYYAML_FORCE_LIBYAML=0 .venv/bin/python -m pip install -r app/backend/requirements-dev.txt`.
+The local launchers serve the built SPA rather than a Vite hot-reload server. Gunicorn
+production mode (`--production` on the shell launcher) requires a Unix host and a previously
+built frontend; it is not a Windows production server.
 
 ### Deploy with azd
 
@@ -125,7 +161,7 @@ See [DEPLOY.md](DEPLOY.md) and [docs/customizing_deploy.md](docs/customizing_dep
 
 ## Choose your backend
 
-The app has two feature-equivalent backends behind the same frontend and the same `/realtime` wire
+The app has two backend implementations behind the same frontend and the same `/realtime` wire
 contract: `app/backend` (Python, aiohttp -- the reference implementation) and
 `app/backend-dotnet` (C#, .NET 11, ASP.NET Core -- an in-progress port). Both can run side by side
 in the same environment, sharing the same Foundry account, Azure AI Search service, and managed
@@ -146,8 +182,16 @@ to `main` after the full validation plan in `docs/persona-architecture.md` secti
 which requires the conformance suite passing on both backends. Run it with:
 
 ```bash
-dotnet test tests/conformance/Conformance.slnx
+# Python is the harness default; it requires the root .venv and backend dependencies.
+dotnet test tests/conformance/Conformance.slnx --filter "Category!=Browser"
+
+# Explicitly select C#; omitting this variable tests Python again.
+CONFORMANCE_BACKEND=dotnet dotnet test tests/conformance/Conformance.slnx --filter "Dotnet=ready&Category!=Browser"
 ```
+
+These examples use Bash environment syntax. In PowerShell, set
+`$env:CONFORMANCE_BACKEND='dotnet'` before the second command. Browser scenarios run separately
+with a Playwright-supported browser channel; see [the harness guide](tests/conformance/README.md#local-validation).
 
 **How to switch.** Both backends can be deployed at once behind one frontend build, and a guest can
 move between them without losing their persona or model choice:
@@ -193,6 +237,8 @@ docs/                 Architecture, ADRs, operations docs, and demo script
 Use the smallest check that covers your change. Common checks are:
 
 ```powershell
+# Activate .venv first, or substitute .\.venv\Scripts\python.exe for python.
+# Install requirements-dev.txt first (see Local development).
 # Python backend targeted tests
 python -m pytest app/backend/tests/test_rebrand_verification.py app/backend/tests/test_tools_attach.py
 
@@ -202,8 +248,13 @@ python -m pytest scripts/tests/test_ab_compare.py
 # .NET backend unit tests, requires .NET 11 SDK
 dotnet test app/backend-dotnet/Backend.slnx
 
-# Cross-backend conformance harness, requires .NET 11 SDK
-dotnet test tests/conformance/Conformance.slnx
+# Non-browser conformance against C# (the default without this variable is Python)
+$env:CONFORMANCE_BACKEND='dotnet'
+dotnet test tests/conformance/Conformance.slnx --filter "Dotnet=ready&Category!=Browser"
+Remove-Item Env:CONFORMANCE_BACKEND
+
+# C# tooling tests
+dotnet test tools/dotnet/Tooling.slnx
 
 # Frontend build and tests
 cd app/frontend

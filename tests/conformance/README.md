@@ -9,6 +9,49 @@ HTTP and WebSocket; never imports backend source.
 > This file documents the GA realtime protocol validation fidelity work (PR #22 review item 9)
 > and the neutral `BackendContract` (PR #22 review item 13).
 
+## Local validation
+
+Run from the repository root with the .NET 11 RC2 SDK in `global.json`, Node.js 24 LTS,
+and a root `.venv` containing the backend dependencies. The Python launcher does not use
+`app/backend/.venv` or a globally installed interpreter. Bootstrap with
+`pwsh ./scripts/load_python_env.ps1` (Windows) or `sh ./scripts/load_python_env.sh` (Unix).
+Install `tests/conformance/requirements-harness.txt` into that same `.venv` for the harness's
+independent PyJWT interoperability test; Python backend tests additionally need
+`app/backend/requirements-dev.txt`.
+
+Build the frontend once before tests that launch a backend, since the built static directory
+is gitignored. These commands use PowerShell:
+
+```powershell
+Push-Location app/frontend
+npm ci
+$env:VITE_AUTH_MODE='Development'
+npm run build
+Pop-Location
+
+dotnet restore tests/conformance/Conformance.slnx --locked-mode
+$env:CONFORMANCE_BACKEND='python'
+dotnet test tests/conformance/Conformance.slnx --no-restore --filter "Category!=Browser"
+
+# Explicitly choose C#; the default is Python, not "both backends".
+dotnet restore app/backend-dotnet/Backend.slnx --locked-mode
+dotnet build app/backend-dotnet/Backend.slnx --no-restore
+$env:CONFORMANCE_BACKEND='dotnet'
+dotnet test tests/conformance/Conformance.slnx --no-restore --filter "Dotnet=ready&Category!=Browser"
+
+# Separate real-browser leg, using an installed Edge or Chrome channel.
+dotnet test tests/conformance/Conformance.slnx --no-restore --filter "Dotnet=ready&Category=Browser"
+Remove-Item Env:CONFORMANCE_BACKEND
+```
+
+For Python browser coverage, select `CONFORMANCE_BACKEND=python` and `--filter "Category=Browser"`.
+Browser selection is handled by `BrowserChannelPolicy`; do not install an unrelated npm
+Playwright package or download a second browser just to run the NuGet harness. CI requires an
+installed supported channel and fails rather than silently skipping browser coverage.
+On Unix, replace PowerShell environment assignments with `export NAME=value` and use
+`.venv/bin/python` for requirement installation. No live Azure services are required: the
+harness launches local upstream/search/Entra fakes.
+
 ## Restoring packages (locked mode) — issue #24
 
 Every project here restores with `RestorePackagesWithLockFile=true` (set repo-wide in
