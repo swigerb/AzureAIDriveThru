@@ -32,8 +32,8 @@ permissions:
 
 env:
   # Keep these two in sync with global.json (repo root).
-  DOTNET_VERSION: "11.0.100-rc.1.26425.128"
-  PYTHON_VERSION: "3.12"
+  DOTNET_VERSION: "11.0.100-rc.2.26504.105"
+  PYTHON_VERSION: "3.15"
   DOTNET_NOLOGO: "true"
   DOTNET_CLI_TELEMETRY_OPTOUT: "true"
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "true"
@@ -65,18 +65,20 @@ jobs:
           cache-dependency-path: app/backend/requirements.txt
 
       - name: Install backend dependencies
+        env:
+          PYYAML_FORCE_LIBYAML: "0"
         run: |
           python -m pip install --upgrade pip
           pip install -r app/backend/requirements.txt
           # Dev-only tooling: not in requirements.txt (that file is the
           # backend's runtime dependency set), pinned to the versions this
           # branch was validated against.
-          pip install ruff==0.16.1 pytest==9.1.1 pytest-asyncio==1.4.0
+          pip install ruff==0.17.0 pytest==9.1.1 pytest-asyncio==1.4.0
 
       - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
           cache-dependency-path: app/frontend/package-lock.json
 
@@ -254,7 +256,7 @@ jobs:
 
       - name: Upload pytest results on failure
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: python-tests-results
           path: |
@@ -272,9 +274,9 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
           cache-dependency-path: app/frontend/package-lock.json
 
@@ -299,7 +301,7 @@ jobs:
 
       - name: Upload frontend test output on failure
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: frontend-tests-results
           path: |
@@ -356,7 +358,7 @@ jobs:
 
       - name: Upload C# backend test results on failure
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dotnet-backend-tests-results
           path: |
@@ -425,6 +427,8 @@ jobs:
         # it only actually runs (and proves anything) on this python leg, not the dotnet leg
         # (which never sets up a Python interpreter at all).
         if: matrix.backend == 'python'
+        env:
+          PYYAML_FORCE_LIBYAML: "0"
         run: |
           python -m venv .venv
           .venv/bin/python -m pip install --upgrade pip
@@ -432,9 +436,9 @@ jobs:
           .venv/bin/python -m pip install -r tests/conformance/requirements-harness.txt
 
       - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
           cache-dependency-path: app/frontend/package-lock.json
 
@@ -535,7 +539,7 @@ jobs:
 
       - name: Upload conformance test results on failure
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: conformance-results-${{ matrix.backend }}
           path: |
@@ -576,15 +580,17 @@ jobs:
         # PythonBackendLauncher (tests/conformance/src/Conformance.Harness)
         # expects a .venv at the repo root with the backend's runtime deps
         # installed -- exactly what a developer's local checkout has.
+        env:
+          PYYAML_FORCE_LIBYAML: "0"
         run: |
           python -m venv .venv
           .venv/bin/python -m pip install --upgrade pip
           .venv/bin/python -m pip install -r app/backend/requirements.txt
 
       - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
           cache-dependency-path: app/frontend/package-lock.json
 
@@ -648,7 +654,7 @@ jobs:
 
       - name: Upload browser conformance test results on failure
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: conformance-results-browser
           path: |
@@ -677,9 +683,9 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
           cache-dependency-path: app/frontend/package-lock.json
 
@@ -747,7 +753,7 @@ jobs:
 
       - name: Upload browser conformance test results on failure
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: conformance-results-browser-dotnet
           path: |

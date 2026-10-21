@@ -893,7 +893,7 @@ class TestJunctionFallbackOn311:
         the fallback must flag exactly this tag."""
         junction_dir = tmp_path / "junction"
         junction_dir.mkdir()
-        fake_stat = SimpleNamespace(st_reparse_tag=self._MOUNT_POINT_TAG)
+        fake_stat = SimpleNamespace(st_mode=stat.S_IFDIR, st_reparse_tag=self._MOUNT_POINT_TAG)
         with mock.patch.object(stat, "IO_REPARSE_TAG_MOUNT_POINT", self._MOUNT_POINT_TAG, create=True):
             with mock.patch.object(os.path, "isjunction", None, create=True):
                 with mock.patch("os.lstat", return_value=fake_stat):
@@ -911,7 +911,7 @@ class TestJunctionFallbackOn311:
         type") must NOT be flagged."""
         other_dir = tmp_path / "other-reparse-point"
         other_dir.mkdir()
-        fake_stat = SimpleNamespace(st_reparse_tag=self._SYMLINK_TAG)
+        fake_stat = SimpleNamespace(st_mode=stat.S_IFDIR, st_reparse_tag=self._SYMLINK_TAG)
         with mock.patch.object(stat, "IO_REPARSE_TAG_MOUNT_POINT", self._MOUNT_POINT_TAG, create=True):
             with mock.patch.object(os.path, "isjunction", None, create=True):
                 with mock.patch("os.lstat", return_value=fake_stat):
@@ -925,7 +925,7 @@ class TestJunctionFallbackOn311:
         `False` rather than e.g. comparing `None == None`."""
         some_dir = tmp_path / "posix-style"
         some_dir.mkdir()
-        fake_stat = SimpleNamespace(st_reparse_tag=self._MOUNT_POINT_TAG)
+        fake_stat = SimpleNamespace(st_mode=stat.S_IFDIR, st_reparse_tag=self._MOUNT_POINT_TAG)
         with mock.patch.object(stat, "IO_REPARSE_TAG_MOUNT_POINT", None, create=True):
             with mock.patch.object(os.path, "isjunction", None, create=True):
                 with mock.patch("os.lstat", return_value=fake_stat):

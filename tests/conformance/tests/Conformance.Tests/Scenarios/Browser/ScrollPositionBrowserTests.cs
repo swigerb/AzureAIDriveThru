@@ -113,9 +113,18 @@ public sealed class ScrollPositionBrowserTests(BrowserConformanceFixture fixture
         // expected). Anything the sheet OPENING then moves the window by further is what must
         // never happen -- the exact regression this suite is about.
         await trigger.ScrollIntoViewIfNeededAsync().ConfigureAwait(false);
-        var scrollYAfterTriggerScroll = await page.EvaluateAsync<double>("window.scrollY").ConfigureAwait(false);
+        await page.EvaluateAsync("() => document.fonts.ready").ConfigureAwait(false);
+        // ClickAsync may scroll again after fonts or focus change the layout. Capture after
+        // Playwright's actionability scroll, immediately before the component opens the sheet.
+        await trigger.EvaluateAsync("""
+            el => el.addEventListener("click", () => {
+                window.__transcriptScrollYBeforeOpen = window.scrollY;
+            }, { capture: true, once: true })
+            """).ConfigureAwait(false);
 
         await trigger.ClickAsync().ConfigureAwait(false);
+        var scrollYAfterTriggerScroll = await page.EvaluateAsync<double>(
+            "window.__transcriptScrollYBeforeOpen").ConfigureAwait(false);
 
         // The sheet slides in as a dialog; scope the lookup to it (rather than a bare
         // ".overflow-auto" class selector) so this can never accidentally match the OTHER,
@@ -123,6 +132,25 @@ public sealed class ScrollPositionBrowserTests(BrowserConformanceFixture fixture
         var dialog = page.GetByRole(AriaRole.Dialog);
         var scrollContainer = dialog.Locator(".overflow-auto");
         await scrollContainer.WaitForAsync().ConfigureAwait(false);
+        await dialog.EvaluateAsync("""
+            async el => {
+                await Promise.all(el.getAnimations({ subtree: true })
+                    .filter(animation => animation.effect?.getComputedTiming().iterations !== Infinity)
+                    .map(animation => animation.finished));
+            }
+            """).ConfigureAwait(false);
+        await scrollContainer.EvaluateAsync("""
+            el => new Promise(resolve => {
+                const settle = () => {
+                    if (Math.abs(el.scrollTop - (el.scrollHeight - el.clientHeight)) <= 1) {
+                        resolve();
+                    } else {
+                        requestAnimationFrame(settle);
+                    }
+                };
+                settle();
+            })
+            """).WaitAsync(TimeSpan.FromSeconds(5), ct).ConfigureAwait(false);
 
         // "Shows the newest entry" means scrolled to the bottom of its OWN container -- checked
         // generically (scrollTop at its max, scrollHeight minus clientHeight) rather than against
@@ -135,6 +163,16 @@ public sealed class ScrollPositionBrowserTests(BrowserConformanceFixture fixture
         Assert.True(
             Math.Abs(scrollTop - maxScrollTop) <= 1,
             $"Expected the mobile transcript sheet's container to be scrolled to the bottom (scrollTop {scrollTop} ~= max {maxScrollTop}).");
+        var newestEntryInView = await scrollContainer.EvaluateAsync<bool>("""
+            el => {
+                const newest = el.firstElementChild?.lastElementChild;
+                if (!newest) return false;
+                const container = el.getBoundingClientRect();
+                const entry = newest.getBoundingClientRect();
+                return entry.top >= container.top - 1 && entry.bottom <= container.bottom + 1;
+            }
+            """).ConfigureAwait(false);
+        Assert.True(newestEntryInView, "The newest transcript entry must be visible inside the sheet.");
 
         var scrollYAfterOpen = await page.EvaluateAsync<double>("window.scrollY").ConfigureAwait(false);
         Assert.Equal(scrollYAfterTriggerScroll, scrollYAfterOpen);

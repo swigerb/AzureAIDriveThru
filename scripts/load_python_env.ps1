@@ -29,10 +29,10 @@ try {
 
   if ($pyLauncher) {
     try {
-      $versionOutput = & $pyLauncher.Source -3.11 --version 2>$null
+      $versionOutput = & $pyLauncher.Source -3 --version 2>$null
       if ($LASTEXITCODE -eq 0) {
         $pythonCmdPath = $pyLauncher.Source
-        $pythonCmdArgs = @("-3.11")
+        $pythonCmdArgs = @("-3")
       }
     } catch {
       $versionOutput = $null
@@ -45,7 +45,7 @@ try {
       $pythonCmd = Get-Command python3 -ErrorAction SilentlyContinue
     }
     if (-not $pythonCmd) {
-      throw "Python executable not found. Install Python 3.11+ or add it to PATH."
+      throw "Python executable not found. Install Python 3.12+ (3.15 recommended) or add it to PATH."
     }
     $pythonCmdPath = $pythonCmd.Source
     $versionOutput = & $pythonCmdPath --version
@@ -54,8 +54,8 @@ try {
   if ($versionOutput -match "Python\s+(\d+)\.(\d+)") {
     $major = [int]$matches[1]
     $minor = [int]$matches[2]
-    if ($major -lt 3 -or ($major -eq 3 -and $minor -lt 11)) {
-      throw "Python 3.11 or later is required. Detected version $versionOutput. Install Python 3.11+ and re-run the script."
+    if ($major -lt 3 -or ($major -eq 3 -and $minor -lt 12)) {
+      throw "Python 3.12 or later is required. Detected version $versionOutput. Install Python 3.15 and re-run the script."
     }
   } else {
     throw "Unable to determine Python version from output: $versionOutput"
@@ -78,7 +78,14 @@ try {
   }
 
   Write-Host 'Installing dependencies from "app/backend/requirements.txt" into virtual environment'
-  & $venvPythonPath -m pip install -r (Join-Path $projectRoot "app/backend/requirements.txt")
+  $previousPyYamlForceLibYaml = $env:PYYAML_FORCE_LIBYAML
+  try {
+    $env:PYYAML_FORCE_LIBYAML = "0"
+    & $venvPythonPath -m pip install -r (Join-Path $projectRoot "app/backend/requirements.txt")
+  }
+  finally {
+    $env:PYYAML_FORCE_LIBYAML = $previousPyYamlForceLibYaml
+  }
 }
 finally {
   Pop-Location

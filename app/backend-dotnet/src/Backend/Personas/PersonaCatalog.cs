@@ -123,7 +123,9 @@ internal sealed class PersonaCatalog
 
         try
         {
-            return JsonSchema.FromFile(path);
+            // Catalog reloads and fixture packs may reuse schema IDs with different content.
+            // Keep registrations local to this load rather than mutating the global registry.
+            return JsonSchema.FromFile(path, new BuildOptions { SchemaRegistry = new SchemaRegistry() });
         }
         catch (JsonException exc)
         {

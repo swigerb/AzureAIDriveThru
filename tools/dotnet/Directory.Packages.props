@@ -18,15 +18,23 @@
       repo's one shared root global.json's "test.runner" key, which would silently change the
       test-execution mode for tests/conformance and app/backend-dotnet too.
     -->
-    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.10.0" />
-    <PackageVersion Include="xunit.runner.visualstudio" Version="4.0.0" />
-    <PackageVersion Include="xunit.v3.mtp-off" Version="4.0.1" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.11.0" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="4.0.1" />
+    <PackageVersion Include="xunit.v3.mtp-off" Version="4.0.2" />
     <!--
       Fix #16: SearchIndexIngestor's one new dependency - DefaultAzureCredential bearer tokens for
       its raw-HttpClient Azure AI Search/Azure OpenAI REST calls. Pinned to the SAME version
       app/backend-dotnet/Directory.Packages.props already uses, not a second, independently-chosen
       one.
     -->
-    <PackageVersion Include="Azure.Identity" Version="1.13.2" />
+    <PackageVersion Include="Azure.Identity" Version="1.21.0" />
+    <PackageVersion Include="Azure.Core" Version="1.63.0" />
+    <PackageVersion Include="Microsoft.Bcl.AsyncInterfaces" Version="10.0.13" />
+    <PackageVersion Include="Microsoft.Identity.Client" Version="4.91.1" />
+    <PackageVersion Include="Microsoft.Identity.Client.Extensions.Msal" Version="4.91.1" />
+    <PackageVersion Include="Microsoft.IdentityModel.Abstractions" Version="8.23.0" />
+    <PackageVersion Include="System.ClientModel" Version="1.16.0" />
+    <PackageVersion Include="System.Memory.Data" Version="10.0.13" />
+    <PackageVersion Include="System.Security.Cryptography.ProtectedData" Version="10.0.13" />
   </ItemGroup>
 </Project>

@@ -42,17 +42,8 @@ internal sealed class ToolCallDispatcher(
             return;
         }
 
-        // Rick's #244 round-2 review, issue 1: refuse to dispatch once this connection has
-        // been superseded by a resume elsewhere, checked HERE -- synchronously, with no IO --
-        // rather than relying on StaleCts having been cancelled promptly. StaleCts cancellation
-        // now happens from a BACKGROUND task (see HandleResumeFirstFrameAsync) that may still
-        // be mid-flight against a non-draining stale peer, and even when prompt,
-        // OrderToolExecutor.ExecuteAsync is synchronous and ignores its own CancellationToken
-        // entirely -- an in-flight call already past this point would run to completion and
-        // mutate the shared (not thread-safe) OrderState regardless of cancellation. This flag
-        // is set synchronously, under SessionManager's own lock, the instant TryResume captures
-        // this connection as stale (SessionManager.SupersededFlag's own doc comment has the
-        // full reasoning), so it is safe to trust here with no further synchronization.
+        // Resume marks this flag synchronously under the registry lock. Cancellation alone
+        // cannot stop a synchronous executor while a non-draining stale socket is closing.
         if (state.Superseded.IsSuperseded)
         {
             logger?.ToolCallDroppedSuperseded(toolName, callId, sessionId);
@@ -101,29 +92,7 @@ internal sealed class ToolCallDispatcher(
             // read itself is wrapped separately from the send so a session with no readable
             // order state yet just skips the refresh instead of losing the function_call_output
             // below too.
-            if (state.ToolExecutor is IOrderTicketSource ticketSource)
-            {
-                string? ticketJson = null;
-                try
-                {
-                    ticketJson = ticketSource.CurrentOrderSummaryJson;
-                }
-                catch (Exception ticketEx)
-                {
-                    logger?.TicketRefreshAfterToolFailureFailed(ticketEx, sessionId);
-                }
-
-                if (ticketJson is not null)
-                {
-                    await FramePump.SendTextAsync(browserSocket, new JsonObject
-                    {
-                        ["type"] = "extension.middle_tier_tool_response",
-                        ["previous_item_id"] = previousItemId,
-                        ["tool_name"] = "get_order",
-                        ["tool_result"] = ticketJson,
-                    }.ToJsonString(), ct).ConfigureAwait(false);
-                }
-            }
+            await RefreshTicketAsync(previousItemId).ConfigureAwait(false);
 
             // Issue #13 Wave 4 (swigerb/SonicAIDriveThru#36, PR #58 re-review "S1"/"S2"):
             // marks this round failed; HandleResponseDoneAsync's response.done handling below
@@ -151,6 +120,34 @@ internal sealed class ToolCallDispatcher(
                 ["previous_item_id"] = previousItemId,
                 ["tool_name"] = toolName,
                 ["tool_result"] = clientText,
+            }.ToJsonString(), ct).ConfigureAwait(false);
+        }
+
+    }
+
+    private async Task RefreshTicketAsync(string previousItemId)
+    {
+        if (state.ToolExecutor is not IOrderTicketSource ticketSource)
+        {
+            return;
+        }
+        string? ticketJson = null;
+        try
+        {
+            ticketJson = ticketSource.CurrentOrderSummaryJson;
+        }
+        catch (Exception ex)
+        {
+            logger?.TicketRefreshAfterToolFailureFailed(ex, sessionId);
+        }
+        if (ticketJson is not null)
+        {
+            await FramePump.SendTextAsync(browserSocket, new JsonObject
+            {
+                ["type"] = "extension.middle_tier_tool_response",
+                ["previous_item_id"] = previousItemId,
+                ["tool_name"] = "get_order",
+                ["tool_result"] = ticketJson,
             }.ToJsonString(), ct).ConfigureAwait(false);
         }
     }

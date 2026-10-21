@@ -493,12 +493,18 @@ public sealed class PythonParityTests
         }
         File.WriteAllLines(envFile, lines);
 
-        var script = Path.Combine(dir, "azd");
+        var environmentJson = JsonSerializer.Serialize(new[]
+        {
+            new { Name = "test", IsDefault = true, DotEnvPath = envFile }
+        });
+        var script = Path.Combine(dir, OperatingSystem.IsWindows() ? "azd.cmd" : "azd");
         File.WriteAllText(
             script,
-            $$"""
+            OperatingSystem.IsWindows()
+                ? $"@echo off\r\necho {environmentJson}\r\n"
+                : $$"""
             #!/bin/sh
-            echo '[{"Name":"test","IsDefault":true,"DotEnvPath":"{{envFile}}"}]'
+            echo '{{environmentJson}}'
             """);
         if (!OperatingSystem.IsWindows())
         {

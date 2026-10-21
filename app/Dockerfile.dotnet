@@ -7,9 +7,9 @@
 # relative); the build context is still the repo root, so no COPY paths change with the rename.
 #
 # Image tags pin the exact SDK/runtime band app/backend-dotnet/global.json requires
-# (11.0.100-rc.1.26425.128, rollForward: latestPatch) -- mcr.microsoft.com/dotnet/sdk publishes an
-# unsuffixed manifest list per feature band (11.0.100-rc.1) and mcr.microsoft.com/dotnet/aspnet
-# publishes one per patch version without the SDK's three-digit feature band (11.0.0-rc.1); both
+# (11.0.100-rc.2.26504.105, rollForward: latestPatch) -- mcr.microsoft.com/dotnet/sdk publishes an
+# unsuffixed manifest list per feature band (11.0.100-rc.2) and mcr.microsoft.com/dotnet/aspnet
+# publishes one per patch version without the SDK's three-digit feature band (11.0.0-rc.2); both
 # are the default (non-alpine, non-chiseled) Debian-based variant, required because
 # Directory.Build.props sets InvariantGlobalization=false (full ICU) and PublishAot=false
 # (Beth's charter: Azure SDK trimming warnings rule out Native AOT for now -- plain JIT publish;
@@ -19,7 +19,7 @@
 # Stage 1: Build the Vite/React frontend (identical to app/Dockerfile's build-stage -- the C# app
 # serves the same bundle, not a second copy of the frontend source).
 # ---------------------------------------------------------------------------
-FROM node:22-slim AS frontend-build-stage
+FROM node:24-slim AS frontend-build-stage
 
 WORKDIR /frontend
 
@@ -43,7 +43,9 @@ ENV VITE_ENTRA_API_SCOPE=${VITE_ENTRA_API_SCOPE}
 
 COPY app/frontend/package.json app/frontend/package-lock.json ./
 
-RUN npm ci --no-audit --no-fund && npm cache clean --force
+# Optional local feed configuration stays out of image layers.
+RUN --mount=type=secret,id=npm_config,target=/root/.npmrc \
+    npm ci --no-audit --no-fund && npm cache clean --force
 
 COPY app/frontend/ ./
 
@@ -52,7 +54,7 @@ RUN npm run build
 # ---------------------------------------------------------------------------
 # Stage 2: Restore and publish the .NET backend
 # ---------------------------------------------------------------------------
-FROM mcr.microsoft.com/dotnet/sdk:11.0.100-rc.1 AS dotnet-build-stage
+FROM mcr.microsoft.com/dotnet/sdk:11.0.100-rc.2 AS dotnet-build-stage
 
 WORKDIR /src
 
@@ -68,7 +70,8 @@ COPY global.json ./
 COPY app/backend-dotnet/Directory.Build.props app/backend-dotnet/Directory.Packages.props app/backend-dotnet/
 COPY app/backend-dotnet/src/Backend/Backend.csproj app/backend-dotnet/src/Backend/packages.lock.json app/backend-dotnet/src/Backend/
 
-RUN dotnet restore app/backend-dotnet/src/Backend/Backend.csproj --locked-mode
+RUN --mount=type=secret,id=nuget_config,target=/root/.nuget/NuGet/NuGet.Config \
+    dotnet restore app/backend-dotnet/src/Backend/Backend.csproj --locked-mode
 
 # Copy the remaining backend source (changes more often than deps) and publish.
 COPY app/backend-dotnet/src/Backend/ app/backend-dotnet/src/Backend/
@@ -88,7 +91,7 @@ RUN dotnet publish app/backend-dotnet/src/Backend/Backend.csproj \
 # ---------------------------------------------------------------------------
 # Stage 3: Production ASP.NET Core runtime
 # ---------------------------------------------------------------------------
-FROM mcr.microsoft.com/dotnet/aspnet:11.0.0-rc.1 AS production-stage
+FROM mcr.microsoft.com/dotnet/aspnet:11.0.0-rc.2 AS production-stage
 
 WORKDIR /app
 

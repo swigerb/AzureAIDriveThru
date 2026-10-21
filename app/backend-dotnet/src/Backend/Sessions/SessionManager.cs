@@ -398,9 +398,7 @@ internal sealed class SessionManager
         }
 
         var digest = Digest(presentedId);
-        string? staleReason;
         ResumeOutcome? outcome;
-        WebSocket? staleWs;
 
         lock (_sync)
         {
@@ -438,62 +436,70 @@ internal sealed class SessionManager
                 }
                 else
                 {
-                    // Consume the presented id before anything else can use it.
-                    _resumeIndex.Remove(digest);
-                    record.ResumeDigest = null;
-
-                    staleWs = record.AttachedSocket;
-                    if (ReferenceEquals(staleWs, ws))
-                    {
-                        staleWs = null;
-                    }
-                    // Issue 4 (Rick's #244 review): capture the STALE connection's own CTS before
-                    // overwriting it with this (new, winning) connection's -- null whenever there
-                    // is no still-attached socket to steal from (staleWs is also null then), same
-                    // condition as staleWs itself.
-                    var staleCts = staleWs is not null ? record.AttachedCts : null;
-                    // Rick's #244 round-2 review, issue 1: mark the STALE connection's own flag
-                    // SYNCHRONOUSLY, right here under the lock -- not deferred to whenever the
-                    // background supersede-close (started by the caller afterward) happens to run
-                    // or finish. This is what lets the stale connection's own in-flight
-                    // HandleToolCallDoneAsync refuse to dispatch a tool the instant it checks,
-                    // regardless of how long that close takes against a non-draining peer.
-                    if (staleWs is not null)
-                    {
-                        record.AttachedSupersededFlag?.MarkSuperseded();
-                        record.AttachedSocket = null;
-                    }
-                    if (provisionalSessionId != sessionId)
-                    {
-                        EndSessionLocked(provisionalSessionId, "replaced by resume");
-                    }
-                    RemoveFromDetachedLocked(sessionId);
-                    record.DetachedAt = null;
-                    record.AttachedSocket = ws;
-                    record.AttachedCts = attachedCts;
-                    record.AttachedSupersededFlag = attachedSupersededFlag;
-                    record.LastActivity = now;
-
-                    var newId = IssueResumeIdLocked(record);
-                    staleReason = staleWs is not null ? "; superseding a still-attached socket" : "";
-                    _logger?.SessionResumed(sessionId, staleReason);
-
-                    outcome = new ResumeOutcome(
-                        true,
-                        SessionId: sessionId,
-                        ResumeId: newId,
-                        StaleWs: staleWs,
-                        ConversationStarted: record.ConversationStarted,
-                        ToolExecutor: record.ToolExecutor,
-                        Voice: record.Voice,
-                        RecentTurns: RecentTurnsLocked(record),
-                        StaleCts: staleCts,
-                        Identifiers: record.Identifiers);
+                    outcome = AttachResumedSessionLocked(
+                        record, sessionId, digest, ws, provisionalSessionId, attachedCts, attachedSupersededFlag, now);
                 }
             }
         }
 
         return outcome!;
+    }
+
+    private ResumeOutcome AttachResumedSessionLocked(
+        SessionRecord record, string sessionId, string digest, WebSocket ws, string provisionalSessionId,
+        CancellationTokenSource? attachedCts, SupersededFlag? attachedSupersededFlag, DateTimeOffset now)
+    {
+        // Consume the presented id before anything else can use it.
+        _resumeIndex.Remove(digest);
+        record.ResumeDigest = null;
+
+        var staleWs = record.AttachedSocket;
+        if (ReferenceEquals(staleWs, ws))
+        {
+            staleWs = null;
+        }
+        // Issue 4 (Rick's #244 review): capture the STALE connection's own CTS before
+        // overwriting it with this (new, winning) connection's -- null whenever there
+        // is no still-attached socket to steal from (staleWs is also null then), same
+        // condition as staleWs itself.
+        var staleCts = staleWs is not null ? record.AttachedCts : null;
+        // Rick's #244 round-2 review, issue 1: mark the STALE connection's own flag
+        // SYNCHRONOUSLY, right here under the lock -- not deferred to whenever the
+        // background supersede-close (started by the caller afterward) happens to run
+        // or finish. This is what lets the stale connection's own in-flight
+        // HandleToolCallDoneAsync refuse to dispatch a tool the instant it checks,
+        // regardless of how long that close takes against a non-draining peer.
+        if (staleWs is not null)
+        {
+            record.AttachedSupersededFlag?.MarkSuperseded();
+            record.AttachedSocket = null;
+        }
+        if (provisionalSessionId != sessionId)
+        {
+            EndSessionLocked(provisionalSessionId, "replaced by resume");
+        }
+        RemoveFromDetachedLocked(sessionId);
+        record.DetachedAt = null;
+        record.AttachedSocket = ws;
+        record.AttachedCts = attachedCts;
+        record.AttachedSupersededFlag = attachedSupersededFlag;
+        record.LastActivity = now;
+
+        var newId = IssueResumeIdLocked(record);
+        var staleReason = staleWs is not null ? "; superseding a still-attached socket" : "";
+        _logger?.SessionResumed(sessionId, staleReason);
+
+        return new ResumeOutcome(
+            true,
+            SessionId: sessionId,
+            ResumeId: newId,
+            StaleWs: staleWs,
+            ConversationStarted: record.ConversationStarted,
+            ToolExecutor: record.ToolExecutor,
+            Voice: record.Voice,
+            RecentTurns: RecentTurnsLocked(record),
+            StaleCts: staleCts,
+            Identifiers: record.Identifiers);
     }
 
     /// <summary>Constant-time digest compare (the resume id itself is never compared directly --

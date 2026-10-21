@@ -8,19 +8,8 @@ using Microsoft.Extensions.Logging;
 namespace Backend.Sessions;
 
 /// <summary>
-/// Issue #338: the transcription/TTS-playback/failed-turn-teardown collaborator extracted from
-/// <see cref="CascadeProcessor.RunSessionAsync"/> -- cascade_processor.py's own
-/// <c>_transcribe</c>/<c>_speak</c>/the failed-<c>response.done</c> local closures, ported
-/// verbatim.
-///
-/// Pure move-and-delegate: every line below is unchanged from the original local functions except
-/// that closed-over locals became constructor parameters -- including
-/// <paramref name="notifyClientAsync"/>, which stays a delegate onto <c>RunSessionAsync</c>'s own
-/// <c>NotifyClientAsync</c> local function (not duplicated here), and
-/// <see cref="CascadeProcessor.SendTextAsync"/>, reused directly rather than re-implemented.
-/// Neither of the two moved methods logged directly (the retry/failure logging for both lives in
-/// <c>RunSessionAsync</c>'s own <c>ProcessTurnAsync</c> local function's catch blocks, which stay
-/// in <c>CascadeProcessor.cs</c>), so there is no accompanying <c>.Log.cs</c> file for this class.
+/// Transcribes guest audio, streams synthesized speech, and closes failed turns.
+/// Writes use the connection token so turn cancellation cannot abort the WebSocket.
 /// </summary>
 internal sealed class CascadeAudioTurnPipeline(
     WebSocket browserSocket,
@@ -31,13 +20,14 @@ internal sealed class CascadeAudioTurnPipeline(
     FoundryAudioClient audioClient,
     CascadeRateLimitSettings rateLimitSettings,
     double echoCooldownSeconds,
-    string sessionId,
+    Func<string> getSessionId,
     TimeProvider timeProvider,
     Func<JsonObject, CancellationToken, Task> notifyClientAsync,
     Func<double> nowSeconds,
     ILogger logger,
     CancellationToken ct)
 {
+    private string SessionId => getSessionId();
     public async Task<string> TranscribeAsync(byte[] turnAudio, CancellationToken turnCt)
     {
         var cascadeAudio = catalog.CascadeAudio
@@ -48,7 +38,7 @@ internal sealed class CascadeAudioTurnPipeline(
         return await CascadeRateLimit.WithRetryAsync(
             rateLimitSettings,
             () => audioClient.TranscribeAsync(turnAudio, deployment, CascadeProcessor.AudioSampleRate, turnCt),
-            "transcription", notifyClientAsync, sessionId, logger, turnCt, timeProvider).ConfigureAwait(false);
+            "transcription", notifyClientAsync, SessionId, logger, turnCt, timeProvider).ConfigureAwait(false);
     }
 
     public async Task SpeakAsync(string text, CancellationToken turnCt)
@@ -91,7 +81,7 @@ internal sealed class CascadeAudioTurnPipeline(
                     }.ToJsonString(), turnCt, ct).ConfigureAwait(false);
                 }
             },
-            "text-to-speech", notifyClientAsync, sessionId, logger, turnCt, timeProvider).ConfigureAwait(false);
+            "text-to-speech", notifyClientAsync, SessionId, logger, turnCt, timeProvider).ConfigureAwait(false);
     }
 
     public async Task SendFailedResponseDoneAsync(string responseId, string message, CancellationToken turnCt)

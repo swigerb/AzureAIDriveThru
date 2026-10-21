@@ -52,7 +52,7 @@ vi.mock("darkreader", () => ({ enable: vi.fn(), disable: vi.fn(), auto: vi.fn(),
 vi.mock("@/hooks/useAudioRecorder", () => ({ default: () => rec }));
 vi.mock("@/hooks/useAudioPlayer", () => ({ default: () => player }));
 vi.mock("@/lib/demo/demoRunner", () => demoRunner);
-vi.mock("@/lib/demo/syntheticGuestAudio", () => ({ SyntheticGuestAudio: vi.fn(() => demoAudio) }));
+vi.mock("@/lib/demo/syntheticGuestAudio", () => ({ SyntheticGuestAudio: vi.fn(function () { return demoAudio; }) }));
 
 const theme = { light: { primary: "200 80% 50%", secondary: "40 60% 40%", background: "0 0% 98%", foreground: "0 0% 10%" } };
 const INDEX = {
