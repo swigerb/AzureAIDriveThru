@@ -19,7 +19,7 @@
 # Stage 1: Build the Vite/React frontend (identical to app/Dockerfile's build-stage -- the C# app
 # serves the same bundle, not a second copy of the frontend source).
 # ---------------------------------------------------------------------------
-FROM node:24-slim AS frontend-build-stage
+FROM node:25-slim AS frontend-build-stage
 
 WORKDIR /frontend
 
