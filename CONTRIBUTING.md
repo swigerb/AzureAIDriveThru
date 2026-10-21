@@ -5,14 +5,14 @@ Thank you for helping improve Microsoft Foundry AI Drive Thru. These steps keep 
 ## Getting started
 
 1. Fork the repository and clone your fork (`git clone https://github.com/swigerb/AzureAIDriveThru.git`).
-2. Install the prerequisites listed in the README: Azure Developer CLI, Azure CLI, Docker, Node.js 20+, Python 3.11+, and Git. Install the .NET 11 SDK only if you run the C# backend or conformance suites.
+2. Install the prerequisites listed in the README: Azure Developer CLI, Azure CLI, Docker, Node.js 24 LTS (24.15+), Python 3.14 (3.12 also supported), and Git. Install the .NET 11 RC2 SDK pinned in `global.json` only if you run the C# backend or conformance suites.
 3. For local Python work, use the repository virtual environment or create one, then install the backend dependencies from `app/backend/requirements.txt`.
 4. Copy the backend and frontend `.env-sample` files to `.env` only when you are not using `scripts/write_env.ps1` or `scripts/write_env.sh` to populate values from azd.
 5. Run `pwsh ./scripts/start.ps1` on Windows, or `./scripts/start.sh` on macOS or Linux, to launch the full stack locally before making UI or API changes.
 
 ## Branching and pull requests
 
-- Create feature branches off `main` using the pattern `feature/<short-description>`.
+- Create feature branches off `dev` and target pull requests to `dev`.
 - Keep pull requests focused on a single change. Include screenshots or GIFs for UI changes when possible.
 - Reference GitHub Issues that the change addresses so the public backlog stays in sync.
 
@@ -26,6 +26,11 @@ Before submitting a pull request, run the smallest checks that cover your change
 4. Python style, when Python files change: `ruff check app/backend`
 5. C# backend, when C# files change and .NET 11 is installed: `dotnet test app/backend-dotnet/Backend.slnx`
 6. Cross-backend conformance, when API or ordering behavior changes and .NET 11 is installed: `dotnet test tests/conformance/Conformance.slnx`
+
+Container builds support optional BuildKit secrets named `npm_config`, `pip_config`, and
+`nuget_config` to inherit approved local package-feed configuration without copying it into
+image layers. Pass the applicable config file with `docker build --secret id=<name>,src=<path>`;
+leave these unset in environments that already use their standard feeds.
 
 ## Documentation updates
 

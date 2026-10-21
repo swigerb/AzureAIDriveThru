@@ -1,7 +1,7 @@
 # ---------------------------------------------------------------------------
 # Stage 1: Build the Vite/React frontend
 # ---------------------------------------------------------------------------
-FROM node:22-slim AS build-stage
+FROM node:24-slim AS build-stage
 
 WORKDIR /frontend
 
@@ -28,7 +28,9 @@ ENV VITE_ENTRA_API_SCOPE=${VITE_ENTRA_API_SCOPE}
 # (azure.yaml's docker.context), not this app/ directory.
 COPY app/frontend/package.json app/frontend/package-lock.json ./
 
-RUN npm ci --no-audit --no-fund && npm cache clean --force
+# Optional local feed configuration stays out of image layers.
+RUN --mount=type=secret,id=npm_config,target=/root/.npmrc \
+    npm ci --no-audit --no-fund && npm cache clean --force
 
 # Copy remaining frontend source (changes more often than deps)
 COPY app/frontend/ ./
@@ -38,7 +40,7 @@ RUN npm run build
 # ---------------------------------------------------------------------------
 # Stage 2: Production Python runtime
 # ---------------------------------------------------------------------------
-FROM python:3.12-slim AS production-stage
+FROM python:3.14-slim AS production-stage
 
 WORKDIR /app
 
@@ -47,7 +49,8 @@ ENV PYTHONUNBUFFERED=1
 
 # Install Python deps before copying app source for layer caching
 COPY ./app/backend/requirements.txt /app/requirements.txt
-RUN python -m pip install --no-cache-dir -r requirements.txt
+RUN --mount=type=secret,id=pip_config,target=/etc/pip.conf \
+    python -m pip install --no-cache-dir -r requirements.txt
 
 # Copy backend application source
 COPY ./app/backend/ /app

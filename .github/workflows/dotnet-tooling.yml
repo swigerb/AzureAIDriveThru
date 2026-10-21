@@ -41,12 +41,12 @@ permissions:
 
 env:
   # Keep in sync with global.json (repo root) and conformance.yml's identical env var.
-  DOTNET_VERSION: "11.0.100-rc.1.26425.128"
+  DOTNET_VERSION: "11.0.100-rc.2.26504.105"
   # Batch 2 (#16): PythonParityTests for SearchIndexRequestBuilder subprocess-invokes the real
   # app/backend/setup_search_index.py (via its persona_loader.py import), which needs the backend's
   # full requirements.txt -- unlike update_menu_sizes.py/extract_production_items.py's parity tests,
   # which only need stdlib Python. Keep in sync with conformance.yml's identical env var.
-  PYTHON_VERSION: "3.12"
+  PYTHON_VERSION: "3.14"
   DOTNET_NOLOGO: "true"
   DOTNET_CLI_TELEMETRY_OPTOUT: "true"
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "true"
@@ -115,7 +115,7 @@ jobs:
 
       - name: Upload tools/dotnet test results on failure
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dotnet-tooling-tests-results
           path: |

@@ -1,9 +1,11 @@
 using System.Text.Json.Nodes;
 using Backend.Cascade;
+using Backend.Models;
 using Backend.Realtime;
 using Backend.Sessions;
 using Backend.Tests.Cascade;
 using Backend.Tests.Realtime;
+using Backend.Tests.TestSupport;
 using Backend.Tools;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -31,21 +33,60 @@ public sealed class CascadeToolCallDispatcherTests
         RoutingFoundryHandler handler,
         IToolExecutor toolExecutor,
         CascadeProcessor.CascadeSessionState state,
-        FakeWebSocket? browserSocket = null) =>
-        new(
-            browserSocket ?? new FakeWebSocket([]),
-            toolExecutor,
-            promptLoader: null,
-            state,
+        FakeWebSocket? browserSocket = null,
+        Action<CascadeSessionContext>? configureContext = null)
+    {
+        var context = new CascadeSessionContext
+        {
+            BrowserSocket = browserSocket ?? new FakeWebSocket([]),
+            Persona = DeltaFixture.Load(),
+            ResolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false),
+            MenuMode = null,
+            LinkedCts = new CancellationTokenSource(),
+            CancellationToken = CancellationToken.None,
+            SessionManager = null,
+            State = state,
+            PromptLoader = null,
+            Detector = new TurnDetector(0.5, 500, 24000),
+            AllowedVoices = new HashSet<string> { "marin" },
+            Logger = NullLogger.Instance,
+            TimeProvider = TimeProvider.System,
+            TurnRegistryLock = new object(),
+            SessionId = "session-1",
+            ToolExecutor = toolExecutor,
+            Identifiers = new SessionIdentifiers("test-alpha", "gpt-5-mini", "session-1", pipeline: "cascade"),
+        };
+        configureContext?.Invoke(context);
+        return new(
+            context,
             new RateLimitSettings(),
             new FoundryChatClient(new HttpClient(handler), Endpoint, new StaticBearerTokenProvider("fake-token")),
-            toolDefinitions: [],
-            sessionManager: null,
-            "session-1",
-            TimeProvider.System,
-            notifyClientAsync: (_, _) => Task.CompletedTask,
-            NullLogger.Instance,
-            CancellationToken.None);
+            toolDefinitions: []);
+    }
+
+    [Fact]
+    public async Task RunChatToolLoopAsync_usesTheResumedExecutorInsteadOfTheProvisionalBinding()
+    {
+        var handler = new RoutingFoundryHandler()
+            .EnqueueChatMessage("assistant", null, new JsonArray(new JsonObject
+            {
+                ["id"] = "resumed-call",
+                ["function"] = new JsonObject { ["name"] = "get_order", ["arguments"] = "{}" },
+            }))
+            .EnqueueChatMessage("assistant", "Restored.");
+        var provisional = new RecordingToolExecutor(["get_order"]);
+        var resumed = new RecordingToolExecutor(["get_order"]);
+        CascadeSessionContext? context = null;
+        var dispatcher = NewDispatcher(handler, provisional, NewState(),
+            configureContext: created => context = created);
+        context!.SessionId = "resumed-session";
+        context.ToolExecutor = resumed;
+
+        Assert.Equal("Restored.", await dispatcher.RunChatToolLoopAsync(CancellationToken.None));
+
+        Assert.Empty(provisional.ReceivedArgumentsJson);
+        Assert.Single(resumed.ReceivedArgumentsJson);
+    }
 
     [Fact]
     public async Task RunChatToolLoopAsync_NoToolCalls_ReturnsAssistantContentAndAppendsIt()

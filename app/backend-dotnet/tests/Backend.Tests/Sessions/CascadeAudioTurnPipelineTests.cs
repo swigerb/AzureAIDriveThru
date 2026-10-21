@@ -41,7 +41,7 @@ public sealed class CascadeAudioTurnPipelineTests
             new FoundryAudioClient(new HttpClient(handler), Endpoint, new StaticBearerTokenProvider("fake-token")),
             new RateLimitSettings(),
             echoCooldownSeconds,
-            "session-1",
+            () => "session-1",
             TimeProvider.System,
             notifyClientAsync: (_, _) => Task.CompletedTask,
             nowSeconds: () => 0,

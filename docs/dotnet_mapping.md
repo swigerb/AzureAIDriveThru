@@ -16,7 +16,7 @@ both pipelines (`realtime`'s upstream `conversation.item.input_audio_transcripti
 the guest and a non-tool `response.done` for the assistant; `cascade`'s own transcription and
 chat-completion turns), feeding rehydration text on resume. Issue #126 extended the same
 `SessionManager`-backed resume/rehydration, idle nudge, and echo suppression to `cascade` (see
-`CascadeProcessor.cs`'s `NegotiateResumeAsync`/`ScheduleNudge`/`CancelNudge` and
+`CascadeResumeCoordinator` and `CascadeTurnCoordinator`'s nudge scheduling and cancellation, and
 `TurnDetector.StartEchoCooldown`), so both pipelines share one `SessionManager` instance and one
 echo-suppression *semantic* end to end (identical in both backends: drop mic audio during estimated
 playback plus a tail of `min(audio.echo_cooldown_seconds, 300ms)`, never buffering dropped frames;
@@ -24,6 +24,15 @@ playback plus a tail of `min(audio.echo_cooldown_seconds, 300ms)`, never bufferi
 implementation context, not a parity exception list.
 
 ## Module mapping
+
+Session processors now compose per-connection collaborators rather than closing over mutable
+locals. `RealtimeSessionContext` binds the two directional handlers (`RealtimeClientRelay` and
+`RealtimeServerRelay`) to the existing greeting, resume, frame-pump, and tool collaborators.
+`CascadeSessionContext` carries the current resumed identity and executor; `CascadeResumeCoordinator`,
+`CascadeClientMessageHandler`, and `CascadeTurnCoordinator` own negotiation, client dispatch, and
+turn lifetimes respectively. A barge-in cancels immediately but its speech-start announcement waits
+for the prior turn tail; the next turn waits for that announcement before transcription begins.
+Socket writes retain the connection cancellation token, not a turn token.
 
 | Python (`app/backend/`) | C# (`app/backend-dotnet/src/Backend/`) | Notes |
 | --- | --- | --- |

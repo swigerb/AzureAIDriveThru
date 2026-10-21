@@ -10,50 +10,30 @@ using Microsoft.Extensions.Logging;
 namespace Backend.Sessions;
 
 /// <summary>
-/// Issue #338: the chat-completion/tool-dispatch collaborator extracted from
-/// <see cref="CascadeProcessor.RunSessionAsync"/> -- cascade_processor.py's own
-/// <c>_run_chat_tool_loop</c>/<c>_execute_tool_call</c> local closures, ported verbatim. Mirrors
-/// <see cref="ToolCallDispatcher"/>'s role on the realtime side, adapted to cascade's own
-/// chat-completion-with-tool-calls loop (realtime dispatches ONE tool call per
-/// <c>response.function_call_arguments.done</c> event; cascade dispatches a whole ROUND of tool
-/// calls returned by one chat-completion response before looping back for the model's next turn).
-///
-/// Pure move-and-delegate: every line below is unchanged from the original local functions except
-/// that closed-over locals became constructor parameters -- including
-/// <paramref name="notifyClientAsync"/>, which stays a delegate onto
-/// <c>RunSessionAsync</c>'s own <c>NotifyClientAsync</c> local function (not duplicated here), and
-/// <see cref="CascadeProcessor.SendTextAsync"/>/<see cref="CascadeProcessor.GetString"/>, reused
-/// directly rather than re-implemented.
+/// Runs complete chat/tool rounds using the connection's current identity and executor.
+/// Resume can replace those bindings before the first turn starts.
 /// </summary>
 internal sealed class CascadeToolCallDispatcher(
-    WebSocket browserSocket,
-    IToolExecutor toolExecutor,
-    PromptLoader? promptLoader,
-    CascadeProcessor.CascadeSessionState state,
+    CascadeSessionContext context,
     CascadeRateLimitSettings rateLimitSettings,
     FoundryChatClient chatClient,
-    IReadOnlyList<JsonObject> toolDefinitions,
-    SessionManager? sessionManager,
-    string sessionId,
-    TimeProvider timeProvider,
-    Func<JsonObject, CancellationToken, Task> notifyClientAsync,
-    ILogger logger,
-    CancellationToken ct)
+    IReadOnlyList<JsonObject> toolDefinitions)
 {
     private async Task<JsonObject> CallChatCompletionAsync(CancellationToken turnCt) =>
         await CascadeRateLimit.WithRetryAsync(
             rateLimitSettings,
-            () => chatClient.CompleteAsync(state.Messages, state.Deployment, toolDefinitions, turnCt),
-            "chat completion", notifyClientAsync, sessionId, logger, turnCt, timeProvider).ConfigureAwait(false);
+            () => chatClient.CompleteAsync(context.State.Messages, context.State.Deployment, toolDefinitions, turnCt),
+            "chat completion", context.NotifyClientAsync, context.SessionId, context.Logger, turnCt,
+            context.TimeProvider).ConfigureAwait(false);
 
     private async Task ExecuteToolCallAsync(JsonObject toolCall, string previousItemId, CancellationToken turnCt)
     {
         var callId = CascadeProcessor.GetString(toolCall, "id") ?? "";
         var name = CascadeProcessor.GetString(toolCall["function"] as JsonObject, "name") ?? "";
-        if (!toolExecutor.ToolNames.Contains(name))
+        if (!context.ToolExecutor.ToolNames.Contains(name))
         {
-            logger?.CascadeUnknownTool(name, sessionId);
-            state.Messages.Add(CascadeChatMessage.Tool("", callId));
+            context.Logger.CascadeUnknownTool(name, context.SessionId);
+            context.State.Messages.Add(CascadeChatMessage.Tool("", callId));
             return;
         }
 
@@ -70,15 +50,15 @@ internal sealed class CascadeToolCallDispatcher(
             var rawArguments = CascadeProcessor.GetString(toolCall["function"] as JsonObject, "arguments");
             var argumentsJson = string.IsNullOrEmpty(rawArguments) ? "{}" : rawArguments;
             using var argumentsDoc = JsonDocument.Parse(argumentsJson);
-            logger?.CascadeExecutingTool(name, sessionId);
-            var result = await toolExecutor.ExecuteAsync(name, argumentsDoc.RootElement.Clone(), turnCt).ConfigureAwait(false);
-            logger?.CascadeToolResultDirection(name, result.Destination, sessionId);
+            context.Logger.CascadeExecutingTool(name, context.SessionId);
+            var result = await context.ToolExecutor.ExecuteAsync(name, argumentsDoc.RootElement.Clone(), turnCt).ConfigureAwait(false);
+            context.Logger.CascadeToolResultDirection(name, result.Destination, context.SessionId);
 
             // Issue #13 tail: track tool call args + result in the context window, mirroring
             // cascade_processor.py's own ctx_monitor.add_content(tool_call.function.arguments
             // or "") / ctx_monitor.add_content(result.to_text()) right after logging the
             // result.
-            var ctxMonitorForTool = sessionManager?.GetContextMonitor(sessionId);
+            var ctxMonitorForTool = context.SessionManager?.GetContextMonitor(context.SessionId);
             if (ctxMonitorForTool is not null)
             {
                 ctxMonitorForTool.AddContent(argumentsJson);
@@ -114,47 +94,53 @@ internal sealed class CascadeToolCallDispatcher(
         }
         catch (Exception ex)
         {
-            logger?.CascadeToolUnhandledException(ex, name, sessionId);
-            outputText = promptLoader?.RenderError("tool_execution_failed") ??
+            context.Logger.CascadeToolUnhandledException(ex, name, context.SessionId);
+            outputText = context.PromptLoader?.RenderError("tool_execution_failed") ??
                 "Something went wrong with that action and it did not complete. Don't retry it yet -- " +
                 "call get_order to confirm the order's current state, then ask the guest to repeat what they'd like.";
             sendToClient = false;
             clientText = null;
 
-            if (toolExecutor is IOrderTicketSource ticketSource)
-            {
-                string? ticketJson = null;
-                try
-                {
-                    ticketJson = ticketSource.CurrentOrderSummaryJson;
-                }
-                catch (Exception ticketEx)
-                {
-                    logger?.CascadeTicketRefreshFailed(ticketEx, sessionId);
-                }
-                if (ticketJson is not null)
-                {
-                    await CascadeProcessor.SendTextAsync(browserSocket, new JsonObject
-                    {
-                        ["type"] = "extension.middle_tier_tool_response",
-                        ["previous_item_id"] = previousItemId,
-                        ["tool_name"] = "get_order",
-                        ["tool_result"] = ticketJson,
-                    }.ToJsonString(), turnCt, ct).ConfigureAwait(false);
-                }
-            }
+            await RefreshTicketAsync(previousItemId, turnCt).ConfigureAwait(false);
         }
 
-        state.Messages.Add(CascadeChatMessage.Tool(outputText, callId));
+        context.State.Messages.Add(CascadeChatMessage.Tool(outputText, callId));
         if (sendToClient)
         {
-            await CascadeProcessor.SendTextAsync(browserSocket, new JsonObject
+            await context.NotifyClientAsync(new JsonObject
             {
                 ["type"] = "extension.middle_tier_tool_response",
                 ["previous_item_id"] = previousItemId,
                 ["tool_name"] = name,
                 ["tool_result"] = clientText,
-            }.ToJsonString(), turnCt, ct).ConfigureAwait(false);
+            }, turnCt).ConfigureAwait(false);
+        }
+    }
+
+    private async Task RefreshTicketAsync(string previousItemId, CancellationToken turnCt)
+    {
+        if (context.ToolExecutor is not IOrderTicketSource ticketSource)
+        {
+            return;
+        }
+        string? ticketJson = null;
+        try
+        {
+            ticketJson = ticketSource.CurrentOrderSummaryJson;
+        }
+        catch (Exception ex)
+        {
+            context.Logger.CascadeTicketRefreshFailed(ex, context.SessionId);
+        }
+        if (ticketJson is not null)
+        {
+            await context.NotifyClientAsync(new JsonObject
+            {
+                ["type"] = "extension.middle_tier_tool_response",
+                ["previous_item_id"] = previousItemId,
+                ["tool_name"] = "get_order",
+                ["tool_result"] = ticketJson,
+            }, turnCt).ConfigureAwait(false);
         }
     }
 
@@ -167,12 +153,12 @@ internal sealed class CascadeToolCallDispatcher(
             if (toolCalls is null || toolCalls.Count == 0)
             {
                 var content = CascadeProcessor.GetString(message, "content") ?? "";
-                state.Messages.Add(CascadeChatMessage.Assistant(content));
+                context.State.Messages.Add(CascadeChatMessage.Assistant(content));
                 return content;
             }
 
-            var preRoundCount = state.Messages.Count;
-            state.Messages.Add((JsonObject)message.DeepClone());
+            var preRoundCount = context.State.Messages.Count;
+            context.State.Messages.Add((JsonObject)message.DeepClone());
             var previousItemId = MiddleTierItemIds.NewId();
             try
             {
@@ -200,11 +186,11 @@ internal sealed class CascadeToolCallDispatcher(
                 // instruction `ExecuteToolCallAsync` already gives it), so nothing is actually
                 // lost. A tool that already mutated the order (e.g. `update_order`) keeps its
                 // real-world effect -- the order store is untouched by this truncation.
-                state.Messages.RemoveRange(preRoundCount, state.Messages.Count - preRoundCount);
+                context.State.Messages.RemoveRange(preRoundCount, context.State.Messages.Count - preRoundCount);
                 throw;
             }
         }
-        logger?.CascadeChatToolLoopCapped(CascadeProcessor.MaxToolRounds, sessionId);
+        context.Logger.CascadeChatToolLoopCapped(CascadeProcessor.MaxToolRounds, context.SessionId);
         return "";
     }
 }

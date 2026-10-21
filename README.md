@@ -68,9 +68,29 @@ The cascade pipeline uses the same WebSocket and frontend contract. The backend 
 ### Prerequisites
 
 - Windows PowerShell 7 or a compatible shell.
-- Azure Developer CLI (`azd`), Azure CLI, Docker, Node.js 20+, Python 3.11+, and Git.
-- .NET 11 SDK only if you run the C# backend or conformance suites.
+- Azure Developer CLI (`azd`), Azure CLI, Docker, Node.js 24 LTS (24.15+), Python 3.14 (3.12 remains supported), and Git.
+- The .NET 11 RC2 SDK pinned in `global.json`, only if you run the C# backend or conformance suites.
 - Azure and GitHub authentication for deployment workflows.
+
+### Dependency compatibility
+
+The frontend uses React 19, Vite 8, TypeScript 7, and Vitest 5. Vite's
+`legacy.inconsistentCjsInterop` option is intentional: `react-use-websocket` still publishes a
+transpiled CommonJS default export, and removing the option breaks the production bundle.
+Commit `package-lock.json` and NuGet `packages.lock.json` updates with manifest changes;
+Dependabot monitors npm, pip, NuGet, containers, and GitHub Actions against `dev`.
+
+The runtime sweep retains these explicit exceptions:
+
+- The C# port already targets .NET 11; RC2 is the latest compatible SDK/runtime, not a stable
+  release. Moving the port to stable .NET 10 is a separate target-framework change.
+- `azure-ai-inference` remains at `1.0.0b9` because no stable release is available.
+- Python 3.15.1 could not install the current PyYAML dependency on Windows without a C++ source
+  build. Production and CI use Python 3.14 instead. The Microsoft Python devcontainer image
+  still uses its available Python 3.12 base; a matching 3.14 image tag was not available.
+
+Local Windows validation does not replace the Linux container build and Gunicorn startup
+checks in CI. No Azure resources or hosting plans need to change for these upgrades.
 
 ### Deploy with azd
 

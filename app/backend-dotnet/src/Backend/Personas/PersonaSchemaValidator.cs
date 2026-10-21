@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using Json.Schema;
 
@@ -19,7 +20,7 @@ internal static class PersonaSchemaValidator
     /// it, e.g. "$.voice: required".</exception>
     public static void Validate(JsonSchema schema, JsonNode? instance, string personaId, string fileLabel)
     {
-        var results = schema.Evaluate(instance, Options);
+        var results = schema.Evaluate(JsonSerializer.SerializeToElement(instance), Options);
         if (results.IsValid)
         {
             return;
@@ -38,22 +39,22 @@ internal static class PersonaSchemaValidator
 
     private static void CollectFailures(EvaluationResults results, List<string> failures)
     {
-        if (results.HasErrors)
+        if (results.Errors is { Count: > 0 } errors)
         {
             var location = results.InstanceLocation.ToString();
             var location_ = string.IsNullOrEmpty(location) ? "$" : $"${location}";
-            foreach (var (keyword, message) in results.Errors!)
+            foreach (var (keyword, message) in errors)
             {
                 failures.Add($"{location_} ({keyword}): {message}");
             }
         }
 
-        if (!results.HasDetails)
+        if (results.Details is not { Count: > 0 } details)
         {
             return;
         }
 
-        foreach (var detail in results.Details)
+        foreach (var detail in details)
         {
             if (!detail.IsValid)
             {

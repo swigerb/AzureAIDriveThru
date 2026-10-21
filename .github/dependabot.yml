@@ -1,12 +1,43 @@
-# To get started with Dependabot version updates, you'll need to specify which
-# package ecosystems to update and where the package manifests are located.
-# Please see the documentation for more information:
-# https://docs.github.com/github/administering-a-repository/configuration-options-for-dependency-updates
-# https://containers.dev/guide/dependabot
-
 version: 2
 updates:
- - package-ecosystem: "devcontainers"
-   directory: "/"
-   schedule:
-     interval: weekly
+  - package-ecosystem: devcontainers
+    directory: /
+    target-branch: dev
+    schedule:
+      interval: weekly
+  - package-ecosystem: npm
+    directory: /app/frontend
+    target-branch: dev
+    schedule:
+      interval: weekly
+    groups:
+      frontend:
+        patterns: ["*"]
+  - package-ecosystem: pip
+    directories:
+      - /app/backend
+      - /tests/conformance
+    target-branch: dev
+    schedule:
+      interval: weekly
+  - package-ecosystem: nuget
+    directories:
+      - /app/backend-dotnet
+      - /tests/conformance
+      - /tools/dotnet
+    target-branch: dev
+    schedule:
+      interval: weekly
+    groups:
+      dotnet:
+        patterns: ["*"]
+  - package-ecosystem: docker
+    directory: /app
+    target-branch: dev
+    schedule:
+      interval: weekly
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: dev
+    schedule:
+      interval: weekly

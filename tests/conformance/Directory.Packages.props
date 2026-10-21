@@ -11,9 +11,9 @@
     environment before being pinned here.
   -->
   <ItemGroup>
-    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.10.0" />
-    <PackageVersion Include="xunit.runner.visualstudio" Version="4.0.0" />
-    <PackageVersion Include="xunit.v3.mtp-off" Version="4.0.1" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.11.0" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="4.0.1" />
+    <PackageVersion Include="xunit.v3.mtp-off" Version="4.0.2" />
     <!-- Real-browser scenarios (issue #26 / #10): Playwright for .NET. Version verified
          to restore through packagefeedproxy.microsoft.io and run against net11.0 in this
          environment before being pinned here. -->
@@ -27,6 +27,14 @@
          parity contract). Exact prerelease version matching the installed net11.0 RC1 SDK,
          found with a prerelease-inclusive `dotnet package search` against the azure-default
          feed (no other net11.0-targeted version exists there). -->
-    <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="11.0.0-rc.1.26425.128" />
+    <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="11.0.0-rc.2.26504.105" />
+    <PackageVersion Include="Microsoft.Bcl.AsyncInterfaces" Version="10.0.13" />
+    <PackageVersion Include="Microsoft.Bcl.Cryptography" Version="10.0.13" />
+    <PackageVersion Include="Microsoft.IdentityModel.Abstractions" Version="8.23.0" />
+    <PackageVersion Include="Microsoft.IdentityModel.JsonWebTokens" Version="8.23.0" />
+    <PackageVersion Include="Microsoft.IdentityModel.Logging" Version="8.23.0" />
+    <PackageVersion Include="Microsoft.IdentityModel.Protocols" Version="8.23.0" />
+    <PackageVersion Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" Version="8.23.0" />
+    <PackageVersion Include="Microsoft.IdentityModel.Tokens" Version="8.23.0" />
   </ItemGroup>
 </Project>

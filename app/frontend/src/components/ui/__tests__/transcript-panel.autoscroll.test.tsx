@@ -22,8 +22,8 @@ const makeTranscript = (count: number) =>
     }));
 
 describe("TranscriptPanel autoscroll (GH-176)", () => {
-    let scrollIntoViewSpy: ReturnType<typeof vi.fn>;
-    let scrollToSpy: ReturnType<typeof vi.fn>;
+    let scrollIntoViewSpy: ReturnType<typeof vi.fn<HTMLElement["scrollIntoView"]>>;
+    let scrollToSpy: ReturnType<typeof vi.fn<(...args: unknown[]) => void>>;
     let scrollTopWrites: Array<{ target: EventTarget | null; value: number }>;
     let scrollTopDescriptor: PropertyDescriptor | undefined;
 
@@ -33,7 +33,7 @@ describe("TranscriptPanel autoscroll (GH-176)", () => {
         scrollIntoViewSpy = vi.fn();
         scrollToSpy = vi.fn();
         window.HTMLElement.prototype.scrollIntoView = scrollIntoViewSpy;
-        window.scrollTo = scrollToSpy as typeof window.scrollTo;
+        window.scrollTo = scrollToSpy;
         Object.defineProperty(window, "scrollY", { value: 0, writable: true, configurable: true });
 
         // Spy on EVERY element's scrollTop write process-wide (rather than one specific node

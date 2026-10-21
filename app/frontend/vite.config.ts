@@ -60,13 +60,15 @@ function authModePlugin(isDevServer: boolean): Plugin {
 // https://vitejs.dev/config/
 export default defineConfig(({ command }) => ({
     plugins: [react(), authModePlugin(command === "serve")],
+    // react-use-websocket publishes a transpiled CommonJS default export.
+    legacy: { inconsistentCjsInterop: true },
     build: {
         outDir: "../backend/static",
         emptyOutDir: true,
         sourcemap: false,
         chunkSizeWarningLimit: 1000,
         target: "es2020",
-        minify: "esbuild",
+        minify: "oxc",
         cssMinify: true,
         rollupOptions: {
             output: {
