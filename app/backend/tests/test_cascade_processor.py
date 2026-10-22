@@ -484,9 +484,15 @@ class SendGreetingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(state.messages), 1)
         self.assertIn("Welcome to the drive-thru!", state.messages[0].content)
         processor._speak.assert_awaited_once_with(
-            ws, "Welcome to the drive-thru! What can I get started for you today?", state
+            ws, "Welcome to the drive-thru! What can I get started for you today?", state,
+            response_id=ws.send_json.await_args_list[0].args[0]["response"]["id"],
         )
         self.assertEqual(_sent_types(ws), ["response.created", "response.audio_transcript.delta", "response.done"])
+        # Realtime API delta shape: the transcript delta names its own response.
+        self.assertEqual(
+            ws.send_json.await_args_list[1].args[0]["response_id"],
+            ws.send_json.await_args_list[0].args[0]["response"]["id"],
+        )
         # Realtime-shaped completion: the frontend renders the assistant line only from
         # `output[].content[].transcript` (an id-only frame left cascade turns invisible).
         done = ws.send_json.await_args_list[-1].args[0]["response"]
@@ -666,7 +672,7 @@ class SplitUtteranceCarryForwardTests(unittest.IsolatedAsyncioTestCase):
     async def test_committed_transcript_audio_is_not_carried_into_the_next_turn(self):
         async def _transcribe(pcm16_bytes):
             self.uploads.append(pcm16_bytes)
-            return "a sonic double cheeseburger"
+            return "a double cheeseburger"
 
         self.processor._transcribe = _transcribe
         await self._utterance(amplitude=8000)
@@ -680,7 +686,7 @@ class SplitUtteranceCarryForwardTests(unittest.IsolatedAsyncioTestCase):
     async def test_barge_in_after_transcript_commit_carries_nothing_and_commits_each_transcript_once(self):
         """Cancellation after the transcript was committed (here: mid chat) must not replay the
         already-committed guest audio into the next turn."""
-        transcripts = iter(["a sonic double cheeseburger", "no that'll be it"])
+        transcripts = iter(["a double cheeseburger", "no that'll be it"])
 
         async def _transcribe(pcm16_bytes):
             self.uploads.append(pcm16_bytes)
@@ -709,7 +715,7 @@ class SplitUtteranceCarryForwardTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(_loud_tone(2400, 8000), self.uploads[1])
         committed = [c.args[0]["transcript"] for c in self.ws.send_json.await_args_list
                      if c.args[0]["type"] == "conversation.item.input_audio_transcription.completed"]
-        self.assertEqual(committed, ["a sonic double cheeseburger", "no that'll be it"])
+        self.assertEqual(committed, ["a double cheeseburger", "no that'll be it"])
 
     async def test_overflowing_carried_audio_keeps_the_newest_bytes_and_logs_a_warning(self):
         self.state.untranscribed_audio = b"\x01\x00" * (_MAX_CARRIED_TURN_AUDIO_BYTES // 2)
@@ -1262,11 +1268,14 @@ class SpeakArmsEchoCooldownTests(unittest.IsolatedAsyncioTestCase):
         with patch("cascade_processor.aiohttp.ClientSession", return_value=fake_session_cm), \
              patch("cascade_processor._ECHO_COOLDOWN_SECONDS", 0.3):
             with patch.object(state.detector, "start_echo_cooldown") as mock_start:
-                await processor._speak(ws, "hello", state)
+                await processor._speak(ws, "hello", state, response_id="resp_1")
 
         mock_start.assert_called_once()
         (duration_seconds,), _ = mock_start.call_args
         self.assertAlmostEqual(duration_seconds, 1.0 + 0.3)
+        deltas = [c.args[0] for c in ws.send_json.await_args_list if c.args[0]["type"] == "response.audio.delta"]
+        self.assertTrue(deltas)
+        self.assertTrue(all(d["response_id"] == "resp_1" for d in deltas))
 
     async def test_speak_with_zero_configured_cooldown_never_arms_suppression(self):
         processor = _make_processor({})

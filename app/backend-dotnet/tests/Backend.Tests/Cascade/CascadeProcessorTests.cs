@@ -758,7 +758,7 @@ public sealed class CascadeProcessorTests
         var handler = new RoutingFoundryHandler()
             .EnqueueChatMessage("assistant", "Welcome!")
             .EnqueueSpeech([1, 2])
-            .EnqueueTranscript("A sonic double cheeseburger.")
+            .EnqueueTranscript("A double cheeseburger.")
             .EnqueueChatMessage("assistant", "Anything else?")
             .EnqueueSpeech([3, 4])
             .EnqueueTranscript("No, that'll be it.")

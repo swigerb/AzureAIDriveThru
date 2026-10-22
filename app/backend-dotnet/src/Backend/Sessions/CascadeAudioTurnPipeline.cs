@@ -41,7 +41,7 @@ internal sealed class CascadeAudioTurnPipeline(
             "transcription", notifyClientAsync, SessionId, logger, turnCt, timeProvider).ConfigureAwait(false);
     }
 
-    public async Task SpeakAsync(string text, CancellationToken turnCt)
+    public async Task SpeakAsync(string text, string responseId, CancellationToken turnCt)
     {
         var cascadeAudio = catalog.CascadeAudio
             ?? throw new InvalidOperationException("config.yaml has no models.cascade transcription/tts configured.");
@@ -77,6 +77,7 @@ internal sealed class CascadeAudioTurnPipeline(
                     await CascadeProcessor.SendTextAsync(browserSocket, new JsonObject
                     {
                         ["type"] = "response.audio.delta",
+                        ["response_id"] = responseId,
                         ["delta"] = Convert.ToBase64String(chunk),
                     }.ToJsonString(), turnCt, ct).ConfigureAwait(false);
                 }

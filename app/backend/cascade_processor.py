@@ -1001,12 +1001,12 @@ class CascadeProcessor:
             return
 
         if final_text:
-            await ws.send_json({"type": "response.audio_transcript.delta", "delta": final_text})
+            await ws.send_json({"type": "response.audio_transcript.delta", "response_id": response_id, "delta": final_text})
             # #126: feeds this session's own rehydration/resume history -- see
             # `_process_turn`'s matching guest-side `record_turn` call for why.
             self._sessions.record_turn(session_id, "assistant", final_text)
             try:
-                await self._with_rate_limit_retry(ws, session_id, lambda: self._speak(ws, final_text, state), "text-to-speech")
+                await self._with_rate_limit_retry(ws, session_id, lambda: self._speak(ws, final_text, state, response_id=response_id), "text-to-speech")
             except CascadeRateLimitExhausted:
                 pass
             except asyncio.CancelledError:
@@ -1221,7 +1221,7 @@ class CascadeProcessor:
             return text
         return apply_lexicon(text, pronunciations)
 
-    async def _speak(self, ws: web.WebSocketResponse, text: str, state: _CascadeSessionState) -> None:
+    async def _speak(self, ws: web.WebSocketResponse, text: str, state: _CascadeSessionState, *, response_id: str = "") -> None:
         token = await self._bearer_token()
         deployment = self.model_catalog.deployment_for(self.model_catalog.cascade_audio.tts)
         url = f"{self.audio_endpoint}/openai/v1/audio/speech"
@@ -1246,5 +1246,7 @@ class CascadeProcessor:
             chunk = audio_bytes[i:i + chunk_size]
             await ws.send_json({
                 "type": "response.audio.delta",
+                # Realtime API delta shape: each chunk names the response it belongs to.
+                "response_id": response_id,
                 "delta": base64.b64encode(chunk).decode("ascii"),
             })

@@ -259,12 +259,13 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
         await CascadeProcessor.SendTextAsync(context.BrowserSocket, new JsonObject
         {
             ["type"] = "response.audio_transcript.delta",
+            ["response_id"] = responseId,
             ["delta"] = finalText,
         }.ToJsonString(), turnCt, context.CancellationToken).ConfigureAwait(false);
         context.SessionManager?.RecordTurn(context.SessionId, "assistant", finalText);
         try
         {
-            await context.AudioTurnPipeline.SpeakAsync(finalText, turnCt).ConfigureAwait(false);
+            await context.AudioTurnPipeline.SpeakAsync(finalText, responseId, turnCt).ConfigureAwait(false);
             return true;
         }
         catch (CascadeRateLimitExhaustedException)

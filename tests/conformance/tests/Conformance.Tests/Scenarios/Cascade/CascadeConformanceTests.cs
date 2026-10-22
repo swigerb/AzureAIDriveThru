@@ -128,6 +128,10 @@ public sealed class CascadeConformanceTests(CascadeConformanceFixture fixture)
             f => f.Sequence > connection.GreetingWatermark && f.Type == "response.audio.delta", FrameTimeout, ct);
         Assert.True(audioDelta is not null, "Expected at least one response.audio.delta chunk from cascade TTS.");
         Assert.Contains("Your order is currently empty.", fixture.Realtime.TtsRequestInputs);
+        // Realtime API delta shape: transcript and audio deltas name the response they belong to.
+        var responseId = doneResponse.GetProperty("id").GetString();
+        Assert.Equal(responseId, finalAnswer.Json.GetProperty("response_id").GetString());
+        Assert.Equal(responseId, audioDelta!.Json.GetProperty("response_id").GetString());
     });
 
     [Fact]
