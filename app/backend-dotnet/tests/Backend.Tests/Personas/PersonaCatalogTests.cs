@@ -21,7 +21,8 @@ public sealed class PersonaCatalogTests
     {
         using var fixture = new PersonaPackFixture();
         var id = "voice-fixture-" + expected.ToLowerInvariant();
-        fixture.DuplicatePersona("sonic", id);
+        var sourceId = PersonaCatalog.Load(personasDir: fixture.PersonasDir).DefaultPersonaId;
+        fixture.DuplicatePersona(sourceId, id);
         fixture.MutatePersonaJson(id, obj =>
         {
             obj.Remove("speechStyle");
@@ -58,7 +59,8 @@ public sealed class PersonaCatalogTests
     public void InvalidRealPackSpeechStyleRefusesToStart(string json)
     {
         using var fixture = new PersonaPackFixture();
-        fixture.MutatePersonaJson("sonic", obj => obj["speechStyle"] = JsonNode.Parse(json));
+        var sourceId = PersonaCatalog.Load(personasDir: fixture.PersonasDir).DefaultPersonaId;
+        fixture.MutatePersonaJson(sourceId, obj => obj["speechStyle"] = JsonNode.Parse(json));
         var error = Assert.Throws<PersonaValidationException>(() => PersonaCatalog.Load(personasDir: fixture.PersonasDir));
         Assert.Contains("speechStyle", error.Message);
     }

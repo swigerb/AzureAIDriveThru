@@ -866,6 +866,11 @@ async def update_order(args, session_id: str) -> ToolResult:
             if order_item.item == item_name and order_item.size == size:
                 existing_qty = order_item.quantity
                 break
+        if menu.speech_style == "naturalDriveThru":
+            existing_qty = sum(
+                i.quantity for i in current_items
+                if i.item == item_name and i.size == menu.canonical_size_key(size)
+            )
         new_item_qty = existing_qty + quantity
         if new_item_qty > MAX_QUANTITY_PER_ITEM:
             allowed = MAX_QUANTITY_PER_ITEM - existing_qty
@@ -916,6 +921,10 @@ async def update_order(args, session_id: str) -> ToolResult:
             logger.info("Total order limit hit in session %s (would be %d items)", session_id, total_qty)
             return ToolResult(msg, ToolResultDirection.TO_SERVER)
 
+    before_remove_quantity = sum(
+        i.quantity for i in order_state_singleton.get_order_items(session_id)
+        if i.item == item_name and i.size == menu.canonical_size_key(size)
+    ) if menu.speech_style == "naturalDriveThru" and args["action"] == "remove" else 0
     result_info = order_state_singleton.handle_order_update(
         session_id,
         args["action"],
@@ -966,7 +975,20 @@ async def update_order(args, session_id: str) -> ToolResult:
     if menu.speech_style == "naturalDriveThru":
         display_size = size.capitalize() + " " if size and size.lower() not in {"standard", "n/a", ""} else ""
         verb = "Removed" if args["action"] == "remove" else "Confirmed"
-        acknowledgement = f"{verb} {number_to_words(quantity)} {menu.spoken(display_size + item_name)}."
+        applied_quantity = quantity
+        if args["action"] == "remove":
+            after_remove_quantity = sum(
+                i.quantity for i in summary.items
+                if i.item == item_name and i.size == menu.canonical_size_key(size)
+            )
+            applied_quantity = before_remove_quantity - after_remove_quantity
+            if result_info.get("vacated_combo_component"):
+                applied_quantity += 1
+        acknowledgement = (
+            f"{verb} {number_to_words(applied_quantity)} {menu.spoken(display_size + item_name)}."
+            if applied_quantity else
+            f"No {menu.spoken(display_size + item_name)} were removed; none matched your order."
+        )
         return ToolResult(
             acknowledgement + _natural_order_context(session_id) + _rewards_model_text(session_id),
             ToolResultDirection.TO_BOTH, client_text=json_order_summary,

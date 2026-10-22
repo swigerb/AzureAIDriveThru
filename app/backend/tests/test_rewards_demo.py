@@ -444,24 +444,22 @@ def test_real_pack_speech_style_validation_and_actual_tool_boundary(tmp_path, st
     import tools
 
     source = Path(__file__).resolve().parents[3] / "personas"
-    shutil.copytree(source / "tacobell", tmp_path / "tacobell")
+    # Catalogs are cached by immutable persona ID. Give each valid pack mutation its own identity.
+    pack_id = "voice-fixture-" + str(style or "absent").lower()
+    shutil.copytree(source / "tacobell", tmp_path / pack_id)
     for schema in ["persona.schema.json", "menu.schema.json"]:
         shutil.copyfile(source / schema, tmp_path / schema)
-    path = tmp_path / "tacobell" / "persona.json"
+    path = tmp_path / pack_id / "persona.json"
     manifest = json.loads(path.read_text(encoding="utf-8"))
+    manifest["id"] = pack_id
     manifest.pop("speechStyle")
     if style is not None:
         manifest["speechStyle"] = style
     path.write_text(json.dumps(manifest), encoding="utf-8")
     if style in ("unknown", 7):
         with pytest.raises(PersonaValidationError, match="speechStyle"):
-            PersonaCatalog.load(personas_dir=tmp_path, enabled=["tacobell"], default_persona_id="tacobell")
+            PersonaCatalog.load(personas_dir=tmp_path, enabled=[pack_id], default_persona_id=pack_id)
         return
-    # Catalogs are cached by immutable persona ID. Give each valid pack mutation its own identity.
-    pack_id = "voice-fixture-" + str(style or "absent").lower()
-    manifest["id"] = pack_id
-    path.write_text(json.dumps(manifest), encoding="utf-8")
-    path.parent.rename(tmp_path / pack_id)
     persona = PersonaCatalog.load(personas_dir=tmp_path, enabled=[pack_id], default_persona_id=pack_id).get(pack_id)
     assert persona.manifest.speechStyle == (style or "fullReadback")
     sid = orders.create_session(persona)
@@ -550,3 +548,51 @@ def test_zero_price_sauces_cannot_earn_or_redeem_points(session, item):
     assert not current["rewardsDemo"]["canRedeem"]
     assert current["rewardsDemo"]["discount"] == 0
     assert current["rewardsDemo"]["pointsToEarn"] == 0
+
+
+def test_natural_acknowledges_only_applied_quantities_and_limit_rejections_do_not_mutate(session):
+    import tools
+    from rtmt import ToolResultDirection
+
+    def update(action, item, quantity, size="Standard"):
+        return asyncio.run(tools.update_order(
+            dict(action=action, item_name=item, size=size, quantity=quantity), session))
+
+    update("add", "Fire Sauce Packet", 2)
+    removed = update("remove", "Fire Sauce Packet", 8)
+    assert removed.to_text().startswith("Removed two Fire Sauce Packet.")
+    assert summary(session)["items"] == []
+    missing = update("remove", "Fire Sauce Packet", 8)
+    assert missing.to_text().startswith("No Fire Sauce Packet were removed; none matched your order.")
+    update("add", "3 Soft Tacos Combo", 1)
+    update("add", "Mountain Dew Baja Blast", 1, "Large")
+    component = update("remove", "Mountain Dew Baja Blast", 8, "Large")
+    assert component.to_text().startswith("Removed one Large Mountain Dew Baja Blast.")
+    assert not summary(session)["items"][0].get("components")
+    update("add", "Fire Sauce Packet", 9)
+    before = summary(session)
+    limited = update("add", "Fire Sauce Packet", 2)
+    assert limited.destination == ToolResultDirection.TO_SERVER
+    assert "Confirmed" not in limited.to_text()
+    assert summary(session) == before
+    update("add", "Hot Sauce Packet", 9)
+    update("add", "Mild Sauce Packet", 5)
+    before = summary(session)
+    limited = update("add", "Diablo Sauce Packet", 2)
+    assert limited.destination == ToolResultDirection.TO_SERVER
+    assert "Confirmed" not in limited.to_text()
+    assert summary(session) == before
+
+
+def test_real_conformance_expectations_match_current_natural_voice_pack():
+    from prompt_loader import PromptLoader
+
+    root = Path(__file__).resolve().parents[3]
+    persona = PersonaCatalog.load().get("tacobell")
+    loader = PromptLoader(prompts_dir=persona.prompts_dir)
+    expected = json.loads((root / "tests" / "conformance" / "testdata" / "personas" / "tacobell" / "smoke.json")
+                          .read_text(encoding="utf-8"))
+    assert expected["greetingSubstring"] in loader.get_greeting()["item"]["content"][0]["text"]
+    assert expected["instructionsSubstring"] in loader.get_system_prompt()
+    search = next(t for t in loader.get_tool_schemas() if t["name"] == "search")
+    assert expected["toolDescriptionSubstring"] in search["description"]

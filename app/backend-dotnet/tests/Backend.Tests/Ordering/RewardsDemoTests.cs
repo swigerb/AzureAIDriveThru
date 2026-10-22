@@ -11,6 +11,43 @@ namespace Backend.Tests.Ordering;
 public sealed class RewardsDemoTests
 {
     [Fact]
+    public async Task NaturalAcknowledgementsUseActualRemovalAndLimitsRejectBeforeMutation()
+    {
+        var persona = PersonaCatalog.Load().Get("tacobell");
+        var order = NewOrder();
+        var executor = new OrderToolExecutor(order, MenuCatalog.FromPersona(persona), null, 10, 25);
+        Task<ToolResult> Update(string action, string item, int quantity, string size = "Standard") =>
+            executor.ExecuteAsync("update_order", JsonSerializer.SerializeToElement(new
+            {
+                action, item_name = item, size, quantity,
+            }), TestContext.Current.CancellationToken);
+        await Update("add", "Fire Sauce Packet", 2);
+        var removed = await Update("remove", "Fire Sauce Packet", 8);
+        Assert.StartsWith("Removed two Fire Sauce Packet.", removed.ToText());
+        Assert.Empty(order.Items);
+        var missing = await Update("remove", "Fire Sauce Packet", 8);
+        Assert.StartsWith("No Fire Sauce Packet were removed; none matched your order.", missing.ToText());
+        await Update("add", "3 Soft Tacos Combo", 1);
+        await Update("add", "Mountain Dew Baja Blast", 1, "Large");
+        var component = await Update("remove", "Mountain Dew Baja Blast", 8, "Large");
+        Assert.StartsWith("Removed one Large Mountain Dew Baja Blast.", component.ToText());
+        Assert.Empty(Assert.Single(order.Items).Components);
+        await Update("add", "Fire Sauce Packet", 9);
+        var before = executor.CurrentOrderSummaryJson;
+        var limited = await Update("add", "Fire Sauce Packet", 2);
+        Assert.Equal(ToolResultDirection.ToServer, limited.Destination);
+        Assert.DoesNotContain("Confirmed", limited.ToText());
+        Assert.Equal(before, executor.CurrentOrderSummaryJson);
+        await Update("add", "Hot Sauce Packet", 9);
+        await Update("add", "Mild Sauce Packet", 5);
+        before = executor.CurrentOrderSummaryJson;
+        limited = await Update("add", "Diablo Sauce Packet", 2);
+        Assert.Equal(ToolResultDirection.ToServer, limited.Destination);
+        Assert.DoesNotContain("Confirmed", limited.ToText());
+        Assert.Equal(before, executor.CurrentOrderSummaryJson);
+    }
+
+    [Fact]
     public async Task NaturalTurnsKeepTotalsPrivateAndSaveSauceQuantitiesWithoutChangingRewardsMath()
     {
         var persona = PersonaCatalog.Load().Get("tacobell");

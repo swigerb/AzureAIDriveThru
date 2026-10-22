@@ -174,6 +174,9 @@ internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings, 
             }
         }
 
+        var beforeRemoveQuantity = _menu.SpeechStyle == "naturalDriveThru" && action == "remove"
+            ? _order.Items.Where(i => i.Item == itemName && i.Size == _menu.CanonicalSizeKey(size)).Sum(i => i.Quantity)
+            : 0;
         var resultInfo = _order.HandleOrderUpdate(action, itemName, size, quantity, callerPrice);
 
         // PR #184 round 4 (Rick's review, item 3): a "wholeBundleSize" pack's
@@ -213,8 +216,19 @@ internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings, 
             var displaySize = size.Length > 0 && size.ToLowerInvariant() is not ("standard" or "n/a")
                 ? Capitalize(size) + " " : "";
             var verb = action == "remove" ? "Removed" : "Confirmed";
+            var appliedQuantity = quantity;
+            if (action == "remove")
+            {
+                var afterRemoveQuantity = summary.Items
+                    .Where(i => i.Item == itemName && i.Size == _menu.CanonicalSizeKey(size)).Sum(i => i.Quantity);
+                appliedQuantity = beforeRemoveQuantity - afterRemoveQuantity +
+                    (resultInfo.VacatedComboComponent is not null ? 1 : 0);
+            }
+            var acknowledgement = appliedQuantity > 0
+                ? $"{verb} {Ordering.Money.NumberToWords(appliedQuantity)} {_menu.Spoken(displaySize + itemName)}."
+                : $"No {_menu.Spoken(displaySize + itemName)} were removed; none matched your order.";
             return new ToolResult(
-                $"{verb} {Ordering.Money.NumberToWords(quantity)} {_menu.Spoken(displaySize + itemName)}." +
+                acknowledgement +
                 BuildNaturalOrderContext(summary) + BuildRewardsModelText(summary),
                 ToolResultDirection.ToBoth, clientText: jsonOrderSummary);
         }
@@ -626,7 +640,9 @@ internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings, 
     /// <c>Configuration.BusinessRulesConfig</c>'s own doc comment).</summary>
     private ToolResult? CheckQuantityLimits(string itemName, string size, int quantity)
     {
-        var existingQty = _order.Items.FirstOrDefault(oi => oi.Item == itemName && oi.Size == size)?.Quantity ?? 0;
+        var existingQty = _menu.SpeechStyle == "naturalDriveThru"
+            ? _order.Items.Where(i => i.Item == itemName && i.Size == _menu.CanonicalSizeKey(size)).Sum(i => i.Quantity)
+            : _order.Items.FirstOrDefault(oi => oi.Item == itemName && oi.Size == size)?.Quantity ?? 0;
         var newItemQty = existingQty + quantity;
         if (newItemQty > _maxItemQuantity)
         {
